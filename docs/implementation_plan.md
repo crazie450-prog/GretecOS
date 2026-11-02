@@ -1,6 +1,6 @@
 # Gregtec OS — Implementation Plan
 
-`v1.1 · 2026-11-01 · owner: Clayton · PM: Claude · implementer: Claude Code · reviewer/tester: Clayton · status: ready for Clayton's review (v1.0 QA review and answers folded in; independently checked)`
+`v1.2 · 2026-11-01 · owner: Clayton · PM: Claude · implementer: Claude Code · reviewer/tester: Clayton · status: ready to build (v1.1 plus crop breeding and the dashboard design handoff; see §0.2)`
 
 ---
 
@@ -12,12 +12,12 @@
   - At each **phase gate (G#)**, an independent reviewer agent (neither the PM nor the implementer) checks the phase against its acceptance criteria. Then Clayton signs off and merges (D41).
 - **Decisions.** §2 is binding. To change a decision, append a new `D##` entry to `docs/decisions.md` (append-only) and note what it supersedes.
 - **VERIFY tags.** A **VERIFY** item must be confirmed on Clayton's machine, or upstream, before any code depends on it. Phase 0 clears most of them.
-- **Research.** Research reports A–H are saved in the project under `research/`. Cite them as `[A§5.4]` instead of re-researching. Each claim in them is tagged CONFIRMED or UNCERTAIN.
+- **Research.** Research reports A–I are saved in the project under `research/` (in the repo, `docs/research/`). Cite them as `[A§5.4]` instead of re-researching. Each claim in them is tagged CONFIRMED or UNCERTAIN.
 - **QA review.** The v1.0 QA review is saved as `reviews/QA_review_v1.0.md`. Its finding IDs are cited as `[QA:S1]`, `[QA:A5]`, `[QA:D8]`, `[QA:V3]`. Clayton's answers to it are decisions D41–D77.
 
 ### 0.1 Non-negotiable principles
 1. **Numbers come from code, never from a model.** Deterministic tools compute recipes, rates, EU/t, overclocks, parallels, effort, costs **and route rankings**. Models route requests, explain and converse [QA:D2].
-2. **Cite or don't claim.** Every number and recipe statement carries a reference: `r:<map>/<sig12>` (recipe), `plan:<id>`, `q:<quest>`, `w:<page>@<revid>` (wiki). With no reference, the agent says it doesn't know and offers to look it up. Opinions with no numbers in them (e.g., "a good early power option") are allowed when labelled **general advice** [QA:D5]. Recipe keys stay stable across exports (§5.2).
+2. **Cite or don't claim.** Every number and recipe statement carries a reference: `r:<map>/<sig12>` (recipe), `plan:<id>`, `q:<quest>`, `crop:<id>` (crop data), `w:<page>@<revid>` (wiki). With no reference, the agent says it doesn't know and offers to look it up. Opinions with no numbers in them (e.g., "a good early power option") are allowed when labelled **general advice** [QA:D5]. Recipe keys stay stable across exports (§5.2).
 3. **Clayton's instance is the source of truth**, addons included. Community data, wiki pages and other planners are reference only.
 4. **Pin to the pack.** Target GTNH 2.9.0 (GT 5.09.54.265). The GT math port is gated by GT's own unit tests. If the pack fingerprint doesn't match the DB, warn: "recipe data is stale". Each new 2.9.x release goes through the pack-update playbook (WO-1.9), and Clayton decides per update whether to adopt it (D44).
 5. **The play world is sacred.** Gregtec OS never writes to the play instance or world, except for the config tweaks in D32, the OC mailbox file (§7.9) and actions Clayton confirms. All testing happens in the **Lab** instance. Claude Code runs under a Windows account that can't write to Play, and Clayton's own GOS processes run only merged code it can't change (D75, §4.6).
@@ -44,6 +44,14 @@
 | Security | Host/Origin checks, cookie token, device pairing, Clayton-only Discord interactions, untrusted-text rule | QA:A8, V6, V9 |
 | Risks | R20–R26 added (§12) | QA:S4, A1, S3 |
 
+### 0.3 What changed in v1.2
+| Area | Change | Source |
+|---|---|---|
+| Crops | New feature (§7.17): breeding guides from the start, stat plans, and an OC breeding station that runs CropsNH's deterministic Crop Breeder unattended. 2.9.0 uses CropsNH, which removed OC support for planted crops, so the IC2-era field robots can't be used | D78; research I |
+| New WOs | 1.10 (crop data), 6.7 (guide and Crops view), 7.6 (breeding station) | D78 |
+| Checks | V30–V33 (§13.2); R27–R28 (§12) | Research I |
+| Dashboard | WO-2.0 is done in Claude Design; Claude Code builds from the handoff from WO-2.6 on; Crops view added; tier colours named (§7.14) | D79 |
+
 ---
 
 ## 1. Product summary
@@ -54,6 +62,7 @@ Gregtec OS (GOS) is a local assistant and planning suite for **GTNH 2.9**. You t
 - **tracks activity** (quests, items, machines, locations, chat, deaths) and advises what to do next;
 - **watches the base live** through OpenComputers, shows status in game, and carries out safe actions after confirmation;
 - **designs themed buildings** around lines. Claude designs the decorative shells, which are pasted; machinery is built legitimately from an interactive 3D guide;
+- **breeds crops** (D78): step-by-step CropsNH breeding guides from the start, then an OC breeding station that breeds a chosen crop unattended;
 - **works from his phone**: Discord for alerts and quick questions, and the full dashboard over Tailscale;
 - **remembers** in an agents-first Obsidian vault plus a SQLite database.
 
@@ -166,6 +175,12 @@ Gregtec OS (GOS) is a local assistant and planning suite for **GTNH 2.9**. You t
 | D75 | Claude Code | Full access on the gaming PC **except Play**: it runs under a separate Windows account with no write access to the Play instance or the world backups, and Clayton's processes run from a release install it can only read. Deny rules add a second layer | Q35 |
 | D76 | Failures | Dashboard banner, voice line and in-game notices (local chat lines from GregtecLink's client module; OC displays from MV/HV). Discord only when GOS goes down while he's away | Q36 |
 | D77 | Startup | Core and Discord bot start at Windows login; voice and the game watchers start with Play (Prism pre-launch hook); manual off switch | Q37 |
+
+### 2.4 After v1.1 (2026-11-01, binding)
+| ID | Topic | Decision | From |
+|---|---|---|---|
+| D78 | Crop breeding | **Added.** Step-by-step CropsNH breeding guides from the start, stat plans, and from MV an OC **breeding station** that runs CropsNH's deterministic Crop Breeder and Seed Generator unattended until a target crop is stocked (§7.17). The IC2-era field robots can't work on 2.9 (CropsNH removed OC support for planted crops), so no field robot is planned. Ordered by tier like everything else (D42) | Clayton, 2026-11-01; research I |
+| D79 | Dashboard design | WO-2.0 is done in Claude Design: one mockup canvas plus a Design System artifact. Claude Code builds views from the approved boards through the Claude Design handoff, starting at WO-2.6; `/design-sync` keeps the design system in step with the real components | Clayton, 2026-11-01 |
 
 D75–D77 combine Clayton's answers with the PM's follow-up recommendations, which he accepted on 2026-11-01.
 
@@ -519,6 +534,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
 | advisor | Next steps (§7.5) | quest_frontier, events_recent, ledger_get, plan_list, base_get |
 | ore-intel | Veins (§7.6) | ore_find, player_pos |
+| crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
 | wiki-research | Wiki cache and fetch, attribution (§7.8) | wiki_search, wiki_fetch |
 | ops | Telemetry, alerts, confirmed actions (§7.9) | telemetry_get, action_propose, action_status |
@@ -550,6 +566,7 @@ note_read/note_write/note_append     inbox_propose(title,body) vault_search(q)
 db_query(name, params)               db_sql(select)            speak(text)  notify(ch,text,lvl)
 timer_set(...)                       handoff(task)             persona_set(id)
 export_diff(run_a, run_b)            machine_fact_get/set(machine, key, ...)   screen_snapshot()
+crop_find(name|trait)                crop_plan(target, have?)  crop_step(plan_id, n) crop_status()
 ```
 - Tool results return TSV, capped at 50 rows, with a `more` cursor.
 
@@ -841,7 +858,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 - **Build rules:**
   1. **Fixed component catalog.** Agents return structured cards (recipe card, route comparison, BOM table, flow diagram, quest card, ore list, power ledger, approval card, alert, health). Never HTML.
   2. **Provenance on every number:** a small citation chip; hover or tap opens the recipe card. A "data stale" badge shows when the fingerprint doesn't match.
-  3. **One colour language:** clean modern (D51), dark by default; GT voltage-tier colours for tiers everywhere (cards, flow nodes, ledger bars); one accent for "needs you"; status colours only for status; tabular figures.
+  3. **One colour language:** clean modern (D51), dark by default; GT voltage-tier colours for tiers everywhere (cards, flow nodes, ledger bars), taken from GT 5.09.54.265's own `TIER_COLORS` (LV dark green, MV gold, HV yellow, EV dark grey, IV blue, …) and always shown with the tier name; one accent for "needs you"; status colours only for status; tabular figures.
   4. **Every state designed:** loading, empty, stale data, AI offline, game not running, game paused, OC disconnected, export running.
   5. **Spoilers stay nudge-first:** content beyond his frontier is blurred until he taps it or says "spoil it".
   6. **Performance budget:** animate only on state changes; render the 3D viewer only when visible; cap glance mode at 30 fps; L7 measures FPS with the dashboard open.
@@ -858,11 +875,13 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | Activity | What happened this session? | Session timeline; jump to journal |
 | Quests | What can I do next? | Frontier cards, spoiler blur, links to items |
 | Ores | Where's the nearest X? | Distance-sorted list + simple map; waypoint (confirmed) |
+| Crops | What should I breed next, and how? | The path to a target crop; the current step's layout grid, requirements and odds; crop machine status (§7.17) |
 | Build | How do I build this multi? | 3D viewer with layer slider and per-layer materials; themes; shells |
 | Costs | Am I within credits? | Month to date vs the $100 of credits, by lane |
 | Settings + Health | Is everything running? | Process status, last export, VERIFY list, re-run doctor, paired devices, `me/` settings |
 
 - WO-2.0's mockups must be approved before any view is built.
+- **Design source (D79):** the approved Claude Design canvas and its Design System artifact. Claude Code builds each view from its board through the Claude Design handoff (or `/design`), never from screenshots. Once real components exist, `/design-sync` brings them back into Claude Design so new screens are mocked from them.
 
 ### 7.15 Voice details [QA:V1–V3]
 - **Pronunciation lexicon:** the `glossary.tsv` `say` column (e.g., LuV → "L U V", EBF → "E B F", naquadah → "nah-kwa-dah"), applied before TTS.
@@ -879,6 +898,40 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 - **Leaving it:** after an API error or outage, automatically once the API answers again. After the credit pause (D48), only by Clayton's choice: **Open billing** opens the Console billing page and offers **Resume AI**, and **No-AI mode** holds until he resumes or the next cycle's credits arrive. After his own switch, when he switches back.
 - **Stop** (D48) shuts GOS down as `gos stop` does, leaving only the supervisor and the Discord bot so he can restart it from the phone.
 - The dashboard shows an "AI offline" badge while the mode is on.
+
+### 7.17 Crop breeding (D78) [I]
+GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped OpenComputers support on purpose [I§1, I§3]. The IC2-era OC breeding bots (GTNH-CropAutomation and its forks) can't read CropsNH crops, so they don't work on 2.9. The feature has four parts:
+1. **Guide (from the start).** For a target crop, `crops/planner.py` finds the shortest path from the crops Clayton has, using the CropsNH NEI dumps (WO-1.10): parent-combination recipes first, then mutation pools shared by two or more parents. Each step is a card with:
+   - **Layout:** which parents sit on single sticks around each double stick. Only north, south, east and west count, and parents must be at least 80% grown.
+   - **Requirements**, checked against what he has: soil, any sub-soil block under the farmland, light, and the nutrient score.
+   - **Odds and time**, computed by code: an update every 256 ticks, a 1/3 breed chance per update, then a 50% copy chance before the recipe or pool roll.
+   - **Warnings:** steps that can destroy seeds (a failed Crop Breeder run) or spread weeds.
+   - **Keep rule:** check children with the Plant Lens, keep the best, replace the weakest parent.
+2. **Stats plan.** A child's stats are the parents' average plus a random step set by the lowest fertilizer level: 0–49 gives −1 to +1, 50–100 gives ±2, and 101+ (Crop Manager only) gives 0 to +4. Growth above 23 (or 24; V30) spreads weeds unless Resistance is at least as high, and Resistance has no downside, so the default target is 31/31/31 where his tier allows it. The planner states the expected generations to a target.
+3. **Machines (LV and up)** [I§6]:
+   - **Crop Breeder:** breeds **deterministically**. Load the parents of a breeding recipe (plus any catalyst) and it makes that child.
+     - It uses 1 of each parent, plus 144 mB of enriched fertilizer per output tier and 72 mB per stat point.
+     - Success is 40% at LV, +10% per tier, reaching 100% at ZPM. A failure uses up the inputs.
+     - The child gets the parents' average stats.
+     - It has 3 input slots below HV and 6 from HV. LV and MV can't breed high-stat seeds. Material crops from MV breed only here.
+   - **Seed Generator:** copies a seed with the same stats, paid in enriched fertilizer per stat point. Some crops need a catalyst; synthesizer-only crops can't be copied.
+   - **Gene Extractor + Crop Synthesizer (EV and up):** scan species, Growth, Gain and Resistance into data orbs, then build a seed from any mix of orbs, paid in UUM. This puts the best stats on any species.
+   - **Crop Manager:** water, fertilizer, Weed-EX and harvest within radius 3 + 2×tier.
+   - **Industrial Farm** (MV and up): bulk output, planned through the line designer.
+4. **Breeding station (automation, from MV; WO-7.6).** Because the Crop Breeder is deterministic, "breed me X" is a production plan.
+   - GOS builds the tree from the crops he has: each Crop Breeder recipe, its parents and catalysts, and the fertilizer bill. It also sets how many copies to make first, from the success odds at his tier, so a failure never costs the last seed. The enriched-fertilizer line is planned like any other.
+   - An OC program runs the station unattended:
+     - transposers move seeds between storage, the Seed Generator and the Crop Breeder;
+     - a seed in the output slot means success;
+     - on a failure it copies the parents again and retries;
+     - it stops once the target is stocked.
+   - It identifies seeds by item name, which carries the species, so it never reads planted crops (CropsNH doesn't allow that). It reads stats from item NBT if V31 passes; otherwise it tracks them from the breeding math.
+   - Start and stop are confirmed actions (§7.9), and status shows on the dashboard and phone. Lab first; Clayton installs it on Play himself.
+   - At ZPM the breeder reaches 100% success, so plain AE2 autocrafting can take over.
+   - Field breeding (raising stats with fertilizer above 100) stays manual with Crop Managers until the EV synthesizer makes it unnecessary. No field robot is planned (R28).
+- **Voice:** "next crop step", "what does X need to grow", "how long until X".
+- **Dashboard:** the Crops view (§7.14).
+- **Citations:** crop facts cite `crop:<id>` (principle 2); machine recipes cite `r:` as usual.
 
 ---
 
@@ -921,18 +974,19 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | 1.7 | `machine_fact`: tooltip parser with confidence, plus curated overrides (`data/curated/machine_facts.tsv`; ShadowTheAge `machines.ts` (MIT) as reference) | All base multis have parallels/OC rules at confidence ≥ 0.8, or are flagged |
 | 1.8 | `structure` table from gtnh-extractor re-pinned to 2.9.0 | ≥ 250 base controllers with dimensions and cells |
 | 1.9 | **Pack-update playbook** [QA:S3] (D44, §7.13): release watcher, diff summary and "adopt?" prompt, the update checklist, GT pin-bump procedure, affected-plan flags | A dry run with a simulated 2.9.x (a changed GT jar in Lab) produces the prompt, runs the whole checklist and flags the right fixture plans; L10 repeats it with real plans before G11 |
+| 1.10 | **Crop data** (D78, §7.17): run the CropsNH NEI dumpers (crops, parent-combination recipes, mutation pools, soils) in Export; load them into `crop*` tables with `crop:<id>` keys; counts report; crop data joins the export diff (WO-1.9) | Every crop in NEI's Crop Breeding tab is in the DB; 10 spot checks against NEI in the Lab; V33 resolved |
 | **G1** | **30 golden recipes** checked against NEI in the Lab (100%); stale detection works; playbook dry run passes | Reviewer report; Clayton sign-off |
 
 ### Phase 2: Core, agents, vault I/O, dashboard shell (text first)
 | WO | Deliverable | Acceptance |
 |---|---|---|
-| 2.0 | **Dashboard design** [QA must-fix 1]: design system (tokens, GT tier colours, type, spacing, states), component catalog (§7.14), information architecture, and clickable mockups of Now, Designer, glance mode and the phone layout, at 2560×1440 and phone width (D50, D51) | Clayton approves the mockups before WO-2.6 starts |
+| 2.0 | **Dashboard design** [QA must-fix 1], done in Claude Design by the PM and Clayton (D79): design system (tokens, GT tier colours, type, spacing, states) as a Design System artifact, component catalog (§7.14), information architecture, and clickable mockups of Now, Designer, glance mode and the phone layout, at 2560×1440 and phone width (D50, D51), on one canvas | Clayton approves the mockups before WO-2.6 starts; the approval is logged in `docs/decisions.md` |
 | 2.1 | Core service: FastAPI + WS, config, client tokens, logging, `llm_usage` meter. **`gos-supervisor`** with login start (D77), restarts, `/health` and a dashboard health strip [QA:A5]. **Host/Origin checks, cookie token and device pairing** [QA:A8] | Health and auth tests; a killed process restarts within 10 s and shows on the strip; requests with a foreign Host or Origin are rejected; an unpaired device is refused |
 | 2.2 | Tool layer, named queries, guards, TSV formatter (§7.0) | Unit tests per tool |
 | 2.3 | Router, instant commands, pre-retrieval, fast lane (Haiku, thinking off, cached system prompt), unsure-match questions [QA:D11] | P50 time to first token ≤ 1.2 s on the 50-question set; 10 ambiguous-item cases ask instead of answering |
 | 2.4 | Deep lane: warm `ClaudeSDKClient` with locked-down tools (§4.4), subagents, skill deploy, hooks, budgets; **cost measured on 10 representative deep-lane tasks** [QA:A4] | The init message lists only `mcp__gos__*` tools and `Skill`; a shell request and a write outside the vault both fail; the path guard blocks a write to `me/`; hitting the budget cap pauses the task and asks; cost table recorded |
 | 2.5 | Vault I/O, curator jobs, INDEX builder; **token re-measurement** of note formats with the count-tokens endpoint | Format decision recorded |
-| 2.6 | Dashboard shell built to WO-2.0: glance and workbench modes, Chrome app window, first Now view, Chat, Search, Settings + Health, Costs | Matches the approved mockups; usable on monitor 2; glance mode clickable (D49) |
+| 2.6 | Dashboard shell built to WO-2.0 from the Claude Design handoff (D79): glance and workbench modes, Chrome app window, first Now view, Chat, Search, Settings + Health, Costs | Matches the approved mockups; usable on monitor 2; glance mode clickable (D49) |
 | 2.7 | `recipe-lookup` skill and a **50-question eval** | ≥ 95% correct, **0 uncited numbers** |
 | 2.8 | **No-AI mode** (§7.16) [QA:A1] and the credits flow (D48), with dashboard banners; the Discord buttons arrive in WO-9.2 | With the API key revoked: instant commands, Search, recipe cards, BOMs and saved plans work, and "AI offline" shows; simulated 80% and 100% credit use trigger the banner and the switch |
 | 2.9 | **First-run setup wizard** [QA dashboard rule 8]: paths, API key, Discord token, headset endpoint, talk key, wake phrase, and the `gos doctor` checklist; later phases add their settings | A fresh install is configured from the wizard alone |
@@ -983,6 +1037,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | 6.4 | `quest-guide` skill: 4 functions, global spoiler levels (D72), **Quests view** with spoiler blur | 20-question eval; L0 never spoils |
 | 6.5 | `advisor`; proactive notices with the D71 defaults on | Clayton rates 3 scenarios "useful"; both default notices fire in a Lab scenario |
 | 6.6 | `ore-intel`, **Ores view**, waypoint action (V23) | Nearest-vein answers check out in the Lab |
+| 6.7 | **Crop breeding guide** (D78, §7.17): `crops/planner.py` (paths, layouts, requirement checks, computed odds and times, stat plans), `crop-breeder` skill, **Crops view**, voice "next crop step"; Crop Manager and Crop Breeder steps at the current tier | Guides for 5 target crops Clayton picks (at least one needing a sub-soil block and one needing the Crop Breeder), reviewed by him; one followed to its target in `lab-progress`; every number cites `crop:`, `r:` or `plan:`; V30 and V32 resolved |
 | **G6** | | Reviewer report; Clayton sign-off |
 
 ### Phase 7: OpenComputers bridge, in-game display, safe actions
@@ -993,6 +1048,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | 7.3 | **M1 file mailbox** (MV tier): OC writer/poller and core reader/writer with Windows retry and `safe_open()` (§7.9) | 1 h in `lab-ops` with no lost or half-read files |
 | 7.4 | In-game displays: OC status-board screen, OCGlasses HUD, chat box; dashboard **Base view** | Readable in game; updates ≤ 10 s |
 | 7.5 | Telemetry alert rules (power low, maintenance, machine stalled, crafting done) | Alerts fire in `lab-ops`, including with the game unfocused and no menu open (the AFK case, D46) |
+| 7.6 | **Breeding station** (D78, §7.17): an OC program in `oc/crop/` that runs a GOS breeding plan on a Crop Breeder and a Seed Generator through transposers. It copies parents first, breeds, detects success from the output, retries, and stocks the target. It identifies seeds by name; status goes over the bridge; start and stop are confirmed actions | In `lab-ops` at MV, it breeds a 3-step target from starter seeds unattended and stocks 4 copies, never uses the last seed of a parent, and stops cleanly mid-run; V31 resolved |
 | **G7** | | Reviewer report; Clayton sign-off |
 
 ### Phase 8: GregtecLink client, screen reading, wiki
@@ -1068,6 +1124,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 - [ ] Voice: wake word ≤ 1 false wake/h with ≥ 38/40 hits; talk key backup; entity accuracy ≥ 95%; latency per PM14; pronunciation and speech filter; personas switch (`gt-veteran` default).
 - [ ] Q&A: recipe, quest, wiki, screen, hover and ambiguous-item evals pass; no-AI mode works (L9).
 - [ ] Context: watchers stable for 2 h with no save errors; listener and census agree; journal and advisor work; default notices fire.
+- [ ] Crops: guides for Clayton's 5 target crops reviewed; one followed to its target in `lab-progress`; Crop Manager and Crop Breeder steps checked; the breeding station bred a target unattended in `lab-ops` (WO-7.6).
 - [ ] OC bridge: config tweak, Lua agent, M1 mailbox and confirmed actions (read-back, one pending, 60 s) tested in `lab-ops`; AFK alerts while unpaused (L4). In survival, M1 switches on at MV and M2 at HV/EV.
 - [ ] Discord and phone: commands, alerts, credit DMs and away-only offline DMs from his phone; phone dashboard over Tailscale (L8).
 - [ ] Build: footprints for the planned multis; 3D guide; ≥ 2 themes; a Claude-designed shell pasted in the Lab.
@@ -1094,6 +1151,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | **Total** | **≈ 85–125 h** | **≈ 108–170 h** | |
 | **With the 1.5× rework buffer (PM11)** | | **≈ 160–255 h** | |
 
+- **v1.2 (D78):** crop breeding adds about 5–7 h of Clayton's time (P1 +1, P6 +2–3, P7 +2–3), so ≈ 113–177 h, or ≈ 170–265 h with the buffer. Day one moves by about a week.
 - These are Clayton's hours (review, testing, decisions). Claude Code works in parallel streams, so his review time sets the pace.
 - **At 7.5 h/week:** about 22–34 weeks, so day one lands around **April–June 2027** (mid case: mid-May 2027). At 5–10 h/week the range is about 16–51 weeks (late February to late October 2027).
 - **External dependencies:** addon 2.9 releases (§13), Claude Code usage limits (R20), and the img2schem SOW for WO-10.0.
@@ -1131,6 +1189,8 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | R24 | Remote access exposes the dashboard (D53) | Tailscale Serve only, never Funnel; Host/Origin checks; device pairing and revocation |
 | R25 | A false "confirm" on an open mic (D59) | Read-back; one pending action; 60 s expiry; no destructive actions; AE2 crafts can be cancelled |
 | R26 | Injected text in chat, wiki or quests steers agents [QA:V6] | Principle 8; actions need human confirmation; `!gos` from Clayton only; security tests |
+| R27 | CropsNH is new in 2.9 and may change in 2.9.x, so breeding guides drift [I] | Guides come only from the exported dumps; the pack-update playbook (WO-1.9) re-exports and diffs crop data; V30 is re-checked on each update |
+| R28 | No OpenComputers route to field automation on 2.9: CropsNH removed OC support for planted crops [I§3] | The breeding station works on machines and seed items only (WO-7.6); raising stats in the field stays manual until the EV synthesizer; the addon watcher flags any CropsNH OC support |
 
 ---
 
@@ -1186,6 +1246,10 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads | Lab save loop | 6.1 |
 | V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
 | V29 | A reliable "game paused" signal (log line or GregtecLink) | Lab test | 6.1 |
+| V30 | CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2] | Lab test | 6.7 |
+| V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
+| V32 | The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6] | NEI + Lab | 6.7 |
+| V33 | The CropsNH NEI dumpers (crops, breeding recipes, mutation pools, soils) run in the Export instance and cover every crop in NEI's tabs [I§2] | Export test | 1.10 |
 
 ---
 
@@ -1219,7 +1283,7 @@ Commands: `uv run pytest` · `uv run gos doctor` · `uv run gos serve` · `uv ru
 ```
 gregtec-os/
   CLAUDE.md  README.md
-  docs/  implementation_plan.md  decisions.md  research/(A–H)  reviews/  img2schem_sow.md (WO-10.0)
+  docs/  implementation_plan.md  decisions.md  research/(A–I)  reviews/  img2schem_sow.md (WO-10.0)
   core/gregtec/
     config.py  cli.py (gos doctor|export|serve|eval|stop|deploy|launch)  supervisor.py
     db/        schema.sql  migrations/  queries/*.sql  access.py
@@ -1233,11 +1297,12 @@ gregtec-os/
     vault/     io.py  index.py  curator.py  schema.py
     build/     schematic.py  palette.py  footprints.py  themes.py  shells.py  shell_designer.py
     alerts/  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
+    crops/     data.py  planner.py  odds.py (§7.17)
   voice/gregtec_voice/   audio.py  ptt.py  wake.py  stt.py  tts.py  lexicon.py  speech_filter.py  client.py
   discord_bot/gregtec_discord/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
-  oc/                    gos-agent.lua  json.lua  mailbox.lua
+  oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
   vault-template/        _gos/{skills,agents,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
@@ -1447,6 +1512,7 @@ CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tie
 | F | `research/F_compat_bridge.md` | Addon 2.9 status; OC file mailbox; pause; OCGlasses and chat box |
 | G | `research/G_build_viewer.md` | Textures; GuideNH and MrBruh viewers; structures; schematic NBT layout |
 | H | `research/H_voice_edges.md` | Wake word options; Discord coexistence; screen capture; wiki API |
+| I | `research/I_crop_breeding.md` | CropsNH in 2.9.0; breeding rules; crop machines; why the IC2-era OC bots don't work; OC robot tiers |
 | QA | `reviews/QA_review_v1.0.md` | Independent QA review of v1.0, with Clayton's answers (D41–D77) |
 
 **Key sources:**

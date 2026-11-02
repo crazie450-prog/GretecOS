@@ -70,7 +70,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 These rules are specific to this repo and take precedence where they are more specific than the guidelines above. This repo (GitHub `crazie450-prog/GretecOS`) is the `gregtec-os` repo named in the plan.
 
-Read docs/implementation_plan.md §0–§2 first (v1.1). Work orders are in §8. QA review: docs/reviews/QA_review_v1.0.md. Research reports: docs/research/ (cite as `[A§5.4]`). Decision changes: append to docs/decisions.md.
+Read docs/implementation_plan.md §0–§2 first (v1.2). Work orders are in §8. QA review: docs/reviews/QA_review_v1.0.md. Research reports: docs/research/ (cite as `[A§5.4]`). Decision changes: append to docs/decisions.md.
 One WO = one branch `wo/<id>-<slug>` + one PR (summary, tests run, evidence, VERIFY items touched, questions).
 - Python 3.12 via uv. ruff + pytest must pass. Type hints everywhere.
 - Game numbers come from gregtec.planner / gregtec.db only. Never in prompts, never estimated. Cite r:/plan:/q:/w: ids.

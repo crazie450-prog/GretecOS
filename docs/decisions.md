@@ -9,3 +9,5 @@ Append-only. The binding decisions D01–D77 and the PM defaults PM01–PM15 are
 
 | ID | Date | Topic | Decision | Supersedes | Source |
 |---|---|---|---|---|---|
+| D78 | 2026-11-01 | Crop breeding | Added: CropsNH breeding guides from the start, stat plans, and from MV an OC breeding station that runs the deterministic Crop Breeder and Seed Generator unattended. No field robot, because 2.9's CropsNH removed OC support for planted crops. Folded into plan v1.2 §2.4 and §7.17 | — (new feature) | Clayton, PM chat; research I |
+| D79 | 2026-11-01 | Dashboard design | WO-2.0 is done in Claude Design (canvas + Design System artifact); Claude Code builds from the handoff from WO-2.6 on. Folded into plan v1.2 §2.4 | Refines WO-2.0 and WO-2.6 | Clayton, PM chat |
