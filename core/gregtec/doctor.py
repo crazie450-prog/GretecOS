@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -28,6 +29,7 @@ PLAY = "GTNH-Play"  # gos.toml [paths] play (Appendix C)
 JAVA8 = "java8"
 JAVA17 = "java17+"
 UNKNOWN = "unknown"
+NOT_APPLICABLE = "n/a"  # java_build of an instance that isn't Minecraft 1.7.10
 LWJGL3_UIDS = {
     "org.lwjgl3",
     "me.eigenraven.lwjgl3ify.forgepatches",
@@ -62,7 +64,7 @@ class Instance:
     game_dir: str | None  # "minecraft", ".minecraft" or None
     pack_version: str | None
     pack_version_sources: dict[str, str]
-    java_build: str  # JAVA8, JAVA17 or UNKNOWN
+    java_build: str  # JAVA8, JAVA17, UNKNOWN or NOT_APPLICABLE
     java_path: str | None
     java_version: str | None
     java_source: (
@@ -79,6 +81,7 @@ class PrismRoot:
     portable: bool
     instances_dir: str
     instances: list[Instance] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # informational; not problems
 
 
 def load_verify_list() -> list[VerifyItem]:
@@ -127,14 +130,18 @@ def read_ini(path: Path) -> dict[str, str]:
     """Read a Qt-style INI file (prismlauncher.cfg, instance.cfg) into a flat dict.
 
     The GTNH zip ships a headerless instance.cfg; once Prism saves it, it has [General]. Keys in
-    [General] (or outside any section) come back unprefixed.
+    [General] (or outside any section) come back unprefixed. A UTF-8 BOM is skipped, as Qt does.
+    A file that doesn't parse raises ``ValueError``.
     """
     parser = configparser.RawConfigParser(strict=False)
     parser.optionxform = str  # keep key case
-    text = read_text(path)
+    text = read_text(path, encoding="utf-8-sig")
     if not text.lstrip().startswith("["):
         text = "[General]\n" + text
-    parser.read_string(text)
+    try:
+        parser.read_string(text)
+    except configparser.Error as exc:
+        raise ValueError(str(exc)) from exc
     values: dict[str, str] = {}
     for section in parser.sections():
         prefix = "" if section == "General" else f"{section}/"
@@ -207,64 +214,95 @@ PACK_VERSION_FILES = (
 )
 
 
-def read_pack_versions(game: Path) -> dict[str, str]:
+def read_pack_versions(game: Path, problems: list[str]) -> dict[str, str]:
+    """Pack-version signals; a file that can't be read is added to ``problems``."""
     found: dict[str, str] = {}
     for label, rel, pattern in PACK_VERSION_FILES:
         path = game / rel
-        m = (
-            re.search(pattern, read_text(path), re.MULTILINE)
-            if path.is_file()
-            else None
-        )
+        try:
+            m = (
+                re.search(pattern, read_text(path), re.MULTILINE)
+                if path.is_file()
+                else None
+            )
+        except OSError as exc:
+            problems.append(f"{rel} unreadable: {exc}")
+            continue
         if m:
             found[label] = m[1].strip()
     return found
 
 
-def list_mods(game: Path, hash_mods: bool) -> list[Mod]:
-    """Jar and zip mods, enabled or .disabled, including mods/1.7.10/ (FML scans it)."""
+def list_mods(game: Path, hash_mods: bool, problems: list[str]) -> list[Mod]:
+    """The archives FML 1.7.10 loads, enabled or .disabled: files directly in mods/ and in
+    mods/1.7.10/. FML treats any other subfolder as a class folder, so jars in it never load.
+
+    A mod file that can't be read is added to ``problems``; the rest are still listed.
+    """
     mods_dir = game / "mods"
-    if not mods_dir.is_dir():
-        return []
+    paths: list[Path] = []
+    for folder in (mods_dir, mods_dir / "1.7.10"):
+        try:
+            if folder.is_dir():
+                paths.extend(folder.iterdir())
+        except OSError as exc:
+            problems.append(f"{folder.relative_to(game).as_posix()} unreadable: {exc}")
     mods = []
-    for path in sorted(mods_dir.rglob("*")):
-        rel = path.relative_to(mods_dir)
-        if (
-            not path.is_file()
-            or rel.parts[0] == ".index"
-            or not path.name.endswith(MOD_SUFFIXES)
-        ):
+    for path in sorted(paths):
+        rel = path.relative_to(mods_dir).as_posix()
+        if not path.name.endswith(MOD_SUFFIXES):
             continue
-        mods.append(
-            Mod(
-                file=rel.as_posix(),
+        try:
+            if not path.is_file():
+                continue
+            mod = Mod(
+                file=rel,
                 enabled=not path.name.endswith(".disabled"),
                 size=path.stat().st_size,
                 sha256=sha256_file(path) if hash_mods else None,
             )
-        )
+        except OSError as exc:
+            problems.append(f"mods/{rel} unreadable: {exc}")
+            continue
+        mods.append(mod)
     return mods
 
 
 def read_instance(folder: Path, hash_mods: bool, prism_cfg: dict[str, str]) -> Instance:
-    cfg = read_ini(folder / "instance.cfg")
+    problems: list[str] = []
+    try:
+        cfg = read_ini(folder / "instance.cfg")  # a parse error arrives as ValueError
+    except (OSError, ValueError) as exc:
+        cfg = {}
+        problems.append(f"instance.cfg unreadable: {exc}")
     # Prism's rule: minecraft/ unless only .minecraft/ exists (the GTNH zips use .minecraft/).
-    game = next(
-        (folder / d for d in ("minecraft", ".minecraft") if (folder / d).is_dir()), None
-    )
-    problems = []
+    try:
+        game = next(
+            (folder / d for d in ("minecraft", ".minecraft") if (folder / d).is_dir()),
+            None,
+        )
+    except OSError as exc:  # Python 3.12's is_dir() re-raises EACCES
+        game = None
+        problems.append(f"game folder unreadable: {exc}")
     try:
         pack = read_pack(folder)
     except (OSError, ValueError) as exc:
         pack = {}
         problems.append(f"mmc-pack.json unreadable: {exc}")
     components = list(pack)
-    versions = read_pack_versions(game) if game else {}
+    versions = read_pack_versions(game, problems) if game else {}
     concrete = {v for v in versions.values() if not _placeholder(v)}
     if len(concrete) > 1:
         problems.append(f"pack version files disagree: {versions}")
     override = cfg.get("OverrideJavaLocation", "false").lower() == "true"
-    java = cfg if override else prism_cfg
+
+    def java_setting(key: str) -> str | None:
+        # Prism: an overriding instance without its own key uses the global value.
+        return (cfg if override and key in cfg else prism_cfg).get(key) or None
+
+    # LWJGL 2 vs 3 tells Java 8 from 17+ only on Minecraft 1.7.10. With no mmc-pack.json the
+    # version is unknown, and so is the build.
+    minecraft = pack.get("net.minecraft")
     inst = Instance(
         folder_name=folder.name,
         name=cfg.get("name", folder.name),
@@ -274,17 +312,18 @@ def read_instance(folder: Path, hash_mods: bool, prism_cfg: dict[str, str]) -> I
         game_dir=game.name if game else None,
         pack_version=next((v for v in versions.values() if not _placeholder(v)), None),
         pack_version_sources=versions,
-        java_build=detect_java_build(components),
-        java_path=java.get("JavaPath") or None,
-        java_version=java.get("JavaVersion") or None,
+        java_build=detect_java_build(components)
+        if minecraft in (None, "1.7.10")
+        else NOT_APPLICABLE,
+        java_path=java_setting("JavaPath"),
+        java_version=java_setting("JavaVersion"),
         java_source="instance" if override else "global",
         components=components,
         problems=problems,
     )
     if game is None:
-        inst.problems.append("no minecraft or .minecraft folder")
-        return inst
-    inst.mods = list_mods(game, hash_mods)
+        return inst  # not launched yet: Prism creates minecraft/ on first launch
+    inst.mods = list_mods(game, hash_mods, inst.problems)
     lwjgl3ify_jar = any(
         m.enabled and Path(m.file).name.lower().startswith("lwjgl3ify-")
         for m in inst.mods
@@ -300,27 +339,60 @@ def read_instance(folder: Path, hash_mods: bool, prism_cfg: dict[str, str]) -> I
     return inst
 
 
+def _probe(check: Callable[[], bool]) -> bool | None:
+    """Stat one of Prism's own files. None: this account may not look (gos-dev, plan 4.6)."""
+    try:
+        return check()
+    except PermissionError:
+        return None
+
+
 def survey(roots: list[Path], hash_mods: bool = True) -> list[PrismRoot]:
     found: list[PrismRoot] = []
     seen: set[Path] = set()
     for root in roots:
         # A portable install keeps its data next to the exe, or in UserData\ beside it.
-        data = root / "UserData" if (root / "UserData").is_dir() else root
-        portable = data != root or (root / "portable.txt").is_file()
+        userdata = _probe((root / "UserData").is_dir)
+        portable_txt = _probe((root / "portable.txt").is_file)
+        exe = _probe((root / "prismlauncher.exe").is_file)
+        data = root / "UserData" if userdata else root
+        unknown = None in (userdata, portable_txt, exe)
+        # If we may not look, the data is still right here: call it portable.
+        portable = data != root or bool(portable_txt) or unknown
         if not data.is_dir() or data.resolve() in seen:
             continue
-        if (root / "prismlauncher.exe").is_file() and not portable:
+        if exe and not portable:
             continue  # an installed copy: its data is in %APPDATA%\PrismLauncher
         seen.add(data.resolve())
+        notes = []
+        if unknown:
+            notes.append(
+                "can't see Prism's own files (running as gos-dev?); assumed portable"
+            )
         settings = data / "prismlauncher.cfg"
-        cfg = read_ini(settings) if settings.is_file() else {}
+        try:
+            cfg = read_ini(settings) if settings.is_file() else {}
+        except PermissionError:
+            cfg = {}
+            notes.append(
+                "can't read Prism's own settings (running as gos-dev?); global Java unknown"
+            )
         instances_dir = data / cfg.get("InstanceDir", "instances")
         prism = PrismRoot(
-            path=str(data), portable=portable, instances_dir=str(instances_dir)
+            path=str(data),
+            portable=portable,
+            instances_dir=str(instances_dir),
+            notes=notes,
         )
         if instances_dir.is_dir():
             for folder in sorted(instances_dir.iterdir()):
-                if folder.name != ".tmp" and (folder / "instance.cfg").is_file():
+                if folder.name == ".tmp":
+                    continue
+                try:
+                    is_instance = (folder / "instance.cfg").is_file()
+                except OSError:  # can't tell: read_instance reports what it can't read
+                    is_instance = True
+                if is_instance:
                     prism.instances.append(read_instance(folder, hash_mods, cfg))
         found.append(prism)
     return found
@@ -381,14 +453,18 @@ def main(
     for root in roots:
         kind = "portable" if root.portable else "installed"
         print(f"Prism ({kind}): {root.path}", file=out)
+        for note in root.notes:
+            print(f"  note: {note}", file=out)
         if not root.instances:
             print(f"  no instances in {root.instances_dir}", file=out)
         for inst in root.instances:
             enabled = sum(m.enabled for m in inst.mods)
+            # No game folder is "not launched yet" only if nothing failed to read.
+            game = inst.game_dir or ("?" if inst.problems else "? (not launched yet)")
             print(
                 f"  {inst.folder_name}\t{'GTNH' if inst.gtnh else 'not GTNH'}"
                 f"\tpack={inst.pack_version or '?'}\tjava={inst.java_build}"
-                f"\tgame={inst.game_dir or '?'}\tmods={enabled} enabled, "
+                f"\tgame={game}\tmods={enabled} enabled, "
                 f"{len(inst.mods) - enabled} disabled",
                 file=out,
             )
