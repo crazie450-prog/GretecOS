@@ -1,0 +1,25 @@
+# Gregtec OS
+
+A local voice assistant and planning suite for **GT New Horizons 2.9**. It designs production and power lines from your own instance's recipe data, answers recipe, quest and wiki questions with cited numbers, watches the base live through OpenComputers, and shows everything on a second-monitor dashboard and a phone.
+
+**Status:** planning is done (plan v1.1, 2026-11-01). The build starts at WO-0.1. Nothing here runs yet.
+
+## Docs
+
+| Doc | What it is |
+|---|---|
+| [docs/implementation_plan.md](docs/implementation_plan.md) | The spec. §2 decisions are binding; §8 holds the work orders and phase gates. |
+| [docs/decisions.md](docs/decisions.md) | Append-only log of decision changes after v1.1 (D78 onward). |
+| [docs/research/](docs/research/) | Research reports A–H. The plan cites them as `[A§5.4]`. |
+| [docs/reviews/QA_review_v1.0.md](docs/reviews/QA_review_v1.0.md) | QA review of plan v1.0, with Clayton's answers (became D41–D77). |
+| [CLAUDE.md](CLAUDE.md) | Working rules for Claude Code. |
+
+Dashboard mockups are being designed in Claude Design. WO-2.0 brings the approved design system and component catalog into `dashboard/design/` before any view is built.
+
+## How work happens
+
+- **Roles:** Claude Code builds, Clayton reviews, tests and merges, and a Claude PM agent maintains the plan.
+- **Work orders:** one work order (WO) = one branch `wo/<id>-<slug>` + one PR with a summary, tests run, evidence, VERIFY items touched and open questions.
+- **Gates:** each phase ends at a gate (G#). An independent reviewer agent reports, then Clayton signs off.
+- **Phase 0 order:** WO-0.1 → WO-0.8 setup → WO-0.7 (build Play) → WO-0.3 → WO-0.8 tests → the rest.
+- **Changing a decision:** append a `D##` entry to `docs/decisions.md` that names what it supersedes.

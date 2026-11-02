@@ -1,0 +1,18 @@
+# Never commit keys, tokens, saves, dumps or DB files (CLAUDE.md).
+# Runtime data lives in GOS_HOME, outside the repo. WO-0.1 adds the Python, Node and Gradle ignores.
+.env
+.env.*
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.mca
+level.dat
+level.dat_old
