@@ -109,9 +109,9 @@ def run_setup(
 
 def sddl(paths: list[Path]) -> dict[str, str]:
     quoted = ",".join(f"'{p}'" for p in paths)
-    out = powershell(
-        f"@({quoted}) | ForEach-Object {{ @{{ p = $_; s = (Get-Acl -LiteralPath $_).Sddl }} }} | ConvertTo-Json"
-    )
+    # -InputObject keeps a one-element result a JSON array (piping would unwrap it).
+    rows = f"@(@({quoted}) | ForEach-Object {{ @{{ p = $_; s = (Get-Acl -LiteralPath $_).Sddl }} }})"
+    out = powershell(f"ConvertTo-Json -InputObject {rows}")
     assert out.returncode == 0, out.stdout + out.stderr
     return {row["p"]: row["s"] for row in json.loads(out.stdout)}
 
