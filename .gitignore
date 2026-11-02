@@ -16,3 +16,19 @@
 *.mca
 level.dat
 level.dat_old
+
+# Python (uv, pytest, ruff)
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Node (dashboard/)
+node_modules/
+/dashboard/dist/
+
+# Gradle (mod/). /mod/run/ is the runServer test world: saves never go in git.
+# Anchor build dirs: a bare build/ would also hide the source package core/gregtec/build/.
+/mod/.gradle/
+/mod/build/
+/mod/run/
