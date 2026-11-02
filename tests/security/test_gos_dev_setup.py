@@ -17,7 +17,7 @@ import sys
 import time
 import zipfile
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -40,7 +40,7 @@ LOGON32_LOGON_NETWORK = 3
 @dataclass(frozen=True)
 class Setup:
     user: str
-    password: str
+    password: str = field(repr=False)
     app: Path
     dev: Path
     prism: Path
@@ -60,6 +60,15 @@ class Setup:
         return args if download else args + " -SkipPrismDownload"
 
 
+def windows_powershell_env() -> dict[str, str]:
+    """os.environ without PSModulePath.
+
+    CI runs pytest from PowerShell 7, whose PSModulePath stops Windows PowerShell 5.1 loading its
+    own modules (ConvertTo-SecureString, Get-Acl).
+    """
+    return {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+
+
 def powershell(command: str, password: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -73,7 +82,7 @@ def powershell(command: str, password: str = "") -> subprocess.CompletedProcess[
         ],
         capture_output=True,
         text=True,
-        env={**os.environ, "GOS_CI_PASSWORD": password},
+        env={**windows_powershell_env(), "GOS_CI_PASSWORD": password},
         check=False,
         timeout=900,
     )
@@ -267,13 +276,25 @@ def test_dev_user_access(installed: Setup) -> None:
 
 
 def test_claude_code_deny_rules(installed: Setup) -> None:
-    rules = json.loads((MANAGED / "gregtec-os.json").read_text(encoding="utf-8"))[
-        "permissions"
-    ]["deny"]
+    raw = (MANAGED / "gregtec-os.json").read_bytes()
+    assert not raw.startswith(
+        b"\xef\xbb\xbf"
+    )  # a BOM would stop Claude Code starting at all
+    rules = json.loads(raw)["permissions"]["deny"]
     prism = "//c/" + installed.prism.as_posix()[3:]
-    assert f"Edit({prism}/instances/GTNH-Play/**)" in rules
-    assert f"Read({prism}/accounts.json)" in rules
-    assert any(r.startswith("Edit(//c/") and r.endswith("/app/**)") for r in rules)
+    home = "//c/" + installed.home.as_posix()[3:]
+    assert set(rules) == {
+        f"Edit({prism}/instances/GTNH-Play/**)",
+        f"Edit(//c/{installed.app.as_posix()[3:]}/**)",
+        f"Edit({home}/**)",
+        f"Read({home}/backups/world/**)",
+        f"Read({prism}/accounts.json)",
+        f"Edit({prism}/accounts.json)",
+    }
+    # Only Read/Edit rules match paths; Windows paths must be //<lowercase drive>/ with forward slashes.
+    for rule in rules:
+        assert rule.startswith(("Read(//c/", "Edit(//c/")), rule
+        assert "\\" not in rule, rule
 
 
 def test_backup_task_copies_play_backup(installed: Setup) -> None:

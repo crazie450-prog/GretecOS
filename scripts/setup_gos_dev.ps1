@@ -202,18 +202,25 @@ Set-ExplicitGrant $worldBackups $DevSid $null
 # ---------------------------------------------------------------- 5. Claude Code deny rules
 Write-Step 'Claude Code managed settings (deny rules, second layer)'
 $play = Join-Path $instances $PlayInstance
+# Only Read(...) and Edit(...) rules match file paths (Edit also covers Write). These bind Claude Code's
+# own file tools and the file commands it recognises in Bash, not PowerShell cmdlets or subprocesses,
+# so the ACLs above are the wall (PM15). The drop-in is machine-wide: it applies to every account.
+$accounts = "$(ConvertTo-ClaudePath $PrismRoot)/accounts.json"
 $deny = @(
     "Edit($(ConvertTo-ClaudePath $play)/**)",
     "Edit($(ConvertTo-ClaudePath $AppRoot)/**)",
     "Edit($(ConvertTo-ClaudePath $GosHome)/**)",
     "Read($(ConvertTo-ClaudePath $worldBackups)/**)",
-    "Read($(ConvertTo-ClaudePath $PrismRoot)/accounts.json)"
+    "Read($accounts)",
+    "Edit($accounts)"
 )
 $json = @{ permissions = @{ deny = $deny } } | ConvertTo-Json -Depth 4
+$null = $json | ConvertFrom-Json
 New-Dir $ManagedSettingsDir
 $dropIn = Join-Path $ManagedSettingsDir 'gregtec-os.json'
-[IO.File]::WriteAllText($dropIn, $json, (New-Object Text.UTF8Encoding $false))   # no BOM: Claude Code refuses to start on unparsable policy
-$null = Get-Content -Raw -LiteralPath $dropIn | ConvertFrom-Json
+# No BOM, and replace atomically: Claude Code refuses to start, for every account, if a policy file can't be parsed.
+[IO.File]::WriteAllText("$dropIn.tmp", $json, (New-Object Text.UTF8Encoding $false))
+Move-Item -LiteralPath "$dropIn.tmp" -Destination $dropIn -Force
 Write-Host "    $dropIn"
 
 # ---------------------------------------------------------------- 6. GOS_APP scripts (until gos deploy)

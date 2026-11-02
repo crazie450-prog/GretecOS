@@ -39,6 +39,8 @@ def run(instance: Path, dest: Path, log: Path) -> subprocess.CompletedProcess[st
         capture_output=True,
         text=True,
         check=False,
+        # CI runs pytest from PowerShell 7; its PSModulePath breaks Windows PowerShell 5.1's modules.
+        env={k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"},
         timeout=120,
     )
 
