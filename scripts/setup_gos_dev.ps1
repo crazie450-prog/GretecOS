@@ -10,17 +10,20 @@
 
     1. Creates the standard local account gos-dev (member of Users only).
     2. Creates C:\GregtecOS-dev (gos-dev: modify), C:\GregtecOS-app (gos-dev: read) and
-       C:\Games\PrismLauncher (gos-dev: none), with inheritance from C:\ broken so that
-       Authenticated Users' Modify on new root folders can't leak in.
+       C:\Games\PrismLauncher (gos-dev: none). Their inheritance from C:\ is broken, they are owned
+       by Administrators, and every existing folder above them gets a deny ACE so gos-dev can't
+       rename it and swap in a tree of its own.
     3. Installs portable Prism Launcher (pinned, SHA256-checked) and sets instance permissions:
        instances\ and GTNH-Play read-only for gos-dev, GTNH-Export and GTNH-Lab modify.
-    4. Sets Clayton's GOS_HOME: data\ readable by gos-dev, backups\world\ not at all.
+    4. Sets Clayton's GOS_HOME: data\ readable by gos-dev, everything else not at all.
     5. Writes Claude Code deny rules as a managed-settings drop-in (a second layer only).
-    6. Copies scripts\ into GOS_APP\scripts (stand-in for `gos deploy` until WO-0.2).
+    6. Copies itself and backup_world.ps1 into GOS_APP\scripts (stand-in for `gos deploy`).
     7. Registers the world backup task (runs as Clayton, S4U: no stored password, no window).
-    8. Checks every path's ACL and exits 1 if gos-dev could write where it must not.
+    8. Checks every protected file and folder, and every Minecraft or Prism install it finds on
+       the fixed drives, and exits 1 if gos-dev could change any of them.
 
-    It never touches an existing Prism or Minecraft install; it only reports them.
+    It refuses to run from a copy gos-dev could have changed, and it never changes an existing
+    Minecraft or Prism install: it only reports those gos-dev can write.
 #>
 [CmdletBinding()]
 param(
@@ -33,6 +36,7 @@ param(
     [string[]]$WritableInstances = @('GTNH-Export', 'GTNH-Lab'),
     [string]$ManagedSettingsDir = 'C:\Program Files\ClaudeCode\managed-settings.d',
     [string]$TaskName = 'GregtecOS world backup',
+    [string[]]$InstallScanRoots,   # where to look for other Minecraft installs; default: every fixed drive
     [securestring]$DevPassword,
     [switch]$SkipPrismDownload,
     [switch]$Yes
@@ -46,13 +50,28 @@ $PrismVersion = '11.1.1'
 $PrismZipUrl = "https://github.com/PrismLauncher/PrismLauncher/releases/download/$PrismVersion/PrismLauncher-Windows-MSVC-Portable-$PrismVersion.zip"
 $PrismZipSha256 = 'AB35A770FB06D89D2CCC098079DB5DB329FB4E68F42B72BABD8B095EFDE3D2D7'
 $Marker = '.gregtec-os'   # written into folders this script created, so a re-run knows they are ours
+$Scripts = @('setup_gos_dev.ps1', 'backup_world.ps1')
 
 $Full = [Security.AccessControl.FileSystemRights]::FullControl
 $Modify = [Security.AccessControl.FileSystemRights]'Modify, Synchronize'
 $ReadExec = [Security.AccessControl.FileSystemRights]'ReadAndExecute, Synchronize'
+$NoRename = [Security.AccessControl.FileSystemRights]'Delete, ChangePermissions, TakeOwnership'
 $System = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'
 $Admins = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'
 $UsersGroup = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+
+# Access masks. Write: write/append data and attributes, delete, delete child, WRITE_DAC,
+# WRITE_OWNER, GENERIC_WRITE, GENERIC_ALL. Read: read data, read EA, GENERIC_READ, GENERIC_ALL.
+$WriteMask = 0x000D0156 -bor 0x50000000
+$ReadMask = 0x00000009 -bor 0x90000000
+$ReplaceMask = 0x000D0000 -bor 0x10000000   # DELETE, WRITE_DAC, WRITE_OWNER, GENERIC_ALL
+$DeleteChild = 0x00000040
+# SIDs a gos-dev logon can carry besides its own and its local groups': Everyone, LOCAL, CONSOLE
+# LOGON, OWNER RIGHTS, NETWORK, BATCH, INTERACTIVE, Authenticated Users, REMOTE INTERACTIVE, This
+# Organization, Local account, NTLM, Users.
+$WellKnownSids = @('S-1-1-0', 'S-1-2-0', 'S-1-2-1', 'S-1-3-4', 'S-1-5-2', 'S-1-5-3', 'S-1-5-4',
+    'S-1-5-11', 'S-1-5-14', 'S-1-5-15', 'S-1-5-113', 'S-1-5-64-10', 'S-1-5-32-545')
+$script:DevSids = $WellKnownSids   # gos-dev's own SID and groups are added once the account exists
 
 function Write-Step([string]$Text) { Write-Host "==> $Text" -ForegroundColor Cyan }
 
@@ -64,54 +83,158 @@ function New-Dir([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Force -Path $Path | Out-Null }
 }
 
-# Replace a folder's DACL with exactly these rules and stop inheriting from its parent.
+# Full path without a trailing backslash, except for a drive root, which keeps it: "C:" alone means
+# the current folder on drive C, not its root.
+function Get-FullPath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full.Length -gt 3) { $full.TrimEnd('\') } else { $full }
+}
+
+function Test-DriveRoot([string]$Path) { $Path -match '^[A-Za-z]:\\$' }
+
+function Get-ParentPath([string]$Path) {
+    $parent = Split-Path -Parent (Get-FullPath $Path)
+    if ($parent) { Get-FullPath $parent } else { $null }
+}
+
+function Test-Under([string]$Child, [string]$Parent) {
+    $c = (Get-FullPath $Child).TrimEnd('\') + '\'
+    $p = (Get-FullPath $Parent).TrimEnd('\') + '\'
+    $c.StartsWith($p, [StringComparison]::OrdinalIgnoreCase)
+}
+
+# Replace a folder's DACL with exactly these rules, stop inheriting from its parent, and give it to
+# Administrators: an owner can always rewrite a DACL.
 function Set-ProtectedAcl([string]$Path, [Security.AccessControl.FileSystemAccessRule[]]$Rules) {
     $acl = New-Object Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner($Admins)
     foreach ($rule in $Rules) { $acl.AddAccessRule($rule) }
-    (Get-Item -LiteralPath $Path).SetAccessControl($acl)
+    (Get-Item -LiteralPath $Path -Force).SetAccessControl($acl)
 }
 
 # Keep the inherited ACEs, drop any explicit ACE for $Sid, then optionally grant $Rights.
 function Set-ExplicitGrant([string]$Path, [Security.Principal.SecurityIdentifier]$Sid, $Rights) {
-    $item = Get-Item -LiteralPath $Path
+    $item = Get-Item -LiteralPath $Path -Force
     $acl = $item.GetAccessControl('Access')
     $acl.PurgeAccessRules($Sid)
     if ($null -ne $Rights) { $acl.AddAccessRule((New-Rule $Sid $Rights)) }
     $item.SetAccessControl($acl)
 }
 
+# What gos-dev may do to one file or folder: the allowed mask (allow ACEs for its SIDs, minus deny
+# ACEs for them) and whether it owns it. Inherit-only ACEs are counted too, which errs on the safe
+# side: they are what the folder's children get.
+function Get-DevAccess([string]$Path) {
+    $acl = (Get-Item -LiteralPath $Path -Force).GetAccessControl('Access, Owner')
+    $allow = 0; $deny = 0
+    foreach ($ace in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($script:DevSids -contains $ace.IdentityReference.Value) {
+            if ($ace.AccessControlType -eq 'Allow') { $allow = $allow -bor [int]$ace.FileSystemRights }
+            else { $deny = $deny -bor [int]$ace.FileSystemRights }
+        }
+    }
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    [pscustomobject]@{ Mask = ($allow -band (-bnot $deny)); Owned = ($script:DevSids -contains $owner) }
+}
+
+# Ways gos-dev could swap $Path out without writing it: rename, move or re-permission any folder
+# above it (DELETE, WRITE_DAC, WRITE_OWNER or ownership), or delete entries from one (DELETE_CHILD).
+function Get-ChainRisk([string]$Path) {
+    $reasons = @()
+    $child = Get-FullPath $Path
+    while ($parent = Get-ParentPath $child) {
+        if (Test-Path -LiteralPath $parent) {
+            $access = Get-DevAccess $parent
+            if ($access.Mask -band $DeleteChild) { $reasons += "can delete or rename entries in $parent" }
+            if (-not (Test-DriveRoot $parent)) {
+                if ($access.Owned) { $reasons += "owns $parent" }
+                if ($access.Mask -band $ReplaceMask) { $reasons += "can rename or re-permission $parent" }
+            }
+        }
+        if (Test-DriveRoot $parent) { break }
+        $child = $parent
+    }
+    $reasons
+}
+
+# Ways gos-dev could change $Path itself or swap it out.
+function Get-ChangeRisk([string]$Path) {
+    $reasons = @()
+    $access = Get-DevAccess $Path
+    if ($access.Owned) { $reasons += "owns $Path" }
+    if ($access.Mask -band $WriteMask) { $reasons += "can write $Path" }
+    $reasons + @(Get-ChainRisk $Path)
+}
+
+# Every file and folder under $Root, skipping the subtrees in $Skip.
+function Get-Tree([string]$Root, [string[]]$Skip) {
+    $stack = New-Object System.Collections.Stack
+    $stack.Push((Get-Item -LiteralPath $Root -Force))
+    while ($stack.Count) {
+        $item = $stack.Pop()
+        if ($Skip | Where-Object { (Get-FullPath $_) -ieq (Get-FullPath $item.FullName) }) { continue }
+        $item
+        if ($item.PSIsContainer -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force) { $stack.Push($child) }
+        }
+    }
+}
+
+# Minecraft and Prism installs on the fixed drives, a few folders deep (CLAUDE.md: every one of
+# them counts as Play). Only reported; never changed.
+function Find-Installs([string[]]$Roots, [string[]]$Exclude) {
+    $markers = @('prismlauncher.cfg', 'multimc.cfg', 'instance.cfg', 'launcher_profiles.json', 'level.dat', '.minecraft')
+    $skip = @('Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', '$Recycle.Bin',
+        'System Volume Information', 'Recovery', 'PerfLogs', 'Users')
+    $found = foreach ($root in $Roots) {
+        foreach ($top in Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue) {
+            if ($skip -contains $top.Name) { continue }
+            Get-ChildItem -LiteralPath $top.FullName -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue |
+                Where-Object { $markers -contains $_.Name } |
+                ForEach-Object { if ($_.PSIsContainer) { $_.FullName } else { $_.DirectoryName } }
+        }
+    }
+    @($found | Sort-Object -Unique | Where-Object { $p = $_; -not ($Exclude | Where-Object { Test-Under $p $_ }) })
+}
+
 # C:\Games\PrismLauncher -> //c/Games/PrismLauncher (Claude Code matches Windows paths in POSIX form).
 function ConvertTo-ClaudePath([string]$Path) {
-    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $full = Get-FullPath $Path
     '//' + $full.Substring(0, 1).ToLowerInvariant() + ($full.Substring(2) -replace '\\', '/')
 }
 
-function Test-Under([string]$Child, [string]$Parent) {
-    $c = [IO.Path]::GetFullPath($Child).TrimEnd('\') + '\'
-    $p = [IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
-    $c.StartsWith($p, [StringComparison]::OrdinalIgnoreCase)
-}
-
-# ---------------------------------------------------------------- preflight
+# ---------------------------------------------------------------- preflight (changes nothing)
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $OwnerSid = $me.User
 Write-Step "Owner (gets Full Control everywhere): $($me.Name) [$OwnerSid]"
 Write-Host "    GOS_HOME: $GosHome"
 if ($me.Name -match "\\$([regex]::Escape($DevUser))$") { throw "Run this as yourself, not as $DevUser." }
-if (Test-Under $PSScriptRoot $DevRoot) { throw "Don't run this from ${DevRoot}: $DevUser can change files there. Run it from your own copy or from $AppRoot\scripts." }
 
-$existing = @(
-    (Join-Path $env:APPDATA 'PrismLauncher'),
-    (Join-Path $env:LOCALAPPDATA 'Programs\PrismLauncher'),
-    (Join-Path $env:APPDATA '.minecraft')
-) | Where-Object { Test-Path -LiteralPath $_ }
-foreach ($path in $existing) { Write-Warning "Existing Minecraft/Prism data at $path. This script leaves it alone (treat it as Play)." }
+$existingDev = Get-LocalUser -Name $DevUser -ErrorAction SilentlyContinue
+if ($existingDev) { $script:DevSids = $WellKnownSids + $existingDev.SID.Value }
+
+# Clayton must never run code gos-dev can change: check this copy before it runs anything.
+$sourceRisk = @(Get-ChangeRisk $PSScriptRoot) + @($Scripts | ForEach-Object { Get-ChangeRisk (Join-Path $PSScriptRoot $_) })
+if ($sourceRisk) {
+    throw "Refusing to run from $PSScriptRoot because $DevUser (or every user) $($sourceRisk -join '; '). Run it from a copy in your own profile or from $AppRoot\scripts."
+}
 
 $prismMarker = Join-Path $PrismRoot $Marker
 if ((Test-Path -LiteralPath $PrismRoot) -and -not (Test-Path -LiteralPath $prismMarker) -and
     @(Get-ChildItem -LiteralPath $PrismRoot -Force).Count -gt 0) {
     throw "$PrismRoot already exists and wasn't created by this script. Refusing to change it; pass -PrismRoot to use another folder."
+}
+
+if (-not $InstallScanRoots) {
+    $InstallScanRoots = [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } |
+        ForEach-Object { $_.RootDirectory.FullName }
+}
+Write-Step "Looking for other Minecraft and Prism installs in $($InstallScanRoots -join ', ')"
+$installs = Find-Installs $InstallScanRoots @($PrismRoot, $DevRoot, $AppRoot, $GosHome)
+foreach ($path in $installs) { Write-Warning "Existing Minecraft/Prism data at $path. This script won't change it (treat it as Play)." }
+foreach ($path in @((Join-Path $env:APPDATA 'PrismLauncher'), (Join-Path $env:LOCALAPPDATA 'Programs\PrismLauncher'), (Join-Path $env:APPDATA '.minecraft'))) {
+    if (Test-Path -LiteralPath $path) { Write-Warning "Existing Minecraft/Prism data at $path (in your profile; $DevUser can't reach it)." }
 }
 
 if (-not $Yes) {
@@ -121,7 +244,7 @@ if (-not $Yes) {
 
 # ---------------------------------------------------------------- 1. account
 Write-Step "Account $DevUser"
-$dev = Get-LocalUser -Name $DevUser -ErrorAction SilentlyContinue
+$dev = $existingDev
 if (-not $dev) {
     if (-not $DevPassword) {
         $DevPassword = Read-Host "New password for $DevUser" -AsSecureString
@@ -147,18 +270,43 @@ function Get-DevGroupSids {
 if (@(Get-DevGroupSids) -notcontains $UsersGroup.Value) { Add-LocalGroupMember -SID $UsersGroup.Value -Member $DevUser }
 $otherGroups = @(Get-DevGroupSids | Where-Object { $_ -ne $UsersGroup.Value })
 if ($otherGroups.Count) { throw "$DevUser must be a member of Users only, but is also in: $($otherGroups -join ', ')." }
+$script:DevSids = @($WellKnownSids + $DevSid.Value + @(Get-DevGroupSids) | Sort-Object -Unique)
 
 # ---------------------------------------------------------------- 2. roots
 Write-Step 'Folders and permissions'
-$ownerFull = @((New-Rule $System $Full), (New-Rule $Admins $Full), (New-Rule $OwnerSid $Full))
+# Anything gos-dev already owns in a root we are about to adopt could be re-permissioned by it later.
+foreach ($root in @($AppRoot, $PrismRoot) | Where-Object { Test-Path -LiteralPath $_ }) {
+    $skip = @($WritableInstances | ForEach-Object { Join-Path $PrismRoot "instances\$_" })
+    $owned = @(Get-Tree $root $skip | Where-Object { (Get-DevAccess $_.FullName).Owned } | Select-Object -First 5)
+    if ($owned) { throw "$DevUser owns files in $root (for example $($owned[0].FullName)); refusing to adopt it." }
+}
 
-# A parent folder this script creates (e.g. C:\Games) would inherit Authenticated Users' Modify from C:\,
-# which would let gos-dev rename it and plant its own PrismLauncher. Protect any parent we create.
-$prismParent = Split-Path -Parent $PrismRoot
+# Every existing folder above a root: deny gos-dev rename and re-permission on that folder only, so it
+# can't move the folder aside and put a look-alike in its place (a folder made under C:\ inherits
+# Authenticated Users: Modify, which includes DELETE). A parent this script creates is protected below.
+$ownerFull = @((New-Rule $System $Full), (New-Rule $Admins $Full), (New-Rule $OwnerSid $Full))
+$prismParent = Get-ParentPath $PrismRoot
 if (-not (Test-Path -LiteralPath $prismParent)) {
     New-Dir $prismParent
     Set-ProtectedAcl $prismParent ($ownerFull + (New-Rule $UsersGroup $ReadExec))
     New-Item -ItemType File -Force -Path (Join-Path $prismParent $Marker) | Out-Null
+}
+foreach ($root in @($AppRoot, $DevRoot, $PrismRoot, $GosHome, $ManagedSettingsDir)) {
+    $folder = Get-ParentPath $root
+    while ($folder -and -not (Test-DriveRoot $folder)) {
+        if (Test-Path -LiteralPath $folder) {
+            $access = Get-DevAccess $folder
+            if ($access.Owned) { throw "$DevUser owns $folder; give it to Administrators first (icacls `"$folder`" /setowner *S-1-5-32-544)." }
+            if ($access.Mask -band $ReplaceMask) {
+                $item = Get-Item -LiteralPath $folder -Force
+                $acl = $item.GetAccessControl('Access')
+                $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($DevSid, $NoRename, 'None', 'None', 'Deny')))
+                $item.SetAccessControl($acl)
+                Write-Host "    ${folder}: $DevUser may no longer rename or re-permission it (deny ACE on this folder only)"
+            }
+        }
+        $folder = Get-ParentPath $folder
+    }
 }
 
 New-Dir $DevRoot;   Set-ProtectedAcl $DevRoot   ($ownerFull + (New-Rule $DevSid $Modify))
@@ -201,10 +349,10 @@ Set-ExplicitGrant $worldBackups $DevSid $null
 
 # ---------------------------------------------------------------- 5. Claude Code deny rules
 Write-Step 'Claude Code managed settings (deny rules, second layer)'
-$play = Join-Path $instances $PlayInstance
 # Only Read(...) and Edit(...) rules match file paths (Edit also covers Write). These bind Claude Code's
 # own file tools and the file commands it recognises in Bash, not PowerShell cmdlets or subprocesses,
 # so the ACLs above are the wall (PM15). The drop-in is machine-wide: it applies to every account.
+$play = Join-Path $instances $PlayInstance
 $accounts = "$(ConvertTo-ClaudePath $PrismRoot)/accounts.json"
 $deny = @(
     "Edit($(ConvertTo-ClaudePath $play)/**)",
@@ -225,17 +373,18 @@ Write-Host "    $dropIn"
 
 # ---------------------------------------------------------------- 6. GOS_APP scripts (until gos deploy)
 $appScripts = Join-Path $AppRoot 'scripts'
-if (-not (Test-Under $PSScriptRoot $appScripts)) {
-    Write-Step "Copy scripts into $appScripts"
+if ((Get-FullPath $PSScriptRoot) -ine (Get-FullPath $appScripts)) {
+    Write-Step "Copy $($Scripts -join ' and ') into $appScripts"
     New-Dir $appScripts
-    Copy-Item -Path (Join-Path $PSScriptRoot '*.ps1') -Destination $appScripts -Force
+    foreach ($name in $Scripts) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $appScripts -Force }
 }
 
 # ---------------------------------------------------------------- 7. world backup task
 Write-Step "Scheduled task '$TaskName'"
+$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'   # never via PATH
 $backupArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Instance "{1}" -Dest "{2}" -LogFile "{3}"' -f `
     (Join-Path $appScripts 'backup_world.ps1'), $play, $worldBackups, (Join-Path $logs 'backup_world.log')
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $backupArgs
+$action = New-ScheduledTaskAction -Execute $powershell -Argument $backupArgs -WorkingDirectory $appScripts
 $every30 = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 30)
 $atLogon = New-ScheduledTaskTrigger -AtLogOn -User $me.Name
 $principal = New-ScheduledTaskPrincipal -UserId $me.Name -LogonType S4U -RunLevel Limited
@@ -245,44 +394,46 @@ Register-ScheduledTask -TaskName $TaskName -TaskPath '\GregtecOS\' -Action $acti
 
 # ---------------------------------------------------------------- 8. check
 Write-Step 'Check: what can gos-dev do?'
-# SIDs whose ACEs apply to gos-dev: itself, its local groups, and the well-known groups every logon gets.
-$devSids = @($DevSid.Value, 'S-1-1-0', 'S-1-2-0', 'S-1-5-4', 'S-1-5-11', 'S-1-5-113', 'S-1-5-32-545') + @(Get-DevGroupSids)
-$WriteMask = 0x000D0156 -bor 0x50000000   # write/append data and attributes, delete, delete child, WRITE_DAC, WRITE_OWNER, GENERIC_WRITE/ALL
-$ReadMask = 0x00000009 -bor 0x90000000    # read data, read EA, GENERIC_READ/ALL
-
-function Get-DevAccess([string]$Path) {
-    $mask = 0
-    foreach ($ace in (Get-Item -LiteralPath $Path).GetAccessControl('Access').GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-        if ($ace.AccessControlType -eq 'Allow' -and $devSids -contains $ace.IdentityReference.Value) { $mask = $mask -bor [int]$ace.FileSystemRights }
-    }
-    [pscustomobject]@{ Write = [bool]($mask -band $WriteMask); Read = [bool]($mask -band $ReadMask) }
-}
-
-$expect = [ordered]@{}
-$expect[$DevRoot] = 'write'
-$expect[$AppRoot] = 'read'
-$expect[$PrismRoot] = 'none'
-if (Test-Path -LiteralPath (Join-Path $prismParent $Marker)) { $expect[$prismParent] = 'read' }
-$expect[$instances] = 'read'
-foreach ($inst in Get-ChildItem -LiteralPath $instances -Directory) {
-    $expect[$inst.FullName] = $(if ($WritableInstances -contains $inst.Name) { 'write' } else { 'read' })
-}
-$expect[$GosHome] = 'none'
-$expect[$data] = 'read'
-$expect[$worldBackups] = 'none'
-$expect[$ManagedSettingsDir] = 'read'
-
 $failed = $false
-foreach ($path in $expect.Keys) {
-    $got = Get-DevAccess $path
-    $want = $expect[$path]
-    $ok = switch ($want) {
-        'write' { $got.Write }
-        'read'  { -not $got.Write }
-        'none'  { -not $got.Write -and -not $got.Read }
-    }
-    if (-not $ok) { $failed = $true }
-    '{0,-4}  {1,-5}  write={2,-5} read={3,-5}  {4}' -f $(if ($ok) { 'ok' } else { 'FAIL' }), $want, $got.Write, $got.Read, $path | Write-Host
+function Write-Check([bool]$Ok, [string]$Want, [string]$Path, [string]$Detail) {
+    if (-not $Ok) { $script:failed = $true }
+    '{0,-4}  {1,-5}  {2}{3}' -f $(if ($Ok) { 'ok' } else { 'FAIL' }), $Want, $Path, $(if ($Detail) { "  ($Detail)" } else { '' }) | Write-Host
 }
-if ($failed) { Write-Host 'gos-dev has access it must not have (see FAIL lines).' -ForegroundColor Red; exit 1 }
+
+# Folders gos-dev must be able to write: the folder itself only.
+$writable = @($DevRoot) + @($WritableInstances | ForEach-Object { Join-Path $instances $_ } | Where-Object { Test-Path -LiteralPath $_ })
+foreach ($path in $writable) { Write-Check ([bool]((Get-DevAccess $path).Mask -band $WriteMask)) 'write' $path '' }
+
+# Trees gos-dev must not change ('read') or not even read ('none'): every file and folder in them,
+# plus every folder above them.
+$trees = @(
+    @{ Path = $AppRoot; Want = 'read'; Skip = @() },
+    @{ Path = $PrismRoot; Want = 'none'; Skip = @($instances) },
+    @{ Path = $instances; Want = 'read'; Skip = $writable },
+    @{ Path = $GosHome; Want = 'none'; Skip = @($data) },
+    @{ Path = $data; Want = 'read'; Skip = @() },
+    @{ Path = $ManagedSettingsDir; Want = 'read'; Skip = @() }
+)
+foreach ($tree in $trees) {
+    $bad = @(); $count = 0
+    foreach ($item in Get-Tree $tree.Path $tree.Skip) {
+        $count++
+        $access = Get-DevAccess $item.FullName
+        $mask = if ($tree.Want -eq 'read') { $WriteMask } else { $WriteMask -bor $ReadMask }
+        if ($access.Owned -or ($access.Mask -band $mask)) { $bad += $item.FullName }
+    }
+    $risk = @(Get-ChainRisk $tree.Path)
+    Write-Check (-not $bad -and -not $risk) $tree.Want $tree.Path "$count items"
+    foreach ($path in $bad | Select-Object -First 20) { Write-Host "        $DevUser can $(if ($tree.Want -eq 'read') { 'change' } else { 'open' }) $path" }
+    if ($bad.Count -gt 20) { Write-Host "        ... and $($bad.Count - 20) more" }
+    foreach ($reason in $risk) { Write-Host "        $DevUser $reason" }
+}
+foreach ($path in $writable) {
+    foreach ($reason in @(Get-ChainRisk $path)) { Write-Check $false 'write' $path "$DevUser $reason" }
+}
+foreach ($path in $installs) {
+    Write-Check (-not ((Get-DevAccess $path).Mask -band $WriteMask)) 'read' $path 'existing install, not changed by this script'
+}
+
+if ($failed) { Write-Host 'gos-dev can change or reach something it must not (see FAIL lines).' -ForegroundColor Red; exit 1 }
 Write-Step "Done. Next: sign in as $DevUser once, then follow the PR's steps."

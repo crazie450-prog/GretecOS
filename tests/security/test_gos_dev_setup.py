@@ -12,6 +12,7 @@ import ctypes
 import json
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -31,7 +32,7 @@ pytestmark = pytest.mark.skipif(
     reason="destructive: runs only on the GitHub Actions Windows runner with GOS_ISOLATION_CI=1",
 )
 
-SETUP = Path(__file__).resolve().parents[2] / "scripts" / "setup_gos_dev.ps1"
+SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 MANAGED = Path(r"C:\Program Files\ClaudeCode\managed-settings.d")
 LOGON32_LOGON_INTERACTIVE = 2
 LOGON32_LOGON_NETWORK = 3
@@ -41,6 +42,9 @@ LOGON32_LOGON_NETWORK = 3
 class Setup:
     user: str
     password: str = field(repr=False)
+    base: Path  # stands in for C:\ (it inherits "Authenticated Users: Modify" from it)
+    source: Path  # Clayton's own copy of the scripts, in the admin profile
+    scan: Path  # where the setup looks for other Minecraft installs
     app: Path
     dev: Path
     prism: Path
@@ -51,10 +55,11 @@ class Setup:
     def instances(self) -> Path:
         return self.prism / "instances"
 
-    def args(self, *, download: bool) -> str:
+    def args(self, *, download: bool, scan: Path | None) -> str:
         args = (
             f"-DevUser '{self.user}' -AppRoot '{self.app}' -DevRoot '{self.dev}' "
-            f"-PrismRoot '{self.prism}' -GosHome '{self.home}' -TaskName '{self.task}' -Yes "
+            f"-PrismRoot '{self.prism}' -GosHome '{self.home}' -TaskName '{self.task}' "
+            f"-InstallScanRoots '{scan or self.scan}' -Yes "
             "-DevPassword (ConvertTo-SecureString $env:GOS_CI_PASSWORD -AsPlainText -Force)"
         )
         return args if download else args + " -SkipPrismDownload"
@@ -89,9 +94,15 @@ def powershell(command: str, password: str = "") -> subprocess.CompletedProcess[
 
 
 def run_setup(
-    cfg: Setup, *, download: bool = False
+    cfg: Setup,
+    *,
+    download: bool = False,
+    source: Path | None = None,
+    scan: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    script = f"try {{ & '{SETUP}' {cfg.args(download=download)}; exit $LASTEXITCODE }} "
+    setup = (source or cfg.source) / "setup_gos_dev.ps1"
+    args = cfg.args(download=download, scan=scan)
+    script = f"try {{ & '{setup}' {args}; exit $LASTEXITCODE }} "
     script += "catch { $_ | Out-String | Write-Host; exit 1 }"
     return powershell(script, cfg.password)
 
@@ -145,6 +156,23 @@ def can_write(directory: Path) -> bool:
     return True
 
 
+def can_rename(path: Path) -> bool:
+    moved = path.with_name(path.name + "-moved")
+    try:
+        path.rename(moved)
+    except PermissionError:
+        return False
+    moved.rename(path)
+    return True
+
+
+def copy_scripts(to: Path) -> Path:
+    to.mkdir(parents=True)
+    for name in ("setup_gos_dev.ps1", "backup_world.ps1"):
+        shutil.copyfile(SCRIPTS / name, to / name)
+    return to
+
+
 def can_read(path: Path) -> bool:
     try:
         if path.is_dir():
@@ -159,24 +187,37 @@ def can_read(path: Path) -> bool:
 @pytest.fixture(scope="module")
 def cfg() -> Iterator[Setup]:
     tag = secrets.token_hex(4)
-    # Directly under C:\, so the "Authenticated Users: Modify" it inherits is in play.
     base = Path(f"C:/gos-ci-{tag}")
     setup = Setup(
         user=f"gosci{tag}",
         password=f"Gos-{secrets.token_urlsafe(18)}-9a",
+        base=base,
+        source=copy_scripts(Path.home() / f"gos-ci-src-{tag}"),
+        scan=Path(f"C:/gos-ci-{tag}-scan"),
         app=base / "app",
         dev=base / "dev",
         prism=base / "games" / "PrismLauncher",
         home=Path.home() / f"gos-ci-home-{tag}",
         task=f"GregtecOS CI {tag}",
     )
+    setup.scan.mkdir()
+    (base / "games").mkdir(
+        parents=True
+    )  # like an existing C:\Games: inherited permissions
     yield setup
+    leftovers = [
+        base,
+        setup.home,
+        setup.source,
+        setup.scan,
+        Path(f"C:/gos-ci-{tag}-old"),
+    ]
     powershell(
         f"Unregister-ScheduledTask -TaskPath '\\GregtecOS\\' -TaskName '{setup.task}' -Confirm:$false -ErrorAction SilentlyContinue; "
         f"Remove-LocalUser -Name '{setup.user}' -ErrorAction SilentlyContinue; "
         f"Remove-Item -LiteralPath '{MANAGED / 'gregtec-os.json'}' -Force -ErrorAction SilentlyContinue; "
-        f"foreach ($p in '{base}', '{setup.home}') {{ if (Test-Path -LiteralPath $p) {{ "
-        "icacls $p /reset /T /C /Q | Out-Null; Remove-Item -LiteralPath $p -Recurse -Force }} }}"
+        f"foreach ($p in {', '.join(f"'{p}'" for p in leftovers)}) {{ if (Test-Path -LiteralPath $p) {{ "
+        "icacls $p /reset /T /C /Q | Out-Null; Remove-Item -LiteralPath $p -Recurse -Force } }"
     )
 
 
@@ -184,6 +225,7 @@ def cfg() -> Iterator[Setup]:
 def installed(cfg: Setup) -> Setup:
     first = run_setup(cfg, download=True)
     assert first.returncode == 0, first.stdout + first.stderr
+    assert "FAIL" not in first.stdout
     # What WO-0.7 / WO-0.3 and Prism itself would create later, as Clayton.
     for name in ("GTNH-Play", "GTNH-Export", "GTNH-Lab"):
         (cfg.instances / name / "minecraft").mkdir(parents=True)
@@ -205,6 +247,8 @@ def test_prism_portable_installed(installed: Setup) -> None:
 
 def test_rerun_is_idempotent(installed: Setup) -> None:
     paths = [
+        installed.base,
+        installed.prism.parent,
         installed.app,
         installed.dev,
         installed.prism,
@@ -252,7 +296,9 @@ def test_dev_user_access(installed: Setup) -> None:
         "dev": True,
         "app": False,
         "app/scripts": False,
-        "prism parent": False,
+        # Pre-existing like a real C:\Games: the script doesn't change who can add files there,
+        # only that nobody but Clayton can rename it (test_dev_user_cannot_swap_folders).
+        "prism parent": True,
         "prism root": False,
         "instances": False,
         "Play": False,
@@ -272,6 +318,34 @@ def test_dev_user_access(installed: Setup) -> None:
         "prism root listing": False,
         "GOS_HOME listing": False,
         "backups/world listing": False,
+    }
+
+
+def test_dev_user_cannot_swap_folders(installed: Setup) -> None:
+    """gos-dev can't move a protected folder, or any folder above one, aside to plant its own."""
+    c = installed
+    with impersonate(c.user, c.password):
+        renames = {
+            "base (like C:\\ children)": can_rename(c.base),
+            "prism parent (pre-existing)": can_rename(c.prism.parent),
+            "prism root": can_rename(c.prism),
+            "app": can_rename(c.app),
+            "app/scripts": can_rename(c.app / "scripts"),
+            "instances": can_rename(c.instances),
+            "Play": can_rename(c.instances / "GTNH-Play"),
+            "GOS_HOME": can_rename(c.home),
+            "dev (its own area)": can_rename(c.dev),
+        }
+    assert renames == {
+        "base (like C:\\ children)": False,
+        "prism parent (pre-existing)": False,
+        "prism root": False,
+        "app": False,
+        "app/scripts": False,
+        "instances": False,
+        "Play": False,
+        "GOS_HOME": False,
+        "dev (its own area)": True,
     }
 
 
@@ -300,12 +374,19 @@ def test_claude_code_deny_rules(installed: Setup) -> None:
 def test_backup_task_copies_play_backup(installed: Setup) -> None:
     info = powershell(
         f"$t = Get-ScheduledTask -TaskPath '\\GregtecOS\\' -TaskName '{installed.task}'; "
-        "@{ logon = [string]$t.Principal.LogonType; args = $t.Actions[0].Arguments; "
+        "@{ logon = [string]$t.Principal.LogonType; exe = $t.Actions[0].Execute; "
+        "args = $t.Actions[0].Arguments; cwd = $t.Actions[0].WorkingDirectory; "
         "interval = $t.Triggers[0].Repetition.Interval; duration = [string]$t.Triggers[0].Repetition.Duration } | ConvertTo-Json"
     )
     assert info.returncode == 0, info.stdout + info.stderr
     task = json.loads(info.stdout)
     assert task["logon"] == "S4U"
+    # An absolute path: a bare powershell.exe would be found through PATH.
+    assert (
+        task["exe"].lower()
+        == r"c:\windows\system32\windowspowershell\v1.0\powershell.exe"
+    )
+    assert task["cwd"] == str(installed.app / "scripts")
     assert str(installed.app / "scripts" / "backup_world.ps1") in task["args"]
     assert task["interval"] == "PT30M"
     assert task["duration"] == ""  # repeats indefinitely
@@ -331,15 +412,41 @@ def test_backup_task_copies_play_backup(installed: Setup) -> None:
     assert zipfile.ZipFile(copied).namelist() == ["level.dat"]
 
 
-def test_self_check_fails_on_a_leak(installed: Setup) -> None:
-    play = installed.instances / "GTNH-Play"
+def test_self_check_finds_a_nested_leak(installed: Setup) -> None:
+    saves = installed.instances / "GTNH-Play" / "minecraft" / "saves"
+    saves.mkdir(exist_ok=True)
     grant = powershell(
-        f"icacls '{play}' /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null; exit $LASTEXITCODE"
+        f"icacls '{saves}' /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null; exit $LASTEXITCODE"
     )
     assert grant.returncode == 0, grant.stdout + grant.stderr
     try:
         leaked = run_setup(installed)
-        assert leaked.returncode == 1
-        assert "FAIL" in leaked.stdout
+        assert leaked.returncode == 1, leaked.stdout
+        assert f"can change {saves}" in leaked.stdout
     finally:
-        powershell(f"icacls '{play}' /remove:g '*S-1-5-32-545' | Out-Null")
+        powershell(f"icacls '{saves}' /remove:g '*S-1-5-32-545' | Out-Null")
+    assert run_setup(installed).returncode == 0
+
+
+def test_refuses_to_run_from_a_copy_the_dev_user_can_change(installed: Setup) -> None:
+    writable = copy_scripts(
+        installed.base / "writable"
+    )  # inherits Authenticated Users: Modify
+    before = sddl([installed.app, installed.prism])
+    refused = run_setup(installed, source=writable)
+    assert refused.returncode == 1
+    assert "Refusing to run from" in refused.stdout
+    assert sddl([installed.app, installed.prism]) == before
+
+
+def test_reports_an_existing_install_the_dev_user_can_write(installed: Setup) -> None:
+    old = Path(str(installed.base) + "-old")
+    instance = old / "MultiMC" / "instances" / "GTNH"
+    instance.mkdir(parents=True)
+    (instance / "instance.cfg").write_text("name=GTNH\n")
+    before = sddl([instance])
+    found = run_setup(installed, scan=old)
+    assert found.returncode == 1, found.stdout
+    assert f"FAIL  read   {instance}" in found.stdout
+    assert "existing install, not changed by this script" in found.stdout
+    assert sddl([instance]) == before  # reported, never changed
