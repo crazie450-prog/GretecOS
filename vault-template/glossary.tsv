@@ -1,30 +1,30 @@
 term	aliases	kind	ref	say
 ULV	ultra low voltage	tier	tier:0	U L V
-LV	low voltage	tier	tier:1	L V
-MV	medium voltage	tier	tier:2	M V
-HV	high voltage	tier	tier:3	H V
-EV	extreme voltage	tier	tier:4	E V
-IV	insane voltage	tier	tier:5	I V
-LuV	ludicrous voltage	tier	tier:6	L U V
-ZPM	ZPM voltage	tier	tier:7	Z P M
-UV	ultimate voltage	tier	tier:8	U V
-UHV	highly ultimate voltage	tier	tier:9	U H V
-UEV	extremely ultimate voltage	tier	tier:10	U E V
-UIV	insanely ultimate voltage	tier	tier:11	U I V
-UMV	mega ultimate voltage	tier	tier:12	U M V
-UXV	extended mega ultimate voltage	tier	tier:13	U X V
+LV	low voltage, tier 1	tier	tier:1	L V
+MV	medium voltage, tier 2	tier	tier:2	M V
+HV	high voltage, tier 3	tier	tier:3	H V
+EV	extreme voltage, tier 4	tier	tier:4	E V
+IV	insane voltage, tier 5	tier	tier:5	I V
+LuV	ludicrous voltage, tier 6	tier	tier:6	L U V
+ZPM	ZPM voltage, tier 7	tier	tier:7	Z P M
+UV	ultimate voltage, tier 8	tier	tier:8	U V
+UHV	highly ultimate voltage, tier 9	tier	tier:9	U H V
+UEV	extremely ultimate voltage, tier 10	tier	tier:10	U E V
+UIV	insanely ultimate voltage, tier 11	tier	tier:11	U I V
+UMV	mega ultimate voltage, tier 12	tier	tier:12	U M V
+UXV	extended mega ultimate voltage, tier 13	tier	tier:13	U X V
 MAX	maximum voltage	tier	tier:14	max
 EBF	electric blast furnace, blast furnace	machine		E B F
 PBF	primitive blast furnace	machine		P B F
 BBF	bricked blast furnace	machine		B B F
 coke oven		machine		
 LCR	large chemical reactor	machine		L C R
-PA	processing array	machine		P A
+PA	processing array	removed		P A
 DT	distillation tower	machine		D T
 vacuum freezer	VF	machine		
 implosion compressor		machine		
-assembly line	assline	machine		
-LSC	lapotronic supercapacitor	machine		L S C
+assembly line	assline, AL	machine		
+LSC	lapotronic supercapacitor, lapotronic super capacitor	machine		L S C
 cleanroom	clean room	machine		
 pyrolyse oven	pyrolyze oven	machine		pie-ro-lize oven
 multi smelter		machine		
@@ -62,8 +62,9 @@ canning machine	canner	machine
 distillery		machine		
 brewery		machine		
 fermenter		machine		
-AE2	applied energistics, applied energistics 2	machine		A E two
+AE2	applied energistics, applied energistics 2	mod		A E two
 ME	ME system, ME network	machine		M E
+zero point module	ZPM	item		Z P M
 steel		material		
 stainless steel	SS	material		
 aluminium	aluminum, alu	material		
@@ -95,7 +96,7 @@ bronze		material
 brass		material		
 tin alloy		material		
 soldering alloy	solder	material		
-polyethylene	PE	material		
+polyethylene	PE, plastic	material		
 PTFE	polytetrafluoroethylene, teflon	material		P T F E
 PBI	polybenzimidazole	material		P B I
 epoxid	epoxy	material		eh-pox-id
