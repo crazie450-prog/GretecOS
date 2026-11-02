@@ -6,6 +6,18 @@ description = "Local voice assistant and planning suite for GT New Horizons 2.9.
 requires-python = ">=3.12,<3.13"
 dependencies = []
 
+[project.scripts]
+gos = "gregtec.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Appendix B layout: the package lives in core/gregtec/.
+module-root = "core"
+module-name = "gregtec"
+
 [dependency-groups]
 dev = [
     "pytest>=9.2",
@@ -14,6 +26,7 @@ dev = [
 ]
 
 [tool.ruff]
+src = ["core"]
 # Ruff formats Python blocks inside Markdown by default; keep it off CLAUDE.md, README.md and docs/.
 extend-exclude = ["*.md"]
 

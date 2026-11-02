@@ -1,0 +1,35 @@
+# Copy of plan section 13.2 (VERIFY list). tests/unit/test_verify_list.py keeps it in sync.
+id	item	how	wo
+V01	Which Java build Clayton runs 2.9.0 on (8 or 17–26); Java 17+ recommended (D68)	`gos doctor`	0.2
+V02	Prism instance paths; `minecraft\` vs `.minecraft\`	`gos doctor`	0.2
+V03	NEI 2.8.172 swap works with 2.9.0 in Export	Export run	1.2
+V04	Exact `options.txt` key for pause-on-lost-focus on 1.7.10	Inspect the file after F3+P	0.6
+V05	Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log	Lab session	6.1
+V06	ServerUtilities world-logging config keys and the single-player `world.log` path	Read the config; Lab session	0.6
+V07	VisualProspecting v3 cache paths and format	Lab	1.6
+V08	Ore-mix source (NEI ore handler vs GT worldgen registry)	Export	1.6
+V09	gtnh-extractor re-pinned to 2.9.0 builds and runs	Build	1.8
+V10	Cable stats source (tooltips/material data vs curated)	Export	4.5
+V11	**Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint	—	5.3
+V12	**Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed	—	—
+V13	lwjgl3ify `borderless` capture has no black frames	Test	8.2
+V14	Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general|rightsinfo&format=json`)	From Clayton's PC	8.3
+V15	GuideNH `exportsite` embeds in the dashboard	Spike	10.1
+V16	worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta)	Lab paste	10.4
+V17	**Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW	—	10.0
+V18	Addon releases on 2.9.0 stable (§13.1)	Weekly; watcher reports	11.1
+V19	Does Open to LAN avoid the pause freeze?	Test	7.2
+V20	`gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4]	`component.list()` in `lab-ops`	7.2
+V21	Haiku 5.5 time to first token with thinking off (no published figure) [D§1.11]	Smoke-test timing	0.4
+V22	Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5]	Export run	1.1
+V23	JourneyMap picks up waypoint files written while the game runs	Lab test	6.6
+V24	Portable Prism folder plus `gos-dev` permissions work: Claude Code and the toolchain run as `gos-dev`, `gos launch` starts Lab and Export, and inheritance leaks no write access	WO-0.8 tests	0.8
+V25	A failing Prism pre-launch command aborts the launch (needed for the instance lock)	Test	1.4
+V26	GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player	Lab test	6.2
+V27	`safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads	Lab save loop	6.1
+V28	Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular	Test	9.3
+V29	A reliable "game paused" signal (log line or GregtecLink)	Lab test	6.1
+V30	CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2]	Lab test	6.7
+V31	Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6]	Lab test	7.6
+V32	The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6]	NEI + Lab	6.7
+V33	The CropsNH NEI dumpers (crops, breeding recipes, mutation pools, soils) run in the Export instance and cover every crop in NEI's tabs [I§2]	Export test	1.10

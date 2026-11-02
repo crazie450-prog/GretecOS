@@ -1,0 +1,117 @@
+term	aliases	kind	ref	say
+ULV	ultra low voltage	tier	tier:0	U L V
+LV	low voltage, tier 1	tier	tier:1	L V
+MV	medium voltage, tier 2	tier	tier:2	M V
+HV	high voltage, tier 3	tier	tier:3	H V
+EV	extreme voltage, tier 4	tier	tier:4	E V
+IV	insane voltage, tier 5	tier	tier:5	I V
+LuV	ludicrous voltage, tier 6	tier	tier:6	L U V
+ZPM	ZPM voltage, tier 7	tier	tier:7	Z P M
+UV	ultimate voltage, tier 8	tier	tier:8	U V
+UHV	highly ultimate voltage, tier 9	tier	tier:9	U H V
+UEV	extremely ultimate voltage, tier 10	tier	tier:10	U E V
+UIV	insanely ultimate voltage, tier 11	tier	tier:11	U I V
+UMV	mega ultimate voltage, tier 12	tier	tier:12	U M V
+UXV	extended mega ultimate voltage, tier 13	tier	tier:13	U X V
+MAX	maximum voltage	tier	tier:14	max
+EBF	electric blast furnace, blast furnace	machine		E B F
+BBF	bricked blast furnace, PBF, primitive blast furnace	machine		B B F
+coke oven		machine		
+LCR	large chemical reactor	machine		L C R
+PA	processing array	removed		P A
+DT	distillation tower	machine		D T
+vacuum freezer	VF	machine		
+implosion compressor		machine		
+assembly line	assline, AL	machine		
+LSC	lapotronic supercapacitor, lapotronic super capacitor	machine		L S C
+cleanroom	clean room	machine		
+pyrolyse oven	pyrolyze oven	machine		pie-ro-lize oven
+multi smelter		machine		
+oil cracker	cracking unit	machine		
+LST	large steam turbine	machine		L S T
+LGT	large gas turbine	machine		L G T
+large bronze boiler	LBB	machine		
+macerator		machine		
+ore washer	ore washing plant	machine		
+thermal centrifuge		machine		
+centrifuge		machine		
+electrolyzer	electrolyser	machine		
+chemical reactor		machine		
+chemical bath		machine		
+mixer		machine		
+assembler		machine		
+circuit assembler		machine		
+wiremill	wire mill	machine		
+extruder		machine		
+bending machine	bender	machine		
+lathe		machine		
+cutting machine	cutter, saw	machine		
+autoclave		machine		
+polarizer	polariser	machine		
+laser engraver	engraver	machine		
+forming press		machine		
+sifter	sifting machine	machine		
+arc furnace		machine		
+alloy smelter		machine		
+compressor		machine		
+extractor		machine		
+fluid solidifier	solidifier	machine		
+fluid extractor		machine		
+canning machine	canner	machine		
+distillery		machine		
+brewery		machine		
+fermenter		machine		
+AE2	applied energistics, applied energistics 2	mod		A E two
+ME	ME system, ME network	machine		M E
+zero point module	ZPM	item		Z P M
+steel		material		
+stainless steel	SS	material		
+aluminium	aluminum, alu	material		
+titanium		material		
+tungstensteel	tungsten steel	material		
+tungsten	wolframium	material		
+chrome	chromium	material		
+platinum		material		
+palladium		material		
+iridium		material		
+osmium		material		
+osmiridium		material		oz-mi-rid-ee-um
+naquadah	naq	material		nah-kwa-dah
+enriched naquadah		material		
+naquadria		material		nah-kwa-dree-ah
+neutronium		material		new-tro-nee-um
+HSS-G	high speed steel G	material		H S S G
+HSS-E	high speed steel E	material		H S S E
+HSS-S	high speed steel S	material		H S S S
+red alloy		material		
+electrum		material		
+cupronickel		material		cue-pro-nickel
+kanthal		material		kan-thal
+nichrome		material		nye-chrome
+TPV-Alloy	TPV	material		T P V alloy
+invar		material		
+cast iron	wrought iron	material		
+bronze		material		
+brass		material		
+tin alloy		material		
+soldering alloy	solder	material		
+polyethylene	PE, plastic	material		
+PTFE	polytetrafluoroethylene, teflon	material		P T F E
+PBI	polybenzimidazole	material		P B I
+epoxid	epoxy	material		eh-pox-id
+silicon		material		
+gallium arsenide	GaAs	material		
+nitrogen		material		
+oxygen		material		
+hydrogen		material		
+chlorine		material		
+sulfuric acid	sulphuric acid	material		
+hydrochloric acid	HCl	material		
+nitric acid		material		
+benzene		material		
+ethylene		material		
+light fuel		material		
+heavy fuel		material		
+diesel		material		
+nitrobenzene		material		
+cetane-boosted diesel	CBD, cetane boosted diesel	material		see-tane boosted diesel
