@@ -34,8 +34,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gregtec.doctor import JAVA17, detect_java_build, read_components
-from gregtec.gamestate.safe_open import read_text
+from gregtec.gamestate.safe_open import read_bytes, read_text
 
+GAME_DIRS = ("minecraft", ".minecraft")  # Prism's order: minecraft, else .minecraft
 OC = "config/OpenComputers.cfg"
 OPTIONS = "options.txt"
 SU = "serverutilities/serverutilities.cfg"
@@ -135,9 +136,14 @@ def _oc_list(lines: list[str], span: tuple[int, int], key: str) -> OcList | None
     if found is None:
         return None
     head, m = found
-    if "]" in m[1]:  # one line: key=["a", "b"]
-        return OcList(head, head, _items(m[1].split("]", 1)[0]))
-    body = []
+    # The rest of the "key=[" line without comments (# or // outside quotes): a "]" in a comment
+    # doesn't close the list.
+    rest = re.sub(
+        r'"(?:[^"\\]|\\.)*"|(?:#|//).*', lambda c: c[0] if c[0][0] == '"' else "", m[1]
+    )
+    if "]" in rest:  # one line: key=["a", "b"]
+        return OcList(head, head, _items(rest.split("]", 1)[0]))
+    body = [rest]  # items may also sit on the "key=[" line
     for i in range(head + 1, span[1] + 1):
         if lines[i].strip().startswith("]"):
             return OcList(head, i, _items("\n".join(body)))
@@ -145,25 +151,57 @@ def _oc_list(lines: list[str], span: tuple[int, int], key: str) -> OcList | None
     return None
 
 
+def _java_int(text: str) -> int | None:
+    """``text`` as Java's Integer.parseInt reads it (optional sign, digits, 32-bit), else None."""
+    if not re.fullmatch(r"[+-]?\d+", text):
+        return None
+    value = int(text)
+    return value if -(2**31) <= value < 2**31 else None
+
+
 def valid_oc_rule(rule: str) -> bool:
-    """OpenComputers' grammar: removeme, or 'allow|deny <filter>' with exactly one space."""
-    if rule == "removeme":
-        return True
+    """OpenComputers 1.12.68-GTNH's InternetFilteringRule grammar.
+
+    The rule is split on single spaces and trailing empty parts are dropped (Java String.split).
+    A rule whose first part is removeme is ignored, so it is valid whatever follows. allow|deny
+    take zero or more filters (ANDed), each matched on its part before the first ':': a filter in
+    OC_FILTERS, domain:<anything>, or ip:<address>[/<prefix>] with an IP literal without a %zone
+    (Guava 17) and a prefix Integer.parseInt reads (no netmask forms). An empty part (two spaces
+    in a row) matches no filter, so the rule is invalid.
+    """
     parts = rule.split(" ")
-    if len(parts) != 2 or parts[0] not in ("allow", "deny"):
-        return False
-    target = parts[1]
-    if target in OC_FILTERS:
+    while len(parts) > 1 and not parts[-1]:
+        parts.pop()
+    if parts[0] == "removeme":
         return True
-    if target.startswith("domain:"):
-        return len(target) > len("domain:")
-    if target.startswith("ip:"):
+    if parts[0] not in ("allow", "deny"):
+        return False
+    for f in parts[1:]:
+        name, colon, value = f.partition(":")
+        if name in OC_FILTERS or (name == "domain" and colon):
+            continue
+        if name != "ip" or not colon:
+            return False
+        addr, slash, prefix = value.partition("/")
+        if "%" in addr:
+            return False
         try:
-            ipaddress.ip_network(target[3:], strict=False)
+            ipaddress.ip_address(addr)
         except ValueError:
             return False
-        return True
-    return False
+        if slash and _java_int(prefix) is None:
+            return False
+    return True
+
+
+def _timeout(rest: str) -> int | None:
+    """requestTimeout as OC's getInt reads it: a plain 32-bit integer (a comment may follow).
+
+    No leading '+': Typesafe Config 1.2.1's tokenizer only reads '+' as part of '+=', so the
+    whole file fails to parse.
+    """
+    m = re.fullmatch(r"(-?\d+)\s*(?:(?:#|//).*)?", rest)
+    return _java_int(m[1]) if m else None
 
 
 # ---------------------------------------------------------------- checks (read-only)
@@ -187,11 +225,18 @@ def check_oc(doc: Doc | None, log: str | None) -> list[Result]:
         f'first rule "{first}"',
     )
 
-    timeout = _find(doc.lines, span, r"\s*requestTimeout\s*[=:]\s*(\d+)")
+    timeout = _find(doc.lines, span, r"(\s*requestTimeout\s*[=:]\s*)(.*)$")
     if timeout is None:
         time = Result("oc_timeout", OC, "missing", "no internet.requestTimeout")
+    elif (value := _timeout(timeout[1][2])) is None:
+        time = Result(
+            "oc_timeout",
+            OC,
+            "invalid",
+            f"requestTimeout={timeout[1][2].strip()} is not a plain 32-bit integer "
+            "(OC reads it with getInt; the game can fail to start)",
+        )
     else:
-        value = int(timeout[1][1])
         time = Result(
             "oc_timeout",
             OC,
@@ -252,16 +297,22 @@ def _forge_bools(
     out: dict[str, str | None] = dict.fromkeys(keys)
     if span:
         for key in keys:
-            if found := _find(doc.lines, span, rf"\s*B:{key}=(\S+)\s*$"):
+            # Forge 1.7.10 keeps the rest of the line as it is: "true " is no boolean.
+            if found := _find(doc.lines, span, rf"\s*B:{key}=(.*)$"):
                 out[key] = found[1][1]
     return out
+
+
+def _forge_true(value: str | None) -> bool:
+    """Forge's Property.isBooleanValue/getBoolean: true only if value.toLowerCase() is "true"."""
+    return value is not None and value.lower() == "true"
 
 
 def check_su(doc: Doc | None) -> list[Result]:
     if doc is None:
         return [Result("su_logging", SU, "no file", "")]
     values = _forge_bools(doc, ["world", "logging"], SU_KEYS)
-    ok = all(v == "true" for v in values.values())
+    ok = all(_forge_true(v) for v in values.values())
     detail = ", ".join(f"{k}={v}" for k, v in values.items())
     return [Result("su_logging", SU, "ok" if ok else "missing", detail)]
 
@@ -276,7 +327,7 @@ def check_borderless(doc: Doc | None, java17: bool) -> list[Result]:
     if doc is None:
         return [Result("borderless", LWJGL3IFY, "no file", "")]
     value = _forge_bools(doc, ["window"], ["borderless"])["borderless"]
-    if value == "true":
+    if _forge_true(value):
         return [
             Result(
                 "borderless",
@@ -313,25 +364,33 @@ def fix_oc(doc: Doc) -> None:
                 if doc.lines[i].strip().rstrip(",").strip('"') == LOOPBACK:
                     del doc.lines[i]
                     rules.end -= 1
-            entries = [
-                i for i in range(rules.head + 1, rules.end) if doc.lines[i].strip()
-            ]
-            indent = (
-                _indent_of(doc.lines[entries[0]])
-                if entries
-                else _indent_of(doc.lines[rules.head]) + "  "
-            )
-            comma = "," if entries else ""
-            doc.lines.insert(rules.head + 1, f'{indent}"{LOOPBACK}"{comma}')
+            line = doc.lines[rules.head]
+            open_at = line.index("[") + 1
+            # items on the "key=[" line: the rule goes right after "[", so it really is first
+            if _items(line[open_at:]):
+                doc.lines[rules.head] = (
+                    f'{line[:open_at]}"{LOOPBACK}", {line[open_at:].lstrip()}'
+                )
+            else:
+                entries = [
+                    i for i in range(rules.head + 1, rules.end) if doc.lines[i].strip()
+                ]
+                indent = (
+                    _indent_of(doc.lines[entries[0]])
+                    if entries
+                    else _indent_of(doc.lines[rules.head]) + "  "
+                )
+                comma = "," if entries else ""
+                doc.lines.insert(rules.head + 1, f'{indent}"{LOOPBACK}"{comma}')
     span = _block(doc.lines, ["opencomputers", "internet"])
     assert span is not None
-    found = _find(doc.lines, span, r"(\s*requestTimeout\s*[=:]\s*)(\d+)")
+    found = _find(doc.lines, span, r"(\s*requestTimeout\s*[=:]\s*)(.*)$")
     if found is None:
         doc.lines.insert(
             span[1] + 1,
             f"{_indent_of(doc.lines[rules.head])}requestTimeout={TIMEOUT_S}",
         )
-    elif int(found[1][2]) <= 0:
+    elif (value := _timeout(found[1][2])) is None or value <= 0:
         doc.lines[found[0]] = f"{found[1][1]}{TIMEOUT_S}"
     # Never write a file OpenComputers would reject: re-check the edited text first.
     after = {r.tweak: r for r in check_oc(doc, None)}
@@ -351,7 +410,7 @@ def _set_forge_bool(doc: Doc, path: Sequence[str], key: str) -> None:
     span = _block(doc.lines, path)
     if span is None:
         raise ValueError(f"no {'.'.join(path)} section")
-    found = _find(doc.lines, span, rf"(\s*B:{key}=)(\S+)\s*$")
+    found = _find(doc.lines, span, rf"(\s*B:{key}=)(.*)$")
     if found is None:
         indent = _indent_of(doc.lines[span[0] - 1]) + "    "
         doc.lines.insert(span[1] + 1, f"{indent}B:{key}=true")
@@ -371,12 +430,26 @@ def fix_borderless(doc: Doc) -> None:
 # ---------------------------------------------------------------- instance level
 
 
-def game_dir(path: Path) -> Path:
-    """Accept an instance folder (with instance.cfg) or its minecraft/.minecraft folder."""
-    for name in ("minecraft", ".minecraft"):
-        if (path / name).is_dir():
-            return path / name
-    return path
+def locate(path: Path) -> tuple[Path, Path]:
+    """(instance folder, game folder) for a Prism instance folder or its minecraft/.minecraft folder.
+
+    Anything else raises ValueError, so a mistyped path is never written to.
+    """
+    root = path.resolve()  # "." from inside .minecraft has no name to check
+    if (
+        not (root / "instance.cfg").is_file()
+        and root.name in GAME_DIRS
+        and root.is_dir()
+    ):
+        root = root.parent  # given the game folder
+    if (root / "instance.cfg").is_file():
+        for name in GAME_DIRS:
+            if (root / name).is_dir():
+                return root, root / name
+    raise ValueError(
+        f"{path}: not a Prism instance folder (instance.cfg and a minecraft or .minecraft "
+        "folder) or its minecraft folder"
+    )
 
 
 def _load(game: Path, rel: str) -> Doc | None:
@@ -385,9 +458,8 @@ def _load(game: Path, rel: str) -> Doc | None:
 
 
 def check(instance: Path) -> list[Result]:
-    game = game_dir(instance)
-    folder = game.parent if game != instance else instance
-    java17 = detect_java_build(read_components(folder)) == JAVA17
+    root, game = locate(instance)
+    java17 = detect_java_build(read_components(root)) == JAVA17
     return [
         *check_oc(_load(game, OC), oc_log_line(game)),
         *check_options(_load(game, OPTIONS)),
@@ -411,7 +483,9 @@ def plan_fixes(results: list[Result]) -> list[str]:
     for r in results:
         if r.tweak not in FIXES:
             continue
-        if r.status == "missing" or (r.status == "no file" and r.file == OPTIONS):
+        if r.status in ("missing", "invalid") or (
+            r.status == "no file" and r.file == OPTIONS
+        ):
             rel = FIXES[r.tweak][0]
             if rel not in files:
                 files.append(rel)
@@ -420,12 +494,17 @@ def plan_fixes(results: list[Result]) -> list[str]:
 
 def apply(instance: Path, files: list[str]) -> None:
     """Edit every file in memory first, so one that can't be fixed changes nothing at all."""
-    game = game_dir(instance)
+    _, game = locate(instance)
     by_file = {rel: fix for rel, fix in FIXES.values()}
     edited = []
     for rel in files:
         target = game / rel
-        doc = Doc(read_text(target)) if target.is_file() else Doc("")
+        # surrogateescape keeps bytes that aren't UTF-8 (options.txt is cp1252 on the Java 8 build)
+        doc = (
+            Doc(read_bytes(target).decode("utf-8", "surrogateescape"))
+            if target.is_file()
+            else Doc("")
+        )
         by_file[rel](doc)
         edited.append((target, doc))
     for target, doc in edited:
@@ -433,8 +512,7 @@ def apply(instance: Path, files: list[str]) -> None:
         if target.is_file() and not backup.exists():
             shutil.copyfile(target, backup)
         tmp = target.with_name(target.name + ".gos-tmp")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_bytes(doc.text().encode("utf-8"))
+        tmp.write_bytes(doc.text().encode("utf-8", "surrogateescape"))
         os.replace(tmp, target)
 
 
@@ -457,13 +535,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--yes", action="store_true", help="don't ask before --apply")
     args = parser.parse_args(argv)
 
+    try:
+        _, game = locate(args.instance)
+    except ValueError as exc:
+        print(exc)
+        return 2
     results = check(args.instance)
     _print(results)
     todo = plan_fixes(results)
     if args.apply and todo:
         print("\nWill change (originals saved once as <file>.gos-bak):")
         for rel in todo:
-            print(f"  {game_dir(args.instance) / rel}")
+            print(f"  {game / rel}")
         if (
             not args.yes
             and input("Close the game first. Apply? [y/N] ").strip().lower() != "y"
