@@ -1,11 +1,12 @@
 """``gos doctor`` (WO-0.2): a read-only survey of the Prism instances on this PC.
 
-For each instance it reports the pack version (``dreamcraft.cfg`` ``S:ModPackVersion=``), the
-Java build (Java 8 or Java 17+; V01, D68), the game folder (``minecraft`` or ``.minecraft``; V02)
-and the mod list with SHA-256 hashes. It writes ``<GOS_HOME>/data/env.json`` and prints the
+For each instance it reports whether it is GTNH, the pack version, the Java build (Java 8 or
+Java 17+; V01, D68) and the Java it runs on, the game folder (``minecraft`` or ``.minecraft``;
+V02) and the mod list with SHA-256 hashes. It writes ``<GOS_HOME>/data/env.json`` and prints the
 VERIFY list (plan section 13.2).
 
 It never writes inside a Prism folder: every game file is read through ``safe_open``.
+Formats are those of the GTNH 2.9.0 Prism zips and Prism Launcher 11.1.1.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import configparser
 import datetime as dt
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 from importlib import resources
@@ -26,6 +28,13 @@ PLAY = "GTNH-Play"  # gos.toml [paths] play (Appendix C)
 JAVA8 = "java8"
 JAVA17 = "java17+"
 UNKNOWN = "unknown"
+LWJGL3_UIDS = {
+    "org.lwjgl3",
+    "me.eigenraven.lwjgl3ify.forgepatches",
+    "me.eigenraven.lwjgl3ify.launchargs",
+}
+GTNH_COMPONENTS = {"net.minecraft": "1.7.10", "net.minecraftforge": "10.13.4.1614"}
+MOD_SUFFIXES = (".jar", ".zip", ".jar.disabled", ".zip.disabled")
 
 
 @dataclass(frozen=True)
@@ -46,12 +55,19 @@ class Mod:
 
 @dataclass
 class Instance:
+    folder_name: str  # Prism's instance id; name= changes on import, so this is the key
     name: str
     folder: str
+    gtnh: bool
     game_dir: str | None  # "minecraft", ".minecraft" or None
     pack_version: str | None
+    pack_version_sources: dict[str, str]
     java_build: str  # JAVA8, JAVA17 or UNKNOWN
     java_path: str | None
+    java_version: str | None
+    java_source: (
+        str  # "instance" (OverrideJavaLocation) or "global" (prismlauncher.cfg)
+    )
     components: list[str]
     mods: list[Mod] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
@@ -75,22 +91,45 @@ def load_verify_list() -> list[VerifyItem]:
     return [VerifyItem(*row) for row in rows[1:]]
 
 
+def _registry_install_dir() -> Path | None:
+    """Where Prism's Windows installer put it (HKCU\\Software\\PrismLauncher InstallDir)."""
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\PrismLauncher") as key:
+            value, _kind = winreg.QueryValueEx(key, "InstallDir")
+    except OSError:
+        return None
+    return Path(value)
+
+
 def default_prism_roots() -> list[Path]:
-    """The portable install from plan section 4.3, then Prism's normal per-user data folder."""
+    """Prism's data folders, in the order Prism itself would pick them."""
+    roots: list[Path] = []
+    if env := os.environ.get("PRISMLAUNCHER_DATA_DIR"):
+        roots.append(Path(env))
     if sys.platform == "win32":
-        roots = [Path(r"C:\Games\PrismLauncher")]
+        roots.append(
+            Path(r"C:\Games\PrismLauncher")
+        )  # the portable install (plan section 4.3)
+        if installed := _registry_install_dir():
+            roots.append(installed)  # counts only if it is portable (see survey)
         if appdata := os.environ.get("APPDATA"):
             roots.append(Path(appdata) / "PrismLauncher")
-        return roots
-    return [Path.home() / ".local" / "share" / "PrismLauncher"]
+    else:
+        roots.append(Path.home() / ".local" / "share" / "PrismLauncher")
+    return roots
 
 
 def read_ini(path: Path) -> dict[str, str]:
     """Read a Qt-style INI file (prismlauncher.cfg, instance.cfg) into a flat dict.
 
-    Keys outside any section, and keys in [General], come back unprefixed.
+    The GTNH zip ships a headerless instance.cfg; once Prism saves it, it has [General]. Keys in
+    [General] (or outside any section) come back unprefixed.
     """
-    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser = configparser.RawConfigParser(strict=False)
     parser.optionxform = str  # keep key case
     text = read_text(path)
     if not text.lstrip().startswith("["):
@@ -107,53 +146,98 @@ def read_ini(path: Path) -> dict[str, str]:
 def _unquote(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] == '"':
-        value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    return value
+        value = value[1:-1].replace('\\"', '"')
+    return value.replace("\\\\", "\\")  # Qt doubles backslashes
 
 
 def detect_java_build(components: list[str]) -> str:
     """Java 17+ builds load LWJGL 3 through lwjgl3ify; Java 8 builds use LWJGL 2.
 
-    The component uids are those of the GTNH 2.9.0 Prism instance zips (mmc-pack.json).
+    These are the mmc-pack.json component uids of the GTNH 2.9.0 Prism zips. config/lwjgl3ify.cfg
+    is no signal: both builds ship it.
     """
     uids = set(components)
-    if "org.lwjgl3" in uids or any("lwjgl3ify" in uid for uid in uids):
+    if uids & LWJGL3_UIDS:
         return JAVA17
     if "org.lwjgl" in uids and "net.minecraftforge" in uids:
         return JAVA8
     return UNKNOWN
 
 
-def read_components(folder: Path) -> list[str]:
+def read_pack(folder: Path) -> dict[str, str]:
+    """mmc-pack.json components as uid -> version."""
     pack = folder / "mmc-pack.json"
     if not pack.is_file():
-        return []
+        return {}
     data = json.loads(read_text(pack))
-    return [
-        str(c.get("uid", "")) for c in data.get("components", []) if isinstance(c, dict)
-    ]
+    return {
+        str(c.get("uid", "")): str(c.get("version", ""))
+        for c in data.get("components", [])
+        if isinstance(c, dict)
+    }
 
 
-def read_pack_version(game: Path) -> str | None:
-    cfg = game / "config" / "GTNewHorizons" / "dreamcraft.cfg"
-    if not cfg.is_file():
-        return None
-    for line in read_text(cfg).splitlines():
-        key, sep, value = line.strip().partition("=")
-        if sep and key == "S:ModPackVersion":
-            return value.strip()
-    return None
+def read_components(folder: Path) -> list[str]:
+    return list(read_pack(folder))
+
+
+def _placeholder(version: str) -> bool:
+    return (
+        re.fullmatch(r"\d+\.\d+\.x", version) is not None
+    )  # "2.9.x": the repo default
+
+
+# Every pack-version signal the GTNH builder (DreamAssemblerXXL) writes into an instance.
+PACK_VERSION_FILES = (
+    (
+        "dreamcraft.cfg",
+        "config/GTNewHorizons/dreamcraft.cfg",
+        r"^\s*S:ModPackVersion=(.*)$",
+    ),
+    (
+        "DreamCoreMod.properties",
+        "config/DreamCoreMod.properties",
+        r"^displayedModpackVersion=(.*)$",
+    ),
+    (
+        "mainmenu/version.txt",
+        "config/txloader/load/mainmenu/version.txt",
+        r"^GTNH (\S+)",
+    ),
+)
+
+
+def read_pack_versions(game: Path) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for label, rel, pattern in PACK_VERSION_FILES:
+        path = game / rel
+        m = (
+            re.search(pattern, read_text(path), re.MULTILINE)
+            if path.is_file()
+            else None
+        )
+        if m:
+            found[label] = m[1].strip()
+    return found
 
 
 def list_mods(game: Path, hash_mods: bool) -> list[Mod]:
+    """Jar and zip mods, enabled or .disabled, including mods/1.7.10/ (FML scans it)."""
     mods_dir = game / "mods"
     if not mods_dir.is_dir():
         return []
     mods = []
-    for path in sorted(p for p in mods_dir.rglob("*") if p.is_file()):
+    for path in sorted(mods_dir.rglob("*")):
+        rel = path.relative_to(mods_dir)
+        if (
+            not path.is_file()
+            or rel.parts[0] == ".index"
+            or not path.name.endswith(MOD_SUFFIXES)
+        ):
+            continue
         mods.append(
             Mod(
-                file=path.relative_to(mods_dir).as_posix(),
+                file=rel.as_posix(),
                 enabled=not path.name.endswith(".disabled"),
                 size=path.stat().st_size,
                 sha256=sha256_file(path) if hash_mods else None,
@@ -162,70 +246,107 @@ def list_mods(game: Path, hash_mods: bool) -> list[Mod]:
     return mods
 
 
-def read_instance(folder: Path, hash_mods: bool) -> Instance:
+def read_instance(folder: Path, hash_mods: bool, prism_cfg: dict[str, str]) -> Instance:
     cfg = read_ini(folder / "instance.cfg")
+    # Prism's rule: minecraft/ unless only .minecraft/ exists (the GTNH zips use .minecraft/).
     game = next(
         (folder / d for d in ("minecraft", ".minecraft") if (folder / d).is_dir()), None
     )
     problems = []
     try:
-        components = read_components(folder)
+        pack = read_pack(folder)
     except (OSError, ValueError) as exc:
-        components = []
+        pack = {}
         problems.append(f"mmc-pack.json unreadable: {exc}")
+    components = list(pack)
+    versions = read_pack_versions(game) if game else {}
+    concrete = {v for v in versions.values() if not _placeholder(v)}
+    if len(concrete) > 1:
+        problems.append(f"pack version files disagree: {versions}")
+    override = cfg.get("OverrideJavaLocation", "false").lower() == "true"
+    java = cfg if override else prism_cfg
     inst = Instance(
+        folder_name=folder.name,
         name=cfg.get("name", folder.name),
         folder=str(folder),
+        gtnh=all(pack.get(uid) == ver for uid, ver in GTNH_COMPONENTS.items())
+        and "dreamcraft.cfg" in versions,
         game_dir=game.name if game else None,
-        pack_version=read_pack_version(game) if game else None,
+        pack_version=next((v for v in versions.values() if not _placeholder(v)), None),
+        pack_version_sources=versions,
         java_build=detect_java_build(components),
-        java_path=cfg.get("JavaPath") or None,
+        java_path=java.get("JavaPath") or None,
+        java_version=java.get("JavaVersion") or None,
+        java_source="instance" if override else "global",
         components=components,
         problems=problems,
     )
     if game is None:
         inst.problems.append("no minecraft or .minecraft folder")
-    else:
-        inst.mods = list_mods(game, hash_mods)
+        return inst
+    inst.mods = list_mods(game, hash_mods)
+    lwjgl3ify_jar = any(
+        m.enabled and Path(m.file).name.lower().startswith("lwjgl3ify-")
+        for m in inst.mods
+    )
+    if inst.java_build == JAVA8 and lwjgl3ify_jar:
+        inst.problems.append(
+            "Java 8 components but an enabled lwjgl3ify jar: mixed build"
+        )
+    if inst.java_build == JAVA17 and inst.gtnh and not lwjgl3ify_jar:
+        inst.problems.append(
+            "Java 17+ components but no enabled lwjgl3ify jar: mixed build"
+        )
     return inst
 
 
 def survey(roots: list[Path], hash_mods: bool = True) -> list[PrismRoot]:
-    found = []
+    found: list[PrismRoot] = []
+    seen: set[Path] = set()
     for root in roots:
-        if not root.is_dir():
+        # A portable install keeps its data next to the exe, or in UserData\ beside it.
+        data = root / "UserData" if (root / "UserData").is_dir() else root
+        portable = data != root or (root / "portable.txt").is_file()
+        if not data.is_dir() or data.resolve() in seen:
             continue
-        settings = root / "prismlauncher.cfg"
+        if (root / "prismlauncher.exe").is_file() and not portable:
+            continue  # an installed copy: its data is in %APPDATA%\PrismLauncher
+        seen.add(data.resolve())
+        settings = data / "prismlauncher.cfg"
         cfg = read_ini(settings) if settings.is_file() else {}
-        instances_dir = root / cfg.get("InstanceDir", "instances")
+        instances_dir = data / cfg.get("InstanceDir", "instances")
         prism = PrismRoot(
-            path=str(root),
-            portable=(root / "portable.txt").is_file(),
-            instances_dir=str(instances_dir),
+            path=str(data), portable=portable, instances_dir=str(instances_dir)
         )
         if instances_dir.is_dir():
-            for folder in sorted(
-                p for p in instances_dir.iterdir() if (p / "instance.cfg").is_file()
-            ):
-                prism.instances.append(read_instance(folder, hash_mods))
+            for folder in sorted(instances_dir.iterdir()):
+                if folder.name != ".tmp" and (folder / "instance.cfg").is_file():
+                    prism.instances.append(read_instance(folder, hash_mods, cfg))
         found.append(prism)
     return found
 
 
+def find_play(roots: list[PrismRoot]) -> Instance | None:
+    instances = [i for r in roots for i in r.instances]
+    return next((i for i in instances if i.folder_name == PLAY), None) or next(
+        (i for i in instances if i.name == PLAY), None
+    )
+
+
 def verify_status(item: VerifyItem, roots: list[PrismRoot]) -> str:
     instances = [i for r in roots for i in r.instances]
-    play = next((i for i in instances if i.name == PLAY), None)
+    play = find_play(roots)
     if item.id == "V01":
-        return (
-            f"{PLAY}: {play.java_build}"
-            if play
-            else f"open: no {PLAY} instance found yet"
-        )
+        if play is None:
+            return f"open: no {PLAY} instance found yet"
+        runtime = play.java_version or "Java version unknown until first launch"
+        return f"{PLAY}: {play.java_build} build ({runtime})"
     if item.id == "V02":
         if not instances:
             return "open: no Prism instances found"
         return "; ".join(
-            f"{i.name}: {Path(i.folder) / (i.game_dir or '?')}" for i in instances
+            f"{i.folder_name}: {Path(i.folder) / (i.game_dir or '?')}"
+            for i in instances
         )
     for word in ("Closed", "Dropped", "Resolved"):
         if item.item.startswith(f"**{word}**"):
@@ -265,9 +386,15 @@ def main(
         for inst in root.instances:
             enabled = sum(m.enabled for m in inst.mods)
             print(
-                f"  {inst.name}\tpack={inst.pack_version or '?'}\tjava={inst.java_build}"
+                f"  {inst.folder_name}\t{'GTNH' if inst.gtnh else 'not GTNH'}"
+                f"\tpack={inst.pack_version or '?'}\tjava={inst.java_build}"
                 f"\tgame={inst.game_dir or '?'}\tmods={enabled} enabled, "
                 f"{len(inst.mods) - enabled} disabled",
+                file=out,
+            )
+            print(
+                f"    runs on: {inst.java_path or '?'} ({inst.java_version or 'version unknown'};"
+                f" {inst.java_source} setting)",
                 file=out,
             )
             for problem in inst.problems:
