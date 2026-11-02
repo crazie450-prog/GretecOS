@@ -54,6 +54,24 @@
 4. Use Weed-EX, pull weeds at once, and spray sick crops with Plant Cure.
 5. Check every child with the Plant Lens; keep the best and replace the weakest parent. Keep Growth at 23 or below unless Resistance is at least as high. Collect seeds with the spade.
 
+## 6. CropsNH breeding machines (addendum)
+
+Read from the CropsNH 2.0.140 source (`tileentity/singleblock/*.java`, `items/ItemGenericSeed.java`, `en_US.lang`) [A]:
+- **CONFIRMED: Crop Breeder** (from LV): its tooltip says it "breeds crops deterministically".
+  - **Recipe choice:** it looks up the deterministic mutations for the loaded parents, trying recipes with more parents first.
+  - **Inputs:** it uses 1 of each parent, any catalyst, and enriched fertilizer (144 mB × output tier + 72 mB × (Growth + Gain + Resistance)).
+  - **Success:** 40% at LV, +10% per tier, capped at 100% (ZPM). On a failure the inputs are used up and nothing comes out.
+  - **Output:** the child's stats are the parents' average.
+  - **Limits:** 3 input slots below HV, 6 from HV. At LV and MV, the tooltip says it "cannot breed high-stat seeds".
+- **CONFIRMED: Seed Generator** (from LV): "generates more seeds from an existing seed".
+  - It outputs a copy with the same stats and costs enriched fertilizer per stat point.
+  - Some crops need a duplication catalyst; it skips seeds that need the synthesizer.
+  - At LV and MV it can't copy high-stat seeds.
+- **CONFIRMED: Crop Gene Extractor** (from EV): extracts one gene to a data orb. Programmed circuit 1 = species, 2 = Growth, 3 = Gain, 4 = Resistance.
+- **CONFIRMED: Crop Synthesizer** (from EV): makes seeds from data orbs, with stats taken from the orbs, paid in UUM per tier and per stat point. The tooltip on crops that can't spread to other sticks points to it for improving or copying them.
+- **CONFIRMED:** a seed item's display name carries its species, so OpenComputers can identify seeds by label without reading NBT.
+- **UNCERTAIN:** the exact "high-stat" cap at LV and MV, and whether OC's GT machine driver reads CropsNH machines. They are GT MetaTileEntities, so it should.
+
 ## VERIFY in game
 
 1. Whether Growth 24 spreads weeds, and whether Necrobloom spreads at 8.

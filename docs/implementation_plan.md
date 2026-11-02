@@ -47,8 +47,8 @@
 ### 0.3 What changed in v1.2
 | Area | Change | Source |
 |---|---|---|
-| Crops | New feature (§7.17): breeding guides from the start, stat plans and CropsNH's machines; an OC seed handler as a spike. 2.9.0 uses CropsNH, whose OC support was removed, so the IC2-era OC bots can't be used | D78; research I |
-| New WOs | 1.10 (crop data), 6.7 (guide and Crops view), 7.6 (OC seed handler spike) | D78 |
+| Crops | New feature (§7.17): breeding guides from the start, stat plans, and an OC breeding station that runs CropsNH's deterministic Crop Breeder unattended. 2.9.0 uses CropsNH, which removed OC support for planted crops, so the IC2-era field robots can't be used | D78; research I |
+| New WOs | 1.10 (crop data), 6.7 (guide and Crops view), 7.6 (breeding station) | D78 |
 | Checks | V30–V33 (§13.2); R27–R28 (§12) | Research I |
 | Dashboard | WO-2.0 is done in Claude Design; Claude Code builds from the handoff from WO-2.6 on; Crops view added; tier colours named (§7.14) | D79 |
 
@@ -62,7 +62,7 @@ Gregtec OS (GOS) is a local assistant and planning suite for **GTNH 2.9**. You t
 - **tracks activity** (quests, items, machines, locations, chat, deaths) and advises what to do next;
 - **watches the base live** through OpenComputers, shows status in game, and carries out safe actions after confirmation;
 - **designs themed buildings** around lines. Claude designs the decorative shells, which are pasted; machinery is built legitimately from an interactive 3D guide;
-- **breeds crops** (D78): step-by-step CropsNH breeding guides from the start, then the crop machines planned and watched like any line;
+- **breeds crops** (D78): step-by-step CropsNH breeding guides from the start, then an OC breeding station that breeds a chosen crop unattended;
 - **works from his phone**: Discord for alerts and quick questions, and the full dashboard over Tailscale;
 - **remembers** in an agents-first Obsidian vault plus a SQLite database.
 
@@ -179,7 +179,7 @@ Gregtec OS (GOS) is a local assistant and planning suite for **GTNH 2.9**. You t
 ### 2.4 After v1.1 (2026-11-01, binding)
 | ID | Topic | Decision | From |
 |---|---|---|---|
-| D78 | Crop breeding | **Added.** Step-by-step CropsNH breeding guides from the start, stat plans, and CropsNH's machines planned and watched like other lines (§7.17). Clayton asked for OC robot automation, but 2.9's CropsNH removed OC support, so an OC seed handler is a spike gated on V31 (WO-7.6), not a promise. Ordered by tier like everything else (D42) | Clayton, 2026-11-01; research I |
+| D78 | Crop breeding | **Added.** Step-by-step CropsNH breeding guides from the start, stat plans, and from MV an OC **breeding station** that runs CropsNH's deterministic Crop Breeder and Seed Generator unattended until a target crop is stocked (§7.17). The IC2-era field robots can't work on 2.9 (CropsNH removed OC support for planted crops), so no field robot is planned. Ordered by tier like everything else (D42) | Clayton, 2026-11-01; research I |
 | D79 | Dashboard design | WO-2.0 is done in Claude Design: one mockup canvas plus a Design System artifact. Claude Code builds views from the approved boards through the Claude Design handoff, starting at WO-2.6; `/design-sync` keeps the design system in step with the real components | Clayton, 2026-11-01 |
 
 D75–D77 combine Clayton's answers with the PM's follow-up recommendations, which he accepted on 2026-11-01.
@@ -908,12 +908,27 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
    - **Warnings:** steps that can destroy seeds (a failed Crop Breeder run) or spread weeds.
    - **Keep rule:** check children with the Plant Lens, keep the best, replace the weakest parent.
 2. **Stats plan.** A child's stats are the parents' average plus a random step set by the lowest fertilizer level: 0–49 gives −1 to +1, 50–100 gives ±2, and 101+ (Crop Manager only) gives 0 to +4. Growth above 23 (or 24; V30) spreads weeds unless Resistance is at least as high, and Resistance has no downside, so the default target is 31/31/31 where his tier allows it. The planner states the expected generations to a target.
-3. **Machines (LV and up).** CropsNH's own automation:
+3. **Machines (LV and up)** [I§6]:
+   - **Crop Breeder:** breeds **deterministically**. Load the parents of a breeding recipe (plus any catalyst) and it makes that child.
+     - It uses 1 of each parent, plus 144 mB of enriched fertilizer per output tier and 72 mB per stat point.
+     - Success is 40% at LV, +10% per tier, reaching 100% at ZPM. A failure uses up the inputs.
+     - The child gets the parents' average stats.
+     - It has 3 input slots below HV and 6 from HV. LV and MV can't breed high-stat seeds. Material crops from MV breed only here.
+   - **Seed Generator:** copies a seed with the same stats, paid in enriched fertilizer per stat point. Some crops need a catalyst; synthesizer-only crops can't be copied.
+   - **Gene Extractor + Crop Synthesizer (EV and up):** scan species, Growth, Gain and Resistance into data orbs, then build a seed from any mix of orbs, paid in UUM. This puts the best stats on any species.
    - **Crop Manager:** water, fertilizer, Weed-EX and harvest within radius 3 + 2×tier.
-   - **Crop Breeder:** crosses in a machine; 40% success at LV, +10% per tier; a failure destroys the parents; material crops from MV breed only here; HV for 31/31/31 (V32).
-   - **Industrial Farm** (MV and up) for bulk output, planned through the line designer like any multiblock.
-   - Machine steps appear in the guide with their odds, and OC telemetry watches the machines like any other (§7.9).
-4. **OC seed handler (spike, WO-7.6).** OC can't read planted CropsNH crops, but 2.9's OC config passes item NBT, so a program may be able to read seed stats in a chest (V31). If it can, an OC program sorts seeds, keeps the best and feeds the Crop Breeder or a fertilized field. Start and stop are confirmed actions; Lab first; Clayton installs it on Play himself. If V31 fails, automation stays with the machines (R28), and the addon watcher (§7.13) flags any CropsNH OC support or a ported bot.
+   - **Industrial Farm** (MV and up): bulk output, planned through the line designer.
+4. **Breeding station (automation, from MV; WO-7.6).** Because the Crop Breeder is deterministic, "breed me X" is a production plan.
+   - GOS builds the tree from the crops he has: each Crop Breeder recipe, its parents and catalysts, and the fertilizer bill. It also sets how many copies to make first, from the success odds at his tier, so a failure never costs the last seed. The enriched-fertilizer line is planned like any other.
+   - An OC program runs the station unattended:
+     - transposers move seeds between storage, the Seed Generator and the Crop Breeder;
+     - a seed in the output slot means success;
+     - on a failure it copies the parents again and retries;
+     - it stops once the target is stocked.
+   - It identifies seeds by item name, which carries the species, so it never reads planted crops (CropsNH doesn't allow that). It reads stats from item NBT if V31 passes; otherwise it tracks them from the breeding math.
+   - Start and stop are confirmed actions (§7.9), and status shows on the dashboard and phone. Lab first; Clayton installs it on Play himself.
+   - At ZPM the breeder reaches 100% success, so plain AE2 autocrafting can take over.
+   - Field breeding (raising stats with fertilizer above 100) stays manual with Crop Managers until the EV synthesizer makes it unnecessary. No field robot is planned (R28).
 - **Voice:** "next crop step", "what does X need to grow", "how long until X".
 - **Dashboard:** the Crops view (§7.14).
 - **Citations:** crop facts cite `crop:<id>` (principle 2); machine recipes cite `r:` as usual.
@@ -1033,7 +1048,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 7.3 | **M1 file mailbox** (MV tier): OC writer/poller and core reader/writer with Windows retry and `safe_open()` (§7.9) | 1 h in `lab-ops` with no lost or half-read files |
 | 7.4 | In-game displays: OC status-board screen, OCGlasses HUD, chat box; dashboard **Base view** | Readable in game; updates ≤ 10 s |
 | 7.5 | Telemetry alert rules (power low, maintenance, machine stalled, crafting done) | Alerts fire in `lab-ops`, including with the game unfocused and no menu open (the AFK case, D46) |
-| 7.6 | **OC seed handler spike** (D78, §7.17), only if V31 passes: an OC program in `oc/crop/` that reads seed stats from items in a chest, keeps the best and feeds a Crop Breeder or a fertilized field; status over the bridge; start and stop are confirmed actions | In `lab-ops`, its stat readings match the Plant Lens on 20 seeds and it runs 1 h unattended with no lost seeds. If V31 fails, the WO closes with a note and automation stays with the CropsNH machines (R28) |
+| 7.6 | **Breeding station** (D78, §7.17): an OC program in `oc/crop/` that runs a GOS breeding plan on a Crop Breeder and a Seed Generator through transposers. It copies parents first, breeds, detects success from the output, retries, and stocks the target. It identifies seeds by name; status goes over the bridge; start and stop are confirmed actions | In `lab-ops` at MV, it breeds a 3-step target from starter seeds unattended and stocks 4 copies, never uses the last seed of a parent, and stops cleanly mid-run; V31 resolved |
 | **G7** | | Reviewer report; Clayton sign-off |
 
 ### Phase 8: GregtecLink client, screen reading, wiki
@@ -1109,7 +1124,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 - [ ] Voice: wake word ≤ 1 false wake/h with ≥ 38/40 hits; talk key backup; entity accuracy ≥ 95%; latency per PM14; pronunciation and speech filter; personas switch (`gt-veteran` default).
 - [ ] Q&A: recipe, quest, wiki, screen, hover and ambiguous-item evals pass; no-AI mode works (L9).
 - [ ] Context: watchers stable for 2 h with no save errors; listener and census agree; journal and advisor work; default notices fire.
-- [ ] Crops: guides for Clayton's 5 target crops reviewed; one followed to its target in `lab-progress`; Crop Manager and Crop Breeder steps checked; the OC seed handler passed in `lab-ops`, or was closed in favour of the machines (V31).
+- [ ] Crops: guides for Clayton's 5 target crops reviewed; one followed to its target in `lab-progress`; Crop Manager and Crop Breeder steps checked; the breeding station bred a target unattended in `lab-ops` (WO-7.6).
 - [ ] OC bridge: config tweak, Lua agent, M1 mailbox and confirmed actions (read-back, one pending, 60 s) tested in `lab-ops`; AFK alerts while unpaused (L4). In survival, M1 switches on at MV and M2 at HV/EV.
 - [ ] Discord and phone: commands, alerts, credit DMs and away-only offline DMs from his phone; phone dashboard over Tailscale (L8).
 - [ ] Build: footprints for the planned multis; 3D guide; ≥ 2 themes; a Claude-designed shell pasted in the Lab.
@@ -1136,7 +1151,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | **Total** | **≈ 85–125 h** | **≈ 108–170 h** | |
 | **With the 1.5× rework buffer (PM11)** | | **≈ 160–255 h** | |
 
-- **v1.2 (D78):** crop breeding adds about 4–6 h of Clayton's time (P1 +1, P6 +2–3, P7 +1–2), so ≈ 112–176 h, or ≈ 170–265 h with the buffer. Day one moves by about a week.
+- **v1.2 (D78):** crop breeding adds about 5–7 h of Clayton's time (P1 +1, P6 +2–3, P7 +2–3), so ≈ 113–177 h, or ≈ 170–265 h with the buffer. Day one moves by about a week.
 - These are Clayton's hours (review, testing, decisions). Claude Code works in parallel streams, so his review time sets the pace.
 - **At 7.5 h/week:** about 22–34 weeks, so day one lands around **April–June 2027** (mid case: mid-May 2027). At 5–10 h/week the range is about 16–51 weeks (late February to late October 2027).
 - **External dependencies:** addon 2.9 releases (§13), Claude Code usage limits (R20), and the img2schem SOW for WO-10.0.
@@ -1175,7 +1190,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | R25 | A false "confirm" on an open mic (D59) | Read-back; one pending action; 60 s expiry; no destructive actions; AE2 crafts can be cancelled |
 | R26 | Injected text in chat, wiki or quests steers agents [QA:V6] | Principle 8; actions need human confirmation; `!gos` from Clayton only; security tests |
 | R27 | CropsNH is new in 2.9 and may change in 2.9.x, so breeding guides drift [I] | Guides come only from the exported dumps; the pack-update playbook (WO-1.9) re-exports and diffs crop data; V30 is re-checked on each update |
-| R28 | No OpenComputers route to crop automation on 2.9: CropsNH removed OC support [I§3] | Automation through CropsNH's machines; the OC seed handler is a spike gated on V31; the addon watcher flags CropsNH OC support or a ported bot |
+| R28 | No OpenComputers route to field automation on 2.9: CropsNH removed OC support for planted crops [I§3] | The breeding station works on machines and seed items only (WO-7.6); raising stats in the field stays manual until the EV synthesizer; the addon watcher flags any CropsNH OC support |
 
 ---
 
@@ -1232,8 +1247,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
 | V29 | A reliable "game paused" signal (log line or GregtecLink) | Lab test | 6.1 |
 | V30 | CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2] | Lab test | 6.7 |
-| V31 | OC can read seed stats from CropsNH seed items in a chest (item NBT), while planted crops give it nothing [I§3] | Lab test | 7.6 |
-| V32 | Crop Breeder odds and limits per tier, including 31/31/31 at HV and material crops only through the Breeder from MV [I§2] | NEI + Lab | 6.7 |
+| V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
+| V32 | The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | The CropsNH NEI dumpers (crops, breeding recipes, mutation pools, soils) run in the Export instance and cover every crop in NEI's tabs [I§2] | Export test | 1.10 |
 
 ---
@@ -1287,7 +1302,7 @@ gregtec-os/
   discord_bot/gregtec_discord/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
-  oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (seed handler spike, WO-7.6)
+  oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
   vault-template/        _gos/{skills,agents,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
