@@ -10,7 +10,7 @@ fact: one per line as key: value
 key_format: lowercase letters, digits and _; units go in the key (rate_s, eut, dur_t, eff_h)
 lists: a, b, c
 links: [[id]]
-pointers: r:<map>/<sig12>, plan:<id>, q:<named_query>, db:<table>/<id>, w:<page>@<revid>
+pointers: r:{map}/{sig12}, plan:{id}, q:{named_query}, db:{table}/{id}, w:{page}@{revid}
 tables: tsv in a ```tsv fence with a header row
 prose: none, except one-line note: entries
 max_lines: 150

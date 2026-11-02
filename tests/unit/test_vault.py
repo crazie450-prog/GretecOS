@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import shutil
+import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -104,15 +106,29 @@ def test_first_deploy_creates_a_git_vault(tmp_path: Path) -> None:
     assert deploy.deploy(vault, TEMPLATE) == "created"
     assert commits(vault) == 1
     template_files = {
-        p.relative_to(TEMPLATE) for p in TEMPLATE.rglob("*") if p.is_file()
+        p.relative_to(TEMPLATE): p.read_bytes()
+        for p in TEMPLATE.rglob("*")
+        if p.is_file()
     }
     vault_files = {
-        p.relative_to(vault)
+        p.relative_to(vault): p.read_bytes()
         for p in vault.rglob("*")
         if p.is_file() and ".git" not in p.parts
     }
     assert vault_files == template_files
+    # A clean tree: the first commit holds every file.
+    assert git(vault, "status", "--porcelain") == ""
     assert deploy.deploy(vault, TEMPLATE) == "unchanged"
+
+
+def test_first_deploy_needs_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))  # no git in here
+    vault = tmp_path / "vault"
+    with pytest.raises(RuntimeError, match="git isn't on PATH"):
+        deploy.deploy(vault, TEMPLATE)
+    assert not vault.exists()
 
 
 def test_redeploy_restores_gos_and_leaves_everything_else(tmp_path: Path) -> None:
@@ -137,8 +153,90 @@ def test_redeploy_restores_gos_and_leaves_everything_else(tmp_path: Path) -> Non
     assert goals.read_text().endswith("goal: reach HV\n")
     assert plan.is_file()
     assert commits(vault) == 1  # back to the committed state: nothing new to commit
+    assert git(vault, "diff", "--cached", "--name-only") == ""  # nothing staged
     status = git(vault, "status", "--porcelain")
-    assert "me/goals.md" in status and "plans/" in status and "_gos" not in status
+    assert " M me/goals.md" in status.splitlines()
+    assert "?? plans/pl-0001.md" in status.splitlines()
+    assert "_gos" not in status
+
+
+def test_redeploy_never_commits_a_deleted_folder(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    deploy.deploy(vault, TEMPLATE)
+    plan = vault / "plans" / "pl-0001.md"
+    plan.write_text("---\nid: pl-0001\nt: plan\nupd: 2026-11-02\n---\n")
+    git(vault, "add", "plans/pl-0001.md")
+    git(
+        vault,
+        "-c",
+        "user.name=agent",
+        "-c",
+        "user.email=agent@localhost",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "agent note",
+    )
+    # Deleted by hand: a folder with a committed note, and me/.
+    shutil.rmtree(vault / "plans")
+    shutil.rmtree(vault / "me")
+
+    assert deploy.deploy(vault, TEMPLATE) == "updated"
+    assert (vault / "plans" / ".gitkeep").is_file()
+    assert commits(vault) == 2  # no deploy commit: the deletions are not deploy's
+    assert git(vault, "diff", "--cached", "--name-only") == ""
+    status = git(vault, "status", "--porcelain").splitlines()
+    assert {" D plans/pl-0001.md", " D me/goals.md", " D me/prefs.md"} <= set(status)
+
+
+def test_redeploy_finishes_a_failed_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template = tmp_path / "repo" / "vault-template"
+    shutil.copytree(TEMPLATE, template)
+    vault = tmp_path / "home" / "vault"
+    deploy.deploy(vault, template)
+    skill = template / "_gos" / "skills" / "recipe-lookup" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("name: recipe-lookup\n")
+    real_git = deploy._git
+
+    def git_that_cannot_commit(cwd: Path, *args: str) -> str:
+        if args[0] == "commit":
+            raise subprocess.CalledProcessError(128, ["git", *args])
+        return real_git(cwd, *args)
+
+    with monkeypatch.context() as m:
+        m.setattr(deploy, "_git", git_that_cannot_commit)
+        with pytest.raises(subprocess.CalledProcessError):
+            deploy.deploy(vault, template)
+    assert (vault / "_gos" / "skills" / "recipe-lookup" / "SKILL.md").is_file()
+    assert commits(vault) == 1  # mirrored and staged, never committed
+
+    assert deploy.deploy(vault, template) == "updated"
+    assert commits(vault) == 2
+    assert git(vault, "show", "--name-only", "--format=", "HEAD").split() == [
+        "_gos/skills/recipe-lookup/SKILL.md"
+    ]
+    assert git(vault, "status", "--porcelain") == ""
+    assert deploy.deploy(vault, template) == "unchanged"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_redeploy_keeps_a_scripts_mode(tmp_path: Path) -> None:
+    template = tmp_path / "repo" / "vault-template"
+    shutil.copytree(TEMPLATE, template)
+    vault = tmp_path / "home" / "vault"
+    deploy.deploy(vault, template)
+    script = template / "_gos" / "skills" / "run.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+
+    assert deploy.deploy(vault, template) == "updated"
+    mode = (vault / "_gos" / "skills" / "run.sh").stat().st_mode
+    assert stat.S_IMODE(mode) == 0o755
 
 
 def test_new_template_version_is_committed(tmp_path: Path) -> None:
@@ -151,6 +249,9 @@ def test_new_template_version_is_committed(tmp_path: Path) -> None:
     skill.write_text("name: recipe-lookup\n")
     goals = vault / "me" / "goals.md"
     goals.write_text(goals.read_text() + "goal: reach HV\n")
+    git(vault, "add", "me/goals.md")  # staged by Clayton: still not deploy's to commit
+    plan = vault / "plans" / "pl-0001.md"  # an agent's note: deploy must not stage it
+    plan.write_text("---\nid: pl-0001\nt: plan\nupd: 2026-11-02\n---\n")
 
     assert deploy.deploy(vault, template) == "updated"
     assert (vault / "_gos" / "skills" / "recipe-lookup" / "SKILL.md").is_file()
@@ -158,7 +259,8 @@ def test_new_template_version_is_committed(tmp_path: Path) -> None:
     assert git(vault, "show", "--name-only", "--format=", "HEAD").split() == [
         "_gos/skills/recipe-lookup/SKILL.md"
     ]
-    assert "me/goals.md" in git(vault, "status", "--porcelain")  # left for Clayton
+    assert git(vault, "diff", "--cached", "--name-only").split() == ["me/goals.md"]
+    assert "?? plans/pl-0001.md" in git(vault, "status", "--porcelain").splitlines()
 
 
 def test_refuses_the_repo_and_unknown_folders(tmp_path: Path) -> None:

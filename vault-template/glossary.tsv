@@ -15,8 +15,7 @@ UMV	mega ultimate voltage, tier 12	tier	tier:12	U M V
 UXV	extended mega ultimate voltage, tier 13	tier	tier:13	U X V
 MAX	maximum voltage	tier	tier:14	max
 EBF	electric blast furnace, blast furnace	machine		E B F
-PBF	primitive blast furnace	machine		P B F
-BBF	bricked blast furnace	machine		B B F
+BBF	bricked blast furnace, PBF, primitive blast furnace	machine		B B F
 coke oven		machine		
 LCR	large chemical reactor	machine		L C R
 PA	processing array	removed		P A
@@ -91,7 +90,7 @@ kanthal		material		kan-thal
 nichrome		material		nye-chrome
 TPV-Alloy	TPV	material		T P V alloy
 invar		material		
-wrought iron		material		
+cast iron	wrought iron	material		
 bronze		material		
 brass		material		
 tin alloy		material		

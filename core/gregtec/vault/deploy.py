@@ -26,14 +26,18 @@ GIT = [
     "user.email=gos@localhost",
     "-c",
     "commit.gpgsign=false",
-    "-c",
-    "core.hooksPath=",
 ]
+
+
+def _cmd(vault: Path, *args: str) -> list[str]:
+    # Hooks come from a folder that never exists (an empty core.hooksPath means the root).
+    no_hooks = (vault / ".git" / "gos-no-hooks").as_posix()
+    return [*GIT, "-c", f"core.hooksPath={no_hooks}", *args]
 
 
 def _git(vault: Path, *args: str) -> str:
     out = subprocess.run(
-        [*GIT, *args], cwd=vault, check=True, capture_output=True, text=True
+        _cmd(vault, *args), cwd=vault, check=True, capture_output=True, text=True
     )
     return out.stdout
 
@@ -45,7 +49,8 @@ def _is_under(child: Path, parent: Path) -> bool:
 def _copy_atomic(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.name + ".gos-tmp")
-    shutil.copyfile(src, tmp)
+    # copy, not copyfile: it keeps the mode bits, so a skill script stays executable.
+    shutil.copy(src, tmp)
     os.replace(tmp, dst)
 
 
@@ -59,6 +64,8 @@ def deploy(vault: Path, template: Path = DEFAULT_TEMPLATE) -> str:
         raise ValueError(f"refusing to deploy into or around the repo: {vault}")
 
     if not vault.exists():
+        if shutil.which(GIT[0]) is None:
+            raise RuntimeError("git isn't on PATH; install Git, then deploy again")
         shutil.copytree(template, vault)
         _git(vault, "init", "-q")
         _git(vault, "add", "-A")
@@ -79,26 +86,28 @@ def deploy(vault: Path, template: Path = DEFAULT_TEMPLATE) -> str:
         if not (template / dst.relative_to(vault)).is_file():
             dst.unlink()
             changed = True
-    created: list[str] = []
+    keeps: list[str] = []
     for folder in sorted(p for p in template.rglob("*") if p.is_dir()):
         target = vault / folder.relative_to(template)
         if not target.exists():
             target.mkdir(parents=True)
+            changed = True
             keep = folder / ".gitkeep"
             if keep.is_file():
                 shutil.copyfile(keep, target / ".gitkeep")
-            created.append(target.relative_to(vault).as_posix())
+                keeps.append((target / ".gitkeep").relative_to(vault).as_posix())
 
-    if not changed and not created:
-        return "unchanged"
-    # Stage and commit only what deploy owns; Clayton's and the agents' edits stay as they are.
-    paths = [OWNED, *created]
+    # Stage and commit only what deploy owns: _gos/ and the .gitkeep of each folder it just
+    # recreated, never the folder itself. Clayton's and the agents' edits and deletions stay
+    # as they are. Git decides whether to commit, so a run after a failed commit finishes it.
+    paths = [OWNED, *keeps]
     _git(vault, "add", "-A", "--", *paths)
     staged = subprocess.run(
-        [*GIT, "diff", "--cached", "--quiet", "--", *paths], check=False, cwd=vault
+        _cmd(vault, "diff", "--cached", "--quiet", "--", *paths), check=False, cwd=vault
     )
     if staged.returncode:
         _git(
             vault, "commit", "-q", "-m", f"Deploy {OWNED}/ from the repo", "--", *paths
         )
-    return "updated"
+        return "updated"
+    return "updated" if changed else "unchanged"
