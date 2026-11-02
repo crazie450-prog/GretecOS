@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from gregtec import cli, doctor
 
@@ -61,13 +64,14 @@ def make_instance(
     menu.mkdir(parents=True)
     (menu / "version.txt").write_text(f"GTNH {version} (2026-10-31)")
     mods = game / "mods"
-    for sub in ("1.7.10", "OpenSecurity/sounds/alarms", ".index"):
+    for sub in ("1.7.10", "OpenSecurity/sounds/alarms", ".index", "old"):
         (mods / sub).mkdir(parents=True)
     (mods / "gregtech-5.09.54.265.jar").write_bytes(b"gt")
     if lwjgl3ify:
         (mods / "lwjgl3ify-3.0.42.jar").write_bytes(b"l3")
     (mods / "OldMod.jar.disabled").write_bytes(b"old")
     (mods / "1.7.10" / "lib.jar").write_bytes(b"lib")
+    (mods / "old" / "ParkedMod.jar").write_bytes(b"parked")  # FML doesn't load it
     (mods / "OpenSecurity" / "sounds" / "alarms" / "klaxon1.ogg").write_bytes(b"ogg")
     (mods / ".index" / "gregtech.pw.toml").write_text("name = 'GT'")
     return inst
@@ -140,6 +144,7 @@ def test_survey_reads_both_builds(tmp_path: Path) -> None:
     assert play.problems == [] and old.problems == []
 
     mods = {m.file: m for m in play.mods}
+    # Not old/ParkedMod.jar: FML loads only mods/ and mods/1.7.10/.
     assert set(mods) == {
         "1.7.10/lib.jar",
         "OldMod.jar.disabled",
@@ -166,6 +171,69 @@ def test_disagreeing_versions_and_mixed_build_are_problems(tmp_path: Path) -> No
     problems = doctor.read_instance(inst, False, {}).problems
     assert any(p.startswith("pack version files disagree") for p in problems)
     assert "Java 8 components but an enabled lwjgl3ify jar: mixed build" in problems
+
+
+def test_lwjgl3ify_parked_in_a_subfolder_is_not_loaded(tmp_path: Path) -> None:
+    inst = make_instance(tmp_path / "instances", "X", JAVA8_PACK, lwjgl3ify=False)
+    (inst / ".minecraft" / "mods" / "old" / "lwjgl3ify-3.0.42.jar").write_bytes(b"l3")
+    found = doctor.read_instance(inst, False, {})
+    assert found.java_build == "java8"
+    assert found.problems == []
+    assert all(not m.file.startswith("old/") for m in found.mods)
+
+
+def test_overriding_instance_falls_back_to_global_java_per_key(tmp_path: Path) -> None:
+    prism_cfg = {"JavaPath": "C:/Prism/java/bin/javaw.exe", "JavaVersion": "25.0.5"}
+    instances = tmp_path / "instances"
+    # Override ticked with the prefilled global path: Prism stores no JavaPath/JavaVersion.
+    a = make_instance(
+        instances, "A", JAVA17_PACK, cfg="[General]\nOverrideJavaLocation=true\n"
+    )
+    found = doctor.read_instance(a, False, prism_cfg)
+    assert (found.java_path, found.java_version, found.java_source) == (
+        "C:/Prism/java/bin/javaw.exe",
+        "25.0.5",
+        "instance",
+    )
+    # Own path, but Prism skipped the Java check (same signature as the global one): no version.
+    b = make_instance(
+        instances,
+        "B",
+        JAVA17_PACK,
+        cfg="[General]\nOverrideJavaLocation=true\nJavaPath=C:/Java/jdk/bin/javaw.exe\n",
+    )
+    found = doctor.read_instance(b, False, prism_cfg)
+    assert (found.java_path, found.java_version, found.java_source) == (
+        "C:/Java/jdk/bin/javaw.exe",
+        "25.0.5",
+        "instance",
+    )
+
+
+def test_java_build_only_for_minecraft_1_7_10(tmp_path: Path) -> None:
+    forge_1165 = {
+        "components": [
+            {"uid": "org.lwjgl3", "version": "3.2.2", "dependencyOnly": True},
+            {"uid": "net.minecraft", "version": "1.16.5", "important": True},
+            {"uid": "net.minecraftforge", "version": "36.2.39"},
+        ],
+        "formatVersion": 1,
+    }
+    inst = make_instance(tmp_path / "instances", "Forge", forge_1165, lwjgl3ify=False)
+    assert doctor.read_instance(inst, False, {}).java_build == "n/a"
+
+
+def test_bom_and_unparsable_instance_cfg(tmp_path: Path) -> None:
+    inst = make_instance(tmp_path / "instances", "X", JAVA8_PACK, lwjgl3ify=False)
+    cfg = inst / "instance.cfg"
+    cfg.write_bytes(
+        b"\xef\xbb\xbf[General]\r\nname=Old world\r\nOverrideJavaLocation=false\r\n"
+    )
+    found = doctor.read_instance(inst, False, {})
+    assert (found.name, found.gtnh, found.problems) == ("Old world", True, [])
+    cfg.write_text("[General]\nthis line is not a key\n")
+    [problem] = doctor.read_instance(inst, False, {}).problems
+    assert problem.startswith("instance.cfg unreadable:")
 
 
 def test_userdata_portable_and_installed_copies(tmp_path: Path) -> None:
@@ -237,11 +305,131 @@ def test_nothing_found_is_not_green(tmp_path: Path) -> None:
     assert "open: no GTNH-Play instance found yet" in out.getvalue()
 
 
-def test_instance_without_game_dir_is_a_problem(tmp_path: Path) -> None:
+def test_instance_not_launched_yet_is_not_a_problem(tmp_path: Path) -> None:
+    # A new Prism instance has only instance.cfg and mmc-pack.json until its first launch.
     root = make_prism(tmp_path / "Prism")
-    broken = root / "instances" / "Broken"
-    broken.mkdir()
-    (broken / "instance.cfg").write_text("name=Broken\n")
+    new = root / "instances" / "New"
+    new.mkdir()
+    (new / "instance.cfg").write_text("name=New\n")
+    (new / "mmc-pack.json").write_text(
+        json.dumps({"components": [{"uid": "net.minecraft", "version": "1.20.1"}]})
+    )
     out = io.StringIO()
-    assert doctor.main([root], tmp_path / "home", False, out) == 1
-    assert "problem: no minecraft or .minecraft folder" in out.getvalue()
+    code = doctor.main([root], tmp_path / "home", False, out)
+    text = out.getvalue()
+    assert code == 0, text
+    assert (
+        "New\tnot GTNH\tpack=?\tjava=n/a\tgame=? (not launched yet)\tmods=0 enabled, 0 disabled"
+        in text
+    )
+    assert "problem:" not in text
+
+
+def test_gos_dev_cannot_see_prisms_own_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Plan 4.6: gos-dev may read instances\ but nothing else in the Prism root, not even a stat.
+    root = make_prism(tmp_path / "Prism")
+    real_stat = Path.stat
+
+    def stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if self.parent == root and self.name != "instances" and os.path.lexists(self):
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    out = io.StringIO()
+    code = doctor.main([root], tmp_path / "home", False, out)
+    text = out.getvalue()
+    assert code == 0, text  # notes are not problems
+    assert f"Prism (portable): {root}\n" in text
+    assert (
+        "  note: can't read Prism's own settings (running as gos-dev?); global Java unknown"
+        in text
+    )
+    assert "runs on: ? (version unknown; global setting)" in text  # GTNH-Play
+    env = json.loads((tmp_path / "home" / "data" / "env.json").read_text())
+    [prism] = env["prism_roots"]
+    assert {i["folder_name"] for i in prism["instances"]} == {"GTNH-Play", "GTNH-Old"}
+    assert len(prism["notes"]) == 2
+
+
+def test_unreadable_instance_files_are_problems(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_prism(tmp_path / "Prism")
+    old_cfg = root / "instances" / "GTNH-Old" / "instance.cfg"
+    gt_jar = root / "instances/GTNH-Play/.minecraft/mods/gregtech-5.09.54.265.jar"
+    real_read_text, real_sha256_file = doctor.read_text, doctor.sha256_file
+
+    def read_text(path: Path, encoding: str = "utf-8") -> str:
+        if path == old_cfg:
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_read_text(path, encoding)
+
+    def sha256_file(path: Path) -> str:
+        if path == gt_jar:
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_sha256_file(path)
+
+    monkeypatch.setattr(doctor, "read_text", read_text)
+    monkeypatch.setattr(doctor, "sha256_file", sha256_file)
+    [prism] = doctor.survey([root])
+    by_folder = {i.folder_name: i for i in prism.instances}
+    play, old = by_folder["GTNH-Play"], by_folder["GTNH-Old"]
+    [problem] = old.problems
+    assert problem.startswith("instance.cfg unreadable:")
+    # The rest of the instance is still read.
+    assert (old.java_build, old.game_dir) == ("java8", "minecraft")
+    [problem] = play.problems
+    assert problem.startswith("mods/gregtech-5.09.54.265.jar unreadable:")
+    assert {m.file for m in play.mods} == {
+        "1.7.10/lib.jar",
+        "OldMod.jar.disabled",
+        "lwjgl3ify-3.0.42.jar",
+    }
+
+
+@pytest.mark.parametrize(
+    ("denied", "expected"),
+    [
+        ("instance.cfg", "instance.cfg unreadable:"),
+        ("minecraft", "game folder unreadable:"),
+    ],
+)
+def test_instance_that_cant_be_statted_is_a_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, denied: str, expected: str
+) -> None:
+    # Python 3.12's is_file()/is_dir() re-raise EACCES: one such path must not stop the survey.
+    root = make_prism(tmp_path / "Prism")
+    target = root / "instances" / "GTNH-Old" / denied
+    real_stat, real_read_text = Path.stat, doctor.read_text
+
+    def blocked(path: Path) -> bool:
+        return path == target or target in path.parents
+
+    def stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if blocked(self):
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    def read_text(path: Path, encoding: str = "utf-8") -> str:
+        if blocked(path):
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_read_text(path, encoding)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(doctor, "read_text", read_text)
+    out = io.StringIO()
+    code = doctor.main([root], tmp_path / "home", False, out)
+    text = out.getvalue()
+    assert code == 1, text
+    assert f"    problem: {expected}" in text
+    assert "not launched yet" not in text
+    env = json.loads((tmp_path / "home" / "data" / "env.json").read_text())
+    [prism] = env["prism_roots"]
+    by_folder = {i["folder_name"]: i for i in prism["instances"]}
+    assert set(by_folder) == {"GTNH-Play", "GTNH-Old"}
+    assert by_folder["GTNH-Play"]["problems"] == []
+    [problem] = by_folder["GTNH-Old"]["problems"]
+    assert problem.startswith(expected)

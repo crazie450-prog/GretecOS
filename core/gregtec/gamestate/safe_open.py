@@ -1,8 +1,16 @@
 """Read game files without getting in the game's way (plan section 5.5, PM13, CLAUDE.md).
 
-On Windows a plain ``open()`` doesn't allow delete sharing, so while GOS holds a file the game's
-save-by-rename (``level.dat_new`` -> ``level.dat``) fails. :func:`safe_open` opens read-only with
-read, write *and* delete sharing. Open, read and close straight away; never hold a handle.
+On Windows a plain ``open()`` doesn't allow delete sharing, so while GOS holds a file the game
+can't rename it. :func:`safe_open` opens read-only with read, write *and* delete sharing. That
+lets the game rename a file GOS holds out of the way: vanilla's save (``level.dat`` ->
+``level.dat_old``, then ``level.dat_new`` -> ``level.dat``) and the log4j log rollover.
+
+It does not let the game replace a file GOS holds. GTNH 2.9.0 saves through Hodgepodge and
+BetterQuesting: they write a temp file, then ``Files.move(ATOMIC_MOVE, REPLACE_EXISTING)`` onto
+the target. That is ``MoveFileExW(MOVEFILE_REPLACE_EXISTING)``, which Windows refuses while any
+handle to the target is open, whatever its sharing. For 2.9.0 the protection is that
+:func:`read_bytes` holds a file only for the read, and Hodgepodge retries on the next autosave.
+Open, read and close straight away; never hold a handle.
 """
 
 from __future__ import annotations
