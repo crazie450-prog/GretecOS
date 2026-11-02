@@ -130,7 +130,7 @@ if (-not $dev) {
         if ((& $plain $DevPassword) -cne (& $plain $again)) { throw 'The passwords did not match; nothing changed.' }
     }
     $dev = New-LocalUser -Name $DevUser -Password $DevPassword -PasswordNeverExpires `
-        -Description 'GregtecOS: Claude Code development account (D75). No access to Play.'
+        -Description 'GregtecOS Claude Code dev account (D75)'   # 48 characters at most
     Write-Host "    created $DevUser"
 }
 $DevSid = $dev.SID
