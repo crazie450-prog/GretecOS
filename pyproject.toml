@@ -1,0 +1,28 @@
+[project]
+name = "gregtec-os"
+version = "0.0.0"
+description = "Local voice assistant and planning suite for GT New Horizons 2.9."
+# PM01: Python 3.12, because Kokoro and RealtimeSTT need <3.13.
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2",
+    # Ruff changed its default rule set in 0.16 and 0.17; take minor bumps on purpose.
+    "ruff>=0.17.3,<0.18",
+]
+
+[tool.ruff]
+# Ruff formats Python blocks inside Markdown by default; keep it off CLAUDE.md, README.md and docs/.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Ruff's default rules plus flake8-annotations, for "type hints everywhere" (CLAUDE.md).
+extend-select = ["ANN"]
+
+[tool.pytest]
+testpaths = ["tests"]
+# importlib mode lets tests/unit, tests/security, ... share file names without __init__.py files.
+addopts = ["--import-mode=importlib"]
+strict = true
