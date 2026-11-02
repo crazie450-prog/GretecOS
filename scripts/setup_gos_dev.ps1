@@ -315,7 +315,8 @@ New-Dir $PrismRoot; Set-ProtectedAcl $PrismRoot $ownerFull
 New-Item -ItemType File -Force -Path $prismMarker | Out-Null
 
 # ---------------------------------------------------------------- 3. Prism and instances
-if (-not $SkipPrismDownload -and -not (Test-Path -LiteralPath (Join-Path $PrismRoot 'prismlauncher.exe'))) {
+$prismExe = Join-Path $PrismRoot 'prismlauncher.exe'
+if (-not $SkipPrismDownload -and -not (Test-Path -LiteralPath $prismExe)) {
     Write-Step "Portable Prism Launcher $PrismVersion"
     $zip = Join-Path $env:TEMP "PrismLauncher-$PrismVersion-portable.zip"
     $ProgressPreference = 'SilentlyContinue'
@@ -324,9 +325,21 @@ if (-not $SkipPrismDownload -and -not (Test-Path -LiteralPath (Join-Path $PrismR
         Remove-Item -LiteralPath $zip -Force
         throw 'Prism download failed its SHA256 check; nothing was extracted.'
     }
-    Expand-Archive -LiteralPath $zip -DestinationPath $PrismRoot -Force
+    # Extract inside the protected root, check, then move into place, so an interrupted extract
+    # can't leave a prismlauncher.exe without its portable.txt.
+    $staging = Join-Path $PrismRoot '.gos-staging'
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    Expand-Archive -LiteralPath $zip -DestinationPath $staging -Force
     Remove-Item -LiteralPath $zip -Force
-    if (-not (Test-Path -LiteralPath (Join-Path $PrismRoot 'portable.txt'))) { throw 'portable.txt missing after extract.' }
+    foreach ($name in 'prismlauncher.exe', 'portable.txt') {
+        if (-not (Test-Path -LiteralPath (Join-Path $staging $name))) { throw "$name missing from the Prism zip; nothing was installed." }
+    }
+    Get-ChildItem -LiteralPath $staging -Force | Move-Item -Destination $PrismRoot -Force
+    Remove-Item -LiteralPath $staging -Recurse -Force
+}
+# Without portable.txt next to the exe, Prism silently uses %APPDATA%\PrismLauncher instead.
+if ((Test-Path -LiteralPath $prismExe) -and -not (Test-Path -LiteralPath (Join-Path $PrismRoot 'portable.txt'))) {
+    throw "portable.txt is missing next to $prismExe, so Prism would not run portable. Create it (an empty file) and re-run."
 }
 
 $instances = Join-Path $PrismRoot 'instances'
@@ -434,6 +447,9 @@ foreach ($path in $writable) {
 foreach ($path in $installs) {
     Write-Check (-not ((Get-DevAccess $path).Mask -band $WriteMask)) 'read' $path 'existing install, not changed by this script'
 }
+# A Claude Code policy in HKLM outranks the policy files, and Claude Code then ignores this drop-in.
+$hklmPolicy = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\ClaudeCode' -Name Settings -ErrorAction SilentlyContinue
+Write-Check (-not $hklmPolicy) 'rules' $dropIn $(if ($hklmPolicy) { 'HKLM\SOFTWARE\Policies\ClaudeCode has a Settings value, so Claude Code ignores this file' } else { 'no HKLM Claude Code policy overrides it' })
 
 if ($failed) { Write-Host 'gos-dev can change or reach something it must not (see FAIL lines).' -ForegroundColor Red; exit 1 }
 Write-Step "Done. Next: sign in as $DevUser once, then follow the PR's steps."

@@ -32,4 +32,4 @@ jobs:
         env:
           # WO-0.8: lets tests/security/test_gos_dev_setup.py create a user and change ACLs.
           # Only the ephemeral Windows runner sets it; never set it on a real PC.
-          GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && '1' || '' }}
+          GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && runner.environment == 'github-hosted' && '1' || '' }}

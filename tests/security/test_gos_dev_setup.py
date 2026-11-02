@@ -2,13 +2,15 @@
 
 This is destructive: it creates a local user, changes ACLs, writes a Claude Code managed-settings
 drop-in and registers a scheduled task. It runs only on the GitHub Actions Windows runner, which is
-an ephemeral VM, when GITHUB_ACTIONS=true and GOS_ISOLATION_CI=1. It never runs on Clayton's PC.
+an ephemeral VM: GitHub-hosted (RUNNER_ENVIRONMENT), not act, and with GOS_ISOLATION_CI=1, which only
+the Windows job of ci.yml sets. Everything it creates has a random tag, and teardown removes only that.
 """
 
 from __future__ import annotations
 
 import contextlib
 import ctypes
+import dataclasses
 import json
 import os
 import secrets
@@ -20,22 +22,26 @@ import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from conftest import Probe
 
 pytestmark = pytest.mark.skipif(
     not (
         sys.platform == "win32"
         and os.environ.get("GITHUB_ACTIONS") == "true"
+        and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
+        and "ACT" not in os.environ
         and os.environ.get("GOS_ISOLATION_CI") == "1"
     ),
     reason="destructive: runs only on the GitHub Actions Windows runner with GOS_ISOLATION_CI=1",
 )
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-MANAGED = Path(r"C:\Program Files\ClaudeCode\managed-settings.d")
 LOGON32_LOGON_INTERACTIVE = 2
-LOGON32_LOGON_NETWORK = 3
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,9 @@ class Setup:
     prism: Path
     home: Path
     task: str
+    managed: (
+        Path  # a CI-only managed-settings folder, so teardown never touches a real one
+    )
 
     @property
     def instances(self) -> Path:
@@ -59,7 +68,8 @@ class Setup:
         args = (
             f"-DevUser '{self.user}' -AppRoot '{self.app}' -DevRoot '{self.dev}' "
             f"-PrismRoot '{self.prism}' -GosHome '{self.home}' -TaskName '{self.task}' "
-            f"-InstallScanRoots '{scan or self.scan}' -Yes "
+            f"-InstallScanRoots '{scan or self.scan}' "
+            f"-ManagedSettingsDir '{self.managed}' -Yes "
             "-DevPassword (ConvertTo-SecureString $env:GOS_CI_PASSWORD -AsPlainText -Force)"
         )
         return args if download else args + " -SkipPrismDownload"
@@ -122,10 +132,10 @@ def impersonate(user: str, password: str) -> Iterator[None]:
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     token = ctypes.c_void_p()
-    for logon_type in (LOGON32_LOGON_INTERACTIVE, LOGON32_LOGON_NETWORK):
-        if advapi32.LogonUserW(user, ".", password, logon_type, 0, ctypes.byref(token)):
-            break
-    else:
+    # Interactive, like a real gos-dev session (its token then carries INTERACTIVE, S-1-5-4).
+    if not advapi32.LogonUserW(
+        user, ".", password, LOGON32_LOGON_INTERACTIVE, 0, ctypes.byref(token)
+    ):
         raise ctypes.WinError(ctypes.get_last_error())
     try:
         if not advapi32.ImpersonateLoggedOnUser(token):
@@ -199,6 +209,7 @@ def cfg() -> Iterator[Setup]:
         prism=base / "games" / "PrismLauncher",
         home=Path.home() / f"gos-ci-home-{tag}",
         task=f"GregtecOS CI {tag}",
+        managed=Path(rf"C:\Program Files\ClaudeCode-ci-{tag}\managed-settings.d"),
     )
     setup.scan.mkdir()
     (base / "games").mkdir(
@@ -210,12 +221,13 @@ def cfg() -> Iterator[Setup]:
         setup.home,
         setup.source,
         setup.scan,
+        setup.managed.parent,
         Path(f"C:/gos-ci-{tag}-old"),
+        Path(f"C:/gos-ci-{tag}-pre"),
     ]
     powershell(
         f"Unregister-ScheduledTask -TaskPath '\\GregtecOS\\' -TaskName '{setup.task}' -Confirm:$false -ErrorAction SilentlyContinue; "
         f"Remove-LocalUser -Name '{setup.user}' -ErrorAction SilentlyContinue; "
-        f"Remove-Item -LiteralPath '{MANAGED / 'gregtec-os.json'}' -Force -ErrorAction SilentlyContinue; "
         f"foreach ($p in {', '.join(f"'{p}'" for p in leftovers)}) {{ if (Test-Path -LiteralPath $p) {{ "
         "icacls $p /reset /T /C /Q | Out-Null; Remove-Item -LiteralPath $p -Recurse -Force } }"
     )
@@ -278,7 +290,7 @@ def test_dev_user_access(installed: Setup) -> None:
             "GOS_HOME": can_write(c.home),
             "data": can_write(c.home / "data"),
             "backups/world": can_write(c.home / "backups" / "world"),
-            "managed settings": can_write(MANAGED),
+            "managed settings": can_write(c.managed),
         }
         reads = {
             "app script": can_read(c.app / "scripts" / "backup_world.ps1"),
@@ -286,7 +298,7 @@ def test_dev_user_access(installed: Setup) -> None:
                 c.instances / "GTNH-Play" / "minecraft" / "options.txt"
             ),
             "data file": can_read(c.home / "data" / "gos.sqlite"),
-            "managed drop-in": can_read(MANAGED / "gregtec-os.json"),
+            "managed drop-in": can_read(c.managed / "gregtec-os.json"),
             "accounts.json": can_read(c.prism / "accounts.json"),
             "prism root listing": can_read(c.prism),
             "GOS_HOME listing": can_read(c.home),
@@ -350,7 +362,7 @@ def test_dev_user_cannot_swap_folders(installed: Setup) -> None:
 
 
 def test_claude_code_deny_rules(installed: Setup) -> None:
-    raw = (MANAGED / "gregtec-os.json").read_bytes()
+    raw = (installed.managed / "gregtec-os.json").read_bytes()
     assert not raw.startswith(
         b"\xef\xbb\xbf"
     )  # a BOM would stop Claude Code starting at all
@@ -450,3 +462,78 @@ def test_reports_an_existing_install_the_dev_user_can_write(installed: Setup) ->
     assert f"FAIL  read   {instance}" in found.stdout
     assert "existing install, not changed by this script" in found.stdout
     assert sddl([instance]) == before  # reported, never changed
+
+
+def test_dev_user_cannot_open_protected_files_for_change(
+    installed: Setup, probe: Probe
+) -> None:
+    """Ask Windows for write, delete and change-permission rights on existing files and folders."""
+    read, write = probe.FILE_READ_DATA, probe.FILE_WRITE_DATA
+    delete, dac = probe.DELETE, probe.WRITE_DAC
+
+    c = installed
+    play = c.instances / "GTNH-Play" / "minecraft"
+    lab = c.instances / "GTNH-Lab" / "minecraft"
+    change = (write, delete, dac)
+    with impersonate(c.user, c.password):
+        files = {
+            "app script": c.app / "scripts" / "backup_world.ps1",
+            "Play file": play / "options.txt",
+            "drop-in": c.managed / "gregtec-os.json",
+            "data file": c.home / "data" / "gos.sqlite",
+            "world backup": c.home / "backups" / "world" / "2026-01-01-00-00-00.zip",
+            "accounts.json": c.prism / "accounts.json",
+        }
+        changeable = {k: [probe.can(f, a) for a in change] for k, f in files.items()}
+        readable = {k: probe.can(f, read) for k, f in files.items()}
+        folders = {
+            "base": c.base,
+            "prism parent": c.prism.parent,
+            "prism root": c.prism,
+            "app": c.app,
+            "Play": c.instances / "GTNH-Play",
+            "GOS_HOME": c.home,
+        }
+        movable = {k: probe.can(f, delete, folder=True) for k, f in folders.items()}
+        creatable = {
+            "Play": probe.can_create(play),
+            "app/scripts": probe.can_create(c.app / "scripts"),
+            "backups/world": probe.can_create(c.home / "backups" / "world"),
+            "Lab": probe.can_create(lab),
+        }
+        lab_file = probe.can(lab / "options.txt", write | delete)
+        dev_folder = probe.can(c.dev, delete, folder=True)
+    assert changeable == {k: [False, False, False] for k in files}
+    assert readable == {
+        "app script": True,
+        "Play file": True,
+        "drop-in": True,
+        "data file": True,
+        "world backup": False,
+        "accounts.json": False,
+    }
+    assert movable == dict.fromkeys(folders, False)
+    assert creatable == {
+        "Play": False,
+        "app/scripts": False,
+        "backups/world": False,
+        "Lab": True,
+    }
+    assert lab_file and dev_folder  # its own area and the Lab stay writable
+
+
+def test_refuses_an_existing_prism_folder(installed: Setup) -> None:
+    """A Prism folder the script didn't create counts as Play: stop before changing anything."""
+    pre = Path(str(installed.base) + "-pre") / "PrismLauncher"
+    pre.mkdir(parents=True)
+    (pre / "prismlauncher.cfg").write_text("InstanceDir=instances\n")
+    before = sddl([pre, pre / "prismlauncher.cfg"])
+    other = dataclasses.replace(installed, user=installed.user + "p", prism=pre)
+    refused = run_setup(other)
+    assert refused.returncode == 1
+    assert "wasn't created by this script" in refused.stdout
+    assert sddl([pre, pre / "prismlauncher.cfg"]) == before
+    no_user = powershell(
+        f"if (Get-LocalUser -Name '{other.user}' -ErrorAction SilentlyContinue) {{ exit 1 }}"
+    )
+    assert no_user.returncode == 0, f"{other.user} was created"
