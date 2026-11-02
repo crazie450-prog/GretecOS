@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from gregtec import doctor
+from gregtec.vault import deploy as vault_deploy
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -41,6 +43,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--no-hash", action="store_true", help="list mods without hashing them (faster)"
     )
 
+    vault = commands.add_parser("vault", help="vault tasks")
+    vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
+    dep = vault_cmds.add_parser(
+        "deploy",
+        help="create the vault from vault-template/, or re-deploy its _gos/",
+        description=(
+            "First run copies vault-template/ and runs git init. Later runs mirror only "
+            "_gos/ (repo-owned skills, agents, schema) and add missing folders; notes and "
+            "me/ are never touched."
+        ),
+    )
+    dep.add_argument(
+        "--vault",
+        type=Path,
+        default=None,
+        help="the live vault. Default: $GOS_HOME/vault, else ~/GregtecOS/vault.",
+    )
+    dep.add_argument(
+        "--template",
+        type=Path,
+        default=vault_deploy.DEFAULT_TEMPLATE,
+        help=argparse.SUPPRESS,
+    )
+
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return doctor.main(
@@ -49,6 +75,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             hash_mods=not args.no_hash,
             out=sys.stdout,
         )
+    if args.command == "vault" and args.vault_command == "deploy":
+        home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
+        target = args.vault or home / "vault"
+        print(f"{vault_deploy.deploy(target, args.template)}: {target}")
+        return 0
     parser.error(f"unknown command {args.command}")
     return 2
 
