@@ -288,6 +288,7 @@ CREATE VIRTUAL TABLE name_fts USING fts5(kind, ref_id UNINDEXED, name_en, name_z
 **5.5 Detecting changes and re-exporting**
 - **Where to look.** Prism's game root is `minecraft/` unless only `.minecraft/` exists. CONFIRMED [S44]. Prism disables a mod by appending `.disabled` to the file name. CONFIRMED [S45].
 - **Pack version.** Read `S:ModPackVersion=` in `config/GTNewHorizons/dreamcraft.cfg` and `displayedModpackVersion=` in `config/DreamCoreMod.properties`. The pack builder writes both. CONFIRMED [S46][S47]. Trust jar hashes over this string.
+  - *Correction 2026-11-03 (PR #4 source check):* the modpack repo's own `2.9.0` tag holds the placeholder `S:ModPackVersion=2.9.x`, which is also the coremod's default. Only the built Prism zips carry `2.9.0`. Treat `2.9.x` as unknown. Source: https://raw.githubusercontent.com/GTNewHorizons/GT-New-Horizons-Modpack/2.9.0/config/GTNewHorizons/dreamcraft.cfg
 - **Fingerprint** = sha256 over sorted `relpath \t sha256` lines for:
   - every enabled `*.jar`/`*.zip` under `mods/`, recursively (covers `mods/1.7.10/`; whether FML scans that folder is UNCERTAIN, so hash it anyway);
   - `scripts/**/*.zs`;
