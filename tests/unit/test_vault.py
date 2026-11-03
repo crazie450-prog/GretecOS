@@ -60,7 +60,7 @@ def test_glossary_seed() -> None:
     terms = [r[0].lower() for r in rows[1:]]
     assert len(terms) == len(set(terms))
     # removed: gone from 2.9.0 (PA), kept so the assistant can say so
-    kinds = {"tier", "machine", "material", "item", "mod", "removed"}
+    kinds = {"tier", "machine", "material", "item", "mod", "removed", "line"}
     assert {r[2] for r in rows[1:]} == kinds
     tiers = [r for r in rows[1:] if r[2] == "tier"]
     assert [r[0] for r in tiers] == TIERS
