@@ -4,7 +4,11 @@ version = "0.0.0"
 description = "Local voice assistant and planning suite for GT New Horizons 2.9."
 # PM01: Python 3.12, because Kokoro and RealtimeSTT need <3.13.
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "anthropic>=2.4.0",
+    "claude-agent-sdk>=0.2.176",
+    "keyring>=25.7.0",
+]
 
 [project.scripts]
 gos = "gregtec.cli:main"
