@@ -15,7 +15,8 @@
        rename it and swap in a tree of its own.
     3. Installs portable Prism Launcher (pinned, SHA256-checked) and sets instance permissions:
        instances\ and GTNH-Play read-only for gos-dev, GTNH-Export and GTNH-Lab modify.
-    4. Sets Clayton's GOS_HOME: data\ readable by gos-dev, everything else not at all.
+    4. Sets Clayton's GOS_HOME: data\, vault\ and logs\ readable by gos-dev (D82), everything
+       else not at all.
     5. Writes Claude Code deny rules as a managed-settings drop-in (a second layer only).
     6. Copies itself and backup_world.ps1 into GOS_APP\scripts (stand-in for `gos deploy`).
     7. Registers the world backup task (runs as Clayton, S4U: no stored password, no window).
@@ -355,10 +356,17 @@ foreach ($inst in Get-ChildItem -LiteralPath $instances -Directory) {
 $data = Join-Path $GosHome 'data'
 $worldBackups = Join-Path $GosHome 'backups\world'
 $logs = Join-Path $GosHome 'logs'
+$vault = Join-Path $GosHome 'vault'
 foreach ($dir in @($GosHome, $data, $worldBackups, $logs)) { New-Dir $dir }
 Set-ExplicitGrant $GosHome $DevSid $null
-Set-ExplicitGrant $data $DevSid $ReadExec
 Set-ExplicitGrant $worldBackups $DevSid $null
+# Read only for gos-dev (plan 4.6, D82). `gos vault deploy` makes the vault and refuses a folder it
+# didn't make, so the vault is granted once it exists: re-run this script after deploying it.
+$readable = @($data, $logs) + @(@($vault) | Where-Object { Test-Path -LiteralPath $_ })
+foreach ($dir in $readable) { Set-ExplicitGrant $dir $DevSid $ReadExec }
+if (-not (Test-Path -LiteralPath $vault)) {
+    Write-Host "    $vault doesn't exist yet: after 'gos vault deploy', re-run this script so $DevUser can read it"
+}
 
 # ---------------------------------------------------------------- 5. Claude Code deny rules
 Write-Step 'Claude Code managed settings (deny rules, second layer)'
@@ -423,10 +431,9 @@ $trees = @(
     @{ Path = $AppRoot; Want = 'read'; Skip = @() },
     @{ Path = $PrismRoot; Want = 'none'; Skip = @($instances) },
     @{ Path = $instances; Want = 'read'; Skip = $writable },
-    @{ Path = $GosHome; Want = 'none'; Skip = @($data) },
-    @{ Path = $data; Want = 'read'; Skip = @() },
+    @{ Path = $GosHome; Want = 'none'; Skip = $readable },
     @{ Path = $ManagedSettingsDir; Want = 'read'; Skip = @() }
-)
+) + @($readable | ForEach-Object { @{ Path = $_; Want = 'read'; Skip = @() } })
 foreach ($tree in $trees) {
     $bad = @(); $count = 0
     foreach ($item in Get-Tree $tree.Path $tree.Skip) {
