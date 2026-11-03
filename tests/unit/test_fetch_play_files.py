@@ -202,6 +202,7 @@ def test_real_pins() -> None:
         "TwistSpaceTechnology-0.8.0.jar",
         "programmablehatches-0.2.1p0.jar",
         "worldedit-v0.0.10.jar",
+        "plannh-0.1.9.jar",
     ]
     for name, url, _ in pins:
         assert url.startswith("https://") and url.endswith("/" + name)

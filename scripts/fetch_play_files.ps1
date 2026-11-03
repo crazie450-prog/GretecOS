@@ -60,16 +60,17 @@ $Addons = @(
     # worldedit-gtnh v0.0.10, the latest (plan 5.1). Issue #30 (meta > 15) only matters when using it.
     @{ name = 'worldedit-v0.0.10.jar'
         url = 'https://github.com/GTNewHorizons/worldedit-gtnh/releases/download/v0.0.10/worldedit-v0.0.10.jar'
-        sha256 = '4904a6d7e29e53afaf28d99a50ce4b946b429d174fecd0563e7787e9c8ef481f' }
+        sha256 = '4904a6d7e29e53afaf28d99a50ce4b946b429d174fecd0563e7787e9c8ef481f' },
+    # PlanNH 0.1.9 (2026-10-22), client-only planner (F8). Clayton chose to include it (D88).
+    @{ name = 'plannh-0.1.9.jar'
+        url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar'
+        sha256 = 'a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb' }
 )
 # Left out on purpose:
 # - GT-Not-Leisure and GTNLLib: no versioned release contains 28007498 (plan 13.1, D02). The rolling
 #   "dev-build" asset is replaced on every push, so it can't be pinned.
 # - 123Technology 2.2.0.1: built against 2.9.0-RC-2; the stable port is merged but not released.
 #   Nobody knows yet whether it loads on stable.
-# - PlanNH 0.1.9: safe, but optional and not in plan 5.1's Play list; it waits on Clayton's answer.
-#   Pin if wanted: https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar
-#   sha256 a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb
 
 try {
     $files = if ($Manifest) { Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json } else { @($Zips[$Build]) + $Addons }
