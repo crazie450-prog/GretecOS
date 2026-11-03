@@ -123,6 +123,7 @@ The Forge 1.7.10 `log4j2.xml` is what GTNH runs; the last change was in 2017 and
 - **Consequence:** vanilla `[CHAT]` lines are in `latest.log`, and mod log lines (BQ, GT, BetterCrashes) are in `fml-client-latest.log`. Inferred from the config. UNCERTAIN until checked on a real GTNH log, since the classpath order of `log4j2.xml` under lwjgl3ify/RFB was not verified.
 - GTNH's own crash template asks for `logs/fml-client-latest.log` / `fml-server-latest.log`, which is consistent with the above. CONFIRMED: https://github.com/GTNewHorizons/GT-New-Horizons-Modpack/blob/master/.github/ISSUE_TEMPLATE/000-report-crash.yml
 - The GTNH Java 17+ Prism instance launches Forge 10.13.4.1614 through `com.gtnewhorizons.retrofuturabootstrap.Main`. CONFIRMED: https://github.com/GTNewHorizons/lwjgl3ify/blob/master/prism-libraries/patches/net.minecraftforge.json
+  - *Correction 2026-11-03 (PR #4 source check):* that file's `mainClass` is only half the story. The 2.9.0 Java 17–26 zip also ships `patches/me.eigenraven.lwjgl3ify.launchargs.json` (order 100), which sets `mainClass` to `com.gtnewhorizons.retrofuturabootstrap.MainStartOnFirstThread`. Which of the two Prism ends up using wasn't checked: UNCERTAIN. Source: https://github.com/GTNewHorizons/lwjgl3ify/tree/3.0.42/prism-libraries/patches
 
 ### 2.2 Useful lines
 
