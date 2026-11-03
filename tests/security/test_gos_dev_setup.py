@@ -238,6 +238,7 @@ def installed(cfg: Setup) -> Setup:
     first = run_setup(cfg, download=True)
     assert first.returncode == 0, first.stdout + first.stderr
     assert "FAIL" not in first.stdout
+    assert "vault doesn't exist yet" in first.stdout  # granted on the re-run below
     # What WO-0.7 / WO-0.3 and Prism itself would create later, as Clayton.
     for name in ("GTNH-Play", "GTNH-Export", "GTNH-Lab"):
         (cfg.instances / name / "minecraft").mkdir(parents=True)
@@ -247,6 +248,9 @@ def installed(cfg: Setup) -> Setup:
     (cfg.prism / "accounts.json").write_text('{"accounts": []}')
     (cfg.home / "data" / "gos.sqlite").write_bytes(b"SQLite format 3\x00")
     (cfg.home / "backups" / "world" / "2026-01-01-00-00-00.zip").write_bytes(b"PK")
+    (cfg.home / "vault" / "me").mkdir(parents=True)  # what gos vault deploy makes
+    (cfg.home / "vault" / "me" / "goals.md").write_text("---\nid: me-goals\n")
+    (cfg.home / "logs" / "core.log").write_text("started\n")
     second = run_setup(cfg)
     assert second.returncode == 0, second.stdout + second.stderr
     return cfg
@@ -266,6 +270,8 @@ def test_rerun_is_idempotent(installed: Setup) -> None:
         installed.prism,
         installed.instances,
         installed.home / "data",
+        installed.home / "vault",
+        installed.home / "logs",
     ]
     paths += [installed.instances / n for n in ("GTNH-Play", "GTNH-Export", "GTNH-Lab")]
     before = sddl(paths)
@@ -289,6 +295,9 @@ def test_dev_user_access(installed: Setup) -> None:
             "Lab": can_write(c.instances / "GTNH-Lab" / "minecraft"),
             "GOS_HOME": can_write(c.home),
             "data": can_write(c.home / "data"),
+            "vault": can_write(c.home / "vault"),
+            "vault/me": can_write(c.home / "vault" / "me"),
+            "logs": can_write(c.home / "logs"),
             "backups/world": can_write(c.home / "backups" / "world"),
             "managed settings": can_write(c.managed),
         }
@@ -298,6 +307,9 @@ def test_dev_user_access(installed: Setup) -> None:
                 c.instances / "GTNH-Play" / "minecraft" / "options.txt"
             ),
             "data file": can_read(c.home / "data" / "gos.sqlite"),
+            "vault note": can_read(c.home / "vault" / "me" / "goals.md"),
+            "vault listing": can_read(c.home / "vault"),
+            "log file": can_read(c.home / "logs" / "core.log"),
             "managed drop-in": can_read(c.managed / "gregtec-os.json"),
             "accounts.json": can_read(c.prism / "accounts.json"),
             "prism root listing": can_read(c.prism),
@@ -318,6 +330,9 @@ def test_dev_user_access(installed: Setup) -> None:
         "Lab": True,
         "GOS_HOME": False,
         "data": False,
+        "vault": False,
+        "vault/me": False,
+        "logs": False,
         "backups/world": False,
         "managed settings": False,
     }
@@ -325,6 +340,9 @@ def test_dev_user_access(installed: Setup) -> None:
         "app script": True,
         "Play options": True,
         "data file": True,
+        "vault note": True,
+        "vault listing": True,
+        "log file": True,
         "managed drop-in": True,
         "accounts.json": False,
         "prism root listing": False,
@@ -481,6 +499,8 @@ def test_dev_user_cannot_open_protected_files_for_change(
             "Play file": play / "options.txt",
             "drop-in": c.managed / "gregtec-os.json",
             "data file": c.home / "data" / "gos.sqlite",
+            "vault note": c.home / "vault" / "me" / "goals.md",
+            "log file": c.home / "logs" / "core.log",
             "world backup": c.home / "backups" / "world" / "2026-01-01-00-00-00.zip",
             "accounts.json": c.prism / "accounts.json",
         }
@@ -499,6 +519,8 @@ def test_dev_user_cannot_open_protected_files_for_change(
             "Play": probe.can_create(play),
             "app/scripts": probe.can_create(c.app / "scripts"),
             "backups/world": probe.can_create(c.home / "backups" / "world"),
+            "vault": probe.can_create(c.home / "vault"),
+            "logs": probe.can_create(c.home / "logs"),
             "Lab": probe.can_create(lab),
         }
         lab_file = probe.can(lab / "options.txt", write | delete)
@@ -509,6 +531,8 @@ def test_dev_user_cannot_open_protected_files_for_change(
         "Play file": True,
         "drop-in": True,
         "data file": True,
+        "vault note": True,
+        "log file": True,
         "world backup": False,
         "accounts.json": False,
     }
@@ -517,6 +541,8 @@ def test_dev_user_cannot_open_protected_files_for_change(
         "Play": False,
         "app/scripts": False,
         "backups/world": False,
+        "vault": False,
+        "logs": False,
         "Lab": True,
     }
     assert lab_file and dev_folder  # its own area and the Lab stay writable

@@ -91,6 +91,25 @@ def test_world_backups_are_closed(probe: Probe, clayton_home: Path) -> None:
     assert not probe.can_create(backups)
 
 
+def test_vault_and_logs_are_read_only(probe: Probe, clayton_home: Path) -> None:
+    """D82: gos-dev may read Clayton's vault\\ and logs\\, never change them."""
+    folders = [clayton_home / d for d in ("vault", "logs")]
+    present = [f for f in folders if f.is_dir()]
+    if not present:
+        pytest.skip("no vault or logs folder yet")
+    files = [
+        p
+        for f in present
+        for p in sorted(f.rglob("*.md"))[:2] + sorted(f.glob("*.log"))[:2]
+    ]
+    assert_read_only(probe, files)
+    for folder in present:
+        assert probe.can(folder, probe.FILE_READ_DATA, folder=True), (
+            f"can't list {folder}"
+        )
+        assert not probe.can_create(folder)
+
+
 def test_prism_root_is_closed(probe: Probe) -> None:
     assert not probe.can(PRISM, probe.FILE_READ_DATA, folder=True)
     accounts = PRISM / "accounts.json"
