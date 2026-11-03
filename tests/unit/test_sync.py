@@ -347,13 +347,15 @@ def test_config_defaults_and_overrides(
     config.default_path().write_text(
         '[paths]\nprism_instances = "D:/Prism/instances"\nexport = "Exp"\n'
         '[sync.lab]\nexclude = ["config/test-only*"]\n'
+        '[sync.export]\nexclude = ["config/export-only.cfg"]\n'
         "[core]\nport = 8765\n"  # other sections are read by later WOs
     )
     cfg = config.load()
     assert cfg.instance("export") == Path("D:/Prism/instances/Exp")
     assert cfg.play == "GTNH-Play"
+    # A custom list adds to the defaults, so Export's NEI exclude can't be dropped by accident.
     assert cfg.sync_exclude == {
-        "export": config.DEFAULT_SYNC_EXCLUDE["export"],
+        "export": (*config.DEFAULT_SYNC_EXCLUDE["export"], "config/export-only.cfg"),
         "lab": ("config/test-only*",),
     }
 

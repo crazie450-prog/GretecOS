@@ -8,8 +8,8 @@
 | [sync.lab] exclude       | nothing                                  | sync           |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
-``exclude`` list replaces its default, so keep the NEI and GregtecLink patterns when you add to
-``[sync.export]``. Each pattern is posix, relative to the game folder and starts in a mirrored
+``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
+accident (Clayton, 2026-11-03). Each pattern is posix, relative to the game folder and starts in a mirrored
 folder (``config/lab-only.cfg``); one that could never match is an error, since sync would then
 delete the file it was meant to keep. Every other key in the Appendix C skeleton is ignored until
 its WO reads it.
@@ -106,13 +106,16 @@ def load(path: Path | None = None) -> Config:
     sync = _table(data, "sync", "")
     exclude: dict[str, tuple[str, ...]] = {}
     for role, default in DEFAULT_SYNC_EXCLUDE.items():
-        patterns = _table(sync, role, "sync.").get("exclude", list(default))
+        patterns = _table(sync, role, "sync.").get("exclude", [])
         if not isinstance(patterns, list) or not all(
             isinstance(p, str) and p for p in patterns
         ):
             raise ConfigError(
                 f"gos.toml: [sync.{role}] exclude must be a list of non-empty strings"
             )
+        patterns = list(
+            dict.fromkeys([*default, *patterns])
+        )  # defaults first, no repeats
         for p in patterns:
             if not _matchable(p):
                 raise ConfigError(
