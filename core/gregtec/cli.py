@@ -136,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _key(command: str, name: str | None) -> int:
     if command == "status":
-        print(f"keyring backend: {keyring.get_keyring()}")
+        print(f"keyring backend: {', '.join(keys.backend_chain())}")
         for each in keys.NAMES:
             print(f"{each}: {'stored' if keys.has_key(each) else 'not stored'}")
         return 0

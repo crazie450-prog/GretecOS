@@ -166,10 +166,30 @@ def test_key_command_reports_keyring_errors(
     assert "keyring error: No recommended backend" in capsys.readouterr().err
 
 
+def test_backend_chain_names_where_keys_go(monkeypatch: pytest.MonkeyPatch) -> None:
+    class WinVaultKeyring:
+        pass
+
+    class OtherKeyring:
+        pass
+
+    class ChainerBackend:
+        backends = (WinVaultKeyring(), OtherKeyring())
+
+    monkeypatch.setattr(keys.keyring, "get_keyring", ChainerBackend)
+    assert keys.backend_chain() == ["WinVaultKeyring", "OtherKeyring"]
+    monkeypatch.setattr(keys.keyring, "get_keyring", WinVaultKeyring)
+    assert keys.backend_chain() == ["WinVaultKeyring"]
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Credential Manager")
 def test_windows_credential_manager_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     # The real default backend, under a service name of its own so it can't touch the real entry.
-    assert type(keyring.get_keyring()).__name__ == "WinVaultKeyring"
+    # keyring may wrap it in ChainerBackend; either way the key must land in Credential Manager.
+    chain = keys.backend_chain()
+    assert chain[0] == "WinVaultKeyring", (
+        f"{type(keyring.get_keyring()).__name__}: {chain}"
+    )
     monkeypatch.setattr(keys, "SERVICE", "gregtec-os-pytest")
     target = "gregtec-os-pytest/anthropic"
     # Where WinVaultKeyring.set_password copies a credential it is about to overwrite.

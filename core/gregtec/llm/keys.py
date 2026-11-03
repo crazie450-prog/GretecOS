@@ -27,6 +27,17 @@ class MissingKeyError(LookupError):
         )
 
 
+def backend_chain() -> list[str]:
+    """The keyring backends in the order they are tried, by class name.
+
+    keyring picks ``ChainerBackend`` when more than one backend is usable; it then reads and
+    writes through those backends in priority order, so the first one is where a key goes.
+    """
+    backend = keyring.get_keyring()
+    chained = getattr(backend, "backends", None)
+    return [type(b).__name__ for b in chained] if chained else [type(backend).__name__]
+
+
 def target(name: str) -> str:
     """The keyring service (the Credential Manager target name) that holds ``name``."""
     return f"{SERVICE}/{name}"
