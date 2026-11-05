@@ -12,12 +12,17 @@ only what needs the live game: registry names, ore names, display names and GT's
   or the UTC time `YYYYMMDDTHHMMSSZ`; an existing name gets `-2`, `-3`, ...
 - Files are written into `<run_id>.partial/`. `manifest.json` is written last; then the folder is renamed to
   `<run_id>/`. A run whose part failed is still renamed, with `"complete": false`.
+- The rename is tried 3 times, waiting 1 s and then 2 s, because on Windows a virus scanner or the indexer often still
+  holds a file that was just written. If all 3 fail, the folder stays `<run_id>.partial/` (its manifest may still say
+  `"complete": true`), the log says so, and readers skip it until it is renamed by hand.
 - **Readers** take only folders without `.partial` whose manifest has `"complete": true`, check each listed file's
   `sha256`, `bytes` and `lines`, refuse any `format` other than `gregteclink-export/1`, and refuse `"mode": "harness"`
   outside tests (dev-environment data is never game data).
-- The mod writes inside its own instance only. WO-1.2/1.4's collection script copies a run into
-  `GOS_HOME\data\exports\<run_id>\` with `safe_open`, copy-then-parse and retry ×3. Python writes nothing to Export,
-  so old runs stay there.
+- The mod writes inside its own instance only: the export root must be exactly the game dir's real path plus
+  `gregteclink/exports`, so a link or junction at `gregteclink` or `exports` stops the export before anything is
+  written. WO-1.2/1.4's collection script copies a run into `GOS_HOME\data\exports\<run_id>\` with `safe_open`,
+  copy-then-parse and retry ×3. Python writes nothing to Export, so old runs stay there; nothing prunes them yet
+  (about 50 MB each; PR question).
 
 ## Keys
 
@@ -34,6 +39,12 @@ only what needs the live game: registry names, ore names, display names and GT's
   bare; byte, short, long, float and double as strings with a `B`, `S`, `L`, `F` or `D` suffix; strings as is; lists
   and int arrays as arrays, byte arrays as arrays of `"<n>B"`; an empty list or array as
   `{"__custom_type": "net.minecraft.nbt.NBTTagList"}` (or `NBTTagIntArray`, `NBTTagByteArray`).
+- **`__item`** is the one key that is not game NBT. A compound shaped like a saved ItemStack (numeric `id`, `Count`
+  and `Damage`, e.g. the `output` of a data stick) also gets `"__item": "<registry name>"` (null if the ID has none).
+  The numeric `id` is kept, but it is an EndlessIDs per-instance ID that means nothing once the game has exited.
+  **WO-1.3** hashes NBT for item keys with `id` dropped from every compound that has `__item`, so no key depends on a
+  numeric ID; NEI's NBT for the same stack is mapped the same way through its own id-to-name table. Removing every
+  `__item` gives NEI's `NBTJson` back. Numeric IDs in NBT of any other shape are not resolved.
 - A **machine**'s `mte_id` is GT's own constant and equals the `meta` of `gregtech:gt.blockmachines`, so its key is
   still registry name + meta.
 
@@ -42,9 +53,9 @@ only what needs the live game: registry names, ore names, display names and GT's
 | File | Content |
 |---|---|
 | `gt_recipe_maps.json` | Array sorted by `name`, one entry per `RecipeMap.ALL_RECIPE_MAPS` map |
-| `gt_recipes.jsonl` | One recipe per line; maps sorted by name, recipes in backend order |
+| `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
-| `items.jsonl` | Every (item, meta) referenced in the files above, sorted by item then meta |
+| `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above, sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
 | `manifest.json` | Run facts, file hashes, counts, part status. Not listed in its own `files` |
 | `nei/*.jsonl` | PR 1b: a copy of NEI's `dumps/recipes/` |
@@ -61,7 +72,7 @@ Recipes store EU/t with the amperage included (`amperage` is the map's).
 {"map":"gt.recipe.blastfurnace","idx":0,"category":"gt.recipe.blastfurnace",
  "eut":1920,"duration":200,"special":4600,
  "in":[{"item":"gregtech:gt.metaitem.01","meta":2503,"n":5}, null],
- "in_chance":[10000,null]?, "out":[...], "out_chance":[...]?,
+ "in_chance":[10000,2500]?, "out":[...], "out_chance":[...]?,
  "fin":[{"fluid":"liquidnitrogen","mb":2000,"alt":[{"fluid":"...","mb":2000}]?}], "fin_chance":[...]?,
  "fout":[...], "fout_chance":[...]?,
  "special_items":<value>?, "metadata":{"coil_heat":4600}?, "nei_desc":["..."]?,
@@ -72,17 +83,27 @@ Recipes store EU/t with the amperage included (`amperage` is the map's).
 - **Arrays stay positional.** `in`, `out`, `fin` and `fout` keep their nulls so the chance arrays line up with the
   slots. A null GT array is written as `[]`. A `*_chance` array is omitted when GT's is null (every slot 100%);
   values are GT's raw 1..10000.
+- **Slot order is GT's and is not always stable.** Some recipes build their outputs from a HashMap, so the same
+  recipe lists them in a different order on each run (in the dev runtime: all 43 `gt.recipe.eyeofharmony` recipes).
+  WO-1.3 compares outputs as a multiset of (ref, chance) pairs, never by position, and an "unchanged export" check
+  compares normalised content, not raw file hashes.
 - **Item inputs of `GTRecipe_WithAlt`** also carry `ore` (the oredict name of the slot, never its numeric ID) and
   `alt` (the slot's accepted alternatives, as refs).
 - **Fluid inputs** carry `alt` from `mAltFluidInputs`.
 - **`metadata`**: keys are GT's own identifiers (`coil_heat`, `cleanroom`, `GLASS`, `fuel_value`, ...), sorted, read
   by reflection. Values, raw: numbers, booleans and strings as is; ItemStack and FluidStack as refs; a Fluid as
   `{"fluid"}`; GT `Materials` as `mName`; other enums as `name()`; arrays, collections and maps as lists and objects
-  (to depth 4); anything else as `{"class", "fields": {public simple-typed fields}?, "str"}`. A value that throws is
-  `{"error"}`.
+  (to depth 4); anything else as `{"class", "fields"?, "str"?}`. `fields` holds every public instance field, encoded
+  the same way (so an ItemStack field is a ref); a field that throws is `{"error"}`. `str` is the value's
+  `toString()`, only when its class overrides it, with identity hashes (`pkg.Class@1b6d3586`) cut to the class name.
+  Object's own `toString()` is only a class name and an identity hash, so it is left out. A class with neither public
+  fields nor its own `toString()` is just `{"class"}` (in the dev runtime: Eye of Harmony's `special_items`, whose
+  data GT keeps in private fields). A value that throws is `{"error"}`. No value depends on the JVM run.
 - **`special_items`** (`mSpecialItems`) uses the same encoding.
-- **`idx`** is the position in the map's backend, for debugging only: it is not stable. Identity is WO-1.3's
-  signature.
+- **`idx`** is the line's position within its map, after sorting. GT registers recipes in a different order on every
+  run (and keeps each map's categories in a HashMap keyed by identity), so the mod sorts each map's lines by their
+  JSON, which also groups them by `category`. An unchanged pack therefore gives the same lines in the same order,
+  apart from the unstable slot order above. Identity is still WO-1.3's signature, never `idx`.
 - **`owners`** are mod IDs, in the order GT recorded them. The export module turns GT's recipe-owner capture on in
   preInit, so recipes added before that (in GT's own preInit) have none; `owners` is omitted when GT kept no list.
 - A recipe that fails to serialise becomes `{"map", "idx", "error"}` and counts in `counts.recipe_errors`.
@@ -103,10 +124,14 @@ structure_tooltip: [...]?, errors: [...]?}`
 
 ### `items.jsonl` line
 
-`{item, meta, unlocalized, name, ore: [names, sorted], gt: {prefix, material, amount}?, errors: [...]?}`. `name` is
-the display name in the instance's language; `gt` is `GTOreDictUnificator.getAssociation` (an `OrePrefixes` name, a
-`Materials.mName` and GT's material amount). Wildcard metas often fail to name and carry `errors`
+`{item, meta, nbt?, unlocalized, name, ore: [names, sorted], gt: {prefix, material, amount}?, errors: [...]?}`.
+`name` is the display name in the instance's language; `gt` is `GTOreDictUnificator.getAssociation` (an `OrePrefixes`
+name, a `Materials.mName` and GT's material amount). Wildcard metas often fail to name and carry `errors`
 (`counts.item_errors`).
+
+Every referenced (item, meta) has a line without `nbt`. Every distinct NBT a ref carries also gets its own line with
+that `nbt`, named from the stack with its tag, because `name` and `unlocalized` can depend on it (bartworks
+`BioLabParts` cultures, for example). This matches A§5.4's `UNIQUE(registry_name, meta, nbt_hash)`.
 
 ### `fluids.jsonl` line
 
@@ -132,8 +157,12 @@ the display name in the instance's language; `gt` is `GTOreDictUnificator.getAss
 ```
 
 - `mods` lists **Export's** loaded mods, sorted by modid. `file` is relative to the game dir, or only the file name
-  for a source outside it (the dev runtime); `sha256` is null for a directory or the Minecraft jar. Play's mods come
-  from Python's fingerprint (§5.2.4), never from here.
+  for a source outside it (the dev runtime); `sha256` is null when the source is not a readable file: a directory, or
+  a name with no file behind it. In the dev runtime that is the `minecraft.jar` reported by `mcp` and the coremods'
+  dummy containers (Forge and FML are hashed there, from the recompiled Minecraft jar). Which entries are null in a
+  real instance shows in the first Export run on the PC. Play's mods come from Python's fingerprint (§5.2.4), never
+  from here.
+- `counts.items` is the number of lines in `items.jsonl`, NBT variants included.
 - `pack_version` `2.9.x` means unknown [A§5.5 correction]: trust jar hashes over this string.
 - `parts.nei`: `absent` without NEI ≥ 2.8.172's `RecipeJsonWriter`; `skipped_server` when it exists but this run
   could not call it (PR 1 never does; PR 1b calls it on the client).

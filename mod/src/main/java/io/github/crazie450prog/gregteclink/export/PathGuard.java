@@ -2,6 +2,7 @@ package io.github.crazie450prog.gregteclink.export;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
 /**
@@ -12,10 +13,25 @@ public final class PathGuard {
 
     private final Path root;
 
-    /** Creates the root if needed, then pins it to its real path. */
-    public PathGuard(Path root) throws IOException {
-        Files.createDirectories(root);
-        this.root = root.toRealPath();
+    /**
+     * Roots the guard at {@code base/sub} (e.g. the game dir and {@code gregteclink/exports}), creating it one folder
+     * at a time. Refuses, before creating anything inside it, a part that is a link or junction: the root must be
+     * exactly base's real path plus {@code sub}, so no write can land outside the game dir.
+     */
+    public PathGuard(Path base, String sub) throws IOException {
+        Path dir = base.toRealPath();
+        for (String part : sub.split("/")) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+                throw new SecurityException("root part refused: " + sub);
+            }
+            dir = dir.resolve(part);
+            if (Files.notExists(dir, LinkOption.NOFOLLOW_LINKS)) Files.createDirectory(dir);
+            if (!dir.toRealPath()
+                .equals(dir)) {
+                throw new SecurityException("link refused: " + dir + " leads to " + dir.toRealPath());
+            }
+        }
+        this.root = dir;
     }
 
     public Path root() {

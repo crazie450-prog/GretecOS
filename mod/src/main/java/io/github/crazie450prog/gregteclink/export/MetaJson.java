@@ -21,8 +21,9 @@ import gregtech.api.enums.Materials;
 
 /**
  * Encodes recipe metadata values and special items, raw: numbers, booleans and strings as is; stacks as refs; enums by
- * name(); GT Materials by mName; arrays and collections as lists; anything else as its class plus its public
- * simple-typed fields and toString().
+ * name(); GT Materials by mName; arrays and collections as lists; maps as objects; anything else as its class, its
+ * public instance fields (encoded the same way) and, only if its class overrides toString(), that string with identity
+ * hashes removed. Nothing here depends on the JVM run, so an unchanged pack exports the same values every time.
  */
 final class MetaJson {
 
@@ -58,7 +59,7 @@ final class MetaJson {
         }
         if (v instanceof Materials) return new JsonPrimitive(((Materials) v).mName);
         if (v instanceof Enum) return new JsonPrimitive(((Enum<?>) v).name());
-        if (depth >= MAX_DEPTH) return opaque(v, false);
+        if (depth >= MAX_DEPTH) return opaque(v, depth);
         if (v.getClass()
             .isArray()) {
             JsonArray a = new JsonArray();
@@ -80,30 +81,30 @@ final class MetaJson {
             for (Map.Entry<String, Object> e : sorted.entrySet()) o.add(e.getKey(), encode(e.getValue(), depth + 1));
             return o;
         }
-        return opaque(v, true);
+        return opaque(v, depth);
     }
 
-    private static JsonObject opaque(Object v, boolean withFields) {
+    /** {"class", "fields"?, "str"?}; at the depth limit, no fields. */
+    private JsonObject opaque(Object v, int depth) {
         JsonObject o = new JsonObject();
         o.addProperty(
             "class",
             v.getClass()
                 .getName());
-        if (withFields) {
+        if (depth < MAX_DEPTH) {
             TreeMap<String, JsonElement> fields = new TreeMap<>();
             for (Field f : v.getClass()
                 .getFields()) {
                 if (Modifier.isStatic(f.getModifiers())) continue;
+                JsonElement fv;
                 try {
-                    Object fv = f.get(v);
-                    if (fv instanceof Number || fv instanceof Boolean || fv instanceof String) {
-                        fields.put(f.getName(), simple(fv));
-                    } else if (fv instanceof Enum) {
-                        fields.put(f.getName(), new JsonPrimitive(((Enum<?>) fv).name()));
-                    }
-                } catch (Throwable ignored) {
-                    // A field we cannot read is left out; "str" still describes the value.
+                    fv = encode(f.get(v), depth + 1);
+                } catch (Throwable t) {
+                    JsonObject err = new JsonObject();
+                    err.addProperty("error", Json.error(t));
+                    fv = err;
                 }
+                fields.put(f.getName(), fv);
             }
             if (!fields.isEmpty()) {
                 JsonObject fo = new JsonObject();
@@ -111,19 +112,23 @@ final class MetaJson {
                 o.add("fields", fo);
             }
         }
-        try {
-            o.addProperty("str", String.valueOf(v));
-        } catch (Throwable t) {
-            o.addProperty("str_error", Json.error(t));
+        // Object's own toString() is only the class name plus an identity hash.
+        if (overridesToString(v.getClass())) {
+            try {
+                o.addProperty("str", Json.stripIdentityHashes(String.valueOf(v)));
+            } catch (Throwable t) {
+                o.addProperty("str_error", Json.error(t));
+            }
         }
         return o;
     }
 
-    private static JsonElement simple(Object v) {
-        if (v instanceof Boolean) return new JsonPrimitive((Boolean) v);
-        if (v instanceof String) return new JsonPrimitive((String) v);
-        double d = ((Number) v).doubleValue();
-        return Double.isNaN(d) || Double.isInfinite(d) ? new JsonPrimitive(v.toString())
-            : new JsonPrimitive((Number) v);
+    private static boolean overridesToString(Class<?> c) {
+        try {
+            return c.getMethod("toString")
+                .getDeclaringClass() != Object.class;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 }

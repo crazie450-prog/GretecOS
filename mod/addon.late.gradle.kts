@@ -1,7 +1,8 @@
 // Headless test harness (WO-1.1, [QA:S2]): ./gradlew runServer -Pharness
 // prepareHarness resets the scripted test world, runServer starts a dedicated dev server with
 // -Dgregtec.harness=true (the mod exports, checks the files and shuts down), and checkHarness
-// fails the build unless run/server/gregteclink/harness-result.json says "pass": true.
+// fails the build unless run/server/gregteclink/harness-result.json says "pass": true;
+// removeHarnessConfig then deletes run/server/config/gregteclink.cfg.
 // Without -Pharness, runServer is the template's plain dev server.
 
 abstract class CheckHarness : DefaultTask() {
@@ -54,9 +55,14 @@ if (providers.gradleProperty("harness").isPresent) {
         resultFile.set(serverDir.file("gregteclink/harness-result.json"))
     }
 
+    val removeHarnessConfig = tasks.register<Delete>("removeHarnessConfig") {
+        description = "Deletes the harness's export=true config again, so a later plain runServer exports nothing."
+        delete(serverDir.file("config/gregteclink.cfg"))
+    }
+
     tasks.named<JavaExec>("runServer") {
         dependsOn(prepareHarness)
         jvmArgs("-Dgregtec.harness=true", "-Xmx6G")
-        finalizedBy(checkHarness)
+        finalizedBy(checkHarness, removeHarnessConfig)
     }
 }

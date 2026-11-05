@@ -27,6 +27,9 @@ public final class ExportRun {
     public static final String EXPORTS_DIR = "gregteclink/exports";
     public static final String RUN_ID_PROPERTY = "gregtec.runId";
     private static final Pattern RUN_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
+    /** On Windows a virus scanner or the indexer often still holds a just-written file, so the rename is retried. */
+    private static final int RENAME_ATTEMPTS = 3;
+    private static final long RENAME_BACKOFF_MS = 1000;
 
     /** What the caller (one-click, harness) needs to know afterwards. */
     public static final class Result {
@@ -34,11 +37,14 @@ public final class ExportRun {
         public final String runId;
         public final Path dir;
         public final boolean complete;
+        /** Tries the .partial rename took; 0 if it failed or was never tried. */
+        public final int renameAttempts;
 
-        Result(String runId, Path dir, boolean complete) {
+        Result(String runId, Path dir, boolean complete, int renameAttempts) {
             this.runId = runId;
             this.dir = dir;
             this.complete = complete;
+            this.renameAttempts = renameAttempts;
         }
     }
 
@@ -73,12 +79,10 @@ public final class ExportRun {
         }
         PathGuard guard;
         try {
-            guard = new PathGuard(
-                gameDir.toPath()
-                    .resolve(EXPORTS_DIR));
+            guard = new PathGuard(gameDir.toPath(), EXPORTS_DIR);
         } catch (Throwable t) {
             GregtecLink.LOG.error("export: cannot create " + EXPORTS_DIR, t);
-            return new Result(base, null, false);
+            return new Result(base, null, false, 0);
         }
         String runId = base;
         for (int i = 2; Files.exists(
@@ -93,23 +97,46 @@ public final class ExportRun {
         GregtecLink.LOG.info("export {} ({}) starting", runId, mode);
         boolean complete = run.writeAll(guard);
         Path finalDir = null;
+        int attempts = 0;
         try {
             Path partial = guard.resolve(runId + ".partial");
             finalDir = guard.resolve(runId);
-            Files.move(partial, finalDir, StandardCopyOption.ATOMIC_MOVE);
+            attempts = rename(partial, finalDir, RENAME_BACKOFF_MS);
         } catch (Throwable t) {
-            GregtecLink.LOG.error("export " + runId + ": rename from .partial failed", t);
+            if (t instanceof InterruptedException) Thread.currentThread()
+                .interrupt();
+            GregtecLink.LOG.error(
+                "export " + runId + ": rename from .partial failed; readers skip the run until it is renamed by hand",
+                t);
             complete = false;
         }
         GregtecLink.LOG.info(
-            "export {} finished in {} ms: complete={} counts={} parts={} -> {}",
+            "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} -> {}",
             runId,
             System.currentTimeMillis() - t0,
             complete,
+            attempts,
             run.counts,
             run.parts,
             finalDir);
-        return new Result(runId, finalDir, complete);
+        return new Result(runId, finalDir, complete, attempts);
+    }
+
+    /**
+     * Moves {@code from} to {@code to} atomically, in up to three tries with a doubling wait ({@code backoffMs}, then
+     * twice that). Returns the tries it took, or throws the last failure.
+     */
+    static int rename(Path from, Path to, long backoffMs) throws IOException, InterruptedException {
+        for (int attempt = 1;; attempt++) {
+            try {
+                Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+                return attempt;
+            } catch (IOException e) {
+                if (attempt >= RENAME_ATTEMPTS) throw e;
+                GregtecLink.LOG.warn("rename of {} failed (try {}): {}; retrying", from, attempt, e.toString());
+                Thread.sleep(backoffMs << (attempt - 1));
+            }
+        }
     }
 
     private boolean writeAll(PathGuard guard) {

@@ -67,6 +67,38 @@ class StackJsonTest {
     }
 
     @Test
+    void savedItemStacksGetTheirRegistryName() {
+        NBTTagCompound out = new NBTTagCompound();
+        out.setShort("id", (short) 555);
+        out.setByte("Count", (byte) 1);
+        out.setShort("Damage", (short) 12741);
+        NBTTagCompound unknown = new NBTTagCompound();
+        unknown.setInteger("id", 40000);
+        unknown.setByte("Count", (byte) 2);
+        unknown.setShort("Damage", (short) 0);
+        NBTTagCompound c = new NBTTagCompound();
+        c.setTag("output", out);
+        c.setTag("other", unknown);
+        c.setShort("id", (short) 7);
+        assertEquals(
+            "{\"id\":\"7S\",\"other\":{\"Count\":\"2B\",\"Damage\":\"0S\",\"__item\":null,\"id\":40000},"
+                + "\"output\":{\"Count\":\"1B\",\"Damage\":\"12741S\",\"__item\":\"gregtech:gt.metaitem.01\","
+                + "\"id\":\"555S\"}}",
+            Json.COMPACT.toJson(StackJson.nbt(c, id -> id == 555 ? "gregtech:gt.metaitem.01" : null)));
+    }
+
+    @Test
+    void identityHashesAreStrippedAndItemStackStringsKept() {
+        assertEquals(
+            "java.lang.Object[a=1,b=java.util.ArrayList]",
+            Json.stripIdentityHashes("java.lang.Object@1b6d3586[a=1,b=java.util.ArrayList@7f31245a]"));
+        assertEquals(
+            "(2xgt.metaitem.01@2097,1) 1xitem.photomask.ilc@0 no.such.Clazz@1a",
+            Json.stripIdentityHashes("(2xgt.metaitem.01@2097,1) 1xitem.photomask.ilc@0 no.such.Clazz@1a"));
+        assertEquals("java.lang.Object@123456789", Json.stripIdentityHashes("java.lang.Object@123456789"));
+    }
+
+    @Test
     void emptyListsKeepTheirType() {
         NBTTagCompound c = new NBTTagCompound();
         c.setTag("l", new NBTTagList());

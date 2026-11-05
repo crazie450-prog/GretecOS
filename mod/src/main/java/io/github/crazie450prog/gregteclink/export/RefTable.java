@@ -18,32 +18,57 @@ import gregtech.api.objects.ItemData;
 import gregtech.api.util.GTOreDictUnificator;
 
 /**
- * Every (item, meta) and fluid that the other files reference, written once each as items.jsonl and fluids.jsonl.
- * Only facts that need the live game are resolved here: names, ore names and GT's unification data.
+ * Every (item, meta) and every (item, meta, NBT) that the other files reference, and every fluid, written once each as
+ * items.jsonl and fluids.jsonl. Only facts that need the live game are resolved here: names, ore names and GT's
+ * unification data.
  */
 final class RefTable {
 
-    private final Map<String, Map<Integer, Item>> items = new TreeMap<>();
+    /** registry name, then meta, then canonical NBT JSON ("" for none): a one-item stack to name. */
+    private final Map<String, Map<Integer, Map<String, ItemStack>>> items = new TreeMap<>();
     private final Map<String, Fluid> fluids = new TreeMap<>();
     int unregistered;
     int itemErrors;
 
     void item(String name, int meta, Item item) {
-        Map<Integer, Item> metas = items.get(name);
+        Map<String, ItemStack> variants = variants(name, meta);
+        if (!variants.containsKey("")) variants.put("", new ItemStack(item, 1, meta));
+    }
+
+    /** A stack with NBT: named with its tag, because the name can depend on it. */
+    void itemWithNbt(String name, ItemStack stack, String nbtJson) {
+        Map<String, ItemStack> variants = variants(name, stack.getItemDamage());
+        if (!variants.containsKey(nbtJson)) {
+            ItemStack copy = stack.copy();
+            copy.stackSize = 1;
+            variants.put(nbtJson, copy);
+        }
+    }
+
+    private Map<String, ItemStack> variants(String name, int meta) {
+        Map<Integer, Map<String, ItemStack>> metas = items.get(name);
         if (metas == null) {
             metas = new TreeMap<>();
             items.put(name, metas);
         }
-        if (!metas.containsKey(meta)) metas.put(meta, item);
+        Map<String, ItemStack> variants = metas.get(meta);
+        if (variants == null) {
+            variants = new TreeMap<>();
+            metas.put(meta, variants);
+        }
+        return variants;
     }
 
     void fluid(Fluid fluid) {
         if (!fluids.containsKey(fluid.getName())) fluids.put(fluid.getName(), fluid);
     }
 
+    /** Lines in items.jsonl: every (item, meta) plus every NBT variant. */
     int itemCount() {
         int n = 0;
-        for (Map<Integer, Item> m : items.values()) n += m.size();
+        for (Map<Integer, Map<String, ItemStack>> m : items.values()) {
+            for (Map<String, ItemStack> v : m.values()) n += v.size();
+        }
         return n;
     }
 
@@ -52,20 +77,23 @@ final class RefTable {
     }
 
     void writeItems(HashedFile out) throws IOException {
-        for (Map.Entry<String, Map<Integer, Item>> e : items.entrySet()) {
-            for (Map.Entry<Integer, Item> m : e.getValue()
+        for (Map.Entry<String, Map<Integer, Map<String, ItemStack>>> e : items.entrySet()) {
+            for (Map.Entry<Integer, Map<String, ItemStack>> m : e.getValue()
                 .entrySet()) {
-                out.line(itemLine(e.getKey(), m.getKey(), m.getValue()));
+                for (ItemStack stack : m.getValue()
+                    .values()) {
+                    out.line(itemLine(e.getKey(), m.getKey(), stack));
+                }
             }
         }
     }
 
-    private JsonObject itemLine(String name, int meta, Item item) {
+    private JsonObject itemLine(String name, int meta, ItemStack stack) {
         JsonObject o = new JsonObject();
         o.addProperty("item", name);
         o.addProperty("meta", meta);
+        if (stack.getTagCompound() != null) o.add("nbt", StackJson.nbt(stack.getTagCompound()));
         JsonArray errors = new JsonArray();
-        ItemStack stack = new ItemStack(item, 1, meta);
         try {
             o.addProperty("unlocalized", stack.getUnlocalizedName());
         } catch (Throwable t) {

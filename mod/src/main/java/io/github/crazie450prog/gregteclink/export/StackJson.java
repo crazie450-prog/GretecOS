@@ -1,8 +1,8 @@
 package io.github.crazie450prog.gregteclink.export;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.function.IntFunction;
 
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -55,6 +55,7 @@ public final class StackJson {
         Item item = stack.getItem();
         String name = itemName(item);
         int meta = stack.getItemDamage();
+        JsonElement tag = stack.getTagCompound() == null ? null : nbt(stack.getTagCompound());
         o.add("item", Json.str(name));
         if (name == null) {
             o.addProperty(
@@ -65,12 +66,11 @@ public final class StackJson {
             refs.unregistered++;
         } else {
             refs.item(name, meta, item);
+            if (tag != null) refs.itemWithNbt(name, stack, Json.COMPACT.toJson(tag));
         }
         o.addProperty("meta", meta);
         o.addProperty("n", stack.stackSize);
-        if (stack.getTagCompound() != null) {
-            o.add("nbt", nbt(stack.getTagCompound()));
-        }
+        if (tag != null) o.add("nbt", tag);
         return o;
     }
 
@@ -114,19 +114,36 @@ public final class StackJson {
         return a;
     }
 
+    /** The registry name for a numeric item ID of this game, or null. Only for IDs found inside NBT. */
+    static String itemNameById(int id) {
+        return itemName(Item.getItemById(id));
+    }
+
     /**
      * Canonical JSON for NBT, in NEI's NBTJson typing so one Python parser reads both sources: compound keys sorted;
      * ints bare; byte, short, long, float and double as strings with a B, S, L, F or D suffix; strings as is; lists and
      * int/byte arrays as arrays; an empty list or array as {"__custom_type": "&lt;tag class&gt;"}.
+     *
+     * <p>
+     * One addition that is not game NBT: a compound shaped like a saved ItemStack (numeric {@code id}, {@code Count},
+     * {@code Damage}) also gets {@code "__item"}, the registry name of that ID, because the numeric ID means nothing
+     * once the game has exited (EndlessIDs). The NBT itself is unchanged.
      */
     public static JsonElement nbt(NBTBase tag) {
+        return nbt(tag, StackJson::itemNameById);
+    }
+
+    static JsonElement nbt(NBTBase tag, IntFunction<String> itemNames) {
         if (tag instanceof NBTTagCompound) {
             NBTTagCompound c = (NBTTagCompound) tag;
-            List<String> keys = new ArrayList<>();
-            for (Object k : c.func_150296_c()) keys.add((String) k);
-            Collections.sort(keys);
+            TreeMap<String, JsonElement> sorted = new TreeMap<>();
+            for (Object k : c.func_150296_c()) sorted.put((String) k, nbt(c.getTag((String) k), itemNames));
+            if (isNumber(c.getTag("id")) && isNumber(c.getTag("Count")) && isNumber(c.getTag("Damage"))) {
+                sorted
+                    .put("__item", Json.str(itemNames.apply(((NBTBase.NBTPrimitive) c.getTag("id")).func_150287_d())));
+            }
             JsonObject o = new JsonObject();
-            for (String k : keys) o.add(k, nbt(c.getTag(k)));
+            for (Map.Entry<String, JsonElement> e : sorted.entrySet()) o.add(e.getKey(), e.getValue());
             return o;
         }
         if (tag instanceof NBTTagByte) return new JsonPrimitive(((NBTTagByte) tag).func_150290_f() + "B");
@@ -142,7 +159,7 @@ public final class StackJson {
             // NBTTagList has no getter for arbitrary element types: drain a copy.
             NBTTagList copy = (NBTTagList) list.copy();
             JsonArray a = new JsonArray();
-            while (copy.tagCount() > 0) a.add(nbt(copy.removeTag(0)));
+            while (copy.tagCount() > 0) a.add(nbt(copy.removeTag(0), itemNames));
             return a;
         }
         if (tag instanceof NBTTagIntArray) {
@@ -164,6 +181,10 @@ public final class StackJson {
                 : tag.getClass()
                     .getName());
         return o;
+    }
+
+    private static boolean isNumber(NBTBase tag) {
+        return tag instanceof NBTBase.NBTPrimitive;
     }
 
     private static JsonObject emptyList(NBTBase tag) {

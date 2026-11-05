@@ -2,6 +2,7 @@ package io.github.crazie450prog.gregteclink.export;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -25,8 +26,9 @@ import gregtech.api.recipe.RecipeMetadataKey;
 import gregtech.api.util.GTRecipe;
 
 /**
- * (a) of plan §5.2 step 2: every map in {@link RecipeMap#ALL_RECIPE_MAPS} (sorted by name) and every recipe in it, in
- * backend order. Raw game facts only; the normaliser (WO-1.3) derives circuits, tiers, signatures and hashes.
+ * (a) of plan §5.2 step 2: every map in {@link RecipeMap#ALL_RECIPE_MAPS} (sorted by name) and every recipe in it
+ * (sorted by its JSON line). Raw game facts only; the normaliser (WO-1.3) derives circuits, tiers, signatures and
+ * hashes.
  */
 final class GtRecipeDump {
 
@@ -62,26 +64,40 @@ final class GtRecipeDump {
         return list;
     }
 
+    /**
+     * Each map's recipes are written sorted by their JSON line, so an unchanged pack gives the same file. GT's own
+     * order is not stable: recipes are registered in a different order on every run, and the backend keeps its
+     * categories in a HashMap keyed by RecipeCategory, which has no hashCode of its own. As "category" is the first
+     * key after "map" and "idx", the sort also groups recipes by category. {@code idx} is the position in this order.
+     */
     void write(HashedFile mapsFile, HashedFile recipesFile) throws IOException {
         JsonArray mapsJson = new JsonArray();
         for (RecipeMap<?> map : sortedMaps()) {
             maps++;
             mapsJson.add(mapJson(map));
-            int idx = 0;
+            // Every line has "idx": 0 until it is sorted, so the sort key is the content alone.
+            List<Map.Entry<String, JsonObject>> lines = new ArrayList<>();
             for (GTRecipe r : map.getAllRecipes()) {
                 JsonObject line;
                 try {
-                    line = recipeJson(map.unlocalizedName, idx, r);
+                    line = recipeJson(map.unlocalizedName, r);
                 } catch (Throwable t) {
                     line = new JsonObject();
                     line.addProperty("map", map.unlocalizedName);
-                    line.addProperty("idx", idx);
+                    line.addProperty("idx", 0);
                     line.addProperty("error", Json.error(t));
                     recipeErrors++;
                 }
-                recipesFile.line(line);
+                lines.add(new AbstractMap.SimpleImmutableEntry<>(Json.COMPACT.toJson(line), line));
+            }
+            lines.sort(Map.Entry.comparingByKey());
+            int idx = 0;
+            for (Map.Entry<String, JsonObject> e : lines) {
+                // Replaces the 0 in place, so "idx" stays the second key.
+                e.getValue()
+                    .addProperty("idx", idx++);
+                recipesFile.line(e.getValue());
                 recipes++;
-                idx++;
             }
         }
         mapsFile.document(mapsJson);
@@ -157,10 +173,10 @@ final class GtRecipeDump {
         return o;
     }
 
-    private JsonObject recipeJson(String mapName, int idx, GTRecipe r) {
+    private JsonObject recipeJson(String mapName, GTRecipe r) {
         JsonObject o = new JsonObject();
         o.addProperty("map", mapName);
-        o.addProperty("idx", idx);
+        o.addProperty("idx", 0);
         RecipeCategory cat = r.getRecipeCategory();
         o.add("category", Json.str(cat == null ? null : cat.unlocalizedName));
         o.addProperty("eut", r.mEUt);

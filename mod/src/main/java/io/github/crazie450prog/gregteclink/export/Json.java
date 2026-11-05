@@ -1,6 +1,10 @@
 package io.github.crazie450prog.gregteclink.export;
 
 import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -19,6 +23,11 @@ public final class Json {
         .serializeNulls()
         .setPrettyPrinting()
         .create();
+
+    /** A dotted Java name, then {@code @} and up to 8 lowercase hex digits (Integer.toHexString). */
+    private static final Pattern IDENTITY_HASH = Pattern
+        .compile("((?:[A-Za-z_$][\\w$]*+\\.)++[A-Za-z_$][\\w$]*+)@[0-9a-f]{1,8}+(?![\\w$])");
+    private static final Map<String, Boolean> CLASSES = new ConcurrentHashMap<>();
 
     private Json() {}
 
@@ -59,5 +68,38 @@ public final class Json {
         String msg = t.getMessage();
         return t.getClass()
             .getName() + (msg == null ? "" : ": " + msg);
+    }
+
+    /**
+     * Removes identity hashes ({@code "pkg.Name@1b6d3586"} becomes {@code "pkg.Name"}), as written by Object's
+     * toString() and by ToStringBuilder; they change every run. Only a name that loads as a class counts, so an
+     * ItemStack's {@code "1xitem.foo@3"} (count, unlocalized name, damage) is kept.
+     */
+    public static String stripIdentityHashes(String s) {
+        if (s == null || s.indexOf('@') < 0) return s;
+        Matcher m = IDENTITY_HASH.matcher(s);
+        StringBuffer out = null;
+        while (m.find()) {
+            if (!isClass(m.group(1))) continue;
+            if (out == null) out = new StringBuffer(s.length());
+            m.appendReplacement(out, Matcher.quoteReplacement(m.group(1)));
+        }
+        if (out == null) return s;
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    private static boolean isClass(String name) {
+        Boolean known = CLASSES.get(name);
+        if (known == null) {
+            try {
+                Class.forName(name, false, Json.class.getClassLoader());
+                known = true;
+            } catch (Throwable t) {
+                known = false;
+            }
+            CLASSES.put(name, known);
+        }
+        return known;
     }
 }

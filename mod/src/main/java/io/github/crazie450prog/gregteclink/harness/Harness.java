@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Consumer;
 
 import net.minecraft.launchwrapper.Launch;
 import net.minecraft.server.MinecraftServer;
@@ -108,9 +109,7 @@ public final class Harness {
         result.add("durations_ms", durations);
         if (counts != null) result.add("counts", counts);
         try {
-            PathGuard guard = new PathGuard(
-                gameDir.toPath()
-                    .resolve("gregteclink"));
+            PathGuard guard = new PathGuard(gameDir.toPath(), "gregteclink");
             Files.write(guard.resolve(RESULT), (Json.PRETTY.toJson(result) + "\n").getBytes(StandardCharsets.UTF_8));
         } catch (Throwable t) {
             GregtecLink.LOG.error("harness: cannot write " + RESULT, t);
@@ -148,12 +147,12 @@ public final class Harness {
         checks.add(c);
     }
 
-    /** relpath -> size:mtime for the game dir, without the world, logs, crash reports and config. */
+    /** relpath -> size:mtime for the game dir (config included), without the world, logs and crash reports. */
     private static Map<String, String> snapshot(File gameDir, String world) throws IOException {
         final Path root = gameDir.toPath()
             .toAbsolutePath()
             .normalize();
-        final Set<String> skip = new HashSet<>(Arrays.asList(world, "logs", "crash-reports", "config"));
+        final Set<String> skip = new HashSet<>(Arrays.asList(world, "logs", "crash-reports"));
         final Map<String, String> out = new TreeMap<>();
         Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
 
@@ -193,12 +192,17 @@ public final class Harness {
             if (!e.getKey()
                 .startsWith("gregteclink/")) outside.add(e.getKey());
         }
+        TreeSet<String> deleted = new TreeSet<>();
+        for (String k : before.keySet()) {
+            if (!after.containsKey(k) && !k.startsWith("gregteclink/")) deleted.add(k);
+        }
+        boolean ok = outside.isEmpty() && deleted.isEmpty();
         check(
             checks,
             "writes_only_under_gregteclink",
-            outside.isEmpty(),
-            outside.isEmpty() ? "no file outside gregteclink/ created or changed during the export"
-                : "changed: " + outside);
+            ok,
+            ok ? "no file outside gregteclink/ created, changed or deleted during the export"
+                : "changed: " + outside + " deleted: " + deleted);
     }
 
     /** Reads the run back from disk, as the Python side will. */
@@ -211,6 +215,11 @@ public final class Harness {
         private int badItemRefs;
         private int forbidden;
         private String forbiddenExample;
+        private int nbtStacks;
+        private int nbtStacksUnnamed;
+        private String nbtUnnamedExample;
+        private int identityHashLines;
+        private String identityHashExample;
 
         Verifier(List<JsonObject> checks) {
             this.checks = checks;
@@ -223,10 +232,10 @@ public final class Harness {
                     .toString()
                     .endsWith(".partial")
                 && !Files.exists(dir.resolveSibling(r.runId + ".partial"));
-            check(checks, "run_dir_final", dirOk, String.valueOf(dir));
+            check(checks, "run_dir_final", dirOk, dir + " (rename tries: " + r.renameAttempts + ")");
             if (!dirOk) return null;
 
-            JsonObject manifest = parse(dir.resolve("manifest.json")).getAsJsonObject();
+            JsonObject manifest = document(dir.resolve("manifest.json")).getAsJsonObject();
             boolean mOk = manifest.get("complete")
                 .getAsBoolean()
                 && ExportRun.FORMAT.equals(
@@ -245,7 +254,7 @@ public final class Harness {
             JsonObject counts = manifest.getAsJsonObject("counts");
             JsonObject parts = manifest.getAsJsonObject("parts");
 
-            JsonArray maps = parse(dir.resolve("gt_recipe_maps.json")).getAsJsonArray();
+            JsonArray maps = document(dir.resolve("gt_recipe_maps.json")).getAsJsonArray();
             Map<String, Integer> mapCounts = new TreeMap<>();
             for (JsonElement m : maps) {
                 JsonObject o = m.getAsJsonObject();
@@ -262,38 +271,35 @@ public final class Harness {
             }
 
             RecipeScan scan = new RecipeScan();
-            try (BufferedReader in = Files.newBufferedReader(dir.resolve("gt_recipes.jsonl"), StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = in.readLine()) != null) scan.recipe(
-                    parser.parse(line)
-                        .getAsJsonObject());
-            }
+            eachLine(dir.resolve("gt_recipes.jsonl"), scan::recipe);
             check(checks, "blastfurnace_coil_heat", scan.coilHeat > 0, scan.coilHeat + " EBF recipes with coil_heat");
             check(checks, "recipe_owners_captured", scan.withOwners > 0, scan.withOwners + " recipes with owners");
             check(checks, "non_consumed_inputs_kept", scan.nZero > 0, scan.nZero + " inputs with n == 0");
 
-            boolean ebf = false;
-            try (
-                BufferedReader in = Files.newBufferedReader(dir.resolve("gt_machines.jsonl"), StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    JsonObject o = parser.parse(line)
-                        .getAsJsonObject();
-                    walk(o);
-                    if (o.get("class")
-                        .getAsString()
-                        .endsWith(".MTEElectricBlastFurnace")
-                        && o.get("meta")
-                            .getAsInt() == 1000
-                        && o.has("recipe_maps")
-                        && o.get("recipe_maps")
-                            .toString()
-                            .contains("\"gt.recipe.blastfurnace\"")) {
-                        ebf = true;
-                    }
+            boolean[] ebf = { false };
+            eachLine(dir.resolve("gt_machines.jsonl"), o -> {
+                if (o.get("class")
+                    .getAsString()
+                    .endsWith(".MTEElectricBlastFurnace")
+                    && o.get("meta")
+                        .getAsInt() == 1000
+                    && o.has("recipe_maps")
+                    && o.get("recipe_maps")
+                        .toString()
+                        .contains("\"gt.recipe.blastfurnace\"")) {
+                    ebf[0] = true;
                 }
-            }
-            check(checks, "machine_ebf_1000", ebf, "MTEElectricBlastFurnace at gregtech:gt.blockmachines@1000");
+            });
+            check(checks, "machine_ebf_1000", ebf[0], "MTEElectricBlastFurnace at gregtech:gt.blockmachines@1000");
+
+            Set<String> items = new HashSet<>();
+            eachLine(dir.resolve("items.jsonl"), o -> items.add(refKey(o)));
+            Set<String> fluids = new HashSet<>();
+            eachLine(
+                dir.resolve("fluids.jsonl"),
+                o -> fluids.add(
+                    o.get("fluid")
+                        .getAsString()));
 
             int unregistered = counts.get("unregistered")
                 .getAsInt();
@@ -306,32 +312,23 @@ public final class Harness {
                 checks,
                 "no_numeric_ids",
                 forbidden == 0,
-                forbidden == 0 ? "none of " + FORBIDDEN_KEYS : forbidden + " found, e.g. " + forbiddenExample);
+                forbidden == 0 ? "none of " + FORBIDDEN_KEYS + " outside NBT, in every file"
+                    : forbidden + " found, e.g. " + forbiddenExample);
+            check(
+                checks,
+                "nbt_item_ids_named",
+                nbtStacks > 0 && nbtStacksUnnamed == 0,
+                nbtStacks + " ItemStack-shaped NBT compounds, "
+                    + nbtStacksUnnamed
+                    + " without __item"
+                    + (nbtUnnamedExample == null ? "" : ", e.g. " + nbtUnnamedExample));
+            check(
+                checks,
+                "no_identity_hashes",
+                identityHashLines == 0,
+                identityHashLines == 0 ? "no pkg.Class@hex in any file"
+                    : identityHashLines + " lines, e.g. " + identityHashExample);
 
-            Set<String> items = new HashSet<>();
-            try (BufferedReader in = Files.newBufferedReader(dir.resolve("items.jsonl"), StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    JsonObject o = parser.parse(line)
-                        .getAsJsonObject();
-                    items.add(
-                        o.get("item")
-                            .getAsString() + "@"
-                            + o.get("meta")
-                                .getAsInt());
-                }
-            }
-            Set<String> fluids = new HashSet<>();
-            try (BufferedReader in = Files.newBufferedReader(dir.resolve("fluids.jsonl"), StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    fluids.add(
-                        parser.parse(line)
-                            .getAsJsonObject()
-                            .get("fluid")
-                            .getAsString());
-                }
-            }
             Set<String> missing = new TreeSet<>(referencedItems);
             missing.removeAll(items);
             Set<String> missingFluids = new TreeSet<>(referencedFluids);
@@ -340,7 +337,7 @@ public final class Harness {
                 checks,
                 "ref_tables_cover_refs",
                 missing.isEmpty() && missingFluids.isEmpty(),
-                referencedItems.size() + " items, "
+                referencedItems.size() + " items (NBT variants included), "
                     + referencedFluids.size()
                     + " fluids referenced; missing items="
                     + first(missing)
@@ -423,8 +420,46 @@ public final class Harness {
                     .size() + " files match the manifest" : bad.toString());
         }
 
-        private JsonElement parse(Path p) throws IOException {
-            return parser.parse(new String(Files.readAllBytes(p), StandardCharsets.UTF_8));
+        /** A whole JSON file: scanned for identity hashes and walked. */
+        private JsonElement document(Path p) throws IOException {
+            String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+            for (String line : text.split("\n")) identityHashes(line);
+            JsonElement e = parser.parse(text);
+            walk(e);
+            return e;
+        }
+
+        /** A JSONL file: each line scanned for identity hashes, walked, then handed on. */
+        private void eachLine(Path p, Consumer<JsonObject> then) throws IOException {
+            try (BufferedReader in = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
+                String line;
+                while ((line = in.readLine()) != null) {
+                    identityHashes(line);
+                    JsonObject o = parser.parse(line)
+                        .getAsJsonObject();
+                    walk(o);
+                    then.accept(o);
+                }
+            }
+        }
+
+        private void identityHashes(String line) {
+            String clean = Json.stripIdentityHashes(line);
+            if (clean.equals(line)) return;
+            if (identityHashLines++ == 0) {
+                int i = 0;
+                while (i < clean.length() && clean.charAt(i) == line.charAt(i)) i++;
+                identityHashExample = line.substring(Math.max(0, i - 80), Math.min(line.length(), i + 20));
+            }
+        }
+
+        /** "item@meta", plus " <nbt json>" for a ref with NBT. */
+        private static String refKey(JsonObject o) {
+            return o.get("item")
+                .getAsString() + "@"
+                + o.get("meta")
+                    .getAsInt()
+                + (o.has("nbt") ? " " + o.get("nbt") : "");
         }
 
         /** Item refs need a string "item" (or null plus "class"); no numeric-ID key anywhere outside NBT. */
@@ -439,15 +474,15 @@ public final class Harness {
                         forbidden++;
                         if (forbiddenExample == null) forbiddenExample = k + " in " + o;
                     }
-                    if (k.equals("nbt")) continue;
+                    if (k.equals("nbt")) {
+                        nbt(f.getValue());
+                        continue;
+                    }
                     if (k.equals("item")) {
                         JsonElement v = f.getValue();
                         if (v.isJsonPrimitive() && v.getAsJsonPrimitive()
                             .isString()) {
-                            if (o.has("meta")) referencedItems.add(
-                                v.getAsString() + "@"
-                                    + o.get("meta")
-                                        .getAsInt());
+                            if (o.has("meta")) referencedItems.add(refKey(o));
                         } else if (!(v.isJsonNull() && o.has("class"))) {
                             badItemRefs++;
                         }
@@ -465,6 +500,23 @@ public final class Harness {
             }
         }
 
+        /** Inside NBT, numeric IDs are game data; each ItemStack-shaped compound must also carry "__item". */
+        private void nbt(JsonElement e) {
+            if (e.isJsonArray()) {
+                for (JsonElement c : e.getAsJsonArray()) nbt(c);
+            } else if (e.isJsonObject()) {
+                JsonObject o = e.getAsJsonObject();
+                if (o.has("id") && o.has("Count") && o.has("Damage")) {
+                    nbtStacks++;
+                    JsonElement name = o.get("__item");
+                    if (name == null || !name.isJsonPrimitive()) {
+                        if (nbtStacksUnnamed++ == 0) nbtUnnamedExample = o.toString();
+                    }
+                }
+                for (Map.Entry<String, JsonElement> f : o.entrySet()) nbt(f.getValue());
+            }
+        }
+
         private static String first(Set<String> s) {
             if (s.isEmpty()) return "[]";
             List<String> l = new ArrayList<>(s);
@@ -478,7 +530,6 @@ public final class Harness {
             int nZero;
 
             void recipe(JsonObject o) {
-                walk(o);
                 if (o.has("error")) return;
                 if ("gt.recipe.blastfurnace".equals(
                     o.get("map")

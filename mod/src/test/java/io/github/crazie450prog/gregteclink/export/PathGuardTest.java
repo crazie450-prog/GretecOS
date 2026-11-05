@@ -1,6 +1,7 @@
 package io.github.crazie450prog.gregteclink.export;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -18,7 +19,7 @@ class PathGuardTest {
 
     @Test
     void acceptsAPathUnderTheRoot() throws IOException {
-        PathGuard g = new PathGuard(tmp.resolve("gregteclink/exports"));
+        PathGuard g = new PathGuard(tmp, "gregteclink/exports");
         Path p = g.resolve("run1.partial/gt_recipes.jsonl");
         assertEquals(
             g.root()
@@ -29,7 +30,7 @@ class PathGuardTest {
 
     @Test
     void createsAndPinsTheRoot() throws IOException {
-        PathGuard g = new PathGuard(tmp.resolve("a/b"));
+        PathGuard g = new PathGuard(tmp, "a/b");
         assertEquals(
             tmp.resolve("a/b")
                 .toRealPath(),
@@ -37,8 +38,25 @@ class PathGuardTest {
     }
 
     @Test
+    void refusesBadRootParts() {
+        assertThrows(SecurityException.class, () -> new PathGuard(tmp, "../escape"));
+        assertThrows(SecurityException.class, () -> new PathGuard(tmp, "a//b"));
+        assertThrows(SecurityException.class, () -> new PathGuard(tmp, "./a"));
+    }
+
+    @Test
+    void refusesARootReachedThroughALink() throws IOException {
+        Path game = Files.createDirectories(tmp.resolve("game"));
+        Path outside = Files.createDirectories(tmp.resolve("outside"));
+        link(game.resolve("gregteclink"), outside);
+        assertThrows(SecurityException.class, () -> new PathGuard(game, "gregteclink/exports"));
+        // Refused before anything was created through the link.
+        assertFalse(Files.exists(outside.resolve("exports")));
+    }
+
+    @Test
     void refusesParentParts() throws IOException {
-        PathGuard g = new PathGuard(tmp.resolve("exports"));
+        PathGuard g = new PathGuard(tmp, "exports");
         assertThrows(SecurityException.class, () -> g.resolve("../escape.txt"));
         assertThrows(SecurityException.class, () -> g.resolve("run/../../escape.txt"));
         assertThrows(SecurityException.class, () -> g.resolve("./x"));
@@ -46,7 +64,7 @@ class PathGuardTest {
 
     @Test
     void refusesAbsoluteAndEmptyPaths() throws IOException {
-        PathGuard g = new PathGuard(tmp.resolve("exports"));
+        PathGuard g = new PathGuard(tmp, "exports");
         assertThrows(
             SecurityException.class,
             () -> g.resolve(
@@ -59,16 +77,20 @@ class PathGuardTest {
 
     @Test
     void refusesALinkThatLeadsOutside() throws IOException {
-        PathGuard g = new PathGuard(tmp.resolve("exports"));
+        PathGuard g = new PathGuard(tmp, "exports");
         Path outside = Files.createDirectories(tmp.resolve("outside"));
+        link(
+            g.root()
+                .resolve("link"),
+            outside);
+        assertThrows(SecurityException.class, () -> g.resolve("link/file.txt"));
+    }
+
+    private static void link(Path link, Path target) {
         try {
-            Files.createSymbolicLink(
-                g.root()
-                    .resolve("link"),
-                outside);
+            Files.createSymbolicLink(link, target);
         } catch (UnsupportedOperationException | IOException e) {
             assumeTrue(false, "symlinks not available here: " + e);
         }
-        assertThrows(SecurityException.class, () -> g.resolve("link/file.txt"));
     }
 }

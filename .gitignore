@@ -36,6 +36,7 @@ node_modules/
 
 # Jars, dumps and exports never go in git (WO-1.1). The Gradle wrapper jar is the one exception
 # (upstream Gradle 9.7.1 wrapper, sha256 checked against services.gradle.org).
+# `git add -A` skips an ignored jar silently: a test-fixture jar needs its own `!` line here.
 *.jar
 !/mod/gradle/wrapper/gradle-wrapper.jar
 dumps/
