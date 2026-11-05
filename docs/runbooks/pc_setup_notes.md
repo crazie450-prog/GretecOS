@@ -27,14 +27,17 @@ uv python install
 
 ### 3. claude.exe is not on gos-dev's PATH
 
-Claude Code's native installer puts `claude.exe` in `%USERPROFILE%\.local\bin`, which is not on gos-dev's PATH. As gos-dev, add it to the user PATH:
+Claude Code's native installer puts `claude.exe` in `%USERPROFILE%\.local\bin`, which is not on gos-dev's PATH. As gos-dev, add it to the user PATH. This keeps the existing `%VAR%` entries unexpanded and does nothing if the entry is already there:
 
 ```powershell
 $bin = Join-Path $env:USERPROFILE '.local\bin'
-[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$bin", 'User')
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$p = $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+if (($p -split ';') -notcontains $bin) { $k.SetValue('Path', ($p.TrimEnd(';') + ';' + $bin).TrimStart(';'), 'ExpandString') }
+$k.Close()
 ```
 
-Then open a new runas window; the old one keeps the old PATH.
+(Or add the entry by hand: as gos-dev, run `rundll32 sysdm.cpl,EditEnvironmentVariables` and edit `Path` under "User variables".) Then open a new runas window; the old one keeps the old PATH.
 
 ### 4. Claude Code login on Windows
 
