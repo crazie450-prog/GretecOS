@@ -189,7 +189,7 @@ def test_refuses_a_name_that_is_a_path(
 
 
 def test_real_pins() -> None:
-    """The pinned files: both zips and the addons cleared for Play (D88, D89), never GTNL."""
+    """The pinned files: both zips and the addons cleared for Play (D88, D90), never GTNL."""
     text = SCRIPT.read_text(encoding="ascii")
     pins = re.findall(
         r"name = '([^']+)'.*?url = '([^']+)'\s+sha256 = '([0-9a-f]{64})'",

@@ -1201,10 +1201,10 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 |---|---|---|---|
 | GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31), still the newest versioned release. GTNLLib 1.1.4 | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") is only in the rolling `dev-build` asset (rc2.1 still calls GT/CropsNH/NEI methods removed in stable), which is replaced on every push and can't be pinned (GTNL dev-290 needs GTNLLib 1.1.3). The repo is now also at github.com/GTNotLeisure/GT-Not-Leisure. |
 | Twist Space Technology | 0.8.0 (2026-11-02) | 2.9.0 stable | ✓ In Play (D88). 0.8.0-RC2.9 crashes on stable, so it is no stand-in. Lab, which mirrors Play, has loaded a world; the D02 smoke test is still to do. |
-| 123Technology | 2.2.1.1 (2026-11-04) | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ **Ready.** Fixes #277 (recipe `IllegalAccessError` with TST). Pinned; goes into Play after a Lab smoke test, jar only, no `123Technology_Musics.zip` (D89). |
+| 123Technology | 2.2.1.1 (2026-11-04) | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ **Ready.** Fixes #277 (recipe `IllegalAccessError` with TST). Pinned; goes into Play after a Lab smoke test, jar only, no `123Technology_Musics.zip` (D90). |
 | Programmable Hatches | v0.2.1p1-beta and v0.2.1p2-beta (2026-11-01) | GT .264, NEI 2.8.171 (p1) | ✓ Play keeps **0.2.1p0** (D88): the author's README still maps 2.9.0 to 0.2.1p0. |
 | worldedit-gtnh | v0.0.10 (2026-07-19), not in the pack | n/a | ⚠ #30 (meta > 15), #24 (EndlessIDs schematic save/load) and #28 (chunk corruption on non-existent meta) are still open (V16). In Play (D88). |
-| PlanNH (optional) | 0.2.0 (2026-11-03), client-only | ≥ 2.9.0-RC-2, same GT compile target as 0.1.9 | ✓ Replaces 0.1.9 in Play after a Lab test; 0.1.9 is the rollback (D89). |
+| PlanNH (optional) | 0.2.0 (2026-11-03), client-only | ≥ 2.9.0-RC-2, same GT compile target as 0.1.9 | ✓ Replaces 0.1.9 in Play after a Lab test; 0.1.9 is the rollback (D90). |
 | NEI | 2.8.171 ships in 2.9.0; 2.8.172-GTNH and 2.8.173-GTNH are out | n/a | Export keeps its manual swap to 2.8.172 (V03). |
 | GT5-Unofficial | 5.09.54.265 ships in 2.9.0 | n/a | `release/2.9.x` has 2 untagged hotfix commits, so a 2.9.1 may come. The GT pin stays at .265 until the pack changes. |
 
