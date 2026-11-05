@@ -30,5 +30,14 @@ node_modules/
 # Gradle (mod/). /mod/run/ is the runServer test world: saves never go in git.
 # Anchor build dirs: a bare build/ would also hide the source package core/gregtec/build/.
 /mod/.gradle/
+/mod/.kotlin/
 /mod/build/
 /mod/run/
+
+# Jars, dumps and exports never go in git (WO-1.1). The Gradle wrapper jar is the one exception
+# (upstream Gradle 9.7.1 wrapper, sha256 checked against services.gradle.org).
+*.jar
+!/mod/gradle/wrapper/gradle-wrapper.jar
+dumps/
+gregteclink/exports/
+harness-result.json

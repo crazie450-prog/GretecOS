@@ -1,0 +1,21 @@
+{
+  "modListVersion": 2,
+  "modList": [{
+    "modid": "${modId}",
+    "name": "${modName}",
+    "description": "Gregtec OS game link. Export module: recipe, machine and manifest dumps for the GTNH-Export instance. Adds no items, blocks or mixins.",
+    "version": "${modVersion}",
+    "mcversion": "${minecraftVersion}",
+    "url": "https://github.com/crazie450-prog/GretecOS",
+    "updateUrl": "",
+    "authorList": ["Gregtec OS"],
+    "credits": "Build scaffolding from GTNewHorizons/ExampleMod1.7.10 (MIT)",
+    "logoFile": "",
+    "screenshots": [],
+    "parent": "",
+    "requiredMods": ["gregtech"],
+    "dependencies": ["gregtech"],
+    "dependants": [],
+    "useDependencyInformation": true
+  }]
+}
