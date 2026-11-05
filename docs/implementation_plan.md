@@ -1211,7 +1211,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 - **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST; not rechecked on 2026-11-05). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
 - **Play-world start gate (D02):**
   - GTNL has a release that includes `28007498`.
-  - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93).
+  - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93). **Done 2026-11-05 (D94).**
   - #575 is fixed or Clayton accepts it. #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
