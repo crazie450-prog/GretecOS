@@ -13,6 +13,12 @@
     skipped. One with another hash is deleted and downloaded again. A download that fails its check
     is deleted and reported, the rest still run, and the script exits 1.
 
+    The "Next" steps it prints are for building Play from scratch. Play already exists, so for the
+    jars D90 added (OTHTechnology-2.2.1.1.jar, plannh-0.2.0.jar) the order is: a Lab smoke test
+    first (copy them into Lab's mods and delete Lab's plannh-0.1.9.jar, before the next
+    sync_instances.py run, which mirrors Lab from Play), then Clayton copies them into Play's mods
+    and deletes plannh-0.1.9.jar there (two PlanNH jars won't start).
+
 .PARAMETER Build
     Java17 (the Java 17-26 build, recommended by D68) or Java8.
 
@@ -37,9 +43,10 @@ $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is far slower wit
 # Windows PowerShell 5.1 may not offer TLS 1.2 by default; GitHub requires it.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# Pins, checked 2026-11-03. downloads.gtnewhorizons.com publishes no checksum, so the zip hashes are
-# those of the files it serves (two full passes agreed, and the sizes matched Content-Length). The
-# jars are GitHub release assets; the worldedit and PlanNH hashes also match GTNH's Nexus.
+# Pins, checked 2026-11-03 (123Technology and PlanNH 0.2.0: 2026-11-05, D90).
+# downloads.gtnewhorizons.com publishes no checksum, so the zip hashes are those of the files it
+# serves (two full passes agreed, and the sizes matched Content-Length). The jars are GitHub release
+# assets, hashed the same way; the worldedit and PlanNH 0.1.9 hashes also match GTNH's Nexus.
 $Zips = @{
     Java17 = @{ name = 'GT_New_Horizons_2.9.0_Java_17-26.zip'   # 747,848,389 bytes
         url = 'https://downloads.gtnewhorizons.com/Multi_mc_downloads/GT_New_Horizons_2.9.0_Java_17-26.zip'
@@ -61,16 +68,23 @@ $Addons = @(
     @{ name = 'worldedit-v0.0.10.jar'
         url = 'https://github.com/GTNewHorizons/worldedit-gtnh/releases/download/v0.0.10/worldedit-v0.0.10.jar'
         sha256 = '4904a6d7e29e53afaf28d99a50ce4b946b429d174fecd0563e7787e9c8ef481f' },
-    # PlanNH 0.1.9 (2026-10-22), client-only planner (F8). Clayton chose to include it (D88).
-    @{ name = 'plannh-0.1.9.jar'
-        url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar'
-        sha256 = 'a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb' }
+    # PlanNH 0.2.0 (2026-11-03, 14,410,615 bytes), client-only planner (F8); replaces 0.1.9 (D90).
+    # Rollback: the plannh-0.1.9.jar this script fetched before stays in -Dest (nothing here
+    # deletes files it doesn't list). To fetch it again:
+    # https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar
+    # SHA256 a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb.
+    @{ name = 'plannh-0.2.0.jar'
+        url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.0/plannh-0.2.0.jar'
+        sha256 = '7201b4b32f3dadef5160ae24b89bc9ff079c25af00eac067e1273b61940f5fc9' },
+    # 123Technology 2.2.1.1 (2026-11-04, 7,800,686 bytes), built for 2.9.0 stable; fixes #277
+    # (recipe IllegalAccessError with TST). The jar only, not the optional 123Technology_Musics.zip (D90).
+    @{ name = 'OTHTechnology-2.2.1.1.jar'
+        url = 'https://github.com/CallmeSHaobe/123Technology/releases/download/2.2.1.1/OTHTechnology-2.2.1.1.jar'
+        sha256 = 'f863dacded2231cda2239ae68912dcec64a62b1ee067cc70432e3cab7034efce' }
 )
 # Left out on purpose:
 # - GT-Not-Leisure and GTNLLib: no versioned release contains 28007498 (plan 13.1, D02). The rolling
 #   "dev-build" asset is replaced on every push, so it can't be pinned.
-# - 123Technology 2.2.0.1: built against 2.9.0-RC-2; the stable port is merged but not released.
-#   Nobody knows yet whether it loads on stable.
 
 try {
     $files = if ($Manifest) { Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json } else { @($Zips[$Build]) + $Addons }
@@ -125,6 +139,8 @@ try {
     if ($failed) { Write-Output "$failed file(s) failed; nothing bad was kept. Re-run to retry."; exit 1 }
 
     Write-Output "`nAll files are in $Dest. Next (the PR's WO-0.7 steps):"
+    Write-Output '  (Play already built? Skip these steps. Run the Lab smoke test first (D90), and when you copy'
+    Write-Output '  plannh-0.2.0.jar into Play''s mods, delete plannh-0.1.9.jar there: two PlanNH jars won''t start.)'
     foreach ($f in $files | Where-Object { $_.name -like '*.zip' }) {
         Write-Output "  Prism: Add Instance > Import > $(Join-Path $Dest $f.name), Name: GTNH-Play"
     }
