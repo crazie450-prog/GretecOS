@@ -6,6 +6,7 @@ real venv once.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
@@ -56,11 +57,27 @@ def snapshot(root: Path) -> dict[str, bytes | None]:
     }
 
 
-def protect(folder: Path) -> None:
-    """Windows: stop inheriting, as setup_gos_dev.ps1 does for GOS_APP (keeps the same ACEs)."""
-    if sys.platform == "win32":
-        subprocess.run(
-            ["icacls", str(folder), "/inheritance:d"], check=True, capture_output=True
+def icacls(folder: Path, *args: str, check: bool = True) -> int:
+    run = subprocess.run(
+        ["icacls", str(folder), *args], check=check, capture_output=True
+    )
+    return run.returncode
+
+
+def protect(folder: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: give the folder setup_gos_dev.ps1's GOS_APP ACL (protected, owner Administrators,
+    full control for SYSTEM, Administrators and you only)."""
+    if sys.platform != "win32":
+        return
+    full = [f"*{sid}:(OI)(CI)F" for sid in (dep.SYSTEM, dep.ADMINS, dep.current_sid())]
+    icacls(folder, "/grant:r", *full)
+    icacls(folder, "/inheritance:r")
+    if icacls(folder, "/setowner", f"*{dep.ADMINS}", check=False):
+        # Only an elevated token may give a folder to Administrators (CI's is; a normal window's
+        # isn't), so here only the owner deploy reads is faked; the ACEs are still real.
+        real = dep.read_acl
+        monkeypatch.setattr(
+            dep, "read_acl", lambda p: dataclasses.replace(real(p), owner=dep.ADMINS)
         )
 
 
@@ -82,11 +99,12 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> Path:
+def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """GOS_APP as setup_gos_dev.ps1 leaves it: its two scripts copied in."""
     app = tmp_path / "GregtecOS-app"
-    (app / "scripts").mkdir(parents=True)
-    protect(app)
+    app.mkdir()
+    protect(app, monkeypatch)
+    (app / "scripts").mkdir()
     for name in ("backup_world.ps1", "setup_gos_dev.ps1"):
         (app / "scripts" / name).write_text("# from setup\n", "utf-8")
     return app
@@ -208,7 +226,7 @@ def test_refuses_a_missing_gos_app(repo: Path, tmp_path: Path) -> None:
     "where", ["in-repo", "around-repo", "forbidden", "in-forbidden"]
 )
 def test_refuses_a_gos_app_that_overlaps(
-    repo: Path, tmp_path: Path, where: str
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str
 ) -> None:
     prism = tmp_path / "Prism"
     (prism / "instances" / "GTNH-Play").mkdir(parents=True)
@@ -219,7 +237,7 @@ def test_refuses_a_gos_app_that_overlaps(
         "in-forbidden": prism / "instances" / "GTNH-Play",
     }[where]
     target.mkdir(exist_ok=True)
-    protect(target)
+    protect(target, monkeypatch)
     before = snapshot(tmp_path)
     with pytest.raises(dep.DeployError, match="overlaps"):
         dep.deploy(repo, "HEAD", target, forbidden=[prism])
@@ -247,6 +265,63 @@ def test_refuses_a_gos_app_that_inherits_its_acl(repo: Path, tmp_path: Path) -> 
     with pytest.raises(dep.DeployError, match="inherits its permissions"):
         dep.deploy(repo, "HEAD", plain)
     assert not any(plain.iterdir())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
+def test_refuses_a_protected_gos_app_owned_by_its_maker(
+    repo: Path, tmp_path: Path
+) -> None:
+    """What gos-dev could make in C:\\ while GOS_APP is missing: protected, owned by itself."""
+    made = tmp_path / "made"
+    made.mkdir()
+    me = dep.current_sid()
+    icacls(made, "/setowner", f"*{me}")
+    icacls(made, "/inheritance:d")
+    acl = dep.read_acl(made)
+    assert acl.protected and acl.owner == me and acl.allows
+    with pytest.raises(dep.DeployError, match="not Administrators"):
+        dep.deploy(repo, "HEAD", made)
+    assert not any(made.iterdir())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
+def test_reads_setup_acl_and_refuses_an_extra_writer(repo: Path, app: Path) -> None:
+    assert dep.acl_problem(dep.read_acl(app), dep.current_sid()) is None
+    icacls(app, "/grant", "*S-1-5-11:(OI)(CI)M")  # Authenticated Users: Modify
+    before = snapshot(app)
+    with pytest.raises(dep.DeployError, match="lets S-1-5-11 change it"):
+        dep.deploy(repo, "HEAD", app)
+    assert snapshot(app) == before
+
+
+ME, DEV = "S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-1002"
+FULL, MODIFY, READ_EXEC = 0x1F01FF, 0x1301BF, 0x1200A9
+SETUP_ACES = ((dep.SYSTEM, FULL), (dep.ADMINS, FULL), (ME, FULL), (DEV, READ_EXEC))
+
+
+@pytest.mark.parametrize(
+    ("acl", "problem"),
+    [
+        (dep.Acl(dep.ADMINS, True, SETUP_ACES), None),
+        (dep.Acl(dep.ADMINS, False, SETUP_ACES), "inherits its permissions"),
+        (dep.Acl(DEV, True, SETUP_ACES), f"is owned by {DEV}, not Administrators"),
+        (dep.Acl(ME, True, SETUP_ACES), "not Administrators"),
+        (dep.Acl(dep.ADMINS, True, (*SETUP_ACES, ("S-1-5-11", MODIFY))), "S-1-5-11"),
+        (
+            dep.Acl(dep.ADMINS, True, (*SETUP_ACES, (DEV, 0x40000000))),
+            DEV,
+        ),  # GENERIC_WRITE
+        (dep.Acl(dep.ADMINS, True, (*SETUP_ACES, (DEV, 0x00040000))), DEV),  # WRITE_DAC
+        (dep.Acl(dep.ADMINS, True, (("S-1-1-0", 0xFFFFFFFF),)), "S-1-1-0"),  # NULL DACL
+    ],
+)
+def test_acl_problem(acl: dep.Acl, problem: str | None) -> None:
+    """GOS_APP must be protected, owned by Administrators, and writable only by SYSTEM,
+    Administrators and the deployer: gos-dev can protect a folder it made, not give it away."""
+    found = dep.acl_problem(acl, ME)
+    assert (
+        found is None if problem is None else (found is not None and problem in found)
+    )
 
 
 def test_refuses_a_current_folder_it_did_not_make(repo: Path, app: Path) -> None:
@@ -292,11 +367,11 @@ def failing_rename(n: int) -> Callable[[Path, Path], None]:
     return rename
 
 
-@pytest.mark.parametrize("n", [1, 2, 3, 4])
+@pytest.mark.parametrize("n", [2, 3, 4, 5])
 def test_a_failed_swap_is_undone(
     repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch, n: int
 ) -> None:
-    """Renames: current aside, staged in, scripts aside, staged scripts in."""
+    """Renames: build to staged, current aside, staged in, scripts aside, staged scripts in."""
     dep.deploy(repo, "HEAD", app)
     commit(repo, {"scripts/backup_world.ps1": "# v2\n"})
     before = snapshot(app)
@@ -310,9 +385,87 @@ def test_first_deploy_swap_failure_is_undone(
     repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     before = snapshot(app)
-    monkeypatch.setattr(dep.os, "rename", failing_rename(3))  # staged scripts in
+    monkeypatch.setattr(dep.os, "rename", failing_rename(4))  # staged scripts in
     with pytest.raises(dep.DeployError, match="GOS_APP is unchanged"):
         dep.deploy(repo, "HEAD", app)
+    assert snapshot(app) == before
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 4, 5])
+def test_an_interrupted_deploy_is_undone(
+    repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch, n: int
+) -> None:
+    """Ctrl+C on any rename (see test_a_failed_swap_is_undone) leaves GOS_APP as it was."""
+    dep.deploy(repo, "HEAD", app)
+    commit(repo, {"scripts/backup_world.ps1": "# v2\n"})
+    before = snapshot(app)
+    real = os.rename
+    calls: list[str] = []
+
+    def rename(src: Path, dst: Path) -> None:
+        calls.append(str(src))
+        if len(calls) == n:
+            raise KeyboardInterrupt
+        real(src, dst)
+
+    monkeypatch.setattr(dep.os, "rename", rename)
+    with pytest.raises(KeyboardInterrupt):
+        dep.deploy(repo, "HEAD", app)
+    assert snapshot(app) == before
+
+
+@pytest.mark.parametrize("lost", ["current", "scripts"])
+def test_the_next_deploy_restores_what_a_crash_mid_swap_lost(
+    repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch, lost: str
+) -> None:
+    """A crash no handler sees (power cut) between renames leaves only .gos-old-<name>-*."""
+    first = dep.deploy(repo, "HEAD", app)
+    before = snapshot(app)
+    os.rename(app / lost, app / f".gos-old-{lost}-20261105-120000-abcd")
+    (
+        app / f".gos-old-{lost}-20261104-120000-abcd"
+    ).mkdir()  # older, couldn't be deleted
+
+    def broken(release: Path) -> None:
+        raise dep.DeployError("uv sync failed (see above); nothing was swapped")
+
+    monkeypatch.setattr(dep, "_build_env", broken)
+    with pytest.raises(dep.DeployError, match="uv sync failed"):
+        dep.deploy(repo, "HEAD", app)
+    assert (
+        snapshot(app) == before
+    )  # the newest old folder is back, the older one cleared
+
+    monkeypatch.setattr(dep, "_build_env", fake_env)
+    commit(repo, {"scripts/backup_world.ps1": "# v2\n"})
+    second = dep.deploy(repo, "HEAD", app)
+    assert second.replaced == first.commit
+    assert sorted(p.name for p in app.iterdir()) == ["current", "scripts"]
+
+
+def test_the_venv_is_checked_after_a_rename(
+    repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A venv that still points at the folder it was built in fails before the swap."""
+    built: list[Path] = []
+    checked: list[Path] = []
+
+    def build_env(release: Path) -> None:
+        fake_env(release)
+        (release / ".venv" / "home").write_text(str(release), "utf-8")
+        built.append(release)
+
+    def check_env(release: Path) -> None:
+        checked.append(release)
+        if not Path((release / ".venv" / "home").read_text("utf-8")).is_dir():
+            raise dep.DeployError("the staged gos command doesn't run")
+
+    monkeypatch.setattr(dep, "_build_env", build_env)
+    monkeypatch.setattr(dep, "_check_env", check_env)
+    before = snapshot(app)
+    with pytest.raises(dep.DeployError, match="doesn't run"):
+        dep.deploy(repo, "HEAD", app)
+    assert built[0].parent == checked[0].parent == app and built[0] != checked[0]
     assert snapshot(app) == before
 
 

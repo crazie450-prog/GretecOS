@@ -1,8 +1,9 @@
 r"""``gos deploy``: install a merged commit of this clone into GOS_APP (WO-0.8, D75, plan 4.6).
 
 Clayton runs it from his own profile clone, as himself. GOS_APP (``C:\GregtecOS-app``) is made by
-``scripts/setup_gos_dev.ps1``: owner Administrators, Clayton full control, gos-dev read only, no
-inheritance from ``C:\``. Deploy never creates it and never writes outside it::
+``scripts/setup_gos_dev.ps1``: owner Administrators, full control for SYSTEM, Administrators and
+Clayton, gos-dev read only, no inheritance from ``C:\``. Deploy never creates it and never writes
+outside it::
 
     GOS_APP\
       current\     git archive of the commit, its .venv and release.json (what, when, from where)
@@ -10,22 +11,30 @@ inheritance from ``C:\``. Deploy never creates it and never writes outside it::
 
 How a deploy runs:
 
-1. Refuse unless GOS_APP is the configured folder, exists, is reached through no link, doesn't
-   overlap the repo, Prism or GOS_HOME, and (Windows) has the protected DACL the setup gives it.
+1. Refuse unless GOS_APP is the configured folder, exists, is reached through no link, and
+   doesn't overlap the repo, Prism or GOS_HOME. On Windows also refuse unless its ACL is setup's:
+   protected from inheritance, owned by Administrators (gos-dev can't give a folder it made to
+   Administrators), and no write access for anyone but SYSTEM, Administrators and the deployer.
 2. Refuse unless the commit is in ``origin/main`` and the working tree has no uncommitted changes.
-3. Build the release in ``GOS_APP\.gos-staging-*``: ``git archive``, then ``uv venv --relocatable``
-   and ``uv sync --locked --no-dev`` with ``UV_LINK_MODE=copy``. Copies, not hardlinks into uv's
-   cache, so every file is new in GOS_APP and inherits its ACL. The editable install's ``.pth`` is
-   made relative, so the release still works once renamed, and is checked before the swap.
+3. Build the release in ``GOS_APP\.gos-staging-build-*``: ``git archive``, then
+   ``uv venv --relocatable`` and ``uv sync --locked --no-dev`` with ``UV_LINK_MODE=copy``. Copies,
+   not hardlinks into uv's cache, so every file is new in GOS_APP and inherits its ACL. The
+   editable install's ``.pth`` is made relative. Then rename the build folder to
+   ``.gos-staging-*`` and check the venv there, so a path left pointing at the build folder fails
+   the check instead of breaking the deployed release.
 4. Swap by renames inside GOS_APP (``current`` and ``scripts`` aside, the staged ones in). A folder
    renamed within the same parent keeps the ACEs it inherited there; nothing is moved in from
    outside, so no source ACL comes along. If a rename fails (Windows refuses while a process runs
-   from the folder), every rename is undone and GOS_APP is as it was.
-5. Delete the old folders. One still in use is left and reported; the next deploy removes it.
+   from the folder) or the swap is interrupted (Ctrl+C), every rename is undone and GOS_APP is as
+   it was.
+5. Delete the old folders. One still in use is left and reported; the next deploy removes it. If a
+   crash mid-swap left ``current`` or ``scripts`` missing, the next deploy first renames the newest
+   matching ``.gos-old-*`` folder back.
 """
 
 from __future__ import annotations
 
+import ctypes
 import io
 import json
 import os
@@ -53,6 +62,10 @@ OLD = ".gos-old-"
 REQUIRED = ("scripts/backup_world.ps1",)
 RENAME_TRIES = 3  # antivirus can hold a freshly written file for a moment
 RENAME_DELAY = 0.5
+SYSTEM, ADMINS = "S-1-5-18", "S-1-5-32-544"
+# setup_gos_dev.ps1's $WriteMask: write/append data, write EA and attributes, delete, delete
+# child, WRITE_DAC, WRITE_OWNER, GENERIC_WRITE, GENERIC_ALL.
+WRITE_MASK = 0x000D0156 | 0x50000000
 
 
 class DeployError(RuntimeError):
@@ -67,6 +80,16 @@ class Release:
     path: Path  # GOS_APP\current
     replaced: str | None  # the commit it replaced, if any
     leftovers: tuple[Path, ...]  # old folders it couldn't delete yet
+
+
+@dataclass(frozen=True)
+class Acl:
+    """What deploy checks of GOS_APP's security descriptor on Windows."""
+
+    owner: str  # SID
+    protected: bool  # SE_DACL_PROTECTED: inherits nothing from its parent
+    # (SID, access mask) of each allow ACE, inherit-only ones too: children get those.
+    allows: tuple[tuple[str, int], ...]
 
 
 def venv_bin(release: Path) -> Path:
@@ -85,6 +108,7 @@ def deploy(
     check_app(app, [repo, *forbidden])
     commit = _commit(repo, ref)
     current, scripts = app / CURRENT, app / SCRIPTS
+    _restore(app)
     replaced = None
     if os.path.lexists(current):
         try:
@@ -97,19 +121,21 @@ def deploy(
     _clear(app)
 
     stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    staged, staged_scripts = (
+    build, staged, staged_scripts = (
+        app / f"{STAGING}build-{stamp}",
         app / f"{STAGING}{stamp}",
         app / f"{STAGING}scripts-{stamp}",
     )
     deployed_at = datetime.now(UTC).isoformat(timespec="seconds")
     try:
-        os.mkdir(staged)  # inside GOS_APP, so it inherits GOS_APP's ACL
-        _extract(repo, commit, staged)
+        os.mkdir(build)  # inside GOS_APP, so it inherits GOS_APP's ACL
+        _extract(repo, commit, build)
         for rel in REQUIRED:
-            if not (staged / rel).is_file():
+            if not (build / rel).is_file():
                 raise DeployError(f"{commit[:12]} has no {rel}; refusing to deploy it")
-        _build_env(staged)
-        relocate_editable(staged)
+        _build_env(build)
+        relocate_editable(build)
+        _rename(build, staged)  # a path still pointing at build now fails the check
         _check_env(staged)
         shutil.copytree(staged / SCRIPTS, staged_scripts, copy_function=shutil.copyfile)
         record = {
@@ -121,7 +147,7 @@ def deploy(
         (staged / RECORD).write_text(json.dumps(record, indent=2) + "\n", "utf-8")
         old = _swap([(staged, current), (staged_scripts, scripts)], stamp)
     except BaseException:
-        for path in (staged, staged_scripts):
+        for path in (build, staged, staged_scripts):
             if os.path.lexists(path):
                 _remove(path)
         raise
@@ -144,11 +170,31 @@ def check_app(app: Path, forbidden: Sequence[Path]) -> None:
             raise DeployError(
                 f"{app} overlaps {other}; GOS_APP must be a folder of its own"
             )
-    if sys.platform == "win32" and not _dacl_protected(app):
-        raise DeployError(
-            f"{app} inherits its permissions from its parent, so it isn't the folder "
-            "setup_gos_dev.ps1 made (that one has gos-dev read only). Run the setup first"
-        )
+    if sys.platform == "win32":
+        problem = acl_problem(read_acl(app), current_sid())
+        if problem:
+            raise DeployError(
+                f"{app} {problem}, so it isn't the folder setup_gos_dev.ps1 makes (owner "
+                "Administrators; only SYSTEM, Administrators and you may change it; gos-dev "
+                "read only). Run the setup first"
+            )
+
+
+def acl_problem(acl: Acl, me: str) -> str | None:
+    r"""Why ``acl`` isn't the ACL setup_gos_dev.ps1 gives GOS_APP, or None. ``me``: deployer's SID.
+
+    gos-dev can make a folder where GOS_APP should be (a standard user may create folders in
+    ``C:\``) and protect it, but it can't make Administrators the owner.
+    """
+    if not acl.protected:
+        return "inherits its permissions from its parent"
+    if acl.owner != ADMINS:
+        return f"is owned by {acl.owner}, not Administrators"
+    writers = {sid for sid, mask in acl.allows if mask & WRITE_MASK}
+    writers -= {SYSTEM, ADMINS, me}
+    if writers:
+        return f"lets {', '.join(sorted(writers))} change it"
+    return None
 
 
 def relocate_editable(release: Path) -> None:
@@ -298,7 +344,7 @@ def _swap(pairs: Sequence[tuple[Path, Path]], stamp: str) -> list[Path]:
                 aside.append((live, old))
             _rename(staged, live)
             placed.append((staged, live))
-    except OSError as exc:
+    except BaseException as exc:  # Ctrl+C too: never leave GOS_APP half swapped
         try:
             for staged, live in reversed(placed):
                 _rename(live, staged)
@@ -306,9 +352,11 @@ def _swap(pairs: Sequence[tuple[Path, Path]], stamp: str) -> list[Path]:
                 _rename(old, live)
         except OSError as undo:
             raise DeployError(
-                f"swap failed ({exc}) and so did undoing it ({undo}). Fix GOS_APP by hand: "
+                f"swap failed ({exc!r}) and so did undoing it ({undo}). Fix GOS_APP by hand: "
                 + "; ".join(f"{old.name} should be {live.name}" for live, old in aside)
             ) from undo
+        if not isinstance(exc, OSError):
+            raise
         raise DeployError(
             f"couldn't swap the release in ({exc}). Something is probably running from "
             "that folder: close the gos tools you started from GOS_APP (or wait a minute "
@@ -331,6 +379,14 @@ def _remove(path: Path) -> bool:
     return True
 
 
+def _restore(app: Path) -> None:
+    """Rename the newest old ``current`` or ``scripts`` back if a crash mid-swap lost it."""
+    for live in (app / CURRENT, app / SCRIPTS):
+        olds = sorted(app.glob(f"{OLD}{live.name}-*"))  # the stamp sorts by time
+        if olds and not os.path.lexists(live):
+            _rename(olds[-1], live)
+
+
 def _clear(app: Path) -> None:
     """Remove staging and old folders an earlier deploy left; skip any still in use."""
     for entry in app.iterdir():
@@ -338,40 +394,19 @@ def _clear(app: Path) -> None:
             _remove(entry)
 
 
-def _dacl_protected(path: Path) -> bool:
-    """Whether the folder's DACL is protected from inheritance (SE_DACL_PROTECTED)."""
-    import ctypes
+def read_acl(path: Path) -> Acl:
+    """Windows: the folder's owner, whether its DACL is protected, and its allow ACEs."""
     from ctypes import wintypes
 
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    get_info = advapi32.GetNamedSecurityInfoW
-    get_info.argtypes = [
-        wintypes.LPCWSTR,
-        ctypes.c_int,
-        wintypes.DWORD,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_void_p),
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_void_p),
-    ]
-    get_info.restype = wintypes.DWORD
-    get_control = advapi32.GetSecurityDescriptorControl
-    get_control.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(wintypes.WORD),
-        ctypes.POINTER(wintypes.DWORD),
-    ]
-    get_control.restype = wintypes.BOOL
-    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
-    dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
-    se_file_object, dacl_security_information, se_dacl_protected = 1, 4, 0x1000
-    error = get_info(
+    advapi32, kernel32 = _win_dlls()
+    owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    se_file_object, owner_information, dacl_information = 1, 0x1, 0x4
+    se_dacl_protected, access_allowed, access_denied = 0x1000, 0, 1
+    error = advapi32.GetNamedSecurityInfoW(
         str(path),
         se_file_object,
-        dacl_security_information,
-        None,
+        owner_information | dacl_information,
+        ctypes.byref(owner),
         None,
         ctypes.byref(dacl),
         None,
@@ -381,8 +416,129 @@ def _dacl_protected(path: Path) -> bool:
         raise ctypes.WinError(error)
     try:
         control, revision = wintypes.WORD(), wintypes.DWORD()
-        if not get_control(sd, ctypes.byref(control), ctypes.byref(revision)):
+        if not advapi32.GetSecurityDescriptorControl(
+            sd, ctypes.byref(control), ctypes.byref(revision)
+        ):
             raise ctypes.WinError(ctypes.get_last_error())
-        return bool(control.value & se_dacl_protected)
+        protected = bool(control.value & se_dacl_protected)
+        if not dacl.value:  # a NULL DACL grants everyone everything
+            return Acl(_sid_string(owner), protected, (("S-1-1-0", 0xFFFFFFFF),))
+        # ACL header: revision (byte), pad (byte), size (word), ACE count (word), pad (word).
+        count = ctypes.cast(
+            dacl.value + 4, ctypes.POINTER(wintypes.WORD)
+        ).contents.value
+        allows: list[tuple[str, int]] = []
+        for index in range(count):
+            ace = ctypes.c_void_p()
+            if not advapi32.GetAce(dacl, index, ctypes.byref(ace)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            assert ace.value is not None
+            # ACE header: type (byte), flags (byte), size (word); then mask (dword), then SID.
+            kind = ctypes.cast(ace.value, ctypes.POINTER(ctypes.c_ubyte)).contents.value
+            if kind == access_denied:  # only takes access away
+                continue
+            if kind != access_allowed:  # setup never writes another kind
+                raise DeployError(
+                    f"{path} has an ACE of a kind deploy can't check ({kind})"
+                )
+            mask = ctypes.cast(
+                ace.value + 4, ctypes.POINTER(wintypes.DWORD)
+            ).contents.value
+            allows.append((_sid_string(ctypes.c_void_p(ace.value + 8)), mask))
+        return Acl(_sid_string(owner), protected, tuple(allows))
     finally:
         kernel32.LocalFree(sd)
+
+
+def current_sid() -> str:
+    """Windows: the SID of the user running this process."""
+    from ctypes import wintypes
+
+    advapi32, kernel32 = _win_dlls()
+    token = wintypes.HANDLE()
+    token_query, token_user = 0x0008, 1
+    if not advapi32.OpenProcessToken(
+        kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        size = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, token_user, None, 0, ctypes.byref(size))
+        buffer = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(
+            token,
+            token_user,
+            ctypes.cast(buffer, ctypes.c_void_p),
+            size,
+            ctypes.byref(size),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        # TOKEN_USER starts with SID_AND_ATTRIBUTES, which starts with the SID pointer.
+        return _sid_string(
+            ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p)).contents
+        )
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _sid_string(sid: ctypes.c_void_p) -> str:
+    advapi32, kernel32 = _win_dlls()
+    text = ctypes.c_void_p()
+    if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.wstring_at(text.value)
+    finally:
+        kernel32.LocalFree(text)
+
+
+def _win_dlls() -> tuple[Any, Any]:
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ptr, out = ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+    get_info = advapi32.GetNamedSecurityInfoW
+    get_info.argtypes = [
+        wintypes.LPCWSTR,
+        ctypes.c_int,
+        wintypes.DWORD,
+        out,
+        out,
+        out,
+        out,
+        out,
+    ]
+    get_info.restype = wintypes.DWORD
+    get_control = advapi32.GetSecurityDescriptorControl
+    get_control.argtypes = [
+        ptr,
+        ctypes.POINTER(wintypes.WORD),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    get_control.restype = wintypes.BOOL
+    advapi32.GetAce.argtypes = [ptr, wintypes.DWORD, out]
+    advapi32.GetAce.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [ptr, out]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    handle = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [
+        handle,
+        wintypes.DWORD,
+        ctypes.POINTER(handle),
+    ]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    get_token = advapi32.GetTokenInformation
+    get_token.argtypes = [
+        handle,
+        ctypes.c_int,
+        ptr,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    get_token.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = handle
+    kernel32.CloseHandle.argtypes = [handle]
+    kernel32.LocalFree.argtypes = [ptr]
+    return advapi32, kernel32
