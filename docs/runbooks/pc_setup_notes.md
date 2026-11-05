@@ -60,3 +60,8 @@ Nothing to do while it stays rare. If it recurs, turn off BetterLoadingScreen's 
 ## OpenComputers log line
 
 OpenComputers prints `Successfully applied N Internet Card filtering rules.` (or `Could not parse Internet Card filtering rules!`) to `logs\fml-client-latest.log` only when a world loads, not at the main menu. To check it, load a world, then run `check_tweaks.py`: when the line is in the log, the `oc_rules` row ends with `last launch: <the line>`. The log is rewritten at every launch, so after a launch that stopped at the main menu the line is missing and `check_tweaks.py` shows no `last launch` part. On 2026-11-05, Lab showed `Successfully applied 8 Internet Card filtering rules.` after loading a world.
+
+## PowerShell: running a tool by its full path
+
+- A quoted path needs `&` in front, or PowerShell just prints the string: `& "C:\GregtecOS-app\current\.venv\Scripts\gos.exe" doctor`. An unquoted path without spaces runs without it.
+- Piping `gos doctor` through `Select-String` in Windows PowerShell 5.1 can garble non-ASCII text (for example `17–26` shows as `17û26`). It's only how the pipe re-encodes the text; the plain output is correct.
