@@ -313,6 +313,12 @@ SETUP_ACES = ((dep.SYSTEM, FULL), (dep.ADMINS, FULL), (ME, FULL), (DEV, READ_EXE
         ),  # GENERIC_WRITE
         (dep.Acl(dep.ADMINS, True, (*SETUP_ACES, (DEV, 0x00040000))), DEV),  # WRITE_DAC
         (dep.Acl(dep.ADMINS, True, (("S-1-1-0", 0xFFFFFFFF),)), "S-1-1-0"),  # NULL DACL
+        # OWNER RIGHTS (what Python's mkdir(mode=0o700) adds) writes only as the owner.
+        (dep.Acl(dep.ADMINS, True, (*SETUP_ACES, (dep.OWNER_RIGHTS, FULL))), None),
+        (
+            dep.Acl(DEV, True, (*SETUP_ACES, (dep.OWNER_RIGHTS, FULL))),
+            "not Administrators",
+        ),
     ],
 )
 def test_acl_problem(acl: dep.Acl, problem: str | None) -> None:
