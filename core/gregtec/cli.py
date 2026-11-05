@@ -12,7 +12,8 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import doctor
+from gregtec import config, doctor
+from gregtec import deploy as app_deploy
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
 
@@ -46,6 +47,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     doc.add_argument(
         "--no-hash", action="store_true", help="list mods without hashing them (faster)"
+    )
+
+    app = commands.add_parser(
+        "deploy",
+        help="install a merged commit of this clone into GOS_APP",
+        description=(
+            "Clayton runs this from his own clone, as himself. It installs REF (default "
+            "HEAD; it must be in origin/main and the working tree clean) into "
+            "GOS_APP\\current with its own .venv, copies its scripts/ to GOS_APP\\scripts, "
+            "and swaps both in by renames, so a failed deploy changes nothing. GOS_APP is "
+            "[paths] gos_app in gos.toml and must already exist (setup_gos_dev.ps1 makes it)."
+        ),
+    )
+    app.add_argument("ref", nargs="?", default="HEAD", help="commit, tag or branch")
+    app.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
 
     vault = commands.add_parser("vault", help="vault tasks")
@@ -112,6 +133,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             hash_mods=not args.no_hash,
             out=sys.stdout,
         )
+    if args.command == "deploy":
+        return _deploy(args.ref, args.config)
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"
@@ -132,6 +155,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         return llm_smoke.run(runs=args.runs, skip_sdk=args.skip_sdk, out=sys.stdout)
     parser.error(f"unknown command {args.command}")
     return 2
+
+
+def _deploy(ref: str, config_path: Path | None) -> int:
+    try:
+        cfg = config.load(config_path)
+    except (OSError, ValueError) as exc:
+        print(f"Can't read gos.toml: {exc}", file=sys.stderr)
+        return 2
+    home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
+    prism = [cfg.prism_instances, cfg.prism_instances.parent]
+    forbidden = [*prism, *doctor.default_prism_roots(), home]
+    try:
+        release = app_deploy.deploy(
+            app_deploy.REPO_ROOT, ref, cfg.gos_app, forbidden=forbidden
+        )
+    except (app_deploy.DeployError, OSError) as exc:
+        print(f"Not deployed: {exc}", file=sys.stderr)
+        return 1
+    was = f", replacing {release.replaced[:12]}" if release.replaced else ""
+    print(f"Deployed {release.commit[:12]} ({ref}) to {release.path}{was}.")
+    print(f"{release.path.parent / app_deploy.SCRIPTS} is a copy of its scripts/.")
+    for path in release.leftovers:
+        print(f"Couldn't delete {path} (in use?); the next deploy removes it.")
+    gos = app_deploy.venv_exe(release.path, "gos")
+    python = app_deploy.venv_exe(release.path, "python")
+    scripts = release.path / "scripts"
+    print("Run the tools that touch Play from the release, as yourself:")
+    print(f"  {gos} doctor")
+    print(f"  {python} {scripts / 'check_tweaks.py'} <instance folder> [--apply]")
+    print(f"  {python} {scripts / 'sync_instances.py'} --dry-run")
+    return 0
 
 
 def _key(command: str, name: str | None) -> int:

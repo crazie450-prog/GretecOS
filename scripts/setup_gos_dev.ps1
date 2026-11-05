@@ -18,7 +18,8 @@
     4. Sets Clayton's GOS_HOME: data\, vault\ and logs\ readable by gos-dev (D82), everything
        else not at all.
     5. Writes Claude Code deny rules as a managed-settings drop-in (a second layer only).
-    6. Copies itself and backup_world.ps1 into GOS_APP\scripts (stand-in for `gos deploy`).
+    6. Copies itself and backup_world.ps1 into GOS_APP\scripts, until `gos deploy` has run
+       (deploy then keeps GOS_APP\scripts in step with the deployed release).
     7. Registers the world backup task (runs as Clayton, S4U: no stored password, no window).
     8. Checks every protected file and folder, and every Minecraft or Prism install it finds on
        the fixed drives, and exits 1 if gos-dev could change any of them.
@@ -393,8 +394,12 @@ Move-Item -LiteralPath "$dropIn.tmp" -Destination $dropIn -Force
 Write-Host "    $dropIn"
 
 # ---------------------------------------------------------------- 6. GOS_APP scripts (until gos deploy)
+# Once `gos deploy` has run, GOS_APP\scripts is a copy of the deployed release's scripts\ and
+# deploy owns it: this script leaves it alone (D91).
 $appScripts = Join-Path $AppRoot 'scripts'
-if ((Get-FullPath $PSScriptRoot) -ine (Get-FullPath $appScripts)) {
+if (Test-Path -LiteralPath (Join-Path $AppRoot 'current\release.json')) {
+    Write-Step "$appScripts comes from gos deploy; not copying into it"
+} elseif ((Get-FullPath $PSScriptRoot) -ine (Get-FullPath $appScripts)) {
     Write-Step "Copy $($Scripts -join ' and ') into $appScripts"
     New-Dir $appScripts
     foreach ($name in $Scripts) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $appScripts -Force }
