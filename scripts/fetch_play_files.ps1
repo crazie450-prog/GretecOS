@@ -13,6 +13,12 @@
     skipped. One with another hash is deleted and downloaded again. A download that fails its check
     is deleted and reported, the rest still run, and the script exits 1.
 
+    The "Next" steps it prints are for building Play from scratch. Play already exists, so for the
+    jars D89 added (OTHTechnology-2.2.1.1.jar, plannh-0.2.0.jar) the order is: a Lab smoke test
+    first (copy them into Lab's mods and delete Lab's plannh-0.1.9.jar, before the next
+    sync_instances.py run, which mirrors Lab from Play), then Clayton copies them into Play's mods
+    and deletes plannh-0.1.9.jar there (two PlanNH jars won't start).
+
 .PARAMETER Build
     Java17 (the Java 17-26 build, recommended by D68) or Java8.
 
@@ -64,7 +70,8 @@ $Addons = @(
         sha256 = '4904a6d7e29e53afaf28d99a50ce4b946b429d174fecd0563e7787e9c8ef481f' },
     # PlanNH 0.2.0 (2026-11-03, 14,410,615 bytes), client-only planner (F8); replaces 0.1.9 (D89).
     # Rollback: the plannh-0.1.9.jar this script fetched before stays in -Dest (nothing here
-    # deletes files it doesn't list). To fetch it again: GTNewHorizons/PlanNH release 0.1.9,
+    # deletes files it doesn't list). To fetch it again:
+    # https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar
     # SHA256 a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb.
     @{ name = 'plannh-0.2.0.jar'
         url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.0/plannh-0.2.0.jar'
@@ -132,6 +139,8 @@ try {
     if ($failed) { Write-Output "$failed file(s) failed; nothing bad was kept. Re-run to retry."; exit 1 }
 
     Write-Output "`nAll files are in $Dest. Next (the PR's WO-0.7 steps):"
+    Write-Output '  (Play already built? Skip these steps. Run the Lab smoke test first (D89), and when you copy'
+    Write-Output '  plannh-0.2.0.jar into Play''s mods, delete plannh-0.1.9.jar there: two PlanNH jars won''t start.)'
     foreach ($f in $files | Where-Object { $_.name -like '*.zip' }) {
         Write-Output "  Prism: Add Instance > Import > $(Join-Path $Dest $f.name), Name: GTNH-Play"
     }
