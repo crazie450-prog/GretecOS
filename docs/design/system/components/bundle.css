@@ -1,0 +1,422 @@
+@import url('https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Cinzel:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=Courier+Prime:wght@400;700&family=Pixelify+Sans:wght@400;600;700&family=Inter:wght@400;500;600;700&family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@600;700&family=Barlow+Condensed:wght@500;600;700;800&family=Roboto+Mono:wght@400;500;700&family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&family=Orbitron:wght@500;700&family=Exo+2:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Rajdhani:wght@500;600;700&family=Titillium+Web:wght@400;600;700&family=Michroma&family=Sora:wght@400;500;600;700&family=Martian+Mono:wght@400;600&family=Unbounded:wght@500;700&family=Manrope:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+
+/* Gregtec OS: semantic variables per theme. The token names in tokens.css are prefixed per theme
+   (--hud-bg, --brass-bg, ...); each .theme-<slug> class maps them onto the same semantic names.
+   No class means the Command HUD. In the app, put the class (or a data-theme attribute) on the root. */
+
+.theme-brass { /* Brass and Steam · 1 · Stone and Steam */
+  --bg: var(--brass-bg);
+  --panel: var(--brass-panel);
+  --border: var(--brass-border);
+  --rule: var(--brass-rule);
+  --text: var(--brass-text);
+  --text-2: var(--brass-text-2);
+  --text-3: var(--brass-text-3);
+  --accent: var(--brass-accent);
+  --primary: var(--brass-primary);
+  --primary-ink: var(--brass-primary-ink);
+  --track: var(--brass-track);
+  --ok: var(--brass-ok);
+  --warn: var(--brass-warn);
+  --err: var(--brass-err);
+  --needs: var(--brass-needs);
+  --needs-border: var(--brass-needs-border);
+  --needs-tint: var(--brass-needs-tint);
+  --confirm: var(--brass-confirm);
+  --confirm-ink: var(--brass-confirm-ink);
+  --shell-bg: var(--brass-shell-bg);
+  --shell-text: var(--brass-shell-text);
+  --shell-text-2: var(--brass-shell-text-2);
+  --font-display: 'Cinzel', sans-serif;
+  --font-body: 'Source Sans 3', system-ui, sans-serif;
+  --font-mono: 'Courier Prime', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--brass-radius-panel);
+  --radius-control: var(--brass-radius-control);
+}
+.theme-machine { /* Machine GUI · 2 · LV */
+  --bg: var(--machine-bg);
+  --panel: var(--machine-panel);
+  --border: var(--machine-border);
+  --rule: var(--machine-rule);
+  --text: var(--machine-text);
+  --text-2: var(--machine-text-2);
+  --text-3: var(--machine-text-3);
+  --accent: var(--machine-accent);
+  --primary: var(--machine-primary);
+  --primary-ink: var(--machine-primary-ink);
+  --track: var(--machine-track);
+  --ok: var(--machine-ok);
+  --warn: var(--machine-warn);
+  --err: var(--machine-err);
+  --needs: var(--machine-needs);
+  --needs-border: var(--machine-needs-border);
+  --needs-tint: var(--machine-needs-tint);
+  --confirm: var(--machine-confirm);
+  --confirm-ink: var(--machine-confirm-ink);
+  --shell-bg: var(--machine-shell-bg);
+  --shell-text: var(--machine-shell-text);
+  --shell-text-2: var(--machine-shell-text-2);
+  --font-display: 'Pixelify Sans', sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'Pixelify Sans', monospace;
+  --label-case: none;
+  --radius-panel: var(--machine-radius-panel);
+  --radius-control: var(--machine-radius-control);
+}
+.theme-alu { /* Brushed Aluminium · 3 · MV */
+  --bg: var(--alu-bg);
+  --panel: var(--alu-panel);
+  --border: var(--alu-border);
+  --rule: var(--alu-rule);
+  --text: var(--alu-text);
+  --text-2: var(--alu-text-2);
+  --text-3: var(--alu-text-3);
+  --accent: var(--alu-accent);
+  --primary: var(--alu-primary);
+  --primary-ink: var(--alu-primary-ink);
+  --track: var(--alu-track);
+  --ok: var(--alu-ok);
+  --warn: var(--alu-warn);
+  --err: var(--alu-err);
+  --needs: var(--alu-needs);
+  --needs-border: var(--alu-needs-border);
+  --needs-tint: var(--alu-needs-tint);
+  --confirm: var(--alu-confirm);
+  --confirm-ink: var(--alu-confirm-ink);
+  --shell-bg: var(--alu-shell-bg);
+  --shell-text: var(--alu-shell-text);
+  --shell-text-2: var(--alu-shell-text-2);
+  --font-display: 'Barlow Semi Condensed', sans-serif;
+  --font-body: 'Barlow', system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--alu-radius-panel);
+  --radius-control: var(--alu-radius-control);
+}
+:root, .theme-hud { /* Command HUD · 4 · HV */
+  --bg: var(--hud-bg);
+  --panel: var(--hud-panel);
+  --border: var(--hud-border);
+  --rule: var(--hud-rule);
+  --text: var(--hud-text);
+  --text-2: var(--hud-text-2);
+  --text-3: var(--hud-text-3);
+  --accent: var(--hud-accent);
+  --primary: var(--hud-primary);
+  --primary-ink: var(--hud-primary-ink);
+  --track: var(--hud-track);
+  --ok: var(--hud-ok);
+  --warn: var(--hud-warn);
+  --err: var(--hud-err);
+  --needs: var(--hud-needs);
+  --needs-border: var(--hud-needs-border);
+  --needs-tint: var(--hud-needs-tint);
+  --confirm: var(--hud-confirm);
+  --confirm-ink: var(--hud-confirm-ink);
+  --shell-bg: var(--hud-shell-bg);
+  --shell-text: var(--hud-shell-text);
+  --shell-text-2: var(--hud-shell-text-2);
+  --font-display: 'Saira Condensed', sans-serif;
+  --font-body: 'Saira', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--hud-radius-panel);
+  --radius-control: var(--hud-radius-control);
+}
+.theme-circuit { /* Circuit Board · 5 · EV */
+  --bg: var(--circuit-bg);
+  --panel: var(--circuit-panel);
+  --border: var(--circuit-border);
+  --rule: var(--circuit-rule);
+  --text: var(--circuit-text);
+  --text-2: var(--circuit-text-2);
+  --text-3: var(--circuit-text-3);
+  --accent: var(--circuit-accent);
+  --primary: var(--circuit-primary);
+  --primary-ink: var(--circuit-primary-ink);
+  --track: var(--circuit-track);
+  --ok: var(--circuit-ok);
+  --warn: var(--circuit-warn);
+  --err: var(--circuit-err);
+  --needs: var(--circuit-needs);
+  --needs-border: var(--circuit-needs-border);
+  --needs-tint: var(--circuit-needs-tint);
+  --confirm: var(--circuit-confirm);
+  --confirm-ink: var(--circuit-confirm-ink);
+  --shell-bg: var(--circuit-shell-bg);
+  --shell-text: var(--circuit-shell-text);
+  --shell-text-2: var(--circuit-shell-text-2);
+  --font-display: 'Chakra Petch', sans-serif;
+  --font-body: 'Chakra Petch', system-ui, sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--circuit-radius-panel);
+  --radius-control: var(--circuit-radius-control);
+}
+.theme-tung { /* Tungstensteel · 6 · IV */
+  --bg: var(--tung-bg);
+  --panel: var(--tung-panel);
+  --border: var(--tung-border);
+  --rule: var(--tung-rule);
+  --text: var(--tung-text);
+  --text-2: var(--tung-text-2);
+  --text-3: var(--tung-text-3);
+  --accent: var(--tung-accent);
+  --primary: var(--tung-primary);
+  --primary-ink: var(--tung-primary-ink);
+  --track: var(--tung-track);
+  --ok: var(--tung-ok);
+  --warn: var(--tung-warn);
+  --err: var(--tung-err);
+  --needs: var(--tung-needs);
+  --needs-border: var(--tung-needs-border);
+  --needs-tint: var(--tung-needs-tint);
+  --confirm: var(--tung-confirm);
+  --confirm-ink: var(--tung-confirm-ink);
+  --shell-bg: var(--tung-shell-bg);
+  --shell-text: var(--tung-shell-text);
+  --shell-text-2: var(--tung-shell-text-2);
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-body: 'Barlow', system-ui, sans-serif;
+  --font-mono: 'Barlow Condensed', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--tung-radius-panel);
+  --radius-control: var(--tung-radius-control);
+}
+.theme-holo { /* Hologram Lab · 7 · LuV */
+  --bg: var(--holo-bg);
+  --panel: var(--holo-panel);
+  --border: var(--holo-border);
+  --rule: var(--holo-rule);
+  --text: var(--holo-text);
+  --text-2: var(--holo-text-2);
+  --text-3: var(--holo-text-3);
+  --accent: var(--holo-accent);
+  --primary: var(--holo-primary);
+  --primary-ink: var(--holo-primary-ink);
+  --track: var(--holo-track);
+  --ok: var(--holo-ok);
+  --warn: var(--holo-warn);
+  --err: var(--holo-err);
+  --needs: var(--holo-needs);
+  --needs-border: var(--holo-needs-border);
+  --needs-tint: var(--holo-needs-tint);
+  --confirm: var(--holo-confirm);
+  --confirm-ink: var(--holo-confirm-ink);
+  --shell-bg: var(--holo-shell-bg);
+  --shell-text: var(--holo-shell-text);
+  --shell-text-2: var(--holo-shell-text-2);
+  --font-display: 'Orbitron', sans-serif;
+  --font-body: 'Exo 2', system-ui, sans-serif;
+  --font-mono: 'Space Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--holo-radius-panel);
+  --radius-control: var(--holo-radius-control);
+}
+.theme-fusion { /* Fusion · 8 · ZPM */
+  --bg: var(--fusion-bg);
+  --panel: var(--fusion-panel);
+  --border: var(--fusion-border);
+  --rule: var(--fusion-rule);
+  --text: var(--fusion-text);
+  --text-2: var(--fusion-text-2);
+  --text-3: var(--fusion-text-3);
+  --accent: var(--fusion-accent);
+  --primary: var(--fusion-primary);
+  --primary-ink: var(--fusion-primary-ink);
+  --track: var(--fusion-track);
+  --ok: var(--fusion-ok);
+  --warn: var(--fusion-warn);
+  --err: var(--fusion-err);
+  --needs: var(--fusion-needs);
+  --needs-border: var(--fusion-needs-border);
+  --needs-tint: var(--fusion-needs-tint);
+  --confirm: var(--fusion-confirm);
+  --confirm-ink: var(--fusion-confirm-ink);
+  --shell-bg: var(--fusion-shell-bg);
+  --shell-text: var(--fusion-shell-text);
+  --shell-text-2: var(--fusion-shell-text-2);
+  --font-display: 'Rajdhani', sans-serif;
+  --font-body: 'Titillium Web', system-ui, sans-serif;
+  --font-mono: 'Rajdhani', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--fusion-radius-panel);
+  --radius-control: var(--fusion-radius-control);
+}
+.theme-naq { /* Naquadah · 9 · UV */
+  --bg: var(--naq-bg);
+  --panel: var(--naq-panel);
+  --border: var(--naq-border);
+  --rule: var(--naq-rule);
+  --text: var(--naq-text);
+  --text-2: var(--naq-text-2);
+  --text-3: var(--naq-text-3);
+  --accent: var(--naq-accent);
+  --primary: var(--naq-primary);
+  --primary-ink: var(--naq-primary-ink);
+  --track: var(--naq-track);
+  --ok: var(--naq-ok);
+  --warn: var(--naq-warn);
+  --err: var(--naq-err);
+  --needs: var(--naq-needs);
+  --needs-border: var(--naq-needs-border);
+  --needs-tint: var(--naq-needs-tint);
+  --confirm: var(--naq-confirm);
+  --confirm-ink: var(--naq-confirm-ink);
+  --shell-bg: var(--naq-shell-bg);
+  --shell-text: var(--naq-shell-text);
+  --shell-text-2: var(--naq-shell-text-2);
+  --font-display: 'Michroma', sans-serif;
+  --font-body: 'Sora', system-ui, sans-serif;
+  --font-mono: 'Martian Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--naq-radius-panel);
+  --radius-control: var(--naq-radius-control);
+}
+.theme-deep { /* Deep Space · 10 · UHV and up */
+  --bg: var(--deep-bg);
+  --panel: var(--deep-panel);
+  --border: var(--deep-border);
+  --rule: var(--deep-rule);
+  --text: var(--deep-text);
+  --text-2: var(--deep-text-2);
+  --text-3: var(--deep-text-3);
+  --accent: var(--deep-accent);
+  --primary: var(--deep-primary);
+  --primary-ink: var(--deep-primary-ink);
+  --track: var(--deep-track);
+  --ok: var(--deep-ok);
+  --warn: var(--deep-warn);
+  --err: var(--deep-err);
+  --needs: var(--deep-needs);
+  --needs-border: var(--deep-needs-border);
+  --needs-tint: var(--deep-needs-tint);
+  --confirm: var(--deep-confirm);
+  --confirm-ink: var(--deep-confirm-ink);
+  --shell-bg: var(--deep-shell-bg);
+  --shell-text: var(--deep-shell-text);
+  --shell-text-2: var(--deep-shell-text-2);
+  --font-display: 'Unbounded', sans-serif;
+  --font-body: 'Manrope', system-ui, sans-serif;
+  --font-mono: 'DM Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--deep-radius-panel);
+  --radius-control: var(--deep-radius-control);
+}
+.theme-calm { /* Calm Ops · Comfort mode */
+  --bg: var(--calm-bg);
+  --panel: var(--calm-panel);
+  --border: var(--calm-border);
+  --rule: var(--calm-rule);
+  --text: var(--calm-text);
+  --text-2: var(--calm-text-2);
+  --text-3: var(--calm-text-3);
+  --accent: var(--calm-accent);
+  --primary: var(--calm-primary);
+  --primary-ink: var(--calm-primary-ink);
+  --track: var(--calm-track);
+  --ok: var(--calm-ok);
+  --warn: var(--calm-warn);
+  --err: var(--calm-err);
+  --needs: var(--calm-needs);
+  --needs-border: var(--calm-needs-border);
+  --needs-tint: var(--calm-needs-tint);
+  --confirm: var(--calm-confirm);
+  --confirm-ink: var(--calm-confirm-ink);
+  --shell-bg: var(--calm-shell-bg);
+  --shell-text: var(--calm-shell-text);
+  --shell-text-2: var(--calm-shell-text-2);
+  --font-display: 'Inter', sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --label-case: none;
+  --radius-panel: var(--calm-radius-panel);
+  --radius-control: var(--calm-radius-control);
+}
+.theme-manual { /* Field Manual · Comfort mode */
+  --bg: var(--manual-bg);
+  --panel: var(--manual-panel);
+  --border: var(--manual-border);
+  --rule: var(--manual-rule);
+  --text: var(--manual-text);
+  --text-2: var(--manual-text-2);
+  --text-3: var(--manual-text-3);
+  --accent: var(--manual-accent);
+  --primary: var(--manual-primary);
+  --primary-ink: var(--manual-primary-ink);
+  --track: var(--manual-track);
+  --ok: var(--manual-ok);
+  --warn: var(--manual-warn);
+  --err: var(--manual-err);
+  --needs: var(--manual-needs);
+  --needs-border: var(--manual-needs-border);
+  --needs-tint: var(--manual-needs-tint);
+  --confirm: var(--manual-confirm);
+  --confirm-ink: var(--manual-confirm-ink);
+  --shell-bg: var(--manual-shell-bg);
+  --shell-text: var(--manual-shell-text);
+  --shell-text-2: var(--manual-shell-text-2);
+  --font-display: 'IBM Plex Serif', sans-serif;
+  --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --label-case: uppercase;
+  --radius-panel: var(--manual-radius-panel);
+  --radius-control: var(--manual-radius-control);
+}
+
+/* Components: one catalog, every theme. Ornaments (rivets, bevels, pins...) live in the app's theme layer. */
+.gos-theme { box-sizing: border-box; background: var(--bg); color: var(--shell-text); font-family: var(--font-body); padding: 20px; }
+.gos-caption { margin-bottom: 10px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--shell-text-2); }
+.gos-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.gos-panel { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-panel); color: var(--text); }
+.gos-label { font-family: var(--font-mono); font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: var(--label-case); color: var(--text-2); }
+.gos-sub { font-size: 15px; color: var(--text-2); }
+.gos-title { margin: 0; font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1.1; }
+.gos-alert { border-color: var(--err); }
+.gos-alert .gos-label { color: var(--err); }
+.gos-big { font-family: var(--font-display); font-size: 64px; font-weight: 700; line-height: 0.95; font-variant-numeric: tabular-nums; }
+.gos-big.neg { color: var(--err); }
+.gos-rail { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; background: var(--shell-bg); color: var(--shell-text); }
+.gos-rail-head { display: flex; align-items: baseline; gap: 10px; }
+.gos-rail-head .gos-label { color: var(--shell-text-2); }
+.gos-rail-head .gos-needs-h { color: var(--needs); }
+.gos-src { font-family: var(--font-mono); font-size: 13px; color: var(--shell-text-2); }
+.gos-approval { box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; background: var(--needs-tint); border: 1px solid var(--needs-border); border-radius: var(--radius-panel); color: var(--text); }
+.theme-holo .gos-approval { border: 4px double var(--needs-border); position: relative; }
+.theme-holo .gos-approval::before { content: "!"; position: absolute; top: -14px; right: -14px; width: 26px; height: 26px; border-radius: 50%; background: var(--needs-border); color: var(--confirm-ink); font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.gos-btn { box-sizing: border-box; height: 44px; padding: 0 16px; border: 1px solid var(--border); border-radius: var(--radius-control); background: transparent; color: var(--text); font: 600 15px var(--font-body); cursor: pointer; }
+.gos-btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.gos-btn.confirm { background: var(--confirm); border-color: var(--confirm); color: var(--confirm-ink); }
+.gos-chip { display: inline-block; padding: 2px 10px; border: 1px solid var(--border); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: 13px; color: var(--text-2); }
+.gos-tier { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 3px 10px; border-radius: var(--radius-control); font: 700 14px var(--font-mono); }
+.tier-steam { background: var(--tier-steam); color: var(--tier-ink-dark); }
+.tier-lv { background: var(--tier-lv); color: var(--tier-ink-dark); }
+.tier-mv { background: var(--tier-mv); color: var(--tier-ink-dark); }
+.tier-hv { background: var(--tier-hv); color: var(--tier-ink-dark); }
+.tier-ev { background: var(--tier-ev); color: var(--tier-ink-light); box-shadow: inset 0 0 0 1px var(--tier-edge); }
+.tier-iv { background: var(--tier-iv); color: var(--tier-ink-light); }
+.tier-luv { background: var(--tier-luv); color: var(--tier-ink-dark); }
+.tier-zpm { background: var(--tier-zpm); color: var(--tier-ink-dark); }
+.tier-uv { background: var(--tier-uv); color: var(--tier-ink-dark); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.tier-uhv { background: var(--tier-uhv); color: var(--tier-ink-light); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.tier-uev { background: var(--tier-uev); color: var(--tier-ink-light); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.tier-uiv { background: var(--tier-uiv); color: var(--tier-ink-light); text-decoration: underline; text-decoration-thickness: 4px; text-underline-offset: 3px; box-shadow: inset 0 0 0 1px var(--tier-edge); }
+.gos-status { font-weight: 700; }
+.gos-status.ok { color: var(--ok); }
+.gos-status.warn { color: var(--warn); }
+.gos-status.err { color: var(--err); }
+.gos-power { display: grid; grid-template-columns: 64px minmax(0, 1fr) 96px; align-items: center; gap: 14px; }
+.gos-track { position: relative; height: 22px; background: var(--track); border: 1px solid var(--rule); border-radius: var(--radius-control); }
+.gos-track .mid { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; background: var(--text-3); }
+.gos-track .pos { position: absolute; left: 50%; top: 4px; bottom: 4px; background: var(--text-2); }
+.gos-track .neg { position: absolute; right: 50%; top: 4px; bottom: 4px; background: var(--err); }
+.gos-value { text-align: right; font: 600 26px var(--font-display); font-variant-numeric: tabular-nums; }
+.gos-value.neg { color: var(--err); }
+.gos-shell { background: var(--shell-bg); color: var(--shell-text); padding: 12px; display: flex; flex-direction: column; gap: 4px; width: 260px; }
+.gos-nav { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius-control); color: var(--shell-text-2); font: 500 17px var(--font-body); }
+.gos-nav.on { color: var(--shell-text); border-color: var(--accent); }
+.gos-nav kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; border: 1px solid var(--border); border-radius: var(--radius-control); font: 13px var(--font-mono); color: var(--shell-text-2); }
+.gos-nav span { flex: 1 1 auto; }
+.gos-nav em { font-style: normal; font: 13px var(--font-mono); color: var(--shell-text-2); }
+.gos-nav em.bad { color: var(--err); }
