@@ -112,9 +112,12 @@ def test_vault_and_logs_are_read_only(probe: Probe, clayton_home: Path) -> None:
 
 def test_prism_root_is_closed(probe: Probe) -> None:
     assert not probe.can(PRISM, probe.FILE_READ_DATA, folder=True)
-    accounts = PRISM / "accounts.json"
-    if accounts.exists():  # exists() needs no access to the file itself
-        assert not probe.can(accounts, probe.FILE_READ_DATA)
+    # Probe the file directly: with the folder closed, gos-dev may not even be told whether it
+    # exists (stat is refused), so exists() can raise. A missing file is fine too.
+    try:
+        assert not probe.can(PRISM / "accounts.json", probe.FILE_READ_DATA)
+    except FileNotFoundError:
+        pass
     assert not probe.can(PRISM, probe.DELETE, folder=True)
 
 
