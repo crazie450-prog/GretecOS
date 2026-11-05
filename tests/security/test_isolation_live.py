@@ -85,6 +85,25 @@ def test_gos_app_is_read_only(probe: Probe) -> None:
     assert not probe.can(APP, probe.DELETE, folder=True)
 
 
+def test_deployed_release_is_read_only(probe: Probe) -> None:
+    """D91: what `gos deploy` puts in GOS_APP inherits gos-dev read only."""
+    current = APP / "current"
+    if not (current / "release.json").is_file():
+        pytest.skip("nothing deployed yet: run `uv run gos deploy` as Clayton first")
+    venv = current / ".venv"
+    files = [current / "release.json", current / "pyproject.toml", venv / "pyvenv.cfg"]
+    files += [venv / "Scripts" / "python.exe", venv / "Scripts" / "gos.exe"]
+    files += sorted((venv / "Lib" / "site-packages").glob("*.pth"))
+    assert_read_only(probe, files)
+    for folder in (
+        current,
+        venv / "Lib" / "site-packages",
+        current / "core" / "gregtec",
+    ):
+        assert not probe.can_create(folder)
+    assert not probe.can(current, probe.DELETE, folder=True)
+
+
 def test_world_backups_are_closed(probe: Probe, clayton_home: Path) -> None:
     backups = clayton_home / "backups" / "world"
     assert not probe.can(backups, probe.FILE_READ_DATA, folder=True)

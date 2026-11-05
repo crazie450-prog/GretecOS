@@ -14,6 +14,7 @@ A local voice assistant and planning suite for **GT New Horizons 2.9**. It desig
 | [docs/reviews/QA_review_v1.0.md](docs/reviews/QA_review_v1.0.md) | QA review of plan v1.0, with Clayton's answers (became D41–D77). |
 | [docs/design/README.md](docs/design/README.md) | The approved dashboard design (D92): which boards are approved, the design system copy in `docs/design/system/`, and the WO-2.6 handoff steps and kickoff prompt. |
 | [docs/design/age_themes.md](docs/design/age_themes.md) | Dashboard themes per voltage age (D81): which theme goes with each age, the rules every theme keeps, and the ship order. |
+| [docs/runbooks/pc_setup_notes.md](docs/runbooks/pc_setup_notes.md) | PC setup gotchas from the Phase 0 runbook, the SDL3 startup crash and its fallback, and when OpenComputers logs its filtering rules. |
 | [CLAUDE.md](CLAUDE.md) | Working rules for Claude Code. |
 
 Dashboard mockups are designed in Claude Design (D79). Claude Code builds each view from the approved canvas through the Claude Design handoff, starting at WO-2.6.

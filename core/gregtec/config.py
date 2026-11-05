@@ -2,6 +2,7 @@
 
 | key                      | default                                  | read by        |
 |--------------------------|------------------------------------------|----------------|
+| [paths] gos_app          | C:/GregtecOS-app                         | deploy (WO-0.8)|
 | [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3)  |
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync           |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync           |
@@ -41,6 +42,7 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
 
 @dataclass(frozen=True)
 class Config:
+    gos_app: Path = Path("C:/GregtecOS-app")
     prism_instances: Path = Path("C:/Games/PrismLauncher/instances")
     play: str = "GTNH-Play"
     export: str = "GTNH-Export"
@@ -125,6 +127,7 @@ def load(path: Path | None = None) -> Config:
                 )
         exclude[role] = tuple(patterns)
     return Config(
+        gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
         prism_instances=Path(
             _string(paths, "prism_instances", str(defaults.prism_instances), "[paths]")
         ),

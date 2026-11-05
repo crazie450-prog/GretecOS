@@ -278,6 +278,8 @@ def test_main_writes_env_and_verify_list(tmp_path: Path) -> None:
     assert env["verify"]["V11"] == "closed"
     assert env["verify"]["V12"] == "dropped"
     assert env["verify"]["V17"] == "resolved"
+    assert env["verify"]["V21"] == "resolved"
+    assert env["verify"]["V24"] == "open: `gos launch` test (WO-2.1)"  # partly resolved
     assert env["verify"]["V03"].startswith("open:")
     assert len(env["verify"]) == len(doctor.load_verify_list())
     [prism] = env["prism_roots"]

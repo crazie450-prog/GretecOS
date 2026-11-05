@@ -1196,29 +1196,30 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 
 ## 13. External dependencies and VERIFY list
 
-### 13.1 Addon status against GTNH 2.9.0 stable (checked 2026-11-01) [F]
+### 13.1 Addon status against GTNH 2.9.0 stable (checked 2026-11-05) [F]
 | Mod | Latest release | Built against | Status |
 |---|---|---|---|
-| GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31) | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") landed after this release, and rc2.1 still calls GT/CropsNH/NEI methods removed in stable. |
-| Twist Space Technology | 0.8.0-RC2.9 (2026-10-27) | RC-2 | ? Probably OK (doesn't use the broken methods); unverified |
-| 123Technology | 2.2.0.1 (2026-10-29) | RC-2 | ? Its stable-port branch was unmerged as of 2026-11-01 |
-| Programmable Hatches | v0.2.1p1-beta (2026-11-01) | GT .264, NEI 2.8.171 | ✓ Likely fine |
-| worldedit-gtnh | v0.0.10 (2026-07-19), not in the pack | n/a | ⚠ Issue #30: meta > 15 errors on 2.9 beta-2 |
-| PlanNH (optional) | 0.1.9 (2026-10-22), client-only | ≥ 2.9.0-RC-2 | ✓ |
-| NEI | 2.8.171 ships in 2.9.0 | n/a | Export needs a manual swap to 2.8.172 |
+| GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31), still the newest versioned release. GTNLLib 1.1.4 | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") is only in the rolling `dev-build` asset (rc2.1 still calls GT/CropsNH/NEI methods removed in stable), which is replaced on every push and can't be pinned (GTNL dev-290 needs GTNLLib 1.1.3). The repo is now also at github.com/GTNotLeisure/GT-Not-Leisure. |
+| Twist Space Technology | 0.8.0 (2026-11-02) | 2.9.0 stable | ✓ In Play (D88). 0.8.0-RC2.9 crashes on stable, so it is no stand-in. Lab, which mirrors Play, has loaded a world; the D02 smoke test is still to do. |
+| 123Technology | 2.2.1.1 (2026-11-04) | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ **Ready.** Fixes #277 (recipe `IllegalAccessError` with TST). Pinned; goes into Play after a Lab smoke test, jar only, no `123Technology_Musics.zip` (D90). |
+| Programmable Hatches | v0.2.1p1-beta and v0.2.1p2-beta (2026-11-01) | GT .264, NEI 2.8.171 (p1) | ✓ Play keeps **0.2.1p0** (D88): the author's README still maps 2.9.0 to 0.2.1p0. |
+| worldedit-gtnh | v0.0.10 (2026-07-19), not in the pack | n/a | ⚠ #30 (meta > 15), #24 (EndlessIDs schematic save/load) and #28 (chunk corruption on non-existent meta) are still open (V16). In Play (D88). |
+| PlanNH (optional) | 0.2.0 (2026-11-03), client-only | ≥ 2.9.0-RC-2, same GT compile target as 0.1.9 | ✓ Replaces 0.1.9 in Play after a Lab test; 0.1.9 is the rollback (D90). |
+| NEI | 2.8.171 ships in 2.9.0; 2.8.172-GTNH and 2.8.173-GTNH are out | n/a | Export keeps its manual swap to 2.8.172 (V03). |
+| GT5-Unofficial | 5.09.54.265 ships in 2.9.0 | n/a | `release/2.9.x` has 2 untagged hotfix commits, so a 2.9.1 may come. The GT pin stays at .265 until the pack changes. |
 
-- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST); PH #323 (crash with a PH hatch in a GTNL machine).
+- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST; not rechecked on 2026-11-05). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
 - **Play-world start gate (D02):**
   - GTNL has a release that includes `28007498`.
   - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe.
-  - #575 and #323 are fixed, or Clayton accepts them.
+  - #575 and #323 are fixed, or Clayton accepts them (#323 is closed; check whether its fix shipped in the releases above).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
 ### 13.2 VERIFY list
 | # | Item | How | WO |
 |---|---|---|---|
-| V01 | Which Java build Clayton runs 2.9.0 on (8 or 17–26); Java 17+ recommended (D68) | `gos doctor` | 0.2 |
-| V02 | Prism instance paths; `minecraft\` vs `.minecraft\` | `gos doctor` | 0.2 |
+| V01 | **Resolved** (D86; `gos doctor`, 2026-11-05): Play runs the Java 17–26 build on Prism's Java 25.0.1 | — | 0.2 |
+| V02 | **Resolved** (`gos doctor`, 2026-11-05): the portable Prism's `GTNH-Play` uses `.minecraft\`; instances in an installed Prism use `minecraft\`. `gos doctor` reads either | — | 0.2 |
 | V03 | NEI 2.8.172 swap works with 2.9.0 in Export | Export run | 1.2 |
 | V04 | Exact `options.txt` key for pause-on-lost-focus on 1.7.10 | Inspect the file after F3+P | 0.6 |
 | V05 | Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log | Lab session | 6.1 |
@@ -1237,10 +1238,10 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V18 | Addon releases on 2.9.0 stable (§13.1) | Weekly; watcher reports | 11.1 |
 | V19 | Does Open to LAN avoid the pause freeze? | Test | 7.2 |
 | V20 | `gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4] | `component.list()` in `lab-ops` | 7.2 |
-| V21 | Haiku 5.5 time to first token with thinking off (no published figure) [D§1.11] | Smoke-test timing | 0.4 |
+| V21 | **Resolved** (`gos smoke`, 2026-11-05): Haiku 5.5 with thinking off, median first token 917 ms over 5 runs (525–1592 ms), median total 1162 ms [D§1.11] | — | 0.4 |
 | V22 | Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5] | Export run | 1.1 |
 | V23 | JourneyMap picks up waypoint files written while the game runs | Lab test | 6.6 |
-| V24 | Portable Prism folder plus `gos-dev` permissions work: Claude Code and the toolchain run as `gos-dev`, `gos launch` starts Lab and Export, and inheritance leaks no write access | WO-0.8 tests | 0.8 |
+| V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
 | V25 | A failing Prism pre-launch command aborts the launch (needed for the instance lock) | Test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player | Lab test | 6.2 |
 | V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads | Lab save loop | 6.1 |
