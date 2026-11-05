@@ -256,7 +256,7 @@ GAMING PC (Windows)
   backups\world\                  off-instance world backups (no gos-dev access, D75)
   vault\                          Obsidian vault (§6)
   logs\
-C:\GregtecOS-app\                 GOS_APP: release install of merged, tagged code (gos-dev: read only)
+C:\GregtecOS-app\                 GOS_APP: release install of merged code, D93 (gos-dev: read only)
 C:\GregtecOS-dev\                 gos-dev's area: git clone (Appendix B) and its own dev GOS_HOME
 C:\Games\PrismLauncher\           portable Prism (V24)
 ```
@@ -341,7 +341,7 @@ C:\Games\PrismLauncher\           portable Prism (V24)
   | `GOS_HOME\backups\world\` and Credential Manager secrets | none | full |
 
   - Folder inheritance must not grant `gos-dev` more than this; WO-0.8 tests it with real write attempts. Claude Code deny rules for the same paths are a second layer only.
-  - **Clayton never runs code `gos-dev` can change.** The supervisor, core, voice, Discord bot, Prism hooks and backup job all run from `GOS_APP`, which Clayton updates with `gos deploy <tag>` after merging a PR.
+  - **Clayton never runs code `gos-dev` can change.** The supervisor, core, voice, Discord bot, Prism hooks and backup job all run from `GOS_APP`, which Clayton updates with `gos deploy` after merging a PR (any merged commit, no tag needed: D93).
   - **Steps that touch Play** (WO-0.6, 0.7, 1.4, 8.1) are scripts in `GOS_APP` that Clayton runs himself. Claude Code writes and tests them on Lab, but never runs them on Play.
   - **Lab and Export launches:** Clayton starts them, or Claude Code asks the supervisor (`gos launch lab|export`).
   - **Residual risk:** mods and configs that Claude Code puts in Lab or Export run as Clayton when those instances launch. Lab and Export configs never contain Play paths, and the off-instance backups are the safety net.
@@ -1211,8 +1211,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 - **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST; not rechecked on 2026-11-05). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
 - **Play-world start gate (D02):**
   - GTNL has a release that includes `28007498`.
-  - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe.
-  - #575 and #323 are fixed, or Clayton accepts them (#323 is closed; check whether its fix shipped in the releases above).
+  - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93). **Done 2026-11-05 (D94).**
+  - #575 is fixed or Clayton accepts it. #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
 ### 13.2 VERIFY list
