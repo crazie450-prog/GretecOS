@@ -1218,8 +1218,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 ### 13.2 VERIFY list
 | # | Item | How | WO |
 |---|---|---|---|
-| V01 | Which Java build Clayton runs 2.9.0 on (8 or 17–26); Java 17+ recommended (D68) | `gos doctor` | 0.2 |
-| V02 | Prism instance paths; `minecraft\` vs `.minecraft\` | `gos doctor` | 0.2 |
+| V01 | **Resolved** (D86; `gos doctor`, 2026-11-05): Play runs the Java 17–26 build on Prism's Java 25.0.1 | — | 0.2 |
+| V02 | **Resolved** (`gos doctor`, 2026-11-05): the portable Prism's `GTNH-Play` uses `.minecraft\`; instances in an installed Prism use `minecraft\`. `gos doctor` reads either | — | 0.2 |
 | V03 | NEI 2.8.172 swap works with 2.9.0 in Export | Export run | 1.2 |
 | V04 | Exact `options.txt` key for pause-on-lost-focus on 1.7.10 | Inspect the file after F3+P | 0.6 |
 | V05 | Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log | Lab session | 6.1 |
@@ -1238,10 +1238,10 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V18 | Addon releases on 2.9.0 stable (§13.1) | Weekly; watcher reports | 11.1 |
 | V19 | Does Open to LAN avoid the pause freeze? | Test | 7.2 |
 | V20 | `gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4] | `component.list()` in `lab-ops` | 7.2 |
-| V21 | Haiku 5.5 time to first token with thinking off (no published figure) [D§1.11] | Smoke-test timing | 0.4 |
+| V21 | **Resolved** (`gos smoke`, 2026-11-05): Haiku 5.5 with thinking off, median first token 917 ms over 5 runs (525–1592 ms), median total 1162 ms [D§1.11] | — | 0.4 |
 | V22 | Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5] | Export run | 1.1 |
 | V23 | JourneyMap picks up waypoint files written while the game runs | Lab test | 6.6 |
-| V24 | Portable Prism folder plus `gos-dev` permissions work: Claude Code and the toolchain run as `gos-dev`, `gos launch` starts Lab and Export, and inheritance leaks no write access | WO-0.8 tests | 0.8 |
+| V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
 | V25 | A failing Prism pre-launch command aborts the launch (needed for the instance lock) | Test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player | Lab test | 6.2 |
 | V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads | Lab save loop | 6.1 |
