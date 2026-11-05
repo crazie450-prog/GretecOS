@@ -1196,22 +1196,23 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 
 ## 13. External dependencies and VERIFY list
 
-### 13.1 Addon status against GTNH 2.9.0 stable (checked 2026-11-01) [F]
+### 13.1 Addon status against GTNH 2.9.0 stable (checked 2026-11-05) [F]
 | Mod | Latest release | Built against | Status |
 |---|---|---|---|
-| GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31) | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") landed after this release, and rc2.1 still calls GT/CropsNH/NEI methods removed in stable. |
-| Twist Space Technology | 0.8.0-RC2.9 (2026-10-27) | RC-2 | ? Probably OK (doesn't use the broken methods); unverified |
-| 123Technology | 2.2.0.1 (2026-10-29) | RC-2 | ? Its stable-port branch was unmerged as of 2026-11-01 |
-| Programmable Hatches | v0.2.1p1-beta (2026-11-01) | GT .264, NEI 2.8.171 | ✓ Likely fine |
-| worldedit-gtnh | v0.0.10 (2026-07-19), not in the pack | n/a | ⚠ Issue #30: meta > 15 errors on 2.9 beta-2 |
-| PlanNH (optional) | 0.1.9 (2026-10-22), client-only | ≥ 2.9.0-RC-2 | ✓ |
-| NEI | 2.8.171 ships in 2.9.0 | n/a | Export needs a manual swap to 2.8.172 |
+| GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31), still the newest versioned release. GTNLLib 1.1.4 | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") is only in the rolling `dev-build` asset (rc2.1 still calls GT/CropsNH/NEI methods removed in stable), which is replaced on every push and can't be pinned (GTNL dev-290 needs GTNLLib 1.1.3). The repo is now also at github.com/GTNotLeisure/GT-Not-Leisure. |
+| Twist Space Technology | 0.8.0 (2026-11-02) | 2.9.0 stable | ✓ In Play (D88). 0.8.0-RC2.9 crashes on stable, so it is no stand-in. Lab has loaded a world with it; the D02 smoke test is still to do. |
+| 123Technology | 2.2.1.1 (2026-11-04) | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ **Ready.** Fixes #277 (recipe `IllegalAccessError` with TST). Pinned; goes into Play after a Lab smoke test, jar only, no `123Technology_Musics.zip` (D89). |
+| Programmable Hatches | v0.2.1p1-beta and v0.2.1p2-beta (2026-11-01) | GT .264, NEI 2.8.171 (p1) | ✓ Play keeps **0.2.1p0** (D88): the author's README still maps 2.9.0 to 0.2.1p0. |
+| worldedit-gtnh | v0.0.10 (2026-07-19), not in the pack | n/a | ⚠ #30 (meta > 15), #24 (EndlessIDs schematic save/load) and #28 (chunk corruption on non-existent meta) are still open (V16). In Play (D88). |
+| PlanNH (optional) | 0.2.0 (2026-11-03), client-only | ≥ 2.9.0-RC-2, same GT compile target as 0.1.9 | ✓ Replaces 0.1.9 in Play after a Lab test; 0.1.9 is the rollback (D89). |
+| NEI | 2.8.171 ships in 2.9.0; 2.8.172-GTNH and 2.8.173-GTNH are out | n/a | Export keeps its manual swap to 2.8.172 (V03). |
+| GT5-Unofficial | 5.09.54.265 ships in 2.9.0 | n/a | `release/2.9.x` has 2 untagged hotfix commits, so a 2.9.1 may come. The GT pin stays at .265 until the pack changes. |
 
-- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST); PH #323 (crash with a PH hatch in a GTNL machine).
+- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST; not rechecked on 2026-11-05). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
 - **Play-world start gate (D02):**
   - GTNL has a release that includes `28007498`.
   - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe.
-  - #575 and #323 are fixed, or Clayton accepts them.
+  - #575 and #323 are fixed, or Clayton accepts them (#323 is closed; check whether its fix shipped in the releases above).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
 ### 13.2 VERIFY list

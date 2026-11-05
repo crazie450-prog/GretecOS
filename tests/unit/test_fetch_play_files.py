@@ -189,7 +189,7 @@ def test_refuses_a_name_that_is_a_path(
 
 
 def test_real_pins() -> None:
-    """The pinned files: both zips and the addons that are safe now, never GTNL or 123Tech."""
+    """The pinned files: both zips and the addons cleared for Play (D88, D89), never GTNL."""
     text = SCRIPT.read_text(encoding="ascii")
     pins = re.findall(
         r"name = '([^']+)'.*?url = '([^']+)'\s+sha256 = '([0-9a-f]{64})'",
@@ -202,7 +202,8 @@ def test_real_pins() -> None:
         "TwistSpaceTechnology-0.8.0.jar",
         "programmablehatches-0.2.1p0.jar",
         "worldedit-v0.0.10.jar",
-        "plannh-0.1.9.jar",
+        "plannh-0.2.0.jar",  # one PlanNH only: two in mods/ is a duplicate-mod crash
+        "OTHTechnology-2.2.1.1.jar",
     ]
     for name, url, _ in pins:
         assert url.startswith("https://") and url.endswith("/" + name)
