@@ -29,7 +29,8 @@ Values are short strings: an enum (``oc``: ``standard``, ``perfect``, ...) or a 
 :data:`VARIABLES` (``8*vt``, ``4 + 2*coil_tier``), checked by :func:`check_formula`; ``n/a`` for
 machines that run no recipes. Every variable is named and says where its value comes from
 (:data:`KINDS`): how the machine is built, its state while running (``ramp``, ``overheated``),
-or the recipe it runs (``recipe_fusion_tier``). See :data:`KEYS` for the vocabulary.
+the recipe it runs (``recipe_fusion_tier``) or the planner's choice for one run
+(``run_parallel``). See :data:`KEYS` for the vocabulary.
 
 A ``processing custom`` machine with no recipe map (the Integrated Ore Factory, Extreme
 Industrial Greenhouse and Large Molecular Assembler, D144) is covered by its plain keys, and
@@ -80,8 +81,10 @@ class Variable:
 
 # build: how the machine is built and equipped (hatches, coils, casings, parts in the controller
 # or a special hatch), chosen by the player; state: changes while the machine runs, so the
-# planner assumes a value; recipe: a property of the recipe it runs (EU/t or recipe metadata).
-KINDS = ("build", "state", "recipe")
+# planner assumes a value; recipe: a property of the recipe it runs (EU/t or recipe metadata);
+# choice: what the planner chooses for one run of a custom machine (how much it processes, how
+# much of an optional input it gives), D144.
+KINDS = ("build", "state", "recipe", "choice")
 
 
 # Formula variables: what each stands for in GT's code (names are GT's accessors).
@@ -219,13 +222,13 @@ VARIABLES: dict[str, Variable] = {
         "(mSpecialValue)",
     ),
     "run_parallel": Variable(
-        "recipe",
+        "choice",
         "the parallels one run of a custom machine processes (Integrated Ore Factory: ores, "
         "Extreme Industrial Greenhouse: seeds, Large Molecular Assembler: crafting jobs): the "
         "planner's choice, at most the machine's parallel",
     ),
     "fertilizer": Variable(
-        "recipe",
+        "choice",
         "Extreme Industrial Greenhouse: fertilizer items given per run (bone meal, or with "
         "Forestry its fertilizer): the planner's choice, 0 for none",
     ),
@@ -322,7 +325,7 @@ KEYS: dict[str, KeySpec] = {
         "L or items",
         formula=True,
         doc="consumes[<fluid or item>]: how much of it one run of a custom machine uses up "
-        "(fluid:<name> in L, registry@meta in items)",
+        "(fluid:<name> in L, registry@meta in items; the fact's unit says which)",
     ),
     "slots": KeySpec(
         "slots", formula=True, doc="distinct inputs it holds at once (EIG: seed types)"
@@ -334,8 +337,9 @@ KEYS: dict[str, KeySpec] = {
         "chain",
         "drops",
         "patterns",
-        doc="where a custom machine's outputs come from: chain: the recipes of the maps in "
-        "chain[mode], one after another; drops: its own simulation, in no recipe map; "
+        doc="where a custom machine's outputs come from: chain: the item outputs of the "
+        "recipes of the maps in chain[mode], one after another (their fluid outputs are "
+        "voided); drops: its own simulation, in no recipe map; "
         "patterns: the AE2 crafting patterns it is sent (crafting-grid recipes)",
     ),
     "chain": KeySpec(
@@ -354,9 +358,13 @@ KEYS: dict[str, KeySpec] = {
 PER_MAP = frozenset(
     {"parallel", "speed", "eu_modifier", "oc", "max_overclocks", "perfect_overclocks"}
 )
-_KEY = re.compile(r"([a-z_]+)(?:\[([A-Za-z0-9_.:@\-]+)\])?")
-# consumes[...]: a fluid or an item as normalize.Ref.text() writes it (no NBT).
-_REF = re.compile(r"fluid:[A-Za-z0-9_.\-]+|[A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+@[0-9]+")
+_KEY = re.compile(r"([a-z_]+)(?:\[([^\[\]]+)\])?")
+_MAP = re.compile(r"[A-Za-z0-9_.:\-]+")
+# consumes[...]: a fluid or an item as normalize.Ref.text() writes it (no NBT). A name may hold
+# spaces and commas (GT's "seaweed byproducts", "1,1dimethylhydrazine"); not brackets, = or ;
+# (the extra column's syntax), tabs or line breaks, and no space at either end.
+_NAME = r"[^\s\[\]=;@](?:[^\t\r\n\[\]=;@]*[^\s\[\]=;@])?"
+_REF = re.compile(rf"fluid:{_NAME}|(?!fluid:){_NAME}:{_NAME}@[0-9]+")
 # The Integrated Ore Factory's item classes (MTEIntegratedOreFactory.initHash), by oredict
 # name: ore (ore* and rawOre*), crushed (crushed* but not the next two), crushedPurified*,
 # crushedCentrifuged*, dustImpure*, dustPure*.
@@ -387,6 +395,8 @@ class Fact:
 
     @property
     def unit(self) -> str | None:
+        if self.base_key == "consumes":
+            return "L" if self.key.startswith("consumes[fluid:") else "items"
         return KEYS[self.base_key].unit
 
 
@@ -531,6 +541,8 @@ def check_value(key: str, value: str) -> None:
         return
     elif arg is not None and base not in PER_MAP:
         raise ValueError(f"{base} can't be given per recipe map")
+    elif arg is not None and not _MAP.fullmatch(arg):
+        raise ValueError(f"{key}: {arg!r} is not a recipe map name")
     spec = KEYS[base]
     if value == NA and m.group(1) in ("parallel", "speed", "eu_modifier", "oc"):
         return

@@ -269,9 +269,12 @@ def test_every_variable_is_named_and_says_where_it_comes_from() -> None:
         mf.Fact("parallel", "8*vt", "curated", 0.9, ""),
         mf.Fact("oc", "perfect", "curated", 0.9, ""),
         mf.Fact("tier_skips", "unlimited", "curated", 0.9, ""),
+        mf.Fact("eu_t", "30*run_parallel", "curated", 0.9, ""),
     ]
-    assert mf.inputs(facts) == {"build", "state", "recipe"}
-    assert mf.inputs(facts[2:]) == {"build"}
+    assert mf.inputs(facts) == {"build", "state", "recipe", "choice"}
+    assert mf.inputs(facts[2:5]) == {"build"}
+    # What the planner chooses per run isn't a property of the recipe (D144).
+    assert {mf.VARIABLES[v].kind for v in ("run_parallel", "fertilizer")} == {"choice"}
 
 
 def test_values_per_key() -> None:
@@ -645,6 +648,11 @@ def custom_status(cls: str) -> mf.Status:
 def test_custom_keys_name_a_fluid_or_item_or_a_mode() -> None:
     mf.check_value("consumes[fluid:lubricant]", "2*run_parallel")
     mf.check_value("consumes[minecraft:dye@15]", "min(fertilizer, 2*run_parallel)")
+    # Fluid names as GT registers them, spaces and commas included.
+    mf.check_value("consumes[fluid:seaweed byproducts]", "1")
+    mf.check_value("consumes[fluid:1,1dimethylhydrazine]", "1")
+    mf.check_value("consumes[fluid:cropsnh:dkorn]", "1")
+    mf.check_value("consumes[gregtech:gt.metaitem.01@2032]", "1")
     mf.check_value("duration", "600 if mode == 0 else 20")
     mf.check_value("outputs", "drops")
     mf.check_value("partial", "outputs")
@@ -656,6 +664,12 @@ def test_custom_keys_name_a_fluid_or_item_or_a_mode() -> None:
         ("consumes", "2"),  # names nothing
         ("consumes[lubricant]", "2"),  # neither fluid:<name> nor registry@meta
         ("consumes[minecraft:dye]", "2"),
+        ("consumes[fluid: water]", "2"),  # a space at either end
+        ("consumes[fluid:water ]", "2"),
+        ("consumes[fluid:a=b]", "2"),  # the extra column's syntax
+        ("consumes[fluid:a;b]", "2"),
+        ("consumes[fluid:]", "2"),
+        ("parallel[gt.recipe.mixer x]", "2"),  # not a recipe map name
         ("consumes[fluid:water]", "lots"),
         ("duration[gt.recipe.mixer]", "20"),  # not a per-map key
         ("chain", "gt.recipe.macerator(ore)"),  # no mode
@@ -674,6 +688,12 @@ def test_custom_keys_name_a_fluid_or_item_or_a_mode() -> None:
     assert bath == mf.Step(
         "gt.recipe.chemicalbath", ("crushed", "crushedPurified"), True
     )
+    # A consumes fact's unit says whether it is litres or items.
+    units = [
+        mf.Fact(k, "1", "curated", 0.9, "").unit
+        for k in ("consumes[fluid:water]", "consumes[minecraft:dye@15]", "duration")
+    ]
+    assert units == ["L", "items", "ticks"]
 
 
 def test_a_custom_machine_without_a_map_is_covered_by_its_plain_keys(
@@ -745,6 +765,14 @@ def test_the_integrated_ore_factory() -> None:
     }
     assert all(c[0].classes == ("ore",) for c in chains)
     assert chains[0][2].classes == ("crushedPurified", "crushed")
+    # getOutputStack keeps only a recipe's item outputs: the key's doc and the row's note
+    # (which the DB carries) say a planner must leave the fluid outputs out.
+    assert "fluid outputs are voided" in mf.KEYS["outputs"].doc
+    [row] = [r for r in mf.read_curated() if r.machine == IOF]
+    assert "its fluid outputs are voided" in row.facts[0].note
+    # The ores processed per run are the planner's choice; the parallel is how it's built.
+    assert mf.inputs(f for f in row.facts if f.key == "parallel") == {"build"}
+    assert mf.inputs(f for f in row.facts if f.key == "eu_t") == {"choice"}
     s = custom_status(IOF)
     assert (s.state, s.why) == ("covered", "")
     assert s.parallel is not None and s.parallel.confidence >= mf.THRESHOLD
@@ -761,6 +789,9 @@ def test_the_extreme_industrial_greenhouse() -> None:
     assert [mf.evaluate(eig["slots"], e) for e in at] == [0, 1, 2, 4, 8, 16, 32]
     seeds = [mf.evaluate(eig["parallel"], e) for e in at]
     assert seeds == [0, 64, 128, 256, 512, 1024, 2048]
+    # addCrop caps only the total: one seed type may fill all of it (not 64 per type).
+    [row] = [r for r in mf.read_curated() if r.machine == EIG]
+    assert "one seed type may take all of it" in row.facts[0].note
     ticks = [mf.evaluate(eig["duration"], e) for e in at]
     assert ticks == [100, 100, 50, 33, 25, 20, 20]
     assert [mf.evaluate(eig["eu_t"], e) for e in at[1:4]] == [2027, 8110, 32440]
