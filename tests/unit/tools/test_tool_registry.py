@@ -61,7 +61,11 @@ def test_every_plan_tool_is_here_or_arrives_later() -> None:
     )
 
 
-WRITERS = {"note_write", "note_append", "inbox_propose"}  # WO-2.5, behind the path guard
+WRITERS = {
+    "note_write",
+    "note_append",
+    "inbox_propose",
+}  # WO-2.5, behind the path guard
 
 
 def test_every_tool_is_read_only_or_gated_with_a_messages_api_spec(
