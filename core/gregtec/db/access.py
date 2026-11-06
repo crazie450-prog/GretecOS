@@ -1,9 +1,9 @@
 """Opening ``GOS_HOME/data/gos.sqlite`` and running named queries (plan section 5.3).
 
 - :func:`connect` opens it in WAL mode (PM03), with autocommit so callers hold their own
-  transactions, and applies ``schema.sql`` (every statement ``IF NOT EXISTS``). A DB whose
-  ``user_version`` is newer than :data:`SCHEMA_VERSION` is refused, because this code would
-  not know its tables.
+  transactions, and applies ``schema.sql`` (every statement ``IF NOT EXISTS``) to a DB whose
+  ``user_version`` is older than :data:`SCHEMA_VERSION`; opening a current DB writes nothing.
+  A DB whose ``user_version`` is newer is refused, because this code would not know its tables.
 - Named read-only queries live in ``queries/<name>.sql`` and are run by name with named
   parameters (``:q``); WO-2.2's tool layer calls them the same way.
 - Never copy the live file: back it up with ``VACUUM INTO`` (plan section 5.3).
@@ -49,7 +49,11 @@ def connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
             )
         if not readonly:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+            # Only a DB older than the schema is written to on open: setting user_version takes
+            # the write lock, so doing it on every open would make each connection wait for a
+            # long write (a build) and fail after the timeout.
+            if version < SCHEMA_VERSION:
+                conn.executescript(SCHEMA.read_text(encoding="utf-8"))
     except BaseException:
         conn.close()
         raise

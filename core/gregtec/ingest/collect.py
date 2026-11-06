@@ -456,7 +456,8 @@ def prune(root: Path, keep: int, current: str) -> tuple[list[str], list[Path]]:
 
 @contextlib.contextmanager
 def lock(gos_home: Path) -> Iterator[None]:
-    """Hold ``GOS_HOME/data/locks/collect.lock`` for one collect; refuse if another holds it."""
+    """Hold ``GOS_HOME/data/locks/collect.lock`` for one collect or ``gos db build``; refuse if
+    another holds it."""
     path = gos_home / LOCK
     for p in (path.parent, path):
         if os.path.lexists(p) and _is_link(os.lstat(p)):
@@ -476,8 +477,8 @@ def lock(gos_home: Path) -> Iterator[None]:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             raise CollectError(
-                f"another gos export collect is running (it holds {path}); try again "
-                "when it has finished"
+                f"another gos export collect or gos db build is running (it holds {path}); "
+                "try again when it has finished"
             ) from None
         try:
             yield

@@ -1,7 +1,8 @@
 -- Gregtec OS SQLite schema, version 1 (plan section 5.3, Appendix D; WO-1.3).
--- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite on every open: every
--- statement is IF NOT EXISTS, so it only adds what is missing. PRAGMA user_version records the
--- version; a DB newer than this file is refused.
+-- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
+-- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
+-- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
+-- name_fts.kind is UNINDEXED, so a search for "fluid" or "item" matches names, not the kind.
 --
 -- Appendix D as written, plus (D107):
 --   export_run.run_key   the collected run's id (GregtecLink run_id, the folder name)
@@ -60,7 +61,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_recipe_ref ON recipe(run_id, ref);
 CREATE INDEX IF NOT EXISTS ix_alt ON recipe_input_alt(recipe_id, slot);
 CREATE INDEX IF NOT EXISTS ix_fact ON machine_fact(machine_id);
 CREATE INDEX IF NOT EXISTS ix_mm_map ON machine_map(recipe_map_id);
-CREATE VIRTUAL TABLE IF NOT EXISTS name_fts USING fts5(kind, ref_id UNINDEXED, name_en, name_zh,
+CREATE VIRTUAL TABLE IF NOT EXISTS name_fts USING fts5(kind UNINDEXED, ref_id UNINDEXED, name_en, name_zh,
   registry_name);
 
 -- Tables added by GOS

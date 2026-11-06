@@ -16,13 +16,17 @@ contract, ``docs/contracts/gregteclink-export-v1.md``). Nothing here reads a fil
   amount, consumed, circuit) and the sorted outputs (key, amount). Input and output order never
   matters, because GT's slot order is not stable between runs (contract:
   ``gt.recipe.eyeofharmony``). A GT input slot is keyed by its displayed item; its oredict name
-  and accepted alternatives are content. An NEI-only slot with alternatives is keyed by all of
-  them, since NEI gives no oredict name.
+  and accepted alternatives are content. An NEI-only slot with alternatives is keyed by the
+  oredict name whose members are exactly what it accepts (:class:`OreIndex`, from the run's
+  ``items.jsonl``), else by the sorted set of what it accepts; never by the stack NEI displays,
+  which NEI picks anew on each run (D104).
 - **Content hash** (:func:`content_hash`) = everything else that changes how the recipe runs:
   EU/t, duration, amperage, raw special value, chances, oredict names and alternatives, NEI
   container items, metadata, special items and flags (not ``nei_desc``, which is display text).
-  A rebalance changes only the content hash, so a diff reports the recipe as changed and its
-  citation key ``r:<map>/<sig12>`` survives.
+  For an NEI-only slot with alternatives it is the accepted set, not the displayed stack or
+  that stack's container item. A rebalance changes only the content hash, so a diff reports
+  the recipe as changed and its citation key ``r:<map>/<sig12>`` survives; so does an oredict
+  gaining or losing a member.
 """
 
 from __future__ import annotations
@@ -167,7 +171,8 @@ class Slot:
     chance_bp: int = FULL
     consumed: bool = True  # inputs only
     circuit: int | None = None  # a programmed circuit's number
-    ore: str | None = None  # GT's oredict name for the slot (GTRecipe_WithAlt)
+    # GT's oredict name for the slot (GTRecipe_WithAlt); for NEI-only slots, OreIndex's
+    ore: str | None = None
     alts: tuple[Ref, ...] = ()  # accepted alternatives (GT alt, NEI anyOf), sorted
     returns: Ref | None = None  # NEI: a crafting grid's container item (bucket)
 
@@ -213,9 +218,8 @@ class Recipe:
     flags: dict[str, bool] = field(default_factory=dict)
     meta: dict[str, Json] = field(default_factory=dict)
     owners: list[str] = field(default_factory=list)
-    alt_identity: bool = (
-        False  # NEI-only: an input with alternatives is keyed by all of them
-    )
+    # NEI-only: an input with alternatives is keyed by its oredict name or accepted set
+    alt_identity: bool = False
     signature: str = ""
     content_hash: str = ""
     ref: str = ""  # the citation key r:<map>/<sig12>[-n], set by gregtec.ingest.merge
@@ -239,10 +243,84 @@ def _sorted(entries: Iterable[list[object]]) -> list[list[object]]:
     return sorted(entries, key=canonical)
 
 
+def accepted(s: Slot) -> list[Ref]:
+    """Everything an input slot accepts: its displayed stack and its alternatives, sorted."""
+    return sorted({*s.alts, s.ref})
+
+
 def _in_key(s: Slot, alt_identity: bool) -> list[object]:
     if alt_identity and s.alts:
-        return ["any", [r.ident() for r in sorted({*s.alts, s.ref})]]
+        if s.ore is not None:
+            return ["ore", s.ore]
+        return ["any", [r.ident() for r in accepted(s)]]
     return s.ref.ident()
+
+
+@dataclass(frozen=True)
+class OreIndex:
+    """The run's oredict as ``items.jsonl`` lists it, to name what an NEI slot accepts (D104).
+
+    An oredict member with meta 32767 (a wildcard, such as ``minecraft:planks@32767`` in
+    ``plankWood``) stands for every meta of its item, as NEI expands it. Items with NBT are
+    compared with their NBT hash.
+    """
+
+    # a member (a wildcard entry too) -> its ore names
+    of: Mapping[Ref, frozenset[str]]
+    # a registry name -> the ores that have it as a wildcard member
+    wild_of: Mapping[str, frozenset[str]]
+    # an ore -> its members that its wildcard members don't cover
+    members: Mapping[str, frozenset[Ref]]
+    # an ore -> the registry names of its wildcard members
+    wild: Mapping[str, frozenset[str]]
+
+    @classmethod
+    def build(cls, items: Iterable[tuple[Ref, Iterable[str]]]) -> OreIndex:
+        of: dict[Ref, set[str]] = {}
+        listed: dict[str, set[Ref]] = {}
+        for ref, ores in items:
+            for o in ores:
+                of.setdefault(ref, set()).add(o)
+                listed.setdefault(o, set()).add(ref)
+        wild = {
+            o: {r.name for r in refs if r.meta == WILDCARD and not r.nbt_hash}
+            for o, refs in listed.items()
+        }
+        wild_of: dict[str, set[str]] = {}
+        for o, names in wild.items():
+            for name in names:
+                wild_of.setdefault(name, set()).add(o)
+        members = {
+            o: frozenset(
+                r for r in refs if r.meta != WILDCARD and r.name not in wild[o]
+            )
+            for o, refs in listed.items()
+        }
+        return cls(
+            {r: frozenset(o) for r, o in of.items()},
+            {n: frozenset(o) for n, o in wild_of.items()},
+            members,
+            {o: frozenset(n) for o, n in wild.items()},
+        )
+
+    def name(self, refs: Iterable[Ref]) -> str | None:
+        """The oredict name whose members are exactly ``refs`` (the first by name when several
+        are, such as GT's ``blockAnyBronze`` and ``blockBronze``), or None."""
+        refs = set(refs)
+        if not refs or any(r.kind != ITEM for r in refs):
+            return None
+        names: set[str] | None = None
+        for r in refs:
+            ores = self.of.get(r, frozenset()) | self.wild_of.get(r.name, frozenset())
+            names = set(ores) if names is None else names & ores
+            if not names:
+                return None
+        assert names is not None
+        covered = {r.name for r in refs}
+        for o in sorted(names):
+            if self.members[o] <= refs and self.wild[o] <= covered:
+                return o
+        return None
 
 
 def signature(
@@ -255,9 +333,10 @@ def signature(
     """The identity hash: key namespace and category, the sorted inputs (key, amount, consumed,
     circuit) and the sorted outputs (key, amount).
 
-    With ``alt_identity`` (NEI-only recipes, whose slots carry no oredict name), an input with
-    alternatives is keyed by the sorted set of everything it accepts, so a recipe that takes any
-    plank and one that takes only oak planks are two recipes (D104).
+    With ``alt_identity`` (NEI-only recipes), an input with alternatives is keyed by its oredict
+    name (``ore``, which :class:`OreIndex` gives it) or else by the sorted set of everything it
+    accepts, never by the stack NEI displays, so a recipe that takes any plank and one that
+    takes only oak planks are two recipes, and each keeps its key between exports (D104).
     """
     body = {
         "map": space,
@@ -275,9 +354,15 @@ def content_hash(recipe: Recipe) -> str:
 
     def ins(s: Slot) -> list[object]:
         returns = s.returns.ident() if s.returns else None
+        shown: list[object] | None = s.ref.ident()
         alts = [a.ident() for a in s.alts]
+        if recipe.alt_identity and s.alts:
+            # NEI-only: the stack NEI displays changes between runs, and with it the container
+            # item it gives back (a water bucket's bucket, none for a water cell); what the slot
+            # accepts doesn't.
+            shown, alts, returns = None, [a.ident() for a in accepted(s)], None
         return [
-            s.ref.ident(),
+            shown,
             s.amount,
             s.consumed,
             s.circuit,

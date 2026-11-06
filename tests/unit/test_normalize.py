@@ -172,6 +172,59 @@ def test_nei_only_recipes_key_an_oredict_slot_by_what_it_accepts() -> None:
     )
 
 
+def test_nei_only_content_ignores_the_displayed_stack_and_its_container() -> None:
+    # NEI shows a different accepted stack on each run (a water bucket, then a water cell).
+    bucket, cell = item("minecraft:water_bucket"), item("IC2:itemCellEmpty", 1)
+    out = [Slot(item("test:clay"), 1)]
+
+    def nei_only(shown: Ref, returns: Ref | None) -> Recipe:
+        s = n.input_slot(shown, 1, alts=[bucket, cell], returns=returns)
+        return Recipe("crafting", "h", [s], out, alt_identity=True).seal()
+
+    a = nei_only(bucket, item("minecraft:bucket"))
+    b = nei_only(cell, None)
+    assert (a.signature, a.content_hash) == (b.signature, b.content_hash)
+    # Once oredict-named, accepting one more stack changes the content, not the identity.
+    named = n.input_slot(bucket, 1, ore="listAllwater", alts=[bucket, cell])
+    more = n.input_slot(
+        bucket, 1, ore="listAllwater", alts=[bucket, cell, item("x:water")]
+    )
+    c = Recipe("crafting", "h", [named], out, alt_identity=True).seal()
+    d = Recipe("crafting", "h", [more], out, alt_identity=True).seal()
+    assert c.signature == d.signature != a.signature
+    assert c.content_hash != d.content_hash
+
+
+def test_ore_index_names_exactly_the_accepted_set() -> None:
+    oak, birch = item("minecraft:planks", 0), item("minecraft:planks", 2)
+    gt_wood = item("gregtech:gt.metaitem.01", 17809)
+    block0, block1 = item("test:block", 0), item("test:block", 1)
+    gem = item("test:gem", 0, "ab" * 32)
+    ores = n.OreIndex.build(
+        [
+            (item("minecraft:planks", n.WILDCARD), ["plankWood"]),
+            (oak, ["plankWood"]),
+            (gt_wood, ["plankWood"]),
+            (block0, ["blockBronze", "blockAnyBronze"]),
+            (block1, ["blockBronze", "blockAnyBronze"]),
+            (gem, ["gemTest"]),
+        ]
+    )
+    # The wildcard member stands for every plank NEI expands it to.
+    assert ores.name([oak, birch, gt_wood]) == "plankWood"
+    # Less than all of plankWood (no GT wood plank), or more than it: no name.
+    assert ores.name([oak, birch]) is None
+    assert ores.name([oak, gt_wood, item("test:stick")]) is None
+    # Two names with the same members (GT's "Any" names): the first by name.
+    assert ores.name([block0, block1]) == "blockAnyBronze"
+    assert ores.name([block0]) is None
+    # NBT counts; fluids and nothing have no oredict name.
+    assert ores.name([gem]) == "gemTest"
+    assert ores.name([item("test:gem", 0)]) is None
+    assert ores.name([Ref(FLUID, "water")]) is None
+    assert ores.name([]) is None
+
+
 def test_citation_key() -> None:
     sig = "0123456789abcdef" * 4
     assert n.cite("gt.recipe.mixer", sig) == "r:gt.recipe.mixer/0123456789ab"

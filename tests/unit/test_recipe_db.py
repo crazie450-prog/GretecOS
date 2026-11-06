@@ -25,6 +25,10 @@ from gregtec.ingest.normalize import CIRCUIT
 
 RUN = "20261106T120000Z"
 WATER = {"fluid": "water", "mb": 1000}
+FUEL_AND_FACADE = (
+    "appeng.integration.modules.NEIHelpers.NEIFacadeRecipeHandler",
+    "codechicken.nei.recipe.FuelRecipeHandler",
+)
 
 
 def ref(item: str, meta: int = 0, n: int = 1, **kw: object) -> dict[str, object]:
@@ -373,6 +377,23 @@ def nei_files() -> dict[str, list[dict[str, object]]]:
             [stack("test:table")],
             None,
         ),
+        # The same recipe as the one before, with NEI showing another plank: a copy.
+        nei_line(
+            "codechicken.nei.recipe.ShapedRecipeHandler",
+            [
+                stack(
+                    "minecraft:planks",
+                    1,
+                    anyOf=[
+                        {"strId": "minecraft:planks", "Damage": 0},
+                        {"strId": "minecraft:planks", "Damage": 1},
+                    ],
+                )
+            ]
+            * 4,
+            [stack("test:table")],
+            None,
+        ),
         nei_line(
             "codechicken.nei.recipe.ShapedRecipeHandler",
             [stack("test:datastick", 0, 1, tag=NEI_DATA_STICK_TAG)],
@@ -399,8 +420,38 @@ def nei_files() -> dict[str, list[dict[str, object]]]:
             None,
         ),
     ]
+    # Alternatives that no oredict in items.jsonl has: keyed by the set they make.
+    ores = [{"strId": "test:ore", "Damage": 0}, {"strId": "test:ore", "Damage": 1}]
     other = [
-        nei_line("other.blast", [stack("test:ore")], [stack("test:ingot", 1, 2)], None)
+        nei_line(
+            "other.blast",
+            [stack("test:ore", anyOf=ores)],
+            [stack("test:ingot", 1, 2)],
+            None,
+        )
+    ]
+    # Handlers that aren't recipes (merge.NOT_RECIPES): left out.
+    fuel = [
+        nei_line(
+            "codechicken.nei.recipe.FuelRecipeHandler",
+            [stack("test:dust", 1)],
+            [stack("test:ingot", 1)],
+            None,
+        )
+    ]
+    facade = [
+        nei_line(
+            "appeng.integration.modules.NEIHelpers.NEIFacadeRecipeHandler",
+            [stack("minecraft:stone")],
+            [
+                stack(
+                    "appliedenergistics2:item.ItemFacade",
+                    count=4,
+                    tag={"itemname": "stone", "modid": "minecraft", "x": [1, 0]},
+                )
+            ],
+            None,
+        )
     ]
     return {
         "nei/Mixer.jsonl": mixer,
@@ -410,6 +461,8 @@ def nei_files() -> dict[str, list[dict[str, object]]]:
         "nei/Shaped Crafting.jsonl": shaped,
         "nei/Shapeless Crafting.jsonl": shapeless,
         "nei/Smelting.jsonl": furnace,
+        "nei/Fuel.jsonl": fuel,
+        "nei/Facade Crafting.jsonl": facade,
     }
 
 
@@ -470,6 +523,8 @@ def items() -> list[dict[str, object]]:
             (CIRCUIT, 3, "Programmed Circuit 3", []),
             ("test:datastick", 0, "Data Stick", []),
             ("gregtech:gt.blockmachines", 1000, "Test Mixer", []),
+            ("minecraft:planks", 32767, "Wooden Planks", ["plankWood"]),
+            ("minecraft:planks", 0, "Oak Wood Planks", ["plankWood"]),
         ]
     ]
     out[0]["gt"] = {"prefix": "dust", "material": "Test", "amount": 3628800}
@@ -633,16 +688,21 @@ def make_run(
 def allow_list(tmp_path: Path) -> Path:
     """The fixture's one genuine collision (recipes 6 and 7) allow-listed."""
     path = tmp_path / "collisions.tsv"
-    sig = collision_sig12(tmp_path / "probe")
-    path.write_text(
-        "# test allow-list\n" + "\t".join(merge.ALLOW_HEADER) + "\n"
-        f"gt.recipe.mixer\t{sig}\t2\tregistered twice, 100 and 20 ticks\n",
-        encoding="utf-8",
-    )
+    sig, content = collision_row(tmp_path / "probe")
+    write_allow_list(path, sig, content)
     return path
 
 
-def collision_sig12(home: Path) -> str:
+def write_allow_list(path: Path, sig: str, content: list[str]) -> None:
+    path.write_text(
+        "# test allow-list\n" + "\t".join(merge.ALLOW_HEADER) + "\n"
+        f"gt.recipe.mixer\t{sig}\t{','.join(content)}\tregistered twice, 100 and 20 ticks\n",
+        encoding="utf-8",
+    )
+
+
+def collision_row(home: Path) -> tuple[str, list[str]]:
+    """(sig12, content12 list) of the fixture's collision, from the curation task."""
     make_run(home)
     with pytest.raises(build.BuildError, match="1 identity collision"):
         build.build(home, allow_list=home / "none.tsv")
@@ -653,7 +713,7 @@ def collision_sig12(home: Path) -> str:
         if line.startswith("gt.recipe.mixer\t")
     ]
     assert len(rows) == 1
-    return rows[0][1]
+    return rows[0][1], rows[0][2].split(",")
 
 
 def built(home: Path, allow_list: Path, **kw: object) -> build.Result:
@@ -719,10 +779,14 @@ def test_a_run_loads_with_every_rule(tmp_path: Path, allow_list: Path) -> None:
         sum(stats.duplicates.values()),
         sum(stats.dropped.values()),
     ) == (3, 2, 1, 1)
-    assert stats.nei_only == 7
+    assert stats.nei_only == 8
+    assert dict(stats.not_recipes) == {h: 1 for h in FUEL_AND_FACADE}
+    keys = result.loaded.keys
+    assert keys is not None and dict(keys.duplicates) == {"gt": 1, "nei": 1}
     by_source = dict(rows(db, "SELECT source, count(*) FROM recipe GROUP BY source"))
-    # GT: 12 recipe lines, 1 exact copy dropped; NEI: 3 shaped (2 kept apart by oredict, 1 NBT),
-    # 1 shapeless, 1 furnace, 1 other handler, 1 in the empty GT category.
+    # GT: 12 recipe lines, 1 exact copy dropped; NEI: 4 shaped (2 kept apart by oredict, 1 copy
+    # dropped, 1 NBT), 1 shapeless, 1 furnace, 1 other handler, 1 in the empty GT category; the
+    # fuel and facade lines are left out.
     assert by_source == {"gt+nei": 5, "gt": 6, "crafting": 4, "furnace": 1, "nei": 2}
     refs = [r[0] for r in rows(db, "SELECT ref FROM recipe ORDER BY ref")]
     assert len(set(refs)) == len(refs) == 18
@@ -927,8 +991,12 @@ def test_without_the_allow_list_a_collision_fails_and_writes_nothing(
     row = next(
         line for line in task.splitlines() if line.startswith("gt.recipe.mixer\t")
     )
-    assert row.split("\t")[2:] == ["2", "TODO: duration 100 | 20"]
+    content = row.split("\t")[2].split(",")
+    assert len(content) == 2 and all(len(c) == 12 for c in content)
+    assert content == sorted(content)  # a new group: content-hash order
+    assert row.split("\t")[3] == "TODO: duration 100 | 20"
     assert "#   -1 content" in task and "#   -2 content" in task
+    assert not list((tmp_path / build.CURATION).glob("*.tmp"))
 
 
 def test_an_allow_listed_collision_gets_suffixes_by_content_hash(
@@ -954,18 +1022,40 @@ def test_an_allow_list_entry_must_have_the_groups_size(
     tmp_path: Path, allow_list: Path
 ) -> None:
     make_run(tmp_path)
-    allow_list.write_text(allow_list.read_text().replace("\t2\t", "\t3\t"))
+    sig, content = collision_row(tmp_path / "probe2")
+    write_allow_list(allow_list, sig, [*content, "0" * 12])
     with pytest.raises(build.BuildError, match="1 identity collision"):
         built(tmp_path, allow_list)
-    allow_list.write_text("map\tsig12\n")
-    with pytest.raises(build.BuildError, match="allow-list"):
-        built(tmp_path, allow_list)
+    for bad in (
+        "map\tsig12\n",
+        f"map\tsig12\tcontent12\twhy\ngt.recipe.mixer\t{sig}\t2\twhy\n",
+        f"map\tsig12\tcontent12\twhy\ngt.recipe.mixer\t{sig}\t{content[0]}\twhy\n",
+        f"map\tsig12\tcontent12\twhy\ngt.recipe.mixer\t{sig}\t{content[0]},XYZ\twhy\n",
+    ):
+        allow_list.write_text(bad)
+        with pytest.raises(build.BuildError, match="allow-list"):
+            built(tmp_path, allow_list)
+
+
+def test_an_allow_listed_groups_order_is_kept(tmp_path: Path, allow_list: Path) -> None:
+    make_run(tmp_path)
+    sig, content = collision_row(tmp_path / "probe2")
+    write_allow_list(allow_list, sig, list(reversed(content)))
+    result = built(tmp_path, allow_list)
+    found = rows(
+        result.db,
+        "SELECT ref, substr(content_hash, 1, 12) FROM recipe WHERE ref LIKE ? ORDER BY ref",
+        f"%/{sig}-%",
+    )
+    # The listed order, not content-hash order: a citation keeps its recipe.
+    assert [c for _ref, c in found] == list(reversed(content))
 
 
 def test_the_repos_allow_list_parses() -> None:
     allowed = merge.read_allow_list()
     assert allowed and all(
-        len(sig) == 12 and n >= 2 for (_m, sig), n in allowed.items()
+        len(sig) == 12 and len(content) >= 2 and all(len(c) == 12 for c in content)
+        for (_m, sig), content in allowed.items()
     )
 
 
@@ -1097,7 +1187,9 @@ def test_a_collect_in_progress_blocks_the_build(
     make_run(tmp_path)
     with (
         collect.lock(tmp_path),
-        pytest.raises(build.BuildError, match="another gos export collect"),
+        pytest.raises(
+            build.BuildError, match="another gos export collect or gos db build"
+        ),
     ):
         built(tmp_path, allow_list)
     assert built(tmp_path, allow_list).run_id == 1
@@ -1213,10 +1305,21 @@ def test_report_counts_per_mod_and_the_addon_check(
     result = built(tmp_path, allow_list)
     text = "\n".join(report.lines(result, full=True))
     assert (
-        "ok          Twist Space Technology (TwistSpaceTechnology 0.8.0): 1 recipe maps, 1 recipes added"
-        in text
+        "ok          Twist Space Technology (TwistSpaceTechnology 0.8.0): 1 recipe maps, 1 GT "
+        "recipes in them, 1 recipes added" in text
     )
     assert "not loaded  GT-Not-Leisure" in text
+    # GT's own copies and NEI-only copies are counted apart.
+    assert "1 rows dropped as copies of another GT recipe" in text
+    assert "(1 of them dropped as copies of another NEI-only recipe)" in text
+    assert "2 lines of 2 handlers that aren't recipes, left out" in text
+    assert "NEI-only oredict slots: 8 keyed by their oredict name, 1 by the set" in text
+    # NEI's recipes in a GT category GT's dump has none in: a warning, and the map is listed.
+    assert (
+        "WARNING: GT categories with recipes only in NEI (the planner doesn't use them "
+        "yet): gt.recipe.empty (1)" in text
+    )
+    assert "Recipe maps with no GT recipe (1):\n  gt.recipe.empty\n" in text
     assert "ProgrammableHatches" not in text or "none expected" in text
     assert "(it adds to GT's own maps, none expected)" in text
     assert (
@@ -1233,6 +1336,17 @@ def test_report_counts_per_mod_and_the_addon_check(
     make_run(home, mods=mods)
     text = "\n".join(report.lines(built(home, allow_list), full=False))
     assert "MISSING     123Technology (othtech 2.2.1.1): 0 recipe maps" in text
+    # An addon whose maps have no GT recipe (added after GT's dump, say) is missing too.
+    home = tmp_path / "empty"
+    lines = [x for x in gt_recipes() if x.get("map") != "tst.recipe.test"]
+    make_run(home, files={**default_files(), "gt_recipes.jsonl": jsonl(lines)})
+    text = "\n".join(report.lines(built(home, allow_list), full=False))
+    assert (
+        "MISSING     Twist Space Technology (TwistSpaceTechnology 0.8.0): 1 recipe maps, 0 GT "
+        "recipes in them, 0 recipes added: it loads but its recipe maps have no GT recipe"
+        in text
+    )
+    assert "    no GT recipe in tst.recipe.test" in text
 
 
 def test_gos_db_build(
@@ -1278,3 +1392,167 @@ def test_a_reload_keeps_the_runs_fingerprint(tmp_path: Path, allow_list: Path) -
     assert rows(first.db, "SELECT fingerprint FROM export_run") == [("f" * 64,)]
     built(tmp_path, allow_list, fingerprint="e" * 64)
     assert rows(first.db, "SELECT fingerprint FROM export_run") == [("e" * 64,)]
+
+
+def replanked(files: dict[str, bytes], show: int, extra: bool) -> dict[str, bytes]:
+    """The same export with NEI showing plank ``show`` in its plank slots and, with ``extra``,
+    test:planks@0 added to plankWood (in items.jsonl and in NEI's anyOf)."""
+    out = dict(files)
+    lines = [json.loads(x) for x in files["nei/Shaped Crafting.jsonl"].splitlines()]
+    for line in lines:
+        for st in line["ingredients"]:
+            if "anyOf" in st:
+                st["Damage"] = show
+                if extra:
+                    st["anyOf"].append({"strId": "test:planks", "Damage": 0})
+    out["nei/Shaped Crafting.jsonl"] = jsonl(lines, "\r\n")
+    if extra:
+        found = [json.loads(x) for x in files["items.jsonl"].splitlines()]
+        for item in found:
+            if item["item"] == "test:planks":
+                item["ore"] = ["plankWood"]
+        out["items.jsonl"] = jsonl(found)
+    return out
+
+
+def test_nei_only_oredict_slots_are_keyed_by_their_oredict_name(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    make_run(tmp_path)
+    first = built(tmp_path, allow_list)
+    db = first.db
+    q = (
+        "SELECT r.ref, r.content_hash FROM recipe r JOIN recipe_output o ON o.recipe_id = r.id"
+        " JOIN item i ON i.id = o.item_id JOIN export_run e ON e.id = r.run_id"
+        " WHERE i.registry_name = 'test:table' AND e.run_key = ? ORDER BY 1"
+    )
+    any_plank = recipe_id(
+        db,
+        "r.id IN (SELECT recipe_id FROM recipe_input WHERE ore_id ="
+        " (SELECT id FROM ore WHERE name = 'plankWood'))",
+    )
+    # Every plank slot names its oredict (planks@32767 in plankWood covers planks@1).
+    assert {r[-1] for r in inputs(db, any_plank)} == {"plankWood"}
+    assert alts(db, any_plank, 0) == {"minecraft:planks@0", "minecraft:planks@1"}
+    tables = rows(db, q, RUN)
+    assert len(tables) == 2  # any plank, and only oak planks
+
+    # NEI shows another plank: nothing changes (NEI picks the stack it shows anew each run).
+    files = replanked(default_files(), show=1, extra=False)
+    make_run(tmp_path, "20261107T120000Z", "2026-11-07T12:00:00Z", files)
+    built(tmp_path, allow_list)
+    every = (
+        "SELECT r.ref, r.signature, r.content_hash FROM recipe r JOIN export_run e"
+        " ON e.id = r.run_id WHERE e.run_key = ? ORDER BY 1"
+    )
+    assert rows(db, every, "20261107T120000Z") == rows(db, every, RUN)
+
+    # plankWood gains a member: the recipe keeps its key; only its content hash changes.
+    files = replanked(default_files(), show=0, extra=True)
+    make_run(tmp_path, "20261108T120000Z", "2026-11-08T12:00:00Z", files)
+    built(tmp_path, allow_list, keep=3)
+    grown = rows(db, q, "20261108T120000Z")
+    assert [r[0] for r in grown] == [r[0] for r in tables]
+    assert sum(a[1] != b[1] for a, b in zip(tables, grown, strict=True)) == 1
+    assert len(rows(db, every, "20261108T120000Z")) == len(rows(db, every, RUN))
+
+
+def test_handlers_that_are_not_recipes_are_left_out(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    make_run(tmp_path)
+    result = built(tmp_path, allow_list)
+    db = result.db
+    for handler in FUEL_AND_FACADE:
+        assert handler in merge.NOT_RECIPES
+        assert rows(
+            db,
+            "SELECT count(*) FROM recipe r JOIN nei_handler h ON h.id = r.nei_handler_id"
+            " WHERE h.handler_name = ?",
+            handler,
+        ) == [(0,)]
+    # Still listed as handlers; the facade, keyed by NBT with a numeric block ID, is no item.
+    names = {r[0] for r in rows(db, "SELECT handler_name FROM nei_handler")}
+    assert set(FUEL_AND_FACADE) <= names
+    assert rows(
+        db, "SELECT count(*) FROM item WHERE registry_name LIKE 'appliedenergistics2:%'"
+    ) == [(0,)]
+    text = "\n".join(report.lines(result, full=True))
+    assert "Handlers left out (not recipes, D105):" in text
+    assert "  codechicken.nei.recipe.FuelRecipeHandler: furnace fuels" in text
+
+
+def test_a_locked_curation_task_is_written_under_another_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_run(tmp_path)
+    real = build.os.replace
+    locked = {f"collisions-{RUN}.tsv"}
+
+    def replace(src: Path, dst: Path) -> None:
+        if Path(dst).name in locked:  # open in Excel, which locks it on Windows
+            raise PermissionError(32, "The process cannot access the file")
+        real(src, dst)
+
+    monkeypatch.setattr(build.os, "replace", replace)
+    with pytest.raises(build.BuildError, match="1 identity collision") as err:
+        build.build(tmp_path, allow_list=tmp_path / "none.tsv")
+    second = tmp_path / build.CURATION / f"collisions-{RUN}-2.tsv"
+    assert f"The curation task is {second}" in str(err.value)
+    assert second.is_file()
+    assert not list((tmp_path / build.CURATION).glob("*.tmp"))
+    # No name can be written: the collisions are in the message itself.
+    locked.update(f"collisions-{RUN}-{n}.tsv" for n in range(2, 10))
+    with pytest.raises(build.BuildError, match="1 identity collision") as err:
+        build.build(tmp_path, allow_list=tmp_path / "none.tsv")
+    assert "couldn't be written" in str(err.value)
+    assert "the collisions are gt.recipe.mixer " in str(err.value)
+    assert not list((tmp_path / build.CURATION).glob("*.tmp"))
+
+
+def test_a_report_that_cant_be_saved_still_builds(
+    tmp_path: Path, allow_list: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_run(tmp_path)
+
+    def locked(path: Path, text: str) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(build, "_write_text", locked)
+    result = built(tmp_path, allow_list)
+    assert result.report_path is None and result.report_error is not None
+    assert rows(result.db, "SELECT count(*) FROM export_run") == [(1,)]
+    text = "\n".join(report.lines(result, full=False))
+    assert f"Report not saved: {tmp_path / build.REPORTS}" in text
+
+
+def test_name_search_matches_names_not_kinds(tmp_path: Path, allow_list: Path) -> None:
+    make_run(tmp_path)
+    result = built(tmp_path, allow_list)
+    conn = access.connect(result.db, readonly=True)
+    try:
+        for word in ("fluid", "item", "machine", "nei_handler"):
+            assert access.query(conn, "find_names", {"q": word, "limit": 50}) == []
+        water = access.query(conn, "find_names", {"q": "water", "limit": 50})
+        assert ("fluid", "Water") in {(r["kind"], r["name_en"]) for r in water}
+    finally:
+        conn.close()
+
+
+def test_opening_the_db_writes_nothing(tmp_path: Path, allow_list: Path) -> None:
+    make_run(tmp_path)
+    db = built(tmp_path, allow_list).db
+    writer = access.connect(db)
+    try:
+        writer.execute(
+            "BEGIN IMMEDIATE"
+        )  # a long write, such as a build, holds the lock
+        writer.execute("INSERT INTO kv(key, value) VALUES ('stale', '1')")
+        reader = access.connect(db)  # would wait 30 s and fail if opening wrote
+        try:
+            assert reader.execute("SELECT count(*) FROM recipe").fetchone()[0] > 0
+        finally:
+            reader.close()
+        writer.execute("ROLLBACK")
+    finally:
+        writer.close()

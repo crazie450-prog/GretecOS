@@ -2,11 +2,14 @@
 
 The report gives counts per mod (recipe maps a mod owns, the recipes in them, the recipes it
 added, its machines and items) and the addon check of plan section 8: every recipe-map addon
-that loads (TST, GT-Not-Leisure, 123Technology) owns at least one recipe map. Programmable
-Hatches adds its recipes to GT's own maps and owns none [A§3], so it is listed with no map
-expected. An addon is matched to Export's loaded mods by modid or mod name, case ignored; the
-modids are the ones in each addon's ``gradle.properties``, still to be confirmed on the first
-full-pack run (Questions, WO-1.3).
+that loads (TST, GT-Not-Leisure, 123Technology) owns at least one recipe map with GT recipes in
+it, and each map it owns without one is listed. Programmable Hatches adds its recipes to GT's
+own maps and owns none [A§3], so it is listed with no map expected. An addon is matched to
+Export's loaded mods by modid or mod name, case ignored; the modids are the ones in each
+addon's ``gradle.properties``, still to be confirmed on the first full-pack run (Questions,
+WO-1.3). GT categories whose recipes are only in NEI (added after GT's dump, as TecTech's
+Godforge maps in the dev runtime) get a warning of their own, because the planner doesn't use
+NEI-only recipes of GT categories yet (``fake`` is NULL, D105).
 """
 
 from __future__ import annotations
@@ -16,8 +19,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from gregtec.ingest.merge import ALLOW_HEADER, Collision
-from gregtec.ingest.normalize import ITEM, Recipe, canonical
+from gregtec.ingest.merge import ALLOW_HEADER, NOT_RECIPES, Collision
+from gregtec.ingest.normalize import ITEM, SIG_CHARS, Recipe, canonical
 
 if TYPE_CHECKING:
     from gregtec.db.build import Result
@@ -105,10 +108,26 @@ def per_mod(result: Result) -> list[tuple[str, int, int, int, int, int]]:
     return rows
 
 
+def gt_recipes_per_map(result: Result) -> Counter[str]:
+    """GT recipes (``gt`` and ``gt+nei``) per recipe map, after duplicates were dropped."""
+    return Counter(r.space for r in result.loaded.recipes if _gt(r))
+
+
+def nei_only_categories(result: Result) -> list[tuple[str, int]]:
+    """(handler, NEI-only recipes) for each GT category whose recipes are only in NEI."""
+    loaded = result.loaded
+    found = Counter(
+        r.handler
+        for r in loaded.recipes
+        if not _gt(r) and r.handler in loaded.categories
+    )
+    return sorted((h, n) for h, n in found.items() if h is not None)
+
+
 def addon_lines(result: Result) -> list[str]:
     loaded = result.loaded
     mods = _mods(loaded.run.manifest)
-    owners = Counter((m.owner_mod or "").lower() for m in loaded.maps)
+    in_map = gt_recipes_per_map(result)
     lines = []
     for addon in ADDONS:
         ids = {i.lower() for i in addon.modids}
@@ -124,21 +143,34 @@ def addon_lines(result: Result) -> list[str]:
             continue
         modid = str(found[0].get("modid"))
         version = found[0].get("version")
-        count = owners[modid.lower()]
+        owned = sorted(
+            m.name for m in loaded.maps if (m.owner_mod or "").lower() == modid.lower()
+        )
+        recipes = sum(in_map[m] for m in owned)
         added = sum(
             1
             for r in loaded.recipes
             if _gt(r) and modid.lower() in {o.lower() for o in r.owners}
         )
-        what = f"{addon.title} ({modid} {version}): {count} recipe maps, {added:,} recipes added"
-        if addon.owns_maps and count == 0:
-            lines.append(f"  MISSING     {what}: it loads but owns no recipe map")
-        elif addon.owns_maps:
-            lines.append(f"  ok          {what}")
-        else:
+        what = (
+            f"{addon.title} ({modid} {version}): {len(owned)} recipe maps, {recipes:,} GT "
+            f"recipes in them, {added:,} recipes added"
+        )
+        if not addon.owns_maps:
             lines.append(
                 f"  ok          {what} (it adds to GT's own maps, none expected)"
             )
+        elif not owned:
+            lines.append(f"  MISSING     {what}: it loads but owns no recipe map")
+        elif recipes == 0:
+            lines.append(
+                f"  MISSING     {what}: it loads but its recipe maps have no GT recipe"
+            )
+        else:
+            lines.append(f"  ok          {what}")
+        if addon.owns_maps:
+            for name in (m for m in owned if in_map[m] == 0):
+                lines.append(f"    no GT recipe in {name}")
     return lines
 
 
@@ -188,7 +220,8 @@ def lines(result: Result, full: bool) -> list[str]:
         ),
         (
             f"  GT: {loaded.gt_recipes:,} recipe lines, {len(loaded.recipe_errors):,} the mod "
-            f"couldn't serialise, {keys.duplicates:,} rows dropped as copies of another recipe"
+            f"couldn't serialise, {keys.duplicates['gt']:,} rows dropped as copies of another "
+            "GT recipe"
         ),
     ]
     if loaded.nei_status == "ok":
@@ -198,10 +231,22 @@ def lines(result: Result, full: bool) -> list[str]:
             f"  NEI: {stats.nei_rows:,} lines: {stats.exact:,} merged by identity hash, "
             f"{stats.matched:,} by slots, {sum(stats.duplicates.values()):,} duplicates, "
             f"{sum(stats.dropped.values()):,} GT recipes NEI shows in another form (dropped), "
-            f"{stats.nei_only:,} NEI-only"
+            f"{stats.nei_only:,} NEI-only ({keys.duplicates['nei']:,} of them dropped as "
+            f"copies of another NEI-only recipe), {sum(stats.not_recipes.values()):,} lines of "
+            f"{len(stats.not_recipes)} handlers that aren't recipes, left out"
+        )
+        out.append(
+            f"  NEI-only oredict slots: {stats.ore_named:,} keyed by their oredict name, "
+            f"{stats.ore_sets:,} by the set of what they accept (no oredict name matches)"
         )
         if warning:
             out.append(f"  NEI warning: {warning}")
+        only_nei = nei_only_categories(result)
+        if only_nei:
+            out.append(
+                "WARNING: GT categories with recipes only in NEI (the planner doesn't use them "
+                "yet): " + ", ".join(f"{h} ({n:,})" for h, n in only_nei)
+            )
     else:
         out.append(
             f"  NEI: not used (parts.nei is {loaded.nei_status!r}; GT recipes only)"
@@ -213,6 +258,11 @@ def lines(result: Result, full: bool) -> list[str]:
     )
     for space, sig12 in keys.stale:
         out.append(f"  stale allow-list entry (no collision now): {space}\t{sig12}")
+    for ref, content12 in keys.relisted:
+        out.append(
+            f"  {ref} has a new content hash {content12} and kept its suffix: put it in "
+            "collisions.tsv"
+        )
     items = {i.ref for i in loaded.items}
     out.append(
         f"Catalog: {len(loaded.maps)} recipe maps, {len(loaded.handlers)} NEI handlers, "
@@ -237,17 +287,27 @@ def lines(result: Result, full: bool) -> list[str]:
     width = max((len(r[0]) for r in rows), default=4)
     for mod, *nums in rows:
         out.append(f"  {mod:<{width}}  " + "  ".join(f"{n:>7,}" for n in nums))
+    if full:
+        in_map = gt_recipes_per_map(result)
+        empty = sorted(m.name for m in loaded.maps if in_map[m.name] == 0)
+        out.append(f"Recipe maps with no GT recipe ({len(empty)}):")
+        out.extend(f"  {name}" for name in empty)
     if full and loaded.nei_status == "ok":
-        out.append("NEI handlers: handler, name, NEI-only recipes, dropped")
+        out.append("NEI handlers: handler, name, NEI-only recipes, dropped, left out")
         only = Counter(r.handler for r in loaded.recipes if not _gt(r))
         for handler, name in sorted(loaded.handlers.items()):
             out.append(
                 f"  {handler}\t{name}\t{only[handler]}\t{stats.dropped[handler]}"
+                f"\t{stats.not_recipes[handler]}"
             )
+        out.append("Handlers left out (not recipes, D105):")
+        out.extend(f"  {h}: {why}" for h, why in sorted(NOT_RECIPES.items()))
     for key in result.pruned:
         out.append(f"Pruned run {key} from the DB (keeping the newest [db] keep_runs)")
     if result.report_path is not None:
         out.append(f"Report: {result.report_path}")
+    if result.report_error is not None:
+        out.append(f"Report not saved: {result.report_error}")
     return out
 
 
@@ -290,12 +350,17 @@ def collisions_tsv(run_key: str, collisions: Iterable[Collision]) -> str:
         "# Check each in NEI. A genuine pair (two recipes GT really has, e.g. one registered",
         "# twice with different timings) goes into core/gregtec/ingest/collisions.tsv as its row",
         "# below, with a real reason in place of TODO; its recipes then get the keys -1, -2, ...",
-        "# in content-hash order. Anything else is a normaliser bug to fix.",
+        "# in the order of the content12 column (content-hash order for a new group). A group",
+        "# the allow-list already has keeps its listed order: put each recipe's new content12",
+        "# where it was. Anything else is a normaliser bug to fix.",
         "\t".join(ALLOW_HEADER),
     ]
     for c in collisions:
         diff = differences(c.recipes)
-        out.append(f"{c.space}\t{c.sig12}\t{len(c.recipes)}\tTODO: {'; '.join(diff)}")
+        content = ",".join(r.content_hash[:SIG_CHARS] for r in c.recipes)
+        out.append(f"{c.space}\t{c.sig12}\t{content}\tTODO: {'; '.join(diff)}")
+        if c.listed:
+            out.append(f"#   on the allow-list as {','.join(c.listed)}")
         for i, r in enumerate(c.recipes, 1):
             ins = ", ".join(f"{s.amount}x {s.ref.text()}" for s in r.inputs)
             outs = ", ".join(f"{s.amount}x {s.ref.text()}" for s in r.outputs)

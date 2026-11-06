@@ -3,11 +3,15 @@
 The runs are the dev runtime's (GT 5.09.54.265 and its dependencies, not the pack; mode
 "harness"), so the checks are the WO's acceptance in shape: every key is one recipe (the
 collision test, with the repo's allow-list), the same input gives byte-identical keys and
-hashes, two independent exports (the server and the client harness) give the same GT keys, no
-key or NBT holds a numeric item ID, and the counts report covers every mod. As in
+hashes, two independent exports (the server and the client harness) give the same GT keys, two
+client exports give the same keys and hashes for every recipe, NEI-only ones too, no key or NBT
+holds a numeric item ID, and the counts report covers every mod. As in
 test_collect_harness.py this runs only with GOS_REQUIRE_HARNESS_RUN=1 (CI's mod job, right
 after both harnesses): run them (mod/README.md), then
-``GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration``. Nothing is written outside
+``GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration``. The two-client check also needs
+an earlier client run: copy ``mod/run/client/gregteclink/exports`` to
+``mod/run/client-b/gregteclink/`` before running the client harness again (the harness wipes
+its own), and set ``GOS_CLIENT_RUN_B=mod/run/client-b``, as CI does. Nothing is written outside
 tmp_path.
 """
 
@@ -22,14 +26,14 @@ from typing import Any
 import pytest
 
 from gregtec.db import access, build, report
-from gregtec.ingest import collect
+from gregtec.ingest import collect, merge
 
 REPO = Path(__file__).resolve().parents[2]
 
 
-def harness_home(side: str, home: Path) -> Path:
+def harness_home(side: str, home: Path, game: Path | None = None) -> Path:
     """A GOS_HOME holding the harness's newest run, collected as ``gos export collect`` does."""
-    game = REPO / "mod" / "run" / side
+    game = game or REPO / "mod" / "run" / side
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     if not (game / collect.EXPORTS).is_dir():
@@ -52,6 +56,17 @@ GT_KEYS = "SELECT ref, signature, content_hash FROM recipe WHERE source IN ('gt'
 @pytest.fixture(scope="module")
 def client(tmp_path_factory: pytest.TempPathFactory) -> build.Result:
     home = harness_home("client", tmp_path_factory.mktemp("client"))
+    return build.build(home, allow_harness=True)
+
+
+@pytest.fixture(scope="module")
+def client_b(tmp_path_factory: pytest.TempPathFactory) -> build.Result:
+    """An earlier client harness run of the same mods (GOS_CLIENT_RUN_B, a game folder)."""
+    where = os.environ.get("GOS_CLIENT_RUN_B")
+    if not where:
+        pytest.skip("set GOS_CLIENT_RUN_B to a game folder with an earlier client run")
+    game = Path(where) if Path(where).is_absolute() else REPO / where
+    home = harness_home("client", tmp_path_factory.mktemp("client_b"), game)
     return build.build(home, allow_harness=True)
 
 
@@ -98,6 +113,19 @@ def test_a_harness_run_builds_with_unique_keys(
             and sources["crafting"] > 10_000
             and sources["furnace"] > 0
         )
+        # The handlers that aren't recipes (facades, fuels, ore pages) are left out.
+        assert set(stats.not_recipes) <= set(merge.NOT_RECIPES)
+        assert sum(stats.not_recipes.values()) > 0
+        in_db = {
+            h
+            for (h,) in rows(
+                db,
+                "SELECT DISTINCT h.handler_name FROM recipe r"
+                " JOIN nei_handler h ON h.id = r.nei_handler_id",
+            )
+        }
+        assert not in_db & set(merge.NOT_RECIPES)
+        assert stats.ore_named > 0
     else:
         assert dict(
             rows(db, "SELECT source, count(*) FROM recipe GROUP BY 1")
@@ -110,6 +138,24 @@ def test_two_exports_of_one_pack_give_the_same_gt_keys(
     # Two JVM runs (the server harness and the client harness) of the same mods: GT registers
     # recipes in another order each time, and some maps list outputs in another order.
     assert rows(client.db, GT_KEYS) == rows(server.db, GT_KEYS)
+
+
+ALL_KEYS = "SELECT ref, signature, content_hash FROM recipe ORDER BY ref"
+
+
+def test_two_client_exports_give_the_same_keys_for_every_recipe(
+    client: build.Result, client_b: build.Result
+) -> None:
+    # NEI shows another accepted stack in an oredict slot on each run, and some handlers show a
+    # random example: neither may change a key or a content hash (M1 of the WO-1.3 review).
+    assert client.loaded.run.run_id != client_b.loaded.run.run_id
+    a, b = rows(client.db, ALL_KEYS), rows(client_b.db, ALL_KEYS)
+    assert len(a) > 140_000
+    gone = {r[0] for r in a} - {r[0] for r in b}
+    new = {r[0] for r in b} - {r[0] for r in a}
+    changed = {x[0] for x, y in zip(a, b) if x != y} - gone - new
+    assert (sorted(gone)[:5], sorted(new)[:5], sorted(changed)[:5]) == ([], [], [])
+    assert a == b
 
 
 def test_the_same_run_again_is_byte_identical(
@@ -140,6 +186,11 @@ def test_no_numeric_item_id_in_any_item_key(client: build.Result) -> None:
         walk(json.loads(text))
         named += "__item" in text
     assert named > 0  # data sticks and the like were named, not numbered
+    # AE2 facades keep a numeric block ID in their NBT ("x"); their handler is left out.
+    assert rows(
+        client.db,
+        "SELECT count(*) FROM item WHERE registry_name = 'appliedenergistics2:item.ItemFacade'",
+    ) == [(0,)]
 
 
 def test_search_and_report(client: build.Result) -> None:
@@ -157,6 +208,10 @@ def test_search_and_report(client: build.Result) -> None:
         conn.close()
     text = "\n".join(report.lines(client, full=True))
     assert "Collision test: passed" in text
+    # TecTech's Godforge maps are empty in GT's dump; NEI has the molten ones' recipes.
+    assert "WARNING: GT categories with recipes only in NEI" in text
+    assert "gt.recipe.fog_molten (" in text
+    assert "Recipe maps with no GT recipe (" in text
     per_mod = {mod for mod, *_ in report.per_mod(client)}
     assert {"gregtech", "bartworks", "miscutils"} <= per_mod
     # The dev runtime has none of Play's addons; the report says so, never "ok".

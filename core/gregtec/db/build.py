@@ -9,7 +9,8 @@
    machines, and NEI's recipes; merge NEI into GT (:mod:`gregtec.ingest.merge`).
 3. **Collision test**: one recipe per citation key ``r:<map>/<sig12>``. A collision not on the
    allow-list fails the build before the DB is touched, and writes the curation task
-   ``GOS_HOME/data/curation/collisions-<run>.tsv``.
+   ``GOS_HOME/data/curation/collisions-<run>.tsv`` (``collisions-<run>-2.tsv`` and so on while
+   that file can't be replaced, e.g. when it is open in Excel).
 4. **Write** everything in one transaction, so a failed build leaves the DB as it was: the run
    (``export_run``, ``mod``), the catalog tables shared by every run (items, fluids, ores, recipe
    maps, NEI handlers, machines, latest run wins), the run's recipes, and the name index
@@ -38,7 +39,7 @@ from typing import TextIO
 from gregtec import config
 from gregtec.db import access, report
 from gregtec.ingest import collect, gtdump, machines, merge, nei
-from gregtec.ingest.normalize import FLUID, ITEM, Json, Recipe, Ref, canonical
+from gregtec.ingest.normalize import FLUID, ITEM, Json, OreIndex, Recipe, Ref, canonical
 
 REPORTS = Path("data", "reports")
 CURATION = Path("data", "curation")
@@ -83,6 +84,7 @@ class Result:
     pruned: list[str] = field(default_factory=list)
     replaced: bool = False  # the run was in the DB already
     report_path: Path | None = None
+    report_error: str | None = None  # why the report couldn't be saved
 
 
 def find_run(
@@ -129,7 +131,7 @@ def _nei_status(m: dict[str, Json]) -> str:
     return status if isinstance(status, str) else "absent"
 
 
-def load(run: collect.Run, allowed: dict[tuple[str, str], int]) -> Loaded:
+def load(run: collect.Run, allowed: dict[tuple[str, str], tuple[str, ...]]) -> Loaded:
     """Read, normalise, merge and key ``run``; raise ``merge.CollisionError`` on a collision."""
     path = run.path
     maps = gtdump.read_recipe_maps(path)
@@ -168,7 +170,8 @@ def load(run: collect.Run, allowed: dict[tuple[str, str], int]) -> Loaded:
     rows: Iterable[Recipe] = ()
     if loaded.nei_status == "ok":
         rows = _nei_rows(loaded, nei.nei_files(run.manifest))
-    combined, loaded.stats = merge.merge(gt_recipes, rows, categories)
+    ores = OreIndex.build((i.ref, i.ore) for i in items)
+    combined, loaded.stats = merge.merge(gt_recipes, rows, categories, ores)
     loaded.keys = merge.assign_keys(combined, allowed)
     loaded.recipes = loaded.keys.recipes
     return loaded
@@ -238,6 +241,7 @@ def _export_run(
             "matched": stats.matched,
             "duplicates": sum(stats.duplicates.values()),
             "dropped": sum(stats.dropped.values()),
+            "not_recipes": sum(stats.not_recipes.values()),
             "nei_only": stats.nei_only,
         },
     }
@@ -693,15 +697,29 @@ def _data_dir(gos_home: Path) -> Path:
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(text, encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def curation_task(gos_home: Path, run_key: str, error: merge.CollisionError) -> Path:
-    """Write the collisions as rows ready for the allow-list, with what differs."""
-    path = gos_home / CURATION / f"collisions-{run_key}.tsv"
-    _write_text(path, report.collisions_tsv(run_key, error.collisions))
-    return path
+    """Write the collisions as rows ready for the allow-list, with what differs. While the
+    file can't be replaced (Windows: open in Excel, which locks it), the next free name
+    ``collisions-<run>-2.tsv``, ``-3`` ... is used; OSError when none can be written."""
+    text = report.collisions_tsv(run_key, error.collisions)
+    folder = gos_home / CURATION
+    for n in range(1, 10):
+        tail = f"-{n}" if n > 1 else ""
+        path = folder / f"collisions-{run_key}{tail}.tsv"
+        try:
+            _write_text(path, text)
+        except PermissionError:
+            continue  # held open by another program
+        return path
+    raise PermissionError(f"{folder}: no collisions-{run_key}*.tsv can be written")
 
 
 def build(
@@ -740,11 +758,17 @@ def build(
     except gtdump.FormatError as exc:
         raise BuildError(f"run {run.run_id}: {exc}") from None
     except merge.CollisionError as exc:
-        task = curation_task(gos_home, run.run_id, exc)
+        try:
+            where = f"The curation task is {curation_task(gos_home, run.run_id, exc)}"
+        except OSError as write_error:
+            where = (
+                f"The curation task couldn't be written ({write_error}); the collisions are "
+                + "; ".join(f"{c.space} {c.sig12}" for c in exc.collisions[:20])
+            )
         raise BuildError(
-            f"run {run.run_id}: {exc}. Nothing was written to the DB. The curation task is "
-            f"{task}: check each collision in NEI, then add the genuine ones to "
-            f"{allow_list.name} (core/gregtec/ingest/) and build again"
+            f"run {run.run_id}: {exc}. Nothing was written to the DB. {where}: check each "
+            f"collision in NEI, then add the genuine ones to {allow_list.name} "
+            "(core/gregtec/ingest/) and build again"
         ) from None
     path = db or access.db_path(gos_home)
     if os.path.lexists(path) and collect._is_link(os.lstat(path)):
@@ -759,7 +783,14 @@ def build(
         conn.close()
     result = Result(run_id, loaded, path, pruned, replaced)
     result.report_path = gos_home / REPORTS / f"db-{run.run_id}.txt"
-    _write_text(result.report_path, "\n".join(report.lines(result, full=True)) + "\n")
+    try:
+        _write_text(
+            result.report_path, "\n".join(report.lines(result, full=True)) + "\n"
+        )
+    except OSError as exc:
+        # The DB is built; only the saved copy of the report is missing.
+        result.report_error = f"{result.report_path}: {exc}"
+        result.report_path = None
     return result
 
 

@@ -674,7 +674,10 @@ def test_a_second_collect_is_refused_while_one_runs(
         code, out = env.collect(capsys)
         assert code == 1
         lock = env.home / "data" / "locks" / "collect.lock"
-        assert f"another gos export collect is running (it holds {lock})" in out
+        assert (
+            f"another gos export collect or gos db build is running (it holds {lock})"
+            in out
+        )
         assert (staging / "items.jsonl").is_file()  # its staging folder is untouched
         assert env.collected() == [staging.name]
     code, out = env.collect(capsys)  # released, so the next collect runs

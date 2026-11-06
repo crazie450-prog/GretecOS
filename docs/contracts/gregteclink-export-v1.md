@@ -239,3 +239,7 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
 - `core/gregtec/ingest/normalize.py` (keys, NBT hash, identity and content hashes, D104) and
   `core/gregtec/ingest/merge.py` (NEI into GT, the collision test, D105, D106); `gos db build`
   (`core/gregtec/db/build.py`, D107) loads a collected run into `GOS_HOME\data\gos.sqlite`.
+- NEI picks the stack it displays for an oredict slot anew on each run, and some handlers show a random example, so
+  no key or content hash uses a displayed stack (D104), and the handlers whose lines aren't recipes (AE2 facades,
+  NEI's fuel list, the GT ore plugin's vein pages, Tinkers' tool materials) are left out of the DB (D105). Their
+  files stay in the collected run.
