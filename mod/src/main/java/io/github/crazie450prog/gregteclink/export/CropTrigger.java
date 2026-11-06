@@ -119,6 +119,8 @@ final class CropTrigger {
                 why = runOne(dumps, e.getKey(), e.getValue(), written);
             } catch (ReflectiveOperationException ex) {
                 return failed(run, "NEI's dumper API or log not reachable: " + Json.error(ex));
+            } catch (IOException | RuntimeException ex) { // a path refused or unreadable
+                why = Json.error(ex);
             }
             if (why != null) (REQUIRED.contains(e.getKey()) ? errors : others).add(e.getKey() + ": " + why);
         }
