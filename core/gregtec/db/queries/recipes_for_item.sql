@@ -1,11 +1,16 @@
 -- Recipes of export run :run_id that output item :item_id or fluid :fluid_id (the other NULL),
--- cited by ref (WO-2.2's recipe_find). Without :all = 1, disabled and fake recipes are left out;
+-- cited by ref (WO-2.2's recipe_find), with the map's NEI name (else the first machine that runs
+-- it, else its unlocalized name) as machine. Without :all = 1, disabled and fake recipes are left out;
 -- fake NULL (an NEI-only handler that doesn't say, D105) stays in. :tier_max (a GT voltage tier)
 -- keeps recipes up to that tier and those with none (crafting, furnace); :maps and :handlers are
 -- JSON arrays of recipe_map and nei_handler ids, or NULL for any machine. GT's recycling recipes
 -- (categories gt.recipe.category.*_recycling: an item back to its material) last, then lowest
 -- tier first, no tier (crafting) before tier 0, then by machine and ref; total counts every match.
-SELECT r.id, r.ref, r.source, coalesce(m.name_en, h.name_en, m.unloc_name, h.handler_name) AS machine,
+SELECT r.id, r.ref, r.source,
+  coalesce(m.name_en, h.name_en, (
+    SELECT mc.name_en FROM machine_map AS mm JOIN machine AS mc ON mc.id = mm.machine_id
+    WHERE mm.recipe_map_id = r.recipe_map_id ORDER BY mm.priority, mc.mte_id LIMIT 1),
+    m.unloc_name, h.handler_name) AS machine,
   m.unloc_name AS map, r.voltage_tier, r.eut, r.duration_ticks, r.amperage, r.special_value,
   r.enabled, r.hidden, r.fake, r.category,
   coalesce(r.category, '') LIKE 'gt.recipe.category.%recycling' AS recycling,

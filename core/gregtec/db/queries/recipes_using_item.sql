@@ -4,7 +4,11 @@
 -- recipe_uses). Without :all = 1, disabled and fake recipes are left out (fake NULL stays in, as
 -- in recipes_for_item). GT's recycling recipes last (as in recipes_for_item), then by machine,
 -- lowest tier and ref; total counts every match.
-SELECT r.id, r.ref, r.source, coalesce(m.name_en, h.name_en, m.unloc_name, h.handler_name) AS machine,
+SELECT r.id, r.ref, r.source,
+  coalesce(m.name_en, h.name_en, (
+    SELECT mc.name_en FROM machine_map AS mm JOIN machine AS mc ON mc.id = mm.machine_id
+    WHERE mm.recipe_map_id = r.recipe_map_id ORDER BY mm.priority, mc.mte_id LIMIT 1),
+    m.unloc_name, h.handler_name) AS machine,
   m.unloc_name AS map, r.voltage_tier, r.eut, r.duration_ticks, r.amperage, r.special_value,
   r.enabled, r.hidden, r.fake, r.category,
   coalesce(r.category, '') LIKE 'gt.recipe.category.%recycling' AS recycling,
