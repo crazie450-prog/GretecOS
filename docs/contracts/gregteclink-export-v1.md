@@ -35,8 +35,8 @@ only what needs the live game: registry names, ore names, display names and GT's
   is about 50 MB without NEI's files and about 145 MB with them (the full pack is larger), so a collector should
   copy a run soon after it appears: ten later runs remove it.
 - On a client, the GT files are written when the world's server starts, NEI's files once NEI has loaded (the
-  folder stays `.partial` in between), and the manifest last. If the world closes first, the run is finished then,
-  without NEI's files.
+  folder stays `.partial` in between), CropsNH's crop files right after NEI's (WO-1.10), and the manifest last. If
+  the world closes first, the run is finished then, without NEI's or the crop files.
 
 ## Keys
 
@@ -74,6 +74,7 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
 | `manifest.json` | Run facts, file hashes, counts, part status. Not listed in its own `files` |
 | `nei/<NEI file name>.jsonl` | On a client with NEI 2.8.172: a byte-for-byte copy of each file NEI's `dumpAll(true)` wrote to `dumps/recipes/` during this run (see below) |
+| `crops/<dumper>.<csv\|txt>` | On a client with CropsNH: a byte-for-byte copy of the file each of CropsNH's NEI data dumpers wrote to `dumps/` during this run (WO-1.10, D134; see below) |
 
 ### `gt_recipe_maps.json` entry
 
@@ -196,12 +197,37 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   reused one, where AE2 had rewritten its `config/AppliedEnergistics2/Facades.cfg` on joining the world. Compare NEI
   content, not counts.
 
+### `crops/*` (CropsNH's format, copied as is; WO-1.10)
+
+CropsNH 2.0.140 (GTNH 2.9.0's; LGPL-3.0, linked at runtime only) registers NEI data dumpers under NEI's Tools, Data
+Dumps, Crops NH (`tools.dump.cropsnh.<name>` in NEI's option list; the classes are
+`com.gtnewhorizon.cropsnh.compatibility.NEI.dumpers.*Dumper`). Right after NEI's recipe dump, on the client thread,
+GregtecLink calls `dumpFile()` on every `DataDumper` in that list, as the Dump buttons do: each writes
+`<gameDir>/dumps/<name>.<ext>` (NEI's `DataDumper` names the file after the part of the option name after its last
+dot) and posts a chat line. GregtecLink copies each file it wrote (regular files only, written since the call
+started minus 2 s, never through a link) into `crops/<name>.<ext>`. The format is CropsNH's, written with the JVM's
+default charset (`manifest.java.charset`) and the platform's line separator; the files Python reads:
+
+| File | Dumper | Content |
+|---|---|---|
+| `cropRegistry.csv` | `CropRegistryDumper` | Header `ID,Name,Unlocalised Name,...,Drop Table,Alternate Seeds` (22 columns), one crop per line: CropsNH's crop id (`cropsnh:allium`), names, tier, soil type, light and sub-soil requirements as English text joined by ` \| `, drops as `N x <display name>[<NBT>] @ <value / 100>.<value % 100>%` (CropsNH's basis points, not zero-padded) joined by ` \| `. CSV quoting with `"` |
+| `deterministicMutations.csv` | `DeterministicMutationRegistryDumper` | The parent-combination recipes: `output,parent1..parent4,conditions`, crops by display name, then one column per condition (sub-soil text, `Requires the crop breeder`, `MachineCatalyst(<item> x N \| ore:<name> x N)`) |
+| `mutationPools.csv` | `MutationPoolRegistryDumper` | Header `Crop,<pool display names>`, one line per crop in any pool, `TRUE`/`FALSE` per pool |
+| `soilRegistry.txt` | `SoilRegistryDumper` | Each soil list's name, then `- <block registry name>[:<meta>]` lines (no meta: any meta), `# empty` for a list with no block; blank lines between lists |
+| `alternateSeed.csv` | `AlternateSeedDumper` | `Item,Meta,CropCard`: an item that plants a crop (meta `*` for any) and the crop id |
+
+The other six (`bootProtection.csv`, `fertilizerFluids.csv`, `fertilizerItems.csv`, `fertilizerUnitFluids.csv`,
+`hydrationFluids.csv`, `weedEXFluids.csv`) are copied too and not read yet. Drops and catalysts are named, not keyed,
+in these files: readers key a drop from NEI's crop page of the same crop (handler `cropsnhCrops`, whose stacks have
+registry names), and NEI's other CropsNH tabs (`cropsnhBreeding`, `mutationPool`, `cropsnhAlternateSeeds`) hold the
+same crops by the seed's NBT `crop` (the crop id) (D136). Neither the files nor NEI's lines carry a numeric ID.
+
 ### `manifest.json`
 
 ```json
 {"format":"gregteclink-export/1","run_id":"20261105T223624Z","created_utc":"2026-11-05T22:36:24Z","complete":true,
  "mode":"one_click|autoexport|harness","world":"<world folder name, or null>","side":"client|server","deobf_env":false,
- "minecraft":"1.7.10","forge":"10.13.4.1614","java":{"version":"...","vendor":"..."},
+ "minecraft":"1.7.10","forge":"10.13.4.1614","java":{"version":"...","vendor":"...","charset":"UTF-8"},
  "pack_version":"<raw S:ModPackVersion of config/GTNewHorizons/dreamcraft.cfg, or null>",
  "gt_version":"5.09.54.265","nei_version":"<NotEnoughItems version, or null>",
  "gregteclink":{"version":"<build version: the deployed commit's first 12 hex digits, else git-derived>"},
@@ -209,13 +235,16 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
  "files":{"gt_recipes.jsonl":{"sha256":"...","bytes":0,"lines":0}, "...":{}},
  "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",
            "ore_mixes","ore_mix_errors","dimensions","items","item_errors","fluids","unregistered",
-           "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_files"?,"nei_recipes"?},
+           "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_files"?,"nei_recipes"?,
+           "crop_dumpers"?,"crop_files"?},
  "options":{"recipe_owners":true},
  "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","refs":"ok|failed",
-          "nei":"absent|skipped_server|ok|failed","autoexport":"off|ok|failed"},
+          "nei":"absent|skipped_server|ok|failed","crops":"absent|skipped_server|ok|failed",
+          "autoexport":"off|ok|failed"},
  "part_errors":{"<part>":"<why it failed>"}?,
  "part_warnings":{"nei":"<what an ok NEI step left out>"}?,
- "durations_ms":{"gt_dump","machines","ore_mixes","refs","nei_wait"?,"nei_dump"?,"nei_copy"?}}
+ "durations_ms":{"gt_dump","machines","ore_mixes","refs","nei_wait"?,"nei_dump"?,"nei_copy"?,"crops_dump"?,
+                 "crops_copy"?}}
 ```
 
 - `mods` lists **Export's** loaded mods, sorted by modid. `file` is relative to the game dir, or only the file name
@@ -240,6 +269,20 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
     succeeded, and the lines copied (`counts.nei_recipes`) equal the count NEI logged (`counts.nei_reported`).
   - `failed`: anything else, with the reason in `part_errors.nei`. Also when NEI was not ready 10 minutes after the
     world opened (NEI disabled, for example), or the world was closed before it was.
+- `parts.crops` (WO-1.10, D134) is not part of `complete`; **readers of `crops/` check `parts.crops == "ok"`**.
+  Runs made before WO-1.10 have no such part and no files.
+  - `absent`: CropsNH isn't loaded.
+  - `skipped_server`: a dedicated server, which has no NEI to run the dumpers.
+  - `ok`: every dumper Python reads (`alternateSeed`, `cropRegistry`, `deterministicMutations`, `mutationPools`,
+    `soilRegistry`) is registered, no `dumpFile()` threw, NEI's logger (`NEIClientConfig.logger`) got no
+    `Error dumping ...` line during the calls (NEI's `DataDumper` catches its own exceptions and logs that), every
+    dumper wrote its file and every copy succeeded; `counts.crop_dumpers` (registered) equals `counts.crop_files`
+    (copied).
+  - `failed`: anything else, with the reason in `part_errors.crops`; also when NEI's recipe step didn't run (NEI
+    absent or not ready, the world closed first, the autoexport deadline), since the crop step runs right after it.
+  - A file already in `dumps/` that is a link or not a regular file is refused (the dumper would write through it).
+- `java.charset` (WO-1.10) is the JVM's default charset, which CropsNH's dumpers write in; runs without it are
+  UTF-8.
 - `parts.autoexport`: `off` without `-Dgregtec.autoexport=true` (or on a dedicated server); `ok` when the
   autoexport flow finished the run itself; `failed` when its 30-minute deadline was reached or the world closed
   first (`part_errors.autoexport`). PR 1 runs may say `not_built`: treat it as `off`. An autoexport launch that
@@ -254,6 +297,8 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   `dumpAll`; `nei_wait` also when NEI was not ready in time. `nei_handlers` and `nei_reported` are -1 when NEI logged
   no such line. `nei_wait` is the time from entering the world until the dump started (or the wait timed out);
   `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
+- The `crop_*` counts and the `crops_dump` and `crops_copy` durations are present only when the crop step ran:
+  `crop_dumpers` once it found CropsNH's dumpers, the rest once it called them.
 
 ## Python readers (WO-1.3)
 
@@ -262,10 +307,14 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
 - `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
 - `core/gregtec/ingest/ore_mixes.py` (WO-1.6): `gt_ore_mixes.json`, only from runs with `parts.ore_mixes == "ok"`;
   `gos ores load` (`core/gregtec/db/ores.py`, D128) loads it into `ore_mix`.
+- `core/gregtec/ingest/crops.py` (WO-1.10): `crops/*`, only from runs with `parts.crops == "ok"`, plus NEI's
+  CropsNH tabs when `parts.nei == "ok"`; `gos db build` loads it into the crop tables (`core/gregtec/db/crops.py`,
+  D136).
 - `core/gregtec/ingest/normalize.py` (keys, NBT hash, identity and content hashes, D104) and
   `core/gregtec/ingest/merge.py` (NEI into GT, the collision test, D105, D106); `gos db build`
   (`core/gregtec/db/build.py`, D107) loads a collected run into `GOS_HOME\data\gos.sqlite`.
 - NEI picks the stack it displays for an oredict slot anew on each run, and some handlers show a random example, so
   no key or content hash uses a displayed stack (D104), and the handlers whose lines aren't recipes (AE2 facades,
-  NEI's fuel list, the GT ore plugin's vein pages, Tinkers' tool materials) are left out of the DB (D105). Their
-  files stay in the collected run.
+  NEI's fuel list, the GT ore plugin's vein pages, Tinkers' tool materials, CropsNH's crop-stick tabs) are left out
+  of the recipe tables (D105, D136). Their files stay in the collected run. GT keys the alternatives of a slot by
+  its displayed item, except in the maps whose displayed item changes between runs (CropsNH's Crop Breeder, D135).

@@ -1250,7 +1250,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V30 | CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2] | Lab test | 6.7 |
 | V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
 | V32 | The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6] | NEI + Lab | 6.7 |
-| V33 | The CropsNH NEI dumpers (crops, breeding recipes, mutation pools, soils) run in the Export instance and cover every crop in NEI's tabs [I§2] | Export test | 1.10 |
+| V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 
 ---
 
