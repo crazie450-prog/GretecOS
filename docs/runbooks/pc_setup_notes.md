@@ -65,3 +65,18 @@ OpenComputers prints `Successfully applied N Internet Card filtering rules.` (or
 
 - A quoted path needs `&` in front, or PowerShell just prints the string: `& "C:\GregtecOS-app\current\.venv\Scripts\gos.exe" doctor`. An unquoted path without spaces runs without it.
 - Piping `gos doctor` through `Select-String` in Windows PowerShell 5.1 can garble non-ASCII text (for example `17–26` shows as `17û26`). It's only how the pipe re-encodes the text; the plain output is correct.
+
+## gos deploy builds GregtecLink; sync installs it into Export (D98)
+
+From WO-1.1 PR 1 on, `gos deploy` also builds the mod in `mod/` and keeps only its jar in `GOS_APP\current\mod-dist\`. This replaces copying the jar and config into Export by hand.
+
+1. Gradle's wrapper needs a Java on `PATH` or `JAVA_HOME` to start (Java 17 or newer); Gradle then downloads the JDKs the build uses into `%USERPROFILE%\.gradle\`. If deploy stops with `ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH`, nothing was swapped: point `JAVA_HOME` at a JDK, open a new window and deploy again.
+2. The first deploy takes a few minutes: Gradle also downloads Minecraft, Forge and GT. Later deploys reuse those downloads. It ends with `Built GregtecLink: ...gregteclink-<commit>.jar` and the jar's SHA256.
+3. Close Export, then run sync from GOS_APP, dry run first:
+
+   ```powershell
+   & "C:\GregtecOS-app\current\.venv\Scripts\python.exe" "C:\GregtecOS-app\current\scripts\sync_instances.py" --dry-run
+   & "C:\GregtecOS-app\current\.venv\Scripts\python.exe" "C:\GregtecOS-app\current\scripts\sync_instances.py"
+   ```
+
+   Under `export:` the `gregteclink:` lines show the jar it installs, any older `gregteclink*.jar` it deletes, and `config/gregteclink.cfg` (export module on). Lab and Play get nothing from this step. Re-run sync after each deploy that changes the mod.

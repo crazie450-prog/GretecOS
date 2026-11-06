@@ -1,12 +1,12 @@
 """``gos.toml`` (plan section 4.3, Appendix C). Only the keys the existing commands read so far.
 
-| key                      | default                                  | read by        |
-|--------------------------|------------------------------------------|----------------|
-| [paths] gos_app          | C:/GregtecOS-app                         | deploy (WO-0.8)|
-| [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3)  |
-| [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync           |
-| [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync           |
-| [sync.lab] exclude       | nothing                                  | sync           |
+| key                      | default                                  | read by                     |
+|--------------------------|------------------------------------------|-----------------------------|
+| [paths] gos_app          | C:/GregtecOS-app                         | deploy (WO-0.8), sync (D98) |
+| [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3)               |
+| [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync                        |
+| [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
+| [sync.lab] exclude       | nothing                                  | sync                        |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
