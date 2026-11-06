@@ -220,7 +220,8 @@ The other six (`bootProtection.csv`, `fertilizerFluids.csv`, `fertilizerItems.cs
 `hydrationFluids.csv`, `weedEXFluids.csv`) are copied too and not read yet. Drops and catalysts are named, not keyed,
 in these files: readers key a drop from NEI's crop page of the same crop (handler `cropsnhCrops`, whose stacks have
 registry names), and NEI's other CropsNH tabs (`cropsnhBreeding`, `mutationPool`, `cropsnhAlternateSeeds`) hold the
-same crops by the seed's NBT `crop` (the crop id) (D136). Neither the files nor NEI's lines carry a numeric ID.
+same crops by the seed's NBT `crop` (the crop id) (D136). `mutationPool` has no `cropsnh` prefix: readers take its
+lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neither the files nor NEI's lines carry a numeric ID.
 
 ### `manifest.json`
 
@@ -276,7 +277,7 @@ same crops by the seed's NBT `crop` (the crop id) (D136). Neither the files nor 
   - `ok`: every dumper Python reads (`alternateSeed`, `cropRegistry`, `deterministicMutations`, `mutationPools`,
     `soilRegistry`) is registered and, for each of them, `dumpFile()` threw nothing, NEI's logger
     (`NEIClientConfig.logger`) got no `Error dumping ...` line during its call (NEI's `DataDumper` catches its own
-    exceptions and logs that), it wrote its file and the copy succeeded. Then `counts.crop_dumpers` (registered)
+    exceptions and logs that), it wrote its file, not empty, and the copy succeeded. Then `counts.crop_dumpers` (registered)
     equals `counts.crop_files` (copied) unless one of the other six failed, which only adds `part_warnings.crops`.
   - `failed`: anything else, with the reason in `part_errors.crops`; also when NEI's recipe step didn't run (NEI
     absent or not ready, the world closed first, the autoexport deadline), since the crop step runs right after it.

@@ -18,7 +18,7 @@ WO-1.10's acceptance, on Clayton's PC: **every crop in NEI's Crop Breeding tab i
    - `parts` has `"nei": "ok"` and `"crops": "ok"`, and there is no `part_errors.crops`;
    - `counts.crop_dumpers` and `counts.crop_files` are equal (11 with CropsNH 2.0.140);
    - `files` lists `crops/cropRegistry.csv`, `crops/deterministicMutations.csv`, `crops/mutationPools.csv`, `crops/soilRegistry.txt` and `crops/alternateSeed.csv` (and six more of CropsNH's: fertilizer, hydration, Weed-EX and boot protection);
-   - `java.charset` is there (`UTF-8` on the Java 17+ build).
+   - `java.charset` is there (`UTF-8` on Java 18 and later; Play and Export run Java 25, D88).
 5. As gos-dev:
 
    ```powershell
@@ -45,20 +45,20 @@ WO-1.10's acceptance, on Clayton's PC: **every crop in NEI's Crop Breeding tab i
    ```
 
 2. Launch **GTNH-Lab** and open any world (`lab-structures` is fine). For each crop, open NEI and search its seeds, e.g. `Wheat Seeds` (CropsNH's seeds are named `<crop> Seeds`). Press **R** on the seeds for the recipe tabs, **U** for usages.
-3. **Compare**, crop by crop:
+3. **Compare** `gos crops show`'s output with NEI, crop by crop. Compare the two with each other, not with any value written here: the full pack can differ from the dev runtime (more sub-soil blocks, pools or drops).
 
-   | Crop | NEI tab | Compare with `gos crops show` |
+   | Crop | NEI tabs to open | What to compare |
    |---|---|---|
-   | Wheat | Crops | tier 1, soil farmland, `Needs a light level of 9 or higher`, drop 1 × Wheat at 100%; the alternate seed (Wheat Seeds) in the Alternate Seeds tab |
-   | Allium | Crops, Crop Breeding | tier 2, drops Allium 25% and Magenta Dye 75%; bred from Pink Tulip + Purple Tulip |
-   | Rubber Bonsai | Crops, Crop Breeding | three drops (Sticky Resin, Rubber Tree Sapling, Rubber Wood) with their amounts and chances; bred from Jungle Bonsai + Spruce Bonsai |
-   | Stone Lily | Crops, Crop Breeding | 9 × Stone Dust at 100%; the sub-soil blocks under the soil slot; bred from Vine + Pumpkin |
-   | Tine | Crops, Crop Breeding | tier 5, `Needs a block of tin under it`; bred from Stone Lily + Spruce Bonsai |
-   | Redstraw | Crops, Crop Breeding | both light limits (5 or higher, 12 or lower) and redstone under it; bred from Nether Stone Lily + Wheat |
-   | Aluminium Oreberry | Crops, Crop Breeding | `Needs a light level of 10 or lower`, aluminium under it, 6 × Aluminum Oreberry; bred from Gold Oreberry + Essence Berry |
-   | Necrobloom | Crops, Crop Breeding | tier 3, drops Poison Powder 95% and Purple Dye 5%; bred from Spidernip + Purple Tulip. (`gos crops show` also says it spreads weeds above Growth 8, which NEI doesn't show: that is V30's Lab test, WO-6.7) |
-   | Oil Berry | Crops, **Crop Breeder** | the soil slot cycles through sand, gravel, soul sand and oil sands; bred only in the Crop Breeder, from Soul Sand Lily + Withereed (not in the Crop Breeding tab) |
-   | Trollplant | Crops, **Crop Breeder** | soil brick, four drops with chances; Crop Breeder only, from Goldfish + Reactoria + Fertilia with the catalysts (5 Bricks, 1 small Plutonium 241 dust, 64 Red Alloy rods) |
+   | Wheat | Crops, Alternate Seeds | tier, soil, the light requirement, the drop's amount, item and chance; the alternate seed |
+   | Allium | Crops, Crop Breeding | tier, each drop's item and chance; the parents |
+   | Rubber Bonsai | Crops, Crop Breeding | every drop (three in the dev runtime) with its amount and chance; the parents |
+   | Stone Lily | Crops, Crop Breeding | the drop's amount and chance; the sub-soil blocks NEI cycles under the soil slot; the parents |
+   | Tine | Crops, Crop Breeding | tier, the block-under requirement; the parents |
+   | Redstraw | Crops, Crop Breeding | both light limits and the block under it; the parents |
+   | Aluminium Oreberry | Crops, Crop Breeding | the light limit, the block under it, the drop's amount; the parents |
+   | Necrobloom | Crops, Crop Breeding | tier, each drop's chance; the parents. (`gos crops show` also prints the Growth above which it spreads weeds, which NEI doesn't show: that is V30's Lab test, WO-6.7) |
+   | Oil Berry | Crops, **Crop Breeder** (a GT machine tab) | every soil block NEI cycles in the soil slot; the parents, and that the recipe is Crop Breeder only (`gos crops show` says so; it is not in the Crop Breeding tab) |
+   | Trollplant | Crops, **Crop Breeder** | the soil, every drop with its chance; the parents and each catalyst with its amount. `gos crops show` prints a catalyst as CropsNH's dump names it (an item's display name, or an oredict name such as `ore:dustSmallPlutonium241`); NEI shows one item of it |
 
    NEI shows chances such as `12.50%`; `gos crops show` prints the same basis points as a percentage with two decimals. Amounts and item names should match exactly; tiers are on the Crops page.
 4. **Coverage (optional, a few minutes).** Open any Crop Breeding recipe (R on Allium Seeds) and click the lines that join the parents to the child: NEI then lists every recipe of the tab. Scroll through a few pages: every child and parent there is in the saved report's crop list, and the page count times 3 recipes per page is about `<B>`.

@@ -89,7 +89,7 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   Crops NH does, then copies the files they wrote to `dumps/` into the run's `crops/`. CropsNH is reached through
   NEI's API by reflection; nothing is compiled against it. Judged as NEI's step is: `parts.crops` is `ok` only if
   the five dumpers Python reads are registered and, for each, the call threw nothing, NEI's logger got no
-  `Error dumping` line during it, it wrote its file and the copy succeeded; otherwise `failed`
+  `Error dumping` line during it, it wrote its file, not empty, and the copy succeeded; otherwise `failed`
   (`part_errors.crops`), and `absent` without CropsNH. One of the other six failing only adds
   `part_warnings.crops`. A file in `dumps/` that is a link is refused, since the dumper writes through it. It takes
   about 25 ms.
