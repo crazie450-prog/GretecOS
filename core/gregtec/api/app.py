@@ -62,6 +62,7 @@ from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
+from gregtec.vault.scheduler import TICK_S, Maintenance
 
 log = logging.getLogger("gregtec.api")
 
@@ -124,6 +125,9 @@ class Core:
     sockets: set[Socket] = field(default_factory=set)
     loop: asyncio.AbstractEventLoop | None = None
     pushed_pending: list[str] = field(default_factory=list)  # request ids last pushed
+    maintenance: Maintenance | None = (
+        None  # idle maintenance and vault commits (WO-2.5)
+    )
 
     # --- pushing to WebSocket clients
 
@@ -230,6 +234,8 @@ class Core:
         items.append(self._db_item())
         items.append(_item("anthropic_key", "check", "Anthropic key", *self.key_status))
         items.append(self._credits_item())
+        if self.maintenance is not None:
+            items.append(self._maintenance_item())
         statuses = {i["status"] for i in items}
         overall = (
             "error" if "error" in statuses else "warn" if "warn" in statuses else "ok"
@@ -257,6 +263,16 @@ class Core:
         except sqlite3.Error as exc:  # shown on the strip, not raised
             return _item("db", "check", "Database", "error", type(exc).__name__)
         return _item("db", "check", "Database", "ok", self.store.path.name)
+
+    def _maintenance_item(self) -> dict[str, Any]:
+        assert self.maintenance is not None
+        try:
+            status, detail = self.maintenance.health()
+        except sqlite3.Error as exc:  # shown on the strip, not raised
+            return _item(
+                "maintenance", "check", "Maintenance", "error", type(exc).__name__
+            )
+        return _item("maintenance", "check", "Maintenance", status, detail)
 
     def _credits_item(self) -> dict[str, Any]:
         try:
@@ -320,13 +336,21 @@ def create_app(core: Core) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         core.loop = asyncio.get_running_loop()
         core.pairing.on_change = core.pairing_changed
-        task = asyncio.create_task(_watch(core))
+        tasks = [asyncio.create_task(_watch(core))]
+        if core.maintenance is not None:
+            tasks.append(asyncio.create_task(_maintain(core.maintenance)))
         try:
             yield
         finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            if core.maintenance is not None:  # a running daily run ends after its job
+                core.maintenance.stop()
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            if core.maintenance is not None:  # plan 6.5: commit at session end
+                await asyncio.to_thread(core.maintenance.session_end)
 
     app = FastAPI(
         title="Gregtec OS core",
@@ -620,3 +644,14 @@ async def _watch(core: Core) -> None:
         except Exception:  # the watcher must keep running
             log.exception("health refresh failed")
         await asyncio.sleep(POLL_S)
+
+
+async def _maintain(maintenance: Maintenance) -> None:
+    """Once a minute: the vault's 10-minute commit batch and, when due and idle, the daily
+    maintenance (WO-2.5, :mod:`gregtec.vault.scheduler`), in a thread."""
+    while True:
+        try:
+            await asyncio.to_thread(maintenance.tick)
+        except Exception:  # the loop must keep running
+            log.exception("maintenance tick failed")
+        await asyncio.sleep(TICK_S)

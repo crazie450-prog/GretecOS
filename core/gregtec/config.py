@@ -22,6 +22,8 @@
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [launch] home            | gos_home                                 | gos launch (D115)           |
+| [maintenance] idle_minutes | 30 (QA:A9)                             | idle maintenance (WO-2.5)   |
+| [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 
@@ -129,6 +131,8 @@ class Config:
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
     launch_home: Path | None = None
+    idle_minutes: int = 30  # [maintenance]: no input this long, game closed (plan 6.6)
+    keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
@@ -363,6 +367,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
     core, startup, budget, launch = (
         table(k) for k in ("core", "startup", "budget", "launch")
     )
+    maintenance = table("maintenance")
     host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
     port = soft(
         lambda: _int(core, "port", defaults.core_port, "[core]", 1024, 65535),
@@ -407,6 +412,28 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
             defaults.cycle_day,
         ),
         "launch_home": launch_home,
+        "idle_minutes": soft(
+            lambda: _int(
+                maintenance,
+                "idle_minutes",
+                defaults.idle_minutes,
+                "[maintenance]",
+                1,
+                1440,
+            ),
+            defaults.idle_minutes,
+        ),
+        "keep_backups": soft(
+            lambda: _int(
+                maintenance,
+                "keep_backups",
+                defaults.keep_backups,
+                "[maintenance]",
+                1,
+                365,
+            ),
+            defaults.keep_backups,
+        ),
         "service_errors": tuple(problems),
     }
 

@@ -14,6 +14,8 @@ from pathlib import Path
 
 FRONTMATTER = ("id", "t", "upd")
 MAX_LINES = 150
+# INDEX.md may be longer: plan 6.1 caps it at 200 lines (it is the one note every prompt loads).
+TYPE_MAX_LINES = {"index": 200}
 KEY = re.compile(r"^([a-z][a-z0-9_]*): (.+)$")
 
 
@@ -36,8 +38,6 @@ class Note:
 def parse(text: str) -> Note:
     """Parse a note; raise ``ValueError`` on anything outside the grammar."""
     lines = text.splitlines()
-    if len(lines) > MAX_LINES:
-        raise ValueError(f"{len(lines)} lines; the cap is {MAX_LINES}")
     if not lines or lines[0] != "---":
         raise ValueError("no frontmatter")
     try:
@@ -52,6 +52,9 @@ def parse(text: str) -> Note:
         meta[key] = value.strip()
     if tuple(meta) != FRONTMATTER:
         raise ValueError(f"frontmatter must be exactly {', '.join(FRONTMATTER)}")
+    cap = TYPE_MAX_LINES.get(meta["t"], MAX_LINES)
+    if len(lines) > cap:
+        raise ValueError(f"{len(lines)} lines; the cap is {cap}")
     dt.date.fromisoformat(meta["upd"])
 
     facts: list[tuple[str, str]] = []
@@ -105,6 +108,59 @@ def check(path: Path, types: dict[str, NoteType]) -> list[str]:
     if kind is None:
         return [f"unknown type t: {note.meta['t']}"]
     problems = []
+    if not fnmatch.fnmatchcase(note.meta["id"], kind.id):
+        problems.append(f"id {note.meta['id']} doesn't match {kind.id} for t: {kind.t}")
+    if kind.keys is not None:
+        problems += [
+            f"key {k} isn't allowed for t: {kind.t}"
+            for k, _ in note.facts
+            if k not in kind.keys
+        ]
+    return problems
+
+
+def type_for(rel: str, types: dict[str, NoteType]) -> NoteType | None:
+    """The note type whose ``path`` holds ``rel`` (a vault-relative posix path): a type with a
+    file path (``base/power.md``) holds that file only; one with a folder path (``plans/``)
+    holds the notes directly in that folder, or in a subfolder no other type claims (the
+    deepest matching folder wins, so ``base/lines/`` beats a type at ``base/``)."""
+    exact = [k for k in types.values() if k.path == rel]
+    if exact:
+        return exact[0]
+    folders = [
+        k for k in types.values() if k.path.endswith("/") and rel.startswith(k.path)
+    ]
+    return max(folders, key=lambda k: len(k.path)) if folders else None
+
+
+def id_for(rel: str, kind: NoteType) -> str:
+    """The id a note at ``rel`` has: the type's fixed id for a file type, else the file name
+    without ``.md`` (so a folder never holds two notes with one id). A date-named note (its
+    name starts with a digit: ``log/2026-11-06.md``, ``log/wk/2026-W44.md``) gets the id
+    pattern's prefix in front (``log-2026-11-06``)."""
+    if not kind.path.endswith("/"):
+        return kind.id
+    stem = rel.rsplit("/", 1)[-1].removesuffix(".md")
+    prefix = kind.id.split("*", 1)[0] if kind.id.endswith("*") else ""
+    return prefix + stem if stem[:1].isdigit() else stem
+
+
+def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:
+    """Problems with a note's text at vault path ``rel``: :func:`check`'s, plus that its type
+    lives at ``rel`` and its id is the one :func:`id_for` gives."""
+    try:
+        note = parse(text)
+    except ValueError as exc:
+        return [str(exc)]
+    kind = types.get(note.meta["t"])
+    if kind is None:
+        return [f"unknown type t: {note.meta['t']}"]
+    problems = []
+    home = type_for(rel, types)
+    if home is None or home.t != kind.t:
+        problems.append(f"t: {kind.t} notes live at {kind.path}, not {rel}")
+    elif note.meta["id"] != id_for(rel, kind):
+        problems.append(f"id must be {id_for(rel, kind)} at {rel}")
     if not fnmatch.fnmatchcase(note.meta["id"], kind.id):
         problems.append(f"id {note.meta['id']} doesn't match {kind.id} for t: {kind.t}")
     if kind.keys is not None:
