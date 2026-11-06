@@ -18,8 +18,9 @@ each ``:param`` the query uses must be given, as a JSON scalar, and nothing else
    tables and views, transactions;
 4. rows are capped (50 a page); deeper pages re-run it, and the time limit holds every run.
 
-Rows are raw DB values: cite the ``ref`` (r:) and quest (q:) ids in them. A page whose rows
-carry no such id says so, because its numbers can't be quoted as game facts.
+Rows of both tools are raw DB values: cite the ``ref`` (r:) and quest (q:) ids in them. A page
+whose rows hold numbers but no such id says so, because its numbers can't be quoted as game
+facts.
 """
 
 from __future__ import annotations
@@ -288,11 +289,12 @@ def db_query(call: Call, args: dict[str, Any], offset: int) -> Result:
             rows.append(tuple(row))
             if len(rows) > call.page:
                 break
+    page = rows[: call.page]
     return Result(
         columns,
-        rows[: call.page],
+        page,
         head=[("query", q.name)],
-        notes=[RAW_NOTE],
+        notes=[RAW_NOTE] if cited(page) else [RAW_NOTE, UNCITED_NOTE],
         offset=offset,
         more=len(rows) > call.page,
     )

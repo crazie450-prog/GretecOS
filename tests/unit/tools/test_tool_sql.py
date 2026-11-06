@@ -235,6 +235,9 @@ def test_db_query_runs_a_named_query(run: Runner) -> None:
     assert p.head["query"] == "find_names"
     assert "Steel Ingot" in p.col("name_en")
     assert p.columns == ["kind", "ref_id", "name_en", "registry_name"]
+    assert sql.UNCITED_NOTE in p.notes  # ref_id is a DB id, not a citation
+    cited = run("db_query", name="recipe_by_ref", params={"run_id": 1, "ref": "r:x/y"})
+    assert sql.UNCITED_NOTE not in cited.notes  # no rows
 
 
 def test_db_query_parameters(run: Runner) -> None:
