@@ -7,11 +7,18 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.4.0",
     "claude-agent-sdk>=0.2.176",
+    "fastapi>=0.162.0",
     "keyring>=25.7.0",
+    "uvicorn>=0.54.0",
+    "websockets>=17.4",
 ]
 
 [project.scripts]
 gos = "gregtec.cli:main"
+
+[project.gui-scripts]
+# WO-2.1, D116: the login Run key starts this windowless launcher (pythonw on Windows).
+gos-supervisor = "gregtec.supervisor:main"
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14"]
