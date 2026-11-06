@@ -8,10 +8,10 @@
 | [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
-| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | collect, core, supervisor   |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
 | [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
-| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch (WO-2.1)         |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | WO-1.2, WO-1.4, WO-2.1      |
+| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch, export run      |
 | [core] host              | 127.0.0.1 (the only value allowed)       | core (WO-2.1, plan 4.6)     |
 | [core] port              | 8765                                     | core, clients               |
 | [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
@@ -24,7 +24,6 @@
 | [launch] home            | gos_home                                 | gos launch (D115)           |
 | [maintenance] idle_minutes | 30 (QA:A9)                             | idle maintenance (WO-2.5)   |
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
-| [paths] prism_root       | C:/Games/PrismLauncher                   | export run (WO-1.4)         |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 
