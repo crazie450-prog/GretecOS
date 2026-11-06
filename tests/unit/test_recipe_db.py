@@ -1622,7 +1622,8 @@ def test_machine_facts_from_the_tooltip_and_the_curated_table(
     text = "\n".join(report.lines(result, full=True))
     assert (
         "Base multiblocks (GT's jar): 1: covered 1 (0 of them with a run-state input, 0 with "
-        "a recipe input), no recipes (n/a) 0, flagged 0, missing 0" in text
+        "a recipe input, 0 with outputs not modelled), no recipes (n/a) 0, flagged 0, "
+        "missing 0" in text
     )
     assert (
         "Tooltip and curated row disagree on 1 facts, and on 0 facts of one mode"

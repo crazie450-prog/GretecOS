@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 
 from gregtec.db import access, build, report
-from gregtec.ingest import collect, merge
+from gregtec.ingest import collect, machine_facts, merge
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -245,14 +245,32 @@ def test_every_base_multiblock_has_parallels_and_oc_rules_or_a_flag(
         s.parallel and s.oc and min(s.parallel.confidence, s.oc.confidence) >= 0.8
         for s in covered
     )
-    # Processing machines with their own recipe check and no recipe map are flagged, not n/a.
-    states = {s.machine.class_name.rsplit(".", 1)[-1]: s.state for s in multis}
-    for cls in ("MTEIntegratedOreFactory", "MTEExtremeIndustrialGreenhouse"):
-        assert states[cls] == "flagged", cls
+    # Processing machines with their own recipe check and no recipe map are covered by their
+    # curated rows (D144), or flagged, never n/a.
+    states = {s.machine.class_name.rsplit(".", 1)[-1]: s for s in multis}
+    for cls in (
+        "MTEIntegratedOreFactory",
+        "MTEExtremeIndustrialGreenhouse",
+        "MTELargeMolecularAssembler",
+    ):
+        assert states[cls].state == "covered", cls
+        assert states[cls].machine.recipe_maps == (), cls
+    assert states["MTEExtremeIndustrialGreenhouse"].why.startswith(
+        "outputs not modelled"
+    )
+    for cls in ("MTEIntegratedOreFactoryLegacy", "AntimatterForge"):
+        assert states[cls].state == "flagged", cls
     facts = result.loaded.facts
     assert facts is not None
     assert {c.machine for c in facts.unmatched} == NOT_IN_DEV_RUNTIME
     assert facts.bad_maps == []
+    # The ore factory's chains name recipe maps that machines of this run have.
+    run_maps = {name for m in result.loaded.machines for name in m.recipe_maps}
+    iof = states["MTEIntegratedOreFactory"].machine
+    chains = [f.value for f in facts.facts[iof.mte_id] if f.base_key == "chain"]
+    assert len(chains) == 7
+    steps = {s.recipe_map for c in chains for s in machine_facts.chain_steps(c)}
+    assert steps <= run_maps, steps - run_maps
     # The EBF's rules, read from GT's source, are in the DB and win over its tooltip.
     conn = access.connect(result.db, readonly=True)
     try:

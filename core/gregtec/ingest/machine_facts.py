@@ -30,6 +30,12 @@ Values are short strings: an enum (``oc``: ``standard``, ``perfect``, ...) or a 
 machines that run no recipes. Every variable is named and says where its value comes from
 (:data:`KINDS`): how the machine is built, its state while running (``ramp``, ``overheated``),
 or the recipe it runs (``recipe_fusion_tier``). See :data:`KEYS` for the vocabulary.
+
+A ``processing custom`` machine with no recipe map (the Integrated Ore Factory, Extreme
+Industrial Greenhouse and Large Molecular Assembler, D144) is covered by its plain keys, and
+its row also says what one run takes (``duration``, ``eu_t``, ``consumes[...]``, over
+``run_parallel``) and where its outputs come from (``outputs``, ``chain[mode]``); ``partial``
+names what the row can't model, without flagging the machine.
 """
 
 from __future__ import annotations
@@ -93,6 +99,16 @@ VARIABLES: dict[str, Variable] = {
         "build",
         "GTUtility.getTierExtended(getMaxInputEu()): voltage tier of the total input EU/t, "
         "amperage included (mega machines)",
+    ),
+    "vt_eu_floor": Variable(
+        "build",
+        "KubaTechGTMultiBlockBase.getVoltageTier(): floor(log4(getMaxInputEu() / 8)), the "
+        "voltage tier of the total input EU/t rounded down (2 A of IV is IV, 4 A is LuV)",
+    ),
+    "input_eu": Variable(
+        "build",
+        "getMaxInputEu(): the total input EU/t of the energy hatches, voltage times amperage "
+        "(exotic hatches included on extended-power multis)",
     ),
     "coil_tier": Variable(
         "build", "HeatingCoilLevel.getTier(): Cupronickel 0, Kanthal 1, ... Eternal 13"
@@ -202,6 +218,17 @@ VARIABLES: dict[str, Variable] = {
         "the field restriction coil tier a Naquadah Fuel Refinery recipe asks for "
         "(mSpecialValue)",
     ),
+    "run_parallel": Variable(
+        "recipe",
+        "the parallels one run of a custom machine processes (Integrated Ore Factory: ores, "
+        "Extreme Industrial Greenhouse: seeds, Large Molecular Assembler: crafting jobs): the "
+        "planner's choice, at most the machine's parallel",
+    ),
+    "fertilizer": Variable(
+        "recipe",
+        "Extreme Industrial Greenhouse: fertilizer items given per run (bone meal, or with "
+        "Forestry its fertilizer): the planner's choice, 0 for none",
+    ),
 }
 FUNCTIONS: dict[str, Callable[..., float]] = {
     "min": min,
@@ -280,12 +307,70 @@ KEYS: dict[str, KeySpec] = {
     ),
     "deprecated": _enum("true", doc="a legacy controller GT will remove"),
     "flag": _enum("review", doc="needs a curator: the note says why"),
+    # Custom machines (processing custom, no recipe map) set their own time, EU and inputs.
+    "duration": KeySpec(
+        "ticks",
+        formula=True,
+        doc="ticks per run of a custom machine, set by the machine itself, overclocks included",
+    ),
+    "eu_t": KeySpec(
+        "EU/t",
+        formula=True,
+        doc="EU/t a custom machine draws while it runs, overclocks included",
+    ),
+    "consumes": KeySpec(
+        "L or items",
+        formula=True,
+        doc="consumes[<fluid or item>]: how much of it one run of a custom machine uses up "
+        "(fluid:<name> in L, registry@meta in items)",
+    ),
+    "slots": KeySpec(
+        "slots", formula=True, doc="distinct inputs it holds at once (EIG: seed types)"
+    ),
+    "output_mul": KeySpec(
+        "x", formula=True, doc="a custom machine's outputs are multiplied by this"
+    ),
+    "outputs": _enum(
+        "chain",
+        "drops",
+        "patterns",
+        doc="where a custom machine's outputs come from: chain: the recipes of the maps in "
+        "chain[mode], one after another; drops: its own simulation, in no recipe map; "
+        "patterns: the AE2 crafting patterns it is sent (crafting-grid recipes)",
+    ),
+    "chain": KeySpec(
+        None,
+        doc="chain[<mode>]: the recipe maps a mode runs its inputs through, in order, as "
+        "map(class+class) > map(class) ...; a step runs only the items of those oredict "
+        "classes (CHAIN_CLASSES) and passes the rest on; +fluids: it uses up its recipe's fluid",
+    ),
+    "partial": _enum(
+        "outputs",
+        doc="what a row leaves unmodelled (the note says why); the rest of the row stands. "
+        "outputs: the DB can't give the machine's outputs",
+    ),
 }
 # Keys a curated row may give per recipe map, ``key[gt.recipe.x]``.
 PER_MAP = frozenset(
     {"parallel", "speed", "eu_modifier", "oc", "max_overclocks", "perfect_overclocks"}
 )
-_KEY = re.compile(r"([a-z_]+)(?:\[([A-Za-z0-9_.:\-]+)\])?")
+_KEY = re.compile(r"([a-z_]+)(?:\[([A-Za-z0-9_.:@\-]+)\])?")
+# consumes[...]: a fluid or an item as normalize.Ref.text() writes it (no NBT).
+_REF = re.compile(r"fluid:[A-Za-z0-9_.\-]+|[A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+@[0-9]+")
+# The Integrated Ore Factory's item classes (MTEIntegratedOreFactory.initHash), by oredict
+# name: ore (ore* and rawOre*), crushed (crushed* but not the next two), crushedPurified*,
+# crushedCentrifuged*, dustImpure*, dustPure*.
+CHAIN_CLASSES = frozenset(
+    {
+        "ore",
+        "crushed",
+        "crushedPurified",
+        "crushedCentrifuged",
+        "dustImpure",
+        "dustPure",
+    }
+)
+_STEP = re.compile(r"([a-z0-9_.\-]+)\(([A-Za-z]+(?:\+[A-Za-z]+)*)\)(\+fluids)?")
 
 
 @dataclass(frozen=True)
@@ -397,14 +482,56 @@ def evaluate(text: str, env: Mapping[str, float]) -> float:
     return _walk(_parse(text), env)
 
 
+@dataclass(frozen=True)
+class Step:
+    """One step of a ``chain``: a recipe map, the item classes it runs, and whether it uses
+    up its recipe's fluid."""
+
+    recipe_map: str
+    classes: tuple[str, ...]
+    fluids: bool
+
+
+def chain_steps(value: str) -> list[Step]:
+    """The steps of a ``chain`` value; ValueError if it isn't one."""
+    steps = []
+    for part in value.split(">"):
+        m = _STEP.fullmatch(part.strip())
+        if m is None:
+            raise ValueError(
+                f"chain step {part.strip()!r} is not map(class+class)[+fluids]"
+            )
+        classes = tuple(m.group(2).split("+"))
+        unknown = set(classes) - CHAIN_CLASSES
+        if unknown:
+            raise ValueError(
+                f"chain step {part.strip()!r}: {', '.join(sorted(unknown))} is not one of "
+                + ", ".join(sorted(CHAIN_CLASSES))
+            )
+        steps.append(Step(m.group(1), classes, m.group(3) is not None))
+    return steps
+
+
 def check_value(key: str, value: str) -> None:
-    """Raise ValueError unless ``value`` is valid for ``key`` (which may name a map)."""
+    """Raise ValueError unless ``value`` is valid for ``key`` (which may name a recipe map,
+    a fluid or item for ``consumes``, or a mode for ``chain``)."""
     m = _KEY.fullmatch(key)
     if m is None or m.group(1) not in KEYS:
         raise ValueError(f"unknown key {key!r}")
-    if m.group(2) is not None and m.group(1) not in PER_MAP:
-        raise ValueError(f"{m.group(1)} can't be given per recipe map")
-    spec = KEYS[m.group(1)]
+    base, arg = m.group(1), m.group(2)
+    if base == "consumes":
+        if arg is None or not _REF.fullmatch(arg):
+            raise ValueError(
+                f"{key}: consumes[...] names a fluid:<name> or registry@meta"
+            )
+    elif base == "chain":
+        if arg is None or not arg.isdigit():
+            raise ValueError(f"{key}: chain[...] names a mode number")
+        chain_steps(value)
+        return
+    elif arg is not None and base not in PER_MAP:
+        raise ValueError(f"{base} can't be given per recipe map")
+    spec = KEYS[base]
     if value == NA and m.group(1) in ("parallel", "speed", "eu_modifier", "oc"):
         return
     if spec.formula:
@@ -871,7 +998,12 @@ def assemble(machines: Iterable[Machine], curated: Sequence[Curated]) -> FactSet
         for m in targets:
             for f in c.facts:
                 mm = _KEY.fullmatch(f.key)
-                if mm and mm.group(2) and mm.group(2) not in m.recipe_maps:
+                if (
+                    mm
+                    and mm.group(1) in PER_MAP
+                    and mm.group(2)
+                    and mm.group(2) not in m.recipe_maps
+                ):
                     bad.append((c, f.key))
             out.setdefault(m.mte_id, []).extend(c.facts)
     return FactSet(out, unmatched, bad)
@@ -952,9 +1084,11 @@ def status(machine: Machine, facts: Sequence[Fact]) -> Status:
     ``flagged``: a ``flag`` fact says why not, on a machine with recipe maps or a curated
     ``processing custom`` one without (it runs its own recipe check). A Lab probe clears the
     flag: parallel and OC ``probe`` facts at the threshold on every map. ``n/a``: it runs no
-    recipes (no recipe map, or curated ``processing`` generator/none at the threshold).
-    ``covered``: on every recipe map, its best parallel and OC facts (the map's own ``key[map]``
-    or the plain key) are at the threshold. ``missing``: none of these.
+    recipes (no recipe map and not ``processing custom``, or curated ``processing``
+    generator/none at the threshold). ``covered``: on every recipe map (a custom machine with
+    none: the plain keys), its best parallel and OC facts (the map's own ``key[map]`` or the
+    plain key) are at the threshold; ``why`` then says what a ``partial`` fact leaves out.
+    ``missing``: none of these.
     """
     b = best(facts)
     maps = machine.recipe_maps
@@ -968,7 +1102,7 @@ def status(machine: Machine, facts: Sequence[Fact]) -> Status:
     ):
         flag = None
     custom = proc is not None and proc.value == "custom"
-    if not maps and not (flag is not None and custom):
+    if not maps and not custom:
         return Status(machine, "n/a", par, oc, "no recipe map")
     if proc and proc.value in ("generator", "none") and proc.confidence >= THRESHOLD:
         return Status(machine, "n/a", par, oc, f"processing {proc.value}")
@@ -979,7 +1113,9 @@ def status(machine: Machine, facts: Sequence[Fact]) -> Status:
         and oc is not None
         and min(par.confidence, oc.confidence) >= THRESHOLD
     ):
-        return Status(machine, "covered", par, oc, "")
+        partial = b.get("partial")
+        why = f"{partial.value} not modelled (see the note)" if partial else ""
+        return Status(machine, "covered", par, oc, why)
     low = ", ".join(
         f"{k} {f.confidence:.2f} ({f.source})" if f else f"{k} none"
         for k, f in (("parallel", par), ("oc", oc))

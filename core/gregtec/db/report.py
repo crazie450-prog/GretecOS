@@ -365,10 +365,13 @@ def fact_lines(result: Result, full: bool) -> list[str]:
                 machine_facts.best(fs.facts.get(s.machine.mte_id, [])).values()
             )
         )
+        # Covered machines whose row leaves a part out (the EIG's drops, D144).
+        partial = sum(1 for s in group if s.state == "covered" and s.why)
         out.append(
             f"  {title}: {len(group)}: covered {n['covered']} ({kinds['state']} of them "
-            f"with a run-state input, {kinds['recipe']} with a recipe input), no recipes "
-            f"(n/a) {n['n/a']}, flagged {n['flagged']}, missing {n['missing']}"
+            f"with a run-state input, {kinds['recipe']} with a recipe input, {partial} "
+            f"with outputs not modelled), no recipes (n/a) {n['n/a']}, flagged "
+            f"{n['flagged']}, missing {n['missing']}"
         )
     if not base:
         out.append(
