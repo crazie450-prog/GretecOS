@@ -234,3 +234,17 @@ Clayton's sign-off: pending
 5. **The deploy ACL check is strict.** It refused a temp folder with an OWNER RIGHTS ACE on CI. If a real GOS_APP ever gets such an ACE (an admin tool, a restore), deploy will refuse until the setup is re-run. That fails safe, but it would block redeploys. (Likely; depends on the CI root cause)
 6. **Addons.** GTNL #575 is a memory leak when loaded with TST, not rechecked on 2026-11-05 (§13.1; last checked 2026-11-01). It matters for long AFK sessions (D46) once GTNL is added. The intermittent SDL3 crash was seen with the addons in, but it happens at startup, when BetterLoadingScreen (not one of the D88/D90 addons, so part of the base pack) opens its window (`pc_setup_notes.md`), so it is a launch-time risk. (Verify)
 7. **Some evidence is reported, not seen.** The PC results above are Clayton's relayed outputs. Exit codes, the excluded counts, the mod hashes and the Lab worlds' modes were not in what this review saw. Pasting the raw outputs into PR #18 or a G0 PR comment would make the record complete.
+
+## Addendum (2026-11-06, after the review)
+
+These changed after the snapshot above. The verdicts above are left as written.
+
+- **PR #18 merged** (`ba5aed7`): D92 is back in `docs/decisions.md`, and D93 and D94 are recorded.
+- **Windows CI:** PR #19 fixes the 30 `test_deploy.py` failures. pytest's temp folders carry an OWNER RIGHTS (S-1-3-4) ACE that the deploy ACL check counted as a writer. CI on #19 is green on ubuntu and windows.
+- **V06:** re-assigned to WO-6.1 by D97. The keys were confirmed in WO-0.6; the `world.log` path is checked in WO-6.1's Lab session.
+- **Backup job test (runbook I):** deferred by D97 to before the survival world starts (G11).
+- **Still required before sign-off:**
+  1. Merge #19, so `main` is green on Windows.
+  2. Observe Claude Code (as gos-dev) refusing to edit a Play file.
+  3. Clayton confirms the vault opens in Obsidian.
+  4. Clayton confirms `lab-structures` and `lab-progress` load.
