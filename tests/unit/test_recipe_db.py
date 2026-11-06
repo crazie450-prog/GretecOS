@@ -1621,11 +1621,41 @@ def test_machine_facts_from_the_tooltip_and_the_curated_table(
     ]
     text = "\n".join(report.lines(result, full=True))
     assert (
-        "Base multiblocks (GT's jar): 1: covered 1, no recipes (n/a) 0, flagged 0, missing 0"
+        "Base multiblocks (GT's jar): 1: covered 1 (0 of them with a run-state input, 0 with "
+        "a recipe input), no recipes (n/a) 0, flagged 0, missing 0" in text
+    )
+    assert (
+        "Tooltip and curated row disagree on 1 facts, and on 0 facts of one mode"
         in text
     )
-    assert "Tooltip and curated row disagree on 1 facts" in text
+    assert "curated rows for 0 classes this run doesn't have" in text
     assert "1000 Test Mixer: parallel tooltip '8*vt'" in text
+
+
+def test_a_lab_probe_in_the_db_clears_a_flag_in_the_report(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    make_run(tmp_path, files=fact_files())
+    flagged = MIXER_ROW.replace("tier_skips=unlimited", "flag=review")
+    first = built(tmp_path, allow_list, curated=curated(tmp_path / "a.tsv", flagged))
+    assert "flagged 1, missing 0" in "\n".join(report.lines(first, full=False))
+    conn = access.connect(first.db)
+    try:
+        conn.execute(
+            "INSERT INTO machine_fact(machine_id, key, value, unit, source, confidence, note)"
+            " SELECT id, 'parallel', '16', 'recipes', 'probe', 0.95, 'Lab run' FROM machine"
+            " UNION ALL"
+            " SELECT id, 'oc', 'perfect', NULL, 'probe', 0.95, 'Lab run' FROM machine"
+        )
+    finally:
+        conn.close()
+    text = "\n".join(
+        report.lines(
+            built(tmp_path, allow_list, curated=curated(tmp_path / "b.tsv", flagged)),
+            full=False,
+        )
+    )
+    assert "flagged 0, missing 0" in text and "covered 1 (" in text
 
 
 def test_a_rebuild_replaces_tooltip_and_curated_facts_but_keeps_probes(
@@ -1649,7 +1679,8 @@ def test_a_rebuild_replaces_tooltip_and_curated_facts_but_keeps_probes(
         result.db, "SELECT count(*) FROM machine_fact WHERE source = 'curated'"
     ) == [(0,)]
     text = "\n".join(report.lines(result, full=False))
-    assert "covered 0, no recipes (n/a) 0, flagged 0, missing 1" in text
+    assert "no recipes (n/a) 0, flagged 0, missing 1" in text
+    assert "covered 0 (" in text
     assert "WARNING: 1 base multiblocks have neither the facts nor a flag" in text
 
 

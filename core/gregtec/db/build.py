@@ -21,8 +21,8 @@
    before) are deleted, except the run just loaded and any run a plan references (plan section
    5.2).
 5. **Report** counts per mod, the addon check and the machine-fact coverage of the base
-   multiblocks (:mod:`gregtec.db.report`), printed and saved to
-   ``GOS_HOME/data/reports/db-<run>.txt``.
+   multiblocks, Lab probe rows already in the DB included (:mod:`gregtec.db.report`), printed
+   and saved to ``GOS_HOME/data/reports/db-<run>.txt``.
 
 ``fingerprint`` is Play's fingerprint for ``export_run`` (plan section 5.2 step 4). WO-1.4
 computes it on Play before syncing and passes it in; until then it is ``""``, which never
@@ -626,6 +626,19 @@ def _machines(
         " VALUES (?,?,?,?,?,?,?)",
         facts,
     )
+    if loaded.facts is not None:
+        # The coverage report counts Lab probes too: they can clear a flag (D111).
+        for mte_id, key, value, confidence, note in conn.execute(
+            "SELECT m.mte_id, f.key, f.value, f.confidence, f.note FROM machine_fact AS f"
+            " JOIN machine AS m ON m.id = f.machine_id WHERE f.source = 'probe'"
+        ):
+            try:
+                machine_facts.check_value(key, value)
+            except ValueError:
+                continue  # not in WO-1.7's vocabulary: the report can't read it
+            loaded.facts.facts.setdefault(mte_id, []).append(
+                machine_facts.Fact(key, value, "probe", confidence, note or "")
+            )
 
 
 def _names(conn: sqlite3.Connection) -> None:

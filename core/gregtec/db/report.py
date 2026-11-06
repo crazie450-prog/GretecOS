@@ -354,9 +354,20 @@ def fact_lines(result: Result, full: bool) -> list[str]:
     ]
     for title, group in groups:
         n = Counter(s.state for s in group)
+        # What the covered machines' formulas need besides how the machine is built: its
+        # state while running (ramp, overheated, wind) or the recipe's metadata.
+        kinds = Counter(
+            kind
+            for s in group
+            if s.state == "covered"
+            for kind in machine_facts.inputs(
+                machine_facts.best(fs.facts.get(s.machine.mte_id, [])).values()
+            )
+        )
         out.append(
-            f"  {title}: {len(group)}: covered {n['covered']}, no recipes (n/a) {n['n/a']}, "
-            f"flagged {n['flagged']}, missing {n['missing']}"
+            f"  {title}: {len(group)}: covered {n['covered']} ({kinds['state']} of them "
+            f"with a run-state input, {kinds['recipe']} with a recipe input), no recipes "
+            f"(n/a) {n['n/a']}, flagged {n['flagged']}, missing {n['missing']}"
         )
     if not base:
         out.append(
@@ -374,17 +385,24 @@ def fact_lines(result: Result, full: bool) -> list[str]:
             f"  WARNING: machine_facts.tsv line {c.line}: {key} names a recipe map "
             f"{c.machine} doesn't have"
         )
-    pairs = [
-        (m, t, c)
-        for m in loaded.machines
-        for t, c in machine_facts.disagreements(fs.facts.get(m.mte_id, []))
-    ]
+    pairs, modes = (
+        [
+            (m, t, c)
+            for m in loaded.machines
+            for t, c in machine_facts.disagreements(fs.facts.get(m.mte_id, []), per_map)
+        ]
+        for per_map in (False, True)
+    )
+    gone = {
+        c.machine if c.meta is None else f"{c.machine}@{c.meta}" for c in fs.unmatched
+    }
     out.append(
-        f"  Tooltip and curated row disagree on {len(pairs)} facts; curated rows for "
-        f"{len(fs.unmatched)} classes this run doesn't have"
+        f"  Tooltip and curated row disagree on {len(pairs)} facts, and on {len(modes)} "
+        f"facts of one mode (check); curated rows for {len(gone)} classes this run doesn't "
+        "have"
         + (
-            " (both listed in the saved report)"
-            if not full and (pairs or fs.unmatched)
+            " (all listed in the saved report)"
+            if not full and (pairs or modes or fs.unmatched)
             else ""
         )
     )
@@ -406,6 +424,15 @@ def fact_lines(result: Result, full: bool) -> list[str]:
             out.append(
                 f"  {m.mte_id} {m.name}: {t.key} tooltip {t.value!r} ({t.note}), curated "
                 f"{c.value!r}"
+            )
+    if modes:
+        out.append(
+            "Tooltip vs curated, one mode (a tooltip mixes the modes; check the mode's row):"
+        )
+        for m, t, c in modes:
+            out.append(
+                f"  {m.mte_id} {m.name}: {c.key} curated {c.value!r}, tooltip {t.key} "
+                f"{t.value!r} ({t.note})"
             )
     if fs.unmatched:
         out.append("Curated rows for classes not in this run:")

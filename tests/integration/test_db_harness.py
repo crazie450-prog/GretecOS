@@ -245,6 +245,10 @@ def test_every_base_multiblock_has_parallels_and_oc_rules_or_a_flag(
         s.parallel and s.oc and min(s.parallel.confidence, s.oc.confidence) >= 0.8
         for s in covered
     )
+    # Processing machines with their own recipe check and no recipe map are flagged, not n/a.
+    states = {s.machine.class_name.rsplit(".", 1)[-1]: s.state for s in multis}
+    for cls in ("MTEIntegratedOreFactory", "MTEExtremeIndustrialGreenhouse"):
+        assert states[cls] == "flagged", cls
     facts = result.loaded.facts
     assert facts is not None
     assert {c.machine for c in facts.unmatched} == NOT_IN_DEV_RUNTIME
@@ -261,5 +265,14 @@ def test_every_base_multiblock_has_parallels_and_oc_rules_or_a_flag(
     assert ebf["oc"] == ("heat", "curated")
     assert ebf["machine_heat"] == ("coil_heat + 100*(vt - 2)", "curated")
     assert ebf["parallel"] == ("1", "curated")
+    # The Dangote Distillus's tower mode agrees with its tooltip's static 12 parallels.
+    [adt] = [
+        s.machine
+        for s in multis
+        if s.machine.class_name.endswith(".MTEAdvDistillationTower")
+    ]
+    adt_facts = {(f.key, f.source): f.value for f in facts.facts[adt.mte_id]}
+    assert adt_facts[("parallel", "tooltip")] == "12"
+    assert adt_facts[("parallel[gt.recipe.distillationtower]", "curated")] == "12"
     text = "\n".join(report.lines(result, full=False))
     assert "Base multiblocks (GT's jar): " in text and "missing 0" in text

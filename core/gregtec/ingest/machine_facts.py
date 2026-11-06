@@ -11,8 +11,9 @@ two places, and ``gos db build`` writes both:
   4/4 Perfect Overclocks"); two lines that disagree 0.6. What a tooltip doesn't say gets GT's
   ProcessingLogic default (parallel 1, speed 1, EU 1, standard overclocks) at 0.5, or at 0.3 when
   a line talks about it in a form no rule reads. Tooltips count coil tiers from 1 (Cupronickel),
-  ``HeatingCoilLevel.getTier()`` from 0. The parser reads English (en_US) tooltips; another
-  language matches nothing and leaves only the defaults.
+  ``HeatingCoilLevel.getTier()`` from 0, and some machines' code counts them from 0 too, so a
+  fact over coil tiers gets 0.5 with the other reading in its note. The parser reads English
+  (en_US) tooltips; another language matches nothing and leaves only the defaults.
 - **curated**: ``data/curated/machine_facts.tsv`` (:func:`read_curated`), written by hand from
   GT's source at the pinned tag (5.09.54.265) or from the tooltips, each row citing where its
   numbers come from. ShadowTheAge's ``machines.ts`` (MIT, Copyright (c) 2025 ShadowTheAge) was a
@@ -26,7 +27,9 @@ machine whose numbers differ per mode; the planner prefers it to the plain key o
 
 Values are short strings: an enum (``oc``: ``standard``, ``perfect``, ...) or a formula in
 :data:`VARIABLES` (``8*vt``, ``4 + 2*coil_tier``), checked by :func:`check_formula`; ``n/a`` for
-machines that run no recipes. See :data:`KEYS` for the vocabulary.
+machines that run no recipes. Every variable is named and says where its value comes from
+(:data:`KINDS`): how the machine is built, its state while running (``ramp``, ``overheated``),
+or the recipe it runs (``recipe_fusion_tier``). See :data:`KEYS` for the vocabulary.
 """
 
 from __future__ import annotations
@@ -60,33 +63,145 @@ NA = "n/a"
 THRESHOLD = 0.8
 SOURCE_RANK = {"probe": 3, "curated": 2, "code": 1, "tooltip": 0}
 
+
+@dataclass(frozen=True)
+class Variable:
+    """A formula variable: where its value comes from, and what it is in GT's code."""
+
+    kind: str  # one of KINDS
+    doc: str
+
+
+# build: how the machine is built and equipped (hatches, coils, casings, parts in the controller
+# or a special hatch), chosen by the player; state: changes while the machine runs, so the
+# planner assumes a value; recipe: a property of the recipe it runs (EU/t or recipe metadata).
+KINDS = ("build", "state", "recipe")
+
+
 # Formula variables: what each stands for in GT's code (names are GT's accessors).
-VARIABLES: dict[str, str] = {
-    "vt": "GTUtility.getTier(getMaxInputVoltage()): voltage tier of the summed input voltage of "
-    "the energy hatches (exotic hatches included on extended-power multis)",
-    "vt_avg": "GTUtility.getTier(getAverageInputVoltage()): voltage tier of the average hatch",
-    "vt_eu": "GTUtility.getTierExtended(getMaxInputEu()): voltage tier of the total input EU/t, "
-    "amperage included (mega machines)",
-    "coil_tier": "HeatingCoilLevel.getTier(): Cupronickel 0, Kanthal 1, ... Eternal 13",
-    "coil_heat": "HeatingCoilLevel.getHeat(): 1 + 900 * ordinal (Cupronickel 1801 K)",
-    "pipe_tier": "the machine's pipe casing tier, as its own code counts it (see the row's note)",
-    "item_pipe_tier": "item pipe casing tier, 1 (Tin) to 8 (GTStructureUtility."
-    "chainItemPipeCasings)",
-    "solenoid_tier": "voltage tier of the solenoid superconductor coils "
-    "(GTStructureUtility.ofSolenoidCoil)",
-    "glass_tier": "the machine's glass tier, as its own code counts it",
-    "casing_tier": "the machine's tiered casing, as its own code counts it (see the row's note)",
-    "machine_tier": "the machine's own structure or controller tier (see the row's note)",
-    "width": "the machine's structure width or length setting (see the row's note)",
-    "height": "the machine's structure height (see the row's note)",
-    "turbine_tier_sum": "the sum of the tiers of the turbines in the structure",
-    "frc_tier": "Naquadah Fuel Refinery field restriction coil tier (1-4)",
-    "cal_casing_tier": "component assembly line casing tier",
-    "laser_amps": "amperage of the laser source hatch (see the row's note)",
-    "mode": "the machine mode set with a screwdriver or the GUI (see the row's note)",
-    "x": "a per-machine input explained in the row's note",
-    "y": "a second per-machine input explained in the row's note",
-    "z": "a third per-machine input explained in the row's note",
+VARIABLES: dict[str, Variable] = {
+    "vt": Variable(
+        "build",
+        "GTUtility.getTier(getMaxInputVoltage()): voltage tier of the summed input voltage of "
+        "the energy hatches (exotic hatches included on extended-power multis)",
+    ),
+    "vt_avg": Variable(
+        "build",
+        "GTUtility.getTier(getAverageInputVoltage()): voltage tier of the average hatch",
+    ),
+    "vt_eu": Variable(
+        "build",
+        "GTUtility.getTierExtended(getMaxInputEu()): voltage tier of the total input EU/t, "
+        "amperage included (mega machines)",
+    ),
+    "coil_tier": Variable(
+        "build", "HeatingCoilLevel.getTier(): Cupronickel 0, Kanthal 1, ... Eternal 13"
+    ),
+    "coil_heat": Variable(
+        "build", "HeatingCoilLevel.getHeat(): 1 + 900 * ordinal (Cupronickel 1801 K)"
+    ),
+    "pipe_tier": Variable(
+        "build",
+        "the machine's pipe casing tier, as its own code counts it (see the row's note)",
+    ),
+    "item_pipe_tier": Variable(
+        "build",
+        "item pipe casing tier, 1 (Tin) to 8 (GTStructureUtility.chainItemPipeCasings)",
+    ),
+    "solenoid_tier": Variable(
+        "build",
+        "voltage tier of the solenoid superconductor coils (GTStructureUtility.ofSolenoidCoil)",
+    ),
+    "glass_tier": Variable(
+        "build", "the machine's glass tier, as its own code counts it"
+    ),
+    "casing_tier": Variable(
+        "build",
+        "the machine's tiered casing, as its own code counts it (see the row's note)",
+    ),
+    "machine_tier": Variable(
+        "build", "the machine's own structure or controller tier (see the row's note)"
+    ),
+    "width": Variable(
+        "build", "the machine's structure width or length setting (see the row's note)"
+    ),
+    "height": Variable("build", "the machine's structure height (see the row's note)"),
+    "turbine_tier_sum": Variable(
+        "build", "the sum of the tiers of the turbines in the structure"
+    ),
+    "frc_tier": Variable(
+        "build", "Naquadah Fuel Refinery field restriction coil tier (1-4)"
+    ),
+    "cal_casing_tier": Variable("build", "component assembly line casing tier"),
+    "laser_amps": Variable(
+        "build", "amperage of the laser source hatch (see the row's note)"
+    ),
+    "laser_tier": Variable(
+        "build", "voltage tier of the laser source hatch (laserSource.mTier)"
+    ),
+    "mode": Variable(
+        "build",
+        "the machine mode set with a screwdriver or the GUI (see the row's note)",
+    ),
+    "sawblade_tier": Variable(
+        "build",
+        "Industrial Cutting Factory sawblade in the controller (SawbladeTiers): 1 "
+        "Tungsten-Titanium Carbide, 2 Mysterious Crystal, 3 Neutronium, 4 Transcendent Metal",
+    ),
+    "magnet_tier": Variable(
+        "build",
+        "Magnetic Flux Exhibitor electromagnet in its magnet hatch (MagnetTiers): 1 Iron, "
+        "2 Steel, 3 Neodymium, 4 Samarium, 5 Tengam",
+    ),
+    "singularity": Variable(
+        "build",
+        "1 with L.A.T.E.X.'s rubber singularity in the controller (hasSingularity), else 0",
+    ),
+    "nanites": Variable(
+        "build", "PCB Factory: nanites in the nanite bus (numberOfNanites)"
+    ),
+    "roughness": Variable(
+        "build",
+        "PCB Factory: trace size setting, mRoughnessMultiplier (duration x its square)",
+    ),
+    "structures": Variable(
+        "build",
+        "PCB Factory: 1 + a bio chamber + a cooling tower (createOverclockCalculator)",
+    ),
+    "ramp": Variable(
+        "state",
+        "0 when the machine starts, 1 once it has run long enough to reach its maximum "
+        "momentum, speed-up or heat-up (see the row's note); it falls back while idle",
+    ),
+    "overheated": Variable(
+        "state", "1 while the Hot Isostatic Pressurization Unit is overheated, else 0"
+    ),
+    "wind_level": Variable(
+        "state",
+        "Windmill wind level (WindLevel ordinal): 1 below 10 wind strength, 2 below 20, 3 below "
+        "30, 4 below 50; it stops below 1 and at 50 or more",
+    ),
+    "recipe_tier": Variable(
+        "recipe", "GTUtility.getTier(recipe EU/t): the recipe's voltage tier"
+    ),
+    "recipe_fusion_tier": Variable(
+        "recipe",
+        "FusionSpecialValueFormatter.getFusionTier(startup EU, EU/t): the fusion Mk (1-5) the "
+        "recipe needs",
+    ),
+    "recipe_startup_eu": Variable(
+        "recipe", "the recipe's fusion startup EU (metadata FUSION_THRESHOLD)"
+    ),
+    "recipe_casing_tier": Variable(
+        "recipe",
+        "the casing tier the recipe asks for (Component Assembly Line: mSpecialValue; "
+        "Draconic Evolution Fusion Crafter: metadata DEFC_CASING_TIER, default 1)",
+    ),
+    "recipe_frc_tier": Variable(
+        "recipe",
+        "the field restriction coil tier a Naquadah Fuel Refinery recipe asks for "
+        "(mSpecialValue)",
+    ),
 }
 FUNCTIONS: dict[str, Callable[..., float]] = {
     "min": min,
@@ -302,22 +417,40 @@ def check_value(key: str, value: str) -> None:
         )
 
 
+def _sample(text: str, env: Mapping[str, float]) -> float | None:
+    try:
+        return evaluate(text, env)
+    except (ZeroDivisionError, OverflowError, ValueError):  # ValueError: sqrt(-1)
+        return None
+
+
 def same_value(key: str, a: str, b: str) -> bool:
-    """Whether two values of ``key`` say the same, formulas compared at sample points."""
+    """Whether two values of ``key`` say the same, formulas compared at sample points.
+
+    The points are every variable at 0 to 5 (so a ``casing_tier == 0`` branch is compared),
+    then every variable apart (1, 2, 3, ... in name order, shifted). A point where neither
+    formula has a value (a division by zero) is skipped; one where only one has is a difference.
+    """
     if a == b:
         return True
     spec = KEYS.get(key.split("[", 1)[0])
     if spec is None or not spec.formula or NA in (a, b) or "unlimited" in (a, b):
         return False
     try:
-        names = variables(a) | variables(b)
-        for point in range(1, 5):
-            env = {n: float(point + i) for i, n in enumerate(sorted(names))}
-            if not math.isclose(evaluate(a, env), evaluate(b, env), rel_tol=1e-9):
-                return False
-    except (ValueError, ZeroDivisionError, OverflowError):
+        names = sorted(variables(a) | variables(b))
+    except ValueError:
         return False
-    return True
+    points = [dict.fromkeys(names, float(p)) for p in range(6)]
+    points += [{n: float(p + i) for i, n in enumerate(names)} for p in range(1, 5)]
+    compared = 0
+    for env in points:
+        va, vb = _sample(a, env), _sample(b, env)
+        if va is None and vb is None:
+            continue
+        if va is None or vb is None or not math.isclose(va, vb, rel_tol=1e-9):
+            return False
+        compared += 1
+    return compared > 0
 
 
 # --- tooltips ------------------------------------------------------------------------------
@@ -326,10 +459,11 @@ _CODES = re.compile("§.")
 _NUM = r"\d+(?:[.,]\d+)*"
 # Tier names of GT's TooltipTier (GT5U.MBTT.Tiers.*, en_US) -> formula variables.
 # Tooltips count coils from 1 (Cupronickel), HeatingCoilLevel.getTier() from 0.
+COIL_FROM_1 = "(coil_tier + 1)"
 TIER_VARIABLES = {
     "voltage": "vt",
-    "heating coil": "(coil_tier + 1)",
-    "coil": "(coil_tier + 1)",
+    "heating coil": COIL_FROM_1,
+    "coil": COIL_FROM_1,
     "pipe casing": "pipe_tier",
     "fluid pipe casing": "pipe_tier",
     "item pipe casing": "item_pipe_tier",
@@ -346,6 +480,10 @@ TIER_VARIABLES = {
 STANDARD = 0.85  # a line in one of GT's MultiblockTooltipBuilder templates
 FREE = 0.7  # free text that says the same
 DEFAULT = 0.5  # nothing in the tooltip: GT's ProcessingLogic default
+# A per-coil-tier line, or a speed bonus with no base line: the tooltip's number is read right,
+# but the machine's code may count the tier from 0, and the bonus may start from 0%, not 100%.
+# Three of the six such lines in the dev runtime matched GT's code.
+COIL = 0.5
 
 
 def _rx(pattern: str) -> re.Pattern[str]:
@@ -523,8 +661,10 @@ def parse_tooltip(lines: Sequence[str], recipe_maps: bool = True) -> list[Fact]:
 
     A rule must match a whole line. Where two lines give one key different values, the first
     wins at 0.6 with the other in its note, so a tooltip that contradicts itself shows. A
-    per-tier speed bonus line adds to the base speed line. Defaults are added only when the
-    machine has recipe maps, at 0.3 when a line talks about the key in a form no rule reads.
+    per-tier speed bonus line adds to the base speed line (to 100% when there is none). A fact
+    over coil tiers, or a bonus with no base line, is at most :data:`COIL` (0.5), with the
+    other reading in its note. Defaults are added only when the machine has recipe maps, at 0.3
+    when a line talks about the key in a form no rule reads.
     """
     found: dict[str, Fact] = {}
     unread: dict[str, str] = {}
@@ -556,9 +696,18 @@ def parse_tooltip(lines: Sequence[str], recipe_maps: bool = True) -> list[Fact]:
     inc = found.pop(SPEED_INC, None)
     if inc is not None:
         base = found.get("speed")
-        value = f"{base.value if base else '1'} + {inc.value}"
-        note = inc.note if base is None else f"{base.note} | {inc.note}"
-        found["speed"] = Fact("speed", value, "tooltip", FREE, note)
+        if base is None:
+            value, confidence = f"1 + {inc.value}", COIL
+            note = f"{inc.note} (no base speed line: read as 100% + the bonus; or {inc.value})"
+        else:
+            value, confidence = f"{base.value} + {inc.value}", FREE
+            note = f"{base.note} | {inc.note}"
+        found["speed"] = Fact("speed", value, "tooltip", confidence, note)
+    for key, f in list(found.items()):
+        if COIL_FROM_1 in f.value:
+            alt = f.value.replace(COIL_FROM_1, "coil_tier")
+            note = f"{f.note} (coil tiers counted from 1; or, from 0: {alt})"
+            found[key] = Fact(key, f.value, f.source, min(f.confidence, COIL), note)
     if recipe_maps:
         for key, value in DEFAULTS.items():
             if key in found:
@@ -578,7 +727,8 @@ def parse_tooltip(lines: Sequence[str], recipe_maps: bool = True) -> list[Fact]:
 @dataclass(frozen=True)
 class Curated:
     machine: str  # the machine pass's class name
-    meta: int | None  # only when one class has several machines
+    # its mte_id (gt.blockmachines meta), only when a class has several machines
+    meta: int | None
     name: str
     facts: tuple[Fact, ...]
     line: int
@@ -601,8 +751,9 @@ def read_curated(path: Path = CURATED) -> list[Curated]:
     """Read and check the curated table; ValueError names the line of the first problem.
 
     One machine may have several rows (each with its own confidence and citation), but a key
-    appears once per machine. A machine whose ``processing`` is ``generator`` or ``none`` gives
-    ``n/a`` (or nothing) for parallel, speed, EU and OC.
+    appears once per machine: a ``class`` row covers every machine of the class, so it and a
+    ``class@meta`` row can't give the same key either. A machine whose ``processing`` is
+    ``generator`` or ``none`` gives ``n/a`` (or nothing) for parallel, speed, EU and OC.
     """
     rows: list[Curated] = []
     seen: dict[tuple[str, int | None], set[str]] = {}
@@ -635,6 +786,8 @@ def _curated_row(
     machine, _, meta_text = row["machine"].partition("@")
     if not re.fullmatch(r"[A-Za-z_$][\w$.]*", machine):
         raise ValueError(f"machine {row['machine']!r} is not a class name")
+    if meta_text and not meta_text.isdigit():
+        raise ValueError(f"meta {meta_text!r} in {row['machine']!r} is not an mte_id")
     meta = int(meta_text) if meta_text else None
     try:
         confidence = float(row["confidence"])
@@ -653,12 +806,23 @@ def _curated_row(
     if not pairs:
         raise ValueError("no facts")
     keys = seen.setdefault((machine, meta), set())
+    # The class row's keys for a class@meta row, and every class@meta row's for a class row.
+    other = {
+        key: f"{cls}@{m}" if m is not None else cls
+        for (cls, m), ks in seen.items()
+        if cls == machine and (m is None) != (meta is None)
+        for key in ks
+    }
     note = f"{row['cite']}" + (f"; {row['note']}" if row["note"] else "")
     facts = []
     for key, value in pairs:
         check_value(key, value)
         if key in keys:
             raise ValueError(f"{key} is given twice for {row['machine']}")
+        if key in other:
+            raise ValueError(
+                f"{key} is given for both {other[key]} and {row['machine']}"
+            )
         keys.add(key)
         facts.append(Fact(key, value, "curated", confidence, note))
     processing = dict(pairs).get("processing")
@@ -697,7 +861,9 @@ def assemble(machines: Iterable[Machine], curated: Sequence[Curated]) -> FactSet
     bad: list[tuple[Curated, str]] = []
     for c in curated:
         targets = [
-            m for m in by_class.get(c.machine, []) if c.meta is None or m.meta == c.meta
+            m
+            for m in by_class.get(c.machine, [])
+            if c.meta is None or m.mte_id == c.meta
         ]
         if not targets:
             unmatched.append(c)
@@ -709,6 +875,15 @@ def assemble(machines: Iterable[Machine], curated: Sequence[Curated]) -> FactSet
                     bad.append((c, f.key))
             out.setdefault(m.mte_id, []).extend(c.facts)
     return FactSet(out, unmatched, bad)
+
+
+def inputs(facts: Iterable[Fact]) -> set[str]:
+    """The kinds of variable (:data:`KINDS`) that the formulas among ``facts`` use."""
+    out: set[str] = set()
+    for f in facts:
+        if KEYS[f.base_key].formula and f.value not in (NA, "unlimited"):
+            out |= {VARIABLES[n].kind for n in variables(f.value)}
+    return out
 
 
 def best(facts: Iterable[Fact]) -> dict[str, Fact]:
@@ -759,11 +934,13 @@ class Status:
     why: str
 
 
-def _weakest(b: Mapping[str, Fact], key: str, maps: Sequence[str]) -> Fact | None:
-    """The least sure of ``key``'s facts over the machine's maps (``key[map]`` or ``key``)."""
-    found = [b.get(f"{key}[{m}]") or b.get(key) for m in maps]
-    if not found:
-        return b.get(key)
+def _per_map(b: Mapping[str, Fact], key: str, maps: Sequence[str]) -> list[Fact | None]:
+    """``key``'s fact on each of the machine's maps (``key[map]``, else ``key``)."""
+    return [b.get(f"{key}[{m}]") or b.get(key) for m in maps] or [b.get(key)]
+
+
+def _weakest(found: Sequence[Fact | None]) -> Fact | None:
+    """The least sure of the facts, None if a map has none."""
     if any(f is None for f in found):
         return None
     return min((f for f in found if f is not None), key=lambda f: f.confidence)
@@ -772,25 +949,37 @@ def _weakest(b: Mapping[str, Fact], key: str, maps: Sequence[str]) -> Fact | Non
 def status(machine: Machine, facts: Sequence[Fact]) -> Status:
     """Whether the planner can trust ``machine``'s parallels and OC rules (WO-1.7 acceptance).
 
-    ``n/a``: it runs no recipes (no recipe map, or curated ``processing`` generator/none at the
-    threshold). ``covered``: on every recipe map, its best parallel and OC facts (the map's own
-    ``key[map]`` or the plain key) are at the threshold. ``flagged``: a ``flag`` fact says why
-    not. ``missing``: none of these.
+    ``flagged``: a ``flag`` fact says why not, on a machine with recipe maps or a curated
+    ``processing custom`` one without (it runs its own recipe check). A Lab probe clears the
+    flag: parallel and OC ``probe`` facts at the threshold on every map. ``n/a``: it runs no
+    recipes (no recipe map, or curated ``processing`` generator/none at the threshold).
+    ``covered``: on every recipe map, its best parallel and OC facts (the map's own ``key[map]``
+    or the plain key) are at the threshold. ``missing``: none of these.
     """
     b = best(facts)
     maps = machine.recipe_maps
-    par, oc = _weakest(b, "parallel", maps), _weakest(b, "oc", maps)
+    pars, ocs = _per_map(b, "parallel", maps), _per_map(b, "oc", maps)
+    par, oc = _weakest(pars), _weakest(ocs)
     proc = b.get("processing")
-    if not maps:
+    flag = b.get("flag")
+    if flag is not None and all(
+        f is not None and f.source == "probe" and f.confidence >= THRESHOLD
+        for f in (*pars, *ocs)
+    ):
+        flag = None
+    custom = proc is not None and proc.value == "custom"
+    if not maps and not (flag is not None and custom):
         return Status(machine, "n/a", par, oc, "no recipe map")
     if proc and proc.value in ("generator", "none") and proc.confidence >= THRESHOLD:
         return Status(machine, "n/a", par, oc, f"processing {proc.value}")
-    flag = b.get("flag")
-    ok = [f for f in (par, oc) if f is not None and f.confidence >= THRESHOLD]
-    if len(ok) == 2 and flag is None:
-        return Status(machine, "covered", par, oc, "")
     if flag is not None:
         return Status(machine, "flagged", par, oc, flag.note)
+    if (
+        par is not None
+        and oc is not None
+        and min(par.confidence, oc.confidence) >= THRESHOLD
+    ):
+        return Status(machine, "covered", par, oc, "")
     low = ", ".join(
         f"{k} {f.confidence:.2f} ({f.source})" if f else f"{k} none"
         for k, f in (("parallel", par), ("oc", oc))
@@ -798,19 +987,23 @@ def status(machine: Machine, facts: Sequence[Fact]) -> Status:
     return Status(machine, "missing", par, oc, low)
 
 
-def disagreements(facts: Sequence[Fact]) -> list[tuple[Fact, Fact]]:
+def disagreements(
+    facts: Sequence[Fact], per_map: bool = False
+) -> list[tuple[Fact, Fact]]:
     """(tooltip, curated) pairs that give one key different values (formulas compared at
-    sample points); tooltip defaults (0.5 and less) and curated ``n/a`` are left out. A new
-    pair after a GT update is a sign the curated row is stale."""
+    sample points); tooltip facts at 0.5 or less (defaults, coil-tier readings) and curated
+    ``n/a`` are left out. A new pair after a GT update is a sign the curated row is stale.
+
+    ``per_map``: the curated ``key[map]`` facts against the tooltip's plain ``key`` instead.
+    A tooltip mixes a machine's modes, so these pairs are only worth a check: one mode of a
+    machine with two usually differs from the tooltip's number.
+    """
     tips = {f.key: f for f in facts if f.source == "tooltip" and f.confidence > DEFAULT}
     out = []
     for f in facts:
-        t = tips.get(f.key)
-        if (
-            f.source == "curated"
-            and f.value != NA
-            and t is not None
-            and not same_value(f.key, t.value, f.value)
-        ):
+        if f.source != "curated" or f.value == NA or (f.key != f.base_key) != per_map:
+            continue
+        t = tips.get(f.base_key)
+        if t is not None and not same_value(f.key, t.value, f.value):
             out.append((t, f))
     return out
