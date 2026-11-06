@@ -1635,8 +1635,8 @@ def test_a_failed_migration_leaves_the_old_db(
     bad = tmp_path / "schema.sql"
     bad.write_text(
         access.SCHEMA.read_text(encoding="utf-8").replace(
-            "PRAGMA user_version = 2;",
-            "CREATE TABLE broken(;\nPRAGMA user_version = 2;",
+            f"PRAGMA user_version = {access.SCHEMA_VERSION};",
+            f"CREATE TABLE broken(;\nPRAGMA user_version = {access.SCHEMA_VERSION};",
         ),
         encoding="utf-8",
     )

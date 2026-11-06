@@ -9,14 +9,17 @@
    machines, and NEI's recipes; merge NEI into GT (:mod:`gregtec.ingest.merge`). The machine
    facts (WO-1.7, :mod:`gregtec.ingest.machine_facts`): each multiblock's tooltip parsed, plus
    the repo's curated ``data/curated/machine_facts.tsv``, checked before anything is read.
+   CropsNH's crop data (WO-1.10, :mod:`gregtec.ingest.crops`) when ``parts.crops`` is ``ok``;
+   a crop file that doesn't read leaves the run without crops, not unbuilt.
 3. **Collision test**: one recipe per citation key ``r:<map>/<sig12>``. A collision not on the
    allow-list fails the build before the DB is touched, and writes the curation task
    ``GOS_HOME/data/curation/collisions-<run>.tsv`` (``collisions-<run>-2.tsv`` and so on while
    that file can't be replaced, e.g. when it is open in Excel).
 4. **Write** everything in one transaction, so a failed build leaves the DB as it was: the run
    (``export_run``, ``mod``), the catalog tables shared by every run (items, fluids, ores, recipe
-   maps, NEI handlers, machines and their facts, latest run wins), the run's recipes, and the
-   name index (``name_fts``). Loading a run that is already in the DB replaces its recipes. Then
+   maps, NEI handlers, machines and their facts, latest run wins), the run's recipes and crop
+   data (:mod:`gregtec.db.crops`), and the name index (``name_fts``). Loading a run that is
+   already in the DB replaces its recipes and crops. Then
    runs past the newest ``[db] keep_runs`` (default 2, so WO-1.4 can diff a run with the one
    before) are deleted, except the run just loaded and any run a plan references (plan section
    5.2).
@@ -42,7 +45,8 @@ from typing import TextIO
 
 from gregtec import config
 from gregtec.db import access, report
-from gregtec.ingest import collect, gtdump, machine_facts, machines, merge, nei
+from gregtec.db import crops as crop_db
+from gregtec.ingest import collect, crops, gtdump, machine_facts, machines, merge, nei
 from gregtec.ingest.normalize import FLUID, ITEM, Json, OreIndex, Recipe, Ref, canonical
 
 REPORTS = Path("data", "reports")
@@ -80,6 +84,11 @@ class Loaded:
     gt_recipes: int = 0  # GT lines loaded, before duplicates were dropped
     # gt_recipes.jsonl lines per map, error lines included
     map_lines: Counter[str] = field(default_factory=Counter)
+    # CropsNH's crop data (WO-1.10): parts.crops, the data when it is "ok" and reads, else why not
+    crops_status: str = "absent"
+    crops: crops.CropData | None = None
+    crops_error: str | None = None
+    crop_lines: list[Recipe] = field(default_factory=list)  # NEI's CropsNH tab lines
 
 
 @dataclass
@@ -185,6 +194,20 @@ def load(
     loaded.keys = merge.assign_keys(combined, allowed)
     loaded.recipes = loaded.keys.recipes
     loaded.facts = machine_facts.assemble(found, curated)
+    # Crop data isn't part of "complete" (as NEI's): a run whose crop step failed, or whose crop
+    # files don't read, still builds its recipes, and the report says why it has no crops.
+    loaded.crops_status = crops.status(run.manifest)
+    if loaded.crops_status == "ok":
+        nei_ok = loaded.nei_status == "ok"
+        try:
+            loaded.crops = crops.read(
+                path,
+                run.manifest,
+                loaded.crop_lines if nei_ok else None,
+                loaded.nei_refs if nei_ok else None,
+            )
+        except (crops.FormatError, OSError) as exc:
+            loaded.crops_error = str(exc)
     return loaded
 
 
@@ -194,6 +217,10 @@ def _nei_rows(loaded: Loaded, rels: list[str]) -> Iterator[Recipe]:
         if recipe.handler not in loaded.handlers:
             stem = rel.removeprefix(nei.DIR + "/").removesuffix(".jsonl")
             loaded.handlers[recipe.handler] = _SUFFIX.sub("", stem)
+        if recipe.handler in crops.NEI_HANDLERS:
+            loaded.crop_lines.append(
+                recipe
+            )  # for the crop tables; merge leaves them out
         yield recipe
 
 
@@ -226,6 +253,7 @@ def _delete_runs(conn: sqlite3.Connection, run_ids: Sequence[int]) -> None:
             conn.execute(f"DELETE FROM {table} WHERE recipe_id IN ({sub})", (run_id,))
         conn.execute("DELETE FROM recipe WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM mod WHERE run_id = ?", (run_id,))
+    crop_db.delete(conn, run_ids)
 
 
 def _export_run(
@@ -298,6 +326,8 @@ def _refs(loaded: Loaded) -> tuple[set[Ref], set[Ref]]:
                 refs.add(s.returns)
     refs.update(m.ref for m in loaded.machines)
     refs.update(i.ref for i in loaded.items)
+    if loaded.crops is not None:
+        refs.update(crops.item_refs(loaded.crops))
     return {r for r in refs if r.kind == ITEM}, {r for r in refs if r.kind == FLUID}
 
 
@@ -650,6 +680,12 @@ def _names(conn: sqlite3.Connection) -> None:
         "SELECT 'machine', m.id, m.name_en, NULL, m.class_name FROM machine AS m",
         "SELECT 'recipe_map', id, name_en, NULL, unloc_name FROM recipe_map",
         "SELECT 'nei_handler', id, name_en, NULL, handler_name FROM nei_handler",
+        # Crops of the newest run that has some (WO-1.10); ref_id is the crop id.
+        (
+            "SELECT 'crop', id, name, NULL, id FROM crop WHERE run_id = (SELECT e.id FROM"
+            " export_run AS e WHERE EXISTS (SELECT 1 FROM crop AS c WHERE c.run_id = e.id)"
+            " ORDER BY e.created_at DESC, e.run_key DESC LIMIT 1)"
+        ),
     )
     for select in sources:
         conn.execute(
@@ -705,6 +741,8 @@ def write(
         maps = _maps(conn, loaded)
         handlers = _handlers(conn, loaded, maps)
         _recipes(conn, loaded, run_id, items, fluids, ores, maps, handlers)
+        if loaded.crops is not None:
+            crop_db.write(conn, run_id, loaded.crops, items)
         _machines(conn, loaded, items, maps)
         _names(conn)
         pruned = prune(conn, keep, run_id)

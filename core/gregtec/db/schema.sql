@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 2 (plan section 5.3, Appendix D; WO-1.3, WO-1.5).
+-- Gregtec OS SQLite schema, version 3 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -14,6 +14,7 @@
 -- several lines), quest_item (every stack a task asks for or a reward gives, by item key) and
 -- quest_state (each quest's state for the tracked player). migrations/2.sql drops version 1's
 -- quest and quest_line, which nothing had written to, so this file can create them anew.
+-- Version 3 (D134, WO-1.10): the crop tables (CropsNH), one set per export run like recipes.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -124,6 +125,37 @@ CREATE TABLE IF NOT EXISTS ore_mix(id TEXT PRIMARY KEY, name TEXT, dims TEXT, ym
   weight INT, density INT, size INT, ores TEXT);
 CREATE TABLE IF NOT EXISTS vein(dim INT, cx INT, cz INT, mix_id TEXT, known INT, depleted INT, src TEXT,
   PRIMARY KEY(dim, cx, cz));
+-- crops (CropsNH; WO-1.10, D134): from the run's crops/ (CropsNH's NEI dumpers) and NEI's CropsNH
+-- tabs, one set per export run (run_id, deleted with the run). A crop is CropsNH's id (e.g.
+-- cropsnh:allium), cited ref = crop:<id>. JSON columns: soil_lists, liked_biomes and
+-- alternate_seeds are lists of names, requirements a list of [kind, value, text], sub_soils a
+-- list of [registry_name, meta, nbt_hash]. in_nei: shown in NEI's tab (NULL: no NEI data).
+-- Items are registry name + meta (+ NBT hash); item_id when the catalog has the item. Blocks
+-- (soils) are registry name + meta, meta NULL for any meta. A parent recipe's key is
+-- <child>< + its parents sorted and joined by +.
+CREATE TABLE IF NOT EXISTS crop(run_id INT NOT NULL, id TEXT NOT NULL, ref TEXT NOT NULL, name TEXT,
+  unlocalized TEXT, flavour TEXT, creator TEXT, soil TEXT, soil_lists TEXT, tier INT,
+  min_seed_bed_tier INT, liked_biomes TEXT, growth_duration INT, breeding_threshold REAL,
+  crossing_threshold REAL, weeds_above INT, drop_multiplier REAL, requirements TEXT,
+  alternate_seeds TEXT, sub_soils TEXT, in_nei INT, PRIMARY KEY(run_id, id));
+CREATE TABLE IF NOT EXISTS crop_drop(run_id INT NOT NULL, crop_id TEXT NOT NULL, slot INT NOT NULL,
+  amount INT NOT NULL, chance_bp INT NOT NULL, name TEXT, nbt TEXT, registry_name TEXT, meta INT,
+  nbt_hash TEXT, item_id INT, PRIMARY KEY(run_id, crop_id, slot));
+CREATE INDEX IF NOT EXISTS ix_crop_drop_item ON crop_drop(registry_name, meta);
+CREATE TABLE IF NOT EXISTS crop_seed(run_id INT NOT NULL, slot INT NOT NULL, registry_name TEXT NOT NULL,
+  meta INT, crop_id TEXT NOT NULL, item_id INT, PRIMARY KEY(run_id, slot));   -- alternate seeds
+CREATE INDEX IF NOT EXISTS ix_crop_seed ON crop_seed(registry_name, meta);
+CREATE TABLE IF NOT EXISTS crop_parent_recipe(run_id INT NOT NULL, key TEXT NOT NULL, child TEXT NOT NULL,
+  requirements TEXT, machine_only INT, world_only INT, in_nei INT, PRIMARY KEY(run_id, key));
+CREATE INDEX IF NOT EXISTS ix_crop_child ON crop_parent_recipe(run_id, child);
+CREATE TABLE IF NOT EXISTS crop_parent(run_id INT NOT NULL, recipe_key TEXT NOT NULL, slot INT NOT NULL,
+  crop_id TEXT NOT NULL, PRIMARY KEY(run_id, recipe_key, slot));
+CREATE INDEX IF NOT EXISTS ix_crop_parent ON crop_parent(run_id, crop_id);
+CREATE TABLE IF NOT EXISTS crop_mutation(run_id INT NOT NULL, pool TEXT NOT NULL, crop_id TEXT NOT NULL,
+  PRIMARY KEY(run_id, pool, crop_id));   -- mutation pool membership; pools by display name
+CREATE INDEX IF NOT EXISTS ix_crop_mutation ON crop_mutation(run_id, crop_id);
+CREATE TABLE IF NOT EXISTS crop_soil(run_id INT NOT NULL, soil TEXT NOT NULL, slot INT NOT NULL,
+  registry_name TEXT, meta INT, PRIMARY KEY(run_id, soil, slot));   -- registry_name NULL: no block
 -- wiki, notes, usage
 CREATE TABLE IF NOT EXISTS wiki_page(title TEXT PRIMARY KEY, revid INT, fetched INT, url TEXT, text TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(title, text, content='wiki_page');
@@ -137,4 +169,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
