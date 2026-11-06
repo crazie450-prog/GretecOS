@@ -1,0 +1,666 @@
+"""Play's Prism hooks and the ask-on-quit export (WO-1.4, plan section 5.2 step 4, D69, D121).
+
+Prism runs ``GOS_APP\\scripts\\prism_prelaunch.ps1`` and ``prism_postexit.ps1`` for Play (set by
+``scripts/install_prism_hooks.py``, which Clayton runs himself); they run ``gos hook pre-launch``
+and ``gos hook post-exit`` from GOS_APP's release, as Clayton.
+
+**Pre-launch** (any instance with the hooks): while the instance lock is held, or while an Export
+client runs, it exits :data:`EXIT_REFUSE` and the wrapper passes that to Prism, which then doesn't
+start the game (V25). For Play it then fingerprints Play and records the stale flag (D120). Any
+other failure only warns: Play still launches (plan 0.1 principle 9).
+
+**Post-exit** (Play only; Prism runs it only after a clean exit): if Play's fingerprint equals the
+last export's, nothing runs. Otherwise, with ``[policy] export_on_quit = "ask"`` (D69), it asks
+"Mods changed. Export now?" in a dialog that times out after 5 minutes as a no (plan 4.2). The
+dashboard and voice take that question over in WO-2.6 and Phase 5. On yes it starts
+``gos export run`` as a separate process, waits until that holds the instance lock, and returns,
+so Prism is free and Play can't launch until the export is done.
+
+**``gos export run``**: hold the instance lock; refuse while any GTNH client runs; fingerprint Play
+(before sync); sync Play to Export (``gregtec.sync``, Export only, GregtecLink included, D98);
+``prismlauncher --launch GTNH-Export``, which autoexports (D100); wait for a new complete run in
+Export's ``gregteclink/exports/`` and for Export to quit; record the fingerprint for that run;
+write the diff against the previous export (D122) to ``GOS_HOME/data/reports/``. Then release
+the lock. Collecting the run into GOS_HOME (WO-1.2) and loading it into the DB (WO-1.3) join this
+pipeline once those are merged; flagging affected plans comes with plans (WO-1.9).
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import io
+import json
+import os
+import secrets
+import subprocess
+import sys
+import time
+import traceback
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TextIO
+
+from gregtec import config, locks, prism, sync
+from gregtec.gamestate.safe_open import read_bytes, read_text
+from gregtec.ingest import fingerprint, rundiff
+
+# pre-launch: don't start this game (the wrapper passes only this code to Prism)
+EXIT_REFUSE = 3
+ASK_TIMEOUT_S = 300  # plan 4.2: the post-exit prompt times out after 5 minutes
+LOCK_WAIT_S = 60.0  # post-exit: how long the started export may take to hold the lock
+START_TIMEOUT_S = 600.0  # Export must start (or a run appear) within 10 minutes
+# The whole export. GregtecLink's own deadline is 30 minutes in the world (D100).
+DEADLINE_S = 3600.0
+# Export still running this long after its run appeared: go on anyway.
+QUIT_WAIT_S = 600.0
+# The processes can't be listed: go on this long after the run appeared.
+UNKNOWN_GRACE_S = 120.0
+POLL_S = 10.0  # one process listing (about a second of PowerShell) per poll
+REPORTS = Path("data", "reports")  # in GOS_HOME
+LOGS = Path("logs")
+MMC_PACK = "mmc-pack.json"
+
+# (title, question, timeout in s) -> yes, no, or None for timed out
+Ask = Callable[[str, str, int], bool | None]
+Clients = Callable[[config.Config], list[str]]
+
+
+def _say(out: TextIO, text: str) -> None:
+    print(f"GOS: {text}", file=out, flush=True)
+
+
+def role_of(cfg: config.Config, inst_dir: str | None) -> str | None:
+    """Which configured instance ``inst_dir`` (Prism's ``INST_DIR``) is, if any."""
+    if not inst_dir:
+        return None
+    for role in ("play", "export", "lab"):
+        folder = cfg.instance(role)
+        try:
+            if os.path.samefile(inst_dir, folder):
+                return role
+        except OSError:
+            if os.path.normcase(os.path.abspath(inst_dir)) == os.path.normcase(
+                os.path.abspath(folder)
+            ):
+                return role
+    return None
+
+
+# --- pre-launch ----------------------------------------------------------------------------
+
+
+def pre_launch(
+    cfg: config.Config,
+    role: str | None,
+    out: TextIO,
+    clients: Clients = prism.running_clients,
+) -> int:
+    """0: launch; :data:`EXIT_REFUSE`: don't. Never raises for a failed stale check."""
+    if role == "export":
+        _say(out, "Export runs under the export pipeline: no hook checks here.")
+        return 0
+    holder = locks.held(cfg.gos_home)
+    if holder is not None:
+        _say(
+            out,
+            f"not launching: the instance lock is held by {holder.describe()}. "
+            "Play and Export never run at once; launch again when the export has finished "
+            f"(its log is in {cfg.gos_home / LOGS}).",
+        )
+        return EXIT_REFUSE
+    try:
+        running = clients(cfg)
+    except OSError as exc:
+        _say(out, f"warning: can't tell whether Export is running ({exc}).")
+        running = []
+    if "export" in running:
+        _say(
+            out,
+            f"not launching: {cfg.export} is running. Launch again once it has quit "
+            "(Play and Export never run at once).",
+        )
+        return EXIT_REFUSE
+    if role != "play":
+        _say(out, "not Play: no stale check.")
+        return 0
+    try:
+        status = fingerprint.check(
+            cfg.gos_home, fingerprint.compute_play(cfg), "pre-launch"
+        )
+    except (OSError, fingerprint.FingerprintError) as exc:
+        _say(out, f"warning: couldn't check whether recipe data is stale: {exc}")
+        return 0
+    _say(out, status.line())
+    for note in status.play.notes:
+        _say(out, f"note: {note}")
+    return 0
+
+
+# --- post-exit -----------------------------------------------------------------------------
+
+
+def ask_dialog(title: str, question: str, timeout_s: int) -> bool | None:
+    """A Windows Yes/No box on top of everything; None when it times out (or can't be shown)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    # MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND
+    flags = 0x4 | 0x20 | 0x40000 | 0x10000
+    # MessageBoxTimeoutW: in user32 since XP, undocumented; MessageBox has no timeout.
+    box = getattr(user32, "MessageBoxTimeoutW", None)
+    if box is None:
+        return None
+    box.argtypes = [
+        wintypes.HWND,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.UINT,
+        wintypes.WORD,
+        wintypes.DWORD,
+    ]
+    box.restype = ctypes.c_int
+    answer = box(None, question, title, flags, 0, timeout_s * 1000)
+    return {6: True, 7: False}.get(answer)  # IDYES, IDNO; 32000 = timed out
+
+
+def notify_dialog(title: str, text: str) -> None:
+    """A Windows message box that closes itself after 10 minutes (no-op elsewhere)."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    box = getattr(user32, "MessageBoxTimeoutW", None)
+    if box is not None:  # MB_ICONINFORMATION | MB_TOPMOST
+        box(None, text, title, 0x40 | 0x40000, 0, 600_000)
+
+
+@dataclass
+class Started:
+    ticket: str  # the started export puts it in the lock's record
+    log: Path
+    proc: subprocess.Popen[bytes] | None = None
+
+
+def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
+    """Start ``gos export run --notify`` on its own, logging to ``GOS_HOME/logs/``."""
+    logs = cfg.gos_home / LOGS
+    logs.mkdir(parents=True, exist_ok=True)
+    log = logs / time.strftime("export-%Y%m%dT%H%M%SZ.log", time.gmtime())
+    ticket = secrets.token_hex(8)
+    argv = [sys.executable, "-m", "gregtec.cli", "export", "run", "--notify"]
+    argv += ["--ticket", ticket]
+    if config_path is not None:
+        argv += ["--config", str(config_path)]
+    kwargs: dict[str, object] = {}
+    if sys.platform == "win32":
+        # Its own process, no console window, outside any job Prism's process is in.
+        base = 0x00000200 | prism.CREATE_NO_WINDOW  # CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = base | 0x01000000  # CREATE_BREAKAWAY_FROM_JOB
+    else:
+        kwargs["start_new_session"] = True
+    with open(log, "ab") as f:
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                **kwargs,
+            )
+        except OSError:
+            if sys.platform != "win32":
+                raise
+            kwargs["creationflags"] = base  # the job doesn't allow breakaway
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                **kwargs,
+            )
+    return Started(ticket, log, proc)
+
+
+def post_exit(
+    cfg: config.Config,
+    role: str | None,
+    out: TextIO,
+    ask: Ask = ask_dialog,
+    spawn: Callable[[], Started] | None = None,
+    wait_s: float = LOCK_WAIT_S,
+) -> int:
+    if role != "play":
+        _say(out, "not Play: nothing to do after exit.")
+        return 0
+    try:
+        status = fingerprint.check(
+            cfg.gos_home, fingerprint.compute_play(cfg), "post-exit"
+        )
+    except (OSError, fingerprint.FingerprintError) as exc:
+        _say(out, f"couldn't fingerprint Play, so not asking to export: {exc}")
+        return 1
+    if not status.stale:
+        _say(out, f"Play unchanged since export {status.export_run}: nothing to do.")
+        return 0
+    _say(out, status.line())
+    if cfg.export_on_quit == "never":
+        _say(
+            out,
+            '[policy] export_on_quit = "never": not asking. Recipe data stays stale.',
+        )
+        return 0
+    holder = locks.held(cfg.gos_home)
+    if holder is not None:
+        _say(out, f"an export is already running ({holder.describe()}).")
+        return 0
+    what = (
+        "No export is recorded yet."
+        if status.export_run is None
+        else f"Play's mods or configs changed since the last export ({status.changes.summary()})."
+    )
+    question = (
+        f"{what}\n\nExport now? This syncs Play to {cfg.export} and launches it to export "
+        "recipes; it quits by itself (up to about 30 minutes). Play can't start until it is "
+        f"done.\n\nNo answer in {ASK_TIMEOUT_S // 60} minutes counts as No."
+    )
+    answer = ask("Gregtec OS: mods changed. Export now?", question, ASK_TIMEOUT_S)
+    if answer is None:
+        _say(
+            out,
+            "no answer (5 minutes passed, or no dialog could be shown): not exporting. "
+            "Recipe data stays stale.",
+        )
+        return 0
+    if not answer:
+        _say(
+            out,
+            "not exporting (No). Recipe data stays stale; you'll be asked next quit.",
+        )
+        return 0
+    started = (spawn or (lambda: spawn_export(cfg, None)))()
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        holder = locks.held(cfg.gos_home)
+        if holder is not None and holder.ticket == started.ticket:
+            _say(out, f"export started (pid {holder.pid}); its log is {started.log}.")
+            return 0
+        if started.proc is not None and started.proc.poll() is not None:
+            _say(
+                out,
+                f"the export stopped at once (exit {started.proc.returncode}); see {started.log}.",
+            )
+            return 1
+        time.sleep(0.2)
+    _say(
+        out,
+        f"the export didn't take the instance lock within {wait_s:.0f} s; see {started.log}.",
+    )
+    return 1
+
+
+# --- the export pipeline -------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FoundRun:
+    name: str
+    complete: bool
+    manifest: Mapping[str, object]
+
+
+def scan_runs(exports: Path, allow_harness: bool = False) -> dict[str, FoundRun]:
+    """Finished runs in Export's ``gregteclink/exports/``: no ``.partial``, a readable manifest
+    of the contract's format whose run_id is the folder's name. Reads manifests only."""
+    found: dict[str, FoundRun] = {}
+    try:
+        names = sorted(os.listdir(exports))
+    except FileNotFoundError:
+        return found
+    for name in names:
+        if name.endswith(".partial") or not fingerprint.RUN_ID.fullmatch(name):
+            continue
+        try:
+            data = read_bytes(exports / name / rundiff.MANIFEST)
+            if len(data) > rundiff.MANIFEST_LIMIT:
+                continue
+            m = json.loads(data)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(m, dict) or m.get("format") != rundiff.FORMAT:
+            continue
+        if m.get("run_id") != name or (
+            m.get("mode") == "harness" and not allow_harness
+        ):
+            continue
+        found[name] = FoundRun(name, m.get("complete") is True, m)
+    return found
+
+
+def _no_run_reason(export_game: Path) -> str | None:
+    """The last ``autoexport: no run: <why>`` line in Export's FML log (D100)."""
+    try:
+        text = read_text(export_game / "logs" / "fml-client-latest.log")
+    except OSError:
+        return None
+    hits = [ln for ln in text.splitlines() if "autoexport: no run:" in ln]
+    return hits[-1].split("autoexport: no run:", 1)[1].strip() if hits else None
+
+
+def _start_prism(argv: Sequence[str]) -> None:
+    """Start Prism's CLI and don't wait: ``--launch`` returns at once only if Prism is open."""
+    kwargs: dict[str, object] = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = 0x00000200  # CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(
+        list(argv),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **kwargs,
+    )
+
+
+class ExportFailed(Exception):
+    pass
+
+
+def wait_for_export(
+    cfg: config.Config,
+    exports: Path,
+    before: set[str],
+    out: TextIO,
+    clients: Clients,
+    *,
+    allow_harness: bool = False,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_s: float = POLL_S,
+) -> FoundRun:
+    """Wait until Export has written a new complete run and quit. Raises ExportFailed."""
+    start = clock()
+    seen_running = False
+    run: FoundRun | None = None
+    run_at = 0.0
+    while True:
+        new = {
+            k: v
+            for k, v in scan_runs(exports, allow_harness).items()
+            if k not in before
+        }
+        complete = [r for r in new.values() if r.complete]
+        if run is None and complete:
+            run = complete[-1]
+            run_at = clock()
+            _say(out, f"Export wrote run {run.name}; waiting for it to quit.")
+        try:
+            running: bool | None = "export" in clients(cfg)
+        except OSError as exc:
+            running = None
+            if run is None:
+                _say(
+                    out,
+                    f"warning: can't list processes ({exc}); watching for the run only.",
+                )
+        seen_running = seen_running or bool(running)
+        now = clock()
+        if run is not None:
+            if running is False:
+                return run
+            if running is None and now - run_at >= UNKNOWN_GRACE_S:
+                return run
+            if running and now - run_at >= QUIT_WAIT_S:
+                _say(
+                    out,
+                    f"warning: Export is still running {QUIT_WAIT_S / 60:.0f} min after its run.",
+                )
+                return run
+        elif seen_running and running is False:
+            # The run is renamed before the quit, but give a slow disk a moment.
+            sleep(poll_s)
+            new = {
+                k: v
+                for k, v in scan_runs(exports, allow_harness).items()
+                if k not in before
+            }
+            done = [r for r in new.values() if r.complete]
+            if done:
+                return done[-1]
+            partial = [r for r in new.values() if not r.complete]
+            if partial:
+                errors = partial[-1].manifest.get("part_errors")
+                raise ExportFailed(
+                    f"Export quit after an incomplete run {partial[-1].name} "
+                    f"(parts {partial[-1].manifest.get('parts')}, errors {errors})"
+                )
+            why = _no_run_reason(fingerprint.game_folder(cfg.instance("export")))
+            raise ExportFailed(
+                "Export quit without a complete run"
+                + (f": {why}" if why else " (no 'autoexport: no run' line in its log)")
+            )
+        elif not seen_running and now - start >= START_TIMEOUT_S:
+            why = _no_run_reason(fingerprint.game_folder(cfg.instance("export")))
+            raise ExportFailed(
+                f"{cfg.export} didn't start within {START_TIMEOUT_S / 60:.0f} minutes "
+                + (
+                    f"(or quit at once: {why})"
+                    if why
+                    else "(is Prism showing an error?)"
+                )
+            )
+        if now - start >= DEADLINE_S:
+            raise ExportFailed(
+                f"no finished export after {DEADLINE_S / 60:.0f} minutes"
+            )
+        sleep(poll_s)
+
+
+def _mmc_differs(cfg: config.Config) -> bool:
+    try:
+        play = read_bytes(cfg.instance("play") / MMC_PACK)
+        export = read_bytes(cfg.instance("export") / MMC_PACK)
+    except OSError:
+        return False
+    return play != export
+
+
+def run_export(
+    cfg: config.Config,
+    out: TextIO,
+    *,
+    launch: Callable[[Sequence[str]], None] = _start_prism,
+    clients: Clients = prism.running_clients,
+    notify: Callable[[str, str], None] | None = None,
+    allow_harness: bool = False,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_s: float = POLL_S,
+    ticket: str = "",
+) -> int:
+    """``gos export run``. 0: exported; 1: refused or failed (the stale flag is kept)."""
+    if getpass.getuser().lower() == prism.DEV_ACCOUNT:
+        _say(
+            out,
+            "refused: the export pipeline runs as Clayton (D75); gos-dev uses gos launch.",
+        )
+        return 1
+    home = cfg.gos_home
+    try:
+        lock = locks.InstanceLock(home).acquire(
+            "export", "gos export run", ticket=ticket
+        )
+    except locks.LockHeld as exc:
+        _say(out, f"refused: {exc}")
+        return 1
+    result: tuple[int, str]
+    with lock:
+        try:
+            result = _export_locked(
+                cfg, out, launch, clients, allow_harness, clock, sleep, poll_s
+            )
+        except ExportFailed as exc:
+            _say(out, f"export failed: {exc}. Recipe data stays stale.")
+            result = (1, f"Export failed: {exc}")
+        except Exception as exc:  # noqa: BLE001 (any failure: release the lock and tell Clayton)
+            traceback.print_exc(file=out)
+            _say(out, f"export failed: {exc!r}. Recipe data stays stale.")
+            result = (1, f"Export failed: {exc!r}. See the log in {home / LOGS}.")
+    _say(out, "instance lock released.")
+    if notify is not None:
+        notify("Gregtec OS export", result[1])
+    return result[0]
+
+
+def _export_locked(
+    cfg: config.Config,
+    out: TextIO,
+    launch: Callable[[Sequence[str]], None],
+    clients: Clients,
+    allow_harness: bool,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    poll_s: float,
+) -> tuple[int, str]:
+    home = cfg.gos_home
+    try:
+        running = clients(cfg)
+    except OSError as exc:
+        raise ExportFailed(
+            f"can't tell whether a GTNH client is running ({exc})"
+        ) from None
+    if running:
+        raise ExportFailed(
+            f"{', '.join(cfg.instance(r).name for r in running)} is running; close it first "
+            "(never two clients at once)"
+        )
+    try:
+        exported = fingerprint.compute_play(cfg)  # before sync (plan 5.2 step 4)
+    except fingerprint.FingerprintError as exc:
+        raise ExportFailed(f"can't fingerprint Play: {exc}") from None
+    _say(out, f"Play's fingerprint {exported.digest[:12]} ({exported.counts()}).")
+
+    plans, refusals = sync.plan_all(cfg, ["export"])
+    if refusals:
+        raise ExportFailed("sync refused: " + "; ".join(refusals))
+    for plan in plans:
+        sync.report(plan, out)
+        sync.report_install(plan, out)
+        try:
+            sync.apply(plan)
+            sync.apply_install(plan)
+        except OSError as exc:
+            raise ExportFailed(f"sync failed: {exc}") from None
+    if _mmc_differs(cfg):
+        _say(
+            out,
+            f"warning: {cfg.export}'s mmc-pack.json differs from Play's. Sync doesn't copy it: "
+            "update Export's components in Prism (pack-update playbook, WO-1.9).",
+        )
+
+    try:
+        exports = rundiff.export_runs_folder(cfg)
+    except fingerprint.FingerprintError as exc:
+        raise ExportFailed(str(exc)) from None
+    before = set(scan_runs(exports, allow_harness=True))
+    argv = prism.launch_command(cfg, "export")
+    _say(out, f"launching: {' '.join(argv)}")
+    try:
+        launch(argv)
+    except OSError as exc:
+        raise ExportFailed(f"can't start Prism ({argv[0]}): {exc}") from None
+    run = wait_for_export(
+        cfg,
+        exports,
+        before,
+        out,
+        clients,
+        allow_harness=allow_harness,
+        clock=clock,
+        sleep=sleep,
+        poll_s=poll_s,
+    )
+
+    previous = fingerprint.last_export(home)
+    try:
+        play_now = fingerprint.compute_play(cfg)
+    except fingerprint.FingerprintError as exc:
+        raise ExportFailed(f"can't fingerprint Play after the export: {exc}") from None
+    status = fingerprint.record_export(home, run.name, exported, play_now)
+    _say(out, f"recorded export {run.name}: {status.line()}")
+
+    summary = f"Export {run.name} done. {status.line()}"
+    if previous is not None and previous["run_id"] != run.name:
+        try:
+            old = rundiff.load_run(rundiff.find_run(cfg, previous["run_id"]))
+            new = rundiff.load_run(exports / run.name)
+            d = rundiff.diff_runs(home, old, new)
+        except rundiff.RunError as exc:
+            _say(out, f"no diff against the previous export: {exc}")
+        else:
+            path = write_report(home, d)
+            print(rundiff.report(d), file=out)
+            _say(out, f"diff report: {path}")
+            summary += f"\n\n{d.summary()}\n\nReport: {path}"
+    else:
+        _say(out, "first recorded export: nothing to diff against.")
+    return 0, summary
+
+
+def write_report(home: Path, d: rundiff.Diff) -> Path:
+    path = home / REPORTS / f"export-diff-{d.old.run_id}-{d.new.run_id}.txt"
+    fingerprint.atomic_write(path, rundiff.report(d).encode("utf-8"))
+    return path
+
+
+# --- gos commands --------------------------------------------------------------------------
+
+
+def add_hook_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("event", choices=("pre-launch", "post-exit"))
+    parser.add_argument(
+        "--instance",
+        choices=("play", "export", "lab"),
+        default=None,
+        help="the instance to act for (default: from Prism's INST_DIR)",
+    )
+    parser.add_argument(
+        "--answer",
+        choices=("yes", "no"),
+        default=None,
+        help="post-exit: answer the export question without the dialog",
+    )
+
+
+def hook_main(args: argparse.Namespace, out: TextIO, env: Mapping[str, str]) -> int:
+    if isinstance(out, io.TextIOWrapper):
+        # Prism reads the hook's output through a pipe in the ANSI code page: a path that
+        # code page can't show must not crash the hook.
+        out.reconfigure(errors="replace")
+    try:
+        cfg = config.load(args.config)
+    except (OSError, ValueError) as exc:
+        _say(out, f"can't read gos.toml: {exc}")
+        return 2
+    role = args.instance or role_of(cfg, env.get("INST_DIR"))
+    if role is None and not env.get("INST_DIR"):
+        _say(out, "no INST_DIR (Prism sets it for hooks): pass --instance.")
+        return 2
+    if args.event == "pre-launch":
+        return pre_launch(cfg, role, out)
+    ask: Ask = ask_dialog
+    if args.answer is not None:
+        answer = args.answer == "yes"
+
+        def ask(title: str, question: str, timeout_s: int) -> bool | None:
+            return answer
+
+    return post_exit(
+        cfg, role, out, ask=ask, spawn=lambda: spawn_export(cfg, args.config)
+    )
