@@ -1,0 +1,67 @@
+{
+ "schema": 3,
+ "controller": {
+  "registry_name": "gregtech:gt.blockmachines",
+  "meta": 1001,
+  "display_name": "Vacuum Freezer",
+  "source_class": "gtPlusPlus.fixture.MTEFixtureFreezer",
+  "facing_convention": "controller front = NORTH (-Z), ExtendedFacing NORTH_NORMAL_NONE; offsets d = [dx,dy,dz] world-space deltas from the controller block"
+ },
+ "variants": [
+  {
+   "trigger_stack_size": 1,
+   "channels": {},
+   "blocks": [
+    {"d": [-1, 0, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 0, 0], "block": "gregtech:gt.blockmachines", "meta": 1001},
+    {"d": [1, 0, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 0, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 0, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 0, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 0, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 0, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 0, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 1, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 1, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 1, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 1, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 1, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 1, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 1, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 1, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 2, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 2, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 2, 0], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 2, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 2, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 2, 1], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [-1, 2, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [0, 2, 2], "block": "gregtech:gt.blockcasings2", "meta": 1},
+    {"d": [1, 2, 2], "block": "gregtech:gt.blockcasings2", "meta": 1}
+   ],
+   "hints": [],
+   "hatch_slots": [
+    {"d": [-1, 0, 0], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [1, 0, 0], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [-1, 0, 1], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [0, 0, 1], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [1, 0, 1], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [-1, 0, 2], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [0, 0, 2], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [1, 0, 2], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [-1, 2, 0], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [0, 2, 0], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [1, 2, 0], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [-1, 2, 1], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [0, 2, 1], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [1, 2, 1], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [-1, 2, 2], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [0, 2, 2], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]},
+    {"d": [1, 2, 2], "kinds": ["Energy", "InputBus", "InputHatch", "Maintenance", "OutputBus", "OutputHatch"]}
+   ],
+   "bbox": [3, 3, 3]
+  }
+ ],
+ "substitutions": {},
+ "failures": []
+}
