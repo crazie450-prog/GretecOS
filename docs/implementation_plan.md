@@ -1242,7 +1242,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V22 | Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5] | Export run | 1.1 |
 | V23 | JourneyMap picks up waypoint files written while the game runs | Lab test | 6.6 |
 | V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
-| V25 | A failing Prism pre-launch command aborts the launch (needed for the instance lock) | Test | 1.4 |
+| V25 | **Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC | Lab test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player | Lab test | 6.2 |
 | V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads | Lab save loop | 6.1 |
 | V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |

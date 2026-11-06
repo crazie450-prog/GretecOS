@@ -117,9 +117,18 @@ def venv_exe(release: Path, name: str) -> Path:
 
 
 def deploy(
-    repo: Path, ref: str, app: Path, *, forbidden: Sequence[Path] = ()
+    repo: Path,
+    ref: str,
+    app: Path,
+    *,
+    forbidden: Sequence[Path] = (),
+    before_swap: Callable[[], None] | None = None,
 ) -> Release:
-    """Deploy ``ref`` of ``repo`` into ``app`` (GOS_APP). Raises :class:`DeployError`."""
+    """Deploy ``ref`` of ``repo`` into ``app`` (GOS_APP). Raises :class:`DeployError`.
+
+    ``before_swap`` runs once the release is staged and checked, right before step 4 (``gos
+    deploy`` stops a supervisor that runs from ``current`` there, D115).
+    """
     app = Path(os.path.abspath(app))
     check_app(app, [repo, *forbidden])
     commit = _commit(repo, ref)
@@ -164,6 +173,8 @@ def deploy(
         if gregteclink is not None:
             record["gregteclink"] = gregteclink
         (staged / RECORD).write_text(json.dumps(record, indent=2) + "\n", "utf-8")
+        if before_swap is not None:
+            before_swap()
         old = _swap([(staged, current), (staged_scripts, scripts)], stamp)
     except BaseException:
         for path in (build, staged, staged_scripts):
