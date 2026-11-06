@@ -35,7 +35,7 @@ from __future__ import annotations
 import os
 import re
 import stat
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -173,6 +173,14 @@ def _put(veins: dict[tuple[int, int, int], Vein], vein: Vein) -> None:
         veins[key] = Vein(*key, old.mix, True, old.source)
 
 
+def _read_parsed[T](path: Path, parse: Callable[[bytes], T]) -> T:
+    """``parse`` of ``path``'s bytes, read whole through ``read_bytes`` (3 tries, a parse error
+    retried like a failed read). The validator keeps what it parsed, so a file is parsed once."""
+    parsed: list[T] = []
+    read_bytes(path, validate=lambda d: parsed.append(parse(d)), limit=FILE_LIMIT + 1)
+    return parsed[-1]
+
+
 def _check_dir(path: Path) -> bool:
     """Whether ``path`` is a real folder; a link or junction is refused."""
     try:
@@ -202,8 +210,7 @@ def read_cache(folder: Path) -> Cache:
             cache.problems.append(f"{name}: {st.st_size:,} bytes; skipped")
             continue
         try:
-            data = read_bytes(path, validate=parse_dimension, limit=FILE_LIMIT + 1)
-            version, _, veins = parse_dimension(data)
+            version, _, veins = _read_parsed(path, parse_dimension)
         except FileNotFoundError:
             continue  # gone since the listing
         except (OSError, ValueError) as exc:
@@ -274,9 +281,7 @@ def world_id(world: Path) -> str | None:
     if _is_link(st) or not stat.S_ISREG(st.st_mode):
         raise VpError(f"{path} is not a regular file; refusing it")
     try:
-        return _world_id_from(
-            read_bytes(path, validate=_world_id_from, limit=FILE_LIMIT + 1)
-        )
+        return _read_parsed(path, _world_id_from)
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
@@ -284,13 +289,19 @@ def world_id(world: Path) -> str | None:
 
 
 def _subdirs(folder: Path) -> list[str]:
+    """The real folders in ``folder`` (no links or junctions; one gone since the listing is
+    skipped)."""
     if not _check_dir(folder):
         return []
-    return sorted(
-        n
-        for n in os.listdir(folder)
-        if not _is_link(st := os.lstat(folder / n)) and stat.S_ISDIR(st.st_mode)
-    )
+    out = []
+    for n in sorted(os.listdir(folder)):
+        try:
+            st = os.lstat(folder / n)
+        except FileNotFoundError:
+            continue
+        if not _is_link(st) and stat.S_ISDIR(st.st_mode):
+            out.append(n)
+    return out
 
 
 def locate(world: Path, game: Path, player: str | None = None) -> Located:
@@ -305,13 +316,18 @@ def locate(world: Path, game: Path, player: str | None = None) -> Located:
         _check_dir(servers)
         _check_dir(clients)
     wid = world_id(world)
+    if player is not None:
+        player = player.lower()
     if wid is None:
+        # WorldIdHandler names a world <folder>_<random UUID>; the UUID part keeps "New World"
+        # from taking "New World_2"'s caches.
+        named = re.compile(re.escape(world.name) + "_" + _UUID.pattern)
         guesses = sorted(
             {
                 n
                 for folder in (servers, *(clients / p for p in _subdirs(clients)))
                 for n in _subdirs(folder)
-                if n.startswith(world.name + "_")
+                if named.fullmatch(n)
             }
         )
         if len(guesses) == 1:
@@ -324,6 +340,11 @@ def locate(world: Path, game: Path, player: str | None = None) -> Located:
             raise VpError(
                 f"{world / WORLD_ID_FILE} is missing and several VP cache folders are named"
                 f" after this world ({', '.join(guesses)}); can't tell which is its"
+            )
+        elif player is not None:
+            raise VpError(
+                f"player {player} has no client cache for this world: VisualProspecting has"
+                f" no data for it yet ({world / WORLD_ID_FILE} is missing)"
             )
         else:
             notes.append(
@@ -340,7 +361,6 @@ def locate(world: Path, game: Path, player: str | None = None) -> Located:
         if _UUID.fullmatch(p) and _check_dir(clients / p / wid)
     ]
     if player is not None:
-        player = player.lower()
         if player not in have:
             listed = ", ".join(have) or "none"
             raise VpError(

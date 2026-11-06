@@ -65,7 +65,10 @@ def read(data: bytes) -> tuple[str, dict[str, Tag]]:
     if tag != COMPOUND:
         raise ValueError(f"the root tag is type {tag}, not a compound")
     name = r.string()
-    value = r.compound(1)
+    try:
+        value = r.compound(1)
+    except RecursionError:  # Python's stack ends before MAX_DEPTH on some builds
+        raise ValueError("NBT nested too deep") from None
     return name, value
 
 

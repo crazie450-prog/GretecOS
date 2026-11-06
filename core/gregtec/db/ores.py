@@ -30,6 +30,7 @@ import json
 import math
 import os
 import sqlite3
+import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,7 +43,7 @@ from gregtec.db import quests as quest_db
 from gregtec.gamestate.safe_open import read_bytes
 from gregtec.ingest import collect, ore_mixes, vp
 from gregtec.ingest.normalize import canonical
-from gregtec.sync import _is_link
+from gregtec.sync import _is_link, _overlap
 
 KV_MIXES, KV_VEINS = "ores.mixes", "ores.veins"
 PART = "ore_mixes"  # manifest parts.ore_mixes
@@ -134,7 +135,16 @@ def read_mixes(
             )
             if entry is None:
                 raise OresError(f"run {run.run_id}: {ore_mixes.FILE} is not listed")
-            data = read_bytes(run.path / entry.rel, limit=entry.size + 1)
+            path = run.path / entry.rel
+            st = os.lstat(
+                path
+            )  # GOS's own copy: checked before reading, as db build does
+            if _is_link(st) or not stat.S_ISREG(st.st_mode) or st.st_size != entry.size:
+                raise OresError(
+                    f"run {run.run_id}: {ore_mixes.FILE} is not a file of the listed size;"
+                    " collect it again"
+                )
+            data = read_bytes(path, limit=entry.size + 1)
             problem = collect._mismatch(data, entry)
             if problem is not None:
                 raise OresError(
@@ -451,10 +461,36 @@ def report(summary: Summary, names: dict[int, str], out: TextIO) -> None:
         )
 
 
+def _from_folder(
+    cfg: config.Config, instance: str | None, world_dir: Path, game_dir: Path | None
+) -> tuple[Path, Path]:
+    """(world folder, game folder) for ``--world-dir``: never a link, and never in Play
+    unless ``--instance play`` says so (D128)."""
+    if os.path.lexists(world_dir) and _is_link(os.lstat(world_dir)):
+        raise OresError(f"{world_dir} is a link or junction; refusing it")
+    if not world_dir.is_dir():
+        raise OresError(f"{world_dir} is not a folder")
+    game = game_dir
+    if game is None:
+        if world_dir.resolve().parent.name != "saves":
+            raise OresError(
+                f"{world_dir} is not in a saves/ folder: say which game folder holds"
+                " its visualprospecting/ with --game-dir"
+            )
+        game = world_dir.resolve().parent.parent
+    play = cfg.instance("play")
+    if instance != "play" and any(_overlap(p, play) for p in (world_dir, game)):
+        raise OresError(
+            f"{world_dir} (game folder {game}) is Play's: add --instance play to read Play"
+            " (read-only)"
+        )
+    return world_dir, game
+
+
 def load_main(
     config_path: Path | None,
     run_key: str | None,
-    instance: str,
+    instance: str | None,
     world: str | None,
     world_dir: Path | None,
     game_dir: Path | None,
@@ -469,21 +505,11 @@ def load_main(
         return 2
     try:
         if world_dir is not None:
-            if not world_dir.is_dir():
-                raise OresError(f"{world_dir} is not a folder")
-            game = game_dir
-            if game is None:
-                if world_dir.resolve().parent.name != "saves":
-                    raise OresError(
-                        f"{world_dir} is not in a saves/ folder: say which game folder holds"
-                        " its visualprospecting/ with --game-dir"
-                    )
-                game = world_dir.resolve().parent.parent
-            path = world_dir
+            path, game = _from_folder(cfg, instance, world_dir, game_dir)
         else:
-            path, game = world_folder(cfg, instance, world)
-            if instance == "play":
-                print(PLAY_READ_NOTE, file=out)
+            path, game = world_folder(cfg, instance or "lab", world)
+        if instance == "play":
+            print(PLAY_READ_NOTE, file=out)
         run_id: str | None
         mixes: ore_mixes.OreMixes | None
         no_mixes = None

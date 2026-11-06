@@ -209,8 +209,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     o_load.add_argument(
         "--instance",
         choices=("lab", "play"),
-        default="lab",
-        help="the instance whose saves/ holds the world (default lab)",
+        default=None,
+        help="the instance whose saves/ holds the world (default lab); with --world-dir, "
+        "play allows a world in Play",
     )
     o_where = o_load.add_mutually_exclusive_group()
     o_where.add_argument(

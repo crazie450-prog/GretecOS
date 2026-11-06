@@ -408,6 +408,13 @@ def test_nbt_refuses_bad_data(data: bytes, error: str) -> None:
         nbt.read(data)
 
 
+def test_nbt_nested_too_deep_is_a_value_error() -> None:
+    # 600 compounds deep: past MAX_DEPTH, and past Python's stack on some builds.
+    deep = b"\x0a\x00\x00" + b"\x0a\x00\x01x" * 600 + b"\x00" * 601
+    with pytest.raises(ValueError, match="nested too deep"):
+        nbt.read(deep)
+
+
 def test_nbt_refuses_a_gzip_bomb(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ValueError, match="once decompressed"):
         nbt.decompress(gzip.compress(b"\x00" * 5000), limit=4096)
@@ -572,9 +579,26 @@ def test_without_the_world_id_file_the_only_named_folder_is_used(
     loc = vp.locate(w, game)
     assert loc.world_id == f"{WORLD}_00000000-0000-4000-8000-000000000000"
     assert "is missing; using the only cache folder" in loc.notes[0]
-    (game / "visualprospecting" / "server" / f"{WORLD}_another").mkdir()
+    # "lab-ores_2" is another world: its caches never count as lab-ores's.
+    (game / "visualprospecting" / "server" / f"{WORLD}_2_{CLAYTON}").mkdir()
+    (game / "visualprospecting" / "server" / f"{WORLD}_backup").mkdir()
+    assert (
+        vp.locate(w, game).world_id == f"{WORLD}_00000000-0000-4000-8000-000000000000"
+    )
+    (game / "visualprospecting" / "server" / f"{WORLD}_{FRIEND}").mkdir()
     with pytest.raises(vp.VpError, match="several VP cache folders"):
         vp.locate(w, game)
+
+
+def test_another_worlds_caches_are_never_guessed(tmp_path: Path) -> None:
+    game = tmp_path / ".minecraft"
+    write_world(game, world="New World_2", wid=f"New World_2_{CLAYTON}")
+    w = game / "saves" / "New World"
+    w.mkdir()
+    loc = vp.locate(w, game)
+    assert loc.world_id is None and loc.server is None
+    with pytest.raises(vp.VpError, match="no data for it yet"):
+        vp.locate(w, game, CLAYTON)
 
 
 def test_a_world_vp_has_not_seen(tmp_path: Path) -> None:
@@ -890,6 +914,28 @@ def test_a_world_folder_anywhere(tmp_path: Path) -> None:
     assert code == 0, out
 
 
+def test_a_world_dir_in_play_needs_instance_play(tmp_path: Path) -> None:
+    # A made-up Play instance in tmp_path: --world-dir never reads it by default.
+    _, toml, _ = prism(tmp_path)
+    play = tmp_path / "instances" / "GTNH-Play" / ".minecraft"
+    w = write_world(play, world="survival")
+    code, out = load(toml, "--world-dir", str(w))
+    assert code == 1 and "is Play's: add --instance play" in out
+    copy = tmp_path / "copy" / "saves" / "survival"
+    copy.parent.mkdir(parents=True)
+    (play / "saves" / "survival").rename(copy)
+    code, out = load(toml, "--world-dir", str(copy), "--game-dir", str(play))
+    assert code == 1 and "is Play's" in out  # Play's caches, through a copied world
+    code, out = load(
+        toml, "--world-dir", str(copy), "--game-dir", str(play), "--instance", "play"
+    )
+    assert code == 0 and out.startswith("Reading Play's world (read-only).")
+    link = tmp_path / "linked-world"
+    link_or_skip(link, copy)
+    code, out = load(toml, "--world-dir", str(link), "--game-dir", str(play))
+    assert code == 1 and "is a link or junction" in out
+
+
 def test_game_dir_needs_world_dir(lab: tuple[Path, Path, Path]) -> None:
     _, toml, _ = lab
     with pytest.raises(SystemExit) as exc:
@@ -972,6 +1018,9 @@ def test_a_tampered_ore_mix_file_is_refused(tmp_path: Path) -> None:
     (tampered / ore_mixes.FILE).write_bytes(ore_mix_bytes()[:-2] + b"]\n")
     code, out = load(toml)
     assert code == 1 and "doesn't match the manifest" in out
+    (tampered / ore_mixes.FILE).write_bytes(ore_mix_bytes() + b"\n")
+    code, out = load(toml)
+    assert code == 1 and "is not a file of the listed size; collect it again" in out
     assert not access.db_path(home).exists()
 
 
