@@ -9,8 +9,8 @@ parsed from memory.
 
 - **World id.** VP names a world's caches by its world id, saved in the world as
   ``<world>/data/visualprospecting.dat`` (``{data: {wId: "<folder>_<uuid>"}}``), so a copied or
-  renamed world still finds its caches. Without that file, a single ``<folder>_*`` cache
-  folder is used, as ServerUtilities' backups match them.
+  renamed world still finds its caches. Without that file, a single ``<folder>_<uuid>``
+  cache folder is used (the UUID part keeps ``New World`` off ``New World_2``'s caches).
 - **Paths**, relative to the game folder (``.minecraft``): the **server cache**, every vein
   generated (D27), ``visualprospecting/server/<world id>/DIM<n>.dat``, saved on every autosave;
   the **client cache**, the veins one player knows (prospected, or shared by his team),
@@ -26,7 +26,8 @@ parsed from memory.
   sentinel are skipped; two entries for one chunk collapse by VP's trust order (a source as
   trusted or more replaces, depleted flags join). A file without ``version`` (VP 1.4, GTNH
   2.8) or newer than 3 is skipped, with a note. VP's repair of misaligned coordinates, which
-  needs the world's ore-vein pattern, is not re-implemented: GTNH 2.9.0 writes centres.
+  needs the world's ore-vein pattern, is not re-implemented: VP saves only under a
+  confirmed pattern, so the chunks on disk are centres.
 - **Depleted** is the player's own flag (the client cache); the server cache writes ``false``.
 """
 
