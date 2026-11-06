@@ -1,4 +1,8 @@
-"""The ``gos`` command (Appendix B). WO-0.2 adds ``gos doctor``; later WOs add the rest."""
+"""The ``gos`` command (Appendix B). WO-0.2 adds ``gos doctor``; later WOs add the rest.
+
+The service commands (serve, stop, status, launch, token, pair, devices; WO-2.1) live in
+``gregtec.servicecli``.
+"""
 
 from __future__ import annotations
 
@@ -7,20 +11,21 @@ import getpass
 import io
 import os
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import keyring
 import keyring.errors
 
-from gregtec import config, doctor
+from gregtec import config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
 from gregtec.db import build as recipe_db
 from gregtec.db import ores as ore_db
 from gregtec.db import quests as quest_db
 from gregtec.db import structures as structure_db
 from gregtec.ingest import collect as export_collect
-from gregtec.ingest import extractor
+from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
 
@@ -77,7 +82,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
 
-    export = commands.add_parser("export", help="GregtecLink export runs")
+    config_help = (
+        "gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults."
+    )
+    hook = commands.add_parser(
+        "hook",
+        help="Play's Prism hooks (WO-1.4): pre-launch and post-exit",
+        description=(
+            "Prism runs these through GOS_APP\\scripts\\prism_prelaunch.ps1 and "
+            "prism_postexit.ps1. pre-launch exits 3 (Prism then doesn't start the game) while "
+            "the instance lock is held or Export runs, and records whether recipe data is "
+            "stale. post-exit asks to export when Play changed since the last export (D69)."
+        ),
+    )
+    playhooks.add_hook_arguments(hook)
+    hook.add_argument("--config", type=Path, default=None, help=config_help)
+
+    export = commands.add_parser(
+        "export", help="GregtecLink export runs (WO-1.2, WO-1.4)"
+    )
     export_cmds = export.add_subparsers(dest="export_command", required=True)
     collect = export_cmds.add_parser(
         "collect",
@@ -91,13 +115,64 @@ def main(argv: Sequence[str] | None = None) -> int:
             "keep_collected runs (default 5). Paths are [paths] in gos.toml."
         ),
     )
-    collect.add_argument(
-        "--config",
-        type=Path,
-        default=None,
-        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
-        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    collect.add_argument("--config", type=Path, default=None, help=config_help)
+    run = export_cmds.add_parser(
+        "run",
+        help="sync Play to Export, launch Export to autoexport, record the fingerprint, diff",
+        description=(
+            "As Clayton, with no GTNH client running: holds the instance lock, fingerprints "
+            "Play, syncs it to GTNH-Export, launches Export through Prism's CLI (it exports and "
+            "quits by itself, D100), waits for the new complete run and for Export to quit, "
+            "records Play's fingerprint for the run and writes the diff against the previous "
+            "export to GOS_HOME/data/reports/."
+        ),
     )
+    run.add_argument("--config", type=Path, default=None, help=config_help)
+    run.add_argument(
+        "--notify",
+        action="store_true",
+        help="show the result in a message box (Windows)",
+    )
+    # Set by the post-exit hook, which waits until the export holding the lock shows it.
+    run.add_argument("--ticket", default="", help=argparse.SUPPRESS)
+    diff = export_cmds.add_parser(
+        "diff",
+        help="compare two export runs (manifest and file-hash level)",
+        description=(
+            "OLD and NEW are run folders or run ids (looked up in GOS_HOME/data/exports, then "
+            "in Export's gregteclink/exports). Without them: the last two recorded exports."
+        ),
+    )
+    diff.add_argument("runs", nargs="*", metavar="RUN", help="OLD NEW")
+    diff.add_argument("--config", type=Path, default=None, help=config_help)
+
+    fp = commands.add_parser(
+        "fingerprint",
+        help="Play's fingerprint and whether recipe data is stale (read-only)",
+        description=(
+            "Fingerprints GTNH-Play (mods, scripts, dreamcraft.cfg, [fingerprint] configs, "
+            "mmc-pack.json; Export's sync excludes left out) and compares it with the last "
+            "recorded export. Reads Play only; writes nothing but GOS's hash cache."
+        ),
+    )
+    fp.add_argument(
+        "--list", action="store_true", help="print every file and its SHA-256"
+    )
+    fp.add_argument("--no-cache", action="store_true", help="hash every file again")
+    fp.add_argument("--config", type=Path, default=None, help=config_help)
+
+    lock = commands.add_parser("lock", help="the instance lock (Export vs Play, V25)")
+    lock_cmds = lock.add_subparsers(dest="lock_command", required=True)
+    lock_status = lock_cmds.add_parser("status", help="say who holds the instance lock")
+    lock_status.add_argument("--config", type=Path, default=None, help=config_help)
+    lock_hold = lock_cmds.add_parser(
+        "hold",
+        help="hold the instance lock (to test that a launch is refused)",
+        description="Holds the lock until Ctrl+C or --minutes pass.",
+    )
+    lock_hold.add_argument("--minutes", type=float, default=10.0)
+    lock_hold.add_argument("--reason", default="manual test (gos lock hold)")
+    lock_hold.add_argument("--config", type=Path, default=None, help=config_help)
 
     db = commands.add_parser(
         "db", help="the recipe database (GOS_HOME/data/gos.sqlite)"
@@ -309,6 +384,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     smoke.add_argument("--skip-sdk", action="store_true", help="run the fast lane only")
 
+    servicecli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -365,6 +441,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     args = parser.parse_args(argv)
+    if args.command in servicecli.COMMANDS:
+        return servicecli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
@@ -415,6 +493,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.stdout,
             )
         return ore_db.list_main(args.config, args.dim, args.limit, sys.stdout)
+    if args.command == "hook":
+        return playhooks.hook_main(args, sys.stdout, os.environ)
+    if args.command == "export":
+        return _export(args)
+    if args.command == "fingerprint":
+        return _fingerprint(args)
+    if args.command == "lock":
+        return _lock(args)
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"
@@ -449,14 +535,35 @@ def _deploy(ref: str, config_path: Path | None) -> int:
         return 2
     home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
     prism = [cfg.prism_instances, cfg.prism_instances.parent]
-    forbidden = [*prism, *doctor.default_prism_roots(), home]
+    forbidden = [*prism, *doctor.default_prism_roots(), home, cfg.gos_home]
+    for problem in cfg.service_errors:
+        print(f"Warning: {problem} (GOS won't start until it's fixed)", file=sys.stderr)
+    # GOS is stopped only for the swap, after the minutes of staging and building, and not at
+    # all for a deploy that is refused (a dirty tree, a ref not in main).
+    stopped: list[dict[str, object]] = []
+
+    def stop_gos() -> None:
+        if (sup := _stop_for_deploy(cfg)) is not None:
+            stopped.append(sup)
+
     try:
         release = app_deploy.deploy(
-            app_deploy.REPO_ROOT, ref, cfg.gos_app, forbidden=forbidden
+            app_deploy.REPO_ROOT,
+            ref,
+            cfg.gos_app,
+            forbidden=forbidden,
+            before_swap=stop_gos,
         )
     except (app_deploy.DeployError, OSError) as exc:
         print(f"Not deployed: {exc}", file=sys.stderr)
         return 1
+    finally:  # also after Ctrl+C: GOS comes back, from whichever release is current
+        if stopped:
+            # As it ran: the gos.toml in its run file (the Run key's --config), if it says.
+            ran_with = stopped[0].get("config", config_path)
+            _restart_after_deploy(
+                cfg, Path(ran_with) if isinstance(ran_with, str | Path) else None
+            )
     was = f", replacing {release.replaced[:12]}" if release.replaced else ""
     print(f"Deployed {release.commit[:12]} ({ref}) to {release.path}{was}.")
     print(f"{release.path.parent / app_deploy.SCRIPTS} is a copy of its scripts/.")
@@ -474,6 +581,129 @@ def _deploy(ref: str, config_path: Path | None) -> int:
     print(f"  {gos} doctor")
     print(f"  {python} {scripts / 'check_tweaks.py'} <instance folder> [--apply]")
     print(f"  {python} {scripts / 'sync_instances.py'} --dry-run")
+    return 0
+
+
+def _stop_for_deploy(cfg: config.Config) -> dict[str, object] | None:
+    """Stop a supervisor running from GOS_APP: Windows can't rename ``current`` under it (D115).
+
+    Returns its run file's data if it was stopped, so the deploy restarts it from the new
+    release with the same gos.toml.
+    """
+    run_file = cfg.run_dir / control.SUPERVISOR_FILE
+    sup = control.running(run_file, control.SUPERVISOR_SERVICE)
+    if sup is None or not isinstance(sup.get("exe"), str):
+        return None
+    app = os.path.normcase(os.path.abspath(cfg.gos_app))
+    exe = os.path.normcase(os.path.abspath(sup["exe"]))
+    if not exe.startswith(app.rstrip("\\/") + os.sep):
+        return None
+    print("Stopping GOS for the swap (it runs from GOS_APP); it restarts afterwards.")
+    try:
+        control.call(sup["port"], "POST", "/shutdown", token=sup["token"])
+    except control.ControlError as exc:
+        print(f"  Couldn't stop it ({exc}); the swap may fail and change nothing.")
+        return None
+    servicecli.wait_until(
+        lambda: control.running(run_file, control.SUPERVISOR_SERVICE), want=False
+    )
+    return sup
+
+
+def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
+    """Start the supervisor of GOS_APP's current release, with the gos.toml it ran with."""
+    exe = app_deploy.venv_exe(cfg.gos_app / app_deploy.CURRENT, "gos-supervisor")
+    if not exe.is_file():
+        print(f"Couldn't restart GOS: there is no {exe}. Log off and on, or run it.")
+        return
+    argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
+    servicecli.spawn_detached(argv, cfg.gos_home)
+    print(f"Restarted GOS: {exe}")
+
+
+def _load(path: Path | None) -> config.Config | None:
+    try:
+        return config.load(path)
+    except (OSError, ValueError) as exc:
+        print(f"Can't read gos.toml: {exc}", file=sys.stderr)
+        return None
+
+
+def _export(args: argparse.Namespace) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if args.export_command == "run":
+        notify = playhooks.notify_dialog if args.notify else None
+        return playhooks.run_export(cfg, sys.stdout, notify=notify, ticket=args.ticket)
+    refs = args.runs
+    if len(refs) not in (0, 2):
+        print(
+            "Give two runs (OLD NEW), or none for the last two exports.",
+            file=sys.stderr,
+        )
+        return 2
+    if not refs:
+        exports = fingerprint.load_state(cfg.gos_home)["exports"]
+        if len(exports) < 2:
+            print(
+                "Fewer than two exports are recorded: name two runs.", file=sys.stderr
+            )
+            return 2
+        refs = [exports[-2]["run_id"], exports[-1]["run_id"]]
+    try:
+        old, new = (rundiff.load_run(rundiff.find_run(cfg, r)) for r in refs)
+    except rundiff.RunError as exc:
+        print(f"Can't diff: {exc}", file=sys.stderr)
+        return 1
+    print(rundiff.report(rundiff.diff_runs(cfg.gos_home, old, new)), end="")
+    return 0
+
+
+def _fingerprint(args: argparse.Namespace) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    try:
+        fp = fingerprint.compute_play(cfg, use_cache=not args.no_cache)
+    except fingerprint.FingerprintError as exc:
+        print(f"Can't fingerprint Play: {exc}", file=sys.stderr)
+        return 1
+    if args.list:
+        sys.stdout.write(fingerprint.listing(fp.entries).decode("utf-8"))
+    print(f"Play ({cfg.instance('play')}): {fp.digest}")
+    print(f"  {len(fp.entries)} files: {fp.counts()}")
+    for note in fp.notes:
+        print(f"  note: {note}")
+    status = fingerprint.status(cfg.gos_home, fp)
+    print(f"  {status.line()}")
+    for row in status.changes.lines(limit=20):
+        print(f"    {row}")
+    return 0
+
+
+def _lock(args: argparse.Namespace) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if args.lock_command == "status":
+        holder = locks.held(cfg.gos_home)
+        print("free" if holder is None else f"held by {holder.describe()}")
+        return 0
+    try:
+        lock = locks.InstanceLock(cfg.gos_home).acquire("test", args.reason)
+    except locks.LockHeld as exc:
+        print(f"Can't hold it: {exc}", file=sys.stderr)
+        return 1
+    with lock:
+        print(
+            f"Holding the instance lock for {args.minutes:g} min (Ctrl+C releases it)."
+        )
+        try:
+            time.sleep(args.minutes * 60)
+        except KeyboardInterrupt:
+            pass
+    print("Released.")
     return 0
 
 
