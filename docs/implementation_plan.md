@@ -389,7 +389,7 @@ C:\Games\PrismLauncher\           portable Prism (V24)
    - **Pre-launch** on Play: compare against the last `export_run` and mark the DB stale on mismatch; check the instance lock; tell the supervisor to start voice and watchers (D77).
    - **Post-exit** [QA must-fix 7]: if the fingerprint changed since the last export, ask Clayton on the dashboard and by voice ("Mods changed. Export now?") (D69). On yes: sync instances, take the lock, export, normalize, diff, and flag affected plans (§7.13). If nothing changed, nothing runs.
 5. **Item and fluid names.** NEI `itempanel.csv` plus English names from the dump, loaded into `name_fts` (FTS5).
-6. **Ore mixes.** From NEI's GT ore-vein handler pages in the dump, or the GT worldgen registry in the export module (**VERIFY** during WO-1.6, then pick one).
+6. **Ore mixes.** From the GT worldgen registry in the export module (`gt_ore_mixes.json`): V08, resolved in WO-1.6 (D126), because NEI's GT ore-vein pages have no mix name, heights, weight, density or size.
 7. **Structures.**
    - Base pack: MrBruh's `gtnh-extractor` (Apache-2.0) builds every controller headless and records `registry@meta` per cell, hatch-eligible cells and coil/glass channels [A§4.2]. Re-pin it to 2.9.0, because it was pinned to beta-3.
    - Addon multis: creative capture in the Lab (§7.10).

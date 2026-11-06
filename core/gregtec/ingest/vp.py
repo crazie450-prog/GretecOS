@@ -6,7 +6,7 @@ re-implemented from its source (``DimensionCache``, ``WorldCache``, ``ClientCach
 file; every file is read whole through ``gamestate.safe_open.read_bytes`` (share-delete, one
 read, handle closed at once, 3 tries with backoff, which also covers VP's in-place writes) and
 parsed from memory. A dimension file still unreadable after the tries is listed in
-``Cache.unreadable``, apart from the files VP would skip too, so a caller can refuse a partial
+``Cache.unreadable``, apart from the files skipped on purpose, so a caller can refuse a partial
 picture (``gos ores load`` does, D128).
 
 - **World id.** VP names a world's caches by its world id, saved in the world as
@@ -86,7 +86,8 @@ class Cache:
     path: Path
     veins: dict[tuple[int, int, int], Vein] = field(default_factory=dict)
     files: list[str] = field(default_factory=list)  # read and used
-    problems: list[str] = field(default_factory=list)  # skipped, as VP would skip them
+    # "<name>: why", for files skipped on purpose (another format, a link, too big).
+    problems: list[str] = field(default_factory=list)
     # "<path>: why", for files not read in 3 tries (caught mid-write, or damaged).
     unreadable: list[str] = field(default_factory=list)
 
