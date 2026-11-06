@@ -1,0 +1,622 @@
+"""The core's HTTP and WebSocket API (WO-2.1). Every route sits behind :class:`HostOriginGuard`.
+
+| route                          | who                     | what                                  |
+|--------------------------------|-------------------------|---------------------------------------|
+| GET  /health                   | anyone (Host-checked)   | liveness for the supervisor's probe   |
+| GET  /api/session              | admin, client, device   | who the caller is                     |
+| GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
+| GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
+| POST /api/pair/start           | anyone, dashboard name  | ask to pair; the code goes elsewhere  |
+| POST /api/pair/complete        | anyone, dashboard name  | the right code sets the device cookie |
+| GET  /api/pair/pending         | admin, device           | pending requests with their codes     |
+| POST /api/pair/{id}/deny       | admin, device           | drop a pending request                |
+| GET  /api/devices              | admin, device           | paired devices                        |
+| DELETE /api/devices/{id}       | admin, device           | revoke a device                       |
+| GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
+| POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
+| WS   /ws                       | admin, client, device   | pushes ``health`` and ``pair.pending``|
+
+Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
+which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
+``localhost``. Cookies ignore ports, so a cookie for ``localhost`` would also go to every other
+web server on this PC that the browser opens, a dev server of gos-dev's included (D117).
+
+Health strip items have ``id``, ``kind`` (process or check), ``label``, ``status`` (ok, warn,
+error or off) and ``detail``; process items add ``state``, ``pid`` (the process's own),
+``launcher_pid`` (the one the supervisor started: on Windows a venv's python.exe launcher),
+``uptime_s``, ``restarts``, ``last_exit`` and ``last_restart_ts`` from the supervisor.
+
+No ``from __future__ import annotations`` here: FastAPI reads the route signatures at runtime,
+and the ``Anyone``/``Trusted``/``Admin`` dependency aliases are local to :func:`create_app`.
+"""
+
+import asyncio
+import contextlib
+import json
+import logging
+import os
+import sqlite3
+import time
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
+from typing import Annotated, Any
+
+import keyring.errors
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.websockets import WebSocketDisconnect
+
+from gregtec import control
+from gregtec.api.security import (
+    COOKIE,
+    COOKIE_MAX_AGE,
+    PAIR_TTL_S,
+    Auth,
+    HostOriginGuard,
+    Pairing,
+    PairingError,
+    Principal,
+)
+from gregtec.config import LOOPBACK, Config
+from gregtec.llm import keys
+from gregtec.llm.usage import UsageMeter
+from gregtec.store import Store
+
+log = logging.getLogger("gregtec.api")
+
+SERVICE = control.CORE_SERVICE
+VERSION = "0.0.0"
+POLL_S = 1.0  # how often the core refreshes the supervisor's process table
+KEY_CHECK_S = 30.0  # how often it asks the keyring whether the Anthropic key is stored
+HEARTBEAT_S = 15.0  # a health push at least this often, changed or not
+MAX_MESSAGE = 4096  # request bodies and WebSocket messages
+# Process states from the supervisor and the strip status each one shows as.
+STATE_STATUS = {
+    "running": "ok",
+    "starting": "warn",
+    "unresponsive": "error",
+    "backoff": "error",
+    "stopped": "off",
+}
+
+
+QUEUE_MAX = (
+    100  # a client that stopped reading drops messages instead of growing the queue
+)
+CLOSE = (
+    None  # queued instead of a message: close the socket (its credential was revoked)
+)
+
+
+@dataclass(eq=False)
+class Socket:
+    """One WebSocket client: who it authenticated as, and its outgoing queue."""
+
+    who: Principal
+    queue: asyncio.Queue[str | None]
+
+    @property
+    def trusted(self) -> bool:
+        """Admin or a paired device: may see pairing codes."""
+        return self.who.role in ("admin", "device")
+
+    def put(self, text: str) -> None:
+        if self.queue.qsize() < QUEUE_MAX:
+            self.queue.put_nowait(text)
+
+
+@dataclass
+class Core:
+    """Everything the routes share. ``shutdown`` stops the server (set by the runner)."""
+
+    cfg: Config
+    store: Store
+    auth: Auth
+    meter: UsageMeter
+    pairing: Pairing = field(default_factory=Pairing)
+    supervisor_token: str | None = None
+    shutdown: Callable[[], None] | None = None
+    started: float = field(default_factory=time.time)
+    supervisor_status: dict[str, Any] | None = None
+    supervisor_error: str | None = None
+    key_status: tuple[str, str] = ("warn", "not checked yet")
+    sockets: set[Socket] = field(default_factory=set)
+    loop: asyncio.AbstractEventLoop | None = None
+    pushed_pending: list[str] = field(default_factory=list)  # request ids last pushed
+
+    # --- pushing to WebSocket clients
+
+    def broadcast(self, message: dict[str, Any], *, trusted_only: bool = False) -> None:
+        """Queue ``message`` for every socket (only admin/device sockets if ``trusted_only``)."""
+        text = json.dumps(message)
+        for sock in list(self.sockets):
+            if trusted_only and not sock.trusted:
+                continue
+            sock.put(text)
+
+    def _threadsafe(self, fn: Callable[[], None]) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(fn)
+
+    def pairing_changed(self) -> None:
+        """Pairing's ``on_change``; may run on a worker thread."""
+        self._threadsafe(self.push_pending)
+
+    def push_pending(self) -> None:
+        """Push the pending pairing requests to trusted sockets if they changed (loop only)."""
+        pending = self.pairing.pending()
+        ids = [p["request_id"] for p in pending]
+        if ids != self.pushed_pending:
+            self.pushed_pending = ids
+            self.broadcast({"type": "pair.pending", "data": pending}, trusted_only=True)
+
+    def disconnect(self, revoked: Callable[[Principal], bool]) -> None:
+        """Close the open sockets of a revoked device or client (any thread)."""
+
+        def close() -> None:
+            for sock in list(self.sockets):
+                if revoked(sock.who):
+                    self.sockets.discard(sock)
+                    sock.queue.put_nowait(CLOSE)
+
+        self._threadsafe(close)
+
+    # --- health
+
+    def refresh_supervisor(self) -> None:
+        """Fetch the supervisor's process table (blocking; run it in a thread)."""
+        if self.supervisor_token is None:
+            return
+        try:
+            self.supervisor_status = control.call(
+                self.cfg.supervisor_port,
+                "GET",
+                "/status",
+                token=self.supervisor_token,
+                timeout=2.0,
+            )
+            self.supervisor_error = None
+        except control.ControlError as exc:
+            self.supervisor_status = None
+            self.supervisor_error = str(exc)
+
+    def refresh_key(self) -> None:
+        try:
+            stored = keys.has_key(keys.ANTHROPIC)
+        except keyring.errors.KeyringError as exc:
+            self.key_status = ("warn", f"keyring unavailable ({type(exc).__name__})")
+            return
+        self.key_status = (
+            ("ok", "stored")
+            if stored
+            else ("warn", "not stored: gos key set anthropic")
+        )
+
+    def health(self) -> dict[str, Any]:
+        now = time.time()
+        items: list[dict[str, Any]] = []
+        if self.supervisor_token is None:
+            items.append(
+                _item("supervisor", "process", "Supervisor", "off", "not supervised")
+            )
+            items.append(self._own_item(now))
+        elif self.supervisor_status is None:
+            items.append(
+                _item(
+                    "supervisor",
+                    "process",
+                    "Supervisor",
+                    "error",
+                    self.supervisor_error or "no answer yet",
+                )
+            )
+            items.append(self._own_item(now))
+        else:
+            sup = self.supervisor_status
+            items.append(
+                _item(
+                    "supervisor",
+                    "process",
+                    "Supervisor",
+                    "ok",
+                    "running",
+                    pid=sup.get("pid"),
+                    uptime_s=sup.get("uptime_s"),
+                )
+            )
+            for proc in sup.get("processes", []):
+                items.append(_process_item(proc))
+        items.append(self._db_item())
+        items.append(_item("anthropic_key", "check", "Anthropic key", *self.key_status))
+        items.append(self._credits_item())
+        statuses = {i["status"] for i in items}
+        overall = (
+            "error" if "error" in statuses else "warn" if "warn" in statuses else "ok"
+        )
+        return {"ts": int(now), "overall": overall, "items": items}
+
+    def _own_item(self, now: float) -> dict[str, Any]:
+        return _item(
+            "core",
+            "process",
+            "Core",
+            "ok",
+            "running",
+            state="running",
+            pid=os.getpid(),
+            uptime_s=int(now - self.started),
+            restarts=0,
+            last_exit=None,
+            last_restart_ts=None,
+        )
+
+    def _db_item(self) -> dict[str, Any]:
+        try:
+            self.store.rows("SELECT 1")
+        except sqlite3.Error as exc:  # shown on the strip, not raised
+            return _item("db", "check", "Database", "error", type(exc).__name__)
+        return _item("db", "check", "Database", "ok", self.store.path.name)
+
+    def _credits_item(self) -> dict[str, Any]:
+        try:
+            cycle = self.meter.cycle()
+        except sqlite3.Error as exc:  # shown on the strip, not raised
+            return _item("credits", "check", "API credits", "error", type(exc).__name__)
+        crossed = cycle["crossed_pct"]
+        top = max(self.meter.alerts_pct)
+        status = "error" if top in crossed else "warn" if crossed else "ok"
+        detail = (
+            f"${cycle['spent_usd']:.2f} of ${cycle['budget_usd']:.2f} "
+            f"this cycle ({cycle['pct']:.0f}%)"
+        )
+        return _item(
+            "credits", "check", "API credits", status, detail, pct=cycle["pct"]
+        )
+
+
+def _item(
+    item_id: str, kind: str, label: str, status: str, detail: str, **extra: object
+) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "kind": kind,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        **extra,
+    }
+
+
+def _process_item(proc: dict[str, Any]) -> dict[str, Any]:
+    state = str(proc.get("state"))
+    return _item(
+        str(proc.get("name")),
+        "process",
+        str(proc.get("label") or proc.get("name")),
+        STATE_STATUS.get(state, "warn"),
+        str(proc.get("detail") or state),
+        state=state,
+        pid=proc.get("pid"),
+        launcher_pid=proc.get("launcher_pid"),
+        uptime_s=proc.get("uptime_s"),
+        restarts=proc.get("restarts", 0),
+        last_exit=proc.get("last_exit"),
+        last_restart_ts=proc.get("last_restart_ts"),
+    )
+
+
+def _health_signature(health: dict[str, Any]) -> str:
+    """What a push is about: everything but the clock and uptimes."""
+    items = [
+        {k: v for k, v in item.items() if k not in ("uptime_s",)}
+        for item in health["items"]
+    ]
+    return json.dumps([health["overall"], items], sort_keys=True)
+
+
+def create_app(core: Core) -> FastAPI:
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        core.loop = asyncio.get_running_loop()
+        core.pairing.on_change = core.pairing_changed
+        task = asyncio.create_task(_watch(core))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    app = FastAPI(
+        title="Gregtec OS core",
+        version=VERSION,
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    app.add_middleware(HostOriginGuard, allowed_hosts=core.cfg.allowed_hosts)
+
+    def principal(request: Request) -> Principal:
+        found = core.auth.from_headers(
+            request.headers.get("authorization"), request.cookies.get(COOKIE)
+        )
+        if found is None:
+            raise HTTPException(401, "not paired: pair this device first")
+        return found
+
+    def trusted(who: Annotated[Principal, Depends(principal)]) -> Principal:
+        if who.role not in ("admin", "device"):
+            raise HTTPException(403, "only a paired device or Clayton's gos commands")
+        return who
+
+    def admin(who: Annotated[Principal, Depends(principal)]) -> Principal:
+        if who.role != "admin":
+            raise HTTPException(403, "only Clayton's gos commands")
+        return who
+
+    def pairing_host(request: Request) -> str:
+        """The request's host name, if pairing may happen on it (see the module docstring)."""
+        name = (request.headers.get("host") or "").lower().split(":")[0]
+        if name in (LOOPBACK, "localhost"):
+            raise HTTPException(
+                403,
+                f"pair on http://{core.cfg.dashboard_host}:{core.cfg.core_port}/ instead: "
+                f"a cookie for {name} would also reach every other local web server",
+            )
+        return name
+
+    Anyone = Annotated[Principal, Depends(principal)]
+    Trusted = Annotated[Principal, Depends(trusted)]
+    Admin = Annotated[Principal, Depends(admin)]
+    PairingHost = Annotated[str, Depends(pairing_host)]
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+    @app.get("/health")
+    def health_probe() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "service": SERVICE,
+            "version": VERSION,
+            "pid": os.getpid(),
+        }
+
+    @app.get("/api/session")
+    def session(who: Anyone) -> dict[str, Any]:
+        return {"role": who.role, "name": who.name, "device_id": who.device_id}
+
+    @app.get("/api/health")
+    def health(_: Anyone) -> dict[str, Any]:
+        return core.health()
+
+    @app.get("/api/usage")
+    def usage(_: Anyone) -> dict[str, Any]:
+        return core.meter.cycle()
+
+    @app.post("/api/pair/start")
+    async def pair_start(request: Request, _: PairingHost) -> dict[str, Any]:
+        body = await _json_body(request)
+        try:
+            pending = core.pairing.start(body.get("name"))
+        except PairingError as exc:
+            raise HTTPException(exc.status, exc.reason) from None
+        # Only a prefix: gos-dev reads the logs (D82), and a full id would let it use up the
+        # request's tries with wrong codes.
+        log.info("pairing requested", extra={"request": _id_prefix(pending.request_id)})
+        # The code is shown on monitor 2 and by `gos pair`, never sent back to the asker.
+        return {"request_id": pending.request_id, "expires_in": PAIR_TTL_S}
+
+    @app.post("/api/pair/complete")
+    async def pair_complete(
+        request: Request, response: Response, host: PairingHost
+    ) -> dict[str, Any]:
+        # The DB work runs in a thread, so a busy DB never blocks the event loop.
+        body = await _json_body(request)
+        try:
+            name = core.pairing.complete(body.get("request_id"), body.get("code"))
+        except PairingError as exc:
+            log.warning(
+                "pairing refused",
+                extra={
+                    "request": _id_prefix(str(body.get("request_id"))),
+                    "why": exc.reason,
+                },
+            )
+            raise HTTPException(exc.status, exc.reason) from None
+        device_id, cookie = await asyncio.to_thread(core.auth.add_device, name)
+        response.set_cookie(
+            COOKIE,
+            cookie,  # host-only: sent back to this host name alone
+            max_age=COOKIE_MAX_AGE,
+            path="/",
+            httponly=True,
+            samesite="strict",
+            # The tailnet name is always HTTPS (Tailscale Serve); *.localhost is plain http.
+            secure=not host.endswith(".localhost"),
+        )
+        log.info("device paired", extra={"device_id": device_id})
+        return {"device_id": device_id, "name": name}
+
+    @app.get("/api/pair/pending")
+    def pair_pending(_: Trusted) -> list[dict[str, Any]]:
+        return core.pairing.pending()
+
+    @app.post("/api/pair/{request_id}/deny")
+    def pair_deny(request_id: str, _: Trusted) -> dict[str, Any]:
+        if not core.pairing.deny(request_id):
+            raise HTTPException(404, "no such pairing request")
+        return {"denied": request_id}
+
+    @app.get("/api/devices")
+    def devices(_: Trusted) -> list[dict[str, Any]]:
+        return core.auth.devices()
+
+    @app.delete("/api/devices/{device_id}")
+    def revoke_device(device_id: str, who: Trusted) -> dict[str, Any]:
+        if not core.auth.revoke_device(device_id):
+            raise HTTPException(404, "no such paired device")
+        core.disconnect(lambda w: w.device_id == device_id)
+        log.info("device revoked", extra={"device_id": device_id, "by": who.role})
+        return {"revoked": device_id}
+
+    @app.get("/api/tokens")
+    def tokens(_: Admin) -> list[dict[str, Any]]:
+        return core.auth.client_tokens()
+
+    @app.post("/api/tokens/{name}")
+    def issue_token(name: str, _: Admin) -> dict[str, Any]:
+        try:
+            token = core.auth.issue_client_token(name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        core.disconnect(
+            lambda w: w.role == "client" and w.name == name
+        )  # the old token's
+        log.info("client token issued", extra={"client": name})
+        return {"name": name, "token": token}
+
+    @app.delete("/api/tokens/{name}")
+    def revoke_token(name: str, _: Admin) -> dict[str, Any]:
+        if not core.auth.revoke_client_token(name):
+            raise HTTPException(404, "no such client token")
+        core.disconnect(lambda w: w.role == "client" and w.name == name)
+        log.info("client token revoked", extra={"client": name})
+        return {"revoked": name}
+
+    @app.post("/api/admin/shutdown")
+    def shutdown(_: Admin) -> dict[str, Any]:
+        if core.shutdown is None:
+            raise HTTPException(409, "this core can't be stopped from the API")
+        log.info("shutdown requested")
+        core.shutdown()
+        return {"stopping": True}
+
+    @app.websocket("/ws")
+    async def socket(ws: WebSocket) -> None:
+        who = await asyncio.to_thread(
+            core.auth.from_headers,
+            ws.headers.get("authorization"),
+            ws.cookies.get(COOKIE),
+        )
+        if who is None:
+            await ws.close(code=1008, reason="not paired")
+            return
+        await ws.accept()
+        sock = Socket(who, asyncio.Queue())
+        core.sockets.add(sock)
+        try:
+            hello = {"type": "hello", "role": who.role, "name": who.name}
+            await ws.send_text(json.dumps(hello))
+            health = await asyncio.to_thread(core.health)
+            await ws.send_text(json.dumps({"type": "health", "data": health}))
+            if sock.trusted:
+                pending = {"type": "pair.pending", "data": core.pairing.pending()}
+                await ws.send_text(json.dumps(pending))
+            await _pump(ws, sock)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            core.sockets.discard(sock)
+
+    return app
+
+
+def _id_prefix(request_id: str) -> str:
+    """Enough of a pairing request id to match log lines, too little to use it."""
+    return request_id[:4] + "..."
+
+
+async def _json_body(request: Request) -> dict[str, Any]:
+    # JSON only: a cross-site form post can't send it without a CORS preflight, which is refused.
+    if (
+        request.headers.get("content-type", "").split(";")[0].strip()
+        != "application/json"
+    ):
+        raise HTTPException(415, "send application/json")
+    length = request.headers.get("content-length")
+    if length is not None and (not length.isdigit() or int(length) > MAX_MESSAGE):
+        raise HTTPException(413, "body too large")
+    raw = b""
+    async for (
+        chunk
+    ) in request.stream():  # a chunked body has no length: count as it comes
+        raw += chunk
+        if len(raw) > MAX_MESSAGE:
+            raise HTTPException(413, "body too large")
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        raise HTTPException(400, "body isn't JSON") from None
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be a JSON object")
+    return body
+
+
+async def _pump(ws: WebSocket, sock: Socket) -> None:
+    """Send queued pushes while answering pings, until the client goes away or is revoked."""
+
+    async def sender() -> None:
+        while True:
+            text = await sock.queue.get()
+            if text is CLOSE:
+                await ws.close(code=1008, reason="revoked")
+                return
+            await ws.send_text(text)
+
+    async def receiver() -> None:
+        while True:
+            message = await ws.receive()
+            if message["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(message.get("code", 1000))
+            text = message.get("text")
+            if text is None:
+                continue  # binary frames mean nothing here
+            if len(text) > MAX_MESSAGE:
+                await ws.close(code=1009)
+                return
+            try:
+                kind = json.loads(text).get("type")
+            except (ValueError, AttributeError):
+                kind = None
+            if kind == "ping":
+                sock.put(json.dumps({"type": "pong"}))
+
+    tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()  # re-raise WebSocketDisconnect
+    finally:
+        for task in tasks:
+            task.cancel()
+
+
+async def _watch(core: Core) -> None:
+    """Refresh health in the background and push it when it changes.
+
+    Also pushes ``pair.pending`` when a pairing request expires, so monitor 2 never shows a dead
+    code. Everything that touches the DB or the network runs in a thread.
+    """
+    last_signature = ""
+    last_push = 0.0
+    last_key = -KEY_CHECK_S
+    while True:
+        now = time.monotonic()
+        try:
+            if now - last_key >= KEY_CHECK_S:
+                await asyncio.to_thread(core.refresh_key)
+                last_key = now
+            await asyncio.to_thread(core.refresh_supervisor)
+            health = await asyncio.to_thread(core.health)
+            signature = _health_signature(health)
+            if signature != last_signature or now - last_push >= HEARTBEAT_S:
+                core.broadcast({"type": "health", "data": health})
+                last_signature, last_push = signature, now
+            core.push_pending()  # catches requests that expired
+        except Exception:  # the watcher must keep running
+            log.exception("health refresh failed")
+        await asyncio.sleep(POLL_S)
