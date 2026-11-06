@@ -14,6 +14,8 @@ import keyring.errors
 
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
+from gregtec.db import structures as structure_db
+from gregtec.ingest import extractor
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
 
@@ -126,6 +128,61 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     smoke.add_argument("--skip-sdk", action="store_true", help="run the fast lane only")
 
+    structures = commands.add_parser(
+        "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
+    )
+    structure_cmds = structures.add_subparsers(dest="structures_command", required=True)
+    extract = structure_cmds.add_parser(
+        "extract",
+        help="run gtnh-extractor re-pinned to GTNH 2.9.0 and write its dataset",
+        description=(
+            "Fetches MrBruh's gtnh-extractor at its pinned commit into WORK, swaps in this "
+            "repo's Gradle wrapper, re-pins it to GTNH 2.9.0 (GT 5.09.54.265, StructureLib "
+            "1.4.47) and runs its headless dev server, which builds every base-pack "
+            "multiblock and writes OUT/multiblocks/. Reads and writes no Prism instance. The "
+            "first run downloads several GB."
+        ),
+    )
+    extract.add_argument(
+        "--work",
+        type=Path,
+        default=None,
+        help="checkout and build folder. Default: $GOS_HOME/data/cache/gtnh-extractor.",
+    )
+    extract.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="new dataset folder. Default: $GOS_HOME/data/structures/2.9.0-<UTC time>.",
+    )
+    load = structure_cmds.add_parser(
+        "load",
+        help="load a gtnh-extractor dataset into GOS_HOME/data/gos.sqlite",
+        description=(
+            "Checks the dataset (schema v3, labelled GT 5.09.54.265) and replaces the "
+            "structure table's gtnh-extractor rows with it in one transaction, then prints "
+            "the counts. A controller file that doesn't read is set aside and listed; the "
+            "rest load."
+        ),
+    )
+    load.add_argument(
+        "dataset",
+        nargs="?",
+        type=Path,
+        default=None,
+        help=(
+            "the dataset folder. Default: the newest in $GOS_HOME/data/structures that "
+            "reads."
+        ),
+    )
+    for each in (extract, load):
+        each.add_argument(
+            "--gos-home",
+            type=Path,
+            default=None,
+            help="Default: $GOS_HOME, else ~/GregtecOS.",
+        )
+
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return doctor.main(
@@ -154,6 +211,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from gregtec.llm import smoke as llm_smoke
 
         return llm_smoke.run(runs=args.runs, skip_sdk=args.skip_sdk, out=sys.stdout)
+    if args.command == "structures" and args.structures_command == "extract":
+        return extractor.main(args.gos_home, args.work, args.out, sys.stdout)
+    if args.command == "structures" and args.structures_command == "load":
+        return structure_db.main(args.gos_home, args.dataset, sys.stdout)
     parser.error(f"unknown command {args.command}")
     return 2
 
