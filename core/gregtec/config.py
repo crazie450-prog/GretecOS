@@ -6,6 +6,7 @@
 | [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | export collect (WO-1.2)     |
 | [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3), collect      |
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync, collect               |
+| [paths] world            | none (the world's folder name in saves/) | quests load (WO-1.5)        |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
@@ -55,6 +56,7 @@ class Config:
     play: str = "GTNH-Play"
     export: str = "GTNH-Export"
     lab: str = "GTNH-Lab"
+    world: str | None = None  # Play's world: its folder name in saves/ (WO-1.5)
     sync_exclude: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(DEFAULT_SYNC_EXCLUDE)
     )
@@ -152,6 +154,7 @@ def load(path: Path | None = None) -> Config:
         play=_string(paths, "play", defaults.play, "[paths]"),
         export=_string(paths, "export", defaults.export, "[paths]"),
         lab=_string(paths, "lab", defaults.lab, "[paths]"),
+        world=_string(paths, "world", "", "[paths]") if "world" in paths else None,
         sync_exclude=exclude,
         keep_collected=keep,
         keep_runs=keep_runs,

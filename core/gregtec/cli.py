@@ -15,6 +15,7 @@ import keyring.errors
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
 from gregtec.db import build as recipe_db
+from gregtec.db import quests as quest_db
 from gregtec.ingest import collect as export_collect
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
@@ -120,6 +121,72 @@ def main(argv: Sequence[str] | None = None) -> int:
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
 
+    quests = commands.add_parser(
+        "quests", help="the quest book, progress, frontier and tier (BetterQuesting)"
+    )
+    quest_cmds = quests.add_subparsers(dest="quests_command", required=True)
+    q_load = quest_cmds.add_parser(
+        "load",
+        help="read a world's quest book and progress into GOS_HOME/data/gos.sqlite",
+        description=(
+            "Read-only on the game: reads the world's betterquesting/QuestDatabase.json (or "
+            "the pack's DefaultQuests when the world has none yet) and every player's "
+            "QuestProgress, works out the tracked player's frontier and tier, and replaces "
+            "the quest tables of GOS_HOME/data/gos.sqlite in one transaction. Default world: "
+            "[paths] world in Play."
+        ),
+    )
+    q_load.add_argument(
+        "--instance",
+        choices=("play", "lab"),
+        default="play",
+        help="the instance whose saves/ holds the world (default play)",
+    )
+    q_where = q_load.add_mutually_exclusive_group()
+    q_where.add_argument(
+        "--world", default=None, help="the world's folder name in saves/"
+    )
+    q_where.add_argument(
+        "--world-dir",
+        type=Path,
+        default=None,
+        help="a world folder anywhere (its DefaultQuests fallback: ../../config/)",
+    )
+    q_load.add_argument(
+        "--player",
+        default=None,
+        help="the player to track, by name or UUID (default: the only one)",
+    )
+    q_front = quest_cmds.add_parser(
+        "frontier",
+        help="list the quests available now, by quest line, as the book shows them",
+    )
+    q_front.add_argument(
+        "--line",
+        default=None,
+        help="only this quest line (its name as the book shows it)",
+    )
+    q_front.add_argument(
+        "--limit", type=int, default=-1, metavar="N", help="at most N rows"
+    )
+    q_tier = quest_cmds.add_parser(
+        "tier",
+        help="show the tier detected from quests, or set or clear an override (D64)",
+    )
+    q_set = q_tier.add_mutually_exclusive_group()
+    q_set.add_argument(
+        "--set", dest="set_stage", choices=quest_db.bq.STAGES, default=None
+    )
+    q_set.add_argument("--clear", action="store_true", help="drop the override")
+    for each in (q_load, q_front, q_tier):
+        each.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+            "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+        )
+
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
     dep = vault_cmds.add_parser(
@@ -190,6 +257,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         return export_collect.main(args.config, sys.stdout)
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
+    if args.command == "quests":
+        if args.quests_command == "load":
+            return quest_db.load_main(
+                args.config,
+                args.instance,
+                args.world,
+                args.world_dir,
+                args.player,
+                sys.stdout,
+            )
+        if args.quests_command == "frontier":
+            return quest_db.frontier_main(
+                args.config, args.line, args.limit, sys.stdout
+            )
+        return quest_db.tier_main(args.config, args.set_stage, args.clear, sys.stdout)
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"

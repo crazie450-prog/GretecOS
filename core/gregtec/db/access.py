@@ -3,6 +3,8 @@
 - :func:`connect` opens it in WAL mode (PM03), with autocommit so callers hold their own
   transactions, and applies ``schema.sql`` (every statement ``IF NOT EXISTS``) to a DB whose
   ``user_version`` is older than :data:`SCHEMA_VERSION`; opening a current DB writes nothing.
+  An existing DB first gets ``migrations/<n>.sql`` for each version ``n`` it lacks (the changes
+  ``IF NOT EXISTS`` can't make, such as new columns); a new DB (version 0) needs none.
   A DB whose ``user_version`` is newer is refused, because this code would not know its tables.
 - Named read-only queries live in ``queries/<name>.sql`` and are run by name with named
   parameters (``:q``); WO-2.2's tool layer calls them the same way.
@@ -19,7 +21,8 @@ from pathlib import Path
 HERE = Path(__file__).parent
 SCHEMA = HERE / "schema.sql"
 QUERIES = HERE / "queries"
-SCHEMA_VERSION = 1
+MIGRATIONS = HERE / "migrations"
+SCHEMA_VERSION = 2
 DB_FILE = Path("data", "gos.sqlite")  # in GOS_HOME (plan 4.3)
 _QUERY_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -53,6 +56,10 @@ def connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
             # the write lock, so doing it on every open would make each connection wait for a
             # long write (a build) and fail after the timeout.
             if version < SCHEMA_VERSION:
+                for n in range(version + 1, SCHEMA_VERSION + 1) if version else ():
+                    step = MIGRATIONS / f"{n}.sql"
+                    if step.is_file():
+                        conn.executescript(step.read_text(encoding="utf-8"))
                 conn.executescript(SCHEMA.read_text(encoding="utf-8"))
     except BaseException:
         conn.close()

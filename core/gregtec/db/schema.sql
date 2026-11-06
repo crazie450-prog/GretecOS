@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 1 (plan section 5.3, Appendix D; WO-1.3).
+-- Gregtec OS SQLite schema, version 2 (plan section 5.3, Appendix D; WO-1.3, WO-1.5).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -9,6 +9,11 @@
 --   recipe.content_hash  (plan v1.1, section 5.2) already in Appendix D
 --   recipe.ref           the citation key r:<map>/<sig12>[-n], unique per run
 --   indexes for loading and pruning runs (ix_recipe_ref, ix_alt, ix_fact, ix_mm_map)
+-- Version 2 (D112, WO-1.5): the quest tables gain what the frontier needs (quest_line descr and
+-- visibility; quest task_logic, is_global, repeat_time), plus quest_line_entry (a quest can sit in
+-- several lines), quest_item (every stack a task asks for or a reward gives, by item key) and
+-- quest_state (each quest's state for the tracked player). migrations/2.sql drops version 1's
+-- quest and quest_line, which nothing had written to, so this file can create them anew.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -65,17 +70,28 @@ CREATE VIRTUAL TABLE IF NOT EXISTS name_fts USING fts5(kind UNINDEXED, ref_id UN
   registry_name);
 
 -- Tables added by GOS
--- quests (BetterQuesting, world copy)
-CREATE TABLE IF NOT EXISTS quest_line(id TEXT PRIMARY KEY, name TEXT, ord INT);
+-- quests (BetterQuesting, world copy; WO-1.5, D112). Ids are BQ's compact ids, cited q:<id>.
+CREATE TABLE IF NOT EXISTS quest_line(id TEXT PRIMARY KEY, name TEXT, ord INT, descr TEXT,
+  visibility TEXT);
+CREATE TABLE IF NOT EXISTS quest_line_entry(line_id TEXT, quest_id TEXT, x INT, y INT, size_x INT,
+  size_y INT, PRIMARY KEY(line_id, quest_id));
 CREATE TABLE IF NOT EXISTS quest(id TEXT PRIMARY KEY, line_id TEXT, name TEXT, descr TEXT, logic TEXT,
-  visibility TEXT, main INT, raw_json TEXT);
+  visibility TEXT, main INT, raw_json TEXT, task_logic TEXT, is_global INT, repeat_time INT);
 CREATE TABLE IF NOT EXISTS quest_prereq(quest_id TEXT, prereq_id TEXT, PRIMARY KEY(quest_id, prereq_id));
 CREATE TABLE IF NOT EXISTS quest_task(quest_id TEXT, idx INT, kind TEXT, item_id INT, fluid_id INT,
   amount INT, consume INT, raw_json TEXT, PRIMARY KEY(quest_id, idx));
 CREATE TABLE IF NOT EXISTS quest_reward(quest_id TEXT, idx INT, kind TEXT, item_id INT, amount INT,
   raw_json TEXT, PRIMARY KEY(quest_id, idx));
+CREATE TABLE IF NOT EXISTS quest_item(quest_id TEXT, part TEXT CHECK(part IN ('task','reward')), idx INT,
+  slot INT, registry_name TEXT, meta INT, nbt_hash TEXT, ore TEXT, fluid TEXT, amount INT, item_id INT,
+  fluid_id INT, PRIMARY KEY(quest_id, part, idx, slot));
+CREATE INDEX IF NOT EXISTS ix_quest_item ON quest_item(registry_name, meta);
+CREATE INDEX IF NOT EXISTS ix_quest_fluid ON quest_item(fluid);
 CREATE TABLE IF NOT EXISTS quest_progress(player_uuid TEXT, quest_id TEXT, completed_ts INT, claimed INT,
   PRIMARY KEY(player_uuid, quest_id));
+CREATE TABLE IF NOT EXISTS quest_state(player_uuid TEXT, quest_id TEXT,
+  state TEXT CHECK(state IN ('done','available','locked')), shown INT, PRIMARY KEY(player_uuid, quest_id));
+CREATE INDEX IF NOT EXISTS ix_quest_state ON quest_state(player_uuid, state);
 CREATE VIRTUAL TABLE IF NOT EXISTS quest_fts USING fts5(quest_id UNINDEXED, name, descr);
 -- sessions and events
 CREATE TABLE IF NOT EXISTS session(id INTEGER PRIMARY KEY, start_ts INT, end_ts INT, world TEXT,
@@ -120,4 +136,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
