@@ -87,9 +87,8 @@ TOOLS = (
         f"page. For questions no other tool answers. {CITE}",
         sql.DB_SQL_SCHEMA,
         sql.db_sql,
-        lanes=frozenset(
-            {DEEP}
-        ),  # the db-analyst's tool; the fast lane has named queries
+        # The db-analyst's tool (deep lane); the fast lane has the named queries.
+        lanes=frozenset({DEEP}),
         deadline_s=sql.DEADLINE_S,
     ),
 )

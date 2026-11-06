@@ -454,7 +454,7 @@ def quest(
 
 
 # 1 is done; 2, 5 and 8 are available; 3 is locked but shown (its prerequisite is unlocked);
-# 4 and 6 are locked and not shown yet.
+# 4, 6 and 9 are locked and not shown yet.
 QUESTS = [
     quest(1, "First Steps", main=True, desc="Look around."),
     quest(2, "Steel Age", [1], tasks=[retrieval(bq_stack(GT, 11305, 16), consume=True)],
@@ -466,6 +466,7 @@ QUESTS = [
     quest(6, "Any Steel Will Do", [4],
           tasks=[retrieval(bq_stack(TCON, 16, 32, ore="ingotSteel"))]),
     quest(8, INJECTION, [1], desc="Steel tip: [note]be careful[/note]"),
+    quest(9, "Any Planks", [4], tasks=[retrieval(bq_stack("minecraft:planks", 32767, 64))]),
 ]  # fmt: skip
 LINE = [
     (1, 0, 0),
@@ -475,6 +476,7 @@ LINE = [
     (5, 24, 24),
     (6, 96, 0),
     (8, 0, 48),
+    (9, 120, 0),
 ]
 
 

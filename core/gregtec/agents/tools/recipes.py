@@ -130,10 +130,8 @@ def cards(
     out = []
     for r in page:
         cond = conds[r["id"]]
-        if not cond and r["special_value"]:
-            cond = [
-                f"special={r['special_value']}"
-            ]  # GT's raw mSpecialValue (plan 5.2)
+        if not cond and r["special_value"]:  # GT's raw mSpecialValue (plan 5.2)
+            cond = [f"special={r['special_value']}"]
         flags = [
             flag
             for flag, on in (

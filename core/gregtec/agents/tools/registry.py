@@ -32,15 +32,14 @@ from gregtec.db import access
 
 FAST, DEEP = "fast", "deep"
 LANES = (FAST, DEEP)
-FAST_EXTRA = frozenset(
-    {"handoff"}
-)  # the one fast-lane tool that isn't read-only (WO-2.3)
+# The one fast-lane tool that isn't read-only (WO-2.3); it still needs its own gate to run.
+FAST_EXTRA = frozenset({"handoff"})
 MORE = "more"
 NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 DEADLINE_S = 5.0  # a named query that runs longer is stopped
-MAX_VALUE_BYTES = (
-    1_000_000  # SQLITE_LIMIT_LENGTH: the longest string or blob a query can make
-)
+# SQLITE_LIMIT_LENGTH: the longest string or blob a query can make or read (the DB's longest
+# value, a quest's raw JSON, is about 21 kB in 2.9.0).
+MAX_VALUE_BYTES = 1_000_000
 MAX_SQL_BYTES = 100_000
 _KV_QUESTS = "quests.source"  # gregtec.db.quests.KV_SOURCE: changes on every quest load
 

@@ -154,9 +154,8 @@ def db_sql(call: Call, args: dict[str, Any], offset: int) -> Result:
                 rows.append(tuple(row))
                 if len(rows) > call.page:
                     break
-    except (
-        sqlite3.DatabaseError
-    ) as exc:  # ProgrammingError too: more than one statement
+    # DatabaseError covers ProgrammingError too: more than one statement.
+    except sqlite3.DatabaseError as exc:
         if "not authorized" in str(exc) or "prohibited" in str(exc):
             raise ToolError(f"{REFUSED} ({exc})") from None
         if str(exc) == "interrupted":

@@ -2,8 +2,8 @@
 
 The fixture book (conftest.py): Clayton has done 1 (First Steps); 2 (Steel Age), 5 (Oxygen Run)
 and 8 (a name that tries to give orders) are available; 3 (Stainless Dreams) is locked but the
-book shows it, because its prerequisite is unlocked; 4 (Secret Alloy) and 6 (Any Steel Will Do)
-are locked and not shown yet.
+book shows it, because its prerequisite is unlocked; 4 (Secret Alloy), 6 (Any Steel Will Do) and
+9 (Any Planks) are locked and not shown yet.
 """
 
 from __future__ import annotations
@@ -139,10 +139,16 @@ def test_quests_for_an_item(run: Runner) -> None:
     got = [(r["quest"], r["part"], r["amount"], r["match"]) for r in p.rows]
     assert got == [
         (q(2), "task", "16", "item"),
-        (q(6), "task", "32", "ore:ingotSteel"),  # TConstruct's steel, as any ingotSteel
-        (q(4), "reward", "4", "item"),
+        # Not shown in the book yet: that they ask for or give it, not how much (nudge-first).
+        (q(6), "task", "", "ore:ingotSteel"),  # TConstruct's steel, as any ingotSteel
+        (q(4), "reward", "", "item"),
     ]
     assert p.rows[1]["name"] == HIDDEN_NAME and p.rows[0]["name"] == "Steel Age"
+
+
+def test_a_wildcard_quest_stack_matches_any_meta(run: Runner) -> None:
+    p = run("quest_for_item", item="oak wood planks")
+    assert [(r["quest"], r["match"]) for r in p.rows] == [(q(9), "any meta")]
 
 
 def test_quests_for_a_fluid(run: Runner) -> None:
