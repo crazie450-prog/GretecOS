@@ -20,6 +20,7 @@ import keyring.errors
 
 from gregtec import config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
+from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
 from gregtec.db import ores as ore_db
@@ -28,6 +29,7 @@ from gregtec.db import structures as structure_db
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
+from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 
 
@@ -351,6 +353,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
+    tool = commands.add_parser(
+        "tool",
+        help="run a read-only agent tool against GOS_HOME's DB (for testing)",
+        description=(
+            "Runs one of the agents' read-only tools (WO-2.2) against "
+            "GOS_HOME/data/gos.sqlite and prints its TSV result, as the fast and deep lanes "
+            "see it. With no NAME, lists the tools."
+        ),
+    )
+    tool.add_argument(
+        "name", nargs="?", default=None, help="the tool (none: list them)"
+    )
+    tool.add_argument(
+        "args",
+        nargs="?",
+        default="{}",
+        help="its arguments, a JSON object (default {})",
+    )
+    tool.add_argument(
+        "--lane",
+        choices=("fast", "deep"),
+        default=None,
+        help="call it as this lane would",
+    )
+    tool.add_argument(
+        "--all", action="store_true", help="follow its more cursors to the last page"
+    )
+    tool.add_argument(
+        "--schema",
+        action="store_true",
+        help="print the tool's schema instead of running it",
+    )
+    tool.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -375,6 +416,57 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=vault_deploy.DEFAULT_TEMPLATE,
         help=argparse.SUPPRESS,
     )
+    maintain = vault_cmds.add_parser(
+        "maintain",
+        help="run the curator's idle-maintenance jobs now (plan 6.6)",
+        description=(
+            "Runs the daily jobs now, whatever the idle rule says: compact old logs (a Haiku "
+            "call each, with the stored key; periods held after refused summaries are tried "
+            "again), check the notes against _gos/schema.md, rebuild INDEX.md, mirror them "
+            "into note_fts, back up the DB, commit to the vault's git. The core runs the same jobs once a day when the game is closed and the PC "
+            "has been idle for [maintenance] idle_minutes."
+        ),
+    )
+    maintain.add_argument(
+        "--job",
+        action="append",
+        choices=vault_curator.JOBS,
+        help="run only this job (repeatable). Default: all, in order.",
+    )
+    maintain.add_argument(
+        "--rerun-today",
+        action="store_true",
+        help="run no job; make the core's daily run due again today (it then waits for the "
+        "idle rule)",
+    )
+    measure = vault_cmds.add_parser(
+        "measure",
+        help="count the note formats' tokens with the count_tokens endpoint (WO-2.5)",
+        description=(
+            "Renders the live vault's notes, plan 6.2's example and two DB tables in each "
+            "candidate format (the grammar, CSV, TOON, Markdown, key: value rows, compact and "
+            "pretty JSON, YAML), counts their tokens with the Messages API's count_tokens "
+            "(free) using the stored Anthropic key, and writes "
+            "GOS_HOME/data/reports/note-formats-YYYYMMDD.txt."
+        ),
+    )
+    measure.add_argument(
+        "--model",
+        action="append",
+        help="a model to count for (repeatable). Default: Haiku, Sonnet and Opus 5.5.",
+    )
+    measure.add_argument(
+        "--no-db",
+        action="store_true",
+        help="leave out the DB tables (vault notes only)",
+    )
+    for sub in (maintain, measure):
+        sub.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml.",
+        )
 
     key_parser = commands.add_parser(
         "key",
@@ -522,6 +614,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.stdout,
             )
         return ore_db.list_main(args.config, args.dim, args.limit, sys.stdout)
+    if args.command == "tool":
+        # Tool results hold pack text (CJK, symbols): escape what a Windows pipe can't encode.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        return tool_command.main(
+            args.config,
+            args.name,
+            args.args,
+            args.lane,
+            args.all,
+            args.schema,
+            sys.stdout,
+        )
     if args.command == "hook":
         return playhooks.hook_main(args, sys.stdout, os.environ)
     if args.command == "export":
@@ -535,6 +640,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         target = args.vault or home / "vault"
         print(f"{vault_deploy.deploy(target, args.template)}: {target}")
         return 0
+    if args.command == "vault" and args.vault_command == "maintain":
+        return _maintain(args.config, args.job, args.rerun_today)
+    if args.command == "vault" and args.vault_command == "measure":
+        from gregtec.vault import measure as vault_measure
+
+        cfg = _load(args.config)
+        if cfg is None:
+            return 2
+        return vault_measure.main(
+            cfg.gos_home, args.model or vault_measure.MODELS, not args.no_db, sys.stdout
+        )
     if args.command == "key":
         try:
             return _key(args.key_command, getattr(args, "name", None))
@@ -648,6 +764,47 @@ def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
     servicecli.spawn_detached(argv, cfg.gos_home)
     print(f"Restarted GOS: {exe}")
+
+
+def _maintain(config_path: Path | None, jobs: list[str] | None, rerun: bool) -> int:
+    """``gos vault maintain``: 0 when no job failed, 1 otherwise, 2 for a bad gos.toml."""
+    import datetime as dt
+
+    from gregtec.llm.summarise import HaikuSummariser
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import DB_NAME, Store
+    from gregtec.vault.scheduler import KV_LAST_DAY
+
+    cfg = _load(config_path)
+    if cfg is None:
+        return 2
+    store = Store(cfg.data_dir / DB_NAME)
+    try:
+        if rerun:
+            with store.transaction() as conn:
+                conn.execute("DELETE FROM kv WHERE key = ?", (KV_LAST_DAY,))
+            print(
+                "The daily run is due again: the core runs it at the next minute when the "
+                f"game is closed and the PC has been idle {cfg.idle_minutes} min."
+            )
+            return 0
+        cur = vault_curator.Curator(
+            vault=cfg.gos_home / "vault",
+            db=cfg.data_dir / DB_NAME,
+            backups=cfg.data_dir / "backups",
+            summariser=HaikuSummariser.from_keyring,
+            meter=UsageMeter(
+                store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
+            ),
+            keep_backups=cfg.keep_backups,
+            retry_held=True,  # Clayton's own run: held log periods get another call
+        )
+        results = cur.run(dt.date.today(), jobs or vault_curator.JOBS)
+    finally:
+        store.close()
+    for result in results:
+        print(result.line())
+    return 1 if any(r.status == vault_curator.FAILED for r in results) else 0
 
 
 def _load(path: Path | None) -> config.Config | None:
