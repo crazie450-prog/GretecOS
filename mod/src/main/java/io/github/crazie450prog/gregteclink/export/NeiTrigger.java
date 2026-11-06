@@ -70,7 +70,8 @@ final class NeiTrigger {
      * Runs NEI's dump on the calling (client) thread, which freezes the game until it returns, then copies the files
      * it wrote into the run. Records counts, durations and any error on the run. Returns "ok" only if the call threw
      * nothing, NEI logged no "Error dumping recipes", at least one file was found, every copy succeeded and the lines
-     * copied equal the count NEI logged; otherwise "failed". Never throws.
+     * copied equal the count NEI logged; otherwise "failed". An ok step whose NEI dropped a handler also gets
+     * {@code part_warnings.nei}. Never throws.
      */
     static String dump(ExportRun run) {
         try {
@@ -157,6 +158,11 @@ final class NeiTrigger {
         else if (log.reported < 0) reason = "NEI's 'Writing N recipes' line was not captured";
         else if (lines != log.reported) reason = lines + " lines copied, NEI reported " + log.reported;
         if (reason != null) return failed(run, reason);
+        String warning = log.warning();
+        if (warning != null) {
+            GregtecLink.LOG.warn("export {}: NEI step ok, but {}", run.runId, warning);
+            run.partWarnings.put("nei", warning);
+        }
         GregtecLink.LOG.info(
             "export {}: NEI wrote {} recipes in {} files ({} skipped, {} handler lookup errors)",
             run.runId,

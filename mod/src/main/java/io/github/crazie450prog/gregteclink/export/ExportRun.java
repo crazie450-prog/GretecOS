@@ -41,8 +41,8 @@ public final class ExportRun {
     public static final String RUN_ID_PROPERTY = "gregtec.runId";
     private static final Pattern RUN_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     /** On Windows a virus scanner or the indexer often still holds a just-written file, so the rename is retried. */
-    private static final int RENAME_ATTEMPTS = 3;
-    private static final long RENAME_BACKOFF_MS = 1000;
+    static final int RENAME_ATTEMPTS = 3;
+    static final long RENAME_BACKOFF_MS = 1000;
     /** Complete runs kept in the exports folder (D98); each is about 50 MB, about 145 MB with NEI's files. */
     public static final int KEEP_COMPLETE = 10;
     /** Incomplete runs (manifest "complete": false) kept for debugging (D98). */
@@ -74,6 +74,8 @@ public final class ExportRun {
     final Map<String, String> parts = new LinkedHashMap<>();
     /** Why a part failed, for each failed part (manifest "part_errors"). */
     final Map<String, String> partErrors = new LinkedHashMap<>();
+    /** What an ok part left out (manifest "part_warnings"). */
+    final Map<String, String> partWarnings = new LinkedHashMap<>();
     final Map<String, Long> durations = new LinkedHashMap<>();
     final Map<String, Number> counts = new LinkedHashMap<>();
     final List<HashedFile> files = new ArrayList<>();
@@ -209,7 +211,7 @@ public final class ExportRun {
         }
         if (attempts > 0) prune(guard, runId, KEEP_COMPLETE, KEEP_INCOMPLETE);
         GregtecLink.LOG.info(
-            "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} errors={} -> {}",
+            "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} errors={} warnings={} -> {}",
             runId,
             System.currentTimeMillis() - t0,
             complete,
@@ -217,6 +219,7 @@ public final class ExportRun {
             counts,
             parts,
             partErrors,
+            partWarnings,
             finalDir);
         result = new Result(runId, finalDir, complete, attempts);
         return result;

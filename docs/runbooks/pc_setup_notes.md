@@ -102,7 +102,7 @@ WO-1.1 is done when these two checks pass on the PC: (1) one click in GTNH-Expor
    - Delete `GTNH-Export\.minecraft\mods\NotEnoughItems-2.8.171-GTNH.jar` and copy the 2.8.172 jar into that folder.
    - Optional, read-only: Play's `NotEnoughItems-2.8.171-GTNH.jar` hashes to `9A822134…88B5A3`.
 5. Prism → GTNH-Export → Edit → Settings → Java: tick the JVM arguments box if needed and add `-Dgregtec.autoexport=true` after the existing arguments. Optionally, Create Shortcut → Desktop. Don't touch GTNH-Play.
-6. **Check (1):** click Launch on GTNH-Export and do nothing. The main menu opens, the "GregtecLink autoexport" world loads, chat shows "GregtecLink: exporting NEI's recipes; the game freezes for a while.", the game freezes during NEI's dump, then it closes by itself (a few minutes; at most 30).
+6. **Check (1):** click Launch on GTNH-Export and do nothing. The main menu opens, the "GregtecLink autoexport" world loads, chat shows "GregtecLink: exporting NEI's recipes; the game freezes for a while.", the game freezes during NEI's dump, then it saves and leaves the world, shows the main menu for a moment and closes by itself (a few minutes; at most 30).
 7. In the newest `GTNH-Export\.minecraft\gregteclink\exports\<run_id>\` (not one ending in `.partial`), `manifest.json` should show:
    - `"mode": "autoexport"`, `"world": "gregteclink-autoexport"`, `"complete": true`;
    - `parts`: `gt_dump`, `machines` and `refs` all `ok`, `"nei": "ok"`, `"autoexport": "ok"`, and no `part_errors`;
@@ -112,15 +112,16 @@ WO-1.1 is done when these two checks pass on the PC: (1) one click in GTNH-Expor
 
    Note the run folder's size (Properties), and any dialog that appeared during the run.
 8. **V22 command line:** run `& "<your Prism folder>\prismlauncher.exe" --launch GTNH-Export`. It should produce a second run the same way. If Prism is already open, the command hands over to it and returns at once.
-9. **Fallback, only if step 6 fails:** remove the flag from step 5, Launch, open "GregtecLink autoexport" from Singleplayer, wait for the chat line "GregtecLink: export … finished", then quit. The manifest should show `"mode": "one_click"` and `"nei": "ok"`. Send the newest `GTNH-Export\.minecraft\logs\fml-client-latest.log` either way.
-10. **Check (2):** run `gos doctor` again, then compare Play's mods (file, enabled, sha256) between the two files; it should print nothing:
+9. **Fallback, only if step 6 fails:** remove the flag from step 5, Launch, and from Singleplayer open "GregtecLink autoexport" if it is listed, otherwise Export's creative void world (if Export has none, create a Creative Superflat world). Wait for the chat line "GregtecLink: export … finished", then Save and Quit. The manifest should show `"mode": "one_click"` and `"nei": "ok"`. Send the newest `GTNH-Export\.minecraft\logs\fml-client-latest.log` either way.
+10. **Check (2):** run `gos doctor` again, then, in PowerShell, compare Play's mods (file, enabled, sha256) between the two files; it should print nothing:
 
     ```powershell
+    cd "<GOS_HOME>\data"
     $before = (Get-Content env-before.json | ConvertFrom-Json).prism_roots.instances | Where-Object folder_name -eq 'GTNH-Play' | ForEach-Object mods
     $after = (Get-Content env.json | ConvertFrom-Json).prism_roots.instances | Where-Object folder_name -eq 'GTNH-Play' | ForEach-Object mods
     Compare-Object $before $after -Property file, enabled, sha256
     ```
 
-    Also, read-only: `Get-ChildItem GTNH-Play\.minecraft\config\gregteclink*` shows no file with `export=true`, and `Select-String gregtec GTNH-Play\instance.cfg` prints nothing.
+    Also, read-only, from your Prism `instances` folder (`cd "<your Prism folder>\instances"`): `Get-ChildItem GTNH-Play\.minecraft\config\gregteclink*` shows no file with `export=true`, and `Select-String gregtec GTNH-Play\instance.cfg` prints nothing.
 
 With the flag left in Export's settings, every launch of Export is an unattended export that quits. To use Export by hand, remove the flag first.

@@ -44,8 +44,9 @@ import io.github.crazie450prog.gregteclink.export.PathGuard;
  * checks the files it wrote, writes {@code <gameDir>/gregteclink/harness-result.json} and shuts the server down; the
  * JVM exits 0 only if every check passed. On a client ({@code ./gradlew runClient25 -Pharness}, under Xvfb in CI) the
  * run is handed to {@link ExportClient}, which opens the autoexport world, runs NEI's dump and calls
- * {@link #onClientFinished}; the result file is then the only signal. Active only with {@code -Dgregtec.harness=true}
- * in the deobfuscated dev environment, so it can never fire in a real instance.
+ * {@link #onClientFinished}, leaves the world and calls {@link #onClientShutdown}; the result file is then the only
+ * signal. Active only with {@code -Dgregtec.harness=true} in the deobfuscated dev environment, so it can never fire in
+ * a real instance.
  */
 public final class Harness {
 
@@ -84,6 +85,11 @@ public final class Harness {
     /** The client game dir just before the NEI step; null until then. */
     private static Map<String, String> neiBefore;
     private static long clientT0;
+    /** Set by {@link #onClientFinished}, written by {@link #onClientShutdown}. */
+    private static String clientRunId;
+    private static JsonObject clientDurations;
+    private static JsonElement clientCounts;
+    private static long clientFinishedMs;
 
     private Harness() {}
 
@@ -143,7 +149,7 @@ public final class Harness {
     /**
      * Client harness ({@code ./gradlew runClient25 -Pharness}, with autoexport): at server start, seeds old runs,
      * starts a harness-mode run and hands it to the client like any other. {@link ExportClient} then runs NEI's dump,
-     * finishes the run and calls {@link #onClientFinished} before it quits.
+     * finishes the run, calls {@link #onClientFinished}, leaves the world and calls {@link #onClientShutdown}.
      */
     private static void startClient(File gameDir, boolean exportEnabled) {
         List<JsonObject> checks = new ArrayList<>();
@@ -167,7 +173,7 @@ public final class Harness {
         }
     }
 
-    /** True from the client harness's server start until {@link #onClientFinished}. */
+    /** True from the client harness's server start until {@link #onClientShutdown}. */
     public static boolean clientRunActive() {
         return clientActive;
     }
@@ -181,9 +187,13 @@ public final class Harness {
         }
     }
 
-    /** Called by {@link ExportClient} on the client thread before it quits; {@code r} is null if no run finished. */
+    /**
+     * Called by {@link ExportClient} on the client thread, still in the world, when it starts to quit; {@code r} is
+     * null if no run finished. Checks the run; {@link #onClientShutdown} writes the result.
+     */
     public static void onClientFinished(File gameDir, ExportRun.Result r) {
-        clientActive = false;
+        clientFinishedMs = System.currentTimeMillis();
+        clientRunId = r == null ? null : r.runId;
         List<JsonObject> checks = clientChecks;
         JsonObject durations = new JsonObject();
         JsonElement counts = null;
@@ -207,7 +217,39 @@ public final class Harness {
             GregtecLink.LOG.error("client harness failed", t);
             check(checks, "harness_ran", false, Json.error(t));
         }
-        boolean pass = writeResult(gameDir, checks, r == null ? null : r.runId, durations, counts);
+        clientDurations = durations;
+        clientCounts = counts;
+    }
+
+    /**
+     * Called by {@link ExportClient} on the next tick, once it has left the world and just before
+     * {@code Minecraft.shutdown()}: the integrated server must be gone, and it must have saved the world after the run
+     * finished. Writes the result.
+     */
+    public static void onClientShutdown(File gameDir, boolean serverStopped) {
+        clientActive = false;
+        List<JsonObject> checks = clientChecks;
+        check(
+            checks,
+            "server_stopped_before_shutdown",
+            serverStopped,
+            serverStopped ? "the integrated server had stopped" : "the integrated server was still running");
+        Path level = gameDir.toPath()
+            .resolve("saves/" + AutoExport.WORLD_FOLDER + "/level.dat");
+        long saved = -1;
+        try {
+            saved = Files.getLastModifiedTime(level)
+                .toMillis();
+        } catch (IOException e) {
+            // Reported below.
+        }
+        check(
+            checks,
+            "world_saved_on_quit",
+            saved >= clientFinishedMs,
+            saved < 0 ? level + " missing"
+                : "level.dat written " + (saved - clientFinishedMs) + " ms after the run finished");
+        boolean pass = writeResult(gameDir, checks, clientRunId, clientDurations, clientCounts);
         GregtecLink.LOG.info("client harness {}: quitting", pass ? "PASSED" : "FAILED");
     }
 
@@ -387,10 +429,16 @@ public final class Harness {
         boolean marker = Files.isRegularFile(world.resolve(AutoExport.MARKER));
         boolean level = Files.isRegularFile(world.resolve("level.dat"));
         boolean staleGone = !Files.exists(world.resolve(STALE_FILE));
+        Set<String> copies = new TreeSet<>();
+        try (DirectoryStream<Path> s = Files.newDirectoryStream(saves, AutoExport.OLD_PREFIX + "*")) {
+            for (Path p : s) copies.add(
+                p.getFileName()
+                    .toString());
+        }
         check(
             checks,
             "autoexport_world_rebuilt",
-            marker && level && staleGone,
+            marker && level && staleGone && copies.isEmpty(),
             "saves/" + AutoExport.WORLD_FOLDER
                 + ": marker="
                 + marker
@@ -399,7 +447,9 @@ public final class Harness {
                 + " seeded "
                 + STALE_FILE
                 + " gone="
-                + staleGone);
+                + staleGone
+                + ", old copies left: "
+                + copies);
         Path decoy = saves.resolve(DECOY_WORLD);
         Set<String> left = new TreeSet<>();
         if (Files.isDirectory(decoy)) {
@@ -611,11 +661,15 @@ public final class Harness {
                     "parts.nei=" + nei + " part_errors.nei=" + why);
                 return counts;
             }
+            // The dev runtime's NEI drops no handler, so a warning fails the check here.
+            JsonElement warnings = manifest.get("part_warnings");
             check(
                 checks,
                 "nei_ok",
-                "ok".equals(nei),
-                "parts.nei=" + nei + (errors == null ? "" : " part_errors=" + errors));
+                "ok".equals(nei) && warnings == null,
+                "parts.nei=" + nei
+                    + (errors == null ? "" : " part_errors=" + errors)
+                    + (warnings == null ? "" : " part_warnings=" + warnings));
             checkNei(dir, manifest.getAsJsonObject("files"), counts);
             return counts;
         }

@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
  * <li>ERROR {@code Error dumping recipes}: the dump failed and stopped</li>
  * <li>WARN {@code Skipping recipe I of HANDLER}: one recipe failed and was left out</li>
  * <li>ERROR {@code Error while looking up crafting recipe}: a handler failed to load and was dropped without
- * notice</li>
+ * notice (its stack trace goes to stderr, not to this logger)</li>
  * </ul>
  */
 final class NeiLog {
@@ -32,6 +32,17 @@ final class NeiLog {
     int lookupErrors;
     /** The first failure's throwable, as "class: message"; null if none was logged. */
     String firstError;
+
+    /**
+     * The manifest's {@code part_warnings.nei} for a dump that is otherwise ok: null unless a handler was dropped,
+     * since the lines then still equal NEI's count but that handler's recipes are missing.
+     */
+    String warning() {
+        if (lookupErrors == 0) return null;
+        return lookupErrors + " recipe handler(s) failed to load and are missing from nei/ (NEI logged '"
+            + LOOKUP_ERROR
+            + "'; the stack traces are the game log's STDERR lines)";
+    }
 
     /** One captured event: its level name, formatted message, and throwable summary (or null). */
     void add(String level, String message, String thrown) {

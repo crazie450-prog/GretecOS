@@ -59,8 +59,9 @@ Separate; the game freezes while it runs, as with the manual click), copies the 
 the manifest and renames the folder. With autoexport (below) the game then quits. The file contract is
 [docs/contracts/gregteclink-export-v1.md](../docs/contracts/gregteclink-export-v1.md).
 
-- Every write goes through `PathGuard`, rooted at `<gameDir>/gregteclink/exports/`. It never changes the world. A link
-  or junction at `gregteclink` or `exports` stops the export before anything is written.
+- Every write of the export goes through `PathGuard`, rooted at `<gameDir>/gregteclink/exports/`. The export never
+  changes a world; only autoexport (below) deletes and recreates its own `saves/gregteclink-autoexport`. A link or
+  junction at `gregteclink` or `exports` stops the export before anything is written.
 - Files go into `<run_id>.partial/`; `manifest.json` is written last, then the folder is renamed.
 - After the rename, the module keeps the newest 10 complete runs (D98): it deletes older complete runs and every
   `.partial` folder left by an earlier run, inside its own `exports/` folder only. It also keeps the newest 3 incomplete runs
@@ -72,12 +73,15 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   shows "added by" lines.
 - `-Dgregtec.runId=<id>` names the run (`[A-Za-z0-9._-]`, up to 64 characters); otherwise it is the UTC time.
 - **NEI step.** NEI returns normally even when its dump fails, so GregtecLink judges it by NEI's own log lines,
-  captured from the `NotEnoughItems` logger during the call, and by the files: `parts.nei` is `ok` only if the call
-  threw nothing, NEI logged no `Error dumping recipes`, it wrote at least one file, every copy succeeded, and the
-  lines copied equal NEI's `Writing N recipes`. Otherwise it is `failed`, with the reason in `part_errors.nei`, and
-  the GT files are still a complete run. NEI deletes every file in `dumps/recipes/` first, so GregtecLink refuses a
-  link or junction at `dumps` or `dumps/recipes`. It copies only regular `.jsonl` files changed since the call
-  started (minus 2 s), through `PathGuard`, and never moves or changes NEI's files. NEI not ready 10 minutes after the
+  captured during the call from the logger object NEI writes to (`NEIClientConfig.logger`, named `NotEnoughItems`),
+  and by the files: `parts.nei` is `ok` only if the call threw nothing, NEI logged no `Error dumping recipes`, it
+  wrote at least one file, every copy succeeded, and the lines copied equal NEI's `Writing N recipes`. Otherwise it
+  is `failed`, with the reason in `part_errors.nei`, and the GT files are still a complete run. An `ok` step whose
+  NEI dropped a recipe handler (it logged `Error while looking up crafting recipe`; the handler's recipes are then
+  missing, and its stack trace is only on stderr) also gets `part_warnings.nei`. NEI deletes every file in
+  `dumps/recipes/` first, so GregtecLink refuses a link or junction at `dumps` or `dumps/recipes`. It copies only
+  regular `.jsonl` files changed since the call started (minus 2 s), through `PathGuard`, and never moves or changes
+  NEI's files. NEI not ready 10 minutes after the
   world opened (NEI disabled, for example) is `failed`; closing the world before then finishes the run without NEI.
 - Without autoexport (a world opened by hand) the module posts two local chat lines, "GregtecLink: exporting NEI's
   recipes; ..." just before the freeze and "GregtecLink: export <run_id> finished: ..." after it, and stays in the
@@ -106,15 +110,24 @@ of Export an unattended export. It does nothing without `export=true`, so never 
 1. On the main menu (`GuiOpenEvent` for `GuiMainMenu` at normal priority, which still sees the vanilla menu before
    Custom Main Menu swaps it), GregtecLink opens its own world on the next tick: folder
    `saves/gregteclink-autoexport`, shown as "GregtecLink autoexport", creative, cheats on, superflat with one layer
-   of bedrock (`2;7;1;`).
+   of bedrock (`2;7;1;`). If no `GuiMainMenu` has come 30 s after the game finished loading (another first screen),
+   it opens the world from whatever screen is up and logs that screen's class.
 2. The world is rebuilt on every run, so a pack update never stops the run at FML's "missing blocks" prompt.
-   GregtecLink deletes only that folder, only when its marker file `gregteclink-autoexport.txt` is in it, never
-   through a link or junction, and refuses (logs, quits, exports nothing) otherwise. Other worlds are never touched.
-3. The export runs as above. Then the game quits (`Minecraft.shutdown()`: the integrated server stops, the game exits
-   with code 0). `parts.autoexport` is `ok`.
+   GregtecLink touches only that folder, only when its marker file `gregteclink-autoexport.txt` is in it, never
+   through a link or junction, and refuses (logs, quits, exports nothing) otherwise. It first renames the old world
+   to `gregteclink-autoexport.old-<epoch ms>` in one atomic step (three tries), so the marker moves with it, then
+   deletes that copy with the marker last (three tries). A delete that fails partway (Windows: a scanner still
+   holds a file) leaves a marked copy, which the next run deletes, never a world folder without its marker. Other
+   worlds are never touched.
+3. The export runs as above, and `parts.autoexport` is `ok`. Then the game quits in two steps: it leaves the world
+   as "Save and Quit to Title" does, which waits until the integrated server has stopped and saved the world, and on
+   the next tick calls `Minecraft.shutdown()` (exit code 0). `shutdown()` alone, called from inside the world, would
+   not wait: Forge's wait for the server throws once the game has stopped running, and the JVM could exit while the
+   server thread was still saving.
 4. 30 minutes after GregtecLink's preInit, a run still waiting is written with what it has (`nei` and `autoexport`
    `failed`) and the game quits. This works only while the client thread ticks; a hang that blocks it needs WO-1.4's
-   outside watchdog.
+   outside watchdog. A launch that quits with no run (the world not prepared, never opened, or no export started by
+   the deadline) logs why at ERROR in `logs/fml-client-latest.log`, as `autoexport: no run: <why>`.
 
 The one click is Prism's Launch button (or a desktop shortcut from Create Shortcut). From the command line,
 `prismlauncher --launch GTNH-Export` does the same; it returns at once when Prism is already open, so a caller (WO-1.4)
@@ -163,15 +176,18 @@ whole autoexport flow in the dev client:
    an old marked autoexport world with a stale file in it, and a decoy world with a marker but another name.
 2. The client starts with `-Dgregtec.harness=true -Dgregtec.autoexport=true`, opens the autoexport world from the
    main menu, seeds old runs at server start, exports in mode `harness`, runs NEI's dump, finishes the run, checks
-   it, writes `run/client/gregteclink/harness-result.json` and quits.
+   it, leaves the world, and once the integrated server has stopped writes `run/client/gregteclink/harness-result.json`
+   and quits.
 3. `checkClientHarness` fails the build unless the result says `"pass": true`; `removeClientHarnessConfig` deletes
    the config again.
 
-Its checks are the server harness's (with `side` client) plus: `nei` and `autoexport` `ok`; every `nei/` file listed
+Its checks are the server harness's (with `side` client) plus: `nei` and `autoexport` `ok`, with no
+`part_warnings`; every `nei/` file listed
 with matching sha256, bytes and lines and none unlisted; at least 150 handler files, as many as NEI loaded; lines
 copied equal NEI's count and exceed 50,000; one handler id per file and at least one `gt.recipe*` handler; no numeric
-`id` in any stack, `anyOf` or `returns`; NEI's files left in `dumps/recipes`; the old marked world rebuilt and the
-decoy untouched. Writes are checked in the two windows where the export's code runs, `saves/` aside: while the GT
+`id` in any stack, `anyOf` or `returns`; NEI's files left in `dumps/recipes`; the old marked world rebuilt (no
+`.old-*` copy left) and the decoy untouched; the integrated server stopped before `Minecraft.shutdown()`, and the
+world's `level.dat` written after the run finished (the save on quitting). Writes are checked in the two windows where the export's code runs, `saves/` aside: while the GT
 parts are written at server start nothing outside `gregteclink/` may change, and from just before NEI's dump to the
 end of the run nothing outside `gregteclink/` and `dumps/recipes/`. Between them, joining the world makes the game
 and other mods write their own files (Forge's `usernamecache.json`, ServerUtilities, NEI's, GT's and AE2's configs),

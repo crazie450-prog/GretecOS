@@ -24,12 +24,21 @@ import io.github.crazie450prog.gregteclink.harness.Harness;
  */
 public final class ExportClient {
 
+    /**
+     * With autoexport and no {@code GuiMainMenu} this long after the first client tick (another first screen in the
+     * pack), the world is opened from whatever screen is up.
+     */
+    static final long MENU_GRACE_MS = 30_000L;
+
     private final File gameDir;
     private final boolean auto = AutoExport.requested();
     private final long startMs = System.currentTimeMillis();
+    private long firstTickMs;
     private boolean menuSeen;
     private boolean launched;
+    /** The game has left the world to quit; it shuts down on the next tick. */
     private boolean quitting;
+    private boolean shutDown;
     private NeiWait wait;
     private long inWorldMs;
 
@@ -58,15 +67,30 @@ public final class ExportClient {
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent e) {
-        if (e.phase != TickEvent.Phase.END || quitting) return;
+        if (e.phase != TickEvent.Phase.END || shutDown) return;
         Minecraft mc = Minecraft.getMinecraft();
+        if (quitting) {
+            shutDown(mc);
+            return;
+        }
         long now = System.currentTimeMillis();
         if (auto && now - startMs >= AutoExport.DEADLINE_MS) {
             deadline(mc);
             return;
         }
-        if (auto && !launched && menuSeen && mc.theWorld == null) {
-            launch(mc);
+        if (auto && !launched && mc.theWorld == null) {
+            // Client ticks start once the game has finished loading.
+            if (firstTickMs == 0) firstTickMs = now;
+            if (!menuSeen && now - firstTickMs >= MENU_GRACE_MS) {
+                GregtecLink.LOG.warn(
+                    "autoexport: no main menu {} s after loading; opening the world from {}",
+                    MENU_GRACE_MS / 1000,
+                    mc.currentScreen == null ? "no screen"
+                        : mc.currentScreen.getClass()
+                            .getName());
+                menuSeen = true;
+            }
+            if (menuSeen) launch(mc);
             return;
         }
         if (mc.theWorld == null || mc.thePlayer == null || !ExportModule.hasPending()) {
@@ -114,7 +138,7 @@ public final class ExportClient {
         try {
             AutoExport.prepareWorld(gameDir);
         } catch (Throwable t) {
-            GregtecLink.LOG.error("autoexport: world not prepared; quitting without an export", t);
+            GregtecLink.LOG.error("autoexport: no run: world not prepared; quitting", t);
             quit(mc, null);
             return;
         }
@@ -130,14 +154,21 @@ public final class ExportClient {
 
     /** The whole autoexport took too long: a waiting run is written with what it has, then the game quits. */
     private void deadline(Minecraft mc) {
-        GregtecLink.LOG.error("autoexport: not done {} min after start; quitting", AutoExport.DEADLINE_MS / 60_000);
         ExportRun run = ExportModule.takePending();
         ExportRun.Result r = null;
         if (run != null) {
+            GregtecLink.LOG.error(
+                "autoexport: not done {} min after start; writing the run and quitting",
+                AutoExport.DEADLINE_MS / 60_000);
             String why = "autoexport deadline (" + AutoExport.DEADLINE_MS / 60_000 + " min) reached";
             run.partErrors.put("nei", why);
             run.partErrors.put("autoexport", why);
             r = run.finish("failed", "failed");
+        } else {
+            GregtecLink.LOG.error(
+                "autoexport: no run: {} {} min after start; quitting",
+                launched ? "the world was opened but no export started" : "the world was never opened",
+                AutoExport.DEADLINE_MS / 60_000);
         }
         quit(mc, r);
     }
@@ -154,9 +185,33 @@ public final class ExportClient {
         if (auto || Harness.clientRunActive()) quit(mc, r);
     }
 
+    /**
+     * Quits in two steps. This tick, the game leaves the world as "Save and Quit to Title" does, and its
+     * {@code loadWorld(null)} waits until the integrated server has stopped and saved. The next tick,
+     * {@link #shutDown}. Calling {@code Minecraft.shutdown()} from inside the world would not wait: once the game has
+     * stopped running, Forge's wait for the server throws before it starts, and the JVM can exit while the server
+     * thread is still saving.
+     */
     private void quit(Minecraft mc, ExportRun.Result r) {
         quitting = true;
         if (Harness.clientRunActive()) Harness.onClientFinished(gameDir, r);
+        if (mc.theWorld == null) return;
+        try {
+            mc.theWorld.sendQuittingDisconnectingPacket();
+            mc.loadWorld(null);
+            mc.displayGuiScreen(new GuiMainMenu());
+        } catch (Throwable t) {
+            GregtecLink.LOG.error("autoexport: leaving the world failed", t);
+        }
+    }
+
+    private void shutDown(Minecraft mc) {
+        shutDown = true;
+        boolean serverStopped = mc.getIntegratedServer() == null;
+        if (!serverStopped)
+            GregtecLink.LOG.error("autoexport: the integrated server is still running; quitting anyway");
+        if (Harness.clientRunActive()) Harness.onClientShutdown(gameDir, serverStopped);
+        GregtecLink.LOG.info("autoexport: quitting");
         mc.shutdown();
     }
 

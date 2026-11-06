@@ -192,6 +192,7 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
  "parts":{"gt_dump":"ok|failed","machines":"ok|failed","refs":"ok|failed",
           "nei":"absent|skipped_server|ok|failed","autoexport":"off|ok|failed"},
  "part_errors":{"<part>":"<why it failed>"}?,
+ "part_warnings":{"nei":"<what an ok NEI step left out>"}?,
  "durations_ms":{"gt_dump","machines","refs","nei_wait"?,"nei_dump"?,"nei_copy"?}}
 ```
 
@@ -205,7 +206,8 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
 - `pack_version` `2.9.x` means unknown [A§5.5 correction]: trust jar hashes over this string.
 - `complete` covers the GT parts and the manifest, as before: a failed NEI step leaves `complete: true`. **Readers that
   need NEI's data check `parts.nei == "ok"`** and use `nei/` only then.
-- `world` is the world's folder name: `gregteclink-autoexport` for autoexport, the harness's own world otherwise.
+- `world` is the world's folder name: `gregteclink-autoexport` for autoexport, the folder of whatever world was
+  opened for `one_click`, the harness's own world for `harness`.
 - `parts.nei`:
   - `absent`: no NEI ≥ 2.8.172 `RecipeJsonWriter` in the game (Export's NEI swap is missing).
   - `skipped_server`: a dedicated server, which has no NEI step.
@@ -215,11 +217,18 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
     world opened (NEI disabled, for example), or the world was closed before it was.
 - `parts.autoexport`: `off` without `-Dgregtec.autoexport=true` (or on a dedicated server); `ok` when the
   autoexport flow finished the run itself; `failed` when its 30-minute deadline was reached or the world closed
-  first (`part_errors.autoexport`). PR 1 runs may say `not_built`: treat it as `off`.
+  first (`part_errors.autoexport`). PR 1 runs may say `not_built`: treat it as `off`. An autoexport launch that
+  quits with no run at all (world not prepared, never opened, no export started by the deadline) writes no
+  manifest; Export's `logs/fml-client-latest.log` then has an ERROR line `autoexport: no run: <why>`.
 - `part_errors` is present only when a part failed, with one entry per failed part.
-- The `nei_*` counts and durations are present only when the NEI step called `dumpAll`. `nei_handlers` and
-  `nei_reported` are -1 when NEI logged no such line. `nei_wait` is the time from entering the world until the dump
-  started; `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
+- `part_warnings` is present only when a part is `ok` but left something out. Today only `nei`: NEI dropped one or
+  more recipe handlers while loading them (`counts.nei_lookup_errors` > 0; NEI names them only on stderr), so their
+  recipes are missing from `nei/` although the lines still equal NEI's count. **Readers that need every handler
+  check that `part_warnings.nei` is absent.**
+- The `nei_*` counts and the `nei_dump` and `nei_copy` durations are present only when the NEI step called
+  `dumpAll`; `nei_wait` also when NEI was not ready in time. `nei_handlers` and `nei_reported` are -1 when NEI logged
+  no such line. `nei_wait` is the time from entering the world until the dump started (or the wait timed out);
+  `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
 
 ## Python readers (WO-1.3; named here only)
 

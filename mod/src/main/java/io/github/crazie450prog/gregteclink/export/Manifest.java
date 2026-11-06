@@ -89,6 +89,12 @@ final class Manifest {
             for (Map.Entry<String, String> e : run.partErrors.entrySet()) errors.addProperty(e.getKey(), e.getValue());
             m.add("part_errors", errors);
         }
+        if (!run.partWarnings.isEmpty()) {
+            JsonObject warnings = new JsonObject();
+            for (Map.Entry<String, String> e : run.partWarnings.entrySet())
+                warnings.addProperty(e.getKey(), e.getValue());
+            m.add("part_warnings", warnings);
+        }
         JsonObject durations = new JsonObject();
         for (Map.Entry<String, Long> e : run.durations.entrySet()) durations.addProperty(e.getKey(), e.getValue());
         m.add("durations_ms", durations);

@@ -2,6 +2,7 @@ package io.github.crazie450prog.gregteclink.export;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +22,7 @@ class NeiLogTest {
         assertEquals(0, log.failed);
         assertEquals(0, log.lookupErrors);
         assertNull(log.firstError);
+        assertNull(log.warning());
     }
 
     /** Seen with dumps/recipes made a file: NEI returns normally and only logs this. */
@@ -42,6 +44,10 @@ class NeiLogTest {
         log.add("ERROR", "results: []", null);
         assertEquals(1, log.lookupErrors);
         assertEquals(0, log.failed);
+        assertTrue(
+            log.warning()
+                .startsWith("1 recipe handler(s) failed to load and are missing from nei/"),
+            log.warning());
     }
 
     @Test
