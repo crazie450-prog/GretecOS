@@ -358,7 +358,8 @@ def find(
 ) -> list[Found]:
     """``ore_find``: the veins whose mix holds ``material`` (a GT material name or its display
     name, any case): live ones first, each by the best layer the material is in (primary,
-    secondary, between, sporadic), then nearest first (D142 (c)). ``near`` is an (x, z) block
+    secondary, between, sporadic; any other layer name after those), then nearest first
+    (D142 (c)). ``near`` is an (x, z) block
     position in ``dim``, so it needs ``dim``; distances are horizontal, to the vein's centre
     block."""
     if near is not None and dim is None:

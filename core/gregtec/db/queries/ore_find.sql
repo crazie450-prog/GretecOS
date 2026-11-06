@@ -6,8 +6,10 @@
 -- gregtec.db.ores.find turns it into blocks), the mix, the layers the material is in, the
 -- mix's heights in this dimension, and known (in the player's client cache), depleted, src.
 -- Order (D142 (c)): live veins first, then depleted ones; within each, by the best layer the
--- material is in (primary, secondary, between, sporadic, then any other layer name: a mix
--- whose layers are unknown), then nearest first, then by dimension and chunk.
+-- material is in (primary, secondary, between, sporadic, then any other layer name, which
+-- the ingest never writes: ELSE keeps such a rank from being NULL, which would sort first),
+-- then nearest first, then by dimension and chunk. A vein whose mix the export lacks has no
+-- known layers and isn't listed (the join drops it).
 WITH hit AS (
   SELECT m.*, (
     SELECT group_concat(json_extract(o.value, '$.layer'), ',')

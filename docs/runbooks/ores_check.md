@@ -66,7 +66,7 @@ uv sync
 
 ## How `ore_find` ranks veins (D142 (c))
 
-Nothing to run for this: `ore_find` has no `gos` command yet (WO-2.2's tool layer registers it). It lists the veins whose mix holds the material ranked by the best layer the material is in that mix (primary, secondary, between, sporadic), then nearest first, with depleted veins after every live one. So a vein where copper is only sporadic comes after a farther one where it is primary or secondary; the `layers` column says which. `gos ores list` is unchanged: it lists a dimension's veins by position.
+Nothing to run for this: `ore_find` has no `gos` command, and the `ore_find` tool isn't registered yet (`catalog.LATER`). It lists the veins whose mix holds the material ranked by the best layer the material is in that mix (primary, secondary, between, sporadic), then nearest first, with depleted veins after every live one. So a vein where copper is only sporadic comes after a farther one where it is primary or secondary; the `layers` column says which. `gos ores list` is unchanged: it lists a dimension's veins by position.
 
 ## What to send back
 

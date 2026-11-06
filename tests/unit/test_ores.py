@@ -15,6 +15,7 @@ import contextlib
 import gzip
 import hashlib
 import io
+import itertools
 import json
 import shutil
 import sqlite3
@@ -870,21 +871,46 @@ def test_ore_find(lab: tuple[Path, Path, Path]) -> None:
             (-24, 72, 218, ("sporadic",), False),
             (24, 24, 151, ("sporadic",), True),
         ]
-        # Tinite is secondary in Copperish, sporadic in Nether Quartzish.
-        tin = ore_db.find(conn, "Tinite", dim=-1)
-        assert [(f.mix, f.layers) for f in tin] == [
-            ("Copperish", ("secondary",)),
-            ("Nether Quartzish", ("sporadic",)),
+        # Tinite is secondary in Copperish, sporadic in Nether Quartzish. From the Nether
+        # Quartzish vein itself (0 blocks), the farther Copperish vein still comes first.
+        tin = ore_db.find(conn, "Tinite", dim=-1, near=(24, 24))
+        assert [(f.mix, f.layers, f.distance) for f in tin] == [
+            ("Copperish", ("secondary",), 136),
+            ("Nether Quartzish", ("sporadic",), 0),
         ]
-        # A layer name outside the four (a mix whose layers are unknown) ranks after them.
-        conn.execute(
-            "UPDATE ore_mix SET ores = replace(ores, '\"secondary\"', '\"other\"')"
-            " WHERE id = 'ore.mix.copperish'"
-        )
-        tin = ore_db.find(conn, "Tinite", dim=-1)
-        assert [(f.mix, f.layers) for f in tin] == [
-            ("Nether Quartzish", ("sporadic",)),
-            ("Copperish", ("other",)),
+
+        def set_layer(mix_id: str, material: str, layer: str) -> None:
+            (ores,) = conn.execute(
+                "SELECT ores FROM ore_mix WHERE id = ?", (mix_id,)
+            ).fetchone()
+            ores = [
+                {**o, "layer": layer} if o["material"] == material else o
+                for o in json.loads(ores)
+            ]
+            conn.execute(
+                "UPDATE ore_mix SET ores = ? WHERE id = ?", (json.dumps(ores), mix_id)
+            )
+
+        # Each layer against the next, with the better one always on the farther vein. The
+        # last layer name is one the ingest never writes: it ranks after the four.
+        order = ["primary", "secondary", "between", "sporadic", "other"]
+        for better, worse in itertools.pairwise(order):
+            set_layer("ore.mix.copperish", "Tinite", better)
+            set_layer("ore.mix.quartzish", "Tinite", worse)
+            tin = ore_db.find(conn, "Tinite", dim=-1, near=(24, 24))
+            assert [(f.mix, f.layers) for f in tin] == [
+                ("Copperish", (better,)),
+                ("Nether Quartzish", (worse,)),
+            ], (better, worse)
+        # The best layer counts: Copperish is primary and between in its own mix, and now
+        # secondary in the Ferrite mix, whose veins are nearer; primary wins.
+        set_layer("ore.mix.ferrite", "Copperish", "secondary")
+        cu = ore_db.find(conn, "Copperish", dim=0, near=(150, -60))
+        assert [(f.x, f.z, f.layers) for f in cu] == [
+            (72, 24, ("primary", "between")),
+            (168, -72, ("secondary",)),
+            (-24, 72, ("secondary",)),
+            (24, 24, ("secondary",)),
         ]
         assert (
             near[0].ymin == 10
