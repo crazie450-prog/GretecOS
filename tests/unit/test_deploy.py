@@ -363,13 +363,15 @@ def test_failed_build_leaves_gos_app_unchanged(
 
 
 # Fake Gradle wrappers: `build` leaves in mod/ what a real one leaves (build/libs with the main,
-# -dev and -sources jars, .gradle/, run/, logs/) plus a stray file in a source folder.
+# -dev and -sources jars, .gradle/, run/, logs/) plus a stray file in a source folder, and a
+# .gradle/ beside mod/ (as a build that writes outside mod/ would).
 # GOS_TEST_GRADLE=fail fails the build, =no-jar makes no jar. The jar holds its arguments.
 FAKE_GRADLEW = """#!/bin/sh
 if [ "$GOS_TEST_GRADLE" = fail ]; then echo "BUILD FAILED" >&2; exit 1; fi
 mkdir -p build/libs .gradle/configuration-cache run/server logs
 echo log > logs/latest.log
 echo stray > src/main/stray.txt
+mkdir -p ../.gradle && echo stray > ../.gradle/outside.txt
 if [ "$GOS_TEST_GRADLE" = no-jar ]; then exit 0; fi
 echo "jar $VERSION $*" > "build/libs/gregteclink-$VERSION.jar"
 echo dev > "build/libs/gregteclink-$VERSION-dev.jar"
@@ -383,6 +385,8 @@ if "%GOS_TEST_GRADLE%"=="fail" (
 mkdir build\\libs .gradle\\configuration-cache run\\server logs
 echo log> logs\\latest.log
 echo stray> src\\main\\stray.txt
+mkdir ..\\.gradle
+echo stray> ..\\.gradle\\outside.txt
 if "%GOS_TEST_GRADLE%"=="no-jar" exit /b 0
 echo jar %VERSION% %*> build\\libs\\gregteclink-%VERSION%.jar
 echo dev> build\\libs\\gregteclink-%VERSION%-dev.jar
@@ -420,8 +424,9 @@ def test_builds_the_mod_and_keeps_only_the_jar(
     assert release.gregteclink == entry
     record = json.loads((app / "current" / "release.json").read_text("utf-8"))
     assert record["gregteclink"] == entry
-    # GOS_APP keeps the sources and the jar: everything the build added to mod/ is gone.
+    # GOS_APP keeps the sources and the jar: everything the build added is gone, in mod/ or not.
     assert snapshot(app / "current" / "mod").keys() == snapshot(repo / "mod").keys()
+    assert not (app / "current" / ".gradle").exists()
     assert f"Building GregtecLink {version}" in capsys.readouterr().out
     assert sorted(p.name for p in app.iterdir()) == ["current", "scripts"]
 
@@ -447,6 +452,28 @@ def test_a_failed_mod_build_leaves_gos_app_unchanged(
     with pytest.raises(dep.DeployError, match=message):
         dep.deploy(repo, "HEAD", app)
     assert snapshot(app) == before
+
+
+@pytest.mark.skipif(
+    os.environ.get("GOS_REAL_MOD_BUILD") != "1",
+    reason="needs Java, Gradle, network and minutes: CI's mod-windows job sets "
+    "GOS_REAL_MOD_BUILD=1",
+)
+def test_the_real_mod_builds_from_a_git_archive(tmp_path: Path) -> None:
+    """Deploy's real mod build on a git archive of this commit (no .git), as on Clayton's PC."""
+    commit = git(REPO, "rev-parse", "HEAD")
+    release = tmp_path / "r"  # short: Windows paths in mod/build are deep
+    release.mkdir()
+    dep._extract(REPO, commit, release)
+    before = snapshot(release)
+    entry = dep._build_mod(release, commit[:12])
+
+    jar = release / dep.MOD_DIST / f"gregteclink-{commit[:12]}.jar"
+    sha256 = hashlib.sha256(jar.read_bytes()).hexdigest()
+    assert entry == {"jar": jar.name, "sha256": sha256}
+    after = snapshot(release)
+    assert sorted(set(after) - set(before)) == [dep.MOD_DIST, f"mod-dist/{jar.name}"]
+    assert {k: after.get(k) for k in before} == before  # nothing changed or left behind
 
 
 def failing_rename(n: int) -> Callable[[Path, Path], None]:

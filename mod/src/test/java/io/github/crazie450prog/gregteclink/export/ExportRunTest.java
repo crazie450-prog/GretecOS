@@ -3,6 +3,7 @@ package io.github.crazie450prog.gregteclink.export;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -78,6 +79,10 @@ class ExportRunTest {
         Path outside = Files.createDirectories(tmp.resolve("outside"));
         Files.write(outside.resolve("keep.txt"), new byte[] { 1 });
         boolean linked = link(root.resolve("run-z/link"), outside);
+        // Links in the exports folder itself, to complete runs outside it: never pruned or followed.
+        run(tmp, "outside-run", true, "2000-01-01T00:00:00Z");
+        boolean topLinked = link(root.resolve("linked-run"), tmp.resolve("outside-run"))
+            && link(root.resolve("linked.partial"), tmp.resolve("outside-run"));
 
         List<String> deleted = ExportRun.prune(guard, "current", 10);
 
@@ -93,8 +98,57 @@ class ExportRunTest {
         Set<String> want = new TreeSet<>(
             Arrays.asList("current", "current.partial", "failed", "no-manifest", "run-w", "run-v", "run-u", "run-t"));
         for (char c = 'o'; c <= 's'; c++) want.add("run-" + c);
+        if (topLinked) want.addAll(Arrays.asList("linked-run", "linked.partial"));
         assertEquals(want, left);
         if (linked) assertTrue(Files.isRegularFile(outside.resolve("keep.txt")));
+        assertTrue(Files.isRegularFile(tmp.resolve("outside-run/gt_recipes.jsonl")));
+    }
+
+    /**
+     * A doomed run is renamed to .partial before its files go, so a delete that fails halfway (on Windows, a file
+     * still held) leaves a folder readers skip and the next prune deletes, not a "complete" run with files missing.
+     */
+    @Test
+    void aDeleteThatFailsHalfwayLeavesAPartialFolder() throws IOException {
+        PathGuard guard = new PathGuard(Files.createDirectories(tmp.resolve("game")), ExportRun.EXPORTS_DIR);
+        Path root = guard.root();
+        run(root, "old", true, "2026-11-01T00:00:00Z");
+        run(root, "current", true, "2026-11-02T00:00:00Z");
+        Path held = Files.createDirectories(root.resolve("old/zz-held"));
+        Files.write(held.resolve("file"), new byte[] { 1 });
+        // A folder whose entries can't be deleted stands in for the held file. Root and Windows can delete them
+        // anyway; the test is skipped there.
+        Path probe = Files.createDirectories(tmp.resolve("probe"));
+        Files.write(probe.resolve("file"), new byte[] { 1 });
+        boolean blocks = probe.toFile()
+            .setWritable(false) && !deletes(probe.resolve("file"));
+        probe.toFile()
+            .setWritable(true);
+        assumeTrue(blocks, "this OS user can delete files in a folder without write permission");
+        assertTrue(
+            held.toFile()
+                .setWritable(false));
+        try {
+            assertEquals(Arrays.asList(), ExportRun.prune(guard, "current", 1));
+            assertTrue(Files.notExists(root.resolve("old")));
+            assertTrue(Files.isRegularFile(root.resolve("old.partial/zz-held/file")));
+        } finally {
+            for (String p : new String[] { "old/zz-held", "old.partial/zz-held" }) root.resolve(p)
+                .toFile()
+                .setWritable(true);
+        }
+        assertEquals(Arrays.asList("old.partial"), ExportRun.prune(guard, "current", 1));
+        assertTrue(Files.notExists(root.resolve("old.partial")));
+        assertTrue(Files.isRegularFile(root.resolve("current/manifest.json")));
+    }
+
+    private static boolean deletes(Path file) {
+        try {
+            Files.delete(file);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static void run(Path root, String name, boolean complete, String created) throws IOException {

@@ -13,6 +13,7 @@ import re
 import runpy
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -462,6 +463,103 @@ def test_installs_the_deployed_jar_into_export_only(
     assert env.targets() == before
 
 
+def _plant(path: Path, play_file: Path, kind: str) -> None:
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    if kind == "symlink":
+        path.symlink_to(play_file)
+    else:
+        os.link(play_file, path)
+
+
+@pytest.mark.parametrize("kind", ["hard link", "symlink"])
+@pytest.mark.parametrize("where", ["temp path", "target"])
+def test_a_link_at_an_install_path_is_never_written_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, where: str
+) -> None:
+    """gos-dev can write Export: links to Play files at the paths the install writes.
+
+    The install's paths match Export's excludes, so the mirror's link checks never see them.
+    Temp paths: the fixed ``<name>.gos-tmp`` the install once used, and the name mkstemp tries
+    first (made ``planted`` here), where a link already waits. Targets: the jar and config
+    themselves are links, which the rename replaces.
+    """
+    if kind == "symlink" and sys.platform == "win32":
+        pytest.skip("symlinks need a privilege")
+    env = Env(tmp_path)
+    deploy_jar(env)
+    monkeypatch.setattr(
+        tempfile, "_get_candidate_names", lambda: iter(["planted", "fresh"])
+    )
+    plants = {
+        f"mods/{LINK}": "mods/example-1.0.jar",
+        "config/gregteclink.cfg": "config/example.cfg",
+    }
+    for rel, play_rel in plants.items():
+        paths = (
+            [f"{rel}{sync.TMP_SUFFIX}", f"{rel}.planted{sync.TMP_SUFFIX}"]
+            if where == "temp path"
+            else [rel]
+        )
+        for path in paths:
+            _plant(env.export / path, env.play / play_rel, kind)
+            assert (env.export / path).read_bytes() == PLAY_FILES[play_rel]
+
+    assert env.sync() == 0
+    env.assert_play_untouched()
+    assert (env.export / "mods" / LINK).read_bytes() == LINK_DATA
+    assert (env.export / "config/gregteclink.cfg").read_bytes() == sync.EXPORT_CONFIG
+    for rel in plants:
+        assert not (env.export / rel).is_symlink()
+        assert (env.export / rel).stat().st_nlink == 1
+    assert not list(env.export.rglob(f"*.fresh{sync.TMP_SUFFIX}"))
+
+
+def test_case_folded_names_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows ``GregtecLink-*.jar`` is one of Export's jars, and the deployed jar under
+    another case is the same file, so it is kept rather than written again."""
+    monkeypatch.setattr(sync, "IGNORE_CASE", True)
+    env = Env(tmp_path)
+    deploy_jar(env)
+    write(env.export, "mods/GregtecLink-0.0.8.jar", b"an older one")
+    same = write(env.export, f"mods/{LINK.upper()}", LINK_DATA)
+    assert env.sync() == 0
+    jars = [
+        p.name
+        for p in (env.export / "mods").iterdir()
+        if "gregteclink" in p.name.lower()
+    ]
+    assert jars == [LINK.upper()]
+    assert same.read_bytes() == LINK_DATA and same.stat().st_mtime_ns == OLD
+    assert (env.export / "config/gregteclink.cfg").read_bytes() == sync.EXPORT_CONFIG
+    env.assert_play_untouched()
+
+
+def test_old_jars_are_deleted_before_the_new_one_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An old jar Export still holds stops the install before Export has two GregtecLinks."""
+    env = Env(tmp_path)
+    deploy_jar(env)
+    held = env.export / "mods/gregteclink-0.1.0.jar"
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == held:
+            raise PermissionError(13, "in use", str(self))
+        real_unlink(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert env.sync() == 1
+    assert "Close its game, then run sync again" in capsys.readouterr().out
+    assert sorted(p.name for p in (env.export / "mods").glob("gregteclink*")) == [
+        "gregteclink-0.1.0.jar"
+    ]
+    env.assert_play_untouched()
+
+
 def test_the_export_config_is_the_one_the_harness_runs() -> None:
     """The modules block of mod/harness's config, which the harness reads as export only."""
     harness = (REPO / "mod" / "harness" / "config" / "gregteclink.cfg").read_bytes()
@@ -538,6 +636,11 @@ def test_only_lab_skips_the_install_and_install_never_writes_lab_or_play(
     for role, game, jar in [
         ("lab", env.lab, env.lab / "mods" / LINK),
         ("export", env.export, env.play / "mods" / LINK),  # Export's plan, Play's path
+        (
+            "export",
+            env.play,
+            env.play / "mods" / LINK,
+        ),  # Export's plan on Play's folder
     ]:
         plan = sync.Plan(role, env.play, game)
         plan.install = sync.Install(current, "c", LINK_DATA, jar, (), None)

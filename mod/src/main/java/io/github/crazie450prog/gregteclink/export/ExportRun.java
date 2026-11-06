@@ -138,8 +138,9 @@ public final class ExportRun {
      * Deletes the complete runs (manifest {@code "complete": true}) beyond the newest {@code keep}, by manifest
      * {@code created_utc} and then name, and every {@code .partial} folder. Only folders directly in the guard's root,
      * and never {@code current}, which counts as one of the kept runs when it is complete. Runs whose manifest is
-     * missing or not complete are kept. A link or junction is deleted itself, never followed. Never throws: what it
-     * can't delete stays and is logged. Returns the names it deleted.
+     * missing or not complete are kept. A complete run is renamed to {@code <name>.partial} before anything in it is
+     * deleted. A link or junction is deleted itself, never followed. Never throws: what it can't delete stays (a run
+     * that can't be renamed stays whole) and is logged. Returns the names it deleted.
      */
     static List<String> prune(PathGuard guard, String current, int keep) {
         List<String[]> complete = new ArrayList<>(); // {created_utc, name}
@@ -172,9 +173,16 @@ public final class ExportRun {
             if (!complete.get(i)[1].equals(current)) doomed.add(complete.get(i)[1]);
         }
         List<String> deleted = new ArrayList<>();
-        for (String name : doomed) {
+        for (String name : doomed) { // .partial folders come first, so a run's .partial name is free by its turn
             try {
-                deleteTree(guard.resolve(name));
+                // A complete run is renamed to .partial first, in one atomic step: if a file in it can't be deleted
+                // (Windows: the indexer, a virus scanner or the collector still holds it), what is left is a .partial
+                // folder that readers skip and the next prune deletes, never a "complete" run with files missing.
+                String gone = name.endsWith(".partial") ? name : name + ".partial";
+                if (!gone.equals(name)) {
+                    Files.move(guard.resolve(name), guard.resolve(gone), StandardCopyOption.ATOMIC_MOVE);
+                }
+                deleteTree(guard.resolve(gone));
                 deleted.add(name);
             } catch (Throwable t) {
                 GregtecLink.LOG.warn("export: old run {} not deleted: {}", name, t.toString());

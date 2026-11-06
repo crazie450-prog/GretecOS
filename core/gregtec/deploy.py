@@ -22,8 +22,9 @@ How a deploy runs:
    not hardlinks into uv's cache, so every file is new in GOS_APP and inherits its ACL. The
    editable install's ``.pth`` is made relative. If the commit has ``mod/``, run its Gradle
    wrapper's ``build`` there (D98), copy the GregtecLink jar to ``mod-dist\``, record its name and
-   SHA256 in ``release.json`` and delete everything the build added to ``mod/`` (``build\``,
-   ``.gradle\``, ``run\``, ...), so the release holds only the sources and the jar;
+   SHA256 in ``release.json`` and delete everything the build added to the release
+   (``mod\build\``, ``mod\.gradle\``, ``mod\run\``, ..., and anything outside ``mod\``), so
+   the release holds only the sources and the jar;
    ``sync_instances.py`` installs that jar into Export. Then rename the build folder to
    ``.gos-staging-*`` and check the venv there, so a path left pointing at the build folder fails
    the check instead of breaking the deployed release.
@@ -328,7 +329,7 @@ def _build_mod(release: Path, version: str) -> dict[str, str] | None:
     wrapper = mod / ("gradlew.bat" if os.name == "nt" else "gradlew")
     if not wrapper.is_file():
         raise DeployError(f"{MOD}/ has no {wrapper.name}; nothing was swapped")
-    before = _tree(mod)
+    before = _tree(release)  # the whole release: a build may also write outside mod/
     print(
         f"Building GregtecLink {version} with {MOD}/{wrapper.name} build (the first deploy "
         "also downloads Gradle, JDKs and Minecraft: a few minutes)...",
@@ -350,10 +351,11 @@ def _build_mod(release: Path, version: str) -> dict[str, str] | None:
     jar = mod / "build" / "libs" / name
     if not jar.is_file():
         raise DeployError(f"the build made no {jar}; nothing was swapped")
+    added = _added(release, before)  # mod/build/, mod/.gradle/, mod/run/, ...
     os.mkdir(release / MOD_DIST)
     shutil.copyfile(jar, release / MOD_DIST / name)
     sha256 = hashlib.sha256((release / MOD_DIST / name).read_bytes()).hexdigest()
-    for path in _added(mod, before):  # build/, .gradle/, run/, logs/, ...
+    for path in added:
         for attempt in range(CLEAN_TRIES):
             if _delete(path):
                 break

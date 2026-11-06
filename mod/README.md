@@ -53,8 +53,9 @@ contract is [docs/contracts/gregteclink-export-v1.md](../docs/contracts/gregtecl
   or junction at `gregteclink` or `exports` stops the export before anything is written.
 - Files go into `<run_id>.partial/`; `manifest.json` is written last, then the folder is renamed.
 - After the rename, the module keeps the newest 10 complete runs (D98): it deletes older complete runs and every
-  `.partial` folder left by an earlier run, inside its own `exports/` folder only. Runs whose manifest isn't complete
-  are kept.
+  `.partial` folder left by an earlier run, inside its own `exports/` folder only. Each old complete run is renamed to
+  `.partial` before anything in it is deleted, so a delete that fails halfway never leaves a "complete" run with
+  files missing. Runs whose manifest isn't complete are kept.
 - One deliberate runtime change, with `export=true` only: GT's recipe-owner capture is turned on in preInit (the same
   switch as GT's `NEIRecipeOwner` client option), so each recipe records the mod that added it. NEI in Export then
   shows "added by" lines.

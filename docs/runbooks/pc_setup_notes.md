@@ -72,6 +72,7 @@ From WO-1.1 PR 1 on, `gos deploy` also builds the mod in `mod/` and keeps only i
 
 1. Gradle's wrapper needs a Java on `PATH` or `JAVA_HOME` to start (Java 17 or newer); Gradle then downloads the JDKs the build uses into `%USERPROFILE%\.gradle\`. If deploy stops with `ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH`, nothing was swapped: point `JAVA_HOME` at a JDK, open a new window and deploy again.
 2. The first deploy takes a few minutes: Gradle also downloads Minecraft, Forge and GT. Later deploys reuse those downloads. It ends with `Built GregtecLink: ...gregteclink-<commit>.jar` and the jar's SHA256.
+   Every deploy runs this build, even one whose commit doesn't change `mod/`. So every deploy needs that Java, and it needs the network whenever Gradle has something new to download (the first deploy, and after the mod's dependencies change). Without them the build fails, and deploy stops before the swap with GOS_APP unchanged.
 3. Close Export, then run sync from GOS_APP, dry run first:
 
    ```powershell
@@ -80,3 +81,4 @@ From WO-1.1 PR 1 on, `gos deploy` also builds the mod in `mod/` and keeps only i
    ```
 
    Under `export:` the `gregteclink:` lines show the jar it installs, any older `gregteclink*.jar` it deletes, and `config/gregteclink.cfg` (export module on). Lab and Play get nothing from this step. Re-run sync after each deploy that changes the mod.
+   If sync stops with `Write failed` because Export was still open, close it and run sync again. Sync deletes the old jar before it writes the new one, so until then Export has one GregtecLink jar or none, never two.

@@ -10,7 +10,9 @@ keep Play's mtime. Each game folder is ``minecraft`` unless only ``.minecraft`` 
 Safety (CLAUDE.md, plan 4.6 residual risk, D82):
 
 - Play is only read, through ``safe_open``: nothing in it is written, renamed or locked.
-- Each target file is written to ``<name>.gos-tmp`` beside it, then ``os.replace``'d.
+- Each target file is written to a new ``<name>.<random>.gos-tmp`` beside it, then
+  ``os.replace``'d. The temp file is created with O_EXCL, so a link planted at a temp path
+  (gos-dev can write Export and Lab) makes the write fail instead of writing through it.
 - Everything is planned before anything is written, and any refusal writes nothing at all:
   a symlink, junction or other reparse point anywhere sync would traverse (both trees, the
   instance and game folders included); a hard link in a target, which is what Prism's "Link
@@ -20,10 +22,12 @@ Safety (CLAUDE.md, plan 4.6 residual risk, D82):
 
 Then, for Export only, sync installs GregtecLink from the release ``gos deploy`` built (D98):
 GOS_APP's ``current/release.json`` names the jar in ``current/mod-dist/`` and its SHA256. The
-jar's bytes must match it; they replace every other ``mods/gregteclink*.jar`` in Export, and
-``config/gregteclink.cfg`` is written with the export module on and listener and client off. Both
-paths are in Export's exclude list, so the mirror never copies or deletes them. With no deployed
-jar this step is skipped with a note; a jar that doesn't match ``release.json`` is a refusal.
+jar's bytes must match it. Every other ``mods/gregteclink*.jar`` in Export is deleted first (so a
+jar Export still holds stops the step before there are two), then the jar is written and
+``config/gregteclink.cfg`` with the export module on and listener and client off, each through
+the same O_EXCL temp file as the mirror. Both paths are in Export's exclude list, so the mirror
+never copies, deletes or link-checks them. With no deployed jar this step is skipped with a note;
+a jar that doesn't match ``release.json`` is a refusal.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -368,20 +373,29 @@ def apply(plan: Plan) -> None:
     for path in plan.mkdir:
         path.mkdir()
     for f, target in plan.copy + plan.update:
-        data = read_bytes(plan.source / f.rel)
-        tmp = target.with_name(target.name + TMP_SUFFIX)
-        tmp.write_bytes(data)
-        os.utime(tmp, ns=(f.atime_ns, f.mtime_ns))
-        os.replace(tmp, target)
+        _write(target, read_bytes(plan.source / f.rel), (f.atime_ns, f.mtime_ns))
     for f, target in plan.retime:
         os.utime(target, ns=(f.atime_ns, f.mtime_ns))
 
 
-def _write(target: Path, data: bytes) -> None:
-    target.parent.mkdir(exist_ok=True)
-    tmp = target.with_name(target.name + TMP_SUFFIX)
-    tmp.write_bytes(data)
-    os.replace(tmp, target)
+def _write(target: Path, data: bytes, times: tuple[int, int] | None = None) -> None:
+    """Write ``data`` to a new temp file beside ``target``, then rename it onto ``target``.
+
+    mkstemp creates the temp file with O_EXCL under a random name, so it never opens a file or
+    link that is already there. A rename replaces a link at ``target`` itself, never its target.
+    """
+    fd, name = tempfile.mkstemp(
+        dir=target.parent, prefix=target.name + ".", suffix=TMP_SUFFIX
+    )
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(data)
+        if times is not None:
+            os.utime(name, ns=times)
+        os.replace(name, target)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
 
 
 def apply_install(plan: Plan) -> None:
@@ -391,13 +405,20 @@ def apply_install(plan: Plan) -> None:
         return
     paths = [p for p in (install.jar, install.config, *install.delete) if p is not None]
     allowed = {plan.game / "mods", (plan.game / LINK_CONFIG).parent}
-    if plan.role != "export" or any(p.parent not in allowed for p in paths):
+    if (
+        plan.role != "export"
+        or _overlap(plan.game, plan.source)
+        or any(p.parent not in allowed for p in paths)
+    ):
         raise ValueError(f"GregtecLink is installed into Export only, not {plan.game}")
-    if install.jar is not None:
-        _write(install.jar, install.data)
+    # Old jars first: if one is locked (Export running), Export never has two GregtecLinks.
     for path in install.delete:
         path.unlink()
+    if install.jar is not None:
+        install.jar.parent.mkdir(exist_ok=True)
+        _write(install.jar, install.data)
     if install.config is not None:
+        install.config.parent.mkdir(exist_ok=True)
         _write(install.config, EXPORT_CONFIG)
 
 

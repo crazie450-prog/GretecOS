@@ -28,8 +28,10 @@ only what needs the live game: registry names, ore names, display names and GT's
   older complete runs and every `.partial` folder an earlier run left, including one whose rename failed. It never
   deletes the new run or a folder whose manifest is missing or says `"complete": false`, and works only on folders
   directly in `exports/`, each resolved through the guard; a link or junction inside one is deleted, never followed.
-  A folder it can't delete (Windows: a file in it is open) stays and is logged. Runs are about 50 MB each, so a
-  collector should copy a run soon after it appears: ten later runs remove it.
+  It first renames a complete run to `<run_id>.partial/` in one atomic step, so a run it can't finish deleting
+  (Windows: a file in it is open) is left as a `.partial` folder that readers skip and the next run deletes, never
+  as a complete run with files missing. A run it can't rename stays whole. Both are logged. Runs are about 50 MB
+  each, so a collector should copy a run soon after it appears: ten later runs remove it.
 
 ## Keys
 
