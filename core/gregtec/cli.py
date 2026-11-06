@@ -27,6 +27,7 @@ from gregtec.db import structures as structure_db
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
+from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 
 
@@ -329,6 +330,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=vault_deploy.DEFAULT_TEMPLATE,
         help=argparse.SUPPRESS,
     )
+    maintain = vault_cmds.add_parser(
+        "maintain",
+        help="run the curator's idle-maintenance jobs now (plan 6.6)",
+        description=(
+            "Runs the daily jobs now, whatever the idle rule says: compact old logs (a Haiku "
+            "call each, with the stored key), rebuild INDEX.md, check the notes against "
+            "_gos/schema.md, mirror them into note_fts, back up the DB, commit to the vault's "
+            "git. The core runs the same jobs once a day when the game is closed and the PC "
+            "has been idle for [maintenance] idle_minutes."
+        ),
+    )
+    maintain.add_argument(
+        "--job",
+        action="append",
+        choices=vault_curator.JOBS,
+        help="run only this job (repeatable). Default: all, in order.",
+    )
+    measure = vault_cmds.add_parser(
+        "measure",
+        help="count the note formats' tokens with the count_tokens endpoint (WO-2.5)",
+        description=(
+            "Renders the live vault's notes, plan 6.2's example and two DB tables in each "
+            "candidate format (the grammar, CSV, TOON, Markdown, key: value rows, compact and "
+            "pretty JSON, YAML), counts their tokens with the Messages API's count_tokens "
+            "(free) using the stored Anthropic key, and writes "
+            "GOS_HOME/data/reports/note-formats-YYYYMMDD.txt."
+        ),
+    )
+    measure.add_argument(
+        "--model",
+        action="append",
+        help="a model to count for (repeatable). Default: Haiku, Sonnet and Opus 5.5.",
+    )
+    measure.add_argument(
+        "--no-db",
+        action="store_true",
+        help="leave out the DB tables (vault notes only)",
+    )
+    for sub in (maintain, measure):
+        sub.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml.",
+        )
 
     key_parser = commands.add_parser(
         "key",
@@ -479,6 +525,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         target = args.vault or home / "vault"
         print(f"{vault_deploy.deploy(target, args.template)}: {target}")
         return 0
+    if args.command == "vault" and args.vault_command == "maintain":
+        return _maintain(args.config, args.job)
+    if args.command == "vault" and args.vault_command == "measure":
+        from gregtec.vault import measure as vault_measure
+
+        cfg = _load(args.config)
+        if cfg is None:
+            return 2
+        return vault_measure.main(
+            cfg.gos_home, args.model or vault_measure.MODELS, not args.no_db, sys.stdout
+        )
     if args.command == "key":
         try:
             return _key(args.key_command, getattr(args, "name", None))
@@ -592,6 +649,37 @@ def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
     servicecli.spawn_detached(argv, cfg.gos_home)
     print(f"Restarted GOS: {exe}")
+
+
+def _maintain(config_path: Path | None, jobs: list[str] | None) -> int:
+    """``gos vault maintain``: 0 when no job failed, 1 otherwise, 2 for a bad gos.toml."""
+    import datetime as dt
+
+    from gregtec.llm.summarise import HaikuSummariser
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import DB_NAME, Store
+
+    cfg = _load(config_path)
+    if cfg is None:
+        return 2
+    store = Store(cfg.data_dir / DB_NAME)
+    try:
+        cur = vault_curator.Curator(
+            vault=cfg.gos_home / "vault",
+            db=cfg.data_dir / DB_NAME,
+            backups=cfg.data_dir / "backups",
+            summariser=HaikuSummariser.from_keyring,
+            meter=UsageMeter(
+                store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
+            ),
+            keep_backups=cfg.keep_backups,
+        )
+        results = cur.run(dt.date.today(), jobs or vault_curator.JOBS)
+    finally:
+        store.close()
+    for result in results:
+        print(result.line())
+    return 1 if any(r.status == vault_curator.FAILED for r in results) else 0
 
 
 def _load(path: Path | None) -> config.Config | None:
