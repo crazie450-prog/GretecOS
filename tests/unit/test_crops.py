@@ -737,3 +737,46 @@ def test_nei_facts_are_compared_only_when_both_runs_have_them(tmp_path: Path) ->
     other = parsed(make_run(tmp_path / "c"))
     other.crops["cropsnh:gamma"] = moved
     assert [c.field for c in crops.diff(with_nei, other).crops_changed] == ["sub_soils"]
+
+
+# --- gos crops show ---------------------------------------------------------------------------
+
+
+def test_gos_crops_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "home"
+    toml = tmp_path / "gos.toml"
+    toml.write_text(f'[paths]\ngos_home = "{home.as_posix()}"\n', encoding="utf-8")
+    assert cli.main(["crops", "show", "--config", str(toml)]) == 1
+    assert "run `gos db build` first" in capsys.readouterr().out
+    make_run(home)
+    build.build(home)
+    assert (
+        cli.main(
+            ["crops", "show", "gamma lily", "crop:cropsnh:beta", "--config", str(toml)]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "crop:cropsnh:gamma  Gamma Lily" in out
+    assert "  soil: stone (TConstruct:decoration.multibrick@3, minecraft:stone)" in out
+    assert (
+        "  requirements: Needs a light level of 10 or lower; Needs a block of tin"
+        in out
+    )
+    assert "  sub-soil blocks: test:tin_block@0, test:tin_ore@2" in out
+    assert "  drops: 3 x Tin Dust{x:1b} (test:dust@7#" in out and " 12.05%" in out
+    assert (
+        "  bred from: Alpha Flower + Beta Reed [in NEI's Crop Breeding tab] (Needs"
+        in out
+    )
+    assert "  parent of: Delta Berry" in out
+    assert "  mutation pools: Flower, Reed" in out
+    assert "  alternate seeds: test:reed@*" in out  # Beta Reed's
+    assert cli.main(["crops", "show", "delta", "--config", str(toml)]) == 0
+    out = capsys.readouterr().out
+    assert "[Crop Breeder only] (catalyst 5 x Bricks; catalyst 2 x ore:dustTin)" in out
+    assert cli.main(["crops", "show", "omega", "--config", str(toml)]) == 1
+    assert "No crop matches 'omega'" in capsys.readouterr().out
+    assert cli.main(["crops", "show", "--config", str(toml)]) == 0
+    listed = capsys.readouterr().out.splitlines()
+    assert listed[0] == f"# run {RUN}: 5 crops" and len(listed) == 6

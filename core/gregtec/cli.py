@@ -16,6 +16,7 @@ import keyring.errors
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
 from gregtec.db import build as recipe_db
+from gregtec.db import crops as crop_db
 from gregtec.db import ores as ore_db
 from gregtec.db import quests as quest_db
 from gregtec.db import structures as structure_db
@@ -118,6 +119,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     db_build.add_argument("run", nargs="?", default=None, help="collected run id")
     db_build.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
+
+    crops = commands.add_parser(
+        "crops", help="CropsNH crop data in the DB (gos db build loads it)"
+    )
+    crop_cmds = crops.add_subparsers(dest="crops_command", required=True)
+    c_show = crop_cmds.add_parser(
+        "show",
+        help="a crop's facts, or every crop's id, name and tier",
+        description=(
+            "Prints what the DB holds for each crop named (its crop:<id>, CropsNH id or "
+            "name, any case; else every crop whose name contains it), from the newest run "
+            "with crop data: tier, soil, requirements, drops with chances, parent recipes and "
+            "mutation pools, for comparing with NEI in the Lab. With no name, lists them all."
+        ),
+    )
+    c_show.add_argument("name", nargs="*", help="crop name or id")
+    c_show.add_argument(
         "--config",
         type=Path,
         default=None,
@@ -378,6 +402,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return export_collect.main(args.config, sys.stdout)
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
+    if args.command == "crops" and args.crops_command == "show":
+        # Pack names, as for quests: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        return crop_db.show_main(args.config, args.name, sys.stdout)
     if args.command == "quests":
         # Quest text is pack data (CJK, symbols). Windows writes a pipe or a file in its ANSI
         # code page (cp1252), which can't encode all of it: escape what it can't, never crash.

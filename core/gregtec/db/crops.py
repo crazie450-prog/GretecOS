@@ -14,7 +14,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import TextIO
 
+from gregtec import config
+from gregtec.db import access
 from gregtec.ingest.crops import (
     Crop,
     CropData,
@@ -279,3 +283,132 @@ def runs_with_crops(conn: sqlite3.Connection) -> list[tuple[int, str]]:
             " ORDER BY e.created_at DESC, e.run_key DESC"
         )
     ]
+
+
+# --- gos crops show ---------------------------------------------------------------------------
+
+
+def find(data: CropData, query: str) -> list[Crop]:
+    """Crops matching ``query``: its id, ``crop:<id>`` or its name (any case); else every crop
+    whose name contains it."""
+    q = query.removeprefix("crop:").casefold()
+    exact = [
+        c for c in data.crops.values() if q in (c.id.casefold(), c.name.casefold())
+    ]
+    return exact or [c for c in data.crops.values() if q in c.name.casefold()]
+
+
+def _pct(bp: int) -> str:
+    return f"{bp / 100:.2f}%"
+
+
+def _req(r: Requirement) -> str:
+    if r.kind == "catalyst":
+        return f"catalyst {r.value} x {r.text}"
+    return r.text
+
+
+def describe(data: CropData, c: Crop) -> list[str]:
+    """One crop's facts for people (for the Lab spot checks against NEI, WO-1.10)."""
+    names = {k: v.name for k, v in data.crops.items()}
+    soils = {s.name: s for s in data.soils}
+
+    def soil_text(name: str) -> str:
+        s = soils.get(name)
+        if s is None:
+            return f"{name} (every registered soil)" if name == "global" else name
+        blocks = ", ".join(
+            b.registry_name + ("" if b.meta is None else f"@{b.meta}") for b in s.blocks
+        )
+        return f"{name} ({blocks or 'no block'})"
+
+    shown = {None: "no NEI data", True: "yes", False: "no (hidden)"}[c.in_nei]
+    out = [
+        f"{c.ref}  {c.name}",
+        (
+            f"  tier {c.tier}, growth duration {c.growth_duration}, spreads weeds above Growth "
+            f"{c.weeds_above}, on NEI's crop pages: {shown}"
+        ),
+        f"  soil: {'; '.join(soil_text(s) for s in c.soil_lists)}",
+        f"  liked biomes: {', '.join(c.liked_biomes) or 'none'}",
+        f"  requirements: {'; '.join(_req(r) for r in c.requirements) or 'none'}",
+    ]
+    if c.sub_soils:
+        out.append(f"  sub-soil blocks: {', '.join(r.text() for r in c.sub_soils)}")
+    drops = [
+        f"{d.amount} x {d.name}{d.nbt or ''}"
+        + (f" ({d.item.text()})" if d.item else "")
+        + f" {_pct(d.chance_bp)}"
+        for d in c.drops
+    ]
+    out.append(f"  drops: {'; '.join(drops) or 'none'}")
+    seeds = [
+        f"{s.registry_name}@{'*' if s.meta is None else s.meta}"
+        for s in data.seeds
+        if s.crop == c.id
+    ]
+    if seeds:
+        out.append(f"  alternate seeds: {', '.join(seeds)}")
+    for r in data.recipes:
+        if r.child != c.id:
+            continue
+        where = (
+            "Crop Breeder only"
+            if r.machine_only
+            else ("in NEI's Crop Breeding tab" if r.in_nei else "crop sticks")
+        )
+        conds = "; ".join(_req(q) for q in r.requirements if q.kind != "machine_only")
+        out.append(
+            f"  bred from: {' + '.join(names.get(p, p) for p in r.parents)} [{where}]"
+            + (f" ({conds})" if conds else "")
+        )
+    children = sorted({names[r.child] for r in data.recipes if c.id in r.parents})
+    if children:
+        out.append(f"  parent of: {', '.join(children)}")
+    pools = [p.name for p in data.pools if c.id in p.members]
+    out.append(f"  mutation pools: {', '.join(pools) or 'none'}")
+    return out
+
+
+def show_main(config_path: Path | None, queries: Sequence[str], out: TextIO) -> int:
+    """``gos crops show``: 0 when every query found a crop, 1 otherwise, 2 for a bad gos.toml."""
+    try:
+        cfg = config.load(config_path)
+    except (OSError, ValueError) as exc:
+        print(f"Can't read gos.toml: {exc}", file=out)
+        return 2
+    path = access.db_path(cfg.gos_home)
+    if not path.is_file():
+        print(f"No crops: {path} doesn't exist; run `gos db build` first", file=out)
+        return 1
+    try:
+        conn = access.connect(path, readonly=True)
+        try:
+            runs = runs_with_crops(conn)
+            data = read(conn, runs[0][0]) if runs else None
+        finally:
+            conn.close()
+    except (access.SchemaError, OSError, sqlite3.Error) as exc:
+        print(f"No crops: {exc}", file=out)
+        return 1
+    if data is None:
+        print(
+            "No crops: no run in the DB has crop data; see `gos db build`'s report",
+            file=out,
+        )
+        return 1
+    print(f"# run {runs[0][1]}: {len(data.crops)} crops", file=out)
+    if not queries:
+        for c in data.crops.values():
+            print(f"{c.ref}\t{c.name}\t{c.tier}", file=out)
+        return 0
+    code = 0
+    for q in queries:
+        found = find(data, q)
+        if not found:
+            print(f"No crop matches {q!r}", file=out)
+            code = 1
+        for c in found:
+            for line in describe(data, c):
+                print(line, file=out)
+    return code
