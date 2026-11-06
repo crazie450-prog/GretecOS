@@ -15,6 +15,7 @@ import keyring.errors
 
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
+from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
 from gregtec.db import quests as quest_db
 from gregtec.ingest import collect as export_collect
@@ -188,6 +189,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
 
+    tool = commands.add_parser(
+        "tool",
+        help="run a read-only agent tool against GOS_HOME's DB (for testing)",
+        description=(
+            "Runs one of the agents' read-only tools (WO-2.2) against "
+            "GOS_HOME/data/gos.sqlite and prints its TSV result, as the fast and deep lanes "
+            "see it. With no NAME, lists the tools."
+        ),
+    )
+    tool.add_argument(
+        "name", nargs="?", default=None, help="the tool (none: list them)"
+    )
+    tool.add_argument(
+        "args",
+        nargs="?",
+        default="{}",
+        help="its arguments, a JSON object (default {})",
+    )
+    tool.add_argument(
+        "--lane",
+        choices=("fast", "deep"),
+        default=None,
+        help="call it as this lane would",
+    )
+    tool.add_argument(
+        "--all", action="store_true", help="follow its more cursors to the last page"
+    )
+    tool.add_argument(
+        "--schema",
+        action="store_true",
+        help="print the tool's schema instead of running it",
+    )
+    tool.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
+
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
     dep = vault_cmds.add_parser(
@@ -277,6 +318,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.config, args.line, args.limit, sys.stdout
             )
         return quest_db.tier_main(args.config, args.set_stage, args.clear, sys.stdout)
+    if args.command == "tool":
+        # Tool results hold pack text (CJK, symbols): escape what a Windows pipe can't encode.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        return tool_command.main(
+            args.config,
+            args.name,
+            args.args,
+            args.lane,
+            args.all,
+            args.schema,
+            sys.stdout,
+        )
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"

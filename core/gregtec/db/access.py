@@ -97,11 +97,15 @@ def _statements(script: str) -> list[str]:
     return out
 
 
+def query_text(name: str) -> str:
+    """The SQL of ``queries/<name>.sql``."""
+    if not _QUERY_NAME.fullmatch(name):
+        raise ValueError(f"not a query name: {name!r}")
+    return (QUERIES / f"{name}.sql").read_text(encoding="utf-8")
+
+
 def query(
     conn: sqlite3.Connection, name: str, params: Mapping[str, object] | None = None
 ) -> list[sqlite3.Row]:
     """Run ``queries/<name>.sql`` with named ``params``."""
-    if not _QUERY_NAME.fullmatch(name):
-        raise ValueError(f"not a query name: {name!r}")
-    sql = (QUERIES / f"{name}.sql").read_text(encoding="utf-8")
-    return conn.execute(sql, dict(params or {})).fetchall()
+    return conn.execute(query_text(name), dict(params or {})).fetchall()
