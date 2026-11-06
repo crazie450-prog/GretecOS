@@ -105,6 +105,8 @@ GAME_TABLES = frozenset(
         "quest_reward", "quest_item", "quest_progress", "quest_state", "quest_fts", "session",
         "event", "tel_machine", "tel_sample", "action", "plan", "base_machine", "base_stock",
         "ore_mix", "vein", "wiki_page", "wiki_fts", "note_fts", "llm_usage", "alert",
+        "crop", "crop_parent_recipe", "crop_parent", "crop_mutation", "crop_drop", "crop_seed",
+        "crop_soil",
     }
 )  # fmt: skip
 PRIVATE = frozenset({"kv", "device"})  # app state and paired devices: not for agents
