@@ -296,8 +296,10 @@ def powershell_path() -> Path:
 # commit, a crash mid-deploy, antivirus) and so block Play (V25); this fails open instead. It is
 # passed with -EncodedCommand: base64 has no $ for Prism to expand, nor quotes or spaces for it to
 # split. -OutputFormat Text: with an encoded command and stderr redirected, PowerShell would
-# otherwise write its error stream as CLIXML.
+# otherwise write its error stream as CLIXML. Progress records ("Preparing modules for first use."
+# on a fresh account) still come out as CLIXML on stderr, so the first line turns progress off.
 _BOOTSTRAP = """\
+$ProgressPreference = 'SilentlyContinue'
 $s = '{script}'
 if (-not (Test-Path -LiteralPath $s -PathType Leaf)) {{
     Write-Output "GOS: $s is missing (run gos deploy); {skip}"

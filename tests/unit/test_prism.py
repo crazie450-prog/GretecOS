@@ -88,7 +88,9 @@ def test_hook_commands() -> None:
         assert re.fullmatch(r"[A-Za-z0-9+/=]+", command[len(head) :])
         code = prism.decoded(command)
         assert code == prism.bootstrap(APP / "scripts" / script)
-        assert code.startswith(f"$s = '{APP / 'scripts' / script}'\n")
+        assert code.startswith(
+            f"$ProgressPreference = 'SilentlyContinue'\n$s = '{APP / 'scripts' / script}'\n"
+        )
         assert prism.ours(command)
     assert "if ($LASTEXITCODE -eq 3) { exit 3 }\nexit 0" in prism.decoded(pre)
     assert prism.decoded(post).endswith("exit $LASTEXITCODE\n")
