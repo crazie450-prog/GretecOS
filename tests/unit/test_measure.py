@@ -210,3 +210,81 @@ def test_gos_vault_maintain(
         assert store.rows("SELECT * FROM kv WHERE key = 'maintenance.last_day'") == []
     finally:
         store.close()
+
+
+# --- review fixes: retries, a partial report, each kind's share ----------------------------
+
+
+def test_retrying_waits_then_gives_up() -> None:
+    calls: list[str] = []
+    slept: list[float] = []
+
+    def flaky(model: str, text: str) -> int:
+        calls.append(text)
+        if len(calls) < 3:
+            raise ConnectionError("429")
+        return 7
+
+    count = measure.retrying(
+        flaky, lambda e: isinstance(e, ConnectionError), (1.0, 2.0, 4.0), slept.append
+    )
+    assert count("m", "x") == 7 and slept == [1.0, 2.0]
+
+    def broken(model: str, text: str) -> int:
+        raise ConnectionError("down")
+
+    slept.clear()
+    with pytest.raises(ConnectionError):
+        measure.retrying(broken, lambda e: True, (1.0, 2.0), slept.append)("m", "x")
+    assert slept == [1.0, 2.0]
+
+    def bad(model: str, text: str) -> int:
+        raise ValueError("bad request")
+
+    slept.clear()
+    with pytest.raises(ValueError):  # not retryable: raised at once
+        measure.retrying(bad, lambda e: False, (1.0,), slept.append)("m", "x")
+    assert slept == []
+
+
+def test_a_failed_count_writes_the_rows_so_far(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    shutil.copytree(TEMPLATE, tmp_path / "vault")
+    made = 0
+
+    def fails_late(model: str, text: str) -> int:
+        nonlocal made
+        made += 1
+        if made > 20:
+            raise RuntimeError("429 rate limited")
+        return fake_count(model, text)
+
+    code = measure.main(
+        tmp_path, ["claude-haiku-5-5"], False, sys.stdout, fails_late, TODAY
+    )
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "count_tokens failed: 429 rate limited" in out
+    partial = tmp_path / "data" / "reports" / "note-formats-20261106.partial.txt"
+    lines = partial.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("partial: 19 counts")  # 1 overhead call, then 19 rows
+    assert len(lines) == 2 + 19
+    assert not (tmp_path / "data" / "reports" / "note-formats-20261106.txt").exists()
+
+
+def test_the_report_gives_each_kinds_share(tmp_path: Path) -> None:
+    shutil.copytree(TEMPLATE, tmp_path / "vault")
+    make_db(tmp_path / "gos.sqlite")
+    items = measure.samples(tmp_path / "vault", tmp_path / "gos.sqlite")
+    report = measure.measure(fake_count, items, ["claude-haiku-5-5"])
+    text = measure.render_report(report, ["claude-haiku-5-5"], TODAY)
+    head = text.split("\n\nformat\t", 1)[0]
+    section = head.split("kind\tmodel\tsamples\t", 1)[1].splitlines()[1:]
+    rows = {line.split("\t")[0]: line.split("\t") for line in section}
+    assert {k: r[2] for k, r in rows.items()} == {
+        "db tables": "2",
+        "plan example": "1",
+        "vault notes": "4",
+    }
+    assert round(sum(float(r[4]) for r in rows.values())) == 100

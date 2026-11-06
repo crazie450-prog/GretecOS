@@ -15,9 +15,14 @@ content: :data:`FORMATS`. A count includes the API's fixed overhead for one user
 is measured once (a one-character message, less one token) and subtracted.
 
 The report (``GOS_HOME/data/reports/note-formats-YYYYMMDD.txt``) has one row per sample, format
-and model, the totals per format and model, and the verdict of the rule D141 fixed in advance:
-the grammar (``gos``: ``key: value`` records, TSV tables) is frozen if its total is within 10% of
-the smallest total, else plan 6.3 is revisited.
+and model, the totals per format and model, each kind of sample's share of them (vault notes,
+the plan example, the DB tables: the tables are big, so the notes' own ratio is shown too), and
+the verdict of the rule D141 fixed in advance: the grammar (``gos``: ``key: value`` records, TSV
+tables) is frozen if its total is within 10% of the smallest total, else plan 6.3 is revisited.
+
+It makes (samples x 8 formats x models) + models calls, one at a time. Each call that is rate
+limited, overloaded or cut off is retried (the SDK's own retries, then :data:`RETRY_WAITS_S`);
+if one still fails, the rows counted so far go to ``note-formats-YYYYMMDD.partial.txt``.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ import io as textio
 import json
 import re
 import sqlite3
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,6 +76,7 @@ DB_SAMPLES = {
 }
 
 Counter = Callable[[str, str], int]  # (model, text) -> input tokens
+RETRY_WAITS_S = (30.0, 60.0, 120.0)  # after the SDK's own retries
 
 
 # --- rendering ------------------------------------------------------------------------------
@@ -317,24 +324,59 @@ class Report:
         return ("keep" if ratio <= 1 + KEEP_WITHIN else "revisit"), ratio
 
 
+class Interrupted(RuntimeError):
+    """A count failed for good; ``report`` holds the rows counted before it."""
+
+    def __init__(self, report: Report, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.report = report
+
+
+def retrying(
+    count: Counter,
+    retryable: Callable[[BaseException], bool],
+    waits: Sequence[float] = RETRY_WAITS_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Counter:
+    """``count``, with each call retried after ``waits`` while it fails ``retryable``."""
+
+    def again(model: str, text: str) -> int:
+        for wait in waits:
+            try:
+                return count(model, text)
+            except Exception as exc:
+                if not retryable(exc):
+                    raise
+                sleep(wait)
+        return count(model, text)
+
+    return again
+
+
 def measure(
     count: Counter, items: Sequence[Sample], models: Sequence[str] = MODELS
 ) -> Report:
-    overhead = {m: max(0, count(m, ".") - 1) for m in models}
-    rows = []
-    for sample in items:
-        for fmt, render in FORMATS.items():
-            text = render(sample.note)
-            for model in models:
-                rows.append(
-                    (
-                        sample.name,
-                        fmt,
-                        model,
-                        max(0, count(model, text) - overhead[model]),
-                    )
-                )
+    """Count every sample in every format for every model. Raises :class:`Interrupted`."""
+    overhead: dict[str, int] = {}
+    rows: list[tuple[str, str, str, int]] = []
+    try:
+        for m in models:
+            overhead[m] = max(0, count(m, ".") - 1)
+        for sample in items:
+            for fmt, render in FORMATS.items():
+                text = render(sample.note)
+                for model in models:
+                    n = max(0, count(model, text) - overhead[model])
+                    rows.append((sample.name, fmt, model, n))
+    except Exception as exc:
+        raise Interrupted(Report(rows, overhead), exc) from exc
     return Report(rows, overhead)
+
+
+def kind(sample: str) -> str:
+    if sample.startswith("db:"):
+        return "db tables"
+    return "plan example" if sample == "plan 6.2 example" else "vault notes"
 
 
 def render_report(report: Report, models: Sequence[str], today: dt.date) -> str:
@@ -357,6 +399,22 @@ def render_report(report: Report, models: Sequence[str], today: dt.date) -> str:
             f"verdict_{model.replace('-', '_')}: {verdict} (gos is {ratio:.3f}x the smallest)"
         )
     totals = report.totals()
+    lines += ["", "kind\tmodel\tsamples\tgos_tokens\tshare_of_gos_pct\tgos_vs_smallest"]
+    for model in models:
+        by_kind: dict[str, dict[str, int]] = {}
+        names: dict[str, set[str]] = {}
+        for sample, fmt, m, n in report.rows:
+            if m == model:
+                k = kind(sample)
+                by_kind.setdefault(k, {}).setdefault(fmt, 0)
+                by_kind[k][fmt] += n
+                names.setdefault(k, set()).add(sample)
+        for k, fmts in sorted(by_kind.items()):
+            share = 100.0 * fmts["gos"] / max(1, totals["gos", model])
+            ratio = fmts["gos"] / max(1, min(fmts.values()))
+            lines.append(
+                f"{k}\t{model}\t{len(names[k])}\t{fmts['gos']}\t{share:.1f}\t{ratio:.3f}"
+            )
     lines += ["", "format\tmodel\ttotal_tokens\tvs_json_pct"]
     for model in models:
         base = totals[BASELINE, model]
@@ -391,16 +449,32 @@ def main(
             return 1
         import anthropic as sdk
 
-        counter = api_counter(sdk.Anthropic(api_key=key, max_retries=8))
-        try:
-            report = measure(counter, items, models)
-        except sdk.APIError as exc:
-            print(f"count_tokens failed: {exc}", file=out)
-            return 1
-    else:
+        def retryable(exc: BaseException) -> bool:
+            return isinstance(exc, sdk.APIConnectionError) or (
+                isinstance(exc, sdk.APIStatusError)
+                and (exc.status_code == 429 or exc.status_code >= 500)
+            )
+
+        counter = retrying(
+            api_counter(sdk.Anthropic(api_key=key, max_retries=8)), retryable
+        )
+    folder = gos_home / REPORTS
+    try:
         report = measure(counter, items, models)
+    except Interrupted as exc:
+        folder.mkdir(parents=True, exist_ok=True)
+        partial = folder / f"note-formats-{day:%Y%m%d}.partial.txt"
+        rows = [f"{s}\t{f}\t{m}\t{n}" for s, f, m, n in exc.report.rows]
+        partial.write_text(
+            f"partial: {len(rows)} counts before count_tokens failed ({exc})\n"
+            "sample\tformat\tmodel\ttokens\n" + "".join(r + "\n" for r in rows),
+            encoding="utf-8",
+        )
+        print(f"count_tokens failed: {exc}", file=out)
+        print(f"the {len(rows)} counts made so far: {partial}", file=out)
+        return 1
     text = render_report(report, models, day)
-    target = gos_home / REPORTS / f"note-formats-{day:%Y%m%d}.txt"
+    target = folder / f"note-formats-{day:%Y%m%d}.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
     head = text.split("\n\nsample\t", 1)[0]
