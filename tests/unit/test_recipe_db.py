@@ -1853,12 +1853,27 @@ def test_the_full_oredict_names_slots_items_jsonl_cannot(
     assert rows(db, PRESS_SLOT, PRESS, run3) == [(ref, "ingotTest")]
 
 
-def test_a_failed_oredict_part_falls_back_to_items_jsonl(
+def test_a_failed_oredict_part_is_refused_when_nei_is_used(
     tmp_path: Path, allow_list: Path
 ) -> None:
-    make_run(tmp_path, files=with_press(), parts=parts("failed"))
+    # items.jsonl's ore lists name fewer NEI-only slots, so building it would give those
+    # recipes other keys for one run (D145): refused, the DB untouched.
+    make_run(
+        tmp_path,
+        files=with_press(),
+        parts=parts("failed"),
+        part_errors={"oredict": "IllegalStateException: boom"},
+    )
+    with pytest.raises(
+        build.BuildError,
+        match=r"parts\.oredict is 'failed' \(IllegalStateException: boom\), so its NEI-only",
+    ):
+        built(tmp_path, allow_list)
+    assert not access.db_path(tmp_path).exists()
+
+    # Without NEI the oredict names no slot, so the GT-only run still builds.
+    gt_only = parts("failed") | {"nei": "absent"}
+    make_run(tmp_path, "20261107T120000Z", "2026-11-07T12:00:00Z", parts=gt_only)
     result = built(tmp_path, allow_list)
     assert result.loaded.oredict is None
-    assert rows(result.db, PRESS_SLOT, PRESS, RUN)[0][1] is None
-    text = "\n".join(report.lines(result, full=False))
-    assert "items.jsonl's ore lists (parts.oredict is 'failed')" in text
+    assert result.loaded.oredict_status == "failed"

@@ -164,7 +164,8 @@ Plan §5.2 step 6 (D126): the registry GT's worldgen draws ore veins from, so th
 `{"ore": "<oredict name>", "members": [<item ref without "n">, ...]}`, or `{"ore", "error"}` when the mod couldn't
 read the name's members (`counts.oredict_errors`). D142 (h), D145.
 
-- One line per name in `OreDictionary.getOreNames()`, sorted by name, each once. A name with no members (Forge and GT
+- One line per name in `OreDictionary.getOreNames()`, sorted by name, each once (an empty name, which no `ore:<name>` could
+  cite, is left out). A name with no members (Forge and GT
   register many names that never get one: 40,717 names and 24,039 members in the dev runtime) has `"members": []`.
 - `members` are the stacks `OreDictionary.getOres(name)` holds, as item refs (`item`, `meta`, `nbt`?), never a
   numeric item or oredict ID. Each distinct ref is listed once, sorted by registry name (unregistered last), meta,
@@ -279,9 +280,11 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
   **Readers of `gt_ore_mixes.json` check `parts.ore_mixes == "ok"`**. Runs made before WO-1.6 have no such part and
   no file.
 - `parts.oredict` (D145) is not part of `complete` either. **Readers of `oredict.jsonl` check
-  `parts.oredict == "ok"`**; without it (`failed`, or a run made before D145, which has no such part and no file)
-  `gos db build` names NEI slots from `items.jsonl`'s `ore` lists, as before. `counts.oredict` is the number of lines
-  (names), `counts.oredict_members` the members listed in all of them.
+  `parts.oredict == "ok"`**. For a run made before D145 (no such part, no file) `gos db build` names NEI slots from
+  `items.jsonl`'s `ore` lists, as before; a run whose `parts.oredict` is `failed` and whose `parts.nei` is `ok` it
+  refuses, because those lists name fewer slots and its NEI-only recipes would get other citation keys for one run,
+  and `gos export run` doesn't record it as an export. `counts.oredict` is the number of lines (names),
+  `counts.oredict_members` the members listed in all of them.
 - `world` is the world's folder name: `gregteclink-autoexport` for autoexport, the folder of whatever world was
   opened for `one_click`, the harness's own world for `harness`.
 - `parts.nei`:

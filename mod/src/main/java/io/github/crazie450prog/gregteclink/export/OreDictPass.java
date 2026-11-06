@@ -32,7 +32,8 @@ final class OreDictPass {
     void write(HashedFile out) throws IOException {
         TreeSet<String> sorted = new TreeSet<>();
         for (String name : OreDictionary.getOreNames()) {
-            if (name != null) sorted.add(name);
+            // An empty name can't be cited as ore:<name>, and the core refuses a line without one.
+            if (name != null && !name.isEmpty()) sorted.add(name);
         }
         for (String name : sorted) {
             names++;

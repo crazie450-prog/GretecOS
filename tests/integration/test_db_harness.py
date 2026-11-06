@@ -173,7 +173,9 @@ def test_the_full_oredict_names_more_nei_only_slots(
     client: build.Result, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # D145: the run's oredict.jsonl names the NEI-only slots whose members items.jsonl
-    # doesn't all list; built again without it (as runs made before it are), fewer get a name.
+    # doesn't all list; built again from items.jsonl's ore lists alone, fewer get a name. That
+    # isn't a run made before D145: this run's items.jsonl lists every oredict member, which
+    # older runs' didn't, so they named fewer still (8,644 of 50,155 for 20261106T092709Z).
     m = client.loaded.run.manifest
     assert m["parts"]["oredict"] == "ok" and client.loaded.oredict is not None
     assert len(client.loaded.oredict) == m["counts"]["oredict"]
@@ -192,7 +194,8 @@ def test_the_full_oredict_names_more_nei_only_slots(
     assert now.ore_named > old.ore_named
     print(
         f"NEI-only oredict slots named: {now.ore_named:,} of "
-        f"{now.ore_named + now.ore_sets:,} (items.jsonl only: {old.ore_named:,})"
+        f"{now.ore_named + now.ore_sets:,} (this run's items.jsonl ore lists alone: "
+        f"{old.ore_named:,})"
     )
 
 

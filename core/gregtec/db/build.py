@@ -90,7 +90,7 @@ class Loaded:
     crops_error: str | None = None
     crop_lines: list[Recipe] = field(default_factory=list)  # NEI's CropsNH tab lines
     # The full ore dictionary (D145) when parts.oredict is "ok"; None names NEI slots from the
-    # ore lists of items.jsonl, as runs made before it do.
+    # ore lists of items.jsonl, as runs made before it do (a failed part with NEI is refused).
     oredict_status: str = "absent"
     oredict: list[gtdump.OreName] | None = None
 
@@ -157,6 +157,18 @@ def load(
 ) -> Loaded:
     """Read, normalise, merge and key ``run``; raise ``merge.CollisionError`` on a collision."""
     path = run.path
+    oredict_status = gtdump.oredict_status(run.manifest)
+    if oredict_status not in ("ok", "absent") and _nei_status(run.manifest) == "ok":
+        # Without the full oredict, items.jsonl's ore lists name fewer NEI-only slots, so
+        # thousands of NEI-only recipes would get other citation keys for this one run (D145).
+        why = run.manifest.get("part_errors")
+        error = why.get("oredict") if isinstance(why, dict) else None
+        raise BuildError(
+            f"run {run.run_id}: parts.oredict is {oredict_status!r}"
+            + (f" ({collect._clean(str(error))})" if error else "")
+            + ", so its NEI-only recipes would get other citation keys; run the export "
+            "again, or name an older run"
+        )
     maps = gtdump.read_recipe_maps(path)
     by_name = {m.name: m for m in maps}
     categories = {c: m.name for m in maps for c, _ in m.categories}
@@ -172,7 +184,6 @@ def load(
             gt_recipes.append(r)
             map_lines[r.space] += 1
     items = list(gtdump.read_items(path, gt_refs.ids))
-    oredict_status = gtdump.oredict_status(run.manifest)
     oredict = None
     if oredict_status == "ok":
         oredict = list(gtdump.read_oredict(path, gt_refs.ids))
