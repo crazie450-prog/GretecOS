@@ -90,7 +90,8 @@ CREATE INDEX IF NOT EXISTS ix_quest_fluid ON quest_item(fluid);
 CREATE TABLE IF NOT EXISTS quest_progress(player_uuid TEXT, quest_id TEXT, completed_ts INT, claimed INT,
   PRIMARY KEY(player_uuid, quest_id));
 CREATE TABLE IF NOT EXISTS quest_state(player_uuid TEXT, quest_id TEXT,
-  state TEXT CHECK(state IN ('done','available','locked')), shown INT, PRIMARY KEY(player_uuid, quest_id));
+  state TEXT CHECK(state IN ('done','repeatable','available','locked')), shown INT,
+  PRIMARY KEY(player_uuid, quest_id));
 CREATE INDEX IF NOT EXISTS ix_quest_state ON quest_state(player_uuid, state);
 CREATE VIRTUAL TABLE IF NOT EXISTS quest_fts USING fts5(quest_id UNINDEXED, name, descr);
 -- sessions and events

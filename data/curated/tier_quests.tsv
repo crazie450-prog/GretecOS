@@ -4,7 +4,10 @@
 # tiers: stone 0, steam 0, LV 1, MV 2 ... UMV 12, UXV 13.
 # Quest ids are BetterQuesting's compact ids (q:<id>); the names are for review only. Ids, names
 # and the tasks quoted in the notes are from GTNH 2.9.0's DefaultQuests (pack_version 2188), (c)
-# the GT: New Horizons team, CC BY-NC-SA 4.0; facts only, read 2026-11-06.
+# the GT: New Horizons team, licensed CC BY-NC-SA 4.0, read 2026-11-06. Licence of this file: it
+# quotes that book (15 quest names, task summaries), so this file is shared under CC BY-NC-SA
+# 4.0 (https://creativecommons.org/licenses/by-nc-sa/4.0/), whatever licence the repo takes.
+# Changes: a selection of quests, with their tasks summarised for tier detection.
 # From MV up, each key quest is the tier chapter's own "Tier N (X)" quest, which asks for that
 # tier's machine hull (gregtech:gt.blockmachines, meta = GT's mID).
 stage	quest	name	note

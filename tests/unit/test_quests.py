@@ -415,6 +415,56 @@ def write_progress(
         )
 
 
+def entry(
+    n: Ident,
+    player: str,
+    *,
+    claimed: bool = True,
+    ts: int = 1_700_000_000_000,
+    tasks: Sequence[tuple[int, str]] = (),
+) -> dict[str, Any]:
+    """One quest's ``questProgress`` entry: the player's completion and the tasks (index,
+    taskID) BQ has as done for them, as ``QuestInstance.writeProgressToNBT`` writes it."""
+    return {
+        **ident(n),
+        "completed:9": typed_list(
+            [{"claimed:1": int(claimed), "timestamp:4": ts, "uuid:8": player}]
+        ),
+        "tasks:9": typed_list(
+            {"completeUsers:9": typed_list([player], 8), "index:3": i, "taskID:8": kind}
+            for i, kind in tasks
+        ),
+    }
+
+
+def progress_file(world: Path, player: str, entries: list[dict[str, Any]]) -> None:
+    write_json(
+        world / bq.WORLD_DIR / bq.PROGRESS_DIR / f"{player}.json",
+        {"questProgress:9": typed_list(entries)},
+    )
+
+
+def repeating(q: dict[str, Any], ticks: int = 24000) -> dict[str, Any]:
+    """``q`` as a repeatable quest (``repeatTime`` in ticks; 24000 is a Minecraft day)."""
+    props = {**q["properties:10"]["betterquesting:10"], "repeatTime:3": ticks}
+    return {**q, "properties:10": {"betterquesting:10": props}}
+
+
+RETRIEVAL = "bq_standard:retrieval"
+OPTIONAL = {
+    "index:3": 1,
+    "requiredItems:9": typed_list([stack("minecraft:apple")]),
+    "taskID:8": bq.OPTIONAL_TASK,
+}
+# Gather Wood (quest 2) as a daily quest, with a second, optional task (BQ counts it as done).
+DAILY_WOOD = [
+    repeating({**q, "tasks:9": typed_list([*q["tasks:9"].values(), OPTIONAL])})
+    if (q["questIDHigh:4"], q["questIDLow:4"]) == (0, 2)
+    else q
+    for q in QUESTS
+]
+
+
 # The three progression states (WO-1.5's acceptance): quests complete in each.
 FRESH: list[Ident] = []
 EARLY_LV: list[Ident] = [1, 2, 3, 4, 5, 6]
@@ -598,6 +648,27 @@ def test_items_get_gos_item_keys(world: Path) -> None:
     assert book.quests[qid(25)].tasks[0].stacks[0].nbt_hash == ""
 
 
+def test_a_stack_inside_nbt_loses_its_numeric_id(world: Path) -> None:
+    # An upgrade's item saved in a helmet's NBT keeps the pack author's numeric id (2.9.0's Dark
+    # Steel Armor Advanced Upgrades). It means nothing in another world, so no key depends on it.
+    def helmet(numeric_id: int) -> bq.Stack:
+        tag = {
+            "upgrade:10": {
+                "upgradeItem:10": {"Count:1": 1, "Damage:2": 0, "id:4": numeric_id}
+            }
+        }
+        q = quest(
+            1, "Upgrades", tasks=[retrieval(stack("EnderIO:helmet", 0, 1, tag=tag))]
+        )
+        return bq.parse_quest(q).tasks[0].stacks[0]
+
+    assert helmet(25).nbt_hash == helmet(4096).nbt_hash != ""
+    unresolved = {
+        "upgrade": {"upgradeItem": {"Count": "1B", "Damage": "0S", "__item": None}}
+    }
+    assert helmet(25).nbt_hash == normalize.nbt_hash(unresolved)
+
+
 def test_defaults_read_like_the_world_copy(tmp_path: Path, world: Path) -> None:
     game = tmp_path / "pack"
     write_defaults(game, unlisted_line=True)
@@ -667,6 +738,9 @@ def test_progress_and_the_tracked_player(world: Path) -> None:
     assert bq.pick_player(p) == CLAYTON
     assert bq.pick_player(p, "clayton") == CLAYTON
     assert bq.pick_player(p, CLAYTON.upper()) == CLAYTON
+    # A UUID BQ has never seen in this world is refused, not tracked as a new player.
+    with pytest.raises(ValueError, match=f"no progress or name for {FRIEND}"):
+        bq.pick_player(p, FRIEND)
     write_progress(world, {FRIEND: [1]}, {CLAYTON: "Clayton", FRIEND: "Friend"})
     p = bq.read_progress(world)
     with pytest.raises(ValueError, match="several players"):
@@ -674,6 +748,28 @@ def test_progress_and_the_tracked_player(world: Path) -> None:
     assert bq.pick_player(p, "Friend") == FRIEND
     with pytest.raises(ValueError, match="no player named"):
         bq.pick_player(p, "Nobody")
+
+
+def test_a_completion_with_no_readable_uuid_is_skipped(world: Path) -> None:
+    # BQ's readProgressFromNBT skips it; it is nobody's, not the file owner's.
+    progress_file(
+        world,
+        CLAYTON,
+        [
+            entry(1, CLAYTON),
+            {
+                **entry(2, CLAYTON),
+                "completed:9": typed_list(
+                    [{"claimed:1": 1, "timestamp:4": 5, "uuid:8": "nope"}]
+                ),
+            },
+        ],
+    )
+    p = bq.read_progress(world)
+    assert set(p.done[CLAYTON]) == {qid(1)}
+    assert p.problems == [
+        f"{CLAYTON}.json: quest {qid(2)}: a completion with no player UUID; skipped, as BQ does"
+    ]
 
 
 def test_a_fresh_world_tracks_the_one_player_bq_has_seen(world: Path) -> None:
@@ -784,6 +880,44 @@ def test_frontier_in_three_progression_states(world: Path) -> None:
         qid(BIG),
         qid(16),
     ]
+
+
+def test_a_reset_repeatable_quest_is_open_again(world: Path) -> None:
+    # BQ's canSubmit: after a claim, a repeatable quest's timer resets it (claimed false,
+    # timestamp 0, its tasks cleared) and the book offers it again in the repeatable frame.
+    write_world_book(world, DAILY_WOOD)
+    book = book_of(world)
+
+    def states(*entries: dict[str, Any]) -> dict[str, bq.State]:
+        progress_file(world, CLAYTON, list(entries))
+        p = bq.read_progress(world)
+        return bq.states(book, p.done, CLAYTON, p.tasks)
+
+    def wood(claimed: bool, ts: int, tasks: Sequence[tuple[int, str]] = ()) -> str:
+        done = entry(2, CLAYTON, claimed=claimed, ts=ts, tasks=tasks)
+        return states(entry(1, CLAYTON), done)[qid(2)].state
+
+    chopped = [(0, RETRIEVAL)]
+    claim_ts = 1_700_000_000_000
+    assert wood(True, claim_ts, chopped) == "done"  # claimed: waiting for its timer
+    assert wood(False, claim_ts, chopped) == "done"  # done, reward not claimed yet
+    # Completed by command: timestamp 0 and unclaimed too, but its tasks are done (the optional
+    # one counts as done, so AND holds with only the first marked).
+    assert wood(False, 0, chopped) == "done"
+    assert wood(False, 0) == "repeatable"  # reset by its timer
+    # Progress under another taskID isn't this task's (BQ ignores it).
+    assert wood(False, 0, [(0, "bq_standard:checkbox")]) == "repeatable"
+    # Only a quest that repeats; and only while unlocked.
+    st = states(entry(1, CLAYTON), entry(3, CLAYTON, claimed=False, ts=0))
+    assert st[qid(3)].state == "done"
+    st = states(entry(2, CLAYTON, claimed=False, ts=0))
+    assert st[qid(2)].state == "done"
+    # It still counts as done: Make a Pick (3) needs it.
+    st = states(entry(1, CLAYTON), entry(2, CLAYTON, claimed=False, ts=0))
+    assert st[qid(2)] == bq.State("repeatable", True)
+    assert st[qid(3)].state == "available"
+    # Getting Started, top to bottom, left to right.
+    assert [q.id for _, _, q in bq.frontier(book, st)][:3] == [qid(2), qid(3), qid(22)]
 
 
 # --- tier ---------------------------------------------------------------------------------------
@@ -1026,10 +1160,85 @@ def test_the_named_frontier_query_is_the_books(lab: tuple[Path, Path]) -> None:
     )
     assert code == 0
     assert out.splitlines()[1:] == [
-        "line\tquest\tid",
-        f"Electric Two\tAlways There\tq:{qid(16)}",
+        "line\tquest\tid\tstate",
+        f"Electric Two\tAlways There\tq:{qid(16)}\tavailable",
         "# 1 rows, 1 quests",
     ]
+
+
+def test_a_repeatable_quest_in_the_db(lab: tuple[Path, Path]) -> None:
+    world, toml = lab
+    write_world_book(world, DAILY_WOOD)
+    write_progress(world, {}, {CLAYTON: "Clayton"})
+    progress_file(
+        world, CLAYTON, [entry(1, CLAYTON), entry(2, CLAYTON, claimed=False, ts=0)]
+    )
+    code, out = run(
+        "quests",
+        "load",
+        "--instance",
+        "lab",
+        "--world",
+        "lab-progress",
+        "--config",
+        str(toml),
+    )
+    assert code == 0 and "2 quests complete, 1 of them repeatable again" in out
+    conn = db_of(toml)
+    try:
+        assert conn.execute(
+            "SELECT state, shown FROM quest_state WHERE quest_id = ?", (qid(2),)
+        ).fetchone() == ("repeatable", 1)
+        assert conn.execute(
+            "SELECT completed_ts, claimed FROM quest_progress WHERE quest_id = ?",
+            (qid(2),),
+        ).fetchone() == (0, 0)
+        rows = quest_db.frontier_rows(conn)
+    finally:
+        conn.close()
+    p = bq.read_progress(world)
+    book = book_of(world)
+    expected = bq.frontier(book, bq.states(book, p.done, CLAYTON, p.tasks))
+    assert [r[2] for r in rows] == [q.id for _, _, q in expected]
+    assert rows[0] == ("Getting Started", "Gather Wood", qid(2), "repeatable")
+    out = run("quests", "frontier", "--line", "getting started", "--config", str(toml))[
+        1
+    ]
+    assert f"Getting Started\tGather Wood\tq:{qid(2)}\trepeatable" in out.splitlines()
+
+
+def test_quest_text_never_breaks_a_windows_pipe(
+    lab: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows writes a pipe or a file in cp1252, which has no CJK brackets (2.9.0's "「 」").
+    world, toml = lab
+    write_world_book(
+        world,
+        [quest(1, "「 」 First Steps") if q is QUESTS[0] else q for q in QUESTS],
+    )
+    write_progress(world, {}, {CLAYTON: "Clayton"})
+    assert (
+        run(
+            "quests",
+            "load",
+            "--instance",
+            "lab",
+            "--world",
+            "lab-progress",
+            "--config",
+            str(toml),
+        )[0]
+        == 0
+    )
+    raw = io.BytesIO()
+    pipe = io.TextIOWrapper(raw, encoding="cp1252", newline="")
+    monkeypatch.setattr("sys.stdout", pipe)
+    assert cli.main(["quests", "frontier", "--config", str(toml)]) == 0
+    pipe.flush()
+    assert (
+        f"Getting Started\t\\u300c \\u300d First Steps\tq:{qid(1)}\tavailable".encode()
+        in raw.getvalue()
+    )
 
 
 def test_items_link_to_the_recipe_db(lab: tuple[Path, Path]) -> None:
@@ -1110,24 +1319,16 @@ def test_tier_override(lab: tuple[Path, Path]) -> None:
         out.startswith("Tier: EV (GT voltage tier 4) (override)")
         and "Detected from quests: HV" in out
     )
-    # A reload keeps the override (D64: it sticks until he clears it).
-    assert (
-        run(
-            "quests",
-            "load",
-            "--instance",
-            "lab",
-            "--world",
-            "lab-progress",
-            "--config",
-            str(toml),
-        )[0]
-        == 0
-    )
+    # A reload keeps the override (D64: it sticks until he clears it), and says it is in use.
+    load = ("quests", "load", "--instance", "lab", "--world", "lab-progress")
+    code, out = run(*load, "--config", str(toml))
+    assert code == 0 and "Tier detected: HV (GT voltage tier 3)" in out
+    assert "Tier in use: EV (GT voltage tier 4), your override (D64)" in out
     assert run("quests", "tier", "--config", str(toml))[1].startswith("Tier: EV")
     assert run("quests", "tier", "--clear", "--config", str(toml))[1].startswith(
         "Tier: HV"
     )
+    assert "Tier in use" not in run(*load, "--config", str(toml))[1]
     with pytest.raises(SystemExit):  # argparse refuses an unknown stage
         cli.main(["quests", "tier", "--set", "nope"])
 
@@ -1165,6 +1366,50 @@ def test_a_failed_load_changes_nothing(lab: tuple[Path, Path]) -> None:
         assert conn.execute("SELECT count(*) FROM quest").fetchone() == (len(QUESTS),)
     finally:
         conn.close()
+
+
+def test_a_write_that_fails_midway_rolls_back(
+    lab: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The failure comes after every quest table was emptied and refilled: all of it is undone.
+    world, toml = lab
+    write_progress(world, {CLAYTON: EARLY_LV}, {CLAYTON: "Clayton"})
+    load = (
+        "quests",
+        "load",
+        "--instance",
+        "lab",
+        "--world",
+        "lab-progress",
+        "--config",
+        str(toml),
+    )
+    assert run(*load)[0] == 0
+
+    def snapshot() -> dict[str, list[tuple[Any, ...]]]:
+        conn = db_of(toml)
+        try:
+            return {
+                t: sorted(conn.execute(f"SELECT * FROM {t}").fetchall(), key=repr)
+                for t in (*quest_db.QUEST_TABLES, "kv")
+            }
+        finally:
+            conn.close()
+
+    before = snapshot()
+    write_progress(world, {CLAYTON: HV}, {CLAYTON: "Clayton"})  # a different load
+    real = quest_db._kv
+
+    def failing(conn: sqlite3.Connection, key: str, value: str | None) -> None:
+        if key == quest_db.KV_TIER:
+            raise sqlite3.OperationalError("disk I/O error")
+        real(conn, key, value)
+
+    monkeypatch.setattr(quest_db, "_kv", failing)
+    code, out = run(*load)
+    assert code == 1 and out == "Not loaded: disk I/O error\n"
+    assert snapshot() == before
+    assert before["quest_state"] and before["quest_progress"]
 
 
 def test_load_refusals(tmp_path: Path, lab: tuple[Path, Path]) -> None:
@@ -1246,10 +1491,24 @@ def test_world_from_config_and_world_dir(
     write_progress(world, {CLAYTON: [1]}, {CLAYTON: "Clayton"})
     code, out = run("quests", "load", "--world-dir", str(world), "--config", str(toml))
     assert code == 0 and "1 quests complete" in out
+    assert quest_db.PLAY_READ_NOTE not in out
+    # [paths] world is Play's world: Play reads it, with the reminder to pause first (D84).
+    play = tmp_path / "instances" / "GTNH-Play"
+    (play / "instance.cfg").parent.mkdir(parents=True)
+    (play / "instance.cfg").write_text("name=GTNH-Play\n", encoding="utf-8")
+    play_world = play / ".minecraft" / "saves" / "survival"
+    write_world_book(play_world)
+    write_progress(play_world, {CLAYTON: [1, 2]}, {CLAYTON: "Clayton"})
     toml.write_text(
-        toml.read_text(encoding="utf-8") + 'world = "lab-progress"\n', encoding="utf-8"
+        toml.read_text(encoding="utf-8") + 'world = "survival"\n', encoding="utf-8"
     )
-    assert run("quests", "load", "--instance", "lab", "--config", str(toml))[0] == 0
+    before = tree(play)
+    code, out = run("quests", "load", "--config", str(toml))
+    assert code == 0 and out.startswith(quest_db.PLAY_READ_NOTE)
+    assert "2 quests complete" in out and tree(play) == before
+    # The Lab never takes Play's world name: it names its own.
+    code, out = run("quests", "load", "--instance", "lab", "--config", str(toml))
+    assert code == 1 and "name the world: --world <folder in saves/>\n" in out
 
 
 def test_a_newer_pack_book_is_reported(lab: tuple[Path, Path]) -> None:
@@ -1284,20 +1543,44 @@ def test_a_newer_pack_book_is_reported(lab: tuple[Path, Path]) -> None:
     assert "DefaultQuests is version" not in out
 
 
+def test_bq_imports_only_a_newer_book_of_the_same_pack(world: Path) -> None:
+    # SaveLoadHandler.loadConfig's hasUpdate: the same pack_name and a higher pack_version.
+    book = book_of(world)  # Testpack, version 7
+    assert bq.updates_book(book, ("Testpack", 8))
+    assert not bq.updates_book(book, ("Testpack", 7))
+    assert not bq.updates_book(book, ("Otherpack", 8))
+    assert not bq.updates_book(book, None)
+    book.source = "defaults"  # a world with no book yet reads the defaults themselves
+    assert not bq.updates_book(book, ("Testpack", 8))
+
+
+SCHEMA_V1 = Path(__file__).resolve().parents[1] / "fixtures" / "gos-schema-v1.sql"
+
+
+def v1_db(path: Path) -> None:
+    """A version-1 DB, made from WO-1.3's schema.sql as it was, with a recipe row in it."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(SCHEMA_V1.read_text(encoding="utf-8"))
+        conn.execute(
+            "INSERT INTO item(registry_name, meta) VALUES ('minecraft:stone', 0)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_schema_1_db_gets_the_new_quest_tables(tmp_path: Path) -> None:
     path = tmp_path / "gos.sqlite"
-    conn = access.connect(path)
-    conn.row_factory = None
-    conn.execute("INSERT INTO item(registry_name, meta) VALUES ('minecraft:stone', 0)")
-    # Make it a version-1 DB: version 1's quest and quest_line, without the new columns.
-    conn.executescript(
-        "DROP TABLE quest; DROP TABLE quest_line; DROP TABLE quest_state;"
-        " CREATE TABLE quest(id TEXT PRIMARY KEY, line_id TEXT, name TEXT, descr TEXT, logic TEXT,"
-        " visibility TEXT, main INT, raw_json TEXT);"
-        " CREATE TABLE quest_line(id TEXT PRIMARY KEY, name TEXT, ord INT);"
-        " PRAGMA user_version = 1;"
-    )
-    conn.close()
+    v1_db(path)
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone() == (1,)
+        assert "task_logic" not in {
+            r[1] for r in conn.execute("PRAGMA table_info(quest)")
+        }
+    finally:
+        conn.close()
     conn = access.connect(path)
     conn.row_factory = None
     try:
@@ -1314,5 +1597,59 @@ def test_schema_1_db_gets_the_new_quest_tables(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA user_version").fetchone() == (
             access.SCHEMA_VERSION,
         )
+    finally:
+        conn.close()
+
+
+def test_a_migration_never_runs_twice(lab: tuple[Path, Path]) -> None:
+    # Two processes open the same version-1 DB. One migrates it and loads quests; the other read
+    # version 1 before that and upgrades after. It reads the version again under the write lock
+    # and leaves the DB alone, instead of dropping the quests the first one loaded.
+    world, toml = lab
+    write_progress(world, {CLAYTON: EARLY_LV}, {CLAYTON: "Clayton"})
+    home = Path(toml.read_text(encoding="utf-8").split('gos_home = "')[1].split('"')[0])
+    (home / "data").mkdir(parents=True)
+    path = access.db_path(home)
+    v1_db(path)
+    late = sqlite3.connect(path, isolation_level=None)  # has seen version 1
+    assert late.execute("PRAGMA user_version").fetchone() == (1,)
+    load = ("quests", "load", "--instance", "lab", "--world", "lab-progress")
+    assert run(*load, "--config", str(toml))[0] == 0  # the first process
+    access._upgrade(late)
+    late.close()
+    conn = db_of(toml)
+    try:
+        assert conn.execute("SELECT count(*) FROM quest").fetchone() == (len(QUESTS),)
+        assert conn.execute("SELECT count(*) FROM quest_state").fetchone() == (
+            len(QUESTS),
+        )
+    finally:
+        conn.close()
+
+
+def test_a_failed_migration_leaves_the_old_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "gos.sqlite"
+    v1_db(path)
+    bad = tmp_path / "schema.sql"
+    bad.write_text(
+        access.SCHEMA.read_text(encoding="utf-8").replace(
+            "PRAGMA user_version = 2;",
+            "CREATE TABLE broken(;\nPRAGMA user_version = 2;",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(access, "SCHEMA", bad)
+    with pytest.raises(sqlite3.OperationalError):
+        access.connect(path)
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone() == (1,)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(quest)")}
+        assert (
+            "raw_json" in cols and "task_logic" not in cols
+        )  # 2.sql's DROP was undone
+        assert conn.execute("SELECT count(*) FROM item").fetchone() == (1,)
     finally:
         conn.close()

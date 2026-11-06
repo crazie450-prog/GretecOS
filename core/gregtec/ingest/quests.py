@@ -20,15 +20,19 @@ parsed from memory.
   string (D112).
 - **Items** in tasks and rewards are registry name + damage (never numeric IDs). Their key is
   GOS's item key (registry name, meta, NBT hash, D104): the stack's ``tag`` in NEI's ``NBTJson``
-  typing (GregtecLink's), hashed as :func:`gregtec.ingest.normalize.nbt_hash` does. A task that
-  ignores NBT accepts the item with any NBT, so its key has no NBT hash.
+  typing (GregtecLink's), hashed as :func:`gregtec.ingest.normalize.nbt_hash` does. A stack
+  saved inside that tag (an upgrade's item, a stored stack) keeps the pack author's numeric
+  ``id``, which means nothing in another world: it is dropped (``__item`` null, as WO-1.3 does
+  for an ID it can't resolve), so no key depends on it. A task that ignores NBT accepts the item
+  with any NBT, so its key has no NBT hash.
 - **Text**: names and descriptions lose ``§`` colour codes and the book's markup tags
   (``[note]``, ``[warn]``, ``[url]``...), keeping the words. Quest text is data, never
   instructions (plan section 0.1 principle 8).
 
 Unlocking and visibility follow BQ's ``QuestInstance.isUnlocked`` and
 ``QuestCache.isQuestShown`` with view mode off (:func:`states`, D113): the **frontier** is the
-quests that are unlocked, not complete, shown, and in a quest line the book shows.
+quests that are unlocked and either not complete or repeatable again (BQ's ``canSubmit``),
+shown, and in a quest line the book shows.
 """
 
 from __future__ import annotations
@@ -70,6 +74,7 @@ VISIBILITIES = (
 )
 ITEM_PARTS = ("requiredItems", "rewards", "choices")  # task, item reward, choice reward
 FLUID_PARTS = ("requiredFluids",)
+OPTIONAL_TASK = "bq_standard:optional_retrieval"  # BQ's ITask.ignored: counts as done
 
 _COLOUR = re.compile("§.", re.DOTALL)
 _IMG = re.compile(r"\[img[^\]]*\].*?\[/img\]", re.DOTALL)
@@ -310,7 +315,8 @@ def _stack(t: Typed, ignore_nbt: bool) -> Stack:
     nbt_type, nbt = t.typed("tag")
     hashed = ""
     if nbt is not None and not ignore_nbt:
-        hashed = nbt_hash(normalize_nbt(nbt_json(nbt_type or 10, nbt)))
+        # No ID table: a nested stack's numeric id is dropped, never part of the key.
+        hashed = nbt_hash(normalize_nbt(nbt_json(nbt_type or 10, nbt), {}))
     return Stack(
         amount=t.num("Count", 1),
         registry_name=t.text("id") or None,
@@ -547,16 +553,28 @@ def read_book(world: Path, game: Path | None) -> Book:
     return book
 
 
-def default_pack_version(game: Path | None) -> int | None:
-    """The pack's DefaultQuests ``pack_version``: BQ re-imports the defaults into a world whose
-    book has the same ``pack_name`` and a lower ``pack_version`` when it next loads."""
+def default_pack(game: Path | None) -> tuple[str, int] | None:
+    """The pack's DefaultQuests ``(pack_name, pack_version)``, or None. When a world loads, BQ
+    imports the defaults into its book if that book has the same ``pack_name`` and a lower
+    ``pack_version`` (``SaveLoadHandler.loadConfig``'s ``hasUpdate``; GTNH turns off loading the
+    defaults on every start)."""
     if game is None:
         return None
     path = game / DEFAULTS / SETTINGS_FILE
     if not path.is_file():
         return None
     props = Typed(read_json(path)).sub("betterquesting")
-    return props.num("pack_version") if "pack_version" in props else None
+    if "pack_version" not in props:
+        return None
+    return props.text("pack_name"), props.num("pack_version")
+
+
+def updates_book(book: Book, pack: tuple[str, int] | None) -> bool:
+    """Whether BQ imports the pack's defaults ``pack`` into this world's ``book`` when the world
+    next loads: the same pack name (``""`` when unset, as BQ reads it) and a higher version."""
+    if book.source != "world" or pack is None:
+        return False
+    return pack[0] == (book.pack_name or "") and pack[1] > (book.pack_version or 0)
 
 
 # --- progress -------------------------------------------------------------------------------
@@ -568,14 +586,19 @@ class Completion:
     claimed: bool
 
 
+TaskKey = tuple[int, str]  # a task's index in its quest, and its taskID
+
+
 @dataclass
 class Progress:
-    """Every player's completions in one world, and BQ's name cache."""
+    """Every player's completions and finished tasks in one world, and BQ's name cache."""
 
     done: dict[str, dict[str, Completion]]  # player uuid -> quest id -> completion
     names: dict[str, str]  # player uuid -> name
     files: list[Path] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    # player uuid -> quest id -> the tasks BQ has as done for them (each task's completeUsers)
+    tasks: dict[str, dict[str, set[TaskKey]]] = field(default_factory=dict)
 
 
 def _uuid(text: object) -> str | None:
@@ -587,7 +610,8 @@ def _uuid(text: object) -> str | None:
 
 def read_progress(world: Path) -> Progress:
     """``<world>/betterquesting/QuestProgress/<uuid>.json`` (one per player) and
-    ``NameCache.json``. A world BQ hasn't saved yet has neither: no completions."""
+    ``NameCache.json``. A world BQ hasn't saved yet has neither: no completions. As BQ's
+    ``readProgressFromNBT`` does, a completion or task user whose UUID doesn't parse is skipped."""
     folder = world / WORLD_DIR
     progress = Progress({}, {})
     names = folder / NAME_CACHE
@@ -615,10 +639,24 @@ def read_progress(world: Path) -> Progress:
                 continue
             for c in t.seq("completed"):
                 ct = Typed(c)
-                who = _uuid(ct.text("uuid")) or owner
+                who = _uuid(ct.text("uuid"))
+                if who is None:
+                    progress.problems.append(
+                        f"{path.name}: quest {qid}: a completion with no player UUID;"
+                        " skipped, as BQ does"
+                    )
+                    continue
                 progress.done.setdefault(who, {})[qid] = Completion(
                     ct.num("timestamp"), ct.flag("claimed")
                 )
+            for task in t.seq("tasks"):
+                tt = Typed(task)
+                key = (tt.num("index", -1), tt.text("taskID"))
+                for user in tt.seq("completeUsers"):
+                    if (who := _uuid(user)) is not None:
+                        progress.tasks.setdefault(who, {}).setdefault(qid, set()).add(
+                            key
+                        )
     return progress
 
 
@@ -629,7 +667,11 @@ def pick_player(progress: Progress, wanted: str | None = None) -> str:
     if wanted:
         pid = _uuid(wanted)
         if pid is not None:
-            return pid
+            if pid in known:
+                return pid
+            raise ValueError(
+                f"BQ has no progress or name for {pid} in this world: {_who(progress, known)}"
+            )
         match = [p for p, n in progress.names.items() if n.lower() == wanted.lower()]
         if len(match) == 1:
             return match[0]
@@ -659,7 +701,9 @@ def _who(progress: Progress, known: Iterable[str]) -> str:
 
 # --- unlocking, visibility, frontier --------------------------------------------------------
 
-DONE, AVAILABLE, LOCKED = "done", "available", "locked"
+DONE, REPEATABLE, AVAILABLE, LOCKED = "done", "repeatable", "available", "locked"
+COMPLETE = (DONE, REPEATABLE)  # completed at least once: BQ's isComplete
+OPEN = (AVAILABLE, REPEATABLE)  # can be worked on now: the frontier's states
 
 
 def logic_result(logic: str, complete: int, total: int) -> bool:
@@ -676,23 +720,35 @@ def logic_result(logic: str, complete: int, total: int) -> bool:
 
 @dataclass(frozen=True)
 class State:
-    state: str  # done, available (unlocked, not done) or locked
+    # done; repeatable (done and unlocked, and its repeat has reset it: it can be done again);
+    # available (unlocked, not done); locked
+    state: str
     shown: bool  # the book shows it (view mode off)
 
 
 def states(
-    book: Book, done: Mapping[str, Mapping[str, Completion]], player: str
+    book: Book,
+    done: Mapping[str, Mapping[str, Completion]],
+    player: str,
+    tasks: Mapping[str, Mapping[str, set[TaskKey]]] | None = None,
 ) -> dict[str, State]:
     """Each quest's state for ``player`` under BQ's rules:
 
     - complete: the player has a completion (a global quest: anyone has);
     - unlocked: no prerequisites, or ``questLogic`` holds over how many of them are complete,
       out of all it lists (a prerequisite missing from the book counts, never complete);
+    - repeatable: complete and unlocked, and BQ's ``canSubmit`` holds again: the quest repeats
+      (``repeatTime`` >= 0), the player's completion is unclaimed, and ``taskLogic`` no longer
+      holds over the tasks that ``tasks`` has as done for them (an optional task counts as done;
+      a quest with no tasks can always be submitted). That is a quest whose repeat timer has
+      reset it (claimed false, timestamp 0, tasks cleared). A quest completed by command is
+      unclaimed with timestamp 0 too, but its tasks are marked done, so it stays done;
     - shown (``QuestCache.isQuestShown``, view mode off): ALWAYS yes, HIDDEN no, SECRET and
       UNLOCKED when complete or unlocked, NORMAL also when every prerequisite in the book is
       unlocked, COMPLETED when complete, CHAIN when it has no prerequisites or one is shown.
     """
     mine = done.get(player, {})
+    my_tasks = (tasks or {}).get(player, {})
     anyone = {q for player_done in done.values() for q in player_done}
     quests = book.quests
 
@@ -739,9 +795,25 @@ def states(
         shown[qid] = result
         return result
 
+    def again(q: Quest) -> bool:
+        """BQ's ``canSubmit`` for a quest the player has completed."""
+        c = mine.get(q.id)
+        if c is None or c.claimed or q.repeat_time < 0:
+            return False
+        if not q.tasks:
+            return True
+        have = my_tasks.get(q.id, set())
+        n = sum(
+            1 for t in q.tasks if t.kind == OPTIONAL_TASK or (t.idx, t.kind) in have
+        )
+        return not logic_result(q.task_logic, n, len(q.tasks))
+
     out: dict[str, State] = {}
-    for qid in quests:
-        state = DONE if complete(qid) else AVAILABLE if unlocked[qid] else LOCKED
+    for qid, q in quests.items():
+        if complete(qid):
+            state = REPEATABLE if unlocked[qid] and again(q) else DONE
+        else:
+            state = AVAILABLE if unlocked[qid] else LOCKED
         out[qid] = State(state, is_shown(qid))
     return out
 
@@ -756,7 +828,7 @@ def lines_shown(book: Book, st: Mapping[str, State]) -> dict[str, bool]:
             out[line.id] = False
         elif line.visibility == "COMPLETED":
             out[line.id] = any(
-                e.quest in st and st[e.quest].state == DONE for e in line.entries
+                e.quest in st and st[e.quest].state in COMPLETE for e in line.entries
             )
         else:
             out[line.id] = True
@@ -764,7 +836,7 @@ def lines_shown(book: Book, st: Mapping[str, State]) -> dict[str, bool]:
 
 
 def frontier(book: Book, st: Mapping[str, State]) -> list[tuple[Line, Entry, Quest]]:
-    """The quests the player can work on now, as the book shows them: unlocked, not complete,
+    """The quests the player can work on now, as the book shows them: available or repeatable,
     shown, in a listed quest line; in tab order, then top to bottom, left to right. A quest in
     two lines is listed in each."""
     listed = lines_shown(book, st)
@@ -774,7 +846,7 @@ def frontier(book: Book, st: Mapping[str, State]) -> list[tuple[Line, Entry, Que
             continue
         for e in sorted(line.entries, key=lambda e: (e.y, e.x, e.quest)):
             s = st.get(e.quest)
-            if s is not None and s.state == AVAILABLE and s.shown:
+            if s is not None and s.state in OPEN and s.shown:
                 out.append((line, e, book.quests[e.quest]))
     return out
 

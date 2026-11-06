@@ -6,7 +6,7 @@
 | [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | export collect (WO-1.2)     |
 | [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3), collect      |
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync, collect               |
-| [paths] world            | none (the world's folder name in saves/) | quests load (WO-1.5)        |
+| [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |

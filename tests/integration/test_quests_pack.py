@@ -187,6 +187,75 @@ def test_tier_and_frontier_at_every_stage(
         assert bq.detect_tier(keys, need | {k.quest}).stage == k.stage
 
 
+def by_command(
+    book: bq.Book, quests: list[str]
+) -> tuple[dict[str, bq.Completion], dict[str, set[bq.TaskKey]]]:
+    """Progress after ``/bq_admin complete`` on each quest (BQ's NetQuestEdit.completeQuests):
+    unclaimed, timestamp 0, and its tasks marked done in order until the task logic holds."""
+    done = {q: bq.Completion(0, False) for q in quests}
+    tasks: dict[str, set[bq.TaskKey]] = {}
+    for qid in quests:
+        q = book.quests[qid]
+        marked: set[bq.TaskKey] = set()
+        if not bq.logic_result(q.task_logic, 0, len(q.tasks)):
+            for t in q.tasks:
+                marked.add((t.idx, t.kind))
+                if bq.logic_result(q.task_logic, len(marked), len(q.tasks)):
+                    break
+        tasks[qid] = marked
+    return done, tasks
+
+
+def test_the_runbook_states(book: bq.Book, keys: list[bq.TierKey]) -> None:
+    """docs/runbooks/quests_check.md's expected output, state by state, on 2.9.0's book."""
+    if book.pack_version != 2188:
+        pytest.skip("the runbook's numbers are 2.9.0's (pack_version 2188)")
+    lv, hv = "AAAAAAAAAAAAAAAAAAAARg", "AAAAAAAAAAAAAAAAAAAAoA"
+    kitchenware, chef = "AAAAAAAAAAAAAAAAAAACmQ", "AAAAAAAAAAAAAAAAAAADWg"
+
+    def front(
+        done: dict[str, bq.Completion], tasks: dict[str, set[bq.TaskKey]]
+    ) -> tuple[list[tuple[str, str, str]], dict[str, bq.State]]:
+        st = bq.states(book, {PLAYER: done}, PLAYER, {PLAYER: tasks})
+        return [
+            (ln.name, q.name, st[q.id].state) for ln, _, q in bq.frontier(book, st)
+        ], st
+
+    rows, _ = front({}, {})
+    assert rows == [("And So, It Begins", "Your First Night", "available")]
+    rows, st = front(*by_command(book, [lv]))
+    assert (len(rows), len({r[1] for r in rows})) == (6, 4)
+    in_lv = [r[1] for r in rows if r[0] == "Tier 1 - LV"]
+    assert len(in_lv) == 2 and in_lv[0] == "Welcome to Tier 1, LV"
+    assert [r[1] for r in rows if r[0] == "Tier 0.5 - Steam"] == ["Safety First"]
+    done = [q for q, s in st.items() if s.state in bq.COMPLETE]
+    assert bq.detect_tier(keys, done).stage == "LV"
+    rows, st = front(*by_command(book, [lv, hv]))
+    assert len({r[1] for r in rows}) == 17
+    assert len([r for r in rows if r[0] == "Tier 3 - HV"]) == 4
+    done = [q for q, s in st.items() if s.state in bq.COMPLETE]
+    assert bq.detect_tier(keys, done).stage == "HV"
+    # Step 5: Chef Training repeats as soon as it is claimed; once BQ resets it (claimed
+    # false, timestamp 0, tasks cleared), it is on the frontier again.
+    assert book.quests[chef].repeat_time == 0 and book.quests[chef].rewards
+    done, tasks = by_command(book, [lv, hv, kitchenware, chef])
+    rows, st = front(done, tasks)
+    assert st[chef].state == "done"  # completed by command: its tasks are done
+    tasks[chef] = set()
+    rows, st = front(done, tasks)
+    assert [s for s in st.values() if s.state == bq.REPEATABLE] == [st[chef]]
+    assert ("Feeding Yourself", "Chef Training", "repeatable") in rows
+    assert len({r[1] for r in rows}) == 21
+    # Step 6: everything completed by command leaves nothing open, repeatable ones included.
+    rows, st = front(*by_command(book, list(book.quests)))
+    assert rows == [] and bq.detect_tier(keys, list(st)).stage == "UXV"
+    # D113's numbers: 93 repeatable quests, all with rewards and in a chapter.
+    repeatable = [q for q in book.quests.values() if q.repeat_time >= 0]
+    placed = {e.quest for ln in book.lines for e in ln.entries}
+    assert len(repeatable) == 93
+    assert all(q.rewards and q.id in placed for q in repeatable)
+
+
 def test_the_named_query_gives_the_same_frontier(
     book: bq.Book, keys: list[bq.TierKey], tmp_path: Path
 ) -> None:

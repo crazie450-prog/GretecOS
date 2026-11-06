@@ -4,7 +4,8 @@
   transactions, and applies ``schema.sql`` (every statement ``IF NOT EXISTS``) to a DB whose
   ``user_version`` is older than :data:`SCHEMA_VERSION`; opening a current DB writes nothing.
   An existing DB first gets ``migrations/<n>.sql`` for each version ``n`` it lacks (the changes
-  ``IF NOT EXISTS`` can't make, such as new columns); a new DB (version 0) needs none.
+  ``IF NOT EXISTS`` can't make, such as new columns); a new DB (version 0) needs none. Both
+  run in one transaction under the write lock, after reading the version again under it.
   A DB whose ``user_version`` is newer is refused, because this code would not know its tables.
 - Named read-only queries live in ``queries/<name>.sql`` and are run by name with named
   parameters (``:q``); WO-2.2's tool layer calls them the same way.
@@ -56,15 +57,44 @@ def connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
             # the write lock, so doing it on every open would make each connection wait for a
             # long write (a build) and fail after the timeout.
             if version < SCHEMA_VERSION:
-                for n in range(version + 1, SCHEMA_VERSION + 1) if version else ():
-                    step = MIGRATIONS / f"{n}.sql"
-                    if step.is_file():
-                        conn.executescript(step.read_text(encoding="utf-8"))
-                conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+                _upgrade(conn)
     except BaseException:
         conn.close()
         raise
     return conn
+
+
+def _upgrade(conn: sqlite3.Connection) -> None:
+    """Migrate and apply the schema in one transaction, under the write lock. The version is
+    read again under the lock: another process may have upgraded the DB (and written to it)
+    since this one first looked, and a migration must not run twice."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < SCHEMA_VERSION:
+            steps = [
+                MIGRATIONS / f"{n}.sql" for n in range(version + 1, SCHEMA_VERSION + 1)
+            ]
+            scripts = [s for s in steps if version and s.is_file()] + [SCHEMA]
+            for script in scripts:
+                for statement in _statements(script.read_text(encoding="utf-8")):
+                    conn.execute(statement)
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def _statements(script: str) -> list[str]:
+    """``script``'s SQL statements one by one (``executescript`` would commit the transaction)."""
+    out: list[str] = []
+    pending = ""
+    for piece in script.split(";"):
+        pending += piece + ";"
+        if sqlite3.complete_statement(pending):
+            out.append(pending)
+            pending = ""
+    return out
 
 
 def query(

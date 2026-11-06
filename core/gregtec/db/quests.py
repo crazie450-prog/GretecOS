@@ -1,12 +1,14 @@
 """``gos quests``: a world's quest book and progress in ``GOS_HOME/data/gos.sqlite`` (WO-1.5).
 
 - ``gos quests load`` reads one world (default: Play's ``[paths] world``; ``--instance lab
-  --world lab-progress`` for the Lab) with :mod:`gregtec.ingest.quests`, read-only, and replaces
-  every quest table in one transaction (D112): the book (``quest_line``, ``quest_line_entry``,
-  ``quest``, ``quest_prereq``, ``quest_task``, ``quest_reward``, ``quest_item``, ``quest_fts``),
-  every player's completions (``quest_progress``) and, for the tracked player, each quest's
-  state (``quest_state``: done, available or locked, and whether the book shows it, D113). A
-  load that fails changes nothing. Quest text is stored as data, never instructions.
+  --world lab-progress`` for the Lab, which always names its world) with
+  :mod:`gregtec.ingest.quests`, read-only, and replaces every quest table in one transaction
+  (D112): the book (``quest_line``, ``quest_line_entry``, ``quest``, ``quest_prereq``,
+  ``quest_task``, ``quest_reward``, ``quest_item``, ``quest_fts``), every player's completions
+  (``quest_progress``) and, for the tracked player, each quest's state (``quest_state``: done,
+  repeatable, available or locked, and whether the book shows it, D113). A load that fails
+  changes nothing. Quest text is stored as data, never instructions. Reading Play prints a
+  reminder to pause the game first (D84) until WO-6.1's save loop times its own reads.
 - Items in tasks and rewards are linked to ``item``/``fluid`` (WO-1.3's catalog) by item key
   when the recipe DB has them; ``quest_item`` keeps the key too, so named queries can join by
   key after a later ``gos db build`` adds items.
@@ -37,6 +39,11 @@ from gregtec.sync import _instance, _is_link
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TIER_KEYS = REPO_ROOT / "data" / "curated" / "tier_quests.tsv"
 KV_SOURCE, KV_TIER, KV_OVERRIDE = "quests.source", "tier.detected", "tier.override"
+# Until WO-6.1's save loop times reads to the game's saves (D84, V27).
+PLAY_READ_NOTE = (
+    "Reading Play's world. Do this with the game paused (Esc) or closed: the read takes"
+    " milliseconds, but a BetterQuesting save that lands during it fails (D84)."
+)
 QUEST_TABLES = (
     "quest_line",
     "quest_line_entry",
@@ -64,7 +71,7 @@ class Loaded:
     tier: bq.Tier
     keys: list[bq.TierKey]
     world: Path
-    default_version: int | None = None  # the pack's DefaultQuests pack_version
+    default_pack: tuple[str, int] | None = None  # the DefaultQuests' name and version
     missing_keys: list[bq.TierKey] = field(default_factory=list)
 
 
@@ -74,6 +81,7 @@ class Summary:
     frontier: int  # distinct quests
     items: int  # stacks in tasks and rewards
     linked: int  # of them, found in the recipe DB's item or fluid table
+    override: str | None = None  # the tier override in kv, if any
 
 
 # --- reading -------------------------------------------------------------------------------
@@ -88,10 +96,12 @@ def world_folder(
     found = _instance(cfg.instance(instance), instance.capitalize(), refusals)
     if found is None:
         raise QuestError("; ".join(refusals))
-    name = world or cfg.world
+    # [paths] world is Play's world; the Lab's is always named.
+    name = world or (cfg.world if instance == "play" else None)
     if not name:
         raise QuestError(
-            "name the world: --world <folder in saves/> or [paths] world in gos.toml"
+            "name the world: --world <folder in saves/>"
+            + (" or [paths] world in gos.toml" if instance == "play" else "")
         )
     if name in (".", "..") or any(c in name for c in "/\\:"):
         raise QuestError(f"--world takes a folder name in saves/, not {name!r}")
@@ -123,11 +133,11 @@ def read(
     if game is None and world.parent.name == "saves":
         game = world.parent.parent
     try:
-        default_version = bq.default_pack_version(game)
+        default_pack = bq.default_pack(game)
     except (OSError, ValueError):
-        default_version = None
-    st = bq.states(book, progress.done, who)
-    done = [q for q, s in st.items() if s.state == bq.DONE]
+        default_pack = None
+    st = bq.states(book, progress.done, who, progress.tasks)
+    done = [q for q, s in st.items() if s.state in bq.COMPLETE]
     return Loaded(
         book=book,
         progress=progress,
@@ -136,7 +146,7 @@ def read(
         tier=bq.detect_tier(keys, done),
         keys=keys,
         world=world,
-        default_version=default_version,
+        default_pack=default_pack,
         missing_keys=[k for k in keys if k.quest not in book.quests],
     )
 
@@ -161,13 +171,15 @@ def _kv(conn: sqlite3.Connection, key: str, value: str | None) -> None:
 
 def _source(loaded: Loaded) -> dict[str, object]:
     b = loaded.book
+    pack_name, pack_version = loaded.default_pack or (None, None)
     return {
         "source": b.source,
         "path": str(b.path),
         "world": str(loaded.world),
         "pack_name": b.pack_name,
         "pack_version": b.pack_version,
-        "defaults_pack_version": loaded.default_version,
+        "defaults_pack_name": pack_name,
+        "defaults_pack_version": pack_version,
         "format": b.format,
         "build": b.build,
         "quests": len(b.quests),
@@ -347,8 +359,11 @@ def write(conn: sqlite3.Connection, loaded: Loaded) -> Summary:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
-    shown = {q for _, _, q in frontier_rows(conn, loaded.player)}
-    return Summary(loaded, len(shown), counts[0], counts[1])
+    shown = {r[2] for r in frontier_rows(conn, loaded.player)}
+    stage, how, _ = effective_tier(conn)
+    return Summary(
+        loaded, len(shown), counts[0], counts[1], stage if how == "override" else None
+    )
 
 
 # --- reading back --------------------------------------------------------------------------
@@ -359,14 +374,15 @@ def frontier_rows(
     player: str | None = None,
     line: str | None = None,
     limit: int = -1,
-) -> list[tuple[str, str, str]]:
-    """(line name, quest name, quest id) of the frontier, as the book shows it."""
+) -> list[tuple[str, str, str, str]]:
+    """(line name, quest name, quest id, state) of the frontier, as the book shows it; the
+    state is available or repeatable."""
     if player is None:
         player = tracked_player(conn)
     rows = access.query(
         conn, "quest_frontier", {"player": player, "line": line, "limit": limit}
     )
-    return [(r[0], r[1], r[2]) for r in rows]  # line, name, quest_id
+    return [(r[0], r[1], r[2], r[3]) for r in rows]  # line, name, quest_id, state
 
 
 def _json_kv(conn: sqlite3.Connection, key: str) -> dict[str, object] | None:
@@ -443,22 +459,23 @@ def report(summary: Summary, out: TextIO) -> None:
         f" version {b.pack_version}",
         file=out,
     )
-    if (
-        b.source == "world"
-        and ld.default_version is not None
-        and b.pack_version is not None
-        and ld.default_version > b.pack_version
-    ):
+    if bq.updates_book(b, ld.default_pack):
+        assert ld.default_pack is not None
         print(
-            f"  The pack's DefaultQuests is version {ld.default_version}: BetterQuesting"
+            f"  The pack's DefaultQuests is version {ld.default_pack[1]}: BetterQuesting"
             " imports it into this world when the world next loads, so load again after.",
             file=out,
         )
     for problem in (b.problems + ld.progress.problems)[:20]:
         print(f"  note: {problem}", file=out)
     name = ld.progress.names.get(ld.player, "?")
-    done = sum(1 for s in ld.states.values() if s.state == bq.DONE)
-    print(f"Player: {name} ({ld.player}): {done} quests complete", file=out)
+    done = sum(1 for s in ld.states.values() if s.state in bq.COMPLETE)
+    again = sum(1 for s in ld.states.values() if s.state == bq.REPEATABLE)
+    print(
+        f"Player: {name} ({ld.player}): {done} quests complete"
+        + (f", {again} of them repeatable again" if again else ""),
+        file=out,
+    )
     print(
         f"Frontier: {summary.frontier} quests (gos quests frontier lists them)",
         file=out,
@@ -466,6 +483,12 @@ def report(summary: Summary, out: TextIO) -> None:
     t = ld.tier
     why = f" from q:{t.quest} ({t.name})" if t.quest else " (no key quest complete yet)"
     print(f"Tier detected: {_stage_text(t.stage)}{why}", file=out)
+    if summary.override is not None:
+        print(
+            f"Tier in use: {_stage_text(summary.override)}, your override (D64);"
+            " `gos quests tier --clear` goes back to the detected tier",
+            file=out,
+        )
     for k in ld.missing_keys:
         print(
             f"  warning: tier key quest q:{k.quest} ({k.stage}, {k.name}) is not in this"
@@ -500,6 +523,8 @@ def load_main(
             path, game = world_dir, None
         else:
             path, game = world_folder(cfg, instance, world)
+            if instance == "play":
+                print(PLAY_READ_NOTE, file=out)
         loaded = read(path, game, player)
         conn = _db(cfg)
         try:
@@ -536,9 +561,9 @@ def frontier_main(
         f" {source.get('loaded_utc')}",
         file=out,
     )
-    print("line\tquest\tid", file=out)
-    for line_name, name, qid in rows:
-        print(f"{line_name}\t{name}\tq:{qid}", file=out)
+    print("line\tquest\tid\tstate", file=out)
+    for line_name, name, qid, state in rows:
+        print(f"{line_name}\t{name}\tq:{qid}\t{state}", file=out)
     print(f"# {len(rows)} rows, {len({r[2] for r in rows})} quests", file=out)
     return 0
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import io
 import os
 import sys
 from collections.abc import Sequence
@@ -258,6 +259,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
     if args.command == "quests":
+        # Quest text is pack data (CJK, symbols). Windows writes a pipe or a file in its ANSI
+        # code page (cp1252), which can't encode all of it: escape what it can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
         if args.quests_command == "load":
             return quest_db.load_main(
                 args.config,
