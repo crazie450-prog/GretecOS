@@ -84,12 +84,10 @@ def test_samples(tmp_path: Path) -> None:
     names = [
         s.name for s in measure.samples(tmp_path / "vault", tmp_path / "gos.sqlite")
     ]
-    assert names == [
+    assert names == [  # never me/ (D142 (d))
         "plan 6.2 example",
         "INDEX.md",
         "_gos/schema.md",
-        "me/goals.md",
-        "me/prefs.md",
         "db:recipes(60)",
         "db:items(120)",
     ]
@@ -148,7 +146,7 @@ def test_gos_vault_measure_writes_the_report(
     assert text.startswith("measured: 2026-11-06\n")
     assert "verdict_claude_haiku_5_5: " in text and "verdict_claude_opus_5_5: " in text
     table = text.split("\nsample\tformat\tmodel\ttokens\n", 1)[1].splitlines()
-    assert len(table) == 5 * len(measure.FORMATS) * 2  # 5 samples, 8 formats, 2 models
+    assert len(table) == 3 * len(measure.FORMATS) * 2  # 3 samples, 8 formats, 2 models
     out = capsys.readouterr().out
     assert "format\tmodel\ttotal_tokens\tvs_json_pct" in out and str(report) in out
 
@@ -285,6 +283,56 @@ def test_the_report_gives_each_kinds_share(tmp_path: Path) -> None:
     assert {k: r[2] for k, r in rows.items()} == {
         "db tables": "2",
         "plan example": "1",
-        "vault notes": "4",
+        "vault notes": "2",
     }
     assert round(sum(float(r[4]) for r in rows.values())) == 100
+
+
+def test_measure_never_reads_or_sends_me(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D142 (d): no text of Clayton's me/ notes reaches the counter, not even the summary
+    INDEX.md copies from them; me/ files are never opened."""
+    from gregtec.vault import deploy, index
+
+    root = tmp_path / "vault"
+    deploy.deploy(root, TEMPLATE)
+    secret = "zebra-quokka-secret"
+    (root / "me" / "goals.md").write_text(
+        f"---\nid: me-goals\nt: goals\nupd: 2026-11-06\n---\ngoal: {secret} one\n",
+        encoding="utf-8",
+    )
+    (root / "me" / "notes").mkdir()
+    (root / "me" / "notes" / "x.md").write_text(
+        f"---\nid: x\nt: prefs\nupd: 2026-11-06\n---\nnote: {secret} two\n",
+        encoding="utf-8",
+    )
+    index.build(root, TODAY)
+    index_text = (root / "INDEX.md").read_text(encoding="utf-8")
+    assert (
+        f"{secret} one" in index_text
+    )  # INDEX.md copies it: measure must leave it out
+    opened: list[str] = []
+    real_read = Path.read_text
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        opened.append(
+            self.relative_to(root).as_posix() if self.is_relative_to(root) else ""
+        )
+        return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    sent: list[str] = []
+
+    def counter(model: str, text: str) -> int:
+        sent.append(text)
+        return fake_count(model, text)
+
+    code = measure.main(
+        tmp_path, ["claude-haiku-5-5"], False, sys.stdout, counter=counter, today=TODAY
+    )
+    assert code == 0
+    assert not [p for p in opened if p.startswith("me/")]
+    assert sent and not [t for t in sent if secret in t or "me/" + "goals" in t]
+    index_sent = [t for t in sent if "_gos/schema.md\tnote types" in t]
+    assert index_sent  # INDEX.md itself is still measured, without its me/ rows

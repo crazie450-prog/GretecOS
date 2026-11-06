@@ -5,7 +5,10 @@ came from OpenAI tokenizers. This counts the same candidates with the Messages A
 ``count_tokens`` endpoint (free; no message is sent to a model) for each model that reads notes,
 on:
 
-- every note in the live vault that follows the grammar (``INDEX.md``, ``_gos/schema.md``, ...);
+- every note in the live vault that follows the grammar (``INDEX.md``, ``_gos/schema.md``, ...),
+  except Clayton's own ``me/`` (D142 (d), D143): its notes are never read, and a table row that
+  points into it (``INDEX.md``'s ``me/goals.md`` row, which copies that note's summary) is left
+  out, so nothing of ``me/`` is sent;
 - the plan 6.2 example line note;
 - two tables from ``gos.sqlite`` when it has an export run: 60 recipes and 120 items, the shape
   of tool results and of bulk tables (their values are only counted, never written anywhere).
@@ -77,6 +80,7 @@ DB_SAMPLES = {
 
 Counter = Callable[[str, str], int]  # (model, text) -> input tokens
 RETRY_WAITS_S = (30.0, 60.0, 120.0)  # after the SDK's own retries
+PRIVATE = "me"  # D142 (d): Clayton's own notes are never read or sent
 
 
 # --- rendering ------------------------------------------------------------------------------
@@ -266,16 +270,32 @@ def _table_note(
     return schema.Note(meta, [("src", name)], [table])
 
 
+def _private(path: str) -> bool:
+    return path == PRIVATE or path.startswith(PRIVATE + "/")
+
+
+def _without_private_rows(note: schema.Note) -> schema.Note:
+    """``note`` less the table rows whose ``path`` cell is in ``me/``."""
+    tables = []
+    for header, *rows in note.tables:
+        if "path" in header:
+            col = header.index("path")
+            rows = [r for r in rows if not _private(r[col])]
+        tables.append([header, *rows])
+    return schema.Note(note.meta, note.facts, tables)
+
+
 def samples(vault: Path | None, db: Path | None) -> list[Sample]:
     found = [Sample("plan 6.2 example", schema.parse(PLAN_EXAMPLE))]
     if vault is not None and vault.is_dir():
         for rel in io.notes(vault):
+            if _private(rel):
+                continue  # D142 (d): me/ is never read
             try:
-                found.append(
-                    Sample(rel, schema.parse((vault / rel).read_text(encoding="utf-8")))
-                )
+                note = schema.parse((vault / rel).read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, ValueError):
                 continue  # only notes that follow the grammar can be rendered faithfully
+            found.append(Sample(rel, _without_private_rows(note)))
     if db is not None and db.is_file():
         conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
         try:

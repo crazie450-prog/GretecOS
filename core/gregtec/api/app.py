@@ -62,7 +62,7 @@ from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
-from gregtec.vault.scheduler import TICK_S, Maintenance
+from gregtec.vault.scheduler import STOP_BACKUP_S, TICK_S, Maintenance
 
 log = logging.getLogger("gregtec.api")
 
@@ -350,7 +350,10 @@ def create_app(core: Core) -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             if core.maintenance is not None:  # plan 6.5: commit at session end
-                await asyncio.to_thread(core.maintenance.session_end)
+                # D142 (g): and back up an overdue DB, in the time the supervisor leaves
+                await asyncio.to_thread(
+                    core.maintenance.session_end, backup_s=STOP_BACKUP_S
+                )
 
     app = FastAPI(
         title="Gregtec OS core",
