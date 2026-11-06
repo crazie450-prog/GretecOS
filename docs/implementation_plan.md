@@ -1223,7 +1223,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V03 | NEI 2.8.172 swap works with 2.9.0 in Export | Export run | 1.2 |
 | V04 | Exact `options.txt` key for pause-on-lost-focus on 1.7.10 | Inspect the file after F3+P | 0.6 |
 | V05 | Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log | Lab session | 6.1 |
-| V06 | ServerUtilities world-logging config keys and the single-player `world.log` path | Read the config; Lab session | 0.6 |
+| V06 | ServerUtilities world-logging config keys and the single-player `world.log` path. **Keys confirmed** (PR #6); the path moves to WO-6.1 (D97) | Lab session | 6.1 |
 | V07 | VisualProspecting v3 cache paths and format | Lab | 1.6 |
 | V08 | Ore-mix source (NEI ore handler vs GT worldgen registry) | Export | 1.6 |
 | V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
