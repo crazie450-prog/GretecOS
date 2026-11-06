@@ -27,3 +27,7 @@ Dashboard mockups are designed in Claude Design (D79). Claude Code builds each v
 - **Gates:** each phase ends at a gate (G#). An independent reviewer agent reports, then Clayton signs off.
 - **Phase 0 order:** WO-0.1 → WO-0.8 setup → WO-0.7 (build Play) → WO-0.3 → WO-0.8 tests → the rest.
 - **Changing a decision:** append a `D##` entry to `docs/decisions.md` that names what it supersedes.
+
+## Licence
+
+Gregtec OS's code is MIT (`LICENSE`); GregtecLink's is too (`mod/LICENSE`, with `mod/LICENSE-ExampleMod` for the template parts). Pack-derived data keeps its own licence where it says so, e.g. `data/curated/tier_quests.tsv` (CC BY-NC-SA 4.0, from GTNH's quest book).
