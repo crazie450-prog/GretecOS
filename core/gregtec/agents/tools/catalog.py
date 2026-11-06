@@ -145,7 +145,7 @@ LATER: dict[str, str] = {
 }
 
 
-def registry(
+def build_registry(
     db: Path, glossary: Glossary | None = None, *, key: bytes | None = None
 ) -> Registry:
     """Every WO-2.2 tool over the DB at ``db``."""
@@ -157,4 +157,4 @@ def registry(
 
 def default_registry(gos_home: Path) -> Registry:
     """The tools over ``GOS_HOME/data/gos.sqlite``, with the live vault's glossary."""
-    return registry(access.db_path(gos_home), Glossary.find(gos_home / "vault"))
+    return build_registry(access.db_path(gos_home), Glossary.find(gos_home / "vault"))

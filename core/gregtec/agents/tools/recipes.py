@@ -8,6 +8,13 @@ duration in seconds (ticks / 20) and chances in percent (basis points / 100), ne
 
 Planner defaults (plan 5.2) hide disabled and fake recipes unless ``show_fake``; a recipe whose
 handler doesn't say whether it is fake (NEI-only handlers, D105) is shown and flagged ``fake?``.
+GT's recycling recipes (an item back to its material: GT categories ``*_recycling``) come last,
+flagged ``recycling``, so a page starts with the ways an item is actually made.
+
+A ``machine`` filter is a recipe map or NEI handler named exactly (``gt.recipe.blastfurnace``,
+"Blast Furnace"), else a machine resolved as ``item_resolve`` resolves one (glossary aliases
+such as "EBF" included; when that is ambiguous the candidates come back instead), else the maps
+and handlers whose names have its words.
 """
 
 from __future__ import annotations
@@ -53,7 +60,8 @@ COLUMNS = (
 )
 NOTE = (
     "cite each recipe by its r: id; eut is EU/t, dur_t ticks (dur_s = dur_t / 20), fluids in L; "
-    "fake? = the NEI handler doesn't say whether the recipe is real"
+    "fake? = the NEI handler doesn't say whether the recipe is real; recycling = GT's recipe "
+    "that turns an item back into its material"
 )
 
 
@@ -133,6 +141,7 @@ def cards(
                 ("fake", r["fake"] == 1),
                 ("fake?", r["fake"] is None),
                 ("hidden", r["hidden"] == 1),
+                ("recycling", r["recycling"] == 1),
             )
             if on
         ]
@@ -163,12 +172,21 @@ def cards(
     )
 
 
-def machine_filter(call: Call, text: str | None) -> tuple[str | None, str | None]:
-    """The recipe map and NEI handler ids ``text`` names, as JSON arrays (None: any machine)."""
+def machine_filter(
+    call: Call, text: str | None
+) -> tuple[str | None, str | None] | Result:
+    """The recipe map and NEI handler ids ``text`` names, as JSON arrays (None: any machine),
+    or the machine candidates when ``text`` could be several machines."""
     if not text:
         return None, None
     text = " ".join(text.split())
     rows = call.query("recipe_maps_named", {"name": text})
+    if not rows and items.words(text):
+        res = items.resolve(call, text, "machine")
+        if res.best is not None:
+            rows = call.query("recipe_maps_named", {"name": res.best.key})
+        elif res.candidates and res.candidates[0].score >= items.LOW:
+            return items.choices(res, 10, "machine")
     if not rows and (found := items.words(text)):
         rows = call.query("recipe_maps_matching", {"q": items.fts_query(found)})
     if not rows:
@@ -234,7 +252,10 @@ def recipe_find(call: Call, args: dict[str, Any], offset: int) -> Result:
     if isinstance(target, Result):
         return target
     run = current_run(call)
-    maps, handlers = machine_filter(call, args.get("machine"))
+    machine = machine_filter(call, args.get("machine"))
+    if isinstance(machine, Result):
+        return machine
+    maps, handlers = machine
     tier = args.get("tier_max")
     rows = call.query(
         "recipes_for_item",

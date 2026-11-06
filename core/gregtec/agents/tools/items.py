@@ -80,6 +80,7 @@ class Resolution:
     candidates: list[Candidate]
     ambiguous: bool
     via: Entry | None = None  # the glossary entry of the form that decided
+    capped: bool = False  # a form had more FTS matches than POOL: more candidates exist
 
     @property
     def best(self) -> Candidate | None:
@@ -171,14 +172,16 @@ def _prefer_gregtech(found: list[Candidate]) -> list[Candidate]:
     return out
 
 
-def _judge(text: str, found: list[Candidate], via: Entry | None = None) -> Resolution:
+def _judge(
+    text: str, found: list[Candidate], via: Entry | None = None, capped: bool = False
+) -> Resolution:
     found = _prefer_gregtech(found)
     found.sort(key=_sort_key)
     if not found:
-        return Resolution(text, [], False, via)
+        return Resolution(text, [], False, via, capped)
     top = found[0].score
     close = len(found) > 1 and top - found[1].score < CLOSE
-    return Resolution(text, found, top < LOW or close, via)
+    return Resolution(text, found, top < LOW or close, via, capped)
 
 
 def by_key(call: Call, text: str) -> Resolution | None:
@@ -223,6 +226,7 @@ def resolve(call: Call, text: str, kind: str | None = None) -> Resolution:
     if keyed is not None:
         return keyed
     per_form: list[tuple[str, Entry | None, dict[str, Candidate]]] = []
+    capped = False
     for form, entry in call.env.glossary.variants(text):
         form_words = words(form)
         if not form_words:
@@ -230,6 +234,7 @@ def resolve(call: Call, text: str, kind: str | None = None) -> Resolution:
         rows = call.query(
             "item_names", {"q": fts_query(form_words), "kind": kind, "limit": POOL}
         )
+        capped = capped or len(rows) >= POOL
         scored: dict[str, Candidate] = {}
         for row in rows:
             value = score(form_words, row)
@@ -251,7 +256,7 @@ def resolve(call: Call, text: str, kind: str | None = None) -> Resolution:
                 c = replace(c, score=c.score * DEMOTE)
             if key not in best or best[key].score < c.score:
                 best[key] = c
-    return _judge(text, list(best.values()), decided[1] if decided else None)
+    return _judge(text, list(best.values()), decided[1] if decided else None, capped)
 
 
 def choices(res: Resolution, limit: int, what: str = "item") -> Result:
@@ -260,7 +265,7 @@ def choices(res: Resolution, limit: int, what: str = "item") -> Result:
     head: list[tuple[str, object]] = [
         ("text", res.text),
         ("ambiguous", int(res.ambiguous)),
-        ("matches", len(res.candidates)),
+        ("matches", f"{len(res.candidates)}{'+' if res.capped else ''}"),
     ]
     if res.via is not None and shown and shown[0].form != res.text:
         head.append(("glossary", f"{res.text} -> {shown[0].form} ({res.via.kind})"))

@@ -35,7 +35,7 @@ WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and bu
 with Phase 10.
 """
 
-from gregtec.agents.tools.catalog import LATER, TOOLS, default_registry, registry
+from gregtec.agents.tools.catalog import LATER, TOOLS, build_registry, default_registry
 from gregtec.agents.tools.registry import DEEP, FAST, Output, Registry, Tool, ToolError
 
 __all__ = [
@@ -47,6 +47,6 @@ __all__ = [
     "Registry",
     "Tool",
     "ToolError",
+    "build_registry",
     "default_registry",
-    "registry",
 ]

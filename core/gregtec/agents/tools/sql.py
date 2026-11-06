@@ -12,12 +12,14 @@ each ``:param`` the query uses must be given, as a JSON scalar, and nothing else
    statement per call;
 3. while it is prepared, an authorizer allows only SELECT, READ of a table in
    :data:`READABLE` (game data and GOS's own tables, not :data:`PRIVATE` ones such as ``kv``
-   and ``device``), the read-only pragmas FTS5 and ``pragma_table_info`` need, and the
-   functions in :data:`FUNCTIONS`. Everything else is denied: writes, ATTACH, PRAGMA writes,
-   ``load_extension``, ``zeroblob``, recursive CTEs, temp tables;
+   and ``device``) and the functions in :data:`FUNCTIONS`, plus the one read-only pragma FTS5
+   runs itself (``data_version``, no argument). Everything else is denied: writes, ATTACH,
+   every other PRAGMA, ``load_extension``, ``randomblob``/``zeroblob``, recursive CTEs, temp
+   tables and views, transactions;
 4. rows are capped (50 a page); deeper pages re-run it, and the time limit holds every run.
 
-Rows are raw DB values: cite the ``ref`` (r:) and quest (q:) ids in them.
+Rows are raw DB values: cite the ``ref`` (r:) and quest (q:) ids in them. A page whose rows
+carry no such id says so, because its numbers can't be quoted as game facts.
 """
 
 from __future__ import annotations
@@ -39,6 +41,15 @@ _COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 _STRING = re.compile(r"'(?:[^']|'')*'")
 _PARAM = re.compile(r"(?<![\w:]):([A-Za-z_][A-Za-z0-9_]*)")
 _FIRST_WORD = re.compile(r"\s*([A-Za-z]+)")
+# A citation id in a cell: r:/q:/mte: (plan:, crop: and w: later), or a bare quest id.
+_CITE = re.compile(r"(?:r|q|mte|plan|crop|w):\S+|[A-Za-z0-9_-]{22}")
+RAW_NOTE = (
+    "raw DB values: cite the r: (recipe.ref) and q: (quest id) ids of the rows you use"
+)
+UNCITED_NOTE = (
+    "no r:, q: or mte: id in these rows: their numbers can't be quoted as game facts; "
+    "select the recipe's ref or the quest's id with them"
+)
 
 # Tables db_sql may read. Every table schema.sql creates is here or in PRIVATE (a unit test
 # checks), so a new table is unreadable until someone decides which it is.
@@ -62,10 +73,7 @@ READABLE = (
     GAME_TABLES
     | FTS_SHADOW
     | {"sqlite_master", "sqlite_schema", "json_each", "json_tree"}
-    | {"pragma_table_info", "pragma_table_xinfo"}
 )
-# Read-only pragmas: FTS5 reads data_version itself; pragma_table_info(...) reads table_info.
-PRAGMAS = frozenset({"data_version", "table_info", "table_xinfo"})
 FUNCTIONS = frozenset(
     {
         # scalar
@@ -96,27 +104,22 @@ def authorize(
     action: int, arg1: str | None, arg2: str | None, db: str | None, trigger: str | None
 ) -> int:
     """db_sql's sqlite3 authorizer (see the module docstring)."""
-    if action == sqlite3.SQLITE_SELECT:
-        return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_READ:
-        return (
-            sqlite3.SQLITE_OK
-            if (arg1 or "").lower() in READABLE and db in (None, "main")
-            else sqlite3.SQLITE_DENY
+    allowed = (
+        action == sqlite3.SQLITE_SELECT
+        or (
+            action == sqlite3.SQLITE_READ
+            and (arg1 or "").lower() in READABLE
+            and db in (None, "main")
         )
-    if action == sqlite3.SQLITE_FUNCTION:
-        return (
-            sqlite3.SQLITE_OK
-            if (arg2 or "").lower() in FUNCTIONS
-            else sqlite3.SQLITE_DENY
+        or (action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in FUNCTIONS)
+        # FTS5 reads PRAGMA data_version itself the first time a connection uses a table.
+        or (
+            action == sqlite3.SQLITE_PRAGMA
+            and (arg1 or "").lower() == "data_version"
+            and arg2 is None
         )
-    if action == sqlite3.SQLITE_PRAGMA:
-        name = (arg1 or "").lower()
-        if name == "data_version" and arg2 is None:
-            return sqlite3.SQLITE_OK
-        if name in PRAGMAS and (arg2 or "").lower() in READABLE:
-            return sqlite3.SQLITE_OK
-    return sqlite3.SQLITE_DENY
+    )
+    return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
 
 
 def check_select(sql: str) -> str:
@@ -161,15 +164,22 @@ def db_sql(call: Call, args: dict[str, Any], offset: int) -> Result:
         raise ToolError(f"SQL error: {exc}") from None
     finally:
         conn.set_authorizer(None)
-    return Result(
-        columns,
-        rows[: call.page],
-        notes=[
-            "raw DB values: cite the r: (recipe.ref) and q: (quest id) ids of the rows you use"
-        ],
-        offset=offset,
-        more=len(rows) > call.page,
-    )
+    page = rows[: call.page]
+    notes = [RAW_NOTE]
+    if not cited(page):
+        notes.append(UNCITED_NOTE)
+    return Result(columns, page, notes=notes, offset=offset, more=len(rows) > call.page)
+
+
+def cited(rows: list[tuple[object, ...]]) -> bool:
+    """Whether every row that holds a number also holds a citation id."""
+    for row in rows:
+        numbers = any(
+            isinstance(v, int | float) and not isinstance(v, bool) for v in row
+        )
+        if numbers and not any(isinstance(v, str) and _CITE.fullmatch(v) for v in row):
+            return False
+    return True
 
 
 DB_SQL_SCHEMA: dict[str, Any] = {
@@ -281,9 +291,7 @@ def db_query(call: Call, args: dict[str, Any], offset: int) -> Result:
         columns,
         rows[: call.page],
         head=[("query", q.name)],
-        notes=[
-            "raw DB values: cite the r: (ref) and q: (quest id) ids of the rows you use"
-        ],
+        notes=[RAW_NOTE],
         offset=offset,
         more=len(rows) > call.page,
     )

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from gregtec.agents.tools.cursor import CursorError, Cursors
+from gregtec.agents.tools.cursor import MAX_LENGTH, CursorError, Cursors
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.schema import ArgumentError, check_schema, validate
 from gregtec.agents.tools.tsv import PAGE, Result, render
@@ -113,7 +113,7 @@ MORE_TOOL = Tool(
             "cursor": {
                 "type": "string",
                 "description": "the text after `more:` in the last result",
-                "maxLength": 4096,
+                "maxLength": MAX_LENGTH,
             }
         },
         "required": ["cursor"],
@@ -136,13 +136,18 @@ def guard(conn: sqlite3.Connection, seconds: float) -> None:
 
 
 def epoch(conn: sqlite3.Connection) -> str:
-    """The DB's state as far as paging cares: the newest export run and the last quest load."""
+    """The DB's state as far as paging cares: the newest export run and the last quest load
+    (whose record has its load time). A rebuild of the same run that changes nothing else is
+    not seen; its recipes keep their keys and order."""
     run = access.query(conn, "current_run")
     quests = conn.execute(
         "SELECT value FROM kv WHERE key = ?", (_KV_QUESTS,)
     ).fetchone()
     loaded = hashlib.sha256(quests[0].encode()).hexdigest()[:12] if quests else "-"
-    return f"{run[0]['run_key'] if run else '-'}|{loaded}"
+    newest = (
+        f"{run[0]['id']}:{run[0]['run_key']}:{run[0]['created_at']}" if run else "-"
+    )
+    return f"{newest}|{loaded}"
 
 
 class Registry:
@@ -218,6 +223,11 @@ class Registry:
                 cursor = self._cursors.issue(
                     tool.name, values, result.offset + len(result.rows), epoch(conn)
                 )
+                if cursor is None:
+                    result.notes.append(
+                        "more rows exist, but these arguments are too long for a more "
+                        "cursor: narrow the call"
+                    )
         return render(result, cursor)
 
     @contextmanager

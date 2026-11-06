@@ -2,10 +2,12 @@
 
 A cursor is ``<payload>.<mac>``, both URL-safe base64 without padding. The payload is canonical
 JSON of the tool's name, its validated arguments, the offset of the next page and the DB's
-epoch (the newest export run and quest load, so a rebuilt DB is never paged into). The MAC is
-HMAC-SHA256 over the payload with a key made per :class:`Cursors` (the core makes one per
+epoch (the newest export run and the last quest load, so a page never mixes two loads). The MAC
+is HMAC-SHA256 over the payload with a key made per :class:`Cursors` (the core makes one per
 process), cut to 128 bits. A cursor that was changed in any way, or that another process
-issued, is refused; the tool then has to be called again.
+issued, is refused; the tool then has to be called again. Opening a cursor checks only that it
+is one this process issued: the registry then runs the tool's lane check and argument
+validation again, as for any call. A cursor longer than :data:`MAX_LENGTH` is never issued.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Any
 
-MAX_LENGTH = 4096
+MAX_LENGTH = 65536  # characters; longer arguments get no cursor
 VERSION = 1
 _DOMAIN = b"gos-cursor/1\n"
 _SHAPE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}")
@@ -56,13 +58,17 @@ class Cursors:
         ).digest()
         return _b64(digest[:16])
 
-    def issue(self, tool: str, args: dict[str, Any], offset: int, epoch: str) -> str:
+    def issue(
+        self, tool: str, args: dict[str, Any], offset: int, epoch: str
+    ) -> str | None:
+        """The cursor of the page at ``offset``; None when it would be over MAX_LENGTH."""
         body = {"a": args, "e": epoch, "o": offset, "t": tool, "v": VERSION}
         text = json.dumps(
             body, sort_keys=True, separators=(",", ":"), ensure_ascii=True
         )
         payload = _b64(text.encode("ascii"))
-        return f"{payload}.{self._mac(payload)}"
+        cursor = f"{payload}.{self._mac(payload)}"
+        return cursor if len(cursor) <= MAX_LENGTH else None
 
     def open(self, cursor: str) -> Page:
         refused = CursorError(
