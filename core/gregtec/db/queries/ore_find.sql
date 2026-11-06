@@ -5,14 +5,23 @@
 -- centre block (x, z), dist2 (its squared horizontal distance from :x, :z, or NULL;
 -- gregtec.db.ores.find turns it into blocks), the mix, the layers the material is in, the
 -- mix's heights in this dimension, and known (in the player's client cache), depleted, src.
--- Live veins first, then depleted ones, each nearest first, then by dimension and chunk.
+-- Order (D142 (c)): live veins first, then depleted ones; within each, by the best layer the
+-- material is in (primary, secondary, between, sporadic, then any other layer name: a mix
+-- whose layers are unknown), then nearest first, then by dimension and chunk.
 WITH hit AS (
   SELECT m.*, (
     SELECT group_concat(json_extract(o.value, '$.layer'), ',')
     FROM json_each(m.ores) AS o
     WHERE lower(json_extract(o.value, '$.material')) = lower(:material)
        OR lower(json_extract(o.value, '$.name')) = lower(:material)
-  ) AS layers
+  ) AS layers, (
+    SELECT min(CASE json_extract(o.value, '$.layer')
+      WHEN 'primary' THEN 0 WHEN 'secondary' THEN 1 WHEN 'between' THEN 2
+      WHEN 'sporadic' THEN 3 ELSE 4 END)
+    FROM json_each(m.ores) AS o
+    WHERE lower(json_extract(o.value, '$.material')) = lower(:material)
+       OR lower(json_extract(o.value, '$.name')) = lower(:material)
+  ) AS layer_rank
   FROM ore_mix AS m
 )
 SELECT v.dim, v.cx * 16 + 8 AS x, v.cz * 16 + 8 AS z,
@@ -29,5 +38,5 @@ SELECT v.dim, v.cx * 16 + 8 AS x, v.cz * 16 + 8 AS z,
 FROM vein AS v
 JOIN hit AS h ON h.id = v.mix_id
 WHERE h.layers IS NOT NULL AND (:dim IS NULL OR v.dim = :dim)
-ORDER BY v.depleted, dist2 IS NULL, dist2, v.dim, v.cx, v.cz
+ORDER BY v.depleted, h.layer_rank, dist2 IS NULL, dist2, v.dim, v.cx, v.cz
 LIMIT :limit;
