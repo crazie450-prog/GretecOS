@@ -93,7 +93,10 @@ Prism must be closed (the script refuses otherwise, since Prism would overwrite 
    `GOS: recipe data is stale: no export is recorded yet`. Quit to the desktop from the main menu.
    The dialog "Gregtec OS: mods changed. Export now?" appears: click **Yes**. Export starts by
    itself, exports (a few minutes, at most 30) and quits. A message box `Export <run> done.`
-   follows; this first time it says nothing to diff against.
+   follows; this first time it says nothing to diff against. If Export hasn't started a minute
+   after Yes, send the newest `%USERPROFILE%\GregtecOS\logs\export-*.log` (the export runs as its
+   own process after the hook returns; this is the first check that Windows lets it outlive
+   the hook).
    - **While Export runs**, click Launch on GTNH-Play: it must not start, and its console shows
      `GOS: not launching: the instance lock is held by export ...` (Play won't launch while Export
      holds the lock).

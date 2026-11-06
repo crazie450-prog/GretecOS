@@ -76,6 +76,30 @@ def test_a_killed_holder_leaves_no_lock(tmp_path: Path) -> None:
         assert locks.held(tmp_path) is not None
 
 
+def test_a_failed_record_write_drops_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_open = locks._open
+
+    def failing_open(path: Path) -> locks.BinaryIO:
+        f = real_open(path)
+
+        class Full:
+            def __getattr__(self, name: str) -> object:
+                return getattr(f, name)
+
+            def write(self, data: bytes) -> int:
+                raise OSError(28, "No space left on device")
+
+        return Full()  # type: ignore[return-value]
+
+    monkeypatch.setattr(locks, "_open", failing_open)
+    with pytest.raises(OSError):
+        locks.InstanceLock(tmp_path).acquire("export", "x")
+    monkeypatch.undo()
+    assert locks.held(tmp_path) is None
+
+
 def test_unreadable_record_is_unknown(tmp_path: Path) -> None:
     lock = locks.InstanceLock(tmp_path).acquire("export", "x")
     with lock:

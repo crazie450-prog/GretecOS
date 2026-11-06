@@ -265,6 +265,55 @@ def test_unlistable_processes_wait_a_grace_period(env: Env) -> None:
     assert "can't list processes" not in text  # the run was already there
 
 
+def test_never_listable_processes_wait_for_the_run_not_the_start_timeout(
+    env: Env,
+) -> None:
+    """Without a process list there is no start timeout: a run at 20 minutes is fine."""
+    calls = [0]
+
+    def clients(cfg: config.Config) -> list[str]:
+        calls[0] += 1
+        if calls[0] == 1:
+            return []  # the check before the launch
+        raise OSError("no PowerShell")
+
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    def sleep(s: float) -> None:
+        now[0] += 60.0
+        if now[0] >= 20 * 60 and not (env.exports / "20261106T120000Z").exists():
+            write_run(env.exports, manifest("20261106T120000Z"))
+
+    code, text = env.run_export(
+        clients=clients, launch=lambda argv: None, clock=clock, sleep=sleep
+    )
+    assert code == 0, text
+    assert text.count("can't list processes") == 1
+
+
+def test_a_run_found_near_the_deadline_is_kept(env: Env) -> None:
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    def sleep(s: float) -> None:
+        now[0] += 60.0
+        # Export quits 2 minutes after the deadline.
+        env.running = now[0] < playhooks.DEADLINE_S + 120
+        if (
+            now[0] >= playhooks.DEADLINE_S - 60
+            and not (env.exports / "20261106T120000Z").exists()
+        ):
+            write_run(env.exports, manifest("20261106T120000Z"))
+
+    code, text = env.run_export(launch=lambda argv: None, clock=clock, sleep=sleep)
+    assert code == 0, text
+
+
 def test_old_runs_are_not_taken_for_the_new_one(env: Env) -> None:
     write_run(env.exports, manifest("20261101T000000Z"))
     env.next_run = None
@@ -304,9 +353,8 @@ def test_pre_launch_reports_stale_and_degrades(env: Env) -> None:
     out = io.StringIO()
     assert playhooks.pre_launch(env.cfg, "play", out, clients=broken) == 0
     assert "can't tell whether Export is running" in out.getvalue()
-    (env.play / ".minecraft").rename(
-        env.play / "gone"
-    )  # can't fingerprint: still launches
+    # Play can't be fingerprinted: it still launches.
+    (env.play / ".minecraft").rename(env.play / "gone")
     code, text = env.pre_launch()
     assert code == 0 and "couldn't check whether recipe data is stale" in text
     code, text = env.pre_launch(None)
@@ -407,9 +455,8 @@ def test_yes_starts_the_export_and_waits_for_its_lock(env: Env) -> None:
         code, text = post_exit(env, ask, spawn)
         assert ready.is_set()
         assert code == 0 and "export started" in text
-        assert (
-            env.pre_launch()[0] == playhooks.EXIT_REFUSE
-        )  # Play can't start meanwhile
+        # Play can't start meanwhile.
+        assert env.pre_launch()[0] == playhooks.EXIT_REFUSE
     finally:
         stop.set()
 

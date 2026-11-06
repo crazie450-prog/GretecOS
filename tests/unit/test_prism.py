@@ -48,6 +48,7 @@ COMMANDS = [
     "trailing space ",
     "tab\tnew\nline",
     "@at start",
+    "@a;b",
     "ünïcødé path C:\\Users\\Clä",
     "",
 ]
@@ -65,6 +66,7 @@ def test_qt_escape_matches_qsettings() -> None:
     )
     assert prism.qt_escape("a;b") == '"a;b"'
     assert prism.qt_escape("@x") == "@@x"
+    assert prism.qt_escape("@a;b") == '"@@a;b"'
     assert prism.qt_unescape('"first line, with a comma"') == "first line, with a comma"
     with pytest.raises(ValueError):
         prism.qt_unescape("a, b")  # Qt reads that as a list
@@ -142,6 +144,28 @@ def test_foreign_commands_need_replace(tmp_path: Path) -> None:
     # uninstall leaves a command that isn't GOS's
     plan = prism.plan_hooks(inst, "pre", "post", uninstall=True)
     assert not plan.changed()
+
+
+def test_prisms_global_commands_keep_working(tmp_path: Path) -> None:
+    """OverrideCommands=true hides Prism's global commands, so they are carried over."""
+    inst = make_instance(tmp_path)
+    pre, post = prism.hook_commands(APP, PS)
+    prism_root = tmp_path / "Prism"
+    prism_root.mkdir()
+    (prism_root / "prismlauncher.cfg").write_text(
+        '[General]\nConfigVersion=1.3\nWrapperCommand=\\"C:\\\\Tools\\\\wrap.exe\\" -x\n'
+    )
+    globals_ = prism.global_commands(prism_root)
+    assert globals_["WrapperCommand"] == '"C:\\Tools\\wrap.exe" -x'
+    plan = prism.plan_hooks(inst, pre, post, global_commands=globals_)
+    ini = prism.IniFile.parse(plan.new)
+    assert ini.get("WrapperCommand") == '"C:\\Tools\\wrap.exe" -x'
+    assert ini.get("PreLaunchCommand") == pre
+
+    globals_["PreLaunchCommand"] = "packwiz-bootstrap.exe"
+    with pytest.raises(ValueError, match="global"):
+        prism.plan_hooks(inst, pre, post, global_commands=globals_)
+    assert prism.global_commands(tmp_path / "nowhere") == {}
 
 
 def test_headerless_instance_cfg_is_refused(tmp_path: Path) -> None:

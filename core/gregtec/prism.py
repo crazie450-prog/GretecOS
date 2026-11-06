@@ -33,7 +33,7 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -178,11 +178,11 @@ def qt_escape(value: str) -> str:
     the whole value quoted when it has ``;``, ``,`` or ``=`` or starts or ends with a space."""
     if any(ord(c) < 0x20 and c not in _ESCAPES for c in value):
         raise ValueError(f"control character in {value!r}")
+    if value.startswith("@"):
+        value = "@" + value  # Qt marks its own @Variant(...) values with a leading @
     out = "".join(_ESCAPES.get(c, c) for c in value)
     if any(c in value for c in ";,=") or value[:1] == " " or value[-1:] == " ":
         out = f'"{out}"'
-    if value.startswith("@"):
-        out = "@" + out  # Qt marks its own @Variant(...) values with a leading @
     return out
 
 
@@ -204,8 +204,6 @@ def qt_unescape(raw: str) -> str:
     quoted = False
     i = 0
     raw = raw.strip()
-    if raw.startswith("@@"):
-        raw = raw[1:]
     while i < len(raw):
         c = raw[i]
         if c == '"':
@@ -226,7 +224,8 @@ def qt_unescape(raw: str) -> str:
         else:
             out.append(c)
         i += 1
-    return "".join(out)
+    value = "".join(out)
+    return value[1:] if value.startswith("@@") else value  # after unquoting, as Qt does
 
 
 @dataclass
@@ -337,12 +336,25 @@ def plan_hooks(
     *,
     uninstall: bool = False,
     replace: bool = False,
+    global_commands: Mapping[str, str | None] | None = None,
 ) -> HookPlan:
-    """The edit of ``instance``'s instance.cfg. Raises ValueError (and reads only)."""
+    """The edit of ``instance``'s instance.cfg. Raises ValueError (and reads only).
+
+    ``global_commands`` are Prism's global custom commands (prismlauncher.cfg). The instance
+    uses them while its ``OverrideCommands`` is off; turning it on would drop them, so a global
+    pre-launch or post-exit command counts as the instance's own, and a global wrapper command
+    is copied into the instance.
+    """
     path = instance / INSTANCE_CFG
     raw = read_bytes(path)
     ini = IniFile.parse(raw.decode("utf-8-sig"))
     current = {k: ini.get(k) for k in (*KEYS, "WrapperCommand")}
+    if current["OverrideCommands"] != "true" and global_commands and not uninstall:
+        for key in ("PreLaunchCommand", "PostExitCommand", "WrapperCommand"):
+            if not current[key] and global_commands.get(key):
+                current[key] = global_commands[key]
+                if key == "WrapperCommand":
+                    ini.set(key, str(global_commands[key]))
     if uninstall:
         for key in ("PreLaunchCommand", "PostExitCommand"):
             if ours(current[key]):
@@ -360,7 +372,7 @@ def plan_hooks(
         ]
         if foreign and not replace:
             raise ValueError(
-                "the instance already has its own custom commands ("
+                "the instance already has custom commands, its own or Prism's global ones ("
                 + "; ".join(foreign)
                 + "); run again with --replace to overwrite them"
             )
@@ -368,6 +380,18 @@ def plan_hooks(
         ini.set("PreLaunchCommand", pre)
         ini.set("PostExitCommand", post)
     return HookPlan(path, raw, ini.text(), current)
+
+
+def global_commands(prism_root: Path) -> dict[str, str | None]:
+    """Prism's global custom commands from ``prismlauncher.cfg`` (none if it can't be read)."""
+    keys = ("PreLaunchCommand", "PostExitCommand", "WrapperCommand")
+    try:
+        ini = IniFile.parse(
+            read_bytes(prism_root / "prismlauncher.cfg").decode("utf-8-sig")
+        )
+        return {k: ini.get(k) for k in keys}
+    except (OSError, ValueError):
+        return {}
 
 
 def write_hooks(plan: HookPlan) -> Path | None:
@@ -453,13 +477,18 @@ def install_main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) ->
     try:
         pre, post = hook_commands(cfg.gos_app)
         plan = plan_hooks(
-            instance, pre, post, uninstall=args.uninstall, replace=args.replace
+            instance,
+            pre,
+            post,
+            uninstall=args.uninstall,
+            replace=args.replace,
+            global_commands=global_commands(cfg.prism_root),
         )
     except (OSError, ValueError) as exc:
         print(f"Refused: {instance}: {exc}", file=out)
         return 1
     print(f"{args.instance}: {plan.path}", file=out)
-    for key in ("PreLaunchCommand", "PostExitCommand"):
+    for key in ("PreLaunchCommand", "PostExitCommand", "WrapperCommand"):
         print(f"  {key} now: {plan.current[key] or '(none)'}", file=out)
     if not args.uninstall:
         print(f"  PreLaunchCommand: {pre}", file=out)

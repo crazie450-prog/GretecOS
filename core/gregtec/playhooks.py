@@ -197,33 +197,33 @@ def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
     argv += ["--ticket", ticket]
     if config_path is not None:
         argv += ["--config", str(config_path)]
-    kwargs: dict[str, object] = {}
+    # Its own process, without a console window, outside any job the hook runs in (a job that
+    # doesn't allow breakaway refuses the flag: then without it).
     if sys.platform == "win32":
-        # Its own process, no console window, outside any job Prism's process is in.
         base = 0x00000200 | prism.CREATE_NO_WINDOW  # CREATE_NEW_PROCESS_GROUP
-        kwargs["creationflags"] = base | 0x01000000  # CREATE_BREAKAWAY_FROM_JOB
+        tries: list[dict[str, object]] = [
+            {"creationflags": base | 0x01000000},  # CREATE_BREAKAWAY_FROM_JOB
+            {"creationflags": base},
+        ]
     else:
-        kwargs["start_new_session"] = True
+        tries = [{"start_new_session": True}]
+    # Unbuffered, so its log is complete up to the moment it stops, however it stops.
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     with open(log, "ab") as f:
-        try:
-            proc = subprocess.Popen(
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                **kwargs,
-            )
-        except OSError:
-            if sys.platform != "win32":
-                raise
-            kwargs["creationflags"] = base  # the job doesn't allow breakaway
-            proc = subprocess.Popen(
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                **kwargs,
-            )
+        for i, flags in enumerate(tries):
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    **flags,
+                )
+                break
+            except OSError:
+                if i == len(tries) - 1:
+                    raise
     return Started(ticket, log, proc)
 
 
@@ -384,34 +384,45 @@ def wait_for_export(
     sleep: Callable[[float], None] = time.sleep,
     poll_s: float = POLL_S,
 ) -> FoundRun:
-    """Wait until Export has written a new complete run and quit. Raises ExportFailed."""
+    """Wait until Export has written a new complete run and quit. Raises ExportFailed.
+
+    Without a process list (``clients`` raising OSError every time) it can only watch for the
+    run: no start timeout then, only the deadline.
+    """
+
+    def new_runs() -> tuple[list[FoundRun], list[FoundRun]]:
+        found = [
+            r for k, r in scan_runs(exports, allow_harness).items() if k not in before
+        ]
+        return [r for r in found if r.complete], [r for r in found if not r.complete]
+
+    def no_run_reason() -> str | None:
+        return _no_run_reason(fingerprint.game_folder(cfg.instance("export")))
+
     start = clock()
-    seen_running = False
+    seen_running = listed = warned = False
     run: FoundRun | None = None
     run_at = 0.0
     while True:
-        new = {
-            k: v
-            for k, v in scan_runs(exports, allow_harness).items()
-            if k not in before
-        }
-        complete = [r for r in new.values() if r.complete]
+        complete, _ = new_runs()
         if run is None and complete:
             run = complete[-1]
             run_at = clock()
             _say(out, f"Export wrote run {run.name}; waiting for it to quit.")
         try:
             running: bool | None = "export" in clients(cfg)
+            listed = True
         except OSError as exc:
             running = None
-            if run is None:
+            if not warned and run is None:
                 _say(
                     out,
                     f"warning: can't list processes ({exc}); watching for the run only.",
                 )
+                warned = True
         seen_running = seen_running or bool(running)
         now = clock()
-        if run is not None:
+        if run is not None:  # bounded by QUIT_WAIT_S, not by the deadline
             if running is False:
                 return run
             if running is None and now - run_at >= UNKNOWN_GRACE_S:
@@ -425,28 +436,22 @@ def wait_for_export(
         elif seen_running and running is False:
             # The run is renamed before the quit, but give a slow disk a moment.
             sleep(poll_s)
-            new = {
-                k: v
-                for k, v in scan_runs(exports, allow_harness).items()
-                if k not in before
-            }
-            done = [r for r in new.values() if r.complete]
-            if done:
-                return done[-1]
-            partial = [r for r in new.values() if not r.complete]
-            if partial:
-                errors = partial[-1].manifest.get("part_errors")
+            complete, incomplete = new_runs()
+            if complete:
+                return complete[-1]
+            if incomplete:
+                last = incomplete[-1]
                 raise ExportFailed(
-                    f"Export quit after an incomplete run {partial[-1].name} "
-                    f"(parts {partial[-1].manifest.get('parts')}, errors {errors})"
+                    f"Export quit after an incomplete run {last.name} (parts "
+                    f"{last.manifest.get('parts')}, errors {last.manifest.get('part_errors')})"
                 )
-            why = _no_run_reason(fingerprint.game_folder(cfg.instance("export")))
+            why = no_run_reason()
             raise ExportFailed(
                 "Export quit without a complete run"
                 + (f": {why}" if why else " (no 'autoexport: no run' line in its log)")
             )
-        elif not seen_running and now - start >= START_TIMEOUT_S:
-            why = _no_run_reason(fingerprint.game_folder(cfg.instance("export")))
+        elif listed and not seen_running and now - start >= START_TIMEOUT_S:
+            why = no_run_reason()
             raise ExportFailed(
                 f"{cfg.export} didn't start within {START_TIMEOUT_S / 60:.0f} minutes "
                 + (
@@ -455,7 +460,7 @@ def wait_for_export(
                     else "(is Prism showing an error?)"
                 )
             )
-        if now - start >= DEADLINE_S:
+        elif now - start >= DEADLINE_S:
             raise ExportFailed(
                 f"no finished export after {DEADLINE_S / 60:.0f} minutes"
             )

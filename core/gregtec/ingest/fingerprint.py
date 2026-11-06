@@ -224,6 +224,38 @@ def _walk(root: Path, rel: str, out: list[tuple[str, Path]], notes: list[str]) -
             out.append((child, root / child))
 
 
+def _literal_root(pattern: str) -> str:
+    """The pattern's leading parts up to the first one with a glob character."""
+    parts = []
+    for part in pattern.strip("/").split("/"):
+        if any(c in part for c in "*?["):
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _visit(game: Path, rel: str, out: list[tuple[str, Path]], notes: list[str]) -> None:
+    """``rel`` if it is a file, every file under it if it is a folder; never through a link."""
+    parts = rel.split("/")
+    for i in range(1, len(parts) + 1):
+        step = "/".join(parts[:i])
+        try:
+            st = os.lstat(game / step)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise FingerprintError(f"can't read {game / step}: {exc}") from exc
+        if _is_link(st):
+            notes.append(
+                f"{step} is a link or junction: not followed, not in the fingerprint"
+            )
+            return
+    if stat.S_ISDIR(st.st_mode):
+        _walk(game, rel, out, notes)
+    elif stat.S_ISREG(st.st_mode):
+        out.append((rel, game / rel))
+
+
 def files(
     instance: Path, exclude: Sequence[str], configs: Sequence[str]
 ) -> tuple[list[tuple[str, Path]], list[str]]:
@@ -236,10 +268,12 @@ def files(
     else:
         notes.append(f"{instance / MMC_PACK} is missing")
     found: list[tuple[str, Path]] = []
-    for folder in ("mods", "scripts", "config"):
+    for folder in ("mods", "scripts"):
         _walk(game, folder, found, notes)
     wanted = (DREAMCRAFT, *configs)
-    for rel, path in found:
+    for root in sorted({_literal_root(p) for p in wanted}):
+        _visit(game, root, found, notes)  # config/ holds thousands: only what may match
+    for rel, path in dict(found).items():
         name = rel.lower()
         if rel.startswith("mods/"):
             keep = name.endswith(MOD_SUFFIXES)

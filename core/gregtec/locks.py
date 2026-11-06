@@ -131,10 +131,14 @@ class InstanceLock:
             "reason": reason,
             "ticket": ticket,
         }
-        f.seek(0)
-        f.truncate()
-        f.write(json.dumps(record).encode("utf-8"))
-        f.flush()
+        try:
+            f.seek(0)
+            f.truncate()
+            f.write(json.dumps(record).encode("utf-8"))
+            f.flush()
+        except BaseException:
+            f.close()  # closing drops the OS lock too
+            raise
         self._f = f
         return self
 
