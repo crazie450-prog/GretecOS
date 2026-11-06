@@ -63,6 +63,12 @@ OK, SKIPPED, FAILED = "ok", "skipped", "failed"
 KEEP_BACKUPS = 7
 BACKUP = re.compile(r"gos-(\d{8})\.sqlite")
 BACKUP_TMP = re.compile(r"gos-(\d{8})\.sqlite\.tmp")
+# A backup with a deadline that ends in one of these was cut short, not failed.
+_CUT_SHORT = {
+    sqlite3.SQLITE_INTERRUPT: "out of time",
+    sqlite3.SQLITE_BUSY: "the DB stayed locked",
+    sqlite3.SQLITE_LOCKED: "the DB stayed locked",
+}
 SCHEMA_REPORT = "inbox/ib-schema-check.md"
 REPORT_ROWS = 120
 DAILY_AGE = dt.timedelta(days=7)
@@ -486,8 +492,9 @@ def backup(
     keep: int = KEEP_BACKUPS,
     deadline: float | None = None,
 ) -> JobResult:
-    """``deadline`` (a ``time.monotonic()`` value): past it, ``VACUUM INTO`` is interrupted, its
-    ``.tmp`` removed and the job ``skipped``, so a stopping core is never killed mid-backup."""
+    """``deadline`` (a ``time.monotonic()`` value): past it, ``VACUUM INTO`` is interrupted (and
+    a wait on a locked DB ends at it), its ``.tmp`` removed and the job ``skipped``, so a
+    stopping core ends the backup itself before the supervisor's kill."""
     if not db.is_file():
         return JobResult("backup", SKIPPED, "no DB yet")
     folder.mkdir(parents=True, exist_ok=True)
@@ -500,22 +507,26 @@ def backup(
         detail = f"{target.name} already exists"
     else:
         tmp = folder / f"{target.name}.tmp"
-        conn = sqlite3.connect(db, timeout=30)
+        busy_s = 30.0  # the progress handler doesn't run while SQLite waits on a lock
+        if deadline is not None:
+            busy_s = max(0.0, min(busy_s, deadline - time.monotonic()))
+        conn = sqlite3.connect(db, timeout=busy_s)
+        cut_short: str | None = None
         try:
             if deadline is not None:
                 conn.set_progress_handler(lambda: time.monotonic() > deadline, 1000)
             conn.execute("VACUUM INTO ?", (str(tmp),))
-        except sqlite3.OperationalError:
-            if deadline is None or time.monotonic() <= deadline:
+        except sqlite3.OperationalError as exc:
+            code = exc.sqlite_errorcode & 0xFF  # the primary code of an extended one
+            if deadline is None or code not in _CUT_SHORT:
                 raise
-            interrupted = True
-        else:
-            interrupted = False
+            cut_short = _CUT_SHORT[code]
         finally:
             conn.close()
-        if interrupted:  # removed once closed: Windows won't delete an open file
+        if cut_short is not None:
+            # removed once closed: Windows won't delete an open file
             tmp.unlink(missing_ok=True)
-            return JobResult("backup", SKIPPED, "cut short: out of time")
+            return JobResult("backup", SKIPPED, f"cut short: {cut_short}")
         os.replace(tmp, target)
         detail = f"wrote {target.name}"
     kept = sorted(

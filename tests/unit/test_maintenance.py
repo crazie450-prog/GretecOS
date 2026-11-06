@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from gregtec import config, locks, playhooks, prism
+from gregtec import config, locks, playhooks, prism, supervisor
 from gregtec.api.app import Core, create_app
 from gregtec.api.security import Auth
 from gregtec.api.server import maintenance as core_maintenance
@@ -462,7 +462,31 @@ def test_the_core_stop_gives_the_backup_a_deadline(
         meter=UsageMeter(store, 100.0, (80, 100)),
         maintenance=m,
     )
+    # No stop request recorded: the deadline counts from the stop itself.
+    with TestClient(create_app(core), base_url="http://127.0.0.1:8765"):
+        before = time.monotonic()
+    after = time.monotonic()
+    [deadline] = seen
+    assert deadline is not None
+    assert (
+        before + scheduler.STOP_DEADLINE_S
+        <= deadline
+        <= after + scheduler.STOP_DEADLINE_S
+    )
+    assert scheduler.STOP_DEADLINE_S < supervisor.STOP_TIMEOUT_S  # ends before the kill
+    asked = time.monotonic() - 3.0  # uvicorn's graceful shutdown took 3 s of the 5
+    core.stop_asked = asked
     with TestClient(create_app(core), base_url="http://127.0.0.1:8765"):
         pass
-    assert seen == [scheduler.STOP_BACKUP_S]
+    assert seen[-1] == asked + scheduler.STOP_DEADLINE_S  # counted from the request
     assert m.session_end() is None and seen[-1] is None  # WO-2.4's: no limit
+
+
+def test_the_stop_deadline_bounds_the_session_end_lock_wait(
+    vault: Path, store: Store
+) -> None:
+    m, _ = make(vault, store, Clock(), [None], [False])
+    with m._lock:
+        start = time.monotonic()
+        assert m.session_end(wait_s=2.0, deadline=start + 0.1) is None
+        assert time.monotonic() - start < 1.5  # not the full 2 s

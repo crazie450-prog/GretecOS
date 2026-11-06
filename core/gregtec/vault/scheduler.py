@@ -23,9 +23,11 @@ minute (``gregtec.api.app``) and :meth:`Maintenance.session_end` when it stops.
   :data:`BACKUP_MISSED_DAYS` days (counted from ``maintenance.last_day``, else from
   ``maintenance.since``), :meth:`Maintenance.session_end` also runs the ``backup`` job after the
   commit. It writes that day's backup, so later session ends that day find it and do nothing.
-  When the core is stopping it has :data:`STOP_BACKUP_S` (the supervisor kills the core 5 s
-  after asking, uvicorn's graceful shutdown taking up to 3 of them): a backup that can't finish
-  in time is interrupted and leaves no file, and the next session end tries again.
+  When the core is stopping, the commit's lock wait and the backup share one deadline,
+  :data:`STOP_DEADLINE_S` after the stop was asked for (the supervisor kills the core 5 s after
+  asking, and uvicorn's graceful shutdown may already have used 3 of them): a backup that
+  can't finish by then, or waits on a locked DB until then, is interrupted and leaves no file,
+  and the next session end tries again.
 """
 
 from __future__ import annotations
@@ -62,7 +64,9 @@ KV_SINCE = "maintenance.since"  # the first day the core checked, for the stale 
 STALE_DAYS = 3
 SESSION_END_WAIT_S = 2.0  # the supervisor kills the core 5 s after asking it to stop
 BACKUP_MISSED_DAYS = 2  # D142 (g): back up at session end once this late
-STOP_BACKUP_S = 1.5  # the most a backup may take while the core is stopping
+# The core's stop deadline, from the moment the stop was asked for: the supervisor's 5 s kill
+# (supervisor.STOP_TIMEOUT_S) less a margin for closing the DB and the process exit.
+STOP_DEADLINE_S = 4.5
 
 
 def seconds_since_input() -> float | None:
@@ -214,12 +218,15 @@ class Maintenance:
             return results
 
     def session_end(
-        self, wait_s: float = SESSION_END_WAIT_S, backup_s: float | None = None
+        self, wait_s: float = SESSION_END_WAIT_S, deadline: float | None = None
     ) -> str | None:
         """Commit the session's writes (plan 6.5: at session end), then the DB backup when the
-        daily run is overdue (see the module docstring); ``backup_s`` is the most it may take
-        (None: no limit). Returns the commit's hash. While a daily run holds the lock past
-        ``wait_s``, both are skipped: the next batch commits them."""
+        daily run is overdue (see the module docstring). ``deadline`` (a ``time.monotonic()``
+        value, None: none) bounds the lock wait and the backup. Returns the commit's hash.
+        While a daily run holds the lock past ``wait_s`` (or the deadline), both are skipped:
+        the next batch commits them."""
+        if deadline is not None:
+            wait_s = max(0.0, min(wait_s, deadline - time.monotonic()))
         if not self._lock.acquire(timeout=wait_s):
             log.warning("session-end commit skipped: maintenance is running")
             return None
@@ -227,7 +234,7 @@ class Maintenance:
             sha = None
             if (self.curator.vault / ".git").is_dir():
                 sha = self.commit("session end")
-            self._overdue_backup(backup_s)
+            self._overdue_backup(deadline)
             return sha
         finally:
             self._lock.release()
@@ -241,7 +248,7 @@ class Maintenance:
         except ValueError:
             return None
 
-    def _overdue_backup(self, budget_s: float | None) -> JobResult | None:
+    def _overdue_backup(self, deadline: float | None) -> JobResult | None:
         """The session-end backup (D142 (g)); errors are logged, never raised."""
         try:
             missed = self.missed_days()
@@ -250,7 +257,6 @@ class Maintenance:
             return None
         if missed is None or missed < BACKUP_MISSED_DAYS:
             return None
-        deadline = None if budget_s is None else time.monotonic() + budget_s
         cur = self.curator
         try:
             result = backup(

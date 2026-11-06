@@ -358,7 +358,7 @@ def test_haiku_summariser_calls_haiku_with_thinking_off() -> None:
     assert kw["messages"][0]["content"].startswith(
         "period: 2026-W44\n\n<counts>\nn_ev: 1\n</counts>\n\n<log path="
     )
-    assert "use exactly its number" in kw["system"]
+    assert "holds exactly that number and no other" in kw["system"]
 
 
 def test_haiku_summariser_refusals_carry_the_usage() -> None:
@@ -750,6 +750,18 @@ def test_event_counts_add_up_summaries_and_count_a_listed_log_once() -> None:
             ("log/2026-10-27.md", "death: b\n"),
         ]
     ) == {"death": 2}
+    # A month written, then killed before its weeks were deleted: they count once, in it.
+    month = "period: 2026-10\nfrom: wk/2026-W43.md, wk/2026-W44.md\nn_death: 6\n"
+    assert event_counts(
+        [
+            ("log/mo/2026-10.md", month),
+            ("log/wk/2026-W43.md", "period: 2026-W43\nn_death: 4\n"),
+            ("log/wk/2026-W44.md", "period: 2026-W44\nn_death: 2\n"),
+        ]
+    ) == {"death": 6}
+    # Only ASCII digits are a count ("²" is a digit to str.isdigit, not to int()).
+    odd = "period: 2026-W45\nfrom: 2026-11-02.md\nn_death: ²\nn_quest: 3\n"
+    assert event_counts([("log/wk/2026-W45.md", odd)]) == {"quest": 3}
 
 
 def test_checked_lines_accept_exactly_the_given_counts() -> None:
@@ -764,8 +776,17 @@ def test_checked_lines_accept_exactly_the_given_counts() -> None:
     assert checked_lines("n_death: 3\ndeath: a, b, c", logs, counts) == [
         "death: a, b, c"
     ]
+    # The kind's own key may give its count beside the logs' numbers (q:12 is in the logs).
+    assert checked_lines("death: 3 (a, b, c)\nquest: 1 done, q:12", logs, counts) == [
+        "death: 3 (a, b, c)",
+        "quest: 1 done, q:12",
+    ]
     for answer, why in [
-        ("deaths: 4", r"numbers that aren't in the logs: \['4'\]"),
+        ("deaths: 4", "counts that aren't the computed ones"),
+        ("deaths: 12", "counts that aren't the computed ones"),  # 12 is in the logs
+        ("quests: 3", "counts that aren't the computed ones"),  # the death count
+        ("deaths: 3 of 12", "counts that aren't the computed ones"),
+        ("built: 3 boilers", r"numbers that aren't in the logs: \['3'\]"),
         ("n_death: 4", "count lines that aren't the computed counts"),
         ("n_built: 3", "count lines that aren't the computed counts"),
         ("n_death: 3", "empty"),
@@ -774,6 +795,12 @@ def test_checked_lines_accept_exactly_the_given_counts() -> None:
             checked_lines(answer, logs, counts)
     with pytest.raises(SummaryError, match="the cap is 118"):
         checked_lines("\n".join(["death: a"] * 119), logs, counts)
+    # One kind's count is never another's, and the <counts> block isn't the logs' text.
+    for answer in ("quest: 3 done", "built: 3 boilers"):
+        with pytest.raises(
+            SummaryError, match=r"numbers that aren't in the logs: \['3'\]"
+        ):
+            checked_lines(answer, source, counts)
 
 
 def test_the_summary_carries_the_computed_counts(vault: Path) -> None:
@@ -806,11 +833,23 @@ def test_the_summary_carries_the_computed_counts(vault: Path) -> None:
     assert "n_built: 1\nn_death: 6\nn_quest: 1\nnote: a month\n" in text
 
 
+def test_n_keys_are_the_curators_counts_only(vault: Path) -> None:
+    """D143: a daily log never holds an n_ key, so no agent note is mistaken for a count."""
+    types = schema.load_types(vault / "_gos" / "schema.md")
+    daily = "---\nid: log-2026-10-26\nt: log\nupd: 2026-10-26\n---\nn_items: 5\n"
+    assert schema.check_text("log/2026-10-26.md", daily, types) == [
+        "key n_items: n_ keys are the curator's counts, in log/wk/ and log/mo/ only"
+    ]
+    for rel, id_ in (("log/wk/2026-W44.md", "W44"), ("log/mo/2026-10.md", "10")):
+        note = f"---\nid: log-2026-{id_}\nt: log\nupd: 2026-11-06\n---\nn_death: 2\n"
+        assert schema.check_text(rel, note, types) == []
+
+
 def test_haiku_summariser_refuses_a_count_it_made_up() -> None:
     messages = FakeMessages("deaths: 2")
     summariser = HaikuSummariser(SimpleNamespace(messages=messages))  # type: ignore[arg-type]
     logs = [("log/a.md", "death: a\ndeath: b\ndeath: c\n")]
-    with pytest.raises(SummaryError, match=r"\['2'\]"):
+    with pytest.raises(SummaryError, match=r"computed ones: \['deaths: 2'\]"):
         summariser.summarise("2026-W44", logs, {"death": 3})
     messages.text = "deaths: 3"
     assert summariser.summarise("2026-W44", logs, {"death": 3}).lines == ["deaths: 3"]
@@ -841,3 +880,25 @@ def test_a_backup_past_its_deadline_leaves_no_file(tmp_path: Path) -> None:
     assert list(folder.iterdir()) == []
     result = curator.backup(db, folder, TODAY, deadline=time.monotonic() + 60)
     assert result.detail == "wrote gos-20261106.sqlite"
+
+
+def test_a_backup_waits_on_a_locked_db_only_until_its_deadline(tmp_path: Path) -> None:
+    """The progress handler doesn't run during SQLite's busy wait: the wait itself ends at the
+    deadline, not after the usual 30 s."""
+    import time
+
+    db, folder = tmp_path / "gos.sqlite", tmp_path / "backups"
+    big_db(db)
+    holder = sqlite3.connect(db, isolation_level=None)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")  # no reader gets in (rollback journal)
+        start = time.monotonic()
+        result = curator.backup(db, folder, TODAY, deadline=start + 0.3)
+        took = time.monotonic() - start
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert result == curator.JobResult(
+        "backup", "skipped", "cut short: the DB stayed locked"
+    )
+    assert took < 5 and list(folder.iterdir()) == []

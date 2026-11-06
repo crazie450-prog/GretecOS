@@ -271,7 +271,8 @@ def _table_note(
 
 
 def _private(path: str) -> bool:
-    return path == PRIVATE or path.startswith(PRIVATE + "/")
+    # Any case, as the vault guard (io.owner) reads it: Windows and Obsidian may write Me/.
+    return path.split("/", 1)[0].lower() == PRIVATE
 
 
 def _without_private_rows(note: schema.Note) -> schema.Note:

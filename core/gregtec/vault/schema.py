@@ -17,6 +17,9 @@ MAX_LINES = 150
 # INDEX.md may be longer: plan 6.1 caps it at 200 lines (it is the one note every prompt loads).
 TYPE_MAX_LINES = {"index": 200}
 KEY = re.compile(r"^([a-z][a-z0-9_]*): (.+)$")
+# D143: n_<kind>: N lines are the curator's computed counts, in the weekly and monthly logs only.
+COUNT_PREFIX = "n_"
+SUMMARY_LOG = re.compile(r"log/(wk|mo)/[^/]+\.md")
 
 
 @dataclass(frozen=True)
@@ -147,7 +150,8 @@ def id_for(rel: str, kind: NoteType) -> str:
 
 def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:
     """Problems with a note's text at vault path ``rel``: :func:`check`'s, plus that its type
-    lives at ``rel`` and its id is the one :func:`id_for` gives."""
+    lives at ``rel``, its id is the one :func:`id_for` gives, and a log other than a weekly or
+    monthly one holds no ``n_`` key (D143: those are the curator's counts)."""
     try:
         note = parse(text)
     except ValueError as exc:
@@ -168,5 +172,11 @@ def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:
             f"key {k} isn't allowed for t: {kind.t}"
             for k, _ in note.facts
             if k not in kind.keys
+        ]
+    if rel.startswith("log/") and not SUMMARY_LOG.fullmatch(rel):
+        problems += [
+            f"key {k}: {COUNT_PREFIX} keys are the curator's counts, in log/wk/ and log/mo/ only"
+            for k, _ in note.facts
+            if k.startswith(COUNT_PREFIX)
         ]
     return problems

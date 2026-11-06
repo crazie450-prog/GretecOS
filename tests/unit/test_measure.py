@@ -336,3 +336,24 @@ def test_measure_never_reads_or_sends_me(
     assert sent and not [t for t in sent if secret in t or "me/" + "goals" in t]
     index_sent = [t for t in sent if "_gos/schema.md\tnote types" in t]
     assert index_sent  # INDEX.md itself is still measured, without its me/ rows
+
+
+def test_me_is_private_in_any_case(tmp_path: Path) -> None:
+    """D142 (d): Windows and Obsidian may write ``Me/``; the vault guard reads it as ``me/``."""
+    root = tmp_path / "vault"
+    (root / "Me").mkdir(parents=True)
+    (root / "Me" / "goals.md").write_text(
+        "---\nid: me-goals\nt: goals\nupd: 2026-11-06\n---\ngoal: secret\n",
+        encoding="utf-8",
+    )
+    (root / "INDEX.md").write_text(
+        "---\nid: index\nt: index\nupd: 2026-11-06\n---\n"
+        "```tsv\nid\tt\tpath\tsummary\tupd\n"
+        "me-goals\tgoals\tMe/goals.md\tsecret\t2026-11-06\n"
+        "pl-a\tplan\tplans/a.md\tplan a\t2026-11-06\n```\n",
+        encoding="utf-8",
+    )
+    found = {s.name: s.note for s in measure.samples(root, None)}
+    assert sorted(found) == ["INDEX.md", "plan 6.2 example"]
+    [table] = found["INDEX.md"].tables
+    assert [row[2] for row in table[1:]] == ["plans/a.md"]

@@ -62,7 +62,7 @@ from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
-from gregtec.vault.scheduler import STOP_BACKUP_S, TICK_S, Maintenance
+from gregtec.vault.scheduler import STOP_DEADLINE_S, TICK_S, Maintenance
 
 log = logging.getLogger("gregtec.api")
 
@@ -128,6 +128,8 @@ class Core:
     maintenance: Maintenance | None = (
         None  # idle maintenance and vault commits (WO-2.5)
     )
+    # time.monotonic() when the runner was asked to stop (the session-end deadline, D143)
+    stop_asked: float | None = None
 
     # --- pushing to WebSocket clients
 
@@ -350,9 +352,11 @@ def create_app(core: Core) -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             if core.maintenance is not None:  # plan 6.5: commit at session end
-                # D142 (g): and back up an overdue DB, in the time the supervisor leaves
+                # D142 (g): and back up an overdue DB, in the time the supervisor leaves,
+                # counted from the stop request (uvicorn's graceful shutdown came first)
+                asked = time.monotonic() if core.stop_asked is None else core.stop_asked
                 await asyncio.to_thread(
-                    core.maintenance.session_end, backup_s=STOP_BACKUP_S
+                    core.maintenance.session_end, deadline=asked + STOP_DEADLINE_S
                 )
 
     app = FastAPI(

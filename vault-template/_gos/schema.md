@@ -16,6 +16,7 @@ tables: tsv in a ```tsv fence with a header row
 prose: none, except one-line note: entries
 max_lines: 150 (INDEX.md: 200)
 index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
+log_counts: n_<kind>: N lines are the curator's computed counts, in log/wk/ and log/mo/ only; no other log uses an n_ key
 note: keys * means any key until the WO that owns the type defines them
 
 ```tsv
