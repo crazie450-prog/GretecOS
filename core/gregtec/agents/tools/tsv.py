@@ -20,6 +20,8 @@ A result is ``key: value`` lines (a record), then a TSV table with a header row,
 - Cells are escaped so a value can never break a row: backslash, tab, CR and LF become ``\\\\``,
   ``\\t``, ``\\r`` and ``\\n``; other control characters and Unicode line breaks become
   ``\\xNN`` or ``\\uNNNN``. A text cell longer than :data:`CELL_MAX` is cut, and says so.
+- A result can carry a note's text instead of a table (``note_read``): its lines as they are,
+  tabs kept (a note's TSV tables), every other control character escaped as in a cell.
 - Numbers are written as the DB holds them: an int as is, a float that is a whole number
   without ``.0``, any other float as Python's shortest repr. Nothing is rounded.
 """
@@ -42,6 +44,9 @@ _ESCAPES: dict[int, str] = {
     0x2028: "\\u2028",  # line separator
     0x2029: "\\u2029",  # paragraph separator
 }
+
+
+_TEXT_ESCAPES = {k: v for k, v in _ESCAPES.items() if k != ord("\t")}
 
 
 def escape(text: str) -> str:
@@ -82,6 +87,7 @@ class Result:
     total: int | None = None  # every matching row, when the query counts them
     offset: int = 0  # rows before this page
     more: bool = False  # another page exists
+    text: str | None = None  # a note's text, shown after the head (no table then)
 
     def __post_init__(self) -> None:
         for row in self.rows:
@@ -102,6 +108,14 @@ def span(result: Result) -> str:
 
 def render(result: Result, cursor: str | None = None) -> str:
     lines = [f"{escape(k)}: {cell(v)}" for k, v in result.head]
+    if result.text is not None:
+        if lines:
+            lines.append("")
+        lines.extend(
+            line.translate(_TEXT_ESCAPES)
+            for line in result.text.rstrip("\n").split("\n")
+        )
+        lines.append("")
     columns, rows = result.columns, result.rows
     if len(columns) == 1:
         columns = ("n", *columns)

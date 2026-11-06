@@ -114,3 +114,55 @@ def check(path: Path, types: dict[str, NoteType]) -> list[str]:
             if k not in kind.keys
         ]
     return problems
+
+
+def type_for(rel: str, types: dict[str, NoteType]) -> NoteType | None:
+    """The note type whose ``path`` holds ``rel`` (a vault-relative posix path): a type with a
+    file path (``base/power.md``) holds that file only; one with a folder path (``plans/``)
+    holds the notes directly in that folder, or in a subfolder no other type claims (the
+    deepest matching folder wins, so ``base/lines/`` beats a type at ``base/``)."""
+    exact = [k for k in types.values() if k.path == rel]
+    if exact:
+        return exact[0]
+    folders = [
+        k for k in types.values() if k.path.endswith("/") and rel.startswith(k.path)
+    ]
+    return max(folders, key=lambda k: len(k.path)) if folders else None
+
+
+def id_for(rel: str, kind: NoteType) -> str:
+    """The id a note at ``rel`` has: the type's fixed id for a file type, else the file name
+    without ``.md`` (so a folder never holds two notes with one id), with the id pattern's
+    prefix put in front when the name lacks it (``log/2026-11-06.md`` is ``log-2026-11-06``)."""
+    if not kind.path.endswith("/"):
+        return kind.id
+    stem = rel.rsplit("/", 1)[-1].removesuffix(".md")
+    prefix = kind.id.split("*", 1)[0] if kind.id.endswith("*") else ""
+    return stem if stem.startswith(prefix) else prefix + stem
+
+
+def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:
+    """Problems with a note's text at vault path ``rel``: :func:`check`'s, plus that its type
+    lives at ``rel`` and its id is the one :func:`id_for` gives."""
+    try:
+        note = parse(text)
+    except ValueError as exc:
+        return [str(exc)]
+    kind = types.get(note.meta["t"])
+    if kind is None:
+        return [f"unknown type t: {note.meta['t']}"]
+    problems = []
+    home = type_for(rel, types)
+    if home is None or home.t != kind.t:
+        problems.append(f"t: {kind.t} notes live at {kind.path}, not {rel}")
+    elif note.meta["id"] != id_for(rel, kind):
+        problems.append(f"id must be {id_for(rel, kind)} at {rel}")
+    if not fnmatch.fnmatchcase(note.meta["id"], kind.id):
+        problems.append(f"id {note.meta['id']} doesn't match {kind.id} for t: {kind.t}")
+    if kind.keys is not None:
+        problems += [
+            f"key {k} isn't allowed for t: {kind.t}"
+            for k, _ in note.facts
+            if k not in kind.keys
+        ]
+    return problems

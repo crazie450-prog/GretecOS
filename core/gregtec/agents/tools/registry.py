@@ -9,8 +9,11 @@
   ``more`` cursor (:mod:`.cursor`) that the ``more`` tool turns into the next page. Errors come
   back as text with ``is_error`` set, the way Anthropic's ``tool_result`` carries them; so
   does a tool's own bug (logged), so a lane's turn never ends on an exception.
-- Only read-only tools run here. A tool that writes needs its own gate first: the vault path
-  guard (WO-2.4, WO-2.5) or the world-action confirm flow (WO-7.1).
+- A tool that writes runs only with its own gate, named in ``Tool.gate``: the note tools'
+  is the vault path guard (:mod:`gregtec.vault.io`, WO-2.5); world actions get the confirm flow
+  (WO-7.1). :meth:`Registry.add` refuses a writing tool without one. A tool with
+  ``needs_db=False`` (the note tools but ``vault_search``) runs without opening the DB, so it
+  works before the first ``gos db build``.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from gregtec.agents.tools.schema import ArgumentError, check_schema, validate
 from gregtec.agents.tools.tsv import PAGE, Result, render
 from gregtec.db import access
 from gregtec.db.quests import KV_SOURCE  # its record changes on every quest load
+from gregtec.vault.io import VaultIO
 
 log = logging.getLogger(__name__)
 
@@ -60,17 +64,25 @@ class Env:
 
     db: Path  # GOS_HOME/data/gos.sqlite
     glossary: Glossary = field(default_factory=Glossary)
+    vault: VaultIO | None = None  # GOS_HOME/vault, for the note tools
 
 
 @dataclass
 class Call:
-    """One tool call: a read-only connection, the environment, the page size and the
-    ``time.monotonic()`` at which the call's statements are stopped."""
+    """One tool call: a read-only connection (None for a tool that doesn't need the DB), the
+    environment, the page size and the ``time.monotonic()`` at which the call's statements
+    are stopped."""
 
-    conn: sqlite3.Connection
+    connection: sqlite3.Connection | None
     env: Env
     page: int = PAGE
     deadline: float = math.inf
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if self.connection is None:
+            raise AssertionError("this tool was registered with needs_db=False")
+        return self.connection
 
     def query(
         self, name: str, params: dict[str, object] | None = None
@@ -90,6 +102,10 @@ class Tool:
     read_only: bool = True
     lanes: frozenset[str] = frozenset(LANES)
     deadline_s: float = DEADLINE_S
+    needs_db: bool = True
+    gate: str = (
+        ""  # what checks a writing tool's every call (required when not read_only)
+    )
 
     def spec(self) -> dict[str, Any]:
         """The tool as Anthropic's Messages API takes it."""
@@ -173,6 +189,8 @@ class Registry:
             raise ValueError(f"tool {tool.name} is already registered")
         if not tool.lanes or tool.lanes - set(LANES):
             raise ValueError(f"{tool.name}: lanes must be some of {LANES}")
+        if not tool.read_only and not tool.gate:
+            raise ValueError(f"{tool.name} writes, so it needs a gate")
         if FAST in tool.lanes and not tool.read_only and tool.name not in FAST_EXTRA:
             raise ValueError(
                 f"{tool.name}: the fast lane gets the read-only tools plus handoff (plan 7.0)"
@@ -212,8 +230,6 @@ class Registry:
             raise ToolError(f"no tool named {name!r}")
         if lane is not None and lane not in tool.lanes:
             raise ToolError(f"{name} isn't offered in the {lane} lane")
-        if not tool.read_only:
-            raise ToolError(f"{name} changes things and has no gate here yet")
         return tool
 
     def _call(self, name: str, args: object, lane: str | None) -> str:
@@ -227,6 +243,11 @@ class Registry:
         if tool is MORE_TOOL:
             raise ToolError("a cursor never points at more itself")
         values = validate(tool.input_schema, args)
+        if not tool.needs_db:
+            result = tool.handler(Call(None, self.env, self.page), values, offset)
+            if result.more:
+                raise AssertionError(f"{tool.name} has no DB to page from")
+            return render(result)
         with self._connect(tool) as (conn, deadline):
             if issued is not None and issued != epoch(conn):
                 raise ToolError(

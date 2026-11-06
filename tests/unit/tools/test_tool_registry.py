@@ -61,9 +61,15 @@ def test_every_plan_tool_is_here_or_arrives_later() -> None:
     )
 
 
-def test_every_tool_is_read_only_with_a_messages_api_spec(reg: Registry) -> None:
+WRITERS = {"note_write", "note_append", "inbox_propose"}  # WO-2.5, behind the path guard
+
+
+def test_every_tool_is_read_only_or_gated_with_a_messages_api_spec(
+    reg: Registry,
+) -> None:
     for tool in reg.tools():
-        assert tool.read_only, tool.name
+        assert tool.read_only == (tool.name not in WRITERS), tool.name
+        assert bool(tool.gate) == (not tool.read_only), tool.name
         spec = tool.spec()
         assert set(spec) == {"name", "description", "input_schema"}
         assert spec["input_schema"]["type"] == "object"
@@ -76,7 +82,8 @@ def test_lanes(reg: Registry) -> None:
     fast = {s["name"] for s in reg.specs(FAST)}
     deep = {s["name"] for s in reg.specs(DEEP)}
     assert deep == {t.name for t in TOOLS} | {MORE}
-    assert fast == deep - {"db_sql"}
+    assert fast == deep - {"db_sql"} - WRITERS
+    assert {"note_read", "vault_search"} <= fast  # the fast lane's two vault tools
 
 
 def test_add_refuses_bad_tools(tool_db: Path) -> None:
@@ -90,8 +97,9 @@ def test_add_refuses_bad_tools(tool_db: Path) -> None:
         (Tool("more", "d", EMPTY, handler), "already registered"),
         (Tool("x", "d", EMPTY, handler, lanes=frozenset()), "lanes"),
         (Tool("x", "d", EMPTY, handler, lanes=frozenset({"slow"})), "lanes"),
+        (Tool("x", "d", EMPTY, handler, read_only=False), "needs a gate"),
         (
-            Tool("x", "d", EMPTY, handler, read_only=False),
+            Tool("x", "d", EMPTY, handler, read_only=False, gate="g"),
             "read-only tools plus handoff",
         ),
         (Tool("x", "d", {"type": "object"}, handler), "additionalProperties"),
@@ -100,9 +108,8 @@ def test_add_refuses_bad_tools(tool_db: Path) -> None:
             reg.add(bad)
     # handoff is the one fast-lane tool that isn't read-only (WO-2.3); the registry still
     # never runs a tool that changes things.
-    reg.add(Tool("handoff", "d", EMPTY, handler, read_only=False))
-    out = reg.call("handoff", {})
-    assert out.is_error and "has no gate here yet" in out.text
+    reg.add(Tool("handoff", "d", EMPTY, handler, read_only=False, gate="WO-2.3"))
+    assert not reg.call("handoff", {}).is_error
 
 
 def test_call_refusals(reg: Registry) -> None:

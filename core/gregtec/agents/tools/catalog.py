@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gregtec.agents.tools import items, machines, quests, recipes, sql
+from gregtec.agents.tools import items, machines, notes, quests, recipes, sql
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
 from gregtec.agents.tools.tsv import PAGE
 from gregtec.db import access
+from gregtec.vault import fts
+from gregtec.vault.io import VaultIO
 
 CITE = "Quote numbers only from the rows, each with the row's id."
 
@@ -92,15 +94,60 @@ TOOLS = (
         lanes=frozenset({DEEP}),
         deadline_s=sql.DEADLINE_S,
     ),
+    Tool(
+        "note_read",
+        "Read one vault note by its path (INDEX.md lists them; vault_search finds more). Open "
+        "only the notes a request needs; me/ is Clayton's (read only).",
+        notes.NOTE_READ_SCHEMA,
+        notes.note_read,
+        needs_db=False,
+    ),
+    Tool(
+        "vault_search",
+        "Find vault notes by words in their text: path, type, date and the matching words, "
+        "best first. For notes INDEX.md doesn't list one by one.",
+        notes.VAULT_SEARCH_SCHEMA,
+        notes.vault_search,
+    ),
+    Tool(
+        "note_write",
+        "Create or replace a note in base/, plans/, quests/, themes/ or personas/ in the note "
+        "grammar; the tool writes the frontmatter. me/, _gos/, INDEX.md and the generated "
+        "base notes are refused (propose with inbox_propose); logs take note_append.",
+        notes.NOTE_WRITE_SCHEMA,
+        notes.note_write,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        gate=notes.GATE,
+    ),
+    Tool(
+        "note_append",
+        "Add lines to the end of a note: today's journal log/YYYY-MM-DD.md (logs are "
+        "append-only), or a note in an agent folder or inbox/.",
+        notes.NOTE_APPEND_SCHEMA,
+        notes.note_append,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        gate=notes.GATE,
+    ),
+    Tool(
+        "inbox_propose",
+        "Propose something to Clayton as a new inbox/ note: a change to me/ or a skill, a "
+        "curation task, a question. Never replaces a proposal.",
+        notes.INBOX_PROPOSE_SCHEMA,
+        notes.inbox_propose,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        gate=notes.GATE,
+    ),
 )
 
 # Plan 7.0's other tools: none is registered, and no stub stands in for one.
 LATER: dict[str, str] = {
     **dict.fromkeys(("handoff", "timer_set"), "WO-2.3 (router, instant commands)"),
-    **dict.fromkeys(
-        ("note_read", "note_write", "note_append", "inbox_propose", "vault_search"),
-        "WO-2.5 (vault I/O)",
-    ),
     "export_diff": "WO-1.4 (fingerprint and diff report)",
     "ore_find": "WO-1.6 (ore mixes and veins; ore-intel WO-6.6)",
     "structure_get": "WO-1.8 (structure table, D123; its data reached this base late, so the "
@@ -153,14 +200,22 @@ def build_registry(
     *,
     key: bytes | None = None,
     page: int = PAGE,
+    vault: VaultIO | None = None,
 ) -> Registry:
-    """Every WO-2.2 tool over the DB at ``db`` (``key``: the cursor key, default random)."""
-    reg = Registry(Env(db, glossary or Glossary()), key=key, page=page)
+    """Every tool over the DB at ``db`` and ``vault`` (``key``: the cursor key, default
+    random)."""
+    reg = Registry(Env(db, glossary or Glossary(), vault), key=key, page=page)
     for tool in TOOLS:
         reg.add(tool)
     return reg
 
 
 def default_registry(gos_home: Path) -> Registry:
-    """The tools over ``GOS_HOME/data/gos.sqlite``, with the live vault's glossary."""
-    return build_registry(access.db_path(gos_home), Glossary.find(gos_home / "vault"))
+    """The tools over ``GOS_HOME/data/gos.sqlite`` and the live vault (its glossary too); a
+    note an agent writes is mirrored into ``note_fts`` at once."""
+    db, root = access.db_path(gos_home), gos_home / "vault"
+
+    def mirror(rel: str) -> None:
+        fts.mirror_one(db, root, rel)
+
+    return build_registry(db, Glossary.find(root), vault=VaultIO(root, on_write=mirror))

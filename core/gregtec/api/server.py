@@ -30,8 +30,11 @@ from gregtec import applog, config, control, supervisor
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
+from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import DB_NAME, Store
+from gregtec.vault.curator import Curator
+from gregtec.vault.scheduler import Maintenance, game_running
 
 log = logging.getLogger("gregtec.api")
 
@@ -73,6 +76,21 @@ def _stop_on_stdin(server: uvicorn.Server) -> None:
     server.should_exit = True
 
 
+def maintenance(cfg: Config, store: Store, meter: UsageMeter) -> Maintenance:
+    """Idle maintenance of ``GOS_HOME/vault`` and the DB (WO-2.5, plan 6.6)."""
+    curator = Curator(
+        vault=cfg.gos_home / "vault",
+        db=cfg.data_dir / DB_NAME,
+        backups=cfg.data_dir / "backups",
+        summariser=HaikuSummariser.from_keyring,
+        meter=meter,
+        keep_backups=cfg.keep_backups,
+    )
+    return Maintenance(
+        curator, store, game=lambda: game_running(cfg), idle_minutes=cfg.idle_minutes
+    )
+
+
 def run(cfg: Config, *, supervised: bool = False) -> int:
     applog.setup("core", cfg.logs_dir)
     if (why := supervisor.elevation_problem()) is not None:
@@ -95,14 +113,16 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         return EXIT_PORT_IN_USE
     store = Store(cfg.data_dir / DB_NAME)
     admin_token = secrets.token_urlsafe(32)
+    meter = UsageMeter(
+        store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
+    )
     core = Core(
         cfg=cfg,
         store=store,
         auth=Auth(store, admin_token),
-        meter=UsageMeter(
-            store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
-        ),
+        meter=meter,
         supervisor_token=supervisor_token,
+        maintenance=maintenance(cfg, store, meter),
     )
     server = uvicorn.Server(
         uvicorn.Config(

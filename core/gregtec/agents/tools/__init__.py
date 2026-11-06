@@ -3,7 +3,7 @@
 One set of Python functions serves the fast lane (Messages API tool schemas,
 ``Registry.specs("fast")``), the deep lane (WO-2.4 wraps the same tools in the in-process MCP
 server, ``read_only`` -> ``readOnlyHint``) and the shell (``gos tool``). Every tool is
-read-only; results are TSV, at most 50 rows a page with a ``more`` cursor, and every row that
+read-only but three note tools (WO-2.5), which write behind the vault path guard; results are TSV, at most 50 rows a page with a ``more`` cursor, and every row that
 states a game number carries the citation the DB gives it (``r:`` recipes, ``q:`` quests,
 ``mte:`` machines). The tools never compute game numbers; the only derived numbers are exact
 unit changes (ticks to seconds, basis points to percent).
@@ -21,12 +21,16 @@ quest_frontier(n)         both   :mod:`.quests`
 quest_for_item(item)      both   :mod:`.quests`
 db_query(name, params)    both   :mod:`.sql` (the game-data ``db/queries/*.sql``)
 db_sql(select)            deep   :mod:`.sql` (authorizer, read-only, time limit)
+note_read(path)           both   :mod:`.notes` (WO-2.5; no DB needed)
+vault_search(q, t)        both   :mod:`.notes` (``note_fts``)
+note_write(path, body)    deep   :mod:`.notes` (writes, behind the vault path guard)
+note_append(path, lines)  deep   :mod:`.notes` (writes; logs append-only)
+inbox_propose(title, ...) deep   :mod:`.notes` (writes a new ``inbox/`` note)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): handoff and
-timer_set with WO-2.3; note_read/write/append, inbox_propose and vault_search with WO-2.5;
-export_diff with WO-1.4; ore_find with WO-1.6; structure_get after WO-1.8; machine_fact_set with
+timer_set with WO-2.3; export_diff with WO-1.4; ore_find with WO-1.6; structure_get after WO-1.8; machine_fact_set with
 WO-1.9; crop_* with WO-1.10 and WO-6.7; plan_*, design_production, effort_estimate and
 layout_estimate with Phase 3; base_get with WO-3.8; design_power with WO-4.2; ledger_* with
 WO-4.4; speak with WO-5.3; persona_set with WO-5.6; player_pos with WO-6.1; events_recent and
