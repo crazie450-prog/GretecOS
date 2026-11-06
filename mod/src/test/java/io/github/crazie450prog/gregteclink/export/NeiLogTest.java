@@ -60,4 +60,21 @@ class NeiLogTest {
         assertEquals(-1, log.reported);
         assertEquals(0, log.failed);
     }
+
+    /** The crop step (WO-1.10): NEI's DataDumper logs "Error dumping <name> mode: <n>" and returns normally. */
+    @Test
+    void cropDumperErrorsAreCaught() {
+        NeiLogCapture.Lines lines = new NeiLogCapture.Lines(CropTrigger.DUMP_FAILED);
+        lines.add("INFO", "Error dumping Crops mode: 0", null);
+        lines.add("ERROR", "Registering NEI dumpers", null);
+        lines.add("ERROR", null, null);
+        assertEquals(0, lines.count());
+        assertNull(lines.first());
+        lines.add("ERROR", "Error dumping Crops mode: 0", "java.io.FileNotFoundException: dumps/cropRegistry.csv");
+        lines.add("ERROR", "Error dumping Soils mode: 0", null);
+        assertEquals(2, lines.count());
+        assertEquals(
+            "Error dumping Crops mode: 0: java.io.FileNotFoundException: dumps/cropRegistry.csv",
+            lines.first());
+    }
 }

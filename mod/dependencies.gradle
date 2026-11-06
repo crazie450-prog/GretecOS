@@ -39,6 +39,11 @@ dependencies {
     devOnlyNonPublishable("com.github.GTNewHorizons:GT5-Unofficial:5.09.54.265:dev")
     // Export's NEI (D100): 2.8.172 adds RecipeJsonWriter, which the NEI trigger calls. Dev runtime only.
     runtimeOnlyNonPublishable("com.github.GTNewHorizons:NotEnoughItems:2.8.172-GTNH:dev")
+    // CropsNH 2.0.140 (GTNH 2.9.0's), for the crop step after NEI's dump (WO-1.10). Dev runtime only; reached through
+    // NEI's option list and reflection, never compiled against. It brings GTNHLib 0.11.54, the pack's version.
+    runtimeOnlyNonPublishable("com.github.GTNewHorizons:CropsNH:2.0.140:dev")
+    // CropsNH's postInit loads its BetterBuildersWands compat classes unconditionally; 2.9.0 ships 0.13.12-GTNH.
+    runtimeOnlyNonPublishable("com.github.GTNewHorizons:BetterBuildersWands:0.13.12-GTNH:dev") { transitive = false }
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")

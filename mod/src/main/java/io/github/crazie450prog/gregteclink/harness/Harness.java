@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
@@ -73,6 +74,18 @@ public final class Harness {
      * for a world opened by hand.
      */
     private static final List<String> CLIENT_WRITES = Arrays.asList("gregteclink/", "dumps/recipes/");
+    /** The crop step's folder in a run, and the CropsNH dumper files Python reads (WO-1.10). */
+    private static final String CROPS_DIR = "crops/";
+    private static final List<String> CROP_FILES = Arrays.asList(
+        "alternateSeed.csv",
+        "cropRegistry.csv",
+        "deterministicMutations.csv",
+        "mutationPools.csv",
+        "soilRegistry.txt");
+    /** Loose: the dev runtime registers only the crops of the mods it has, not the pack's. */
+    private static final int MIN_CROPS = 50;
+    /** NEI handler ids of CropsNH's tabs start with its mod id ({@code cropsnhBreeding}, {@code cropsnhCrops}). */
+    private static final String CROP_HANDLER_PREFIX = "cropsnh";
     /** Seeded by prepareClientHarness: a file in the old autoexport world, and a marked world with another name. */
     private static final String STALE_FILE = "harness-stale.txt";
     private static final String DECOY_WORLD = "gregteclink-harness-decoy";
@@ -204,7 +217,7 @@ public final class Harness {
             if (neiBefore == null) {
                 check(checks, "nei_step_writes_only_gregteclink_and_dumps", false, "the NEI step never ran");
             } else {
-                checkWrites(checks, "nei_step_writes_only_gregteclink_and_dumps", neiBefore, after, CLIENT_WRITES);
+                checkWrites(checks, "nei_step_writes_only_gregteclink_and_dumps", neiBefore, after, clientWrites(r));
             }
             if (r != null) {
                 checkPrune(checks, r);
@@ -414,6 +427,21 @@ public final class Harness {
                 : "changed: " + outside + " deleted: " + deleted);
     }
 
+    /**
+     * {@link #CLIENT_WRITES}, plus the file each CropsNH dumper wrote directly in {@code dumps/} (the crop step's
+     * copies in the run's {@code crops/} name them).
+     */
+    private static List<String> clientWrites(ExportRun.Result r) throws IOException {
+        List<String> out = new ArrayList<>(CLIENT_WRITES);
+        Path crops = r == null || r.dir == null ? null : r.dir.resolve(CROPS_DIR);
+        if (crops != null && Files.isDirectory(crops)) {
+            try (DirectoryStream<Path> s = Files.newDirectoryStream(crops)) {
+                for (Path p : s) out.add("dumps/" + p.getFileName());
+            }
+        }
+        return out;
+    }
+
     private static boolean under(String rel, List<String> prefixes) {
         for (String p : prefixes) {
             if (rel.startsWith(p)) return true;
@@ -555,6 +583,7 @@ public final class Harness {
                 }
             });
             check(checks, "machine_ebf_1000", ebf[0], "MTEElectricBlastFurnace at gregtech:gt.blockmachines@1000");
+            checkOreMixes(dir, counts, manifest.getAsJsonObject("parts"));
 
             Set<String> items = new HashSet<>();
             eachLine(dir.resolve("items.jsonl"), o -> items.add(refKey(o)));
@@ -634,6 +663,13 @@ public final class Harness {
             if (!client) {
                 // The dev runtime has NEI 2.8.172, so the writer is there; a server never calls it.
                 check(checks, "nei_not_run_on_server", "skipped_server".equals(nei), "parts.nei=" + nei);
+                // The dev runtime has CropsNH (WO-1.10); its dumpers need NEI's client, so a server never runs them.
+                JsonElement crops = parts.get("crops");
+                check(
+                    checks,
+                    "crops_not_run_on_server",
+                    crops != null && "skipped_server".equals(crops.getAsString()),
+                    "parts.crops=" + crops);
                 check(checks, "autoexport_off", "off".equals(auto), "parts.autoexport=" + auto);
                 return counts;
             }
@@ -648,7 +684,9 @@ public final class Harness {
                 "autoexport_ok",
                 "ok".equals(auto),
                 "parts.autoexport=" + auto + (errors == null ? "" : " part_errors=" + errors));
-            if (Boolean.getBoolean(NEI_FAIL_PROPERTY)) {
+            boolean neiFail = Boolean.getBoolean(NEI_FAIL_PROPERTY);
+            checkCrops(dir, manifest, !neiFail);
+            if (neiFail) {
                 // -PharnessNeiFail: dumps/recipes is a file, so NEI's dump fails; NEI only logs it.
                 String why = errors != null && errors.getAsJsonObject()
                     .has("nei") ? errors.getAsJsonObject()
@@ -672,6 +710,233 @@ public final class Harness {
                     + (warnings == null ? "" : " part_warnings=" + warnings));
             checkNei(dir, manifest.getAsJsonObject("files"), counts);
             return counts;
+        }
+
+        /**
+         * The crop step (WO-1.10): CropsNH's dumper files in {@code crops/}, listed and left in {@code dumps/}; the
+         * crop
+         * registry dump lists crops; and (V33) every crop NEI's CropsNH tabs show, by the crop id in its seed's NBT, is
+         * in that dump. {@code withNei}: the NEI step was meant to succeed, so its CropsNH handler files are there.
+         */
+        private void checkCrops(Path dir, JsonObject manifest, boolean withNei) throws IOException {
+            JsonObject parts = manifest.getAsJsonObject("parts");
+            JsonObject counts = manifest.getAsJsonObject("counts");
+            JsonObject files = manifest.getAsJsonObject("files");
+            JsonElement errors = manifest.get("part_errors");
+            JsonElement status = parts.get("crops");
+            JsonElement warnings = manifest.get("part_warnings");
+            JsonElement cropWarning = warnings != null && warnings.isJsonObject() ? warnings.getAsJsonObject()
+                .get("crops") : null;
+            Map<String, JsonObject> listed = new TreeMap<>();
+            for (Map.Entry<String, JsonElement> e : files.entrySet()) {
+                if (e.getKey()
+                    .startsWith(CROPS_DIR))
+                    listed.put(
+                        e.getKey()
+                            .substring(CROPS_DIR.length()),
+                        e.getValue()
+                            .getAsJsonObject());
+            }
+            int copied = counts.has("crop_files") ? counts.get("crop_files")
+                .getAsInt() : -1;
+            int dumpers = counts.has("crop_dumpers") ? counts.get("crop_dumpers")
+                .getAsInt() : -1;
+            check(
+                checks,
+                "crops_ok",
+                status != null && "ok".equals(status.getAsString())
+                    && copied == listed.size()
+                    && copied == dumpers
+                    && cropWarning == null,
+                "parts.crops=" + status
+                    + " crop_dumpers="
+                    + dumpers
+                    + " crop_files="
+                    + copied
+                    + " listed="
+                    + listed.size()
+                    + (errors == null ? "" : " part_errors=" + errors)
+                    + (cropWarning == null ? "" : " part_warnings.crops=" + cropWarning));
+
+            Set<String> onDisk = new TreeSet<>();
+            Path crops = dir.resolve(CROPS_DIR);
+            if (Files.isDirectory(crops)) {
+                try (DirectoryStream<Path> s = Files.newDirectoryStream(crops)) {
+                    for (Path p : s) onDisk.add(
+                        p.getFileName()
+                            .toString());
+                }
+            }
+            Set<String> problems = new TreeSet<>();
+            for (String name : CROP_FILES) {
+                if (!listed.containsKey(name)) problems.add(name + " not listed");
+            }
+            for (String name : onDisk) {
+                if (!listed.containsKey(name)) problems.add(name + " unlisted");
+            }
+            Path dumps = gameDir.toPath()
+                .resolve("dumps");
+            for (Map.Entry<String, JsonObject> e : listed.entrySet()) {
+                Path p = dumps.resolve(e.getKey());
+                if (!Files.isRegularFile(p) || Files.size(p) != e.getValue()
+                    .get("bytes")
+                    .getAsLong()) problems.add("dumps/" + e.getKey() + " missing or changed");
+            }
+            check(
+                checks,
+                "crop_files_listed",
+                problems.isEmpty(),
+                problems.isEmpty() ? listed.keySet() + " listed, each still in dumps/" : first(problems));
+
+            // The crop registry: a CSV with a header row, one crop per line, the crop id first (CropsNH's
+            // CropRegistry.dumpCrops). Crop ids carry no comma or quote, so the first field is the id as is.
+            Set<String> ids = new TreeSet<>();
+            boolean header = false;
+            Path registry = crops.resolve("cropRegistry.csv");
+            if (Files.isRegularFile(registry)) {
+                String charset = manifest.getAsJsonObject("java")
+                    .get("charset")
+                    .getAsString();
+                List<String> lines = Files.readAllLines(registry, Charset.forName(charset));
+                header = !lines.isEmpty() && lines.get(0)
+                    .startsWith("ID,Name,Unlocalised Name,");
+                for (int i = 1; i < lines.size(); i++) {
+                    String l = lines.get(i);
+                    int comma = l.indexOf(',');
+                    if (comma > 0 && l.indexOf(':') > 0 && l.indexOf(':') < comma) ids.add(l.substring(0, comma));
+                }
+            }
+            check(
+                checks,
+                "crop_registry_lists_crops",
+                header && ids.size() >= MIN_CROPS,
+                "header=" + header + ", " + ids.size() + " crop ids (want >= " + MIN_CROPS + "), e.g. " + first(ids));
+            if (!withNei) return;
+
+            CropNeiScan scan = new CropNeiScan();
+            for (Map.Entry<String, JsonElement> e : files.entrySet()) {
+                if (e.getKey()
+                    .startsWith("nei/")) scan.file(dir.resolve(e.getKey()));
+            }
+            Set<String> unknown = new TreeSet<>(scan.crops);
+            unknown.removeAll(ids);
+            check(
+                checks,
+                "crop_nei_tabs_covered",
+                scan.breeding > 0 && scan.cropPages > 0 && !scan.crops.isEmpty() && unknown.isEmpty(),
+                scan.breeding + " Crop Breeding recipes, "
+                    + scan.cropPages
+                    + " crop pages, "
+                    + scan.crops.size()
+                    + " crop ids in NEI's CropsNH tabs; not in cropRegistry.csv: "
+                    + first(unknown));
+        }
+
+        /** NEI's lines of CropsNH's handlers: the crop id ({@code tag.crop}) of every CropsNH seed in them. */
+        private final class CropNeiScan {
+
+            final Set<String> crops = new TreeSet<>();
+            int breeding;
+            int cropPages;
+
+            void file(Path p) throws IOException {
+                try (BufferedReader in = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        if (!line.contains(CROP_HANDLER_PREFIX) && !line.contains("\"mutationPool\"")) continue;
+                        JsonObject o = parser.parse(line)
+                            .getAsJsonObject();
+                        String h = o.get("handler")
+                            .getAsString();
+                        if (h.equals(CROP_HANDLER_PREFIX + "Breeding")) breeding++;
+                        else if (h.equals(CROP_HANDLER_PREFIX + "Crops")) cropPages++;
+                        else if (!h.startsWith(CROP_HANDLER_PREFIX) && !h.equals("mutationPool")) continue;
+                        for (String k : new String[] { "ingredients", "results" }) {
+                            if (o.has(k)) for (JsonElement s : o.getAsJsonArray(k)) stack(s.getAsJsonObject());
+                        }
+                    }
+                }
+            }
+
+            private void stack(JsonObject s) {
+                if (s.has("tag") && s.get("tag")
+                    .isJsonObject()) {
+                    JsonElement crop = s.getAsJsonObject("tag")
+                        .get("crop");
+                    if (crop != null && crop.isJsonPrimitive()) crops.add(crop.getAsString());
+                }
+                if (s.has("anyOf")) for (JsonElement a : s.getAsJsonArray("anyOf")) stack(a.getAsJsonObject());
+            }
+        }
+
+        /** gt_ore_mixes.json (D126): GT's ore layers with four keyed ores each, and the vanilla dimensions named. */
+        private void checkOreMixes(Path dir, JsonObject counts, JsonObject parts) throws IOException {
+            JsonElement status = parts.get("ore_mixes");
+            check(
+                checks,
+                "ore_mixes_ok",
+                status != null && "ok".equals(status.getAsString())
+                    && counts.get("ore_mix_errors")
+                        .getAsInt() == 0,
+                "parts.ore_mixes=" + status + " ore_mix_errors=" + counts.get("ore_mix_errors"));
+            JsonObject root = document(dir.resolve("gt_ore_mixes.json")).getAsJsonObject();
+            int layers = 0;
+            int keyed = 0;
+            boolean naquadah = false;
+            for (JsonElement e : root.getAsJsonArray("layers")) {
+                JsonObject l = e.getAsJsonObject();
+                layers++;
+                int ores = 0;
+                JsonObject o = l.getAsJsonObject("ores");
+                for (String layer : new String[] { "primary", "secondary", "between", "sporadic" }) {
+                    JsonObject ore = o.has(layer) ? o.getAsJsonObject(layer) : null;
+                    if (ore != null && ore.get("material")
+                        .isJsonPrimitive()
+                        && ore.has("ore")
+                        && ore.getAsJsonObject("ore")
+                            .get("item")
+                            .isJsonPrimitive())
+                        ores++;
+                }
+                if (ores == 4) keyed++;
+                if ("ore.mix.naquadah".equals(
+                    l.get("name")
+                        .getAsString())) {
+                    naquadah = l.get("weight")
+                        .getAsInt() > 0
+                        && l.get("min_y")
+                            .getAsInt()
+                            < l.get("max_y")
+                                .getAsInt()
+                        && l.getAsJsonArray("dims")
+                            .size() > 0
+                        && ores == 4;
+                }
+            }
+            check(
+                checks,
+                "ore_mixes_keyed",
+                layers >= 100 && keyed == layers
+                    && layers == counts.get("ore_mixes")
+                        .getAsInt(),
+                layers + " ore layers, " + keyed + " with four ores keyed by material and ore block");
+            check(checks, "ore_mix_naquadah", naquadah, "ore.mix.naquadah with weight, heights, dimensions and ores");
+            Map<Integer, String> dims = new TreeMap<>();
+            for (JsonElement e : root.getAsJsonArray("dimensions")) {
+                JsonObject d = e.getAsJsonObject();
+                if (d.has("name") && d.get("name")
+                    .isJsonPrimitive())
+                    dims.put(
+                        d.get("dim")
+                            .getAsInt(),
+                        d.get("name")
+                            .getAsString());
+            }
+            check(
+                checks,
+                "dimensions_named",
+                "Overworld".equals(dims.get(0)) && "Nether".equals(dims.get(-1)) && "The End".equals(dims.get(1)),
+                dims.toString());
         }
 
         /** NEI's files in the run: listed, complete, one handler each, GT handlers present, no numeric IDs. */
@@ -814,8 +1079,8 @@ public final class Harness {
 
         private void checkFiles(Path dir, JsonObject files) throws IOException {
             List<String> bad = new ArrayList<>();
-            String[] required = { "gt_recipe_maps.json", "gt_recipes.jsonl", "gt_machines.jsonl", "items.jsonl",
-                "fluids.jsonl" };
+            String[] required = { "gt_recipe_maps.json", "gt_recipes.jsonl", "gt_machines.jsonl", "gt_ore_mixes.json",
+                "items.jsonl", "fluids.jsonl" };
             for (String name : required) {
                 if (!files.has(name)) bad.add(name + " not listed");
             }

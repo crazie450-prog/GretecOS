@@ -3,6 +3,7 @@ package io.github.crazie450prog.gregteclink.export;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -63,6 +64,11 @@ final class Manifest {
         JsonObject java = new JsonObject();
         java.addProperty("version", System.getProperty("java.version"));
         java.addProperty("vendor", System.getProperty("java.vendor"));
+        // The charset CropsNH's dumpers write crops/ in (a PrintWriter on a File: the JVM's default).
+        java.addProperty(
+            "charset",
+            Charset.defaultCharset()
+                .name());
         m.add("java", java);
         m.add("pack_version", Json.str(packVersion()));
         m.add("gt_version", Json.str(modVersion("gregtech")));

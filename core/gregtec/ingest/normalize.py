@@ -19,7 +19,9 @@ contract, ``docs/contracts/gregteclink-export-v1.md``). Nothing here reads a fil
   and accepted alternatives are content. An NEI-only slot with alternatives is keyed by the
   oredict name whose members are exactly what it accepts (:class:`OreIndex`, from the run's
   ``items.jsonl``), else by the sorted set of what it accepts; never by the stack NEI displays,
-  which NEI picks anew on each run (D104).
+  which NEI picks anew on each run (D104). The GT maps in :data:`ALT_IDENTITY_MAPS` key their
+  slots with alternatives the NEI-only way too, because their displayed item changes between
+  runs (D135).
 - **Content hash** (:func:`content_hash`) = everything else that changes how the recipe runs:
   EU/t, duration, amperage, raw special value, chances, oredict names and alternatives, NEI
   container items, metadata, special items and flags (not ``nei_desc``, which is display text).
@@ -49,6 +51,11 @@ ITEM, FLUID = "i", "f"
 _TYPED_INT = re.compile(r"(-?[0-9]+)[BSL]?")
 # recipe_meta keys that are display text only: kept in the DB, left out of the content hash.
 DISPLAY_ONLY = frozenset({"nei_desc"})
+# GT recipe maps whose input slots with alternatives show a different alternative on each run, so
+# they are keyed by what they accept, as NEI-only slots are (D135). CropsNH's Crop Breeder builds
+# a sub-soil slot from a hash set of blocks: 12 of its 109 dev-runtime recipes showed another
+# block in the server and the client harness's exports, with the same alternatives.
+ALT_IDENTITY_MAPS = frozenset({"cropsnh.recipes.cropBreeder"})
 
 
 def canonical(value: object) -> str:

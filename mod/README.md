@@ -4,7 +4,7 @@ Gregtec OS's Forge mod for GTNH 2.9.0 (Minecraft 1.7.10, GT 5.09.54.265). It has
 
 | Module | Instance | Status |
 |---|---|---|
-| `export` | GTNH-Export only | WO-1.1: GT recipe-map dump, machine pass, item/fluid tables, NEI trigger, autoexport (V22), manifest |
+| `export` | GTNH-Export only | WO-1.1: GT recipe-map dump, machine pass, item/fluid tables, NEI trigger, autoexport (V22), manifest; WO-1.6: ore mixes (`gt_ore_mixes.json`, D126); WO-1.10: CropsNH's crop dumpers (`crops/`, D134) |
 | `listener` | Play | WO-6.2; registers nothing yet |
 | `client` | Play (client side) | WO-8.1; registers nothing yet |
 
@@ -83,9 +83,19 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   regular `.jsonl` files changed since the call started (minus 2 s), through `PathGuard`, and never moves or changes
   NEI's files. NEI not ready 10 minutes after the
   world opened (NEI disabled, for example) is `failed`; closing the world before then finishes the run without NEI.
+- **Crop step** (WO-1.10, D134). Right after NEI's dump, still on the client thread, GregtecLink runs every data
+  dumper CropsNH registered in NEI's option list (`tools.dump.cropsnh.*`: crops, parent-combination recipes,
+  mutation pools, soils, alternate seeds and six more), as clicking each Dump button under NEI's Tools, Data Dumps,
+  Crops NH does, then copies the files they wrote to `dumps/` into the run's `crops/`. CropsNH is reached through
+  NEI's API by reflection; nothing is compiled against it. Judged as NEI's step is: `parts.crops` is `ok` only if
+  the five dumpers Python reads are registered and, for each, the call threw nothing, NEI's logger got no
+  `Error dumping` line during it, it wrote its file, not empty, and the copy succeeded; otherwise `failed`
+  (`part_errors.crops`), and `absent` without CropsNH. One of the other six failing only adds
+  `part_warnings.crops`. A file in `dumps/` that is a link is refused, since the dumper writes through it. It takes
+  about 25 ms.
 - Without autoexport (a world opened by hand) the module posts two local chat lines, "GregtecLink: exporting NEI's
   recipes; ..." just before the freeze and "GregtecLink: export <run_id> finished: ..." after it, and stays in the
-  world.
+  world. CropsNH's dumpers add a chat line each.
 
 ### NEI 2.8.172 in Export (manual swap, D100)
 
@@ -100,7 +110,9 @@ GTNH 2.9.0 ships NEI 2.8.171, which has no `RecipeJsonWriter`; without the swap 
 - Not 2.8.173 (it drops six vanilla display-name overrides, so Export's names would differ from Play's) and not
   2.9.x (it reworks the recipe-handler API and is not a drop-in for pack 2.9.0).
 - In the dev runtime, `dependencies.gradle` puts NEI 2.8.172 on the run classpath; the mod still compiles against
-  GT's NEI 2.8.160 and reaches NEI only by reflection.
+  GT's NEI 2.8.160 and reaches NEI only by reflection. It also puts CropsNH 2.0.140 (2.9.0's) there, with
+  BetterBuildersWands 0.13.12-GTNH, whose classes CropsNH's postInit loads; CropsNH brings GTNHLib 0.11.54, the
+  pack's version.
 
 ### Autoexport (V22)
 
@@ -185,11 +197,14 @@ Its checks are the server harness's (with `side` client) plus: `nei` and `autoex
 `part_warnings`; every `nei/` file listed
 with matching sha256, bytes and lines and none unlisted; at least 150 handler files, as many as NEI loaded; lines
 copied equal NEI's count and exceed 50,000; one handler id per file and at least one `gt.recipe*` handler; no numeric
-`id` in any stack, `anyOf` or `returns`; NEI's files left in `dumps/recipes`; the old marked world rebuilt (no
+`id` in any stack, `anyOf` or `returns`; NEI's files left in `dumps/recipes`; the crop step `ok` with as many files
+as CropsNH registered dumpers, the five Python reads among them, all left in `dumps/`, and at least 50 crops in the
+crop registry dump; every crop id in NEI's CropsNH tabs (Crop Breeding, crop pages, mutation pools) in that dump
+(V33); the old marked world rebuilt (no
 `.old-*` copy left) and the decoy untouched; the integrated server stopped before `Minecraft.shutdown()`, and the
 world's `level.dat` written after the run finished (the save on quitting). Writes are checked in the two windows where the export's code runs, `saves/` aside: while the GT
 parts are written at server start nothing outside `gregteclink/` may change, and from just before NEI's dump to the
-end of the run nothing outside `gregteclink/` and `dumps/recipes/`. Between them, joining the world makes the game
+end of the run nothing outside `gregteclink/`, `dumps/recipes/` and the crop dumpers' files in `dumps/`. Between them, joining the world makes the game
 and other mods write their own files (Forge's `usernamecache.json`, ServerUtilities, NEI's, GT's and AE2's configs),
 as for a world opened by hand. NEI counts vary with config state between run folders (AE2 rewrites its
 `Facades.cfg` on joining a world, and "Facade Crafting" grows from 2,403 to 2,631 recipes), so only loose thresholds
@@ -209,7 +224,8 @@ run it.
   its notice is in [LICENSE-ExampleMod](LICENSE-ExampleMod). That notice covers only those files.
 - The Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/`) is Gradle's own and is Apache-2.0 (see the SPDX
   header in `gradlew`).
-- GT5-Unofficial and NEI are linked at runtime only; nothing of theirs is vendored.
+- GT5-Unofficial, NEI and CropsNH (LGPL-3.0) are linked at runtime only; nothing of theirs is vendored. CropsNH's
+  dump formats were read from its source to write the Python reader, which re-implements them.
 - Gregtorio's GPL-3 dumper (`tools/gtnh_dump`) is not copied. The recipe fields follow the "format 1" list in its
   README, as summarised in research A§1.7. The value encoding in `MetaJson` was first written in the same shape as
   Gregtorio's `writeValue` (the same type-check order, a depth-4 cutoff, a GT material as its name, public simple

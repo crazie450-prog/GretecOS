@@ -389,7 +389,7 @@ C:\Games\PrismLauncher\           portable Prism (V24)
    - **Pre-launch** on Play: compare against the last `export_run` and mark the DB stale on mismatch; check the instance lock; tell the supervisor to start voice and watchers (D77).
    - **Post-exit** [QA must-fix 7]: if the fingerprint changed since the last export, ask Clayton on the dashboard and by voice ("Mods changed. Export now?") (D69). On yes: sync instances, take the lock, export, normalize, diff, and flag affected plans (§7.13). If nothing changed, nothing runs.
 5. **Item and fluid names.** NEI `itempanel.csv` plus English names from the dump, loaded into `name_fts` (FTS5).
-6. **Ore mixes.** From NEI's GT ore-vein handler pages in the dump, or the GT worldgen registry in the export module (**VERIFY** during WO-1.6, then pick one).
+6. **Ore mixes.** From the GT worldgen registry in the export module (`gt_ore_mixes.json`): V08, resolved in WO-1.6 (D126), because NEI's GT ore-vein pages have no mix name, heights, weight, density or size.
 7. **Structures.**
    - Base pack: MrBruh's `gtnh-extractor` (Apache-2.0) builds every controller headless and records `registry@meta` per cell, hatch-eligible cells and coil/glass channels [A§4.2]. Re-pin it to 2.9.0, because it was pinned to beta-3.
    - Addon multis: creative capture in the Lab (§7.10).
@@ -1224,8 +1224,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V04 | Exact `options.txt` key for pause-on-lost-focus on 1.7.10 | Inspect the file after F3+P | 0.6 |
 | V05 | Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log | Lab session | 6.1 |
 | V06 | ServerUtilities world-logging config keys and the single-player `world.log` path. **Keys confirmed** (PR #6); the path moves to WO-6.1 (D97) | Lab session | 6.1 |
-| V07 | VisualProspecting v3 cache paths and format | Lab | 1.6 |
-| V08 | Ore-mix source (NEI ore handler vs GT worldgen registry) | Export | 1.6 |
+| V07 | **Partly resolved** (D127, WO-1.6): from VisualProspecting 1.5.42's source and a cache it wrote in the dev runtime, both caches are in the game folder (`visualprospecting\server\<world id>\`, `visualprospecting\client\<uuid>\<world id>\`), format v3. Still open: the Lab check (`docs/runbooks/ores_check.md`) | Lab | 1.6 |
+| V08 | **Resolved** (D126, WO-1.6): GT's worldgen registry, exported by GregtecLink as `gt_ore_mixes.json`; NEI's vein pages have no mix name, heights, weight, density or size | — | 1.6 |
 | V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
 | V10 | Cable stats source (tooltips/material data vs curated) | Export | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
@@ -1250,7 +1250,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V30 | CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2] | Lab test | 6.7 |
 | V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
 | V32 | The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6] | NEI + Lab | 6.7 |
-| V33 | The CropsNH NEI dumpers (crops, breeding recipes, mutation pools, soils) run in the Export instance and cover every crop in NEI's tabs [I§2] | Export test | 1.10 |
+| V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 
 ---
 

@@ -22,6 +22,8 @@ from gregtec import config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
+from gregtec.db import crops as crop_db
+from gregtec.db import ores as ore_db
 from gregtec.db import quests as quest_db
 from gregtec.db import structures as structure_db
 from gregtec.ingest import collect as export_collect
@@ -201,6 +203,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
 
+    crops = commands.add_parser(
+        "crops", help="CropsNH crop data in the DB (gos db build loads it)"
+    )
+    crop_cmds = crops.add_subparsers(dest="crops_command", required=True)
+    c_show = crop_cmds.add_parser(
+        "show",
+        help="a crop's facts, or every crop's id, name and tier",
+        description=(
+            "Prints what the DB holds for each crop named (its crop:<id>, CropsNH id or "
+            "name, any case; else every crop whose name contains it), from the newest run "
+            "with crop data: tier, soil, requirements, drops with chances, parent recipes and "
+            "mutation pools, for comparing with NEI in the Lab. With no name, lists them all."
+        ),
+    )
+    c_show.add_argument("name", nargs="*", help="crop name or id")
+    c_show.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
+
     quests = commands.add_parser(
         "quests", help="the quest book, progress, frontier and tier (BetterQuesting)"
     )
@@ -267,6 +292,67 @@ def main(argv: Sequence[str] | None = None) -> int:
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
 
+    ores = commands.add_parser(
+        "ores", help="GT's ore mixes and a world's veins (VisualProspecting)"
+    )
+    ore_cmds = ores.add_subparsers(dest="ores_command", required=True)
+    o_load = ore_cmds.add_parser(
+        "load",
+        help="load ore mixes from the collected export and a world's veins into gos.sqlite",
+        description=(
+            "Read-only on the game: reads GT's ore mixes from the newest collected export "
+            "run (gt_ore_mixes.json) and a world's VisualProspecting caches (the server "
+            "cache of every generated vein, and the player's client cache of the veins he "
+            "knows), and replaces the vein table of GOS_HOME/data/gos.sqlite, and ore_mix "
+            "when the run has mixes, in one transaction. Default world: [paths] lab_world in "
+            "the Lab, never Play's unless --instance play."
+        ),
+    )
+    o_load.add_argument("--run", default=None, help="collected run id (default newest)")
+    o_load.add_argument(
+        "--instance",
+        choices=("lab", "play"),
+        default=None,
+        help="the instance whose saves/ holds the world (default lab); with --world-dir, "
+        "play allows a world in Play",
+    )
+    o_where = o_load.add_mutually_exclusive_group()
+    o_where.add_argument(
+        "--world", default=None, help="the world's folder name in saves/"
+    )
+    o_where.add_argument(
+        "--world-dir", type=Path, default=None, help="a world folder anywhere"
+    )
+    o_load.add_argument(
+        "--game-dir",
+        type=Path,
+        default=None,
+        help="with --world-dir: the game folder holding visualprospecting/ (default: the "
+        "folder that holds the world's saves/)",
+    )
+    o_load.add_argument(
+        "--player",
+        default=None,
+        help="whose client cache to read, by UUID (default: the only one)",
+    )
+    o_list = ore_cmds.add_parser(
+        "list",
+        help="veins per dimension, or one dimension's veins with --dim",
+    )
+    o_list.add_argument(
+        "--dim", type=int, default=None, metavar="N", help="list dimension N's veins"
+    )
+    o_list.add_argument(
+        "--limit", type=int, default=-1, metavar="N", help="at most N rows"
+    )
+    for each in (o_load, o_list):
+        each.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+            "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+        )
     tool = commands.add_parser(
         "tool",
         help="run a read-only agent tool against GOS_HOME's DB (for testing)",
@@ -486,6 +572,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return export_collect.main(args.config, sys.stdout)
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
+    if args.command == "crops" and args.crops_command == "show":
+        # Pack names, as for quests: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        return crop_db.show_main(args.config, args.name, sys.stdout)
     if args.command == "quests":
         # Quest text is pack data (CJK, symbols). Windows writes a pipe or a file in its ANSI
         # code page (cp1252), which can't encode all of it: escape what it can't, never crash.
@@ -505,6 +596,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.config, args.line, args.limit, sys.stdout
             )
         return quest_db.tier_main(args.config, args.set_stage, args.clear, sys.stdout)
+    if args.command == "ores":
+        # Paths and pack names, as for quests: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        if args.ores_command == "load":
+            if args.game_dir is not None and args.world_dir is None:
+                parser.error("--game-dir goes with --world-dir")
+            return ore_db.load_main(
+                args.config,
+                args.run,
+                args.instance,
+                args.world,
+                args.world_dir,
+                args.game_dir,
+                args.player,
+                sys.stdout,
+            )
+        return ore_db.list_main(args.config, args.dim, args.limit, sys.stdout)
     if args.command == "tool":
         # Tool results hold pack text (CJK, symbols): escape what a Windows pipe can't encode.
         if isinstance(sys.stdout, io.TextIOWrapper):

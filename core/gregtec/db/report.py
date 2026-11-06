@@ -306,6 +306,7 @@ def lines(result: Result, full: bool) -> list[str]:
         out.append("Handlers left out (not recipes, D105):")
         out.extend(f"  {h}: {why}" for h, why in sorted(NOT_RECIPES.items()))
     out.extend(fact_lines(result, full))
+    out.extend(crop_lines(result, full))
     for key in result.pruned:
         out.append(f"Pruned run {key} from the DB (keeping the newest [db] keep_runs)")
     if result.report_path is not None:
@@ -437,6 +438,109 @@ def fact_lines(result: Result, full: bool) -> list[str]:
     if fs.unmatched:
         out.append("Curated rows for classes not in this run:")
         out.extend(f"  line {c.line}: {c.machine} ({c.name})" for c in fs.unmatched)
+    return out
+
+
+CROP_PROBLEMS_SHOWN = 10  # in the printed report; the saved one lists them all
+
+
+def crop_lines(result: Result, full: bool) -> list[str]:
+    """The crop tables' counts (WO-1.10, D137) and, with NEI's data, the coverage of NEI's
+    CropsNH tabs: every crop they show must be in CropsNH's crop dump (plan section 8)."""
+    loaded = result.loaded
+    data = loaded.crops
+    if data is None:
+        m = loaded.run.manifest
+        errors = m.get("part_errors")
+        why = errors.get("crops") if isinstance(errors, dict) else None
+        if loaded.crops_error is not None:
+            return [f"WARNING: crops not loaded: {loaded.crops_error}"]
+        if loaded.crops_status == "absent":
+            return [
+                (
+                    "Crops: none (parts.crops is 'absent': no CropsNH in Export, or a run from "
+                    "before WO-1.10)"
+                )
+            ]
+        if loaded.crops_status == "skipped_server":
+            return [
+                "Crops: none (parts.crops is 'skipped_server': CropsNH's dumpers need NEI's client)"
+            ]
+        tail = f": {why}" if why else ""
+        return [
+            f"WARNING: crops not loaded (parts.crops is {loaded.crops_status!r}{tail})"
+        ]
+    recipes = data.recipes
+    drops = [d for c in data.crops.values() for d in c.drops]
+    keyed = sum(d.item is not None for d in drops)
+    machine = sum(r.machine_only for r in recipes)
+    members = sum(len(p.members) for p in data.pools)
+    blocks = sum(len(s.blocks) for s in data.soils)
+    check = data.nei
+    on_pages = (
+        f" ({sum(bool(c.in_nei) for c in data.crops.values())} on NEI's crop pages)"
+        if check
+        else ""
+    )
+    in_tab = (
+        f"{sum(bool(r.in_nei) for r in recipes)} in NEI's Crop Breeding tab, "
+        if check
+        else ""
+    )
+    out = [
+        (
+            f"Crops: {len(data.crops)} crops{on_pages}, {len(recipes)} parent-combination recipes "
+            f"({in_tab}{machine} for the Crop Breeder only), {len(data.pools)} mutation pools "
+            f"({members} memberships), {len(data.soils)} soil lists ({blocks} blocks), "
+            f"{len(data.seeds)} alternate seeds, {len(drops)} drops ({keyed} keyed by item)"
+        )
+    ]
+    if check is not None:
+        # Every tab: the crop pages, Crop Breeding, the mutation pools and alternate seeds.
+        missing = sorted(check.shown - set(data.crops))
+        if not check.shown:
+            verdict = "WARNING: they show no crop, so nothing was checked"
+        elif not missing:
+            verdict = f"all {len(check.shown)} crops they show are in the crop dump"
+        else:
+            names = ", ".join(missing)
+            verdict = (
+                f"{len(missing)} crops they show are NOT in the crop dump: {names}"
+            )
+        out.append(
+            f"  NEI's CropsNH tabs: Crop Breeding {check.breeding} recipes with "
+            f"{len(check.breeding_crops)} crops, {check.crop_pages} crop pages, "
+            f"{check.pools} mutation pool pages ({check.pools_matched} match a dumped pool); "
+            + verdict
+        )
+    else:
+        out.append(
+            f"  NEI's CropsNH tabs not checked (parts.nei is {loaded.nei_status!r}): drops "
+            "have no item key and crops no sub-soil blocks"
+        )
+    other = sum(
+        r.kind == "other"
+        for x in (*data.crops.values(), *recipes)
+        for r in x.requirements
+    )
+    if other:
+        out.append(
+            f"  {other} requirement texts not recognised (kind 'other'; not CropsNH 2.0.140's "
+            "English descriptions)"
+        )
+    if data.problems:
+        out.append(f"WARNING: crop data: {len(data.problems)} problems")
+        shown = data.problems if full else data.problems[:CROP_PROBLEMS_SHOWN]
+        out.extend(f"  {p}" for p in shown)
+        if len(shown) < len(data.problems):
+            out.append(
+                f"  ... {len(data.problems) - len(shown)} more in the saved report"
+            )
+    if full:
+        out.append("Crops: crop:<id>, name, tier, soil, in NEI")
+        for c in data.crops.values():
+            shown_in = "" if c.in_nei is None else ("yes" if c.in_nei else "no")
+            out.append(f"  {c.ref}\t{c.name}\t{c.tier}\t{c.soil}\t{shown_in}")
     return out
 
 
