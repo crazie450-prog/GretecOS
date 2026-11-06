@@ -4,7 +4,8 @@
    one named), found as ``gos export collect`` finds runs (complete, ``gregteclink-export/1``,
    no harness runs outside tests), and every listed file checked again against its manifest's
    size and sha256. Steps 1 and 2 hold collect's lock, so a collect can't prune or swap the run
-   while it is read. NEI's files are used only when ``parts.nei`` is ``ok``.
+   while it is read. NEI's files are used only when ``parts.nei`` is ``ok``, and then a failed
+   ``parts.oredict`` refuses the run (its NEI-only slots would get other keys, D145).
 2. **Normalise** (:mod:`gregtec.ingest.normalize`): GT's recipe maps, recipes, items, fluids and
    machines, and NEI's recipes; merge NEI into GT (:mod:`gregtec.ingest.merge`). The machine
    facts (WO-1.7, :mod:`gregtec.ingest.machine_facts`): each multiblock's tooltip parsed, plus
