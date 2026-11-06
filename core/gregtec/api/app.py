@@ -342,6 +342,8 @@ def create_app(core: Core) -> FastAPI:
         try:
             yield
         finally:
+            if core.maintenance is not None:  # a running daily run ends after its job
+                core.maintenance.stop()
             for task in tasks:
                 task.cancel()
             for task in tasks:

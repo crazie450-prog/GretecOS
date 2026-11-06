@@ -13,6 +13,12 @@ minute (``gregtec.api.app``) and :meth:`Maintenance.session_end` when it stops.
   processes can't be listed, the game counts as running. **Input**: Windows' ``GetLastInputInfo``
   for this session (:func:`seconds_since_input`); elsewhere it is unknown, which never counts
   as idle. Both are injectable, for tests.
+- **The day is marked done in memory before the jobs start**, so a ``kv`` write that fails
+  (the DB locked by a long ``gos db build``) never repeats the run every minute; the ``kv`` mark
+  keeps a restart from running it twice. A run cut short by :meth:`Maintenance.stop` isn't
+  marked in ``kv``: the next start runs that day's jobs again (each is safe to repeat).
+- **Health** warns when no run has happened for :data:`STALE_DAYS` days: a PC that sleeps after
+  30 idle minutes never gets an idle half hour while awake, and waking it is input.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import ctypes
 import datetime as dt
 import json
 import logging
+import sqlite3
 import sys
 import threading
 import time
@@ -38,6 +45,9 @@ COMMIT_EVERY_S = 600.0  # plan 6.5: batches every 10 minutes
 TICK_S = 60.0
 KV_LAST_DAY = "maintenance.last_day"
 KV_LAST_RUN = "maintenance.last_run"
+KV_SINCE = "maintenance.since"  # the first day the core checked, for the stale warning
+STALE_DAYS = 3
+SESSION_END_WAIT_S = 2.0  # the supervisor kills the core 5 s after asking it to stop
 
 
 def seconds_since_input() -> float | None:
@@ -84,6 +94,8 @@ class Maintenance:
     last_commit: float | None = None
     last_wait: str = "not checked yet"
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _stop: threading.Event = field(default_factory=threading.Event, repr=False)
+    _ran_day: str | None = None
 
     # --- the idle rule
 
@@ -135,21 +147,35 @@ class Maintenance:
             log.info("vault commit", extra={"why": why, "commit": sha})
         return sha
 
+    def stop(self) -> None:
+        """The core is stopping: a running daily run ends after its current job."""
+        self._stop.set()
+
     def run_daily(self, today: dt.date) -> list[JobResult]:
-        results = self.curator.run(today)
+        # Marked before the jobs start: never twice in this process, whatever kv says.
+        self._ran_day = today.isoformat()
+        results = self.curator.run(today, stop=self._stop.is_set)
+        if self._stop.is_set():
+            log.info("maintenance stopped", extra={"day": today.isoformat()})
+            return results
         record = {
             "day": today.isoformat(),
             "ts": int(time.time()),
             "jobs": [r.__dict__ for r in results],
         }
-        self._set_kv(KV_LAST_DAY, today.isoformat())
-        self._set_kv(KV_LAST_RUN, json.dumps(record))
+        try:
+            self._set_kv(KV_LAST_RUN, json.dumps(record))
+            self._set_kv(KV_LAST_DAY, today.isoformat())
+        except sqlite3.Error as exc:  # the memory mark holds until the core restarts
+            log.warning("can't record the maintenance run", extra={"error": str(exc)})
         return results
 
     def tick(self) -> list[JobResult] | None:
         """One minute's check: the 10-minute commit batch, then the daily run if it is due and
         allowed. Returns the daily run's results when it ran."""
         with self._lock:
+            if self._stop.is_set():
+                return None
             mono = self.monotonic()
             if self.last_commit is None:
                 self.last_commit = mono
@@ -158,7 +184,9 @@ class Maintenance:
                 if (self.curator.vault / ".git").is_dir():
                     self.commit("agent writes")
             today = self.now().date()
-            if self._kv(KV_LAST_DAY) == today.isoformat():
+            if self._kv(KV_SINCE) is None:
+                self._set_kv(KV_SINCE, today.isoformat())
+            if today.isoformat() in (self._ran_day, self._kv(KV_LAST_DAY)):
                 self.last_wait = f"done for {today}"
                 return None
             why = self.waiting_for()
@@ -170,20 +198,44 @@ class Maintenance:
             self.last_wait = f"done for {today}"
             return results
 
-    def session_end(self) -> str | None:
-        """Commit the session's writes (plan 6.5: at session end)."""
-        with self._lock:
+    def session_end(self, wait_s: float = SESSION_END_WAIT_S) -> str | None:
+        """Commit the session's writes (plan 6.5: at session end). While a daily run holds the
+        lock past ``wait_s``, it is skipped: the next batch commits them."""
+        if not self._lock.acquire(timeout=wait_s):
+            log.warning("session-end commit skipped: maintenance is running")
+            return None
+        try:
             if not (self.curator.vault / ".git").is_dir():
                 return None
             return self.commit("session end")
+        finally:
+            self._lock.release()
 
     def health(self) -> tuple[str, str]:
         """(status, detail) for the dashboard's health strip."""
         last = self.last_run()
+        stale = self._stale(last)
         if last is None:
-            return "ok", f"not run yet; {self.last_wait}"
+            detail = f"not run yet; {self.last_wait}"
+            return ("warn", f"{detail}; {stale}") if stale else ("ok", detail)
         failed = [j["job"] for j in last.get("jobs", []) if j.get("status") == FAILED]
         detail = f"last run {last.get('day')}; {self.last_wait}"
+        if stale:
+            detail += f"; {stale}"
         if failed:
             return "warn", f"{detail}; failed: {', '.join(failed)}"
-        return "ok", detail
+        return ("warn" if stale else "ok"), detail
+
+    def _stale(self, last: dict[str, Any] | None) -> str | None:
+        """Why the health strip should warn that maintenance hasn't run for days, or None."""
+        since = (last or {}).get("day") or self._kv(KV_SINCE)
+        try:
+            days = (self.now().date() - dt.date.fromisoformat(str(since))).days
+        except ValueError:
+            return None
+        if days <= STALE_DAYS:
+            return None
+        return (
+            f"no run for {days} days: no idle {self.idle_minutes} min while awake "
+            "(does the PC sleep sooner?)"
+        )

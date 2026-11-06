@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sqlite3
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -47,9 +48,14 @@ class FakeCurator(Curator):
     def __init__(self, vault: Path) -> None:
         super().__init__(vault, vault / "x.sqlite", vault / "b")
         self.days: list[dt.date] = []
+        self.during: Callable[[], None] | None = None
 
-    def run(self, today: dt.date, jobs: object = None) -> list[JobResult]:  # type: ignore[override]
+    def run(  # type: ignore[override]
+        self, today: dt.date, jobs: object = None, stop: object = None
+    ) -> list[JobResult]:
         self.days.append(today)
+        if self.during is not None:
+            self.during()
         return [JobResult("index", "ok", "rebuilt"), JobResult("backup", "failed", "x")]
 
 
@@ -286,3 +292,81 @@ def test_the_core_shows_maintenance_and_commits_when_it_stops(
     with TestClient(create_app(core), base_url="http://127.0.0.1:8765"):
         pass  # start-up runs a first tick; shutdown is the session end
     assert git(vault, "log", "-1", "--format=%s").strip() == "GOS: session end"
+
+
+# --- review fixes: a failed kv write, a stop mid-run, the stale warning --------------------
+
+
+def test_a_failed_kv_write_doesnt_repeat_the_run(
+    vault: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m, cur = make(vault, store, Clock(), [3600.0], [False])
+    real = m._set_kv
+
+    def locked(key: str, value: str) -> None:  # a long gos db build holds the DB
+        if key in (scheduler.KV_LAST_RUN, scheduler.KV_LAST_DAY):
+            raise sqlite3.OperationalError("database is locked")
+        real(key, value)
+
+    monkeypatch.setattr(m, "_set_kv", locked)
+    assert m.tick() is not None
+    assert m._kv(scheduler.KV_LAST_DAY) is None
+    assert m.tick() is None and m.tick() is None  # not again every minute
+    assert len(cur.days) == 1
+
+
+def test_a_stop_mid_run_isnt_recorded_and_ends_the_ticks(
+    vault: Path, store: Store
+) -> None:
+    m, cur = make(vault, store, Clock(), [3600.0], [False])
+    cur.during = m.stop  # the core stops while the jobs run
+    assert m.tick() is not None
+    assert m._kv(scheduler.KV_LAST_DAY) is None  # the next start runs the day again
+    assert m.tick() is None and len(cur.days) == 1
+
+
+def test_curator_run_gets_the_stop_check(vault: Path, store: Store) -> None:
+    seen: list[object] = []
+
+    class Recording(FakeCurator):
+        def run(  # type: ignore[override]
+            self, today: dt.date, jobs: object = None, stop: object = None
+        ) -> list[JobResult]:
+            seen.append(stop)
+            return []
+
+    m = scheduler.Maintenance(
+        Recording(vault), store, idle_s=lambda: 3600.0, game=lambda: False
+    )
+    m.tick()
+    [stop] = seen
+    assert callable(stop) and stop() is False
+    m.stop()
+    assert stop() is True
+
+
+def test_session_end_doesnt_wait_for_a_running_job(vault: Path, store: Store) -> None:
+    m, _ = make(vault, store, Clock(), [0.0], [False])
+    write_plan(vault, 4)
+    with m._lock:  # a daily run holds it
+        assert m.session_end(wait_s=0.05) is None
+    assert m.session_end() is not None
+
+
+def test_health_warns_when_maintenance_hasnt_run_for_days(
+    vault: Path, store: Store
+) -> None:
+    clock = Clock()
+    m, _ = make(vault, store, clock, [60.0], [False])
+    m.tick()  # input a minute ago: waits; since = 2026-11-06
+    clock.advance(3 * 86400)
+    m.tick()
+    assert m.health()[0] == "ok"
+    clock.advance(86400)
+    m.tick()
+    status, detail = m.health()
+    assert status == "warn"
+    assert "no run for 4 days" in detail and "does the PC sleep sooner?" in detail
+    m.idle_s = lambda: 3600.0
+    m.tick()  # runs; the fake's backup failed, so it warns for that, not staleness
+    assert "no run for" not in m.health()[1]
