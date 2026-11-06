@@ -53,9 +53,10 @@ contract is [docs/contracts/gregteclink-export-v1.md](../docs/contracts/gregtecl
   or junction at `gregteclink` or `exports` stops the export before anything is written.
 - Files go into `<run_id>.partial/`; `manifest.json` is written last, then the folder is renamed.
 - After the rename, the module keeps the newest 10 complete runs (D98): it deletes older complete runs and every
-  `.partial` folder left by an earlier run, inside its own `exports/` folder only. Each old complete run is renamed to
-  `.partial` before anything in it is deleted, so a delete that fails halfway never leaves a "complete" run with
-  files missing. Runs whose manifest isn't complete are kept.
+  `.partial` folder left by an earlier run, inside its own `exports/` folder only. It also keeps the newest 3 incomplete runs
+  (manifest `"complete": false`) and deletes older ones. Each doomed run is renamed to `.partial` before anything in
+  it is deleted, so a delete that fails halfway never leaves a "complete" run with files missing. Runs with no
+  readable manifest are kept.
 - One deliberate runtime change, with `export=true` only: GT's recipe-owner capture is turned on in preInit (the same
   switch as GT's `NEIRecipeOwner` client option), so each recipe records the mod that added it. NEI in Export then
   shows "added by" lines.
@@ -82,7 +83,7 @@ Never install it into Play with `export=true`.
 1. `prepareHarness` deletes `run/server/harness/` (the world) and `run/server/gregteclink/`, then copies `harness/`
    (`eula.txt`, `server.properties` for a fresh superflat world, and a config with `export=true`) into `run/server/`.
 2. `runServer` starts the dev server with `-Dgregtec.harness=true`. On server start the mod seeds `exports/` with 11
-   old complete runs, an incomplete one and a stale `.partial` (for the pruning check), exports in mode `harness`,
+   old complete runs, 4 incomplete ones and a stale `.partial` (for the pruning check), exports in mode `harness`,
    reads the files back, runs the scripted checks, writes `run/server/gregteclink/harness-result.json`, shuts the
    server down and exits 0 (all checks passed) or 1.
 3. `checkHarness` prints each check and fails the build unless the result says `"pass": true`.

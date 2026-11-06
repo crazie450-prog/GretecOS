@@ -146,15 +146,17 @@ public final class Harness {
     }
 
     /**
-     * Old runs for the pruning check (D98), all older than the harness run: {@link #SEEDED_COMPLETE} complete ones, one
-     * incomplete one and one stale {@code .partial}.
+     * Old runs for the pruning check (D98), all older than the harness run: {@link #SEEDED_COMPLETE} complete ones,
+     * {@code KEEP_INCOMPLETE + 1} incomplete ones and one stale {@code .partial}.
      */
     private static void seedOldRuns(File gameDir) throws IOException {
         PathGuard guard = new PathGuard(gameDir.toPath(), ExportRun.EXPORTS_DIR);
         for (int i = 0; i < SEEDED_COMPLETE; i++) {
             seed(guard, String.format("seed-%02d", i), true, String.format("2000-01-01T00:00:%02dZ", i));
         }
-        seed(guard, "seed-incomplete", false, "1999-01-01T00:00:00Z");
+        for (int i = 0; i <= ExportRun.KEEP_INCOMPLETE; i++) { // one more than are kept
+            seed(guard, String.format("seed-incomplete-%d", i), false, String.format("1999-01-01T00:00:%02dZ", i));
+        }
         seed(guard, "seed-stale.partial", true, "2000-01-02T00:00:00Z");
     }
 
@@ -171,14 +173,14 @@ public final class Harness {
                 .getBytes(StandardCharsets.UTF_8));
     }
 
-    /** After the export: the run and the newest 9 seeded complete runs, plus the incomplete one. */
+    /** After the export: the run, the newest 9 seeded complete runs and the newest 3 incomplete ones. */
     private static void checkPrune(List<JsonObject> checks, ExportRun.Result r) throws IOException {
         Set<String> want = new TreeSet<>();
         want.add(r.runId);
         for (int i = SEEDED_COMPLETE - (ExportRun.KEEP_COMPLETE - 1); i < SEEDED_COMPLETE; i++) {
             want.add(String.format("seed-%02d", i));
         }
-        want.add("seed-incomplete");
+        for (int i = 1; i <= ExportRun.KEEP_INCOMPLETE; i++) want.add(String.format("seed-incomplete-%d", i));
         Set<String> left = new TreeSet<>();
         if (r.dir != null) {
             try (DirectoryStream<Path> s = Files.newDirectoryStream(r.dir.getParent())) {
@@ -189,7 +191,7 @@ public final class Harness {
         }
         check(
             checks,
-            "prune_keeps_newest_" + ExportRun.KEEP_COMPLETE,
+            "prune_keeps_newest_" + ExportRun.KEEP_COMPLETE + "_and_" + ExportRun.KEEP_INCOMPLETE + "_incomplete",
             left.equals(want),
             "exports/ holds " + left + (left.equals(want) ? "" : ", want " + want));
     }

@@ -84,7 +84,7 @@ class ExportRunTest {
         boolean topLinked = link(root.resolve("linked-run"), tmp.resolve("outside-run"))
             && link(root.resolve("linked.partial"), tmp.resolve("outside-run"));
 
-        List<String> deleted = ExportRun.prune(guard, "current", 10);
+        List<String> deleted = ExportRun.prune(guard, "current", 10, 3);
 
         // current and the 9 newest others (run-o .. run-w) stay; the oldest three go, and the link in run-z is
         // deleted without following it.
@@ -129,7 +129,7 @@ class ExportRunTest {
             held.toFile()
                 .setWritable(false));
         try {
-            assertEquals(Arrays.asList(), ExportRun.prune(guard, "current", 1));
+            assertEquals(Arrays.asList(), ExportRun.prune(guard, "current", 1, 3));
             assertTrue(Files.notExists(root.resolve("old")));
             assertTrue(Files.isRegularFile(root.resolve("old.partial/zz-held/file")));
         } finally {
@@ -137,9 +137,33 @@ class ExportRunTest {
                 .toFile()
                 .setWritable(true);
         }
-        assertEquals(Arrays.asList("old.partial"), ExportRun.prune(guard, "current", 1));
+        assertEquals(Arrays.asList("old.partial"), ExportRun.prune(guard, "current", 1, 3));
         assertTrue(Files.notExists(root.resolve("old.partial")));
         assertTrue(Files.isRegularFile(root.resolve("current/manifest.json")));
+    }
+
+    /** D98: the newest 3 incomplete runs stay; older ones go; complete runs are counted separately. */
+    @Test
+    void pruneKeepsTheNewestIncompleteRuns() throws IOException {
+        PathGuard guard = new PathGuard(Files.createDirectories(tmp.resolve("game")), ExportRun.EXPORTS_DIR);
+        Path root = guard.root();
+        for (int i = 0; i < 5; i++) {
+            run(root, "failed-" + (char) ('z' - i), false, String.format("2026-11-%02dT00:00:00Z", i + 1));
+        }
+        run(root, "done", true, "2026-10-01T00:00:00Z"); // older than every failed run, but complete: kept
+        run(root, "current", false, "2026-12-01T00:00:00Z"); // a failed current run counts as one of the 3
+
+        List<String> deleted = ExportRun.prune(guard, "current", 10, 3);
+
+        // current, failed-v and failed-w stay; failed-x, failed-y and failed-z go.
+        assertEquals(new TreeSet<>(Arrays.asList("failed-x", "failed-y", "failed-z")), new TreeSet<>(deleted));
+        Set<String> left = new TreeSet<>();
+        try (DirectoryStream<Path> s = Files.newDirectoryStream(root)) {
+            for (Path p : s) left.add(
+                p.getFileName()
+                    .toString());
+        }
+        assertEquals(new TreeSet<>(Arrays.asList("current", "done", "failed-v", "failed-w")), left);
     }
 
     private static boolean deletes(Path file) {

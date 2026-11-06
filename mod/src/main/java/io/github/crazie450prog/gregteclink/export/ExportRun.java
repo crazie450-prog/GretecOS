@@ -41,6 +41,8 @@ public final class ExportRun {
     private static final long RENAME_BACKOFF_MS = 1000;
     /** Complete runs kept in the exports folder (D98); each is about 50 MB. */
     public static final int KEEP_COMPLETE = 10;
+    /** Incomplete runs (manifest "complete": false) kept for debugging (D98). */
+    public static final int KEEP_INCOMPLETE = 3;
 
     /** What the caller (one-click, harness) needs to know afterwards. */
     public static final class Result {
@@ -121,7 +123,7 @@ public final class ExportRun {
                 t);
             complete = false;
         }
-        if (attempts > 0) prune(guard, runId, KEEP_COMPLETE);
+        if (attempts > 0) prune(guard, runId, KEEP_COMPLETE, KEEP_INCOMPLETE);
         GregtecLink.LOG.info(
             "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} -> {}",
             runId,
@@ -135,15 +137,17 @@ public final class ExportRun {
     }
 
     /**
-     * Deletes the complete runs (manifest {@code "complete": true}) beyond the newest {@code keep}, by manifest
+     * Deletes the complete runs (manifest {@code "complete": true}) beyond the newest {@code keep}, the incomplete
+     * runs (manifest {@code "complete": false}) beyond the newest {@code keepIncomplete}, each ordered by manifest
      * {@code created_utc} and then name, and every {@code .partial} folder. Only folders directly in the guard's root,
-     * and never {@code current}, which counts as one of the kept runs when it is complete. Runs whose manifest is
-     * missing or not complete are kept. A complete run is renamed to {@code <name>.partial} before anything in it is
-     * deleted. A link or junction is deleted itself, never followed. Never throws: what it can't delete stays (a run
+     * and never {@code current}, which counts as one of the kept runs of its kind. Runs whose manifest is missing or
+     * unreadable are kept. A run is renamed to {@code <name>.partial} before anything in it is deleted. A link or
+     * junction is deleted itself, never followed. Never throws: what it can't delete stays (a run
      * that can't be renamed stays whole) and is logged. Returns the names it deleted.
      */
-    static List<String> prune(PathGuard guard, String current, int keep) {
+    static List<String> prune(PathGuard guard, String current, int keep, int keepIncomplete) {
         List<String[]> complete = new ArrayList<>(); // {created_utc, name}
+        List<String[]> incomplete = new ArrayList<>();
         List<String> doomed = new ArrayList<>();
         try (DirectoryStream<Path> entries = Files.newDirectoryStream(guard.root())) {
             for (Path p : entries) {
@@ -154,24 +158,16 @@ public final class ExportRun {
                     if (!name.equals(current + ".partial")) doomed.add(name);
                     continue;
                 }
-                String created = completeCreated(p.resolve("manifest.json"));
-                if (created != null) complete.add(new String[] { created, name });
+                String[] state = manifestState(p.resolve("manifest.json")); // {complete, created_utc} or null
+                if (state != null)
+                    (state[0].equals("true") ? complete : incomplete).add(new String[] { state[1], name });
             }
         } catch (Throwable t) {
             GregtecLink.LOG.warn("export: old runs not pruned: {}", t.toString());
             return new ArrayList<>();
         }
-        Collections.sort(complete, new Comparator<String[]>() {
-
-            @Override
-            public int compare(String[] a, String[] b) {
-                int c = b[0].compareTo(a[0]); // newest first
-                return c != 0 ? c : b[1].compareTo(a[1]);
-            }
-        });
-        for (int i = keep; i < complete.size(); i++) {
-            if (!complete.get(i)[1].equals(current)) doomed.add(complete.get(i)[1]);
-        }
+        doomed.addAll(beyondNewest(complete, keep, current));
+        doomed.addAll(beyondNewest(incomplete, keepIncomplete, current));
         List<String> deleted = new ArrayList<>();
         for (String name : doomed) { // .partial folders come first, so a run's .partial name is free by its turn
             try {
@@ -192,8 +188,25 @@ public final class ExportRun {
         return deleted;
     }
 
-    /** The manifest's created_utc ("" if it has none) when it says "complete": true; else null. */
-    private static String completeCreated(Path manifest) {
+    /** The names of {@code runs} ({created_utc, name}) past the newest {@code keep}, never {@code current}. */
+    private static List<String> beyondNewest(List<String[]> runs, int keep, String current) {
+        Collections.sort(runs, new Comparator<String[]>() {
+
+            @Override
+            public int compare(String[] a, String[] b) {
+                int c = b[0].compareTo(a[0]); // newest first
+                return c != 0 ? c : b[1].compareTo(a[1]);
+            }
+        });
+        List<String> out = new ArrayList<>();
+        for (int i = keep; i < runs.size(); i++) {
+            if (!runs.get(i)[1].equals(current)) out.add(runs.get(i)[1]);
+        }
+        return out;
+    }
+
+    /** {"true"|"false", created_utc or ""} from a readable manifest with a boolean "complete"; else null. */
+    private static String[] manifestState(Path manifest) {
         try {
             if (!Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS)) return null;
             JsonObject m = new JsonParser().parse(new String(Files.readAllBytes(manifest), StandardCharsets.UTF_8))
@@ -201,10 +214,11 @@ public final class ExportRun {
             JsonElement complete = m.get("complete");
             if (complete == null || !complete.isJsonPrimitive()
                 || !complete.getAsJsonPrimitive()
-                    .isBoolean()
-                || !complete.getAsBoolean()) return null;
+                    .isBoolean())
+                return null;
             JsonElement created = m.get("created_utc");
-            return created != null && created.isJsonPrimitive() ? created.getAsString() : "";
+            String when = created != null && created.isJsonPrimitive() ? created.getAsString() : "";
+            return new String[] { String.valueOf(complete.getAsBoolean()), when };
         } catch (Throwable t) {
             return null;
         }
