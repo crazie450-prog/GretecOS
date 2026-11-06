@@ -7,6 +7,18 @@
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync                        |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | core, supervisor (WO-2.1)   |
+| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch (WO-2.1)         |
+| [core] host              | 127.0.0.1 (the only value allowed)       | core (WO-2.1, plan 4.6)     |
+| [core] port              | 8765                                     | core, clients               |
+| [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
+| [core] dashboard_host    | gos.localhost (pairing and the dashboard)| core (D117)                 |
+| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
+| [startup] core_at_login  | true                                     | supervisor --login (D77)    |
+| [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
+| [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
+| [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
+| [launch] home            | gos_home                                 | gos launch (D115)           |
 | [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | fingerprint, hooks (WO-1.4) |
 | [paths] prism_root       | C:/Games/PrismLauncher                   | export run (WO-1.4)         |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
@@ -16,6 +28,16 @@
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
 accident (Clayton, 2026-11-03). Each pattern is posix, relative to the game folder and starts in a mirrored
 folder (``config/lab-only.cfg``); one that could never match is an error, since sync would then
+delete the file it was meant to keep. ``allowed_hosts`` likewise adds to its default (each of the
+three names with ``:<port>``). Every other key in the Appendix C skeleton is ignored until its WO
+reads it.
+
+**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``) are read only by the core,
+the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
+``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
+is such a value): the key keeps its default and the problem goes into
+``Config.service_errors``. :func:`service_problems` adds one more, gos-dev using Clayton's ports or
+dashboard name (D115); the core and the supervisor refuse to start while there is any.
 delete the file it was meant to keep. ``[fingerprint] configs`` likewise adds to its default; each
 pattern is matched as an exclude pattern is, and must start in ``config/``. Every other key in the
 Appendix C skeleton is ignored until its WO reads it.
@@ -24,12 +46,16 @@ Appendix C skeleton is ignored until its WO reads it.
 from __future__ import annotations
 
 import fnmatch
+import getpass
 import os
+import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 MIRRORED = ("mods", "config", "scripts")  # the game folder's folders that sync mirrors
 
@@ -62,6 +88,28 @@ def default_home() -> Path:
     return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
 
 
+# The core binds to loopback only (plan 4.6). The phone reaches it through Tailscale Serve, which
+# proxies from this PC, so no other address is ever needed (the LAN move in 4.2 is a later WO).
+LOOPBACK = "127.0.0.1"
+# Browsers resolve every *.localhost name to loopback. Paired dashboards use this name only, never
+# bare 127.0.0.1 or localhost: cookies ignore ports, so a cookie for localhost would also go to
+# every other local web server, a dev server of gos-dev's included (D117).
+DASHBOARD_HOST = "gos.localhost"
+# An allowed_hosts entry: a lower-case DNS name or IPv4 address, optionally with :port.
+_HOST_ENTRY = re.compile(
+    r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?$"
+)
+_DASHBOARD_ENTRY = re.compile(r"^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+localhost$")
+# Claude Code's account (setup_gos_dev.ps1 -DevUser). Its own core and supervisor must not use
+# Clayton's ports or dashboard name (D115): see service_problems.
+DEV_ACCOUNT = "gos-dev"
+
+
+def default_home() -> Path:
+    """GOS_HOME: ``$GOS_HOME``, else ``~/GregtecOS`` (plan 4.3)."""
+    return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
+
+
 @dataclass(frozen=True)
 class Config:
     gos_app: Path = Path("C:/GregtecOS-app")
@@ -74,6 +122,18 @@ class Config:
     )
     gos_home: Path = field(default_factory=default_home)
     prism_root: Path = Path("C:/Games/PrismLauncher")
+    core_host: str = LOOPBACK
+    core_port: int = 8765
+    supervisor_port: int = 8766
+    dashboard_host: str = DASHBOARD_HOST
+    extra_allowed_hosts: tuple[str, ...] = ()
+    core_at_login: bool = True
+    monthly_included_usd: float = 100.0
+    credit_alerts_pct: tuple[int, ...] = (80, 100)
+    cycle_day: int = 1
+    launch_home: Path | None = None
+    # Problems with the service keys; the core and the supervisor refuse to start while any.
+    service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
     export_on_quit: str = "ask"
 
@@ -81,6 +141,30 @@ class Config:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
         name: str = getattr(self, role)
         return self.prism_instances / name
+
+    @property
+    def allowed_hosts(self) -> tuple[str, ...]:
+        """Host header values (and Origin host:port) the core accepts (plan 4.6, QA:A8)."""
+        port = self.core_port
+        base = (
+            f"{LOOPBACK}:{port}",
+            f"localhost:{port}",
+            f"{self.dashboard_host}:{port}",
+        )
+        return tuple(dict.fromkeys([*base, *self.extra_allowed_hosts]))
+
+    @property
+    def data_dir(self) -> Path:
+        return self.gos_home / "data"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.gos_home / "logs"
+
+    @property
+    def run_dir(self) -> Path:
+        """Run files with live tokens. Clayton only: gos-dev reads data, vault and logs (D82)."""
+        return self.gos_home / "run"
 
 
 class ConfigError(ValueError):
@@ -91,10 +175,64 @@ def default_path() -> Path:
     return default_home() / "config" / "gos.toml"
 
 
+def running_as_dev() -> bool:
+    """Whether this process runs as gos-dev (Claude Code's account, D75)."""
+    try:
+        return getpass.getuser().lower() == DEV_ACCOUNT
+    except (KeyError, OSError):  # no user name at all: not gos-dev
+        return False
+
+
+def service_problems(cfg: Config) -> list[str]:
+    """Why the core or the supervisor must not start with ``cfg``; empty if they may.
+
+    Besides ``cfg.service_errors``: as gos-dev, Clayton's default ports and dashboard name. A
+    gos-dev core on 8765 while Clayton's GOS is down (a deploy, ``gos stop --all``) would keep his
+    supervisor from starting and receive his clients' tokens, and his browser sends his dashboard
+    cookie to any port of the dashboard name (D115, D117).
+    """
+    problems = list(cfg.service_errors)
+    if running_as_dev():
+        taken = sorted(
+            {cfg.core_port, cfg.supervisor_port}
+            & {Config.core_port, Config.supervisor_port}
+        )
+        if taken:
+            problems.append(
+                f"gos.toml: as {DEV_ACCOUNT}, [core] port and supervisor_port must not be "
+                f"Clayton's {Config.core_port} and {Config.supervisor_port} (now {taken}); "
+                "set e.g. port = 8775 and supervisor_port = 8776 in gos-dev's own gos.toml"
+            )
+        if cfg.dashboard_host == DASHBOARD_HOST:
+            problems.append(
+                f"gos.toml: as {DEV_ACCOUNT}, [core] dashboard_host must not be Clayton's "
+                f'{DASHBOARD_HOST}; set e.g. dashboard_host = "gos-dev.localhost"'
+            )
+    return problems
+
+
 def _string(table: Mapping[str, Any], key: str, default: str, where: str) -> str:
     value = table.get(key, default)
     if not isinstance(value, str) or not value:
         raise ConfigError(f"gos.toml: {where} {key} must be a non-empty string")
+    return value
+
+
+def _int(
+    table: Mapping[str, Any], key: str, default: int, where: str, lo: int, hi: int
+) -> int:
+    value = table.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ConfigError(
+            f"gos.toml: {where} {key} must be a whole number from {lo} to {hi}"
+        )
+    return value
+
+
+def _bool(table: Mapping[str, Any], key: str, default: bool, where: str) -> bool:
+    value = table.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"gos.toml: {where} {key} must be true or false")
     return value
 
 
@@ -120,7 +258,8 @@ def load(path: Path | None = None) -> Config:
     """Read ``path`` (default: :func:`default_path`; a missing default file means defaults).
 
     A file that doesn't parse raises ``tomllib.TOMLDecodeError``, a known key of the wrong type
-    or a bad exclude pattern :class:`ConfigError`; both are ``ValueError``.
+    or a bad exclude pattern :class:`ConfigError`; both are ``ValueError``. A bad service key
+    doesn't raise: it goes into ``service_errors`` (see the module docstring).
     """
     if path is None:
         path = default_path()
@@ -151,6 +290,7 @@ def load(path: Path | None = None) -> Config:
                     "config/ or scripts/ (e.g. 'config/lab-only.cfg')"
                 )
         exclude[role] = tuple(patterns)
+    service = _service_keys(data, defaults)
     configs = _table(data, "fingerprint", "").get("configs", [])
     if not isinstance(configs, list) or not all(
         isinstance(p, str) and p for p in configs
@@ -188,8 +328,142 @@ def load(path: Path | None = None) -> Config:
         prism_root=Path(
             _string(paths, "prism_root", str(defaults.prism_root), "[paths]")
         ),
+        **service,
         fingerprint_configs=tuple(
             dict.fromkeys([*DEFAULT_FINGERPRINT_CONFIGS, *configs])
         ),
         export_on_quit=on_quit,
     )
+
+
+def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
+    """The service keys as Config fields. A bad one keeps its default; its problem is recorded."""
+    problems: list[str] = []
+
+    def soft(parse: Callable[[], T], default: T) -> T:
+        try:
+            return parse()
+        except ConfigError as exc:
+            problems.append(str(exc))
+            return default
+
+    def table(key: str) -> Mapping[str, Any]:
+        return soft(lambda: _table(data, key, ""), {})
+
+    core, startup, budget, launch = (
+        table(k) for k in ("core", "startup", "budget", "launch")
+    )
+    host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
+    port = soft(
+        lambda: _int(core, "port", defaults.core_port, "[core]", 1024, 65535),
+        defaults.core_port,
+    )
+    supervisor_port = soft(
+        lambda: _int(
+            core, "supervisor_port", defaults.supervisor_port, "[core]", 1024, 65535
+        ),
+        defaults.supervisor_port,
+    )
+    if supervisor_port == port:
+        problems.append("gos.toml: [core] supervisor_port must differ from port")
+    dashboard = soft(
+        lambda: _dashboard_host(core, defaults.dashboard_host), defaults.dashboard_host
+    )
+    hosts = soft(lambda: _allowed_hosts(core), ())
+    monthly = soft(
+        lambda: _monthly(budget, defaults.monthly_included_usd),
+        defaults.monthly_included_usd,
+    )
+    alerts = soft(
+        lambda: _alerts(budget, defaults.credit_alerts_pct), defaults.credit_alerts_pct
+    )
+    launch_home = soft(lambda: _launch_home(launch), None)
+    return {
+        "core_host": host,
+        "core_port": port,
+        "supervisor_port": supervisor_port,
+        "dashboard_host": dashboard,
+        "extra_allowed_hosts": hosts,
+        "core_at_login": soft(
+            lambda: _bool(
+                startup, "core_at_login", defaults.core_at_login, "[startup]"
+            ),
+            defaults.core_at_login,
+        ),
+        "monthly_included_usd": monthly,
+        "credit_alerts_pct": alerts,
+        "cycle_day": soft(
+            lambda: _int(budget, "cycle_day", defaults.cycle_day, "[budget]", 1, 28),
+            defaults.cycle_day,
+        ),
+        "launch_home": launch_home,
+        "service_errors": tuple(problems),
+    }
+
+
+def _core_host(core: Mapping[str, Any], default: str) -> str:
+    host = _string(core, "host", default, "[core]")
+    if host != LOOPBACK:
+        raise ConfigError(
+            f"gos.toml: [core] host must be {LOOPBACK}: the core listens on loopback only "
+            "(plan 4.6); the phone reaches it through Tailscale Serve"
+        )
+    return host
+
+
+def _dashboard_host(core: Mapping[str, Any], default: str) -> str:
+    name = _string(core, "dashboard_host", default, "[core]")
+    if not _DASHBOARD_ENTRY.match(name):
+        raise ConfigError(
+            "gos.toml: [core] dashboard_host must be a lower-case name ending in .localhost "
+            f"(browsers resolve those to loopback), e.g. {DASHBOARD_HOST!r}"
+        )
+    return name
+
+
+def _allowed_hosts(core: Mapping[str, Any]) -> tuple[str, ...]:
+    hosts = core.get("allowed_hosts", [])
+    if not isinstance(hosts, list) or not all(
+        isinstance(h, str) and _HOST_ENTRY.match(h) for h in hosts
+    ):
+        raise ConfigError(
+            "gos.toml: [core] allowed_hosts must be a list of lower-case host names or "
+            "host:port values, e.g. 'gaming-pc.tail1234.ts.net' (no scheme, path or wildcard)"
+        )
+    return tuple(dict.fromkeys(hosts))
+
+
+def _monthly(budget: Mapping[str, Any], default: float) -> float:
+    monthly = budget.get("monthly_included_usd", default)
+    if (
+        isinstance(monthly, bool)
+        or not isinstance(monthly, int | float)
+        or monthly <= 0
+    ):
+        raise ConfigError(
+            "gos.toml: [budget] monthly_included_usd must be a number above 0"
+        )
+    return float(monthly)
+
+
+def _alerts(budget: Mapping[str, Any], default: tuple[int, ...]) -> tuple[int, ...]:
+    alerts = budget.get("credit_alerts_pct", list(default))
+    if (
+        not isinstance(alerts, list)
+        or not alerts
+        or not all(
+            isinstance(a, int) and not isinstance(a, bool) and 0 < a <= 1000
+            for a in alerts
+        )
+    ):
+        raise ConfigError(
+            "gos.toml: [budget] credit_alerts_pct must be a list of whole percentages, e.g. [80, 100]"
+        )
+    return tuple(sorted(set(alerts)))
+
+
+def _launch_home(launch: Mapping[str, Any]) -> Path | None:
+    home = launch.get("home")
+    if home is not None and (not isinstance(home, str) or not home):
+        raise ConfigError("gos.toml: [launch] home must be a non-empty string")
+    return Path(home) if home else None

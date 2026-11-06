@@ -10,8 +10,8 @@
 The key comes from the OS keyring (``keys``) and goes only to this process: the API client's
 ``api_key`` and the SDK subprocess's environment. It is never put in the user or machine
 environment, where interactive Claude Code would offer to use it. Token use and cost estimates
-are printed; the costs come from ``PRICES``, which are API prices, not game numbers. Nothing is
-retried: a smoke test should show the first error as it is.
+are printed; the costs come from ``prices.PRICES``, which are API prices, not game numbers.
+Nothing is retried: a smoke test should show the first error as it is.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from claude_agent_sdk import (
 )
 
 from gregtec.llm import keys
+from gregtec.llm.prices import PRICES_CHECKED, Usage, estimate_cost
 
 if TYPE_CHECKING:
     import httpx2
@@ -58,64 +59,6 @@ OUTRANKING_ENV = (
 )
 
 QueryFn = Callable[..., AsyncIterator[Any]]
-
-
-@dataclass(frozen=True)
-class Price:
-    """USD per million tokens. ``cache_write`` is the 5-minute rate."""
-
-    input: float
-    output: float
-    cache_write: float
-    cache_read: float
-
-
-# platform.claude.com/docs/en/about-claude/pricing, checked 2026-11-03 (plan section 4.4, QA:A12).
-PRICES_CHECKED = "2026-11-03"
-PRICES = {
-    FAST_MODEL: Price(input=0.10, output=0.50, cache_write=0.125, cache_read=0.01),
-    DEEP_MODEL: Price(input=2.00, output=10.00, cache_write=2.50, cache_read=0.10),
-}
-# Haiku 5.5 bills a request whose prompt (cache reads and writes included) is over 100k
-# tokens at 5x, for the whole request.
-HAIKU_LONG_PROMPT = 100_000
-HAIKU_LONG = Price(input=0.50, output=2.50, cache_write=0.625, cache_read=0.05)
-
-
-@dataclass
-class Usage:
-    input: int = 0
-    output: int = 0
-    cache_write: int = 0
-    cache_read: int = 0
-
-    def add(self, other: Usage) -> None:
-        self.input += other.input
-        self.output += other.output
-        self.cache_write += other.cache_write
-        self.cache_read += other.cache_read
-
-    def __str__(self) -> str:
-        cache = (
-            f", cache write {self.cache_write} / read {self.cache_read}"
-            if self.cache_write or self.cache_read
-            else ""
-        )
-        return f"{self.input} in / {self.output} out tokens{cache}"
-
-
-def estimate_cost(model: str, usage: Usage) -> float:
-    """Estimated USD for one request's usage. Haiku 5.5 is priced per request by prompt size."""
-    price = PRICES[model]
-    prompt = usage.input + usage.cache_write + usage.cache_read
-    if model == FAST_MODEL and prompt > HAIKU_LONG_PROMPT:
-        price = HAIKU_LONG
-    return (
-        usage.input * price.input
-        + usage.output * price.output
-        + usage.cache_write * price.cache_write
-        + usage.cache_read * price.cache_read
-    ) / 1_000_000
 
 
 # The usage tier's monthly spend cap (a 429 with no retry-after; retries keep failing).
