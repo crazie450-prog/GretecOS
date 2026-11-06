@@ -82,18 +82,21 @@ def safe_open(path: StrPath) -> Iterator[BinaryIO]:
 
 
 def read_bytes(
-    path: StrPath, validate: Callable[[bytes], object] | None = None
+    path: StrPath,
+    validate: Callable[[bytes], object] | None = None,
+    limit: int | None = None,
 ) -> bytes:
     """Read a whole file with :func:`safe_open`, retrying up to 3 times with backoff.
 
     ``validate`` may raise ``ValueError`` (a partial or corrupt read); that is retried too.
-    A missing file is not retried.
+    A missing file is not retried. ``limit`` reads at most that many bytes, so a file that is
+    far bigger than expected can't fill memory.
     """
     error: Exception | None = None
     for attempt in range(RETRIES):
         try:
             with safe_open(path) as f:
-                data = f.read()
+                data = f.read() if limit is None else f.read(limit)
             if validate is not None:
                 validate(data)
             return data

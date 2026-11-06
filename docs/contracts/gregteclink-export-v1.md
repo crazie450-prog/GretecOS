@@ -21,8 +21,9 @@ only what needs the live game: registry names, ore names, display names and GT's
   outside tests (dev-environment data is never game data).
 - The mod writes inside its own instance only: the export root must be exactly the game dir's real path plus
   `gregteclink/exports`, so a link or junction at `gregteclink` or `exports` stops the export before anything is
-  written. WO-1.2/1.4's collection script copies a run into `GOS_HOME\data\exports\<run_id>\` with `safe_open`,
-  copy-then-parse and retry ×3. Python writes nothing to Export.
+  written. `gos export collect` (WO-1.2, `core/gregtec/ingest/collect.py`, D101) copies the newest complete run into
+  `GOS_HOME\data\exports\<run_id>\` with `safe_open`, verifying every file before it is written, and keeps the newest
+  `[export] keep_collected` there (gos.toml, default 5, D102). Python writes nothing to Export.
 - **Pruning** (D98): after a run's rename succeeds, the mod keeps the newest 10 complete runs (manifest
   `"complete": true`, newest by `created_utc`, then by name), the new run among them when it is complete. It deletes
   older complete runs and every `.partial` folder an earlier run left, including one whose rename failed. It also keeps the newest 3 incomplete runs (manifest `"complete": false`) and deletes older
@@ -230,8 +231,15 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   no such line. `nei_wait` is the time from entering the world until the dump started (or the wait timed out);
   `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
 
-## Python readers (WO-1.3; named here only)
+## Python readers (WO-1.3)
 
 - `core/gregtec/ingest/gtdump.py`: `gt_recipe_maps.json`, `gt_recipes.jsonl`, `items.jsonl`, `fluids.jsonl`.
 - `core/gregtec/ingest/machines.py`: `gt_machines.jsonl`.
 - `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
+- `core/gregtec/ingest/normalize.py` (keys, NBT hash, identity and content hashes, D104) and
+  `core/gregtec/ingest/merge.py` (NEI into GT, the collision test, D105, D106); `gos db build`
+  (`core/gregtec/db/build.py`, D107) loads a collected run into `GOS_HOME\data\gos.sqlite`.
+- NEI picks the stack it displays for an oredict slot anew on each run, and some handlers show a random example, so
+  no key or content hash uses a displayed stack (D104), and the handlers whose lines aren't recipes (AE2 facades,
+  NEI's fuel list, the GT ore plugin's vein pages, Tinkers' tool materials) are left out of the DB (D105). Their
+  files stay in the collected run.

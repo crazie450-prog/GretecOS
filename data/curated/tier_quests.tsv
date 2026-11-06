@@ -1,0 +1,28 @@
+# Tier detection (D64, D114): the key quests that show a progression stage is reached. Read by
+# gregtec.ingest.quests.read_tier_keys. The detected stage is the highest one with a complete key
+# quest (any of its rows); "stone" has none, so a new world starts there. Stages and GT voltage
+# tiers: stone 0, steam 0, LV 1, MV 2 ... UMV 12, UXV 13.
+# Quest ids are BetterQuesting's compact ids (q:<id>); the names are for review only. Ids, names
+# and the tasks quoted in the notes are from GTNH 2.9.0's DefaultQuests (pack_version 2188), (c)
+# the GT: New Horizons team, licensed CC BY-NC-SA 4.0, read 2026-11-06. Licence of this file: it
+# quotes that book (15 quest names, task summaries), so this file is shared under CC BY-NC-SA
+# 4.0 (https://creativecommons.org/licenses/by-nc-sa/4.0/), whatever licence the repo takes.
+# Changes: a selection of quests, with their tasks summarised for tier detection.
+# From MV up, each key quest is the tier chapter's own "Tier N (X)" quest, which asks for that
+# tier's machine hull (gregtech:gt.blockmachines, meta = GT's mID).
+stage	quest	name	note
+steam	AAAAAAAAAAAAAAAAAAAALA	Welcome to Tier 0.5, Steam!	retrieval of gt.blockmachines@100 (Small Coal Boiler); opens Tier 0.5 - Steam
+LV	AAAAAAAAAAAAAAAAAAAARg	Steam-a-licious!	crafting one of gt.blockmachines@1120, @1115, @837, @1110 (Basic Steam Turbine, Gas Turbine, Semifluid or Combustion Generator: the first LV power); its text: the last step to Tier 1
+LV	AAAAAAAAAAAAAAAAAAAAWA	Welcome to Tier 1, LV	checkbox after Steam-a-licious!; opens Tier 1 - LV
+MV	AAAAAAAAAAAAAAAAAAAEfA	Tier 2 (MV)	retrieval of gt.blockmachines@12 (MV machine hull)
+HV	AAAAAAAAAAAAAAAAAAAAoA	Tier 3 (HV)	retrieval of gt.blockmachines@13 (HV machine hull)
+EV	AAAAAAAAAAAAAAAAAAAAsA	Tier 4 (EV)	retrieval of gt.blockmachines@14 (EV machine hull)
+IV	AAAAAAAAAAAAAAAAAAAA1Q	Tier 5 (IV)	retrieval of gt.blockmachines@15 (IV machine hull)
+LuV	AAAAAAAAAAAAAAAAAAAF1Q	Tier 6 (LuV)	retrieval of gt.blockmachines@16 (LuV machine hull)
+ZPM	AAAAAAAAAAAAAAAAAAAKMg	Tier 7 (ZPM)	retrieval of gt.blockmachines@17 (ZPM machine hull)
+UV	AAAAAAAAAAAAAAAAAAAKNQ	Tier 8 (UV)	retrieval of gt.blockmachines@18 (UV machine hull)
+UHV	AAAAAAAAAAAAAAAAAAAKOA	Tier 9 (UHV)	retrieval of gt.blockmachines@19 (UHV machine hull)
+UEV	k9PA3buhTvK1EJpPfA8ZAg	Tier 10 (UEV)	retrieval of gt.blockmachines@11230 (UEV machine hull)
+UIV	u-1Y-eQ-TLyw-WGi5EEnVA	Tier 11 (UIV)	retrieval of gt.blockmachines@11231 (UIV machine hull)
+UMV	jlXvqqgIQ_Crha2tW0gEQg	Tier 12 (UMV)	retrieval of gt.blockmachines@11232 (UMV machine hull)
+UXV	7wI7VuLKRe6lqAJpuYKKJg	Tier 13 (UXV)	retrieval of gt.blockmachines@11233 (UXV machine hull); in Endgame Goals

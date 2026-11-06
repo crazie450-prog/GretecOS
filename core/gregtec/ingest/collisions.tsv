@@ -1,0 +1,37 @@
+# Allow-listed identity collisions (plan section 5.2 step 3, D106; curated in the repo).
+# Each row is a group of different recipes, in one map, whose identity hashes start with the
+# same 12 hex digits: they share a citation key r:<map>/<sig12>. A group listed here is
+# accepted as genuine. content12 holds the first 12 hex digits of each recipe's content hash,
+# comma-separated: the first recipe gets the key r:<map>/<sig12>-1, the second -2, and so on.
+# A new row lists them in content-hash order (plan section 5.2); after that the order never
+# changes, so a citation keeps its recipe. If one recipe of a group is rebalanced (a new
+# content hash, the others as listed), it keeps the suffix that is left and the build report
+# asks for its new content12 here. A group that isn't listed, has another size, or has two or
+# more recipes no content12 matches fails `gos db build`, which writes a curation task with
+# ready-made rows to GOS_HOME/data/curation/collisions-<run>.tsv.
+# Check each new group in NEI before adding it, and say why it is genuine.
+# The rows below came from the dev-runtime harness run of 2026-11-06 (GT 5.09.54.265 and its
+# dependencies); the first full-pack run will show which still apply (stale ones are reported).
+map	sig12	content12	why
+gt.recipe.arcfurnace	a8739d091427	6c677e126ef4,73d775075a1a	two arc furnace recycling recipes for one Werkstoff block: 1920 EU/t for 20 ticks and 30 EU/t for 1102 ticks
+gt.recipe.canner	ec02bd9e078c	8bc9550faa23,f293b5f70566	the bromine cell canning recipe registered twice, at 4 and at 16 ticks
+gt.recipe.extruder	f17fa900f0eb	0613ee40ae44,ac4871496f64	two extruder recipes that keep only the extruder shape (their material is missing in the dev runtime), at 128 and at 64 ticks
+gt.recipe.large_hadron_collider	67dee7c662d9	1382b4697eda,2c8be8db96bd	one collider casing input, two particle lists in large_hadron_collider_metadata
+gt.recipe.packager	03dbc435eb60	3a9b60638b7f,c7c673ba48d0	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	0a7d7df5b50d	513626c4ab09,caba6e59136c	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	27f3d8a79fcc	ba6ba1d0f209,ea6bc1f1dcf5	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	4f12a26db8f7	0ccdc5479f23,745fb50865fc	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	516ba6bff0fe	0e5f4e591c5b,ae3e19ddcc1e	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	552fdbdc0e43	a392c8cc0679,f367e35a07a0	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	67b7905a9465	21644ad64905,5c6b13d060d3	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	6b66b24a590b	011fa25b665b,d40b8d864f8b	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	78eaa926c684	0c5426d901ad,c73db7a6f159	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	7fd1e97530f4	3817c9432cc5,ad9e7e6a7335	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	820671e3e3ce	30f308ecfbbf,c03b66ef1688	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	9054ca176047	0b9204e39bfd,fdda0b85beac	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	a482f4e863c7	8d39c440eaa8,cd17e806c072	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	b992a7766a3b	72e8e179b4c4,abc7274d8dc9	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	bf30fde30ecc	14680dca0b7e,fcd7401d3a26	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	c3194eb15a25	64c9d0ba95ea,eb6e83ca6a35	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	ea144dba0d9b	85e63a6b7fec,fa8a779c38b7	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	fcaaccccf1f9	8f32ba0171a1,940beb8e2a1d	the same dust packing or unpacking registered twice, at 100 and at 20 ticks

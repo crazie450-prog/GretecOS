@@ -3,12 +3,15 @@
 | key                      | default                                  | read by                     |
 |--------------------------|------------------------------------------|-----------------------------|
 | [paths] gos_app          | C:/GregtecOS-app                         | deploy (WO-0.8), sync (D98) |
-| [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3)               |
-| [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync                        |
+| [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3), collect      |
+| [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync, collect               |
+| [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
-| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | core, supervisor (WO-2.1)   |
-| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch (WO-2.1)         |
+| [export] keep_collected  | 5 (D102)                                 | export collect              |
+| [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | WO-1.2, WO-1.4, WO-2.1      |
+| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch, export run      |
 | [core] host              | 127.0.0.1 (the only value allowed)       | core (WO-2.1, plan 4.6)     |
 | [core] port              | 8765                                     | core, clients               |
 | [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
@@ -19,8 +22,6 @@
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [launch] home            | gos_home                                 | gos launch (D115)           |
-| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | fingerprint, hooks (WO-1.4) |
-| [paths] prism_root       | C:/Games/PrismLauncher                   | export run (WO-1.4)         |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 
@@ -105,11 +106,6 @@ _DASHBOARD_ENTRY = re.compile(r"^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+localhost$")
 DEV_ACCOUNT = "gos-dev"
 
 
-def default_home() -> Path:
-    """GOS_HOME: ``$GOS_HOME``, else ``~/GregtecOS`` (plan 4.3)."""
-    return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
-
-
 @dataclass(frozen=True)
 class Config:
     gos_app: Path = Path("C:/GregtecOS-app")
@@ -117,6 +113,7 @@ class Config:
     play: str = "GTNH-Play"
     export: str = "GTNH-Export"
     lab: str = "GTNH-Lab"
+    world: str | None = None  # Play's world: its folder name in saves/ (WO-1.5)
     sync_exclude: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(DEFAULT_SYNC_EXCLUDE)
     )
@@ -136,6 +133,8 @@ class Config:
     service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
     export_on_quit: str = "ask"
+    keep_collected: int = 5  # collected export runs kept in GOS_HOME (D102)
+    keep_runs: int = 2  # export runs kept in gos.sqlite (D107)
 
     def instance(self, role: str) -> Path:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
@@ -315,6 +314,14 @@ def load(path: Path | None = None) -> Config:
         raise ConfigError(
             f"gos.toml: [policy] export_on_quit must be one of {', '.join(EXPORT_ON_QUIT)}"
         )
+    keep = _table(data, "export", "").get("keep_collected", defaults.keep_collected)
+    if type(keep) is not int or keep < 1:
+        raise ConfigError(
+            "gos.toml: [export] keep_collected must be a whole number >= 1"
+        )
+    keep_runs = _table(data, "db", "").get("keep_runs", defaults.keep_runs)
+    if type(keep_runs) is not int or keep_runs < 1:
+        raise ConfigError("gos.toml: [db] keep_runs must be a whole number >= 1")
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
         prism_instances=Path(
@@ -323,6 +330,7 @@ def load(path: Path | None = None) -> Config:
         play=_string(paths, "play", defaults.play, "[paths]"),
         export=_string(paths, "export", defaults.export, "[paths]"),
         lab=_string(paths, "lab", defaults.lab, "[paths]"),
+        world=_string(paths, "world", "", "[paths]") if "world" in paths else None,
         sync_exclude=exclude,
         gos_home=Path(_string(paths, "gos_home", str(defaults.gos_home), "[paths]")),
         prism_root=Path(
@@ -333,6 +341,8 @@ def load(path: Path | None = None) -> Config:
             dict.fromkeys([*DEFAULT_FINGERPRINT_CONFIGS, *configs])
         ),
         export_on_quit=on_quit,
+        keep_collected=keep,
+        keep_runs=keep_runs,
     )
 
 

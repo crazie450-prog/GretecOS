@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import io
 import os
 import sys
 import time
@@ -17,10 +18,12 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import config, control, doctor, servicecli
-from gregtec import config, doctor, locks, playhooks
+from gregtec import config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
+from gregtec.db import build as recipe_db
+from gregtec.db import quests as quest_db
 from gregtec.db import structures as structure_db
+from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
@@ -95,8 +98,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     playhooks.add_hook_arguments(hook)
     hook.add_argument("--config", type=Path, default=None, help=config_help)
 
-    export = commands.add_parser("export", help="export runs (WO-1.4)")
+    export = commands.add_parser(
+        "export", help="GregtecLink export runs (WO-1.2, WO-1.4)"
+    )
     export_cmds = export.add_subparsers(dest="export_command", required=True)
+    collect = export_cmds.add_parser(
+        "collect",
+        help="copy GTNH-Export's newest complete export run into GOS_HOME",
+        description=(
+            "Read-only on Export: finds the newest complete run in GTNH-Export's "
+            "gregteclink/exports/ (no .partial or incomplete runs), checks every file "
+            "against its manifest's sha256, size and line count, and copies the run into "
+            "GOS_HOME/data/exports/<run_id>/ by a staging folder and one rename. An "
+            "identical run already there is left alone. Keeps the newest [export] "
+            "keep_collected runs (default 5). Paths are [paths] in gos.toml."
+        ),
+    )
+    collect.add_argument("--config", type=Path, default=None, help=config_help)
     run = export_cmds.add_parser(
         "run",
         help="sync Play to Export, launch Export to autoexport, record the fingerprint, diff",
@@ -154,6 +172,98 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock_hold.add_argument("--minutes", type=float, default=10.0)
     lock_hold.add_argument("--reason", default="manual test (gos lock hold)")
     lock_hold.add_argument("--config", type=Path, default=None, help=config_help)
+
+    db = commands.add_parser(
+        "db", help="the recipe database (GOS_HOME/data/gos.sqlite)"
+    )
+    db_cmds = db.add_subparsers(dest="db_command", required=True)
+    db_build = db_cmds.add_parser(
+        "build",
+        help="load a collected export run into GOS_HOME/data/gos.sqlite",
+        description=(
+            "Normalises a run that `gos export collect` copied into GOS_HOME/data/exports/ "
+            "(default: the newest) and loads it into GOS_HOME/data/gos.sqlite in one "
+            "transaction: recipes with their r:<map>/<sig12> keys, items, fluids, machines, "
+            "NEI's recipes merged into GT's, and the name index. A collision (two different "
+            "recipes with one key) fails the build and writes a curation task to "
+            "GOS_HOME/data/curation/. Keeps the newest [db] keep_runs runs (default 2) and "
+            "prints the counts report, also saved to GOS_HOME/data/reports/."
+        ),
+    )
+    db_build.add_argument("run", nargs="?", default=None, help="collected run id")
+    db_build.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
+
+    quests = commands.add_parser(
+        "quests", help="the quest book, progress, frontier and tier (BetterQuesting)"
+    )
+    quest_cmds = quests.add_subparsers(dest="quests_command", required=True)
+    q_load = quest_cmds.add_parser(
+        "load",
+        help="read a world's quest book and progress into GOS_HOME/data/gos.sqlite",
+        description=(
+            "Read-only on the game: reads the world's betterquesting/QuestDatabase.json (or "
+            "the pack's DefaultQuests when the world has none yet) and every player's "
+            "QuestProgress, works out the tracked player's frontier and tier, and replaces "
+            "the quest tables of GOS_HOME/data/gos.sqlite in one transaction. Default world: "
+            "[paths] world in Play."
+        ),
+    )
+    q_load.add_argument(
+        "--instance",
+        choices=("play", "lab"),
+        default="play",
+        help="the instance whose saves/ holds the world (default play)",
+    )
+    q_where = q_load.add_mutually_exclusive_group()
+    q_where.add_argument(
+        "--world", default=None, help="the world's folder name in saves/"
+    )
+    q_where.add_argument(
+        "--world-dir",
+        type=Path,
+        default=None,
+        help="a world folder anywhere (its DefaultQuests fallback: ../../config/)",
+    )
+    q_load.add_argument(
+        "--player",
+        default=None,
+        help="the player to track, by name or UUID (default: the only one)",
+    )
+    q_front = quest_cmds.add_parser(
+        "frontier",
+        help="list the quests available now, by quest line, as the book shows them",
+    )
+    q_front.add_argument(
+        "--line",
+        default=None,
+        help="only this quest line (its name as the book shows it)",
+    )
+    q_front.add_argument(
+        "--limit", type=int, default=-1, metavar="N", help="at most N rows"
+    )
+    q_tier = quest_cmds.add_parser(
+        "tier",
+        help="show the tier detected from quests, or set or clear an override (D64)",
+    )
+    q_set = q_tier.add_mutually_exclusive_group()
+    q_set.add_argument(
+        "--set", dest="set_stage", choices=quest_db.bq.STAGES, default=None
+    )
+    q_set.add_argument("--clear", action="store_true", help="drop the override")
+    for each in (q_load, q_front, q_tier):
+        each.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+            "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+        )
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -279,6 +389,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "deploy":
         return _deploy(args.ref, args.config)
+    if args.command == "export" and args.export_command == "collect":
+        return export_collect.main(args.config, sys.stdout)
+    if args.command == "db" and args.db_command == "build":
+        return recipe_db.main(args.config, args.run, sys.stdout)
+    if args.command == "quests":
+        # Quest text is pack data (CJK, symbols). Windows writes a pipe or a file in its ANSI
+        # code page (cp1252), which can't encode all of it: escape what it can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        if args.quests_command == "load":
+            return quest_db.load_main(
+                args.config,
+                args.instance,
+                args.world,
+                args.world_dir,
+                args.player,
+                sys.stdout,
+            )
+        if args.quests_command == "frontier":
+            return quest_db.frontier_main(
+                args.config, args.line, args.limit, sys.stdout
+            )
+        return quest_db.tier_main(args.config, args.set_stage, args.clear, sys.stdout)
     if args.command == "hook":
         return playhooks.hook_main(args, sys.stdout, os.environ)
     if args.command == "export":
@@ -405,6 +538,8 @@ def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
     servicecli.spawn_detached(argv, cfg.gos_home)
     print(f"Restarted GOS: {exe}")
+
+
 def _load(path: Path | None) -> config.Config | None:
     try:
         return config.load(path)

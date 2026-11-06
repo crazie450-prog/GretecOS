@@ -123,6 +123,16 @@ if (providers.gradleProperty("harness").isPresent) {
             val xdgData = clientDir.dir("xdg-data").asFile
             environment("XDG_DATA_HOME", xdgData.absolutePath)
             doFirst { xdgData.mkdirs() }
+            // The configuration cache keeps the environment the task had when it was configured, so a
+            // second xvfb-run would hand the game the first one's DISPLAY and its deleted XAUTHORITY
+            // ("Can't connect to X11 window server"). Take the display variables from this run instead.
+            doFirst {
+                val exec = this as JavaExec
+                for (variable in listOf("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY")) {
+                    val now = System.getenv(variable)
+                    if (now != null) exec.environment(variable, now) else exec.environment.remove(variable)
+                }
+            }
             finalizedBy(checkClientHarness, removeClientHarnessConfig)
         }
     }
