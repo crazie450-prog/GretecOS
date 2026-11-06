@@ -7,6 +7,7 @@ A fake GOS_APP holds copies of scripts/prism_prelaunch.ps1 and prism_postexit.ps
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,16 +55,14 @@ def setup(tmp: Path) -> tuple[Path, dict[str, str]]:
 
 
 def hook(app: Path, script: str, env: dict[str, str]) -> tuple[int, str]:
+    """The command install_prism_hooks.py sets, run as Prism runs it: split by
+    QProcess::splitCommand (no escaped quotes in it), in the game folder."""
+    pre, post = prism.hook_commands(app)
+    command = pre if script == prism.PRE_SCRIPT else post
+    argv = [a.replace('"', "") for a in re.findall(r'(?:"[^"]*"|\S)+', command)]
     done = subprocess.run(
-        [
-            str(prism.powershell_path()),
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(app / "scripts" / script),
-        ],
+        argv,
+        cwd=Path(env["INST_DIR"]) / ".minecraft",
         env=env,
         capture_output=True,
         text=True,
@@ -102,3 +101,11 @@ def test_a_missing_release_never_blocks_play(tmp_path: Path) -> None:
     assert code == 0 and "is missing" in text, text
     code, text = hook(app, prism.POST_SCRIPT, env)
     assert code == 1 and "is missing" in text, text
+    # GOS_APP's scripts themselves missing (an older release, a crash mid-deploy): Play starts.
+    for name in (prism.PRE_SCRIPT, prism.POST_SCRIPT):
+        (app / "scripts" / name).unlink()
+    code, text = hook(app, prism.PRE_SCRIPT, env)
+    assert code == 0 and "is missing (run gos deploy)" in text, text
+    assert "CLIXML" not in text, text
+    code, text = hook(app, prism.POST_SCRIPT, env)
+    assert code == 1 and "is missing (run gos deploy)" in text, text

@@ -49,6 +49,7 @@ PRE_SCRIPT = "prism_prelaunch.ps1"  # in GOS_APP\scripts (D91)
 POST_SCRIPT = "prism_postexit.ps1"
 DEV_ACCOUNT = "gos-dev"  # Claude Code's account (D75)
 KEYS = ("OverrideCommands", "PreLaunchCommand", "PostExitCommand")
+COMMANDS = ("PreLaunchCommand", "PostExitCommand", "WrapperCommand")
 
 
 def launch_command(cfg: config.Config, role: str) -> list[str]:
@@ -59,12 +60,13 @@ def launch_command(cfg: config.Config, role: str) -> list[str]:
 # --- running processes ------------------------------------------------------------------------
 
 # As WO-2.1's supervisor lists them: a CIM failure stops the script (non-zero exit, so OSError),
-# and setting the output encoding can fail without a console, which doesn't matter.
+# and setting the output encoding can fail without a console, which doesn't matter. A process
+# whose command line Windows doesn't show (another user's, or an elevated one) is listed as "".
 _PS_LIST = (
     "$ErrorActionPreference = 'Stop'; "
     "try {{ [Console]::OutputEncoding = [Text.Encoding]::UTF8 }} catch {{ }}; "
     '$p = @(Get-CimInstance -ClassName Win32_Process -Filter "{filter}" | '
-    "ForEach-Object {{ $_.CommandLine }} | Where-Object {{ $_ }}); "
+    "ForEach-Object {{ [string]$_.CommandLine }}); "
     "ConvertTo-Json -InputObject $p -Compress"
 )
 
@@ -73,7 +75,8 @@ def command_lines(names: Sequence[str] = JAVA_NAMES) -> list[str]:
     """Command lines of this PC's processes whose program is one of ``names``.
 
     Windows: Win32_Process through PowerShell (about a second; Clayton's processes see his own
-    processes' command lines). Elsewhere: /proc. Raises OSError if it can't tell.
+    processes' command lines, and "" for one Windows doesn't show them). Elsewhere: /proc.
+    Raises OSError if it can't tell.
     """
     if sys.platform == "win32":
         flt = " OR ".join(f"Name = '{n}'" for n in names)
@@ -164,7 +167,8 @@ def running_clients(
 
 
 def prism_running() -> bool:
-    """Whether Prism Launcher runs. Raises OSError if the processes can't be listed."""
+    """Whether Prism Launcher runs (by program name: an elevated Prism's command line can't be
+    read, but it is counted). Raises OSError if the processes can't be listed."""
     return bool(command_lines((PRISM_EXE,)))
 
 
@@ -287,27 +291,83 @@ def powershell_path() -> Path:
     return root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 
 
+# What Prism runs (D121): a few lines of PowerShell that run GOS_APP's hook script if it is there.
+# `powershell -File <script>` would exit non-zero when the script is missing (a deploy of an older
+# commit, a crash mid-deploy, antivirus) and so block Play (V25); this fails open instead. It is
+# passed with -EncodedCommand: base64 has no $ for Prism to expand, nor quotes or spaces for it to
+# split. -OutputFormat Text: with an encoded command and stderr redirected, PowerShell would
+# otherwise write its error stream as CLIXML.
+_BOOTSTRAP = """\
+$s = '{script}'
+if (-not (Test-Path -LiteralPath $s -PathType Leaf)) {{
+    Write-Output "GOS: $s is missing (run gos deploy); {skip}"
+    exit {fail}
+}}
+$global:LASTEXITCODE = 0
+try {{ & $s }} catch {{
+    Write-Output "GOS: couldn't run $s ($_); {skip}"
+    exit {fail}
+}}
+{last}
+"""
+# (what is skipped, exit code then, the last line): pre-launch passes only the refusal (3).
+_HOOKS = {
+    PRE_SCRIPT: (
+        "no pre-launch checks. The game starts.",
+        0,
+        "if ($LASTEXITCODE -eq 3) { exit 3 }\nexit 0",
+    ),
+    POST_SCRIPT: ("not checking for an export.", 1, "exit $LASTEXITCODE"),
+}
+_ENCODED = re.compile(r"-EncodedCommand\s+([A-Za-z0-9+/=]+)", re.IGNORECASE)
+
+
+def bootstrap(script: Path) -> str:
+    """The PowerShell that Prism's command for ``script`` (a GOS hook script) runs."""
+    if any(c in str(script) for c in "'\u2018\u2019\u201a\u201b"):
+        raise ValueError(
+            f"{script} has a single quote, which the hook command can't hold"
+        )
+    skip, fail, last = _HOOKS[script.name]
+    return _BOOTSTRAP.format(script=script, skip=skip, fail=fail, last=last)
+
+
+def decoded(command: str | None) -> str:
+    """The script an ``-EncodedCommand`` in ``command`` runs ("" if there is none)."""
+    m = _ENCODED.search(command or "")
+    if m is None:
+        return ""
+    try:
+        return base64.b64decode(m.group(1), validate=True).decode("utf-16-le")
+    except ValueError:
+        return ""
+
+
 def hook_commands(gos_app: Path, powershell: Path | None = None) -> tuple[str, str]:
-    """Play's pre-launch and post-exit commands: GOS_APP's hook scripts through PowerShell."""
+    """Play's pre-launch and post-exit commands: GOS_APP's hook scripts through PowerShell,
+    each through :func:`bootstrap`."""
     ps = powershell or powershell_path()
-    for path in (ps, gos_app):
-        if any(c in str(path) for c in '"$'):
-            raise ValueError(
-                f"{path} has a quote or $, which Prism's command line can't hold"
-            )
+    if any(c in str(ps) for c in '"$'):
+        raise ValueError(
+            f"{ps} has a quote or $, which Prism's command line can't hold"
+        )
     scripts = gos_app / "scripts"
 
     def command(script: str) -> str:
+        code = bootstrap(scripts / script)
+        encoded = base64.b64encode(code.encode("utf-16-le")).decode("ascii")
         return (
             f'"{ps}" -NoProfile -NonInteractive -ExecutionPolicy Bypass '
-            f'-File "{scripts / script}"'
+            f"-OutputFormat Text -EncodedCommand {encoded}"
         )
 
     return command(PRE_SCRIPT), command(POST_SCRIPT)
 
 
 def ours(command: str | None) -> bool:
-    return bool(command) and (PRE_SCRIPT in command or POST_SCRIPT in command)
+    """Whether ``command`` runs one of GOS's hook scripts."""
+    text = f"{command or ''}\n{decoded(command)}"
+    return PRE_SCRIPT in text or POST_SCRIPT in text
 
 
 @dataclass
@@ -350,20 +410,14 @@ def plan_hooks(
     ini = IniFile.parse(raw.decode("utf-8-sig"))
     current = {k: ini.get(k) for k in (*KEYS, "WrapperCommand")}
     if current["OverrideCommands"] != "true" and global_commands and not uninstall:
-        for key in ("PreLaunchCommand", "PostExitCommand", "WrapperCommand"):
+        for key in COMMANDS:
             if not current[key] and global_commands.get(key):
                 current[key] = global_commands[key]
                 if key == "WrapperCommand":
                     ini.set(key, str(global_commands[key]))
     if uninstall:
-        for key in ("PreLaunchCommand", "PostExitCommand"):
-            if ours(current[key]):
-                ini.set(key, "")
-        commands = ("PreLaunchCommand", "PostExitCommand", "WrapperCommand")
-        if current["OverrideCommands"] is not None and not any(
-            ini.get(k) for k in commands
-        ):
-            ini.set("OverrideCommands", "false")
+        if any(ours(current[k]) for k in ("PreLaunchCommand", "PostExitCommand")):
+            _undo(ini, current, _before_install(path), global_commands or {})
     else:
         foreign = [
             f"{k}={current[k]!r}"
@@ -382,14 +436,61 @@ def plan_hooks(
     return HookPlan(path, raw, ini.text(), current)
 
 
+def _backup_order(path: Path) -> tuple[str, int]:
+    stamp, _, n = path.name.rpartition(".gos-backup-")[2].partition("-")
+    return stamp, int(n) if n.isdigit() else 1
+
+
+def _before_install(path: Path) -> dict[str, str | None] | None:
+    """The commands in the newest ``instance.cfg.gos-backup-*`` without GOS's hooks: the file
+    as it was before they were installed (None if no such backup is left)."""
+    backups = path.parent.glob(f"{INSTANCE_CFG}.gos-backup-*")
+    for backup in sorted(backups, key=_backup_order, reverse=True):
+        try:
+            ini = IniFile.parse(read_bytes(backup).decode("utf-8-sig"))
+            old = {k: ini.get(k) for k in (*KEYS, "WrapperCommand")}
+        except (OSError, ValueError):
+            continue
+        if not (ours(old["PreLaunchCommand"]) or ours(old["PostExitCommand"])):
+            return old
+    return None
+
+
+def _undo(
+    ini: IniFile,
+    current: Mapping[str, str | None],
+    before: Mapping[str, str | None] | None,
+    globals_: Mapping[str, str | None],
+) -> None:
+    """Remove GOS's commands. With ``before`` (the commands before install), set them back as
+    they were: the commands --replace overwrote and OverrideCommands, and a copy of Prism's
+    global wrapper that install made goes again."""
+    old = before or {}
+    for key in ("PreLaunchCommand", "PostExitCommand"):
+        if ours(current[key]):
+            ini.set(key, old.get(key) or "")
+    wrapper = globals_.get("WrapperCommand")
+    if (
+        old.get("OverrideCommands") != "true"
+        and wrapper
+        and ini.get("WrapperCommand") == wrapper
+    ):
+        ini.set("WrapperCommand", old.get("WrapperCommand") or "")
+    if before is not None:
+        ini.set("OverrideCommands", old.get("OverrideCommands") or "false")
+    elif current["OverrideCommands"] is not None and not any(
+        ini.get(k) for k in COMMANDS
+    ):
+        ini.set("OverrideCommands", "false")
+
+
 def global_commands(prism_root: Path) -> dict[str, str | None]:
     """Prism's global custom commands from ``prismlauncher.cfg`` (none if it can't be read)."""
-    keys = ("PreLaunchCommand", "PostExitCommand", "WrapperCommand")
     try:
         ini = IniFile.parse(
             read_bytes(prism_root / "prismlauncher.cfg").decode("utf-8-sig")
         )
-        return {k: ini.get(k) for k in keys}
+        return {k: ini.get(k) for k in COMMANDS}
     except (OSError, ValueError):
         return {}
 
@@ -488,11 +589,18 @@ def install_main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) ->
         print(f"Refused: {instance}: {exc}", file=out)
         return 1
     print(f"{args.instance}: {plan.path}", file=out)
-    for key in ("PreLaunchCommand", "PostExitCommand", "WrapperCommand"):
+    for key in COMMANDS:
         print(f"  {key} now: {plan.current[key] or '(none)'}", file=out)
     if not args.uninstall:
-        print(f"  PreLaunchCommand: {pre}", file=out)
-        print(f"  PostExitCommand:  {post}", file=out)
+        for key, command in (("PreLaunchCommand", pre), ("PostExitCommand", post)):
+            print(f"  {key}: {command}", file=out)
+            print("    PowerShell then runs (it is encoded in the command):", file=out)
+            for line in decoded(command).splitlines():
+                print(f"      {line}", file=out)
+    else:
+        after = IniFile.parse(plan.new)
+        for key in (*KEYS, "WrapperCommand"):
+            print(f"  {key} after: {after.get(key) or '(none)'}", file=out)
     if not plan.changed():
         print("  already set; nothing to do", file=out)
         return 0

@@ -10,7 +10,8 @@
 
     Its exit code goes to Prism: anything but 0 makes Prism show the console with the error.
 
-    install_prism_hooks.py sets this as Play's post-exit command; Clayton runs it himself.
+    install_prism_hooks.py (Clayton runs it himself) sets Play's post-exit command to a short
+    encoded bootstrap that runs this file (gregtec.prism.bootstrap).
 #>
 # No $ErrorActionPreference = 'Stop': Windows PowerShell turns a native command's stderr into
 # errors when its own output is redirected, as Prism's is.

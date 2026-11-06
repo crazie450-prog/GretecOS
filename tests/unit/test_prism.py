@@ -7,6 +7,8 @@ when this was written: every value below was read back exactly and Qt wrote the 
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -76,13 +78,87 @@ def test_qt_escape_matches_qsettings() -> None:
 
 def test_hook_commands() -> None:
     pre, post = prism.hook_commands(APP, PS)
-    assert pre == (
+    head = (
         f'"{PS}" -NoProfile -NonInteractive -ExecutionPolicy Bypass '
-        f'-File "{APP / "scripts" / "prism_prelaunch.ps1"}"'
+        "-OutputFormat Text -EncodedCommand "
     )
-    assert post.endswith(f'"{APP / "scripts" / "prism_postexit.ps1"}"')
+    for command, script in ((pre, prism.PRE_SCRIPT), (post, prism.POST_SCRIPT)):
+        assert command.startswith(head)
+        # Nothing after the program for Prism to expand ($VAR) or split (quotes, spaces).
+        assert re.fullmatch(r"[A-Za-z0-9+/=]+", command[len(head) :])
+        code = prism.decoded(command)
+        assert code == prism.bootstrap(APP / "scripts" / script)
+        assert code.startswith(f"$s = '{APP / 'scripts' / script}'\n")
+        assert prism.ours(command)
+    assert "if ($LASTEXITCODE -eq 3) { exit 3 }\nexit 0" in prism.decoded(pre)
+    assert prism.decoded(post).endswith("exit $LASTEXITCODE\n")
+    old_form = f'"{PS}" -File "{APP / "scripts" / "prism_postexit.ps1"}"'
+    assert prism.ours(old_form)
+    assert not prism.ours("packwiz-bootstrap.exe -EncodedCommand !!")
+    assert not prism.ours(None) and prism.decoded(None) == ""
     with pytest.raises(ValueError):
-        prism.hook_commands(Path("C:/a$b"), PS)
+        prism.hook_commands(APP, Path("C:/a$b/powershell.exe"))
+    with pytest.raises(ValueError):
+        prism.hook_commands(Path("C:/Clayton's app"), PS)
+
+
+def split_command(command: str) -> list[str]:
+    """QProcess::splitCommand for commands without escaped quotes (Prism splits with it)."""
+    return [a.replace('"', "") for a in re.findall(r'(?:"[^"]*"|\S)+', command)]
+
+
+def find_powershell() -> str | None:
+    if sys.platform == "win32":
+        return str(prism.powershell_path())
+    return shutil.which("pwsh")  # GitHub's Ubuntu runners have PowerShell 7
+
+
+@pytest.mark.skipif(find_powershell() is None, reason="no PowerShell here")
+@pytest.mark.parametrize(
+    ("script", "body", "code", "said"),
+    [
+        (
+            prism.PRE_SCRIPT,
+            None,
+            0,
+            "is missing (run gos deploy); no pre-launch checks",
+        ),
+        (prism.PRE_SCRIPT, "Write-Output 'refused'; exit 3", 3, "refused"),
+        (prism.PRE_SCRIPT, "exit 5", 0, ""),
+        (prism.PRE_SCRIPT, "this is { not PowerShell", 0, "The game starts."),
+        (prism.POST_SCRIPT, None, 1, "is missing (run gos deploy)"),
+        (prism.POST_SCRIPT, "Write-Output 'asked'; exit 0", 0, "asked"),
+        (prism.POST_SCRIPT, "exit 4", 4, ""),
+    ],
+)
+def test_hook_commands_fail_open(
+    tmp_path: Path, script: str, body: str | None, code: int, said: str
+) -> None:
+    """The commands as Prism runs them: split, in the game folder. A missing or broken hook
+    script never refuses a launch; only its exit 3 does."""
+    ps = find_powershell()
+    assert ps is not None
+    app = tmp_path / "app"
+    (app / "scripts").mkdir(parents=True)
+    if body is not None:
+        (app / "scripts" / script).write_text(body + "\n", encoding="utf-8")
+    pre, post = prism.hook_commands(app, Path(ps))
+    argv = split_command(pre if script == prism.PRE_SCRIPT else post)
+    assert argv[0] == ps and len(argv) == 9
+    game = tmp_path / "game"
+    game.mkdir()
+    done = subprocess.run(
+        argv,
+        cwd=game,
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == code, done.stdout + done.stderr
+    assert said in done.stdout, done.stdout + done.stderr
+    assert "CLIXML" not in done.stdout + done.stderr
 
 
 def make_instance(tmp: Path, text: str = INSTANCE_CFG, newline: str = "\n") -> Path:
@@ -166,6 +242,42 @@ def test_prisms_global_commands_keep_working(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="global"):
         prism.plan_hooks(inst, pre, post, global_commands=globals_)
     assert prism.global_commands(tmp_path / "nowhere") == {}
+
+
+def test_uninstall_undoes_install(tmp_path: Path) -> None:
+    """Back to the file before install: the copy of Prism's global wrapper goes, a command
+    --replace overwrote comes back, OverrideCommands is as it was."""
+    inst = make_instance(tmp_path)
+    original = (inst / "instance.cfg").read_bytes()
+    pre, post = prism.hook_commands(APP, PS)
+    globals_: dict[str, str | None] = {"WrapperCommand": '"C:\\Tools\\wrap.exe" -x'}
+    prism.write_hooks(prism.plan_hooks(inst, pre, post, global_commands=globals_))
+    ini = prism.IniFile.parse((inst / "instance.cfg").read_text(encoding="utf-8"))
+    assert ini.get("WrapperCommand") == '"C:\\Tools\\wrap.exe" -x'
+
+    def uninstall(path: Path) -> prism.HookPlan:
+        return prism.plan_hooks(
+            path, pre, post, uninstall=True, global_commands=globals_
+        )
+
+    prism.write_hooks(uninstall(inst))
+    assert (inst / "instance.cfg").read_bytes() == original
+    assert not uninstall(inst).changed()  # a second uninstall: nothing to do
+
+    # Without a backup GOS's commands and the wrapper copy go all the same.
+    prism.write_hooks(prism.plan_hooks(inst, pre, post, global_commands=globals_))
+    for backup in inst.glob("instance.cfg.gos-backup-*"):
+        backup.unlink()
+    assert uninstall(inst).new_bytes() == original
+
+    own = INSTANCE_CFG.replace(
+        "OverrideCommands=false", "OverrideCommands=true"
+    ).replace("PreLaunchCommand=", 'PreLaunchCommand=\\"$INST_JAVA\\" -jar packwiz.jar')
+    inst = make_instance(tmp_path / "own", own)
+    prism.write_hooks(prism.plan_hooks(inst, pre, post, replace=True))
+    prism.write_hooks(prism.plan_hooks(inst, pre, post))  # installed twice
+    prism.write_hooks(uninstall(inst))
+    assert (inst / "instance.cfg").read_text(encoding="utf-8") == own
 
 
 def test_headerless_instance_cfg_is_refused(tmp_path: Path) -> None:
@@ -313,6 +425,23 @@ def test_command_lines_sees_a_java_process(tmp_path: Path) -> None:
         child.kill()
         child.wait()
     assert prism.running_clients(cfg) == []
+
+
+def test_unreadable_command_lines_still_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows shows no command line for an elevated (or another user's) process: it is listed
+    as "", so an elevated Prism still counts as running, and matches no instance."""
+    assert "Where-Object" not in prism._PS_LIST
+    monkeypatch.setattr(prism.sys, "platform", "win32")
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(argv, 0, b'[""]', b"")
+
+    monkeypatch.setattr(prism.subprocess, "run", run)
+    assert prism.command_lines((prism.PRISM_EXE,)) == [""]
+    assert prism.prism_running()
+    assert prism.running_clients(config.Config(prism_instances=tmp_path)) == []
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Win32_Process through PowerShell")

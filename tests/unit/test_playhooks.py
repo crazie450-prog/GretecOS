@@ -157,7 +157,7 @@ def test_export_records_the_fingerprint_and_clears_stale(env: Env) -> None:
     assert last is not None and last["run_id"] == "20261106T120000Z"
     assert last["fingerprint"] == fingerprint.compute_play(env.cfg).digest
     assert fingerprint.load_state(env.home)["stale"] is False
-    assert "first recorded export" in text
+    assert "no earlier export is recorded: nothing to diff against" in text
     assert locks.held(env.home) is None
     code, text = env.pre_launch()
     assert code == 0 and "recipe data matches Play (export 20261106T120000Z" in text
@@ -177,6 +177,117 @@ def test_second_export_writes_the_diff(env: Env) -> None:
     assert "Play: 1 added, 1 removed, 0 changed" in body
     assert "  + mods/tst-0.8.1.jar" in body and "  + tst 0.8.1 (y)" in body
     assert str(report) in text
+
+
+def test_the_message_box_says_what_the_log_says(env: Env) -> None:
+    told: list[str] = []
+    (env.export / "mmc-pack.json").write_text('{"components": []}\n')
+    env.next_run = manifest(
+        "20261106T120000Z", part_warnings={"nei": "2 handlers failed to load"}
+    )
+    code, text = env.run_export(notify=lambda title, body: told.append(body))
+    assert code == 0, text
+    assert told[0].startswith("Export 20261106T120000Z done. recipe data matches Play")
+    assert "First recorded export: nothing to diff against." in told[0]
+    assert "warning: GTNH-Export's mmc-pack.json differs from Play's" in text
+    assert "warning: nei left something out: 2 handlers failed to load" in text
+    assert "Warnings:\n- GTNH-Export's mmc-pack.json differs from Play's" in told[0]
+    assert "- nei left something out: 2 handlers failed to load" in told[0]
+
+
+@pytest.mark.parametrize(
+    ("parts", "errors", "said"),
+    [
+        (
+            {"nei": "failed"},
+            {"nei": "NEI wasn't ready"},
+            "NEI's part is failed (NEI wasn't ready)",
+        ),
+        ({"nei": "absent"}, {}, "NEI's part is absent"),
+        (
+            {"autoexport": "failed"},
+            {"autoexport": "deadline"},
+            "autoexport failed (deadline)",
+        ),
+    ],
+)
+def test_a_run_without_nei_or_a_finished_autoexport_keeps_stale(
+    env: Env, parts: dict[str, str], errors: dict[str, str], said: str
+) -> None:
+    """``complete`` covers only the GT parts: such a run is not recorded and Play stays stale."""
+    assert env.run_export()[0] == 0  # a whole earlier export
+    (env.play / ".minecraft/mods/tst-0.8.0.jar").write_bytes(b"tst rebuilt")
+    m = manifest("20261107T120000Z", part_errors=errors)
+    m["parts"].update(parts)
+    env.next_run = m
+    told: list[str] = []
+    code, text = env.run_export(notify=lambda title, body: told.append(body))
+    assert code == 1 and "not recording export 20261107T120000Z" in text
+    assert (
+        told[0].startswith("Export 20261107T120000Z is incomplete: ")
+        and said in told[0]
+    )
+    assert "you'll be asked again" in told[0]
+    last = fingerprint.last_export(env.home)
+    assert last is not None and last["run_id"] == "20261106T120000Z"
+    code, text = env.pre_launch()
+    assert "recipe data is stale: Play changed since export 20261106T120000Z" in text
+    # The diff against the earlier export is written all the same, with the parts.
+    report = env.home / "data/reports/export-diff-20261106T120000Z-20261107T120000Z.txt"
+    assert "Play: 0 added, 0 removed, 1 changed" in report.read_text()
+    assert "Report:" in told[0] and "-> " + next(iter(parts.values())) in told[0]
+
+
+def test_run_problems() -> None:
+    ok = manifest("x")
+    assert playhooks.run_problems(ok) == []
+    server = {**ok, "side": "server", "parts": {"nei": "skipped_server"}}
+    assert playhooks.run_problems(server) == []
+    client = {**ok, "parts": {"nei": "skipped_server"}}
+    assert playhooks.run_problems(client) == ["NEI's part is skipped_server"]
+    assert playhooks.run_problems({"parts": "junk"}) == ["NEI's part is None"]
+
+
+def test_export_waits_for_a_launch_to_start_its_client(env: Env) -> None:
+    """Prism starts Play's Java a while after pre-launch passed: an export started meanwhile
+    would run beside it, so it refuses until post-exit or LAUNCH_GRACE_S."""
+    assert env.pre_launch()[0] == 0
+    code, text = env.run_export()
+    assert (
+        code == 1 and "GTNH-Play was launched 0 s ago and may still be starting" in text
+    )
+    assert env.launched == []
+    assert post_exit(env, Asker(False))[0] == 0  # Play quit: the mark goes
+    assert playhooks.launching(env.home) is None
+    assert env.run_export()[0] == 0
+    # A launch that crashed (no post-exit) stops counting after LAUNCH_GRACE_S.
+    env.pre_launch()
+    record = json.loads((env.home / playhooks.LAUNCHING).read_text())
+    record["time"] -= playhooks.LAUNCH_GRACE_S
+    (env.home / playhooks.LAUNCHING).write_text(json.dumps(record))
+    assert playhooks.launching(env.home) is None
+    # A refused launch leaves no mark.
+    with locks.hold(env.home, "export", "gos export run"):
+        assert env.pre_launch()[0] == playhooks.EXIT_REFUSE
+    assert not (env.home / playhooks.LAUNCHING).exists()
+
+
+def test_spawned_export_runs_outside_plays_folder(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prism runs the hook in Play's game folder: the export must not have it on sys.path or
+    as its working directory."""
+    seen: list[tuple[list[str], dict[str, object]]] = []
+
+    class Popen:
+        def __init__(self, argv: list[str], **kwargs: object) -> None:
+            seen.append((argv, kwargs))
+
+    monkeypatch.setattr(playhooks.subprocess, "Popen", Popen)
+    started = playhooks.spawn_export(env.cfg, env.config_path)
+    argv, kwargs = seen[0]
+    assert argv[:4] == [sys.executable, "-P", "-m", "gregtec.cli"]
+    assert kwargs["cwd"] == env.home and started.log.parent == env.home / "logs"
 
 
 def test_export_refusals(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -578,17 +689,23 @@ def test_end_to_end_with_the_real_commands(env: Env) -> None:
     )
     prism_exe.chmod(0o755)
     base_env = {**os.environ, "GOS_HOME": str(env.home), "INST_DIR": str(env.play)}
+    # Prism runs the hooks in Play's game folder: a module there must not shadow one of GOS's.
+    planted = env.tmp / "planted-ran"
+    game = env.play / ".minecraft"
+    (game / "secrets.py").write_text(f"open({str(planted)!r}, 'w').close()\n")
 
     def gos(*args: str) -> tuple[int, str]:
         done = subprocess.run(
             [
                 sys.executable,
+                "-P",  # as gos.exe, which doesn't put its working directory on sys.path
                 "-m",
                 "gregtec.cli",
                 *args,
                 "--config",
                 str(env.config_path),
             ],
+            cwd=game,
             env=base_env,
             capture_output=True,
             text=True,
@@ -637,3 +754,4 @@ def test_end_to_end_with_the_real_commands(env: Env) -> None:
     assert len(list((env.home / "logs").glob("export-*.log"))) == 2  # no third export
     code, text = gos("export", "diff")
     assert code == 0 and "Play: 0 added, 0 removed, 1 changed" in text, text
+    assert not planted.exists()  # neither the hooks nor the exports they started ran it

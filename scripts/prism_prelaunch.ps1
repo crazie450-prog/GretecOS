@@ -11,7 +11,9 @@
     a missing release included, is printed to Prism's console and the game still starts: GOS being
     broken never stops Clayton from playing.
 
-    install_prism_hooks.py sets this as Play's pre-launch command; Clayton runs it himself.
+    install_prism_hooks.py (Clayton runs it himself) sets Play's pre-launch command to a short
+    encoded bootstrap that runs this file, and lets the game start if it is missing
+    (gregtec.prism.bootstrap).
 #>
 # No $ErrorActionPreference = 'Stop': Windows PowerShell turns a native command's stderr into
 # errors when its own output is redirected, as Prism's is.

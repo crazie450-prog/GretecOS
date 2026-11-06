@@ -1,13 +1,16 @@
 """Play's Prism hooks and the ask-on-quit export (WO-1.4, plan section 5.2 step 4, D69, D121).
 
 Prism runs ``GOS_APP\\scripts\\prism_prelaunch.ps1`` and ``prism_postexit.ps1`` for Play (set by
-``scripts/install_prism_hooks.py``, which Clayton runs himself); they run ``gos hook pre-launch``
-and ``gos hook post-exit`` from GOS_APP's release, as Clayton.
+``scripts/install_prism_hooks.py``, which Clayton runs himself, through a bootstrap that lets Play
+start when they are missing: ``gregtec.prism.bootstrap``); they run ``gos hook pre-launch`` and
+``gos hook post-exit`` from GOS_APP's release, as Clayton.
 
 **Pre-launch** (any instance with the hooks): while the instance lock is held, or while an Export
 client runs, it exits :data:`EXIT_REFUSE` and the wrapper passes that to Prism, which then doesn't
 start the game (V25). For Play it then fingerprints Play and records the stale flag (D120). Any
-other failure only warns: Play still launches (plan 0.1 principle 9).
+other failure only warns: Play still launches (plan 0.1 principle 9). It marks the launch
+(:data:`LAUNCHING`) before checking the lock, so an export started before Prism has started the
+client's Java refuses instead of running beside it; post-exit removes the mark.
 
 **Post-exit** (Play only; Prism runs it only after a clean exit): if Play's fingerprint equals the
 last export's, nothing runs. Otherwise, with ``[policy] export_on_quit = "ask"`` (D69), it asks
@@ -16,13 +19,15 @@ dashboard and voice take that question over in WO-2.6 and Phase 5. On yes it sta
 ``gos export run`` as a separate process, waits until that holds the instance lock, and returns,
 so Prism is free and Play can't launch until the export is done.
 
-**``gos export run``**: hold the instance lock; refuse while any GTNH client runs; fingerprint Play
-(before sync); sync Play to Export (``gregtec.sync``, Export only, GregtecLink included, D98);
-``prismlauncher --launch GTNH-Export``, which autoexports (D100); wait for a new complete run in
-Export's ``gregteclink/exports/`` and for Export to quit; record the fingerprint for that run;
-write the diff against the previous export (D122) to ``GOS_HOME/data/reports/``. Then release
-the lock. Collecting the run into GOS_HOME (WO-1.2) and loading it into the DB (WO-1.3) join this
-pipeline once those are merged; flagging affected plans comes with plans (WO-1.9).
+**``gos export run``**: hold the instance lock; refuse while any GTNH client runs or was just
+launched; fingerprint Play (before sync); sync Play to Export (``gregtec.sync``, Export only,
+GregtecLink included, D98); ``prismlauncher --launch GTNH-Export``, which autoexports (D100); wait
+for a new complete run in Export's ``gregteclink/exports/`` and for Export to quit; record the
+fingerprint for that run, unless NEI's part isn't ok or the autoexport failed (:func:`run_problems`:
+then recipe data stays stale); write the diff against the previous export (D122) to
+``GOS_HOME/data/reports/``. Then release the lock and show the result, part warnings included.
+Collecting the run into GOS_HOME (WO-1.2) and loading it into the DB (WO-1.3) join this pipeline
+once those are merged; flagging affected plans comes with plans (WO-1.9).
 """
 
 from __future__ import annotations
@@ -61,6 +66,11 @@ POLL_S = 10.0  # one process listing (about a second of PowerShell) per poll
 REPORTS = Path("data", "reports")  # in GOS_HOME
 LOGS = Path("logs")
 MMC_PACK = "mmc-pack.json"
+# Written by pre-launch, removed by post-exit: a client may be starting. Prism runs its account
+# and update steps after pre-launch, so its Java appears only later; meanwhile ``gos export run``
+# refuses. After this long the launch has started its Java, or failed.
+LAUNCHING = Path("data", "locks", "launching.json")  # in GOS_HOME
+LAUNCH_GRACE_S = 300.0
 
 # (title, question, timeout in s) -> yes, no, or None for timed out
 Ask = Callable[[str, str, int], bool | None]
@@ -101,6 +111,9 @@ def pre_launch(
     if role == "export":
         _say(out, "Export runs under the export pipeline: no hook checks here.")
         return 0
+    # Marked before the lock is checked, and the export checks the mark after taking the lock:
+    # so either this sees the lock or the export sees the mark.
+    _mark_launch(cfg.gos_home, role or "other", out)
     holder = locks.held(cfg.gos_home)
     if holder is not None:
         _say(
@@ -109,6 +122,7 @@ def pre_launch(
             "Play and Export never run at once; launch again when the export has finished "
             f"(its log is in {cfg.gos_home / LOGS}).",
         )
+        _clear_launch(cfg.gos_home)
         return EXIT_REFUSE
     try:
         running = clients(cfg)
@@ -121,6 +135,7 @@ def pre_launch(
             f"not launching: {cfg.export} is running. Launch again once it has quit "
             "(Play and Export never run at once).",
         )
+        _clear_launch(cfg.gos_home)
         return EXIT_REFUSE
     if role != "play":
         _say(out, "not Play: no stale check.")
@@ -136,6 +151,31 @@ def pre_launch(
     for note in status.play.notes:
         _say(out, f"note: {note}")
     return 0
+
+
+def _mark_launch(home: Path, role: str, out: TextIO) -> None:
+    record = {"role": role, "utc": fingerprint.utc_now(), "time": time.time()}
+    try:
+        fingerprint.atomic_write(home / LAUNCHING, json.dumps(record).encode("utf-8"))
+    except OSError as exc:
+        _say(out, f"warning: couldn't mark the launch ({exc}).")
+
+
+def _clear_launch(home: Path) -> None:
+    try:
+        (home / LAUNCHING).unlink(missing_ok=True)
+    except OSError:
+        pass  # it ages out after LAUNCH_GRACE_S
+
+
+def launching(home: Path) -> tuple[str, float] | None:
+    """(role, seconds ago) of a launch that may still be starting its client, or None."""
+    try:
+        record = json.loads(read_bytes(home / LAUNCHING))
+        role, age = str(record["role"]), time.time() - float(record["time"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return (role, age) if 0 <= age < LAUNCH_GRACE_S else None
 
 
 # --- post-exit -----------------------------------------------------------------------------
@@ -193,7 +233,9 @@ def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / time.strftime("export-%Y%m%dT%H%M%SZ.log", time.gmtime())
     ticket = secrets.token_hex(8)
-    argv = [sys.executable, "-m", "gregtec.cli", "export", "run", "--notify"]
+    # -P and the working directory GOS_HOME: the hook runs in Play's game folder (Prism sets it),
+    # which must neither be on the export's sys.path nor held as its directory for an hour.
+    argv = [sys.executable, "-P", "-m", "gregtec.cli", "export", "run", "--notify"]
     argv += ["--ticket", ticket]
     if config_path is not None:
         argv += ["--config", str(config_path)]
@@ -201,12 +243,9 @@ def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
     # doesn't allow breakaway refuses the flag: then without it).
     if sys.platform == "win32":
         base = 0x00000200 | prism.CREATE_NO_WINDOW  # CREATE_NEW_PROCESS_GROUP
-        tries: list[dict[str, object]] = [
-            {"creationflags": base | 0x01000000},  # CREATE_BREAKAWAY_FROM_JOB
-            {"creationflags": base},
-        ]
+        tries = [base | 0x01000000, base]  # CREATE_BREAKAWAY_FROM_JOB first
     else:
-        tries = [{"start_new_session": True}]
+        tries = [0]
     # Unbuffered, so its log is complete up to the moment it stops, however it stops.
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     with open(log, "ab") as f:
@@ -217,8 +256,10 @@ def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
                     stdin=subprocess.DEVNULL,
                     stdout=f,
                     stderr=subprocess.STDOUT,
+                    cwd=cfg.gos_home,
                     env=env,
-                    **flags,
+                    creationflags=flags,
+                    start_new_session=sys.platform != "win32",
                 )
                 break
             except OSError:
@@ -235,6 +276,7 @@ def post_exit(
     spawn: Callable[[], Started] | None = None,
     wait_s: float = LOCK_WAIT_S,
 ) -> int:
+    _clear_launch(cfg.gos_home)  # its client has run and quit
     if role != "play":
         _say(out, "not Play: nothing to do after exit.")
         return 0
@@ -354,17 +396,14 @@ def _no_run_reason(export_game: Path) -> str | None:
 
 def _start_prism(argv: Sequence[str]) -> None:
     """Start Prism's CLI and don't wait: ``--launch`` returns at once only if Prism is open."""
-    kwargs: dict[str, object] = {}
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x00000200  # CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
+    windows = sys.platform == "win32"
     subprocess.Popen(
         list(argv),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **kwargs,
+        creationflags=0x00000200 if windows else 0,  # CREATE_NEW_PROCESS_GROUP
+        start_new_session=not windows,
     )
 
 
@@ -545,6 +584,17 @@ def _export_locked(
             f"{', '.join(cfg.instance(r).name for r in running)} is running; close it first "
             "(never two clients at once)"
         )
+    starting = launching(home)
+    if starting is not None:
+        role, age = starting
+        what = (
+            cfg.instance(role).name if role in ("play", "export", "lab") else "a client"
+        )
+        raise ExportFailed(
+            f"{what} was launched {age:.0f} s ago and may still be starting (never two clients "
+            f"at once); try again once it has quit, or in {LAUNCH_GRACE_S - age:.0f} s if it "
+            "didn't start"
+        )
     try:
         exported = fingerprint.compute_play(cfg)  # before sync (plan 5.2 step 4)
     except fingerprint.FingerprintError as exc:
@@ -562,12 +612,14 @@ def _export_locked(
             sync.apply_install(plan)
         except OSError as exc:
             raise ExportFailed(f"sync failed: {exc}") from None
+    warnings: list[str] = []  # shown with the result, too
     if _mmc_differs(cfg):
-        _say(
-            out,
-            f"warning: {cfg.export}'s mmc-pack.json differs from Play's. Sync doesn't copy it: "
-            "update Export's components in Prism (pack-update playbook, WO-1.9).",
+        warnings.append(
+            f"{cfg.export}'s mmc-pack.json differs from Play's (Forge, LWJGL or Java "
+            "components). Sync doesn't copy it: update Export's components in Prism "
+            "(pack-update playbook, WO-1.9)."
         )
+        _say(out, f"warning: {warnings[-1]}")
 
     try:
         exports = rundiff.export_runs_folder(cfg)
@@ -592,30 +644,71 @@ def _export_locked(
         poll_s=poll_s,
     )
 
+    for part, why in _table(run.manifest, "part_warnings").items():
+        warnings.append(f"{part} left something out: {why}")
+        _say(out, f"warning: {warnings[-1]}")
     previous = fingerprint.last_export(home)
-    try:
-        play_now = fingerprint.compute_play(cfg)
-    except fingerprint.FingerprintError as exc:
-        raise ExportFailed(f"can't fingerprint Play after the export: {exc}") from None
-    status = fingerprint.record_export(home, run.name, exported, play_now)
-    _say(out, f"recorded export {run.name}: {status.line()}")
-
-    summary = f"Export {run.name} done. {status.line()}"
-    if previous is not None and previous["run_id"] != run.name:
-        try:
-            old = rundiff.load_run(rundiff.find_run(cfg, previous["run_id"]))
-            new = rundiff.load_run(exports / run.name)
-            d = rundiff.diff_runs(home, old, new)
-        except rundiff.RunError as exc:
-            _say(out, f"no diff against the previous export: {exc}")
-        else:
-            path = write_report(home, d)
-            print(rundiff.report(d), file=out)
-            _say(out, f"diff report: {path}")
-            summary += f"\n\n{d.summary()}\n\nReport: {path}"
+    problems = run_problems(run.manifest)
+    if problems:
+        # Not recorded: recipe data stays stale, so Clayton is asked again on the next quit.
+        code = 1
+        summary = (
+            f"Export {run.name} is incomplete: {'; '.join(problems)}. It isn't recorded, so "
+            "recipe data stays stale and you'll be asked again after the next quit. "
+            f"The run is {exports / run.name}."
+        )
+        _say(out, f"not recording export {run.name}: {'; '.join(problems)}.")
     else:
-        _say(out, "first recorded export: nothing to diff against.")
-    return 0, summary
+        try:
+            play_now = fingerprint.compute_play(cfg)
+        except fingerprint.FingerprintError as exc:
+            raise ExportFailed(
+                f"can't fingerprint Play after the export: {exc}"
+            ) from None
+        status = fingerprint.record_export(home, run.name, exported, play_now)
+        _say(out, f"recorded export {run.name}: {status.line()}")
+        code, summary = 0, f"Export {run.name} done. {status.line()}"
+    if warnings:
+        summary += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
+
+    if previous is None or previous["run_id"] == run.name:
+        _say(out, "no earlier export is recorded: nothing to diff against.")
+        return code, f"{summary}\n\nFirst recorded export: nothing to diff against."
+    try:
+        old = rundiff.load_run(rundiff.find_run(cfg, previous["run_id"]))
+        new = rundiff.load_run(exports / run.name)
+    except rundiff.RunError as exc:
+        _say(out, f"no diff against the previous export: {exc}")
+        return code, summary
+    play_old = fingerprint.run_entries(home, previous["run_id"])
+    d = rundiff.diff(old, new, play_old, exported.entries)
+    path = write_report(home, d)
+    print(rundiff.report(d), file=out)
+    _say(out, f"diff report: {path}")
+    return code, f"{summary}\n\n{d.summary()}\n\nReport: {path}"
+
+
+_table = rundiff._table  # a manifest's table, or {} when it isn't one
+
+
+def run_problems(manifest: Mapping[str, object]) -> list[str]:
+    """Why a complete run isn't a whole export (``complete`` covers only the GT parts): NEI's
+    recipes are missing (the contract's readers need ``parts.nei == "ok"``; a dedicated server
+    has no NEI step) or the autoexport hit its deadline."""
+    parts, errors = _table(manifest, "parts"), _table(manifest, "part_errors")
+
+    def why(part: str) -> str:
+        return f" ({errors[part]})" if part in errors else ""
+
+    problems = []
+    nei = parts.get("nei")
+    if nei != "ok" and not (
+        nei == "skipped_server" and manifest.get("side") == "server"
+    ):
+        problems.append(f"NEI's part is {nei}{why('nei')}")
+    if parts.get("autoexport") == "failed":
+        problems.append(f"the autoexport failed{why('autoexport')}")
+    return problems
 
 
 def write_report(home: Path, d: rundiff.Diff) -> Path:

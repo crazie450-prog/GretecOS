@@ -13,8 +13,9 @@ by relpath, UTF-8. The files are, in **Play** (never Export, whose NEI and Gregt
 Relpaths are posix, relative to the game folder (``mmc-pack.json`` to the instance folder).
 Anything that matches Export's ``[sync.export] exclude`` is left out: sync never copies it to
 Export, so it can't change an export, and an export never makes Play look stale. Links and
-junctions are never followed or hashed; they are noted. The same files give the same fingerprint
-on any PC, whatever the mtimes.
+junctions are never followed or hashed; they are noted (``mods/`` and ``scripts/`` themselves
+too). An instance or game folder that is one can't be fingerprinted, as sync refuses it. The same
+files give the same fingerprint on any PC, whatever the mtimes.
 
 Hashes are cached per file by (size, mtime) in ``GOS_HOME/data/cache/fingerprint.json``
 [A§5.5], so a launch hashes only what changed. Play is only read, through ``safe_open``.
@@ -200,6 +201,16 @@ def game_folder(instance: Path) -> Path:
     raise FingerprintError(f"{instance} has no minecraft or .minecraft folder")
 
 
+def _no_link(path: Path) -> None:
+    """Raise FingerprintError if ``path`` is a link or junction (sync refuses one too)."""
+    try:
+        linked = _is_link(os.lstat(path))
+    except OSError as exc:
+        raise FingerprintError(f"can't read {path}: {exc}") from exc
+    if linked:
+        raise FingerprintError(f"{path} is a symlink or junction: not fingerprinted")
+
+
 def _walk(root: Path, rel: str, out: list[tuple[str, Path]], notes: list[str]) -> None:
     """Every regular file under ``root/rel``; links and junctions are noted, never followed."""
     try:
@@ -260,16 +271,18 @@ def files(
     instance: Path, exclude: Sequence[str], configs: Sequence[str]
 ) -> tuple[list[tuple[str, Path]], list[str]]:
     """The (relpath, path) of every file in the fingerprint, and notes. Reads only names."""
+    _no_link(instance)
     game = game_folder(instance)
+    _no_link(game)
     notes: list[str] = []
     out: list[tuple[str, Path]] = []
-    if (instance / MMC_PACK).is_file():
-        out.append((MMC_PACK, instance / MMC_PACK))
-    else:
+    _visit(instance, MMC_PACK, out, notes)  # a link is noted, not followed
+    out = [(rel, path) for rel, path in out if rel == MMC_PACK]
+    if not out and not notes:
         notes.append(f"{instance / MMC_PACK} is missing")
     found: list[tuple[str, Path]] = []
     for folder in ("mods", "scripts"):
-        _walk(game, folder, found, notes)
+        _visit(game, folder, found, notes)  # a linked mods/ is noted, not followed
     wanted = (DREAMCRAFT, *configs)
     for root in sorted({_literal_root(p) for p in wanted}):
         _visit(game, root, found, notes)  # config/ holds thousands: only what may match

@@ -123,9 +123,10 @@ class Diff:
         )
         recipes = next((c for c in self.counts if c[0] == "recipes"), None)
         rec = f", recipes {recipes[1]} -> {recipes[2]}" if recipes else ""
+        parts = "".join(f"; {k} {_fmt(x)} -> {_fmt(y)}" for k, x, y in self.parts)
         return (
             f"{self.old.run_id} -> {self.new.run_id}: {play}; Export mods {mods} changed; "
-            f"files {files} changed{rec}"
+            f"files {files} changed{rec}{parts}"
         )
 
 

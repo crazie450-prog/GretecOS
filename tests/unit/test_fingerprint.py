@@ -231,6 +231,34 @@ def test_links_are_not_followed(tmp_path: Path) -> None:
     assert any("mods/linked is a link" in n for n in fp.notes)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="symlinks need a privilege on Windows"
+)
+def test_linked_roots_are_not_followed(tmp_path: Path) -> None:
+    """mods/, scripts/ and mmc-pack.json as links are noted; a linked game or instance folder
+    can't be fingerprinted (sync refuses all of them)."""
+    inst = make_play(tmp_path)
+    game = inst / ".minecraft"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    for name in ("mods", "scripts"):
+        (game / name).rename(outside / name)
+        (game / name).symlink_to(outside / name)
+    (inst / "mmc-pack.json").rename(outside / "mmc-pack.json")
+    (inst / "mmc-pack.json").symlink_to(outside / "mmc-pack.json")
+    fp = fingerprint.compute_play(make_cfg(tmp_path))
+    assert not any(rel.startswith(("mods/", "scripts/")) for rel, _ in fp.entries)
+    assert "mmc-pack.json" not in dict(fp.entries)
+    for name in ("mods", "scripts", "mmc-pack.json"):
+        assert f"{name} is a link or junction: not followed" in "\n".join(fp.notes)
+    assert not any("mmc-pack.json is missing" in n for n in fp.notes)
+
+    game.rename(outside / "game")
+    game.symlink_to(outside / "game")
+    with pytest.raises(fingerprint.FingerprintError, match="symlink or junction"):
+        fingerprint.compute_play(make_cfg(tmp_path))
+
+
 def test_stale_flag_follows_the_last_export(tmp_path: Path) -> None:
     inst = make_play(tmp_path)
     cfg = make_cfg(tmp_path)
