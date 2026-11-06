@@ -455,9 +455,9 @@ def collect(
     if status != UNCHANGED:
         unlisted = _unlisted(run, listed)
         staging = root / f"{STAGING}{run.run_id}-{secrets.token_hex(4)}"
-        os.mkdir(
-            staging
-        )  # not mkdtemp: its 0o700 gives an owner-only ACL on Windows (D82)
+        # Not mkdtemp: its mode 0o700 gives the folder an owner-only ACL on Windows, and
+        # gos-dev may read GOS_HOME's data (D82).
+        os.mkdir(staging)
         try:
             for entry in listed:
                 _write_new(staging / entry.rel, read_verified(run, entry))
