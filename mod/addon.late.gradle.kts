@@ -118,6 +118,11 @@ if (providers.gradleProperty("harness").isPresent) {
             dependsOn(prepareClientHarness)
             jvmArgs("-Dgregtec.harness=true", "-Dgregtec.autoexport=true", "-Xmx6G")
             if (neiFail) jvmArgs("-Dgregtec.harness.neiFail=true")
+            // lwjgl3ify writes a .desktop entry under $XDG_DATA_HOME (else ~/.local/share) and refuses to
+            // start when neither exists, as on CI runners. Point it inside run/client instead.
+            val xdgData = clientDir.dir("xdg-data").asFile
+            environment("XDG_DATA_HOME", xdgData.absolutePath)
+            doFirst { xdgData.mkdirs() }
             finalizedBy(checkClientHarness, removeClientHarnessConfig)
         }
     }
