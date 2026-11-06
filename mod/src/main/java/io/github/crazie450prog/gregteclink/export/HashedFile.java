@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.FilterOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
@@ -18,7 +19,9 @@ import java.security.NoSuchAlgorithmException;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
-/** A UTF-8 output file that records its sha256, byte count and line count while it is written. */
+/**
+ * An output file (UTF-8 JSON, or a raw copy) that records its sha256, byte count and line count while it is written.
+ */
 final class HashedFile implements Closeable {
 
     final String name;
@@ -58,11 +61,28 @@ final class HashedFile implements Closeable {
         }
     }
 
+    /** Copies raw bytes (another program's file, as is); lines are counted by {@code \n}. */
+    void copy(InputStream in) throws IOException {
+        out.flush();
+        byte[] buf = new byte[1 << 16];
+        int n;
+        while ((n = in.read(buf)) > 0) {
+            counter.write(buf, 0, n);
+            for (int i = 0; i < n; i++) {
+                if (buf[i] == '\n') lines++;
+            }
+        }
+    }
+
     @Override
     public void close() throws IOException {
         if (sha256 != null) return;
         out.close();
         sha256 = Json.hex(digest.digest());
+    }
+
+    long lines() {
+        return lines;
     }
 
     /** {"sha256","bytes","lines"} for the manifest; call after {@link #close()}. */

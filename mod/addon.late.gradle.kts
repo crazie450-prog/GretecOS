@@ -3,7 +3,8 @@
 // -Dgregtec.harness=true (the mod exports, checks the files and shuts down), and checkHarness
 // fails the build unless run/server/gregteclink/harness-result.json says "pass": true;
 // removeHarnessConfig then deletes run/server/config/gregteclink.cfg.
-// Without -Pharness, runServer is the template's plain dev server.
+// The client harness (runClient25 / runClient -Pharness) is at the end of this file.
+// Without -Pharness, runServer and runClient are the template's plain dev runs.
 
 abstract class CheckHarness : DefaultTask() {
     @get:Internal
@@ -46,7 +47,9 @@ if (providers.gradleProperty("harness").isPresent) {
     val prepareHarness = tasks.register<Copy>("prepareHarness") {
         description = "Copies harness/ (eula, server.properties, gregteclink.cfg) into run/server."
         dependsOn(cleanHarness)
-        from(layout.projectDirectory.dir("harness"))
+        from(layout.projectDirectory.dir("harness")) {
+            exclude("client/**", "client-nei-fail/**")
+        }
         into(serverDir)
     }
 
@@ -64,5 +67,58 @@ if (providers.gradleProperty("harness").isPresent) {
         dependsOn(prepareHarness)
         jvmArgs("-Dgregtec.harness=true", "-Xmx6G")
         finalizedBy(checkHarness, removeHarnessConfig)
+    }
+
+    // Client harness (PR 1b): ./gradlew runClient25 -Pharness (or runClient), under Xvfb in CI. With autoexport on,
+    // the mod opens its own world from the main menu, exports, runs NEI's dump once NEI has loaded, checks the run
+    // and quits. Seeds: an old marked autoexport world (rebuilt) and a marked decoy world (left alone).
+    // Add -PharnessNeiFail to make dumps/recipes a file: NEI's dump then fails, and the harness expects
+    // "nei": "failed" in a run that is still complete.
+    val clientDir = layout.projectDirectory.dir("run/client")
+    val neiFail = providers.gradleProperty("harnessNeiFail").isPresent
+
+    val cleanClientHarness = tasks.register<Delete>("cleanClientHarness") {
+        description = "Deletes the client harness's worlds, NEI dump and earlier GregtecLink output from run/client."
+        delete(
+            clientDir.dir("saves/gregteclink-autoexport"),
+            clientDir.dir("saves/gregteclink-harness-decoy"),
+            clientDir.dir("gregteclink"),
+            clientDir.dir("dumps"),
+        )
+    }
+
+    val prepareClientHarness = tasks.register<Copy>("prepareClientHarness") {
+        description = "Copies harness/config/gregteclink.cfg and the seeded worlds in harness/client/ into run/client."
+        dependsOn(cleanClientHarness)
+        from(layout.projectDirectory.dir("harness/config")) {
+            into("config")
+        }
+        from(layout.projectDirectory.dir("harness/client"))
+        // Not kept under a dumps/ path in git: the repository ignores every dumps/ folder.
+        if (neiFail) {
+            from(layout.projectDirectory.file("harness/client-nei-fail/recipes")) {
+                into("dumps")
+            }
+        }
+        into(clientDir)
+    }
+
+    val checkClientHarness = tasks.register<CheckHarness>("checkClientHarness") {
+        description = "Fails unless the client harness wrote a passing harness-result.json."
+        resultFile.set(clientDir.file("gregteclink/harness-result.json"))
+    }
+
+    val removeClientHarnessConfig = tasks.register<Delete>("removeClientHarnessConfig") {
+        description = "Deletes the client harness's export=true config again, so a later plain runClient exports nothing."
+        delete(clientDir.file("config/gregteclink.cfg"))
+    }
+
+    listOf("runClient", "runClient25").forEach { name ->
+        tasks.named<JavaExec>(name) {
+            dependsOn(prepareClientHarness)
+            jvmArgs("-Dgregtec.harness=true", "-Dgregtec.autoexport=true", "-Xmx6G")
+            if (neiFail) jvmArgs("-Dgregtec.harness.neiFail=true")
+            finalizedBy(checkClientHarness, removeClientHarnessConfig)
+        }
     }
 }

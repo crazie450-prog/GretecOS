@@ -10,8 +10,10 @@ import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.event.FMLServerStartedEvent;
 import cpw.mods.fml.common.event.FMLServerStoppedEvent;
+import cpw.mods.fml.common.event.FMLServerStoppingEvent;
 import cpw.mods.fml.relauncher.Side;
 import io.github.crazie450prog.gregteclink.client.ClientModule;
+import io.github.crazie450prog.gregteclink.export.ExportClient;
 import io.github.crazie450prog.gregteclink.export.ExportModule;
 import io.github.crazie450prog.gregteclink.harness.Harness;
 import io.github.crazie450prog.gregteclink.listener.ListenerModule;
@@ -45,6 +47,10 @@ public class GregtecLink {
         LOG.info("GregtecLink {}: modules {}", Tags.VERSION, modules);
         if (modules.export) {
             ExportModule.preInit(gameDir);
+            if (FMLCommonHandler.instance()
+                .getSide() == Side.CLIENT) {
+                ExportClient.register(gameDir);
+            }
         }
         if (modules.listener) {
             ListenerModule.preInit();
@@ -62,6 +68,13 @@ public class GregtecLink {
             Harness.onServerStarted(gameDir, modules.export);
         } else if (modules.export) {
             ExportModule.onServerStarted();
+        }
+    }
+
+    @Mod.EventHandler
+    public void serverStopping(FMLServerStoppingEvent event) {
+        if (modules.export) {
+            ExportModule.onServerStopping();
         }
     }
 

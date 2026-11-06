@@ -35,8 +35,10 @@
  */
 dependencies {
     // GT pin 5.09.54.265 (GTNH 2.9.0, CLAUDE.md). Linked at runtime only, never vendored.
-    // NEI is reached by reflection only; GT brings an older NEI into the dev runtime transitively.
+    // NEI is reached by reflection only; GT brings an older NEI (2.8.160) to compile against transitively.
     devOnlyNonPublishable("com.github.GTNewHorizons:GT5-Unofficial:5.09.54.265:dev")
+    // Export's NEI (D100): 2.8.172 adds RecipeJsonWriter, which the NEI trigger calls. Dev runtime only.
+    runtimeOnlyNonPublishable("com.github.GTNewHorizons:NotEnoughItems:2.8.172-GTNH:dev")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
