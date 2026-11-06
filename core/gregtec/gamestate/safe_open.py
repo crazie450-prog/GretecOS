@@ -113,9 +113,21 @@ def read_text(path: StrPath, encoding: str = "utf-8") -> str:
 
 
 def sha256_file(path: StrPath, chunk: int = 1 << 20) -> str:
-    """Hex SHA-256 of a file, streamed through :func:`safe_open` (for mod jars)."""
-    digest = hashlib.sha256()
-    with safe_open(path) as f:
-        while block := f.read(chunk):
-            digest.update(block)
-    return digest.hexdigest()
+    """Hex SHA-256 of a file, streamed through :func:`safe_open` (for mod jars). Retried like
+    :func:`read_bytes` (antivirus can hold a file for a moment); a missing file is not."""
+    error: OSError | None = None
+    for attempt in range(RETRIES):
+        digest = hashlib.sha256()
+        try:
+            with safe_open(path) as f:
+                while block := f.read(chunk):
+                    digest.update(block)
+            return digest.hexdigest()
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            error = exc
+            if attempt < RETRIES - 1:
+                time.sleep(BACKOFF_S * 2**attempt)
+    assert error is not None
+    raise error

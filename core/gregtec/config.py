@@ -19,6 +19,10 @@
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [launch] home            | gos_home                                 | gos launch (D115)           |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | fingerprint, hooks (WO-1.4) |
+| [paths] prism_root       | C:/Games/PrismLauncher                   | export run (WO-1.4)         |
+| [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
+| [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -34,6 +38,9 @@ the supervisor and the service commands. A bad one doesn't stop :func:`load`, so
 is such a value): the key keeps its default and the problem goes into
 ``Config.service_errors``. :func:`service_problems` adds one more, gos-dev using Clayton's ports or
 dashboard name (D115); the core and the supervisor refuse to start while there is any.
+delete the file it was meant to keep. ``[fingerprint] configs`` likewise adds to its default; each
+pattern is matched as an exclude pattern is, and must start in ``config/``. Every other key in the
+Appendix C skeleton is ignored until its WO reads it.
 """
 
 from __future__ import annotations
@@ -62,6 +69,23 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
     ),
     "lab": (),
 }
+
+# Recipe-affecting configs in Play's fingerprint besides dreamcraft.cfg, which is always in it
+# (plan 5.2 step 4; the whitelist is a VERIFY [A§5.5], D120). GT's files from the 2.9.0 pack;
+# GT's Client.cfg (client preferences) and Other.cfg (tool ranges) are left out.
+DEFAULT_FINGERPRINT_CONFIGS = (
+    "config/GregTech/GregTech.cfg",
+    "config/GregTech/MachineStats.cfg",
+    "config/GregTech/OverpoweredStuff.cfg",
+    "config/GregTech/Pollution.cfg",
+    "config/GregTech/WorldGeneration.cfg",
+)
+EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+
+
+def default_home() -> Path:
+    """GOS_HOME: ``$GOS_HOME``, else ``~/GregtecOS`` (plan 4.3)."""
+    return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
 
 
 # The core binds to loopback only (plan 4.6). The phone reaches it through Tailscale Serve, which
@@ -110,6 +134,8 @@ class Config:
     launch_home: Path | None = None
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
+    fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
+    export_on_quit: str = "ask"
 
     def instance(self, role: str) -> Path:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
@@ -265,6 +291,30 @@ def load(path: Path | None = None) -> Config:
                 )
         exclude[role] = tuple(patterns)
     service = _service_keys(data, defaults)
+    configs = _table(data, "fingerprint", "").get("configs", [])
+    if not isinstance(configs, list) or not all(
+        isinstance(p, str) and p for p in configs
+    ):
+        raise ConfigError(
+            "gos.toml: [fingerprint] configs must be a list of non-empty strings"
+        )
+    for p in configs:
+        if not (_matchable(p) and p.startswith("config/")):
+            raise ConfigError(
+                f"gos.toml: [fingerprint] configs {p!r} can never match: write it with /, "
+                "relative to the game folder and starting with config/ "
+                "(e.g. 'config/bartworks.cfg')"
+            )
+    on_quit = _string(
+        _table(data, "policy", ""),
+        "export_on_quit",
+        defaults.export_on_quit,
+        "[policy]",
+    )
+    if on_quit not in EXPORT_ON_QUIT:
+        raise ConfigError(
+            f"gos.toml: [policy] export_on_quit must be one of {', '.join(EXPORT_ON_QUIT)}"
+        )
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
         prism_instances=Path(
@@ -279,6 +329,10 @@ def load(path: Path | None = None) -> Config:
             _string(paths, "prism_root", str(defaults.prism_root), "[paths]")
         ),
         **service,
+        fingerprint_configs=tuple(
+            dict.fromkeys([*DEFAULT_FINGERPRINT_CONFIGS, *configs])
+        ),
+        export_on_quit=on_quit,
     )
 
 
