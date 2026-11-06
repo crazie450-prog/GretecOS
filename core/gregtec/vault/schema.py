@@ -14,6 +14,8 @@ from pathlib import Path
 
 FRONTMATTER = ("id", "t", "upd")
 MAX_LINES = 150
+# INDEX.md may be longer: plan 6.1 caps it at 200 lines (it is the one note every prompt loads).
+TYPE_MAX_LINES = {"index": 200}
 KEY = re.compile(r"^([a-z][a-z0-9_]*): (.+)$")
 
 
@@ -36,8 +38,6 @@ class Note:
 def parse(text: str) -> Note:
     """Parse a note; raise ``ValueError`` on anything outside the grammar."""
     lines = text.splitlines()
-    if len(lines) > MAX_LINES:
-        raise ValueError(f"{len(lines)} lines; the cap is {MAX_LINES}")
     if not lines or lines[0] != "---":
         raise ValueError("no frontmatter")
     try:
@@ -52,6 +52,9 @@ def parse(text: str) -> Note:
         meta[key] = value.strip()
     if tuple(meta) != FRONTMATTER:
         raise ValueError(f"frontmatter must be exactly {', '.join(FRONTMATTER)}")
+    cap = TYPE_MAX_LINES.get(meta["t"], MAX_LINES)
+    if len(lines) > cap:
+        raise ValueError(f"{len(lines)} lines; the cap is {cap}")
     dt.date.fromisoformat(meta["upd"])
 
     facts: list[tuple[str, str]] = []
