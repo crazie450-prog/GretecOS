@@ -410,6 +410,23 @@ public final class ExportRun {
         counts.put("ore_mix_errors", ores.layerErrors);
         counts.put("dimensions", ores.dimensions);
 
+        // The full ore dictionary (D145). Not part of "complete" either: without it `gos db build` names NEI slots
+        // from items.jsonl's ore lists, as before. Before the item table, so every member is listed there.
+        t = System.currentTimeMillis();
+        OreDictPass oredict = new OreDictPass(stacks);
+        try (HashedFile out = open(dir, "oredict.jsonl")) {
+            oredict.write(out);
+            parts.put("oredict", "ok");
+        } catch (Throwable e) {
+            GregtecLink.LOG.error("export: oredict pass failed", e);
+            parts.put("oredict", "failed");
+            partErrors.put("oredict", Json.error(e));
+        }
+        durations.put("oredict", System.currentTimeMillis() - t);
+        counts.put("oredict", oredict.names);
+        counts.put("oredict_members", oredict.members);
+        counts.put("oredict_errors", oredict.errors);
+
         t = System.currentTimeMillis();
         try (HashedFile items = open(dir, "items.jsonl"); HashedFile fluids = open(dir, "fluids.jsonl")) {
             refs.writeItems(items);

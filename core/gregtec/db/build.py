@@ -89,6 +89,10 @@ class Loaded:
     crops: crops.CropData | None = None
     crops_error: str | None = None
     crop_lines: list[Recipe] = field(default_factory=list)  # NEI's CropsNH tab lines
+    # The full ore dictionary (D145) when parts.oredict is "ok"; None names NEI slots from the
+    # ore lists of items.jsonl, as runs made before it do.
+    oredict_status: str = "absent"
+    oredict: list[gtdump.OreName] | None = None
 
 
 @dataclass
@@ -168,6 +172,10 @@ def load(
             gt_recipes.append(r)
             map_lines[r.space] += 1
     items = list(gtdump.read_items(path, gt_refs.ids))
+    oredict_status = gtdump.oredict_status(run.manifest)
+    oredict = None
+    if oredict_status == "ok":
+        oredict = list(gtdump.read_oredict(path, gt_refs.ids))
     fluids = list(gtdump.read_fluids(path))
     found = list(machines.read_machines(path))
     loaded = Loaded(
@@ -185,11 +193,13 @@ def load(
         nei_status=_nei_status(run.manifest),
         gt_recipes=len(gt_recipes),
         map_lines=map_lines,
+        oredict_status=oredict_status,
+        oredict=oredict,
     )
     rows: Iterable[Recipe] = ()
     if loaded.nei_status == "ok":
         rows = _nei_rows(loaded, nei.nei_files(run.manifest))
-    ores = OreIndex.build((i.ref, i.ore) for i in items)
+    ores = OreIndex.build(_ore_pairs(loaded))
     combined, loaded.stats = merge.merge(gt_recipes, rows, categories, ores)
     loaded.keys = merge.assign_keys(combined, allowed)
     loaded.recipes = loaded.keys.recipes
@@ -215,6 +225,19 @@ def load(
         ) as exc:  # a shape the reader didn't foresee
             loaded.crops_error = f"{type(exc).__name__}: {exc}"
     return loaded
+
+
+def _ore_pairs(loaded: Loaded) -> Iterator[tuple[Ref, tuple[str, ...]]]:
+    """(member, its ore names) for :class:`OreIndex`: from the full ore dictionary when the run
+    has one (D145), else from the ore lists of ``items.jsonl``, which hold only the items GT's
+    files reference, and give an NBT variant its item's names (Forge ignores NBT there)."""
+    if loaded.oredict is None:
+        for i in loaded.items:
+            yield i.ref, i.ore
+        return
+    for o in loaded.oredict:
+        for m in o.members:
+            yield m, (o.name,)
 
 
 def _nei_rows(loaded: Loaded, rels: list[str]) -> Iterator[Recipe]:
@@ -332,6 +355,8 @@ def _refs(loaded: Loaded) -> tuple[set[Ref], set[Ref]]:
                 refs.add(s.returns)
     refs.update(m.ref for m in loaded.machines)
     refs.update(i.ref for i in loaded.items)
+    for o in loaded.oredict or ():
+        refs.update(o.members)
     if loaded.crops is not None:
         refs.update(crops.item_refs(loaded.crops))
     return {r for r in refs if r.kind == ITEM}, {r for r in refs if r.kind == FLUID}
@@ -420,13 +445,20 @@ def _ores(
     names = set(loaded.gt_refs.ores)
     for i in loaded.items:
         names.update(i.ore)
+    for o in loaded.oredict or ():
+        names.add(o.name)
     conn.executemany(
         "INSERT OR IGNORE INTO ore(name) VALUES (?)", [(n,) for n in sorted(names)]
     )
     ids = {row[1]: row[0] for row in conn.execute("SELECT id, name FROM ore")}
-    # Membership is the latest run's, like the other catalog tables.
+    # Membership is the latest run's, like the other catalog tables: each item's own ore list
+    # (so an item covered by a wildcard member is found by its meta) plus the full ore
+    # dictionary's members as registered (a wildcard member by its meta 32767 row, D145).
     conn.execute("DELETE FROM ore_member")
-    members = sorted({(ids[o], items[i.ref]) for i in loaded.items for o in i.ore})
+    pairs = {(ids[o], items[i.ref]) for i in loaded.items for o in i.ore}
+    for o in loaded.oredict or ():
+        pairs.update((ids[o.name], items[m]) for m in o.members)
+    members = sorted(pairs)
     conn.executemany("INSERT INTO ore_member(ore_id, item_id) VALUES (?, ?)", members)
     return ids
 
