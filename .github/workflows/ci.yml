@@ -63,7 +63,7 @@ jobs:
       # Java 25 with lwjgl3ify, as GTNH's Java 17+ build on the PC. LWJGL needs xrandr (x11-xserver-utils).
       - run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb x11-xserver-utils libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends xvfb x11-xserver-utils libgl1-mesa-dri libegl1 libegl-mesa0
       - run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" timeout 1500 ./gradlew --no-daemon runClient25 -Pharness
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
