@@ -200,9 +200,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Read-only on the game: reads GT's ore mixes from the newest collected export "
             "run (gt_ore_mixes.json) and a world's VisualProspecting caches (the server "
             "cache of every generated vein, and the player's client cache of the veins he "
-            "knows), and replaces the ore_mix and vein tables of GOS_HOME/data/gos.sqlite "
-            "in one transaction. Default world: [paths] lab_world in the Lab, never Play's "
-            "unless --instance play."
+            "knows), and replaces the vein table of GOS_HOME/data/gos.sqlite, and ore_mix "
+            "when the run has mixes, in one transaction. Default world: [paths] lab_world in "
+            "the Lab, never Play's unless --instance play."
         ),
     )
     o_load.add_argument("--run", default=None, help="collected run id (default newest)")

@@ -600,6 +600,38 @@ def test_the_player_is_picked_like_quests_pick_him(tmp_path: Path) -> None:
     assert loc.player is None and "no client cache for this world yet" in loc.notes[-1]
 
 
+def link_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError):
+        pytest.skip("can't make symlinks here")
+
+
+def test_links_are_refused(tmp_path: Path) -> None:
+    game = tmp_path / ".minecraft"
+    w = write_world(game)
+    # A dimension file that is a link is skipped, never followed.
+    server = game / vp.VP_DIR / vp.SERVER_DIR / WID
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "DIM5.dat").write_bytes(vp_dim(5, [(1, 1, "ore.mix.x", False, GEN)]))
+    link_or_skip(server / "DIM5.dat", elsewhere / "DIM5.dat")
+    cache = vp.read_cache(server)
+    assert "DIM5.dat: not a regular file; skipped" in cache.problems
+    assert all(dim != 5 for dim, _, _ in cache.veins)
+    # A cache folder that is a link is refused.
+    server.rename(elsewhere / WID)
+    link_or_skip(server, elsewhere / WID)
+    with pytest.raises(vp.VpError, match="is a link or junction"):
+        vp.locate(w, game)
+    # So is a world-id file that is a link.
+    wid_file = w / vp.WORLD_ID_FILE
+    wid_file.rename(elsewhere / "wid.dat")
+    link_or_skip(wid_file, elsewhere / "wid.dat")
+    with pytest.raises(vp.VpError, match="not a regular file"):
+        vp.world_id(w)
+
+
 def test_server_and_client_merge(tmp_path: Path) -> None:
     game = tmp_path / ".minecraft"
     clients = {
