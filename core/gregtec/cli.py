@@ -159,9 +159,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "load",
         help="load a gtnh-extractor dataset into GOS_HOME/data/gos.sqlite",
         description=(
-            "Checks the dataset (schema v3, made against GT 5.09.54.265) and replaces the "
+            "Checks the dataset (schema v3, labelled GT 5.09.54.265) and replaces the "
             "structure table's gtnh-extractor rows with it in one transaction, then prints "
-            "the counts."
+            "the counts. A controller file that doesn't read is set aside and listed; the "
+            "rest load."
         ),
     )
     load.add_argument(
@@ -169,7 +170,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         nargs="?",
         type=Path,
         default=None,
-        help="the dataset folder. Default: the newest in $GOS_HOME/data/structures.",
+        help=(
+            "the dataset folder. Default: the newest in $GOS_HOME/data/structures that "
+            "reads."
+        ),
     )
     for each in (extract, load):
         each.add_argument(
