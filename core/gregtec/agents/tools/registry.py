@@ -29,6 +29,7 @@ from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.schema import ArgumentError, check_schema, validate
 from gregtec.agents.tools.tsv import PAGE, Result, render
 from gregtec.db import access
+from gregtec.db.quests import KV_SOURCE  # its record changes on every quest load
 
 FAST, DEEP = "fast", "deep"
 LANES = (FAST, DEEP)
@@ -41,7 +42,6 @@ DEADLINE_S = 5.0  # a named query that runs longer is stopped
 # value, a quest's raw JSON, is about 21 kB in 2.9.0).
 MAX_VALUE_BYTES = 1_000_000
 MAX_SQL_BYTES = 100_000
-_KV_QUESTS = "quests.source"  # gregtec.db.quests.KV_SOURCE: changes on every quest load
 
 
 class ToolError(Exception):
@@ -139,9 +139,7 @@ def epoch(conn: sqlite3.Connection) -> str:
     (whose record has its load time). A rebuild of the same run that changes nothing else is
     not seen; its recipes keep their keys and order."""
     run = access.query(conn, "current_run")
-    quests = conn.execute(
-        "SELECT value FROM kv WHERE key = ?", (_KV_QUESTS,)
-    ).fetchone()
+    quests = conn.execute("SELECT value FROM kv WHERE key = ?", (KV_SOURCE,)).fetchone()
     loaded = hashlib.sha256(quests[0].encode()).hexdigest()[:12] if quests else "-"
     newest = (
         f"{run[0]['id']}:{run[0]['run_key']}:{run[0]['created_at']}" if run else "-"
