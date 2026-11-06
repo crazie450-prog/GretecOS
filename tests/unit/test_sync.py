@@ -1,15 +1,19 @@
 """sync_instances.py (WO-0.3) on small fake Prism instances.
 
 Play uses .minecraft (as the GTNH zips do), Export too (Prism's Copy keeps it), Lab uses minecraft.
+GOS_APP is a fake ``current`` folder as gos deploy leaves it, for the GregtecLink install (D98).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import runpy
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -69,9 +73,11 @@ class Env:
         write(self.export, "mods/gregteclink-0.1.0.jar", b"link export")
         write(self.export, "config/gregteclink.cfg", b"export config")
         self.config = tmp / "gos.toml"
+        self.app = tmp / "GregtecOS-app"  # GOS_APP: nothing deployed until deploy_jar
         lab = "" if lab_exclude is None else f"[sync.lab]\nexclude = {lab_exclude!r}\n"
         self.write_config(
-            f'[paths]\nprism_instances = "{self.instances.as_posix()}"\n{lab}'
+            f'[paths]\nprism_instances = "{self.instances.as_posix()}"\n'
+            f'gos_app = "{self.app.as_posix()}"\n{lab}'
         )
         self.play_before = snapshot(self.play.parent)
 
@@ -403,4 +409,242 @@ def test_only_and_the_script(
         runpy.run_path(str(REPO / "scripts" / "sync_instances.py"), run_name="__main__")
     assert done.value.code == 0
     assert mirrored(env.lab) == mirrored(env.play)
+    env.assert_play_untouched()
+
+
+# GregtecLink into Export from GOS_APP's deployed release (D98).
+LINK = "gregteclink-0123456789ab.jar"
+LINK_DATA = b"deployed link jar"
+
+
+def deploy_jar(env: Env, sha: str | None = None) -> Path:
+    """GOS_APP\\current as gos deploy leaves it: release.json and mod-dist\\<jar>."""
+    current = env.app / "current"
+    (current / "mod-dist").mkdir(parents=True)
+    (current / "mod-dist" / LINK).write_bytes(LINK_DATA)
+    entry = {"jar": LINK, "sha256": sha or hashlib.sha256(LINK_DATA).hexdigest()}
+    record = {"commit": "0123456789ab" + "0" * 28, "gregteclink": entry}
+    (current / "release.json").write_text(json.dumps(record), "utf-8")
+    return current
+
+
+def gregteclink_files(game: Path) -> dict[str, tuple[bytes, int] | None]:
+    return {k: v for k, v in snapshot(game).items() if "gregteclink" in k}
+
+
+def test_installs_the_deployed_jar_into_export_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = Env(tmp_path)
+    write(env.export, "mods/gregteclink-0.0.9.jar", b"an older one")
+    deploy_jar(env)
+    app_before = snapshot(env.app)
+    assert env.sync() == 0
+    out = capsys.readouterr().out
+    assert "gregteclink: gregteclink-0123456789ab.jar from" in out
+    assert "delete  mods/gregteclink-0.0.9.jar" in out
+    assert "delete  mods/gregteclink-0.1.0.jar" in out
+    assert f"install mods/{LINK}" in out
+    assert "write   config/gregteclink.cfg (export module on" in out
+
+    export = gregteclink_files(env.export)
+    assert sorted(export) == ["config/gregteclink.cfg", f"mods/{LINK}"]
+    assert (env.export / "mods" / LINK).read_bytes() == LINK_DATA
+    assert (env.export / "config/gregteclink.cfg").read_bytes() == sync.EXPORT_CONFIG
+    assert not list(env.export.rglob(f"*{sync.TMP_SUFFIX}"))
+    # Lab mirrors Play's GregtecLink files and gets nothing from GOS_APP.
+    assert gregteclink_files(env.lab) == gregteclink_files(env.play)
+    env.assert_play_untouched()
+    assert snapshot(env.app) == app_before  # GOS_APP is only read
+
+    before = env.targets()
+    assert env.sync() == 0
+    assert "gregteclink: jar and config already installed" in capsys.readouterr().out
+    assert env.targets() == before
+
+
+def _plant(path: Path, play_file: Path, kind: str) -> None:
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    if kind == "symlink":
+        path.symlink_to(play_file)
+    else:
+        os.link(play_file, path)
+
+
+@pytest.mark.parametrize("kind", ["hard link", "symlink"])
+@pytest.mark.parametrize("where", ["temp path", "target"])
+def test_a_link_at_an_install_path_is_never_written_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, where: str
+) -> None:
+    """gos-dev can write Export: links to Play files at the paths the install writes.
+
+    The install's paths match Export's excludes, so the mirror's link checks never see them.
+    Temp paths: the fixed ``<name>.gos-tmp`` the install once used, and the name mkstemp tries
+    first (made ``planted`` here), where a link already waits. Targets: the jar and config
+    themselves are links, which the rename replaces.
+    """
+    if kind == "symlink" and sys.platform == "win32":
+        pytest.skip("symlinks need a privilege")
+    env = Env(tmp_path)
+    deploy_jar(env)
+    monkeypatch.setattr(
+        tempfile, "_get_candidate_names", lambda: iter(["planted", "fresh"])
+    )
+    plants = {
+        f"mods/{LINK}": "mods/example-1.0.jar",
+        "config/gregteclink.cfg": "config/example.cfg",
+    }
+    for rel, play_rel in plants.items():
+        paths = (
+            [f"{rel}{sync.TMP_SUFFIX}", f"{rel}.planted{sync.TMP_SUFFIX}"]
+            if where == "temp path"
+            else [rel]
+        )
+        for path in paths:
+            _plant(env.export / path, env.play / play_rel, kind)
+            assert (env.export / path).read_bytes() == PLAY_FILES[play_rel]
+
+    assert env.sync() == 0
+    env.assert_play_untouched()
+    assert (env.export / "mods" / LINK).read_bytes() == LINK_DATA
+    assert (env.export / "config/gregteclink.cfg").read_bytes() == sync.EXPORT_CONFIG
+    for rel in plants:
+        assert not (env.export / rel).is_symlink()
+        assert (env.export / rel).stat().st_nlink == 1
+    assert not list(env.export.rglob(f"*.fresh{sync.TMP_SUFFIX}"))
+
+
+def test_case_folded_names_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows ``GregtecLink-*.jar`` is one of Export's jars, and the deployed jar under
+    another case is the same file, so it is kept rather than written again."""
+    monkeypatch.setattr(sync, "IGNORE_CASE", True)
+    env = Env(tmp_path)
+    deploy_jar(env)
+    write(env.export, "mods/GregtecLink-0.0.8.jar", b"an older one")
+    same = write(env.export, f"mods/{LINK.upper()}", LINK_DATA)
+    assert env.sync() == 0
+    jars = [
+        p.name
+        for p in (env.export / "mods").iterdir()
+        if "gregteclink" in p.name.lower()
+    ]
+    assert jars == [LINK.upper()]
+    assert same.read_bytes() == LINK_DATA and same.stat().st_mtime_ns == OLD
+    assert (env.export / "config/gregteclink.cfg").read_bytes() == sync.EXPORT_CONFIG
+    env.assert_play_untouched()
+
+
+def test_old_jars_are_deleted_before_the_new_one_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An old jar Export still holds stops the install before Export has two GregtecLinks."""
+    env = Env(tmp_path)
+    deploy_jar(env)
+    held = env.export / "mods/gregteclink-0.1.0.jar"
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == held:
+            raise PermissionError(13, "in use", str(self))
+        real_unlink(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert env.sync() == 1
+    assert "Close its game, then run sync again" in capsys.readouterr().out
+    assert sorted(p.name for p in (env.export / "mods").glob("gregteclink*")) == [
+        "gregteclink-0.1.0.jar"
+    ]
+    env.assert_play_untouched()
+
+
+def test_the_export_config_is_the_one_the_harness_runs() -> None:
+    """The modules block of mod/harness's config, which the harness reads as export only."""
+    harness = (REPO / "mod" / "harness" / "config" / "gregteclink.cfg").read_bytes()
+
+    def block(text: bytes) -> list[bytes]:
+        lines = [line.strip() for line in text.splitlines()]
+        return lines[lines.index(b"modules {") :]
+
+    assert block(sync.EXPORT_CONFIG) == block(harness)
+
+
+@pytest.mark.parametrize("bad", ["sha", "missing jar", "bad record", "bad name"])
+def test_a_jar_that_does_not_match_release_json_refuses_everything(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], bad: str
+) -> None:
+    env = Env(tmp_path)
+    current = deploy_jar(env, sha="0" * 64 if bad == "sha" else None)
+    record = current / "release.json"
+    if bad == "missing jar":
+        (current / "mod-dist" / LINK).unlink()
+    elif bad == "bad record":
+        record.write_text("{", "utf-8")
+    elif bad == "bad name":
+        entry = {"jar": "../../Play/mods/x.jar", "sha256": "0" * 64}
+        record.write_text(json.dumps({"gregteclink": entry}), "utf-8")
+    why = {
+        "sha": f"doesn't match the SHA256 in {record}",
+        "missing jar": "can't read the deployed jar",
+        "bad record": f"can't read {record}",
+        "bad name": "names no GregtecLink jar",
+    }[bad]
+    _refuses(env, capsys, why)  # Lab isn't written either
+
+
+def test_dry_run_reports_the_install_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = Env(tmp_path)
+    deploy_jar(env)
+    before = env.targets()
+    assert env.sync("--dry-run") == 0
+    out = capsys.readouterr().out
+    assert f"install mods/{LINK}" in out
+    assert "write   config/gregteclink.cfg" in out
+    assert env.targets() == before
+    env.assert_play_untouched()
+
+
+@pytest.mark.parametrize("deployed", ["nothing", "a release without mod/"])
+def test_no_deployed_jar_leaves_export_alone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], deployed: str
+) -> None:
+    env = Env(tmp_path)
+    if deployed != "nothing":
+        (env.app / "current").mkdir(parents=True)
+        (env.app / "current" / "release.json").write_text('{"commit": "c"}', "utf-8")
+    own = gregteclink_files(env.export)
+    assert env.sync() == 0
+    out = capsys.readouterr().out
+    assert out.count("note: no GregtecLink jar is deployed") == 1
+    assert gregteclink_files(env.export) == own
+
+
+def test_only_lab_skips_the_install_and_install_never_writes_lab_or_play(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = Env(tmp_path)
+    current = deploy_jar(env, sha="0" * 64)  # an Export sync would refuse this
+    assert env.sync("--only", "lab") == 0
+    out = capsys.readouterr().out
+    assert "gregteclink:" not in out and str(env.app) not in out
+
+    before = env.targets()
+    for role, game, jar in [
+        ("lab", env.lab, env.lab / "mods" / LINK),
+        ("export", env.export, env.play / "mods" / LINK),  # Export's plan, Play's path
+        (
+            "export",
+            env.play,
+            env.play / "mods" / LINK,
+        ),  # Export's plan on Play's folder
+    ]:
+        plan = sync.Plan(role, env.play, game)
+        plan.install = sync.Install(current, "c", LINK_DATA, jar, (), None)
+        with pytest.raises(ValueError, match="into Export only"):
+            sync.apply_install(plan)
+    assert env.targets() == before
     env.assert_play_untouched()

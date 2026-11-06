@@ -7,6 +7,7 @@ real venv once.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import shutil
@@ -118,7 +119,11 @@ def fake_env(release: Path) -> None:
 @pytest.fixture(autouse=True)
 def stub_uv(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     monkeypatch.setattr(dep, "RENAME_DELAY", 0)
+    monkeypatch.setattr(dep, "CLEAN_DELAY", 0)
     if "real_uv" in request.fixturenames:
+        # This repo's real mod/ needs Gradle, JDKs and minutes: the mod CI job builds it, and
+        # the fake wrapper below checks what deploy does around the build.
+        monkeypatch.setattr(dep, "_build_mod", lambda release, version: None)
         return
     monkeypatch.setattr(dep, "_build_env", fake_env)
     monkeypatch.setattr(dep, "relocate_editable", lambda release: None)
@@ -135,6 +140,8 @@ def test_first_deploy_installs_and_records_the_commit(repo: Path, app: Path) -> 
     record = json.loads((app / "current" / "release.json").read_text("utf-8"))
     assert record["commit"] == sha and record["ref"] == "HEAD"
     assert record["deployed_at"] == release.deployed_at
+    assert "gregteclink" not in record and release.gregteclink is None  # no mod/
+    assert not (app / "current" / "mod-dist").exists()
     assert (app / "current" / "core" / "gregtec" / "__init__.py").is_file()
     assert (app / "current" / ".venv" / "marker").is_file()
     assert not (app / "current" / ".git").exists()
@@ -355,6 +362,120 @@ def test_failed_build_leaves_gos_app_unchanged(
     assert snapshot(app) == before
 
 
+# Fake Gradle wrappers: `build` leaves in mod/ what a real one leaves (build/libs with the main,
+# -dev and -sources jars, .gradle/, run/, logs/) plus a stray file in a source folder, and a
+# .gradle/ beside mod/ (as a build that writes outside mod/ would).
+# GOS_TEST_GRADLE=fail fails the build, =no-jar makes no jar. The jar holds its arguments.
+FAKE_GRADLEW = """#!/bin/sh
+if [ "$GOS_TEST_GRADLE" = fail ]; then echo "BUILD FAILED" >&2; exit 1; fi
+mkdir -p build/libs .gradle/configuration-cache run/server logs
+echo log > logs/latest.log
+echo stray > src/main/stray.txt
+mkdir -p ../.gradle && echo stray > ../.gradle/outside.txt
+if [ "$GOS_TEST_GRADLE" = no-jar ]; then exit 0; fi
+echo "jar $VERSION $*" > "build/libs/gregteclink-$VERSION.jar"
+echo dev > "build/libs/gregteclink-$VERSION-dev.jar"
+echo src > "build/libs/gregteclink-$VERSION-sources.jar"
+"""
+FAKE_GRADLEW_BAT = """@echo off
+if "%GOS_TEST_GRADLE%"=="fail" (
+  echo BUILD FAILED 1>&2
+  exit /b 1
+)
+mkdir build\\libs .gradle\\configuration-cache run\\server logs
+echo log> logs\\latest.log
+echo stray> src\\main\\stray.txt
+mkdir ..\\.gradle
+echo stray> ..\\.gradle\\outside.txt
+if "%GOS_TEST_GRADLE%"=="no-jar" exit /b 0
+echo jar %VERSION% %*> build\\libs\\gregteclink-%VERSION%.jar
+echo dev> build\\libs\\gregteclink-%VERSION%-dev.jar
+echo src> build\\libs\\gregteclink-%VERSION%-sources.jar
+exit /b 0
+"""
+
+
+def add_mod(repo: Path, *, wrapper: bool = True) -> str:
+    """Commit a mod/ with the fake wrappers (merged); returns the commit."""
+    files = {"mod/src/main/java/Mod.java": "class Mod {}\n"}
+    if wrapper:
+        files |= {"mod/gradlew": FAKE_GRADLEW, "mod/gradlew.bat": FAKE_GRADLEW_BAT}
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, "utf-8")
+    if wrapper:
+        os.chmod(repo / "mod" / "gradlew", 0o755)  # POSIX runs this one
+    return commit(repo, {})
+
+
+def test_builds_the_mod_and_keeps_only_the_jar(
+    repo: Path, app: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sha = add_mod(repo)
+    release = dep.deploy(repo, "HEAD", app)
+
+    version = sha[:12]
+    name = f"gregteclink-{version}.jar"
+    dist = app / "current" / "mod-dist"
+    assert sorted(p.name for p in dist.iterdir()) == [name]  # not -dev or -sources
+    data = (dist / name).read_bytes()
+    assert data.decode().split() == ["jar", version, "--no-daemon", "--quiet", "build"]
+    entry = {"jar": name, "sha256": hashlib.sha256(data).hexdigest()}
+    assert release.gregteclink == entry
+    record = json.loads((app / "current" / "release.json").read_text("utf-8"))
+    assert record["gregteclink"] == entry
+    # GOS_APP keeps the sources and the jar: everything the build added is gone, in mod/ or not.
+    assert snapshot(app / "current" / "mod").keys() == snapshot(repo / "mod").keys()
+    assert not (app / "current" / ".gradle").exists()
+    assert f"Building GregtecLink {version}" in capsys.readouterr().out
+    assert sorted(p.name for p in app.iterdir()) == ["current", "scripts"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("fail", "GregtecLink build failed"),
+        ("no-jar", "the build made no"),
+        ("no-wrapper", "mod/ has no gradlew"),
+        ("in-use", "couldn't delete the build's"),
+    ],
+)
+def test_a_failed_mod_build_leaves_gos_app_unchanged(
+    repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch, mode: str, message: str
+) -> None:
+    dep.deploy(repo, "HEAD", app)
+    add_mod(repo, wrapper=mode != "no-wrapper")
+    before = snapshot(app)
+    monkeypatch.setenv("GOS_TEST_GRADLE", mode)
+    if mode == "in-use":
+        monkeypatch.setattr(dep, "_delete", lambda path: False)
+    with pytest.raises(dep.DeployError, match=message):
+        dep.deploy(repo, "HEAD", app)
+    assert snapshot(app) == before
+
+
+@pytest.mark.skipif(
+    os.environ.get("GOS_REAL_MOD_BUILD") != "1",
+    reason="needs Java, Gradle, network and minutes: CI's mod-windows job sets "
+    "GOS_REAL_MOD_BUILD=1",
+)
+def test_the_real_mod_builds_from_a_git_archive(tmp_path: Path) -> None:
+    """Deploy's real mod build on a git archive of this commit (no .git), as on Clayton's PC."""
+    commit = git(REPO, "rev-parse", "HEAD")
+    release = tmp_path / "r"  # short: Windows paths in mod/build are deep
+    release.mkdir()
+    dep._extract(REPO, commit, release)
+    before = snapshot(release)
+    entry = dep._build_mod(release, commit[:12])
+
+    jar = release / dep.MOD_DIST / f"gregteclink-{commit[:12]}.jar"
+    sha256 = hashlib.sha256(jar.read_bytes()).hexdigest()
+    assert entry == {"jar": jar.name, "sha256": sha256}
+    after = snapshot(release)
+    assert sorted(set(after) - set(before)) == [dep.MOD_DIST, f"mod-dist/{jar.name}"]
+    assert {k: after.get(k) for k in before} == before  # nothing changed or left behind
+
+
 def failing_rename(n: int) -> Callable[[Path, Path], None]:
     """os.rename that fails, every time, for the pair it is given on its nth call."""
     real = os.rename
@@ -533,11 +654,14 @@ def test_cli_deploys_to_the_configured_folder(
         f'prism_instances = "{(tmp_path / "Prism" / "instances").as_posix()}"\n',
         "utf-8",
     )
+    sha = add_mod(repo)
     assert cli.main(["deploy", "--config", str(toml)]) == 0
     out = capsys.readouterr().out
-    sha = git(repo, "rev-parse", "HEAD")
     assert f"Deployed {sha[:12]} (HEAD)" in out
     assert str(dep.venv_exe(app / "current", "gos")) in out
+    jar = app / "current" / "mod-dist" / f"gregteclink-{sha[:12]}.jar"
+    assert f"Built GregtecLink: {jar}" in out
+    assert f"SHA256 {hashlib.sha256(jar.read_bytes()).hexdigest()}" in out
 
     (repo / "scripts" / "old_tool.py").write_text("# edited\n", "utf-8")
     assert cli.main(["deploy", "--config", str(toml)]) == 1

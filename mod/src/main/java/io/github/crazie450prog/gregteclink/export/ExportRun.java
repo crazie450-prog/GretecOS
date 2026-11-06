@@ -2,11 +2,16 @@ package io.github.crazie450prog.gregteclink.export;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,12 +19,16 @@ import java.util.Map;
 import java.util.TimeZone;
 import java.util.regex.Pattern;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import io.github.crazie450prog.gregteclink.GregtecLink;
 
 /**
  * One export run: writes every file into {@code <run_id>.partial/}, writes manifest.json last, then renames the folder
- * to {@code <run_id>/}. Everything goes through a {@link PathGuard} rooted at {@code <gameDir>/gregteclink/exports/}.
- * It reads the game and never changes the world.
+ * to {@code <run_id>/} and prunes old runs. Everything goes through a {@link PathGuard} rooted at
+ * {@code <gameDir>/gregteclink/exports/}. It reads the game and never changes the world.
  */
 public final class ExportRun {
 
@@ -30,6 +39,10 @@ public final class ExportRun {
     /** On Windows a virus scanner or the indexer often still holds a just-written file, so the rename is retried. */
     private static final int RENAME_ATTEMPTS = 3;
     private static final long RENAME_BACKOFF_MS = 1000;
+    /** Complete runs kept in the exports folder (D98); each is about 50 MB. */
+    public static final int KEEP_COMPLETE = 10;
+    /** Incomplete runs (manifest "complete": false) kept for debugging (D98). */
+    public static final int KEEP_INCOMPLETE = 3;
 
     /** What the caller (one-click, harness) needs to know afterwards. */
     public static final class Result {
@@ -110,6 +123,7 @@ public final class ExportRun {
                 t);
             complete = false;
         }
+        if (attempts > 0) prune(guard, runId, KEEP_COMPLETE, KEEP_INCOMPLETE);
         GregtecLink.LOG.info(
             "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} -> {}",
             runId,
@@ -120,6 +134,105 @@ public final class ExportRun {
             run.parts,
             finalDir);
         return new Result(runId, finalDir, complete, attempts);
+    }
+
+    /**
+     * Deletes the complete runs (manifest {@code "complete": true}) beyond the newest {@code keep}, the incomplete
+     * runs (manifest {@code "complete": false}) beyond the newest {@code keepIncomplete}, each ordered by manifest
+     * {@code created_utc} and then name, and every {@code .partial} folder. Only folders directly in the guard's root,
+     * and never {@code current}, which counts as one of the kept runs of its kind. Runs whose manifest is missing or
+     * unreadable are kept. A run is renamed to {@code <name>.partial} before anything in it is deleted. A link or
+     * junction is deleted itself, never followed. Never throws: what it can't delete stays (a run
+     * that can't be renamed stays whole) and is logged. Returns the names it deleted.
+     */
+    static List<String> prune(PathGuard guard, String current, int keep, int keepIncomplete) {
+        List<String[]> complete = new ArrayList<>(); // {created_utc, name}
+        List<String[]> incomplete = new ArrayList<>();
+        List<String> doomed = new ArrayList<>();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(guard.root())) {
+            for (Path p : entries) {
+                String name = p.getFileName()
+                    .toString();
+                if (!Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) continue;
+                if (name.endsWith(".partial")) {
+                    if (!name.equals(current + ".partial")) doomed.add(name);
+                    continue;
+                }
+                String[] state = manifestState(p.resolve("manifest.json")); // {complete, created_utc} or null
+                if (state != null)
+                    (state[0].equals("true") ? complete : incomplete).add(new String[] { state[1], name });
+            }
+        } catch (Throwable t) {
+            GregtecLink.LOG.warn("export: old runs not pruned: {}", t.toString());
+            return new ArrayList<>();
+        }
+        doomed.addAll(beyondNewest(complete, keep, current));
+        doomed.addAll(beyondNewest(incomplete, keepIncomplete, current));
+        List<String> deleted = new ArrayList<>();
+        for (String name : doomed) { // .partial folders come first, so a run's .partial name is free by its turn
+            try {
+                // A complete run is renamed to .partial first, in one atomic step: if a file in it can't be deleted
+                // (Windows: the indexer, a virus scanner or the collector still holds it), what is left is a .partial
+                // folder that readers skip and the next prune deletes, never a "complete" run with files missing.
+                String gone = name.endsWith(".partial") ? name : name + ".partial";
+                if (!gone.equals(name)) {
+                    Files.move(guard.resolve(name), guard.resolve(gone), StandardCopyOption.ATOMIC_MOVE);
+                }
+                deleteTree(guard.resolve(gone));
+                deleted.add(name);
+            } catch (Throwable t) {
+                GregtecLink.LOG.warn("export: old run {} not deleted: {}", name, t.toString());
+            }
+        }
+        if (!deleted.isEmpty()) GregtecLink.LOG.info("export: deleted old runs {}", deleted);
+        return deleted;
+    }
+
+    /** The names of {@code runs} ({created_utc, name}) past the newest {@code keep}, never {@code current}. */
+    private static List<String> beyondNewest(List<String[]> runs, int keep, String current) {
+        Collections.sort(runs, new Comparator<String[]>() {
+
+            @Override
+            public int compare(String[] a, String[] b) {
+                int c = b[0].compareTo(a[0]); // newest first
+                return c != 0 ? c : b[1].compareTo(a[1]);
+            }
+        });
+        List<String> out = new ArrayList<>();
+        for (int i = keep; i < runs.size(); i++) {
+            if (!runs.get(i)[1].equals(current)) out.add(runs.get(i)[1]);
+        }
+        return out;
+    }
+
+    /** {"true"|"false", created_utc or ""} from a readable manifest with a boolean "complete"; else null. */
+    private static String[] manifestState(Path manifest) {
+        try {
+            if (!Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS)) return null;
+            JsonObject m = new JsonParser().parse(new String(Files.readAllBytes(manifest), StandardCharsets.UTF_8))
+                .getAsJsonObject();
+            JsonElement complete = m.get("complete");
+            if (complete == null || !complete.isJsonPrimitive()
+                || !complete.getAsJsonPrimitive()
+                    .isBoolean())
+                return null;
+            JsonElement created = m.get("created_utc");
+            String when = created != null && created.isJsonPrimitive() ? created.getAsString() : "";
+            return new String[] { String.valueOf(complete.getAsBoolean()), when };
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Deletes {@code p} and, if it is a real folder (not a link or junction), everything in it first. */
+    private static void deleteTree(Path p) throws IOException {
+        if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS) && p.toRealPath()
+            .equals(p)) {
+            try (DirectoryStream<Path> children = Files.newDirectoryStream(p)) {
+                for (Path c : children) deleteTree(c);
+            }
+        }
+        Files.delete(p);
     }
 
     /**

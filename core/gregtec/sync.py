@@ -10,28 +10,43 @@ keep Play's mtime. Each game folder is ``minecraft`` unless only ``.minecraft`` 
 Safety (CLAUDE.md, plan 4.6 residual risk, D82):
 
 - Play is only read, through ``safe_open``: nothing in it is written, renamed or locked.
-- Each target file is written to ``<name>.gos-tmp`` beside it, then ``os.replace``'d.
+- Each target file is written to a new ``<name>.<random>.gos-tmp`` beside it, then
+  ``os.replace``'d. The temp file is created with O_EXCL, so a link planted at a temp path
+  (gos-dev can write Export and Lab) makes the write fail instead of writing through it.
 - Everything is planned before anything is written, and any refusal writes nothing at all:
   a symlink, junction or other reparse point anywhere sync would traverse (both trees, the
   instance and game folders included); a hard link in a target, which is what Prism's "Link
   files" copy makes and would let the target write through to Play; a target that is Play or
   the other target, is inside it or holds it; a target that doesn't exist (sync never creates
   instances: use Prism's Copy instance).
+
+Then, for Export only, sync installs GregtecLink from the release ``gos deploy`` built (D98):
+GOS_APP's ``current/release.json`` names the jar in ``current/mod-dist/`` and its SHA256. The
+jar's bytes must match it. Every other ``mods/gregteclink*.jar`` in Export is deleted first (so a
+jar Export still holds stops the step before there are two), then the jar is written and
+``config/gregteclink.cfg`` with the export module on and listener and client off, each through
+the same O_EXCL temp file as the mirror. Both paths are in Export's exclude list, so the mirror
+never copies, deletes or link-checks them. With no deployed jar this step is skipped with a note;
+a jar that doesn't match ``release.json`` is a refusal.
 """
 
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
+import json
 import os
+import re
 import stat
 import sys
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from gregtec import config
+from gregtec import config, deploy
 from gregtec.gamestate.safe_open import read_bytes, sha256_file
 from gregtec.tweaks import GAME_DIRS
 
@@ -39,6 +54,19 @@ MIRRORED = config.MIRRORED
 TARGETS = ("export", "lab")
 TMP_SUFFIX = ".gos-tmp"
 IGNORE_CASE = sys.platform == "win32"  # file names and exclude patterns
+LINK_JARS = "gregteclink*.jar"  # Export's mods/ jars that the deployed one replaces
+LINK_JAR_NAME = re.compile(r"gregteclink-[A-Za-z0-9][A-Za-z0-9._+-]*\.jar")
+LINK_CONFIG = "config/gregteclink.cfg"
+# What GregtecLink's ModulesConfig reads; the modules block is mod/harness/config/gregteclink.cfg's.
+EXPORT_CONFIG = b"""# GregtecLink in GTNH-Export: the export module only (D98).
+# sync_instances.py rewrites this file at every sync; Play never gets it.
+
+modules {
+    B:client=false
+    B:export=true
+    B:listener=false
+}
+"""
 
 
 def _fold(text: str) -> str:
@@ -139,6 +167,7 @@ class Plan:
     retime: list[tuple[File, Path]] = field(default_factory=list)  # same bytes
     excluded: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    install: Install | None = None  # Export only
 
     def empty(self) -> bool:
         return not (
@@ -224,6 +253,83 @@ def plan_target(
     return plan
 
 
+@dataclass(frozen=True)
+class Install:
+    """GregtecLink from GOS_APP's deployed release into Export's game folder (D98)."""
+
+    source: Path  # GOS_APP\current\mod-dist\<jar>
+    commit: str
+    data: bytes  # the jar's bytes, already checked against release.json's SHA256
+    jar: Path | None  # Export's mods/<jar> to write; None if it already has these bytes
+    delete: tuple[Path, ...]  # Export's other mods/gregteclink*.jar
+    config: Path | None  # config/gregteclink.cfg to write; None if it already says this
+
+
+def _same(path: Path, data: bytes) -> bool:
+    return path.is_file() and not _is_link(os.lstat(path)) and read_bytes(path) == data
+
+
+def plan_install(
+    plan: Plan, gos_app: Path, patterns: Sequence[str], refusals: list[str]
+) -> None:
+    """Set ``plan.install`` (Export's plan), or add a note or a refusal. Reads only."""
+    release = gos_app / deploy.CURRENT
+    record_path = release / deploy.RECORD
+    try:
+        record = json.loads(read_bytes(record_path))
+    except FileNotFoundError:
+        record = None
+    except (OSError, ValueError) as exc:
+        refusals.append(f"export: can't read {record_path}: {exc}")
+        return
+    entry = record.get("gregteclink") if isinstance(record, dict) else None
+    if entry is None:
+        plan.notes.append(
+            f"no GregtecLink jar is deployed in {gos_app} (gos deploy builds it), so "
+            "Export's GregtecLink is left as it is"
+        )
+        return
+    name = entry.get("jar") if isinstance(entry, dict) else None
+    want = entry.get("sha256") if isinstance(entry, dict) else None
+    if not (isinstance(name, str) and LINK_JAR_NAME.fullmatch(name)):
+        refusals.append(f"export: {record_path} names no GregtecLink jar: {entry!r}")
+        return
+    for rel in (f"mods/{name}", LINK_CONFIG):
+        if not excluded(rel, patterns):  # the mirror would delete it again
+            refusals.append(f"export: {rel} isn't in [sync.export] exclude")
+            return
+    source = release / deploy.MOD_DIST / name
+    try:
+        data = read_bytes(source)
+    except OSError as exc:
+        refusals.append(f"export: can't read the deployed jar {source}: {exc}")
+        return
+    if hashlib.sha256(data).hexdigest() != want:
+        refusals.append(
+            f"export: {source} doesn't match the SHA256 in {record_path}; deploy again"
+        )
+        return
+    mods = plan.game / "mods"
+    jars = sorted(
+        (
+            p
+            for p in (mods.iterdir() if mods.is_dir() else ())
+            if fnmatch.fnmatchcase(_fold(p.name), LINK_JARS)
+        ),
+        key=lambda p: p.name,
+    )
+    target = next((p for p in jars if _fold(p.name) == _fold(name)), mods / name)
+    config_path = plan.game / LINK_CONFIG
+    plan.install = Install(
+        source=source,
+        commit=str(record.get("commit", "?")),
+        data=data,
+        jar=None if _same(target, data) else target,
+        delete=tuple(p for p in jars if p != target),
+        config=None if _same(config_path, EXPORT_CONFIG) else config_path,
+    )
+
+
 def plan_all(cfg: config.Config, roles: Sequence[str]) -> tuple[list[Plan], list[str]]:
     """Plans for ``roles``, and every refusal. Reads only."""
     refusals: list[str] = []
@@ -253,6 +359,9 @@ def plan_all(cfg: config.Config, roles: Sequence[str]) -> tuple[list[Plan], list
         plan_target(role, play[1], game, cfg.sync_exclude.get(role, ()), refusals)
         for role, game in targets
     ]
+    for plan in plans:
+        if plan.role == "export":
+            plan_install(plan, cfg.gos_app, cfg.sync_exclude["export"], refusals)
     return plans, refusals
 
 
@@ -264,13 +373,77 @@ def apply(plan: Plan) -> None:
     for path in plan.mkdir:
         path.mkdir()
     for f, target in plan.copy + plan.update:
-        data = read_bytes(plan.source / f.rel)
-        tmp = target.with_name(target.name + TMP_SUFFIX)
-        tmp.write_bytes(data)
-        os.utime(tmp, ns=(f.atime_ns, f.mtime_ns))
-        os.replace(tmp, target)
+        _write(target, read_bytes(plan.source / f.rel), (f.atime_ns, f.mtime_ns))
     for f, target in plan.retime:
         os.utime(target, ns=(f.atime_ns, f.mtime_ns))
+
+
+def _write(target: Path, data: bytes, times: tuple[int, int] | None = None) -> None:
+    """Write ``data`` to a new temp file beside ``target``, then rename it onto ``target``.
+
+    mkstemp creates the temp file with O_EXCL under a random name, so it never opens a file or
+    link that is already there. A rename replaces a link at ``target`` itself, never its target.
+    """
+    fd, name = tempfile.mkstemp(
+        dir=target.parent, prefix=target.name + ".", suffix=TMP_SUFFIX
+    )
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(data)
+        if times is not None:
+            os.utime(name, ns=times)
+        os.replace(name, target)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
+
+
+def apply_install(plan: Plan) -> None:
+    """Write ``plan.install`` into Export. Never Lab or Play: anything else raises first."""
+    install = plan.install
+    if install is None:
+        return
+    paths = [p for p in (install.jar, install.config, *install.delete) if p is not None]
+    allowed = {plan.game / "mods", (plan.game / LINK_CONFIG).parent}
+    if (
+        plan.role != "export"
+        or _overlap(plan.game, plan.source)
+        or any(p.parent not in allowed for p in paths)
+    ):
+        raise ValueError(f"GregtecLink is installed into Export only, not {plan.game}")
+    # Old jars first: if one is locked (Export running), Export never has two GregtecLinks.
+    for path in install.delete:
+        path.unlink()
+    if install.jar is not None:
+        install.jar.parent.mkdir(exist_ok=True)
+        _write(install.jar, install.data)
+    if install.config is not None:
+        install.config.parent.mkdir(exist_ok=True)
+        _write(install.config, EXPORT_CONFIG)
+
+
+def report_install(plan: Plan, out: TextIO) -> None:
+    install = plan.install
+    if install is None:
+        return
+    print(
+        f"  gregteclink: {install.source.name} from {install.source.parent.parent} "
+        f"(release {install.commit[:12]}), SHA256 matches",
+        file=out,
+    )
+    lines = [
+        *(("delete", p, "") for p in install.delete),
+        *(("install", p, "") for p in (install.jar,) if p is not None),
+        *(
+            ("write", p, " (export module on, listener and client off)")
+            for p in (install.config,)
+            if p is not None
+        ),
+    ]
+    for verb, path, why in lines:
+        print(f"  {verb:<7} {path.relative_to(plan.game).as_posix()}{why}", file=out)
+    if not lines:
+        print("  gregteclink: jar and config already installed", file=out)
 
 
 def report(plan: Plan, out: TextIO) -> None:
@@ -339,10 +512,12 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
         print("Dry run: nothing is written.", file=out)
     for p in plans:
         report(p, out)
+        report_install(p, out)
         if args.dry_run:
             continue
         try:
             apply(p)
+            apply_install(p)  # after the mirror (D98)
         except OSError as exc:
             print(
                 f"Write failed: {exc}\n{p.role} is part synced. Close its game, then "

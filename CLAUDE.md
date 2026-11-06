@@ -92,7 +92,7 @@ One WO = one branch `wo/<id>-<slug>` + one PR (summary, tests run, evidence, VER
 - Ask Clayton (PR "Questions") instead of guessing on gameplay preferences, anything touching Play, or spending.
   "Ask" (§1 above) means: if Clayton is in the session, ask him there. If you are running unattended, finish the parts that don't depend on the answer, put the question in the PR's Questions section, and stop short of the part that does.
 
-Commands: `uv run pytest` · `uv run gos doctor` · `uv run gos deploy [ref]` (Clayton only, from his own clone; installs into GOS_APP, D91) ·
+Commands: `uv run pytest` · `uv run gos doctor` · `uv run gos deploy [ref]` (Clayton only, from his own clone; installs into GOS_APP and builds GregtecLink's jar there, D91, D98) ·
 `uv run gos serve` · `uv run gos eval` · `uv run gos stop` ·
 `pnpm -C dashboard dev` · `cd mod && ./gradlew build` · `cd mod && ./gradlew runServer -Pharness` (headless export harness, WO-1.1)
 (None of these exist yet: WO-0.1 sets up the toolchain, and the `gos` commands arrive with their WOs.)

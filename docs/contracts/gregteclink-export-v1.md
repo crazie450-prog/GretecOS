@@ -14,15 +14,24 @@ only what needs the live game: registry names, ore names, display names and GT's
   `<run_id>/`. A run whose part failed is still renamed, with `"complete": false`.
 - The rename is tried 3 times, waiting 1 s and then 2 s, because on Windows a virus scanner or the indexer often still
   holds a file that was just written. If all 3 fail, the folder stays `<run_id>.partial/` (its manifest may still say
-  `"complete": true`), the log says so, and readers skip it until it is renamed by hand.
+  `"complete": true`), the log says so, and readers skip it until it is renamed by hand. The next successful run
+  deletes it (see Pruning).
 - **Readers** take only folders without `.partial` whose manifest has `"complete": true`, check each listed file's
   `sha256`, `bytes` and `lines`, refuse any `format` other than `gregteclink-export/1`, and refuse `"mode": "harness"`
   outside tests (dev-environment data is never game data).
 - The mod writes inside its own instance only: the export root must be exactly the game dir's real path plus
   `gregteclink/exports`, so a link or junction at `gregteclink` or `exports` stops the export before anything is
   written. WO-1.2/1.4's collection script copies a run into `GOS_HOME\data\exports\<run_id>\` with `safe_open`,
-  copy-then-parse and retry ×3. Python writes nothing to Export, so old runs stay there; nothing prunes them yet
-  (about 50 MB each; PR question).
+  copy-then-parse and retry ×3. Python writes nothing to Export.
+- **Pruning** (D98): after a run's rename succeeds, the mod keeps the newest 10 complete runs (manifest
+  `"complete": true`, newest by `created_utc`, then by name), the new run among them when it is complete. It deletes
+  older complete runs and every `.partial` folder an earlier run left, including one whose rename failed. It also keeps the newest 3 incomplete runs (manifest `"complete": false`) and deletes older
+  ones. It never deletes the new run or a folder whose manifest is missing or unreadable, and works only on folders
+  directly in `exports/`, each resolved through the guard; a link or junction inside one is deleted, never followed.
+  It first renames a doomed run to `<run_id>.partial/` in one atomic step, so a run it can't finish deleting
+  (Windows: a file in it is open) is left as a `.partial` folder that readers skip and the next run deletes, never
+  as a complete run with files missing. A run it can't rename stays whole. Both are logged. Runs are about 50 MB
+  each, so a collector should copy a run soon after it appears: ten later runs remove it.
 
 ## Keys
 
@@ -145,7 +154,7 @@ that `nbt`, named from the stack with its tag, because `name` and `unlocalized` 
  "minecraft":"1.7.10","forge":"10.13.4.1614","java":{"version":"...","vendor":"..."},
  "pack_version":"<raw S:ModPackVersion of config/GTNewHorizons/dreamcraft.cfg, or null>",
  "gt_version":"5.09.54.265","nei_version":"<NotEnoughItems version, or null>",
- "gregteclink":{"version":"<git-derived build version>"},
+ "gregteclink":{"version":"<build version: the deployed commit's first 12 hex digits, else git-derived>"},
  "mods":[{"modid","name","version","file","sha256"}],
  "files":{"gt_recipes.jsonl":{"sha256":"...","bytes":0,"lines":0}, "...":{}},
  "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",

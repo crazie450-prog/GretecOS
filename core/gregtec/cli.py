@@ -55,8 +55,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         description=(
             "Clayton runs this from his own clone, as himself. It installs REF (default "
             "HEAD; it must be in origin/main and the working tree clean) into "
-            "GOS_APP\\current with its own .venv, copies its scripts/ to GOS_APP\\scripts, "
-            "and swaps both in by renames, so a failed deploy changes nothing. GOS_APP is "
+            "GOS_APP\\current with its own .venv, builds its mod/ (GregtecLink) with Gradle "
+            "and keeps only the jar, copies its scripts/ to GOS_APP\\scripts, and swaps "
+            "both in by renames, so a failed deploy changes nothing. GOS_APP is "
             "[paths] gos_app in gos.toml and must already exist (setup_gos_dev.ps1 makes it)."
         ),
     )
@@ -176,6 +177,11 @@ def _deploy(ref: str, config_path: Path | None) -> int:
     was = f", replacing {release.replaced[:12]}" if release.replaced else ""
     print(f"Deployed {release.commit[:12]} ({ref}) to {release.path}{was}.")
     print(f"{release.path.parent / app_deploy.SCRIPTS} is a copy of its scripts/.")
+    if release.gregteclink is not None:
+        jar = release.path / app_deploy.MOD_DIST / release.gregteclink["jar"]
+        print(f"Built GregtecLink: {jar}")
+        print(f"  SHA256 {release.gregteclink['sha256']} (in {app_deploy.RECORD})")
+        print("  sync_instances.py installs it into Export.")
     for path in release.leftovers:
         print(f"Couldn't delete {path} (in use?); the next deploy removes it.")
     gos = app_deploy.venv_exe(release.path, "gos")

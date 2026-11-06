@@ -6,7 +6,8 @@ Clayton, gos-dev read only, no inheritance from ``C:\``. Deploy never creates it
 outside it::
 
     GOS_APP\
-      current\     git archive of the commit, its .venv and release.json (what, when, from where)
+      current\     git archive of the commit, its .venv, mod-dist\ (the GregtecLink jar, when the
+                   commit has mod/) and release.json (what, when, from where, the jar's SHA256)
       scripts\     a copy of current\scripts: fixed paths for the world backup task and Prism hooks
 
 How a deploy runs:
@@ -19,7 +20,12 @@ How a deploy runs:
 3. Build the release in ``GOS_APP\.gos-staging-build-*``: ``git archive``, then
    ``uv venv --relocatable`` and ``uv sync --locked --no-dev`` with ``UV_LINK_MODE=copy``. Copies,
    not hardlinks into uv's cache, so every file is new in GOS_APP and inherits its ACL. The
-   editable install's ``.pth`` is made relative. Then rename the build folder to
+   editable install's ``.pth`` is made relative. If the commit has ``mod/``, run its Gradle
+   wrapper's ``build`` there (D98), copy the GregtecLink jar to ``mod-dist\``, record its name and
+   SHA256 in ``release.json`` and delete everything the build added to the release
+   (``mod\build\``, ``mod\.gradle\``, ``mod\run\``, ..., and anything outside ``mod\``), so
+   the release holds only the sources and the jar;
+   ``sync_instances.py`` installs that jar into Export. Then rename the build folder to
    ``.gos-staging-*`` and check the venv there, so a path left pointing at the build folder fails
    the check instead of breaking the deployed release.
 4. Swap by renames inside GOS_APP (``current`` and ``scripts`` aside, the staged ones in). A folder
@@ -35,6 +41,7 @@ How a deploy runs:
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import io
 import json
 import os
@@ -58,10 +65,14 @@ SCRIPTS = "scripts"
 RECORD = "release.json"
 STAGING = ".gos-staging-"
 OLD = ".gos-old-"
+# GregtecLink's sources, and the release folder deploy puts its jar in (D98).
+MOD, MOD_DIST = "mod", "mod-dist"
 # The scheduled world backup runs GOS_APP\scripts\backup_world.ps1 (setup_gos_dev.ps1 step 7).
 REQUIRED = ("scripts/backup_world.ps1",)
 RENAME_TRIES = 3  # antivirus can hold a freshly written file for a moment
 RENAME_DELAY = 0.5
+# Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.
+CLEAN_TRIES, CLEAN_DELAY = 10, 1.0
 SYSTEM, ADMINS = "S-1-5-18", "S-1-5-32-544"
 # OWNER RIGHTS: an ACE for it grants its rights to whoever owns the object, nobody else.
 # Python >= 3.12.4 adds one when it makes a folder with mode=0o700 (pytest's temp folders).
@@ -83,6 +94,7 @@ class Release:
     path: Path  # GOS_APP\current
     replaced: str | None  # the commit it replaced, if any
     leftovers: tuple[Path, ...]  # old folders it couldn't delete yet
+    gregteclink: dict[str, str] | None  # release.json's {"jar", "sha256"}, if mod/
 
 
 @dataclass(frozen=True)
@@ -138,6 +150,7 @@ def deploy(
                 raise DeployError(f"{commit[:12]} has no {rel}; refusing to deploy it")
         _build_env(build)
         relocate_editable(build)
+        gregteclink = _build_mod(build, commit[:12])
         _rename(build, staged)  # a path still pointing at build now fails the check
         _check_env(staged)
         shutil.copytree(staged / SCRIPTS, staged_scripts, copy_function=shutil.copyfile)
@@ -147,6 +160,8 @@ def deploy(
             "deployed_at": deployed_at,
             "source": str(repo),
         }
+        if gregteclink is not None:
+            record["gregteclink"] = gregteclink
         (staged / RECORD).write_text(json.dumps(record, indent=2) + "\n", "utf-8")
         old = _swap([(staged, current), (staged_scripts, scripts)], stamp)
     except BaseException:
@@ -155,7 +170,7 @@ def deploy(
                 _remove(path)
         raise
     leftovers = tuple(p for p in old if not _remove(p))
-    return Release(commit, ref, deployed_at, current, replaced, leftovers)
+    return Release(commit, ref, deployed_at, current, replaced, leftovers, gregteclink)
 
 
 def check_app(app: Path, forbidden: Sequence[Path]) -> None:
@@ -299,6 +314,91 @@ def _build_env(release: Path) -> None:
     ):
         if subprocess.run([uv, *args], check=False, cwd=release, env=env).returncode:
             raise DeployError(f"uv {args[0]} failed (see above); nothing was swapped")
+
+
+def _build_mod(release: Path, version: str) -> dict[str, str] | None:
+    """Build ``mod/`` with its Gradle wrapper, keep the jar in ``mod-dist/``, delete the rest.
+
+    Returns release.json's ``gregteclink`` entry, or None if the release has no ``mod/``. A git
+    archive has no ``.git`` to take a version from, so ``VERSION`` (gtnhgradle's override) names
+    the jar ``gregteclink-<version>.jar``. Gradle's caches and JDKs stay in the deployer's profile.
+    """
+    mod = release / MOD
+    if not mod.is_dir():
+        return None
+    wrapper = mod / ("gradlew.bat" if os.name == "nt" else "gradlew")
+    if not wrapper.is_file():
+        raise DeployError(f"{MOD}/ has no {wrapper.name}; nothing was swapped")
+    before = _tree(release)  # the whole release: a build may also write outside mod/
+    print(
+        f"Building GregtecLink {version} with {MOD}/{wrapper.name} build (the first deploy "
+        "also downloads Gradle, JDKs and Minecraft: a few minutes)...",
+        flush=True,
+    )
+    built = subprocess.run(
+        [str(wrapper), "--no-daemon", "--quiet", "build"],
+        check=False,
+        cwd=mod,
+        env={**os.environ, "VERSION": version},
+        stdin=subprocess.DEVNULL,
+    )
+    if built.returncode:
+        raise DeployError(
+            f"the GregtecLink build failed ({wrapper.name} exit {built.returncode}, see "
+            "above); nothing was swapped"
+        )
+    name = f"gregteclink-{version}.jar"  # the main jar, not -dev or -sources
+    jar = mod / "build" / "libs" / name
+    if not jar.is_file():
+        raise DeployError(f"the build made no {jar}; nothing was swapped")
+    added = _added(release, before)  # mod/build/, mod/.gradle/, mod/run/, ...
+    os.mkdir(release / MOD_DIST)
+    shutil.copyfile(jar, release / MOD_DIST / name)
+    sha256 = hashlib.sha256((release / MOD_DIST / name).read_bytes()).hexdigest()
+    for path in added:
+        for attempt in range(CLEAN_TRIES):
+            if _delete(path):
+                break
+            if attempt == CLEAN_TRIES - 1:
+                raise DeployError(
+                    f"couldn't delete the build's {path} (in use?); nothing was swapped. "
+                    "Deploy again in a minute"
+                )
+            time.sleep(CLEAN_DELAY)
+    return {"jar": name, "sha256": sha256}
+
+
+def _tree(root: Path) -> set[str]:
+    """Every path under ``root``, relative and posix. A link is listed, never followed."""
+    return {
+        (Path(top).relative_to(root) / name).as_posix()
+        for top, dirs, files in os.walk(root)
+        for name in (*dirs, *files)
+    }
+
+
+def _added(root: Path, before: set[str]) -> list[Path]:
+    """The topmost paths under ``root`` that aren't in ``before``."""
+    added: list[Path] = []
+    for top, dirs, files in os.walk(root):
+        rel = Path(top).relative_to(root)
+        for name in sorted(dirs):
+            if (rel / name).as_posix() not in before:
+                added.append(Path(top) / name)
+                dirs.remove(name)  # it goes as a whole: don't walk into it
+        added += [Path(top) / n for n in files if (rel / n).as_posix() not in before]
+    return added
+
+
+def _delete(path: Path) -> bool:
+    """Delete a file, link or folder the mod build made; False if Windows refuses."""
+    if path.is_dir() and not (path.is_symlink() or path.is_junction()):
+        return _remove(path)
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def _check_env(release: Path) -> None:

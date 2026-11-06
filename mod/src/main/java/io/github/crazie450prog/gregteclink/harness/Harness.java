@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,6 +52,9 @@ public final class Harness {
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
         Arrays.asList("id", "item_id", "block_id", "fluid_id", "fluidID", "ore_id", "ore_ids", "oredict_id"));
 
+    /** Complete runs seeded before the export: with the harness run, two more than pruning keeps (D98). */
+    private static final int SEEDED_COMPLETE = 11;
+
     private static boolean ran;
     private static int exitCode = 1;
 
@@ -81,10 +85,12 @@ public final class Harness {
             Map<String, String> before = snapshot(gameDir, world);
             check(checks, "export_module_enabled", exportEnabled, "config/gregteclink.cfg modules.export");
             if (exportEnabled) {
+                seedOldRuns(gameDir);
                 long t0 = System.currentTimeMillis();
                 ExportRun.Result r = ExportModule.runForHarness();
                 durations.addProperty("export_ms", System.currentTimeMillis() - t0);
                 runId = r.runId;
+                checkPrune(checks, r);
                 long t1 = System.currentTimeMillis();
                 counts = new Verifier(checks).verify(r);
                 Map<String, String> after = snapshot(gameDir, world);
@@ -137,6 +143,57 @@ public final class Harness {
             FMLCommonHandler.instance()
                 .exitJava(exitCode, false);
         }
+    }
+
+    /**
+     * Old runs for the pruning check (D98), all older than the harness run: {@link #SEEDED_COMPLETE} complete ones,
+     * {@code KEEP_INCOMPLETE + 1} incomplete ones and one stale {@code .partial}.
+     */
+    private static void seedOldRuns(File gameDir) throws IOException {
+        PathGuard guard = new PathGuard(gameDir.toPath(), ExportRun.EXPORTS_DIR);
+        for (int i = 0; i < SEEDED_COMPLETE; i++) {
+            seed(guard, String.format("seed-%02d", i), true, String.format("2000-01-01T00:00:%02dZ", i));
+        }
+        for (int i = 0; i <= ExportRun.KEEP_INCOMPLETE; i++) { // one more than are kept
+            seed(guard, String.format("seed-incomplete-%d", i), false, String.format("1999-01-01T00:00:%02dZ", i));
+        }
+        seed(guard, "seed-stale.partial", true, "2000-01-02T00:00:00Z");
+    }
+
+    private static void seed(PathGuard guard, String name, boolean complete, String created) throws IOException {
+        JsonObject m = new JsonObject();
+        m.addProperty("format", ExportRun.FORMAT);
+        m.addProperty("mode", "harness");
+        m.addProperty("complete", complete);
+        m.addProperty("created_utc", created);
+        Files.createDirectory(guard.resolve(name));
+        Files.write(
+            guard.resolve(name + "/manifest.json"),
+            Json.COMPACT.toJson(m)
+                .getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** After the export: the run, the newest 9 seeded complete runs and the newest 3 incomplete ones. */
+    private static void checkPrune(List<JsonObject> checks, ExportRun.Result r) throws IOException {
+        Set<String> want = new TreeSet<>();
+        want.add(r.runId);
+        for (int i = SEEDED_COMPLETE - (ExportRun.KEEP_COMPLETE - 1); i < SEEDED_COMPLETE; i++) {
+            want.add(String.format("seed-%02d", i));
+        }
+        for (int i = 1; i <= ExportRun.KEEP_INCOMPLETE; i++) want.add(String.format("seed-incomplete-%d", i));
+        Set<String> left = new TreeSet<>();
+        if (r.dir != null) {
+            try (DirectoryStream<Path> s = Files.newDirectoryStream(r.dir.getParent())) {
+                for (Path p : s) left.add(
+                    p.getFileName()
+                        .toString());
+            }
+        }
+        check(
+            checks,
+            "prune_keeps_newest_" + ExportRun.KEEP_COMPLETE + "_and_" + ExportRun.KEEP_INCOMPLETE + "_incomplete",
+            left.equals(want),
+            "exports/ holds " + left + (left.equals(want) ? "" : ", want " + want));
     }
 
     static void check(List<JsonObject> checks, String name, boolean ok, String detail) {
