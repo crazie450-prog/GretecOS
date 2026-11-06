@@ -202,7 +202,7 @@ Should do (not blocking):
 - Confirm the Lab worlds' modes.
 - Confirm the Console workspace limit (D83).
 
-Clayton's sign-off: pending
+Clayton's sign-off: given 2026-11-06 (D99); see the Sign-off section at the end.
 
 ---
 
@@ -248,3 +248,9 @@ These changed after the snapshot above. The verdicts above are left as written.
   2. Observe Claude Code (as gos-dev) refusing to edit a Play file.
   3. Clayton confirms the vault opens in Obsidian.
   4. Clayton confirms `lab-structures` and `lab-progress` load.
+
+## Sign-off (2026-11-06)
+
+All four remaining required items were met: #19 merged and `main` is green on Windows; as gos-dev, Claude Code refused to edit a Play file; the vault opens in Obsidian; `lab-structures` and `lab-progress` load (Clayton, in the session). The redeploy of `362a22e` built GregtecLink on the PC and sync installed it into Export only.
+
+**Clayton's sign-off: given on 2026-11-06 (D99). G0 is met; Phase 0 is closed.**
