@@ -1,8 +1,8 @@
 """WO-1.8: `gos structures extract`, the gtnh-extractor driver (D124).
 
 Nothing here runs Gradle or the extractor: the Gradle step is a stub that copies the
-self-authored fixture dataset into place, and the upstream checkout is a local git repository
-holding a few self-authored files in the extractor's layout.
+self-authored fixture dataset into place and writes a dev server FML log, and the upstream
+checkout is a local git repository holding a few self-authored files in the extractor's layout.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -117,7 +118,20 @@ def test_prepare_swaps_the_wrapper_and_pins(tmp_path: Path) -> None:
     server = build / "run" / "server"
     assert sorted(p.name for p in server.iterdir()) == ["eula.txt", "server.properties"]
     assert (server / "eula.txt").read_text() == "eula=true\n"
-    assert "online-mode=false" in (server / "server.properties").read_text()
+    props = dict(
+        line.split("=", 1)
+        for line in (server / "server.properties").read_text().splitlines()
+    )
+    # Offline mode, so loopback only, one player, no query, RCON or snooper (as mod/harness).
+    assert props == {
+        "online-mode": "false",
+        "server-ip": "127.0.0.1",
+        "server-port": "25599",
+        "max-players": "1",
+        "enable-query": "false",
+        "enable-rcon": "false",
+        "snooper-enabled": "false",
+    }
     # The checkout is only read.
     assert (up / extractor.TOOL / "gradlew").read_text() == "upstream wrapper\n"
 
@@ -216,19 +230,147 @@ def test_gradle_command_passes_the_pins(tmp_path: Path) -> None:
     assert f"-PextractorSha={extractor.COMMIT}+gos-2.9.0" in command
 
 
-def test_run_gradle_sets_the_version_and_closes_stdin(tmp_path: Path) -> None:
+def test_run_gradle_sets_the_version_and_a_timeout(tmp_path: Path) -> None:
     seen: dict[str, Any] = {}
 
-    def runner(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
+    def runner(command: list[str], **kwargs: object) -> int:
         seen.update(kwargs, command=command)
-        return subprocess.CompletedProcess(command, 3)
+        return 3
 
     assert extractor.run_gradle(tmp_path, tmp_path / "out", runner=runner) == 3
     assert seen["cwd"] == tmp_path
     assert seen["env"]["VERSION"] == extractor.COMMIT[:12]
-    assert seen["stdin"] == subprocess.DEVNULL
+    assert seen["timeout"] == extractor.TIMEOUT_S
+
+
+def test_run_gradle_reports_a_hung_run(tmp_path: Path) -> None:
+    def runner(command: list[str], **kwargs: object) -> int:
+        raise subprocess.TimeoutExpired(command, 1800)
+
+    with pytest.raises(ExtractError, match="still running after 0.5 h and was stopped"):
+        extractor.run_gradle(tmp_path, tmp_path / "out", runner=runner, timeout=1800)
+
+
+def test_run_tree_closes_stdin_and_returns_the_code(tmp_path: Path) -> None:
+    code = "import sys; sys.exit(7 if sys.stdin.read() == '' else 1)"
+    command = [sys.executable, "-c", code]
+    assert (
+        extractor.run_tree(command, cwd=tmp_path, env=dict(os.environ), timeout=60) == 7
+    )
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    stat = Path(f"/proc/{pid}/stat")  # a zombie no one reaps yet is not running
+    try:
+        return stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_run_tree_stops_what_the_command_started(tmp_path: Path) -> None:
+    # Like gradlew: the command starts a child (the dev server) and waits on it.
+    pid_file = tmp_path / "child.pid"
+    child = "import time; time.sleep(120)"
+    parent = (
+        "import subprocess, sys, pathlib; "
+        f"p = subprocess.Popen([sys.executable, '-c', {child!r}]); "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid)); p.wait()"
+    )
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        extractor.run_tree(
+            [sys.executable, "-c", parent],
+            cwd=tmp_path,
+            env=dict(os.environ),
+            timeout=3,
+        )
+    assert time.monotonic() - started < 60
+    pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not _alive(pid)
+
+
+def test_kill_tree_on_windows_uses_taskkill(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(extractor.subprocess, "run", run)
+    extractor.kill_tree(4242, windows=True)
+    assert calls == [["taskkill", "/F", "/T", "/PID", "4242"]]
+
+
+# --- the jars the dev server loaded -------------------------------------------------------
+
+
+def fml_log(
+    build: Path, versions: dict[str, str] | None = None, sep: str = ":"
+) -> Path:
+    """A dev server FML log whose classpath line names one jar per pinned mod."""
+    versions = {**extractor.PINS, **(versions or {})}
+    cache = "/root/.gradle/caches/modules-2/files-2.1/com.github.GTNewHorizons"
+    if sep == ";":
+        cache = r"C:\Users\gos-dev\.gradle\caches\modules-2\files-2.1\com.github.GTNewHorizons"
+    slash = "\\" if sep == ";" else "/"
+    jars = [
+        f"{cache}{slash}{m}{slash}{v}{slash}0a1b{slash}{m}-{v}-dev.jar"
+        for m, v in versions.items()
+    ]
+    jars.insert(1, f"{cache}{slash}GTNHLib{slash}0.11.52{slash}GTNHLib-0.11.52-dev.jar")
+    log = build / extractor.FML_LOG
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        "[01:41:07] [main/INFO] [FML/]: Forge Mod Loader version 7.99.40.1614\n"
+        f"[01:41:08] [main/DEBUG] [FML/]: Java classpath at launch is {sep.join(jars)}\n",
+        encoding="utf-8",
+    )
+    return log
+
+
+@pytest.mark.parametrize("sep", [":", ";"], ids=["linux", "windows"])
+def test_loaded_versions_reads_the_classpath(tmp_path: Path, sep: str) -> None:
+    fml_log(tmp_path, sep=sep)
+    assert extractor.loaded_versions(tmp_path, time.time() - 5) == {
+        m: [v] for m, v in extractor.PINS.items()
+    }
+    extractor.check_loaded(tmp_path, time.time() - 5)
+
+
+def test_check_loaded_refuses_another_version(tmp_path: Path) -> None:
+    # GT 5.09.54.265 on its own pulls StructureLib 1.4.46, as mod/'s harness shows.
+    fml_log(tmp_path, {"StructureLib": "1.4.46"})
+    with pytest.raises(
+        ExtractError, match=r"loaded StructureLib 1\.4\.46, not the pins"
+    ):
+        extractor.check_loaded(tmp_path, time.time() - 5)
+
+
+def test_check_loaded_refuses_a_missing_jar(tmp_path: Path) -> None:
+    log = fml_log(tmp_path)
+    log.write_text(log.read_text().replace("CropsNH-2.0.140-dev.jar", "x.jar"))
+    with pytest.raises(ExtractError, match="CropsNH no jar"):
+        extractor.check_loaded(tmp_path, time.time() - 5)
+
+
+def test_loaded_versions_needs_this_runs_log(tmp_path: Path) -> None:
+    with pytest.raises(ExtractError, match="can't tell which jars"):
+        extractor.loaded_versions(tmp_path, time.time())
+    log = fml_log(tmp_path)
+    os.utime(log, (time.time() - 3600, time.time() - 3600))
+    with pytest.raises(ExtractError, match="from this run"):
+        extractor.loaded_versions(tmp_path, time.time())
+    log.write_text("[01:41:07] [main/INFO] [FML/]: no classpath here\n")
+    with pytest.raises(ExtractError, match="has no 'Java classpath at launch is' line"):
+        extractor.loaded_versions(tmp_path, time.time() - 5)
 
 
 def test_check_accepts_a_fresh_dump(tmp_path: Path) -> None:
@@ -283,16 +425,17 @@ def no_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return up
 
 
-def gradle_stub(code: int, *, dump: bool = True) -> extractor.Runner:
-    def runner(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
+def gradle_stub(
+    code: int, *, dump: bool = True, loaded: dict[str, str] | None = None
+) -> extractor.GradleRunner:
+    def runner(command: list[str], **kwargs: object) -> int:
         out = Path(next(a for a in command if a.startswith("-PdatasetOut="))[13:])
+        fml_log(Path(str(kwargs["cwd"])), loaded)
         if dump:
             shutil.copytree(
                 FIXTURE / "multiblocks", out / "multiblocks", copy_function=shutil.copy
             )
-        return subprocess.CompletedProcess(command, code)
+        return code
 
     return runner
 
@@ -302,11 +445,18 @@ def test_extract_end_to_end(
 ) -> None:
     out = tmp_path / "home" / "data" / "structures" / "run"
     code = extractor.main(
-        tmp_path / "home", tmp_path / "work", out, runner=gradle_stub(0)
+        tmp_path / "home", tmp_path / "work", out, gradle=gradle_stub(0)
     )
     printed = capsys.readouterr().out
     assert code == 0, printed
-    assert "Dumped 3 controllers (4 variants)" in printed
+    assert (
+        "The dev server loaded GT5-Unofficial 5.09.54.265, StructureLib 1.4.47"
+        in printed
+    )
+    assert (
+        "Dumped 3 controllers (4 variants)" in printed
+        and "1 not dumped, 0 set aside by the reader." in printed
+    )
     assert f"Next: gos structures load {out.resolve()}" in printed
     build = tmp_path / "work" / "build"
     assert (build / "gradlew").read_bytes() == (
@@ -318,7 +468,7 @@ def test_extract_reports_a_failed_server(
     tmp_path: Path, no_network: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code = extractor.main(
-        tmp_path, tmp_path / "work", tmp_path / "out", runner=gradle_stub(1, dump=False)
+        tmp_path, tmp_path / "work", tmp_path / "out", gradle=gradle_stub(1, dump=False)
     )
     assert code == 1
     assert "exited 1" in capsys.readouterr().err
@@ -328,10 +478,20 @@ def test_extract_needs_the_dump_not_just_a_good_exit(
     tmp_path: Path, no_network: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code = extractor.main(
-        tmp_path, tmp_path / "work", tmp_path / "out", runner=gradle_stub(0, dump=False)
+        tmp_path, tmp_path / "work", tmp_path / "out", gradle=gradle_stub(0, dump=False)
     )
     assert code == 1
     assert "never reached the dump" in capsys.readouterr().err
+
+
+def test_extract_refuses_a_run_on_other_jars(
+    tmp_path: Path, no_network: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = gradle_stub(0, loaded={"GT5-Unofficial": "5.09.54.236"})
+    assert (
+        extractor.main(tmp_path, tmp_path / "work", tmp_path / "out", gradle=stub) == 1
+    )
+    assert "loaded GT5-Unofficial 5.09.54.236, not the pins" in capsys.readouterr().err
 
 
 def test_extract_refuses_a_foreign_work_folder(
@@ -340,7 +500,7 @@ def test_extract_refuses_a_foreign_work_folder(
     work = tmp_path / "someone"
     work.mkdir()
     (work / "notes.txt").write_text("keep me\n")
-    code = extractor.main(tmp_path, work, tmp_path / "out", runner=gradle_stub(0))
+    code = extractor.main(tmp_path, work, tmp_path / "out", gradle=gradle_stub(0))
     assert code == 1
     assert "not an extractor work folder" in capsys.readouterr().err
     assert (work / "notes.txt").read_text() == "keep me\n"

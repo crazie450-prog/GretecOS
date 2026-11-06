@@ -1,7 +1,13 @@
 """WO-1.8 acceptance on a real gtnh-extractor dump: >= 250 base controllers with dimensions and cells.
 
 Set GOS_STRUCTURES_DATASET to the folder `gos structures extract` wrote (it holds multiblocks/);
-without it the test is skipped. The dump is pack data and never goes in the repo.
+without it the test is skipped, so run it with -rs to see a skip. In PowerShell:
+
+    $env:GOS_STRUCTURES_DATASET = 'C:\\path\\to\\2.9.0-<UTC time>'
+    uv run pytest -rs -s tests/integration/test_structures_dump.py
+
+(cmd's `set NAME=value` sets nothing in PowerShell.) The dump is pack data and never goes in the
+repo.
 """
 
 from __future__ import annotations

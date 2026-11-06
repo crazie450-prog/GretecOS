@@ -15,8 +15,11 @@ re-implementation from that output format, not a copy of the extractor's own Pyt
   controller_count, failures[{registry_name, reason}], untranslated_names[], census?}``.
 
 Every block is keyed by registry name + meta, never a numeric ID (EndlessIDs). Hints (hologram
-dots) are read past: ``hatch_slots`` carries what may go in a cell. Unknown keys are ignored; the
-``schema`` field gates the format. The dataset is data, not instructions.
+dots) are read past: ``hatch_slots`` carries what may go in a cell. A hatch slot need not sit on a
+block: the extractor builds with GT's hatch supply emptied, so a cell whose element takes only a
+hatch (GT's ``IHatchElement.newAny``, e.g. the Electric Blast Furnace's muffler) stays air and is
+in ``hatch_slots`` only. Unknown keys are ignored; the ``schema`` field gates the format. The
+dataset is data, not instructions.
 """
 
 from __future__ import annotations
@@ -74,7 +77,9 @@ class Variant:
     channels: Mapping[str, int]
     blocks: tuple[Block, ...]
     hatch_slots: tuple[HatchSlot, ...]
-    size: Offset  # bbox: x, y, z extent of the blocks
+    # x, y, z extent of the blocks and hatch slots. The extractor's bbox spans the blocks only, so
+    # a hatch-only cell on an outer face is outside it.
+    size: Offset
 
     @property
     def key(self) -> str:
@@ -123,10 +128,20 @@ class Meta:
 
 
 @dataclass(frozen=True, slots=True)
+class Rejected:
+    """A controller file this reader set aside, and why."""
+
+    file: str  # the file name in multiblocks/
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class Dataset:
     path: Path  # the multiblocks/ folder
     meta: Meta
     controllers: tuple[Controller, ...]  # sorted by (registry_name, meta)
+    # Controller files that did not read, sorted by file name.
+    rejected: tuple[Rejected, ...] = ()
 
 
 def multiblocks_dir(path: Path) -> Path:
@@ -137,8 +152,12 @@ def multiblocks_dir(path: Path) -> Path:
 def read_dataset(path: Path, *, gt_version: str | None) -> Dataset:
     """Read and check a whole dump: the extractor's ``-PdatasetOut`` folder or its ``multiblocks/``.
 
-    ``gt_version`` is the GT pin the dump must have been made against (``None`` skips the check).
-    One bad file fails the whole read, so a broken dump never loads halfway.
+    ``gt_version`` is the GT pin the dump must be labelled with (``None`` skips the check). The
+    label is what the extractor was told (``-PmodVersions``); ``gos structures extract`` checks it
+    against the jars its dev server loaded. A bad ``_meta.json``, another GT or a short dump fails
+    the whole read. A controller file that doesn't read, or two files with one controller, is set
+    aside in :attr:`Dataset.rejected` and the rest are read, as the extractor itself lists a
+    controller it could not dump and carries on. If no controller file reads, the read fails.
     """
     folder = multiblocks_dir(path)
     if not (folder / META).is_file():
@@ -148,27 +167,44 @@ def read_dataset(path: Path, *, gt_version: str | None) -> Dataset:
     meta = _read_meta(folder / META)
     if gt_version is not None and meta.gt_version != gt_version:
         raise FormatError(
-            f"{folder / META}: made against {GT_MOD} {meta.gt_version!r}, but the pin is "
+            f"{folder / META}: labelled {GT_MOD} {meta.gt_version!r}, but the pin is "
             f"{gt_version}; re-run `gos structures extract` for this pack"
         )
-    controllers = []
-    seen: dict[tuple[str, int], str] = {}
-    for f in sorted(folder.glob("*.json")):
-        if f.name == META:
-            continue
-        c = _read_controller(f)
-        key = (c.registry_name, c.meta)
-        if key in seen:
-            raise FormatError(f"{f.name}: controller {key} is also in {seen[key]}")
-        seen[key] = f.name
-        controllers.append(c)
-    if len(controllers) != meta.controller_count:
+    files = [f for f in sorted(folder.glob("*.json")) if f.name != META]
+    if len(files) != meta.controller_count:
         raise FormatError(
-            f"{folder}: {len(controllers)} controller files, but {META} says "
+            f"{folder}: {len(files)} controller files, but {META} says "
             f"{meta.controller_count}; the dump is incomplete"
         )
+    rejected: list[Rejected] = []
+    by_key: dict[tuple[str, int], list[tuple[str, Controller]]] = {}
+    for f in files:
+        try:
+            c = _read_controller(f)
+        except FormatError as exc:
+            rejected.append(Rejected(f.name, str(exc).removeprefix(f"{f.name}: ")))
+            continue
+        by_key.setdefault((c.registry_name, c.meta), []).append((f.name, c))
+    controllers = []
+    for key, found in by_key.items():
+        if len(found) == 1:
+            controllers.append(found[0][1])
+            continue
+        names = [name for name, _ in found]
+        rejected += [
+            Rejected(
+                name, f"controller {key[0]}#{key[1]} is in {len(names)} files: {names}"
+            )
+            for name in names
+        ]
+    if not controllers:
+        first = (
+            f"; the first, {rejected[0].file}: {rejected[0].reason}" if rejected else ""
+        )
+        raise FormatError(f"{folder}: no controller file reads{first}")
     controllers.sort(key=lambda c: (c.registry_name, c.meta))
-    return Dataset(folder, meta, tuple(controllers))
+    rejected.sort(key=lambda r: r.file)
+    return Dataset(folder, meta, tuple(controllers), tuple(rejected))
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -271,15 +307,12 @@ def _variant(raw: object) -> Variant:
         )
         for b in _list(v.get("blocks"), f"{where} blocks", nonempty=True)
     )
-    cells = {b.d for b in blocks}
-    if len(cells) != len(blocks):
+    if len({b.d for b in blocks}) != len(blocks):
         raise _Malformed(f"{where}: a cell is listed twice")
     slots = []
     for raw_slot in _list(v.get("hatch_slots", []), f"{where} hatch_slots"):
         s = _obj(raw_slot, "hatch slot")
         d = _offset(s.get("d"), f"{where} hatch slot d")
-        if d not in cells:
-            raise _Malformed(f"{where}: hatch slot {list(d)} is not a block cell")
         layer = s.get("output_layer")
         slots.append(
             HatchSlot(
@@ -291,19 +324,25 @@ def _variant(raw: object) -> Variant:
                 None if layer is None else _int(layer, "output_layer"),
             )
         )
-    size = _offset(v.get("bbox"), f"{where} bbox")
-    extent = tuple(
-        max(b.d[i] for b in blocks) - min(b.d[i] for b in blocks) + 1 for i in range(3)
-    )
-    if size != extent:
+    bbox = _offset(v.get("bbox"), f"{where} bbox")
+    extent = _extent([b.d for b in blocks])
+    if bbox != extent:
         raise _Malformed(
-            f"{where}: bbox {list(size)} is not the blocks' extent {list(extent)}"
+            f"{where}: bbox {list(bbox)} is not the blocks' extent {list(extent)}"
         )
     channels = {
         _str(k, "channel"): _int(x, f"channel {k}")
         for k, x in _obj(v.get("channels", {}), f"{where} channels").items()
     }
-    return Variant(stack, channels, blocks, tuple(slots), (size[0], size[1], size[2]))
+    size = _extent([b.d for b in blocks] + [s.d for s in slots])
+    return Variant(stack, channels, blocks, tuple(slots), size)
+
+
+def _extent(cells: Sequence[Offset]) -> Offset:
+    x, y, z = (
+        max(c[i] for c in cells) - min(c[i] for c in cells) + 1 for i in range(3)
+    )
+    return (x, y, z)
 
 
 def _int(value: object, what: str) -> int:

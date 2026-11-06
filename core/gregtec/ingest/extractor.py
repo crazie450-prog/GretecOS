@@ -12,13 +12,17 @@ and meta, hatch slots and tier tables, writes JSON and exits [G§3.1][A§4.2]. U
    wrapper, puts this repo's own wrapper from ``mod/`` in its place (the same Gradle and daemon
    JDK GregtecLink builds with), sets the GTNH settings plugin to ``mod/``'s version, rewrites the
    dependency coordinates to :data:`PINS` (the 2.9.0 DreamAssemblerXXL manifest), and writes the
-   dev server's ``eula.txt`` and ``server.properties``. A coordinate that is missing or appears
-   twice stops the run: upstream changed, so re-check the pin.
+   dev server's ``eula.txt`` and ``server.properties`` (bound to 127.0.0.1, as ``mod/harness``'s
+   is). A coordinate that is missing or appears twice stops the run: upstream changed, so
+   re-check the pin.
 3. :func:`run_gradle`: ``gradlew --no-daemon runServer -PdatasetOut=<out> ...``. The first run
-   downloads the toolchains, Forge and the mod jars (several GB) from the GTNH Nexus.
+   downloads the toolchains, Forge and the mod jars (several GB) from the GTNH Nexus. A run
+   past :data:`TIMEOUT_S` is stopped with every process it started.
 4. :func:`check`: a ``BUILD SUCCESSFUL`` doesn't prove a dump ran [upstream README], so the
    output must hold a fresh ``_meta.json`` and pass :func:`gregtec.ingest.structures.read_dataset`
-   against the GT pin.
+   against the GT pin. That pin in ``_meta.json`` is only our own ``-PmodVersions`` label read
+   back, so :func:`loaded_versions` also reads the jars the dev server actually loaded from its
+   FML log, and each pinned mod's must be the pinned version.
 
 The dev runtime is GT5-Unofficial and its hard dependencies only, so the dump covers the base
 pack's controllers (GT, GT++, TecTech, bartworks, ... are all in GT5-Unofficial), not addon
@@ -31,6 +35,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -68,12 +73,24 @@ _SETTINGS_PLUGIN = re.compile(
     r'(id\("com\.gtnewhorizons\.gtnhsettingsconvention"\)\s*version\(")([^"]+)("\))'
 )
 MARKER = ".gos-extractor-work"  # in the work folder: it is ours to clean and rebuild
+# The dev server is offline-mode, so it listens on loopback only and takes one player, with no
+# query, RCON or snooper: the keys mod/harness/server.properties sets.
 SERVER_FILES = {
     "eula.txt": "eula=true\n",
-    "server.properties": "online-mode=false\nserver-port=25599\n",
+    "server.properties": (
+        "online-mode=false\nserver-ip=127.0.0.1\nserver-port=25599\nmax-players=1\n"
+        "enable-query=false\nenable-rcon=false\nsnooper-enabled=false\n"
+    ),
 }
+# The first run downloads several GB and decompiles Minecraft; a cached run takes minutes. Past
+# this, the run is taken as hung and stopped.
+TIMEOUT_S = 4 * 3600
+# The dev server's FML log; its "Java classpath at launch is ..." line names every jar it loaded.
+FML_LOG = Path("run", "server", "logs", "fml-server-latest.log")
+_CLASSPATH = "Java classpath at launch is "
 
 Runner = Callable[..., Any]  # subprocess.run's shape
+GradleRunner = Callable[..., int]  # run_tree's shape
 
 
 class ExtractError(RuntimeError):
@@ -202,17 +219,102 @@ def gradle_command(build: Path, out: Path) -> list[str]:
     ]
 
 
-def run_gradle(build: Path, out: Path, *, runner: Runner = subprocess.run) -> int:
+def run_tree(
+    command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
+) -> int:
+    """Run ``command`` with stdin closed and return its exit code.
+
+    It runs in a process group of its own, so on a timeout (``TimeoutExpired``) or a Ctrl+C
+    (``KeyboardInterrupt``) the dev server Gradle forked is stopped with it, before the error
+    goes on.
+    """
+    windows = sys.platform == "win32"
+    group: dict[str, Any] = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if windows
+        else {"start_new_session": True}
+    )
+    proc = subprocess.Popen(
+        command, cwd=cwd, env=env, stdin=subprocess.DEVNULL, **group
+    )
+    try:
+        return proc.wait(timeout=timeout)
+    except BaseException:
+        kill_tree(proc.pid, windows=windows)
+        proc.wait()
+        raise
+
+
+def kill_tree(pid: int, *, windows: bool) -> None:
+    """Stop ``pid`` and every process it started (its process group off Windows)."""
+    if windows:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False
+        )
+        return
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def run_gradle(
+    build: Path,
+    out: Path,
+    *,
+    runner: GradleRunner = run_tree,
+    timeout: float = TIMEOUT_S,
+) -> int:
     """Run the dump; the build folder has no ``.git``, so the mod's version comes from VERSION."""
     env = dict(os.environ, VERSION=COMMIT[:12])
-    done = runner(
-        gradle_command(build, out),
-        cwd=build,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        check=False,
-    )
-    return int(done.returncode)
+    try:
+        return runner(gradle_command(build, out), cwd=build, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise ExtractError(
+            f"gradlew runServer was still running after {timeout / 3600:g} h and was "
+            f"stopped; see {build / FML_LOG.parent}"
+        ) from None
+
+
+def loaded_versions(build: Path, started: float) -> dict[str, list[str]]:
+    """Each :data:`PINS` mod's version(s) whose jar the dev server loaded, from its FML log."""
+    log = build / FML_LOG
+    if not log.is_file() or log.stat().st_mtime < started - 2:
+        raise ExtractError(f"no {log} from this run: can't tell which jars were loaded")
+    text = log.read_text(encoding="utf-8", errors="replace")
+    line = next((x for x in text.splitlines() if _CLASSPATH in x), None)
+    if line is None:
+        raise ExtractError(
+            f"{log} has no {_CLASSPATH.strip()!r} line: can't tell which jars were loaded"
+        )
+    classpath = line.split(_CLASSPATH, 1)[1]
+    return {
+        name: sorted(
+            set(
+                re.findall(
+                    rf"(?:^|[\\/;:]){re.escape(name)}-([^\\/;:]+?)-dev\.jar", classpath
+                )
+            )
+        )
+        for name in PINS
+    }
+
+
+def check_loaded(build: Path, started: float) -> None:
+    """Refuse a run whose dev server loaded another version of a pinned mod (or none)."""
+    wrong = {
+        name: found
+        for name, found in loaded_versions(build, started).items()
+        if found != [PINS[name]]
+    }
+    if wrong:
+        raise ExtractError(
+            "the dev server loaded "
+            + "; ".join(f"{n} {', '.join(v) or 'no jar'}" for n, v in wrong.items())
+            + ", not the pins ("
+            + ", ".join(f"{n} {PINS[n]}" for n in wrong)
+            + f"); see {build / FML_LOG} and re-check the pin (D124)"
+        )
 
 
 def check(out: Path, started: float) -> Dataset:
@@ -252,7 +354,7 @@ def main(
     out: Path | None,
     stream: TextIO | None = None,
     *,
-    runner: Runner = subprocess.run,
+    gradle: GradleRunner = run_tree,
 ) -> int:
     stream = stream or sys.stdout
     home = gos_home or Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
@@ -269,7 +371,7 @@ def main(
     try:
         print(f"Fetching gtnh-extractor {COMMIT[:12]} into {work}", file=stream)
         claim(work)
-        upstream = fetch(work, git=git, runner=runner)
+        upstream = fetch(work, git=git)
         build = work / "build"
         prepare(upstream, build)
         pins = ", ".join(f"{k} {v}" for k, v in PINS.items())
@@ -280,22 +382,27 @@ def main(
         )
         out.mkdir(parents=True, exist_ok=True)
         started = time.time()
-        code = run_gradle(build, out, runner=runner)
+        code = run_gradle(build, out, runner=gradle)
         if code != 0:
             raise ExtractError(
                 f"gradlew runServer exited {code}; see {build / 'run' / 'server'}"
             )
         data = check(out, started)
+        check_loaded(build, started)
     except (ExtractError, OSError) as exc:
         print(f"Extract failed: {exc}", file=sys.stderr)
         return 1
+    print(f"The dev server loaded {pins}.", file=stream)
     print(
         f"Dumped {len(data.controllers)} controllers "
         f"({sum(len(c.variants) for c in data.controllers)} variants) to {out}; "
-        f"{len(data.meta.failures)} not dumped.",
+        f"{len(data.meta.failures)} not dumped, {len(data.rejected)} set aside by the "
+        "reader.",
         file=stream,
     )
     for failure in data.meta.failures:
         print(f"  {failure.registry_name}: {failure.reason}", file=stream)
+    for rejected in data.rejected:
+        print(f"  {rejected.file}: {rejected.reason}", file=stream)
     print(f"Next: gos structures load {out}", file=stream)
     return 0
