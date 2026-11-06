@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 DB_NAME = "gos.sqlite"
+BUSY_TIMEOUT_MS = 5000  # how long a write waits for another writer
+QUICK_TIMEOUT_MS = 50  # try_write's wait
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_usage(ts INT, lane TEXT, model TEXT, in_tok INT, out_tok INT,
@@ -36,7 +38,10 @@ def connect(path: Path) -> sqlite3.Connection:
     """Open the DB (WAL, 5 s busy timeout, autocommit) and make sure the core's tables exist."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(
-        path, timeout=5.0, isolation_level=None, check_same_thread=False
+        path,
+        timeout=BUSY_TIMEOUT_MS / 1000,
+        isolation_level=None,
+        check_same_thread=False,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -72,6 +77,18 @@ class Store:
                 self._conn.execute("ROLLBACK")
                 raise
             self._conn.execute("COMMIT")
+
+    def try_write(self, sql: str, params: Sequence[Any] = ()) -> None:
+        """One write statement that waits at most QUICK_TIMEOUT_MS for another writer.
+
+        Raises ``sqlite3.OperationalError`` ("database is locked") if it can't have the DB.
+        """
+        with self._lock:
+            self._conn.execute(f"PRAGMA busy_timeout = {QUICK_TIMEOUT_MS}")
+            try:
+                self._conn.execute(sql, params)
+            finally:
+                self._conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
 
     def close(self) -> None:
         with self._lock:

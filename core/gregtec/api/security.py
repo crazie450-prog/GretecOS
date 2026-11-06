@@ -1,8 +1,8 @@
 """Who may talk to the core (plan 4.6, QA:A8, D117).
 
 **Host and Origin.** Every HTTP request and WebSocket handshake must carry a ``Host`` from
-``[core] allowed_hosts`` (``127.0.0.1:<port>``, ``localhost:<port>``, later the PC's tailnet name),
-which stops DNS rebinding. A request with an ``Origin`` must come from one of those hosts over
+``[core] allowed_hosts`` (``127.0.0.1:<port>``, ``localhost:<port>``, the dashboard's
+``gos.localhost:<port>``, later the PC's tailnet name), which stops DNS rebinding. A request with an ``Origin`` must come from one of those hosts over
 http or https, and one a browser marks ``Sec-Fetch-Site: cross-site`` or ``same-site`` is refused,
 which stops other web pages, other localhost ports included. Requests without ``Origin`` (local
 clients, same-origin GETs) pass this check and still need a credential.
@@ -28,8 +28,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -40,6 +42,8 @@ from urllib.parse import urlsplit
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gregtec.store import Store
+
+log = logging.getLogger("gregtec.api")
 
 COOKIE = "gos_device"
 COOKIE_MAX_AGE = 400 * 86400  # Chrome's cap on cookie lifetime
@@ -125,6 +129,15 @@ class HostOriginGuard:
         if reason is None:
             await self.app(scope, receive, send)
             return
+        # The path only: a query string may carry anything (the access log is off for that).
+        log.warning(
+            "request refused",
+            extra={
+                "why": reason,
+                "kind": scope["type"],
+                "path": str(scope.get("path", ""))[:100],
+            },
+        )
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008, "reason": reason})
             return
@@ -186,10 +199,9 @@ class Auth:
         name, last_used = rows[0]["name"], rows[0]["last_used"]
         now = int(time.time())
         if last_used is None or now - last_used >= LAST_SEEN_EVERY_S:
-            with self.store.transaction() as conn:
-                conn.execute(
-                    "UPDATE client_token SET last_used = ? WHERE name = ?", (now, name)
-                )
+            self._stamp(
+                "UPDATE client_token SET last_used = ? WHERE name = ?", (now, name)
+            )
         return Principal("client", name)
 
     def device(self, cookie: str) -> Principal | None:
@@ -208,11 +220,18 @@ class Auth:
             return None
         now = int(time.time())
         if row["last_seen"] is None or now - row["last_seen"] >= LAST_SEEN_EVERY_S:
-            with self.store.transaction() as conn:
-                conn.execute(
-                    "UPDATE device SET last_seen = ? WHERE id = ?", (now, device_id)
-                )
+            self._stamp(
+                "UPDATE device SET last_seen = ? WHERE id = ?", (now, device_id)
+            )
         return Principal("device", row["name"], device_id)
+
+    def _stamp(self, sql: str, params: tuple[object, ...]) -> None:
+        """A last-used stamp, skipped while another writer holds the DB (the WO-1.3 normalizer,
+        a backup): authentication only reads, and must not fail or wait for a stamp."""
+        try:
+            self.store.try_write(sql, params)
+        except sqlite3.OperationalError as exc:
+            log.info("last-used stamp skipped", extra={"why": str(exc)})
 
     # client tokens
 

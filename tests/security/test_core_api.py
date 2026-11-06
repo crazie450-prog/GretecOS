@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import sqlite3
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -28,8 +29,8 @@ from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
 
 ADMIN = "admin-" + "a" * 40
-BASE = "http://127.0.0.1:8765"
-WS = "ws://127.0.0.1:8765/ws"  # TestClient ignores base_url for WebSockets
+BASE = "http://gos.localhost:8765"  # the dashboard name: pairing works only there
+WS = "ws://gos.localhost:8765/ws"  # TestClient ignores base_url for WebSockets
 TAILNET = "gaming-pc.tail1234.ts.net"
 
 
@@ -125,7 +126,9 @@ def test_foreign_host_is_rejected(client: TestClient, host: str) -> None:
     assert r.status_code == 403
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1:8765", "localhost:8765", "LOCALHOST:8765"])
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1:8765", "localhost:8765", "LOCALHOST:8765", "gos.localhost:8765"]
+)
 def test_loopback_hosts_are_accepted(client: TestClient, host: str) -> None:
     assert (
         client.get("/api/health", headers=admin_headers(Host=host)).status_code == 200
@@ -147,6 +150,8 @@ def test_tailnet_host_is_accepted_when_configured(tmp_path: Path) -> None:
         "https://evil.example",
         "null",  # sandboxed frames and file:// pages
         "http://localhost:3000",  # another local web server
+        "http://gos.localhost:5173",  # the dashboard name on another port
+        "http://dev.gos.localhost:8765",
         "http://127.0.0.1:8766",
         "http://127.0.0.1:8765.evil.example",
         "http://127.0.0.1:8765/path",
@@ -165,7 +170,10 @@ def test_foreign_origin_is_rejected(client: TestClient, origin: str) -> None:
     assert r.status_code == 403
 
 
-@pytest.mark.parametrize("origin", ["http://127.0.0.1:8765", "http://localhost:8765"])
+@pytest.mark.parametrize(
+    "origin",
+    ["http://127.0.0.1:8765", "http://localhost:8765", "http://gos.localhost:8765"],
+)
 def test_own_origin_is_accepted(client: TestClient, origin: str) -> None:
     assert (
         client.get("/api/health", headers=admin_headers(Origin=origin)).status_code
@@ -288,6 +296,9 @@ def test_pairing_sets_a_strict_httponly_cookie(client: TestClient) -> None:
     assert "SameSite=strict" in header or "SameSite=Strict" in header
     assert "Path=/" in header
     assert "Secure" not in header  # plain http on loopback
+    assert (
+        "domain=" not in header.lower()
+    )  # host-only: gos.localhost alone gets it back
     assert f"Max-Age={security.COOKIE_MAX_AGE}" in header
 
     # The cookie now works, for HTTP and the WebSocket.
@@ -297,6 +308,41 @@ def test_pairing_sets_a_strict_httponly_cookie(client: TestClient) -> None:
     # The request is used up.
     again = client.post("/api/pair/complete", json={"request_id": rid, "code": code})
     assert again.status_code == 404
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8765", "localhost:8765"])
+def test_pairing_is_refused_on_bare_loopback_names(
+    client: TestClient, core: Core, host: str
+) -> None:
+    """Cookies ignore ports: one for localhost would reach every local web server (D117)."""
+    r = client.post("/api/pair/start", json={"name": "x"}, headers={"Host": host})
+    assert r.status_code == 403
+    assert "http://gos.localhost:8765/" in r.json()["error"]
+    assert core.pairing.pending() == []
+    rid = client.post("/api/pair/start", json={"name": "x"}).json()["request_id"]
+    code = core.pairing.pending()[0]["code"]
+    r = client.post(
+        "/api/pair/complete",
+        json={"request_id": rid, "code": code},
+        headers={"Host": host},
+    )
+    assert r.status_code == 403 and security.COOKIE not in r.cookies
+    assert len(core.pairing.pending()) == 1  # not used up: pair on the right name
+    assert client.get("/api/health", headers={"Host": host}).status_code == 401
+
+
+def test_the_dashboard_name_follows_the_config(tmp_path: Path) -> None:
+    core = make_core(tmp_path, dashboard_host="gos-dev.localhost", core_port=8775)
+    assert "gos-dev.localhost:8775" in core.cfg.allowed_hosts
+    with TestClient(create_app(core), base_url="http://gos-dev.localhost:8775") as c:
+        assert c.post("/api/pair/start", json={"name": "x"}).status_code == 200
+        r = c.post(
+            "/api/pair/start",
+            json={"name": "x"},
+            headers={"Host": "gos.localhost:8775"},
+        )
+        assert r.status_code == 403 and r.json() == {"error": "host not allowed"}
+    core.store.close()
 
 
 def test_cookie_is_secure_on_the_tailnet_name(tmp_path: Path) -> None:
@@ -510,12 +556,58 @@ def test_secrets_never_reach_logs_or_the_db(
     for line in logged.splitlines():
         json.loads(line)
     secret = cookie.split(".", 1)[1]
+    # The request id only as a prefix: with the whole id, a log reader could use up its tries.
+    assert rid not in logged and f'"{rid[:4]}..."' in logged
     for value in (code, secret, token, ADMIN):
         assert value not in logged
     dump = "\n".join(sqlite3.connect(core.store.path).iterdump())
     for value in (code, secret, token, ADMIN):
         assert value not in dump
     assert security.sha256(secret) in dump  # only hashes are kept
+
+
+def test_refusals_are_logged_without_the_query(
+    client: TestClient, tmp_path: Path
+) -> None:
+    log_file = applog.setup("core", tmp_path / "logs")
+    client.get("/api/health?x=secret1", headers={"Host": "evil.example"})
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    lines = [json.loads(line) for line in log_file.read_text("utf-8").splitlines()]
+    ours = [
+        line for line in lines if not line["logger"].startswith("httpx")
+    ]  # the client's
+    assert [(r["msg"], r["why"], r["path"]) for r in ours] == [
+        ("request refused", "host not allowed", "/api/health")
+    ]
+    assert "secret1" not in json.dumps(ours)
+    # uvicorn's access log is off: test_standalone_core_over_real_sockets checks core.log.
+
+
+def test_a_busy_db_doesnt_fail_authentication(client: TestClient, core: Core) -> None:
+    """Another writer (the normalizer, a backup) holds the DB: last-used stamps are skipped."""
+    token = client.post("/api/tokens/voice", headers=admin_headers()).json()["token"]
+    device_id, cookie = pair(client)
+    with core.store.transaction() as conn:  # the stamps are due again
+        conn.execute("UPDATE client_token SET last_used = NULL")
+        conn.execute("UPDATE device SET last_seen = NULL")
+    other = sqlite3.connect(core.store.path, isolation_level=None)
+    try:
+        other.execute("BEGIN IMMEDIATE")  # holds the write lock
+        started = time.monotonic()
+        r = client.get("/api/health", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        client.cookies.set(security.COOKIE, cookie)
+        assert client.get("/api/session").json()["device_id"] == device_id
+        client.cookies.clear()
+        assert time.monotonic() - started < 3  # not two 5 s busy waits
+        other.execute("ROLLBACK")
+    finally:
+        other.close()
+    rows = core.store.rows("SELECT last_used FROM client_token")
+    assert rows[0]["last_used"] is None  # skipped, not queued
+    client.get("/api/health", headers={"Authorization": f"Bearer {token}"})
+    assert core.store.rows("SELECT last_used FROM client_token")[0]["last_used"]
 
 
 def test_admin_shutdown_needs_admin(client: TestClient, core: Core) -> None:

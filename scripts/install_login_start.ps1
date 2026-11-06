@@ -16,7 +16,8 @@
     entry off.
 
     It refuses to run from anywhere but GOS_APP (Clayton never runs code gos-dev can change,
-    D75), as gos-dev, or when the release has no gos-supervisor.exe. -Remove deletes the value.
+    D75), as gos-dev, elevated (run it in a normal window), or when the release has no
+    gos-supervisor.exe. -Remove deletes the value.
     -StartNow also starts the supervisor straight away, so there is no need to log off.
 
 .EXAMPLE
@@ -53,6 +54,14 @@ function Test-Under([string]$Child, [string]$Parent) {
 
 if ($env:USERNAME -ieq $DevUser) {
     Stop-Script "Run this as Clayton, not as ${DevUser}: login start is for Clayton's own account."
+}
+
+# Elevated, -StartNow would start GOS elevated, and with it Prism, Lab and Export (gos-dev's
+# mods). An elevated window may also belong to another account, whose HKCU this would write.
+# GOS_ALLOW_ELEVATED: GitHub's Windows runners run elevated; never set it on a real PC.
+$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and $env:GOS_ALLOW_ELEVATED -ne '1') {
+    Stop-Script 'Run this in a normal PowerShell window, not as administrator: GOS would run elevated, and so would everything it starts.'
 }
 
 if ($Remove) {

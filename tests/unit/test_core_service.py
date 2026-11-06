@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -49,7 +50,12 @@ def test_core_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cfg = config.load(write(tmp_path, ""))
     assert cfg.core_host == "127.0.0.1"
     assert (cfg.core_port, cfg.supervisor_port) == (8765, 8766)
-    assert cfg.allowed_hosts == ("127.0.0.1:8765", "localhost:8765")
+    assert cfg.dashboard_host == "gos.localhost"
+    assert cfg.allowed_hosts == (
+        "127.0.0.1:8765",
+        "localhost:8765",
+        "gos.localhost:8765",
+    )
     assert cfg.gos_home == tmp_path
     assert cfg.run_dir == tmp_path / "run"
     assert cfg.core_at_login is True
@@ -59,6 +65,7 @@ def test_core_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         1,
     )
     assert cfg.launch_home is None
+    assert cfg.service_errors == ()
 
 
 def test_core_keys_are_read(tmp_path: Path) -> None:
@@ -73,6 +80,7 @@ prism_root = "D:/Prism"
 host = "127.0.0.1"
 port = 9000
 supervisor_port = 9001
+dashboard_host = "gos-dev.localhost"
 allowed_hosts = ["127.0.0.1:9000", "gaming-pc.tail1234.ts.net"]
 [startup]
 core_at_login = false
@@ -91,8 +99,10 @@ home = "C:/Users/Clayton/GregtecOS"
     assert cfg.allowed_hosts == (
         "127.0.0.1:9000",
         "localhost:9000",
+        "gos-dev.localhost:9000",
         "gaming-pc.tail1234.ts.net",
     )
+    assert cfg.service_errors == ()
     assert cfg.core_at_login is False
     assert cfg.monthly_included_usd == 150.0
     assert cfg.credit_alerts_pct == (50, 80, 100)
@@ -124,11 +134,82 @@ home = "C:/Users/Clayton/GregtecOS"
         "[budget]\ncycle_day = 29",  # every month has the day
         "[budget]\ncycle_day = 0",
         '[launch]\nhome = ""',
+        '[core]\ndashboard_host = "localhost"',  # bare: cookies would reach every port
+        '[core]\ndashboard_host = "gos.example"',  # not resolved to loopback
+        '[core]\ndashboard_host = "GOS.localhost"',
+        'core = "not a table"',
     ],
 )
-def test_bad_core_keys_are_refused(tmp_path: Path, text: str) -> None:
-    with pytest.raises(config.ConfigError):
-        config.load(write(tmp_path, text))
+def test_bad_core_keys_stop_only_the_service(tmp_path: Path, text: str) -> None:
+    """Deploy, doctor, sync and check_tweaks still load it; the core and supervisor refuse."""
+    cfg = config.load(write(tmp_path, text))
+    assert len(cfg.service_errors) == 1, cfg.service_errors
+    assert cfg.service_errors[0].startswith("gos.toml: ")
+    assert config.service_problems(cfg) == list(cfg.service_errors)
+    # Each bad key keeps its default.
+    defaults = config.Config()
+    assert cfg.core_host == defaults.core_host
+    assert cfg.dashboard_host == defaults.dashboard_host
+    assert cfg.extra_allowed_hosts == ()
+
+
+def test_appendix_c_skeleton_loads(tmp_path: Path) -> None:
+    """Its allowed_hosts placeholder is a service problem, not a load error (review finding)."""
+    cfg = config.load(
+        write(
+            tmp_path,
+            """
+[paths]
+gos_app = "C:/GregtecOS-app"
+gos_home = "C:/Users/<you>/GregtecOS"
+[sync.lab]
+exclude = ["config/Betterloadingscreen/betterloadingscreen.cfg"]
+[core]
+host = "127.0.0.1"
+port = 8765
+allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]
+[startup]
+core_at_login = true
+voice_with_play = true
+[budget]
+monthly_included_usd = 100
+credit_alerts_pct = [80, 100]
+on_credits_out = "no_ai"
+""",
+        )
+    )
+    assert cfg.gos_app == Path("C:/GregtecOS-app")
+    assert (
+        "config/Betterloadingscreen/betterloadingscreen.cfg" in cfg.sync_exclude["lab"]
+    )
+    assert [e.split(" ")[1] for e in cfg.service_errors] == ["[core]"]
+    assert "allowed_hosts" in cfg.service_errors[0]
+
+
+def test_gos_dev_may_not_use_claytons_ports_or_dashboard_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config.getpass, "getuser", lambda: "GOS-DEV")
+    assert config.running_as_dev()
+    problems = config.service_problems(config.load(write(tmp_path, "")))
+    assert len(problems) == 2
+    assert "8765" in problems[0] and "8775" in problems[0]
+    assert "gos.localhost" in problems[1]
+    own = config.load(
+        write(
+            tmp_path,
+            '[core]\nport = 8775\nsupervisor_port = 8776\ndashboard_host = "gos-dev.localhost"\n',
+        )
+    )
+    assert config.service_problems(own) == []
+    monkeypatch.setattr(config.getpass, "getuser", lambda: "clayton")
+    assert config.service_problems(config.load(write(tmp_path, ""))) == []
+
+    def nobody() -> str:
+        raise OSError("no user name")
+
+    monkeypatch.setattr(config.getpass, "getuser", nobody)
+    assert not config.running_as_dev()
 
 
 # --- prices and the usage meter ----------------------------------------------------------------
@@ -269,6 +350,74 @@ def test_json_log_lines(tmp_path: Path) -> None:
     assert (first["proc"], first["code"]) == ("core", 1)
     assert first["ts"].endswith("+00:00")
     assert "ValueError: boom" in lines[1]["exc"]
+
+
+def test_log_rotation_survives_a_file_held_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows refuses the rename while a reader holds the log without share-delete."""
+    monkeypatch.setattr(applog, "MAX_BYTES", 2000)
+    path = applog.setup("rot", tmp_path)
+    log = logging.getLogger("gregtec.rot")
+    now = [1000.0]
+    monkeypatch.setattr(applog, "_clock", lambda: now[0])
+    real_replace = os.replace
+    held = {"on": True}
+
+    def replace(src: str, dst: str) -> None:
+        if held["on"] and src == str(path):
+            raise PermissionError(32, "in use by another process")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(applog.os, "replace", replace)
+    (tmp_path / "rot.log.1").write_text("old backup\n", encoding="utf-8")
+
+    def lines(p: Path) -> list[str]:
+        return [
+            json.loads(x)["msg"]
+            for x in p.read_text("utf-8").splitlines()
+            if x[0] == "{"
+        ]
+
+    for i in range(40):  # about 4 KB: past MAX_BYTES while held
+        log.info(f"record {i:02d} " + "x" * 50)
+    assert lines(path) == [
+        f"record {i:02d} " + "x" * 50 for i in range(40)
+    ]  # none lost
+    assert (tmp_path / "rot.log.1").read_text("utf-8") == "old backup\n"  # untouched
+    assert not (tmp_path / "rot.log.2").exists()
+    held["on"] = False
+    log.info("still within the minute")
+    assert lines(path)[-1] == "still within the minute"  # no retry yet
+    now[0] += applog.ROTATE_RETRY_S
+    log.info("after the minute")
+    assert lines(tmp_path / "rot.log.1")[-1] == "still within the minute"
+    assert (tmp_path / "rot.log.2").read_text("utf-8") == "old backup\n"
+    assert lines(path) == ["after the minute"]
+
+
+def test_records_go_to_stderr_only_on_a_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Stream:
+        def __init__(self, tty: bool) -> None:
+            self.tty, self.text = tty, ""
+
+        def isatty(self) -> bool:
+            return self.tty
+
+        def write(self, text: str) -> None:
+            self.text += text
+
+        def flush(self) -> None:
+            pass
+
+    for tty in (True, False):
+        stream = Stream(tty)
+        monkeypatch.setattr(sys, "stderr", stream)
+        applog.setup("tty", tmp_path)
+        logging.getLogger("gregtec.tty").warning("hello")
+        assert ("hello" in stream.text) is tty
 
 
 # --- the health strip --------------------------------------------------------------------------

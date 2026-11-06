@@ -2,6 +2,9 @@
 
 The acceptance test runs a real supervisor process (``python -m gregtec.supervisor``) with the real
 core on free loopback ports in a temporary GOS_HOME, kills the core and times the restart.
+
+On Windows a venv's python.exe is a launcher that runs the interpreter as its child, so a Popen
+pid isn't the pid a process reports (run files, /health): the tests compare reported pids.
 """
 
 from __future__ import annotations
@@ -68,6 +71,12 @@ def write_config(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
 
 
 @pytest.fixture(autouse=True)
+def allow_elevated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GitHub's Windows runners run elevated; GOS refuses that (review finding 5)."""
+    monkeypatch.setenv(supervisor.ALLOW_ELEVATED_ENV, "1")
+
+
+@pytest.fixture(autouse=True)
 def restore_logging() -> Iterator[None]:
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
@@ -109,7 +118,9 @@ def test_killed_core_restarts_within_10_s_and_shows_on_the_strip(
         sup = wait_for(
             lambda: control.running(run_file, control.SUPERVISOR_SERVICE), 30
         )
-        assert sup["pid"] == sup_proc.pid
+        if sys.platform != "win32":  # Windows: sup_proc is the venv's launcher
+            assert sup["pid"] == sup_proc.pid
+        assert os.path.samefile(sup["config"], path)
 
         def status() -> dict[str, Any]:
             return control.call(sup["port"], "GET", "/status", token=sup["token"])
@@ -121,6 +132,11 @@ def test_killed_core_restarts_within_10_s_and_shows_on_the_strip(
 
         first = wait_for(core_up, 30)
         assert first["restarts"] == 0 and first["last_exit"] is None
+        # The pid the core reports, which is the one to kill (gos status shows it).
+        assert first["pid"] == control.call(cfg.core_port, "GET", "/health")["pid"]
+        assert first["launcher_pid"] is not None
+        if sys.platform != "win32":
+            assert first["launcher_pid"] == first["pid"]
 
         kill(first["pid"])
         killed_at = time.monotonic()
@@ -147,15 +163,17 @@ def test_killed_core_restarts_within_10_s_and_shows_on_the_strip(
 
         item = wait_for(strip_shows_restart, 10)
         assert item["state"] == "running" and item["pid"] == second["pid"]
+        assert item["launcher_pid"] == second["launcher_pid"]
         assert item["last_exit"]["code"] == second["last_exit"]["code"]
         health = control.call(core["port"], "GET", "/api/health", token=core["token"])
         sup_item = next(i for i in health["items"] if i["id"] == "supervisor")
-        assert sup_item["status"] == "ok" and sup_item["pid"] == sup_proc.pid
+        assert sup_item["status"] == "ok" and sup_item["pid"] == sup["pid"]
 
         capsys.readouterr()
         assert cli.main(["status", "--config", str(path)]) == 0
         printed = capsys.readouterr().out
         assert "restarts: 1" in printed and "Core" in printed
+        assert f"(pid {second['pid']})" in printed
 
         # gos stop: the core stops through its stdin and stays stopped; the supervisor stays.
         assert cli.main(["stop", "--config", str(path)]) == 0
@@ -341,7 +359,6 @@ def test_start_that_never_answers_counts_as_failed(
 def test_stop_asks_through_stdin_then_kills(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(supervisor, "STOP_TIMEOUT_S", 1.0)
     cfg, _ = write_config(tmp_path)
     polite = ProcessSpec("polite", "Polite", (PY, "-c", "import sys; sys.stdin.read()"))
     stubborn = ProcessSpec(
@@ -353,9 +370,10 @@ def test_stop_asks_through_stdin_then_kills(
     sup.start_all()
     time.sleep(0.5)
     started = time.monotonic()
-    sup.stop("polite")
-    assert time.monotonic() - started < 1.0
+    sup.stop("polite")  # within the full STOP_TIMEOUT_S: slow Windows runners
+    assert time.monotonic() - started < supervisor.STOP_TIMEOUT_S
     assert sup.procs["polite"].last_exit["code"] == 0  # type: ignore[index]
+    monkeypatch.setattr(supervisor, "STOP_TIMEOUT_S", 1.0)
     sup.stop("stubborn")
     assert sup.procs["stubborn"].last_exit["code"] != 0  # type: ignore[index]
     for managed in sup.procs.values():
@@ -515,6 +533,11 @@ def test_launch_lab_and_export_never_play(served: Supervisor, tmp_path: Path) ->
     with pytest.raises(control.ControlError) as caught:
         control.call(port, "POST", "/launch", token=token, body={"instance": "lab"})
     assert caught.value.status == 429  # once per 30 s
+    (served.cfg.prism_instances / "GTNH-Export").mkdir()
+    with pytest.raises(control.ControlError) as caught:
+        control.call(port, "POST", "/launch", token=token, body={"instance": "export"})
+    assert caught.value.status == 429  # of any instance: Lab's Java may not be up yet
+    (served.cfg.prism_instances / "GTNH-Export").rmdir()
     for instance in ("play", "GTNH-Play", "Play", "../GTNH-Play", None, 1):
         with pytest.raises(control.ControlError) as caught:
             control.call(
@@ -683,7 +706,7 @@ def test_gos_token_new_stores_in_keyring(
     assert calls == [("POST", "/api/tokens/voice"), ("POST", "/api/tokens/mod")]
 
 
-def test_deploy_stops_and_restarts_a_supervisor_running_from_gos_app(
+def test_deploy_stops_a_supervisor_running_from_gos_app_only_for_the_swap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     app = tmp_path / "app"
@@ -691,7 +714,8 @@ def test_deploy_stops_and_restarts_a_supervisor_running_from_gos_app(
     exe = app_deploy.venv_exe(app / app_deploy.CURRENT, "gos-supervisor")
     exe.parent.mkdir(parents=True)
     exe.write_text("")
-    running = {"pid": 1, "port": 1, "token": "t", "exe": str(exe)}
+    ran_with = str(tmp_path / "run key's" / "gos.toml")  # the Run key's --config
+    running = {"pid": 1, "port": 1, "token": "t", "exe": str(exe), "config": ran_with}
     state = {"up": True}
     posted: list[str] = []
     spawned: list[list[str]] = []
@@ -704,31 +728,49 @@ def test_deploy_stops_and_restarts_a_supervisor_running_from_gos_app(
         state["up"] = False
         return {}
 
-    def fake_deploy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    def swap_fails(*args: Any, before_swap: Callable[[], None], **kw: Any) -> Any:  # noqa: ANN401
+        assert state["up"], "GOS keeps running while the release is staged and built"
+        before_swap()
         assert not state["up"], "GOS must be stopped before the swap"
-        raise app_deploy.DeployError("simulated")
+        raise app_deploy.DeployError("simulated swap failure")
+
+    def refused(*args: Any, **kw: Any) -> Any:  # noqa: ANN401
+        raise app_deploy.DeployError("simulated: uncommitted changes")
 
     monkeypatch.setattr(control, "running", fake_running)
     monkeypatch.setattr(control, "call", fake_call)
-    monkeypatch.setattr(app_deploy, "deploy", fake_deploy)
     monkeypatch.setattr(
         servicecli, "spawn_detached", lambda argv, cwd: spawned.append(argv)
     )
+    monkeypatch.setattr(app_deploy, "deploy", swap_fails)
     assert cli.main(["deploy", "--config", str(path)]) == 1
     assert posted == ["/shutdown"]
-    assert spawned == [[str(exe), "--config", str(path)]]  # the old release, restarted
+    # The old release, restarted with the gos.toml it ran with, not deploy's --config.
+    assert spawned == [[str(exe), "--config", ran_with]]
     assert "Restarted GOS" in capsys.readouterr().out
 
-    # A supervisor that doesn't run from GOS_APP (a dev run) is left alone.
-    running["exe"] = str(tmp_path / "elsewhere" / "python")
+    # A deploy refused before the swap never stops GOS.
     state["up"], posted[:], spawned[:] = True, [], []
-    monkeypatch.setattr(
-        app_deploy,
-        "deploy",
-        lambda *a, **k: (_ for _ in ()).throw(app_deploy.DeployError("simulated")),
-    )
+    monkeypatch.setattr(app_deploy, "deploy", refused)
+    assert cli.main(["deploy", "--config", str(path)]) == 1
+    assert posted == [] and spawned == [] and state["up"]
+
+    # A supervisor that doesn't run from GOS_APP (a dev run) is left alone.
+    def leaves_it(*args: Any, before_swap: Callable[[], None], **kw: Any) -> Any:  # noqa: ANN401
+        before_swap()
+        assert state["up"]
+        raise app_deploy.DeployError("simulated")
+
+    running["exe"] = str(tmp_path / "elsewhere" / "python")
+    monkeypatch.setattr(app_deploy, "deploy", leaves_it)
     assert cli.main(["deploy", "--config", str(path)]) == 1
     assert posted == [] and spawned == []
+
+    # One started without a config restarts without one.
+    running.update(exe=str(exe), config=None)
+    monkeypatch.setattr(app_deploy, "deploy", swap_fails)
+    assert cli.main(["deploy", "--config", str(path)]) == 1
+    assert spawned == [[str(exe)]]
 
 
 def test_supervisor_command_prefers_the_windowless_launcher(tmp_path: Path) -> None:
@@ -810,6 +852,24 @@ def test_standalone_core_over_real_sockets(tmp_path: Path) -> None:
             with pytest.raises(InvalidStatus) as caught:
                 connect(url, proxy=None, **kwargs)
             assert caught.value.response.status_code == 403
+
+        # A frame past MAX_MESSAGE is refused by the protocol layer (ws_max_size).
+        from websockets.exceptions import ConnectionClosed
+
+        with connect(url, additional_headers=bearer, proxy=None) as ws:
+            ws.recv(timeout=10)
+            ws.send("x" * 5000)
+            with pytest.raises(ConnectionClosed) as closed:
+                while True:
+                    ws.recv(timeout=10)
+            assert closed.value.rcvd is not None and closed.value.rcvd.code == 1009
+
+        # No access log: query strings and the probes stay out of core.log (D82).
+        get({"Host": host, **bearer}, "/api/health?token=secret-in-query")
+        for line in (cfg.logs_dir / "core.log").read_text("utf-8").splitlines():
+            entry = json.loads(line)
+            assert not entry["logger"].startswith("uvicorn.access"), entry
+            assert "secret-in-query" not in line
 
         # gos stop on a core with no supervisor: the admin shutdown route.
         assert cli.main(["stop", "--config", str(path)]) == 0
@@ -893,3 +953,336 @@ def test_gos_launch_sends_no_token_to_a_stranger(
     finally:
         stranger.shutdown()
         stranger.server_close()
+
+
+# --- review fixes (2): Windows pids, clients running, elevation, config, logs ------------------
+
+
+def test_status_pid_is_the_one_the_process_reports(tmp_path: Path) -> None:
+    """Windows: Popen's pid is the venv launcher's; /health and run files have the child's."""
+    cfg, _ = write_config(tmp_path)
+    script = tmp_path / "fake.py"
+    script.write_text(FAKE, encoding="utf-8")
+    port = free_port()
+    spec = ProcessSpec(
+        "fake",
+        "Fake",
+        (PY, "-I", str(script), str(port), str(tmp_path / "never")),
+        health_port=port,
+        health_service="fake",
+    )
+    sup = Supervisor(cfg, [spec])
+    managed = sup.procs["fake"]
+    try:
+        sup.start_all()
+        assert proc_row(sup.status(), "fake")["pid"] is None  # not answered yet
+        launcher = managed.proc.pid  # type: ignore[union-attr]
+
+        def step() -> bool:
+            sup.tick()
+            return managed.state == "running"
+
+        wait_for(step, 20, step=0.05)
+        reported = control.call(port, "GET", "/health")["pid"]
+        row = proc_row(sup.status(), "fake")
+        assert (row["pid"], row["launcher_pid"]) == (reported, launcher)
+    finally:
+        sup.stop_all()
+    row = proc_row(sup.status(), "fake")
+    assert (row["pid"], row["launcher_pid"]) == (None, None)
+    sleeper = ProcessSpec("x", "X", (PY, "-c", "import time; time.sleep(30)"))
+    no_health = Supervisor(cfg, [sleeper])
+    try:
+        no_health.start_all()
+        row = proc_row(no_health.status(), "x")
+        assert row["pid"] is not None and row["pid"] == row["launcher_pid"]
+    finally:
+        no_health.stop_all()
+
+
+def test_launch_is_refused_while_a_gtnh_client_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, _ = write_config(tmp_path)
+    for name in ("GTNH-Play", "GTNH-Lab", "GTNH-Export"):
+        (cfg.prism_instances / name).mkdir(parents=True)
+    launched: list[list[str]] = []
+
+    class Proc:
+        pid = 4242
+
+        def wait(self) -> int:
+            return 0
+
+    def popen(argv: list[str], **kw: Any) -> Proc:  # noqa: ANN401
+        launched.append(argv)
+        return Proc()
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", popen)
+    play = (
+        str(cfg.instance("play")).replace("/", "\\").upper()
+    )  # as Windows may show it
+    java = [f'"C:\\Java\\bin\\javaw.exe" -Djava.library.path={play}\\natives -cp x']
+    monkeypatch.setattr(supervisor, "command_lines", lambda: java)
+    sup = Supervisor(cfg, [])
+    with pytest.raises(supervisor.LaunchError) as caught:
+        sup.launch("lab")
+    assert caught.value.status == 409 and "GTNH-Play is running" in caught.value.reason
+    # Lab running: Export is refused too (never two clients at once).
+    lab = cfg.instance("lab").as_posix()
+    java[:] = [f"/usr/bin/java -cp {lab}/libraries/a.jar:{lab}/libraries/b.jar Main"]
+    with pytest.raises(supervisor.LaunchError) as caught:
+        sup.launch("export")
+    assert caught.value.status == 409 and "GTNH-Lab" in caught.value.reason
+    # A refusal doesn't use up the 30 s: once it has quit, the launch goes ahead.
+    java[:] = []
+    assert sup.launch("export")["launched"] == "GTNH-Export"
+    assert launched[-1][-2:] == ["--launch", "GTNH-Export"]
+
+    def cannot_tell() -> list[str]:
+        raise OSError("PowerShell exited 1")
+
+    monkeypatch.setattr(supervisor, "command_lines", cannot_tell)
+    with pytest.raises(supervisor.LaunchError) as caught:
+        Supervisor(cfg, []).launch("lab")
+    assert caught.value.status == 503 and "couldn't check" in caught.value.reason
+    assert len(launched) == 1
+
+
+@pytest.mark.parametrize(
+    ("line", "found"),
+    [
+        ("java -Djava.library.path=C:/Games/Prism/instances/GTNH-Play/natives", True),
+        (
+            '"javaw.exe" -cp "C:\\Games\\Prism\\instances\\gtnh-play\\libraries\\x.jar"',
+            True,
+        ),
+        ("java -jar C:/Games/Prism/instances/GTNH-Play", True),
+        ("java -cp C:/Games/Prism/instances/GTNH-Play;C:/other", True),
+        ("java -cp C:/Games/Prism/instances/GTNH-Play2/libraries/x.jar", False),
+        ("java -cp C:/Games/Prism/instances/GTNH-Lab/libraries/x.jar", False),
+        ("java -cp D:/Games/Prism/instances/GTNH-Play/libraries/x.jar", False),
+    ],
+)
+def test_folder_in_a_command_line(line: str, found: bool) -> None:
+    folder = Path("C:/Games/Prism/instances/GTNH-Play")
+    assert supervisor._folder_in(folder, line) is found
+
+
+def test_command_lines_lists_real_processes(tmp_path: Path) -> None:
+    """The real lister (PowerShell's Win32_Process on Windows, /proc on Linux)."""
+    folder = tmp_path / "GTNH-Marker"
+    marker = str(folder / "natives")
+    child = subprocess.Popen(
+        [PY, "-c", "import time; time.sleep(60)", marker],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        time.sleep(0.5)
+        lines = supervisor.command_lines(names=(Path(PY).name,))
+        mine = [line for line in lines if marker in line]
+        assert mine, lines[:5]
+        assert supervisor._folder_in(folder, mine[0])
+        assert not any(
+            marker in line for line in supervisor.command_lines()
+        )  # not java
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+
+
+def test_gos_refuses_to_run_elevated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg, path = write_config(tmp_path)
+    monkeypatch.setattr(supervisor, "is_elevated", lambda: True)
+    monkeypatch.delenv(supervisor.ALLOW_ELEVATED_ENV)
+    monkeypatch.chdir(tmp_path)
+    assert supervisor.run(cfg, path) == supervisor.EXIT_ELEVATED
+    assert not (cfg.run_dir / control.SUPERVISOR_FILE).exists()
+    logged = (cfg.logs_dir / "supervisor.log").read_text("utf-8")
+    assert "refusing to start" in logged and "elevated" in logged
+    assert server.run(cfg) == supervisor.EXIT_ELEVATED
+    assert cli.main(["serve", "--detach", "--config", str(path)]) == 4
+    assert "elevated" in capsys.readouterr().err
+    monkeypatch.setenv(supervisor.ALLOW_ELEVATED_ENV, "1")  # CI only
+    assert supervisor.elevation_problem() is None
+
+
+def test_is_elevated_answers() -> None:
+    assert isinstance(supervisor.is_elevated(), bool)
+    if sys.platform != "win32":
+        assert supervisor.is_elevated() is False
+
+
+def test_bad_service_keys_stop_gos_starting_but_not_other_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, path = write_config(tmp_path)
+    path.write_text(
+        path.read_text("utf-8") + 'allowed_hosts = ["<pc>.<tailnet>.ts.net"]\n', "utf-8"
+    )
+    cfg = config.load(path)
+    monkeypatch.chdir(tmp_path)
+    assert supervisor.run(cfg, path) == 2
+    assert "allowed_hosts" in (cfg.logs_dir / "supervisor.log").read_text("utf-8")
+    assert server.run(cfg) == 2
+    assert not cfg.run_dir.exists()
+    capsys.readouterr()
+    assert cli.main(["serve", "--config", str(path)]) == 2
+    assert "Not starting GOS" in capsys.readouterr().err
+    # Other commands only warn: gos stop still works.
+    assert cli.main(["stop", "--config", str(path)]) == 0
+    assert "Warning: gos.toml: [core] allowed_hosts" in capsys.readouterr().err
+
+
+def test_gos_dev_may_not_serve_on_claytons_ports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D115: a gos-dev core on 8765 would lock Clayton's GOS out and get his clients' tokens."""
+    monkeypatch.setattr(config, "running_as_dev", lambda: True)
+    path = tmp_path / "gos.toml"
+    path.write_text(
+        f'[paths]\ngos_home = "{(tmp_path / "home").as_posix()}"\n'
+        '[core]\nport = 8765\nsupervisor_port = 8776\ndashboard_host = "gos-dev.localhost"\n',
+        encoding="utf-8",
+    )
+    for argv in (["serve"], ["serve", "--core-only"], ["serve", "--detach"]):
+        assert cli.main([*argv, "--config", str(path)]) == 2
+        assert "Clayton's 8765 and 8766" in capsys.readouterr().err
+    cfg = config.load(path)
+    monkeypatch.chdir(tmp_path)
+    assert supervisor.run(cfg, path) == 2
+    assert server.run(cfg) == 2
+    assert not cfg.run_dir.exists()
+
+
+def test_a_broken_gos_toml_at_login_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pythonw has no stderr: the default GOS_HOME's supervisor.log is the only trace."""
+    monkeypatch.setenv("GOS_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(sys, "stderr", None)
+    bad = tmp_path / "gos.toml"
+    bad.write_text("[paths\n", encoding="utf-8")
+    assert supervisor.main(["--login", "--config", str(bad)]) == 2
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    log_file = tmp_path / "home" / "logs" / "supervisor.log"
+    entry = json.loads(log_file.read_text("utf-8").splitlines()[-1])
+    assert entry["msg"] == "can't read gos.toml" and entry["path"] == str(bad)
+
+
+def test_stderr_log_that_cant_rotate_keeps_its_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(supervisor, "STDERR_MAX", 1000)
+    monkeypatch.setattr(supervisor, "STDERR_TAIL", 100)
+    log_path = tmp_path / "core.stderr.log"
+    log_path.write_bytes(b"a" * 2000 + b"Traceback: the last crash\n")
+
+    def held(src: object, dst: object) -> None:
+        raise PermissionError(32, "in use")
+
+    with monkeypatch.context() as m:
+        m.setattr(supervisor.os, "replace", held)
+        with supervisor._open_stderr_log(log_path) as f:
+            f.write(b"next run\n")
+    text = log_path.read_bytes()
+    assert (
+        len(text) < 300 and b"the last crash" in text and text.endswith(b"next run\n")
+    )
+    monkeypatch.setattr(supervisor, "STDERR_MAX", 10)
+    with supervisor._open_stderr_log(log_path) as f:
+        f.write(b"rotated\n")
+    assert log_path.read_bytes() == b"rotated\n"
+    assert b"next run" in (tmp_path / "core.stderr.log.1").read_bytes()
+
+
+def test_gos_stop_waits_long_enough_for_a_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, path = write_config(tmp_path)
+    calls: list[tuple[str, float]] = []
+    monkeypatch.setattr(
+        servicecli, "_supervisor", lambda cfg: {"port": 1, "token": "t"}
+    )
+
+    def fake_call(port: int, method: str, url: str, **kw: Any) -> dict[str, Any]:  # noqa: ANN401
+        calls.append((url, kw.get("timeout", 5.0)))
+        return {"processes": []}
+
+    monkeypatch.setattr(control, "call", fake_call)
+    assert cli.main(["stop", "--config", str(path)]) == 0
+    # A stop can take STOP_TIMEOUT_S, then as long again for the kill.
+    assert calls == [("/stop", servicecli.STOP_CALL_S)]
+    assert servicecli.STOP_CALL_S > 2 * supervisor.STOP_TIMEOUT_S + 5
+
+
+def test_gos_launch_through_a_supervisor_on_any_os(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """As gos-dev would, against an in-process supervisor.run: Windows too, unlike
+    test_gos_launch_end_to_end's script prismlauncher. launch.json, its token, the port."""
+    cfg, path = write_config(tmp_path)
+    (cfg.prism_instances / "GTNH-Lab").mkdir(parents=True)
+    out = tmp_path / "launched.txt"
+    script = tmp_path / "fake_prism.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text(' '.join(sys.argv[2:]))\n",
+        encoding="utf-8",
+    )
+
+    def fake_prism(cfg: config.Config, instance: str) -> list[str]:
+        return [PY, "-I", str(script), str(out), "--launch", instance]
+
+    def idle_core(cfg: config.Config, config_path: Path | None) -> ProcessSpec:
+        return ProcessSpec("idle", "Idle", (PY, "-c", "import sys; sys.stdin.read()"))
+
+    monkeypatch.setattr(supervisor, "prism_command", fake_prism)
+    monkeypatch.setattr(supervisor, "core_spec", idle_core)
+    monkeypatch.chdir(tmp_path)  # run() moves into GOS_HOME; this puts it back
+    relative = Path(os.path.relpath(path, tmp_path))
+    done: list[int] = []
+    thread = threading.Thread(target=lambda: done.append(supervisor.run(cfg, relative)))
+    thread.start()
+    run_file = cfg.run_dir / control.SUPERVISOR_FILE
+    try:
+        sup = wait_for(
+            lambda: control.running(run_file, control.SUPERVISOR_SERVICE), 30
+        )
+        # Made absolute before the move into GOS_HOME.
+        assert Path(sup["config"]).is_absolute() and os.path.samefile(
+            sup["config"], path
+        )
+        dev = tmp_path / "dev"
+        dev.mkdir()
+        dev_cfg = dev / "gos.toml"
+        dev_cfg.write_text(
+            f'[paths]\ngos_home = "{dev.as_posix()}"\n'
+            f'[launch]\nhome = "{cfg.gos_home.as_posix()}"\n',
+            encoding="utf-8",
+        )
+        assert cli.main(["launch", "lab", "--config", str(dev_cfg)]) == 0
+        assert "GTNH-Lab" in capsys.readouterr().out
+        assert wait_for(lambda: out.exists() and out.read_text(), 20) == (
+            "--launch GTNH-Lab"
+        )
+        assert cli.main(["stop", "--all", "--config", str(path)]) == 0
+        thread.join(timeout=30)
+        assert done == [0]
+    finally:
+        if thread.is_alive():
+            info = control.read_run_file(run_file)
+            if info is not None:
+                control.call(info["port"], "POST", "/shutdown", token=info["token"])
+            thread.join(timeout=30)
+
+
+def test_supervisor_command_passes_an_absolute_config(tmp_path: Path) -> None:
+    cfg, _ = write_config(tmp_path)
+    argv = servicecli.supervisor_command(cfg, Path("rel") / "gos.toml")
+    assert Path(argv[-1]).is_absolute() and argv[-1].endswith("gos.toml")

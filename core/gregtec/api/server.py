@@ -1,8 +1,13 @@
 """Run the core: ``python -m gregtec.api`` (the supervisor's child) or ``gos serve --core-only``.
 
-- Binds ``127.0.0.1:<[core] port>`` itself (:func:`bind`), so no other program, gos-dev's
-  included, can bind the same address beside it. A taken port exits with
+- Binds ``127.0.0.1:<[core] port>`` itself (:func:`bind`), so no other account's program,
+  gos-dev's included, can bind the same address beside it. A taken port exits with
   :data:`EXIT_PORT_IN_USE`, which the supervisor shows on the health strip.
+- Refuses to start (exit 2) with a bad service key or, as gos-dev, Clayton's ports or dashboard
+  name (``config.service_problems``), and elevated (exit 4, ``supervisor.elevation_problem``).
+- No access log: it would put every query string, and the supervisor's probe every 2 s, into
+  ``GOS_HOME/logs/core.log``, which gos-dev reads (D82). Refused Host/Origin checks are logged
+  instead.
 - Makes a fresh admin token and writes it to ``GOS_HOME/run/core.json`` for Clayton's ``gos``
   commands. ``--supervised``: takes the supervisor's status token from ``GOS_SUPERVISOR_TOKEN``
   (and removes it from the environment, so nothing the core starts inherits it), and stops when
@@ -21,8 +26,8 @@ import time
 
 import uvicorn
 
-from gregtec import applog, control
-from gregtec.api.app import Core, create_app
+from gregtec import applog, config, control, supervisor
+from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm.usage import UsageMeter
@@ -35,14 +40,15 @@ SUPERVISOR_TOKEN_ENV = "GOS_SUPERVISOR_TOKEN"
 
 
 def bind(port: int) -> socket.socket:
-    """A listening socket on 127.0.0.1:``port`` that no other program can share.
+    """A listening socket on 127.0.0.1:``port`` that no other account's program can share.
 
-    Windows: no socket options. A specific address bound without SO_REUSEADDR can't be bound
-    again by any socket, from any account, while it is open (Windows' enhanced socket security;
-    Microsoft's "Using SO_REUSEADDR and SO_EXCLUSIVEADDRUSE"). SO_REUSEADDR, which uvicorn would
-    set, lets another account's socket take the address, and SO_EXCLUSIVEADDRUSE can keep a
-    restart from binding until old connections end. POSIX: SO_REUSEADDR only lets a restart bind
-    past old TIME_WAIT connections.
+    Windows: no socket options. While it is open, a socket of another account (gos-dev's) can't
+    bind the same address, with or without SO_REUSEADDR (Windows' enhanced socket security;
+    Microsoft's "Using SO_REUSEADDR and SO_EXCLUSIVEADDRUSE"); one of the same account still
+    could with SO_REUSEADDR, which only SO_EXCLUSIVEADDRUSE would stop. SO_REUSEADDR on our own
+    socket, which uvicorn would set, would let another account's socket take the address too, and
+    SO_EXCLUSIVEADDRUSE can keep a restart from binding until old connections end. POSIX:
+    SO_REUSEADDR only lets a restart bind past old TIME_WAIT connections.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -69,6 +75,13 @@ def _stop_on_stdin(server: uvicorn.Server) -> None:
 
 def run(cfg: Config, *, supervised: bool = False) -> int:
     applog.setup("core", cfg.logs_dir)
+    if (why := supervisor.elevation_problem()) is not None:
+        log.error("refusing to start", extra={"why": why})
+        return supervisor.EXIT_ELEVATED
+    if problems := config.service_problems(cfg):
+        for problem in problems:
+            log.error("refusing to start: fix gos.toml", extra={"why": problem})
+        return 2
     supervisor_token = (
         os.environ.pop(SUPERVISOR_TOKEN_ENV, None) if supervised else None
     )
@@ -97,7 +110,9 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
             log_config=None,  # keep applog's JSON handlers
             proxy_headers=False,  # request.client stays the real peer
             server_header=False,
+            access_log=False,  # see the module docstring
             ws="websockets-sansio",
+            ws_max_size=MAX_MESSAGE,  # refused as the frame arrives, not after 16 MiB of it
             lifespan="on",
             timeout_graceful_shutdown=3,
         )

@@ -31,7 +31,15 @@ def run_key() -> Iterator[str]:
     winreg.DeleteKey(winreg.HKEY_CURRENT_USER, name)
 
 
-def run(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def run(
+    script: Path, *args: str, allow_elevated: bool = True
+) -> subprocess.CompletedProcess[str]:
+    # CI runs pytest from PowerShell 7; its PSModulePath breaks Windows PowerShell 5.1's modules.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    # GitHub's Windows runners run elevated, which the script refuses (review finding 5).
+    env.pop("GOS_ALLOW_ELEVATED", None)
+    if allow_elevated:
+        env["GOS_ALLOW_ELEVATED"] = "1"
     return subprocess.run(
         [
             "powershell.exe",
@@ -46,8 +54,7 @@ def run(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
-        # CI runs pytest from PowerShell 7; its PSModulePath breaks Windows PowerShell 5.1's modules.
-        env={k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"},
+        env=env,
         timeout=120,
     )
 
@@ -115,3 +122,19 @@ def test_refuses_as_gos_dev(tmp_path: Path, run_key: str) -> None:
     )
     assert done.returncode != 0 and "not as" in done.stderr
     assert value(run_key) is None
+
+
+def test_refuses_to_run_elevated(tmp_path: Path, run_key: str) -> None:
+    """GOS started from an elevated window would start Prism, Lab and Export elevated."""
+    from gregtec import supervisor
+
+    if not supervisor.is_elevated():
+        pytest.skip("needs an elevated runner, as GitHub's Windows runners are")
+    app, _, script = make_app(tmp_path)
+    key = f"HKCU:\\{run_key}"
+    for extra in ((), ("-StartNow",), ("-Remove",)):
+        done = run(
+            script, "-AppRoot", str(app), "-RunKey", key, *extra, allow_elevated=False
+        )
+        assert done.returncode != 0 and "not as administrator" in done.stderr, extra
+        assert value(run_key) is None

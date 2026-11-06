@@ -6,8 +6,8 @@
 | GET  /api/session              | admin, client, device   | who the caller is                     |
 | GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
 | GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
-| POST /api/pair/start           | anyone (Host-checked)   | ask to pair; the code goes elsewhere  |
-| POST /api/pair/complete        | anyone (Host-checked)   | the right code sets the device cookie |
+| POST /api/pair/start           | anyone, dashboard name  | ask to pair; the code goes elsewhere  |
+| POST /api/pair/complete        | anyone, dashboard name  | the right code sets the device cookie |
 | GET  /api/pair/pending         | admin, device           | pending requests with their codes     |
 | POST /api/pair/{id}/deny       | admin, device           | drop a pending request                |
 | GET  /api/devices              | admin, device           | paired devices                        |
@@ -16,9 +16,15 @@
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
 | WS   /ws                       | admin, client, device   | pushes ``health`` and ``pair.pending``|
 
+Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
+which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
+``localhost``. Cookies ignore ports, so a cookie for ``localhost`` would also go to every other
+web server on this PC that the browser opens, a dev server of gos-dev's included (D117).
+
 Health strip items have ``id``, ``kind`` (process or check), ``label``, ``status`` (ok, warn,
-error or off) and ``detail``; process items add ``state``, ``pid``, ``uptime_s``, ``restarts``,
-``last_exit`` and ``last_restart_ts`` from the supervisor.
+error or off) and ``detail``; process items add ``state``, ``pid`` (the process's own),
+``launcher_pid`` (the one the supervisor started: on Windows a venv's python.exe launcher),
+``uptime_s``, ``restarts``, ``last_exit`` and ``last_restart_ts`` from the supervisor.
 
 No ``from __future__ import annotations`` here: FastAPI reads the route signatures at runtime,
 and the ``Anyone``/``Trusted``/``Admin`` dependency aliases are local to :func:`create_app`.
@@ -292,6 +298,7 @@ def _process_item(proc: dict[str, Any]) -> dict[str, Any]:
         str(proc.get("detail") or state),
         state=state,
         pid=proc.get("pid"),
+        launcher_pid=proc.get("launcher_pid"),
         uptime_s=proc.get("uptime_s"),
         restarts=proc.get("restarts", 0),
         last_exit=proc.get("last_exit"),
@@ -349,9 +356,21 @@ def create_app(core: Core) -> FastAPI:
             raise HTTPException(403, "only Clayton's gos commands")
         return who
 
+    def pairing_host(request: Request) -> str:
+        """The request's host name, if pairing may happen on it (see the module docstring)."""
+        name = (request.headers.get("host") or "").lower().split(":")[0]
+        if name in (LOOPBACK, "localhost"):
+            raise HTTPException(
+                403,
+                f"pair on http://{core.cfg.dashboard_host}:{core.cfg.core_port}/ instead: "
+                f"a cookie for {name} would also reach every other local web server",
+            )
+        return name
+
     Anyone = Annotated[Principal, Depends(principal)]
     Trusted = Annotated[Principal, Depends(trusted)]
     Admin = Annotated[Principal, Depends(admin)]
+    PairingHost = Annotated[str, Depends(pairing_host)]
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -379,18 +398,22 @@ def create_app(core: Core) -> FastAPI:
         return core.meter.cycle()
 
     @app.post("/api/pair/start")
-    async def pair_start(request: Request) -> dict[str, Any]:
+    async def pair_start(request: Request, _: PairingHost) -> dict[str, Any]:
         body = await _json_body(request)
         try:
             pending = core.pairing.start(body.get("name"))
         except PairingError as exc:
             raise HTTPException(exc.status, exc.reason) from None
-        log.info("pairing requested", extra={"request_id": pending.request_id})
+        # Only a prefix: gos-dev reads the logs (D82), and a full id would let it use up the
+        # request's tries with wrong codes.
+        log.info("pairing requested", extra={"request": _id_prefix(pending.request_id)})
         # The code is shown on monitor 2 and by `gos pair`, never sent back to the asker.
         return {"request_id": pending.request_id, "expires_in": PAIR_TTL_S}
 
     @app.post("/api/pair/complete")
-    async def pair_complete(request: Request, response: Response) -> dict[str, Any]:
+    async def pair_complete(
+        request: Request, response: Response, host: PairingHost
+    ) -> dict[str, Any]:
         # The DB work runs in a thread, so a busy DB never blocks the event loop.
         body = await _json_body(request)
         try:
@@ -399,22 +422,21 @@ def create_app(core: Core) -> FastAPI:
             log.warning(
                 "pairing refused",
                 extra={
-                    "request_id": str(body.get("request_id"))[:32],
+                    "request": _id_prefix(str(body.get("request_id"))),
                     "why": exc.reason,
                 },
             )
             raise HTTPException(exc.status, exc.reason) from None
         device_id, cookie = await asyncio.to_thread(core.auth.add_device, name)
-        host = (request.headers.get("host") or "").lower()
-        local = host.split(":")[0] in (LOOPBACK, "localhost")
         response.set_cookie(
             COOKIE,
-            cookie,
+            cookie,  # host-only: sent back to this host name alone
             max_age=COOKIE_MAX_AGE,
             path="/",
             httponly=True,
             samesite="strict",
-            secure=not local,  # the tailnet name is always HTTPS (Tailscale Serve)
+            # The tailnet name is always HTTPS (Tailscale Serve); *.localhost is plain http.
+            secure=not host.endswith(".localhost"),
         )
         log.info("device paired", extra={"device_id": device_id})
         return {"device_id": device_id, "name": name}
@@ -501,6 +523,11 @@ def create_app(core: Core) -> FastAPI:
             core.sockets.discard(sock)
 
     return app
+
+
+def _id_prefix(request_id: str) -> str:
+    """Enough of a pairing request id to match log lines, too little to use it."""
+    return request_id[:4] + "..."
 
 
 async def _json_body(request: Request) -> dict[str, Any]:

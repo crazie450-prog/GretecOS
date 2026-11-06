@@ -31,8 +31,13 @@ The admin token is in ``GOS_HOME\run\supervisor.json`` (Clayton only), the statu
 the core in its environment, and the launch token is in ``GOS_HOME\data\launch.json``, which
 gos-dev can read (D82), so Claude Code can ask for Lab or Export (``gos launch``). Play is never
 launched: ``/launch`` takes only ``lab`` or ``export``, maps them through this supervisor's own
-gos.toml, and refuses an instance that is Play's folder. Every request needs a loopback ``Host``,
-and any ``Origin`` or ``Sec-Fetch-*`` header (a browser) is refused.
+gos.toml, and refuses an instance that is Play's folder. It also refuses while a GTNH client
+(Play, Export or Lab) runs [A§5.5], and launches at most once per 30 s. Every request needs a
+loopback ``Host``, and any ``Origin`` or ``Sec-Fetch-*`` header (a browser) is refused.
+
+**Refusing to start.** As gos-dev with Clayton's ports or dashboard name, with a bad service key
+in gos.toml (``config.service_problems``, exit 2), or elevated (exit 4): everything the
+supervisor starts would inherit an elevated token. Each refusal is in ``logs\supervisor.log``.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import socketserver
 import subprocess
@@ -68,9 +74,10 @@ HANG_AFTER_S = 20.0  # /health failing this long while running: kill and restart
 STABLE_AFTER_S = 60.0  # a run this long resets the back-off
 BACKOFF_S = (1, 2, 4, 8, 16, 30, 60)
 STOP_TIMEOUT_S = 5.0
-LAUNCH_EVERY_S = 30.0  # at most one launch per instance this often
+LAUNCH_EVERY_S = 30.0  # at most one launch, of any instance, this often
 MAX_BODY = 4096
 STDERR_MAX = 5 * 1024 * 1024
+STDERR_TAIL = 64 * 1024
 # Exit codes a managed process uses to say why it stopped (gregtec.api.server).
 EXIT_DETAIL = {3: "its port is in use by another program"}
 CREATE_NO_WINDOW = 0x0800_0000
@@ -103,6 +110,11 @@ class ProcessSpec:
 class Managed:
     spec: ProcessSpec
     proc: subprocess.Popen[bytes] | None = None
+    # The pid the process itself reports on /health. On Windows a venv's python.exe is a
+    # launcher that runs the interpreter as its child, so proc.pid (kept as ``launcher_pid``)
+    # isn't the pid in the process's run file or /health. None until /health answers; for a
+    # process without /health, proc.pid.
+    pid: int | None = None
     state: str = "stopped"  # starting | running | unresponsive | backoff | stopped
     detail: str = "not started"
     started_at: float | None = None  # monotonic
@@ -167,7 +179,8 @@ class Supervisor:
         # One start, stop or restart at a time, so a start can't land in the middle of a stop.
         self._ops = threading.RLock()
         self._stop = threading.Event()
-        self._launched: dict[str, float] = {}
+        # When the last launch was asked for (self.clock), if any.
+        self._launched: float | None = None
         self._server: _ControlServer | None = None
 
     # --- process control (callers hold no lock; these take it) --------------------------------
@@ -244,6 +257,7 @@ class Supervisor:
             return
         now = self.clock()
         managed.started_at, managed.started_wall = now, time.time()
+        managed.pid = None if spec.health_port is not None else managed.proc.pid
         managed.last_ok = None
         managed.next_probe = now + 0.5
         managed.restart_at = None
@@ -251,7 +265,10 @@ class Supervisor:
             managed.state, managed.detail = "running", "running"
         else:
             managed.state, managed.detail = "starting", "starting"
-        log.info("process started", extra={"proc": spec.name, "pid": managed.proc.pid})
+        log.info(
+            "process started",
+            extra={"proc": spec.name, "launcher_pid": managed.proc.pid},
+        )
 
     def _reap(self, managed: Managed, *, expected: bool) -> int | None:
         """Record a finished process. Returns its exit code (None if there was none)."""
@@ -263,6 +280,7 @@ class Supervisor:
             return None
         ran = self.clock() - (managed.started_at or self.clock())
         managed.proc = None
+        managed.pid = None
         if managed.stderr is not None:
             managed.stderr.close()
             managed.stderr = None
@@ -320,13 +338,16 @@ class Supervisor:
                     managed.next_probe = now + PROBE_EVERY_S
                     to_probe.append(managed)
         for managed in to_probe:
-            ok = _probe(managed.spec)
+            health = _probe(managed.spec)
             with self._lock:
                 now = self.clock()
                 if managed.proc is None or managed.stopping:
                     continue
-                if ok:
+                if health is not None:
                     managed.last_ok = now
+                    reported = health.get("pid")
+                    if isinstance(reported, int) and not isinstance(reported, bool):
+                        managed.pid = reported
                     if managed.state != "running":
                         managed.state, managed.detail = "running", "running"
                     if (
@@ -381,7 +402,8 @@ class Supervisor:
                         "label": m.spec.label,
                         "state": m.state,
                         "detail": m.detail,
-                        "pid": m.proc.pid if m.proc is not None else None,
+                        "pid": m.pid if m.proc is not None else None,
+                        "launcher_pid": m.proc.pid if m.proc is not None else None,
                         "started": int(m.started_wall)
                         if m.proc is not None and m.started_wall
                         else None,
@@ -417,13 +439,30 @@ class Supervisor:
         if not instance.is_dir():
             raise LaunchError(404, f"no {role} instance at {instance}")
         with self._lock:
-            now = self.clock()
-            last = self._launched.get(role)
+            # One launch per LAUNCH_EVERY_S of any instance: Prism takes seconds to start Java,
+            # so a second launch right after the first wouldn't see it in running_client().
+            now, last = self.clock(), self._launched
             if last is not None and now - last < LAUNCH_EVERY_S:
                 raise LaunchError(
-                    429, f"{role} was launched {int(now - last)} s ago; wait"
+                    429, f"a launch was asked for {int(now - last)} s ago; wait"
                 )
-            self._launched[role] = now
+            self._launched = now
+        try:
+            busy = running_client(cfg)
+        except OSError as exc:
+            with self._lock:
+                self._launched = last
+            raise LaunchError(
+                503, f"couldn't check whether a GTNH client is running: {exc}"
+            ) from None
+        if busy is not None:
+            with self._lock:
+                self._launched = last
+            raise LaunchError(
+                409,
+                f"refused: {busy} is running, and two GTNH clients never run at once "
+                "[A§5.5]; try again once it has quit",
+            )
         argv = prism_command(cfg, instance.name)
         try:
             proc = subprocess.Popen(
@@ -439,7 +478,7 @@ class Supervisor:
             )
         except OSError as exc:
             with self._lock:
-                self._launched.pop(role, None)
+                self._launched = last
             raise LaunchError(
                 503, f"couldn't run Prism Launcher ({argv[0]}): {exc}"
             ) from None
@@ -484,15 +523,147 @@ def _same_path(a: Path, b: Path) -> bool:
         return False
 
 
-def _probe(spec: ProcessSpec) -> bool:
+# --- is a GTNH client running? -----------------------------------------------------------------
+
+JAVA_NAMES = ("java.exe", "javaw.exe") if sys.platform == "win32" else ("java",)
+# Win32_Process command lines of the named images, as a JSON list (null for ones it can't read).
+_PS_COMMAND_LINES = (
+    "$ErrorActionPreference = 'Stop'; "
+    "try {{ [Console]::OutputEncoding = [Text.Encoding]::UTF8 }} catch {{ }}; "
+    "ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process -Filter '{filter}' "
+    "| ForEach-Object {{ $_.CommandLine }})"
+)
+
+
+def command_lines(names: Sequence[str] = JAVA_NAMES) -> list[str]:
+    """The command lines of this PC's running processes whose program is one of ``names``.
+
+    Windows: Win32_Process through PowerShell (about a second; the supervisor runs as Clayton, so
+    it sees his processes' command lines without reading any of their files). Linux: /proc.
+    Raises OSError if it can't tell.
+    """
+    if sys.platform == "win32":
+        # '' is a quote inside PowerShell's '...'.
+        flt = " OR ".join(f"Name = ''{n}''" for n in names)
+        try:
+            done = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    _PS_COMMAND_LINES.format(filter=flt),
+                ],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=30,
+                creationflags=CREATE_NO_WINDOW,  # no console flash on Clayton's screen
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise OSError("PowerShell didn't list the processes within 30 s") from None
+        if done.returncode != 0:
+            raise OSError(
+                f"PowerShell exited {done.returncode}: "
+                f"{done.stderr.decode('utf-8', 'replace').strip()[:200]}"
+            )
+        try:
+            found = json.loads(done.stdout.decode("utf-8-sig", "replace") or "[]")
+        except ValueError as exc:
+            raise OSError(f"PowerShell's process list isn't JSON ({exc})") from None
+        if not isinstance(found, list):
+            raise OSError("PowerShell's process list isn't a list")
+        return [c for c in found if isinstance(c, str)]
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return []  # no Prism clients outside Windows and Linux
+    wanted = {n.lower() for n in names}
+    lines = []
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:  # gone, or not ours to read
+            continue
+        if argv and Path(os.fsdecode(argv[0])).name.lower() in wanted:
+            lines.append(" ".join(os.fsdecode(a) for a in argv if a))
+    return lines
+
+
+def _folder_in(folder: Path, command_line: str) -> bool:
+    """Whether ``command_line`` names ``folder`` (or a path inside it), ignoring case and slashes."""
+    norm = command_line.replace("\\", "/").lower()
+    for form in {str(folder), str(_resolved(folder))}:
+        path = re.escape(form.replace("\\", "/").rstrip("/").lower())
+        if re.search(path + r'(?=[/"\s;:]|$)', norm):
+            return True
+    return False
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def running_client(cfg: Config) -> str | None:
+    """The instance (Play, Export or Lab) a running Java process was started from, else None.
+
+    Prism starts each client's Java with paths inside its instance folder on the command line
+    (its natives and libraries). Raises OSError if the processes can't be listed.
+    """
+    lines = command_lines()
+    for role in ("play", "export", "lab"):
+        folder = cfg.instance(role)
+        if any(_folder_in(folder, line) for line in lines):
+            return folder.name
+    return None
+
+
+# --- elevation ---------------------------------------------------------------------------------
+
+# GitHub's Windows runners run every job elevated, so CI sets this; never set it on a real PC.
+ALLOW_ELEVATED_ENV = "GOS_ALLOW_ELEVATED"
+EXIT_ELEVATED = 4
+
+
+def is_elevated() -> bool:
+    """Whether this process runs with an elevated (administrator) token. Windows only."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return False
+
+
+def elevation_problem() -> str | None:
+    """Why GOS must not start here, or None. Everything GOS starts (Prism, Lab and Export with
+    gos-dev's mods) would inherit an elevated token, beyond plan 4.6's "runs as Clayton"."""
+    if is_elevated() and os.environ.get(ALLOW_ELEVATED_ENV) != "1":
+        return (
+            "GOS doesn't run elevated (as administrator): everything it starts would be "
+            "elevated too. Start it from a normal window, or log off and on."
+        )
+    return None
+
+
+def _probe(spec: ProcessSpec) -> dict[str, Any] | None:
+    """The process's /health answer, or None if it didn't give a good one."""
     assert spec.health_port is not None
     try:
         health = control.call(
             spec.health_port, "GET", "/health", timeout=PROBE_TIMEOUT_S
         )
     except control.ControlError:
-        return False
-    return spec.health_service is None or health.get("service") == spec.health_service
+        return None
+    if spec.health_service is not None and health.get("service") != spec.health_service:
+        return None
+    return health
 
 
 def _stop_process(proc: subprocess.Popen[bytes]) -> None:
@@ -513,12 +684,31 @@ def _stop_process(proc: subprocess.Popen[bytes]) -> None:
 
 
 def _open_stderr_log(path: Path) -> IO[bytes]:
-    """Append to ``path``; past STDERR_MAX it is moved to ``<name>.1`` first."""
+    """Append to ``path``; past STDERR_MAX it is moved to ``<name>.1`` first.
+
+    If the move fails (Windows: someone has the file open without share-delete, an editor or a
+    tail), the file starts again with its last STDERR_TAIL bytes, which hold the last crash, so
+    it never grows past about STDERR_MAX either way.
+    """
     try:
-        if path.stat().st_size > STDERR_MAX:
-            os.replace(path, path.with_name(path.name + ".1"))
+        size = path.stat().st_size
     except OSError:
-        pass
+        size = 0
+    if size > STDERR_MAX:
+        try:
+            os.replace(path, path.with_name(path.name + ".1"))
+        except OSError:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(-STDERR_TAIL, os.SEEK_END)
+                    tail = f.read()
+                out = open(path, "wb")  # noqa: SIM115 - returned, closed on reap
+            except OSError:
+                return open(path, "ab")
+            out.write(
+                b"[gos-supervisor: couldn't rotate this file; kept its end]\n" + tail
+            )
+            return out  # closed when the process is reaped
     return open(path, "ab")  # closed when the process is reaped
 
 
@@ -676,6 +866,16 @@ def run(cfg: Config, config_path: Path | None, *, login: bool = False) -> int:
     if login and not cfg.core_at_login:
         log.info("login start is off ([startup] core_at_login = false)")
         return 0
+    if (why := elevation_problem()) is not None:
+        log.error("refusing to start", extra={"why": why})
+        return EXIT_ELEVATED
+    if problems := config.service_problems(cfg):
+        for problem in problems:
+            log.error("refusing to start: fix gos.toml", extra={"why": problem})
+        return 2
+    # Absolute: the core starts in GOS_HOME, and so does this process from here on.
+    if config_path is not None:
+        config_path = Path(os.path.abspath(config_path))
     cfg.gos_home.mkdir(parents=True, exist_ok=True)
     os.chdir(cfg.gos_home)  # a Run-key start begins in System32; never sit in GOS_APP
     run_file = cfg.run_dir / control.SUPERVISOR_FILE
@@ -700,6 +900,8 @@ def run(cfg: Config, config_path: Path | None, *, login: bool = False) -> int:
             "port": cfg.supervisor_port,
             "token": sup.admin_token,
             "exe": sys.executable,  # gos deploy restarts it only if it ran from GOS_APP
+            # ... with the same gos.toml (the Run key's --config, if it has one).
+            "config": str(config_path) if config_path is not None else None,
             "started": int(time.time()),
         },
     )
@@ -736,8 +938,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cfg = config.load(path)
     except (OSError, ValueError) as exc:
-        logging.basicConfig()
-        log.error("can't read gos.toml: %s", exc)
+        # No config, so no [paths] gos_home: log where GOS_HOME is by default. A login start
+        # runs under pythonw, which has no stderr, so the log file is the only trace.
+        applog.setup("supervisor", config.default_home() / "logs")
+        log.error("can't read gos.toml", extra={"path": str(path), "error": str(exc)})
         return 2
     return run(cfg, path, login=args.login)
 

@@ -24,6 +24,8 @@ from gregtec.config import Config
 from gregtec.llm import keys
 
 WAIT_S = 15.0  # how long stop/serve wait for a process to go or come
+# /stop waits for each process: up to STOP_TIMEOUT_S for it to stop, then as long for the kill.
+STOP_CALL_S = 25.0
 
 
 def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -144,6 +146,18 @@ def run(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         print(f"Can't read gos.toml: {exc}", file=sys.stderr)
         return 2
+    if args.command == "serve":
+        # The core and the supervisor refuse these too; saying so here is quicker and clearer.
+        if problems := config.service_problems(cfg):
+            for problem in problems:
+                print(f"Not starting GOS: {problem}", file=sys.stderr)
+            return 2
+    else:
+        for problem in cfg.service_errors:
+            print(
+                f"Warning: {problem} (GOS won't start until it's fixed)",
+                file=sys.stderr,
+            )
     try:
         return _HANDLERS[args.command](cfg, args)
     except control.ControlError as exc:
@@ -193,8 +207,8 @@ def supervisor_command(cfg: Config, config_path: Path | None) -> list[str]:
         if exe.is_file()
         else [supervisor.python_exe(), "-m", "gregtec.supervisor"]
     )
-    if config_path is not None:
-        argv += ["--config", str(config_path)]
+    if config_path is not None:  # absolute: the supervisor starts in GOS_HOME
+        argv += ["--config", str(config_path.absolute())]
     return argv
 
 
@@ -241,6 +255,9 @@ def _serve(cfg: Config, args: argparse.Namespace) -> int:
         print("The supervisor is running; started what was stopped:")
         _print_processes(status)
         return 0
+    if (why := supervisor.elevation_problem()) is not None:
+        print(f"Not starting GOS: {why}", file=sys.stderr)
+        return supervisor.EXIT_ELEVATED
     if args.detach:
         spawn_detached(supervisor_command(cfg, args.config), cfg.gos_home)
         if not wait_until(lambda: _supervisor(cfg), True):
@@ -264,7 +281,9 @@ def _stop(cfg: Config, args: argparse.Namespace) -> int:
             gone = wait_until(lambda: _supervisor(cfg), False)
             print("GOS and its supervisor stopped." if gone else "Asked GOS to stop.")
             return 0 if gone else 1
-        status = control.call(sup["port"], "POST", "/stop", token=sup["token"])
+        status = control.call(
+            sup["port"], "POST", "/stop", token=sup["token"], timeout=STOP_CALL_S
+        )
         print("Stopped (the supervisor keeps running; `gos serve` starts them again):")
         _print_processes(status)
         return 0
@@ -305,7 +324,10 @@ def _status(cfg: Config, args: argparse.Namespace) -> int:
         print("The core isn't answering; the supervisor says:")
         _print_processes(status)
         return 1
-    print("GOS isn't running.")
+    print(
+        "GOS isn't running. If it should be, see "
+        f"{cfg.logs_dir / 'supervisor.log'} (one JSON object per line)."
+    )
     return 1
 
 
