@@ -284,3 +284,43 @@ def test_named_queries_parse() -> None:
     assert sql.params_of("SELECT ':no' -- :nope\n, :yes, x::y FROM t /* :hid */") == (
         "yes",
     )
+
+
+# Plausible values for every parameter a named query takes, so each one runs.
+SAMPLE: dict[str, object] = {
+    "q": '"steel"',
+    "player": "11111111-2222-4333-8444-555555555555",
+    "ids": "[1, 2, 3]",
+    "items": "[1, 2, 3]",
+    "ores": "[]",
+    "maps": None,
+    "handlers": None,
+    "all": 0,
+    "tier_max": None,
+    "line": None,
+    "kind": None,
+    "nbt": "",
+    "meta": 11305,
+    "registry": "gregtech:gt.metaitem.01",
+    "name": "Blast Furnace",
+    "ref": "r:gt.recipe.blastfurnace/000000000000",
+    "run_id": 1,
+    "item_id": 1,
+    "fluid_id": None,
+    "fluid": None,
+    "mte_id": 1000,
+    "id": "AAAAAAAAAAAAAAAAAAAAAg",
+}
+
+
+def sample(name: str) -> dict[str, object]:
+    wanted = [p for p in sql.named_queries()[name].params if p not in sql.MANAGED]
+    missing = [p for p in wanted if p not in SAMPLE]
+    assert not missing, f"add {missing} to SAMPLE"
+    return {p: SAMPLE[p] for p in wanted}
+
+
+@pytest.mark.parametrize("name", sorted(sql.named_queries()))
+def test_every_named_query_runs(run: Runner, name: str) -> None:
+    p = run("db_query", name=name, params=sample(name))
+    assert p.columns, name
