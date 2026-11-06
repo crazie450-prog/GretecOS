@@ -211,9 +211,11 @@ def decode_id(text: str) -> tuple[int, int]:
 def read_id(t: Typed, field_name: str = "questID") -> str | None:
     """A quest's (``questID``) or quest line's (``questLineID``) id, or None if it has none."""
     high, low = t.get(field_name + "High"), t.get(field_name + "Low")
-    if isinstance(high, int) and isinstance(low, int):
-        return encode_id(high, low)
-    return None
+    if not (isinstance(high, int) and isinstance(low, int)):
+        return None
+    if not all(-(1 << 63) <= v < 1 << 63 for v in (high, low)):
+        return None  # not a Java long: a damaged file
+    return encode_id(high, low)
 
 
 def clean(text: str) -> str:

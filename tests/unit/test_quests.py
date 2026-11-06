@@ -477,6 +477,9 @@ def test_ids_are_bqs_compact_form() -> None:
     for bad in ("", "AAAA", "AAAAAAAAAAAAAAAAAAAB+g", "not a quest id at all!"):
         with pytest.raises(ValueError):
             bq.decode_id(bad)
+    # A damaged file's id that is no Java long is no id (and no crash).
+    assert bq.read_id(bq.Typed({"questIDHigh:4": 1 << 64, "questIDLow:4": 1})) is None
+    assert bq.read_id(bq.Typed({"questIDHigh:4": 0})) is None
 
 
 def test_typed_keys_split_on_the_last_colon() -> None:
