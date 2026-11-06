@@ -705,7 +705,10 @@ def test_a_staging_folder_deleted_mid_copy_fails_the_collect(
     monkeypatch.setattr(collect, "_write_new", raced)
     code, out = env.collect(capsys)
     assert code == 1
-    assert "Not collected: [Errno 2]" in out
+    # Windows says "path not found" (WinError 3) when the missing folder is a file's parent.
+    assert "Not collected: [Errno 2]" in out or "Not collected: [WinError 3]" in out, (
+        out
+    )
     assert env.collected() == []  # no run with files missing, and no staging folder
 
 
