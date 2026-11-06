@@ -1,0 +1,66 @@
+{
+ "schema": 3,
+ "controller": {
+  "registry_name": "gregtech:gt.blockmachines",
+  "meta": 9001,
+  "display_name": "Fixture Furnace",
+  "source_class": "gregtech.fixture.MTEFixtureFurnace",
+  "facing_convention": "controller front = NORTH (-Z), ExtendedFacing NORTH_NORMAL_NONE; offsets d = [dx,dy,dz] world-space deltas from the controller block"
+ },
+ "variants": [
+  {
+   "trigger_stack_size": 1,
+   "channels": {},
+   "blocks": [
+    {"d": [-1, 0, 0], "block": "fixture:casing", "meta": 0},
+    {"d": [0, 0, 0], "block": "gregtech:gt.blockmachines", "meta": 9001},
+    {"d": [1, 0, 0], "block": "fixture:casing", "meta": 0},
+    {"d": [-1, 0, 1], "block": "fixture:casing", "meta": 0},
+    {"d": [0, 0, 1], "block": "fixture:casing", "meta": 0},
+    {"d": [1, 0, 1], "block": "fixture:casing", "meta": 0},
+    {"d": [-1, 0, 2], "block": "fixture:casing", "meta": 0},
+    {"d": [0, 0, 2], "block": "fixture:casing", "meta": 0},
+    {"d": [1, 0, 2], "block": "fixture:casing", "meta": 0},
+    {"d": [-1, 1, 0], "block": "fixture:coil", "meta": 0},
+    {"d": [0, 1, 0], "block": "fixture:coil", "meta": 0},
+    {"d": [1, 1, 0], "block": "fixture:coil", "meta": 0},
+    {"d": [-1, 1, 1], "block": "fixture:coil", "meta": 0},
+    {"d": [1, 1, 1], "block": "fixture:coil", "meta": 0},
+    {"d": [-1, 1, 2], "block": "fixture:coil", "meta": 0},
+    {"d": [0, 1, 2], "block": "fixture:coil", "meta": 0},
+    {"d": [1, 1, 2], "block": "fixture:coil", "meta": 0},
+    {"d": [-1, 2, 0], "block": "fixture:casing", "meta": 0},
+    {"d": [0, 2, 0], "block": "fixture:casing", "meta": 0},
+    {"d": [1, 2, 0], "block": "fixture:casing", "meta": 0},
+    {"d": [-1, 2, 1], "block": "fixture:casing", "meta": 0},
+    {"d": [1, 2, 1], "block": "fixture:casing", "meta": 0},
+    {"d": [-1, 2, 2], "block": "fixture:casing", "meta": 0},
+    {"d": [0, 2, 2], "block": "fixture:casing", "meta": 0},
+    {"d": [1, 2, 2], "block": "fixture:casing", "meta": 0}
+   ],
+   "hints": [
+    {"d": [0, 2, 1], "hint": 2}
+   ],
+   "hatch_slots": [
+    {"d": [-1, 0, 0], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [1, 0, 0], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [-1, 0, 1], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [0, 0, 1], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [1, 0, 1], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [-1, 0, 2], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [0, 0, 2], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [1, 0, 2], "kinds": ["Energy", "InputBus", "Maintenance", "OutputBus"]},
+    {"d": [0, 2, 1], "kinds": ["Muffler"]}
+   ],
+   "bbox": [3, 3, 3]
+  }
+ ],
+ "substitutions": {
+  "coil": [
+   {"channel_value": 1, "block": "fixture:coil", "meta": 0},
+   {"channel_value": 2, "block": "fixture:coil", "meta": 1},
+   {"channel_value": 3, "block": "fixture:coil", "meta": 2}
+  ]
+ },
+ "failures": []
+}
