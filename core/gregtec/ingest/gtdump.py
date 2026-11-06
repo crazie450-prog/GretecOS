@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.ingest.normalize import (
+    ALT_IDENTITY_MAPS,
     FLUID,
     FULL,
     ITEM,
@@ -312,6 +313,7 @@ def recipe_from_line(
         flags=flags,
         meta=meta,
         owners=owners,
+        alt_identity=name in ALT_IDENTITY_MAPS,
     ).seal()
 
 

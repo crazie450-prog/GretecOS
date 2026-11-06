@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.ingest.normalize import (
+    ALT_IDENTITY_MAPS,
     ITEM,
     SIG_CHARS,
     WILDCARD,
@@ -82,6 +83,14 @@ NOT_RECIPES = {
         "AE2 cable facades: cosmetic, a set that changes with AE2's Facades.cfg, and NBT "
         "with numeric block IDs"
     ),
+    # CropsNH's crop-stick tabs (WO-1.10, D136): crop facts, which the crop tables hold. Its
+    # machines (Crop Breeder, Seed Generator, ...) are GT recipe maps and stay recipes.
+    "cropsnhCrops": "CropsNH crop pages (seed, soils, drops without their chances): crop tables",
+    "cropsnhBreeding": (
+        "CropsNH breeding on crop sticks, where no parent is used up: crop tables"
+    ),
+    "mutationPool": "CropsNH mutation pools (members only, no pool name): crop tables",
+    "cropsnhAlternateSeeds": "CropsNH alternate seeds (an item that plants a crop): crop tables",
 }
 
 
@@ -260,7 +269,9 @@ def merge(
             nei_only.append(n.seal())
             stats.nei_only += 1
             continue
-        sig = signature(space, handler, n.inputs, n.outputs)
+        # GT-style, so it matches the GT recipe's; keyed by what a slot accepts in the maps
+        # whose displayed item is unstable (D135).
+        sig = signature(space, handler, n.inputs, n.outputs, space in ALT_IDENTITY_MAPS)
         exact = by_sig.get((space, sig), [])
         free = [g for g in exact if id(g) not in merged]
         if free:
