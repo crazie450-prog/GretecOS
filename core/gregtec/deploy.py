@@ -73,6 +73,9 @@ RENAME_DELAY = 0.5
 # Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.
 CLEAN_TRIES, CLEAN_DELAY = 10, 1.0
 SYSTEM, ADMINS = "S-1-5-18", "S-1-5-32-544"
+# OWNER RIGHTS: an ACE for it grants its rights to whoever owns the object, nobody else.
+# Python >= 3.12.4 adds one when it makes a folder with mode=0o700 (pytest's temp folders).
+OWNER_RIGHTS = "S-1-3-4"
 # setup_gos_dev.ps1's $WriteMask: write/append data, write EA and attributes, delete, delete
 # child, WRITE_DAC, WRITE_OWNER, GENERIC_WRITE, GENERIC_ALL.
 WRITE_MASK = 0x000D0156 | 0x50000000
@@ -205,7 +208,9 @@ def acl_problem(acl: Acl, me: str) -> str | None:
     if acl.owner != ADMINS:
         return f"is owned by {acl.owner}, not Administrators"
     writers = {sid for sid, mask in acl.allows if mask & WRITE_MASK}
-    writers -= {SYSTEM, ADMINS, me}
+    # OWNER RIGHTS writes as the owner, which is Administrators here (checked above). In a
+    # file deploy creates inside GOS_APP, the owner is the deployer (``me``).
+    writers -= {SYSTEM, ADMINS, me, OWNER_RIGHTS}
     if writers:
         return f"lets {', '.join(sorted(writers))} change it"
     return None
