@@ -7,33 +7,43 @@ never stops the others:
    monthly ones once the week's Sunday is 8 weeks old (a week belongs to the month of its
    Thursday, as ISO weeks do). One Haiku call per period (:mod:`gregtec.llm.summarise`); the
    summary is written (``log/wk/YYYY-Www.md``, ``log/mo/YYYY-MM.md``, an existing one included in
-   the input) before its sources are deleted, and git keeps them. Without an Anthropic key the
-   job is skipped and the logs wait.
-2. ``index``: rebuild ``INDEX.md`` (:mod:`gregtec.vault.index`).
-3. ``schema``: check every note against ``_gos/schema.md``; the problems go to one standing note,
+   the input) before its sources are deleted, and git keeps them. Without an Anthropic key, or
+   once the cycle's included credits are spent (D48), the job is skipped and the logs wait. A
+   period whose summary was refused :data:`MAX_REFUSALS` times is held (``kv``) and listed in
+   ``inbox/ib-compact-held.md`` for Clayton; ``gos vault maintain`` (``retry_held``) tries again.
+2. ``schema``: check every note against ``_gos/schema.md``; the problems go to one standing note,
    ``inbox/ib-schema-check.md``, rewritten when they change and removed when there are none.
+3. ``index``: rebuild ``INDEX.md`` (:mod:`gregtec.vault.index`), after the inbox notes the first
+   two jobs write.
 4. ``fts``: mirror the notes into ``note_fts`` (:mod:`gregtec.vault.fts`).
 5. ``backup``: ``VACUUM INTO data/backups/gos-YYYYMMDD.sqlite`` (through a temporary name, so a
-   half-written backup never has a backup's name), keeping the newest ``keep_backups``.
+   half-written backup never has a backup's name; a ``.tmp`` left by a killed run is removed),
+   keeping the newest ``keep_backups``.
 6. ``git``: commit the agents' and the curator's changes (:func:`commit_agent_writes`).
 
 Git commits cover every path except ``me/`` (Clayton's) and ``_gos/`` (``gos vault deploy``
-commits it); hooks and signing are off, as in deploy.
+commits it) and the temporary files of a write that was killed; hooks and signing are off, as
+in deploy. :meth:`Curator.run` checks ``stop`` between jobs (and compaction between periods), so
+the core's stop doesn't wait for, or kill, a whole run.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
+import time
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+import keyring.errors
 
 from gregtec.llm.summarise import Summariser, SummaryError
 from gregtec.llm.usage import UsageMeter
@@ -42,17 +52,23 @@ from gregtec.vault.deploy import _cmd
 
 log = logging.getLogger(__name__)
 
-JOBS = ("compact", "index", "schema", "fts", "backup", "git")
+JOBS = ("compact", "schema", "index", "fts", "backup", "git")
 OK, SKIPPED, FAILED = "ok", "skipped", "failed"
 KEEP_BACKUPS = 7
 BACKUP = re.compile(r"gos-(\d{8})\.sqlite")
+BACKUP_TMP = re.compile(r"gos-(\d{8})\.sqlite\.tmp")
 SCHEMA_REPORT = "inbox/ib-schema-check.md"
 REPORT_ROWS = 120
 DAILY_AGE = dt.timedelta(days=7)
 WEEKLY_AGE = dt.timedelta(weeks=8)
 WEEKLY = re.compile(r"log/wk/(\d{4})-W(\d{2})\.md")
-GIT_PATHS = (".", ":(exclude)me", ":(exclude)_gos")
+# io.atomic_write's temporary files: a write killed half-way leaves one, never committed.
+GIT_PATHS = (".", ":(exclude)me", ":(exclude)_gos", ":(exclude,glob)**/.*.gos-tmp")
 LANE = "maintenance"  # llm_usage.lane of the compaction calls
+MAX_REFUSALS = 3  # refused summaries of one period before it waits for Clayton
+# kv key + period -> {"n": refused summaries, "why": the last reason}
+KV_REFUSED = "maintenance.compact_refused."
+HELD_NOTE = "inbox/ib-compact-held.md"
 
 
 @dataclass(frozen=True)
@@ -179,7 +195,9 @@ def _summary_note(
             if line.startswith("from: "):
                 earlier = line.removeprefix("from: ").split(", ")
                 break
-    sources_line = ", ".join([*earlier, *(s.removeprefix("log/") for s in sources)])
+    # dict.fromkeys: a run killed between the write and the deletes lists its sources once
+    named = dict.fromkeys([*earlier, *(s.removeprefix("log/") for s in sources)])
+    sources_line = ", ".join(named)
     body = [f"period: {period}", f"from: {sources_line}", *summary.lines]
     text = io.frontmatter(schema.id_for(rel, kind), kind.t, today)
     text += "".join(line + "\n" for line in body)
@@ -191,40 +209,171 @@ def _summary_note(
         (root / src).unlink()
 
 
+Refusals = dict[str, tuple[int, str]]  # period -> (refused summaries, the last reason)
+
+
+def _refusals(meter: UsageMeter | None) -> Refusals:
+    """Every period whose summary was refused, as kept in ``kv``."""
+    if meter is None:
+        return {}
+    found = {}
+    for row in meter.store.rows(
+        "SELECT key, value FROM kv WHERE key LIKE ?", (KV_REFUSED + "%",)
+    ):
+        try:
+            value = json.loads(row["value"])
+            found[row["key"].removeprefix(KV_REFUSED)] = (
+                int(value["n"]),
+                str(value["why"]),
+            )
+        except (ValueError, TypeError, KeyError):
+            continue
+    return found
+
+
+def _set_refusal(meter: UsageMeter | None, period: str, n: int, why: str) -> None:
+    if meter is None:
+        return
+    with meter.store.transaction() as conn:
+        if n == 0:
+            conn.execute("DELETE FROM kv WHERE key = ?", (KV_REFUSED + period,))
+            return
+        conn.execute(
+            "INSERT INTO kv(key, value, upd) VALUES (?, ?, ?) ON CONFLICT(key) DO "
+            "UPDATE SET value = excluded.value, upd = excluded.upd",
+            (
+                KV_REFUSED + period,
+                json.dumps({"n": n, "why": why[:300]}),
+                int(time.time()),
+            ),
+        )
+
+
+def _held_note(root: Path, today: dt.date, held: Refusals) -> None:
+    """``inbox/ib-compact-held.md``: the held periods, or no note when there are none."""
+    target = root / HELD_NOTE
+    if not held:
+        target.unlink(missing_ok=True)
+        return
+    body = [
+        "title: log summaries the curator gave up on",
+        f"count: {len(held)}",
+        (
+            f"note: each period's summary was refused {MAX_REFUSALS} times, so its logs stay "
+            "as they are and no more calls are made for it"
+        ),
+        "note: gos vault maintain --job compact tries these periods again",
+        "",
+        "```tsv",
+        "period\trefused\tlast_reason",
+    ]
+    body += [
+        f"{period}\t{n}\t{_clean_cell(why)[:200]}"
+        for period, (n, why) in sorted(held.items())
+    ]
+    body.append("```")
+    text = io.frontmatter("ib-compact-held", "inbox", today)
+    text += "".join(line + "\n" for line in body)
+    try:
+        old = target.read_text(encoding="utf-8")
+        if old.split("\n---\n", 1)[-1] == text.split("\n---\n", 1)[-1]:
+            return
+    except OSError:
+        pass
+    io.atomic_write(target, text.encode("utf-8"))
+
+
 def compact(
     root: Path,
     today: dt.date,
-    summariser: Summariser | None,
+    summariser: Callable[[], Summariser | None],
     meter: UsageMeter | None = None,
+    *,
+    retry_held: bool = False,
+    stop: Callable[[], bool] = lambda: False,
 ) -> JobResult:
+    """Compact the logs old enough (see the module docstring). ``summariser`` is only called
+    (the keyring read) once a period is due; ``meter`` meters the calls, keeps the refusal
+    counts in ``kv`` and gives the credit cycle; without one, nothing is held or checked."""
     days, weeks = _daily_groups(root, today), _weekly_groups(root, today)
-    if not days and not weeks:
+    refused = _refusals(meter)
+    due = set(days) | set(weeks)
+    # A period no longer due: its logs are gone (compacted, or deleted by hand).
+    for period in set(refused) - due:
+        _set_refusal(meter, period, 0, "")
+        del refused[period]
+    held = (
+        {} if retry_held else {p: r for p, r in refused.items() if r[0] >= MAX_REFUSALS}
+    )
+    _held_note(root, today, held)
+    if not due:
         return JobResult("compact", OK, "nothing old enough")
-    if summariser is None:
+    if not due - set(held):
+        return JobResult(
+            "compact",
+            SKIPPED,
+            f"{', '.join(sorted(held))} held after {MAX_REFUSALS} refused summaries "
+            f"({HELD_NOTE})",
+        )
+    if meter is not None:
+        cycle = meter.cycle()
+        if cycle["pct"] >= 100:
+            return JobResult(
+                "compact",
+                SKIPPED,
+                f"the cycle's included credits are spent ({cycle['pct']}%, D48): the logs wait",
+            )
+    try:
+        summ = summariser()
+    except keyring.errors.KeyringError as exc:
+        return JobResult(
+            "compact",
+            SKIPPED,
+            f"the Anthropic key can't be read ({exc}): the logs wait",
+        )
+    if summ is None:
         return JobResult(
             "compact",
             SKIPPED,
             "no Anthropic key stored: the logs wait (gos key set anthropic)",
         )
-    done, failed = [], []
-    for period, sources in sorted(days.items()):
+    done: list[str] = []
+    failed: list[str] = []
+    stopped = False
+
+    def one(period: str, rel: str, sources: list[str]) -> None:
+        nonlocal stopped
+        if period in held:
+            return
+        if stop():
+            stopped = True
+            return
         try:
-            _summary_note(
-                root, f"log/wk/{period}.md", period, sources, summariser, meter, today
-            )
+            _summary_note(root, rel, period, sources, summ, meter, today)
             done.append(period)
-        except (SummaryError, OSError, ValueError) as exc:
+            if period in refused:
+                _set_refusal(meter, period, 0, "")
+        except SummaryError as exc:
+            n = refused.get(period, (0, ""))[0] + 1
+            refused[period] = (n, str(exc))
+            _set_refusal(meter, period, n, str(exc))
+            if n >= MAX_REFUSALS:
+                held[period] = refused[period]
             failed.append(f"{period}: {exc}")
+        except (OSError, ValueError) as exc:
+            failed.append(f"{period}: {exc}")
+
+    for period, sources in sorted(days.items()):
+        one(period, f"log/wk/{period}.md", sources)
     # Weeks made just now are only days old: they never qualify for a month in the same run.
     for period, sources in sorted(_weekly_groups(root, today).items()):
-        try:
-            _summary_note(
-                root, f"log/mo/{period}.md", period, sources, summariser, meter, today
-            )
-            done.append(period)
-        except (SummaryError, OSError, ValueError) as exc:
-            failed.append(f"{period}: {exc}")
+        one(period, f"log/mo/{period}.md", sources)
+    _held_note(root, today, held)
     detail = f"compacted {', '.join(done) or 'nothing'}"
+    if held:
+        detail += f"; held {', '.join(sorted(held))} ({HELD_NOTE})"
+    if stopped:
+        detail += "; stopped before the rest"
     if failed:
         return JobResult("compact", FAILED, detail + "; failed " + "; ".join(failed))
     return JobResult("compact", OK, detail)
@@ -304,12 +453,15 @@ def backup(
     if not db.is_file():
         return JobResult("backup", SKIPPED, "no DB yet")
     folder.mkdir(parents=True, exist_ok=True)
+    for stale in [p for p in folder.iterdir() if BACKUP_TMP.fullmatch(p.name)]:
+        stale.unlink(
+            missing_ok=True
+        )  # a run killed in VACUUM INTO, maybe on another day
     target = folder / f"gos-{today:%Y%m%d}.sqlite"
     if target.exists():
         detail = f"{target.name} already exists"
     else:
         tmp = folder / f"{target.name}.tmp"
-        tmp.unlink(missing_ok=True)
         conn = sqlite3.connect(db, timeout=30)
         try:
             conn.execute("VACUUM INTO ?", (str(tmp),))
@@ -339,8 +491,17 @@ class Curator:
     summariser: Callable[[], Summariser | None] = lambda: None
     meter: UsageMeter | None = None
     keep_backups: int = KEEP_BACKUPS
+    # gos vault maintain sets it: Clayton's own run tries held periods again.
+    retry_held: bool = False
 
-    def run(self, today: dt.date, jobs: Sequence[str] = JOBS) -> list[JobResult]:
+    def run(
+        self,
+        today: dt.date,
+        jobs: Sequence[str] = JOBS,
+        stop: Callable[[], bool] = lambda: False,
+    ) -> list[JobResult]:
+        """Run ``jobs`` in :data:`JOBS` order. Once ``stop()`` is true, the jobs not started
+        are ``skipped`` (``stopped``)."""
         unknown = set(jobs) - set(JOBS)
         if unknown:
             raise ValueError(f"unknown jobs: {sorted(unknown)}")
@@ -348,8 +509,11 @@ class Curator:
         for job in JOBS:
             if job not in jobs:
                 continue
+            if stop():
+                results.append(JobResult(job, SKIPPED, "stopped"))
+                continue
             try:
-                result = self._job(job, today)
+                result = self._job(job, today, stop)
             except Exception as exc:  # one job's failure never stops the others
                 log.exception("maintenance job %s failed", job)
                 result = JobResult(job, FAILED, f"{type(exc).__name__}: {exc}")
@@ -360,7 +524,7 @@ class Curator:
             results.append(result)
         return results
 
-    def _job(self, job: str, today: dt.date) -> JobResult:
+    def _job(self, job: str, today: dt.date, stop: Callable[[], bool]) -> JobResult:
         if (
             job in ("compact", "index", "schema", "fts", "git")
             and not (self.vault / io.SCHEMA_NOTE).is_file()
@@ -369,7 +533,14 @@ class Curator:
                 job, SKIPPED, f"no vault at {self.vault}: gos vault deploy"
             )
         if job == "compact":
-            return compact(self.vault, today, self.summariser(), self.meter)
+            return compact(
+                self.vault,
+                today,
+                self.summariser,
+                self.meter,
+                retry_held=self.retry_held,
+                stop=stop,
+            )
         if job == "index":
             changed = index.build(self.vault, today)
             return JobResult(job, OK, "rebuilt" if changed else "unchanged")

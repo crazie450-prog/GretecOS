@@ -335,9 +335,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the curator's idle-maintenance jobs now (plan 6.6)",
         description=(
             "Runs the daily jobs now, whatever the idle rule says: compact old logs (a Haiku "
-            "call each, with the stored key), rebuild INDEX.md, check the notes against "
-            "_gos/schema.md, mirror them into note_fts, back up the DB, commit to the vault's "
-            "git. The core runs the same jobs once a day when the game is closed and the PC "
+            "call each, with the stored key; periods held after refused summaries are tried "
+            "again), check the notes against _gos/schema.md, rebuild INDEX.md, mirror them "
+            "into note_fts, back up the DB, commit to the vault's git. The core runs the same jobs once a day when the game is closed and the PC "
             "has been idle for [maintenance] idle_minutes."
         ),
     )
@@ -688,6 +688,7 @@ def _maintain(config_path: Path | None, jobs: list[str] | None, rerun: bool) -> 
                 store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
             ),
             keep_backups=cfg.keep_backups,
+            retry_held=True,  # Clayton's own run: held log periods get another call
         )
         results = cur.run(dt.date.today(), jobs or vault_curator.JOBS)
     finally:

@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -63,6 +63,11 @@ class FakeSummariser:
         self.lines = list(lines)
         self.fail = fail
         self.calls: list[tuple[str, list[tuple[str, str]]]] = []
+        self.made = 0
+
+    def __call__(self) -> FakeSummariser:  # the curator's factory: the keyring read
+        self.made += 1
+        return self
 
     def summarise(self, period: str, sources: Sequence[tuple[str, str]]) -> Summary:
         self.calls.append((period, list(sources)))
@@ -261,7 +266,7 @@ def test_compaction_waits_without_a_key_and_keeps_logs_on_failure(
     vault: Path, tmp_path: Path
 ) -> None:
     daily(vault, "2026-10-26", "ev: a\n")
-    skipped = curator.compact(vault, TODAY + dt.timedelta(days=30), None)
+    skipped = curator.compact(vault, TODAY + dt.timedelta(days=30), lambda: None)
     assert skipped.status == "skipped" and "gos key set anthropic" in skipped.detail
     store = Store(tmp_path / "gos.sqlite")
     try:
@@ -440,8 +445,8 @@ def test_the_run_does_every_job_in_order(vault: Path, tmp_path: Path) -> None:
     ).run(TODAY)
     assert [(r.job, r.status) for r in results] == [
         ("compact", "ok"),
-        ("index", "ok"),
         ("schema", "ok"),
+        ("index", "ok"),
         ("fts", "ok"),
         ("backup", "ok"),
         ("git", "ok"),
@@ -469,10 +474,10 @@ def test_one_failed_job_doesnt_stop_the_others(
         TODAY, ["index", "schema"]
     )
     assert [(r.job, r.status) for r in results] == [
+        ("schema", "ok"),  # the schema report comes first, so INDEX.md lists it
         ("index", "failed"),
-        ("schema", "ok"),
     ]
-    assert results[0].detail == "OSError: disk full"
+    assert results[1].detail == "OSError: disk full"
     with pytest.raises(ValueError, match="unknown jobs"):
         curator.Curator(vault, tmp_path / "gos.sqlite", tmp_path / "b").run(
             TODAY, ["nope"]
@@ -491,3 +496,142 @@ def test_no_vault_skips_the_vault_jobs(tmp_path: Path) -> None:
         "backup": "skipped",
         "git": "skipped",
     }
+
+
+# --- review fixes: holds, credits, the key read, stop, leftovers ---------------------------
+
+
+@pytest.fixture
+def meter(tmp_path: Path) -> Iterator[UsageMeter]:
+    store = Store(tmp_path / "meter.sqlite")
+    yield UsageMeter(store, 100.0, (80, 100))
+    store.close()
+
+
+LATER = TODAY + dt.timedelta(days=30)
+
+
+def test_a_period_refused_3_times_is_held_for_clayton(
+    vault: Path, meter: UsageMeter
+) -> None:
+    daily(vault, "2026-10-26", "death: creeper\ndeath: lava\ndeath: fall\n")
+    counting = FakeSummariser(["deaths: 3"], fail=True)
+    for n in (1, 2, 3):
+        result = curator.compact(vault, LATER, counting, meter)
+        assert result.status == "failed", n
+    assert len(counting.calls) == 3
+    held = (vault / curator.HELD_NOTE).read_text(encoding="utf-8")
+    assert "id: ib-compact-held\nt: inbox\n" in held
+    assert "2026-W44\t3\tno\n" in held
+    assert not schema.check_text(
+        curator.HELD_NOTE, held, schema.load_types(vault / "_gos" / "schema.md")
+    )
+    # The next daily run makes no call: the logs wait for Clayton.
+    result = curator.compact(vault, LATER, counting, meter)
+    assert result.status == "skipped" and "2026-W44 held after 3" in result.detail
+    assert len(counting.calls) == 3 and counting.made == 3
+    assert (vault / "log" / "2026-10-26.md").exists()
+    # His own run (gos vault maintain) tries again; a good summary clears the hold.
+    good = FakeSummariser(["death: creeper"])
+    result = curator.compact(vault, LATER, good, meter, retry_held=True)
+    assert result == curator.JobResult("compact", "ok", "compacted 2026-W44")
+    assert not (vault / curator.HELD_NOTE).exists()
+    assert meter.store.rows("SELECT key FROM kv WHERE key LIKE 'maintenance.%'") == []
+
+
+def test_spent_credits_skip_compaction(vault: Path, meter: UsageMeter) -> None:
+    daily(vault, "2026-10-26", "ev: a\n")
+    meter.record("deep", HAIKU, Usage(), usd=100.0)
+    fake = FakeSummariser()
+    result = curator.compact(vault, LATER, fake, meter)
+    assert result.status == "skipped" and "credits are spent" in result.detail
+    assert fake.made == 0 and fake.calls == []
+
+
+def test_the_key_is_read_only_when_a_period_is_due(vault: Path) -> None:
+    import keyring.errors
+
+    fake = FakeSummariser()
+    assert curator.compact(vault, TODAY, fake).detail == "nothing old enough"
+    assert fake.made == 0
+
+    def locked() -> None:
+        raise keyring.errors.KeyringLocked("locked")
+
+    daily(vault, "2026-10-26", "ev: a\n")
+    result = curator.compact(vault, LATER, locked)
+    assert result.status == "skipped" and "can't be read (locked)" in result.detail
+
+
+def test_numbers_compare_by_value() -> None:
+    source = "built: 06 boilers\nrate: 2.50"
+    assert checked_lines("built: 6 boilers\nrate: 2.5", source) == [
+        "built: 6 boilers",
+        "rate: 2.5",
+    ]
+    with pytest.raises(SummaryError, match=r"\['3'\]"):  # a count is computing
+        checked_lines("deaths: 3", "death: a\ndeath: b\ndeath: c")
+
+
+def test_a_stop_skips_the_rest(vault: Path, tmp_path: Path) -> None:
+    for day in ("2026-10-19", "2026-10-26"):  # weeks 43 and 44
+        daily(vault, day, "ev: a\n")
+    asked = []
+
+    def stop() -> bool:
+        asked.append(1)
+        return len(asked) > 2  # compact's first period runs, then the stop comes
+
+    results = curator.Curator(
+        vault, tmp_path / "gos.sqlite", tmp_path / "b", FakeSummariser()
+    ).run(LATER, stop=stop)
+    assert (
+        results[0].job == "compact" and "stopped before the rest" in results[0].detail
+    )
+    assert "compacted 2026-W43" in results[0].detail
+    assert [(r.status, r.detail) for r in results[1:]] == [("skipped", "stopped")] * 5
+    assert (vault / "log" / "2026-10-26.md").exists()
+
+
+def test_a_run_killed_after_the_summary_lists_its_sources_once(vault: Path) -> None:
+    daily(vault, "2026-10-26", "ev: a\n")
+    note(
+        vault,
+        "log/wk/2026-W44.md",
+        "log",
+        "log-2026-W44",
+        "period: 2026-W44\nfrom: 2026-10-26.md\nev: a\n",
+    )
+    curator.compact(vault, LATER, FakeSummariser(["ev: a"]))
+    week = (vault / "log" / "wk" / "2026-W44.md").read_text(encoding="utf-8")
+    assert "from: 2026-10-26.md\n" in week
+
+
+def test_a_stale_backup_tmp_is_removed(tmp_path: Path) -> None:
+    db, folder = tmp_path / "gos.sqlite", tmp_path / "backups"
+    make_db(db)
+    folder.mkdir()
+    (folder / "gos-20261001.sqlite.tmp").write_bytes(b"half")
+    curator.backup(db, folder, TODAY)
+    assert sorted(p.name for p in folder.iterdir()) == ["gos-20261106.sqlite"]
+
+
+def test_git_never_commits_a_killed_writes_temp_file(vault: Path) -> None:
+    note(vault, "plans/pl-1.md", "plan", "pl-1", "st: x\n")
+    (vault / "plans" / ".pl-2.md.ab12cd34.gos-tmp").write_text("x", encoding="utf-8")
+    (vault / ".INDEX.md.ab12cd34.gos-tmp").write_text("x", encoding="utf-8")
+    assert curator.commit_agent_writes(vault, "GOS: agent writes")
+    assert git(vault, "show", "--name-only", "--format=", "HEAD").split() == [
+        "plans/pl-1.md"
+    ]
+    assert "*.gos-tmp" in (TEMPLATE / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_index_lists_the_schema_report_the_same_day(
+    vault: Path, tmp_path: Path
+) -> None:
+    note(vault, "plans/pl-1.md", "plan", "pl-1", "Not a fact.\n")
+    curator.Curator(vault, tmp_path / "gos.sqlite", tmp_path / "b").run(
+        TODAY, ["schema", "index"]
+    )
+    assert curator.SCHEMA_REPORT in (vault / "INDEX.md").read_text(encoding="utf-8")
