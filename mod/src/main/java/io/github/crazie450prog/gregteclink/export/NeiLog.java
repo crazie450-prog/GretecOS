@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * notice (its stack trace goes to stderr, not to this logger)</li>
  * </ul>
  */
-final class NeiLog {
+final class NeiLog implements NeiLogCapture.Sink {
 
     private static final Pattern HANDLERS = Pattern.compile("Loading (\\d+) recipe handlers took .*");
     private static final Pattern WRITTEN = Pattern.compile("Writing (\\d+) recipes took .*");
@@ -45,7 +45,8 @@ final class NeiLog {
     }
 
     /** One captured event: its level name, formatted message, and throwable summary (or null). */
-    void add(String level, String message, String thrown) {
+    @Override
+    public void add(String level, String message, String thrown) {
         if (message == null) return;
         Matcher m;
         if ("INFO".equals(level) && (m = HANDLERS.matcher(message)).matches()) {

@@ -79,6 +79,8 @@ public final class ExportRun {
     final Map<String, Long> durations = new LinkedHashMap<>();
     final Map<String, Number> counts = new LinkedHashMap<>();
     final List<HashedFile> files = new ArrayList<>();
+    /** The crop step's status ({@link CropTrigger#dump}); null if it did not run. */
+    String crops;
     /** Null if the exports folder could not be set up: then nothing is written. */
     private final PathGuard guard;
     private final long t0;
@@ -151,9 +153,18 @@ public final class ExportRun {
      * {@code nei/<name>}. A failed copy is deleted again and not listed.
      */
     HashedFile addNeiFile(Path source) throws IOException {
+        return addCopiedFile(
+            "nei/" + source.getFileName()
+                .toString(),
+            source);
+    }
+
+    /**
+     * Copies another program's file, byte for byte, into {@code <run_id>.partial/<name>}, listed in the manifest as
+     * {@code name}. A failed copy is deleted again and not listed.
+     */
+    HashedFile addCopiedFile(String name, Path source) throws IOException {
         if (guard == null) throw new IOException("no exports folder");
-        String name = "nei/" + source.getFileName()
-            .toString();
         String dir = runId + ".partial";
         HashedFile f = new HashedFile(guard, dir, name);
         try {
@@ -186,6 +197,8 @@ public final class ExportRun {
             return result;
         }
         parts.put("nei", nei);
+        // Not part of "complete" either (WO-1.10): `gos db build` checks the part before it reads crops/.
+        parts.put("crops", crops != null ? crops : CropTrigger.notRun(this));
         parts.put("autoexport", autoexport);
         boolean complete = gtOk;
         // Last, and not listed in its own "files".

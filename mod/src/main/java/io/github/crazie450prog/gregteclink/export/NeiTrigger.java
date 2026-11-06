@@ -97,9 +97,10 @@ final class NeiTrigger {
         } catch (Throwable t) {
             return failed(run, "NEI's writer not callable: " + Json.error(t));
         }
+        NeiLog log = new NeiLog();
         NeiLogCapture capture;
         try {
-            capture = NeiLogCapture.attach();
+            capture = NeiLogCapture.attach(log);
         } catch (Throwable t) {
             return failed(run, "NEI's log can't be captured: " + Json.error(t));
         }
@@ -120,7 +121,6 @@ final class NeiTrigger {
             capture.detach();
         }
         run.durations.put("nei_dump", System.currentTimeMillis() - start);
-        NeiLog log = capture.result();
         run.counts.put("nei_handlers", log.handlers);
         run.counts.put("nei_reported", log.reported);
         run.counts.put("nei_skipped", log.skipped);

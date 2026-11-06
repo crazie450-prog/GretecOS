@@ -19,7 +19,8 @@ import io.github.crazie450prog.gregteclink.harness.Harness;
 /**
  * The export module's client side (client only, {@code export=true}). On the client tick: with autoexport, opens
  * GregtecLink's world from the main menu; in any world with a run waiting ({@link ExportModule}), waits for NEI, runs
- * the NEI step, finishes the run; with autoexport, then quits. Without autoexport (a world opened by hand) it posts two
+ * the NEI step and then the crop step ({@link CropTrigger}), finishes the run; with autoexport, then quits. Without
+ * autoexport (a world opened by hand) it posts two
  * local chat lines and stays in the world.
  */
 public final class ExportClient {
@@ -116,6 +117,7 @@ public final class ExportClient {
                 run.durations.put("nei_wait", now - inWorldMs);
                 if (Harness.clientRunActive()) Harness.beforeNeiStep(gameDir);
                 String nei = NeiTrigger.dump(run);
+                run.crops = CropTrigger.dump(run);
                 done(mc, run, run.finish(nei, auto ? "ok" : "off"));
                 break;
             }
@@ -181,6 +183,8 @@ public final class ExportClient {
                 + r.complete
                 + ", NEI "
                 + run.parts.get("nei")
+                + ", crops "
+                + run.parts.get("crops")
                 + (auto ? "; quitting." : "."));
         if (auto || Harness.clientRunActive()) quit(mc, r);
     }
