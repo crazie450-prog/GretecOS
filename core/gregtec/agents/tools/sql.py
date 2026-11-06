@@ -51,13 +51,15 @@ UNCITED_NOTE = (
     "select the recipe's ref or the quest's id with them"
 )
 
-# Tables db_sql may read. Every table schema.sql creates is here or in PRIVATE (a unit test
-# checks), so a new table is unreadable until someone decides which it is.
+# Tables db_sql may read. Every table schema.sql (and, until WO-1.3's schema absorbs it,
+# gregtec.db.structures, D123) creates is here or in PRIVATE (a unit test checks), so a new table
+# is unreadable until someone decides which it is.
 GAME_TABLES = frozenset(
     {
         "export_run", "mod", "item", "fluid", "ore", "ore_member", "recipe_map", "nei_handler",
         "recipe", "recipe_input", "recipe_input_alt", "recipe_output", "recipe_meta",
         "assembly_line_research", "machine", "machine_map", "machine_fact", "structure",
+        "structure_run",
         "name_fts", "quest_line", "quest_line_entry", "quest", "quest_prereq", "quest_task",
         "quest_reward", "quest_item", "quest_progress", "quest_state", "quest_fts", "session",
         "event", "tel_machine", "tel_sample", "action", "plan", "base_machine", "base_stock",

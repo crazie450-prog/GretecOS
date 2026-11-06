@@ -102,7 +102,8 @@ LATER: dict[str, str] = {
     ),
     "export_diff": "WO-1.4 (fingerprint and diff report)",
     "ore_find": "WO-1.6 (ore mixes and veins; ore-intel WO-6.6)",
-    "structure_get": "WO-1.8 (structure table)",
+    "structure_get": "WO-1.8 (structure table, D123; its data reached this base late, so the "
+    "tool is a follow-up)",
     "machine_fact_get": "machine_info covers reading facts (WO-2.2); a fact-by-key tool comes with machine_fact_set",
     "machine_fact_set": "WO-1.9 (pack-update playbook: curation)",
     **dict.fromkeys(

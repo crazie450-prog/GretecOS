@@ -19,7 +19,7 @@ import pytest
 
 from gregtec.agents.tools import TOOLS, build_registry, sql
 from gregtec.agents.tools.registry import Env, Registry, guard
-from gregtec.db import access
+from gregtec.db import access, structures
 
 if TYPE_CHECKING:
     from conftest import Runner
@@ -117,8 +117,9 @@ def test_the_connection_alone_refuses_writes(tool_db: Path, statement: str) -> N
 
 
 def test_every_schema_table_is_readable_or_private() -> None:
-    script = access.SCHEMA.read_text(encoding="utf-8")
+    script = access.SCHEMA.read_text(encoding="utf-8") + structures.SCHEMA  # D123
     tables = set(re.findall(r"CREATE (?:VIRTUAL )?TABLE IF NOT EXISTS (\w+)", script))
+    assert {"recipe", "quest", "structure_run"} <= tables
     assert tables, "schema.sql changed shape"
     assert tables <= sql.GAME_TABLES | sql.PRIVATE
     assert not sql.GAME_TABLES & sql.PRIVATE
