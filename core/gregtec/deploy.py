@@ -30,9 +30,10 @@ How a deploy runs:
    the check instead of breaking the deployed release.
 4. Swap by renames inside GOS_APP (``current`` and ``scripts`` aside, the staged ones in). A folder
    renamed within the same parent keeps the ACEs it inherited there; nothing is moved in from
-   outside, so no source ACL comes along. If a rename fails (Windows refuses while a process runs
-   from the folder) or the swap is interrupted (Ctrl+C), every rename is undone and GOS_APP is as
-   it was.
+   outside, so no source ACL comes along. A refused rename is retried for about 10 s, since an
+   antivirus scan can hold a file in a fresh folder for seconds. If it still fails (Windows
+   refuses while a process runs from the folder) or the swap is interrupted (Ctrl+C), every
+   rename is undone and GOS_APP is as it was.
 5. Delete the old folders. One still in use is left and reported; the next deploy removes it. If a
    crash mid-swap left ``current`` or ``scripts`` missing, the next deploy first renames the newest
    matching ``.gos-old-*`` folder back.
@@ -69,8 +70,8 @@ OLD = ".gos-old-"
 MOD, MOD_DIST = "mod", "mod-dist"
 # The scheduled world backup runs GOS_APP\scripts\backup_world.ps1 (setup_gos_dev.ps1 step 7).
 REQUIRED = ("scripts/backup_world.ps1",)
-RENAME_TRIES = 3  # antivirus can hold a freshly written file for a moment
-RENAME_DELAY = 0.5
+# Antivirus can hold a file in a freshly written folder for seconds (WinError 5 on the swap).
+RENAME_TRIES, RENAME_DELAY = 10, 1.0
 # Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.
 CLEAN_TRIES, CLEAN_DELAY = 10, 1.0
 SYSTEM, ADMINS = "S-1-5-18", "S-1-5-32-544"
@@ -427,6 +428,7 @@ def _check_env(release: Path) -> None:
 
 
 def _rename(src: Path, dst: Path) -> None:
+    """``os.rename``, retried for about 10 s while Windows refuses it (PermissionError)."""
     for attempt in range(RENAME_TRIES):
         try:
             os.rename(src, dst)
