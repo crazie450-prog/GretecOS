@@ -14,6 +14,7 @@ import keyring.errors
 
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
+from gregtec.db import build as recipe_db
 from gregtec.ingest import collect as export_collect
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
@@ -93,6 +94,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
 
+    db = commands.add_parser(
+        "db", help="the recipe database (GOS_HOME/data/gos.sqlite)"
+    )
+    db_cmds = db.add_subparsers(dest="db_command", required=True)
+    db_build = db_cmds.add_parser(
+        "build",
+        help="load a collected export run into GOS_HOME/data/gos.sqlite",
+        description=(
+            "Normalises a run that `gos export collect` copied into GOS_HOME/data/exports/ "
+            "(default: the newest) and loads it into GOS_HOME/data/gos.sqlite in one "
+            "transaction: recipes with their r:<map>/<sig12> keys, items, fluids, machines, "
+            "NEI's recipes merged into GT's, and the name index. A collision (two different "
+            "recipes with one key) fails the build and writes a curation task to "
+            "GOS_HOME/data/curation/. Keeps the newest [db] keep_runs runs (default 2) and "
+            "prints the counts report, also saved to GOS_HOME/data/reports/."
+        ),
+    )
+    db_build.add_argument("run", nargs="?", default=None, help="collected run id")
+    db_build.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
+
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
     dep = vault_cmds.add_parser(
@@ -161,6 +188,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _deploy(args.ref, args.config)
     if args.command == "export" and args.export_command == "collect":
         return export_collect.main(args.config, sys.stdout)
+    if args.command == "db" and args.db_command == "build":
+        return recipe_db.main(args.config, args.run, sys.stdout)
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"

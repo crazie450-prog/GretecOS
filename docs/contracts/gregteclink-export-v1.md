@@ -231,8 +231,11 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   no such line. `nei_wait` is the time from entering the world until the dump started (or the wait timed out);
   `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
 
-## Python readers (WO-1.3; named here only)
+## Python readers (WO-1.3)
 
 - `core/gregtec/ingest/gtdump.py`: `gt_recipe_maps.json`, `gt_recipes.jsonl`, `items.jsonl`, `fluids.jsonl`.
 - `core/gregtec/ingest/machines.py`: `gt_machines.jsonl`.
 - `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
+- `core/gregtec/ingest/normalize.py` (keys, NBT hash, identity and content hashes, D104) and
+  `core/gregtec/ingest/merge.py` (NEI into GT, the collision test, D105, D106); `gos db build`
+  (`core/gregtec/db/build.py`, D107) loads a collected run into `GOS_HOME\data\gos.sqlite`.

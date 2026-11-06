@@ -9,6 +9,7 @@
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
+| [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -58,6 +59,7 @@ class Config:
         default_factory=lambda: dict(DEFAULT_SYNC_EXCLUDE)
     )
     keep_collected: int = 5  # collected export runs kept in GOS_HOME (D102)
+    keep_runs: int = 2  # export runs kept in gos.sqlite (D107)
 
     def instance(self, role: str) -> Path:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
@@ -138,6 +140,9 @@ def load(path: Path | None = None) -> Config:
         raise ConfigError(
             "gos.toml: [export] keep_collected must be a whole number >= 1"
         )
+    keep_runs = _table(data, "db", "").get("keep_runs", defaults.keep_runs)
+    if type(keep_runs) is not int or keep_runs < 1:
+        raise ConfigError("gos.toml: [db] keep_runs must be a whole number >= 1")
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
         gos_home=Path(_string(paths, "gos_home", str(defaults.gos_home), "[paths]")),
@@ -149,4 +154,5 @@ def load(path: Path | None = None) -> Config:
         lab=_string(paths, "lab", defaults.lab, "[paths]"),
         sync_exclude=exclude,
         keep_collected=keep,
+        keep_runs=keep_runs,
     )

@@ -1,0 +1,163 @@
+"""``gos db build`` (WO-1.3) on real export runs from GregtecLink's harnesses.
+
+The runs are the dev runtime's (GT 5.09.54.265 and its dependencies, not the pack; mode
+"harness"), so the checks are the WO's acceptance in shape: every key is one recipe (the
+collision test, with the repo's allow-list), the same input gives byte-identical keys and
+hashes, two independent exports (the server and the client harness) give the same GT keys, no
+key or NBT holds a numeric item ID, and the counts report covers every mod. As in
+test_collect_harness.py this runs only with GOS_REQUIRE_HARNESS_RUN=1 (CI's mod job, right
+after both harnesses): run them (mod/README.md), then
+``GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration``. Nothing is written outside
+tmp_path.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from gregtec.db import access, build, report
+from gregtec.ingest import collect
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def harness_home(side: str, home: Path) -> Path:
+    """A GOS_HOME holding the harness's newest run, collected as ``gos export collect`` does."""
+    game = REPO / "mod" / "run" / side
+    if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
+        pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
+    if not (game / collect.EXPORTS).is_dir():
+        pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
+    collect.collect(game, home, 1, allow_harness=True)
+    return home
+
+
+def rows(db: Path, sql: str, *args: object) -> list[tuple[Any, ...]]:
+    conn = sqlite3.connect(db)
+    try:
+        return [tuple(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.close()
+
+
+GT_KEYS = "SELECT ref, signature, content_hash FROM recipe WHERE source IN ('gt', 'gt+nei') ORDER BY ref"
+
+
+@pytest.fixture(scope="module")
+def client(tmp_path_factory: pytest.TempPathFactory) -> build.Result:
+    home = harness_home("client", tmp_path_factory.mktemp("client"))
+    return build.build(home, allow_harness=True)
+
+
+@pytest.fixture(scope="module")
+def server(tmp_path_factory: pytest.TempPathFactory) -> build.Result:
+    home = harness_home("server", tmp_path_factory.mktemp("server"))
+    return build.build(home, allow_harness=True)
+
+
+@pytest.mark.parametrize("side", ["server", "client"])
+def test_a_harness_run_builds_with_unique_keys(
+    side: str, request: pytest.FixtureRequest
+) -> None:
+    result: build.Result = request.getfixturevalue(side)
+    db, m = result.db, result.loaded.run.manifest
+    counts = m["counts"]
+    # The collision test passed (else build() raised): one recipe per key, keys well formed.
+    total, distinct = rows(db, "SELECT count(*), count(DISTINCT ref) FROM recipe")[0]
+    assert total == distinct > 90_000
+    assert rows(
+        db, "SELECT count(*) FROM recipe WHERE ref NOT GLOB 'r:*/[0-9a-f]*'"
+    ) == [(0,)]
+    assert rows(db, "SELECT count(*) FROM recipe_map") == [(counts["recipe_maps"],)]
+    assert (
+        result.loaded.gt_recipes + len(result.loaded.recipe_errors) == counts["recipes"]
+    )
+    assert rows(db, "SELECT count(*) FROM machine") == [(counts["machines"],)]
+    # Every map with recipes in the dump has recipes in the DB.
+    empty = rows(
+        db,
+        "SELECT m.unloc_name FROM recipe_map m WHERE NOT EXISTS"
+        " (SELECT 1 FROM recipe r WHERE r.recipe_map_id = m.id)",
+    )
+    dumped = {mp.name for mp in result.loaded.maps if mp.count}
+    assert not dumped & {e[0] for e in empty}
+    if side == "client":
+        stats = result.loaded.stats
+        assert stats is not None and m["parts"]["nei"] == "ok"
+        gt_rows = stats.nei_rows - stats.nei_only
+        assert stats.exact + stats.matched > 0.95 * gt_rows
+        sources = dict(rows(db, "SELECT source, count(*) FROM recipe GROUP BY 1"))
+        assert (
+            sources["gt+nei"] > 80_000
+            and sources["crafting"] > 10_000
+            and sources["furnace"] > 0
+        )
+    else:
+        assert dict(
+            rows(db, "SELECT source, count(*) FROM recipe GROUP BY 1")
+        ).keys() == {"gt"}
+
+
+def test_two_exports_of_one_pack_give_the_same_gt_keys(
+    client: build.Result, server: build.Result
+) -> None:
+    # Two JVM runs (the server harness and the client harness) of the same mods: GT registers
+    # recipes in another order each time, and some maps list outputs in another order.
+    assert rows(client.db, GT_KEYS) == rows(server.db, GT_KEYS)
+
+
+def test_the_same_run_again_is_byte_identical(
+    client: build.Result, tmp_path: Path
+) -> None:
+    home = client.loaded.run.path.parents[2]
+    again = build.build(home, allow_harness=True, db=tmp_path / "again.sqlite")
+    q = "SELECT ref, signature, content_hash, source FROM recipe ORDER BY ref"
+    assert rows(again.db, q) == rows(client.db, q)
+    q = "SELECT registry_name, meta, nbt_hash, nbt_json FROM item ORDER BY 1, 2, 3"
+    assert rows(again.db, q) == rows(client.db, q)
+
+
+def test_no_numeric_item_id_in_any_item_key(client: build.Result) -> None:
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            assert not ("__item" in value and "id" in value), value
+            for v in value.values():
+                walk(v)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v)
+
+    named = 0
+    for (text,) in rows(
+        client.db, "SELECT nbt_json FROM item WHERE nbt_json IS NOT NULL"
+    ):
+        walk(json.loads(text))
+        named += "__item" in text
+    assert named > 0  # data sticks and the like were named, not numbered
+
+
+def test_search_and_report(client: build.Result) -> None:
+    conn = access.connect(client.db, readonly=True)
+    try:
+        found = access.query(conn, "find_names", {"q": '"stainless steel"', "limit": 5})
+        assert found and all("Stainless Steel" in (r["name_en"] or "") for r in found)
+        making = access.query(
+            conn,
+            "recipes_making",
+            {"q": '"steel ingot"', "run_id": client.run_id, "limit": 5000},
+        )
+        assert any(r["source"] == "gt+nei" for r in making)
+    finally:
+        conn.close()
+    text = "\n".join(report.lines(client, full=True))
+    assert "Collision test: passed" in text
+    per_mod = {mod for mod, *_ in report.per_mod(client)}
+    assert {"gregtech", "bartworks", "miscutils"} <= per_mod
+    # The dev runtime has none of Play's addons; the report says so, never "ok".
+    assert text.count("not loaded  ") == len(report.ADDONS)

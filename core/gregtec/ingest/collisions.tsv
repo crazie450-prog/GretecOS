@@ -1,0 +1,32 @@
+# Allow-listed identity collisions (plan section 5.2 step 3, D106; curated in the repo).
+# Each row is a group of different recipes, in one map, whose identity hashes start with the
+# same 12 hex digits: they share a citation key r:<map>/<sig12>. A group listed here with its
+# exact size is accepted as genuine, and its recipes get the keys r:<map>/<sig12>-1, -2, ...
+# in content-hash order; a group that isn't (or has another size) fails `gos db build`, which
+# writes a curation task with ready-made rows to GOS_HOME/data/curation/collisions-<run>.tsv.
+# Check each new group in NEI before adding it, and say why it is genuine.
+# The rows below came from the dev-runtime harness run of 2026-11-06 (GT 5.09.54.265 and its
+# dependencies); the first full-pack run will show which still apply (stale ones are reported).
+map	sig12	recipes	why
+gt.recipe.arcfurnace	a8739d091427	2	two arc furnace recycling recipes for one Werkstoff block: 1920 EU/t for 20 ticks and 30 EU/t for 1102 ticks
+gt.recipe.canner	ec02bd9e078c	2	the bromine cell canning recipe registered twice, at 4 and at 16 ticks
+gt.recipe.extruder	f17fa900f0eb	2	two extruder recipes that keep only the extruder shape (their material is missing in the dev runtime), at 128 and at 64 ticks
+gt.recipe.large_hadron_collider	67dee7c662d9	2	one collider casing input, two particle lists in large_hadron_collider_metadata
+gt.recipe.packager	03dbc435eb60	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	0a7d7df5b50d	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	27f3d8a79fcc	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	4f12a26db8f7	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	516ba6bff0fe	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	552fdbdc0e43	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	67b7905a9465	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	6b66b24a590b	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	78eaa926c684	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	7fd1e97530f4	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	820671e3e3ce	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	9054ca176047	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	a482f4e863c7	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	b992a7766a3b	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	bf30fde30ecc	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	c3194eb15a25	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	ea144dba0d9b	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+gt.recipe.packager	fcaaccccf1f9	2	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
