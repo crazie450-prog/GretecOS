@@ -3,19 +3,23 @@
 | key                      | default                                  | read by                     |
 |--------------------------|------------------------------------------|-----------------------------|
 | [paths] gos_app          | C:/GregtecOS-app                         | deploy (WO-0.8), sync (D98) |
-| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | export collect (WO-1.2)     |
 | [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3), collect      |
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync, collect               |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | collect (WO-1.2), WO-1.4    |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
+| [paths] prism_root       | C:/Games/PrismLauncher                   | export run (WO-1.4)         |
+| [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
+| [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
 accident (Clayton, 2026-11-03). Each pattern is posix, relative to the game folder and starts in a mirrored
 folder (``config/lab-only.cfg``); one that could never match is an error, since sync would then
-delete the file it was meant to keep. Every other key in the Appendix C skeleton is ignored until
-its WO reads it.
+delete the file it was meant to keep. ``[fingerprint] configs`` likewise adds to its default; each
+pattern is matched as an exclude pattern is, and must start in ``config/``. Every other key in the
+Appendix C skeleton is ignored until its WO reads it.
 """
 
 from __future__ import annotations
@@ -41,15 +45,27 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
     "lab": (),
 }
 
+# Recipe-affecting configs in Play's fingerprint besides dreamcraft.cfg, which is always in it
+# (plan 5.2 step 4; the whitelist is a VERIFY [A§5.5], D120). GT's files from the 2.9.0 pack;
+# GT's Client.cfg (client preferences) and Other.cfg (tool ranges) are left out.
+DEFAULT_FINGERPRINT_CONFIGS = (
+    "config/GregTech/GregTech.cfg",
+    "config/GregTech/MachineStats.cfg",
+    "config/GregTech/OverpoweredStuff.cfg",
+    "config/GregTech/Pollution.cfg",
+    "config/GregTech/WorldGeneration.cfg",
+)
+EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+
 
 def default_home() -> Path:
+    """GOS_HOME: ``$GOS_HOME``, else ``~/GregtecOS`` (plan 4.3)."""
     return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
 
 
 @dataclass(frozen=True)
 class Config:
     gos_app: Path = Path("C:/GregtecOS-app")
-    gos_home: Path = field(default_factory=default_home)
     prism_instances: Path = Path("C:/Games/PrismLauncher/instances")
     play: str = "GTNH-Play"
     export: str = "GTNH-Export"
@@ -57,6 +73,10 @@ class Config:
     sync_exclude: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(DEFAULT_SYNC_EXCLUDE)
     )
+    gos_home: Path = field(default_factory=default_home)
+    prism_root: Path = Path("C:/Games/PrismLauncher")
+    fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
+    export_on_quit: str = "ask"
     keep_collected: int = 5  # collected export runs kept in GOS_HOME (D102)
 
     def instance(self, role: str) -> Path:
@@ -133,6 +153,30 @@ def load(path: Path | None = None) -> Config:
                     "config/ or scripts/ (e.g. 'config/lab-only.cfg')"
                 )
         exclude[role] = tuple(patterns)
+    configs = _table(data, "fingerprint", "").get("configs", [])
+    if not isinstance(configs, list) or not all(
+        isinstance(p, str) and p for p in configs
+    ):
+        raise ConfigError(
+            "gos.toml: [fingerprint] configs must be a list of non-empty strings"
+        )
+    for p in configs:
+        if not (_matchable(p) and p.startswith("config/")):
+            raise ConfigError(
+                f"gos.toml: [fingerprint] configs {p!r} can never match: write it with /, "
+                "relative to the game folder and starting with config/ "
+                "(e.g. 'config/bartworks.cfg')"
+            )
+    on_quit = _string(
+        _table(data, "policy", ""),
+        "export_on_quit",
+        defaults.export_on_quit,
+        "[policy]",
+    )
+    if on_quit not in EXPORT_ON_QUIT:
+        raise ConfigError(
+            f"gos.toml: [policy] export_on_quit must be one of {', '.join(EXPORT_ON_QUIT)}"
+        )
     keep = _table(data, "export", "").get("keep_collected", defaults.keep_collected)
     if type(keep) is not int or keep < 1:
         raise ConfigError(
@@ -140,7 +184,6 @@ def load(path: Path | None = None) -> Config:
         )
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
-        gos_home=Path(_string(paths, "gos_home", str(defaults.gos_home), "[paths]")),
         prism_instances=Path(
             _string(paths, "prism_instances", str(defaults.prism_instances), "[paths]")
         ),
@@ -148,5 +191,13 @@ def load(path: Path | None = None) -> Config:
         export=_string(paths, "export", defaults.export, "[paths]"),
         lab=_string(paths, "lab", defaults.lab, "[paths]"),
         sync_exclude=exclude,
+        gos_home=Path(_string(paths, "gos_home", str(defaults.gos_home), "[paths]")),
+        prism_root=Path(
+            _string(paths, "prism_root", str(defaults.prism_root), "[paths]")
+        ),
+        fingerprint_configs=tuple(
+            dict.fromkeys([*DEFAULT_FINGERPRINT_CONFIGS, *configs])
+        ),
+        export_on_quit=on_quit,
         keep_collected=keep,
     )
