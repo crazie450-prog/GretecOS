@@ -18,6 +18,13 @@ def test_reads_bytes_text_and_hash(tmp_path: Path) -> None:
     assert so.sha256_file(f) == hashlib.sha256(f.read_bytes()).hexdigest()
 
 
+def test_limit_caps_the_read(tmp_path: Path) -> None:
+    f = tmp_path / "gt_recipes.jsonl"
+    f.write_bytes(b"0123456789")
+    assert so.read_bytes(f, limit=4) == b"0123"
+    assert so.read_bytes(f, limit=11) == b"0123456789"
+
+
 def test_missing_file_is_not_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

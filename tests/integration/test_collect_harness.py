@@ -3,8 +3,11 @@
 ``./gradlew runServer -Pharness`` and ``runClient25 -Pharness`` (mod/README.md) leave a complete
 run in ``mod/run/{server,client}/gregteclink/exports/``: mode "harness", from the dev runtime
 (GT 5.09.54.265 and its dependencies, not the pack), so loose checks only. The client's run has
-NEI's files in ``nei/``. Without a run this skips, unless GOS_REQUIRE_HARNESS_RUN=1 (CI's mod
-job, which runs both harnesses first). Nothing here is committed or written outside tmp_path.
+NEI's files in ``nei/``. This runs only with GOS_REQUIRE_HARNESS_RUN=1 (CI's mod job, which runs
+both harnesses first), and then fails without a run: a plain ``uv run pytest`` skips it, because
+an old run left in the ignored ``mod/run/`` may predate today's mod. Run the harnesses, then
+``GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration``. Nothing here is committed or
+written outside tmp_path.
 """
 
 from __future__ import annotations
@@ -23,11 +26,10 @@ REPO = Path(__file__).resolve().parents[2]
 
 def harness_game(side: str) -> Path:
     game = REPO / "mod" / "run" / side
+    if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
+        pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     if not (game / collect.EXPORTS).is_dir():
-        why = f"no harness run in {game / collect.EXPORTS} (mod/README.md)"
-        if os.environ.get("GOS_REQUIRE_HARNESS_RUN") == "1":
-            pytest.fail(why)
-        pytest.skip(why)
+        pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     return game
 
 

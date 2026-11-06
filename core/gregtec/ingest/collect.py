@@ -8,24 +8,28 @@ GregtecLink's, as ``docs/contracts/gregteclink-export-v1.md`` describes them.
    is, holds or is inside Play or Lab. The runs are the folders directly in
    ``<game>/gregteclink/exports/``; a link or junction at ``gregteclink`` or ``exports`` is refused.
    A folder is skipped (and reported) when it ends in ``.partial``, is a link or junction, has a
-   name that is no run id, or has no readable ``manifest.json`` with ``format``
-   ``gregteclink-export/1``, ``"complete": true``, ``run_id`` equal to the folder's name,
-   ``created_utc`` and ``files``. ``"mode": "harness"`` (dev-environment data) is skipped too,
-   except in tests. The run collected is the newest by ``created_utc``, then name: the order the mod
-   prunes by.
-2. **Verify before writing.** Every file the manifest lists is read whole through
+   name that is no run id, or has no readable ``manifest.json`` (a file, not a link or hard link,
+   of at most 16 MiB) with ``format`` ``gregteclink-export/1``, ``"complete": true``, ``run_id``
+   equal to the folder's name, ``created_utc`` and ``files``. ``"mode": "harness"``
+   (dev-environment data) is skipped too, except in tests. The run collected is the newest by
+   ``created_utc``, then name: the order the mod prunes by.
+2. **Verify before writing.** Every file the manifest lists must be a file of the listed size,
+   then is read whole (never more than its listed size plus one byte) through
    ``gamestate.safe_open.read_bytes`` (share-delete, one read, handle closed at once, 3 tries with
    backoff) and checked against its ``sha256``, ``bytes`` and ``lines`` in memory, so a file that
-   doesn't match never reaches GOS_HOME. A name that leaves the run folder, a link or junction on
-   the way to a file, and a missing file are refused. A run that fails is not collected, and no
-   older run is taken in its place. Files the manifest doesn't list are not copied (reported).
+   doesn't match never reaches GOS_HOME. A name that leaves the run folder, a link, junction or
+   hard link on the way to a file, and a missing file are refused. A run that fails is not
+   collected, and no older run is taken in its place. Files the manifest doesn't list are not
+   copied (reported).
 3. **Write atomically.** The files go into a new ``GOS_HOME/data/exports/.gos-staging-<run>-<hex>/``,
-   ``manifest.json`` (the bytes read from Export) last; then the folder is renamed to ``<run_id>/``,
-   with 3 tries, because Windows' indexer or a virus scanner can hold a file just written. Nothing
-   is ever written to Export, Play or Lab.
+   each flushed to disk, ``manifest.json`` (the bytes read from Export) last; then the folder is
+   renamed to ``<run_id>/``, with 3 tries waiting 1 s then 2 s as the mod does, because Windows'
+   indexer or a virus scanner can hold a file just written. Nothing is ever written to Export,
+   Play or Lab.
 4. **Idempotent.** If ``<run_id>/`` is already there with the same manifest bytes and every file
    matches, nothing is written. With the same manifest but a damaged or missing file, the run is
-   collected again and swapped in. Another manifest under the same run id is refused.
+   collected again and swapped in. Another manifest under the same run id is refused, and so is a
+   ``<run_id>/`` with no readable manifest (damaged, or not a collected run).
 5. **Prune.** Keeps the newest ``[export] keep_collected`` collected runs (default 5, D102), and
    always the run just collected. A run to delete is renamed to ``.gos-trash-<run>-<hex>/`` first,
    so a delete that fails halfway (a file in use) never leaves a run with files missing; the next
@@ -33,11 +37,16 @@ GregtecLink's, as ``docs/contracts/gregteclink-export-v1.md`` describes them.
    aren't collected runs are never deleted.
 
 ``GOS_HOME``, ``data`` and ``data/exports`` must not be links or junctions, and ``data/exports``
-must not be, hold or be inside the Prism instances folder or an instance.
+must not be, hold or be inside the Prism instances folder or an instance. One collect runs at a
+time: steps 3 to 5 delete staging folders and swap runs, so a second collect while one holds
+``GOS_HOME/data/locks/collect.lock`` is refused. It is an OS file lock (``fcntl.flock``,
+``msvcrt.locking``), which the OS drops when the process ends, so a crashed collect leaves no
+stale lock.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -45,8 +54,9 @@ import re
 import secrets
 import shutil
 import stat
+import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -59,14 +69,17 @@ from gregtec.sync import _instance, _is_link, _overlap
 
 FORMAT = "gregteclink-export/1"
 MANIFEST = "manifest.json"
+# Bytes. A dev-runtime manifest, listing 187 files, is about 30 KB.
+MANIFEST_LIMIT = 16 << 20
 PARTIAL = ".partial"
 EXPORTS = Path("gregteclink", "exports")  # in Export's game folder
 DATA_EXPORTS = Path("data", "exports")  # in GOS_HOME (plan 4.3)
+LOCK = Path("data", "locks", "collect.lock")  # in GOS_HOME (plan 4.3's data\locks\)
 # The mod's run id (-Dgregtec.runId or the UTC time), plus the -2, -3, ... it adds on a clash.
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:-[0-9]+)?")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 STAGING, TRASH = ".gos-staging-", ".gos-trash-"
-RENAME_TRIES, RENAME_DELAY = 3, 0.5
+RENAME_TRIES, RENAME_DELAY = 3, 1.0  # waits 1 s, then 2 s: the mod's own rename retry
 UNCHANGED, COLLECTED, REPAIRED = "unchanged", "collected", "repaired"
 
 
@@ -153,7 +166,8 @@ def dest_root(gos_home: Path, forbidden: Sequence[Path] = ()) -> Path:
 
 
 def _read_manifest(path: Path) -> tuple[object, bytes]:
-    raw = read_bytes(path, validate=json.loads)  # a half-written read is retried
+    # A half-written read is retried; one past the limit is cut short, so it fails json.loads.
+    raw = read_bytes(path, validate=json.loads, limit=MANIFEST_LIMIT)
     return json.loads(raw), raw
 
 
@@ -191,12 +205,14 @@ def _candidate(root: Path, name: str, allow_harness: bool) -> Run | str:
         if not RUN_ID.fullmatch(name):
             return "not a run id"
         mst = os.lstat(path / MANIFEST)
-        if _is_link(mst) or not stat.S_ISREG(mst.st_mode):
-            return f"its {MANIFEST} is a link or not a file"
+        if _is_link(mst) or not stat.S_ISREG(mst.st_mode) or mst.st_nlink > 1:
+            return f"its {MANIFEST} is a link, a hard link or not a file"
+        if mst.st_size > MANIFEST_LIMIT:
+            return f"its {MANIFEST} is over {MANIFEST_LIMIT:,} bytes"
         manifest, raw = _read_manifest(path / MANIFEST)
     except FileNotFoundError:
         return f"no {MANIFEST}"
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:  # Recursion: JSON too deep
         return f"{MANIFEST} unreadable: {exc}"
     problem = _manifest_problem(manifest, name, allow_harness)
     if problem is not None:
@@ -274,14 +290,26 @@ def read_verified(run: Run, entry: Entry) -> bytes:
             st = os.lstat(path)
             if _is_link(st):
                 raise CollectError(
-                    f"run {run.run_id}: {path} is a link or junction; refusing the run"
+                    f"run {run.run_id}: {_clean(str(path))} is a link or junction; "
+                    "refusing the run"
                 )
     except FileNotFoundError:
         raise CollectError(
             f"run {run.run_id}: {_clean(entry.rel)} is missing; not collected"
         ) from None
     if not stat.S_ISREG(st.st_mode):
-        raise CollectError(f"run {run.run_id}: {path} is not a file; not collected")
+        raise CollectError(
+            f"run {run.run_id}: {_clean(str(path))} is not a file; not collected"
+        )
+    if st.st_nlink > 1:  # as sync refuses them in Export: its bytes live elsewhere too
+        raise CollectError(
+            f"run {run.run_id}: {_clean(str(path))} is a hard link; refusing the run"
+        )
+    if st.st_size != entry.size:  # checked before reading, so a huge file is never read
+        raise CollectError(
+            f"run {run.run_id}: {_clean(entry.rel)} is {st.st_size:,} bytes; the "
+            f"manifest says {entry.size:,}; not collected"
+        )
 
     def check(data: bytes) -> None:
         problem = _mismatch(data, entry)
@@ -289,7 +317,8 @@ def read_verified(run: Run, entry: Entry) -> bytes:
             raise ValueError(problem)
 
     try:
-        return read_bytes(path, validate=check)
+        # One byte past the listed size, so a file that grew since lstat fails the check.
+        return read_bytes(path, validate=check, limit=entry.size + 1)
     except FileNotFoundError:
         raise CollectError(
             f"run {run.run_id}: {_clean(entry.rel)} went away while it was read"
@@ -337,10 +366,20 @@ def _damage(dest: Path, listed: Sequence[Entry]) -> str | None:
     return None
 
 
-def _write_new(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "xb") as f:  # a fresh staging folder: nothing may be there yet
+def _write_new(staging: Path, rel: str, data: bytes) -> None:
+    """Write ``staging/rel`` and flush it to disk before the run's rename.
+
+    Folders are made one level at a time, never ``staging`` itself: if the staging folder was
+    deleted under this collect, the write fails instead of quietly making a new one."""
+    path = staging
+    *folders, name = rel.split("/")
+    for part in folders:
+        path = path / part
+        path.mkdir(exist_ok=True)
+    with open(path / name, "xb") as f:  # a fresh staging folder: nothing is there yet
         f.write(data)
+        f.flush()
+        os.fsync(f.fileno())  # else a power cut can keep the rename but not the data
 
 
 def _rename(src: Path, dst: Path) -> None:
@@ -388,7 +427,7 @@ def prune(root: Path, keep: int, current: str) -> tuple[list[str], list[Path]]:
             if _is_link(os.lstat(path)) or not path.is_dir():
                 continue
             m = json.loads((path / MANIFEST).read_bytes())
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             continue  # not a collected run, so never deleted
         if (
             isinstance(m, dict)
@@ -415,6 +454,41 @@ def prune(root: Path, keep: int, current: str) -> tuple[list[str], list[Path]]:
     return pruned, left
 
 
+@contextlib.contextmanager
+def lock(gos_home: Path) -> Iterator[None]:
+    """Hold ``GOS_HOME/data/locks/collect.lock`` for one collect; refuse if another holds it."""
+    path = gos_home / LOCK
+    for p in (path.parent, path):
+        if os.path.lexists(p) and _is_link(os.lstat(p)):
+            raise CollectError(f"{p} is a link or junction; refusing it")
+    path.parent.mkdir(exist_ok=True)  # data/ is there: dest_root made data/exports
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags | getattr(os, "O_BINARY", 0))
+    try:
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # byte 0; the file stays empty
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise CollectError(
+                f"another gos export collect is running (it holds {path}); try again "
+                "when it has finished"
+            ) from None
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                # Windows asks for an unlock before the close.
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
+
+
 def collect(
     game: Path,
     gos_home: Path,
@@ -430,6 +504,11 @@ def collect(
     """
     source = exports_root(game)
     root = dest_root(gos_home, forbidden)
+    with lock(gos_home):
+        return _collect(source, root, keep, allow_harness)
+
+
+def _collect(source: Path, root: Path, keep: int, allow_harness: bool) -> Result:
     leftovers = _cleanup(root)
     runs, skipped = find_runs(source, allow_harness)
     if not runs:
@@ -443,10 +522,13 @@ def collect(
         if _is_link(os.lstat(dest)) or not dest.is_dir():
             raise CollectError(f"{dest} is a link, a junction or not a folder")
         try:
-            same = (dest / MANIFEST).read_bytes() == run.raw
-        except OSError:
-            same = False
-        if not same:
+            held = (dest / MANIFEST).read_bytes()
+        except OSError as exc:
+            raise CollectError(
+                f"{dest} is there but has no readable {MANIFEST} ({exc}), so it is damaged "
+                f"or no collected run. Move it out of {root}, then collect again"
+            ) from None
+        if held != run.raw:
             raise CollectError(
                 f"{dest} holds another run with the id {run.run_id}. Move it out of "
                 f"{root}, then collect again"
@@ -460,8 +542,8 @@ def collect(
         os.mkdir(staging)
         try:
             for entry in listed:
-                _write_new(staging / entry.rel, read_verified(run, entry))
-            _write_new(staging / MANIFEST, run.raw)  # last, as the mod writes it
+                _write_new(staging, entry.rel, read_verified(run, entry))
+            _write_new(staging, MANIFEST, run.raw)  # last, as the mod writes it
             if status == REPAIRED:
                 trash = root / f"{TRASH}{run.run_id}-{secrets.token_hex(4)}"
                 _rename(dest, trash)
@@ -495,8 +577,9 @@ def collect(
 
 
 def _clean(text: str) -> str:
-    """Export's text (gos-dev can write Export) without control characters, for the terminal."""
-    return "".join("?" if ord(c) < 32 or ord(c) == 127 else c for c in text)
+    """Export's text (gos-dev can write Export) without C0 or C1 control characters, for the
+    terminal."""
+    return "".join("?" if ord(c) < 32 or 127 <= ord(c) < 160 else c for c in text)
 
 
 def _count(counts: object, key: str) -> str:

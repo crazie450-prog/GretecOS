@@ -41,6 +41,9 @@ NEI_FILES = {  # NEI's names have spaces and _2 suffixes; Windows line ends (con
 }
 
 
+RENAME_DELAY = collect.RENAME_DELAY  # before _fast_retries sets it to 0
+
+
 @pytest.fixture(autouse=True)
 def _fast_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(safe_open, "BACKOFF_S", 0)
@@ -213,9 +216,12 @@ def test_a_run_that_doesnt_match_its_manifest_is_not_collected(
     code, out = env.collect(capsys)
     assert code == 1
     assert "Not collected: run 20261102T000000Z: gt_recipes.jsonl" in out
-    expect = (
-        "is missing" if how == "missing" else "doesn't match the manifest in 3 reads"
-    )
+    expect = {
+        "same size": "doesn't match the manifest in 3 reads",
+        "extra line": "is 57 bytes; the manifest says 56; not collected",
+        "truncated": "is 10 bytes; the manifest says 56; not collected",
+        "missing": "is missing",
+    }[how]
     assert expect in out
     # Nothing of it reached GOS_HOME, and no older run was taken in its place.
     assert env.collected() == []
@@ -244,6 +250,89 @@ def test_a_partial_read_is_retried(
     assert reads.count("gt_recipes.jsonl") == 2
     data = (env.dest / "20261102T000000Z" / "gt_recipes.jsonl").read_bytes()
     assert data == GT_FILES["gt_recipes.jsonl"]
+
+
+class Recording(io.BytesIO):
+    """A file whose reads are recorded, for checking how much collect asks for."""
+
+    def __init__(self, data: bytes, sizes: list[int | None]) -> None:
+        super().__init__(data)
+        self.sizes = sizes
+
+    def read(self, size: int | None = -1) -> bytes:
+        self.sizes.append(size)
+        return super().read(size)
+
+
+def test_a_file_of_the_wrong_size_is_refused_unread(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = Env(tmp_path)
+    run = make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    with open(run / "gt_recipes.jsonl", "r+b") as f:
+        f.truncate(50 << 20)  # sparse on most file systems; gos-dev can write Export
+    real = safe_open.safe_open
+    reads: list[str] = []
+
+    @contextlib.contextmanager
+    def counted(path: safe_open.StrPath) -> Iterator[BinaryIO]:
+        reads.append(Path(path).name)
+        with real(path) as f:
+            yield f
+
+    monkeypatch.setattr(safe_open, "safe_open", counted)
+    code, out = env.collect(capsys)
+    assert code == 1
+    assert "gt_recipes.jsonl is 52,428,800 bytes; the manifest says 56" in out
+    assert "gt_recipes.jsonl" not in reads
+    assert env.collected() == []
+
+
+def test_a_file_that_grows_after_its_size_check_is_read_only_one_byte_past_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = Env(tmp_path)
+    make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    real = safe_open.safe_open
+    sizes: list[int | None] = []
+
+    @contextlib.contextmanager
+    def growing(path: safe_open.StrPath) -> Iterator[BinaryIO]:
+        if Path(path).name != "gt_recipes.jsonl":
+            with real(path) as f:
+                yield f
+            return
+        yield Recording(GT_FILES["gt_recipes.jsonl"] + b"x" * 1_000_000, sizes)
+
+    monkeypatch.setattr(safe_open, "safe_open", growing)
+    code, out = env.collect(capsys)
+    assert code == 1
+    assert "gt_recipes.jsonl doesn't match the manifest in 3 reads (57 bytes" in out
+    assert sizes == [57] * 3  # never the whole million
+    assert env.collected() == []
+
+
+@pytest.mark.parametrize("how", ["nested", "huge"])
+def test_a_deep_or_huge_manifest_is_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], how: str
+) -> None:
+    env = Env(tmp_path)
+    make_run(env.exports, "20261101T000000Z", "2026-11-01T00:00:00Z")
+    run = make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    with open(run / collect.MANIFEST, "wb") as f:
+        if how == "nested":
+            f.write(b"[" * 200_000 + b"]" * 200_000)  # RecursionError in json.loads
+        else:
+            f.truncate(collect.MANIFEST_LIMIT + 1)
+    code, out = env.collect(capsys)
+    assert code == 0, out
+    expect = (
+        "manifest.json unreadable: maximum recursion depth"
+        if how == "nested"
+        else "its manifest.json is over 16,777,216 bytes"
+    )
+    assert f"skipped 20261102T000000Z: {expect}" in out
+    assert env.collected() == ["20261101T000000Z"]
 
 
 @pytest.mark.parametrize(
@@ -343,23 +432,59 @@ def test_a_linked_run_folder_is_skipped(
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="NTFS junctions")
-def test_a_junction_in_a_run_is_refused(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("where", ["gregteclink", "exports", "nei", "data/exports"])
+def test_a_junction_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], where: str
 ) -> None:
+    """mklink /J needs no privilege, so unlike the symlink tests this runs on Windows CI."""
     env = Env(tmp_path)
     run = make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
     elsewhere = tmp_path / "elsewhere"
-    (run / "nei").rename(elsewhere)
+    link = {
+        "gregteclink": env.exports.parent,
+        "exports": env.exports,
+        "nei": run / "nei",
+        "data/exports": env.dest,
+    }[where]
+    if where == "data/exports":
+        env.dest.parent.mkdir(parents=True)
+        elsewhere.mkdir()
+    else:
+        link.rename(elsewhere)
     subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(run / "nei"), str(elsewhere)],
+        ["cmd", "/c", "mklink", "/J", str(link), str(elsewhere)],
         check=True,
         capture_output=True,
     )
-    assert (run / "nei").is_junction()
+    assert link.is_junction()
     code, out = env.collect(capsys)
     assert code == 1
-    assert f"{run / 'nei'} is a link or junction" in out
-    assert env.collected() == []
+    if where == "data/exports":
+        assert f"{link} is a link, a junction or not a folder" in out
+        assert not any(elsewhere.iterdir())  # nothing written through it
+    else:
+        assert f"{link} is a link or junction" in out
+        assert env.collected() == []
+
+
+@pytest.mark.parametrize("what", ["file", "manifest"])
+def test_a_hard_link_in_a_run_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], what: str
+) -> None:
+    env = Env(tmp_path)
+    make_run(env.exports, "20261101T000000Z", "2026-11-01T00:00:00Z")
+    run = make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    name = "items.jsonl" if what == "file" else collect.MANIFEST
+    os.link(run / name, tmp_path / "elsewhere")  # no privilege needed, NTFS included
+    code, out = env.collect(capsys)
+    if what == "file":
+        assert code == 1
+        assert f"{run / 'items.jsonl'} is a hard link; refusing the run" in out
+        assert env.collected() == []
+    else:  # a run with a linked manifest is no candidate, as with a symlinked one
+        assert code == 0, out
+        assert "skipped 20261102T000000Z: its manifest.json is a link, a hard" in out
+        assert env.collected() == ["20261101T000000Z"]
 
 
 def test_unlisted_files_are_not_copied(
@@ -425,11 +550,11 @@ def test_nei_status_is_reported(
         "2026-11-02T00:00:00Z",
         files=GT_FILES,
         parts={"gt_dump": "ok", "nei": "failed"},
-        part_errors={"nei": "NEI logged 'Error dumping recipes'\x1b[31m"},
+        part_errors={"nei": "NEI logged 'Error dumping recipes'\x1b[31m\x9b0m"},
     )
     code, out = env.collect(capsys)
     assert code == 0, out
-    assert "NEI: failed: NEI logged 'Error dumping recipes'?[31m" in out
+    assert "NEI: failed: NEI logged 'Error dumping recipes'?[31m?0m" in out  # C0 and C1
     assert "5 files" in out
 
 
@@ -445,6 +570,22 @@ def test_another_run_under_the_same_id_is_refused(
     assert f"{other} holds another run with the id 20261102T000000Z" in out
     assert snapshot(other) == before
     assert env.collected() == ["20261102T000000Z"]
+
+
+def test_a_copy_with_no_manifest_is_called_damaged_and_left_alone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = Env(tmp_path)
+    make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    assert env.collect(capsys)[0] == 0
+    dest = env.dest / "20261102T000000Z"
+    (dest / collect.MANIFEST).unlink()
+    before = snapshot(dest)
+    code, out = env.collect(capsys)
+    assert code == 1
+    assert f"{dest} is there but has no readable manifest.json" in out
+    assert "so it is damaged or no collected run" in out
+    assert snapshot(dest) == before
 
 
 def test_a_damaged_copy_is_collected_again(
@@ -505,11 +646,11 @@ def test_an_interrupted_collect_leaves_nothing(
     real = collect._write_new
     calls: list[Path] = []
 
-    def interrupted(path: Path, data: bytes) -> None:
-        calls.append(path)
+    def interrupted(staging: Path, rel: str, data: bytes) -> None:
+        calls.append(staging / rel)
         if len(calls) == 3:
             raise KeyboardInterrupt
-        real(path, data)
+        real(staging, rel, data)
 
     monkeypatch.setattr(collect, "_write_new", interrupted)
     with pytest.raises(KeyboardInterrupt):
@@ -518,6 +659,54 @@ def test_an_interrupted_collect_leaves_nothing(
     monkeypatch.setattr(collect, "_write_new", real)
     assert env.collect(capsys)[0] == 0
     assert env.collected() == ["20261102T000000Z"]
+
+
+def test_a_second_collect_is_refused_while_one_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = Env(tmp_path)
+    make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    env.dest.mkdir(parents=True)
+    staging = env.dest / ".gos-staging-20261102T000000Z-abcd"
+    staging.mkdir()  # the running collect's, half written
+    (staging / "items.jsonl").write_bytes(GT_FILES["items.jsonl"])
+    with collect.lock(env.home):  # an OS lock: a second open of the file can't take it
+        code, out = env.collect(capsys)
+        assert code == 1
+        lock = env.home / "data" / "locks" / "collect.lock"
+        assert f"another gos export collect is running (it holds {lock})" in out
+        assert (staging / "items.jsonl").is_file()  # its staging folder is untouched
+        assert env.collected() == [staging.name]
+    code, out = env.collect(capsys)  # released, so the next collect runs
+    assert code == 0, out
+    assert env.collected() == ["20261102T000000Z"]
+
+
+@pytest.mark.parametrize("at", ["items.jsonl", "nei/Blast Furnace.jsonl"])
+def test_a_staging_folder_deleted_mid_copy_fails_the_collect(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    at: str,
+) -> None:
+    """What a second collect's cleanup did before the lock: the copy must not carry on into a
+    folder it makes anew, then rename a run with files missing into place."""
+    env = Env(tmp_path)
+    make_run(env.exports, "20261102T000000Z", "2026-11-02T00:00:00Z")
+    real = collect._write_new
+    calls: list[str] = []
+
+    def raced(staging: Path, rel: str, data: bytes) -> None:
+        calls.append(rel)
+        if rel == at:  # a file at the top, or the first in a new subfolder
+            assert collect._cleanup(env.dest) == []  # deletes the staging folder
+        real(staging, rel, data)
+
+    monkeypatch.setattr(collect, "_write_new", raced)
+    code, out = env.collect(capsys)
+    assert code == 1
+    assert "Not collected: [Errno 2]" in out
+    assert env.collected() == []  # no run with files missing, and no staging folder
 
 
 def test_a_held_folder_is_renamed_on_a_later_try(
@@ -535,9 +724,13 @@ def test_a_held_folder_is_renamed_on_a_later_try(
         real(src, dst)
 
     monkeypatch.setattr(os, "rename", held)
+    monkeypatch.setattr(collect, "RENAME_DELAY", RENAME_DELAY)
+    sleeps: list[float] = []
+    monkeypatch.setattr(collect.time, "sleep", sleeps.append)
     code, out = env.collect(capsys)
     assert code == 0, out
     assert tries == ["20261102T000000Z"] * 3
+    assert sleeps == [1.0, 2.0]  # as the mod waits for the same scanner holds
 
 
 @pytest.mark.parametrize("role", ["play", "lab"])
