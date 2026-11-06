@@ -68,6 +68,29 @@ def test_retry_succeeds_once_the_file_is_whole(
     assert so.read_bytes(f, validate=validate) == b'{"ok": 1}'
 
 
+def test_hash_is_retried_while_a_file_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(so.time, "sleep", sleeps.append)
+    f = tmp_path / "mod.jar"
+    f.write_bytes(b"jar")
+    real, calls = so.safe_open, [0]
+
+    def held_once(path: so.StrPath) -> object:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise PermissionError(13, "held by antivirus")
+        return real(path)
+
+    monkeypatch.setattr(so, "safe_open", held_once)
+    assert so.sha256_file(f) == hashlib.sha256(b"jar").hexdigest()
+    assert sleeps == [so.BACKOFF_S]
+    with pytest.raises(FileNotFoundError):
+        so.sha256_file(tmp_path / "missing.jar")
+    assert sleeps == [so.BACKOFF_S]
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows sharing semantics")
 def test_game_can_save_by_rename_while_we_hold_the_file(tmp_path: Path) -> None:
     level = tmp_path / "level.dat"
