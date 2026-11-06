@@ -1,0 +1,2 @@
+#Dev-only server for the GregtecLink harness (run/server), as GTNH's own CI does.
+eula=true

@@ -33,3 +33,39 @@ jobs:
           # WO-0.8: lets tests/security/test_gos_dev_setup.py create a user and change ACLs.
           # Only the ephemeral Windows runner sets it; never set it on a real PC.
           GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && runner.environment == 'github-hosted' && '1' || '' }}
+
+  mod:
+    # WO-1.1: GregtecLink build, then the headless harness (dev server, scripted export, checks, exit).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # gtnhgradle derives the mod version from git history.
+          fetch-depth: 0
+      # As GTNH's own CI: Gradle runs on 25, Minecraft on 8.
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: zulu
+          java-version: |
+            8
+            17
+            21
+            25
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - run: ./gradlew --no-daemon build
+      - run: timeout 1500 ./gradlew --no-daemon runServer -Pharness
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harness-logs
+          path: |
+            mod/run/server/logs/
+            mod/run/server/crash-reports/
+            mod/run/server/gregteclink/harness-result.json
+            mod/run/server/gregteclink/exports/*/manifest.json
+          if-no-files-found: ignore
