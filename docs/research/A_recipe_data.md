@@ -80,6 +80,12 @@ Research date: 2026-11-01. Method: I cloned each repository at its current HEAD 
 - **Missing fields.** GT special value (heat), cleanroom/low gravity, recipe metadata, amperage, oredict names, and recipes NEI hides. CONFIRMED [S12] (only `mEUt`/`mDuration` are read, via reflection).
 - **Handler name.** For GT recipes `handler` should be the GT recipe-category id, e.g. `gt.recipe.assembler`. NEI resolves HandlerInfo by class name and then by overlay id, and GT registers HandlerInfos by category name. UNCERTAIN, inferred from source [S12 `GuiRecipeTab.getHandlerInfo`][S4 `NEIGTConfig.java`].
 - **Thread and duration.** The export runs from the GUI click handler with no worker thread, so expect a client freeze. UNCERTAIN; I have no timing data.
+- *Correction 2026-11-06 (WO-1.1 PR 1b: source at tag `2.8.172-GTNH`, and runs of the dev client with NEI 2.8.172 and GT 5.09.54.265's transitive mod set, not the full pack):*
+  - **Handler name.** For GT the `handler` is the recipe **category** id, e.g. `gt.recipe.assembler` or `gt.recipe.category.alloy_smelter_molding`, so one recipe map can appear as several handlers. CONFIRMED (131 `gt.recipe*` handler ids among 182).
+  - **Thread.** `dumpAll` runs on the calling thread and blocks until it is done (it waits on NEI's ForkJoin pool), so the game freezes. It catches every exception, logs `Error dumping recipes` and returns normally; a handler that fails to load is dropped with only a logged `Error while looking up crafting recipe`. CONFIRMED (source; a forced failure returned after 0.8 s with no file written).
+  - **Duration.** NEI was ready 0.6–1.3 s after entering the world; `dumpAll(true)` took 6–11 s for 182 handlers and about 140,000 recipes (about 94 MB). CONFIRMED in the dev runtime only; the full pack is larger.
+  - **Circuits and molds** keep `Count: 0` (e.g. `Mold (Nuggets)` in `gt.recipe.category.alloy_smelter_molding`). CONFIRMED.
+  - **Counts vary with config state.** AE2's "Facade Crafting" had 2,403 recipes in a brand-new run folder and 2,631 in a reused one, with every other handler equal; in the reused folder AE2 had rewritten its `Facades.cfg` on joining the world. Compare content, not counts.
 
 ### 1.3 NESQL Exporter (D-Cysteine) and WebNEI
 - **Maintenance.** v0.5.2 is the last commit (2024-05-04); the README says "Still WIP". CONFIRMED [S18].

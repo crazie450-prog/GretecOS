@@ -32,6 +32,8 @@ import com.google.gson.JsonParser;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import io.github.crazie450prog.gregteclink.GregtecLink;
+import io.github.crazie450prog.gregteclink.export.AutoExport;
+import io.github.crazie450prog.gregteclink.export.ExportClient;
 import io.github.crazie450prog.gregteclink.export.ExportModule;
 import io.github.crazie450prog.gregteclink.export.ExportRun;
 import io.github.crazie450prog.gregteclink.export.Json;
@@ -40,13 +42,17 @@ import io.github.crazie450prog.gregteclink.export.PathGuard;
 /**
  * Headless test harness ({@code ./gradlew runServer -Pharness}). On server start it runs an export in mode "harness",
  * checks the files it wrote, writes {@code <gameDir>/gregteclink/harness-result.json} and shuts the server down; the
- * JVM exits 0 only if every check passed. Active only with {@code -Dgregtec.harness=true} in the deobfuscated dev
- * environment, so it can never fire in a real instance.
+ * JVM exits 0 only if every check passed. On a client ({@code ./gradlew runClient25 -Pharness}, under Xvfb in CI) the
+ * run is handed to {@link ExportClient}, which opens the autoexport world, runs NEI's dump and calls
+ * {@link #onClientFinished}; the result file is then the only signal. Active only with {@code -Dgregtec.harness=true}
+ * in the deobfuscated dev environment, so it can never fire in a real instance.
  */
 public final class Harness {
 
     public static final String PROPERTY = "gregtec.harness";
     public static final String RESULT = "harness-result.json";
+    /** Set by {@code -PharnessNeiFail}: the client harness expects NEI's dump to fail. */
+    private static final String NEI_FAIL_PROPERTY = "gregtec.harness.neiFail";
 
     /** Numeric-ID fields that must never appear (EndlessIDs: key on registry name + meta). NBT is not searched. */
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
@@ -55,8 +61,29 @@ public final class Harness {
     /** Complete runs seeded before the export: with the harness run, two more than pruning keeps (D98). */
     private static final int SEEDED_COMPLETE = 11;
 
+    /** Where the export may write: the server harness's game dir (the world, logs and crash reports aside). */
+    private static final List<String> SERVER_WRITES = Arrays.asList("gregteclink/");
+    /**
+     * Where the NEI step may write in the client harness's game dir, {@code saves/} aside (the world, and NEI's
+     * per-world data; the decoy world is checked on its own): GregtecLink's output, and NEI's dump, which GregtecLink
+     * copies and never changes. The client harness checks only the two windows in which the export's code runs (the
+     * GT parts at server start; the NEI step to the end of the run): joining a world makes the game and other mods
+     * write files of their own (Forge's usernamecache.json, ServerUtilities, NEI's, GT's and AE2's configs), as it does
+     * for a world opened by hand.
+     */
+    private static final List<String> CLIENT_WRITES = Arrays.asList("gregteclink/", "dumps/recipes/");
+    /** Seeded by prepareClientHarness: a file in the old autoexport world, and a marked world with another name. */
+    private static final String STALE_FILE = "harness-stale.txt";
+    private static final String DECOY_WORLD = "gregteclink-harness-decoy";
+    private static final String DECOY_FILE = "decoy.txt";
+
     private static boolean ran;
     private static int exitCode = 1;
+    private static volatile boolean clientActive;
+    private static List<JsonObject> clientChecks;
+    /** The client game dir just before the NEI step; null until then. */
+    private static Map<String, String> neiBefore;
+    private static long clientT0;
 
     private Harness() {}
 
@@ -72,6 +99,12 @@ public final class Harness {
         if (!deobfEnvironment()) {
             GregtecLink.LOG.warn("-D{}=true ignored: the harness runs only in the dev environment", PROPERTY);
             if (exportEnabled) ExportModule.onServerStarted();
+            return;
+        }
+        if (FMLCommonHandler.instance()
+            .getSide()
+            .isClient()) {
+            startClient(gameDir, exportEnabled);
             return;
         }
         ran = true;
@@ -92,15 +125,95 @@ public final class Harness {
                 runId = r.runId;
                 checkPrune(checks, r);
                 long t1 = System.currentTimeMillis();
-                counts = new Verifier(checks).verify(r);
+                counts = new Verifier(checks, gameDir, false).verify(r);
                 Map<String, String> after = snapshot(gameDir, world);
-                checkWrites(checks, before, after);
+                checkWrites(checks, "writes_only_under_gregteclink", before, after, SERVER_WRITES);
                 durations.addProperty("verify_ms", System.currentTimeMillis() - t1);
             }
         } catch (Throwable t) {
             GregtecLink.LOG.error("harness failed", t);
             check(checks, "harness_ran", false, Json.error(t));
         }
+        exitCode = writeResult(gameDir, checks, runId, durations, counts) ? 0 : 1;
+        GregtecLink.LOG.info("harness {}: shutting down", exitCode == 0 ? "PASSED" : "FAILED");
+        MinecraftServer.getServer()
+            .initiateShutdown();
+    }
+
+    /**
+     * Client harness ({@code ./gradlew runClient25 -Pharness}, with autoexport): at server start, seeds old runs,
+     * starts a harness-mode run and hands it to the client like any other. {@link ExportClient} then runs NEI's dump,
+     * finishes the run and calls {@link #onClientFinished} before it quits.
+     */
+    private static void startClient(File gameDir, boolean exportEnabled) {
+        List<JsonObject> checks = new ArrayList<>();
+        check(checks, "export_module_enabled", exportEnabled, "config/gregteclink.cfg modules.export");
+        check(checks, "autoexport_requested", AutoExport.requested(), "-D" + AutoExport.PROPERTY);
+        try {
+            if (!exportEnabled || !AutoExport.requested()) throw new IllegalStateException("nothing would finish");
+            Map<String, String> before = snapshot(gameDir, "saves");
+            seedOldRuns(gameDir);
+            clientChecks = checks;
+            clientT0 = System.currentTimeMillis();
+            clientActive = true;
+            ExportModule.startForHarness(); // the GT parts, on this (server) thread
+            checkWrites(checks, "writes_only_under_gregteclink", before, snapshot(gameDir, "saves"), SERVER_WRITES);
+        } catch (Throwable t) {
+            GregtecLink.LOG.error("client harness failed", t);
+            check(checks, "harness_ran", false, Json.error(t));
+            writeResult(gameDir, checks, null, new JsonObject(), null);
+            FMLCommonHandler.instance()
+                .exitJava(1, false);
+        }
+    }
+
+    /** True from the client harness's server start until {@link #onClientFinished}. */
+    public static boolean clientRunActive() {
+        return clientActive;
+    }
+
+    /** Called by {@link ExportClient} on the client thread just before NEI's dump. */
+    public static void beforeNeiStep(File gameDir) {
+        try {
+            neiBefore = snapshot(gameDir, "saves");
+        } catch (Throwable t) {
+            GregtecLink.LOG.error("client harness: no snapshot before the NEI step", t);
+        }
+    }
+
+    /** Called by {@link ExportClient} on the client thread before it quits; {@code r} is null if no run finished. */
+    public static void onClientFinished(File gameDir, ExportRun.Result r) {
+        clientActive = false;
+        List<JsonObject> checks = clientChecks;
+        JsonObject durations = new JsonObject();
+        JsonElement counts = null;
+        try {
+            durations.addProperty("export_ms", System.currentTimeMillis() - clientT0);
+            Map<String, String> after = snapshot(gameDir, "saves");
+            check(checks, "run_finished", r != null, r == null ? "no run finished" : r.runId);
+            if (neiBefore == null) {
+                check(checks, "nei_step_writes_only_gregteclink_and_dumps", false, "the NEI step never ran");
+            } else {
+                checkWrites(checks, "nei_step_writes_only_gregteclink_and_dumps", neiBefore, after, CLIENT_WRITES);
+            }
+            if (r != null) {
+                checkPrune(checks, r);
+                long t1 = System.currentTimeMillis();
+                counts = new Verifier(checks, gameDir, true).verify(r);
+                checkWorlds(checks, gameDir);
+                durations.addProperty("verify_ms", System.currentTimeMillis() - t1);
+            }
+        } catch (Throwable t) {
+            GregtecLink.LOG.error("client harness failed", t);
+            check(checks, "harness_ran", false, Json.error(t));
+        }
+        boolean pass = writeResult(gameDir, checks, r == null ? null : r.runId, durations, counts);
+        GregtecLink.LOG.info("client harness {}: quitting", pass ? "PASSED" : "FAILED");
+    }
+
+    /** Writes harness-result.json and logs each check; true if every check passed and the file was written. */
+    private static boolean writeResult(File gameDir, List<JsonObject> checks, String runId, JsonObject durations,
+        JsonElement counts) {
         boolean pass = !checks.isEmpty();
         for (JsonObject c : checks) {
             if (!c.get("ok")
@@ -121,7 +234,6 @@ public final class Harness {
             GregtecLink.LOG.error("harness: cannot write " + RESULT, t);
             pass = false;
         }
-        exitCode = pass ? 0 : 1;
         for (JsonObject c : checks) {
             GregtecLink.LOG.info(
                 "harness check {} {}: {}",
@@ -132,9 +244,7 @@ public final class Harness {
                 c.get("detail")
                     .getAsString());
         }
-        GregtecLink.LOG.info("harness {}: shutting down", pass ? "PASSED" : "FAILED");
-        MinecraftServer.getServer()
-            .initiateShutdown();
+        return pass;
     }
 
     /** The exit code is a second signal; harness-result.json is the contract. */
@@ -241,25 +351,66 @@ public final class Harness {
         return out;
     }
 
-    private static void checkWrites(List<JsonObject> checks, Map<String, String> before, Map<String, String> after) {
+    private static void checkWrites(List<JsonObject> checks, String name, Map<String, String> before,
+        Map<String, String> after, List<String> allowed) {
         TreeSet<String> outside = new TreeSet<>();
         for (Map.Entry<String, String> e : after.entrySet()) {
             if (e.getValue()
                 .equals(before.get(e.getKey()))) continue;
-            if (!e.getKey()
-                .startsWith("gregteclink/")) outside.add(e.getKey());
+            if (!under(e.getKey(), allowed)) outside.add(e.getKey());
         }
         TreeSet<String> deleted = new TreeSet<>();
         for (String k : before.keySet()) {
-            if (!after.containsKey(k) && !k.startsWith("gregteclink/")) deleted.add(k);
+            if (!after.containsKey(k) && !under(k, allowed)) deleted.add(k);
         }
         boolean ok = outside.isEmpty() && deleted.isEmpty();
         check(
             checks,
-            "writes_only_under_gregteclink",
+            name,
             ok,
-            ok ? "no file outside gregteclink/ created, changed or deleted during the export"
+            ok ? "no file outside " + allowed + " created, changed or deleted"
                 : "changed: " + outside + " deleted: " + deleted);
+    }
+
+    private static boolean under(String rel, List<String> prefixes) {
+        for (String p : prefixes) {
+            if (rel.startsWith(p)) return true;
+        }
+        return false;
+    }
+
+    /** The old marked autoexport world was rebuilt; a marked world with another name was left alone. */
+    private static void checkWorlds(List<JsonObject> checks, File gameDir) throws IOException {
+        Path saves = gameDir.toPath()
+            .resolve("saves");
+        Path world = saves.resolve(AutoExport.WORLD_FOLDER);
+        boolean marker = Files.isRegularFile(world.resolve(AutoExport.MARKER));
+        boolean level = Files.isRegularFile(world.resolve("level.dat"));
+        boolean staleGone = !Files.exists(world.resolve(STALE_FILE));
+        check(
+            checks,
+            "autoexport_world_rebuilt",
+            marker && level && staleGone,
+            "saves/" + AutoExport.WORLD_FOLDER
+                + ": marker="
+                + marker
+                + " level.dat="
+                + level
+                + " seeded "
+                + STALE_FILE
+                + " gone="
+                + staleGone);
+        Path decoy = saves.resolve(DECOY_WORLD);
+        Set<String> left = new TreeSet<>();
+        if (Files.isDirectory(decoy)) {
+            try (DirectoryStream<Path> s = Files.newDirectoryStream(decoy)) {
+                for (Path p : s) left.add(
+                    p.getFileName()
+                        .toString());
+            }
+        }
+        Set<String> want = new TreeSet<>(Arrays.asList(AutoExport.MARKER, DECOY_FILE));
+        check(checks, "decoy_world_untouched", left.equals(want), "saves/" + DECOY_WORLD + " holds " + left);
     }
 
     /** Reads the run back from disk, as the Python side will. */
@@ -278,8 +429,14 @@ public final class Harness {
         private int identityHashLines;
         private String identityHashExample;
 
-        Verifier(List<JsonObject> checks) {
+        private final File gameDir;
+        /** The client harness: the run has an NEI step and was made by autoexport. */
+        private final boolean client;
+
+        Verifier(List<JsonObject> checks, File gameDir, boolean client) {
             this.checks = checks;
+            this.gameDir = gameDir;
+            this.client = client;
         }
 
         JsonElement verify(ExportRun.Result r) throws IOException {
@@ -415,15 +572,190 @@ public final class Harness {
             check(checks, "recipe_errors_zero", recipeErrors == 0, recipeErrors + " recipe errors");
             String nei = parts.get("nei")
                 .getAsString();
-            check(
-                checks,
-                "nei_not_run_on_server",
-                "absent".equals(nei) || "skipped_server".equals(nei),
-                "parts.nei=" + nei);
             String auto = parts.get("autoexport")
                 .getAsString();
-            check(checks, "autoexport_off", "off".equals(auto), "parts.autoexport=" + auto);
+            String side = manifest.get("side")
+                .getAsString();
+            String world = manifest.get("world")
+                .isJsonNull() ? null
+                    : manifest.get("world")
+                        .getAsString();
+            JsonElement errors = manifest.get("part_errors");
+            if (!client) {
+                // The dev runtime has NEI 2.8.172, so the writer is there; a server never calls it.
+                check(checks, "nei_not_run_on_server", "skipped_server".equals(nei), "parts.nei=" + nei);
+                check(checks, "autoexport_off", "off".equals(auto), "parts.autoexport=" + auto);
+                return counts;
+            }
+            check(checks, "client_side", "client".equals(side), "side=" + side);
+            check(
+                checks,
+                "autoexport_world",
+                AutoExport.WORLD_FOLDER.equals(world),
+                "world=" + world + ", want " + AutoExport.WORLD_FOLDER);
+            check(
+                checks,
+                "autoexport_ok",
+                "ok".equals(auto),
+                "parts.autoexport=" + auto + (errors == null ? "" : " part_errors=" + errors));
+            if (Boolean.getBoolean(NEI_FAIL_PROPERTY)) {
+                // -PharnessNeiFail: dumps/recipes is a file, so NEI's dump fails; NEI only logs it.
+                String why = errors != null && errors.getAsJsonObject()
+                    .has("nei") ? errors.getAsJsonObject()
+                        .get("nei")
+                        .getAsString() : "";
+                check(
+                    checks,
+                    "nei_failure_detected",
+                    "failed".equals(nei) && why.contains("Error dumping recipes"),
+                    "parts.nei=" + nei + " part_errors.nei=" + why);
+                return counts;
+            }
+            check(
+                checks,
+                "nei_ok",
+                "ok".equals(nei),
+                "parts.nei=" + nei + (errors == null ? "" : " part_errors=" + errors));
+            checkNei(dir, manifest.getAsJsonObject("files"), counts);
             return counts;
+        }
+
+        /** NEI's files in the run: listed, complete, one handler each, GT handlers present, no numeric IDs. */
+        private void checkNei(Path dir, JsonObject files, JsonObject counts) throws IOException {
+            Map<String, JsonObject> listed = new TreeMap<>();
+            for (Map.Entry<String, JsonElement> e : files.entrySet()) {
+                if (e.getKey()
+                    .startsWith("nei/"))
+                    listed.put(
+                        e.getKey()
+                            .substring(4),
+                        e.getValue()
+                            .getAsJsonObject());
+            }
+            Set<String> onDisk = new TreeSet<>();
+            Path nei = dir.resolve("nei");
+            if (Files.isDirectory(nei)) {
+                try (DirectoryStream<Path> s = Files.newDirectoryStream(nei)) {
+                    for (Path p : s) onDisk.add(
+                        p.getFileName()
+                            .toString());
+                }
+            }
+            Set<String> unlisted = new TreeSet<>(onDisk);
+            unlisted.removeAll(listed.keySet());
+            check(
+                checks,
+                "nei_files_listed",
+                !listed.isEmpty() && unlisted.isEmpty(),
+                listed.size() + " nei/ files listed, unlisted on disk: " + first(unlisted));
+            long handlers = counts.has("nei_handlers") ? counts.get("nei_handlers")
+                .getAsLong() : -1;
+            check(
+                checks,
+                "nei_handler_files_at_least_150",
+                listed.size() >= 150 && listed.size() == handlers,
+                listed.size() + " files, NEI loaded " + handlers + " handlers");
+            long lines = 0;
+            for (JsonObject f : listed.values()) lines += f.get("lines")
+                .getAsLong();
+            long recipes = counts.has("nei_recipes") ? counts.get("nei_recipes")
+                .getAsLong() : -1;
+            long reported = counts.has("nei_reported") ? counts.get("nei_reported")
+                .getAsLong() : -1;
+            check(
+                checks,
+                "nei_lines_equal_reported",
+                lines == recipes && recipes == reported && recipes > 50_000,
+                lines + " lines listed, nei_recipes=" + recipes + ", nei_reported=" + reported + " (want > 50000)");
+
+            NeiScan scan = new NeiScan();
+            for (String name : listed.keySet()) scan.file(nei.resolve(name));
+            check(
+                checks,
+                "nei_one_handler_per_file",
+                scan.mixedFiles.isEmpty(),
+                scan.handlers.size() + " handler ids, "
+                    + scan.emptyFiles
+                    + " empty files; mixed: "
+                    + first(scan.mixedFiles));
+            check(
+                checks,
+                "nei_gt_handlers",
+                scan.gtHandlers > 0,
+                scan.gtHandlers + " gt.recipe.* handler ids, e.g. " + scan.gtExample);
+            check(
+                checks,
+                "nei_no_numeric_ids",
+                scan.forbidden == 0,
+                scan.forbidden == 0 ? scan.stacks + " stacks (anyOf and returns included), none with " + FORBIDDEN_KEYS
+                    : scan.forbidden + " found, e.g. " + scan.forbiddenExample);
+
+            // GregtecLink copies NEI's files and never moves or changes them.
+            List<String> gone = new ArrayList<>();
+            Path dumps = gameDir.toPath()
+                .resolve("dumps/recipes");
+            for (Map.Entry<String, JsonObject> e : listed.entrySet()) {
+                Path p = dumps.resolve(e.getKey());
+                if (!Files.isRegularFile(p) || Files.size(p) != e.getValue()
+                    .get("bytes")
+                    .getAsLong()) gone.add(e.getKey());
+            }
+            check(
+                checks,
+                "nei_dumps_left_in_place",
+                gone.isEmpty(),
+                gone.isEmpty() ? listed.size() + " files still in dumps/recipes"
+                    : "missing or changed: " + first(new TreeSet<>(gone)));
+        }
+
+        /** NEI's lines: {handler, ingredients, results, gt?}; stacks carry strId, never a numeric id. */
+        private final class NeiScan {
+
+            final Set<String> handlers = new TreeSet<>();
+            final Set<String> mixedFiles = new TreeSet<>();
+            int emptyFiles;
+            int gtHandlers;
+            String gtExample;
+            int stacks;
+            int forbidden;
+            String forbiddenExample;
+
+            void file(Path p) throws IOException {
+                Set<String> inFile = new HashSet<>();
+                try (BufferedReader in = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        JsonObject o = parser.parse(line)
+                            .getAsJsonObject();
+                        String h = o.get("handler")
+                            .getAsString();
+                        inFile.add(h);
+                        if (handlers.add(h) && h.startsWith("gt.recipe")) {
+                            gtHandlers++;
+                            if (gtExample == null) gtExample = h;
+                        }
+                        for (String k : new String[] { "ingredients", "results" }) {
+                            if (o.has(k)) for (JsonElement s : o.getAsJsonArray(k)) stack(s.getAsJsonObject(), true);
+                        }
+                    }
+                }
+                if (inFile.isEmpty()) emptyFiles++;
+                if (inFile.size() > 1) mixedFiles.add(
+                    p.getFileName()
+                        .toString());
+            }
+
+            /** Keys of the stack itself; its "tag" is game NBT and is not searched. */
+            private void stack(JsonObject s, boolean slot) {
+                stacks++;
+                for (Map.Entry<String, JsonElement> f : s.entrySet()) {
+                    if (!FORBIDDEN_KEYS.contains(f.getKey())) continue;
+                    if (forbidden++ == 0) forbiddenExample = f.getKey() + " in " + s;
+                }
+                if (!slot) return;
+                if (s.has("anyOf")) for (JsonElement a : s.getAsJsonArray("anyOf")) stack(a.getAsJsonObject(), false);
+                if (s.has("returns")) stack(s.getAsJsonObject("returns"), false);
+            }
         }
 
         private void checkFiles(Path dir, JsonObject files) throws IOException {

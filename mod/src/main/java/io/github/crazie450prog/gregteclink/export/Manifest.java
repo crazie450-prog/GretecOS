@@ -51,6 +51,7 @@ final class Manifest {
         m.addProperty("created_utc", iso.format(run.created));
         m.addProperty("complete", complete);
         m.addProperty("mode", run.mode);
+        m.add("world", Json.str(run.world));
         m.addProperty(
             "side",
             FMLCommonHandler.instance()
@@ -83,6 +84,11 @@ final class Manifest {
         JsonObject parts = new JsonObject();
         for (Map.Entry<String, String> e : run.parts.entrySet()) parts.addProperty(e.getKey(), e.getValue());
         m.add("parts", parts);
+        if (!run.partErrors.isEmpty()) {
+            JsonObject errors = new JsonObject();
+            for (Map.Entry<String, String> e : run.partErrors.entrySet()) errors.addProperty(e.getKey(), e.getValue());
+            m.add("part_errors", errors);
+        }
         JsonObject durations = new JsonObject();
         for (Map.Entry<String, Long> e : run.durations.entrySet()) durations.addProperty(e.getKey(), e.getValue());
         m.add("durations_ms", durations);

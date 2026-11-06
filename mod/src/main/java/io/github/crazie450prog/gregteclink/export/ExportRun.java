@@ -2,6 +2,7 @@ package io.github.crazie450prog.gregteclink.export;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -19,6 +20,8 @@ import java.util.Map;
 import java.util.TimeZone;
 import java.util.regex.Pattern;
 
+import net.minecraft.server.MinecraftServer;
+
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -26,9 +29,10 @@ import com.google.gson.JsonParser;
 import io.github.crazie450prog.gregteclink.GregtecLink;
 
 /**
- * One export run: writes every file into {@code <run_id>.partial/}, writes manifest.json last, then renames the folder
- * to {@code <run_id>/} and prunes old runs. Everything goes through a {@link PathGuard} rooted at
- * {@code <gameDir>/gregteclink/exports/}. It reads the game and never changes the world.
+ * One export run: writes every file into {@code <run_id>.partial/} (the GT parts at server start, then NEI's files on a
+ * client), writes manifest.json last, then renames the folder to {@code <run_id>/} and prunes old runs. Everything goes
+ * through a {@link PathGuard} rooted at {@code <gameDir>/gregteclink/exports/}. It reads the game and never changes the
+ * world.
  */
 public final class ExportRun {
 
@@ -39,12 +43,12 @@ public final class ExportRun {
     /** On Windows a virus scanner or the indexer often still holds a just-written file, so the rename is retried. */
     private static final int RENAME_ATTEMPTS = 3;
     private static final long RENAME_BACKOFF_MS = 1000;
-    /** Complete runs kept in the exports folder (D98); each is about 50 MB. */
+    /** Complete runs kept in the exports folder (D98); each is about 50 MB, about 145 MB with NEI's files. */
     public static final int KEEP_COMPLETE = 10;
     /** Incomplete runs (manifest "complete": false) kept for debugging (D98). */
     public static final int KEEP_INCOMPLETE = 3;
 
-    /** What the caller (one-click, harness) needs to know afterwards. */
+    /** What the caller (one-click, autoexport, harness) needs to know afterwards. */
     public static final class Result {
 
         public final String runId;
@@ -64,20 +68,41 @@ public final class ExportRun {
     final File gameDir;
     final String mode;
     final String runId;
+    /** The world's folder name, from the server at start; null if there was none. */
+    final String world;
     final Date created = new Date();
     final Map<String, String> parts = new LinkedHashMap<>();
+    /** Why a part failed, for each failed part (manifest "part_errors"). */
+    final Map<String, String> partErrors = new LinkedHashMap<>();
     final Map<String, Long> durations = new LinkedHashMap<>();
     final Map<String, Number> counts = new LinkedHashMap<>();
     final List<HashedFile> files = new ArrayList<>();
+    /** Null if the exports folder could not be set up: then nothing is written. */
+    private final PathGuard guard;
+    private final long t0;
+    private boolean gtOk;
+    private Result result;
 
-    private ExportRun(File gameDir, String mode, String runId) {
+    private ExportRun(File gameDir, String mode, String runId, String world, PathGuard guard, long t0) {
         this.gameDir = gameDir;
         this.mode = mode;
         this.runId = runId;
+        this.world = world;
+        this.guard = guard;
+        this.t0 = t0;
     }
 
-    /** Runs a whole export. Never throws: a failed run still gets a manifest with "complete": false where possible. */
+    /** A whole export with no NEI step (a dedicated server, or a client without NEI's writer). Never throws. */
     public static Result run(File gameDir, String mode) {
+        return start(gameDir, mode).finish(NeiTrigger.serverStatus(), "off");
+    }
+
+    /**
+     * Starts a run on the server thread: writes the GT parts (recipe maps, machines, item and fluid tables) into
+     * {@code <run_id>.partial/}. {@link #finish} then writes the manifest, renames and prunes; in between, a client
+     * adds NEI's files ({@link #addNeiFile}). Never throws.
+     */
+    public static ExportRun start(File gameDir, String mode) {
         long t0 = System.currentTimeMillis();
         String requested = System.getProperty(RUN_ID_PROPERTY);
         String base;
@@ -90,12 +115,19 @@ public final class ExportRun {
             f.setTimeZone(TimeZone.getTimeZone("UTC"));
             base = f.format(new Date());
         }
+        String world = null;
+        try {
+            MinecraftServer server = MinecraftServer.getServer();
+            if (server != null) world = server.getFolderName();
+        } catch (Throwable t) {
+            GregtecLink.LOG.warn("export: world name not read: {}", t.toString());
+        }
         PathGuard guard;
         try {
             guard = new PathGuard(gameDir.toPath(), EXPORTS_DIR);
         } catch (Throwable t) {
             GregtecLink.LOG.error("export: cannot create " + EXPORTS_DIR, t);
-            return new Result(base, null, false, 0);
+            return new ExportRun(gameDir, mode, base, world, null, t0);
         }
         String runId = base;
         for (int i = 2; Files.exists(
@@ -106,9 +138,61 @@ public final class ExportRun {
                     .resolve(runId + ".partial")); i++) {
             runId = base + "-" + i;
         }
-        ExportRun run = new ExportRun(gameDir, mode, runId);
+        ExportRun run = new ExportRun(gameDir, mode, runId, world, guard, t0);
         GregtecLink.LOG.info("export {} ({}) starting", runId, mode);
-        boolean complete = run.writeAll(guard);
+        run.gtOk = run.writeGt();
+        return run;
+    }
+
+    /**
+     * Copies one of NEI's dump files into {@code <run_id>.partial/nei/}, listed in the manifest as
+     * {@code nei/<name>}. A failed copy is deleted again and not listed.
+     */
+    HashedFile addNeiFile(Path source) throws IOException {
+        if (guard == null) throw new IOException("no exports folder");
+        String name = "nei/" + source.getFileName()
+            .toString();
+        String dir = runId + ".partial";
+        HashedFile f = new HashedFile(guard, dir, name);
+        try {
+            try (InputStream in = Files.newInputStream(source)) {
+                f.copy(in);
+            }
+            f.close();
+        } catch (IOException | RuntimeException e) {
+            try {
+                f.close();
+            } catch (IOException ignored) {
+                // The copy failed already.
+            }
+            Files.deleteIfExists(guard.resolve(dir + "/" + name));
+            throw e;
+        }
+        files.add(f);
+        return f;
+    }
+
+    /**
+     * Writes the manifest with the given NEI and autoexport status, renames the folder and prunes old runs. Runs once:
+     * later calls return the first result. Never throws: a failed run still gets a manifest with "complete": false
+     * where possible.
+     */
+    public synchronized Result finish(String nei, String autoexport) {
+        if (result != null) return result;
+        if (guard == null) {
+            result = new Result(runId, null, false, 0);
+            return result;
+        }
+        parts.put("nei", nei);
+        parts.put("autoexport", autoexport);
+        boolean complete = gtOk;
+        // Last, and not listed in its own "files".
+        try (HashedFile manifest = new HashedFile(guard, runId + ".partial", "manifest.json")) {
+            manifest.document(new Manifest(this).build(complete));
+        } catch (Throwable e) {
+            GregtecLink.LOG.error("export: manifest failed", e);
+            complete = false;
+        }
         Path finalDir = null;
         int attempts = 0;
         try {
@@ -125,15 +209,17 @@ public final class ExportRun {
         }
         if (attempts > 0) prune(guard, runId, KEEP_COMPLETE, KEEP_INCOMPLETE);
         GregtecLink.LOG.info(
-            "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} -> {}",
+            "export {} finished in {} ms: complete={} rename_tries={} counts={} parts={} errors={} -> {}",
             runId,
             System.currentTimeMillis() - t0,
             complete,
             attempts,
-            run.counts,
-            run.parts,
+            counts,
+            parts,
+            partErrors,
             finalDir);
-        return new Result(runId, finalDir, complete, attempts);
+        result = new Result(runId, finalDir, complete, attempts);
+        return result;
     }
 
     /**
@@ -225,7 +311,7 @@ public final class ExportRun {
     }
 
     /** Deletes {@code p} and, if it is a real folder (not a link or junction), everything in it first. */
-    private static void deleteTree(Path p) throws IOException {
+    static void deleteTree(Path p) throws IOException {
         if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS) && p.toRealPath()
             .equals(p)) {
             try (DirectoryStream<Path> children = Files.newDirectoryStream(p)) {
@@ -252,7 +338,8 @@ public final class ExportRun {
         }
     }
 
-    private boolean writeAll(PathGuard guard) {
+    /** The GT parts; true if all three succeeded. */
+    private boolean writeGt() {
         String dir = runId + ".partial";
         boolean ok = true;
         RefTable refs = new RefTable();
@@ -260,13 +347,13 @@ public final class ExportRun {
 
         long t = System.currentTimeMillis();
         GtRecipeDump gt = new GtRecipeDump(stacks);
-        try (HashedFile maps = open(guard, dir, "gt_recipe_maps.json");
-            HashedFile recipes = open(guard, dir, "gt_recipes.jsonl")) {
+        try (HashedFile maps = open(dir, "gt_recipe_maps.json"); HashedFile recipes = open(dir, "gt_recipes.jsonl")) {
             gt.write(maps, recipes);
             parts.put("gt_dump", "ok");
         } catch (Throwable e) {
             GregtecLink.LOG.error("export: GT recipe dump failed", e);
             parts.put("gt_dump", "failed");
+            partErrors.put("gt_dump", Json.error(e));
             ok = false;
         }
         durations.put("gt_dump", System.currentTimeMillis() - t);
@@ -278,12 +365,13 @@ public final class ExportRun {
         t = System.currentTimeMillis();
         ModSources mods = new ModSources();
         MachinePass mp = new MachinePass(mods, refs);
-        try (HashedFile machines = open(guard, dir, "gt_machines.jsonl")) {
+        try (HashedFile machines = open(dir, "gt_machines.jsonl")) {
             mp.write(machines);
             parts.put("machines", "ok");
         } catch (Throwable e) {
             GregtecLink.LOG.error("export: machine pass failed", e);
             parts.put("machines", "failed");
+            partErrors.put("machines", Json.error(e));
             ok = false;
         }
         durations.put("machines", System.currentTimeMillis() - t);
@@ -291,13 +379,14 @@ public final class ExportRun {
         counts.put("machine_errors", mp.machineErrors);
 
         t = System.currentTimeMillis();
-        try (HashedFile items = open(guard, dir, "items.jsonl"); HashedFile fluids = open(guard, dir, "fluids.jsonl")) {
+        try (HashedFile items = open(dir, "items.jsonl"); HashedFile fluids = open(dir, "fluids.jsonl")) {
             refs.writeItems(items);
             refs.writeFluids(fluids);
             parts.put("refs", "ok");
         } catch (Throwable e) {
             GregtecLink.LOG.error("export: item/fluid table failed", e);
             parts.put("refs", "failed");
+            partErrors.put("refs", Json.error(e));
             ok = false;
         }
         durations.put("refs", System.currentTimeMillis() - t);
@@ -305,21 +394,10 @@ public final class ExportRun {
         counts.put("item_errors", refs.itemErrors);
         counts.put("fluids", refs.fluidCount());
         counts.put("unregistered", refs.unregistered);
-
-        parts.put("nei", NeiTrigger.status());
-        parts.put("autoexport", AutoExport.status());
-
-        // Last, and not listed in its own "files".
-        try (HashedFile manifest = new HashedFile(guard, dir, "manifest.json")) {
-            manifest.document(new Manifest(this).build(ok));
-        } catch (Throwable e) {
-            GregtecLink.LOG.error("export: manifest failed", e);
-            ok = false;
-        }
         return ok;
     }
 
-    private HashedFile open(PathGuard guard, String dir, String name) throws IOException {
+    private HashedFile open(String dir, String name) throws IOException {
         HashedFile f = new HashedFile(guard, dir, name);
         files.add(f);
         return f;

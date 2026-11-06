@@ -30,8 +30,12 @@ only what needs the live game: registry names, ore names, display names and GT's
   directly in `exports/`, each resolved through the guard; a link or junction inside one is deleted, never followed.
   It first renames a doomed run to `<run_id>.partial/` in one atomic step, so a run it can't finish deleting
   (Windows: a file in it is open) is left as a `.partial` folder that readers skip and the next run deletes, never
-  as a complete run with files missing. A run it can't rename stays whole. Both are logged. Runs are about 50 MB
-  each, so a collector should copy a run soon after it appears: ten later runs remove it.
+  as a complete run with files missing. A run it can't rename stays whole. Both are logged. In the dev runtime a run
+  is about 50 MB without NEI's files and about 145 MB with them (the full pack is larger), so a collector should
+  copy a run soon after it appears: ten later runs remove it.
+- On a client, the GT files are written when the world's server starts, NEI's files once NEI has loaded (the
+  folder stays `.partial` in between), and the manifest last. If the world closes first, the run is finished then,
+  without NEI's files.
 
 ## Keys
 
@@ -67,7 +71,7 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above, sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
 | `manifest.json` | Run facts, file hashes, counts, part status. Not listed in its own `files` |
-| `nei/*.jsonl` | PR 1b: a copy of NEI's `dumps/recipes/` |
+| `nei/<NEI file name>.jsonl` | On a client with NEI 2.8.172: a byte-for-byte copy of each file NEI's `dumpAll(true)` wrote to `dumps/recipes/` during this run (see below) |
 
 ### `gt_recipe_maps.json` entry
 
@@ -146,11 +150,35 @@ that `nbt`, named from the stack with its tag, because `name` and `unlocalized` 
 
 `{fluid, unlocalized, name, temperature, density, viscosity, gaseous}`, or `{fluid, error}`.
 
+### `nei/*.jsonl` (NEI's format, copied as is)
+
+NEI 2.8.172's own recipe export (PR #1100), the same files as Data Dumps → All Handler Recipes → Separate. GregtecLink
+calls `RecipeJsonWriter.dumpAll(true)` on the client thread once NEI has loaded, then copies every `.jsonl` file NEI
+wrote (regular files only, never a link) into `nei/`. The format is NEI's, not GregtecLink's:
+
+- One recipe per line: `{"handler", "ingredients": [stack...], "results": [stack...], "gt": {"eut", "durationTicks",
+  "totalEU"}?}`. Lines end with the platform's line separator (`\r\n` on Windows); `lines` in the manifest counts `\n`.
+- A stack is `{"strId": "<registry name>", "Damage", "Count", "name", "tag"?, "chance"?, "anyOf"?, "returns"?,
+  "neiFluidName"?}`, with no numeric `id`. `tag` is NEI's `NBTJson` (typed strings like `"1B"`), the same typing as
+  GregtecLink's `nbt`. `chance` is 1/10000 and only present below 10000. `anyOf` lists every accepted stack of the
+  slot (oredict alternatives), without `Count`. `returns` is a crafting grid's container item. GT fluid display stacks
+  carry `neiFluidName` and `Count` in mB. Non-consumed stacks (molds, programmed circuits) keep `Count: 0`.
+- `handler` is NEI's handler id: for GT handlers the recipe **category** id, e.g. `gt.recipe.assembler` or
+  `gt.recipe.category.alloy_smelter_molding`, so one GT map can appear as several handlers. **Readers key on each
+  line's `handler`, never on the file name**: file names are NEI's cleaned handler display names in the instance's
+  language, with `_2`, `_3` added for duplicate names (two handlers named "Blast Furnace", for example).
+- Coverage limits: a handler hidden in NEI's config (Export mirrors Play's `config/NEI/`) is not dumped; a handler that
+  fails to load is dropped by NEI without notice (it counts in `counts.nei_lookup_errors`); a recipe NEI can't
+  serialise is left out (`counts.nei_skipped`). Counts can also differ between runs of the same pack with config
+  state: in the dev runtime, AE2's "Facade Crafting" had 2,403 recipes in a brand-new run folder and 2,631 in a
+  reused one, where AE2 had rewritten its `config/AppliedEnergistics2/Facades.cfg` on joining the world. Compare NEI
+  content, not counts.
+
 ### `manifest.json`
 
 ```json
 {"format":"gregteclink-export/1","run_id":"20261105T223624Z","created_utc":"2026-11-05T22:36:24Z","complete":true,
- "mode":"one_click|autoexport|harness","side":"client|server","deobf_env":false,
+ "mode":"one_click|autoexport|harness","world":"<world folder name, or null>","side":"client|server","deobf_env":false,
  "minecraft":"1.7.10","forge":"10.13.4.1614","java":{"version":"...","vendor":"..."},
  "pack_version":"<raw S:ModPackVersion of config/GTNewHorizons/dreamcraft.cfg, or null>",
  "gt_version":"5.09.54.265","nei_version":"<NotEnoughItems version, or null>",
@@ -158,11 +186,13 @@ that `nbt`, named from the stack with its tag, because `name` and `unlocalized` 
  "mods":[{"modid","name","version","file","sha256"}],
  "files":{"gt_recipes.jsonl":{"sha256":"...","bytes":0,"lines":0}, "...":{}},
  "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",
-           "items","item_errors","fluids","unregistered"},
+           "items","item_errors","fluids","unregistered",
+           "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_files"?,"nei_recipes"?},
  "options":{"recipe_owners":true},
  "parts":{"gt_dump":"ok|failed","machines":"ok|failed","refs":"ok|failed",
-          "nei":"absent|skipped_server|ok|failed","autoexport":"off|not_built|ok|failed"},
- "durations_ms":{"gt_dump","machines","refs"}}
+          "nei":"absent|skipped_server|ok|failed","autoexport":"off|ok|failed"},
+ "part_errors":{"<part>":"<why it failed>"}?,
+ "durations_ms":{"gt_dump","machines","refs","nei_wait"?,"nei_dump"?,"nei_copy"?}}
 ```
 
 - `mods` lists **Export's** loaded mods, sorted by modid. `file` is relative to the game dir, or only the file name
@@ -173,12 +203,26 @@ that `nbt`, named from the stack with its tag, because `name` and `unlocalized` 
   from here.
 - `counts.items` is the number of lines in `items.jsonl`, NBT variants included.
 - `pack_version` `2.9.x` means unknown [A§5.5 correction]: trust jar hashes over this string.
-- `parts.nei`: `absent` without NEI ≥ 2.8.172's `RecipeJsonWriter`; `skipped_server` when it exists but this run
-  could not call it (PR 1 never does; PR 1b calls it on the client).
-- `parts.autoexport`: `not_built` when `-Dgregtec.autoexport=true` was set before PR 1b.
+- `complete` covers the GT parts and the manifest, as before: a failed NEI step leaves `complete: true`. **Readers that
+  need NEI's data check `parts.nei == "ok"`** and use `nei/` only then.
+- `world` is the world's folder name: `gregteclink-autoexport` for autoexport, the harness's own world otherwise.
+- `parts.nei`:
+  - `absent`: no NEI ≥ 2.8.172 `RecipeJsonWriter` in the game (Export's NEI swap is missing).
+  - `skipped_server`: a dedicated server, which has no NEI step.
+  - `ok`: the call threw nothing, NEI logged no `Error dumping recipes`, it wrote at least one file, every copy
+    succeeded, and the lines copied (`counts.nei_recipes`) equal the count NEI logged (`counts.nei_reported`).
+  - `failed`: anything else, with the reason in `part_errors.nei`. Also when NEI was not ready 10 minutes after the
+    world opened (NEI disabled, for example), or the world was closed before it was.
+- `parts.autoexport`: `off` without `-Dgregtec.autoexport=true` (or on a dedicated server); `ok` when the
+  autoexport flow finished the run itself; `failed` when its 30-minute deadline was reached or the world closed
+  first (`part_errors.autoexport`). PR 1 runs may say `not_built`: treat it as `off`.
+- `part_errors` is present only when a part failed, with one entry per failed part.
+- The `nei_*` counts and durations are present only when the NEI step called `dumpAll`. `nei_handlers` and
+  `nei_reported` are -1 when NEI logged no such line. `nei_wait` is the time from entering the world until the dump
+  started; `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
 
 ## Python readers (WO-1.3; named here only)
 
 - `core/gregtec/ingest/gtdump.py`: `gt_recipe_maps.json`, `gt_recipes.jsonl`, `items.jsonl`, `fluids.jsonl`.
 - `core/gregtec/ingest/machines.py`: `gt_machines.jsonl`.
-- `core/gregtec/ingest/nei.py`: `nei/*.jsonl` (PR 1b).
+- `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
