@@ -83,48 +83,77 @@ def test_a_path_to_write_is_lower_case() -> None:
     assert io.clean("ME/goals.md") == "ME/goals.md"  # reading is fine
 
 
+W, A, P = io.WRITE, io.APPEND, io.PROPOSE
+
+
 @pytest.mark.parametrize(
-    ("rel", "why"),
+    ("rel", "op", "why"),
     [
-        ("me/goals.md", "Clayton's"),
-        ("me/new.md", "Clayton's"),
-        ("_gos/schema.md", "the repo's"),
-        ("_gos/skills/x/skill.md", "the repo's"),
-        ("INDEX.md", "generated"),
-        ("base/tier.md", "generated"),
-        ("base/machines.md", "generated"),
-        ("base/storage.md", "generated"),
-        ("notes.md", "isn't in a folder agents write"),
-        ("other/x.md", "isn't in a folder agents write"),
-        ("log/wk/2026-W44.md", "curator's"),
-        ("log/mo/2026-10.md", "curator's"),
-        ("log/2026-11-05.md", "only today's log"),
-        ("log/notes.md", "daily log"),
-        ("ME/goals.md", "Clayton's"),
-        ("Plans/pl-1.md", "lower-case only"),
+        ("me/goals.md", W, "Clayton's"),
+        ("me/new.md", A, "Clayton's"),
+        ("_gos/schema.md", W, "the repo's"),
+        ("_gos/skills/x/skill.md", W, "the repo's"),
+        ("INDEX.md", W, "generated"),
+        ("base/tier.md", A, "generated"),
+        ("base/machines.md", W, "generated"),
+        ("base/storage.md", W, "generated"),
+        ("notes.md", W, "isn't in a folder agents write"),
+        ("other/x.md", A, "isn't in a folder agents write"),
+        ("log/wk/2026-W44.md", A, "curator's"),
+        ("log/mo/2026-10.md", W, "curator's"),
+        ("log/2026-11-05.md", A, "only today's log"),
+        ("log/2026-11-06.md", W, "append-only; use note_append"),
+        ("log/notes.md", A, "daily log"),
+        ("inbox/ib-20261106-x.md", W, "come from inbox_propose"),
+        ("inbox/ib-schema-check.md", W, "come from inbox_propose"),
+        ("plans/pl-1.md", P, "proposals go in inbox/"),
+        ("ME/goals.md", W, "Clayton's"),
+        ("Plans/pl-1.md", W, "lower-case only"),
     ],
 )
-def test_write_refusals(rel: str, why: str) -> None:
-    refusal = io.write_refusal(rel, today=TODAY)
+def test_write_refusals(rel: str, op: str, why: str) -> None:
+    refusal = io.write_refusal(rel, op, today=TODAY)
     assert refusal is not None and why in refusal
 
 
 @pytest.mark.parametrize(
-    "rel",
+    ("rel", "op"),
     [
-        "base/power.md",
-        "base/lines/ln-steel-01.md",
-        "plans/pl-0007.md",
-        "quests/qs-steam.md",
-        "themes/th-brass.md",
-        "personas/pe-ship.md",
-        "inbox/ib-20261106-x.md",
-        "log/2026-11-06.md",
-        "log/2026-11-06-2.md",
+        ("base/power.md", W),
+        ("base/lines/ln-steel-01.md", W),
+        ("plans/pl-0007.md", W),
+        ("plans/pl-0007.md", A),
+        ("quests/qs-steam.md", W),
+        ("themes/th-brass.md", W),
+        ("personas/pe-ship.md", A),
+        ("inbox/ib-20261106-x.md", A),
+        ("inbox/ib-20261106-x.md", P),
+        ("log/2026-11-06.md", A),
+        ("log/2026-11-06-2.md", A),
     ],
 )
-def test_agents_may_write(rel: str) -> None:
-    assert io.write_refusal(rel, today=TODAY) is None
+def test_agents_may_write(rel: str, op: str) -> None:
+    assert io.write_refusal(rel, op, today=TODAY) is None
+
+
+def test_the_guard_without_today_uses_the_local_date() -> None:
+    """The hook-style call: an old daily log is refused even when no ``today`` is given."""
+    today = dt.date.today()
+    assert io.write_refusal(f"log/{today.isoformat()}.md", A) is None
+    why = io.write_refusal("log/2020-01-01.md", A)
+    assert why is not None and "only today's log" in why
+    with pytest.raises(ValueError, match="op must be one of"):
+        io.write_refusal("plans/pl-1.md", "edit")
+
+
+def test_the_vaults_refusal_adds_the_link_check(vault: io.VaultIO) -> None:
+    assert vault.refusal("plans/pl-1.md", W) is None
+    assert "Clayton's" in (vault.refusal("me/goals.md", W) or "")
+    assert "only today's log" in (vault.refusal("log/2026-11-05.md", A) or "")
+    assert "inbox_propose" in (vault.refusal("inbox/ib-schema-check.md", W) or "")
+    if sys.platform != "win32":
+        (vault.root / "plans" / "pl-link.md").symlink_to(vault.root / "me" / "goals.md")
+        assert "a link leads elsewhere" in (vault.refusal("plans/pl-link.md", W) or "")
 
 
 def test_the_guard_matches_the_schema_writers() -> None:
@@ -136,9 +165,12 @@ def test_the_guard_matches_the_schema_writers() -> None:
             if not kind.path.endswith("/")
             else f"{kind.path}{kind.id.rstrip('*')}x.md"
         )
+        op = W
         if kind.t == "log":
-            rel = f"log/{TODAY.isoformat()}.md"
-        refused = io.write_refusal(rel, today=TODAY) is not None
+            rel, op = f"log/{TODAY.isoformat()}.md", A
+        elif kind.t == "inbox":
+            op = P
+        refused = io.write_refusal(rel, op, today=TODAY) is not None
         assert refused == (kind.writer in ("repo", "clayton", "generated")), kind.t
 
 
@@ -333,6 +365,7 @@ def test_append_refusals(vault: io.VaultIO) -> None:
         (rel, "---\nid: x", "body lines only"),
         (rel, "", "nothing to append"),
         ("plans/pl-9.md", "st: a", "note_write makes it"),
+        ("inbox/ib-nope.md", "note: a", "inbox_propose makes it"),
         ("me/goals.md", "goal: x", "Clayton's"),
     ]:
         with pytest.raises(io.VaultError, match=why):
@@ -356,6 +389,16 @@ def test_append_to_a_note_rewrites_it_with_todays_date(vault: io.VaultIO) -> Non
     vault.append("plans/pl-1.md", "note: pinned the EBF route")
     assert text(vault, "plans/pl-1.md") == (
         "---\nid: pl-1\nt: plan\nupd: 2026-11-06\n---\nst: draft\nnote: pinned the EBF route\n"
+    )
+
+
+def test_append_to_a_note_with_no_body_and_no_final_newline(vault: io.VaultIO) -> None:
+    (vault.root / "plans" / "pl-1.md").write_text(
+        "---\nid: pl-1\nt: plan\nupd: 2026-11-01\n---", encoding="utf-8"
+    )
+    vault.append("plans/pl-1.md", "note: x")
+    assert text(vault, "plans/pl-1.md") == (
+        "---\nid: pl-1\nt: plan\nupd: 2026-11-06\n---\nnote: x\n"
     )
 
 
@@ -416,3 +459,37 @@ def test_notes_skips_hidden_folders_skills_and_other_files(vault: io.VaultIO) ->
         "me/prefs.md",
         "plans/pl-1.md",
     } == set(found)
+
+
+def test_notes_skips_junctions(
+    vault: io.VaultIO, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Windows junction isn't a symlink and os.walk enters it; notes() doesn't."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pl-x.md").write_text("x", encoding="utf-8")
+    shutil.copytree(outside, vault.root / "plans" / "far")
+    real = Path.is_junction
+    monkeypatch.setattr(
+        Path, "is_junction", lambda p: p.name == "far" or real(p), raising=True
+    )
+    assert "plans/far/pl-x.md" not in set(io.notes(vault.root))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows-only")
+def test_notes_skips_a_real_junction(vault: io.VaultIO, tmp_path: Path) -> None:
+    import subprocess
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pl-x.md").write_text("x", encoding="utf-8")
+    link = vault.root / "plans" / "far"
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+        check=True,
+        capture_output=True,
+    )
+    assert link.is_junction()
+    assert "plans/far/pl-x.md" not in set(io.notes(vault.root))
+    with pytest.raises(io.VaultError, match="a link leads elsewhere"):
+        vault.read("plans/far/pl-x.md")

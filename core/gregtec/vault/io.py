@@ -2,7 +2,10 @@
 
 The note tools (``note_read``, ``note_write``, ``note_append``, ``inbox_propose``; ``vault_search``
 is :mod:`gregtec.vault.fts`) call :class:`VaultIO`. It owns the **path guard** (plan 6.5), which
-WO-2.4's ``PreToolUse`` hook also asks through :func:`write_refusal`:
+WO-2.4's ``PreToolUse`` hook also asks, through :meth:`VaultIO.refusal` (the guard plus the link
+check; :func:`write_refusal` is the guard alone). Both take the operation: ``write`` (create or
+replace a note: ``note_write``, and an SDK ``Write`` or ``Edit``), ``append`` (``note_append``)
+or ``propose`` (a new inbox note: ``inbox_propose`` only):
 
 | path                                    | agents may                                         |
 |-----------------------------------------|----------------------------------------------------|
@@ -10,8 +13,8 @@ WO-2.4's ``PreToolUse`` hook also asks through :func:`write_refusal`:
 | ``_gos/``                               | read (repo-owned, deployed by ``gos vault deploy``)|
 | ``INDEX.md``, ``base/{tier,machines,storage}.md`` | read (generated: the curator, My base)   |
 | ``base/ plans/ quests/ themes/ personas/`` | read, write, append                             |
-| ``log/``                                | read; append to today's daily log only             |
-| ``inbox/``                              | read, append; new notes only through ``inbox_propose`` |
+| ``log/``                                | read; ``append`` to today's daily log only         |
+| ``inbox/``                              | read, ``append``; new notes only by ``propose``    |
 | anything else                           | read if it is a note; never write                  |
 
 - A path is vault-relative with ``/`` between folders, at most 6 parts and 200 characters, and
@@ -59,6 +62,12 @@ _DEVICES = frozenset(
 )
 DAILY = re.compile(r"log/(\d{4}-\d{2}-\d{2})(-[2-9]|-[1-9][0-9])?\.md")
 REPLACE_TRIES = 3
+WRITE, APPEND, PROPOSE = (
+    "write",
+    "append",
+    "propose",
+)  # the operations the guard decides on
+OPS = (WRITE, APPEND, PROPOSE)
 
 # Who writes where (plan 6.5): the first part of the path, or the whole path.
 CLAYTON, REPO, GENERATED, AGENTS, BOTH, JOURNAL, INBOX, NOBODY = (
@@ -126,9 +135,13 @@ def clean(rel: object, *, write: bool = False) -> str:
     return rel
 
 
-def write_refusal(rel: object, *, today: dt.date | None = None) -> str | None:
-    """Why an agent may not write (or append to) ``rel``, or None if it may (plan 6.5).
-    WO-2.4's ``PreToolUse`` path guard asks this for every vault write."""
+def write_refusal(rel: object, op: str, *, today: dt.date | None = None) -> str | None:
+    """Why an agent may not ``op`` (``write``, ``append`` or ``propose``) ``rel``, or None if it
+    may (plan 6.5). ``today`` (default: the local date) is the one daily log that takes lines.
+    The link check needs the vault: WO-2.4's ``PreToolUse`` hook asks :meth:`VaultIO.refusal`."""
+    if op not in OPS:
+        raise ValueError(f"op must be one of {OPS}, not {op!r}")
+    day_now = today or dt.date.today()
     try:
         path = clean(rel)
     except VaultError as exc:
@@ -152,8 +165,15 @@ def write_refusal(rel: object, *, today: dt.date | None = None) -> str | None:
         day = DAILY.fullmatch(path)
         if day is None:
             return f"{path}: agents append only to a daily log, log/YYYY-MM-DD.md (weekly and monthly logs are the curator's)"
-        if today is not None and day[1] != today.isoformat():
-            return f"{path}: logs are append-only, and only today's log ({today.isoformat()}) takes new lines"
+        if op != APPEND:
+            return f"{path}: logs are append-only; use note_append"
+        if day[1] != day_now.isoformat():
+            return f"{path}: logs are append-only, and only today's log ({day_now.isoformat()}) takes new lines"
+    elif who == INBOX:
+        if op == WRITE:
+            return f"{path}: new inbox notes come from inbox_propose; note_append adds to one"
+    elif op == PROPOSE:
+        return f"{path}: proposals go in inbox/, through inbox_propose"
     try:
         clean(path, write=True)
     except VaultError as exc:
@@ -167,13 +187,17 @@ def notes(root: Path) -> Iterator[str]:
     found: list[str] = []
     for top, dirs, files in os.walk(root):
         here = Path(top)
-        dirs[:] = sorted(
-            d for d in dirs if _READ_PART.fullmatch(d) and not (here / d).is_symlink()
+        dirs[:] = sorted(  # a Windows junction isn't a symlink, and os.walk enters it
+            d
+            for d in dirs
+            if _READ_PART.fullmatch(d)
+            and not (here / d).is_symlink()
+            and not (here / d).is_junction()
         )
         for name in files:
             full = here / name
             rel = full.relative_to(root).as_posix()
-            if full.is_symlink() or rel.startswith(NOT_NOTES):
+            if full.is_symlink() or full.is_junction() or rel.startswith(NOT_NOTES):
                 continue
             try:
                 found.append(clean(rel))
@@ -274,8 +298,21 @@ class VaultIO:
 
     # --- writing
 
-    def _refuse(self, rel: object) -> None:
-        why = write_refusal(rel, today=self.today())
+    def refusal(self, rel: object, op: str) -> str | None:
+        """Why an agent may not ``op`` ``rel`` in this vault, or None if it may: the guard
+        (:func:`write_refusal`, with this vault's today) and the link check of :meth:`path`.
+        WO-2.4's ``PreToolUse`` hook asks this, with the path made vault-relative."""
+        why = write_refusal(rel, op, today=self.today())
+        if why is not None:
+            return why
+        try:
+            self.path(rel, write=True)
+        except VaultError as exc:
+            return str(exc)
+        return None
+
+    def _refuse(self, rel: object, op: str) -> None:
+        why = self.refusal(rel, op)
         if why is not None:
             raise VaultError(why)
 
@@ -296,15 +333,8 @@ class VaultIO:
 
     def write(self, rel: object, body: object) -> str:
         """Create or replace a note; the frontmatter is made from its path and today's date."""
-        self._refuse(rel)
+        self._refuse(rel, WRITE)
         name, target = self.path(rel, write=True)
-        who = owner(name)
-        if who == JOURNAL:
-            raise VaultError(f"{name}: logs are append-only; use note_append")
-        if who == INBOX:
-            raise VaultError(
-                f"{name}: new inbox notes come from inbox_propose; note_append adds to one"
-            )
         lines = _strip_frontmatter(_body_lines(body))
         with self._lock:
             text = self._compose(name, lines, self.types())
@@ -316,7 +346,7 @@ class VaultIO:
         """Add lines to the end of a note: today's daily log (made if missing, then only ever
         appended to), or an existing note in an agent folder (rewritten atomically, ``upd``
         set to today)."""
-        self._refuse(rel)
+        self._refuse(rel, APPEND)
         name, target = self.path(rel, write=True)
         lines = _body_lines(lines_text, "lines")
         if not lines:
@@ -329,7 +359,8 @@ class VaultIO:
                 self._append_log(name, target, lines, types)
             else:
                 if not target.is_file():
-                    raise VaultError(f"no note at {name} yet: note_write makes it")
+                    maker = "inbox_propose" if owner(name) == INBOX else "note_write"
+                    raise VaultError(f"no note at {name} yet: {maker} makes it")
                 old = target.read_text(encoding="utf-8").replace("\r\n", "\n")
                 try:
                     schema.parse(old)
@@ -337,8 +368,10 @@ class VaultIO:
                     raise VaultError(
                         f"{name} doesn't follow the grammar now ({exc}); note_write a fixed copy"
                     ) from None
-                body = old.split("\n---\n", 1)[1].rstrip("\n").split("\n")
-                body = [] if body == [""] else body
+                rows = old.split("\n")
+                body = rows[rows.index("---", 1) + 1 :]  # parse() found the closing ---
+                while body and not body[-1]:
+                    body.pop()
                 text = self._compose(name, body + lines, types)
                 atomic_write(target, text.encode("utf-8"))
         self._written(name)
@@ -392,6 +425,7 @@ class VaultIO:
             types = self.types()
             for n in range(1, 100):
                 name = f"inbox/{stem}{'' if n == 1 else f'-{n}'}.md"
+                self._refuse(name, PROPOSE)
                 _, target = self.path(name, write=True)
                 if target.exists():
                     continue
