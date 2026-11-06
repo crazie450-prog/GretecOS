@@ -252,6 +252,8 @@ def test_weekly_logs_compact_into_a_month_after_8_weeks(vault: Path) -> None:
         "log/wk/2026-W41.md",
     ]
     assert not (vault / "log" / "wk" / "2026-W41.md").exists()
+    month = (vault / "log" / "mo" / "2026-10.md").read_text(encoding="utf-8")
+    assert "from: wk/2026-W40.md, wk/2026-W41.md\n" in month
     assert (vault / "log" / "wk" / "2026-W44.md").exists()
 
 

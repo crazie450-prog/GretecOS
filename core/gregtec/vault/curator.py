@@ -173,7 +173,13 @@ def _summary_note(
     kind = schema.type_for(rel, types)
     if kind is None:
         raise SummaryError(f"the schema has no type at {rel}")
-    sources_line = ", ".join(s.removeprefix("log/") for s in sources)
+    earlier: list[str] = []
+    if inputs and inputs[0] == rel:  # keep the earlier summary's sources in from:
+        for line in texts[0][1].splitlines():
+            if line.startswith("from: "):
+                earlier = line.removeprefix("from: ").split(", ")
+                break
+    sources_line = ", ".join([*earlier, *(s.removeprefix("log/") for s in sources)])
     body = [f"period: {period}", f"from: {sources_line}", *summary.lines]
     text = io.frontmatter(schema.id_for(rel, kind), kind.t, today)
     text += "".join(line + "\n" for line in body)
