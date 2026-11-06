@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-02
+upd: 2026-11-06
 ---
 version: 0
 note: the single source of truth for vault writers (plan 6.2); WO-2.5 re-measures and freezes it
@@ -19,7 +19,7 @@ note: keys * means any key until the WO that owns the type defines them
 ```tsv
 t	id	path	writer	keys
 schema	gos-schema	_gos/schema.md	repo	*
-index	index	INDEX.md	agents	*
+index	index	INDEX.md	generated	*
 goals	me-goals	me/goals.md	clayton	goal, note
 prefs	me-prefs	me/prefs.md	clayton	*
 tier	base-tier	base/tier.md	generated	*

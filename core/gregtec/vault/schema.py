@@ -132,13 +132,14 @@ def type_for(rel: str, types: dict[str, NoteType]) -> NoteType | None:
 
 def id_for(rel: str, kind: NoteType) -> str:
     """The id a note at ``rel`` has: the type's fixed id for a file type, else the file name
-    without ``.md`` (so a folder never holds two notes with one id), with the id pattern's
-    prefix put in front when the name lacks it (``log/2026-11-06.md`` is ``log-2026-11-06``)."""
+    without ``.md`` (so a folder never holds two notes with one id). A date-named note (its
+    name starts with a digit: ``log/2026-11-06.md``, ``log/wk/2026-W44.md``) gets the id
+    pattern's prefix in front (``log-2026-11-06``)."""
     if not kind.path.endswith("/"):
         return kind.id
     stem = rel.rsplit("/", 1)[-1].removesuffix(".md")
     prefix = kind.id.split("*", 1)[0] if kind.id.endswith("*") else ""
-    return stem if stem.startswith(prefix) else prefix + stem
+    return prefix + stem if stem[:1].isdigit() else stem
 
 
 def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:

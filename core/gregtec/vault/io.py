@@ -130,7 +130,7 @@ def write_refusal(rel: object, *, today: dt.date | None = None) -> str | None:
     """Why an agent may not write (or append to) ``rel``, or None if it may (plan 6.5).
     WO-2.4's ``PreToolUse`` path guard asks this for every vault write."""
     try:
-        path = clean(rel, write=True)
+        path = clean(rel)
     except VaultError as exc:
         return str(exc)
     who = owner(path)
@@ -154,6 +154,10 @@ def write_refusal(rel: object, *, today: dt.date | None = None) -> str | None:
             return f"{path}: agents append only to a daily log, log/YYYY-MM-DD.md (weekly and monthly logs are the curator's)"
         if today is not None and day[1] != today.isoformat():
             return f"{path}: logs are append-only, and only today's log ({today.isoformat()}) takes new lines"
+    try:
+        clean(path, write=True)
+    except VaultError as exc:
+        return str(exc)
     return None
 
 
@@ -270,7 +274,7 @@ class VaultIO:
 
     # --- writing
 
-    def _refuse(self, rel: str) -> None:
+    def _refuse(self, rel: object) -> None:
         why = write_refusal(rel, today=self.today())
         if why is not None:
             raise VaultError(why)
@@ -292,8 +296,8 @@ class VaultIO:
 
     def write(self, rel: object, body: object) -> str:
         """Create or replace a note; the frontmatter is made from its path and today's date."""
+        self._refuse(rel)
         name, target = self.path(rel, write=True)
-        self._refuse(name)
         who = owner(name)
         if who == JOURNAL:
             raise VaultError(f"{name}: logs are append-only; use note_append")
@@ -312,8 +316,8 @@ class VaultIO:
         """Add lines to the end of a note: today's daily log (made if missing, then only ever
         appended to), or an existing note in an agent folder (rewritten atomically, ``upd``
         set to today)."""
+        self._refuse(rel)
         name, target = self.path(rel, write=True)
-        self._refuse(name)
         lines = _body_lines(lines_text, "lines")
         if not lines:
             raise VaultError("nothing to append")
