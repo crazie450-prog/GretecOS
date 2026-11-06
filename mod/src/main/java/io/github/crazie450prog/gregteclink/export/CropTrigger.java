@@ -87,7 +87,6 @@ final class CropTrigger {
     }
 
     private static String dumpOrThrow(ExportRun run) throws Exception {
-        long t0 = System.currentTimeMillis();
         PathGuard dumps;
         try {
             dumps = new PathGuard(run.gameDir.toPath(), DUMP_DIR);
@@ -101,63 +100,117 @@ final class CropTrigger {
             return failed(run, "CropsNH's dumpers not found in NEI's option list: " + Json.error(t));
         }
         run.counts.put("crop_dumpers", dumpers.size());
+        Outcome o = runAll(dumps, dumpers, NEI_LOG, p -> copy(run, p));
+        if (o.dumpMs >= 0) run.durations.put("crops_dump", o.dumpMs);
+        if (o.copyMs >= 0) {
+            run.durations.put("crops_copy", o.copyMs);
+            run.counts.put("crop_files", o.files);
+        }
+        String error = o.error();
+        if (error != null) return failed(run, error);
+        String warning = o.warning();
+        if (warning != null) {
+            GregtecLink.LOG.warn("export {}: crop step ok, but {}", run.runId, warning);
+            run.partWarnings.put("crops", warning);
+        }
+        GregtecLink.LOG.info("export {}: CropsNH's {} dumpers wrote {} files", run.runId, dumpers.size(), o.files);
+        return "ok";
+    }
+
+    /** Attaches a sink to NEI's log for one dumper call; returns what detaches it. */
+    interface LogTap {
+
+        Runnable attach(NeiLogCapture.Sink sink) throws ReflectiveOperationException;
+    }
+
+    /** NEI's own logger ({@link NeiLogCapture}). */
+    static final LogTap NEI_LOG = sink -> NeiLogCapture.attach(sink)::detach;
+
+    /** Copies one written dump file into the run's {@code crops/}. */
+    interface Copier {
+
+        void copy(Path file) throws IOException, InterruptedException;
+    }
+
+    /** What {@link #runAll} found; the run's status follows from {@link #error} and {@link #warning}. */
+    static final class Outcome {
+
+        /** The step can't go on at all (a required dumper unregistered, NEI's API unreachable), or null. */
+        String fatal;
+        /** The required dumpers that failed, as "name: why". */
+        final List<String> errors = new ArrayList<>();
+        /** The other dumpers that failed. */
+        final List<String> others = new ArrayList<>();
+        /** The dumpers whose file was copied, sorted. */
+        final List<String> copied = new ArrayList<>();
+        int files;
+        long dumpMs = -1;
+        long copyMs = -1;
+
+        /** {@code part_errors.crops}, or null if the step is ok. */
+        String error() {
+            if (fatal != null) return fatal;
+            return errors.isEmpty() ? null : errors.size() + " dumper(s) failed, e.g. " + errors.get(0);
+        }
+
+        /** {@code part_warnings.crops} of an ok step, or null. */
+        String warning() {
+            if (error() != null || others.isEmpty()) return null;
+            return others.size() + " of CropsNH's other dumpers failed (their files are missing from crops/), e.g. "
+                + others.get(0);
+        }
+    }
+
+    /**
+     * Runs every dumper (by short name, sorted) with {@code log} tapped during each call, then copies the files they
+     * wrote. A {@link #REQUIRED} dumper's failure fails the step; one of the others' is only a warning. Never throws.
+     */
+    static Outcome runAll(PathGuard dumps, Map<String, Object> dumpers, LogTap log, Copier copier) {
+        Outcome o = new Outcome();
+        long t0 = System.currentTimeMillis();
         List<String> missing = new ArrayList<>(REQUIRED);
         missing.removeAll(dumpers.keySet());
         if (!missing.isEmpty()) {
-            return failed(
-                run,
-                "CropsNH registered no dumper " + missing + " under " + OPTIONS + ": " + dumpers.keySet());
+            o.fatal = "CropsNH registered no dumper " + missing + " under " + OPTIONS + ": " + dumpers.keySet();
+            return o;
         }
-
-        // A required dumper's failure fails the step; one of the others' is only a warning.
-        List<String> errors = new ArrayList<>();
-        List<String> others = new ArrayList<>();
         Map<String, Path> written = new TreeMap<>();
         for (Map.Entry<String, Object> e : dumpers.entrySet()) {
             String why;
             try {
-                why = runOne(dumps, e.getKey(), e.getValue(), written);
+                why = runOne(dumps, e.getKey(), e.getValue(), log, written);
             } catch (ReflectiveOperationException ex) {
-                return failed(run, "NEI's dumper API or log not reachable: " + Json.error(ex));
+                o.fatal = "NEI's dumper API or log not reachable: " + Json.error(ex);
+                return o;
             } catch (IOException | RuntimeException ex) { // a path refused or unreadable
                 why = Json.error(ex);
             }
-            if (why != null) (REQUIRED.contains(e.getKey()) ? errors : others).add(e.getKey() + ": " + why);
+            if (why != null) (REQUIRED.contains(e.getKey()) ? o.errors : o.others).add(e.getKey() + ": " + why);
         }
-        run.durations.put("crops_dump", System.currentTimeMillis() - t0);
+        o.dumpMs = System.currentTimeMillis() - t0;
 
         long t = System.currentTimeMillis();
-        int files = 0;
         for (Map.Entry<String, Path> e : written.entrySet()) {
             try {
-                copy(run, e.getValue());
-                files++;
+                copier.copy(e.getValue());
+                o.files++;
+                o.copied.add(e.getKey());
             } catch (Throwable ex) {
                 if (ex instanceof InterruptedException) Thread.currentThread()
                     .interrupt();
-                (REQUIRED.contains(e.getKey()) ? errors : others).add(e.getKey() + ": copy failed: " + Json.error(ex));
+                (REQUIRED.contains(e.getKey()) ? o.errors : o.others)
+                    .add(e.getKey() + ": copy failed: " + Json.error(ex));
             }
         }
-        run.durations.put("crops_copy", System.currentTimeMillis() - t);
-        run.counts.put("crop_files", files);
-
-        if (!errors.isEmpty()) return failed(run, errors.size() + " dumper(s) failed, e.g. " + errors.get(0));
-        if (!others.isEmpty()) {
-            String warning = others.size() + " of CropsNH's other dumpers failed (their files are missing from "
-                + "crops/), e.g. "
-                + others.get(0);
-            GregtecLink.LOG.warn("export {}: crop step ok, but {}", run.runId, warning);
-            run.partWarnings.put("crops", warning);
-        }
-        GregtecLink.LOG.info("export {}: CropsNH's {} dumpers wrote {} files", run.runId, dumpers.size(), files);
-        return "ok";
+        o.copyMs = System.currentTimeMillis() - t;
+        return o;
     }
 
     /**
-     * Runs one dumper, with NEI's log captured during the call; adds its file to {@code written}. Returns why it
-     * failed, or null. Throws only if NEI's API or logger can't be reached.
+     * Runs one dumper, with NEI's log tapped during the call; adds its file to {@code written}. Returns why it failed,
+     * or null. Throws only if NEI's API or logger can't be reached.
      */
-    private static String runOne(PathGuard dumps, String name, Object dumper, Map<String, Path> written)
+    private static String runOne(PathGuard dumps, String name, Object dumper, LogTap tap, Map<String, Path> written)
         throws ReflectiveOperationException, IOException {
         String file = (String) dumper.getClass()
             .getMethod("getFileName", String.class)
@@ -169,7 +222,7 @@ final class CropTrigger {
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS))
             return DUMP_DIR + "/" + file + " refused: not a regular file";
         NeiLogCapture.Lines log = new NeiLogCapture.Lines(DUMP_FAILED);
-        NeiLogCapture capture = NeiLogCapture.attach(log);
+        Runnable detach = tap.attach(log);
         long start = System.currentTimeMillis();
         try {
             dumper.getClass()
@@ -178,13 +231,16 @@ final class CropTrigger {
         } catch (InvocationTargetException ex) {
             return "dumpFile threw " + Json.error(ex.getCause());
         } finally {
-            capture.detach();
+            detach.run();
         }
         if (log.count() > 0) return "NEI logged '" + log.first() + "'";
         if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
             || Files.getLastModifiedTime(target, LinkOption.NOFOLLOW_LINKS)
                 .toMillis() < start - NeiTrigger.MTIME_SLACK_MS)
             return "wrote no " + DUMP_DIR + "/" + file;
+        // CropsNH's PrintWriter swallows write errors (a full disk): an empty file is the one sign left, as every
+        // dump has at least a header. A file cut short later is not detected (D134).
+        if (Files.size(target) == 0) return "wrote an empty " + DUMP_DIR + "/" + file;
         written.put(name, target);
         return null;
     }

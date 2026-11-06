@@ -504,7 +504,9 @@ def crop_lines(result: Result, full: bool) -> list[str]:
             verdict = f"all {len(check.shown)} crops they show are in the crop dump"
         else:
             names = ", ".join(missing)
-            verdict = f"{len(missing)} crops they show are NOT in the crop dump: {names}"
+            verdict = (
+                f"{len(missing)} crops they show are NOT in the crop dump: {names}"
+            )
         out.append(
             f"  NEI's CropsNH tabs: Crop Breeding {check.breeding} recipes with "
             f"{len(check.breeding_crops)} crops, {check.crop_pages} crop pages, "
