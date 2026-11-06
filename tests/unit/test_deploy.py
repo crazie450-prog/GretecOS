@@ -23,6 +23,7 @@ from gregtec import deploy as dep
 
 REPO = Path(__file__).resolve().parents[2]
 RELOCATE = dep.relocate_editable  # the real one; the autouse stub replaces it
+RENAME_DELAY = dep.RENAME_DELAY  # the real one; the autouse stub zeroes it
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
 
 
@@ -516,6 +517,32 @@ def test_first_deploy_swap_failure_is_undone(
     with pytest.raises(dep.DeployError, match="GOS_APP is unchanged"):
         dep.deploy(repo, "HEAD", app)
     assert snapshot(app) == before
+
+
+def test_a_swap_rename_refused_for_seconds_is_retried(
+    repo: Path, app: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An antivirus scan can hold GOS_APP\\current for seconds (WinError 5): the swap waits."""
+    dep.deploy(repo, "HEAD", app)
+    commit(repo, {"scripts/backup_world.ps1": "# v2\n"})
+    real = os.rename
+    refusals = dep.RENAME_TRIES - 1
+    slept: list[float] = []
+
+    def rename(src: Path, dst: Path) -> None:
+        nonlocal refusals
+        if Path(src).name == "current" and refusals:
+            refusals -= 1
+            raise PermissionError(13, "Access is denied", str(src))
+        real(src, dst)
+
+    monkeypatch.setattr(dep.os, "rename", rename)
+    monkeypatch.setattr(dep, "RENAME_DELAY", RENAME_DELAY)
+    monkeypatch.setattr(dep.time, "sleep", slept.append)  # recorded, not slept
+    dep.deploy(repo, "HEAD", app)
+    assert sum(slept) >= 9
+    assert (app / "scripts" / "backup_world.ps1").read_text("utf-8") == "# v2\n"
+    assert sorted(p.name for p in app.iterdir()) == ["current", "scripts"]
 
 
 @pytest.mark.parametrize("n", [1, 2, 3, 4, 5])
