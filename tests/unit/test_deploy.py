@@ -210,9 +210,32 @@ def test_refuses_and_changes_nothing(
     elif change == "no-backup-script":
         commit(repo, {"scripts/backup_world.ps1": None})
     before = snapshot(app)
+    called: list[int] = []
     with pytest.raises(dep.DeployError, match=message):
-        dep.deploy(repo, ref, app)
+        dep.deploy(repo, ref, app, before_swap=lambda: called.append(1))
     assert snapshot(app) == before
+    assert called == []  # a refused deploy never stops GOS (D115)
+
+
+def test_before_swap_runs_once_the_release_is_staged(repo: Path, app: Path) -> None:
+    """gos deploy stops a supervisor running from current here, and only here (D115)."""
+    first = dep.deploy(repo, "HEAD", app)
+    second_sha = commit(repo, {"scripts/backup_world.ps1": "# v2\n"})
+    seen: list[tuple[str, list[str]]] = []
+
+    def before_swap() -> None:
+        record = json.loads((app / "current" / "release.json").read_text("utf-8"))
+        staged = sorted(
+            p.name for p in app.iterdir() if p.name.startswith(".gos-staging-")
+        )
+        seen.append((record["commit"], staged))
+
+    second = dep.deploy(repo, "HEAD", app, before_swap=before_swap)
+    assert second.commit == second_sha
+    assert len(seen) == 1
+    current_then, staged = seen[0]
+    assert current_then == first.commit  # not swapped yet
+    assert len(staged) == 2 and not any("build" in name for name in staged)
 
 
 def test_untracked_files_are_not_deployed_and_not_refused(
