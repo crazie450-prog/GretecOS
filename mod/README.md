@@ -88,9 +88,11 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   mutation pools, soils, alternate seeds and six more), as clicking each Dump button under NEI's Tools, Data Dumps,
   Crops NH does, then copies the files they wrote to `dumps/` into the run's `crops/`. CropsNH is reached through
   NEI's API by reflection; nothing is compiled against it. Judged as NEI's step is: `parts.crops` is `ok` only if
-  the five dumpers Python reads are registered, no call threw, NEI's logger got no `Error dumping` line, each
-  dumper wrote its file and every copy succeeded; otherwise `failed` (`part_errors.crops`), and `absent` without
-  CropsNH. A file in `dumps/` that is a link is refused, since the dumper writes through it. It takes about 25 ms.
+  the five dumpers Python reads are registered and, for each, the call threw nothing, NEI's logger got no
+  `Error dumping` line during it, it wrote its file and the copy succeeded; otherwise `failed`
+  (`part_errors.crops`), and `absent` without CropsNH. One of the other six failing only adds
+  `part_warnings.crops`. A file in `dumps/` that is a link is refused, since the dumper writes through it. It takes
+  about 25 ms.
 - Without autoexport (a world opened by hand) the module posts two local chat lines, "GregtecLink: exporting NEI's
   recipes; ..." just before the freeze and "GregtecLink: export <run_id> finished: ..." after it, and stays in the
   world. CropsNH's dumpers add a chat line each.

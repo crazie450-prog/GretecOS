@@ -72,8 +72,9 @@ final class CropTrigger {
     /**
      * Runs every CropsNH dumper on the calling (client) thread, then copies the files they wrote into the run's
      * {@code crops/}. Records counts, durations and any error on the run. Returns "absent" without CropsNH; "ok" only
-     * if every required dumper is registered, no call threw, NEI logged no {@code Error dumping} line, every dumper
-     * wrote its file and every copy succeeded; otherwise "failed". Never throws.
+     * if every {@link #REQUIRED} dumper is registered and, for each of them, the call threw nothing, NEI logged no
+     * {@code Error dumping} line during it, it wrote its file and the copy succeeded; otherwise "failed". One of the
+     * other dumpers failing only adds {@code part_warnings.crops}. Never throws.
      */
     static String dump(ExportRun run) {
         if (!present()) return "absent";
@@ -108,77 +109,82 @@ final class CropTrigger {
                 "CropsNH registered no dumper " + missing + " under " + OPTIONS + ": " + dumpers.keySet());
         }
 
+        // A required dumper's failure fails the step; one of the others' is only a warning.
         List<String> errors = new ArrayList<>();
-        List<Path> written = new ArrayList<>();
-        NeiLogCapture.Lines log;
-        NeiLogCapture capture;
-        try {
-            log = new NeiLogCapture.Lines(DUMP_FAILED);
-            capture = NeiLogCapture.attach(log);
-        } catch (Throwable t) {
-            return failed(run, "NEI's log can't be captured: " + Json.error(t));
-        }
-        try {
-            for (Map.Entry<String, Object> e : dumpers.entrySet()) {
-                Object dumper = e.getValue();
-                String file = (String) dumper.getClass()
-                    .getMethod("getFileName", String.class)
-                    .invoke(dumper, e.getKey());
-                Path target = dumps.resolve(file);
-                if (!target.getParent()
-                    .equals(dumps.root())) {
-                    errors.add(e.getKey() + ": file " + file + " is not directly in " + DUMP_DIR);
-                    continue;
-                }
-                // The dumper writes through the file: refuse one that is a link or not a regular file.
-                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-                    errors.add(e.getKey() + ": " + DUMP_DIR + "/" + file + " refused: not a regular file");
-                    continue;
-                }
-                long start = System.currentTimeMillis();
-                try {
-                    dumper.getClass()
-                        .getMethod("dumpFile")
-                        .invoke(dumper);
-                } catch (InvocationTargetException ex) {
-                    errors.add(e.getKey() + ": dumpFile threw " + Json.error(ex.getCause()));
-                    continue;
-                }
-                if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
-                    || Files.getLastModifiedTime(target, LinkOption.NOFOLLOW_LINKS)
-                        .toMillis() < start - NeiTrigger.MTIME_SLACK_MS) {
-                    errors.add(e.getKey() + ": wrote no " + DUMP_DIR + "/" + file);
-                    continue;
-                }
-                written.add(target);
+        List<String> others = new ArrayList<>();
+        Map<String, Path> written = new TreeMap<>();
+        for (Map.Entry<String, Object> e : dumpers.entrySet()) {
+            String why;
+            try {
+                why = runOne(dumps, e.getKey(), e.getValue(), written);
+            } catch (ReflectiveOperationException ex) {
+                return failed(run, "NEI's dumper API or log not reachable: " + Json.error(ex));
             }
-        } finally {
-            capture.detach();
+            if (why != null) (REQUIRED.contains(e.getKey()) ? errors : others).add(e.getKey() + ": " + why);
         }
         run.durations.put("crops_dump", System.currentTimeMillis() - t0);
 
         long t = System.currentTimeMillis();
         int files = 0;
-        for (Path p : written) {
+        for (Map.Entry<String, Path> e : written.entrySet()) {
             try {
-                copy(run, p);
+                copy(run, e.getValue());
                 files++;
-            } catch (Throwable e) {
-                if (e instanceof InterruptedException) Thread.currentThread()
+            } catch (Throwable ex) {
+                if (ex instanceof InterruptedException) Thread.currentThread()
                     .interrupt();
-                errors.add(p.getFileName() + ": copy failed: " + Json.error(e));
+                (REQUIRED.contains(e.getKey()) ? errors : others).add(e.getKey() + ": copy failed: " + Json.error(ex));
             }
         }
         run.durations.put("crops_copy", System.currentTimeMillis() - t);
         run.counts.put("crop_files", files);
 
-        String reason = null;
-        if (log.count() > 0) reason = "NEI logged '" + DUMP_FAILED + "...': " + log.first();
-        else if (!errors.isEmpty()) reason = errors.size() + " dumper(s) failed, e.g. " + errors.get(0);
-        if (reason != null) return failed(run, reason);
+        if (!errors.isEmpty()) return failed(run, errors.size() + " dumper(s) failed, e.g. " + errors.get(0));
+        if (!others.isEmpty()) {
+            String warning = others.size() + " of CropsNH's other dumpers failed (their files are missing from "
+                + "crops/), e.g. "
+                + others.get(0);
+            GregtecLink.LOG.warn("export {}: crop step ok, but {}", run.runId, warning);
+            run.partWarnings.put("crops", warning);
+        }
         GregtecLink.LOG.info("export {}: CropsNH's {} dumpers wrote {} files", run.runId, dumpers.size(), files);
         return "ok";
+    }
+
+    /**
+     * Runs one dumper, with NEI's log captured during the call; adds its file to {@code written}. Returns why it
+     * failed, or null. Throws only if NEI's API or logger can't be reached.
+     */
+    private static String runOne(PathGuard dumps, String name, Object dumper, Map<String, Path> written)
+        throws ReflectiveOperationException, IOException {
+        String file = (String) dumper.getClass()
+            .getMethod("getFileName", String.class)
+            .invoke(dumper, name);
+        Path target = dumps.resolve(file);
+        if (!target.getParent()
+            .equals(dumps.root())) return "file " + file + " is not directly in " + DUMP_DIR;
+        // The dumper writes through the file: refuse one that is a link or not a regular file.
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS))
+            return DUMP_DIR + "/" + file + " refused: not a regular file";
+        NeiLogCapture.Lines log = new NeiLogCapture.Lines(DUMP_FAILED);
+        NeiLogCapture capture = NeiLogCapture.attach(log);
+        long start = System.currentTimeMillis();
+        try {
+            dumper.getClass()
+                .getMethod("dumpFile")
+                .invoke(dumper);
+        } catch (InvocationTargetException ex) {
+            return "dumpFile threw " + Json.error(ex.getCause());
+        } finally {
+            capture.detach();
+        }
+        if (log.count() > 0) return "NEI logged '" + log.first() + "'";
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+            || Files.getLastModifiedTime(target, LinkOption.NOFOLLOW_LINKS)
+                .toMillis() < start - NeiTrigger.MTIME_SLACK_MS)
+            return "wrote no " + DUMP_DIR + "/" + file;
+        written.put(name, target);
+        return null;
     }
 
     /**
@@ -212,7 +218,7 @@ final class CropTrigger {
                 run.addCopiedFile("crops/" + p.getFileName(), p);
                 return;
             } catch (IOException e) {
-                if (attempt >= 3) throw e;
+                if (attempt >= NeiTrigger.COPY_ATTEMPTS) throw e;
                 GregtecLink.LOG.warn("copy of {} failed (try {}): {}; retrying", p, attempt, e.toString());
                 Thread.sleep(1000L << (attempt - 1));
             }

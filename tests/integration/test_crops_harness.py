@@ -109,6 +109,9 @@ def test_every_dumped_crop_and_every_crop_of_neis_breeding_tab_loads(
     assert data is not None and data.nei is not None
     assert data.problems == []
     assert (
+        data.nei.shown >= tab and data.nei.shown <= loaded
+    )  # every CropsNH tab's crops
+    assert (
         recipes[1] == data.nei.breeding > 0
     )  # each NEI breeding recipe is a dumped one
     assert (
@@ -120,7 +123,8 @@ def test_every_dumped_crop_and_every_crop_of_neis_breeding_tab_loads(
     )  # every drop keyed by item and in the catalog
     text = "\n".join(report.lines(client, full=False))
     assert f"Crops: {len(ids)} crops" in text
-    assert "every crop they show is in the crop dump" in text
+    assert "crops they show are in the crop dump" in text
+    assert "crops they show are NOT" not in text
     print(
         f"\n{len(ids)} crops dumped and loaded; NEI's Crop Breeding tab: {data.nei.breeding} "
         f"recipes with {len(tab)} crops; {recipes[0]} parent recipes; {drops[0]} drops"

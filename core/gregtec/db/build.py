@@ -208,6 +208,12 @@ def load(
             )
         except (crops.FormatError, OSError) as exc:
             loaded.crops_error = str(exc)
+        except (
+            ValueError,
+            LookupError,
+            IndexError,
+        ) as exc:  # a shape the reader didn't foresee
+            loaded.crops_error = f"{type(exc).__name__}: {exc}"
     return loaded
 
 
@@ -680,17 +686,20 @@ def _names(conn: sqlite3.Connection) -> None:
         "SELECT 'machine', m.id, m.name_en, NULL, m.class_name FROM machine AS m",
         "SELECT 'recipe_map', id, name_en, NULL, unloc_name FROM recipe_map",
         "SELECT 'nei_handler', id, name_en, NULL, handler_name FROM nei_handler",
-        # Crops of the newest run that has some (WO-1.10); ref_id is the crop id.
-        (
-            "SELECT 'crop', id, name, NULL, id FROM crop WHERE run_id = (SELECT e.id FROM"
-            " export_run AS e WHERE EXISTS (SELECT 1 FROM crop AS c WHERE c.run_id = e.id)"
-            " ORDER BY e.created_at DESC, e.run_key DESC LIMIT 1)"
-        ),
     )
     for select in sources:
         conn.execute(
             "INSERT INTO name_fts(kind, ref_id, name_en, name_zh, registry_name) "
             + select
+        )
+    # Crops of the newest run that has some (WO-1.10); ref_id is the crop id. Called after
+    # pruning, so it never indexes a run the build deletes.
+    runs = crop_db.runs_with_crops(conn)
+    if runs:
+        conn.execute(
+            "INSERT INTO name_fts(kind, ref_id, name_en, name_zh, registry_name)"
+            " SELECT 'crop', id, name, NULL, id FROM crop WHERE run_id = ?",
+            (runs[0][0],),
         )
 
 
@@ -744,8 +753,8 @@ def write(
         if loaded.crops is not None:
             crop_db.write(conn, run_id, loaded.crops, items)
         _machines(conn, loaded, items, maps)
-        _names(conn)
         pruned = prune(conn, keep, run_id)
+        _names(conn)
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")

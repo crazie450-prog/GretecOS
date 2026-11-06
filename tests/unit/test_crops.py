@@ -510,10 +510,43 @@ def test_a_bad_file_is_a_format_error(
         parsed(run, with_nei=False)
 
 
-def test_an_unknown_charset_is_a_format_error(tmp_path: Path) -> None:
-    run = make_run(tmp_path, charset="no-such-charset")
+@pytest.mark.parametrize("name", ["no-such-charset", "base64"])
+def test_an_unknown_charset_is_a_format_error(tmp_path: Path, name: str) -> None:
+    run = make_run(tmp_path, charset=name)  # base64 is a Python codec, not a charset
     with pytest.raises(crops.FormatError, match="not a known charset"):
         parsed(run)
+
+
+def test_an_empty_first_line_is_a_format_error(tmp_path: Path) -> None:
+    files = {**base_files(nei_ok=False), **crop_files()}
+    files[f"crops/{crops.POOLS}"] = b"\r\nAlpha Flower,TRUE"
+    with pytest.raises(crops.FormatError, match="no 'Crop,...' header"):
+        parsed(make_run(tmp_path, files=files), with_nei=False)
+
+
+def test_a_crop_only_on_neis_pool_or_seed_tabs_is_found_missing(tmp_path: Path) -> None:
+    files = {**base_files(), **crop_files()}
+    extra = [
+        {
+            "handler": crops.NEI_POOLS,
+            "ingredients": [seed("cropsnh:alpha"), seed("cropsnh:zeta")],
+            "results": [],
+        },
+        {
+            "handler": crops.NEI_SEEDS,
+            "ingredients": [st("test:zeta", 0, 1, "Zeta")],
+            "results": [seed("cropsnh:eta")],
+        },
+    ]
+    files["nei/Crops.jsonl"] += "".join(json.dumps(x) + "\r\n" for x in extra).encode()
+    make_run(tmp_path, files=files)
+    data = parsed(tmp_path / collect.DATA_EXPORTS / RUN)
+    assert data.nei is not None and {"cropsnh:eta", "cropsnh:zeta"} <= data.nei.shown
+    result = build.build(tmp_path)
+    text = "\n".join(report.lines(result, full=False))
+    assert (
+        "2 crops they show are NOT in the crop dump: cropsnh:eta, cropsnh:zeta" in text
+    )
 
 
 def test_requirement_kinds() -> None:
@@ -523,6 +556,10 @@ def test_requirement_kinds() -> None:
         "other", None, "Braucht Licht"
     )
     assert crops.requirement("MachineCatalyst(nonsense)")[0].kind == "other"
+    # All or nothing: one item that doesn't read makes the whole condition "other".
+    assert crops.requirement("MachineCatalyst(Bricks x 5 | weird)") == [
+        crops.Requirement("other", None, "MachineCatalyst(Bricks x 5 | weird)")
+    ]
     assert crops.soil_lists("global") == ("global",)
     assert crops.clean("§6Gold §rLeaf") == "Gold Leaf"
 
@@ -568,7 +605,7 @@ def test_db_build_loads_the_crop_tables(tmp_path: Path) -> None:
         "Breeding tab, 1 for the Crop Breeder only), 2 mutation pools (4 memberships), 4 soil "
         "lists (5 blocks), 2 alternate seeds, 6 drops (6 keyed by item)"
     ) in text
-    assert "every crop they show is in the crop dump" in text
+    assert "all 4 crops they show are in the crop dump" in text
     assert "  crop:cropsnh:weed\tWeed\t1\tglobal\tno" in text
 
 
@@ -596,6 +633,19 @@ def test_a_reload_replaces_and_a_prune_deletes_crop_rows(tmp_path: Path) -> None
     assert last.pruned == ["20261107T120000Z"]  # 06 went when 07 was built
     for table in crop_db.TABLES:
         assert rows(last.db, f"SELECT DISTINCT run_id FROM {table}") == [(last.run_id,)]
+
+
+def test_the_name_index_never_keeps_crops_of_a_pruned_run(tmp_path: Path) -> None:
+    make_run(tmp_path, "20261106T120000Z", "2026-11-06T12:00:00Z")
+    make_run(
+        tmp_path, "20261107T120000Z", "2026-11-07T12:00:00Z", crops_status="failed"
+    )
+    build.build(tmp_path, "20261106T120000Z")
+    # The new run has no crops and the old one is pruned in the same build: no crop is indexed.
+    last = build.build(tmp_path, "20261107T120000Z", keep=1)
+    assert last.pruned == ["20261106T120000Z"]
+    assert rows(last.db, "SELECT count(*) FROM name_fts WHERE kind = 'crop'") == [(0,)]
+    assert rows(last.db, "SELECT count(*) FROM crop") == [(0,)]
 
 
 @pytest.mark.parametrize(

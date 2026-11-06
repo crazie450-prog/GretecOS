@@ -26,7 +26,7 @@ final class NeiTrigger {
     /** A file NEI wrote during the call has an mtime no older than the call's start minus this (FAT: 2 s steps). */
     static final long MTIME_SLACK_MS = 2000;
     /** Each copy is tried 3 times, as Windows may still hold a just-written file. */
-    private static final int COPY_ATTEMPTS = 3;
+    static final int COPY_ATTEMPTS = 3;
 
     private static Method isLoaded;
     private static Field loadFinished;

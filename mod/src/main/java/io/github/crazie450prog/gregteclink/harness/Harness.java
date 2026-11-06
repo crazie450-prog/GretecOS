@@ -724,6 +724,9 @@ public final class Harness {
             JsonObject files = manifest.getAsJsonObject("files");
             JsonElement errors = manifest.get("part_errors");
             JsonElement status = parts.get("crops");
+            JsonElement warnings = manifest.get("part_warnings");
+            JsonElement cropWarning = warnings != null && warnings.isJsonObject() ? warnings.getAsJsonObject()
+                .get("crops") : null;
             Map<String, JsonObject> listed = new TreeMap<>();
             for (Map.Entry<String, JsonElement> e : files.entrySet()) {
                 if (e.getKey()
@@ -741,7 +744,10 @@ public final class Harness {
             check(
                 checks,
                 "crops_ok",
-                status != null && "ok".equals(status.getAsString()) && copied == listed.size() && copied == dumpers,
+                status != null && "ok".equals(status.getAsString())
+                    && copied == listed.size()
+                    && copied == dumpers
+                    && cropWarning == null,
                 "parts.crops=" + status
                     + " crop_dumpers="
                     + dumpers
@@ -749,7 +755,8 @@ public final class Harness {
                     + copied
                     + " listed="
                     + listed.size()
-                    + (errors == null ? "" : " part_errors=" + errors));
+                    + (errors == null ? "" : " part_errors=" + errors)
+                    + (cropWarning == null ? "" : " part_warnings.crops=" + cropWarning));
 
             Set<String> onDisk = new TreeSet<>();
             Path crops = dir.resolve(CROPS_DIR);

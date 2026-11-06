@@ -211,6 +211,7 @@ class NeiCheck:
     crop_pages: int = 0
     breeding: int = 0  # recipes in the Crop Breeding tab
     breeding_crops: set[str] = field(default_factory=set)  # crops in that tab
+    shown: set[str] = field(default_factory=set)  # crops in any of CropsNH's tabs
     pools: int = 0
     pools_matched: int = 0
     drops_keyed: int = 0
@@ -244,11 +245,12 @@ def charset(manifest: Mapping[str, Any]) -> str:
     if name is None:
         return "UTF-8"
     try:
-        codecs.lookup(str(name))
+        info = codecs.lookup(str(name))
     except LookupError:
-        raise FormatError(
-            f"manifest java.charset {name!r} is not a known charset"
-        ) from None
+        info = None
+    # Python's binary codecs (base64, zlib) aren't charsets: open() refuses them.
+    if info is None or not getattr(info, "_is_text_encoding", True):
+        raise FormatError(f"manifest java.charset {name!r} is not a known charset")
     return str(name)
 
 
@@ -256,7 +258,7 @@ def _rows(path: Path, encoding: str) -> list[list[str]]:
     try:
         with open(path, encoding=encoding, newline="") as f:
             return list(csv.reader(f, strict=True))
-    except (UnicodeDecodeError, csv.Error) as exc:
+    except (UnicodeError, csv.Error) as exc:
         raise FormatError(f"{DIR}/{path.name}: {exc}") from None
 
 
@@ -280,15 +282,15 @@ def clean(name: str) -> str:
 
 
 def requirement(text: str) -> list[Requirement]:
-    """One requirement or condition column; a ``MachineCatalyst(...)`` gives one per item."""
+    """One requirement or condition column; a ``MachineCatalyst(...)`` gives one per item, or
+    one ``other`` for the whole text when any item doesn't read."""
     m = _CATALYST.fullmatch(text)
     if m:
         out = []
         for part in m.group(1).split(_LIST_SEP):
             item = _CATALYST_ITEM.fullmatch(part)
             if item is None:
-                out.append(Requirement("other", None, text))
-                break
+                return [Requirement("other", None, text)]
             out.append(Requirement("catalyst", int(item.group(2)), item.group(1)))
         return out
     for pattern, kind in _KINDS:
@@ -453,7 +455,7 @@ def parse_pools(
     if not rows or rows[0] == ["Empty"]:
         return []
     header = rows[0]
-    if header[0] != "Crop":
+    if not header or header[0] != "Crop":
         raise FormatError(f"{DIR}/{POOLS}: no 'Crop,...' header")
     pools = [clean(p) for p in header[1:]]
     if len(set(pools)) != len(pools):
@@ -564,12 +566,17 @@ def apply_nei(data: CropData, lines: Iterable[Recipe], refs: NeiRefs) -> None:
     pages: dict[str, Recipe] = {}
     breeding: set[str] = set()
     for r in lines:
-        if r.handler == NEI_CROPS and r.inputs:
-            crop = _species(r.inputs[0].ref, refs)
+        if r.handler == NEI_CROPS:
+            crop = _species(r.inputs[0].ref, refs) if r.inputs else None
             if crop is None:
                 data.problems.append("an NEI crop page shows no CropsNH seed")
                 continue
             check.crop_pages += 1
+            if crop in pages:
+                data.problems.append(
+                    f"NEI has two crop pages for crop:{crop}; the first is used"
+                )
+                continue
             pages[crop] = r
         elif r.handler == NEI_BREEDING:
             check.breeding += 1
@@ -585,14 +592,21 @@ def apply_nei(data: CropData, lines: Iterable[Recipe], refs: NeiRefs) -> None:
             breeding.add(f"{child}<{'+'.join(sorted(parents))}")
         elif r.handler == NEI_POOLS:
             check.pools += 1
-            members = tuple(sorted({_species(s.ref, refs) or "?" for s in r.inputs}))
+            species = {_species(s.ref, refs) for s in r.inputs}
+            check.shown.update(s for s in species if s is not None)
+            members = tuple(sorted(s or "?" for s in species))
             if any(p.members == members for p in data.pools):
                 check.pools_matched += 1
             else:
                 data.problems.append(
                     f"an NEI mutation pool page ({len(members)} crops) matches no dumped pool"
                 )
-    shown = set(pages) | check.breeding_crops
+        elif r.handler == NEI_SEEDS:
+            check.shown.update(
+                s for s in (_species(o.ref, refs) for o in r.outputs) if s is not None
+            )
+    check.shown.update(pages, check.breeding_crops)
+    shown = check.shown
     for cid in sorted(shown - set(data.crops)):
         data.problems.append(
             f"NEI shows crop {cid}, which CropsNH's crop dump doesn't list"
@@ -658,7 +672,7 @@ def read(
         problems.append("CropsNH's crop dump lists no crop")
     try:
         soils_text = (folder / SOILS).read_text(encoding=enc)
-    except UnicodeDecodeError as exc:
+    except UnicodeError as exc:
         raise FormatError(f"{DIR}/{SOILS}: {exc}") from None
     data = CropData(
         crops=crops,

@@ -242,7 +242,7 @@ same crops by the seed's NBT `crop` (the crop id) (D136). Neither the files nor 
           "nei":"absent|skipped_server|ok|failed","crops":"absent|skipped_server|ok|failed",
           "autoexport":"off|ok|failed"},
  "part_errors":{"<part>":"<why it failed>"}?,
- "part_warnings":{"nei":"<what an ok NEI step left out>"}?,
+ "part_warnings":{"nei":"<what an ok NEI step left out>","crops":"<an optional crop dumper that failed>"}?,
  "durations_ms":{"gt_dump","machines","ore_mixes","refs","nei_wait"?,"nei_dump"?,"nei_copy"?,"crops_dump"?,
                  "crops_copy"?}}
 ```
@@ -274,10 +274,10 @@ same crops by the seed's NBT `crop` (the crop id) (D136). Neither the files nor 
   - `absent`: CropsNH isn't loaded.
   - `skipped_server`: a dedicated server, which has no NEI to run the dumpers.
   - `ok`: every dumper Python reads (`alternateSeed`, `cropRegistry`, `deterministicMutations`, `mutationPools`,
-    `soilRegistry`) is registered, no `dumpFile()` threw, NEI's logger (`NEIClientConfig.logger`) got no
-    `Error dumping ...` line during the calls (NEI's `DataDumper` catches its own exceptions and logs that), every
-    dumper wrote its file and every copy succeeded; `counts.crop_dumpers` (registered) equals `counts.crop_files`
-    (copied).
+    `soilRegistry`) is registered and, for each of them, `dumpFile()` threw nothing, NEI's logger
+    (`NEIClientConfig.logger`) got no `Error dumping ...` line during its call (NEI's `DataDumper` catches its own
+    exceptions and logs that), it wrote its file and the copy succeeded. Then `counts.crop_dumpers` (registered)
+    equals `counts.crop_files` (copied) unless one of the other six failed, which only adds `part_warnings.crops`.
   - `failed`: anything else, with the reason in `part_errors.crops`; also when NEI's recipe step didn't run (NEI
     absent or not ready, the world closed first, the autoexport deadline), since the crop step runs right after it.
   - A file already in `dumps/` that is a link or not a regular file is refused (the dumper would write through it).
@@ -292,7 +292,8 @@ same crops by the seed's NBT `crop` (the crop id) (D136). Neither the files nor 
 - `part_warnings` is present only when a part is `ok` but left something out. Today only `nei`: NEI dropped one or
   more recipe handlers while loading them (`counts.nei_lookup_errors` > 0; NEI names them only on stderr), so their
   recipes are missing from `nei/` although the lines still equal NEI's count. **Readers that need every handler
-  check that `part_warnings.nei` is absent.**
+  check that `part_warnings.nei` is absent.** And `crops` (WO-1.10): one of CropsNH's dumpers that Python doesn't
+  read failed, so its file is missing from `crops/`.
 - The `nei_*` counts and the `nei_dump` and `nei_copy` durations are present only when the NEI step called
   `dumpAll`; `nei_wait` also when NEI was not ready in time. `nei_handlers` and `nei_reported` are -1 when NEI logged
   no such line. `nei_wait` is the time from entering the world until the dump started (or the wait timed out);
