@@ -1,0 +1,54 @@
+{
+ "schema": 3,
+ "controller": {
+  "registry_name": "gregtech:gt.blockmachines",
+  "meta": 9002,
+  "display_name": "Fixture Freezer",
+  "source_class": "gtPlusPlus.fixture.MTEFixtureFreezer",
+  "facing_convention": "controller front = NORTH (-Z), ExtendedFacing NORTH_NORMAL_NONE; offsets d = [dx,dy,dz] world-space deltas from the controller block"
+ },
+ "variants": [
+  {
+   "trigger_stack_size": 1,
+   "channels": {},
+   "blocks": [
+    {"d": [-1, 0, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 0, 0], "block": "gregtech:gt.blockmachines", "meta": 9002},
+    {"d": [1, 0, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 0, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 0, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 0, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 0, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 0, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 0, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 1, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 1, 0], "block": "fixture:glass", "meta": 0},
+    {"d": [1, 1, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 1, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 1, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 1, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 1, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 1, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 2, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 2, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 2, 0], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 2, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 2, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 2, 1], "block": "fixture:casing", "meta": 1},
+    {"d": [-1, 2, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [0, 2, 2], "block": "fixture:casing", "meta": 1},
+    {"d": [1, 2, 2], "block": "fixture:casing", "meta": 1}
+   ],
+   "hints": [],
+   "hatch_slots": [
+    {"d": [-1, 0, 2], "kinds": ["Energy", "InputHatch", "OutputHatch"]},
+    {"d": [0, 0, 2], "kinds": ["Energy", "InputHatch", "OutputHatch"]},
+    {"d": [1, 0, 2], "kinds": ["Energy", "InputHatch", "OutputHatch"]},
+    {"d": [0, 3, 1], "kinds": ["Muffler"]}
+   ],
+   "bbox": [3, 3, 3]
+  }
+ ],
+ "substitutions": {},
+ "failures": []
+}
