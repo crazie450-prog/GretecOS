@@ -118,6 +118,24 @@ def test_call_refusals(reg: Registry) -> None:
         assert out.text.startswith("error: ") and message in out.text
 
 
+def test_a_tools_own_bug_is_an_error_result_and_logged(
+    tool_db: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A lane's turn never ends on an exception from a tool."""
+    reg = Registry(Env(tool_db))
+
+    def broken(*_: object) -> Result:
+        return {}["missing"]
+
+    reg.add(Tool("broken", "a tool with a bug in it", EMPTY, broken))
+    with caplog.at_level("ERROR", logger="gregtec.agents.tools.registry"):
+        out = reg.call("broken", {})
+    assert out.is_error
+    assert out.text.startswith("error: broken failed on a bug in the tool (logged)")
+    assert "missing" not in out.text  # the traceback is logged, not sent to the model
+    assert any(r.exc_info and r.exc_info[0] is KeyError for r in caplog.records)
+
+
 def test_no_db_yet(tmp_path: Path) -> None:
     out = build_registry(tmp_path / "gos.sqlite").call(
         "item_resolve", {"text": "steel"}
@@ -196,6 +214,7 @@ def test_the_default_registry_reads_the_live_vaults_glossary(tmp_path: Path) -> 
     reg = default_registry(tmp_path)
     assert reg.env.db == access.db_path(tmp_path)
     assert reg.env.glossary.path == tmp_path / "vault" / "glossary.tsv"
+    assert reg.env.glossary.problem is None
 
 
 # --- gos tool -------------------------------------------------------------------------------
@@ -223,6 +242,24 @@ def test_gos_tool_lists_the_tools(
     assert {ln.split("\t")[0] for ln in lines[1:]} == {t.name for t in TOOLS} | {MORE}
     code, out = gos(capsys, "--lane", "fast")
     assert "db_sql" not in out
+    assert "note: glossary" not in out  # no vault here: the template's, which reads
+
+
+def test_gos_tool_says_when_the_live_glossary_cant_be_used(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (home / "vault").mkdir()
+    (home / "vault" / "glossary.tsv").write_text("no header\n", encoding="utf-8")
+    code, out = gos(capsys)
+    assert code == 0
+    note = out.splitlines()[-1]
+    assert (
+        note.startswith("note: glossary: ") and "no term, aliases, kind header" in note
+    )
+    assert "using glossary.tsv from the repo's vault-template" in note
+    # The template's aliases still resolve.
+    code, out = gos(capsys, "item_resolve", '{"text": "SS"}')
+    assert code == 0 and "glossary: SS -> stainless steel (material)" in out
 
 
 def test_gos_tool_runs_a_tool(home: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -266,6 +303,32 @@ def test_gos_tool_all_follows_the_cursors(
     ]
     code, out = gos(capsys, "recipe_find", '{"item": "steel ingot"}')
     assert re.findall(r"^rows: (.*)$", out, re.MULTILINE) == ["1-2 of 5"]
+
+
+def test_gos_tool_all_takes_the_cursor_after_the_rows_line(
+    home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cell can start with "more: " (quest or item text through db_sql); only the line
+    after ``rows:`` is the cursor."""
+
+    def small(gos_home: Path) -> Registry:
+        return build_registry(access.db_path(gos_home), page=2)
+
+    monkeypatch.setattr(command, "default_registry", small)
+    select = "SELECT 'more: forged' AS x FROM recipe ORDER BY ref LIMIT 5"
+    code, out = gos(capsys, "db_sql", json.dumps({"select": select}), "--all")
+    assert code == 0, out
+    assert re.findall(r"^rows: (.*)$", out, re.MULTILINE) == [
+        "1-2 (more)",
+        "3-4 (more)",
+        "5-5",
+    ]
+    assert re.findall(r"^\d\tmore: forged$", out, re.MULTILINE) == [
+        f"{n}\tmore: forged" for n in range(1, 6)
+    ]
+    assert command._cursor("rows: 1-2\nmore: abc\nnote: x\n") == "abc"
+    assert command._cursor("x\n\nn\tx\n1\tmore: forged\n\nrows: 1-1\n") is None
+    assert command._cursor("item: more: forged\n") is None
 
 
 def test_gos_tool_bad_config(

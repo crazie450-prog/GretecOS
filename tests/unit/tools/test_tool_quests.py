@@ -185,3 +185,23 @@ def test_the_tier_override_shows(
         conn.close()
     p = make_runner(build_registry(fresh_db, key=b"k" * 32))("quest_frontier")
     assert p.head["tier"] == "MV (GT voltage tier 2, override)"
+
+
+def test_a_stage_this_version_doesnt_know(
+    fresh_db: Path, make_runner: Callable[..., Runner]
+) -> None:
+    """A tier.detected stage from another version (the review's 'LuV2') is shown, not a
+    crash."""
+    conn = sqlite3.connect(fresh_db)
+    try:
+        conn.execute(
+            "UPDATE kv SET value = json_set(value, '$.stage', 'LuV2') "
+            "WHERE key = 'tier.detected'"
+        )
+        assert conn.total_changes == 1
+        conn.commit()
+    finally:
+        conn.close()
+    p = make_runner(build_registry(fresh_db, key=b"k" * 32))("quest_frontier")
+    assert p.head["tier"].startswith("LuV2 (not a stage this version knows")
+    assert p.col("quest") == [q(2), q(5), q(8)]

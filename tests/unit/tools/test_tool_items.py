@@ -95,6 +95,34 @@ def test_keys_resolve_to_themselves(run: Runner, text: str, key: str) -> None:
     assert p.head["ambiguous"] == "0"
 
 
+CLAY_CAST = "TConstruct:Clay Cast@3"
+JET_FUEL = "fluid:jet fuel a"
+
+
+def test_keys_with_spaces_round_trip(run: Runner) -> None:
+    """Registry and fluid names can have spaces (174 of the dev runtime's 1349 fluids do): the
+    key item_resolve gives back must work in every tool that takes an item."""
+    fuel = run("item_resolve", text="jet fuel")
+    assert fuel.rows[0]["key"] == JET_FUEL and fuel.rows[0]["name"] == "Jet Fuel A"
+    cast = run("item_resolve", text="clay ingot cast")
+    assert cast.rows[0]["key"] == CLAY_CAST
+    for key in (JET_FUEL, CLAY_CAST, f"  {JET_FUEL} "):
+        p = run("item_resolve", text=key)
+        assert p.col("key") == [key.strip()] and p.head["ambiguous"] == "0"
+    made = run("recipe_find", item=JET_FUEL)
+    assert made.head["item"] == f"Jet Fuel A [{JET_FUEL}]"
+    assert [r["out"] for r in made.rows] == [f"50L Jet Fuel A [{JET_FUEL}]"]
+    assert made.rows[0]["in"].startswith(
+        f"Clay Ingot Cast [{CLAY_CAST}] (not consumed)"
+    )
+    used = run("recipe_uses", item=CLAY_CAST)
+    assert used.col("ref") == made.col("ref")
+    quests = run("quest_for_item", item=JET_FUEL)
+    assert [(r["match"], r["amount"]) for r in quests.rows] == [("fluid", "250")]
+    # A key is looked up exactly: its words don't fall through to a search.
+    assert run("recipe_find", item="fluid:jet  fuel a").rows == []
+
+
 def test_an_unknown_key_or_name_gives_no_candidates(run: Runner) -> None:
     for text in ("gregtech:gt.metaitem.01@99999", "fluid:nope", "zzzqqq"):
         p = run("item_resolve", text=text)
@@ -159,6 +187,29 @@ def test_a_bad_glossary_is_ignored(
     g = Glossary.load(path)
     assert g.entries == ()
     assert problem in (g.problem or "")
+
+
+def test_a_glossary_saved_with_a_bom_reads(tmp_path: Path) -> None:
+    """Windows editors (Notepad, Excel's TSV) start a UTF-8 file with a BOM."""
+    path = tmp_path / "glossary.tsv"
+    path.write_bytes("﻿term\taliases\tkind\nfoo\tbar\tmaterial\n".encode())
+    g = Glossary.load(path)
+    assert g.problem is None
+    assert [e.forms for e in g.entries] == [("foo", "bar")]
+
+
+@pytest.mark.parametrize("content", [b"no header here\n", b"\xff\xfe", b""])
+def test_a_bad_live_glossary_falls_back_to_the_template(
+    tmp_path: Path, content: bytes
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "glossary.tsv").write_bytes(content)
+    g = Glossary.find(vault)
+    assert g.path == TEMPLATE
+    assert any(e.term == "EBF" for e in g.entries)  # "EBF" and "SS" still resolve
+    assert g.problem is not None
+    assert str(vault / "glossary.tsv") in g.problem and "vault-template" in g.problem
 
 
 def test_glossary_variants() -> None:
