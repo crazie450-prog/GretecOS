@@ -21,8 +21,9 @@ only what needs the live game: registry names, ore names, display names and GT's
   outside tests (dev-environment data is never game data).
 - The mod writes inside its own instance only: the export root must be exactly the game dir's real path plus
   `gregteclink/exports`, so a link or junction at `gregteclink` or `exports` stops the export before anything is
-  written. WO-1.2/1.4's collection script copies a run into `GOS_HOME\data\exports\<run_id>\` with `safe_open`,
-  copy-then-parse and retry ×3. Python writes nothing to Export.
+  written. `gos export collect` (WO-1.2, `core/gregtec/ingest/collect.py`, D101) copies the newest complete run into
+  `GOS_HOME\data\exports\<run_id>\` with `safe_open`, verifying every file before it is written, and keeps the newest
+  5 there (D102). Python writes nothing to Export.
 - **Pruning** (D98): after a run's rename succeeds, the mod keeps the newest 10 complete runs (manifest
   `"complete": true`, newest by `created_utc`, then by name), the new run among them when it is complete. It deletes
   older complete runs and every `.partial` folder an earlier run left, including one whose rename failed. It also keeps the newest 3 incomplete runs (manifest `"complete": false`) and deletes older

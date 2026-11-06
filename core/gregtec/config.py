@@ -3,10 +3,12 @@
 | key                      | default                                  | read by                     |
 |--------------------------|------------------------------------------|-----------------------------|
 | [paths] gos_app          | C:/GregtecOS-app                         | deploy (WO-0.8), sync (D98) |
-| [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3)               |
-| [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync                        |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | export collect (WO-1.2)     |
+| [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3), collect      |
+| [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync, collect               |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
+| [export] keep_collected  | 5 (D102)                                 | export collect              |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -40,9 +42,14 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
 }
 
 
+def default_home() -> Path:
+    return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
+
+
 @dataclass(frozen=True)
 class Config:
     gos_app: Path = Path("C:/GregtecOS-app")
+    gos_home: Path = field(default_factory=default_home)
     prism_instances: Path = Path("C:/Games/PrismLauncher/instances")
     play: str = "GTNH-Play"
     export: str = "GTNH-Export"
@@ -50,6 +57,7 @@ class Config:
     sync_exclude: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(DEFAULT_SYNC_EXCLUDE)
     )
+    keep_collected: int = 5  # collected export runs kept in GOS_HOME (D102)
 
     def instance(self, role: str) -> Path:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
@@ -62,8 +70,7 @@ class ConfigError(ValueError):
 
 
 def default_path() -> Path:
-    home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
-    return home / "config" / "gos.toml"
+    return default_home() / "config" / "gos.toml"
 
 
 def _string(table: Mapping[str, Any], key: str, default: str, where: str) -> str:
@@ -126,8 +133,14 @@ def load(path: Path | None = None) -> Config:
                     "config/ or scripts/ (e.g. 'config/lab-only.cfg')"
                 )
         exclude[role] = tuple(patterns)
+    keep = _table(data, "export", "").get("keep_collected", defaults.keep_collected)
+    if type(keep) is not int or keep < 1:
+        raise ConfigError(
+            "gos.toml: [export] keep_collected must be a whole number >= 1"
+        )
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
+        gos_home=Path(_string(paths, "gos_home", str(defaults.gos_home), "[paths]")),
         prism_instances=Path(
             _string(paths, "prism_instances", str(defaults.prism_instances), "[paths]")
         ),
@@ -135,4 +148,5 @@ def load(path: Path | None = None) -> Config:
         export=_string(paths, "export", defaults.export, "[paths]"),
         lab=_string(paths, "lab", defaults.lab, "[paths]"),
         sync_exclude=exclude,
+        keep_collected=keep,
     )

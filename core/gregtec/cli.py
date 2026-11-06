@@ -14,6 +14,7 @@ import keyring.errors
 
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
+from gregtec.ingest import collect as export_collect
 from gregtec.llm import keys
 from gregtec.vault import deploy as vault_deploy
 
@@ -63,6 +64,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     app.add_argument("ref", nargs="?", default="HEAD", help="commit, tag or branch")
     app.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+        "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+    )
+
+    export = commands.add_parser("export", help="GregtecLink export runs")
+    export_cmds = export.add_subparsers(dest="export_command", required=True)
+    collect = export_cmds.add_parser(
+        "collect",
+        help="copy GTNH-Export's newest complete export run into GOS_HOME",
+        description=(
+            "Read-only on Export: finds the newest complete run in GTNH-Export's "
+            "gregteclink/exports/ (no .partial or incomplete runs), checks every file "
+            "against its manifest's sha256, size and line count, and copies the run into "
+            "GOS_HOME/data/exports/<run_id>/ by a staging folder and one rename. An "
+            "identical run already there is left alone. Keeps the newest [export] "
+            "keep_collected runs (default 5). Paths are [paths] in gos.toml."
+        ),
+    )
+    collect.add_argument(
         "--config",
         type=Path,
         default=None,
@@ -136,6 +159,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "deploy":
         return _deploy(args.ref, args.config)
+    if args.command == "export" and args.export_command == "collect":
+        return export_collect.main(args.config, sys.stdout)
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"

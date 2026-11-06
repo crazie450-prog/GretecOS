@@ -65,6 +65,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb x11-xserver-utils libgl1-mesa-dri
       - run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" timeout 1500 ./gradlew --no-daemon runClient25 -Pharness
+      # WO-1.2: `gos export collect` on the two runs the harnesses just wrote (tests/integration).
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+      - run: uv python install
+        working-directory: .
+      - run: uv run --locked pytest tests/integration
+        working-directory: .
+        env:
+          GOS_REQUIRE_HARNESS_RUN: "1"
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
