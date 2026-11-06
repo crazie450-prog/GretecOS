@@ -19,7 +19,7 @@ quest_find(text)          both   :mod:`.quests`
 quest_get(id, spoil)      both   :mod:`.quests` (nudge-first spoilers, D26)
 quest_frontier(n)         both   :mod:`.quests`
 quest_for_item(item)      both   :mod:`.quests`
-db_query(name, params)    both   :mod:`.sql` (``core/gregtec/db/queries/*.sql``)
+db_query(name, params)    both   :mod:`.sql` (the game-data ``db/queries/*.sql``)
 db_sql(select)            deep   :mod:`.sql` (authorizer, read-only, time limit)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================

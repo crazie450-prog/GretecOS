@@ -77,7 +77,8 @@ TOOLS = (
     ),
     Tool(
         "db_query",
-        f"Run a named read-only DB query with its parameters, 50 rows a page. {CITE}",
+        "Run a named read-only query over the game data (items, recipes, machines) with "
+        f"its parameters, 50 rows a page; quests are the quest tools'. {CITE}",
         sql.db_query_schema(),
         sql.db_query,
     ),

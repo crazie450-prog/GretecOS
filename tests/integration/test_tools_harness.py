@@ -159,6 +159,27 @@ def test_the_ebf_and_its_steel_recipes(reg: Registry, db: Path) -> None:
     assert len(uses) == 50
 
 
+def test_keys_with_spaces_resolve(reg: Registry, db: Path) -> None:
+    """Fluid names such as "jet fuel a" and TConstruct's "Clay Cast" registry name have
+    spaces: the keys item_resolve and the recipe cards give must work as arguments."""
+    conn = sqlite3.connect(db)
+    try:
+        spaced = conn.execute(
+            "SELECT f.name, count(DISTINCT o.recipe_id) FROM fluid AS f "
+            "JOIN recipe_output AS o ON o.fluid_id = f.id "
+            "WHERE f.name LIKE '% %' GROUP BY f.name ORDER BY f.name LIMIT 5"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert spaced
+    for name, _ in spaced:
+        found = call(reg, "recipe_find", item=f"fluid:{name}", show_fake=True)
+        head, rows, _ = table(found)
+        assert head["item"].endswith(f"[fluid:{name}]") and rows, name
+        _, found, _ = table(call(reg, "item_resolve", text=f"fluid:{name}"))
+        assert [r["key"] for r in found] == [f"fluid:{name}"]
+
+
 def test_every_named_query_runs_on_the_real_schema(reg: Registry, db: Path) -> None:
     spec = reg.get("db_query")
     assert spec is not None
@@ -190,6 +211,18 @@ def test_db_sql_guards_hold_on_the_real_file(reg: Registry, db: Path) -> None:
         assert reg.call("db_sql", {"select": statement}).is_error, statement
     out = reg.call("db_sql", {"select": "SELECT count(*) FROM recipe a, recipe b"})
     assert out.is_error and "limit and was stopped" in out.text
+    # One row calling instr 300 times over 64 KiB strings (a flattened subquery's column):
+    # stopped by the deadline check in each call, not after the row (about 7 s).
+    flat = (
+        "WITH s(a, b) AS (SELECT printf('%.*c', 65000, 'a'), printf('%.*c', 32000, 'a') "
+        "|| 'b') SELECT "
+        + " + ".join(["x"] * 300)
+        + " FROM (SELECT instr(a, b) AS x FROM s)"
+    )
+    start = time.monotonic()
+    out = reg.call("db_sql", {"select": flat})
+    assert out.is_error and "limit and was stopped" in out.text, out.text
+    assert time.monotonic() - start < 3.5
     text = call(reg, "db_sql", select="SELECT ref, eut FROM recipe ORDER BY eut DESC")
     assert "rows: 1-50" in text and "\nmore: " in text
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
