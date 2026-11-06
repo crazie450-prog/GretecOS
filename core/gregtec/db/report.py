@@ -498,11 +498,13 @@ def crop_lines(result: Result, full: bool) -> list[str]:
     if check is not None:
         # Every tab: the crop pages, Crop Breeding, the mutation pools and alternate seeds.
         missing = sorted(check.shown - set(data.crops))
-        verdict = (
-            f"all {len(check.shown)} crops they show are in the crop dump"
-            if not missing
-            else f"{len(missing)} crops they show are NOT in the crop dump: {', '.join(missing)}"
-        )
+        if not check.shown:
+            verdict = "WARNING: they show no crop, so nothing was checked"
+        elif not missing:
+            verdict = f"all {len(check.shown)} crops they show are in the crop dump"
+        else:
+            names = ", ".join(missing)
+            verdict = f"{len(missing)} crops they show are NOT in the crop dump: {names}"
         out.append(
             f"  NEI's CropsNH tabs: Crop Breeding {check.breeding} recipes with "
             f"{len(check.breeding_crops)} crops, {check.crop_pages} crop pages, "

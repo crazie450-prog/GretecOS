@@ -687,6 +687,25 @@ def test_without_neis_data_drops_have_no_item_key(tmp_path: Path) -> None:
     assert "NEI's CropsNH tabs not checked (parts.nei is 'absent')" in text
 
 
+def test_nei_data_without_cropsnhs_tabs_is_a_problem_not_a_pass(tmp_path: Path) -> None:
+    # parts.nei is ok, but NEI's lines hold none of CropsNH's tabs (a renamed handler id, or
+    # NEI's dump left them out): every crop would look hidden and the check pass empty.
+    files = {**base_files(), **crop_files()}
+    files["nei/Crops.jsonl"] = b""
+    make_run(tmp_path, files=files)
+    result = build.build(tmp_path)
+    data = parsed(tmp_path / collect.DATA_EXPORTS / RUN)
+    assert data.nei is not None and not data.nei.shown
+    assert any(p.startswith("NEI's data has no crop pages") for p in data.problems)
+    assert any(
+        p.startswith("NEI's data has no Crop Breeding recipes") for p in data.problems
+    )
+    text = "\n".join(report.lines(result, full=False))
+    assert "WARNING: they show no crop, so nothing was checked" in text
+    assert "WARNING: crop data: 2 problems" in text
+    assert "crops they show are in the crop dump" not in text
+
+
 def test_gos_db_build_prints_the_crop_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

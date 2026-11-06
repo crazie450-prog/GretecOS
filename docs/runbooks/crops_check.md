@@ -32,7 +32,7 @@ WO-1.10's acceptance, on Clayton's PC: **every crop in NEI's Crop Breeding tab i
 
 6. **Expect** in `gos db build`'s output:
    - a `Crops: <N> crops (<M> on NEI's crop pages), <R> parent-combination recipes (<B> in NEI's Crop Breeding tab, <C> for the Crop Breeder only), ...` line, with `<N>` at least 131 and every drop keyed (`<D> drops (<D> keyed by item)`);
-   - `NEI's CropsNH tabs: Crop Breeding <B> recipes with <K> crops, ... ; all <S> crops they show are in the crop dump` (**this is the WO's first criterion and V33**);
+   - `NEI's CropsNH tabs: Crop Breeding <B> recipes with <K> crops, ... ; all <S> crops they show are in the crop dump` with `<B>`, `<K>` and `<S>` all above 0 (**this is the WO's first criterion and V33**). `they show no crop, so nothing was checked` instead means NEI's dump has none of CropsNH's tabs: the criterion is not met, send the lines back;
    - no `WARNING: crop data:` line, and no `requirement texts not recognised` line (that one means Export's game language isn't English: CropsNH's requirement texts are then kept, but not sorted into light, sub-soil and Crop Breeder kinds, D137).
    - The saved report (`GOS_HOME\data\reports\db-<run_id>.txt`, gos-dev's `GOS_HOME`) ends with every crop: `crop:<id>`, name, tier, soil, whether NEI shows it.
 

@@ -606,6 +606,18 @@ def apply_nei(data: CropData, lines: Iterable[Recipe], refs: NeiRefs) -> None:
                 s for s in (_species(o.ref, refs) for o in r.outputs) if s is not None
             )
     check.shown.update(pages, check.breeding_crops)
+    # No line of a tab at all means NEI's dump didn't have it (renamed or left out), not that
+    # every crop is hidden: the coverage check would otherwise pass with nothing checked.
+    if data.crops and check.crop_pages == 0:
+        data.problems.append(
+            f"NEI's data has no crop pages ({NEI_CROPS}) though the crop dump lists "
+            f"{len(data.crops)} crops: NEI's coverage of the crops wasn't checked"
+        )
+    if any(not r.machine_only for r in data.recipes) and check.breeding == 0:
+        data.problems.append(
+            f"NEI's data has no Crop Breeding recipes ({NEI_BREEDING}) though the dump has "
+            "recipes outside the Crop Breeder: the Crop Breeding tab wasn't checked"
+        )
     shown = check.shown
     for cid in sorted(shown - set(data.crops)):
         data.problems.append(
