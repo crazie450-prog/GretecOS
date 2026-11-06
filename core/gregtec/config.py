@@ -7,8 +7,8 @@
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync                        |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
-| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | core, supervisor (WO-2.1)   |
-| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch (WO-2.1)         |
+| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | WO-2.1, WO-1.4              |
+| [paths] prism_root       | C:/Games/PrismLauncher                   | gos launch, export run      |
 | [core] host              | 127.0.0.1 (the only value allowed)       | core (WO-2.1, plan 4.6)     |
 | [core] port              | 8765                                     | core, clients               |
 | [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
@@ -19,8 +19,6 @@
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [launch] home            | gos_home                                 | gos launch (D115)           |
-| [paths] gos_home         | $GOS_HOME, else ~/GregtecOS              | fingerprint, hooks (WO-1.4) |
-| [paths] prism_root       | C:/Games/PrismLauncher                   | export run (WO-1.4)         |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 
@@ -103,11 +101,6 @@ _DASHBOARD_ENTRY = re.compile(r"^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+localhost$")
 # Claude Code's account (setup_gos_dev.ps1 -DevUser). Its own core and supervisor must not use
 # Clayton's ports or dashboard name (D115): see service_problems.
 DEV_ACCOUNT = "gos-dev"
-
-
-def default_home() -> Path:
-    """GOS_HOME: ``$GOS_HOME``, else ``~/GregtecOS`` (plan 4.3)."""
-    return Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
 
 
 @dataclass(frozen=True)

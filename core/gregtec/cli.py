@@ -17,8 +17,7 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import config, control, doctor, servicecli
-from gregtec import config, doctor, locks, playhooks
+from gregtec import config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
 from gregtec.db import structures as structure_db
 from gregtec.ingest import extractor, fingerprint, rundiff
@@ -405,6 +404,8 @@ def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
     servicecli.spawn_detached(argv, cfg.gos_home)
     print(f"Restarted GOS: {exe}")
+
+
 def _load(path: Path | None) -> config.Config | None:
     try:
         return config.load(path)
