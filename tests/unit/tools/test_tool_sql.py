@@ -11,13 +11,15 @@ import dataclasses
 import hashlib
 import re
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from gregtec.agents.tools import TOOLS, build_registry, sql
+from gregtec.agents.tools import TOOLS, build_registry, sql, tsv
+from gregtec.agents.tools.quests import TEXT_NOTE
 from gregtec.agents.tools.registry import Env, Registry, guard
 from gregtec.db import access, structures
 
@@ -188,6 +190,159 @@ def test_db_sql_has_a_time_limit(tool_db: Path) -> None:
     assert sql.DEADLINE_S == 2.0 and tool.deadline_s == sql.DEADLINE_S
 
 
+def short_registry(tool_db: Path, seconds: float) -> Registry:
+    tool = next(t for t in TOOLS if t.name == "db_sql")
+    reg = Registry(Env(tool_db))
+    reg.add(dataclasses.replace(tool, deadline_s=seconds))
+    return reg
+
+
+def test_one_huge_function_call_ends_at_once(run: Runner) -> None:
+    """The review's probe: instr over two strings of about 1 MB ran 5 s in one step of the
+    query, where the progress handler never looks. Values are now capped at 64 KiB (printf
+    stops there; anything else that would pass it is an error)."""
+    probe = "instr(printf('%.*c',990000,'a'), printf('%.*c',495000,'a')||'b')"
+    for select in (f"SELECT {probe}", "SELECT " + ", ".join([probe] * 4)):
+        start = time.monotonic()
+        run.out("db_sql", select=select)
+        assert time.monotonic() - start < 1, select
+    half = "printf('%.*c', 40000, 'a')"
+    error = run.fail("db_sql", select=f"SELECT length({half} || {half})")
+    assert "too big" in error and "64 KiB" in error
+
+
+# Long strings, and the longest LIKE and GLOB patterns db_sql takes, that match almost
+# everywhere: the slowest a costly function gets.
+FLAT = (
+    "WITH s(a, b, p, g) AS (SELECT printf('%.*c', 65000, 'a'), printf('%.*c', 32000, 'a') "
+    "|| 'b', '%' || printf('%.*c', 96, 'a') || 'b%', '*' || printf('%.*c', 96, 'a') || 'b*') "
+)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "instr(a, b)",
+        "length(replace(a, b, ''))",
+        "a LIKE p",
+        "like(p, a, '!')",
+        "a GLOB g",
+    ],
+)
+def test_a_row_calling_a_costly_function_hundreds_of_times_stops_at_the_deadline(
+    tool_db: Path, expr: str
+) -> None:
+    """SQLite copies a flattened subquery's expression to every use of its column and runs a
+    row's expressions without checking the progress handler: 300 uses of one instr ran 300
+    calls (6.5 s at 64 KiB) in one step. Each costly call now checks the deadline first."""
+    reg = short_registry(tool_db, 0.2)
+    uses = " + ".join(["x"] * 300)
+    start = time.monotonic()
+    out = reg.call(
+        "db_sql", {"select": f"{FLAT}SELECT {uses} FROM (SELECT {expr} AS x FROM s)"}
+    )
+    elapsed = time.monotonic() - start
+    assert out.is_error and "ran past its 0.2 s limit" in out.text, out.text
+    assert elapsed < 1.5
+
+
+@pytest.mark.parametrize("fn", ["trim", "ltrim", "rtrim"])
+def test_no_trim(run: Runner, fn: str) -> None:
+    """trim(x, chars) takes time that grows with the product of its lengths (half a second for
+    one call at 64 KiB), and the authorizer can't tell it from trim(x)."""
+    error = run.fail("db_sql", select=f"SELECT {fn}(' a ')")
+    assert "refused" in error and fn in error
+
+
+def test_db_sql_limits(run: Runner) -> None:
+    pattern = "a" * 101
+    assert "pattern too complex" in run.fail(
+        "db_sql", select=f"SELECT 'a' LIKE '{pattern}'"
+    )
+    assert "100 bytes" in run.fail("db_sql", select=f"SELECT 'a' GLOB '{pattern}'")
+    assert run("db_sql", select=f"SELECT 'a' LIKE '{pattern[1:]}'").rows
+    columns = ", ".join(str(n) for n in range(101))
+    assert "too many columns" in run.fail("db_sql", select=f"SELECT {columns}")
+    assert run("db_sql", select=f"SELECT {columns.rsplit(', ', 1)[0]}").rows
+
+
+# Each wrapped function in the shapes SQLite's own takes: NULLs, numbers, blobs, ESCAPE,
+# case-folding (ASCII only), GLOB classes, an empty needle.
+COSTLY_CASES = [
+    "'Steel Ingot' LIKE 'steel%'",
+    "'ÄBC' LIKE 'äbc'",
+    "'a_c' LIKE 'a!_c' ESCAPE '!'",
+    "'abc' LIKE 'a_c'",
+    "'x' NOT LIKE 'y'",
+    "NULL LIKE 'a'",
+    "1.5 LIKE '1.5'",
+    "'Abc' GLOB 'a*'",
+    "'abc' GLOB '[a-c]?c'",
+    "instr('héllo wörld', 'wö')",
+    "instr(x'00010203', x'0203')",
+    "instr(12345, 34)",
+    "instr('abc', '')",
+    "instr(NULL, 'a')",
+    "replace('aaa', 'a', 'bb')",
+    "replace('abc', '', 'x')",
+    "replace(123, 2, 9)",
+    "hex(replace(x'616263', x'62', x'7a'))",
+]
+
+
+def test_the_costly_functions_answer_as_sqlites_own(run: Runner) -> None:
+    select = "SELECT " + ", ".join(f"{e} AS c{n}" for n, e in enumerate(COSTLY_CASES))
+    p = run("db_sql", select=select)
+    conn = sqlite3.connect(":memory:")
+    try:
+        want = conn.execute(select).fetchone()
+    finally:
+        conn.close()
+    got = [p.rows[0][f"c{n}"] for n in range(len(COSTLY_CASES))]
+    assert got == [tsv.cell(v) for v in want]
+
+
+def test_a_page_stops_once_its_values_pass_the_byte_cap(
+    run: Runner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    whole = run("db_sql", select="SELECT ref FROM recipe ORDER BY ref").col("ref")
+    monkeypatch.setattr(sql, "PAGE_BYTES", 1000)
+    # 300 characters a row: a ref after its padding.
+    select = "SELECT printf('%.*c', 300 - length(ref), '-') || ref AS big FROM recipe ORDER BY ref"
+    p = run("db_sql", select=select)
+    assert len(p.rows) == 4 and p.more  # 4 x 300 bytes pass 1,000
+    assert any(n.startswith("this page stops at 4 rows") for n in p.notes)
+    big = p.col("big")
+    while p.more:
+        p = run.page(p.more)
+        big += p.col("big")
+    assert [b.lstrip("-") for b in big] == whole
+
+
+def test_db_sql_marks_quest_text(run: Runner) -> None:
+    for select in (
+        "SELECT id, name FROM quest",
+        "SELECT quest_id FROM quest_fts WHERE quest_fts MATCH 'steel'",
+    ):
+        p = run("db_sql", select=select)
+        assert TEXT_NOTE in p.notes and sql.SPOILER_NOTE in p.notes, select
+    p = run("db_sql", select="SELECT ref FROM recipe")
+    assert TEXT_NOTE not in p.notes and sql.SPOILER_NOTE not in p.notes
+
+
+def test_a_22_character_value_is_a_quest_id_only_in_an_id_column(run: Runner) -> None:
+    """cited() is a heuristic (the review's case: a GT material name of 22 letters)."""
+    material = "SELECT 'PlatinumMetallicPowder' AS gt_material, -1 AS amount"
+    assert sql.UNCITED_NOTE in run("db_sql", select=material).notes
+    for select in (
+        "SELECT 'AAAAAAAAAAAAAAAAAAAABA' AS id, 1 AS main",
+        "SELECT 'AAAAAAAAAAAAAAAAAAAABA' AS QUEST_ID, 1 AS main",
+        "SELECT 'q:AAAAAAAAAAAAAAAAAAAABA' AS quest, 1 AS main",
+        "SELECT 'r:gt.recipe.x/0123456789ab' AS ref, 120 AS eut",
+    ):
+        assert sql.UNCITED_NOTE not in run("db_sql", select=select).notes, select
+
+
 def test_db_sql_pages_by_its_row_cap(
     tool_db: Path, make_runner: Callable[..., Runner]
 ) -> None:
@@ -220,14 +375,64 @@ def test_db_sql_arguments(run: Runner) -> None:
 # --- db_query --------------------------------------------------------------------------------
 
 
-def test_db_query_offers_every_named_query(reg: Registry) -> None:
+def test_db_query_offers_the_game_data_queries(reg: Registry) -> None:
     spec = reg.get("db_query")
     assert spec is not None
     names = spec.input_schema["properties"]["name"]["enum"]
-    assert names == sorted(p.stem for p in access.QUERIES.glob("*.sql"))
+    files = {p.stem for p in access.QUERIES.glob("*.sql")}
+    assert names == sorted(sql.DB_QUERY) and sql.DB_QUERY <= files
+    assert not [n for n in names if n.startswith("quest")]
     description = spec.input_schema["properties"]["name"]["description"]
     assert "find_names(q)" in description  # :limit belongs to the tool
-    assert "quest_frontier(player, line)" in description
+    assert "quest" not in description
+
+
+QUEST_QUERIES = sorted(
+    p.stem for p in access.QUERIES.glob("*.sql") if p.stem.startswith("quest")
+)
+
+
+@pytest.mark.parametrize("lane", [None, "fast", "deep"])
+def test_db_query_never_runs_the_quest_tools_queries(
+    reg: Registry, make_runner: Callable[..., Runner], lane: str | None
+) -> None:
+    """The quest tools show a quest past the frontier nudge-first (D26); their queries would
+    show its name, description, tasks and rewards, so db_query has none of them."""
+    run = make_runner(reg, lane)
+    assert len(QUEST_QUERIES) >= 8
+    for name in QUEST_QUERIES:
+        assert "must be one of" in run.fail(
+            "db_query", name=name, params={"id": "AAAAAAAAAAAAAAAAAAAABA"}
+        )
+
+
+def test_db_query_never_reads_a_private_table(
+    run: Runner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever a named query says, db_query's authorizer refuses kv and device."""
+    peek = sql.Named("peek", (), "a query that reads kv")
+    monkeypatch.setattr(sql, "named_queries", lambda: {"find_names": peek})
+    monkeypatch.setattr(access, "query_text", lambda name: "SELECT key FROM kv")
+    assert "access to kv.key is prohibited" in run.fail(
+        "db_query", name="find_names", params={}
+    )
+
+
+def test_db_querys_authorizer_allows_recursion_and_refuses_private_tables() -> None:
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE TABLE kv(key, value)")
+        conn.execute("CREATE TABLE device(id)")
+        conn.set_authorizer(sql.authorize_named)
+        recursive = (
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION SELECT x + 1 FROM c WHERE x < 3)"
+        )
+        assert conn.execute(f"{recursive} SELECT count(*) FROM c").fetchone() == (3,)
+        for table in ("kv", "device", "main.KV"):
+            with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+                conn.execute(f"SELECT count(*) FROM {table}")
+    finally:
+        conn.close()
 
 
 def test_db_query_runs_a_named_query(run: Runner) -> None:
@@ -249,7 +454,9 @@ def test_db_query_parameters(run: Runner) -> None:
         "db_query", name="find_names", params={"q": "a", "limit": 10**9}
     )
     assert ":offset is set by db_query" in run.fail(
-        "db_query", name="quest_search", params={"q": "a", "player": "p", "offset": 0}
+        "db_query",
+        name="recipes_using_item",
+        params={"run_id": 1, "items": "[]", "offset": 0},
     )
     assert "must be one of" in run.fail("db_query", name="../schema", params={})
     assert "params.q must be one of" in run.fail(
@@ -282,7 +489,7 @@ def test_db_query_pages_with_and_without_its_own_limit(
 
 def test_named_queries_parse() -> None:
     found = sql.named_queries()
-    assert set(found) == {p.stem for p in access.QUERIES.glob("*.sql")}
+    assert set(found) == sql.DB_QUERY
     for q in found.values():
         assert q.summary, f"{q.name}.sql has no leading comment"
     assert sql.params_of("SELECT ':no' -- :nope\n, :yes, x::y FROM t /* :hid */") == (

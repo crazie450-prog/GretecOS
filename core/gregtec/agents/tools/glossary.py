@@ -5,12 +5,13 @@ Columns ``term⇥aliases⇥kind⇥ref⇥say``; aliases are comma-separated. A te
 "SS plate" is also tried as "stainless steel plate" and "EBF" as "electric blast furnace". Only
 entries of the kinds in :data:`EXPANDS` are used: a tier ("LV") is part of item names as it is.
 The live vault's copy wins (agents may add to it); the repo's ``vault-template/glossary.tsv`` is
-the fallback. Glossary text is data: it only ever becomes search words.
+the fallback, also when the live copy can't be used (``Glossary.problem`` says why, and
+``gos tool`` shows it). Glossary text is data: it only ever becomes search words.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -38,7 +39,7 @@ class Entry:
 class Glossary:
     entries: tuple[Entry, ...] = ()
     path: Path | None = None
-    problem: str | None = None  # why the file was not used
+    problem: str | None = None  # why the file (or the live vault's) was not used
 
     @classmethod
     def load(cls, path: Path) -> Glossary:
@@ -46,7 +47,7 @@ class Glossary:
         try:
             if path.stat().st_size > MAX_BYTES:
                 return cls(path=path, problem=f"{path} is over {MAX_BYTES} bytes")
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8-sig")  # a Windows editor's BOM
         except FileNotFoundError:
             return cls(path=path, problem=f"{path} doesn't exist")
         except (OSError, UnicodeDecodeError) as exc:
@@ -72,10 +73,18 @@ class Glossary:
 
     @classmethod
     def find(cls, vault: Path | None) -> Glossary:
-        """The live vault's glossary, else the repo template's."""
-        if vault is not None and (vault / FILE).is_file():
-            return cls.load(vault / FILE)
-        return cls.load(TEMPLATE)
+        """The live vault's glossary, else (missing or unreadable) the repo template's."""
+        if vault is None or not (vault / FILE).is_file():
+            return cls.load(TEMPLATE)
+        live = cls.load(vault / FILE)
+        if live.problem is None:
+            return live
+        template = cls.load(TEMPLATE)
+        note = f"{live.problem}; using {TEMPLATE.name} from the repo's vault-template"
+        return replace(
+            template,
+            problem=note if template.problem is None else f"{note}: {template.problem}",
+        )
 
     def variants(self, text: str) -> list[tuple[str, Entry | None]]:
         """``text`` first, then ``text`` with each glossary form it contains swapped for each

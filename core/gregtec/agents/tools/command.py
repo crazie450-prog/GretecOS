@@ -1,6 +1,7 @@
 """``gos tool``: run a read-only tool from the shell, as an agent would (WO-2.2, for testing).
 
-``gos tool`` lists the tools; ``gos tool NAME '{"arg": ...}'`` runs one against
+``gos tool`` lists the tools (and says when the live vault's glossary can't be used);
+``gos tool NAME '{"arg": ...}'`` runs one against
 ``GOS_HOME/data/gos.sqlite`` and prints its TSV; ``--all`` follows its ``more`` cursors (a
 cursor only works in the process that issued it); ``--schema`` prints the tool as the Messages
 API takes it.
@@ -20,10 +21,14 @@ MAX_PAGES = 200
 
 
 def _cursor(text: str) -> str | None:
-    for line in text.splitlines():
-        if line.startswith("more: "):
-            return line.removeprefix("more: ")
-    return None
+    """The cursor on the line after the result's last ``rows:`` line (a cell or a head line
+    can start with "more: " too)."""
+    lines = text.split("\n")
+    rows = [i for i, line in enumerate(lines) if line.startswith("rows: ")]
+    if not rows or rows[-1] + 1 >= len(lines):
+        return None
+    line = lines[rows[-1] + 1]
+    return line.removeprefix("more: ") if line.startswith("more: ") else None
 
 
 def main(
@@ -50,6 +55,8 @@ def main(
                 f"{t.name}\t{','.join(sorted(t.lanes))}\t{int(t.read_only)}\t{first}",
                 file=out,
             )
+        if reg.env.glossary.problem is not None:
+            print(f"note: glossary: {reg.env.glossary.problem}", file=out)
         return 0
     tool = reg.get(name)
     if tool is None:

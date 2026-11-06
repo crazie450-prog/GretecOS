@@ -18,7 +18,10 @@ from gregtec.agents.tools.recipes import tier_name
 from gregtec.agents.tools.registry import Call, ToolError
 from gregtec.agents.tools.tsv import Result
 
-_MTE = re.compile(r"(?:mte:|gregtech:gt\.blockmachines@)?([0-9]{1,9})")
+# The prefix is required: a bare number is more likely a numeric block ID (F3, NEI), which
+# GOS never keys on, than an MTE id.
+_MTE = re.compile(r"(?:mte:|gregtech:gt\.blockmachines@)([0-9]{1,9})")
+_NUMBER = re.compile(r"[0-9]+")
 COLUMNS = ("key", "value", "unit", "source", "confidence", "note", "cite")
 NOTE = (
     "cite facts by the machine's mte: id; a value is a number or a formula over named inputs "
@@ -31,7 +34,7 @@ MACHINE_INFO_SCHEMA: dict[str, Any] = {
         "machine": {
             "type": "string",
             "description": 'the machine\'s name ("Electric Blast Furnace", "EBF") or id '
-            "(mte:1000, 1000, gregtech:gt.blockmachines@1000)",
+            "(mte:1000 or gregtech:gt.blockmachines@1000; a bare number is not an id)",
             "minLength": 1,
             "maxLength": 200,
         }
@@ -44,6 +47,11 @@ MACHINE_INFO_SCHEMA: dict[str, Any] = {
 def machine_info(call: Call, args: dict[str, Any], offset: int) -> Result:
     text = " ".join(args["machine"].split())
     m = _MTE.fullmatch(text)
+    if _NUMBER.fullmatch(text):
+        raise ToolError(
+            f"{text} is a bare number, which could be a numeric block ID (GOS never keys on "
+            "those): name the machine, or give GT's MetaTileEntity id as mte:<id>"
+        )
     if m is not None:
         mte = int(m[1])
     else:

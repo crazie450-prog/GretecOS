@@ -36,6 +36,9 @@ KEY = b"k" * 32
 GT = "gregtech:gt.metaitem.01"
 MACHINES = "gregtech:gt.blockmachines"
 TCON = "TConstruct:materials"
+# Registry and fluid names with spaces, as some mods' are: their keys must round-trip.
+CLAY_CAST = "TConstruct:Clay Cast"
+JET_FUEL = "jet fuel a"
 STEEL = f"{GT}@11305"
 STAINLESS = f"{GT}@11306"
 EBF_CLASS = "gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace"
@@ -113,6 +116,10 @@ def gt_recipes() -> list[dict[str, object]]:
         gt(mac, 2, 2, 20, **{"in": [ref("minecraft:planks", 32767)], "out": [ref(GT, 2815)]}),
         gt(mac, 3, 2, 98, category="gt.recipe.category.macerator_recycling",
            **{"in": [ref(GT, 11305)], "out": [ref(GT, 2305)]}),
+        # A spaced fluid out of a spaced registry name's item (not consumed).
+        gt("gt.recipe.distillery", 0, 30, 40,
+           **{"in": [ref(CLAY_CAST, 3, 0)], "fin": [{"fluid": "water", "mb": 100}],
+              "fout": [{"fluid": JET_FUEL, "mb": 50}]}),
         gt("gt.recipe.primitiveblastfurnace", 0, 0, 1200,
            **{"in": [ref("minecraft:iron_ingot"), ref("minecraft:coal", 1, 2)],
               "out": [ref(GT, 11305), ref(GT, 2815)]}),
@@ -193,6 +200,7 @@ def recipe_maps() -> list[dict[str, object]]:
         m("gt.recipe.arcfurnace", ("gt.recipe.category.arc_furnace_recycling",), 1),
         m("gt.recipe.blastfurnace", count=5),
         m("gt.recipe.macerator", ("gt.recipe.category.macerator_recycling",), 4),
+        m("gt.recipe.distillery", count=1),
         m("gt.recipe.primitiveblastfurnace", count=1),
     ]  # fmt: skip
 
@@ -219,6 +227,7 @@ def items() -> list[dict[str, object]]:
         ("minecraft:planks", 32767, "Wooden Planks", ["plankWood"], None),
         ("minecraft:stick", 0, "Stick", ["stickWood"], None),
         ("test:weird", 0, WEIRD, [], None),
+        (CLAY_CAST, 3, "Clay Ingot Cast", [], None),
     ]  # fmt: skip
     out: list[dict[str, object]] = []
     for item, meta, name, ore, assoc in rows:
@@ -296,7 +305,11 @@ def fluids() -> list[dict[str, object]]:
             "viscosity": 1000,
             "gaseous": gas,
         }
-        for f, name, gas in [("oxygen", "Oxygen", True), ("water", "Water", False)]
+        for f, name, gas in [
+            ("oxygen", "Oxygen", True),
+            ("water", "Water", False),
+            (JET_FUEL, "Jet Fuel A", False),
+        ]
     ]
 
 
@@ -418,7 +431,12 @@ OXYGEN = {
     "consume:1": 1,
     "ignoreNBT:1": 1,
     "index:3": 0,
-    "requiredFluids:9": typed_list([{"Amount:3": 1000, "FluidName:8": "oxygen"}]),
+    "requiredFluids:9": typed_list(
+        [
+            {"Amount:3": 1000, "FluidName:8": "oxygen"},
+            {"Amount:3": 250, "FluidName:8": JET_FUEL},
+        ]
+    ),
     "taskID:8": "bq_standard:fluid",
 }
 

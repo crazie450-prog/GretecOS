@@ -271,6 +271,12 @@ def quest_frontier(call: Call, args: dict[str, Any], offset: int) -> Result:
         lines[r["quest_id"]].append(r["line"])
     quests = list(order.items())[: args["n"]]
     stage, how, _ = quest_db.effective_tier(call.conn)
+    tier = bq.STAGES.get(stage)
+    shown = (
+        f"{stage} (GT voltage tier {tier}, {how})"
+        if tier is not None
+        else f"{stage} (not a stage this version knows: run `gos quests load` again)"
+    )
     page = quests[offset : offset + call.page]
     return Result(
         LIST_COLUMNS,
@@ -280,7 +286,7 @@ def quest_frontier(call: Call, args: dict[str, Any], offset: int) -> Result:
         ],
         head=[
             ("player", player_name(call) or who),
-            ("tier", f"{stage} (GT voltage tier {bq.STAGES[stage]}, {how})"),
+            ("tier", shown),
             ("frontier", len(order)),
         ],
         notes=[

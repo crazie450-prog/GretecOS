@@ -14,6 +14,9 @@ A result is ``key: value`` lines (a record), then a TSV table with a header row,
     note: ...
 
 - A page holds at most :data:`PAGE` rows (50).
+- A table of one column gets an ``n`` column (the row's number) first, so every table line has a
+  tab: a lone cell could otherwise be empty or read like the ``rows:``, ``more:`` or ``note:``
+  line after the table.
 - Cells are escaped so a value can never break a row: backslash, tab, CR and LF become ``\\\\``,
   ``\\t``, ``\\r`` and ``\\n``; other control characters and Unicode line breaks become
   ``\\xNN`` or ``\\uNNNN``. A text cell longer than :data:`CELL_MAX` is cut, and says so.
@@ -99,11 +102,15 @@ def span(result: Result) -> str:
 
 def render(result: Result, cursor: str | None = None) -> str:
     lines = [f"{escape(k)}: {cell(v)}" for k, v in result.head]
-    if result.columns:
+    columns, rows = result.columns, result.rows
+    if len(columns) == 1:
+        columns = ("n", *columns)
+        rows = [(result.offset + n, *row) for n, row in enumerate(rows, 1)]
+    if columns:
         if lines:
             lines.append("")
-        lines.append("\t".join(escape(c) for c in result.columns))
-        lines.extend("\t".join(cell(v) for v in row) for row in result.rows)
+        lines.append("\t".join(escape(c) for c in columns))
+        lines.extend("\t".join(cell(v) for v in row) for row in rows)
         lines.append("")
         lines.append(f"rows: {span(result)}")
     if cursor is not None:

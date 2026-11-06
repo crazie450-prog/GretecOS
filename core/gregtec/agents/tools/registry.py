@@ -7,7 +7,8 @@
   ``PRAGMA query_only``, no ATTACH, a cap on value sizes and a progress-handler time limit),
   runs the tool and renders its result as TSV (:mod:`.tsv`): at most 50 rows a page, then a
   ``more`` cursor (:mod:`.cursor`) that the ``more`` tool turns into the next page. Errors come
-  back as text with ``is_error`` set, the way Anthropic's ``tool_result`` carries them.
+  back as text with ``is_error`` set, the way Anthropic's ``tool_result`` carries them; so
+  does a tool's own bug (logged), so a lane's turn never ends on an exception.
 - Only read-only tools run here. A tool that writes needs its own gate first: the vault path
   guard (WO-2.4, WO-2.5) or the world-action confirm flow (WO-7.1).
 """
@@ -15,6 +16,8 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+import math
 import re
 import sqlite3
 import time
@@ -31,6 +34,8 @@ from gregtec.agents.tools.tsv import PAGE, Result, render
 from gregtec.db import access
 from gregtec.db.quests import KV_SOURCE  # its record changes on every quest load
 
+log = logging.getLogger(__name__)
+
 FAST, DEEP = "fast", "deep"
 LANES = (FAST, DEEP)
 # The one fast-lane tool that isn't read-only (WO-2.3); it still needs its own gate to run.
@@ -38,8 +43,9 @@ FAST_EXTRA = frozenset({"handoff"})
 MORE = "more"
 NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 DEADLINE_S = 5.0  # a named query that runs longer is stopped
-# SQLITE_LIMIT_LENGTH: the longest string or blob a query can make or read (the DB's longest
-# value, a quest's raw JSON, is about 21 kB in 2.9.0).
+# SQLITE_LIMIT_LENGTH for the named queries: the longest string or blob a query can make or read
+# (the DB's longest values, export_run.sources_json and a quest's raw JSON, are about 25 kB).
+# db_sql sets its own, smaller limits (sql.LIMITS).
 MAX_VALUE_BYTES = 1_000_000
 MAX_SQL_BYTES = 100_000
 
@@ -58,11 +64,13 @@ class Env:
 
 @dataclass
 class Call:
-    """One tool call: a read-only connection, the environment and the page size."""
+    """One tool call: a read-only connection, the environment, the page size and the
+    ``time.monotonic()`` at which the call's statements are stopped."""
 
     conn: sqlite3.Connection
     env: Env
     page: int = PAGE
+    deadline: float = math.inf
 
     def query(
         self, name: str, params: dict[str, object] | None = None
@@ -122,9 +130,11 @@ MORE_TOOL = Tool(
 )
 
 
-def guard(conn: sqlite3.Connection, seconds: float) -> None:
+def guard(conn: sqlite3.Connection, seconds: float) -> float:
     """Make ``conn`` (opened ``mode=ro``) refuse writes and ATTACH, cap the size of any value
-    a query makes, and stop any statement still running ``seconds`` from now."""
+    a query makes, and stop any statement still running ``seconds`` from now (returned, as a
+    ``time.monotonic()``). SQLite checks the progress handler only between steps of a query
+    (its loops), never inside one row's expressions; db_sql bounds those itself."""
     conn.execute("PRAGMA query_only = ON")
     conn.execute("PRAGMA trusted_schema = OFF")
     conn.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
@@ -132,6 +142,7 @@ def guard(conn: sqlite3.Connection, seconds: float) -> None:
     conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, MAX_SQL_BYTES)
     deadline = time.monotonic() + seconds
     conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+    return deadline
 
 
 def epoch(conn: sqlite3.Connection) -> str:
@@ -185,6 +196,13 @@ class Registry:
             return Output(self._call(name, args, lane))
         except (ToolError, ArgumentError, CursorError) as exc:
             return Output(f"error: {exc}\n", is_error=True)
+        except Exception:
+            log.exception("tool %s failed", name)
+            return Output(
+                f"error: {name} failed on a bug in the tool (logged); nothing was changed. "
+                "Answer without it, or try another tool\n",
+                is_error=True,
+            )
 
     def _tool(self, name: str, lane: str | None) -> Tool:
         if lane is not None and lane not in LANES:
@@ -209,12 +227,13 @@ class Registry:
         if tool is MORE_TOOL:
             raise ToolError("a cursor never points at more itself")
         values = validate(tool.input_schema, args)
-        with self._connect(tool) as conn:
+        with self._connect(tool) as (conn, deadline):
             if issued is not None and issued != epoch(conn):
                 raise ToolError(
                     "the DB changed since this cursor was issued; call the tool again"
                 )
-            result = tool.handler(Call(conn, self.env, self.page), values, offset)
+            call = Call(conn, self.env, self.page, deadline)
+            result = tool.handler(call, values, offset)
             cursor = None
             if result.more:
                 cursor = self._cursors.issue(
@@ -228,7 +247,7 @@ class Registry:
         return render(result, cursor)
 
     @contextmanager
-    def _connect(self, tool: Tool) -> Iterator[sqlite3.Connection]:
+    def _connect(self, tool: Tool) -> Iterator[tuple[sqlite3.Connection, float]]:
         path = self.env.db
         if not path.is_file():
             raise ToolError(
@@ -240,8 +259,7 @@ class Registry:
         except (access.SchemaError, sqlite3.Error) as exc:
             raise ToolError(f"can't open the DB: {exc}") from None
         try:
-            guard(conn, tool.deadline_s)
-            yield conn
+            yield conn, guard(conn, tool.deadline_s)
         except sqlite3.OperationalError as exc:
             if str(exc) == "interrupted":
                 raise ToolError(

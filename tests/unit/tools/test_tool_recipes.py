@@ -222,7 +222,6 @@ def test_with_no_export_run_the_recipe_tools_say_so(
         "EBF",
         "Electric Blast Furnace",
         "mte:1000",
-        "1000",
         "gregtech:gt.blockmachines@1000",
     ],
 )
@@ -254,6 +253,14 @@ def test_a_singleblock_machine_has_its_tier(run: Runner) -> None:
     p = run("machine_info", machine="mte:31")
     assert p.head["tier"] == "LV"
     assert p.head["maps"] == "Macerator [gt.recipe.macerator]"
+
+
+@pytest.mark.parametrize("text", ["1000", " 31 "])
+def test_a_bare_number_is_never_a_machine_id(run: Runner, text: str) -> None:
+    """A number read off F3 or NEI is likely a numeric block ID (CLAUDE.md: never key on
+    those), so machine_info wants mte:<id>."""
+    error = run.fail("machine_info", machine=text)
+    assert "bare number" in error and "mte:<id>" in error
 
 
 def test_an_unknown_machine(run: Runner) -> None:

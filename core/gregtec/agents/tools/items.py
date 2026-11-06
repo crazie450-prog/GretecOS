@@ -52,10 +52,12 @@ KINDS = ("item", "fluid", "machine")
 _KIND_ORDER = {k: n for n, k in enumerate(KINDS)}
 WORD = re.compile(r"[^\W_]+")
 _FORMAT = re.compile("\u00a7.", re.DOTALL)
+# Registry and fluid names can have spaces ("TConstruct:Clay Cast", "fluid:jet fuel a"); a key
+# is looked up exactly, so a text that only looks like one finds nothing.
 ITEM_KEY = re.compile(
-    r"(?P<reg>[^\s@#]+:[^\s@#]+)@(?P<meta>[0-9]{1,9})(?:#(?P<nbt>[0-9a-f]{8,64}))?"
+    r"(?P<reg>[^@#\t\r\n]+:[^@#\t\r\n]+)@(?P<meta>[0-9]{1,9})(?:#(?P<nbt>[0-9a-f]{8,64}))?"
 )
-FLUID_KEY = re.compile(r"fluid:(?P<name>\S{1,200})")
+FLUID_KEY = re.compile(r"fluid:(?P<name>[^\t\r\n]{1,200})")
 MTE_KEY = re.compile(r"mte:(?P<mte>[0-9]{1,9})")
 
 
@@ -185,18 +187,21 @@ def _judge(
 
 
 def by_key(call: Call, text: str) -> Resolution | None:
-    """``text`` as an item, fluid or machine key; None when it isn't one."""
-    if m := ITEM_KEY.fullmatch(text):
-        rows = call.query(
-            "item_by_key",
-            {"registry": m["reg"], "meta": int(m["meta"]), "nbt": m["nbt"] or ""},
-        )
-        found = [_candidate(r, 1.0, text) for r in rows]
-    elif m := FLUID_KEY.fullmatch(text):
-        found = [
-            _candidate(r, 1.0, text)
-            for r in call.query("fluid_by_name", {"name": m["name"]})
-        ]
+    """``text`` as an item, fluid or machine key; None when it isn't one. A fluid key can also
+    have an item key's shape (``fluid:a@1``): both are looked up."""
+    item, fluid = ITEM_KEY.fullmatch(text), FLUID_KEY.fullmatch(text)
+    if item or fluid:
+        found = []
+        if fluid:
+            rows = call.query("fluid_by_name", {"name": fluid["name"]})
+            found += [_candidate(r, 1.0, text) for r in rows]
+        if item:
+            nbt = item["nbt"] or ""
+            rows = call.query(
+                "item_by_key",
+                {"registry": item["reg"], "meta": int(item["meta"]), "nbt": nbt},
+            )
+            found += [_candidate(r, 1.0, text) for r in rows]
     elif m := MTE_KEY.fullmatch(text):
         rows = call.query("machine_by_mte", {"mte_id": int(m["mte"])})
         found = [
@@ -219,12 +224,12 @@ def by_key(call: Call, text: str) -> Resolution | None:
 def resolve(call: Call, text: str, kind: str | None = None) -> Resolution:
     """Resolve ``text`` (a key, or words) to ranked candidates of ``kind`` (None: an item or a
     fluid; ``machine``: machine rows, keyed ``mte:<id>``)."""
+    keyed = by_key(call, text.strip())  # a key as it is: names keep their spaces
+    if keyed is not None:
+        return keyed
     text = " ".join(text.split())
     if not words(text):
         raise ToolError("name an item, fluid or machine (words or a key)")
-    keyed = by_key(call, text)
-    if keyed is not None:
-        return keyed
     per_form: list[tuple[str, Entry | None, dict[str, Candidate]]] = []
     capped = False
     for form, entry in call.env.glossary.variants(text):
