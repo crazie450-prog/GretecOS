@@ -16,6 +16,7 @@ import gzip
 import hashlib
 import io
 import json
+import shutil
 import sqlite3
 import struct
 from collections.abc import Iterable
@@ -864,28 +865,82 @@ def test_game_dir_needs_world_dir(lab: tuple[Path, Path, Path]) -> None:
     assert exc.value.code == 2
 
 
-def test_a_run_without_ore_mixes_is_refused(tmp_path: Path) -> None:
+def mix_count(home: Path) -> int:
+    conn = db(home)
+    try:
+        return int(conn.execute("SELECT count(*) FROM ore_mix").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_veins_load_without_ore_mixes(tmp_path: Path) -> None:
+    # Before Export runs a GregtecLink from WO-1.6 on, or with no collected run at all, the
+    # veins still load: they show their mix's GT name only.
     game, toml, home = prism(tmp_path)
     write_world(game)
-    old = make_run(home, "20261106T130000Z", parts={"gt_dump": "ok"})
+    shutil.rmtree(home / collect.DATA_EXPORTS / RUN)
     code, out = load(toml)
+    assert code == 0, out
+    assert "Ore mixes: not loaded (no collected run in" in out
+    assert "the DB has none yet, so veins show only their mix's GT name" in out
+    assert "dim 0: 5 veins, 2 known, 1 depleted" in out
+    assert "veins of mixes this export doesn't have" not in out
+    code, out = run("ores", "list", "--dim", "0", "--config", str(toml))
+    assert code == 0 and "24\t24\tore.mix.ferrite\t\t\t1\t1\tserver/generated" in out
+
+    # A run that has mixes loads them; a newer one without keeps them.
+    make_run(home)
+    assert load(toml)[0] == 0 and mix_count(home) == 4
+    make_run(home, "20261106T130000Z", parts={"gt_dump": "ok"})
+    code, out = load(toml)
+    assert code == 0, out
+    assert (
+        "Ore mixes: not loaded (run 20261106T130000Z has no ore mixes (parts.ore_mixes is"
+        " missing); export with a GregtecLink from WO-1.6 on, collect, and load again);"
+        " kept the 4 an earlier load left" in out
+    )
+    assert mix_count(home) == 4
+    assert "veins of mixes this export doesn't have: ore.mix.retired (1)" in out
+    conn = db(home)
+    try:
+        kv = dict(conn.execute("SELECT key, value FROM kv").fetchall())
+    finally:
+        conn.close()
+    assert json.loads(kv["ores.mixes"])["run"] == RUN
+    assert (
+        "20261106T130000Z has no ore mixes" in json.loads(kv["ores.veins"])["no_mixes"]
+    )
+
+
+def test_a_named_run_must_have_ore_mixes(tmp_path: Path) -> None:
+    game, toml, home = prism(tmp_path)
+    write_world(game)
+    make_run(home, "20261106T130000Z", parts={"gt_dump": "ok"})
+    code, out = load(toml, "--run", "20261106T130000Z")
     assert code == 1 and "has no ore mixes (parts.ore_mixes is missing)" in out
     assert load(toml, "--run", RUN)[0] == 0
-    (old / collect.MANIFEST).unlink()
-    failed = make_run(
+    code, out = load(toml, "--run", "20261106T999999Z")
+    assert code == 1 and "no such collected run" in out
+    make_run(
         home,
         "20261106T140000Z",
         parts={"ore_mixes": "failed"},
         part_errors={"ore_mixes": "java.lang.NullPointerException"},
     )
-    code, out = load(toml)
+    code, out = load(toml, "--run", "20261106T140000Z")
     assert code == 1 and "failed: java.lang.NullPointerException" in out
-    (failed / ore_mixes.FILE).write_bytes(b"{}")
-    (failed / collect.MANIFEST).unlink()
+    code, out = load(toml)  # the newest: noted, veins loaded
+    assert code == 0 and "failed: java.lang.NullPointerException" in out
+
+
+def test_a_tampered_ore_mix_file_is_refused(tmp_path: Path) -> None:
+    game, toml, home = prism(tmp_path)
+    write_world(game)
     tampered = make_run(home, "20261106T150000Z")
     (tampered / ore_mixes.FILE).write_bytes(ore_mix_bytes()[:-2] + b"]\n")
     code, out = load(toml)
     assert code == 1 and "doesn't match the manifest" in out
+    assert not access.db_path(home).exists()
 
 
 def test_a_failed_load_changes_nothing(

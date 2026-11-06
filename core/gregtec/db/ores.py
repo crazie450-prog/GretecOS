@@ -1,10 +1,13 @@
 """``gos ores``: GT's ore mixes and a world's veins in ``GOS_HOME/data/gos.sqlite`` (WO-1.6).
 
-- ``gos ores load`` replaces ``ore_mix`` and ``vein`` in one transaction (D128), so a load that
-  fails changes nothing:
+- ``gos ores load`` replaces ``vein``, and ``ore_mix`` when the run has mixes, in one
+  transaction (D128), so a load that fails changes nothing:
   - **Mixes** from a collected export run's ``gt_ore_mixes.json`` (default: the newest run in
     ``GOS_HOME/data/exports/``, checked against its manifest), which GregtecLink writes from
-    GT's worldgen registry (D126, :mod:`gregtec.ingest.ore_mixes`). ``ore_mix.dims`` is JSON:
+    GT's worldgen registry (D126, :mod:`gregtec.ingest.ore_mixes`). When the newest run has none
+    (a GregtecLink from before WO-1.6, or a failed pass) or there is no collected run, the load
+    says so, keeps the mixes an earlier load left and still loads the veins (D128); a run named
+    with ``--run`` must have them. ``ore_mix.dims`` is JSON:
     ``{dimension name: {"ids": [dimension IDs in that instance], "ymin"?, "ymax"?}}``, the
     heights only where the mix overrides them; ``ore_mix.ores`` is JSON, the four layers in
     order: ``[{"layer", "material", "name", "item"?, "meta"?}]``.
@@ -54,6 +57,10 @@ class OresError(RuntimeError):
     """Refused or failed; the DB is as it was."""
 
 
+class NoMixes(OresError):
+    """The run has no ore mixes (or there is no collected run); veins can still load."""
+
+
 @dataclass
 class Veins:
     located: vp.Located
@@ -66,12 +73,14 @@ class Veins:
 
 @dataclass
 class Summary:
-    run_id: str
-    mixes: ore_mixes.OreMixes
+    run_id: str | None  # None: no mixes loaded this time
+    mixes: ore_mixes.OreMixes | None
     veins: Veins
     unknown: dict[str, int] = field(
         default_factory=dict
     )  # vein mix not among the mixes
+    kept_mixes: int = 0  # with no mixes loaded: how many an earlier load left
+    no_mixes: str | None = None  # why none were loaded
 
 
 @dataclass(frozen=True)
@@ -104,16 +113,21 @@ def read_mixes(
     against its manifest under collect's lock."""
     try:
         with collect.lock(gos_home):
-            run = recipe_db.find_run(gos_home, run_key, allow_harness)
+            try:
+                run = recipe_db.find_run(gos_home, run_key, allow_harness)
+            except recipe_db.BuildError as exc:
+                if run_key is None:  # no collected run at all
+                    raise NoMixes(str(exc)) from None
+                raise
             parts = run.manifest.get("parts")
             status = parts.get(PART) if isinstance(parts, dict) else None
             if status != "ok":
                 errors = run.manifest.get("part_errors")
                 why = errors.get(PART) if isinstance(errors, dict) else None
-                raise OresError(
+                raise NoMixes(
                     f"run {run.run_id} has no ore mixes (parts.{PART} is"
-                    f" {status or 'missing'}{f': {why}' if why else ''}); export again with"
-                    " this GregtecLink, collect, and load again"
+                    f" {status or 'missing'}{f': {why}' if why else ''}); export with a"
+                    " GregtecLink from WO-1.6 on, collect, and load again"
                 )
             entry = next(
                 (e for e in collect.entries(run) if e.rel == ore_mixes.FILE), None
@@ -211,7 +225,9 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _veins_source(veins: Veins, unknown: dict[str, int]) -> dict[str, object]:
+def _veins_source(
+    veins: Veins, unknown: dict[str, int], no_mixes: str | None
+) -> dict[str, object]:
     loc = veins.located
     caches = {"server": veins.server, "client": veins.client}
     return {
@@ -229,6 +245,7 @@ def _veins_source(veins: Veins, unknown: dict[str, int]) -> dict[str, object]:
             for d, (n, k, dep) in sorted(vp.counts(veins.merged).items())
         },
         "unknown_mixes": unknown,
+        "no_mixes": no_mixes,
         "caches_differ": veins.differ,
         "notes": list(loc.notes)
         + [p for c in caches.values() if c is not None for p in c.problems][:50],
@@ -237,24 +254,47 @@ def _veins_source(veins: Veins, unknown: dict[str, int]) -> dict[str, object]:
 
 
 def write(
-    conn: sqlite3.Connection, run_id: str, mixes: ore_mixes.OreMixes, veins: Veins
+    conn: sqlite3.Connection,
+    run_id: str | None,
+    mixes: ore_mixes.OreMixes | None,
+    veins: Veins,
+    no_mixes: str | None = None,
 ) -> Summary:
-    """Replace ``ore_mix`` and ``vein`` in one transaction."""
-    ids = mixes.ids_by_name()
-    known_mixes = {m.id for m in mixes.mixes}
-    unknown: dict[str, int] = {}
-    for m in veins.merged:
-        if m.vein.mix not in known_mixes:
-            unknown[m.vein.mix] = unknown.get(m.vein.mix, 0) + 1
+    """Replace ``vein``, and ``ore_mix`` unless ``mixes`` is None (then the mixes an earlier
+    load left stay, and ``no_mixes`` says why), in one transaction."""
     conn.execute("BEGIN IMMEDIATE")  # waits up to 30 s for another writer
     try:
-        conn.execute("DELETE FROM ore_mix")
+        if mixes is not None:
+            ids = mixes.ids_by_name()
+            known_mixes = {m.id for m in mixes.mixes}
+            conn.execute("DELETE FROM ore_mix")
+            conn.executemany(
+                "INSERT INTO ore_mix(id, name, dims, ymin, ymax, weight, density, size,"
+                " ores) VALUES (?,?,?,?,?,?,?,?,?)",
+                [_mix_row(m, ids) for m in mixes.mixes],
+            )
+            _kv(
+                conn,
+                KV_MIXES,
+                canonical(
+                    {
+                        "run": run_id,
+                        "mixes": len(mixes.mixes),
+                        "dimensions": [[d.dim, d.name] for d in mixes.dimensions],
+                        "problems": mixes.problems[:50],
+                        "loaded_utc": _now(),
+                    }
+                ),
+            )
+        else:
+            known_mixes = {r[0] for r in conn.execute("SELECT id FROM ore_mix")}
+        unknown: dict[
+            str, int
+        ] = {}  # with no mixes in the DB at all, none is "unknown"
+        for m in veins.merged if known_mixes else ():
+            if m.vein.mix not in known_mixes:
+                unknown[m.vein.mix] = unknown.get(m.vein.mix, 0) + 1
         conn.execute("DELETE FROM vein")
-        conn.executemany(
-            "INSERT INTO ore_mix(id, name, dims, ymin, ymax, weight, density, size, ores)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            [_mix_row(m, ids) for m in mixes.mixes],
-        )
         conn.executemany(
             "INSERT INTO vein(dim, cx, cz, mix_id, known, depleted, src)"
             " VALUES (?,?,?,?,?,?,?)",
@@ -271,25 +311,13 @@ def write(
                 for m in veins.merged
             ],
         )
-        _kv(
-            conn,
-            KV_MIXES,
-            canonical(
-                {
-                    "run": run_id,
-                    "mixes": len(mixes.mixes),
-                    "dimensions": [[d.dim, d.name] for d in mixes.dimensions],
-                    "problems": mixes.problems[:50],
-                    "loaded_utc": _now(),
-                }
-            ),
-        )
-        _kv(conn, KV_VEINS, canonical(_veins_source(veins, unknown)))
+        _kv(conn, KV_VEINS, canonical(_veins_source(veins, unknown, no_mixes)))
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")
         raise
-    return Summary(run_id, mixes, veins, unknown)
+    kept = len(known_mixes) if mixes is None else 0
+    return Summary(run_id, mixes, veins, unknown, kept, no_mixes)
 
 
 # --- reading back --------------------------------------------------------------------------
@@ -374,13 +402,21 @@ def _db(cfg: config.Config, readonly: bool = False) -> sqlite3.Connection:
 def report(summary: Summary, names: dict[int, str], out: TextIO) -> None:
     m, v = summary.mixes, summary.veins
     loc = v.located
-    print(
-        f"Ore mixes: {len(m.mixes)} from export run {summary.run_id}"
-        f" ({len(m.dimensions)} dimensions named)",
-        file=out,
-    )
-    for problem in m.problems[:10]:
-        print(f"  note: {problem}", file=out)
+    if m is not None:
+        print(
+            f"Ore mixes: {len(m.mixes)} from export run {summary.run_id}"
+            f" ({len(m.dimensions)} dimensions named)",
+            file=out,
+        )
+        for problem in m.problems[:10]:
+            print(f"  note: {problem}", file=out)
+    else:
+        kept = (
+            f"kept the {summary.kept_mixes} an earlier load left"
+            if summary.kept_mixes
+            else "the DB has none yet, so veins show only their mix's GT name"
+        )
+        print(f"Ore mixes: not loaded ({summary.no_mixes}); {kept}", file=out)
     print(f"World: {loc.world}", file=out)
     print(f"  VisualProspecting world id: {loc.world_id or 'none yet'}", file=out)
     if v.server_skipped:
@@ -448,11 +484,19 @@ def load_main(
             path, game = world_folder(cfg, instance, world)
             if instance == "play":
                 print(PLAY_READ_NOTE, file=out)
-        run_id, mixes = read_mixes(cfg.gos_home, run_key)
+        run_id: str | None
+        mixes: ore_mixes.OreMixes | None
+        no_mixes = None
+        try:
+            run_id, mixes = read_mixes(cfg.gos_home, run_key)
+        except NoMixes as exc:
+            if run_key is not None:
+                raise
+            run_id, mixes, no_mixes = None, None, str(exc)
         veins = read_veins(path, game, player, cfg.ore_server_cache)
         conn = _db(cfg)
         try:
-            summary = write(conn, run_id, mixes, veins)
+            summary = write(conn, run_id, mixes, veins, no_mixes)
             names = dimension_names(conn)
         finally:
             conn.close()
