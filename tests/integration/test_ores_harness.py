@@ -107,7 +107,12 @@ def test_every_nei_vein_page_is_a_registry_layer(tmp_path: Path) -> None:
                 p for line in f if (p := json.loads(line))["handler"] == NEI_VEINS
             ]
     assert len(pages) == len(mixes.mixes)
+    # What a page holds: its dimensions (as display blocks) and its four ores. No mix name (the
+    # key VisualProspecting stores veins by), heights, weight, density or size: the plugin
+    # draws those on the page and the dump leaves them out (V08, D126).
+    assert {k for p in pages for k in p} == {"handler", "ingredients", "results"}
     unmatched = []
+    hit: set[str] = set()
     for p in pages:
         slots = [
             {(s["strId"], s["Damage"])}
@@ -130,4 +135,8 @@ def test_every_nei_vein_page_is_a_registry_layer(tmp_path: Path) -> None:
         ]
         if not hits:
             unmatched.append([s["name"] for s in p["results"]])
+        hit.update(m.id for m in hits)
     assert unmatched == []
+    # ... and every layer is some page's (pages with the same ores and as many dimensions, such
+    # as Ross128b's and Ross128ba's, match both).
+    assert hit == {m.id for m in mixes.mixes}

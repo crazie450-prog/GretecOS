@@ -191,7 +191,10 @@ def read_cache(folder: Path) -> Cache:
         if not _DAT.fullmatch(name):
             continue
         path = folder / name
-        st = os.lstat(path)
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            continue  # gone since the listing
         if _is_link(st) or not stat.S_ISREG(st.st_mode):
             cache.problems.append(f"{name}: not a regular file; skipped")
             continue
