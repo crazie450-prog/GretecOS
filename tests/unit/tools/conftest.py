@@ -622,16 +622,16 @@ class Runner:
         self.reg = reg
         self.lane = lane
 
-    def out(self, name: str, **args: object) -> Output:
-        return self.reg.call(name, args, lane=self.lane)
+    def out(self, tool: str, /, **args: object) -> Output:
+        return self.reg.call(tool, args, lane=self.lane)
 
-    def __call__(self, name: str, **args: object) -> Parsed:
-        out = self.out(name, **args)
+    def __call__(self, tool: str, /, **args: object) -> Parsed:
+        out = self.out(tool, **args)
         assert not out.is_error, out.text
         return parse(out.text)
 
-    def fail(self, name: str, **args: object) -> str:
-        out = self.out(name, **args)
+    def fail(self, tool: str, /, **args: object) -> str:
+        out = self.out(tool, **args)
         assert out.is_error, out.text
         assert out.text.startswith("error: ")
         return out.text

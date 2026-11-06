@@ -7,6 +7,7 @@ from pathlib import Path
 from gregtec.agents.tools import items, machines, quests, recipes, sql
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
+from gregtec.agents.tools.tsv import PAGE
 from gregtec.db import access
 
 CITE = "Quote numbers only from the rows, each with the row's id."
@@ -146,10 +147,14 @@ LATER: dict[str, str] = {
 
 
 def build_registry(
-    db: Path, glossary: Glossary | None = None, *, key: bytes | None = None
+    db: Path,
+    glossary: Glossary | None = None,
+    *,
+    key: bytes | None = None,
+    page: int = PAGE,
 ) -> Registry:
-    """Every WO-2.2 tool over the DB at ``db``."""
-    reg = Registry(Env(db, glossary or Glossary()), key=key)
+    """Every WO-2.2 tool over the DB at ``db`` (``key``: the cursor key, default random)."""
+    reg = Registry(Env(db, glossary or Glossary()), key=key, page=page)
     for tool in TOOLS:
         reg.add(tool)
     return reg
