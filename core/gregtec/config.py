@@ -7,10 +7,12 @@
 | [paths] prism_instances  | C:/Games/PrismLauncher/instances         | sync (WO-0.3), collect      |
 | [paths] play, export, lab| GTNH-Play, GTNH-Export, GTNH-Lab         | sync, collect               |
 | [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
+| [paths] lab_world        | none (a Lab world: a folder in saves/)   | ores load (WO-1.6)          |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
 | [sync.lab] exclude       | nothing                                  | sync                        |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
 | [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
+| [policy] ore_server_cache| true (D27: every generated vein)         | ores load (WO-1.6)          |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -57,11 +59,13 @@ class Config:
     export: str = "GTNH-Export"
     lab: str = "GTNH-Lab"
     world: str | None = None  # Play's world: its folder name in saves/ (WO-1.5)
+    lab_world: str | None = None  # the Lab world `gos ores load` reads (WO-1.6)
     sync_exclude: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(DEFAULT_SYNC_EXCLUDE)
     )
     keep_collected: int = 5  # collected export runs kept in GOS_HOME (D102)
     keep_runs: int = 2  # export runs kept in gos.sqlite (D107)
+    ore_server_cache: bool = True  # read VisualProspecting's server cache (D27)
 
     def instance(self, role: str) -> Path:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
@@ -145,6 +149,11 @@ def load(path: Path | None = None) -> Config:
     keep_runs = _table(data, "db", "").get("keep_runs", defaults.keep_runs)
     if type(keep_runs) is not int or keep_runs < 1:
         raise ConfigError("gos.toml: [db] keep_runs must be a whole number >= 1")
+    server_cache = _table(data, "policy", "").get(
+        "ore_server_cache", defaults.ore_server_cache
+    )
+    if type(server_cache) is not bool:
+        raise ConfigError("gos.toml: [policy] ore_server_cache must be true or false")
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
         gos_home=Path(_string(paths, "gos_home", str(defaults.gos_home), "[paths]")),
@@ -155,7 +164,11 @@ def load(path: Path | None = None) -> Config:
         export=_string(paths, "export", defaults.export, "[paths]"),
         lab=_string(paths, "lab", defaults.lab, "[paths]"),
         world=_string(paths, "world", "", "[paths]") if "world" in paths else None,
+        lab_world=(
+            _string(paths, "lab_world", "", "[paths]") if "lab_world" in paths else None
+        ),
         sync_exclude=exclude,
         keep_collected=keep,
         keep_runs=keep_runs,
+        ore_server_cache=server_cache,
     )

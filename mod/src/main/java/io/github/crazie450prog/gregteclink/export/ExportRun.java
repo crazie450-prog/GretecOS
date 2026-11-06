@@ -341,7 +341,7 @@ public final class ExportRun {
         }
     }
 
-    /** The GT parts; true if all three succeeded. */
+    /** The GT parts; true if the recipe dump, machine pass and item/fluid tables succeeded. */
     private boolean writeGt() {
         String dir = runId + ".partial";
         boolean ok = true;
@@ -380,6 +380,22 @@ public final class ExportRun {
         durations.put("machines", System.currentTimeMillis() - t);
         counts.put("machines", mp.machines);
         counts.put("machine_errors", mp.machineErrors);
+
+        // Not part of "complete" (as NEI's step): the recipe DB doesn't need it; `gos ores load` checks the part.
+        t = System.currentTimeMillis();
+        OreMixPass ores = new OreMixPass(stacks);
+        try (HashedFile mixes = open(dir, "gt_ore_mixes.json")) {
+            ores.write(mixes);
+            parts.put("ore_mixes", "ok");
+        } catch (Throwable e) {
+            GregtecLink.LOG.error("export: ore mix pass failed", e);
+            parts.put("ore_mixes", "failed");
+            partErrors.put("ore_mixes", Json.error(e));
+        }
+        durations.put("ore_mixes", System.currentTimeMillis() - t);
+        counts.put("ore_mixes", ores.layers);
+        counts.put("ore_mix_errors", ores.layerErrors);
+        counts.put("dimensions", ores.dimensions);
 
         t = System.currentTimeMillis();
         try (HashedFile items = open(dir, "items.jsonl"); HashedFile fluids = open(dir, "fluids.jsonl")) {

@@ -16,6 +16,7 @@ import keyring.errors
 from gregtec import config, doctor
 from gregtec import deploy as app_deploy
 from gregtec.db import build as recipe_db
+from gregtec.db import ores as ore_db
 from gregtec.db import quests as quest_db
 from gregtec.ingest import collect as export_collect
 from gregtec.llm import keys
@@ -188,6 +189,67 @@ def main(argv: Sequence[str] | None = None) -> int:
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
 
+    ores = commands.add_parser(
+        "ores", help="GT's ore mixes and a world's veins (VisualProspecting)"
+    )
+    ore_cmds = ores.add_subparsers(dest="ores_command", required=True)
+    o_load = ore_cmds.add_parser(
+        "load",
+        help="load ore mixes from the collected export and a world's veins into gos.sqlite",
+        description=(
+            "Read-only on the game: reads GT's ore mixes from the newest collected export "
+            "run (gt_ore_mixes.json) and a world's VisualProspecting caches (the server "
+            "cache of every generated vein, and the player's client cache of the veins he "
+            "knows), and replaces the ore_mix and vein tables of GOS_HOME/data/gos.sqlite "
+            "in one transaction. Default world: [paths] lab_world in the Lab, never Play's "
+            "unless --instance play."
+        ),
+    )
+    o_load.add_argument("--run", default=None, help="collected run id (default newest)")
+    o_load.add_argument(
+        "--instance",
+        choices=("lab", "play"),
+        default="lab",
+        help="the instance whose saves/ holds the world (default lab)",
+    )
+    o_where = o_load.add_mutually_exclusive_group()
+    o_where.add_argument(
+        "--world", default=None, help="the world's folder name in saves/"
+    )
+    o_where.add_argument(
+        "--world-dir", type=Path, default=None, help="a world folder anywhere"
+    )
+    o_load.add_argument(
+        "--game-dir",
+        type=Path,
+        default=None,
+        help="with --world-dir: the game folder holding visualprospecting/ (default: the "
+        "folder that holds the world's saves/)",
+    )
+    o_load.add_argument(
+        "--player",
+        default=None,
+        help="whose client cache to read, by UUID (default: the only one)",
+    )
+    o_list = ore_cmds.add_parser(
+        "list",
+        help="veins per dimension, or one dimension's veins with --dim",
+    )
+    o_list.add_argument(
+        "--dim", type=int, default=None, metavar="N", help="list dimension N's veins"
+    )
+    o_list.add_argument(
+        "--limit", type=int, default=-1, metavar="N", help="at most N rows"
+    )
+    for each in (o_load, o_list):
+        each.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+            "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+        )
+
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
     dep = vault_cmds.add_parser(
@@ -277,6 +339,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.config, args.line, args.limit, sys.stdout
             )
         return quest_db.tier_main(args.config, args.set_stage, args.clear, sys.stdout)
+    if args.command == "ores":
+        if args.ores_command == "load":
+            if args.game_dir is not None and args.world_dir is None:
+                parser.error("--game-dir goes with --world-dir")
+            return ore_db.load_main(
+                args.config,
+                args.run,
+                args.instance,
+                args.world,
+                args.world_dir,
+                args.game_dir,
+                args.player,
+                sys.stdout,
+            )
+        return ore_db.list_main(args.config, args.dim, args.limit, sys.stdout)
     if args.command == "vault" and args.vault_command == "deploy":
         home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
         target = args.vault or home / "vault"

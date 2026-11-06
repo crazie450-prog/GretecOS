@@ -555,6 +555,7 @@ public final class Harness {
                 }
             });
             check(checks, "machine_ebf_1000", ebf[0], "MTEElectricBlastFurnace at gregtech:gt.blockmachines@1000");
+            checkOreMixes(dir, counts, manifest.getAsJsonObject("parts"));
 
             Set<String> items = new HashSet<>();
             eachLine(dir.resolve("items.jsonl"), o -> items.add(refKey(o)));
@@ -672,6 +673,76 @@ public final class Harness {
                     + (warnings == null ? "" : " part_warnings=" + warnings));
             checkNei(dir, manifest.getAsJsonObject("files"), counts);
             return counts;
+        }
+
+        /** gt_ore_mixes.json (D126): GT's ore layers with four keyed ores each, and the vanilla dimensions named. */
+        private void checkOreMixes(Path dir, JsonObject counts, JsonObject parts) throws IOException {
+            JsonElement status = parts.get("ore_mixes");
+            check(
+                checks,
+                "ore_mixes_ok",
+                status != null && "ok".equals(status.getAsString())
+                    && counts.get("ore_mix_errors")
+                        .getAsInt() == 0,
+                "parts.ore_mixes=" + status + " ore_mix_errors=" + counts.get("ore_mix_errors"));
+            JsonObject root = document(dir.resolve("gt_ore_mixes.json")).getAsJsonObject();
+            int layers = 0;
+            int keyed = 0;
+            boolean naquadah = false;
+            for (JsonElement e : root.getAsJsonArray("layers")) {
+                JsonObject l = e.getAsJsonObject();
+                layers++;
+                int ores = 0;
+                JsonObject o = l.getAsJsonObject("ores");
+                for (String layer : new String[] { "primary", "secondary", "between", "sporadic" }) {
+                    JsonObject ore = o.has(layer) ? o.getAsJsonObject(layer) : null;
+                    if (ore != null && ore.get("material")
+                        .isJsonPrimitive()
+                        && ore.has("ore")
+                        && ore.getAsJsonObject("ore")
+                            .get("item")
+                            .isJsonPrimitive())
+                        ores++;
+                }
+                if (ores == 4) keyed++;
+                if ("ore.mix.naquadah".equals(
+                    l.get("name")
+                        .getAsString())) {
+                    naquadah = l.get("weight")
+                        .getAsInt() > 0
+                        && l.get("min_y")
+                            .getAsInt()
+                            < l.get("max_y")
+                                .getAsInt()
+                        && l.getAsJsonArray("dims")
+                            .size() > 0
+                        && ores == 4;
+                }
+            }
+            check(
+                checks,
+                "ore_mixes_keyed",
+                layers >= 100 && keyed == layers
+                    && layers == counts.get("ore_mixes")
+                        .getAsInt(),
+                layers + " ore layers, " + keyed + " with four ores keyed by material and ore block");
+            check(checks, "ore_mix_naquadah", naquadah, "ore.mix.naquadah with weight, heights, dimensions and ores");
+            Map<Integer, String> dims = new TreeMap<>();
+            for (JsonElement e : root.getAsJsonArray("dimensions")) {
+                JsonObject d = e.getAsJsonObject();
+                if (d.has("name") && d.get("name")
+                    .isJsonPrimitive())
+                    dims.put(
+                        d.get("dim")
+                            .getAsInt(),
+                        d.get("name")
+                            .getAsString());
+            }
+            check(
+                checks,
+                "dimensions_named",
+                "Overworld".equals(dims.get(0)) && "Nether".equals(dims.get(-1)) && "The End".equals(dims.get(1)),
+                dims.toString());
         }
 
         /** NEI's files in the run: listed, complete, one handler each, GT handlers present, no numeric IDs. */
@@ -814,8 +885,8 @@ public final class Harness {
 
         private void checkFiles(Path dir, JsonObject files) throws IOException {
             List<String> bad = new ArrayList<>();
-            String[] required = { "gt_recipe_maps.json", "gt_recipes.jsonl", "gt_machines.jsonl", "items.jsonl",
-                "fluids.jsonl" };
+            String[] required = { "gt_recipe_maps.json", "gt_recipes.jsonl", "gt_machines.jsonl", "gt_ore_mixes.json",
+                "items.jsonl", "fluids.jsonl" };
             for (String name : required) {
                 if (!files.has(name)) bad.add(name + " not listed");
             }

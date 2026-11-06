@@ -69,7 +69,8 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `gt_recipe_maps.json` | Array sorted by `name`, one entry per `RecipeMap.ALL_RECIPE_MAPS` map |
 | `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
-| `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above, sorted by item, meta, then NBT JSON (none first) |
+| `gt_ore_mixes.json` | GT's worldgen ore layers (`WorldgenGTOreLayer.sList`) and the instance's dimension IDs (WO-1.6, D126) |
+| `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` too), sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
 | `manifest.json` | Run facts, file hashes, counts, part status. Not listed in its own `files` |
 | `nei/<NEI file name>.jsonl` | On a client with NEI 2.8.172: a byte-for-byte copy of each file NEI's `dumpAll(true)` wrote to `dumps/recipes/` during this run (see below) |
@@ -136,6 +137,26 @@ structure_tooltip: [...]?, errors: [...]?}`
   the secondary one; shift-dependent text may differ between client and server.
 - A line with `errors` counts in `counts.machine_errors`.
 
+### `gt_ore_mixes.json`
+
+Plan §5.2 step 6 (D126): the registry GT's worldgen draws ore veins from, so the numbers are the ones that generate.
+
+```json
+{"layers":[{"name":"ore.mix.naquadah","localized":"Naquadah","min_y":10,"max_y":90,"weight":30,"density":4,"size":32,
+  "dims":["EndAsteroid","asteroids","barnarda4","..."],"dim_heights":{"Twilight Forest":[15,40]}?,
+  "ores":{"primary":{"material":"Naquadah","name":"Naquadah","class":"gregtech.api.enums.Materials","stone":"Stone",
+                     "ore":{"item":"gregtech:gt.blockores2","meta":324,"n":1}},
+          "secondary":{...},"between":{...},"sporadic":{...}},"errors":[...]?}],
+ "dimensions":[{"dim":0,"provider":"net.minecraft.world.WorldProviderSurface","name":"Overworld"}]}
+```
+
+- `layers`: one per `WorldgenGTOreLayer.sList` entry (GT 5.09.54.265 registers every `OreMixes` mix there, all enabled), sorted by `name`. `name` is GT's `mWorldGenName`, the key VisualProspecting stores veins by; `localized` is the mix's display name (`OreMixBuilder.getLocalizedName`, the name VP shows), null when GT has no builder for the layer.
+- `min_y`/`max_y` are the layer's `veinHeight` **after** GT's own fix-up (a range under 9 blocks is widened to `min + 9`), which is what worldgen uses; `dim_heights` holds the per-dimension overrides (`dimVeinHeights`), only when the layer has some. `weight`, `density` and `size` are `mWeight`, `mDensity` and `mSize` as GT stores them.
+- `dims` are the dimension names GT matches a world by (`DimensionDef.getDimensionName`: a Galacticraft body's name such as `moon`, else the provider's `getDimensionName()` such as `Overworld`, `Nether`, `Twilight Forest`), sorted.
+- `ores`: the four layers. `material` is the `IOreMaterial`'s internal name (a GT `Materials.mName`, a bartworks Werkstoff or a GT++ material name), `name` its display name, `class` its class. `ore` is an item ref of the ore block in plain stone (`StoneType.Stone`), or in the material's first valid stone when it has no plain-stone ore (`stone` says which), as `OreManager.getStack` gives it; the ref is recorded in `items.jsonl` like every other. Never a numeric ID.
+- `dimensions`: every registered dimension ID (`DimensionManager.getStaticDimensionIDs()`), with its provider class and the name GT's worldgen would match it by (resolved as VisualProspecting's `DimensionNameResolver` does: the loaded world's provider, else a new provider instance; Galacticraft's celestial body by reflection). Several IDs can share a name. A dimension that fails to resolve carries `error` instead of `name`.
+- A layer whose part fails to serialise keeps the rest and lists `errors` (`counts.ore_mix_errors`).
+
 ### `items.jsonl` line
 
 `{item, meta, nbt?, unlocalized, name, ore: [names, sorted], gt: {prefix, material, amount}?, errors: [...]?}`.
@@ -187,14 +208,14 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
  "mods":[{"modid","name","version","file","sha256"}],
  "files":{"gt_recipes.jsonl":{"sha256":"...","bytes":0,"lines":0}, "...":{}},
  "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",
-           "items","item_errors","fluids","unregistered",
+           "ore_mixes","ore_mix_errors","dimensions","items","item_errors","fluids","unregistered",
            "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_files"?,"nei_recipes"?},
  "options":{"recipe_owners":true},
- "parts":{"gt_dump":"ok|failed","machines":"ok|failed","refs":"ok|failed",
+ "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","refs":"ok|failed",
           "nei":"absent|skipped_server|ok|failed","autoexport":"off|ok|failed"},
  "part_errors":{"<part>":"<why it failed>"}?,
  "part_warnings":{"nei":"<what an ok NEI step left out>"}?,
- "durations_ms":{"gt_dump","machines","refs","nei_wait"?,"nei_dump"?,"nei_copy"?}}
+ "durations_ms":{"gt_dump","machines","ore_mixes","refs","nei_wait"?,"nei_dump"?,"nei_copy"?}}
 ```
 
 - `mods` lists **Export's** loaded mods, sorted by modid. `file` is relative to the game dir, or only the file name
@@ -207,6 +228,9 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
 - `pack_version` `2.9.x` means unknown [A§5.5 correction]: trust jar hashes over this string.
 - `complete` covers the GT parts and the manifest, as before: a failed NEI step leaves `complete: true`. **Readers that
   need NEI's data check `parts.nei == "ok"`** and use `nei/` only then.
+- `parts.ore_mixes` (WO-1.6) is not part of `complete` either: a failed ore-mix pass leaves the recipe parts usable.
+  **Readers of `gt_ore_mixes.json` check `parts.ore_mixes == "ok"`**. Runs made before WO-1.6 have no such part and
+  no file.
 - `world` is the world's folder name: `gregteclink-autoexport` for autoexport, the folder of whatever world was
   opened for `one_click`, the harness's own world for `harness`.
 - `parts.nei`:
@@ -236,6 +260,8 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
 - `core/gregtec/ingest/gtdump.py`: `gt_recipe_maps.json`, `gt_recipes.jsonl`, `items.jsonl`, `fluids.jsonl`.
 - `core/gregtec/ingest/machines.py`: `gt_machines.jsonl`.
 - `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
+- `core/gregtec/ingest/ore_mixes.py` (WO-1.6): `gt_ore_mixes.json`, only from runs with `parts.ore_mixes == "ok"`;
+  `gos ores load` (`core/gregtec/db/ores.py`, D128) loads it into `ore_mix`.
 - `core/gregtec/ingest/normalize.py` (keys, NBT hash, identity and content hashes, D104) and
   `core/gregtec/ingest/merge.py` (NEI into GT, the collision test, D105, D106); `gos db build`
   (`core/gregtec/db/build.py`, D107) loads a collected run into `GOS_HOME\data\gos.sqlite`.
