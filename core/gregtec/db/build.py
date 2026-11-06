@@ -223,7 +223,7 @@ def _nei_rows(loaded: Loaded, rels: list[str]) -> Iterator[Recipe]:
         if recipe.handler not in loaded.handlers:
             stem = rel.removeprefix(nei.DIR + "/").removesuffix(".jsonl")
             loaded.handlers[recipe.handler] = _SUFFIX.sub("", stem)
-        if recipe.handler in crops.NEI_HANDLERS:
+        if crops.is_crop_line(recipe):
             loaded.crop_lines.append(
                 recipe
             )  # for the crop tables; merge leaves them out

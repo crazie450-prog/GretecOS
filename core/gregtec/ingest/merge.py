@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gregtec.ingest import crops
 from gregtec.ingest.normalize import (
     ALT_IDENTITY_MAPS,
     ITEM,
@@ -89,6 +90,7 @@ NOT_RECIPES = {
     "cropsnhBreeding": (
         "CropsNH breeding on crop sticks, where no parent is used up: crop tables"
     ),
+    # Only lines of CropsNH seeds alone (crops.is_crop_line): the id has no cropsnh prefix.
     "mutationPool": "CropsNH mutation pools (members only, no pool name): crop tables",
     "cropsnhAlternateSeeds": "CropsNH alternate seeds (an item that plants a crop): crop tables",
 }
@@ -256,7 +258,9 @@ def merge(
     for n in nei:
         stats.nei_rows += 1
         handler = n.handler or ""
-        if handler in NOT_RECIPES:
+        if handler in NOT_RECIPES and (
+            handler not in crops.NEI_HANDLERS or crops.is_crop_line(n)
+        ):
             stats.not_recipes[handler] += 1
             continue
         space = categories.get(handler)

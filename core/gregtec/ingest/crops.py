@@ -62,6 +62,21 @@ NEI_POOLS = "mutationPool"
 NEI_SEEDS = "cropsnhAlternateSeeds"
 NEI_HANDLERS = frozenset({NEI_CROPS, NEI_BREEDING, NEI_POOLS, NEI_SEEDS})
 MAX_PARENTS = 4  # the dump's parent columns
+
+
+def is_crop_line(r: Recipe) -> bool:
+    """Whether an NEI line is one of CropsNH's crop-stick tabs. The others' ids carry ``cropsnh``;
+    the bare ``mutationPool`` counts only when it shows CropsNH seeds and nothing else, so another
+    mod's handler of that id stays a recipe (D136)."""
+    if r.handler not in NEI_HANDLERS:
+        return False
+    return r.handler != NEI_POOLS or (
+        bool(r.inputs)
+        and not r.outputs
+        and all(s.ref.name == GENERIC_SEED for s in r.inputs)
+    )
+
+
 _COLUMNS = {
     "id": "ID",
     "name": "Name",
@@ -566,6 +581,8 @@ def apply_nei(data: CropData, lines: Iterable[Recipe], refs: NeiRefs) -> None:
     pages: dict[str, Recipe] = {}
     breeding: set[str] = set()
     for r in lines:
+        if not is_crop_line(r):
+            continue
         if r.handler == NEI_CROPS:
             crop = _species(r.inputs[0].ref, refs) if r.inputs else None
             if crop is None:

@@ -706,6 +706,28 @@ def test_nei_data_without_cropsnhs_tabs_is_a_problem_not_a_pass(tmp_path: Path) 
     assert "crops they show are in the crop dump" not in text
 
 
+def test_another_mods_mutation_pool_handler_stays_a_recipe(tmp_path: Path) -> None:
+    # CropsNH's pool tab id has no cropsnh prefix: only lines of CropsNH seeds alone are its.
+    files = {**base_files(), **crop_files()}
+    other = {
+        "handler": crops.NEI_POOLS,
+        "ingredients": [st("test:gene", 0, 1, "Gene"), seed("cropsnh:alpha")],
+        "results": [st("test:bee", 0, 1, "Bee")],
+    }
+    files["nei/Crops.jsonl"] += (json.dumps(other) + "\r\n").encode()
+    make_run(tmp_path, files=files)
+    result = build.build(tmp_path)
+    assert rows(
+        result.db,
+        "SELECT count(*) FROM recipe r JOIN nei_handler h ON h.id = r.nei_handler_id"
+        " WHERE h.handler_name = ?",
+        crops.NEI_POOLS,
+    ) == [(1,)]
+    data = parsed(tmp_path / collect.DATA_EXPORTS / RUN)
+    assert data.problems == []
+    assert data.nei is not None and data.nei.pools == 2
+
+
 def test_gos_db_build_prints_the_crop_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -721,14 +743,28 @@ def test_gos_db_build_prints_the_crop_line(
     assert "crop:cropsnh:weed" in saved
 
 
+SCHEMA_V2 = Path(__file__).resolve().parents[1] / "fixtures" / "gos-schema-v2.sql"
+
+
 def test_a_version_2_db_gets_the_crop_tables(tmp_path: Path) -> None:
+    # A real version-2 DB: WO-1.6's schema.sql as it was, with data in it.
     path = tmp_path / "gos.sqlite"
-    conn = access.connect(path)
-    for table in crop_db.TABLES:
-        conn.execute(f"DROP TABLE {table}")
-    conn.execute("INSERT INTO kv(key, value) VALUES ('tier.override', 'mv')")
-    conn.execute("PRAGMA user_version = 2")
-    conn.close()
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(SCHEMA_V2.read_text(encoding="utf-8"))
+        conn.execute("INSERT INTO kv(key, value) VALUES ('tier.override', 'mv')")
+        conn.execute(
+            "INSERT INTO item(registry_name, meta) VALUES ('minecraft:stone', 0)"
+        )
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone() == (2,)
+        tables = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert not tables & set(crop_db.TABLES)
+    finally:
+        conn.close()
     conn = access.connect(path)
     try:
         assert (
@@ -739,6 +775,7 @@ def test_a_version_2_db_gets_the_crop_tables(tmp_path: Path) -> None:
         for table in crop_db.TABLES:
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
         assert conn.execute("SELECT value FROM kv").fetchone()[0] == "mv"
+        assert conn.execute("SELECT count(*) FROM item").fetchone()[0] == 1
     finally:
         conn.close()
 
