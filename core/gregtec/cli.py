@@ -1,4 +1,8 @@
-"""The ``gos`` command (Appendix B). WO-0.2 adds ``gos doctor``; later WOs add the rest."""
+"""The ``gos`` command (Appendix B). WO-0.2 adds ``gos doctor``; later WOs add the rest.
+
+The service commands (serve, stop, status, launch, token, pair, devices; WO-2.1) live in
+``gregtec.servicecli``.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import config, doctor, locks, playhooks
+from gregtec import config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
 from gregtec.db import structures as structure_db
 from gregtec.ingest import collect as export_collect
@@ -222,6 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     smoke.add_argument("--skip-sdk", action="store_true", help="run the fast lane only")
 
+    servicecli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -278,6 +283,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     args = parser.parse_args(argv)
+    if args.command in servicecli.COMMANDS:
+        return servicecli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
@@ -331,14 +338,35 @@ def _deploy(ref: str, config_path: Path | None) -> int:
         return 2
     home = Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
     prism = [cfg.prism_instances, cfg.prism_instances.parent]
-    forbidden = [*prism, *doctor.default_prism_roots(), home]
+    forbidden = [*prism, *doctor.default_prism_roots(), home, cfg.gos_home]
+    for problem in cfg.service_errors:
+        print(f"Warning: {problem} (GOS won't start until it's fixed)", file=sys.stderr)
+    # GOS is stopped only for the swap, after the minutes of staging and building, and not at
+    # all for a deploy that is refused (a dirty tree, a ref not in main).
+    stopped: list[dict[str, object]] = []
+
+    def stop_gos() -> None:
+        if (sup := _stop_for_deploy(cfg)) is not None:
+            stopped.append(sup)
+
     try:
         release = app_deploy.deploy(
-            app_deploy.REPO_ROOT, ref, cfg.gos_app, forbidden=forbidden
+            app_deploy.REPO_ROOT,
+            ref,
+            cfg.gos_app,
+            forbidden=forbidden,
+            before_swap=stop_gos,
         )
     except (app_deploy.DeployError, OSError) as exc:
         print(f"Not deployed: {exc}", file=sys.stderr)
         return 1
+    finally:  # also after Ctrl+C: GOS comes back, from whichever release is current
+        if stopped:
+            # As it ran: the gos.toml in its run file (the Run key's --config), if it says.
+            ran_with = stopped[0].get("config", config_path)
+            _restart_after_deploy(
+                cfg, Path(ran_with) if isinstance(ran_with, str | Path) else None
+            )
     was = f", replacing {release.replaced[:12]}" if release.replaced else ""
     print(f"Deployed {release.commit[:12]} ({ref}) to {release.path}{was}.")
     print(f"{release.path.parent / app_deploy.SCRIPTS} is a copy of its scripts/.")
@@ -357,6 +385,43 @@ def _deploy(ref: str, config_path: Path | None) -> int:
     print(f"  {python} {scripts / 'check_tweaks.py'} <instance folder> [--apply]")
     print(f"  {python} {scripts / 'sync_instances.py'} --dry-run")
     return 0
+
+
+def _stop_for_deploy(cfg: config.Config) -> dict[str, object] | None:
+    """Stop a supervisor running from GOS_APP: Windows can't rename ``current`` under it (D115).
+
+    Returns its run file's data if it was stopped, so the deploy restarts it from the new
+    release with the same gos.toml.
+    """
+    run_file = cfg.run_dir / control.SUPERVISOR_FILE
+    sup = control.running(run_file, control.SUPERVISOR_SERVICE)
+    if sup is None or not isinstance(sup.get("exe"), str):
+        return None
+    app = os.path.normcase(os.path.abspath(cfg.gos_app))
+    exe = os.path.normcase(os.path.abspath(sup["exe"]))
+    if not exe.startswith(app.rstrip("\\/") + os.sep):
+        return None
+    print("Stopping GOS for the swap (it runs from GOS_APP); it restarts afterwards.")
+    try:
+        control.call(sup["port"], "POST", "/shutdown", token=sup["token"])
+    except control.ControlError as exc:
+        print(f"  Couldn't stop it ({exc}); the swap may fail and change nothing.")
+        return None
+    servicecli.wait_until(
+        lambda: control.running(run_file, control.SUPERVISOR_SERVICE), want=False
+    )
+    return sup
+
+
+def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
+    """Start the supervisor of GOS_APP's current release, with the gos.toml it ran with."""
+    exe = app_deploy.venv_exe(cfg.gos_app / app_deploy.CURRENT, "gos-supervisor")
+    if not exe.is_file():
+        print(f"Couldn't restart GOS: there is no {exe}. Log off and on, or run it.")
+        return
+    argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
+    servicecli.spawn_detached(argv, cfg.gos_home)
+    print(f"Restarted GOS: {exe}")
 
 
 def _load(path: Path | None) -> config.Config | None:

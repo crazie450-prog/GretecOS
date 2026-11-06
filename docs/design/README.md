@@ -64,6 +64,10 @@ docs/design/README.md, docs/design/age_themes.md and docs/design/system/README.m
   (D81 ship order); switching follows tier detection (D64), with pinning and the
   tier-up moment.
 - Agents return cards, never HTML. Every game number keeps its citation chip.
+- The core serves the build at http://gos.localhost:8765/, the only local name
+  pairing works on (D117): the Chrome app window opens that URL. Never serve
+  a dev build on gos.localhost (its cookie would go there); use localhost:<port>
+  against gos-dev's own core (its own ports and dashboard_host, D115).
 - Bundle the fonts locally with their OFL licence files.
 - Acceptance: matches the boards at 2560x1440; switching themes never moves
   anything; every theme passes the contrast rule; approvals and status stay
