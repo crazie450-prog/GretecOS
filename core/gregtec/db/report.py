@@ -9,7 +9,9 @@ Export's loaded mods by modid or mod name, case ignored; the modids are the ones
 addon's ``gradle.properties``, still to be confirmed on the first full-pack run (Questions,
 WO-1.3). GT categories whose recipes are only in NEI (added after GT's dump, as TecTech's
 Godforge maps in the dev runtime) get a warning of their own, because the planner doesn't use
-NEI-only recipes of GT categories yet (``fake`` is NULL, D105).
+NEI-only recipes of GT categories yet (``fake`` is NULL, D105). The machine-fact section (WO-1.7,
+D109) counts the base and addon multiblocks whose parallels and OC rules are at confidence 0.8
+or more, have no recipes, are flagged or are missing.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from gregtec.ingest import machine_facts
 from gregtec.ingest.merge import ALLOW_HEADER, NOT_RECIPES, Collision
 from gregtec.ingest.normalize import ITEM, SIG_CHARS, Recipe, canonical
 
@@ -302,12 +305,111 @@ def lines(result: Result, full: bool) -> list[str]:
             )
         out.append("Handlers left out (not recipes, D105):")
         out.extend(f"  {h}: {why}" for h, why in sorted(NOT_RECIPES.items()))
+    out.extend(fact_lines(result, full))
     for key in result.pruned:
         out.append(f"Pruned run {key} from the DB (keeping the newest [db] keep_runs)")
     if result.report_path is not None:
         out.append(f"Report: {result.report_path}")
     if result.report_error is not None:
         out.append(f"Report not saved: {result.report_error}")
+    return out
+
+
+def fact_statuses(result: Result) -> tuple[set[str], list[machine_facts.Status]]:
+    """(the base pack's GT mod ids, the status of every multiblock in the run)."""
+    loaded = result.loaded
+    base = machine_facts.base_mods(loaded.run.manifest)
+    facts = loaded.facts.facts if loaded.facts is not None else {}
+    found = [
+        machine_facts.status(m, facts.get(m.mte_id, []))
+        for m in sorted(loaded.machines, key=lambda m: m.mte_id)
+        if m.multiblock
+    ]
+    return base, found
+
+
+def _fact(f: machine_facts.Fact | None) -> str:
+    return "none" if f is None else f"{f.value} ({f.confidence:.2f} {f.source})"
+
+
+def fact_lines(result: Result, full: bool) -> list[str]:
+    """The machine-fact section: how many multiblocks have parallels and OC rules at
+    confidence >= 0.8 (WO-1.7's acceptance), the rest flagged or missing."""
+    loaded = result.loaded
+    fs = loaded.facts
+    if fs is None:
+        return []
+    base, found = fact_statuses(result)
+    by_source = Counter(f.source for facts in fs.facts.values() for f in facts)
+    out = [
+        (
+            f"Machine facts (WO-1.7): tooltip {by_source['tooltip']:,}, curated "
+            f"{by_source['curated']:,} (plus the machine pass's flags); parallels and OC rules "
+            f"at confidence >= {machine_facts.THRESHOLD}, or flagged:"
+        )
+    ]
+    groups = [
+        ("Base multiblocks (GT's jar)", [s for s in found if s.machine.mod in base]),
+        ("Addon multiblocks", [s for s in found if s.machine.mod not in base]),
+    ]
+    for title, group in groups:
+        n = Counter(s.state for s in group)
+        out.append(
+            f"  {title}: {len(group)}: covered {n['covered']}, no recipes (n/a) {n['n/a']}, "
+            f"flagged {n['flagged']}, missing {n['missing']}"
+        )
+    if not base:
+        out.append(
+            "  WARNING: GT (modid gregtech) isn't in the manifest's mods; all are addons"
+        )
+    missing = [s for s in groups[0][1] if s.state == "missing"]
+    if missing:
+        out.append(
+            f"  WARNING: {len(missing)} base multiblocks have neither the facts nor a flag: "
+            + ", ".join(f"{s.machine.mte_id} {s.machine.name}" for s in missing[:10])
+            + (" ..." if len(missing) > 10 else "")
+        )
+    for c, key in fs.bad_maps:
+        out.append(
+            f"  WARNING: machine_facts.tsv line {c.line}: {key} names a recipe map "
+            f"{c.machine} doesn't have"
+        )
+    pairs = [
+        (m, t, c)
+        for m in loaded.machines
+        for t, c in machine_facts.disagreements(fs.facts.get(m.mte_id, []))
+    ]
+    out.append(
+        f"  Tooltip and curated row disagree on {len(pairs)} facts; curated rows for "
+        f"{len(fs.unmatched)} classes this run doesn't have"
+        + (
+            " (both listed in the saved report)"
+            if not full and (pairs or fs.unmatched)
+            else ""
+        )
+    )
+    if not full:
+        return out
+    for title, group in groups:
+        out.append(f"{title}: state, machine, parallel, oc, why")
+        for s in group:
+            m = s.machine
+            out.append(
+                f"  {s.state:<8} {m.mte_id} {m.name} ({m.class_name})\t{_fact(s.parallel)}"
+                f"\t{_fact(s.oc)}\t{s.why}"
+            )
+    if pairs:
+        out.append(
+            "Tooltip vs curated (the curated row wins; stale after a GT update?):"
+        )
+        for m, t, c in pairs:
+            out.append(
+                f"  {m.mte_id} {m.name}: {t.key} tooltip {t.value!r} ({t.note}), curated "
+                f"{c.value!r}"
+            )
+    if fs.unmatched:
+        out.append("Curated rows for classes not in this run:")
+        out.extend(f"  line {c.line}: {c.machine} ({c.name})" for c in fs.unmatched)
     return out
 
 

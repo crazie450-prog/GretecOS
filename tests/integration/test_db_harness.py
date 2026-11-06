@@ -216,3 +216,50 @@ def test_search_and_report(client: build.Result) -> None:
     assert {"gregtech", "bartworks", "miscutils"} <= per_mod
     # The dev runtime has none of Play's addons; the report says so, never "ok".
     assert text.count("not loaded  ") == len(report.ADDONS)
+
+
+# Base multiblocks GT registers only with mods the dev runtime doesn't have (WO-1.7): Thaumcraft
+# (Research Completer, Large Essentia Smeltery), MobsInfo and EnderIO (Extreme Entity Crusher),
+# Forestry (the Industrial Apiary). Their curated rows are for the full pack.
+NOT_IN_DEV_RUNTIME = {
+    "gregtech.common.tileentities.machines.multi.MTEResearchCompleter",
+    "goodgenerator.blocks.tileEntity.MTELargeEssentiaSmeltery",
+    "kubatech.tileentity.gregtech.multiblock.MTEExtremeEntityCrusher",
+    "kubatech.tileentity.gregtech.multiblock.MTEMegaIndustrialApiary",
+}
+
+
+@pytest.mark.parametrize("side", ["server", "client"])
+def test_every_base_multiblock_has_parallels_and_oc_rules_or_a_flag(
+    side: str, request: pytest.FixtureRequest
+) -> None:
+    result: build.Result = request.getfixturevalue(side)
+    base, found = report.fact_statuses(result)
+    assert {"gregtech", "miscutils", "tectech", "bartworks"} <= base
+    multis = [s for s in found if s.machine.mod in base]
+    assert len(multis) > 290
+    assert [s.machine.mte_id for s in multis if s.state == "missing"] == []
+    covered = [s for s in multis if s.state == "covered"]
+    assert len(covered) > 120
+    assert all(
+        s.parallel and s.oc and min(s.parallel.confidence, s.oc.confidence) >= 0.8
+        for s in covered
+    )
+    facts = result.loaded.facts
+    assert facts is not None
+    assert {c.machine for c in facts.unmatched} == NOT_IN_DEV_RUNTIME
+    assert facts.bad_maps == []
+    # The EBF's rules, read from GT's source, are in the DB and win over its tooltip.
+    conn = access.connect(result.db, readonly=True)
+    try:
+        ebf = {
+            r["key"]: (r["value"], r["source"])
+            for r in access.query(conn, "machine_facts", {"mte_id": 1000})
+        }
+    finally:
+        conn.close()
+    assert ebf["oc"] == ("heat", "curated")
+    assert ebf["machine_heat"] == ("coil_heat + 100*(vt - 2)", "curated")
+    assert ebf["parallel"] == ("1", "curated")
+    text = "\n".join(report.lines(result, full=False))
+    assert "Base multiblocks (GT's jar): " in text and "missing 0" in text

@@ -6,19 +6,23 @@
    size and sha256. Steps 1 and 2 hold collect's lock, so a collect can't prune or swap the run
    while it is read. NEI's files are used only when ``parts.nei`` is ``ok``.
 2. **Normalise** (:mod:`gregtec.ingest.normalize`): GT's recipe maps, recipes, items, fluids and
-   machines, and NEI's recipes; merge NEI into GT (:mod:`gregtec.ingest.merge`).
+   machines, and NEI's recipes; merge NEI into GT (:mod:`gregtec.ingest.merge`). The machine
+   facts (WO-1.7, :mod:`gregtec.ingest.machine_facts`): each multiblock's tooltip parsed, plus
+   the repo's curated ``data/curated/machine_facts.tsv``, checked before anything is read.
 3. **Collision test**: one recipe per citation key ``r:<map>/<sig12>``. A collision not on the
    allow-list fails the build before the DB is touched, and writes the curation task
    ``GOS_HOME/data/curation/collisions-<run>.tsv`` (``collisions-<run>-2.tsv`` and so on while
    that file can't be replaced, e.g. when it is open in Excel).
 4. **Write** everything in one transaction, so a failed build leaves the DB as it was: the run
    (``export_run``, ``mod``), the catalog tables shared by every run (items, fluids, ores, recipe
-   maps, NEI handlers, machines, latest run wins), the run's recipes, and the name index
-   (``name_fts``). Loading a run that is already in the DB replaces its recipes. Then runs past
-   the newest ``[db] keep_runs`` (default 2, so WO-1.4 can diff a run with the one before) are
-   deleted, except the run just loaded and any run a plan references (plan section 5.2).
-5. **Report** counts per mod and the addon check (:mod:`gregtec.db.report`), printed and saved
-   to ``GOS_HOME/data/reports/db-<run>.txt``.
+   maps, NEI handlers, machines and their facts, latest run wins), the run's recipes, and the
+   name index (``name_fts``). Loading a run that is already in the DB replaces its recipes. Then
+   runs past the newest ``[db] keep_runs`` (default 2, so WO-1.4 can diff a run with the one
+   before) are deleted, except the run just loaded and any run a plan references (plan section
+   5.2).
+5. **Report** counts per mod, the addon check and the machine-fact coverage of the base
+   multiblocks (:mod:`gregtec.db.report`), printed and saved to
+   ``GOS_HOME/data/reports/db-<run>.txt``.
 
 ``fingerprint`` is Play's fingerprint for ``export_run`` (plan section 5.2 step 4). WO-1.4
 computes it on Play before syncing and passes it in; until then it is ``""``, which never
@@ -38,7 +42,7 @@ from typing import TextIO
 
 from gregtec import config
 from gregtec.db import access, report
-from gregtec.ingest import collect, gtdump, machines, merge, nei
+from gregtec.ingest import collect, gtdump, machine_facts, machines, merge, nei
 from gregtec.ingest.normalize import FLUID, ITEM, Json, OreIndex, Recipe, Ref, canonical
 
 REPORTS = Path("data", "reports")
@@ -71,6 +75,8 @@ class Loaded:
     nei_status: str
     stats: merge.MergeStats | None = None
     keys: merge.KeyResult | None = None
+    # tooltip and curated machine facts (WO-1.7)
+    facts: machine_facts.FactSet | None = None
     gt_recipes: int = 0  # GT lines loaded, before duplicates were dropped
     # gt_recipes.jsonl lines per map, error lines included
     map_lines: Counter[str] = field(default_factory=Counter)
@@ -131,7 +137,11 @@ def _nei_status(m: dict[str, Json]) -> str:
     return status if isinstance(status, str) else "absent"
 
 
-def load(run: collect.Run, allowed: dict[tuple[str, str], tuple[str, ...]]) -> Loaded:
+def load(
+    run: collect.Run,
+    allowed: dict[tuple[str, str], tuple[str, ...]],
+    curated: Sequence[machine_facts.Curated] = (),
+) -> Loaded:
     """Read, normalise, merge and key ``run``; raise ``merge.CollisionError`` on a collision."""
     path = run.path
     maps = gtdump.read_recipe_maps(path)
@@ -174,6 +184,7 @@ def load(run: collect.Run, allowed: dict[tuple[str, str], tuple[str, ...]]) -> L
     combined, loaded.stats = merge.merge(gt_recipes, rows, categories, ores)
     loaded.keys = merge.assign_keys(combined, allowed)
     loaded.recipes = loaded.keys.recipes
+    loaded.facts = machine_facts.assemble(found, curated)
     return loaded
 
 
@@ -573,11 +584,13 @@ def _machines(
         rows,
     )
     ids = {row[1]: row[0] for row in conn.execute("SELECT id, mte_id FROM machine")}
-    # Each machine's maps and flags are the latest run's. Only the machine pass's own fact
-    # rows are replaced; WO-1.7 owns the tooltip and curated facts.
+    # Each machine's maps and facts are the latest run's: the machine pass's flags, the
+    # tooltip facts and the curated table (WO-1.7). Probe rows (Lab measurements) are kept.
     conn.execute("DELETE FROM machine_map")
     conn.execute(
-        "DELETE FROM machine_fact WHERE source = 'code' AND note = ?", (PASS_NOTE,)
+        "DELETE FROM machine_fact WHERE (source = 'code' AND note = ?)"
+        " OR source IN ('tooltip', 'curated')",
+        (PASS_NOTE,),
     )
     mm, facts = [], []
     for m in loaded.machines:
@@ -599,6 +612,11 @@ def _machines(
             )
             for k, v in sorted(m.flags.items())
         )
+        if loaded.facts is not None:
+            facts.extend(
+                (mid, f.key, f.value, f.unit, f.source, f.confidence, f.note)
+                for f in loaded.facts.facts.get(m.mte_id, [])
+            )
     conn.executemany(
         "INSERT INTO machine_map(machine_id, recipe_map_id, priority) VALUES (?,?,?)",
         mm,
@@ -730,12 +748,13 @@ def build(
     fingerprint: str = "",
     allow_harness: bool = False,
     allow_list: Path | None = None,
+    curated: Path | None = None,
     db: Path | None = None,
 ) -> Result:
     """Load a collected run into the DB (``db``: default ``GOS_HOME/data/gos.sqlite``).
 
-    ``allow_list`` defaults to the repo's ``core/gregtec/ingest/collisions.tsv``;
-    ``allow_harness`` is for tests only.
+    ``allow_list`` defaults to the repo's ``core/gregtec/ingest/collisions.tsv`` and
+    ``curated`` to its ``data/curated/machine_facts.tsv``; ``allow_harness`` is for tests only.
     """
     data = _data_dir(gos_home)
     allow_list = allow_list or merge.ALLOW_LIST
@@ -743,6 +762,10 @@ def build(
         allowed = merge.read_allow_list(allow_list)
     except ValueError as exc:
         raise BuildError(f"allow-list: {exc}") from None
+    try:
+        facts = machine_facts.read_curated(curated or machine_facts.CURATED)
+    except (OSError, ValueError) as exc:
+        raise BuildError(f"curated machine facts: {exc}") from None
     if not (gos_home / collect.DATA_EXPORTS).is_dir():
         raise BuildError(
             f"{gos_home / collect.DATA_EXPORTS} doesn't exist: run `gos export collect` first"
@@ -752,7 +775,7 @@ def build(
         with collect.lock(gos_home):
             run = find_run(gos_home, run_key, allow_harness)
             verify(run)
-            loaded = load(run, allowed)
+            loaded = load(run, allowed, facts)
     except collect.CollectError as exc:
         raise BuildError(str(exc)) from None
     except gtdump.FormatError as exc:

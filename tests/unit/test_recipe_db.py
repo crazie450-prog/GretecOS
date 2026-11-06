@@ -1556,3 +1556,108 @@ def test_opening_the_db_writes_nothing(tmp_path: Path, allow_list: Path) -> None
         writer.execute("ROLLBACK")
     finally:
         writer.close()
+
+
+# --- machine facts (WO-1.7) ----------------------------------------------------------------
+
+FACTS_HEADER = "machine\tname\tprocessing\tparallel\tspeed\teu_modifier\toc\textra\tconfidence\tcite\tnote\n"
+MIXER_ROW = (
+    "test.MTEMixer\tTest Mixer\tlogic\t4*vt\t\t\tperfect\ttier_skips=unlimited\t0.95\t"
+    "gt@5.09.54.265:test/MTEMixer.java#createProcessingLogic\tcurated by hand\n"
+)
+
+
+def fact_files() -> dict[str, bytes]:
+    lines = machines()
+    lines[0]["tooltip"] = [
+        "§7Mixes things",
+        "§b8§7 Parallels per §9Voltage§7 Tier",
+        "§a200%§7 Speed",
+    ]
+    return {**default_files(), "gt_machines.jsonl": jsonl(lines)}
+
+
+def curated(path: Path, *lines: str) -> Path:
+    path.write_text("# test\n" + FACTS_HEADER + "".join(lines), encoding="utf-8")
+    return path
+
+
+def best_facts(db: Path) -> dict[str, tuple[Any, ...]]:
+    conn = access.connect(db, readonly=True)
+    try:
+        return {
+            r["key"]: (r["value"], r["source"], r["confidence"])
+            for r in access.query(conn, "machine_facts", {"mte_id": 1000})
+        }
+    finally:
+        conn.close()
+
+
+def test_machine_facts_from_the_tooltip_and_the_curated_table(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    make_run(tmp_path, files=fact_files())
+    table = curated(tmp_path / "facts.tsv", MIXER_ROW)
+    result = built(tmp_path, allow_list, curated=table)
+    best = best_facts(result.db)
+    assert best["parallel"] == ("4*vt", "curated", 0.95)  # the curated row wins
+    assert best["speed"] == ("2", "tooltip", 0.85)  # only the tooltip says
+    assert best["oc"] == ("perfect", "curated", 0.95)
+    assert best["tier_skips"] == ("unlimited", "curated", 0.95)
+    assert best["batch_mode"] == ("true", "code", 1.0)  # the machine pass's flags stay
+    by_source = dict(
+        rows(result.db, "SELECT source, count(*) FROM machine_fact GROUP BY source")
+    )
+    assert by_source == {"code": 4, "tooltip": 4, "curated": 4}
+    note = rows(
+        result.db,
+        "SELECT note, unit FROM machine_fact WHERE source = 'curated' AND key = 'parallel'",
+    )
+    assert note == [
+        (
+            "gt@5.09.54.265:test/MTEMixer.java#createProcessingLogic; curated by hand",
+            "recipes",
+        )
+    ]
+    text = "\n".join(report.lines(result, full=True))
+    assert (
+        "Base multiblocks (GT's jar): 1: covered 1, no recipes (n/a) 0, flagged 0, missing 0"
+        in text
+    )
+    assert "Tooltip and curated row disagree on 1 facts" in text
+    assert "1000 Test Mixer: parallel tooltip '8*vt'" in text
+
+
+def test_a_rebuild_replaces_tooltip_and_curated_facts_but_keeps_probes(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    make_run(tmp_path, files=fact_files())
+    db = built(tmp_path, allow_list, curated=curated(tmp_path / "a.tsv", MIXER_ROW)).db
+    conn = access.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO machine_fact(machine_id, key, value, unit, source, confidence, note)"
+            " SELECT id, 'parallel', '16', 'recipes', 'probe', 0.99, 'Lab run' FROM machine"
+        )
+    finally:
+        conn.close()
+    result = built(tmp_path, allow_list, curated=curated(tmp_path / "b.tsv"))
+    best = best_facts(result.db)
+    assert best["parallel"] == ("16", "probe", 0.99)
+    assert best["oc"] == ("standard", "tooltip", 0.5)  # the curated row is gone
+    assert rows(
+        result.db, "SELECT count(*) FROM machine_fact WHERE source = 'curated'"
+    ) == [(0,)]
+    text = "\n".join(report.lines(result, full=False))
+    assert "covered 0, no recipes (n/a) 0, flagged 0, missing 1" in text
+    assert "WARNING: 1 base multiblocks have neither the facts nor a flag" in text
+
+
+def test_a_bad_curated_table_fails_before_the_db_is_touched(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    make_run(tmp_path)
+    bad = curated(tmp_path / "bad.tsv", MIXER_ROW.replace("4*vt", "4*tier"))
+    with pytest.raises(build.BuildError, match=r"curated machine facts: bad\.tsv:3: "):
+        built(tmp_path, allow_list, curated=bad)
+    assert not access.db_path(tmp_path).exists()
