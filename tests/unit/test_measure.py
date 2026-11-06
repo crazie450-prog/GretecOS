@@ -196,3 +196,17 @@ def test_gos_vault_maintain(
     ]
     assert cli.main(["vault", "maintain", "--job", "backup"]) == 0
     assert (tmp_path / "data" / "backups").is_dir()
+    capsys.readouterr()
+
+    from gregtec.store import Store
+
+    store = Store(tmp_path / "data" / "gos.sqlite")
+    try:
+        store.rows(
+            "INSERT INTO kv(key, value, upd) VALUES ('maintenance.last_day', 'x', 0)"
+        )
+        assert cli.main(["vault", "maintain", "--rerun-today"]) == 0
+        assert "due again" in capsys.readouterr().out
+        assert store.rows("SELECT * FROM kv WHERE key = 'maintenance.last_day'") == []
+    finally:
+        store.close()

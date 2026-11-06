@@ -347,6 +347,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=vault_curator.JOBS,
         help="run only this job (repeatable). Default: all, in order.",
     )
+    maintain.add_argument(
+        "--rerun-today",
+        action="store_true",
+        help="run no job; make the core's daily run due again today (it then waits for the "
+        "idle rule)",
+    )
     measure = vault_cmds.add_parser(
         "measure",
         help="count the note formats' tokens with the count_tokens endpoint (WO-2.5)",
@@ -526,7 +532,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{vault_deploy.deploy(target, args.template)}: {target}")
         return 0
     if args.command == "vault" and args.vault_command == "maintain":
-        return _maintain(args.config, args.job)
+        return _maintain(args.config, args.job, args.rerun_today)
     if args.command == "vault" and args.vault_command == "measure":
         from gregtec.vault import measure as vault_measure
 
@@ -651,19 +657,28 @@ def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     print(f"Restarted GOS: {exe}")
 
 
-def _maintain(config_path: Path | None, jobs: list[str] | None) -> int:
+def _maintain(config_path: Path | None, jobs: list[str] | None, rerun: bool) -> int:
     """``gos vault maintain``: 0 when no job failed, 1 otherwise, 2 for a bad gos.toml."""
     import datetime as dt
 
     from gregtec.llm.summarise import HaikuSummariser
     from gregtec.llm.usage import UsageMeter
     from gregtec.store import DB_NAME, Store
+    from gregtec.vault.scheduler import KV_LAST_DAY
 
     cfg = _load(config_path)
     if cfg is None:
         return 2
     store = Store(cfg.data_dir / DB_NAME)
     try:
+        if rerun:
+            with store.transaction() as conn:
+                conn.execute("DELETE FROM kv WHERE key = ?", (KV_LAST_DAY,))
+            print(
+                "The daily run is due again: the core runs it at the next minute when the "
+                f"game is closed and the PC has been idle {cfg.idle_minutes} min."
+            )
+            return 0
         cur = vault_curator.Curator(
             vault=cfg.gos_home / "vault",
             db=cfg.data_dir / DB_NAME,

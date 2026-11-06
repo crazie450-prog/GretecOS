@@ -85,7 +85,8 @@ def test_index_from_the_template_follows_the_schema(vault: Path) -> None:
     ]
     assert rows[0] == ["id", "t", "path", "summary", "upd"]
     assert [r[2] for r in rows[1:]] == ["_gos/schema.md", "me/goals.md", "me/prefs.md"]
-    assert rows[1][3] == "the single source of truth for vault writers (plan 6.2);..."
+    assert rows[1][3] == "note types and allowed keys"  # its summary: fact
+    assert rows[2][3] == "Clayton's goals, one per line as goal: {text}; agents rea..."
     assert len(rows[1][3]) <= index.SUMMARY_MAX
     assert "upd: 2026-11-06" in text  # the newest row's date (the schema note's)
     assert not index.build(

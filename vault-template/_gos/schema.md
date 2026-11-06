@@ -4,6 +4,7 @@ t: schema
 upd: 2026-11-06
 ---
 version: 0
+summary: note types and allowed keys
 note: the single source of truth for vault writers (plan 6.2); WO-2.5 re-measures and freezes it
 frontmatter: id, t, upd
 fact: one per line as key: value
@@ -13,7 +14,8 @@ links: [[id]]
 pointers: r:{map}/{sig12}, plan:{id}, q:{named_query}, db:{table}/{id}, w:{page}@{revid}
 tables: tsv in a ```tsv fence with a header row
 prose: none, except one-line note: entries
-max_lines: 150
+max_lines: 150 (INDEX.md: 200)
+index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
 note: keys * means any key until the WO that owns the type defines them
 
 ```tsv
