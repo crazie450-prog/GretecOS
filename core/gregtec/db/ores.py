@@ -9,14 +9,16 @@
     says so, keeps the mixes an earlier load left and still loads the veins (D128); a run named
     with ``--run`` must have them. ``ore_mix.dims`` is JSON:
     ``{dimension name: {"ids": [dimension IDs in that instance], "ymin"?, "ymax"?}}``, the
-    heights only where the mix overrides them; ``ore_mix.ores`` is JSON, the four layers in
-    order: ``[{"layer", "material", "name", "item"?, "meta"?}]``.
+    heights only where the mix overrides them (``EndAsteroid`` has no IDs: it is GT's name for
+    The End's outer chunks, not a dimension, and its veins are dim 1's); ``ore_mix.ores`` is
+    JSON, the four layers in order: ``[{"layer", "material", "name", "item"?, "meta"?}]``.
   - **Veins** from one world's VisualProspecting caches (D127, :mod:`gregtec.ingest.vp`),
     read-only: by default the Lab world ``[paths] lab_world`` names, never Play's unless asked
     (``--instance play``); ``--world-dir`` for any world folder. ``vein.known`` is 1 when the
     tracked player's client cache has the vein, ``depleted`` when he marked it, ``src``
     ``<cache>/<VP source>`` (``server/generated``). The server cache (every generated vein,
-    D27) is read unless ``[policy] ore_server_cache = false``.
+    D27) is read unless ``[policy] ore_server_cache = false``. A dimension file that can't be
+    read in 3 tries (VP caught saving it) refuses the load, so its veins never go missing.
   - ``kv`` ``ores.mixes`` and ``ores.veins`` say where each came from.
 - ``gos ores list`` prints veins per dimension; ``--dim N`` lists one dimension's veins (named
   query ``ore_veins``).
@@ -112,6 +114,10 @@ def read_mixes(
 ) -> tuple[str, ore_mixes.OreMixes]:
     """(run id, its ore mixes) of the newest (or the named) collected run, the file checked
     against its manifest under collect's lock."""
+    exports = gos_home / collect.DATA_EXPORTS
+    if not exports.is_dir():  # nothing collected yet, and no data/ for the lock either
+        why = f"{exports} doesn't exist: run `gos export collect` first"
+        raise NoMixes(why if run_key is None else f"run {run_key}: {why}")
     try:
         with collect.lock(gos_home):
             try:
@@ -180,12 +186,20 @@ def world_folder(
 def read_veins(
     world: Path, game: Path, player: str | None = None, server: bool = True
 ) -> Veins:
-    """A world's veins from its VisualProspecting caches (no DB)."""
+    """A world's veins from its VisualProspecting caches (no DB); refused when a dimension file
+    can't be read in 3 tries."""
     try:
         located = vp.locate(world, game, player)
         s, c = vp.read_all(located, server)
     except (vp.VpError, OSError) as exc:
         raise OresError(str(exc)) from None
+    bad = [u for x in (s, c) if x is not None for u in x.unreadable]
+    if bad:  # replacing vein now would drop those files' veins until the next load
+        raise OresError(
+            f"{'; '.join(bad)}. VisualProspecting may have been saving it: try again in a"
+            " moment. If it keeps failing the file is damaged; VisualProspecting skips it"
+            " too and writes it afresh the next time that dimension's veins change"
+        )
     merged, differ = vp.merge(s, c)
     return Veins(located, s, c, merged, differ, not server)
 

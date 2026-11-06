@@ -398,6 +398,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return quest_db.tier_main(args.config, args.set_stage, args.clear, sys.stdout)
     if args.command == "ores":
+        # Paths and pack names, as for quests: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
         if args.ores_command == "load":
             if args.game_dir is not None and args.world_dir is None:
                 parser.error("--game-dir goes with --world-dir")

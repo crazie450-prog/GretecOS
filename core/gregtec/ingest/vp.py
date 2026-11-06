@@ -5,7 +5,9 @@ re-implemented from its source (``DimensionCache``, ``WorldCache``, ``ClientCach
 ``ServerCache``, ``WorldIdHandler``, ``VeinSource``, ``Utils``) [B§4.1]. Nothing here writes a
 file; every file is read whole through ``gamestate.safe_open.read_bytes`` (share-delete, one
 read, handle closed at once, 3 tries with backoff, which also covers VP's in-place writes) and
-parsed from memory.
+parsed from memory. A dimension file still unreadable after the tries is listed in
+``Cache.unreadable``, apart from the files VP would skip too, so a caller can refuse a partial
+picture (``gos ores load`` does, D128).
 
 - **World id.** VP names a world's caches by its world id, saved in the world as
   ``<world>/data/visualprospecting.dat`` (``{data: {wId: "<folder>_<uuid>"}}``), so a copied or
@@ -15,8 +17,9 @@ parsed from memory.
   generated (D27), ``visualprospecting/server/<world id>/DIM<n>.dat``, saved on every autosave;
   the **client cache**, the veins one player knows (prospected, or shared by his team),
   ``visualprospecting/client/<player uuid>/<world id>/DIM<n>.dat``, saved only when he leaves
-  the world or changes dimension. VP's client resolves both against its game folder, so in
-  single-player both are next to ``saves/``, not in the world.
+  the world or changes dimension. In single-player the server cache is in the game folder
+  (``mcDataDir``) and the client cache's path is relative to the game's working folder, which
+  Prism sets to the game folder, so both are next to ``saves/``, not in the world.
 - **Format v3**, gzip NBT, one file per dimension: ``{version: 3, dim, ores: {palette: [mix
   name], chunkX: int[], chunkZ: int[], veinTypeIndex: int[], depleted: byte[], source:
   byte[]}, fluids: {...}}``. Only ``ores`` is read here. A vein is keyed by its centre chunk
@@ -83,7 +86,9 @@ class Cache:
     path: Path
     veins: dict[tuple[int, int, int], Vein] = field(default_factory=dict)
     files: list[str] = field(default_factory=list)  # read and used
-    problems: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)  # skipped, as VP would skip them
+    # "<path>: why", for files not read in 3 tries (caught mid-write, or damaged).
+    unreadable: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -215,7 +220,7 @@ def read_cache(folder: Path) -> Cache:
         except FileNotFoundError:
             continue  # gone since the listing
         except (OSError, ValueError) as exc:
-            cache.problems.append(f"{name}: unreadable after 3 tries ({exc}); skipped")
+            cache.unreadable.append(f"{path}: unreadable after 3 tries ({exc})")
             continue
         if version != FORMAT_VERSION:
             what = "no version (VP 1.4, GTNH 2.8)" if version is None else version
@@ -252,21 +257,21 @@ def merge(server: Cache | None, client: Cache | None) -> tuple[list[Merged], int
 # --- finding the caches --------------------------------------------------------------------
 
 
-def _world_id_from(data: bytes) -> str:
-    _, root = nbt.read(data)
+def _root(data: bytes) -> dict[str, nbt.Tag]:
+    return nbt.read(data)[1]
+
+
+def _world_id_from(root: dict[str, nbt.Tag]) -> str | None:
+    """``data.wId`` of a ``visualprospecting.dat``, if it can name a folder: one path part, no
+    control characters (a NUL would make every path built from it raise ``ValueError``)."""
     inner = root.get("data")
     wid = inner.get("wId") if isinstance(inner, dict) else None
     if (
         not isinstance(wid, str)
-        or not wid
-        or any(c in wid for c in "/\\:")
-        or wid
-        in (
-            ".",
-            "..",
-        )
+        or wid in ("", ".", "..")
+        or any(c in "/\\:" or ord(c) < 32 or c == "\x7f" for c in wid)
     ):
-        raise FormatError("no usable data.wId")
+        return None
     return wid
 
 
@@ -282,11 +287,17 @@ def world_id(world: Path) -> str | None:
     if _is_link(st) or not stat.S_ISREG(st.st_mode):
         raise VpError(f"{path} is not a regular file; refusing it")
     try:
-        return _read_parsed(path, _world_id_from)
+        root = _read_parsed(path, _root)  # a bad read is retried; a bad wId is not
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
         raise VpError(f"{path}: unreadable after 3 tries ({exc})") from None
+    wid = _world_id_from(root)
+    if wid is None:
+        raise VpError(
+            f"{path}: no usable data.wId (VisualProspecting's world id, a folder name)"
+        )
+    return wid
 
 
 def _subdirs(folder: Path) -> list[str]:

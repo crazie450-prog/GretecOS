@@ -520,14 +520,13 @@ def test_a_cache_collapses_duplicates_by_vps_trust(
         (0, 4, 4): vp.Vein(0, 4, 4, "ore.mix.ferrite", True, "generated"),
     }
     assert cache.files == ["DIM0-copy.dat", "DIM0.dat", "zz.dat"]
-    assert [p.split(":")[0] for p in cache.problems] == [
-        "DIM1.dat",
-        "DIM2.dat",
-        "DIM3.dat",
-    ]
+    assert [p.split(":")[0] for p in cache.problems] == ["DIM1.dat", "DIM2.dat"]
     assert "no version (VP 1.4, GTNH 2.8)" in cache.problems[0]
     assert "format 4" in cache.problems[1]
-    assert "unreadable after 3 tries" in cache.problems[2]
+    # A file VP could still be writing is kept apart: gos ores load refuses on it.
+    assert len(cache.unreadable) == 1 and cache.unreadable[0].startswith(
+        f"{folder / 'DIM3.dat'}: unreadable after 3 tries ("
+    )
 
 
 def test_a_partial_read_is_retried(
@@ -654,6 +653,27 @@ def test_links_are_refused(tmp_path: Path) -> None:
     link_or_skip(wid_file, elsewhere / "wid.dat")
     with pytest.raises(vp.VpError, match="not a regular file"):
         vp.world_id(w)
+
+
+@pytest.mark.parametrize("wid", ["", "..", "a/b", "a\\b", "C:x", "a\x00b", "a\nb"])
+def test_a_bad_world_id_is_refused_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wid: str
+) -> None:
+    # A wId that can't name one folder is refused, not retried: the file read fine.
+    game = tmp_path / ".minecraft"
+    w = write_world(game)
+    (w / vp.WORLD_ID_FILE).write_bytes(world_id_file(wid))
+    reads: list[safe_open.StrPath] = []
+    real = safe_open.safe_open
+
+    def counted(p: safe_open.StrPath) -> contextlib.AbstractContextManager[BinaryIO]:
+        reads.append(p)
+        return real(p)
+
+    monkeypatch.setattr(safe_open, "safe_open", counted)
+    with pytest.raises(vp.VpError, match="no usable data.wId") as exc:
+        vp.locate(w, game)
+    assert "unreadable" not in str(exc.value) and len(reads) == 1
 
 
 def test_server_and_client_merge(tmp_path: Path) -> None:
@@ -897,6 +917,22 @@ def test_the_world_comes_from_lab_world_never_play_by_default(tmp_path: Path) ->
     assert code == 1 and "not '../elsewhere'" in out
 
 
+def test_output_never_breaks_a_windows_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows writes a pipe or a file in cp1252, which has no kana: a world named in Japanese.
+    world = "ラボ"
+    game, toml, _ = prism(tmp_path, lab_world=world)
+    write_world(game, world=world, wid=f"{world}_0f9e8d7c-6b5a-4938-8271-605f4e3d2c1b")
+    for command in (["load"], ["list"], ["list", "--dim", "0"]):
+        raw = io.BytesIO()
+        pipe = io.TextIOWrapper(raw, encoding="cp1252", newline="")
+        monkeypatch.setattr("sys.stdout", pipe)
+        assert cli.main(["ores", *command, "--config", str(toml)]) == 0
+        pipe.flush()
+        assert b"\\u30e9\\u30dc" in raw.getvalue()
+
+
 def test_a_world_folder_anywhere(tmp_path: Path) -> None:
     _, toml, _ = prism(tmp_path)
     copy = tmp_path / "backup" / ".minecraft"
@@ -990,6 +1026,21 @@ def test_veins_load_without_ore_mixes(tmp_path: Path) -> None:
     )
 
 
+def test_veins_load_into_a_new_gos_home(tmp_path: Path) -> None:
+    # gos-dev's first gos command: GOS_HOME has no data/ yet, so no lock folder either.
+    game, toml, home = prism(tmp_path)
+    write_world(game)
+    shutil.rmtree(home)
+    code, out = load(toml, "--run", RUN)
+    assert code == 1 and "doesn't exist: run `gos export collect` first" in out
+    assert not home.exists()
+    code, out = load(toml)
+    assert code == 0, out
+    assert "Ore mixes: not loaded (" in out and "doesn't exist" in out
+    assert "dim 0: 5 veins, 2 known, 1 depleted" in out
+    assert not (home / "data" / "locks").exists()
+
+
 def test_a_named_run_must_have_ore_mixes(tmp_path: Path) -> None:
     game, toml, home = prism(tmp_path)
     write_world(game)
@@ -1043,7 +1094,9 @@ def test_a_failed_load_changes_nothing(
 
     before = snapshot()
     world = game / "saves" / WORLD
-    (world / vp.WORLD_ID_FILE).write_bytes(b"\x1f\x8bcut")
+    wid_file = world / vp.WORLD_ID_FILE
+    good = wid_file.read_bytes()
+    wid_file.write_bytes(b"\x1f\x8bcut")
     code, out = load(toml)
     assert (
         code == 1
@@ -1051,6 +1104,20 @@ def test_a_failed_load_changes_nothing(
         and "unreadable after 3 tries" in out
     )
     assert snapshot() == before
+
+    # A dimension file VP is saving (in place) whenever GOS reads it: the load is refused
+    # rather than drop that dimension's veins until the next load.
+    wid_file.write_bytes(good)
+    dim0 = game / vp.VP_DIR / vp.SERVER_DIR / WID / "DIM0.dat"
+    full = dim0.read_bytes()
+    dim0.write_bytes(full[:20])
+    code, out = load(toml)
+    assert code == 1 and out.startswith(f"Not loaded: {dim0}: unreadable after 3 tries")
+    assert "may have been saving it: try again in a moment" in out
+    assert snapshot() == before
+    dim0.write_bytes(full)
+    code, out = load(toml)
+    assert code == 0 and "dim 0 (Overworld): 5 veins" in out
 
 
 def test_list_before_any_load(tmp_path: Path) -> None:
