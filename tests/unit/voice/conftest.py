@@ -142,9 +142,14 @@ def pump(voice: VoiceClient, until: Callable[[], bool], timeout: float = 5.0) ->
 
 @dataclass
 class LiveCore:
-    core: Core
-    port: int
-    url: str
+    """A real core on a loopback port; :meth:`stop` and :meth:`start` restart it there."""
+
+    def __init__(self, core: Core, sock: Any) -> None:  # noqa: ANN401 - a socket
+        self.core = core
+        self.sock = sock
+        self.port: int = sock.getsockname()[1]
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.server, self.thread = serve(core, sock)
 
     def admin(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {ADMIN}"}
@@ -157,6 +162,26 @@ class LiveCore:
         loop = self.core.loop
         assert loop is not None
         loop.call_soon_threadsafe(lambda: self.core.broadcast(message))
+
+    def stop(self) -> None:
+        if self.server is not None:
+            self.server.should_exit = True
+            self.thread.join(timeout=10)
+            self.sock.close()
+            self.server = None
+
+    def start(self) -> None:
+        """Serve the same core on the same port again (a supervisor restart)."""
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                self.sock = bind(self.port)
+                break
+            except OSError:  # the old socket's port isn't free yet
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.1)
+        self.server, self.thread = serve(self.core, self.sock)
 
 
 def serve(core: Core, sock: Any) -> tuple[uvicorn.Server, threading.Thread]:  # noqa: ANN401
@@ -188,23 +213,20 @@ def live_core(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[LiveC
     """A real core (FastAPI + uvicorn) on 127.0.0.1:<free port>, no API key, no DB yet."""
     monkeypatch.setattr(keys, "has_key", lambda name: False)
     sock = bind(0)
-    port = sock.getsockname()[1]
     store = Store(tmp_path / "data" / "gos.sqlite")
     deep = HandoffRecorder()
     core = Core(
-        cfg=Config(gos_home=tmp_path, core_port=port),
+        cfg=Config(gos_home=tmp_path, core_port=sock.getsockname()[1]),
         store=store,
         auth=Auth(store, ADMIN),
         meter=UsageMeter(store, 100.0, (80, 100)),
         asker=Asker(default_registry(tmp_path, deep=deep), deep, None),
     )
-    server, thread = serve(core, sock)
+    live = LiveCore(core, sock)
     try:
-        yield LiveCore(core, port, f"http://127.0.0.1:{port}")
+        yield live
     finally:
-        server.should_exit = True
-        thread.join(timeout=10)
-        sock.close()
+        live.stop()
         store.close()
 
 
