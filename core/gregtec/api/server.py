@@ -28,6 +28,7 @@ from collections.abc import Callable
 import uvicorn
 
 from gregtec import applog, config, control, supervisor
+from gregtec.agents import ask
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
@@ -124,6 +125,7 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         meter=meter,
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter),
+        asker=ask.setup(cfg, store=store).asker(),
     )
     server = uvicorn.Server(
         uvicorn.Config(

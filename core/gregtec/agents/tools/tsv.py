@@ -179,14 +179,15 @@ def parse(text: str) -> Parsed:
     tail = lines[end:] if spans else lines
     out.notes = [unescape(ln[6:]) for ln in tail if ln.startswith("note: ")]
     body = lines[:end]
-    blank = body.index("") if "" in body else len(body)
+    # A table without head lines starts at the top; no head line has a tab.
+    blank = next((i for i, ln in enumerate(body) if not ln or "\t" in ln), len(body))
     for ln in body[:blank]:
         key, sep, value = ln.partition(": ")
         if sep and key not in ("note", "more"):
             out.head[unescape(key)] = unescape(value)
     if spans:
         out.span = lines[end].removeprefix("rows: ")
-        grid = [ln for ln in body[blank + 1 :] if ln]
+        grid = [ln for ln in body[blank:] if ln]
         if grid:
             out.columns = [unescape(c) for c in grid[0].split("\t")]
             for ln in grid[1:]:

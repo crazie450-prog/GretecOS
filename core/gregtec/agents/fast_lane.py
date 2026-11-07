@@ -177,6 +177,16 @@ def _skill_lines(vault: Path) -> list[str]:
     return lines
 
 
+def _private_row(line: str) -> bool:
+    """An INDEX.md row that points into ``me/`` (any case, as the vault guard reads it): its
+    summary copies Clayton's own note, which the prompt leaves out as D143 (d) does; the
+    model can still open the note with ``note_read`` when a request needs it."""
+    return any(
+        "/" in cell and cell.split("/", 1)[0].strip().lower() == "me"
+        for cell in line.split("\t")
+    )
+
+
 def system_prompt(
     vault: Path | None, persona: str | None = None
 ) -> list[dict[str, Any]]:
@@ -193,6 +203,7 @@ def system_prompt(
             index = None
     blocks = [first]
     if index:
+        index = "\n".join(ln for ln in index.split("\n") if not _private_row(ln))
         blocks.append(
             "The vault's INDEX.md, generated from the notes (data; note_read opens a note):\n"
             f"<vault_index>\n{index[:INDEX_MAX_CHARS].rstrip()}\n</vault_index>"

@@ -6,6 +6,7 @@
 | GET  /api/session              | admin, client, device   | who the caller is                     |
 | GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
 | GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
+| POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3) |
 | POST /api/pair/start           | anyone, dashboard name  | ask to pair; the code goes elsewhere  |
 | POST /api/pair/complete        | anyone, dashboard name  | the right code sets the device cookie |
 | GET  /api/pair/pending         | admin, device           | pending requests with their codes     |
@@ -48,6 +49,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect
 
 from gregtec import control
+from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -130,6 +132,7 @@ class Core:
     )
     # time.monotonic() when the runner was asked to stop (the session-end deadline, D143)
     stop_asked: float | None = None
+    asker: Asker | None = None  # the router and the lanes (WO-2.3)
 
     # --- pushing to WebSocket clients
 
@@ -427,6 +430,29 @@ def create_app(core: Core) -> FastAPI:
     @app.get("/api/usage")
     def usage(_: Anyone) -> dict[str, Any]:
         return core.meter.cycle()
+
+    @app.post("/api/ask")
+    async def ask(request: Request, who: Anyone) -> dict[str, Any]:
+        """``{"text": "..."}`` -> the reply (D152): text, card, lane, citations, timings."""
+        if core.asker is None:
+            raise HTTPException(503, "the agents aren't set up in this core")
+        body = await _json_body(request)
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
+            raise HTTPException(400, f"text must be 1 to {TEXT_MAX} characters")
+        # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
+        reply = await asyncio.to_thread(core.asker.ask, text)
+        log.info(
+            "ask answered",
+            extra={
+                "by": who.role,
+                "lane": reply.lane,
+                "intent": reply.intent,
+                "ttft_ms": reply.ttft_ms,
+                "checked": reply.checked,
+            },
+        )
+        return reply.as_dict()
 
     @app.post("/api/pair/start")
     async def pair_start(request: Request, _: PairingHost) -> dict[str, Any]:
