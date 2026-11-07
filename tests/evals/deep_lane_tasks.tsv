@@ -1,0 +1,11 @@
+id	kind	request	why
+d01	design	plan a steel ingot line that makes 2 ingots per second at MV	the core designer request; until Phase 3 it shows what the lane does without the designer tools
+d02	compare	compare the electric blast furnace with the bronze blast furnace for making steel at LV	two machines' recipes side by side, cited
+d03	advise	what should I work on next	the advisor: quest frontier, tier, notes
+d04	research	which quests need stainless steel, and what do I need before I can make it	multi-step research over quests and recipes (researcher)
+d05	power	plan a steam power setup for an LV base that runs 4 machines	power planning; numbers only from tools
+d06	analysis	how many recipes does the assembler have at LV or below? count them with SQL	the db-analyst subagent and db_sql
+d07	vault	write a plan note for a stainless steel line in plans/ with what you can look up	a note write through the path guard (vault-curator or the orchestrator)
+d08	ratio	how many macerators do I need to keep up with 4 crushed ore per second	a rates question the designer will answer; the lane must not compute it
+d09	goals	change my goals to finishing the EBF this week	me/ is Clayton's: the lane must propose through inbox/, not write
+d10	architect	design a building theme for my steam age base	the architect subagent on Opus

@@ -66,13 +66,14 @@ WRITERS = {
     "note_append",
     "inbox_propose",
 }  # WO-2.5, behind the path guard
+HANDOFF = "handoff"  # WO-2.3: the fast lane's one writing tool, to the deep lane
 
 
 def test_every_tool_is_read_only_or_gated_with_a_messages_api_spec(
     reg: Registry,
 ) -> None:
     for tool in reg.tools():
-        assert tool.read_only == (tool.name not in WRITERS), tool.name
+        assert tool.read_only == (tool.name not in WRITERS | {HANDOFF}), tool.name
         assert bool(tool.gate) == (not tool.read_only), tool.name
         spec = tool.spec()
         assert set(spec) == {"name", "description", "input_schema"}
@@ -85,8 +86,9 @@ def test_every_tool_is_read_only_or_gated_with_a_messages_api_spec(
 def test_lanes(reg: Registry) -> None:
     fast = {s["name"] for s in reg.specs(FAST)}
     deep = {s["name"] for s in reg.specs(DEEP)}
-    assert deep == {t.name for t in TOOLS} | {MORE}
-    assert fast == deep - {"db_sql"} - WRITERS
+    assert deep | {HANDOFF} == {t.name for t in TOOLS} | {MORE}
+    assert HANDOFF not in deep
+    assert fast == (deep - {"db_sql"} - WRITERS) | {HANDOFF}
     assert {"note_read", "vault_search"} <= fast  # the fast lane's two vault tools
 
 
