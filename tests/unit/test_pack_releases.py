@@ -242,3 +242,32 @@ def test_watch_records_what_it_saw(tmp_path: Path) -> None:
     assert "Twist Space Technology" in text  # its feed 404s: noted, not fatal
     state = releases.load_state(tmp_path / "home")
     assert state["last"]["newer"] == ["2.9.1"] and len(state["history"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("tag", "jar", "same"),
+    [
+        ("1.2", "x-1.2.jar", True),
+        ("v1.2", "x-1.2-GTNH.jar", True),
+        ("1.2", "x-1.2.3.jar", False),
+        ("1.2", "x-11.2.jar", False),
+        ("1.2.3", "x-1.2.jar", False),
+        ("2.2.1.1", "123Technology-2.2.1.1.jar", True),
+        ("", "x-1.2.jar", False),
+    ],
+)
+def test_addon_tags_match_on_version_boundaries(tag: str, jar: str, same: bool) -> None:
+    assert releases.version_in(tag, jar) is same
+
+
+def test_stock_reports_a_missing_play_as_a_note(tmp_path: Path) -> None:
+    net = Net(
+        {
+            releases.MANIFEST_URL.format(version="2.9.0"): json.dumps(
+                manifest("2.9.0", "5.09.54.265")
+            ).encode(),
+            releases.ASSETS_URL: json.dumps({"mods": []}).encode(),
+        }
+    )
+    result, notes = releases.stock(tmp_path, "2.9.0", tmp_path / "no-play", net)
+    assert result is None and "Play's mods couldn't be listed" in notes[0]

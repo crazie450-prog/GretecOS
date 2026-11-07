@@ -184,6 +184,21 @@ def ref_where(db: Path, run_key: str, sql: str, *args: object) -> list[str]:
         conn.close()
 
 
+def ebf_hashes(db: Path, run_key: str) -> dict[str, str]:
+    conn = sqlite3.connect(db)
+    try:
+        return {
+            str(r[0]): str(r[1])
+            for r in conn.execute(
+                "SELECT r.ref, r.content_hash FROM recipe r JOIN export_run e"
+                " ON e.id = r.run_id WHERE e.run_key = ? AND r.ref LIKE ?",
+                (run_key, f"r:{MAP}/%"),
+            )
+        }
+    finally:
+        conn.close()
+
+
 def test_a_simulated_gt_update_through_the_whole_playbook(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -225,7 +240,6 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
     # Fixture plans on that run: an EBF recipe the update rebalances, one it removes, one it
     # keeps, and the crop it changes.
     ebf = ref_where(db, base.run_key, "r.ref LIKE ?", f"r:{MAP}/%")
-    conn = sqlite3.connect(db)
     plan_dir = home / "data" / "plans"
     plan_dir.mkdir(parents=True)
 
@@ -236,10 +250,16 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
             ),
             encoding="utf-8",
         )
-        conn.execute(
-            "INSERT INTO plan(id, status, json_path, run_id) VALUES (?, 'accepted', ?, ?)",
-            (pid, f"data/plans/{pid}.json", base.run_id),
-        )
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute(
+                "INSERT INTO plan(id, status, json_path, run_id)"
+                " VALUES (?, 'accepted', ?, ?)",
+                (pid, f"data/plans/{pid}.json", base.run_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     # Every EBF recipe in one plan, so whichever the update touches, it must be flagged; and a
     # plan citing recipes of another map, which the update leaves alone.
@@ -247,8 +267,6 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
     add("pl-ebf", ebf)
     add("pl-crop", [f"crop:{CROP}"])
     add("pl-same", other)
-    conn.commit()
-    conn.close()
     assert ebf and other
 
     u = playbook.start(home, "2.9.1", simulate=False)
@@ -285,6 +303,24 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
         u.sandbox / access.DB_FILE, lab_run, "r.ref LIKE ?", f"r:{MAP}/%"
     )
     assert len(set(ebf) - set(new_ebf)) == 1 and len(set(new_ebf) - set(ebf)) == 1
+    # One plan per recipe the update touched, and one citing an EBF recipe it left alone:
+    # the flags name exactly the touched ones, not only a plan citing the whole map.
+    old_h = ebf_hashes(db, base.run_key)
+    new_h = ebf_hashes(u.sandbox / access.DB_FILE, lab_run)
+    [removed] = set(old_h) - set(new_h)
+    [changed] = [k for k in old_h if k in new_h and old_h[k] != new_h[k]]
+    kept = next(k for k in sorted(old_h) if new_h.get(k) == old_h[k])
+    add("pl-removed", [removed])
+    add("pl-rebalanced", [changed])
+    add("pl-ebf-kept", [kept])
+    playbook.redo(u, "diff")
+    assert playbook.walk(c, u) == 3, out.getvalue()
+    assert sorted(u.step("diff")["data"]["flagged_preview"]) == [
+        "pl-crop",
+        "pl-ebf",
+        "pl-rebalanced",
+        "pl-removed",
+    ]
 
     with pytest.raises(playbook.UpdateError, match="GT PIN MISMATCH"):
         playbook.answer(home, u, True)
@@ -302,5 +338,17 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
     conn = sqlite3.connect(db)
     rows = dict(conn.execute("SELECT id, affected_run FROM plan"))
     conn.close()
-    assert rows == {"pl-ebf": new.run_id, "pl-crop": new.run_id, "pl-same": None}
+    assert rows == {
+        "pl-ebf": new.run_id,
+        "pl-crop": new.run_id,
+        "pl-same": None,
+        "pl-removed": new.run_id,
+        "pl-rebalanced": new.run_id,
+        "pl-ebf-kept": None,
+    }
+    # The Lab run never reached the main DB: only Play's two runs are there.
+    conn = sqlite3.connect(db)
+    keys = {str(r[0]) for r in conn.execute("SELECT run_key FROM export_run")}
+    conn.close()
+    assert lab_run not in keys and collect.lab_runs(home) == {lab_run}
     assert playbook.adopted(home)["version"] == "2.9.1"

@@ -435,3 +435,18 @@ def test_instance_that_cant_be_statted_is_a_problem(
     assert by_folder["GTNH-Play"]["problems"] == []
     [problem] = by_folder["GTNH-Old"]["problems"]
     assert problem.startswith(expected)
+
+
+def test_doctor_checks_the_gt_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gregtec.packupdate import gtpin
+
+    prism = make_prism(tmp_path / "Prism")
+    out = io.StringIO()
+    assert doctor.main([prism], tmp_path / "home", False, out) == 0
+    assert "GT pin 5.09.54.265: no DB yet" in out.getvalue()
+    monkeypatch.setattr(gtpin, "check_db", lambda home: (False, "!!! GT PIN MISMATCH"))
+    out = io.StringIO()
+    assert doctor.main([prism], tmp_path / "home", False, out) == 1
+    assert "!!! GT PIN MISMATCH" in out.getvalue()

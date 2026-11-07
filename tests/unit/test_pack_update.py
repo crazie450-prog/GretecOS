@@ -11,7 +11,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import shutil
 import sqlite3
+import time
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from gregtec import config, playhooks
+from gregtec import config, locks, playhooks
 from gregtec.db import access, build
 from gregtec.ingest import collect, fingerprint
 from gregtec.packupdate import diff, gtpin, plans, playbook, playupdate, releases
@@ -556,3 +559,341 @@ def test_lab_to_export_and_lab_to_play_refuse_overlaps(
     assert plan is None and any("is Play" in r for r in refusals)
     plan, refusals = playupdate.plan_update(same)
     assert plan is None and any("is Play" in r for r in refusals)
+
+
+# --- review fixes: Lab runs stay out of the main DB; the guards around writing Play ------------
+
+
+def adopted_update(
+    cfg: config.Config, prism: FakePrism, monkeypatch: pytest.MonkeyPatch
+) -> playbook.Update:
+    """A real update to 2.9.1, adopted (after the pin bump), waiting on the Play step."""
+    baseline(cfg, prism)
+    u = playbook.start(cfg.gos_home, "2.9.1", simulate=False)
+    backup_zip(cfg)
+    update_lab(cfg)
+    assert playbook.walk(ctx(cfg, prism, io.StringIO()), u) == 3
+    monkeypatch.setattr(config, "GT_PIN", NEW_GT)
+    playbook.answer(cfg.gos_home, u, True)
+    return playbook.find(cfg.gos_home, u.id)
+
+
+def main_runs(cfg: config.Config) -> list[str]:
+    conn = sqlite3.connect(access.db_path(cfg.gos_home))
+    try:
+        return [r[0] for r in conn.execute("SELECT run_key FROM export_run")]
+    finally:
+        conn.close()
+
+
+def test_the_lab_run_never_reaches_the_main_db(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    cfg, prism = world
+    baseline(cfg, prism)
+    [play_run] = main_runs(cfg)
+    u = playbook.start(cfg.gos_home, "2.9.1", simulate=False)
+    backup_zip(cfg)
+    update_lab(cfg)
+    out = io.StringIO()
+    assert playbook.walk(ctx(cfg, prism, out), u) == 3
+    lab_run = u.step("lab_export")["data"]["run"]
+    assert collect.lab_runs(cfg.gos_home) == {lab_run}
+    # Declined: the Lab run is still Export's newest, as in the review's probe.
+    playbook.answer(cfg.gos_home, u, False)
+    assert playbook.walk(ctx(cfg, prism, out), u) == 0
+    game = cfg.instance("export") / ".minecraft"
+    assert (game / collect.EXPORTS / lab_run).is_dir()
+    # The runbook's pipeline: collect takes Play's run again, build loads Play's run.
+    got = collect.collect(game, cfg.gos_home, 5)
+    assert got.run.run_id == play_run
+    assert (lab_run, collect.LAB_RUN) in got.skipped
+    assert not (cfg.gos_home / collect.DATA_EXPORTS / lab_run).exists()
+    build.build(cfg.gos_home)
+    assert main_runs(cfg) == [play_run]
+    # A Lab run copied into the main GOS_HOME by hand is still never built.
+    shutil.copytree(
+        u.sandbox / collect.DATA_EXPORTS / lab_run,
+        cfg.gos_home / collect.DATA_EXPORTS / lab_run,
+    )
+    build.build(cfg.gos_home)
+    assert main_runs(cfg) == [play_run]
+    with pytest.raises(build.BuildError, match="Lab run"):
+        build.build(cfg.gos_home, lab_run)
+    # The next update diffs against Play's run, not the Lab one.
+    v = playbook.start(cfg.gos_home, "2.9.2", simulate=False)
+    assert playbook.walk(ctx(cfg, prism, io.StringIO()), v) == 3
+    assert v.step("diff")["data"]["old_run"] == play_run
+
+
+GUARDS = [
+    ("gos-dev", "never as gos-dev"),
+    ("not-adopted", "isn't adopted"),
+    ("backup-step", "backup step isn't done"),
+    ("old-backup", "no world backup from the last 24 h"),
+    ("old-confirm", "no world backup from the last 24 h"),
+    ("lab-changed", "Lab changed since its export was tested"),
+    ("client", "is running; close it"),
+    ("lock", "the instance lock is held"),
+    ("abandoned", "is finished"),
+    ("applied", "Play was already updated"),
+]
+
+
+@pytest.mark.parametrize(("case", "why"), GUARDS, ids=[c for c, _ in GUARDS])
+def test_update_play_apply_refuses(
+    case: str,
+    why: str,
+    world: tuple[config.Config, FakePrism],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, prism = world
+    u = adopted_update(cfg, prism, monkeypatch)
+    clients: playhooks.Clients = prism.clients
+    stale = time.time() - 10 * 24 * 3600
+    zips = list((cfg.gos_home / playbook.WORLD_BACKUPS).glob("*.zip"))
+    if case == "gos-dev":
+        monkeypatch.setattr(config, "running_as_dev", lambda: True)
+    elif case == "not-adopted":
+        u.decision()["status"] = playbook.PENDING_DECISION
+    elif case == "backup-step":
+        u.step("backup")["status"] = playbook.WAITING
+    elif case == "old-backup":
+        for z in zips:
+            os.utime(z, (stale, stale))
+    elif case == "old-confirm":
+        for z in zips:
+            z.unlink()
+        playbook.confirm(u, "backup", "copied by hand", now=stale)
+    elif case == "lab-changed":
+        (cfg.instance("lab") / ".minecraft" / "mods" / "extra.jar").write_bytes(b"x")
+    elif case == "client":
+
+        def clients(c: config.Config) -> list[str]:
+            return ["play"]
+
+    elif case == "abandoned":
+        playbook.abandon(u, "test")
+    elif case == "applied":
+        (u.folder / playupdate.BEFORE).mkdir()
+        (u.folder / playupdate.BEFORE / playupdate.MANIFEST).write_text(
+            "{}", encoding="utf-8"
+        )
+    u.save()
+    held = (
+        locks.InstanceLock(cfg.gos_home).acquire("export", "test")
+        if case == "lock"
+        else None
+    )
+    out = io.StringIO()
+    try:
+        assert playupdate.run(cfg, u.id, True, out, clients) == 1, out.getvalue()
+    finally:
+        if held is not None:
+            held.release()
+    assert "refused: " in out.getvalue() and why in out.getvalue()
+    assert (cfg.instance("play") / ".minecraft" / "mods" / OLD_JAR).is_file()
+    assert not (cfg.instance("play") / ".minecraft" / "mods" / NEW_JAR).exists()
+
+
+def test_a_fresh_hand_confirm_counts_as_a_backup(
+    world: tuple[config.Config, FakePrism], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, prism = world
+    u = adopted_update(cfg, prism, monkeypatch)
+    for z in (cfg.gos_home / playbook.WORLD_BACKUPS).glob("*.zip"):
+        z.unlink()
+    now = time.time()
+    assert "no world backup" in (playbook.backup_problem(cfg.gos_home, u, now) or "")
+    playbook.confirm(u, "backup", "copied by hand", now=now - 3600)
+    assert playbook.backup_problem(cfg.gos_home, u, now) is None
+    assert playbook.backup_problem(cfg.gos_home, u, now + 24 * 3600) is not None
+
+
+def test_rollback_puts_play_back_exactly(
+    world: tuple[config.Config, FakePrism], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, prism = world
+    play = cfg.instance("play") / ".minecraft"
+    lab = cfg.instance("lab") / ".minecraft"
+    (play / "mods" / "old-addon.jar").write_bytes(b"addon")  # Lab doesn't have it
+    (play / "scripts" / "gone").mkdir()
+    (play / "scripts" / "gone" / "a.zs").write_text("// a\n", encoding="utf-8")
+    (lab / "scripts" / "new").mkdir()
+    (lab / "scripts" / "new" / "b.zs").write_text("// b\n", encoding="utf-8")
+    (lab / "scripts" / "pack.zs").write_text("// pack, new\n", encoding="utf-8")
+    before = fingerprint.compute_play(cfg, use_cache=False)
+    u = adopted_update(cfg, prism, monkeypatch)
+    log = io.StringIO()
+    assert playupdate.run(cfg, None, True, log, prism.clients) == 0, log.getvalue()
+    assert (play / "mods" / NEW_JAR).is_file() and (play / "scripts/new/b.zs").is_file()
+    assert not (play / "mods" / "old-addon.jar").exists()
+    assert "--rollback" in log.getvalue()
+    m = json.loads((u.folder / "play-before" / "manifest.json").read_bytes())
+    assert sorted(m["added"]) == [f"mods/{NEW_JAR}", "scripts/new/b.zs"]
+    assert m["made_dirs"] == ["scripts/new"] and m["removed_dirs"] == ["scripts/gone"]
+    assert sorted(m["deleted"]) == [
+        f"mods/{OLD_JAR}",
+        "mods/old-addon.jar",
+        "scripts/gone/a.zs",
+    ]
+    assert m["replaced"] == ["scripts/pack.zs"]
+
+    # An added file changed since: refused, nothing written.
+    b = play / "scripts" / "new" / "b.zs"
+    b.write_text("// mine now\n", encoding="utf-8")
+    out = io.StringIO()
+    assert playupdate.rollback(cfg, None, out, prism.clients) == 1
+    assert "was changed since the update" in out.getvalue()
+    assert (play / "mods" / NEW_JAR).is_file()
+    b.write_text("// b\n", encoding="utf-8")
+
+    monkeypatch.setattr(config, "running_as_dev", lambda: True)
+    assert playupdate.rollback(cfg, None, io.StringIO(), prism.clients) == 1
+    monkeypatch.setattr(config, "running_as_dev", lambda: False)
+    out = io.StringIO()
+    assert playupdate.rollback(cfg, None, out, prism.clients) == 0, out.getvalue()
+    after = fingerprint.compute_play(cfg, use_cache=False)
+    assert after.digest == before.digest  # mods, scripts and configs exactly as before
+    assert sorted(p.name for p in (play / "mods").iterdir()) == [
+        OLD_JAR,
+        "old-addon.jar",
+    ]
+    assert not (play / "scripts" / "new").exists()
+    assert (play / "scripts" / "gone" / "a.zs").is_file()
+    assert not (u.folder / "play-before").exists()
+    assert len(list(u.folder.glob("play-before-rolled-back-*"))) == 1
+    u = playbook.find(cfg.gos_home, u.id)
+    assert u.status("play") == "pending" and u.decision()["status"] == "adopted"
+    assert playupdate.rollback(cfg, None, io.StringIO(), prism.clients) == 1
+    # And it can be applied again.
+    assert playupdate.run(cfg, None, True, io.StringIO(), prism.clients) == 0
+    assert (play / "mods" / NEW_JAR).is_file()
+
+
+def test_a_finished_update_takes_no_more_answers_or_steps(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    cfg, prism = world
+    baseline(cfg, prism)
+    u = playbook.start(cfg.gos_home, "2.9.1", simulate=False)
+    backup_zip(cfg)
+    update_lab(cfg)
+    assert playbook.walk(ctx(cfg, prism, io.StringIO()), u) == 3
+    playbook.abandon(u, "changed my mind")
+    calls = (
+        lambda: playbook.answer(cfg.gos_home, u, True),
+        lambda: playbook.answer(cfg.gos_home, u, False),
+        lambda: playbook.redo(u, "diff"),
+        lambda: playbook.confirm(u, "backup", ""),
+        lambda: playbook.abandon(u, "again"),
+    )
+    for call in calls:
+        with pytest.raises(playbook.UpdateError, match="is finished"):
+            call()
+    outcome = playbook.find(cfg.gos_home, u.id).state["outcome"]
+    assert outcome == "abandoned: changed my mind"
+
+
+def test_adopt_yes_needs_a_gt_version_that_is_the_pin(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    cfg, prism = world
+    baseline(cfg, prism)
+    u = playbook.start(cfg.gos_home, "2.9.1", simulate=False)
+    backup_zip(cfg)
+    update_lab(cfg)
+    assert playbook.walk(ctx(cfg, prism, io.StringIO()), u) == 3
+    data = u.step("diff")["data"]
+    data.update(gt_new=None, gt_problem=None)  # a diff that recorded no GT version
+    with pytest.raises(playbook.UpdateError, match="no GT version"):
+        playbook.answer(cfg.gos_home, u, True)
+    data.update(gt_new=NEW_GT, gt_problem=None)  # recorded before a pin change
+    with pytest.raises(playbook.UpdateError, match="GT PIN MISMATCH"):
+        playbook.answer(cfg.gos_home, u, True)
+    playbook.answer(cfg.gos_home, u, False)  # no is always taken
+
+
+def test_db_build_and_doctor_are_loud_on_a_gt_pin_mismatch(
+    world: tuple[config.Config, FakePrism],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg, prism = world
+    assert gtpin.check_db(cfg.gos_home)[0]  # no DB yet: a note
+    baseline(cfg, prism)
+    ok, line = gtpin.check_db(cfg.gos_home)
+    assert ok and "matches" in line
+    toml = tmp_path / "gos.toml"
+    toml.write_text(
+        f'[paths]\ngos_home = "{cfg.gos_home.as_posix()}"\n', encoding="utf-8"
+    )
+    out = io.StringIO()
+    assert build.main(toml, None, out) == 0, out.getvalue()
+    monkeypatch.setattr(config, "GT_PIN", NEW_GT)  # Play's GT is no longer the pin
+    out = io.StringIO()
+    assert build.main(toml, None, out) == 1
+    text = out.getvalue()
+    assert "!!! GT PIN MISMATCH" in text and "the DB was built" in text
+    ok, line = gtpin.check_db(cfg.gos_home)
+    assert not ok and "GT PIN MISMATCH" in line
+
+
+def test_finished_sandboxes_are_pruned_when_the_next_update_starts(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    cfg, prism = world
+    baseline(cfg, prism)
+    u = playbook.start(cfg.gos_home, "2.9.1", simulate=False)
+    backup_zip(cfg)
+    update_lab(cfg)
+    assert playbook.walk(ctx(cfg, prism, io.StringIO()), u) == 3
+    assert u.sandbox.is_dir()
+    assert playbook.prune_sandboxes(cfg.gos_home) == []  # still open: kept
+    playbook.abandon(u, "test")
+    assert playbook.prune_sandboxes(cfg.gos_home)
+    assert not u.sandbox.exists() and (u.folder / "diff.txt").is_file()
+
+
+def test_play_update_messages_name_lab_as_the_source(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    cfg, _ = world
+    shutil.rmtree(cfg.instance("lab") / ".minecraft" / "scripts")
+    plan, refusals = playupdate.plan_update(cfg)
+    assert plan is not None and not refusals
+    assert plan.notes == ["Lab has no scripts/ folder, so scripts/ is left as it is"]
+
+
+def test_the_inbox_note_is_searchable_at_once(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    cfg, prism = world
+    baseline(cfg, prism)
+    vault_deploy.deploy(cfg.gos_home / "vault")
+    u = playbook.start(cfg.gos_home, "2.9.1", simulate=False)
+    backup_zip(cfg)
+    update_lab(cfg)
+    assert playbook.walk(ctx(cfg, prism, io.StringIO()), u) == 3
+    conn = sqlite3.connect(access.db_path(cfg.gos_home))
+    try:
+        rows = conn.execute(
+            "SELECT path FROM note_fts WHERE note_fts MATCH 'adopt'"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [r[0][:9] for r in rows] == ["inbox/ib-"]
+
+
+def test_the_pin_has_no_stale_copies() -> None:
+    """The GT pin-bump procedure's other copies (docs/runbooks/pack_update.md) agree."""
+    from gregtec.ingest import extractor
+
+    assert extractor.PINS[extractor.GT] == config.GT_PIN
+    assert extractor.PACK_VERSION == config.PACK_PIN
+    gradle = (extractor.REPO_ROOT / "mod" / "dependencies.gradle").read_text(
+        encoding="utf-8"
+    )
+    assert f"GT5-Unofficial:{config.GT_PIN}:dev" in gradle
+    claude = (extractor.REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert f"GT pin {config.GT_PIN} (GTNH {config.PACK_PIN})" in claude
