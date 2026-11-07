@@ -428,7 +428,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     fast_eval.add_argument(
         "--limit", type=int, default=None, help="only the first N rows"
     )
-    for each in (ask, fast_eval):
+    deep_eval = eval_cmds.add_parser(
+        "deep-lane",
+        help="the deep lane's cost table over 10 representative tasks (WO-2.4)",
+        description=(
+            "Hands every row of tests/evals/deep_lane_tasks.tsv to the deep lane, one fresh "
+            "session each, and prints the cost table (SDK cost by model, turns, tools, "
+            "subagents, seconds; total, mean, median). A task that reaches [budget] "
+            "task_max_usd is stopped, never approved, so a run costs at most 10 caps. Uses "
+            "the stored Anthropic key and records llm_usage unless --fake."
+        ),
+    )
+    deep_eval.add_argument(
+        "--fake",
+        action="store_true",
+        help="the real CLI against a local scripted model: no key, no cost",
+    )
+    deep_eval.add_argument("--tasks", type=Path, default=None, help="another task file")
+    deep_eval.add_argument(
+        "--limit", type=int, default=None, help="only the first N rows"
+    )
+    deep_eval.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="where to write the table (TSV). Default: "
+        "GOS_HOME/data/reports/deep-lane-costs-<date>.tsv",
+    )
+    for each in (ask, fast_eval, deep_eval):
         each.add_argument(
             "--config",
             type=Path,
@@ -683,6 +710,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return agents_ask.main(args.config, args.text, args.json, sys.stdout)
         if args.limit is not None and args.limit < 1:
             parser.error("--limit must be at least 1")
+        if args.eval_command == "deep-lane":
+            from gregtec.agents import deep_eval
+
+            return deep_eval.main(
+                args.config, args.tasks, args.fake, args.limit, args.out, sys.stdout
+            )
         from gregtec.agents import evals
 
         return evals.main(

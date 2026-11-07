@@ -650,3 +650,58 @@ def test_the_router_hands_off_to_the_lane(lane_reg: Registry, tmp_path: Path) ->
         assert task.request == "plan a steel line"
     finally:
         lane.stop()
+
+
+# --- the core's routes -----------------------------------------------------------------------
+
+ADMIN = "admin-" + "b" * 40
+
+
+def test_deep_task_routes(lane_reg: Registry, tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+
+    sessions = [[[init(), big("m1"), big("m2")], [result(1.3, text="Done after all.")]]]
+    lane, _ = service(lane_reg, tmp_path, sessions)
+    store = Store(tmp_path / "core.sqlite")
+    core = Core(
+        cfg=config.Config(gos_home=tmp_path),
+        store=store,
+        auth=Auth(store, ADMIN),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+        asker=ask.Asker(lane_reg, lane, None),
+        deep=lane,
+    )
+    lane.on_change = core.deep_changed
+    admin = {"Authorization": f"Bearer {ADMIN}"}
+    try:
+        with TestClient(create_app(core), base_url="http://127.0.0.1:8765") as client:
+            voice = {"Authorization": f"Bearer {core.auth.issue_client_token('voice')}"}
+            reply = client.post(
+                "/api/ask", json={"text": "plan a steel line"}, headers=voice
+            )
+            task_id = reply.json()["handoff"]["id"]
+            paused = lane.wait(task_id, 10)
+            assert paused is not None and paused.status == deep.NEEDS_APPROVAL
+            got = client.get(f"/api/deep/tasks/{task_id}", headers=voice).json()
+            assert got["status"] == "needs_approval" and got["cap_usd"] == 1.0
+            listed = client.get("/api/deep/tasks", headers=voice).json()
+            assert [t["id"] for t in listed] == [task_id]
+            health = client.get("/api/health", headers=admin).json()["items"]
+            assert {i["id"]: i for i in health}["deep_lane"]["status"] == "warn"
+            # approving spends money: Clayton's devices and commands only
+            approve = f"/api/deep/tasks/{task_id}/approve"
+            assert client.post(approve, headers=voice).status_code == 403
+            ok = client.post(approve, headers=admin)
+            assert ok.status_code == 200, ok.text
+            done = lane.wait(task_id, 10)
+            assert done is not None and done.status == deep.DONE
+            stop = client.post(f"/api/deep/tasks/{task_id}/stop", headers=admin)
+            assert stop.status_code == 409
+            missing = client.get("/api/deep/tasks/h-none", headers=admin)
+            assert missing.status_code == 404
+    finally:
+        lane.stop()
+        store.close()
