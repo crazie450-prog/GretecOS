@@ -512,7 +512,7 @@ def run_fake(
         lane = DeepLaneService(
             None,
             Settings.from_config(cfg),
-            home=cfg.data_dir / "agent-eval",
+            home=cfg.data_dir / "agent-eval-recipe-lookup",  # not deep-lane eval's
             key=lambda: FAKE_KEY,
             meter=None,  # simulated costs never reach llm_usage
             env=api.env(),
