@@ -23,6 +23,7 @@ from gregtec import config, playhooks
 from gregtec.db import access, build
 from gregtec.ingest import collect, fingerprint
 from gregtec.packupdate import diff, gtpin, plans, playbook, playupdate, releases
+from gregtec.vault import deploy as vault_deploy
 
 NEW_GT = "5.09.54.266"
 OLD_JAR = "gregtech-5.09.54.265.jar"
@@ -342,9 +343,15 @@ def test_a_real_update_runs_the_whole_checklist_and_flags_the_right_plans(
     # Lab still equals Play: waits for Clayton to update Lab.
     assert playbook.walk(c, u) == 3 and u.status("lab") == "waiting"
     update_lab(cfg)
+    vault_deploy.deploy(home / "vault")
 
-    out.truncate(0)
+    out.seek(0)
+    out.truncate()
     assert playbook.walk(c, u) == 3  # lab, lab_export, diff, then "adopt?"
+    notes = list((home / "vault" / "inbox").glob("ib-*.md"))
+    assert len(notes) == 1, out.getvalue()
+    note = notes[0].read_text(encoding="utf-8")
+    assert "title: Pack update 2.9.1: adopt?" in note and "recipes_removed: 1" in note
     text = out.getvalue()
     assert [u.status(s) for s in ("lab", "lab_export", "diff", "adopt")] == [
         "done",
@@ -391,7 +398,8 @@ def test_a_real_update_runs_the_whole_checklist_and_flags_the_right_plans(
 
     u = playbook.find(home, u.id)  # as the next gos pack update reads it
     assert u.step("play")["data"]["backup"].endswith("play-before")
-    out.truncate(0)
+    out.seek(0)
+    out.truncate()
     assert playbook.walk(c, u) == 0, out.getvalue()
     assert u.state["outcome"] == "adopted"
     flags = affected(cfg)
@@ -511,3 +519,22 @@ def test_the_gt_pin_check_is_loud() -> None:
     msg = gtpin.problem("5.09.54.266")
     assert msg is not None and msg.startswith("GT PIN MISMATCH")
     assert "no GT version" in (gtpin.problem(None) or "")
+
+
+def test_gos_pack_commands_refuse_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gregtec import cli
+
+    toml = tmp_path / "gos.toml"
+    toml.write_text(
+        f'[paths]\ngos_home = "{(tmp_path / "home").as_posix()}"\n', encoding="utf-8"
+    )
+    c = ["--config", str(toml)]
+    assert cli.main(["pack", "status", *c]) == 1
+    assert cli.main(["pack", "adopt", "yes", *c]) == 1
+    assert cli.main(["pack", "update", "--start", "2.9.0", *c]) == 1
+    assert cli.main(["pack", "pin", *c]) == 1
+    text = capsys.readouterr().out
+    assert "no pack update is open" in text and "newer than the adopted" in text
+    assert "there is no DB" in text

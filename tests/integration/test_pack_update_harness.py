@@ -294,7 +294,8 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
     log = io.StringIO()
     assert playupdate.run(cfg, None, True, log, prism.clients) == 0, log.getvalue()
     u = playbook.find(home, u.id)
-    out.truncate(0)
+    out.seek(0)
+    out.truncate()
     assert playbook.walk(c, u) == 0, out.getvalue()
     new = diff.side(db, None, home)
     assert new.gt_version == NEW_GT and new.run_key != base.run_key

@@ -617,7 +617,7 @@ def _vault_note(ctx: Ctx, u: Update, s: diff.Summary, flagged: list[str]) -> str
         f"note: answer with gos pack adopt yes or no; the report is {u.folder / 'diff.txt'}",
     ]
     try:
-        return f"vault note: {VaultIO(root).propose(title, body)}"
+        return f"vault note: {VaultIO(root).propose(title, '\n'.join(body))}"
     except (VaultError, OSError) as exc:
         return f"warning: no vault note ({exc})"
 
