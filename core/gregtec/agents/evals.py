@@ -202,7 +202,7 @@ def main(
         return 2
     if limit is not None:
         questions = questions[:limit]
-    agents = setup(cfg, fake=fake)
+    agents = setup(cfg, fake=fake, deep_lane=False)
     try:
         fast = agents.fast or agents.lane()
         if fast is None:

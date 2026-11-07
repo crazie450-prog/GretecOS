@@ -36,6 +36,7 @@ import json
 import logging
 import re
 import secrets
+import subprocess
 import threading
 import time
 from collections import deque
@@ -44,10 +45,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+import keyring.errors
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     Message,
     ResultMessage,
     StreamEvent,
@@ -61,8 +64,10 @@ from claude_agent_sdk import (
 from gregtec.agents import deep_config, hooks
 from gregtec.agents.deep_lane import KEEP, TASK_MAX, Handoff
 from gregtec.agents.tools.registry import Registry
+from gregtec.llm import keys
 from gregtec.llm.prices import PRICES, Price, Usage, estimate_cost
 from gregtec.llm.usage import UsageMeter
+from gregtec.vault import deploy as vault_deploy
 from gregtec.vault.io import VaultIO
 
 log = logging.getLogger(__name__)
@@ -72,7 +77,7 @@ DONE, FAILED, STOPPED, OFFLINE = "done", "failed", "stopped", "offline"
 FINAL = frozenset({DONE, FAILED, STOPPED, OFFLINE})
 PROGRESS_KEEP = 40
 STOP_WAIT_S = 10.0
-APPROVE, STOP = "approve", "stop"
+APPROVE, STOP, SHUTDOWN = "approve", "stop", "shutdown"
 # The most a token costs at any listed price: an unknown model is priced at this (never zero).
 _TOP = Price(
     input=max(p.input for p in PRICES.values()),
@@ -270,22 +275,22 @@ class DeepLaneService:
 
     def __init__(
         self,
-        registry: Registry,
+        registry: Registry | None,
         settings: deep_config.Settings,
         *,
         home: Path,
-        vault: VaultIO | None,
         key: Callable[[], str],
         meter: UsageMeter | None = None,
         env: Mapping[str, str] | None = None,
         client_factory: ClientFactory = ClaudeSDKClient,
         on_change: Callable[[DeepTask], None] | None = None,
         task_label: str = "deep",
+        template: Path | None = None,
     ) -> None:
-        self.registry = registry
+        self._registry = registry
         self.settings = settings
         self.home = home
-        self.vault = vault
+        self.template = template
         self.key = key
         self.meter = meter
         self.env = dict(env or {})
@@ -306,17 +311,65 @@ class DeepLaneService:
         self.problem: str | None = None  # why the lane can't connect right now
         self.last_init: dict[str, Any] | None = None
 
+    @classmethod
+    def for_home(
+        cls,
+        gos_home: Path,
+        settings: deep_config.Settings,
+        meter: UsageMeter | None,
+    ) -> DeepLaneService:
+        """The core's deep lane: ``GOS_HOME/data/agent`` for Claude Code's own files, the
+        stored key, and the repo's ``vault-template/_gos/`` deployed into the live vault when
+        it starts. Set :attr:`registry` before the first handoff."""
+        return cls(
+            None,
+            settings,
+            home=gos_home / "data" / "agent",
+            key=lambda: keys.get_key(keys.ANTHROPIC),
+            meter=meter,
+            template=vault_deploy.DEFAULT_TEMPLATE,
+        )
+
+    @property
+    def registry(self) -> Registry:
+        if self._registry is None:
+            raise RuntimeError("the deep lane has no tool registry yet")
+        return self._registry
+
+    @registry.setter
+    def registry(self, value: Registry) -> None:
+        self._registry = value
+
+    @property
+    def vault(self) -> VaultIO | None:
+        """The live vault, as the note tools reach it (the registry's)."""
+        return self.registry.env.vault
+
     # --- the thread
 
     def start(self) -> None:
         with self._lock:
             if self._thread is not None:
                 return
+            self._deploy_skills()
             self._thread = threading.Thread(
                 target=self._main, name="gos-deep-lane", daemon=True
             )
             self._thread.start()
         self._ready.wait(10)
+
+    def _deploy_skills(self) -> None:
+        """Mirror the repo's ``_gos/`` (skills, the plugin manifest) into the live vault, as
+        ``gos vault deploy`` does; a vault that doesn't exist yet is left to that command."""
+        vault = self.vault
+        if self.template is None or vault is None or not (vault.root / ".git").is_dir():
+            return
+        try:
+            done = vault_deploy.deploy(vault.root, self.template)
+        except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError):
+            log.exception("deep lane: can't deploy the vault's _gos/")
+            return
+        log.info("deep lane: vault _gos/ deployed", extra={"result": done})
 
     def _main(self) -> None:
         loop = asyncio.new_event_loop()
@@ -338,7 +391,7 @@ class DeepLaneService:
     def _shutdown(self) -> None:
         for fut in self._decisions.values():  # a paused task ends as stopped
             if not fut.done():
-                fut.set_result(STOP)
+                fut.set_result(SHUTDOWN)
         if self._current is None and self._queue is not None:
             self._queue.put_nowait(None)  # idle: end after the queue's turn
         elif self._worker is not None:
@@ -381,7 +434,17 @@ class DeepLaneService:
             source,
             self.settings.task_max_usd,
         )
-        self.start()
+        try:
+            self.key()
+        except (
+            LookupError,
+            OSError,
+            keyring.errors.KeyringError,
+        ) as exc:  # offline (7.16)
+            self.problem = f"{type(exc).__name__}: {exc}"[:300]
+            item.status, item.error, item.ended = OFFLINE, self.problem, time.time()
+        else:
+            self.start()
         with self._lock:
             self._tasks[item.id] = item
             self._order.append(item.id)
@@ -395,7 +458,9 @@ class DeepLaneService:
             extra={"task": item.id, "source": source, "chars": len(item.request)},
         )
         loop, queue = self._loop, self._queue
-        if loop is None or queue is None:
+        if item.status == OFFLINE:
+            self._changed(item)
+        elif loop is None or queue is None:
             self._finish(item, FAILED, error="the deep lane didn't start")
         else:
             loop.call_soon_threadsafe(queue.put_nowait, item)
@@ -438,12 +503,32 @@ class DeepLaneService:
             if ok:
                 assert fut is not None
                 fut.set_result(decision)
+                # The new state now, so a caller that waits next sees it.
+                if decision == APPROVE:
+                    with self._lock:
+                        task.status = RUNNING
+                else:
+                    self._finish(task, STOPPED, error="stopped at its cap by Clayton")
             answered.append(ok)
             done.set()
 
         loop.call_soon_threadsafe(set_it)
         done.wait(5)
         return bool(answered and answered[0])
+
+    def health(self) -> tuple[str, str]:
+        """The dashboard health strip's (status, detail) for the lane."""
+        waiting = [t.id for t in self.tasks() if t.status == NEEDS_APPROVAL]
+        if waiting:
+            return "warn", f"{waiting[0]} paused at its cap: approve or stop it"
+        current = self._current
+        if current is not None:
+            return "ok", f"working on {current.id}"
+        if self.problem is not None:
+            return "warn", f"offline: {self.problem}"
+        if self._thread is None:
+            return "off", "not started"
+        return ("ok", "warm") if self._spare is not None else ("warn", "connecting")
 
     def wait(self, task_id: str, timeout: float) -> DeepTask | None:
         """Block until the task is final or waits for approval (or ``timeout`` passes)."""
@@ -533,6 +618,7 @@ class DeepLaneService:
         if task.status != QUEUED:  # stopped while it waited
             return
         pair, self._spare = self._spare, None
+        warm = pair is not None
         if pair is None:
             pair = await self._connect_quietly()
         if pair is None:
@@ -540,25 +626,32 @@ class DeepLaneService:
                 task, OFFLINE, error=f"the deep lane is offline: {self.problem}"
             )
             return
-        client, gate = pair
-        gate.on_event = lambda tool, agent, args: self._event(task, tool, agent, args)
         self._current = task
         with self._lock:
             task.status, task.started = RUNNING, time.time()
         self._changed(task)
         recorded: dict[str, dict[str, float]] = {}
+        first = prompt(task.request, task.task, task.source)
+        client, gate = pair
+        gate.on_event = self._listener(task)
         try:
-            await self._turn(
-                client,
-                gate,
-                task,
-                prompt(task.request, task.task, task.source),
-                recorded,
-            )
+            try:
+                await self._turn(client, gate, task, first, recorded)
+            except ClaudeSDKError:
+                if not warm or task.init is not None:
+                    raise
+                # The warm session died while it waited (its CLI exited): start a fresh one.
+                log.warning("deep lane: the warm session was gone; reconnecting")
+                await self._disconnect(pair)
+                pair = await self._connect()
+                client, gate = pair
+                gate.on_event = self._listener(task)
+                await self._turn(client, gate, task, first, recorded)
             while task.status == NEEDS_APPROVAL:
                 decision = await self._decision(task)
+                if decision == SHUTDOWN:
+                    self._finish(task, STOPPED, error="GOS stopped")
                 if decision != APPROVE:
-                    self._finish(task, STOPPED, error="stopped at its cap by Clayton")
                     break
                 with self._lock:
                     task.approvals += 1
@@ -588,6 +681,12 @@ class DeepLaneService:
                     f"{t} ({a or 'orchestrator'}): {w}" for t, a, w in gate.denied
                 ]
             await self._disconnect(pair)
+
+    def _listener(self, task: DeepTask) -> hooks.Event:
+        def event(tool: str, agent: str | None, args: dict[str, Any]) -> None:
+            self._event(task, tool, agent, args)
+
+        return event
 
     async def _decision(self, task: DeepTask) -> str:
         assert self._loop is not None

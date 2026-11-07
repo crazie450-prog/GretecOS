@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +27,14 @@ from typing import Any, TextIO
 
 from gregtec import config
 from gregtec.agents import prefetch, router
+from gregtec.agents.deep import (
+    DONE,
+    NEEDS_APPROVAL,
+    OFFLINE,
+    DeepLaneService,
+    DeepTask,
+)
+from gregtec.agents.deep_config import Settings
 from gregtec.agents.deep_lane import DeepLane, HandoffRecorder
 from gregtec.agents.fast_lane import (
     NOT_CHECKED,
@@ -45,6 +54,7 @@ from gregtec.store import Store
 log = logging.getLogger(__name__)
 
 TEXT_MAX = 1000  # characters of one request
+DEEP_WAIT_S = 1800.0  # how long gos ask waits for a deep-lane task
 LANE_RETRY_S = 30.0  # how often a missing lane (no key yet) is looked for again
 AI_OFFLINE = "AI is offline; I can do lookups."
 NOTHING_PENDING = "Nothing is waiting for confirmation."
@@ -55,8 +65,9 @@ NOT_CHECKED_NO_CARD = (
     "I can't give that answer with checked numbers. Ask for the item's recipe or uses and "
     "I'll show the rows with their ids."
 )
-HANDED_OFF = (
-    "That's one for the deep lane; I've handed it over. It arrives with WO-2.4."
+HANDED_OFF = "That's one for the deep lane; I've handed it over."
+DEEP_OFFLINE = (
+    "The deep lane is offline, so I can't take that on now; I can do lookups."
 )
 _ORDINALS = {
     "1": 0, "one": 0, "first": 0, "the first": 0, "the first one": 0, "number one": 0,
@@ -240,7 +251,8 @@ class Asker:
             return self._instant(route)
         if route.kind == router.DEEP:
             item = self.deep.handoff(route.text, route.text, "router")
-            return Reply(HANDED_OFF, router.DEEP, route.intent, handoff=item.as_dict())
+            text = DEEP_OFFLINE if item.status == OFFLINE else HANDED_OFF
+            return Reply(text, router.DEEP, route.intent, handoff=item.as_dict())
         pre = prefetch.prefetch(self.registry, route)
         if pre.clarify is not None:
             return self._ask_back(route, pre)
@@ -355,7 +367,7 @@ class Agents:
     gos.toml for the core, ``gos ask`` and ``gos eval fast-lane``."""
 
     registry: Registry
-    deep: HandoffRecorder
+    deep: HandoffRecorder | DeepLaneService
     meter: UsageMeter | None
     vault: Path | None
     fast: FastLane | None = None
@@ -371,19 +383,26 @@ class Agents:
         return Asker(self.registry, self.deep, self.lane)
 
     def close(self) -> None:
+        if isinstance(self.deep, DeepLaneService):
+            self.deep.stop()
         if self.store is not None:
             self.store.close()
             self.store = None
 
 
 def setup(
-    cfg: config.Config, *, store: Store | None = None, fake: bool = False
+    cfg: config.Config,
+    *,
+    store: Store | None = None,
+    fake: bool = False,
+    deep_lane: bool = True,
 ) -> Agents:
     """``store``: the core's own (else one is opened when the DB exists, for the meter).
     ``fake``: the fast lane runs :class:`gregtec.llm.fake.EchoClient` (no key, no cost) with no
-    meter, so its simulated calls never reach ``llm_usage`` (the credit alerts, the TTFT data)."""
-    deep = HandoffRecorder()
-    registry = default_registry(cfg.gos_home, deep=deep)
+    meter, so its simulated calls never reach ``llm_usage`` (the credit alerts, the TTFT data).
+    ``deep_lane`` False (or ``fake``): handoffs are only recorded (:class:`HandoffRecorder`), as
+    ``gos eval fast-lane`` needs; else the real deep lane (WO-2.4), started on the first
+    handoff or by the core."""
     vault = cfg.gos_home / "vault"
     opened = None
     if store is None and access.db_path(cfg.gos_home).is_file():
@@ -395,6 +414,14 @@ def setup(
         if store is not None
         else None
     )
+    deep: HandoffRecorder | DeepLaneService
+    if fake or not deep_lane:
+        deep = HandoffRecorder()
+        registry = default_registry(cfg.gos_home, deep=deep)
+    else:
+        deep = DeepLaneService.for_home(cfg.gos_home, Settings.from_config(cfg), meter)
+        registry = default_registry(cfg.gos_home, deep=deep)
+        deep.registry = registry
     agents = Agents(
         registry, deep, meter, vault if vault.is_dir() else None, store=opened
     )
@@ -403,8 +430,53 @@ def setup(
     return agents
 
 
+def wait_deep(
+    deep: DeepLaneService,
+    out: TextIO,
+    approve: Callable[[DeepTask], bool],
+    timeout: float = DEEP_WAIT_S,
+) -> list[DeepTask]:
+    """Wait for every task this process handed to the deep lane; a task that pauses at its
+    cap continues when ``approve`` says yes, else it is stopped. Prints each outcome."""
+    done = []
+    for task in deep.tasks():
+        found = deep.wait(task.id, timeout)
+        while found is not None and found.status == NEEDS_APPROVAL:
+            if approve(found):
+                deep.approve(found.id)
+                found = deep.wait(found.id, timeout)
+            else:
+                deep.stop_task(found.id)
+                found = deep.wait(found.id, 30)
+        if found is None:
+            continue
+        print(
+            f"deep lane {found.id}: {found.status}, ${found.cost_usd:.4f} "
+            f"(cap ${found.cap_usd:.2f}), {found.turns} turns",
+            file=out,
+        )
+        if found.text:
+            print(found.text, file=out)
+        if found.error:
+            print(f"  error: {found.error}", file=out)
+        done.append(found)
+    return done
+
+
+def _ask_approval(task: DeepTask) -> bool:
+    """Ask at the terminal whether a paused task may spend another cap (no terminal: no)."""
+    if not sys.stdin.isatty():
+        return False
+    answer = input(
+        f"The deep-lane task paused at ${task.spent_usd:.2f} (cap ${task.cap_usd:.2f}). "
+        "Approve another cap's worth? [y/N] "
+    )
+    return answer.strip().lower() in ("y", "yes")
+
+
 def main(config_path: Path | None, text: str, as_json: bool, out: TextIO) -> int:
-    """``gos ask "<text>"``: 0 answered, 1 an error or no-AI answer, 2 bad gos.toml."""
+    """``gos ask "<text>"``: 0 answered, 1 an error or no-AI answer, 2 bad gos.toml. A request
+    handed to the deep lane is waited for here (D157)."""
     try:
         cfg = config.load(config_path)
     except (OSError, ValueError) as exc:
@@ -413,6 +485,11 @@ def main(config_path: Path | None, text: str, as_json: bool, out: TextIO) -> int
     agents = setup(cfg)
     try:
         reply = agents.asker().ask(text)
+        deep = agents.deep
+        if isinstance(deep, DeepLaneService) and deep.tasks() and not as_json:
+            print(reply.text, file=out)
+            done = wait_deep(deep, out, _ask_approval)
+            return 0 if done and all(t.status == DONE for t in done) else 1
     finally:
         agents.close()
     if as_json:

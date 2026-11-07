@@ -270,7 +270,6 @@ def options(
     config_dir, workdir = home / "claude", home / "work"
     config_dir.mkdir(parents=True, exist_ok=True)
     workdir.mkdir(parents=True, exist_ok=True)
-    main, _ = tool_sets(registry)
     plugin = plugin_dir(vault)
     skills = skill_names(vault) if plugin is not None else []
     return ClaudeAgentOptions(
@@ -278,7 +277,9 @@ def options(
         effort=ORCHESTRATOR_EFFORT,  # type: ignore[arg-type]
         system_prompt={"type": "file", "path": str(PROMPT_FILE)},
         tools=list(BUILTIN_TOOLS),
-        allowed_tools=[*_ordered(registry, main), "Agent"],
+        # Pre-approved for dontAsk: every gos tool (the tool gate decides who may call
+        # which: db_sql is the db-analyst's) and the subagent tool.
+        allowed_tools=[*served(registry), "Agent"],
         disallowed_tools=[f"Agent({name})" for name in BUILTIN_AGENTS],
         mcp_servers={mcp.SERVER: mcp.server(registry)},
         strict_mcp_config=True,
@@ -305,12 +306,16 @@ def policy(registry: Registry, vault: Path | None) -> hooks.Policy:
     return hooks.Policy(main, agents, frozenset(skills))
 
 
+def served(registry: Registry) -> list[str]:
+    """Every tool the ``gos`` server serves, qualified, in the registry's order."""
+    return [mcp.qualified(t.name) for t in mcp.tools(registry)]
+
+
 def init_problems(init: Mapping[str, Any], registry: Registry) -> list[str]:
     """Why the CLI's ``init`` report breaks the deep lane's rules (empty: it doesn't)."""
-    main, agents = tool_sets(registry)
     # The server serves every deep-lane tool to the session; the tool gate decides who calls
     # which (db_sql is the db-analyst's alone).
-    allowed = main.union(*agents.values()) | {"Skill"} | hooks.AGENT_TOOLS
+    allowed = set(served(registry)) | {"Skill"} | hooks.AGENT_TOOLS
     problems = []
     tools = init.get("tools")
     if not isinstance(tools, list):

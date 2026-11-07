@@ -7,6 +7,9 @@
 | GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
 | GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
 | POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3) |
+| GET  /api/deep/tasks[/{id}]    | admin, client, device   | deep-lane tasks and their state       |
+| POST /api/deep/tasks/{id}/approve | admin, device        | a paused task may spend another cap   |
+| POST /api/deep/tasks/{id}/stop | admin, device           | end a paused or queued task           |
 | POST /api/pair/start           | anyone, dashboard name  | ask to pair; the code goes elsewhere  |
 | POST /api/pair/complete        | anyone, dashboard name  | the right code sets the device cookie |
 | GET  /api/pair/pending         | admin, device           | pending requests with their codes     |
@@ -15,7 +18,7 @@
 | DELETE /api/devices/{id}       | admin, device           | revoke a device                       |
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
-| WS   /ws                       | admin, client, device   | pushes ``health`` and ``pair.pending``|
+| WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -50,6 +53,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from gregtec import control
 from gregtec.agents.ask import TEXT_MAX, Asker
+from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -133,6 +137,7 @@ class Core:
     # time.monotonic() when the runner was asked to stop (the session-end deadline, D143)
     stop_asked: float | None = None
     asker: Asker | None = None  # the router and the lanes (WO-2.3)
+    deep: DeepLaneService | None = None  # the deep lane (WO-2.4)
 
     # --- pushing to WebSocket clients
 
@@ -147,6 +152,11 @@ class Core:
     def _threadsafe(self, fn: Callable[[], None]) -> None:
         if self.loop is not None:
             self.loop.call_soon_threadsafe(fn)
+
+    def deep_changed(self, task: DeepTask) -> None:
+        """The deep lane's ``on_change`` (its own thread): push the task to every socket."""
+        data = task.as_dict()
+        self._threadsafe(lambda: self.broadcast({"type": "deep.task", "data": data}))
 
     def pairing_changed(self) -> None:
         """Pairing's ``on_change``; may run on a worker thread."""
@@ -241,6 +251,8 @@ class Core:
         items.append(self._credits_item())
         if self.maintenance is not None:
             items.append(self._maintenance_item())
+        if self.deep is not None:
+            items.append(_item("deep_lane", "check", "Deep lane", *self.deep.health()))
         statuses = {i["status"] for i in items}
         overall = (
             "error" if "error" in statuses else "warn" if "warn" in statuses else "ok"
@@ -453,6 +465,41 @@ def create_app(core: Core) -> FastAPI:
             },
         )
         return reply.as_dict()
+
+    def deep_lane() -> DeepLaneService:
+        if core.deep is None:
+            raise HTTPException(503, "the deep lane isn't set up in this core")
+        return core.deep
+
+    @app.get("/api/deep/tasks")
+    def deep_tasks(_: Anyone) -> list[dict[str, Any]]:
+        return [t.as_dict() for t in deep_lane().tasks()]
+
+    @app.get("/api/deep/tasks/{task_id}")
+    def deep_task(task_id: str, _: Anyone) -> dict[str, Any]:
+        task = deep_lane().get(task_id)
+        if task is None:
+            raise HTTPException(404, "no such deep-lane task")
+        return task.as_dict()
+
+    # Approving spends money (D156), so only Clayton's own devices and commands may.
+    @app.post("/api/deep/tasks/{task_id}/approve")
+    async def deep_approve(task_id: str, who: Trusted) -> dict[str, Any]:
+        lane = deep_lane()
+        if not await asyncio.to_thread(lane.approve, task_id):
+            raise HTTPException(409, "that task isn't waiting for approval")
+        log.info("deep-lane task approved", extra={"task": task_id, "by": who.role})
+        task = lane.get(task_id)
+        return task.as_dict() if task else {}
+
+    @app.post("/api/deep/tasks/{task_id}/stop")
+    async def deep_stop(task_id: str, who: Trusted) -> dict[str, Any]:
+        lane = deep_lane()
+        if not await asyncio.to_thread(lane.stop_task, task_id):
+            raise HTTPException(409, "that task isn't queued or waiting for approval")
+        log.info("deep-lane task stopped", extra={"task": task_id, "by": who.role})
+        task = lane.get(task_id)
+        return task.as_dict() if task else {}
 
     @app.post("/api/pair/start")
     async def pair_start(request: Request, _: PairingHost) -> dict[str, Any]:
