@@ -202,7 +202,6 @@ test("golden", function()
         T.cmd(101, "say", { text = "Craft started" }, "dashboard"),
         T.cmd(102, "craft", { name = "gregtech:gt.metaitem.01", damage = 11305, amount = 64 }, "voice"),
         T.cmd(103, "machine_pause", { addr = world.ebf.addr }, "phone"),
-        T.cmd(104, "self_destruct", {}, "voice"),
       })
       T.dump("golden-reply-commands.json", json.encode(reply))
     end
@@ -217,7 +216,7 @@ test("golden", function()
   T.dump("golden-reply-empty.json", '{"v":1,"ok":true,"cmds":[]}')
   T.dump("golden-reply-refused.json", '{"v":1,"ok":false,"cmds":[],"err":"unauthorized"}')
   local p3 = T.last_body(w)
-  T.eq(#p3.results, 4)
+  T.eq(#p3.results, 3)
   T.eq(p3.crafts[1].state, "crafting")
 end)
 

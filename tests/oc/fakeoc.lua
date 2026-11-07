@@ -223,6 +223,9 @@ function World:print(...)
     parts[i] = tostring(parts[i])
   end
   self.printed[#self.printed + 1] = table.concat(parts, "\t")
+  if self.lean and #self.printed > 50 then
+    table.remove(self.printed, 1)
+  end
 end
 
 function World:printed_text()
@@ -251,7 +254,9 @@ function World:count(dtype, method, direct)
   self.calls[key] = (self.calls[key] or 0) + 1
   if not direct then
     self.nondirect = self.nondirect + 1
-    self.trace[#self.trace + 1] = { t = self.clock, type = dtype, method = method }
+    if not self.lean then
+      self.trace[#self.trace + 1] = { t = self.clock, type = dtype, method = method }
+    end
   end
 end
 
@@ -701,10 +706,15 @@ function F.internet_card(w, opts)
       error("too many open connections", 0)
     end
     local req = { url = url, body = post, headers = headers or {}, method = method, t = w.clock }
-    w.requests[#w.requests + 1] = req
+    w.nrequests = (w.nrequests or 0) + 1
+    if w.lean then
+      w.requests = { req } -- a long run keeps only the last request
+    else
+      w.requests[#w.requests + 1] = req
+    end
     local spec = w.server and w.server(req, w) or { body = '{"v":1,"ok":true,"cmds":[]}' }
     req.spec = spec
-    if spec.body then
+    if spec.body and not w.lean then
       w.replies[#w.replies + 1] = spec.body
     end
     local ready_at = w.clock + (spec.ready_ticks or 2) * TICK

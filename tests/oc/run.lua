@@ -51,6 +51,22 @@ local function wanted(suite, name)
   return false
 end
 
+-- Every telemetry message a test's worlds received (the first 20 and the last 5 of each), and
+-- the replies the standard fake core built, for the schema check in test_oc_agent.py.
+local function dump_world(id, wi, w)
+  local reqs = w.requests
+  for i, r in ipairs(reqs) do
+    if (i <= 20 or i > #reqs - 5) and type(r.body) == "string" then
+      T.dump(("%s-w%d-req-%03d.json"):format(id, wi, i), r.body)
+    end
+  end
+  for i, body in ipairs(w.valid_replies or {}) do
+    if i <= 20 then
+      T.dump(("%s-w%d-reply-%03d.json"):format(id, wi, i), body)
+    end
+  end
+end
+
 local passed, failed, failures = 0, 0, {}
 for _, suite in ipairs(SUITES) do
   local tests = dofile(root .. "/tests/oc/" .. suite .. ".lua")
@@ -58,19 +74,26 @@ for _, suite in ipairs(SUITES) do
     local name, fn = t[1], t[2]
     if wanted(suite, name) then
       T.current = suite .. "." .. name
-      -- A fresh world for every test; the watchdog watches its clock.
-      local world_ref = {}
+      -- A fresh world for every test; the watchdog watches the newest one's clock.
+      local worlds = {}
       T.on_world = function(w)
-        world_ref.w = w
+        worlds[#worlds + 1] = w
       end
       debug.sethook(function()
-        if world_ref.w then
-          world_ref.w:instruction_hook()
+        local w = worlds[#worlds]
+        if w then
+          w:instruction_hook()
         end
       end, "", 100000)
       local ok, err = xpcall(fn, debug.traceback)
       debug.sethook()
       T.on_world = nil
+      if T.dump_dir then
+        local id = T.current:gsub("[^%w_%-]", "_")
+        for wi, w in ipairs(worlds) do
+          dump_world(id, wi, w)
+        end
+      end
       if ok then
         passed = passed + 1
         print("ok   " .. T.current)

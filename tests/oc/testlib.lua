@@ -167,12 +167,19 @@ function T.base(opts)
     F.write_config(w, opts.config or T.config_text(opts.extra))
   end
   w.cmds_queue = {}
-  -- The default core: 200 with the queued commands, acking every message.
+  w.valid_replies = {}
+  -- The default core: 200 with the queued commands, acking every message. Its replies are
+  -- valid by the schema unless a test queues a bad command on purpose (it then sets
+  -- w.bad_cmds), so the runner dumps them for the Python check.
   w.server = opts.server or function(req, world)
     local cmds = world.cmds_queue
     world.cmds_queue = {}
     local reply = { v = 1, ok = true, cmds = json.array(cmds) }
-    return { body = json.encode(reply) }
+    local body = json.encode(reply)
+    if not world.bad_cmds and not world.lean then
+      world.valid_replies[#world.valid_replies + 1] = body
+    end
+    return { body = body }
   end
   return w
 end

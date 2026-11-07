@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gregtec-os:contracts:oc-bridge:1",
+  "title": "gos-oc-bridge/1",
+  "description": "The OpenComputers bridge contract (docs/contracts/oc_bridge.md): the telemetry document the OC agent sends (oc/gos-agent.lua, WO-7.2) and the reply the core returns (WO-7.1). Validate a document against #/$defs/telemetry or #/$defs/reply.",
+  "oneOf": [{ "$ref": "#/$defs/telemetry" }, { "$ref": "#/$defs/reply" }],
+  "$defs": {
+    "address": {
+      "description": "An OpenComputers component address (a UUID).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "registry_name": {
+      "description": "An item's registry name (modid:name). Never a numeric id.",
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.\\-]+:[^\\s]+$"
+    },
+    "damage": { "description": "Item damage (meta).", "type": "integer", "minimum": 0, "maximum": 32767 },
+    "seconds": { "description": "computer.uptime() of the OC computer, in seconds.", "type": "number", "minimum": 0 },
+    "eu": { "type": "integer", "minimum": 0 },
+    "decimal": { "description": "A non-negative integer as decimal digits, exact beyond 64 bits.", "type": "string", "pattern": "^[0-9]+$", "maxLength": 80 },
+    "xyz": { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 },
+    "meta_name": { "description": "GT's meta tile entity name (getName()), e.g. multimachine.blastfurnace.", "type": "string", "maxLength": 128 },
+    "sensor": {
+      "description": "getSensorInformation() lines exactly as the driver returned them (2.9: 'key\\\\arg\\\\arg' or server-side localised text, with section-sign codes). Parsed by the core, never by the agent.",
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 200 }
+    },
+    "command_id": { "description": "The core's action id (action.id).", "type": "integer", "minimum": 1 },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "agent", "boot", "seq", "uptime", "transport", "cycle_s", "sample_s", "computer", "components", "power", "machines", "crafts", "results", "errors"],
+      "properties": {
+        "v": { "const": 1 },
+        "kind": { "const": "telemetry" },
+        "agent": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "boot": { "description": "Random per agent start; seq starts again at 1 with a new boot.", "type": "string", "pattern": "^[0-9a-f]{8}$" },
+        "seq": { "type": "integer", "minimum": 1 },
+        "uptime": { "$ref": "#/$defs/seconds" },
+        "transport": { "enum": ["http", "mailbox"] },
+        "cycle_s": { "type": "number", "minimum": 5, "maximum": 10 },
+        "sample_s": { "type": "number", "minimum": 0 },
+        "computer": { "$ref": "#/$defs/computer" },
+        "tick_ms": { "description": "The server's mean tick time from a tps_card, when one is in.", "type": "number", "minimum": 0 },
+        "components": {
+          "description": "How many components of each type the computer sees.",
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9_]+$" },
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        },
+        "power": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/power" } },
+        "machines": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/machine" } },
+        "ae2": { "$ref": "#/$defs/ae2" },
+        "crafts": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/craft" } },
+        "results": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/result" } },
+        "errors": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/error" } }
+      }
+    },
+    "computer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "arch", "mem_free", "mem_total", "energy", "energy_max"],
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "arch": { "type": "string", "maxLength": 32 },
+        "mem_free": { "type": "integer", "minimum": 0 },
+        "mem_total": { "type": "integer", "minimum": 0 },
+        "energy": { "type": "number", "minimum": 0 },
+        "energy_max": { "type": "number", "minimum": 0 }
+      }
+    },
+    "power": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["addr", "type", "kind"],
+      "properties": {
+        "addr": { "$ref": "#/$defs/address" },
+        "type": { "enum": ["gt_machine", "gt_batterybuffer", "lsc"] },
+        "kind": { "enum": ["battery_buffer", "storage"] },
+        "name": { "$ref": "#/$defs/meta_name" },
+        "xyz": { "$ref": "#/$defs/xyz" },
+        "eu": { "$ref": "#/$defs/eu" },
+        "eu_max": { "$ref": "#/$defs/eu" },
+        "eu_str": { "$ref": "#/$defs/decimal" },
+        "eu_max_str": { "$ref": "#/$defs/decimal" },
+        "eu_in": { "type": "integer" },
+        "eu_out": { "type": "integer" },
+        "sensor": { "$ref": "#/$defs/sensor" },
+        "sensor_at": { "$ref": "#/$defs/seconds" }
+      },
+      "dependentRequired": { "sensor": ["sensor_at"] },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "battery_buffer" } } },
+          "then": { "not": { "anyOf": [{ "required": ["eu_str"] }, { "required": ["eu_max_str"] }] } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "storage" } } },
+          "then": { "not": { "anyOf": [{ "required": ["eu"] }, { "required": ["eu_max"] }] } }
+        }
+      ]
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["addr", "type"],
+      "properties": {
+        "addr": { "$ref": "#/$defs/address" },
+        "type": { "const": "gt_machine" },
+        "name": { "$ref": "#/$defs/meta_name" },
+        "xyz": { "$ref": "#/$defs/xyz" },
+        "active": { "type": "boolean" },
+        "allowed": { "type": "boolean" },
+        "work": { "type": "boolean" },
+        "progress": { "type": "integer" },
+        "progress_max": { "type": "integer" },
+        "eu": { "$ref": "#/$defs/eu" },
+        "eu_max": { "$ref": "#/$defs/eu" },
+        "sensor": { "$ref": "#/$defs/sensor" },
+        "sensor_at": { "$ref": "#/$defs/seconds" }
+      },
+      "dependentRequired": { "sensor": ["sensor_at"] }
+    },
+    "ae2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["addr", "type", "cpus"],
+      "properties": {
+        "addr": { "$ref": "#/$defs/address" },
+        "type": { "enum": ["me_controller", "me_interface"] },
+        "cpus": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/cpu" } },
+        "items": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/item" } },
+        "items_at": { "$ref": "#/$defs/seconds" }
+      },
+      "dependentRequired": { "items": ["items_at"] }
+    },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "storage", "coprocessors", "busy"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 64 },
+        "storage": { "type": "integer", "minimum": 0 },
+        "coprocessors": { "type": "integer", "minimum": 0 },
+        "busy": { "type": "boolean" }
+      }
+    },
+    "item": {
+      "description": "One watchlist entry: every stack of that registry name and damage summed (NBT variants included; stacks counts them).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "damage", "size", "stacks", "craftable"],
+      "properties": {
+        "name": { "$ref": "#/$defs/registry_name" },
+        "damage": { "$ref": "#/$defs/damage" },
+        "size": { "type": "integer", "minimum": 0 },
+        "stacks": { "type": "integer", "minimum": 0 },
+        "craftable": { "type": "boolean" }
+      }
+    },
+    "craft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "damage", "amount", "state", "at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/command_id" },
+        "name": { "$ref": "#/$defs/registry_name" },
+        "damage": { "$ref": "#/$defs/damage" },
+        "amount": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["computing", "crafting", "done", "canceled", "failed"] },
+        "err": { "type": "string", "maxLength": 200 },
+        "at": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "ok", "state", "at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/command_id" },
+        "kind": { "type": "string", "maxLength": 32 },
+        "ok": { "type": "boolean" },
+        "state": { "enum": ["done", "submitted", "failed", "refused"] },
+        "err": { "type": "string", "maxLength": 200 },
+        "at": { "$ref": "#/$defs/seconds" }
+      },
+      "if": { "properties": { "ok": { "const": true } } },
+      "then": { "properties": { "state": { "enum": ["done", "submitted"] } }, "not": { "required": ["err"] } },
+      "else": { "properties": { "state": { "enum": ["failed", "refused"] } }, "required": ["err"] }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "where", "msg", "count"],
+      "properties": {
+        "at": { "$ref": "#/$defs/seconds" },
+        "where": { "enum": ["discover", "power", "machines", "sensor", "ae2", "tps", "command", "transport", "state", "cycle"] },
+        "msg": { "type": "string", "maxLength": 200 },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "ok", "cmds"],
+      "properties": {
+        "v": { "const": 1 },
+        "ok": { "type": "boolean" },
+        "cmds": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/command" } },
+        "err": { "type": ["string", "null"], "maxLength": 200 },
+        "ack": { "type": "integer", "minimum": 1 },
+        "poll_s": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "if": { "properties": { "ok": { "const": false } } },
+      "then": {
+        "required": ["err"],
+        "properties": {
+          "cmds": { "maxItems": 0 },
+          "err": { "enum": ["unauthorized", "bad_payload", "unsupported_version", "internal"] }
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "args", "confirmed_via"],
+      "properties": {
+        "id": { "$ref": "#/$defs/command_id" },
+        "kind": { "enum": ["craft", "machine_pause", "machine_resume", "say"] },
+        "args": { "type": "object" },
+        "confirmed_via": { "enum": ["voice", "dashboard", "phone", "discord"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "craft" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/craft_args" } } } },
+        {
+          "if": { "properties": { "kind": { "enum": ["machine_pause", "machine_resume"] } } },
+          "then": { "properties": { "args": { "$ref": "#/$defs/machine_args" } } }
+        },
+        { "if": { "properties": { "kind": { "const": "say" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/say_args" } } } }
+      ]
+    },
+    "craft_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "damage", "amount"],
+      "properties": {
+        "name": { "$ref": "#/$defs/registry_name" },
+        "damage": { "$ref": "#/$defs/damage" },
+        "amount": { "type": "integer", "minimum": 1, "maximum": 1000000000 },
+        "cpu": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "machine_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["addr"],
+      "properties": { "addr": { "$ref": "#/$defs/address" } }
+    },
+    "say_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 256 } }
+    }
+  }
+}

@@ -40,6 +40,7 @@ end
 
 test("say", function()
   local w = T.base()
+  w.bad_cmds = true -- some of these break the schema on purpose
   local M, st = T.agent(w)
   local r = exchange(w, M, st, {
     T.cmd(1, "say", { text = "Craft 64 stainless steel ingots started." }),
@@ -85,6 +86,7 @@ end)
 
 test("pause refuses anything but a found machine", function()
   local w = T.base()
+  w.bad_cmds = true
   local M, st = T.agent(w)
   local r = exchange(w, M, st, {
     T.cmd(1, "machine_pause", { addr = "deadbeef-0000-4000-8000-000000000000" }),
@@ -163,6 +165,7 @@ end)
 
 test("craft arguments are checked", function()
   local w = T.base()
+  w.bad_cmds = true
   local M, st = T.agent(w)
   local bad = {
     { name = "gregtech:gt.metaitem.01", damage = 11305, amount = 0 },
@@ -220,6 +223,7 @@ end)
 
 test("only allowlisted, confirmed commands with ids run", function()
   local w = T.base()
+  w.bad_cmds = true
   local M, st = T.agent(w)
   local r = exchange(w, M, st, {
     T.cmd(1, "self_destruct", {}),
@@ -304,6 +308,7 @@ test("at most 8 commands per reply, none from a refusal", function()
   for i = 1, 10 do
     cmds[i] = T.cmd(i, "say", { text = "line " .. i })
   end
+  w.bad_cmds = true -- 10 is over the contract's 8
   local M, st = T.agent(w)
   exchange(w, M, st, cmds)
   T.eq(#w.chat.said, 8)
@@ -319,6 +324,7 @@ end)
 test("property: nothing outside the rules ever runs", function()
   math.randomseed(7202)
   local w = T.base()
+  w.bad_cmds = true
   local M, st = T.agent(w)
   local kinds = { "craft", "machine_pause", "machine_resume", "say", "nuke", "waypoint", "", 5 }
   local vias = { "voice", "dashboard", "phone", "discord", false, "", 7 }
