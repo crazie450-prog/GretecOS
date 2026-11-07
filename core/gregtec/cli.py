@@ -29,6 +29,7 @@ from gregtec.db import structures as structure_db
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
+from gregtec.packupdate import cli as pack_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 
@@ -573,6 +574,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     smoke.add_argument("--skip-sdk", action="store_true", help="run the fast lane only")
 
     servicecli.add_parsers(commands)
+    pack_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -631,6 +633,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command in servicecli.COMMANDS:
         return servicecli.run(args)
+    if args.command in pack_cli.COMMANDS:
+        return pack_cli.run(args, sys.stdout)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,

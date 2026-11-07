@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TextIO
 
 from gregtec.gamestate.safe_open import read_text, sha256_file
+from gregtec.packupdate import gtpin
 
 PLAY = "GTNH-Play"  # gos.toml [paths] play (Appendix C)
 JAVA8 = "java8"
@@ -476,6 +477,10 @@ def main(
             for problem in inst.problems:
                 healthy = False
                 print(f"    problem: {problem}", file=out)
+
+    pin_ok, pin_line = gtpin.check_db(home)  # WO-1.9, D148: loud on a mismatch
+    healthy = healthy and pin_ok
+    print(f"\n{pin_line}", file=out)
 
     verify = {v.id: verify_status(v, roots) for v in load_verify_list()}
     env = write_env(roots, home, verify)
