@@ -26,8 +26,7 @@ from typing import Any
 import pytest
 
 from gregtec.db import access, build, report
-from gregtec.ingest import collect, machine_facts, merge
-from gregtec.ingest import collect, gtdump, merge
+from gregtec.ingest import collect, gtdump, machine_facts, merge
 
 REPO = Path(__file__).resolve().parents[2]
 
