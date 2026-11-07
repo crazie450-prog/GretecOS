@@ -26,11 +26,12 @@ vault_search(q, t)        both   :mod:`.notes` (``note_fts``)
 note_write(path, body)    deep   :mod:`.notes` (writes, behind the vault path guard)
 note_append(path, lines)  deep   :mod:`.notes` (writes; logs append-only)
 inbox_propose(title, ...) deep   :mod:`.notes` (writes a new ``inbox/`` note)
+handoff(task)             fast   :mod:`gregtec.agents.deep_lane` (WO-2.3; to the deep lane)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
-The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): handoff and
-timer_set with WO-2.3; export_diff with WO-1.4; ore_find with WO-1.6; structure_get after WO-1.8; machine_fact_set with
+The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
+with WO-5.3; export_diff with WO-1.4; ore_find with WO-1.6; structure_get after WO-1.8; machine_fact_set with
 WO-1.9; crop_* with WO-1.10 and WO-6.7; plan_*, design_production, effort_estimate and
 layout_estimate with Phase 3; base_get with WO-3.8; design_power with WO-4.2; ledger_* with
 WO-4.4; speak with WO-5.3; persona_set with WO-5.6; player_pos with WO-6.1; events_recent and

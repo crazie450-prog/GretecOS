@@ -59,8 +59,11 @@ class UsageMeter:
         usd: float | None = None,
         task: str | None = None,
         ts: float | None = None,
+        ttft_ms: int | None = None,
     ) -> float:
-        """Add one call to ``llm_usage``. Returns its cost in USD."""
+        """Add one call to ``llm_usage``. Returns its cost in USD. ``ttft_ms``: a streamed
+        call's milliseconds from sending it to its first text token (None: no text, or not
+        streamed)."""
         if not lane:
             raise ValueError("lane must be a non-empty string")
         if usd is None:
@@ -72,7 +75,7 @@ class UsageMeter:
         with self.store.transaction() as conn:
             conn.execute(
                 "INSERT INTO llm_usage(ts, lane, model, in_tok, out_tok, cache_read, "
-                "cache_write, usd, task) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cache_write, usd, task, ttft_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     int(time.time() if ts is None else ts),
                     lane,
@@ -83,6 +86,7 @@ class UsageMeter:
                     usage.cache_write,
                     usd,
                     task,
+                    ttft_ms,
                 ),
             )
         return usd

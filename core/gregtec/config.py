@@ -23,6 +23,9 @@
 | [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
+| [budget] task_max_usd    | 2.0 (placeholder until WO-3.7, plan 4.4) | deep lane (WO-2.4, D156)    |
+| [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
+| [models] use_heavy       | false (planner and architect on heavy)   | deep lane (D155)            |
 | [launch] home            | gos_home                                 | gos launch (D115)           |
 | [maintenance] idle_minutes | 30 (QA:A9)                             | idle maintenance (WO-2.5)   |
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
@@ -37,7 +40,7 @@ delete the file it was meant to keep. ``allowed_hosts`` likewise adds to its def
 three names with ``:<port>``). Every other key in the Appendix C skeleton is ignored until its WO
 reads it.
 
-**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``) are read only by the core,
+**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``) are read only by the core,
 the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -52,6 +55,7 @@ from __future__ import annotations
 
 import fnmatch
 import getpass
+import math
 import os
 import re
 import tomllib
@@ -59,6 +63,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
+
+from gregtec.llm.prices import PRICES
 
 T = TypeVar("T")
 
@@ -86,6 +92,8 @@ DEFAULT_FINGERPRINT_CONFIGS = (
     "config/GregTech/WorldGeneration.cfg",
 )
 EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+# [models] keys the deep lane reads (plan 4.4, Appendix C; vision arrives with WO-8.2)
+MODEL_ROLES = ("orchestrator", "planner", "architect", "analyst", "heavy")
 
 
 def default_home() -> Path:
@@ -133,6 +141,16 @@ class Config:
     monthly_included_usd: float = 100.0
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
+    task_max_usd: float = (
+        2.0  # [budget]: one deep-lane task's cap before it asks (D156)
+    )
+    # [models] (plan 4.4, Appendix C): the deep lane's orchestrator and subagents (D155)
+    model_orchestrator: str = "claude-sonnet-5-5"
+    model_planner: str = "claude-opus-5-5"
+    model_architect: str = "claude-opus-5-5"
+    model_analyst: str = "claude-haiku-5-5"
+    model_heavy: str = "claude-fable-5-1"
+    use_heavy: bool = False  # planner and architect on model_heavy (opt-in only)
     launch_home: Path | None = None
     idle_minutes: int = 30  # [maintenance]: no input this long, game closed (plan 6.6)
     keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
@@ -381,6 +399,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         table(k) for k in ("core", "startup", "budget", "launch")
     )
     maintenance = table("maintenance")
+    models = table("models")
     host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
     port = soft(
         lambda: _int(core, "port", defaults.core_port, "[core]", 1024, 65535),
@@ -425,6 +444,23 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
             defaults.cycle_day,
         ),
         "launch_home": launch_home,
+        "task_max_usd": soft(
+            lambda: _usd(budget, "task_max_usd", defaults.task_max_usd),
+            defaults.task_max_usd,
+        ),
+        **{
+            f"model_{role}": soft(
+                lambda role=role: _model(
+                    models, role, getattr(defaults, f"model_{role}")
+                ),
+                getattr(defaults, f"model_{role}"),
+            )
+            for role in MODEL_ROLES
+        },
+        "use_heavy": soft(
+            lambda: _bool(models, "use_heavy", defaults.use_heavy, "[models]"),
+            defaults.use_heavy,
+        ),
         "idle_minutes": soft(
             lambda: _int(
                 maintenance,
@@ -494,6 +530,28 @@ def _monthly(budget: Mapping[str, Any], default: float) -> float:
             "gos.toml: [budget] monthly_included_usd must be a number above 0"
         )
     return float(monthly)
+
+
+def _usd(budget: Mapping[str, Any], key: str, default: float) -> float:
+    value = budget.get(key, default)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ConfigError(f"gos.toml: [budget] {key} must be a number of USD above 0")
+    return float(value)
+
+
+def _model(models: Mapping[str, Any], role: str, default: str) -> str:
+    """A model id the price table knows: the deep lane meters every call (D118, D156)."""
+    value = models.get(role, default)
+    if value not in PRICES:
+        raise ConfigError(
+            f"gos.toml: [models] {role} must be one of {', '.join(sorted(PRICES))}"
+        )
+    return str(value)
 
 
 def _alerts(budget: Mapping[str, Any], default: tuple[int, ...]) -> tuple[int, ...]:

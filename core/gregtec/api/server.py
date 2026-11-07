@@ -28,6 +28,8 @@ from collections.abc import Callable
 import uvicorn
 
 from gregtec import applog, config, control, supervisor
+from gregtec.agents import ask
+from gregtec.agents.deep import DeepLaneService
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
@@ -117,6 +119,7 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
     meter = UsageMeter(
         store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
     )
+    agents = ask.setup(cfg, store=store)
     core = Core(
         cfg=cfg,
         store=store,
@@ -124,7 +127,12 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         meter=meter,
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter),
+        asker=agents.asker(),
     )
+    if isinstance(agents.deep, DeepLaneService):
+        core.deep = agents.deep
+        agents.deep.on_change = core.deep_changed
+        agents.deep.start()  # warm: its first session connects now (plan 4.4)
     server = uvicorn.Server(
         uvicorn.Config(
             create_app(core),
@@ -165,6 +173,7 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         server.run(sockets=[sock])
     finally:
         control.remove_run_file(run_file, os.getpid())
+        agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         store.close()
         sock.close()
     log.info("core stopped")
