@@ -4,8 +4,9 @@ The runs are the dev runtime's (GT 5.09.54.265 and its dependencies, not the pac
 "harness"), so the checks are the WO's acceptance in shape: every key is one recipe (the
 collision test, with the repo's allow-list), the same input gives byte-identical keys and
 hashes, two independent exports (the server and the client harness) give the same GT keys, two
-client exports give the same keys and hashes for every recipe, NEI-only ones too, no key or NBT
-holds a numeric item ID, and the counts report covers every mod. As in
+client exports give the same keys and hashes for every recipe, NEI-only ones too, and the same
+alternatives for every input (D188), no key or NBT holds a numeric item ID, and the counts
+report covers every mod. As in
 test_collect_harness.py this runs only with GOS_REQUIRE_HARNESS_RUN=1 (CI's mod job, right
 after both harnesses): run them (mod/README.md), then
 ``GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration``. The two-client check also needs
@@ -155,6 +156,28 @@ def test_two_client_exports_give_the_same_keys_for_every_recipe(
     new = {r[0] for r in b} - {r[0] for r in a}
     changed = {x[0] for x, y in zip(a, b) if x != y} - gone - new
     assert (sorted(gone)[:5], sorted(new)[:5], sorted(changed)[:5]) == ([], [], [])
+    assert a == b
+
+
+ALTS = (
+    "SELECT r.ref, a.slot, i.registry_name, i.meta, i.nbt_hash, f.name"
+    " FROM recipe_input_alt a JOIN recipe r ON r.id = a.recipe_id"
+    " LEFT JOIN item i ON i.id = a.item_id LEFT JOIN fluid f ON f.id = a.fluid_id"
+    " ORDER BY 1, 2, 3, 4, 5, 6"
+)
+
+
+def test_two_client_exports_give_the_same_alternatives_for_every_input(
+    client: build.Result, client_b: build.Result
+) -> None:
+    # D188: while NEI loaded GT's handlers in parallel, GT built its oredict table on first
+    # use as other threads read it, so a run could miss some of an input's oredict
+    # alternatives (NEI's anyOf, the only source for most GT inputs) with no error at all.
+    a, b = rows(client.db, ALTS), rows(client_b.db, ALTS)
+    assert len(a) > 200_000
+    gone = {r[0] for r in set(a) - set(b)}
+    new = {r[0] for r in set(b) - set(a)}
+    assert (sorted(gone)[:5], sorted(new)[:5]) == ([], [])
     assert a == b
 
 

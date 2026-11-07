@@ -208,7 +208,10 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   language, with `_2`, `_3` added for duplicate names (two handlers named "Blast Furnace", for example).
 - Coverage limits: a handler hidden in NEI's config (Export mirrors Play's `config/NEI/`) is not dumped; a handler that
   fails to load is dropped by NEI without notice (it counts in `counts.nei_lookup_errors`); a recipe NEI can't
-  serialise is left out (`counts.nei_skipped`). Counts can also differ between runs of the same pack with config
+  serialise is left out (`counts.nei_skipped`). For the dump, GregtecLink has NEI load every handler on the client
+  thread, one after another (D188), so the same pack gives the same handlers and the same `anyOf` stacks on every
+  run. Runs made before D188 could drop a GT handler or, with no flag at all, miss some of a GT slot's `anyOf`
+  stacks: NEI loaded GT's handlers in parallel, which GT 5.09.54.265 doesn't support. Counts can also differ between runs of the same pack with config
   state: in the dev runtime, AE2's "Facade Crafting" had 2,403 recipes in a brand-new run folder and 2,631 in a
   reused one, where AE2 had rewritten its `config/AppliedEnergistics2/Facades.cfg` on joining the world. Compare NEI
   content, not counts.
@@ -293,7 +296,8 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
   - `ok`: the call threw nothing, NEI logged no `Error dumping recipes`, it wrote at least one file, every copy
     succeeded, and the lines copied (`counts.nei_recipes`) equal the count NEI logged (`counts.nei_reported`).
   - `failed`: anything else, with the reason in `part_errors.nei`. Also when NEI was not ready 10 minutes after the
-    world opened (NEI disabled, for example), or the world was closed before it was.
+    world opened (NEI disabled, for example), or the world was closed before it was, or NEI's handler lists could
+    not be swapped for the serial load (D188).
 - `parts.crops` (WO-1.10, D134) is not part of `complete`; **readers of `crops/` check `parts.crops == "ok"`**.
   Runs made before WO-1.10 have no such part and no files.
   - `absent`: CropsNH isn't loaded.
@@ -316,8 +320,9 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `part_errors` is present only when a part failed, with one entry per failed part.
 - `part_warnings` is present only when a part is `ok` but left something out. Today only `nei`: NEI dropped one or
   more recipe handlers while loading them (`counts.nei_lookup_errors` > 0; NEI names them only on stderr), so their
-  recipes are missing from `nei/` although the lines still equal NEI's count. **Readers that need every handler
-  check that `part_warnings.nei` is absent.** And `crops` (WO-1.10): one of CropsNH's dumpers that Python doesn't
+  recipes are missing from `nei/` although the lines still equal NEI's count. Since D188 the handlers load one by
+  one on the client thread, so this is a handler that fails there too, not a race between NEI's threads. **Readers
+  that need every handler check that `part_warnings.nei` is absent.** And `crops` (WO-1.10): one of CropsNH's dumpers that Python doesn't
   read failed, so its file is missing from `crops/`.
 - The `nei_*` counts and the `nei_dump` and `nei_copy` durations are present only when the NEI step called
   `dumpAll`; `nei_wait` also when NEI was not ready in time. `nei_handlers` and `nei_reported` are -1 when NEI logged

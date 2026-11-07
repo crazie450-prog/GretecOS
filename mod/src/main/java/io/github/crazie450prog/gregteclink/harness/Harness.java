@@ -97,6 +97,8 @@ public final class Harness {
     private static List<JsonObject> clientChecks;
     /** The client game dir just before the NEI step; null until then. */
     private static Map<String, String> neiBefore;
+    /** NEI's crafting handler lists just before the NEI step ({@link #neiHandlerLists}); null until then. */
+    private static Object[] neiListsBefore;
     private static long clientT0;
     /** Set by {@link #onClientFinished}, written by {@link #onClientShutdown}. */
     private static String clientRunId;
@@ -195,9 +197,46 @@ public final class Harness {
     public static void beforeNeiStep(File gameDir) {
         try {
             neiBefore = snapshot(gameDir, "saves");
+            neiListsBefore = neiHandlerLists();
         } catch (Throwable t) {
             GregtecLink.LOG.error("client harness: no snapshot before the NEI step", t);
         }
+    }
+
+    /**
+     * NEI's two crafting handler lists ({@code GuiCraftingRecipe.craftinghandlers}, loaded in parallel, and
+     * {@code serialCraftingHandlers}) and their sizes. The NEI step swaps them for its call (D188).
+     */
+    private static Object[] neiHandlerLists() throws ReflectiveOperationException {
+        Class<?> c = Class.forName("codechicken.nei.recipe.GuiCraftingRecipe");
+        Object parallel = c.getField("craftinghandlers")
+            .get(null);
+        Object serial = c.getField("serialCraftingHandlers")
+            .get(null);
+        return new Object[] { parallel, serial, ((List<?>) parallel).size(), ((List<?>) serial).size() };
+    }
+
+    /** After the NEI step, NEI holds its own two handler lists again, the same objects with the same sizes. */
+    private static void checkNeiLists(List<JsonObject> checks) throws ReflectiveOperationException {
+        if (neiListsBefore == null) {
+            check(checks, "nei_handler_lists_restored", false, "not recorded before the NEI step");
+            return;
+        }
+        Object[] now = neiHandlerLists();
+        boolean same = now[0] == neiListsBefore[0] && now[1] == neiListsBefore[1];
+        check(
+            checks,
+            "nei_handler_lists_restored",
+            same && now[2].equals(neiListsBefore[2]) && now[3].equals(neiListsBefore[3]),
+            "craftinghandlers " + now[2]
+                + ", serialCraftingHandlers "
+                + now[3]
+                + " ("
+                + neiListsBefore[2]
+                + " and "
+                + neiListsBefore[3]
+                + " before the NEI step, "
+                + (same ? "the same lists)" : "other lists)"));
     }
 
     /**
@@ -219,6 +258,7 @@ public final class Harness {
             } else {
                 checkWrites(checks, "nei_step_writes_only_gregteclink_and_dumps", neiBefore, after, clientWrites(r));
             }
+            checkNeiLists(checks);
             if (r != null) {
                 checkPrune(checks, r);
                 long t1 = System.currentTimeMillis();

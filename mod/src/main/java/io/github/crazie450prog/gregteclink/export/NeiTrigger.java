@@ -67,11 +67,12 @@ final class NeiTrigger {
     }
 
     /**
-     * Runs NEI's dump on the calling (client) thread, which freezes the game until it returns, then copies the files
-     * it wrote into the run. Records counts, durations and any error on the run. Returns "ok" only if the call threw
-     * nothing, NEI logged no "Error dumping recipes", at least one file was found, every copy succeeded and the lines
-     * copied equal the count NEI logged; otherwise "failed". An ok step whose NEI dropped a handler also gets
-     * {@code part_warnings.nei}. Never throws.
+     * Runs NEI's dump on the calling (client) thread, which freezes the game until it returns, with every recipe
+     * handler loaded on that thread ({@link NeiSerialLookup}, D188), then copies the files it wrote into the run.
+     * Records counts, durations and any error on the run. Returns "ok" only if the call threw nothing, NEI logged no
+     * "Error dumping recipes", at least one file was found, every copy succeeded and the lines copied equal the count
+     * NEI logged; otherwise "failed". An ok step whose NEI dropped a handler also gets {@code part_warnings.nei}.
+     * Never throws.
      */
     static String dump(ExportRun run) {
         try {
@@ -82,7 +83,7 @@ final class NeiTrigger {
         }
     }
 
-    private static String dumpOrThrow(ExportRun run) {
+    private static String dumpOrThrow(ExportRun run) throws IllegalAccessException {
         // NEI deletes every file in dumps/recipes first: refuse a link or junction at dumps or dumps/recipes.
         PathGuard dumps;
         try {
@@ -104,14 +105,22 @@ final class NeiTrigger {
         } catch (Throwable t) {
             return failed(run, "NEI's log can't be captured: " + Json.error(t));
         }
+        NeiSerialLookup serial;
+        try {
+            serial = NeiSerialLookup.begin();
+        } catch (Throwable t) {
+            capture.detach();
+            return failed(run, "NEI's handler lookup can't be made serial: " + Json.error(t));
+        }
         long start = System.currentTimeMillis();
         Throwable thrown = null;
         try {
             GregtecLink.LOG.info(
-                "export {}: NEI dumpAll(true) on {}",
+                "export {}: NEI dumpAll(true) on {}, all {} recipe handlers loaded serially on it",
                 run.runId,
                 Thread.currentThread()
-                    .getName());
+                    .getName(),
+                serial.handlers);
             dumpAll.invoke(null, true);
         } catch (InvocationTargetException e) {
             thrown = e.getCause();
@@ -119,6 +128,7 @@ final class NeiTrigger {
             thrown = t;
         } finally {
             capture.detach();
+            serial.restore();
         }
         run.durations.put("nei_dump", System.currentTimeMillis() - start);
         run.counts.put("nei_handlers", log.handlers);

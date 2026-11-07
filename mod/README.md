@@ -77,12 +77,23 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   and by the files: `parts.nei` is `ok` only if the call threw nothing, NEI logged no `Error dumping recipes`, it
   wrote at least one file, every copy succeeded, and the lines copied equal NEI's `Writing N recipes`. Otherwise it
   is `failed`, with the reason in `part_errors.nei`, and the GT files are still a complete run. An `ok` step whose
-  NEI dropped a recipe handler (it logged `Error while looking up crafting recipe`; the handler's recipes are then
-  missing, and its stack trace is only on stderr) also gets `part_warnings.nei`. NEI deletes every file in
+  NEI still dropped a recipe handler (it logged `Error while looking up crafting recipe`; with the serial load below,
+  the handler failed on the client thread too, so its recipes are missing, and its stack trace is only on stderr)
+  also gets `part_warnings.nei`. NEI deletes every file in
   `dumps/recipes/` first, so GregtecLink refuses a link or junction at `dumps` or `dumps/recipes`. It copies only
   regular `.jsonl` files changed since the call started (minus 2 s), through `PathGuard`, and never moves or changes
   NEI's files. NEI not ready 10 minutes after the
   world opened (NEI disabled, for example) is `failed`; closing the world before then finishes the run without NEI.
+- **Serial handler load** (D188). NEI loads most recipe handlers in parallel on its own worker threads, and GT
+  5.09.54.265's are not safe to load that way: the first GT handler to load builds GT's oredict table
+  (`GTOreDictUnificator.getNonUnifiedStacks`) while the others already read it. A run then dropped a GT handler
+  (`part_warnings.nei`, 4 of 95 client harness runs on CI) or, more often, silently left out some of a GT handler's
+  oredict alternatives (`anyOf`). So for the `dumpAll` call GregtecLink moves every crafting handler into NEI's serial
+  list (`GuiCraftingRecipe.serialCraftingHandlers`, NEI's own serial ones first, so NEI's order and file names stay
+  the same) and empties the parallel one (`craftinghandlers`), then puts NEI's own lists back. Every handler then
+  loads on the client thread, one after another; in the dev runtime that took a median 0.87 s for 190 handlers,
+  against 0.63 s in parallel. NEI's own switch, `config/NEI/serialhandlers.cfg`, can't reach GT's handlers: GT adds
+  them to the list directly. Lists that can't be swapped fail the step.
 - **Crop step** (WO-1.10, D134). Right after NEI's dump, still on the client thread, GregtecLink runs every data
   dumper CropsNH registered in NEI's option list (`tools.dump.cropsnh.*`: crops, parent-combination recipes,
   mutation pools, soils, alternate seeds and six more), as clicking each Dump button under NEI's Tools, Data Dumps,
@@ -194,7 +205,8 @@ whole autoexport flow in the dev client:
    the config again.
 
 Its checks are the server harness's (with `side` client) plus: `nei` and `autoexport` `ok`, with no
-`part_warnings`; every `nei/` file listed
+`part_warnings`; NEI's two crafting handler lists back after the NEI step, the same lists with the same sizes as
+before it (D188); every `nei/` file listed
 with matching sha256, bytes and lines and none unlisted; at least 150 handler files, as many as NEI loaded; lines
 copied equal NEI's count and exceed 50,000; one handler id per file and at least one `gt.recipe*` handler; no numeric
 `id` in any stack, `anyOf` or `returns`; NEI's files left in `dumps/recipes`; the crop step `ok` with as many files
