@@ -29,6 +29,7 @@ A result is ``key: value`` lines (a record), then a TSV table with a header row,
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -131,3 +132,65 @@ def render(result: Result, cursor: str | None = None) -> str:
         lines.append(f"more: {cursor}")
     lines.extend(f"note: {escape(n)}" for n in result.notes)
     return "\n".join(lines) + "\n"
+
+
+_UNESCAPED = {"\\": "\\", "t": "\t", "n": "\n", "r": "\r"}
+_ESCAPE_SEQ = re.compile(r"\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|([\\tnr]))")
+
+
+def unescape(text: str) -> str:
+    """:func:`escape` undone."""
+
+    def one(m: re.Match[str]) -> str:
+        code = m[1] or m[2]
+        return chr(int(code, 16)) if code else _UNESCAPED[m[3]]
+
+    return _ESCAPE_SEQ.sub(one, text)
+
+
+@dataclass
+class Parsed:
+    """A rendered result taken apart again, as the router and the fast lane read what the
+    model reads: head lines, the table (cells unescaped), the ``rows:`` span and the notes."""
+
+    head: dict[str, str] = field(default_factory=dict)
+    columns: list[str] = field(default_factory=list)
+    rows: list[dict[str, str]] = field(default_factory=list)
+    span: str | None = None
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def total(self) -> int | None:
+        """N of ``rows: a-b of N``, when the result counted its rows."""
+        if self.span is None or " of " not in self.span:
+            return None
+        n = self.span.rsplit(" of ", 1)[1].split(" ", 1)[0]
+        return int(n) if n.isdigit() else None
+
+
+def parse(text: str) -> Parsed:
+    """:func:`render`'s text taken apart. No head line has a tab and no table line is empty
+    (cells are escaped), so the head runs to the first blank line and the table from there to
+    the blank line before ``rows:``; notes follow the table."""
+    lines = text.rstrip("\n").split("\n")
+    out = Parsed()
+    spans = [i for i, ln in enumerate(lines) if ln.startswith("rows: ")]
+    end = spans[-1] if spans else len(lines)
+    tail = lines[end:] if spans else lines
+    out.notes = [unescape(ln[6:]) for ln in tail if ln.startswith("note: ")]
+    body = lines[:end]
+    blank = body.index("") if "" in body else len(body)
+    for ln in body[:blank]:
+        key, sep, value = ln.partition(": ")
+        if sep and key not in ("note", "more"):
+            out.head[unescape(key)] = unescape(value)
+    if spans:
+        out.span = lines[end].removeprefix("rows: ")
+        grid = [ln for ln in body[blank + 1 :] if ln]
+        if grid:
+            out.columns = [unescape(c) for c in grid[0].split("\t")]
+            for ln in grid[1:]:
+                cells = [unescape(c) for c in ln.split("\t")]
+                if len(cells) == len(out.columns):
+                    out.rows.append(dict(zip(out.columns, cells, strict=True)))
+    return out

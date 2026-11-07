@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS client_token(name TEXT PRIMARY KEY, token_sha256 TEXT
   created INT NOT NULL, last_used INT, revoked INT NOT NULL DEFAULT 0);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
-ADDED_COLUMNS = (("device", "token_sha256", "TEXT"),)
+ADDED_COLUMNS = (
+    ("device", "token_sha256", "TEXT"),
+    (
+        "llm_usage",
+        "ttft_ms",
+        "INT",
+    ),  # a streamed call's time to first text token (D152)
+)
 
 
 def connect(path: Path) -> sqlite3.Connection:

@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gregtec.agents.tools.cursor import MAX_LENGTH, CursorError, Cursors
 from gregtec.agents.tools.glossary import Glossary
@@ -37,6 +37,9 @@ from gregtec.agents.tools.tsv import PAGE, Result, render
 from gregtec.db import access
 from gregtec.db.quests import KV_SOURCE  # its record changes on every quest load
 from gregtec.vault.io import VaultIO
+
+if TYPE_CHECKING:
+    from gregtec.agents.deep_lane import DeepLane
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +68,7 @@ class Env:
     db: Path  # GOS_HOME/data/gos.sqlite
     glossary: Glossary = field(default_factory=Glossary)
     vault: VaultIO | None = None  # GOS_HOME/vault, for the note tools
+    deep: DeepLane | None = None  # where handoff sends a task (WO-2.3; WO-2.4 runs it)
 
 
 @dataclass
