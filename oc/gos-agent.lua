@@ -69,6 +69,17 @@ local M = { VERSION = VERSION, CONTRACT_V = CONTRACT_V, json = json, DIR = DIR }
 
 local floor, mtype, tointeger = math.floor, math.type, math.tointeger
 
+-- pcall that lets OpenOS's hard interrupt through: Ctrl+Alt+C raises "interrupted" out of the
+-- pull in progress, and a sleep inside a command or an exchange must not swallow it.
+local function try(fn, ...)
+  local r = table.pack(pcall(fn, ...))
+  if not r[1] and r[2] == "interrupted" then
+    error("interrupted", 0)
+  end
+  return table.unpack(r, 1, r.n)
+end
+M.try = try
+
 ---------------------------------------------------------------------------------------------
 -- Limits (bounded tables keep memory flat over hours)
 
@@ -1075,7 +1086,7 @@ function M.run_command(st, cmd)
   elseif not json.is_object(cmd.args) then
     r = refused(id, kind, "args must be an object")
   else
-    local ok, out = pcall(HANDLERS[kind], st, id, cmd.args)
+    local ok, out = try(HANDLERS[kind], st, id, cmd.args)
     if not ok then
       out = failed(id, kind, "agent error: " .. tostring(out))
     end
@@ -1291,6 +1302,9 @@ function Http:exchange(body, seq)
   end)
   pcall(handle.close)
   if not okx then
+    if err == "interrupted" then
+      error(err, 0) -- Ctrl+Alt+C, after the connection is closed
+    end
     return nil, tostring(err)
   end
   local reply, derr = json.decode(text)
@@ -1384,12 +1398,12 @@ end
 function M.cycle(st)
   local t0 = now()
   if st.rediscover or t0 >= st.next_discover then
-    local okd, derr = pcall(M.discover, st)
+    local okd, derr = try(M.discover, st)
     if not okd then
       M.record_error(st, "discover", derr)
     end
   end
-  local oks, serr = pcall(sample, st)
+  local oks, serr = try(sample, st)
   if not oks then
     M.record_error(st, "cycle", serr)
   end
@@ -1403,7 +1417,7 @@ function M.cycle(st)
     return false
   end
   st.last_bytes = #body
-  local okt, reply, terr = pcall(st.transport.exchange, st.transport, body, st.seq)
+  local okt, reply, terr = try(st.transport.exchange, st.transport, body, st.seq)
   if not okt then
     reply, terr = nil, "transport error: " .. tostring(reply)
   end
@@ -1550,7 +1564,7 @@ function M.run(st, opts)
       M.log(st, "error", err.fatal)
       return false, err.fatal
     end
-    if tostring(err):find("interrupted", 1, true) then
+    if err == "interrupted" then
       M.log(st, "info", "stopped (interrupted)")
       return true
     end
