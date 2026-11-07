@@ -538,3 +538,21 @@ def test_gos_pack_commands_refuse_cleanly(
     text = capsys.readouterr().out
     assert "no pack update is open" in text and "newer than the adopted" in text
     assert "there is no DB" in text
+
+
+def test_lab_to_export_and_lab_to_play_refuse_overlaps(
+    world: tuple[config.Config, FakePrism],
+) -> None:
+    from dataclasses import replace
+
+    from gregtec import sync
+
+    cfg, _ = world
+    plan, refusals = sync.plan_lab_to_export(cfg)
+    assert plan is not None and not refusals
+    assert plan.source == cfg.instance("lab") / ".minecraft"
+    same = replace(cfg, lab=cfg.play)
+    plan, refusals = sync.plan_lab_to_export(same)
+    assert plan is None and any("is Play" in r for r in refusals)
+    plan, refusals = playupdate.plan_update(same)
+    assert plan is None and any("is Play" in r for r in refusals)
