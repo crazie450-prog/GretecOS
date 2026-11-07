@@ -11,8 +11,10 @@ GregtecLink's, as ``docs/contracts/gregteclink-export-v1.md`` describes them.
    name that is no run id, or has no readable ``manifest.json`` (a file, not a link or hard link,
    of at most 16 MiB) with ``format`` ``gregteclink-export/1``, ``"complete": true``, ``run_id``
    equal to the folder's name, ``created_utc`` and ``files``. ``"mode": "harness"``
-   (dev-environment data) is skipped too, except in tests. The run collected is the newest by
-   ``created_utc``, then name: the order the mod prunes by.
+   (dev-environment data) is skipped too, except in tests, and so is every run listed in
+   ``GOS_HOME/data/packupdate/lab-runs.txt`` (:data:`LAB_RUNS`: the pack-update playbook's Lab
+   exports, never Play's data, WO-1.9). The run collected is the newest by ``created_utc``,
+   then name: the order the mod prunes by.
 2. **Verify before writing.** Every file the manifest lists must be a file of the listed size,
    then is read whole (never more than its listed size plus one byte) through
    ``gamestate.safe_open.read_bytes`` (share-delete, one read, handle closed at once, 3 tries with

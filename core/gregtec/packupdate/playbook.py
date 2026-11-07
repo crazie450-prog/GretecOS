@@ -12,7 +12,8 @@ the first one that waits for Clayton, saying exactly what to do. Steps, in order
 4. ``lab_export``: Lab mirrored into Export (``gregtec.sync.plan_lab_to_export``), Export
    launched to autoexport (D100), the run collected and built into the update's own sandbox
    GOS_HOME (``updates/<id>/home/``), never into the main DB, so no tool answers from a pack
-   that isn't adopted.
+   that isn't adopted. The run is listed in ``collect.LAB_RUNS`` as soon as the export returns,
+   so ``gos export collect`` and ``gos db build`` never take it into the main DB either.
 5. ``diff``: the run against the main DB's newest run (:mod:`.diff`), the GT pin check
    (:mod:`.gtpin`) and the plans it would affect (:mod:`.plans`), written to the update folder,
    ``GOS_HOME/data/reports/`` and, when the vault exists, an ``inbox/`` note. Then the

@@ -24,33 +24,50 @@ $upd = "C:\GregtecOS-app\current\scripts\update_play.py"
 | `gos pack diff [OLD NEW]` | The recipe-level diff of two runs in the DB (D147): added, removed and changed recipes by `r:` key and content hash, grouped by mod, the top changes, the crop diff (WO-1.10), the oredict diff (D145), WO-1.4's manifest diff, and the plans it would flag. |
 | `gos pack pin [RUN]` | Exits 1, loudly, when a run's GT version isn't the pin (`config.GT_PIN`, 5.09.54.265). |
 | `gos pack fixture-plans DIR SPEC...` | Writes `gos-plan/0` fixture plans from the DB's newest run, for dry runs: `pl-x=minecraft:chest@0` cites every recipe making that item, `pl-y=crop:cropsnh:allium` a crop. |
-| `update_play.py [--apply]` | Clayton's Play update (D149), from GOS_APP. Without `--apply` it prints the plan. |
+| `update_play.py [--apply \| --rollback]` | Clayton's Play update (D149), from GOS_APP. Without `--apply` it prints the plan; `--rollback` puts Play back as it was before `--apply`. |
 
 ## The checklist (`gos pack update`)
 
 1. **release**: the release summary from DAXXL's manifests.
 2. **backup**: a Play world backup from the last 24 h in `GOS_HOME\backups\world\` (the backup
    job's copies). Make one in game with `/backup start`, wait for the job (30 min), or
-   `gos pack update --confirm backup --note "..."` for a copy you made another way.
+   `gos pack update --confirm backup --note "..."` for a copy you made another way. A confirm
+   is recorded with its time and, like a backup file, counts for 24 h: `update_play.py --apply`
+   checks again, so if you play on for days between here and step 7, make a new backup first.
 3. **lab**: you update **GTNH-Lab** to the new pack in Prism: the new pack's `mods\`, `config\`
    and `scripts\` (and the addons that load on it, D02); Play stays as it is. Checked: Lab now
    differs from Play; missing plan 5.6 tweaks in Lab are warned about.
 4. **lab_export**: Lab is mirrored into Export (Lab's own test-only files left out, GregtecLink
    installed as always), Export autoexports (D100), and the run is built into the update's own
-   sandbox DB (`data\packupdate\updates\<id>\home\`), never the main one.
+   sandbox DB (`data\packupdate\updates\<id>\home\`), never the main one. The run stays in
+   Export's `gregteclink\exports\`, but its id is listed in `data\packupdate\lab-runs.txt`, and
+   `gos export collect` and `gos db build` skip every run listed there, so running the normal
+   pipeline before Play is updated still leaves the main DB on Play's own run.
 5. **diff**: Lab's run against Play's newest run in the main DB, the GT pin check and the plans
    it would flag; the report is `updates\<id>\diff.txt` (and `data\reports\pack-diff-*.txt`),
    plus an `inbox\` note in the vault. Then **"adopt?"** is pending.
 6. **adopt**: `gos pack adopt yes` or `no`. No ends the update; Play stays where it is (put Lab
-   back with `sync_instances.py --only lab` when you like).
+   back with `sync_instances.py --only lab` when you like). An update that is finished
+   (declined, abandoned, simulated or adopted) takes no more answers, `--redo` or `--confirm`;
+   start a new one instead.
 7. **play**: close Play, run `& $py $upd` (dry run), then `& $py $upd --apply`. It refuses unless
-   the update is adopted, the backup step is done, Lab still has the tested fingerprint and no
-   GTNH client runs; it copies every Play file it replaces or deletes to
-   `updates\<id>\play-before\` first (the way back), then mirrors Lab's `mods\`, `config\` and
-   `scripts\` into Play. It never touches worlds, saves, options or Prism's components: match
-   Play's Forge/LWJGL/Java components to Lab's in Prism if it says they differ. Checked: Play's
+   it runs as you (not gos-dev), the update is open and adopted, there is a world backup from
+   the last 24 h, Play wasn't already updated for it, Lab still has the tested fingerprint, no
+   GTNH client runs and the instance lock is free. It copies every Play file it replaces or
+   deletes to `updates\<id>\play-before\`, with `manifest.json` listing those and every file
+   and folder the update adds or removes, then mirrors Lab's `mods\`, `config\` and `scripts\`
+   into Play. It never touches worlds, saves, options or Prism's components: match Play's
+   Forge/LWJGL/Java components to Lab's in Prism if it says they differ. Checked: Play's
    fingerprint now equals Lab's tested one, and Play has the plan 5.6 tweaks
    (`check_tweaks.py --apply` on Play if not).
+
+   **The way back**: `& $py $upd --rollback` (Play closed) restores the copied files, deletes
+   the files and folders the update added and re-makes the folders it removed, so Play's
+   `mods\`, `config\` and `scripts\` are exactly as before (no second GT jar). It refuses,
+   before writing anything, if a file the update added was changed since. The folder is then
+   renamed `play-before-rolled-back-<UTC>` and the play step waits again; `--apply` works
+   again, or `gos pack update --abandon`. A finished update needs `--update <id>`. Worlds come
+   back from the world backup, not from this.
 8. **play_export**: the normal export pipeline on Play, built into the main DB with Play's
    fingerprint.
 9. **flag**: every plan citing a recipe or crop that changed or vanished gets
@@ -67,14 +84,31 @@ tests, so an export of another GT version is never planned with it quietly: the 
 `gos pack pin` print **GT PIN MISMATCH**, and `gos pack adopt yes` is refused. When a pack update
 changes GT, before answering yes:
 
-1. In a Claude Code session (a WO branch, as any change): set `GT_PIN` in
-   `core/gregtec/config.py` to the new version, and the GT pin in `CLAUDE.md` and plan §0.1/§3.
+1. In a Claude Code session (a WO branch, as any change): set `GT_PIN` (and `PACK_PIN`) in
+   `core/gregtec/config.py` to the new version, and every copy of the pin with it:
+   - `mod/dependencies.gradle`: the `GT5-Unofficial:<version>:dev` dependency, which is the GT
+     the dev runtime and both harnesses export (and its comment);
+   - `core/gregtec/ingest/extractor.py`: `PINS[GT]` and `PACK_VERSION` (and the other pins from
+     the new release's DAXXL manifest), which label and re-pin gtnh-extractor's dataset;
+   - the help text of `gos structures extract` and `load` in `core/gregtec/cli.py`;
+   - `CLAUDE.md` ("GT pin ... (GTNH ...)") and plan §0.1/§3;
+   - Java and docstring comments that name the version (`grep -rn 5.09.54.265`), checked
+     against the new GT source where they describe its code.
+
+   `tests/unit/test_pack_update.py::test_the_pin_has_no_stale_copies` fails while
+   `extractor.py`, `dependencies.gradle` or CLAUDE.md disagree with `config.py`. Re-run both
+   harnesses (`mod/README.md`) so their runs carry the new GT, then the integration tests.
 2. If the new pack changes GT's tiers, overclock or parallel code, re-port those changes from the
    new GT source tag into `planner/gtmath` and re-vendor GT's unit tests from that tag; all of
    them must pass (`uv run pytest tests/unit -k gtmath`). Until WO-3.1 exists there is nothing
    to port: the pin bump is then step 1 alone.
 3. Merge, `gos deploy`, then `gos pack adopt yes`. `gos pack pin` exits 0 again once Play's new
-   export is in the DB.
+   export is in the DB. Between the deploy and Play's new export, `gos pack pin`, `gos db build`
+   and `gos doctor` report Play's current run as a mismatch: expected, and the reason to update
+   Play soon after adopting.
+
+`gos db build` and `gos doctor` exit 1 with **GT PIN MISMATCH** whenever the DB's newest run
+has another GT, so a Play updated outside this playbook doesn't go unnoticed.
 
 ## Daily watcher (optional)
 
