@@ -175,7 +175,7 @@ def test_one_call_with_the_cached_prefix_and_ttft_recorded(
     )
     (vault / "INDEX.md").write_text("id\tt\tpath\n", encoding="utf-8")
     client = ScriptedClient(
-        latency_s=0.01,
+        latency_s=0.02,
         turns=[Turn(f"Steel Ingot: 120 EU/t in the EBF ({EBF_RECIPE}).")],
     )
     fast = lane(agents_reg, client, meter, vault)
