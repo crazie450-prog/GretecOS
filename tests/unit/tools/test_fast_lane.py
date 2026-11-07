@@ -548,7 +548,9 @@ def test_instant_commands(agents_reg: Registry, deep: HandoffRecorder) -> None:
     assert a.ask("repeat").text == "I haven't said anything yet."
     card = a.ask("recipe for steel")
     assert card.lane == "instant" and card.text.startswith("Steel Ingot: ")
-    assert card.refs and card.refs[0] in card.card["rows"][0][0]  # type: ignore[index]
+    # The reply's card is a catalog recipe card (D160), its first recipe the one cited.
+    assert card.card is not None and card.card["type"] == "recipe"
+    assert card.refs and card.refs[0] == card.card["recipes"][0]["ref"]
     again = a.ask("say that again")
     assert again.text == card.text and again.intent == "repeat"
     assert a.ask("what uses steel").text.startswith("Steel Ingot goes into ")

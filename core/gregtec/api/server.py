@@ -94,7 +94,18 @@ def maintenance(cfg: Config, store: Store, meter: UsageMeter) -> Maintenance:
     )
 
 
-def run(cfg: Config, *, supervised: bool = False) -> int:
+def _default_agents(cfg: Config, store: Store) -> ask.Agents:
+    return ask.setup(cfg, store=store)
+
+
+def run(
+    cfg: Config,
+    *,
+    supervised: bool = False,
+    setup_agents: Callable[[Config, Store], ask.Agents] | None = None,
+) -> int:
+    """Run the core until it is stopped. ``setup_agents``: how the router and lanes are set up
+    (default :func:`gregtec.agents.ask.setup`; the dashboard e2e harness passes fake lanes)."""
     applog.setup("core", cfg.logs_dir)
     if (why := supervisor.elevation_problem()) is not None:
         log.error("refusing to start", extra={"why": why})
@@ -119,7 +130,7 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
     meter = UsageMeter(
         store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
     )
-    agents = ask.setup(cfg, store=store)
+    agents = (setup_agents or _default_agents)(cfg, store)
     core = Core(
         cfg=cfg,
         store=store,

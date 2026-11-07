@@ -18,7 +18,7 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import config, control, doctor, locks, playhooks, servicecli
+from gregtec import appwindow, config, control, doctor, locks, playhooks, servicecli
 from gregtec import deploy as app_deploy
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
@@ -575,6 +575,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     servicecli.add_parsers(commands)
     pack_cli.add_parsers(commands)
+    appwindow.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -635,6 +636,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return servicecli.run(args)
     if args.command in pack_cli.COMMANDS:
         return pack_cli.run(args, sys.stdout)
+    if args.command in appwindow.COMMANDS:
+        return appwindow.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
@@ -815,6 +818,8 @@ def _deploy(ref: str, config_path: Path | None) -> int:
         print(f"Built GregtecLink: {jar}")
         print(f"  SHA256 {release.gregteclink['sha256']} (in {app_deploy.RECORD})")
         print("  sync_instances.py installs it into Export.")
+    if release.dashboard is not None:
+        print(f"Built the dashboard: {release.path / app_deploy.DASHBOARD / 'dist'}")
     for path in release.leftovers:
         print(f"Couldn't delete {path} (in use?); the next deploy removes it.")
     gos = app_deploy.venv_exe(release.path, "gos")

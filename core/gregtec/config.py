@@ -20,6 +20,7 @@
 | [core] dashboard_host    | gos.localhost (pairing and the dashboard)| core (D117)                 |
 | [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
+| [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
 | [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
@@ -143,6 +144,7 @@ class Config:
     dashboard_host: str = DASHBOARD_HOST
     extra_allowed_hosts: tuple[str, ...] = ()
     core_at_login: bool = True
+    dashboard_window: bool = True  # [startup]: open the Chrome app window (D52, D163)
     monthly_included_usd: float = 100.0
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
@@ -441,6 +443,12 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 startup, "core_at_login", defaults.core_at_login, "[startup]"
             ),
             defaults.core_at_login,
+        ),
+        "dashboard_window": soft(
+            lambda: _bool(
+                startup, "dashboard_window", defaults.dashboard_window, "[startup]"
+            ),
+            defaults.dashboard_window,
         ),
         "monthly_included_usd": monthly,
         "credit_alerts_pct": alerts,

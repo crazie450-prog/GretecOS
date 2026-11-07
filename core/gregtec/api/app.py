@@ -19,6 +19,7 @@
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
+| GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -54,6 +55,7 @@ from starlette.websockets import WebSocketDisconnect
 from gregtec import control
 from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
+from gregtec.api import dashboard
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -138,6 +140,7 @@ class Core:
     stop_asked: float | None = None
     asker: Asker | None = None  # the router and the lanes (WO-2.3)
     deep: DeepLaneService | None = None  # the deep lane (WO-2.4)
+    board: dashboard.Board | None = None  # the dashboard's own state (WO-2.6)
 
     # --- pushing to WebSocket clients
 
@@ -452,8 +455,14 @@ def create_app(core: Core) -> FastAPI:
         text = body.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
             raise HTTPException(400, f"text must be 1 to {TEXT_MAX} characters")
+        board = dashboard.board_of(core)
+        entry = board.asked(text)  # the rail shows what is being worked on
+        await dashboard.push_state(core)
         # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
-        reply = await asyncio.to_thread(core.asker.ask, text)
+        try:
+            reply = await asyncio.to_thread(core.asker.ask, text)
+        finally:
+            board.done(entry)
         log.info(
             "ask answered",
             extra={
@@ -464,7 +473,10 @@ def create_app(core: Core) -> FastAPI:
                 "checked": reply.checked,
             },
         )
-        return reply.as_dict()
+        answer = board.answered(entry, dashboard.checked_reply(reply.as_dict()))
+        core.broadcast({"type": "answer", "data": answer})
+        await dashboard.push_state(core)
+        return answer["reply"]
 
     def deep_lane() -> DeepLaneService:
         if core.deep is None:
@@ -620,12 +632,15 @@ def create_app(core: Core) -> FastAPI:
             if sock.trusted:
                 pending = {"type": "pair.pending", "data": core.pairing.pending()}
                 await ws.send_text(json.dumps(pending))
+            snapshot = await asyncio.to_thread(dashboard.state, core, sock.trusted)
+            await ws.send_text(json.dumps({"type": "state", "data": snapshot}))
             await _pump(ws, sock)
         except WebSocketDisconnect:
             pass
         finally:
             core.sockets.discard(sock)
 
+    dashboard.add_routes(app, core, principal, trusted, _json_body)
     return app
 
 
@@ -721,6 +736,7 @@ async def _watch(core: Core) -> None:
                 core.broadcast({"type": "health", "data": health})
                 last_signature, last_push = signature, now
             core.push_pending()  # catches requests that expired
+            await dashboard.tick(core)  # the dashboard's state (WO-2.6)
         except Exception:  # the watcher must keep running
             log.exception("health refresh failed")
         await asyncio.sleep(POLL_S)

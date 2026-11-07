@@ -274,7 +274,7 @@ class Asker:
             text,
             lane,
             route.intent,
-            card=pre.main.card() if pre.main else None,
+            card=pre.main.card(self.registry.env.db) if pre.main else None,
             target=(
                 {
                     "key": pre.target.key,
@@ -344,14 +344,11 @@ class Asker:
         if intent == router.TIER:
             out = self.registry.call("quest_frontier", {"n": 1}, lane="fast")
             block = prefetch.Block("quest_frontier", {"n": 1}, out.text, out.is_error)
+            card = block.card()
             if out.is_error:
-                return Reply(
-                    block.card()["error"], router.INSTANT, intent, card=block.card()
-                )
+                return Reply(card["error"], router.INSTANT, intent, card=card)
             tier = block.parsed.head.get("tier", "unknown")
-            return Reply(
-                f"Your tier: {tier}.", router.INSTANT, intent, card=block.card()
-            )
+            return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
         pre = prefetch.prefetch(self.registry, route, tier=False)
         if pre.clarify is not None:
             return self._ask_back(route, pre)
@@ -507,8 +504,8 @@ def main(config_path: Path | None, text: str, as_json: bool, out: TextIO) -> int
         if card.get("type") == "choices":
             for c in card["candidates"]:
                 print(f"  {c['n']}. {c['name']} [{c['key']}]", file=out)
-        elif card.get("columns"):
-            print(f"  card: {card['tool']}, rows {card.get('span')}", file=out)
+        elif card.get("tool"):
+            print(f"  card: {card['type']} from {card['tool']}", file=out)
         ttft = "-" if reply.ttft_ms is None else f"{reply.ttft_ms} ms"
         checked = "numbers checked" if reply.checked else "NOT checked"
         print(
