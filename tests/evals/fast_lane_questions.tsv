@@ -52,7 +52,7 @@ q50	core	deep	handoff		What should I do next?
 a01	ambiguous	ambiguous	ask		How do I make copper wire?
 a02	ambiguous	ambiguous	ask		How do I make a basic circuit?
 a03	ambiguous	ambiguous	ask		What makes a hull?
-a04	ambiguous	ambiguous	ask		Tell me about the macerator.
+a04	ambiguous	ambiguous	ask		Tell me about the wrench.
 a05	ambiguous	ambiguous	ask		How do I make stainless?
 a06	ambiguous	ambiguous	ask		recipe for battery
 a07	ambiguous	ambiguous	ask		How is silicon made?
