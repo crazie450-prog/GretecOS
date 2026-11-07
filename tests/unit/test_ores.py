@@ -15,6 +15,7 @@ import contextlib
 import gzip
 import hashlib
 import io
+import itertools
 import json
 import shutil
 import sqlite3
@@ -838,28 +839,78 @@ def test_ore_find(lab: tuple[Path, Path, Path]) -> None:
     assert load(toml)[0] == 0
     conn = db(home)
     try:
-        # Any case, GT name or display name; live veins first, then by dimension and chunk.
+        # Any case, GT name or display name; live veins first, by the material's best
+        # layer (D142 (c)), then by dimension and chunk.
         found = ore_db.find(conn, "ferrite")
         assert [(f.dim, f.x, f.z, f.depleted) for f in found] == [
-            (-1, -72, 120, False),  # Copperish's sporadic layer
             (0, -24, 72, False),
-            (0, 72, 24, False),
             (0, 168, -72, False),
             (7, 24, -24, False),
+            (-1, -72, 120, False),  # Copperish's sporadic layer
+            (0, 72, 24, False),
             (0, 24, 24, True),
         ]
-        assert found[0].layers == ("sporadic",) and found[1].layers == (
-            "primary",
-            "between",
+        assert found[0].layers == ("primary", "between") and found[3].layers == (
+            "sporadic",
         )
         assert ore_db.find(conn, "Nether quartzish")[0].mix == "Nether Quartzish"
         # Nearest first in one dimension, with the distance in blocks.
         near = ore_db.find(conn, "Ferrite", dim=0, near=(150, -60))
         assert [(f.x, f.z, f.distance) for f in near] == [
             (168, -72, 22),
-            (72, 24, 115),
-            (-24, 72, 218),
+            (-24, 72, 218),  # primary, though farther than the sporadic one
+            (72, 24, 115),  # sporadic
             (24, 24, 151),  # depleted: last
+        ]
+        # Copperish is sporadic in the Ferrite mix: the nearest vein there ranks after the
+        # farther Copperish vein where it is primary.
+        cu = ore_db.find(conn, "Copperish", dim=0, near=(150, -60))
+        assert [(f.x, f.z, f.distance, f.layers, f.depleted) for f in cu] == [
+            (72, 24, 115, ("primary", "between"), False),
+            (168, -72, 22, ("sporadic",), False),
+            (-24, 72, 218, ("sporadic",), False),
+            (24, 24, 151, ("sporadic",), True),
+        ]
+        # Tinite is secondary in Copperish, sporadic in Nether Quartzish. From the Nether
+        # Quartzish vein itself (0 blocks), the farther Copperish vein still comes first.
+        tin = ore_db.find(conn, "Tinite", dim=-1, near=(24, 24))
+        assert [(f.mix, f.layers, f.distance) for f in tin] == [
+            ("Copperish", ("secondary",), 136),
+            ("Nether Quartzish", ("sporadic",), 0),
+        ]
+
+        def set_layer(mix_id: str, material: str, layer: str) -> None:
+            (ores,) = conn.execute(
+                "SELECT ores FROM ore_mix WHERE id = ?", (mix_id,)
+            ).fetchone()
+            ores = [
+                {**o, "layer": layer} if o["material"] == material else o
+                for o in json.loads(ores)
+            ]
+            conn.execute(
+                "UPDATE ore_mix SET ores = ? WHERE id = ?", (json.dumps(ores), mix_id)
+            )
+
+        # Each layer against the next, with the better one always on the farther vein. The
+        # last layer name is one the ingest never writes: it ranks after the four.
+        order = ["primary", "secondary", "between", "sporadic", "other"]
+        for better, worse in itertools.pairwise(order):
+            set_layer("ore.mix.copperish", "Tinite", better)
+            set_layer("ore.mix.quartzish", "Tinite", worse)
+            tin = ore_db.find(conn, "Tinite", dim=-1, near=(24, 24))
+            assert [(f.mix, f.layers) for f in tin] == [
+                ("Copperish", (better,)),
+                ("Nether Quartzish", (worse,)),
+            ], (better, worse)
+        # The best layer counts: Copperish is primary and between in its own mix, and now
+        # secondary in the Ferrite mix, whose veins are nearer; primary wins.
+        set_layer("ore.mix.ferrite", "Copperish", "secondary")
+        cu = ore_db.find(conn, "Copperish", dim=0, near=(150, -60))
+        assert [(f.x, f.z, f.layers) for f in cu] == [
+            (72, 24, ("primary", "between")),
+            (168, -72, ("secondary",)),
+            (-24, 72, ("secondary",)),
+            (24, 24, ("secondary",)),
         ]
         assert (
             near[0].ymin == 10
