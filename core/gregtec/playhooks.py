@@ -23,8 +23,8 @@ so Prism is free and Play can't launch until the export is done.
 launched; fingerprint Play (before sync); sync Play to Export (``gregtec.sync``, Export only,
 GregtecLink included, D98); ``prismlauncher --launch GTNH-Export``, which autoexports (D100); wait
 for a new complete run in Export's ``gregteclink/exports/`` and for Export to quit; record the
-fingerprint for that run, unless NEI's part isn't ok or the autoexport failed (:func:`run_problems`:
-then recipe data stays stale); write the diff against the previous export (D122) to
+fingerprint for that run, unless NEI's part isn't ok, the oredict part failed (D145) or the
+autoexport failed (:func:`run_problems`: then recipe data stays stale); write the diff against the previous export (D122) to
 ``GOS_HOME/data/reports/``. Then release the lock and show the result, part warnings included.
 Collecting the run into GOS_HOME (WO-1.2) and loading it into the DB (WO-1.3) join this pipeline
 once those are merged; flagging affected plans comes with plans (WO-1.9).
@@ -694,7 +694,8 @@ _table = rundiff._table  # a manifest's table, or {} when it isn't one
 def run_problems(manifest: Mapping[str, object]) -> list[str]:
     """Why a complete run isn't a whole export (``complete`` covers only the GT parts): NEI's
     recipes are missing (the contract's readers need ``parts.nei == "ok"``; a dedicated server
-    has no NEI step) or the autoexport hit its deadline."""
+    has no NEI step), the oredict part failed (``gos db build`` refuses such a run: its NEI-only
+    recipes would get other citation keys, D145) or the autoexport hit its deadline."""
     parts, errors = _table(manifest, "parts"), _table(manifest, "part_errors")
 
     def why(part: str) -> str:
@@ -706,6 +707,8 @@ def run_problems(manifest: Mapping[str, object]) -> list[str]:
         nei == "skipped_server" and manifest.get("side") == "server"
     ):
         problems.append(f"NEI's part is {nei}{why('nei')}")
+    if parts.get("oredict") == "failed":
+        problems.append(f"the oredict part failed{why('oredict')}")
     if parts.get("autoexport") == "failed":
         problems.append(f"the autoexport failed{why('autoexport')}")
     return problems

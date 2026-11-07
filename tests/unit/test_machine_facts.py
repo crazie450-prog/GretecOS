@@ -269,9 +269,12 @@ def test_every_variable_is_named_and_says_where_it_comes_from() -> None:
         mf.Fact("parallel", "8*vt", "curated", 0.9, ""),
         mf.Fact("oc", "perfect", "curated", 0.9, ""),
         mf.Fact("tier_skips", "unlimited", "curated", 0.9, ""),
+        mf.Fact("eu_t", "30*run_parallel", "curated", 0.9, ""),
     ]
-    assert mf.inputs(facts) == {"build", "state", "recipe"}
-    assert mf.inputs(facts[2:]) == {"build"}
+    assert mf.inputs(facts) == {"build", "state", "recipe", "choice"}
+    assert mf.inputs(facts[2:5]) == {"build"}
+    # What the planner chooses per run isn't a property of the recipe (D144).
+    assert {mf.VARIABLES[v].kind for v in ("run_parallel", "fertilizer")} == {"choice"}
 
 
 def test_values_per_key() -> None:
@@ -625,3 +628,204 @@ def test_base_mods_are_the_ones_in_gts_jar() -> None:
     assert mf.base_mods({"mods": no_hash}) == {"gregtech", "miscutils"}
     assert mf.base_mods({"mods": mods[2:]}) == set()
     assert mf.base_mods({}) == set()
+
+
+# --- custom machines with no recipe map (D142 (j), D144) -----------------------------------
+
+IOF = "gregtech.common.tileentities.machines.multi.MTEIntegratedOreFactory"
+EIG = "kubatech.tileentity.gregtech.multiblock.MTEExtremeIndustrialGreenhouse"
+LMA = "gregtech.common.tileentities.machines.multi.MTELargeMolecularAssembler"
+
+
+def custom_status(cls: str) -> mf.Status:
+    """The coverage the repo's row for ``cls`` gives a multiblock with no recipe map."""
+    m = machine(1000, cls, ())
+    fs = mf.assemble([m], mf.read_curated())
+    assert fs.bad_maps == []
+    return mf.status(m, fs.facts[1000])
+
+
+def test_custom_keys_name_a_fluid_or_item_or_a_mode() -> None:
+    mf.check_value("consumes[fluid:lubricant]", "2*run_parallel")
+    mf.check_value("consumes[minecraft:dye@15]", "min(fertilizer, 2*run_parallel)")
+    # Fluid names as GT registers them, spaces and commas included.
+    mf.check_value("consumes[fluid:seaweed byproducts]", "1")
+    mf.check_value("consumes[fluid:1,1dimethylhydrazine]", "1")
+    mf.check_value("consumes[fluid:cropsnh:dkorn]", "1")
+    mf.check_value("consumes[gregtech:gt.metaitem.01@2032]", "1")
+    mf.check_value("duration", "600 if mode == 0 else 20")
+    mf.check_value("outputs", "drops")
+    mf.check_value("partial", "outputs")
+    mf.check_value(
+        "chain[4]",
+        "gt.recipe.macerator(ore) > gt.recipe.chemicalbath(crushed+crushedPurified)+fluids",
+    )
+    for key, value in [
+        ("consumes", "2"),  # names nothing
+        ("consumes[lubricant]", "2"),  # neither fluid:<name> nor registry@meta
+        ("consumes[minecraft:dye]", "2"),
+        ("consumes[fluid: water]", "2"),  # a space at either end
+        ("consumes[fluid:water ]", "2"),
+        ("consumes[fluid:a=b]", "2"),  # the extra column's syntax
+        ("consumes[fluid:a;b]", "2"),
+        ("consumes[fluid:]", "2"),
+        ("parallel[gt.recipe.mixer x]", "2"),  # not a recipe map name
+        ("consumes[fluid:water]", "lots"),
+        ("duration[gt.recipe.mixer]", "20"),  # not a per-map key
+        ("chain", "gt.recipe.macerator(ore)"),  # no mode
+        ("chain[a]", "gt.recipe.macerator(ore)"),
+        ("chain[0]", "gt.recipe.macerator(ingot)"),  # not one of the IOF's classes
+        ("chain[0]", "gt.recipe.macerator"),
+        ("chain[0]", "gt.recipe.macerator(ore) >"),
+        ("outputs", "recipe"),
+        ("partial", "parallel"),
+    ]:
+        with pytest.raises(ValueError):
+            mf.check_value(key, value)
+    [_, bath] = mf.chain_steps(
+        "gt.recipe.macerator(ore) > gt.recipe.chemicalbath(crushed+crushedPurified)+fluids"
+    )
+    assert bath == mf.Step(
+        "gt.recipe.chemicalbath", ("crushed", "crushedPurified"), True
+    )
+    # A consumes fact's unit says whether it is litres or items.
+    units = [
+        mf.Fact(k, "1", "curated", 0.9, "").unit
+        for k in ("consumes[fluid:water]", "consumes[minecraft:dye@15]", "duration")
+    ]
+    assert units == ["L", "items", "ticks"]
+
+
+def test_a_custom_machine_without_a_map_is_covered_by_its_plain_keys(
+    tmp_path: Path,
+) -> None:
+    custom = {"processing": "custom", "oc": "none"}
+    rows = mf.read_curated(
+        table(
+            tmp_path,
+            row(machine="test.MTEFull", parallel="4", **custom),
+            row(machine="test.MTEHalf", **custom),
+            row(machine="test.MTEWeak", parallel="4", confidence="0.6", **custom),
+            row(
+                machine="test.MTEPart",
+                parallel="4",
+                extra="outputs=drops;partial=outputs",
+                **custom,
+            ),
+        )
+    )
+    ms = [
+        machine(1000, "test.MTEFull", ()),
+        machine(1001, "test.MTEHalf", ()),
+        machine(1002, "test.MTEWeak", ()),
+        machine(1003, "test.MTEPart", ()),
+        machine(1004, "test.MTENothing", ()),
+    ]
+    fs = mf.assemble(ms, rows)
+    states = [mf.status(m, fs.facts.get(m.mte_id, [])) for m in ms]
+    assert [s.state for s in states] == [
+        "covered",
+        "missing",
+        "missing",
+        "covered",
+        "n/a",
+    ]
+    assert states[0].why == ""
+    assert states[3].why == "outputs not modelled (see the note)"
+
+
+def test_the_integrated_ore_factory() -> None:
+    # MTEIntegratedOreFactory.checkProcessing: getMaxInputEu() / 30 ores, 30 EU/t, 2 L of
+    # lubricant and 200 L of distilled water each, a fixed time per mode, no overclocks.
+    iof = curated_row(IOF)
+    assert "flag" not in iof and iof["processing"] == "custom" and iof["oc"] == "none"
+    assert mf.evaluate(iof["parallel"], {"input_eu": 4 * 131072}) == 17476  # 4 A LuV
+    assert mf.evaluate(iof["parallel"], {"input_eu": 29}) == 0
+    seconds = [mf.evaluate(iof["duration"], {"mode": m}) / 20 for m in range(7)]
+    assert seconds == [30, 15, 10, 20, 17, 32, 1]
+    run = {"run_parallel": 1000}
+    assert mf.evaluate(iof["eu_t"], run) == 30000
+    assert mf.evaluate(iof["consumes[fluid:lubricant]"], run) == 2000
+    assert mf.evaluate(iof["consumes[fluid:ic2distilledwater]"], run) == 200000
+    assert iof["outputs"] == "chain"
+    chains = [mf.chain_steps(iof[f"chain[{m}]"]) for m in range(7)]
+    maps = [[s.recipe_map.removeprefix("gt.recipe.") for s in c] for c in chains]
+    assert maps == [
+        ["macerator", "orewasher", "thermalcentrifuge", "macerator"],
+        ["macerator", "orewasher", "macerator", "centrifuge"],
+        ["macerator", "macerator", "centrifuge"],
+        ["macerator", "orewasher", "sifter"],
+        ["macerator", "chemicalbath", "macerator", "centrifuge"],
+        ["macerator", "chemicalbath", "thermalcentrifuge", "macerator"],
+        ["hammer", "hammer", "simplewasher"],
+    ]
+    # Only the chemical bath uses up its recipe's fluid; every chain starts on the ores.
+    assert {s.recipe_map for c in chains for s in c if s.fluids} == {
+        "gt.recipe.chemicalbath"
+    }
+    assert all(c[0].classes == ("ore",) for c in chains)
+    assert chains[0][2].classes == ("crushedPurified", "crushed")
+    # getOutputStack keeps only a recipe's item outputs: the key's doc and the row's note
+    # (which the DB carries) say a planner must leave the fluid outputs out.
+    assert "fluid outputs are voided" in mf.KEYS["outputs"].doc
+    [row] = [r for r in mf.read_curated() if r.machine == IOF]
+    assert "its fluid outputs are voided" in row.facts[0].note
+    # The ores processed per run are the planner's choice; the parallel is how it's built.
+    assert mf.inputs(f for f in row.facts if f.key == "parallel") == {"build"}
+    assert mf.inputs(f for f in row.facts if f.key == "eu_t") == {"choice"}
+    s = custom_status(IOF)
+    assert (s.state, s.why) == ("covered", "")
+    assert s.parallel is not None and s.parallel.confidence >= mf.THRESHOLD
+    # The legacy controller (deprecated, its own OverclockCalculator) keeps its flag.
+    assert "flag" in curated_row(IOF + "Legacy")
+
+
+def test_the_extreme_industrial_greenhouse() -> None:
+    # Normal mode (EIGNormalMode): 1 slot of 64 seeds at EV, twice the slots per tier; time
+    # 100 / (tier - 3) ticks, at least 1 s; (long)(V[tier] * 0.99) EU/t.
+    eig = curated_row(EIG)
+    assert "flag" not in eig and eig["oc"] == "none"
+    at = [{"vt_eu_floor": t} for t in range(3, 10)]  # HV .. UHV
+    assert [mf.evaluate(eig["slots"], e) for e in at] == [0, 1, 2, 4, 8, 16, 32]
+    seeds = [mf.evaluate(eig["parallel"], e) for e in at]
+    assert seeds == [0, 64, 128, 256, 512, 1024, 2048]
+    # addCrop caps only the total: one seed type may fill all of it (not 64 per type).
+    [row] = [r for r in mf.read_curated() if r.machine == EIG]
+    assert "one seed type may take all of it" in row.facts[0].note
+    ticks = [mf.evaluate(eig["duration"], e) for e in at]
+    assert ticks == [100, 100, 50, 33, 25, 20, 20]
+    assert [mf.evaluate(eig["eu_t"], e) for e in at[1:4]] == [2027, 8110, 32440]
+    water, weedex = eig["consumes[fluid:water]"], eig["consumes[fluid:weedex9000]"]
+    assert mf.evaluate(water, {"run_parallel": 256}) == 256000
+    assert mf.evaluate(weedex, {"run_parallel": 999}) == 0
+    assert mf.evaluate(weedex, {"run_parallel": 1000}) == 1000
+    # Fertilizer: at most 2 per seed, up to +400% drops.
+    bone, mul = eig["consumes[minecraft:dye@15]"], eig["output_mul"]
+    for given, used, x in [(0, 0, 1), (64, 64, 3), (128, 128, 5), (500, 128, 5)]:
+        env = {"run_parallel": 64, "fertilizer": given}
+        assert (mf.evaluate(bone, env), mf.evaluate(mul, env)) == (used, x)
+    # The seeds' drops are the game's own simulation: covered, with the outputs flagged.
+    assert (eig["outputs"], eig["partial"]) == ("drops", "outputs")
+    s = custom_status(EIG)
+    assert (s.state, s.why) == ("covered", "outputs not modelled (see the note)")
+
+
+def test_the_large_molecular_assembler() -> None:
+    # checkRecipe: MV is the base (64 EU/t, 2 jobs in 1 s); HV and EV halve the time, each
+    # tier past EV doubles the jobs; every overclock quadruples the EU.
+    lma = curated_row(LMA)
+    assert "flag" not in lma and lma["oc"] == "custom" and lma["outputs"] == "patterns"
+    got = [
+        tuple(mf.evaluate(lma[k], {"vt": vt}) for k in ("duration", "eu_t", "parallel"))
+        for vt in range(1, 8)
+    ]
+    assert got == [
+        (20, 64, 2),  # LV: no overclock below MV
+        (20, 64, 2),
+        (10, 256, 2),
+        (5, 1024, 2),
+        (5, 4096, 4),
+        (5, 16384, 8),
+        (5, 65536, 16),
+    ]
+    assert custom_status(LMA).state == "covered"

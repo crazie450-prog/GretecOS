@@ -26,7 +26,8 @@ from typing import Any
 import pytest
 
 from gregtec.db import access, build, report
-from gregtec.ingest import collect, merge
+from gregtec.ingest import collect, machine_facts, merge
+from gregtec.ingest import collect, gtdump, merge
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -169,6 +170,36 @@ def test_the_same_run_again_is_byte_identical(
     assert rows(again.db, q) == rows(client.db, q)
 
 
+def test_the_full_oredict_names_more_nei_only_slots(
+    client: build.Result, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # D145: the run's oredict.jsonl names the NEI-only slots whose members items.jsonl
+    # doesn't all list; built again from items.jsonl's ore lists alone, fewer get a name. That
+    # isn't a run made before D145: this run's items.jsonl lists every oredict member, which
+    # older runs' didn't, so they named fewer still (8,644 of 50,155 for 20261106T092709Z).
+    m = client.loaded.run.manifest
+    assert m["parts"]["oredict"] == "ok" and client.loaded.oredict is not None
+    assert len(client.loaded.oredict) == m["counts"]["oredict"]
+    steel = rows(
+        client.db,
+        "SELECT i.registry_name, i.meta FROM ore_member om JOIN ore o ON o.id = om.ore_id"
+        " JOIN item i ON i.id = om.item_id WHERE o.name = 'ingotSteel'",
+    )
+    assert ("gregtech:gt.metaitem.01", 11305) in steel
+    home = client.loaded.run.path.parents[2]
+    monkeypatch.setattr(gtdump, "oredict_status", lambda manifest: "absent")
+    before = build.build(home, allow_harness=True, db=tmp_path / "before.sqlite")
+    now, old = client.loaded.stats, before.loaded.stats
+    assert now is not None and old is not None
+    assert now.ore_named + now.ore_sets == old.ore_named + old.ore_sets
+    assert now.ore_named > old.ore_named
+    print(
+        f"NEI-only oredict slots named: {now.ore_named:,} of "
+        f"{now.ore_named + now.ore_sets:,} (this run's items.jsonl ore lists alone: "
+        f"{old.ore_named:,})"
+    )
+
+
 def test_no_numeric_item_id_in_any_item_key(client: build.Result) -> None:
     def walk(value: object) -> None:
         if isinstance(value, dict):
@@ -245,14 +276,32 @@ def test_every_base_multiblock_has_parallels_and_oc_rules_or_a_flag(
         s.parallel and s.oc and min(s.parallel.confidence, s.oc.confidence) >= 0.8
         for s in covered
     )
-    # Processing machines with their own recipe check and no recipe map are flagged, not n/a.
-    states = {s.machine.class_name.rsplit(".", 1)[-1]: s.state for s in multis}
-    for cls in ("MTEIntegratedOreFactory", "MTEExtremeIndustrialGreenhouse"):
-        assert states[cls] == "flagged", cls
+    # Processing machines with their own recipe check and no recipe map are covered by their
+    # curated rows (D144), or flagged, never n/a.
+    states = {s.machine.class_name.rsplit(".", 1)[-1]: s for s in multis}
+    for cls in (
+        "MTEIntegratedOreFactory",
+        "MTEExtremeIndustrialGreenhouse",
+        "MTELargeMolecularAssembler",
+    ):
+        assert states[cls].state == "covered", cls
+        assert states[cls].machine.recipe_maps == (), cls
+    assert states["MTEExtremeIndustrialGreenhouse"].why.startswith(
+        "outputs not modelled"
+    )
+    for cls in ("MTEIntegratedOreFactoryLegacy", "AntimatterForge"):
+        assert states[cls].state == "flagged", cls
     facts = result.loaded.facts
     assert facts is not None
     assert {c.machine for c in facts.unmatched} == NOT_IN_DEV_RUNTIME
     assert facts.bad_maps == []
+    # The ore factory's chains name recipe maps that machines of this run have.
+    run_maps = {name for m in result.loaded.machines for name in m.recipe_maps}
+    iof = states["MTEIntegratedOreFactory"].machine
+    chains = [f.value for f in facts.facts[iof.mte_id] if f.base_key == "chain"]
+    assert len(chains) == 7
+    steps = {s.recipe_map for c in chains for s in machine_facts.chain_steps(c)}
+    assert steps <= run_maps, steps - run_maps
     # The EBF's rules, read from GT's source, are in the DB and win over its tooltip.
     conn = access.connect(result.db, readonly=True)
     try:

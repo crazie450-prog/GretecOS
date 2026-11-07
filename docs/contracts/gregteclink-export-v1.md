@@ -70,7 +70,8 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
 | `gt_ore_mixes.json` | GT's worldgen ore layers (`WorldgenGTOreLayer.sList`) and the instance's dimension IDs (WO-1.6, D126) |
-| `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` too), sorted by item, meta, then NBT JSON (none first) |
+| `oredict.jsonl` | The full ore dictionary: one line per oredict name, sorted by name, with its members (D145) |
+| `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` and the members of `oredict.jsonl` too), sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
 | `manifest.json` | Run facts, file hashes, counts, part status. Not listed in its own `files` |
 | `nei/<NEI file name>.jsonl` | On a client with NEI 2.8.172: a byte-for-byte copy of each file NEI's `dumpAll(true)` wrote to `dumps/recipes/` during this run (see below) |
@@ -158,6 +159,21 @@ Plan §5.2 step 6 (D126): the registry GT's worldgen draws ore veins from, so th
 - `dimensions`: every registered dimension ID (`DimensionManager.getStaticDimensionIDs()`), with its provider class and the name GT's worldgen would match it by (resolved as VisualProspecting's `DimensionNameResolver` does: the loaded world's provider, else a new provider instance; Galacticraft's celestial body by reflection). Several IDs can share a name. A dimension that fails to resolve carries `error` instead of `name`.
 - A layer whose part fails to serialise keeps the rest and lists `errors` (`counts.ore_mix_errors`).
 
+### `oredict.jsonl` line
+
+`{"ore": "<oredict name>", "members": [<item ref without "n">, ...]}`, or `{"ore", "error"}` when the mod couldn't
+read the name's members (`counts.oredict_errors`). D142 (h), D145.
+
+- One line per name in `OreDictionary.getOreNames()`, sorted by name, each once (an empty name, which no `ore:<name>` could
+  cite, is left out). A name with no members (Forge and GT
+  register many names that never get one: 40,717 names and 24,039 members in the dev runtime) has `"members": []`.
+- `members` are the stacks `OreDictionary.getOres(name)` holds, as item refs (`item`, `meta`, `nbt`?), never a
+  numeric item or oredict ID. Each distinct ref is listed once, sorted by registry name (unregistered last), meta,
+  then NBT JSON (none first). **Wildcard meta 32767 is kept raw**: `minecraft:planks@32767` in `plankWood` stands for
+  every meta of the item, as NEI expands it. `nbt` is the same canonical JSON as every ref's; Python takes the NBT hash
+  (WO-1.3). An unregistered member is `{"item": null, "class"}` and counts in `counts.unregistered`.
+- Every member is also a line of `items.jsonl` (named there), so its `ore` list holds the name too.
+
 ### `items.jsonl` line
 
 `{item, meta, nbt?, unlocalized, name, ore: [names, sorted], gt: {prefix, material, amount}?, errors: [...]?}`.
@@ -235,16 +251,18 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
  "mods":[{"modid","name","version","file","sha256"}],
  "files":{"gt_recipes.jsonl":{"sha256":"...","bytes":0,"lines":0}, "...":{}},
  "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",
-           "ore_mixes","ore_mix_errors","dimensions","items","item_errors","fluids","unregistered",
+           "ore_mixes","ore_mix_errors","dimensions","oredict","oredict_members","oredict_errors",
+           "items","item_errors","fluids","unregistered",
            "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_files"?,"nei_recipes"?,
            "crop_dumpers"?,"crop_files"?},
  "options":{"recipe_owners":true},
- "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","refs":"ok|failed",
+ "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","oredict":"ok|failed",
+          "refs":"ok|failed",
           "nei":"absent|skipped_server|ok|failed","crops":"absent|skipped_server|ok|failed",
           "autoexport":"off|ok|failed"},
  "part_errors":{"<part>":"<why it failed>"}?,
  "part_warnings":{"nei":"<what an ok NEI step left out>","crops":"<an optional crop dumper that failed>"}?,
- "durations_ms":{"gt_dump","machines","ore_mixes","refs","nei_wait"?,"nei_dump"?,"nei_copy"?,"crops_dump"?,
+ "durations_ms":{"gt_dump","machines","ore_mixes","oredict","refs","nei_wait"?,"nei_dump"?,"nei_copy"?,"crops_dump"?,
                  "crops_copy"?}}
 ```
 
@@ -261,6 +279,12 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `parts.ore_mixes` (WO-1.6) is not part of `complete` either: a failed ore-mix pass leaves the recipe parts usable.
   **Readers of `gt_ore_mixes.json` check `parts.ore_mixes == "ok"`**. Runs made before WO-1.6 have no such part and
   no file.
+- `parts.oredict` (D145) is not part of `complete` either. **Readers of `oredict.jsonl` check
+  `parts.oredict == "ok"`**. For a run made before D145 (no such part, no file) `gos db build` names NEI slots from
+  `items.jsonl`'s `ore` lists, as before; a run whose `parts.oredict` is `failed` and whose `parts.nei` is `ok` it
+  refuses, because those lists name fewer slots and its NEI-only recipes would get other citation keys for one run,
+  and `gos export run` doesn't record it as an export. `counts.oredict` is the number of lines (names),
+  `counts.oredict_members` the members listed in all of them.
 - `world` is the world's folder name: `gregteclink-autoexport` for autoexport, the folder of whatever world was
   opened for `one_click`, the harness's own world for `harness`.
 - `parts.nei`:
@@ -304,7 +328,9 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 
 ## Python readers (WO-1.3)
 
-- `core/gregtec/ingest/gtdump.py`: `gt_recipe_maps.json`, `gt_recipes.jsonl`, `items.jsonl`, `fluids.jsonl`.
+- `core/gregtec/ingest/gtdump.py`: `gt_recipe_maps.json`, `gt_recipes.jsonl`, `items.jsonl`, `fluids.jsonl`, and
+  `oredict.jsonl` (D145), only from runs with `parts.oredict == "ok"`; `gos db build` loads it into `ore` and
+  `ore_member` and names NEI-only oredict slots from it.
 - `core/gregtec/ingest/machines.py`: `gt_machines.jsonl`.
 - `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
 - `core/gregtec/ingest/ore_mixes.py` (WO-1.6): `gt_ore_mixes.json`, only from runs with `parts.ore_mixes == "ok"`;

@@ -23,7 +23,9 @@
 - ``gos ores list`` prints veins per dimension; ``--dim N`` lists one dimension's veins (named
   query ``ore_veins``).
 - :func:`find` is ``ore_find(material, dim?, near?)`` (plan section 7.6) over the named query
-  ``ore_find``; WO-2.2 wraps it as a tool.
+  ``ore_find``; WO-2.2 wraps it as a tool. Veins are ranked by the best layer the material is
+  in (primary, secondary, between, sporadic; any other layer name after those), then nearest
+  first, with depleted veins after every live one (D142 (c), settling D129).
 """
 
 from __future__ import annotations
@@ -355,8 +357,11 @@ def find(
     limit: int = 50,
 ) -> list[Found]:
     """``ore_find``: the veins whose mix holds ``material`` (a GT material name or its display
-    name, any case), live ones first, nearest first. ``near`` is an (x, z) block position in
-    ``dim``, so it needs ``dim``; distances are horizontal, to the vein's centre block."""
+    name, any case): live ones first, each by the best layer the material is in (primary,
+    secondary, between, sporadic; any other layer name after those), then nearest first
+    (D142 (c)). ``near`` is an (x, z) block
+    position in ``dim``, so it needs ``dim``; distances are horizontal, to the vein's centre
+    block."""
     if near is not None and dim is None:
         raise ValueError("near is a position in a dimension: give dim too")
     x, z = near if near is not None else (None, None)
