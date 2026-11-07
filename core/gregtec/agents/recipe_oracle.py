@@ -299,6 +299,8 @@ def sentence(step: Step, found: Found | None) -> str:
         verb = "makes" if step.op == MAKE else "takes"
         return f"{name}: no recipe in the DB {verb} it."
     row = found.row
+    if step.op != MAKE and (used := _slot(row.get("in", ""), step.key)):
+        name = used["name"] or name  # a use found through its output's lookup
     verb = "made in" if step.op == MAKE else "used in"
     parts = [v for w in step.want if w != "machine" and (v := _value(step, w, found))]
     tail = f", {', '.join(parts)}" if parts else ""

@@ -675,6 +675,50 @@ def test_a_handoff_with_no_deep_lane_fails(
     assert "doesn't run here" in results[0].score.why
 
 
+class _Lane:
+    """A stand-in deep lane whose tasks are already where a test wants them."""
+
+    def __init__(self, tasks: list[deep.DeepTask]) -> None:
+        self.done = tasks
+        self.stopped: list[str] = []
+
+    def tasks(self) -> list[deep.DeepTask]:
+        return list(self.done)
+
+    def wait(self, task_id: str, timeout: float) -> deep.DeepTask | None:
+        return next((t for t in self.done if t.id == task_id), None)
+
+    def stop_task(self, task_id: str) -> bool:
+        self.stopped.append(task_id)
+        for t in self.done:
+            if t.id == task_id:
+                t.status = deep.STOPPED
+        return True
+
+
+def test_the_deep_lanes_answers_are_waited_for() -> None:
+    def task(id_: str, status: str, text: str | None = None) -> deep.DeepTask:
+        t = deep.DeepTask(id_, "r", "r", "router", 2.0, status=status, text=text)
+        t.cost_usd = 0.5
+        return t
+
+    old = task("h-old", deep.DONE, "an earlier row's answer")
+    lane = _Lane(
+        [old, task("h-1", deep.DONE, "Steel Ingot: ..."), task("h-2", deep.FAILED)]
+    )
+    text, cost, why = recipe_eval._deep_answer(
+        cast(deep.DeepLaneService, lane), {"h-old"}, 1.0
+    )
+    assert text == "Steel Ingot: ..." and cost == 1.0 and why is not None
+    assert "failed" in why
+    capped = _Lane([task("h-3", deep.NEEDS_APPROVAL)])
+    text, _, why = recipe_eval._deep_answer(
+        cast(deep.DeepLaneService, capped), set(), 1.0
+    )
+    assert capped.stopped == ["h-3"]  # never approved (D157)
+    assert text == "" and why is not None and "cap" in why
+
+
 def test_decide_asks_on_an_ambiguous_result(lane_reg: Registry) -> None:
     out = lane_reg.call("item_resolve", {"text": "dust"}, lane="fast")
     question = recipe_eval.question("a", "recipe", ANSWER, "x", f"make {STEEL}")

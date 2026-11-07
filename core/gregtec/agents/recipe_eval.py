@@ -47,17 +47,15 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TextIO
 
 from gregtec import config
 from gregtec.agents import fast_lane
 from gregtec.agents.ask import Asker, Reply, setup
+from gregtec.agents.deep import DONE, NEEDS_APPROVAL, DeepLaneService
 from gregtec.agents.tools.items import FLUID_KEY, ITEM_KEY, MTE_KEY, WILDCARD
 from gregtec.agents.tools.recipes import TIERS
 from gregtec.db import access
-
-if TYPE_CHECKING:
-    from gregtec.agents import deep
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 QUESTIONS = REPO_ROOT / "tests" / "evals" / "recipe_lookup.tsv"
@@ -602,9 +600,8 @@ def _has(text: str, want: str, values: set[str], numbers: set[str]) -> bool:
     hit = {fast_lane.value(n) for v in values for n in fast_lane.NUMBER.findall(v)}
     if hit:
         return bool(hit & numbers)
-    return any(
-        v.casefold() in folded for v in values
-    )  # a word fact ("heat", "standard")
+    # a fact that is a word ("heat", "standard")
+    return any(v.casefold() in folded for v in values)
 
 
 def asks(reply: Reply, text: str) -> bool:
@@ -715,17 +712,16 @@ def _names(reply: Reply) -> set[str]:
 
 
 def _deep_answer(
-    deep: deep.DeepLaneService, before: set[str], wait_s: float
+    deep: DeepLaneService, before: set[str], wait_s: float
 ) -> tuple[str, float, str | None]:
     """(the answers of the tasks this row handed off, their cost, why none answered)."""
-    from gregtec.agents import deep as deep_mod
 
     texts, cost, why = [], 0.0, None
     for task in deep.tasks():
         if task.id in before:
             continue
         found = deep.wait(task.id, wait_s)
-        if found is not None and found.status == deep_mod.NEEDS_APPROVAL:
+        if found is not None and found.status == NEEDS_APPROVAL:
             deep.stop_task(found.id)  # never approve in an eval (D157)
             found = deep.wait(found.id, 30)
             why = "the deep-lane task reached its cap and was stopped"
@@ -735,7 +731,7 @@ def _deep_answer(
         cost += found.cost_usd
         if found.text:
             texts.append(found.text)
-        elif found.status != deep_mod.DONE:
+        elif found.status != DONE:
             why = why or f"deep lane: {found.status}: {found.error or ''}".strip()
     return "\n\n".join(texts), cost, why
 
@@ -747,7 +743,7 @@ def run(
     out: TextIO,
     *,
     fake: bool,
-    deep: deep.DeepLaneService | None = None,
+    deep: DeepLaneService | None = None,
     wait_s: float = DEEP_WAIT_S,
 ) -> tuple[int, list[Result]]:
     """Ask and score every question (``asker_for()`` makes a fresh :class:`Asker` per row);
@@ -881,7 +877,6 @@ def _run_real(
     cfg: config.Config, questions: Sequence[Question], ground: Ground, out: TextIO
 ) -> tuple[int, list[Result]]:
     """The real models: the stored key, ``llm_usage`` task ``eval:recipe-lookup``."""
-    from gregtec.agents.deep import DeepLaneService
 
     agents = setup(cfg)
     try:
