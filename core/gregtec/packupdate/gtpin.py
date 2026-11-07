@@ -14,8 +14,10 @@ from gregtec import config
 RUNBOOK = "docs/runbooks/pack_update.md (GT pin bump)"
 
 
-def problem(gt_version: object, pin: str = config.GT_PIN) -> str | None:
-    """Why an export of ``gt_version`` doesn't match the pin, or None when it does."""
+def problem(gt_version: object, pin: str | None = None) -> str | None:
+    """Why an export of ``gt_version`` doesn't match the pin (default
+    :data:`gregtec.config.GT_PIN`), or None when it does."""
+    pin = config.GT_PIN if pin is None else pin
     if gt_version == pin:
         return None
     seen = "no GT version" if gt_version in (None, "") else f"GT {gt_version}"
