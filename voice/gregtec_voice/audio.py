@@ -327,8 +327,10 @@ class Device:
 def _sounddevice() -> Any:  # noqa: ANN401 - the sounddevice module (Windows only)
     if sys.platform != "win32":
         raise AudioError("WASAPI capture runs on Windows only")
-    import sounddevice  # Windows only (D181)
-
+    try:
+        import sounddevice  # Windows only (D181); starts PortAudio when imported
+    except Exception as exc:  # noqa: BLE001 - OSError (no PortAudio), PortAudioError (no start)
+        raise AudioError(f"PortAudio didn't start: {exc}") from None
     return sounddevice
 
 

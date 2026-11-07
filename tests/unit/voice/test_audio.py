@@ -275,8 +275,8 @@ def test_wasapi_devices_list_on_windows(caplog: pytest.LogCaptureFixture) -> Non
     caplog.set_level(logging.INFO)
     try:
         devices = audio.capture_devices()
-    except AudioError as exc:
-        assert "WASAPI" in str(exc)
+    except AudioError as exc:  # no audio service on the runner
+        assert "WASAPI" in str(exc) or "PortAudio" in str(exc)
         return
     assert all(isinstance(d, Device) for d in devices)
     assert sum(d.default for d in devices) <= 1

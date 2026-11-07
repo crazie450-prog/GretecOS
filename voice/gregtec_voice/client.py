@@ -9,7 +9,8 @@ fast lane's prompt cache is warmed (``POST /api/prewarm``, D152) and a segment o
 pre-roll. The key comes up: after the post-roll the segment closes, a worker transcribes it
 (WO-5.2's engine) and asks the core (``POST /api/ask``, D152), and the reply's text is spoken
 (WO-5.3's engine) while its card goes to the dashboards (the core pushes ``ask.reply``). A new
-turn supersedes one still in flight: its late reply isn't spoken. Each turn's timings go to
+question, once sent, supersedes one still in flight: its late reply isn't spoken. A tap that
+only stopped speech sends nothing, so it supersedes nothing. Each turn's timings go to
 ``logs/voice.log`` as a ``turn`` record (never its text): ``gos voice bench`` reads them (PM14).
 
 **Hotkeys**: *confirm* and *cancel* are the router's instant commands (D59, D150), asked like a
@@ -215,15 +216,13 @@ class VoiceClient:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = settings
-        self.observer = (
-            observer  # sees each event first, on this thread (gos voice test)
-        )
+        # sees each event first, on this thread (gos voice test)
+        self.observer = observer
         self.core = core
         self.transcriber = transcriber
         self.speaker = speaker
-        self.transcript = (
-            transcript  # every segment says this (latency runs, --transcript)
-        )
+        # every segment "says" this (latency runs before STT, --transcript)
+        self.transcript = transcript
         self.clock = clock
         self.events: queue.Queue[object] = queue.Queue()
         self.recorder = Recorder(lambda seg: self.post(Closed(seg)), clock=clock)
@@ -231,17 +230,17 @@ class VoiceClient:
         self.hotkeys = Hotkeys({k.vk: name for name, k in settings.hotkeys().items()})
         self.state: tuple[str, str | None] = (OFF, None)
         self.turns = 0
-        self._turn: Turn | None = (
-            None  # the newest turn; an older one's reply is dropped
-        )
+        # the turn being recorded; it becomes the newest turn once it is sent
+        self._listening: Turn | None = None
+        # the newest turn sent: an older one's reply is dropped (superseded)
+        self._turn: Turn | None = None
         self._thinking = False  # its worker is still running
         self._speaking: _Utterance | None = None
         self._queued: deque[_Utterance] = deque(maxlen=SPEECH_QUEUE)
         self._utterances = 0
         self._asked: deque[tuple[str, float]] = deque(maxlen=MINE_KEEP)
-        self._mine: dict[
-            str, int
-        ] = {}  # deep-lane task id -> approvals already announced
+        # deep-lane task id -> how many of its approvals were announced
+        self._mine: dict[str, int] = {}
         self._offline_since: float | None = None
         self._told_offline = False
 
@@ -295,6 +294,7 @@ class VoiceClient:
                 on_tick(now)
         self._barge_in()
         self.recorder.cancel()
+        self._listening = None
         self._set_state(OFF)
 
     def drain(self) -> None:
@@ -370,7 +370,7 @@ class VoiceClient:
         if self.recorder.recording is not None:
             return  # the other trigger has the open segment
         self.turns += 1
-        self._turn = Turn(self.turns, trigger, t)  # supersedes a turn still in flight
+        self._listening = Turn(self.turns, trigger, t)
         self.recorder.start(trigger, t)
         self.core.prewarm()
         self._set_state(LISTENING, trigger)
@@ -378,13 +378,12 @@ class VoiceClient:
     def _stop_segment(self, trigger: str, t: float) -> None:
         if self.recorder.recording == trigger:
             self.recorder.stop(t)
-            if self._turn is not None and self._turn.trigger == trigger:
-                self._turn.stopped = t
+            if self._listening is not None:
+                self._listening.stopped = t
 
     def _cancel_segment(self, trigger: str) -> None:
         if self.recorder.recording == trigger and self.recorder.cancel():
-            if self._turn is not None and self._turn.trigger == trigger:
-                self._turn = None
+            self._listening = None  # a turn still in flight keeps its answer
             self._settle()
 
     def _hotkey(self, name: str, t: float) -> None:
@@ -394,6 +393,7 @@ class VoiceClient:
             return
         if self.recorder.cancel():  # confirm or cancel drop what was being recorded
             self.talk.closed()
+            self._listening = None
         self._barge_in()
         self.turns += 1
         turn = Turn(self.turns, name, t, stopped=t, closed=t)
@@ -402,11 +402,11 @@ class VoiceClient:
     # --- turns
 
     def _closed(self, segment: Segment) -> None:
-        turn = self._turn
+        turn, self._listening = self._listening, None
         if segment.trigger == KEY:
             self.talk.closed()
         if turn is None or turn.started != segment.started:
-            return  # a cancelled or superseded segment
+            return  # a cancelled segment
         turn.closed = segment.closed
         turn.seconds = segment.seconds
         if segment.capped:
@@ -414,9 +414,19 @@ class VoiceClient:
         self._ask(turn, segment, None)
 
     def _ask(self, turn: Turn, segment: Segment | None, text: str | None) -> None:
+        """Send ``turn``: it supersedes the turn in flight, and an older answer still waiting to
+        be said is dropped."""
+        stale = [u.turn for u in self._queued if u.turn is not None]
+        notices = (u for u in self._queued if u.turn is None)
+        self._queued = deque(notices, maxlen=SPEECH_QUEUE)
+        for old in stale:
+            old.outcome = "superseded"
+            self._log_turn(old)
         self._turn = turn
         self._thinking = True
         self._set_state(THINKING, turn.trigger if turn.trigger in (KEY, WAKE) else None)
+        if self._speaking is None and self._queued:  # a notice that waited for the key
+            self._speak(self._queued.popleft())
         threading.Thread(
             target=self._work,
             args=(turn, segment, text),

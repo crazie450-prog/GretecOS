@@ -179,6 +179,52 @@ def test_a_new_turn_supersedes_one_in_flight(
     assert sorted(t["outcome"] for t in turns(caplog)) == ["answered", "superseded"]
 
 
+def test_a_tap_while_an_answer_is_pending_keeps_it(
+    make: Callable[..., VoiceClient],
+    clock: Any,  # noqa: ANN401
+    core: Any,  # noqa: ANN401
+    speaker: Any,  # noqa: ANN401
+    run_events: Pump,
+) -> None:
+    voice = make()
+    core.hold = threading.Event()
+    talk(voice, clock)
+    run_events(voice, lambda: len(core.asked) == 1)
+    talk(voice, clock, held_s=0.1)  # a tap: barge-in only, nothing sent
+    core.hold.set()
+    run_events(voice, lambda: bool(speaker.said))
+    assert speaker.said == ["You said how do I make steel."] and len(core.asked) == 1
+
+
+def test_an_answer_waiting_while_a_new_question_is_recorded_is_dropped_when_it_is_sent(
+    make: Callable[..., VoiceClient],
+    clock: Any,  # noqa: ANN401
+    core: Any,  # noqa: ANN401
+    speaker: Any,  # noqa: ANN401
+    transcriber: Any,  # noqa: ANN401
+    run_events: Pump,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    voice = make()
+    core.hold = threading.Event()
+    talk(voice, clock)
+    run_events(voice, lambda: len(core.asked) == 1)
+    key(voice, clock, F13, True)  # asking again while the first answer is on its way
+    core.hold.set()
+    run_events(voice, lambda: bool(turns(caplog)) or bool(voice._queued))
+    voice.say("A notice.")  # not an answer: it survives the new question
+    assert speaker.said == []  # the first answer waits: Clayton is talking
+    transcriber.text = "what uses steel"
+    audio_for(voice, clock, 1.0)
+    key(voice, clock, F13, False)
+    audio_for(voice, clock, 0.2)
+    run_events(voice, lambda: len(speaker.said) == 2)
+    assert speaker.said == ["A notice.", "You said what uses steel."]
+    voice.drain()  # the speaker's callbacks: the turn is logged when it has been said
+    assert sorted(t["outcome"] for t in turns(caplog)) == ["answered", "superseded"]
+
+
 def test_hotkeys(
     make: Callable[..., VoiceClient],
     clock: Any,  # noqa: ANN401
@@ -330,7 +376,8 @@ def test_speech_waits_while_listening(
     key(voice, clock, F13, False)
     audio_for(voice, clock, 0.2)
     run_events(voice, lambda: len(speaker.said) == 2)
-    assert speaker.said == ["You said how do I make steel.", "A notice."]
+    # the notice is said once the key is up, while the question is on its way
+    assert speaker.said == ["A notice.", "You said how do I make steel."]
 
 
 def test_the_wake_hook_point(
