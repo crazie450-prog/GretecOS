@@ -1,14 +1,14 @@
 """The deep lane's door (plan 4.4): where the router and the fast lane's ``handoff`` send a task.
 
-WO-2.4 puts the warm ``ClaudeSDKClient`` behind :class:`DeepLane`. Until then
-:class:`HandoffRecorder` is the stub: it records each handoff (in memory, the newest
-:data:`KEEP`, and as a log line) and says the deep lane isn't running yet, so the router, the
-fast lane and ``POST /api/ask`` are built against the interface WO-2.4 fills in (D152).
+:class:`gregtec.agents.deep.DeepLaneService` (WO-2.4, D154) is the real :class:`DeepLane`:
+a warm ``ClaudeSDKClient`` session per task. :class:`HandoffRecorder` only records each handoff
+(in memory, the newest :data:`KEEP`, and as a log line); ``gos eval fast-lane`` and the tests use
+it, so they never start a deep-lane session (D152).
 
 A handoff carries two texts. ``request`` is what Clayton said, word for word: the deep lane's
 only instruction. ``task`` is the router's copy of it, or the fast lane model's summary (with
-items resolved), which tool results the fast lane read may have steered: WO-2.4 reads it as
-data, a hint about the request, never as instructions of its own.
+items resolved), which tool results the fast lane read may have steered: the deep lane quotes
+it as data, a hint about the request, never as instructions of its own.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 KEEP = 50
 TASK_MAX = 2000
-NOT_YET = "recorded; the deep lane arrives with WO-2.4"
+NOT_YET = "recorded only: no deep lane runs in this process"
 
 
 @dataclass(frozen=True)
@@ -126,5 +126,5 @@ HANDOFF_TOOL = Tool(
     read_only=False,
     lanes=frozenset({FAST}),
     needs_db=False,
-    gate="the deep lane's own budget and confirm rules (WO-2.4)",
+    gate="the deep lane's own tool gate, path guard and cost cap (D154, D156)",
 )

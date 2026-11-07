@@ -30,7 +30,7 @@ Clayton runs these on the gaming PC after the WO-2.3 PR is merged: about 10 minu
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe ask "how do I make copper wire"
    ```
    Expect `Which copper wire did you mean: ...?` and the three candidates with their keys. (`gos ask` starts afresh each time; answering "the second one" works through the core, as the dashboard and voice will use it.)
-6. A deep-lane request: `gos ask "design me a steel line at MV"` says it is handed to the deep lane (recorded only, until WO-2.4).
+6. A deep-lane request: `gos ask "design me a steel line at MV"` hands it to the deep lane, which runs it since WO-2.4 (docs/runbooks/deep_lane.md).
 
 ## C. The eval (plan §8 acceptance)
 

@@ -705,3 +705,19 @@ def test_deep_task_routes(lane_reg: Registry, tmp_path: Path) -> None:
     finally:
         lane.stop()
         store.close()
+
+
+def test_old_transcripts_are_pruned(tmp_path: Path) -> None:
+    import os
+    import time
+
+    project = tmp_path / "claude" / "projects" / "-work"
+    project.mkdir(parents=True)
+    old, new = project / "old.jsonl", project / "new.jsonl"
+    old.write_text("{}\n", encoding="utf-8")
+    new.write_text("{}\n", encoding="utf-8")
+    month_ago = time.time() - 31 * 86400
+    os.utime(old, (month_ago, month_ago))
+    assert deep.prune_transcripts(tmp_path) == 1
+    assert not old.exists() and new.exists()
+    assert deep.prune_transcripts(tmp_path / "nowhere") == 0

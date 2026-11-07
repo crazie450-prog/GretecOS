@@ -76,6 +76,7 @@ QUEUED, RUNNING, NEEDS_APPROVAL = "queued", "running", "needs_approval"
 DONE, FAILED, STOPPED, OFFLINE = "done", "failed", "stopped", "offline"
 FINAL = frozenset({DONE, FAILED, STOPPED, OFFLINE})
 PROGRESS_KEEP = 40
+TRANSCRIPT_DAYS = 30  # Claude Code's session transcripts kept in the lane's folder
 STOP_WAIT_S = 10.0
 APPROVE, STOP, SHUTDOWN = "approve", "stop", "shutdown"
 # The most a token costs at any listed price: an unknown model is priced at this (never zero).
@@ -99,6 +100,25 @@ class Client(Protocol):
 
 
 ClientFactory = Callable[[ClaudeAgentOptions], Client]
+
+
+def prune_transcripts(home: Path, days: int = TRANSCRIPT_DAYS) -> int:
+    """Delete the lane's session transcripts (``claude/projects/*/*.jsonl``) older than
+    ``days``: each task writes one, and nothing else ever reads them. Returns how many."""
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for path in (home / "claude" / "projects").glob("*/*.jsonl"):
+        try:
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and path.stat().st_mtime < cutoff
+            ):
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _safe(text: str) -> str:
@@ -352,6 +372,7 @@ class DeepLaneService:
             if self._thread is not None:
                 return
             self._deploy_skills()
+            prune_transcripts(self.home)
             self._thread = threading.Thread(
                 target=self._main, name="gos-deep-lane", daemon=True
             )
