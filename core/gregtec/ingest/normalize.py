@@ -265,7 +265,8 @@ def _in_key(s: Slot, alt_identity: bool) -> list[object]:
 
 @dataclass(frozen=True)
 class OreIndex:
-    """The run's oredict as ``items.jsonl`` lists it, to name what an NEI slot accepts (D104).
+    """The run's oredict, to name what an NEI slot accepts (D104): from ``oredict.jsonl`` when the
+    run has it (D145), else as ``items.jsonl``'s ore lists give it (runs made before D145).
 
     An oredict member with meta 32767 (a wildcard, such as ``minecraft:planks@32767`` in
     ``plankWood``) stands for every meta of its item, as NEI expands it. Items with NBT are

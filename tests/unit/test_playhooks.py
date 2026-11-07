@@ -246,6 +246,12 @@ def test_run_problems() -> None:
     client = {**ok, "parts": {"nei": "skipped_server"}}
     assert playhooks.run_problems(client) == ["NEI's part is skipped_server"]
     assert playhooks.run_problems({"parts": "junk"}) == ["NEI's part is None"]
+    failed = {
+        **ok,
+        "parts": {"nei": "ok", "oredict": "failed"},
+        "part_errors": {"oredict": "boom"},
+    }
+    assert playhooks.run_problems(failed) == ["the oredict part failed (boom)"]
 
 
 def test_export_waits_for_a_launch_to_start_its_client(env: Env) -> None:

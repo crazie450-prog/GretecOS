@@ -238,9 +238,20 @@ def lines(result: Result, full: bool) -> list[str]:
             f"copies of another NEI-only recipe), {sum(stats.not_recipes.values()):,} lines of "
             f"{len(stats.not_recipes)} handlers that aren't recipes, left out"
         )
+        if loaded.oredict is not None:
+            unread = sum(o.error is not None for o in loaded.oredict)
+            tail = f", {unread:,} whose members the mod couldn't read" if unread else ""
+            source = (
+                f"the run's full ore dictionary ({len(loaded.oredict):,} names{tail})"
+            )
+        else:
+            source = (
+                f"items.jsonl's ore lists (parts.oredict is {loaded.oredict_status!r})"
+            )
         out.append(
             f"  NEI-only oredict slots: {stats.ore_named:,} keyed by their oredict name, "
-            f"{stats.ore_sets:,} by the set of what they accept (no oredict name matches)"
+            f"{stats.ore_sets:,} by the set of what they accept (no oredict name matches), "
+            f"names from {source}"
         )
         if warning:
             out.append(f"  NEI warning: {warning}")

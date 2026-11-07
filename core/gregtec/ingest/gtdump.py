@@ -1,5 +1,6 @@
 """Readers for GregtecLink's GT files (WO-1.3): ``gt_recipe_maps.json``, ``gt_recipes.jsonl``,
-``items.jsonl`` and ``fluids.jsonl`` of one export run (the export contract).
+``items.jsonl`` and ``fluids.jsonl`` of one export run (the export contract), and the full ore
+dictionary ``oredict.jsonl`` (D145).
 
 Each reader turns the mod's raw facts into :mod:`gregtec.ingest.normalize` records. A line
 that isn't the contract's shape raises :class:`FormatError` naming the file and line, because
@@ -400,3 +401,42 @@ def read_fluids(run: Path) -> Iterator[Fluid]:
             )
         except ValueError as exc:
             raise FormatError(f"{FLUIDS}:{number}: {exc}") from None
+
+
+ORE_DICT = "oredict.jsonl"
+
+
+@dataclass(frozen=True, slots=True)
+class OreName:
+    """One oredict name and its members (D145): wildcard meta 32767 kept raw."""
+
+    name: str
+    members: tuple[Ref, ...]
+    error: str | None  # the mod couldn't read the name's members
+
+
+def oredict_status(manifest: Mapping[str, Any]) -> str:
+    """``parts.oredict``; ``absent`` for a run made before D145."""
+    parts = manifest.get("parts")
+    value = parts.get("oredict") if isinstance(parts, dict) else None
+    return value if isinstance(value, str) else "absent"
+
+
+def read_oredict(
+    run: Path, ids: dict[int, str | None] | None = None
+) -> Iterator[OreName]:
+    """``oredict.jsonl``: one :class:`OreName` per line, members keyed as every item ref is."""
+    for number, d in jsonl(run / ORE_DICT):
+        try:
+            members = tuple(
+                item_ref(_obj(m, "member"), ids)[0]
+                for m in _list(d.get("members"), "members")
+            )
+            error = d.get("error")
+            yield OreName(
+                _str(d.get("ore"), "ore"),
+                members,
+                None if error is None else str(error),
+            )
+        except ValueError as exc:
+            raise FormatError(f"{ORE_DICT}:{number}: {exc}") from None

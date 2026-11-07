@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 
 from gregtec.db import access, build, report
-from gregtec.ingest import collect, merge
+from gregtec.ingest import collect, gtdump, merge
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -167,6 +167,36 @@ def test_the_same_run_again_is_byte_identical(
     assert rows(again.db, q) == rows(client.db, q)
     q = "SELECT registry_name, meta, nbt_hash, nbt_json FROM item ORDER BY 1, 2, 3"
     assert rows(again.db, q) == rows(client.db, q)
+
+
+def test_the_full_oredict_names_more_nei_only_slots(
+    client: build.Result, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # D145: the run's oredict.jsonl names the NEI-only slots whose members items.jsonl
+    # doesn't all list; built again from items.jsonl's ore lists alone, fewer get a name. That
+    # isn't a run made before D145: this run's items.jsonl lists every oredict member, which
+    # older runs' didn't, so they named fewer still (8,644 of 50,155 for 20261106T092709Z).
+    m = client.loaded.run.manifest
+    assert m["parts"]["oredict"] == "ok" and client.loaded.oredict is not None
+    assert len(client.loaded.oredict) == m["counts"]["oredict"]
+    steel = rows(
+        client.db,
+        "SELECT i.registry_name, i.meta FROM ore_member om JOIN ore o ON o.id = om.ore_id"
+        " JOIN item i ON i.id = om.item_id WHERE o.name = 'ingotSteel'",
+    )
+    assert ("gregtech:gt.metaitem.01", 11305) in steel
+    home = client.loaded.run.path.parents[2]
+    monkeypatch.setattr(gtdump, "oredict_status", lambda manifest: "absent")
+    before = build.build(home, allow_harness=True, db=tmp_path / "before.sqlite")
+    now, old = client.loaded.stats, before.loaded.stats
+    assert now is not None and old is not None
+    assert now.ore_named + now.ore_sets == old.ore_named + old.ore_sets
+    assert now.ore_named > old.ore_named
+    print(
+        f"NEI-only oredict slots named: {now.ore_named:,} of "
+        f"{now.ore_named + now.ore_sets:,} (this run's items.jsonl ore lists alone: "
+        f"{old.ore_named:,})"
+    )
 
 
 def test_no_numeric_item_id_in_any_item_key(client: build.Result) -> None:
