@@ -7,6 +7,7 @@
 - ``gos pack status``: the open update's checklist and pending question.
 - ``gos pack diff [OLD NEW]``: the recipe, crop and oredict diff of two runs in the DB.
 - ``gos pack pin [RUN]``: the GT pin check of a run (exit 1 on a mismatch).
+- ``gos pack fixture-plans DIR SPEC...``: fixture plans for a dry run (WO-1.9 acceptance, L10).
 """
 
 from __future__ import annotations
@@ -111,7 +112,17 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "pin", help="check a run's GT version against the GT pin (exit 1 if it differs)"
     )
     pin.add_argument("run", nargs="?", default=None, help="run key (default: newest)")
-    for each in (watch, stock, update, adopt, status, pdiff, pin):
+    fx = cmds.add_parser(
+        "fixture-plans",
+        help="write gos-plan/0 fixture plans from the DB's newest run (for a dry run)",
+        description=(
+            "Each SPEC is <plan id>=<registry>@<meta> (cites every recipe making that item) or "
+            "<plan id>=crop:<crop id>. Reads the DB only; writes DIR/<plan id>.json."
+        ),
+    )
+    fx.add_argument("dir", type=Path)
+    fx.add_argument("spec", nargs="+")
+    for each in (watch, stock, update, adopt, status, pdiff, pin, fx):
         each.add_argument("--config", type=Path, default=None, help=CONFIG_HELP)
 
 
@@ -166,6 +177,23 @@ def _run(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
         return 0
     if cmd == "diff":
         return _diff(cfg, args.runs, out)
+    if cmd == "fixture-plans":
+        s = diff.side(access.db_path(home), None, home)
+        conn = diff.connect(s.db)
+        try:
+            made = [
+                plans.fixture(conn, s.run_id, s.run_key, spec) for spec in args.spec
+            ]
+        except ValueError as exc:
+            print(f"refused: {exc}", file=out)
+            return 1
+        finally:
+            conn.close()
+        for p in made:
+            path = args.dir / f"{p.id}.json"
+            fingerprint.atomic_write(path, plans.dumps(p))
+            print(f"{path}: {len(p.cites)} cites ({p.name})", file=out)
+        return 0
     if cmd == "pin":
         s = diff.side(access.db_path(home), args.run, home)
         problem = gtpin.problem(s.gt_version)

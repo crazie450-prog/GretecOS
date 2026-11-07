@@ -254,3 +254,53 @@ def mark_affected(
         conn.execute("ROLLBACK")
         raise
     return n
+
+
+def fixture(conn: sqlite3.Connection, run_id: int, run_key: str, spec: str) -> Plan:
+    """A ``gos-plan/0`` fixture plan for a dry run: ``<id>=<registry>@<meta>`` cites every
+    recipe of the run with that item among its outputs; ``<id>=crop:<crop id>`` cites the crop.
+    ValueError when the spec is malformed or cites nothing."""
+    pid, sep, what = spec.partition("=")
+    if not sep or not PLAN_ID.fullmatch(pid):
+        raise ValueError(
+            f"{spec!r}: write <plan id>=<registry>@<meta> or <plan id>=crop:<id>"
+        )
+    if what.startswith(CROP):
+        row = conn.execute(
+            "SELECT 1 FROM crop WHERE run_id = ? AND id = ?",
+            (run_id, what[len(CROP) :]),
+        ).fetchone()
+        cites = [what] if row else []
+    else:
+        registry, at, meta = what.rpartition("@")
+        if not at or not registry or not meta.isdigit():
+            raise ValueError(
+                f"{spec!r}: the item is <registry>@<meta>, e.g. minecraft:chest@0"
+            )
+        cites = [
+            str(r[0])
+            for r in conn.execute(
+                "SELECT DISTINCT r.ref FROM recipe AS r"
+                " JOIN recipe_output AS o ON o.recipe_id = r.id"
+                " JOIN item AS i ON i.id = o.item_id"
+                " WHERE r.run_id = ? AND i.registry_name = ? AND i.meta = ? ORDER BY r.ref",
+                (run_id, registry, int(meta)),
+            )
+        ]
+    if not cites:
+        raise ValueError(f"{spec!r}: run {run_key} has nothing to cite for {what}")
+    return Plan(pid, f"fixture: {what}", "fixture", run_key, tuple(cites))
+
+
+def dumps(plan: Plan) -> bytes:
+    return json.dumps(
+        {
+            "format": FORMAT,
+            "id": plan.id,
+            "name": plan.name,
+            "status": plan.status,
+            "run": plan.run,
+            "cites": list(plan.cites),
+        },
+        indent=1,
+    ).encode("utf-8")

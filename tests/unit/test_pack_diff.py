@@ -237,3 +237,21 @@ def test_plans_from_the_plan_table_and_mark_affected(db: Path, tmp_path: Path) -
 def test_plan_format_is_checked(doc: dict[str, object], match: str) -> None:
     with pytest.raises(ValueError, match=match):
         plans.parse(json.dumps(doc).encode(), "p.json")
+
+
+def test_fixture_plans_from_the_db(db: Path) -> None:
+    conn = access.connect(db, readonly=True)
+    try:
+        p = plans.fixture(conn, 2, "new", "pl-ingot=IC2:ingot@0")
+        assert p.cites == ("r:a/1", "r:a/2") and p.run == "new"
+        assert plans.parse(plans.dumps(p), "x") == p
+        for bad in (
+            "noequals",
+            "pl-x=IC2:ingot",
+            "pl-x=nothing:here@0",
+            "pl-x=crop:none",
+        ):
+            with pytest.raises(ValueError):
+                plans.fixture(conn, 2, "new", bad)
+    finally:
+        conn.close()
