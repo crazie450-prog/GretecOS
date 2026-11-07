@@ -86,6 +86,11 @@ DEFAULT_FINGERPRINT_CONFIGS = (
     "config/GregTech/WorldGeneration.cfg",
 )
 EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+# The pack and GT versions GOS is pinned to (plan 0.1 principle 4, CLAUDE.md). Repo constants, not
+# gos.toml keys: a GT bump needs the GT pin-bump procedure (docs/runbooks/pack_update.md, D148),
+# which changes code, so it can't be done by editing a config file (WO-1.9).
+PACK_PIN = "2.9.0"
+GT_PIN = "5.09.54.265"
 
 
 def default_home() -> Path:
