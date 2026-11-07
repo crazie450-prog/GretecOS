@@ -10,6 +10,9 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
 - With no fast lane (no key stored, or the API failing) a fast-lane request gets the instant
   answer for its card when pre-retrieval found one, else "AI is offline; I can do lookups"
   (plan 7.16; WO-2.8 adds the mode switch, banners and the credit flow).
+- :meth:`Asker.prewarm` writes the fast lane's prompt cache ahead of a request (the voice client
+  calls it as the talk key goes down, D152, D179), unless a fast-lane call started within the
+  last 4 minutes: each call refreshes the 5-minute cache, so the cache is still warm then.
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TextIO
+
+import anthropic
 
 from gregtec import config
 from gregtec.agents import prefetch, router
@@ -57,6 +62,10 @@ log = logging.getLogger(__name__)
 TEXT_MAX = 1000  # characters of one request
 DEEP_WAIT_S = 1800.0  # how long gos ask waits for a deep-lane task
 LANE_RETRY_S = 30.0  # how often a missing lane (no key yet) is looked for again
+# A fast-lane call this recent keeps the 5-minute prompt cache warm (each read refreshes it);
+# the margin covers the seconds between the talk key going down and the request (D179).
+PREWARM_FRESH_S = 240.0
+WARMED, WARM, BUSY, NO_LANE, FAILED = "warmed", "warm", "busy", "offline", "failed"
 AI_OFFLINE = "AI is offline; I can do lookups."
 NOTHING_PENDING = "Nothing is waiting for confirmation."
 NOTHING_TO_REPEAT = "I haven't said anything yet."
@@ -192,6 +201,8 @@ class Asker:
         self._lock = threading.Lock()
         self._last: Reply | None = None
         self._pending: _Pending | None = None
+        self._warm_at: float | None = None  # clock when the last fast-lane call started
+        self._warming = False
 
     def lane(self) -> FastLane | None:
         """The fast lane; a missing one (no key stored yet) is looked for every 30 s."""
@@ -265,7 +276,40 @@ class Asker:
         except LaneError as exc:
             log.warning("fast lane failed", extra={"error": str(exc)[:200]})
             return self._offline(route, pre, str(exc))
+        with self._lock:
+            self._warm_at = started
         return self._fast(route, pre, answer)
+
+    def prewarm(self) -> str:
+        """Write the fast lane's prompt cache for the request about to come (D152, D179).
+
+        Returns :data:`WARMED`, :data:`WARM` (a call started within :data:`PREWARM_FRESH_S`
+        already keeps it), :data:`BUSY` (another pre-warm is running), :data:`NO_LANE` (no key
+        stored) or :data:`FAILED` (the API failed; the request itself will say so).
+        """
+        lane = self.lane()
+        if lane is None:
+            return NO_LANE
+        with self._lock:
+            if self._warming:
+                return BUSY
+            now = self.clock()
+            if self._warm_at is not None and now - self._warm_at < PREWARM_FRESH_S:
+                return WARM
+            self._warming = True
+        try:
+            lane.prewarm()
+        except anthropic.APIError as exc:
+            log.warning(
+                "fast-lane pre-warm failed", extra={"error": type(exc).__name__}
+            )
+            return FAILED
+        finally:
+            with self._lock:
+                self._warming = False
+        with self._lock:
+            self._warm_at = now
+        return WARMED
 
     def _base(
         self, route: router.Route, pre: prefetch.Prefetch, lane: str, text: str

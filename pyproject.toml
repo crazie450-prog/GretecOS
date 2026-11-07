@@ -50,7 +50,7 @@ members = ["voice"]
 gregtec-voice = { workspace = true }
 
 [tool.ruff]
-src = ["core"]
+src = ["core", "voice"]  # first-party: gregtec and gregtec_voice (D179)
 # Ruff formats Python blocks inside Markdown by default; keep it off CLAUDE.md, README.md and docs/.
 extend-exclude = ["*.md"]
 

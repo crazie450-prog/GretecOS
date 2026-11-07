@@ -7,6 +7,9 @@
 | GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
 | GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
 | POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3) |
+| POST /api/prewarm              | admin, client, device   | warm the fast lane's prompt cache     |
+| POST /api/ui                   | admin, client, device   | a dashboard action (``next_card``)    |
+| POST /api/voice/state          | admin, the voice client | the voice strip's state (WO-5.1)      |
 | GET  /api/deep/tasks[/{id}]    | admin, client, device   | deep-lane tasks and their state       |
 | POST /api/deep/tasks/{id}/approve | admin, device        | a paused task may spend another cap   |
 | POST /api/deep/tasks/{id}/stop | admin, device           | end a queued, running or paused task  |
@@ -19,6 +22,8 @@
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
+|                                |                         | and, to admin and devices, ``ask.reply``, |
+|                                |                         | ``ui`` and ``voice.state`` (D179)     |
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -29,6 +34,15 @@ Health strip items have ``id``, ``kind`` (process or check), ``label``, ``status
 error or off) and ``detail``; process items add ``state``, ``pid`` (the process's own),
 ``launcher_pid`` (the one the supervisor started: on Windows a venv's python.exe launcher),
 ``uptime_s``, ``restarts``, ``last_exit`` and ``last_restart_ts`` from the supervisor.
+
+**Voice (WO-5.1, D179).** Every answer ``/api/ask`` gives is also pushed to the dashboards as
+``{"type": "ask.reply", "data": {"by", "request", ...the reply}}``, so a spoken question's card
+shows on monitor 2 (D23). ``/api/ui`` pushes ``{"type": "ui", "action", "by"}`` (the voice
+client's next-card hotkey). The voice client reports its state (``idle``, ``listening``,
+``thinking``, ``speaking``, ``off``; ``trigger`` ``key`` or ``wake``) to ``/api/voice/state``; the
+core keeps the latest, pushes it as ``{"type": "voice.state", "data": {"state", "trigger",
+"ts"}}`` and sends it to each dashboard that connects; when the voice client's WebSocket closes
+the state is ``off``. ``/api/prewarm`` runs :meth:`Asker.prewarm` (the talk key went down).
 
 No ``from __future__ import annotations`` here: FastAPI reads the route signatures at runtime,
 and the ``Anyone``/``Trusted``/``Admin`` dependency aliases are local to :func:`create_app`.
@@ -94,6 +108,10 @@ QUEUE_MAX = (
 CLOSE = (
     None  # queued instead of a message: close the socket (its credential was revoked)
 )
+UI_ACTIONS = ("next_card",)  # what /api/ui pushes to the dashboards (WO-5.1 hotkeys)
+VOICE_CLIENT = "voice"  # the voice client's token name (gos token new voice)
+VOICE_STATES = ("idle", "listening", "thinking", "speaking", "off")
+VOICE_TRIGGERS = ("key", "wake")
 
 
 @dataclass(eq=False)
@@ -138,6 +156,7 @@ class Core:
     stop_asked: float | None = None
     asker: Asker | None = None  # the router and the lanes (WO-2.3)
     deep: DeepLaneService | None = None  # the deep lane (WO-2.4)
+    voice: dict[str, Any] | None = None  # the voice client's latest state (WO-5.1)
 
     # --- pushing to WebSocket clients
 
@@ -157,6 +176,12 @@ class Core:
         """The deep lane's ``on_change`` (its own thread): push the task to every socket."""
         data = task.as_dict()
         self._threadsafe(lambda: self.broadcast({"type": "deep.task", "data": data}))
+
+    def set_voice(self, state: str, trigger: str | None) -> dict[str, Any]:
+        """Keep the voice client's state and push it to the dashboards (loop only)."""
+        self.voice = {"state": state, "trigger": trigger, "ts": int(time.time())}
+        self.broadcast({"type": "voice.state", "data": self.voice}, trusted_only=True)
+        return self.voice
 
     def pairing_changed(self) -> None:
         """Pairing's ``on_change``; may run on a worker thread."""
@@ -464,7 +489,43 @@ def create_app(core: Core) -> FastAPI:
                 "checked": reply.checked,
             },
         )
-        return reply.as_dict()
+        answer = reply.as_dict()
+        # The dashboards show every answer's card, a spoken question's too (D23, D179).
+        pushed = {"by": who.name, "request": text, **answer}
+        core.broadcast({"type": "ask.reply", "data": pushed}, trusted_only=True)
+        return answer
+
+    @app.post("/api/prewarm")
+    async def prewarm(_: Anyone) -> dict[str, Any]:
+        """Warm the fast lane's prompt cache for the request about to come (D152, D179)."""
+        if core.asker is None:
+            raise HTTPException(503, "the agents aren't set up in this core")
+        return {"status": await asyncio.to_thread(core.asker.prewarm)}
+
+    @app.post("/api/ui")
+    async def ui_action(request: Request, who: Anyone) -> dict[str, Any]:
+        """``{"action": "next_card"}`` -> pushed to the dashboards (the WO-5.1 hotkey)."""
+        body = await _json_body(request)
+        action = body.get("action")
+        if action not in UI_ACTIONS:
+            raise HTTPException(400, f"action must be one of {', '.join(UI_ACTIONS)}")
+        core.broadcast(
+            {"type": "ui", "action": action, "by": who.name}, trusted_only=True
+        )
+        return {"action": action}
+
+    @app.post("/api/voice/state")
+    async def voice_state(request: Request, who: Anyone) -> dict[str, Any]:
+        """The voice client's state for the voice strip and orb (WO-5.1, D179)."""
+        if who.role != "admin" and (who.role, who.name) != ("client", VOICE_CLIENT):
+            raise HTTPException(403, "only the voice client reports the voice state")
+        body = await _json_body(request)
+        state, trigger = body.get("state"), body.get("trigger")
+        if state not in VOICE_STATES:
+            raise HTTPException(400, f"state must be one of {', '.join(VOICE_STATES)}")
+        if trigger is not None and trigger not in VOICE_TRIGGERS:
+            raise HTTPException(400, "trigger must be key, wake or null")
+        return core.set_voice(state, trigger)
 
     def deep_lane() -> DeepLaneService:
         if core.deep is None:
@@ -620,13 +681,22 @@ def create_app(core: Core) -> FastAPI:
             if sock.trusted:
                 pending = {"type": "pair.pending", "data": core.pairing.pending()}
                 await ws.send_text(json.dumps(pending))
+                if core.voice is not None:
+                    voice = {"type": "voice.state", "data": core.voice}
+                    await ws.send_text(json.dumps(voice))
             await _pump(ws, sock)
         except WebSocketDisconnect:
             pass
         finally:
             core.sockets.discard(sock)
+            if _is_voice(who) and not any(_is_voice(s.who) for s in core.sockets):
+                core.set_voice("off", None)  # the voice client went away (D179)
 
     return app
+
+
+def _is_voice(who: Principal) -> bool:
+    return who.role == "client" and who.name == VOICE_CLIENT
 
 
 def _id_prefix(request_id: str) -> str:
