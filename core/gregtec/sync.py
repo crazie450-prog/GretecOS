@@ -365,6 +365,36 @@ def plan_all(cfg: config.Config, roles: Sequence[str]) -> tuple[list[Plan], list
     return plans, refusals
 
 
+def plan_lab_to_export(cfg: config.Config) -> tuple[Plan | None, list[str]]:
+    """Export's plan with **Lab** as the source, for the pack-update playbook's Lab export
+    (WO-1.9, D148): Lab's mods/, config/ and scripts/ mirrored into Export, never touching what
+    Export's or Lab's exclude list matches (Lab's test-only files stay out of Export), then
+    GregtecLink installed as for every export. Play is never touched; Lab is only read. The
+    next ``gos export run`` mirrors Play into Export again. Reads only; (None, refusals) when
+    anything is refused."""
+    refusals: list[str] = []
+    play = _instance(cfg.instance("play"), "Play", refusals)
+    lab = _instance(cfg.instance("lab"), "lab", refusals)
+    export = _instance(cfg.instance("export"), "export", refusals)
+    if play is None or lab is None or export is None:
+        return None, refusals
+    for a, b, what in (
+        (export, play, "Play"),
+        (export, lab, "Lab"),
+        (lab, play, "Play"),
+    ):
+        if _overlap(a[0], b[0]):
+            refusals.append(f"{a[0]} is {what}, is inside it or holds it")
+    if refusals:
+        return None, refusals
+    patterns = tuple(
+        dict.fromkeys([*cfg.sync_exclude["export"], *cfg.sync_exclude.get("lab", ())])
+    )
+    plan = plan_target("export", lab[1], export[1], patterns, refusals)
+    plan_install(plan, cfg.gos_app, cfg.sync_exclude["export"], refusals)
+    return (None if refusals else plan), refusals
+
+
 def apply(plan: Plan) -> None:
     for path in plan.delete:
         path.unlink()
