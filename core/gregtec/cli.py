@@ -392,6 +392,77 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
+    ask = commands.add_parser(
+        "ask",
+        help="ask Gregtec OS a question (router, instant commands, fast lane)",
+        description=(
+            "Routes the text as POST /api/ask does (WO-2.3): instant commands and unsure "
+            "item matches answer without a model; lookups go to the fast lane (Haiku 5.5, "
+            "the stored key); design and planning are handed to the deep lane. Runs in this "
+            "process against GOS_HOME's DB and vault."
+        ),
+    )
+    ask.add_argument("text", help='the question, e.g. "how do I make steel"')
+    ask.add_argument(
+        "--json", action="store_true", help="print the whole reply as JSON"
+    )
+    eval_parser = commands.add_parser("eval", help="run an eval set")
+    eval_cmds = eval_parser.add_subparsers(dest="eval_command", required=True)
+    fast_eval = eval_cmds.add_parser(
+        "fast-lane",
+        help="the fast lane's 50 questions and 10 ambiguous items (WO-2.3)",
+        description=(
+            "Asks every row of tests/evals/fast_lane_questions.tsv and reports pass/fail, "
+            "time to first token (P50 target 1.2 s) and whether the ambiguous items asked. "
+            "Uses the stored Anthropic key (about a cent a run) unless --fake."
+        ),
+    )
+    fast_eval.add_argument(
+        "--fake",
+        action="store_true",
+        help="a fake model client: no key, no cost, no real timings",
+    )
+    fast_eval.add_argument(
+        "--questions", type=Path, default=None, help="another question file"
+    )
+    fast_eval.add_argument(
+        "--limit", type=int, default=None, help="only the first N rows"
+    )
+    deep_eval = eval_cmds.add_parser(
+        "deep-lane",
+        help="the deep lane's cost table over 10 representative tasks (WO-2.4)",
+        description=(
+            "Hands every row of tests/evals/deep_lane_tasks.tsv to the deep lane, one fresh "
+            "session each, and prints the cost table (SDK cost by model, turns, tools, "
+            "subagents, seconds; total, mean, median). A task that reaches [budget] "
+            "task_max_usd is stopped, never approved, so a run costs at most 10 caps. Uses "
+            "the stored Anthropic key and records llm_usage unless --fake."
+        ),
+    )
+    deep_eval.add_argument(
+        "--fake",
+        action="store_true",
+        help="the real CLI against a local scripted model: no key, no cost",
+    )
+    deep_eval.add_argument("--tasks", type=Path, default=None, help="another task file")
+    deep_eval.add_argument(
+        "--limit", type=int, default=None, help="only the first N rows"
+    )
+    deep_eval.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="where to write the table (TSV). Default: "
+        "GOS_HOME/data/reports/deep-lane-costs-<date>.tsv",
+    )
+    for each in (ask, fast_eval, deep_eval):
+        each.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
+            "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
+        )
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -627,6 +698,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.all,
             args.schema,
             sys.stdout,
+        )
+    if args.command in ("ask", "eval"):
+        # Answers hold pack text (CJK, symbols): escape what a Windows pipe can't encode.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        # Imported here: the agents import the anthropic SDK, which takes a moment.
+        if args.command == "ask":
+            from gregtec.agents import ask as agents_ask
+
+            return agents_ask.main(args.config, args.text, args.json, sys.stdout)
+        if args.limit is not None and args.limit < 1:
+            parser.error("--limit must be at least 1")
+        if args.eval_command == "deep-lane":
+            from gregtec.agents import deep_eval
+
+            return deep_eval.main(
+                args.config, args.tasks, args.fake, args.limit, args.out, sys.stdout
+            )
+        from gregtec.agents import evals
+
+        return evals.main(
+            args.config, args.questions, args.fake, args.limit, sys.stdout
         )
     if args.command == "hook":
         return playhooks.hook_main(args, sys.stdout, os.environ)

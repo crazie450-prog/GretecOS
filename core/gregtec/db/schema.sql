@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS wiki_page(title TEXT PRIMARY KEY, revid INT, fetched 
 CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(title, text, content='wiki_page');
 CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(path UNINDEXED, t, upd UNINDEXED, body);
 CREATE TABLE IF NOT EXISTS llm_usage(ts INT, lane TEXT, model TEXT, in_tok INT, out_tok INT,
-  cache_read INT, cache_write INT, usd REAL, task TEXT);
+  cache_read INT, cache_write INT, usd REAL, task TEXT, ttft_ms INT);
 -- devices, alerts and small app state
 CREATE TABLE IF NOT EXISTS device(id TEXT PRIMARY KEY, name TEXT, paired INT, last_seen INT,
   revoked INT);   -- QA:A8

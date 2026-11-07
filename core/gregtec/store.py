@@ -22,7 +22,7 @@ QUICK_TIMEOUT_MS = 50  # try_write's wait
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_usage(ts INT, lane TEXT, model TEXT, in_tok INT, out_tok INT,
-  cache_read INT, cache_write INT, usd REAL, task TEXT);
+  cache_read INT, cache_write INT, usd REAL, task TEXT, ttft_ms INT);
 CREATE INDEX IF NOT EXISTS ix_llm_usage_ts ON llm_usage(ts);
 CREATE TABLE IF NOT EXISTS device(id TEXT PRIMARY KEY, name TEXT, paired INT, last_seen INT,
   revoked INT);
@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS client_token(name TEXT PRIMARY KEY, token_sha256 TEXT
   created INT NOT NULL, last_used INT, revoked INT NOT NULL DEFAULT 0);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
-ADDED_COLUMNS = (("device", "token_sha256", "TEXT"),)
+ADDED_COLUMNS = (
+    ("device", "token_sha256", "TEXT"),
+    (
+        "llm_usage",
+        "ttft_ms",
+        "INT",
+    ),  # a streamed call's time to first text token (D152)
+)
 
 
 def connect(path: Path) -> sqlite3.Connection:

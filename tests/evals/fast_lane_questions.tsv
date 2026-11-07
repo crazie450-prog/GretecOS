@@ -1,0 +1,61 @@
+id	set	kind	expect	key	question
+q01	core	recipe	answer	gregtech:gt.metaitem.01@11305	How do I make steel?
+q02	core	recipe	answer	gregtech:gt.metaitem.02@31305	How do I make a steel gear?
+q03	core	recipe	answer	gregtech:gt.metaitem.01@32700	How do I craft a vacuum tube?
+q04	core	recipe	answer	gregtech:gt.metaitem.01@11306	What makes stainless steel?
+q05	core	recipe	answer	gregtech:gt.metaitem.01@11308	How is red alloy made?
+q06	core	recipe	answer	gregtech:gt.metaitem.01@32600	How do I make an LV motor?
+q07	core	recipe	answer	gregtech:gt.metaitem.01@17305	How do I make a steel plate?
+q08	core	recipe	answer	fluid:sulfuricacid	What machine makes sulfuric acid?
+q09	core	recipe	answer	gregtech:gt.metaitem.01@11019	How do I get aluminium?
+q10	core	recipe	answer	gregtech:gt.metaitem.01@23305	How do I make a steel rod?
+q11	core	recipe	answer	IC2:itemCable@1	How do I make copper cable?
+q12	core	recipe	answer	gregtech:gt.blockmachines@3	How do I make a steel hull?
+q13	core	recipe	answer	gregtech:gt.metaitem.01@11880	How do I make a rubber bar at LV?
+q14	core	recipe	answer	gregtech:gt.metaitem.01@11300	How do I make bronze?
+q15	core	recipe	answer	fluid:oxygen	What produces oxygen?
+q16	core	recipe	answer	IC2:itemCable@10	How do I make tin cable?
+q17	core	recipe	answer	minecraft:glass@0	How do I make glass?
+q18	core	recipe	answer	gregtech:gt.metaitem.01@32641	How can I make an MV electric piston?
+q19	core	item	answer	gregtech:gt.blockmachines@1000	What does the EBF do?
+q20	core	item	answer	gregtech:gt.blockmachines@1000	Tell me about the electric blast furnace.
+q21	core	item	answer	gregtech:gt.blockmachines@12730	What does the mega electric blast furnace do?
+q22	core	item	answer	gregtech:gt.blockmachines@3	Tell me about the steel hull.
+q23	core	item	answer	gregtech:gt.metaitem.01@32700	What is a vacuum tube?
+q24	core	item	answer	gregtech:gt.blockmachines@140	Tell me about the bricked blast furnace.
+q25	core	item	answer	fluid:sulfuricacid	What is sulfuric acid?
+q26	core	item	answer	gregtech:gt.blockmachines@1366	Info on the 1x copper cable.
+q27	core	uses	answer	gregtech:gt.metaitem.01@11305	What is steel used for?
+q28	core	uses	answer	gregtech:gt.metaitem.01@32700	What can I make with a vacuum tube?
+q29	core	uses	answer	gregtech:gt.metaitem.01@32716	What are resistors used for?
+q30	core	quest	answer	gregtech:gt.metaitem.01@11305	Which quest asks for steel?
+q31	core	quest	answer	gregtech:gt.metaitem.01@32700	Which quests need a vacuum tube?
+q32	core	quest	answer		What quests can I do now?
+q33	core	quest	answer		Tell me about the quest called your first night.
+q34	core	quest	answer	gregtech:gt.metaitem.01@11300	Which quest gives bronze?
+q35	core	quest	answer		What are my next quests?
+q36	core	general	answer		Is the wiki or NEI better for checking recipes?
+q37	core	general	answer		What do the r: ids in your answers mean?
+q38	core	general	answer		Why does GregTech have so many tiers?
+q39	core	general	answer		Where do I find oil?
+q40	core	general	answer		What is EU/t?
+q41	core	instant	instant	gregtech:gt.metaitem.01@11306	recipe for stainless steel
+q42	core	instant	instant	gregtech:gt.metaitem.02@31305	steel gear recipe
+q43	core	instant	instant	gregtech:gt.metaitem.01@11308	what uses red alloy
+q44	core	instant	instant		what's my tier
+q45	core	instant	instant	gregtech:gt.metaitem.01@32700	recipes for the vacuum tube at LV
+q46	core	instant	instant	gregtech:gt.metaitem.01@11057	uses of tin
+q47	core	deep	handoff		Design me a steel production line at MV.
+q48	core	deep	handoff		Compare the EBF and the bricked blast furnace for steel.
+q49	core	deep	handoff		How many EBFs do I need for 2 steel per second?
+q50	core	deep	handoff		What should I do next?
+a01	ambiguous	ambiguous	ask		How do I make copper wire?
+a02	ambiguous	ambiguous	ask		How do I make a basic circuit?
+a03	ambiguous	ambiguous	ask		What makes a hull?
+a04	ambiguous	ambiguous	ask		Tell me about the wrench.
+a05	ambiguous	ambiguous	ask		How do I make stainless?
+a06	ambiguous	ambiguous	ask		recipe for battery
+a07	ambiguous	ambiguous	ask		How is silicon made?
+a08	ambiguous	ambiguous	ask		What uses a conveyor?
+a09	ambiguous	ambiguous	ask		How do I craft a gear?
+a10	ambiguous	ambiguous	ask		Which quest needs a circuit?
