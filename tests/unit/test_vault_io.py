@@ -364,6 +364,7 @@ def test_append_refusals(vault: io.VaultIO) -> None:
         (rel, "Built the EBF today.", "is not key: value"),
         (rel, "---\nid: x", "body lines only"),
         (rel, "", "nothing to append"),
+        (rel, "n_items: 5", "curator's counts"),  # D143: n_ is reserved for the counts
         ("plans/pl-9.md", "st: a", "note_write makes it"),
         ("inbox/ib-nope.md", "note: a", "inbox_propose makes it"),
         ("me/goals.md", "goal: x", "Clayton's"),

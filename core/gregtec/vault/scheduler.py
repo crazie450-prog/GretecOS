@@ -19,6 +19,15 @@ minute (``gregtec.api.app``) and :meth:`Maintenance.session_end` when it stops.
   marked in ``kv``: the next start runs that day's jobs again (each is safe to repeat).
 - **Health** warns when no run has happened for :data:`STALE_DAYS` days: a PC that sleeps after
   30 idle minutes never gets an idle half hour while awake, and waking it is input.
+- **The DB backup at session end** (D142 (g), D143): once the daily run has been missed for
+  :data:`BACKUP_MISSED_DAYS` days (counted from ``maintenance.last_day``, else from
+  ``maintenance.since``), :meth:`Maintenance.session_end` also runs the ``backup`` job after the
+  commit. It writes that day's backup, so later session ends that day find it and do nothing.
+  When the core is stopping, the commit's lock wait and the backup share one deadline,
+  :data:`STOP_DEADLINE_S` after the stop was asked for (the supervisor kills the core 5 s after
+  asking, and uvicorn's graceful shutdown may already have used 3 of them): a backup that
+  can't finish by then, or waits on a locked DB until then, is interrupted and leaves no file,
+  and the next session end tries again.
 """
 
 from __future__ import annotations
@@ -37,7 +46,13 @@ from typing import Any
 
 from gregtec import config, locks, playhooks, prism
 from gregtec.store import Store
-from gregtec.vault.curator import FAILED, Curator, JobResult, commit_agent_writes
+from gregtec.vault.curator import (
+    FAILED,
+    Curator,
+    JobResult,
+    backup,
+    commit_agent_writes,
+)
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +63,10 @@ KV_LAST_RUN = "maintenance.last_run"
 KV_SINCE = "maintenance.since"  # the first day the core checked, for the stale warning
 STALE_DAYS = 3
 SESSION_END_WAIT_S = 2.0  # the supervisor kills the core 5 s after asking it to stop
+BACKUP_MISSED_DAYS = 2  # D142 (g): back up at session end once this late
+# The core's stop deadline, from the moment the stop was asked for: the supervisor's 5 s kill
+# (supervisor.STOP_TIMEOUT_S) less a margin for closing the DB and the process exit.
+STOP_DEADLINE_S = 4.5
 
 
 def seconds_since_input() -> float | None:
@@ -198,18 +217,62 @@ class Maintenance:
             self.last_wait = f"done for {today}"
             return results
 
-    def session_end(self, wait_s: float = SESSION_END_WAIT_S) -> str | None:
-        """Commit the session's writes (plan 6.5: at session end). While a daily run holds the
-        lock past ``wait_s``, it is skipped: the next batch commits them."""
+    def session_end(
+        self, wait_s: float = SESSION_END_WAIT_S, deadline: float | None = None
+    ) -> str | None:
+        """Commit the session's writes (plan 6.5: at session end), then the DB backup when the
+        daily run is overdue (see the module docstring). ``deadline`` (a ``time.monotonic()``
+        value, None: none) bounds the lock wait and the backup. Returns the commit's hash.
+        While a daily run holds the lock past ``wait_s`` (or the deadline), both are skipped:
+        the next batch commits them."""
+        if deadline is not None:
+            wait_s = max(0.0, min(wait_s, deadline - time.monotonic()))
         if not self._lock.acquire(timeout=wait_s):
             log.warning("session-end commit skipped: maintenance is running")
             return None
         try:
-            if not (self.curator.vault / ".git").is_dir():
-                return None
-            return self.commit("session end")
+            sha = None
+            if (self.curator.vault / ".git").is_dir():
+                sha = self.commit("session end")
+            self._overdue_backup(deadline)
+            return sha
         finally:
             self._lock.release()
+
+    def missed_days(self) -> int | None:
+        """Days since the last daily run (or since the core first checked, before any), or
+        None when neither is recorded."""
+        since = self._kv(KV_LAST_DAY) or self._kv(KV_SINCE)
+        try:
+            return (self.now().date() - dt.date.fromisoformat(str(since))).days
+        except ValueError:
+            return None
+
+    def _overdue_backup(self, deadline: float | None) -> JobResult | None:
+        """The session-end backup (D142 (g)); errors are logged, never raised."""
+        try:
+            missed = self.missed_days()
+        except sqlite3.Error as exc:
+            log.warning("session-end backup skipped", extra={"error": str(exc)})
+            return None
+        if missed is None or missed < BACKUP_MISSED_DAYS:
+            return None
+        cur = self.curator
+        try:
+            result = backup(
+                cur.db, cur.backups, self.now().date(), cur.keep_backups, deadline
+            )
+        except (OSError, sqlite3.Error) as exc:
+            result = JobResult("backup", FAILED, f"{type(exc).__name__}: {exc}")
+        log.info(
+            "session-end backup",
+            extra={
+                "missed_days": missed,
+                "status": result.status,
+                "detail": result.detail,
+            },
+        )
+        return result
 
     def health(self) -> tuple[str, str]:
         """(status, detail) for the dashboard's health strip."""

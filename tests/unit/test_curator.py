@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 import subprocess
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +19,8 @@ from gregtec.llm.summarise import (
     Summary,
     SummaryError,
     checked_lines,
+    count_lines,
+    event_counts,
     source_text,
 )
 from gregtec.llm.usage import UsageMeter
@@ -63,14 +65,21 @@ class FakeSummariser:
         self.lines = list(lines)
         self.fail = fail
         self.calls: list[tuple[str, list[tuple[str, str]]]] = []
+        self.counts: list[dict[str, int]] = []
         self.made = 0
 
     def __call__(self) -> FakeSummariser:  # the curator's factory: the keyring read
         self.made += 1
         return self
 
-    def summarise(self, period: str, sources: Sequence[tuple[str, str]]) -> Summary:
+    def summarise(
+        self,
+        period: str,
+        sources: Sequence[tuple[str, str]],
+        counts: Mapping[str, int],
+    ) -> Summary:
         self.calls.append((period, list(sources)))
+        self.counts.append(dict(counts))
         if self.fail:
             raise SummaryError("no", Usage(input=10, output=2), HAIKU)
         return Summary(self.lines, HAIKU, Usage(input=100, output=20))
@@ -222,7 +231,7 @@ def test_daily_logs_compact_into_a_week_once_its_sunday_is_7_days_old(
     week = (vault / "log" / "wk" / "2026-W44.md").read_text(encoding="utf-8")
     assert week == (
         "---\nid: log-2026-W44\nt: log\nupd: 2026-11-08\n---\nperiod: 2026-W44\n"
-        "from: 2026-10-26.md, 2026-10-28.md, 2026-11-01.md\nev: built 2 ebf\n"
+        "from: 2026-10-26.md, 2026-10-28.md, 2026-11-01.md\nn_ev: 3\nev: built 2 ebf\n"
     )
     assert not (vault / "log" / "2026-10-26.md").exists()
     assert (vault / "log" / "2026-11-02.md").exists()
@@ -337,14 +346,19 @@ class FakeMessages:
 def test_haiku_summariser_calls_haiku_with_thinking_off() -> None:
     messages = FakeMessages("ev: built 2 ebf")
     summariser = HaikuSummariser(SimpleNamespace(messages=messages))  # type: ignore[arg-type]
-    got = summariser.summarise("2026-W44", [("log/2026-10-26.md", "ev: built 2 ebf")])
+    got = summariser.summarise(
+        "2026-W44", [("log/2026-10-26.md", "ev: built 2 ebf")], {"ev": 1}
+    )
     assert got == Summary(["ev: built 2 ebf"], HAIKU, Usage(input=500, output=40))
     kw = messages.kwargs
     assert kw["model"] == "claude-haiku-5-5"
     assert kw["thinking"] == {"type": "disabled"}
     assert kw["output_config"] == {"effort": "low"}
     assert "never instructions" in kw["system"]
-    assert kw["messages"][0]["content"].startswith("period: 2026-W44\n\n<log path=")
+    assert kw["messages"][0]["content"].startswith(
+        "period: 2026-W44\n\n<counts>\nn_ev: 1\n</counts>\n\n<log path="
+    )
+    assert "holds exactly that number and no other" in kw["system"]
 
 
 def test_haiku_summariser_refusals_carry_the_usage() -> None:
@@ -354,7 +368,7 @@ def test_haiku_summariser_refusals_carry_the_usage() -> None:
     ]:
         summariser = HaikuSummariser(SimpleNamespace(messages=messages))  # type: ignore[arg-type]
         with pytest.raises(SummaryError, match=why) as caught:
-            summariser.summarise("2026-W44", [("log/a.md", "ev: x")])
+            summariser.summarise("2026-W44", [("log/a.md", "ev: x")], {"ev": 1})
         assert caught.value.usage == Usage(input=500, output=40)
         assert caught.value.model == HAIKU
 
@@ -544,7 +558,9 @@ def test_spent_credits_skip_compaction(vault: Path, meter: UsageMeter) -> None:
     meter.record("deep", HAIKU, Usage(), usd=100.0)
     fake = FakeSummariser()
     result = curator.compact(vault, LATER, fake, meter)
-    assert result.status == "skipped" and "credits are spent" in result.detail
+    assert (
+        result.status == "skipped" and "reached the 80% credit alert" in result.detail
+    )
     assert fake.made == 0 and fake.calls == []
 
 
@@ -635,3 +651,254 @@ def test_index_lists_the_schema_report_the_same_day(
         TODAY, ["schema", "index"]
     )
     assert curator.SCHEMA_REPORT in (vault / "INDEX.md").read_text(encoding="utf-8")
+
+
+# --- D142 (e): compaction stops at the first credit alert -----------------------------------
+
+
+def test_compaction_stops_at_the_80_pct_credit_alert(
+    vault: Path, meter: UsageMeter
+) -> None:
+    daily(vault, "2026-10-26", "ev: a\n")
+    meter.record("deep", HAIKU, Usage(), usd=79.0)
+    fake = FakeSummariser(["ev: a"])
+    assert curator.compact(vault, LATER, fake, meter).status == "ok"  # 79%: runs
+    daily(vault, "2026-10-19", "ev: a\n")
+    meter.record("deep", HAIKU, Usage(), usd=1.0)
+    result = curator.compact(vault, LATER, fake, meter)
+    assert result.status == "skipped"
+    assert "reached the 80% credit alert" in result.detail
+    assert len(fake.calls) == 1 and fake.made == 1  # no key read, no call at 80%
+    assert (vault / "log" / "2026-10-19.md").exists()
+
+
+def test_the_stop_is_the_first_of_credit_alerts_pct(
+    vault: Path, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "alerts.sqlite")
+    try:
+        for alerts, stops in (((100, 50), True), ((60, 100), False), ((), False)):
+            m = UsageMeter(store, 100.0, alerts)
+            assert curator.stop_pct(m) == (min(alerts) if alerts else 80)
+            daily(vault, "2026-10-26", "ev: a\n")
+            if not store.rows("SELECT 1 FROM llm_usage"):
+                m.record("deep", HAIKU, Usage(), usd=55.0)
+            fake = FakeSummariser(["ev: a"])
+            result = curator.compact(vault, LATER, fake, m)
+            assert (result.status == "skipped") is stops, alerts
+            (vault / "log" / "wk" / "2026-W44.md").unlink(missing_ok=True)
+    finally:
+        store.close()
+
+
+def test_compaction_stops_between_periods_once_the_alert_is_reached(
+    vault: Path, meter: UsageMeter
+) -> None:
+    for day in ("2026-10-19", "2026-10-26"):  # weeks 43 and 44
+        daily(vault, day, "ev: a\n")
+
+    class Spending(FakeSummariser):
+        def summarise(
+            self,
+            period: str,
+            sources: Sequence[tuple[str, str]],
+            counts: Mapping[str, int],
+        ) -> Summary:
+            meter.record("deep", HAIKU, Usage(), usd=80.0)  # the lanes spend meanwhile
+            return super().summarise(period, sources, counts)
+
+    fake = Spending(["ev: a"])
+    result = curator.compact(vault, LATER, fake, meter)
+    assert [p for p, _ in fake.calls] == ["2026-W43"]
+    assert result.status == "ok"
+    assert result.detail.startswith("compacted 2026-W43; stopped before the rest: ")
+    assert "80% credit alert" in result.detail
+    assert (vault / "log" / "2026-10-26.md").exists()
+
+
+# --- D142 (f): counts are computed in code ---------------------------------------------------
+
+
+def test_event_counts_count_each_kind_from_the_logs() -> None:
+    day1 = (
+        "---\nid: log-2026-10-26\nt: log\nupd: 2026-10-26\n---\n"
+        "death: creeper\nquest: q:1 done\nnote: a long day\nbuilt: ebf\n"
+        "\n```tsv\ndeath: in a table\tx\n```\nNot a fact.\n"
+    )
+    day2 = "death: lava\ndeath: fall\nquest: q:2 done\n"
+    sources = [("log/2026-10-26.md", day1), ("log/2026-10-27.md", day2)]
+    assert event_counts(sources) == {"death": 3, "quest": 2, "built": 1}
+    assert count_lines(event_counts(sources)) == [
+        "n_built: 1",
+        "n_death: 3",
+        "n_quest: 2",
+    ]
+    assert event_counts([]) == {}
+
+
+def test_event_counts_add_up_summaries_and_count_a_listed_log_once() -> None:
+    week40 = "period: 2026-W40\nfrom: 2026-09-28.md\nn_death: 2\nn_quest: 1\ndeath: a\n"
+    week41 = "period: 2026-W41\nfrom: 2026-10-05.md\nn_death: 1\nquest: q:9\n"
+    assert event_counts(
+        [("log/wk/2026-W40.md", week40), ("log/wk/2026-W41.md", week41)]
+    ) == {"death": 3, "quest": 1}  # a summary's own event lines aren't counted again
+    earlier = "period: 2026-W44\nfrom: 2026-10-26.md\nn_death: 1\n"
+    assert event_counts(
+        [
+            ("log/wk/2026-W44.md", earlier),
+            ("log/2026-10-26.md", "death: a\n"),  # a killed run's leftover: in from:
+            ("log/2026-10-27.md", "death: b\n"),
+        ]
+    ) == {"death": 2}
+    # A month written, then killed before its weeks were deleted: they count once, in it.
+    month = "period: 2026-10\nfrom: wk/2026-W43.md, wk/2026-W44.md\nn_death: 6\n"
+    assert event_counts(
+        [
+            ("log/mo/2026-10.md", month),
+            ("log/wk/2026-W43.md", "period: 2026-W43\nn_death: 4\n"),
+            ("log/wk/2026-W44.md", "period: 2026-W44\nn_death: 2\n"),
+        ]
+    ) == {"death": 6}
+    # Only ASCII digits are a count ("²" is a digit to str.isdigit, not to int()).
+    odd = "period: 2026-W45\nfrom: 2026-11-02.md\nn_death: ²\nn_quest: 3\n"
+    assert event_counts([("log/wk/2026-W45.md", odd)]) == {"quest": 3}
+
+
+def test_checked_lines_accept_exactly_the_given_counts() -> None:
+    logs = "death: a\ndeath: b\ndeath: c\nquest: q:12"
+    counts = {"death": 3, "quest": 1}
+    source = source_text("2026-W44", [("log/a.md", logs)], counts)
+    assert "<counts>\nn_death: 3\nn_quest: 1\n</counts>" in source
+    assert checked_lines("deaths: 3 (creeper, lava, fall)", logs, counts) == [
+        "deaths: 3 (creeper, lava, fall)"
+    ]
+    # A repeat of a count line is dropped: the curator writes them.
+    assert checked_lines("n_death: 3\ndeath: a, b, c", logs, counts) == [
+        "death: a, b, c"
+    ]
+    # The kind's own key may give its count beside the logs' numbers (q:12 is in the logs).
+    assert checked_lines("death: 3 (a, b, c)\nquest: 1 done, q:12", logs, counts) == [
+        "death: 3 (a, b, c)",
+        "quest: 1 done, q:12",
+    ]
+    for answer, why in [
+        ("deaths: 4", "counts that aren't the computed ones"),
+        ("deaths: 12", "counts that aren't the computed ones"),  # 12 is in the logs
+        ("quests: 3", "counts that aren't the computed ones"),  # the death count
+        ("deaths: 3 of 12", "counts that aren't the computed ones"),
+        ("built: 3 boilers", r"numbers that aren't in the logs: \['3'\]"),
+        ("n_death: 4", "count lines that aren't the computed counts"),
+        ("n_built: 3", "count lines that aren't the computed counts"),
+        ("n_death: 3", "empty"),
+    ]:
+        with pytest.raises(SummaryError, match=why):
+            checked_lines(answer, logs, counts)
+    with pytest.raises(SummaryError, match="the cap is 118"):
+        checked_lines("\n".join(["death: a"] * 119), logs, counts)
+    # One kind's count is never another's, and the <counts> block isn't the logs' text.
+    for answer in ("quest: 3 done", "built: 3 boilers"):
+        with pytest.raises(
+            SummaryError, match=r"numbers that aren't in the logs: \['3'\]"
+        ):
+            checked_lines(answer, source, counts)
+
+
+def test_the_summary_carries_the_computed_counts(vault: Path) -> None:
+    daily(vault, "2026-10-26", "death: creeper\nquest: q:1 done\nnote: x\n")
+    daily(vault, "2026-10-27", "death: lava\nbuilt: ebf\n")
+    fake = FakeSummariser(["death: creeper, lava", "built: ebf"])
+    assert curator.compact(vault, LATER, fake, None).status == "ok"
+    assert fake.counts == [{"death": 2, "quest": 1, "built": 1}]
+    week = (vault / "log" / "wk" / "2026-W44.md").read_text(encoding="utf-8")
+    assert week.endswith(
+        "period: 2026-W44\nfrom: 2026-10-26.md, 2026-10-27.md\n"
+        "n_built: 1\nn_death: 2\nn_quest: 1\ndeath: creeper, lava\nbuilt: ebf\n"
+    )
+    assert not schema.check_text(
+        "log/wk/2026-W44.md", week, schema.load_types(vault / "_gos" / "schema.md")
+    )
+    # Eight weeks on, October's month adds up its weeks' counts.
+    note(
+        vault,
+        "log/wk/2026-W43.md",
+        "log",
+        "log-2026-W43",
+        "period: 2026-W43\nfrom: 2026-10-19.md\nn_death: 4\nnote: y\n",
+    )
+    month = FakeSummariser(["note: a month"])
+    assert curator.compact(vault, dt.date(2026, 12, 27), month, None).status == "ok"
+    assert month.counts == [{"death": 6, "quest": 1, "built": 1}]
+    text = (vault / "log" / "mo" / "2026-10.md").read_text(encoding="utf-8")
+    assert "from: wk/2026-W43.md, wk/2026-W44.md\n" in text
+    assert "n_built: 1\nn_death: 6\nn_quest: 1\nnote: a month\n" in text
+
+
+def test_n_keys_are_the_curators_counts_only(vault: Path) -> None:
+    """D143: a daily log never holds an n_ key, so no agent note is mistaken for a count."""
+    types = schema.load_types(vault / "_gos" / "schema.md")
+    daily = "---\nid: log-2026-10-26\nt: log\nupd: 2026-10-26\n---\nn_items: 5\n"
+    assert schema.check_text("log/2026-10-26.md", daily, types) == [
+        "key n_items: n_ keys are the curator's counts, in log/wk/ and log/mo/ only"
+    ]
+    for rel, id_ in (("log/wk/2026-W44.md", "W44"), ("log/mo/2026-10.md", "10")):
+        note = f"---\nid: log-2026-{id_}\nt: log\nupd: 2026-11-06\n---\nn_death: 2\n"
+        assert schema.check_text(rel, note, types) == []
+
+
+def test_haiku_summariser_refuses_a_count_it_made_up() -> None:
+    messages = FakeMessages("deaths: 2")
+    summariser = HaikuSummariser(SimpleNamespace(messages=messages))  # type: ignore[arg-type]
+    logs = [("log/a.md", "death: a\ndeath: b\ndeath: c\n")]
+    with pytest.raises(SummaryError, match=r"computed ones: \['deaths: 2'\]"):
+        summariser.summarise("2026-W44", logs, {"death": 3})
+    messages.text = "deaths: 3"
+    assert summariser.summarise("2026-W44", logs, {"death": 3}).lines == ["deaths: 3"]
+
+
+# --- D142 (g): a backup with a deadline ------------------------------------------------------
+
+
+def big_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("CREATE TABLE t(x)")
+        conn.executemany(
+            "INSERT INTO t VALUES (?)", [(f"row {n}",) for n in range(5000)]
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_backup_past_its_deadline_leaves_no_file(tmp_path: Path) -> None:
+    import time
+
+    db, folder = tmp_path / "gos.sqlite", tmp_path / "backups"
+    big_db(db)
+    result = curator.backup(db, folder, TODAY, deadline=time.monotonic() - 1)
+    assert result == curator.JobResult("backup", "skipped", "cut short: out of time")
+    assert list(folder.iterdir()) == []
+    result = curator.backup(db, folder, TODAY, deadline=time.monotonic() + 60)
+    assert result.detail == "wrote gos-20261106.sqlite"
+
+
+def test_a_backup_waits_on_a_locked_db_only_until_its_deadline(tmp_path: Path) -> None:
+    """The progress handler doesn't run during SQLite's busy wait: the wait itself ends at the
+    deadline, not after the usual 30 s."""
+    import time
+
+    db, folder = tmp_path / "gos.sqlite", tmp_path / "backups"
+    big_db(db)
+    holder = sqlite3.connect(db, isolation_level=None)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")  # no reader gets in (rollback journal)
+        start = time.monotonic()
+        result = curator.backup(db, folder, TODAY, deadline=start + 0.3)
+        took = time.monotonic() - start
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert result == curator.JobResult(
+        "backup", "skipped", "cut short: the DB stayed locked"
+    )
+    assert took < 5 and list(folder.iterdir()) == []

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from gregtec import config, locks, playhooks, prism
+from gregtec import config, locks, playhooks, prism, supervisor
 from gregtec.api.app import Core, create_app
 from gregtec.api.security import Auth
 from gregtec.api.server import maintenance as core_maintenance
@@ -370,3 +370,123 @@ def test_health_warns_when_maintenance_hasnt_run_for_days(
     m.idle_s = lambda: 3600.0
     m.tick()  # runs; the fake's backup failed, so it warns for that, not staleness
     assert "no run for" not in m.health()[1]
+
+
+# --- D142 (g): the DB backup at session end once the daily run is 2 days late ----------------
+
+
+def real_curator(vault: Path, tmp_path: Path) -> Curator:
+    db = tmp_path / "data" / "gos.sqlite"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("CREATE TABLE t(x)")
+        conn.execute("INSERT INTO t VALUES (7)")
+        conn.commit()
+    finally:
+        conn.close()
+    return Curator(vault, db, tmp_path / "data" / "backups")
+
+
+@pytest.mark.parametrize(
+    ("last_day", "since", "backed_up"),
+    [
+        ("2026-11-04", None, True),  # yesterday and the day before missed
+        ("2026-11-05", None, False),  # ran yesterday
+        ("2026-11-06", None, False),  # ran today
+        (None, "2026-11-04", True),  # never ran: counted from the first check
+        (None, "2026-11-05", False),
+        (None, None, False),  # nothing recorded yet
+    ],
+)
+def test_session_end_backs_up_the_db_once_the_daily_run_is_2_days_late(
+    vault: Path,
+    store: Store,
+    tmp_path: Path,
+    last_day: str | None,
+    since: str | None,
+    backed_up: bool,
+) -> None:
+    clock = Clock()
+    cur = real_curator(vault, tmp_path)
+    m = scheduler.Maintenance(cur, store, now=lambda: clock.now)
+    if last_day is not None:
+        m._set_kv(scheduler.KV_LAST_DAY, last_day)
+    if since is not None:
+        m._set_kv(scheduler.KV_SINCE, since)
+    write_plan(vault, 5)
+    assert m.session_end() is not None  # the commit comes first, as before
+    target = cur.backups / "gos-20261106.sqlite"
+    assert target.exists() is backed_up
+    if backed_up:  # a later session end the same day finds it and writes nothing
+        stamp = target.stat().st_mtime_ns
+        m.session_end()
+        assert target.stat().st_mtime_ns == stamp
+        assert [p.name for p in cur.backups.iterdir()] == ["gos-20261106.sqlite"]
+
+
+def test_the_session_end_backup_needs_no_git_vault_and_never_raises(
+    tmp_path: Path,
+    store: Store,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    cur = real_curator(plain, tmp_path)
+    m = scheduler.Maintenance(cur, store, now=lambda: NOW)
+    m._set_kv(scheduler.KV_LAST_DAY, "2026-11-01")
+    assert m.session_end() is None  # nothing to commit: no git
+    assert (cur.backups / "gos-20261106.sqlite").exists()
+
+    def full(*args: object) -> JobResult:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(scheduler, "backup", full)
+    with caplog.at_level("INFO", logger="gregtec.vault.scheduler"):
+        assert m.session_end() is None
+    [rec] = [r for r in caplog.records if r.getMessage() == "session-end backup"]
+    assert rec.status == "failed" and "disk full" in rec.detail  # type: ignore[attr-defined]
+
+
+def test_the_core_stop_gives_the_backup_a_deadline(
+    vault: Path, store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m, _ = make(vault, store, Clock(), [None], [False])
+    seen: list[float | None] = []
+    monkeypatch.setattr(m, "_overdue_backup", seen.append)
+    core = Core(
+        cfg=config.Config(gos_home=tmp_path),
+        store=store,
+        auth=Auth(store, "a" * 43),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+        maintenance=m,
+    )
+    # No stop request recorded: the deadline counts from the stop itself.
+    with TestClient(create_app(core), base_url="http://127.0.0.1:8765"):
+        before = time.monotonic()
+    after = time.monotonic()
+    [deadline] = seen
+    assert deadline is not None
+    assert (
+        before + scheduler.STOP_DEADLINE_S
+        <= deadline
+        <= after + scheduler.STOP_DEADLINE_S
+    )
+    assert scheduler.STOP_DEADLINE_S < supervisor.STOP_TIMEOUT_S  # ends before the kill
+    asked = time.monotonic() - 3.0  # uvicorn's graceful shutdown took 3 s of the 5
+    core.stop_asked = asked
+    with TestClient(create_app(core), base_url="http://127.0.0.1:8765"):
+        pass
+    assert seen[-1] == asked + scheduler.STOP_DEADLINE_S  # counted from the request
+    assert m.session_end() is None and seen[-1] is None  # WO-2.4's: no limit
+
+
+def test_the_stop_deadline_bounds_the_session_end_lock_wait(
+    vault: Path, store: Store
+) -> None:
+    m, _ = make(vault, store, Clock(), [None], [False])
+    with m._lock:
+        start = time.monotonic()
+        assert m.session_end(wait_s=2.0, deadline=start + 0.1) is None
+        assert time.monotonic() - start < 1.5  # not the full 2 s

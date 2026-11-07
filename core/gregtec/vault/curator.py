@@ -7,10 +7,14 @@ never stops the others:
    monthly ones once the week's Sunday is 8 weeks old (a week belongs to the month of its
    Thursday, as ISO weeks do). One Haiku call per period (:mod:`gregtec.llm.summarise`); the
    summary is written (``log/wk/YYYY-Www.md``, ``log/mo/YYYY-MM.md``, an existing one included in
-   the input) before its sources are deleted, and git keeps them. Without an Anthropic key, or
-   once the cycle's included credits are spent (D48), the job is skipped and the logs wait. A
-   period whose summary was refused :data:`MAX_REFUSALS` times is held (``kv``) and listed in
-   ``inbox/ib-compact-held.md`` for Clayton; ``gos vault maintain`` (``retry_held``) tries again.
+   the input) before its sources are deleted, and git keeps them. The period's counts (events
+   by kind, :func:`gregtec.llm.summarise.event_counts`) are computed here from the logs, written
+   into the summary as ``n_<kind>: N`` lines and given to the summariser, which may only use
+   those numbers (D142 (f), D143). Without an Anthropic key, or once the cycle's spend reaches
+   the first credit alert (``[budget] credit_alerts_pct``, 80%: D142 (e), D143; checked before
+   each period), the job is skipped and the logs wait. A period whose summary was refused
+   :data:`MAX_REFUSALS` times is held (``kv``) and listed in ``inbox/ib-compact-held.md`` for
+   Clayton; ``gos vault maintain`` (``retry_held``) tries again.
 2. ``schema``: check every note against ``_gos/schema.md``; the problems go to one standing note,
    ``inbox/ib-schema-check.md``, rewritten when they change and removed when there are none.
 3. ``index``: rebuild ``INDEX.md`` (:mod:`gregtec.vault.index`), after the inbox notes the first
@@ -18,7 +22,9 @@ never stops the others:
 4. ``fts``: mirror the notes into ``note_fts`` (:mod:`gregtec.vault.fts`).
 5. ``backup``: ``VACUUM INTO data/backups/gos-YYYYMMDD.sqlite`` (through a temporary name, so a
    half-written backup never has a backup's name; a ``.tmp`` left by a killed run is removed),
-   keeping the newest ``keep_backups``.
+   keeping the newest ``keep_backups``. The scheduler also runs it at session end once the
+   daily run has been missed for 2 days (D142 (g), D143), with a deadline when the core is
+   stopping (an interrupted backup leaves no file).
 6. ``git``: commit the agents' and the curator's changes (:func:`commit_agent_writes`).
 
 Git commits cover every path except ``me/`` (Clayton's) and ``_gos/`` (``gos vault deploy``
@@ -45,7 +51,7 @@ from pathlib import Path
 
 import keyring.errors
 
-from gregtec.llm.summarise import Summariser, SummaryError
+from gregtec.llm.summarise import Summariser, SummaryError, count_lines, event_counts
 from gregtec.llm.usage import UsageMeter
 from gregtec.vault import fts, index, io, schema
 from gregtec.vault.deploy import _cmd
@@ -57,6 +63,12 @@ OK, SKIPPED, FAILED = "ok", "skipped", "failed"
 KEEP_BACKUPS = 7
 BACKUP = re.compile(r"gos-(\d{8})\.sqlite")
 BACKUP_TMP = re.compile(r"gos-(\d{8})\.sqlite\.tmp")
+# A backup with a deadline that ends in one of these was cut short, not failed.
+_CUT_SHORT = {
+    sqlite3.SQLITE_INTERRUPT: "out of time",
+    sqlite3.SQLITE_BUSY: "the DB stayed locked",
+    sqlite3.SQLITE_LOCKED: "the DB stayed locked",
+}
 SCHEMA_REPORT = "inbox/ib-schema-check.md"
 REPORT_ROWS = 120
 DAILY_AGE = dt.timedelta(days=7)
@@ -69,6 +81,8 @@ MAX_REFUSALS = 3  # refused summaries of one period before it waits for Clayton
 # kv key + period -> {"n": refused summaries, "why": the last reason}
 KV_REFUSED = "maintenance.compact_refused."
 HELD_NOTE = "inbox/ib-compact-held.md"
+# D142 (e): compaction stops at the cycle's first credit alert; 80% when gos.toml lists none.
+DEFAULT_STOP_PCT = 80
 
 
 @dataclass(frozen=True)
@@ -175,8 +189,9 @@ def _summary_note(
             0, rel
         )  # an earlier summary of the same period is merged, not lost
     texts = [(p, (root / p).read_text(encoding="utf-8")) for p in inputs]
+    counts = event_counts(texts)  # D142 (f): counted here, never by the model
     try:
-        summary = summariser.summarise(period, texts)
+        summary = summariser.summarise(period, texts, counts)
     except SummaryError as exc:
         if meter is not None and exc.usage is not None and exc.model is not None:
             meter.record(LANE, exc.model, exc.usage, task=f"log compaction {period}")
@@ -198,7 +213,12 @@ def _summary_note(
     # dict.fromkeys: a run killed between the write and the deletes lists its sources once
     named = dict.fromkeys([*earlier, *(s.removeprefix("log/") for s in sources)])
     sources_line = ", ".join(named)
-    body = [f"period: {period}", f"from: {sources_line}", *summary.lines]
+    body = [
+        f"period: {period}",
+        f"from: {sources_line}",
+        *count_lines(counts),
+        *summary.lines,
+    ]
     text = io.frontmatter(schema.id_for(rel, kind), kind.t, today)
     text += "".join(line + "\n" for line in body)
     problems = schema.check_text(rel, text, types)
@@ -283,6 +303,22 @@ def _held_note(root: Path, today: dt.date, held: Refusals) -> None:
     io.atomic_write(target, text.encode("utf-8"))
 
 
+def stop_pct(meter: UsageMeter) -> int:
+    """The cycle's share of the included credits at which compaction stops: the first of
+    ``[budget] credit_alerts_pct`` (D142 (e))."""
+    return min(meter.alerts_pct) if meter.alerts_pct else DEFAULT_STOP_PCT
+
+
+def _over_alert(meter: UsageMeter | None) -> str | None:
+    """Why compaction must stop for the credits, or None."""
+    if meter is None:
+        return None
+    pct, limit = meter.cycle()["pct"], stop_pct(meter)
+    if pct < limit:
+        return None
+    return f"the cycle's spend reached the {limit}% credit alert ({pct}%, D142): the logs wait"
+
+
 def compact(
     root: Path,
     today: dt.date,
@@ -315,14 +351,8 @@ def compact(
             f"{', '.join(sorted(held))} held after {MAX_REFUSALS} refused summaries "
             f"({HELD_NOTE})",
         )
-    if meter is not None:
-        cycle = meter.cycle()
-        if cycle["pct"] >= 100:
-            return JobResult(
-                "compact",
-                SKIPPED,
-                f"the cycle's included credits are spent ({cycle['pct']}%, D48): the logs wait",
-            )
+    if (why := _over_alert(meter)) is not None:
+        return JobResult("compact", SKIPPED, why)
     try:
         summ = summariser()
     except keyring.errors.KeyringError as exc:
@@ -340,14 +370,20 @@ def compact(
     done: list[str] = []
     failed: list[str] = []
     stopped = False
+    capped: str | None = None
 
     def one(period: str, rel: str, sources: list[str]) -> None:
-        nonlocal stopped
-        if period in held:
+        nonlocal stopped, capped
+        if period in held or stopped or capped is not None:
             return
         if stop():
             stopped = True
             return
+        # Each call spends: the alert is checked again before the next one.
+        if done or failed:
+            capped = _over_alert(meter)
+            if capped is not None:
+                return
         try:
             _summary_note(root, rel, period, sources, summ, meter, today)
             done.append(period)
@@ -374,6 +410,8 @@ def compact(
         detail += f"; held {', '.join(sorted(held))} ({HELD_NOTE})"
     if stopped:
         detail += "; stopped before the rest"
+    if capped is not None:
+        detail += f"; stopped before the rest: {capped}"
     if failed:
         return JobResult("compact", FAILED, detail + "; failed " + "; ".join(failed))
     return JobResult("compact", OK, detail)
@@ -448,8 +486,15 @@ def check_schema(root: Path, today: dt.date) -> JobResult:
 
 
 def backup(
-    db: Path, folder: Path, today: dt.date, keep: int = KEEP_BACKUPS
+    db: Path,
+    folder: Path,
+    today: dt.date,
+    keep: int = KEEP_BACKUPS,
+    deadline: float | None = None,
 ) -> JobResult:
+    """``deadline`` (a ``time.monotonic()`` value): past it, ``VACUUM INTO`` is interrupted (and
+    a wait on a locked DB ends at it), its ``.tmp`` removed and the job ``skipped``, so a
+    stopping core ends the backup itself before the supervisor's kill."""
     if not db.is_file():
         return JobResult("backup", SKIPPED, "no DB yet")
     folder.mkdir(parents=True, exist_ok=True)
@@ -462,11 +507,26 @@ def backup(
         detail = f"{target.name} already exists"
     else:
         tmp = folder / f"{target.name}.tmp"
-        conn = sqlite3.connect(db, timeout=30)
+        busy_s = 30.0  # the progress handler doesn't run while SQLite waits on a lock
+        if deadline is not None:
+            busy_s = max(0.0, min(busy_s, deadline - time.monotonic()))
+        conn = sqlite3.connect(db, timeout=busy_s)
+        cut_short: str | None = None
         try:
+            if deadline is not None:
+                conn.set_progress_handler(lambda: time.monotonic() > deadline, 1000)
             conn.execute("VACUUM INTO ?", (str(tmp),))
+        except sqlite3.OperationalError as exc:
+            code = exc.sqlite_errorcode & 0xFF  # the primary code of an extended one
+            if deadline is None or code not in _CUT_SHORT:
+                raise
+            cut_short = _CUT_SHORT[code]
         finally:
             conn.close()
+        if cut_short is not None:
+            # removed once closed: Windows won't delete an open file
+            tmp.unlink(missing_ok=True)
+            return JobResult("backup", SKIPPED, f"cut short: {cut_short}")
         os.replace(tmp, target)
         detail = f"wrote {target.name}"
     kept = sorted(

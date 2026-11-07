@@ -23,6 +23,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 import uvicorn
 
@@ -65,7 +66,7 @@ def bind(port: int) -> socket.socket:
     return sock
 
 
-def _stop_on_stdin(server: uvicorn.Server) -> None:
+def _stop_on_stdin(stop: Callable[[], None]) -> None:
     try:
         for line in sys.stdin.buffer:
             if line.strip() == b"stop":
@@ -73,7 +74,7 @@ def _stop_on_stdin(server: uvicorn.Server) -> None:
     except (OSError, ValueError, AttributeError):
         pass
     log.info("supervisor asked the core to stop")
-    server.should_exit = True
+    stop()
 
 
 def maintenance(cfg: Config, store: Store, meter: UsageMeter) -> Maintenance:
@@ -139,6 +140,8 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
     )
 
     def shutdown() -> None:
+        if core.stop_asked is None:  # the session-end deadline counts from here (D143)
+            core.stop_asked = time.monotonic()
         server.should_exit = True
 
     core.shutdown = shutdown
@@ -153,7 +156,7 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         },
     )
     if supervised:
-        threading.Thread(target=_stop_on_stdin, args=(server,), daemon=True).start()
+        threading.Thread(target=_stop_on_stdin, args=(shutdown,), daemon=True).start()
     log.info(
         "core listening",
         extra={"port": cfg.core_port, "supervised": supervised, "pid": os.getpid()},

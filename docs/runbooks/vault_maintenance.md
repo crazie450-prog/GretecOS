@@ -1,6 +1,6 @@
 # Vault I/O and idle maintenance: PC steps (WO-2.5)
 
-Clayton runs these on the gaming PC after the WO-2.5 PR is merged. They take about 25 minutes, plus one idle half hour for step 7. Decisions: D138 (vault I/O and the path guard), D139 (idle maintenance), D140 (INDEX.md and note_fts), D141 (the note-format measurement).
+Clayton runs these on the gaming PC after the WO-2.5 PR is merged. They take about 25 minutes, plus one idle half hour for step 7. Decisions: D138 (vault I/O and the path guard), D139 (idle maintenance), D140 (INDEX.md and note_fts), D141 (the note-format measurement), D143 (your D142 answers: `me/` never measured, compaction stops at the 80% credit alert, counts computed in code, the session-end backup).
 
 `gos` below means Clayton's release copy, `C:\GregtecOS-app\current\.venv\Scripts\gos.exe` (D91), run in a normal PowerShell window (not "Run as administrator"). The vault is `%USERPROFILE%\GregtecOS\vault`.
 
@@ -37,7 +37,7 @@ Clayton runs these on the gaming PC after the WO-2.5 PR is merged. They take abo
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe vault measure
    ```
-   It sends the text of every vault note (`me/` included) and two small DB tables to Anthropic's token-counting endpoint with your key, one call at a time: about 400 calls, a few minutes. It prints the totals per format and model, each kind of sample's share (`kind  model  samples  gos_tokens  share_of_gos_pct  gos_vs_smallest`) and a `verdict_<model>: keep` or `revisit` line for Haiku, Sonnet and Opus 5.5, and writes `%USERPROFILE%\GregtecOS\data\reports\note-formats-YYYYMMDD.txt`. If it ends with `count_tokens failed: ...` (rate limited or overloaded), it has already retried that call for about four minutes and kept the counts so far in `note-formats-YYYYMMDD.partial.txt`: wait ten minutes and run it again. Paste the printed head (everything above `report:`) into the PR or a chat with the PM: the format decision is recorded from those numbers (D141's rule: `keep` for every model freezes the grammar as schema version 1).
+   It sends the text of every vault note except your own `me/` (never read or sent, D142 (d); `INDEX.md` goes without its `me/` rows, which copy those notes' summaries) and two small DB tables to Anthropic's token-counting endpoint with your key, one call at a time: about 400 calls, a few minutes. It prints the totals per format and model, each kind of sample's share (`kind  model  samples  gos_tokens  share_of_gos_pct  gos_vs_smallest`) and a `verdict_<model>: keep` or `revisit` line for Haiku, Sonnet and Opus 5.5, and writes `%USERPROFILE%\GregtecOS\data\reports\note-formats-YYYYMMDD.txt`. If it ends with `count_tokens failed: ...` (rate limited or overloaded), it has already retried that call for about four minutes and kept the counts so far in `note-formats-YYYYMMDD.partial.txt`: wait ten minutes and run it again. Paste the printed head (everything above `report:`) into the PR or a chat with the PM: the format decision is recorded from those numbers (D141's rule: `keep` for every model freezes the grammar as schema version 1).
 
 ## D. The idle rule, live
 
@@ -45,7 +45,7 @@ Clayton runs these on the gaming PC after the WO-2.5 PR is merged. They take abo
    ```powershell
    powercfg /query SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
    ```
-   `Current AC Power Setting Index` is in seconds, in hex: `0x00000000` (never) or anything above `0x00000744` (31 minutes) is fine; `0x00000708` (30 minutes) or less is not. The same check for `HIBERNATEIDLE` in place of `STANDBYIDLE`. To change it (your call: it is a power setting), Settings > System > Power & battery > Screen, sleep & hibernate timeouts > "When plugged in, put my device to sleep after": 45 minutes or longer, or Never. If you'd rather keep a short timeout, say so in the PR (Questions): backups would then need another trigger. The health strip warns `no run for N days` once maintenance hasn't run for more than 3 days.
+   `Current AC Power Setting Index` is in seconds, in hex: `0x00000000` (never) or anything above `0x00000744` (31 minutes) is fine; `0x00000708` (30 minutes) or less is not. The same check for `HIBERNATEIDLE` in place of `STANDBYIDLE`. To change it (your call: it is a power setting), Settings > System > Power & battery > Screen, sleep & hibernate timeouts > "When plugged in, put my device to sleep after": 45 minutes or longer, or Never. If you keep a short timeout, the DB backup still runs at session end once the daily run is 2 days late (step 9, D142 (g)), but compaction, the index and the schema check wait. The health strip warns `no run for N days` once maintenance hasn't run for more than 3 days.
 7. **Runs when idle and the game is closed.** `gos vault maintain` doesn't count as the core's daily run, but the core may already have run today. To see the scheduler do it (as Clayton, with GOS running):
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe status
@@ -56,12 +56,17 @@ Clayton runs these on the gaming PC after the WO-2.5 PR is merged. They take abo
    ```
    Leave the PC alone for 31 minutes with GTNH closed (screen saver and lock are fine). `gos status` then shows `Maintenance  ok  last run <today>; done for <today>`, and the vault has a new `GOS idle maintenance` commit if anything changed.
 8. **Waits while the game runs.** Run `gos vault maintain --rerun-today` again, start Play, and leave it at the main menu for 31 minutes without touching the PC. `gos status` shows `Maintenance ... the game is running`, and no run happens until you quit and stay idle another 30 minutes.
+9. **The session-end backup (D142 (g)).** When the daily run hasn't happened today or yesterday (`kv` `maintenance.last_day`, or since the first day the core checked), each session end also writes that day's `gos-YYYYMMDD.sqlite` after its vault commit; later session ends that day find it and do nothing. Until WO-2.4 has deep-lane sessions, the session end is the core's stop (`gos stop`, a deploy, logging off), and a stopping core must finish it 4.5 s after the stop was asked for, before the supervisor's 5 s kill; uvicorn's shutdown and the vault commit come out of that time first. A DB that takes longer (a 133 MB dev-runtime DB took 3.9 s in the build container), or that stays locked, is interrupted cleanly and leaves no file. To see which happened, after GOS has been stopped on a day the daily run was 2 days late:
+   ```powershell
+   Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern "session-end backup" | Select-Object -Last 3
+   ```
+   `"status": "ok"` with `wrote gos-YYYYMMDD.sqlite` (the file is in `data\backups\`) or `"status": "skipped"` with `cut short: out of time` (or `cut short: the DB stayed locked`). Report which in the PR: if it is cut short, the backup needs another trigger before WO-2.4 (see the PR's Questions).
 
 ## E. If something fails
 
 - `compact  skipped  no Anthropic key stored`: store it with `gos key set anthropic`; the logs wait until then.
-- `compact  skipped  ... held after 3 refused summaries`: the summariser's answer for those periods was refused three times (usually a count or total that isn't in the logs). `inbox\ib-compact-held.md` lists them and the last reason; no more calls are made for them. `gos vault maintain --job compact` tries them again (one call each).
-- `compact  skipped  the cycle's included credits are spent`: compaction waits for the next credit cycle (D48).
+- `compact  skipped  ... held after 3 refused summaries`: the summariser's answer for those periods was refused three times (usually a number that is neither in the logs nor among the counts the curator computed and wrote as `n_<kind>:` lines, or a `deaths:`-style line whose number isn't that kind's count, D142 (f)). `inbox\ib-compact-held.md` lists them and the last reason; no more calls are made for them. `gos vault maintain --job compact` tries them again (one call each).
+- `compact  skipped  the cycle's spend reached the 80% credit alert`: compaction waits for the next credit cycle (D142 (e): it stops at the first of `[budget] credit_alerts_pct`, not at 100%). A run that reaches it part-way says `stopped before the rest: ...` and leaves the later periods' logs as they are.
 - `Maintenance  warn  ... no run for N days`: see step 6 (the PC sleeps before an idle half hour), or the game was running whenever you were away.
 - `git  failed  ... isn't a git repo`: the vault was not made by `gos vault deploy`; deploy into a new folder.
 - A `failed` job writes its reason in `%USERPROFILE%\GregtecOS\logs\core.log` (the core's run) and on the `gos vault maintain` line (a manual run).

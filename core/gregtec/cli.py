@@ -443,7 +443,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "measure",
         help="count the note formats' tokens with the count_tokens endpoint (WO-2.5)",
         description=(
-            "Renders the live vault's notes, plan 6.2's example and two DB tables in each "
+            "Renders the live vault's notes (never me/, D142), plan 6.2's example and two DB "
+            "tables in each "
             "candidate format (the grammar, CSV, TOON, Markdown, key: value rows, compact and "
             "pretty JSON, YAML), counts their tokens with the Messages API's count_tokens "
             "(free) using the stored Anthropic key, and writes "
