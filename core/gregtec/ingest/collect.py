@@ -63,6 +63,7 @@ from typing import Any, TextIO
 
 from gregtec import config
 from gregtec.gamestate.safe_open import read_bytes
+from gregtec.ingest.fingerprint import atomic_write
 
 # sync's own checks, so collect finds and link-checks Export exactly as sync does.
 from gregtec.sync import _instance, _is_link, _overlap
@@ -75,6 +76,10 @@ PARTIAL = ".partial"
 EXPORTS = Path("gregteclink", "exports")  # in Export's game folder
 DATA_EXPORTS = Path("data", "exports")  # in GOS_HOME (plan 4.3)
 LOCK = Path("data", "locks", "collect.lock")  # in GOS_HOME (plan 4.3's data\locks\)
+# Runs the pack-update playbook exported from Lab (WO-1.9, D148): never Play's data, so a
+# collect or a build into this GOS_HOME skips them (an update's sandbox GOS_HOME has no list).
+LAB_RUNS = Path("data", "packupdate", "lab-runs.txt")
+LAB_RUN = "a pack update's Lab run, never Play's data (D148)"
 # The mod's run id (-Dgregtec.runId or the UTC time), plus the -2, -3, ... it adds on a clash.
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:-[0-9]+)?")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -221,14 +226,35 @@ def _candidate(root: Path, name: str, allow_harness: bool) -> Run | str:
     return Run(name, path, manifest["created_utc"], manifest, raw)
 
 
+def lab_runs(gos_home: Path) -> frozenset[str]:
+    """The Lab runs recorded in ``gos_home`` (:data:`LAB_RUNS`). An unreadable list raises
+    ``OSError``, so nothing is collected or built while it can't be read."""
+    try:
+        text = (gos_home / LAB_RUNS).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return frozenset()
+    return frozenset(
+        x for x in map(str.strip, text.splitlines()) if RUN_ID.fullmatch(x)
+    )
+
+
+def mark_lab_run(gos_home: Path, run_id: str) -> None:
+    """Record ``run_id`` as a Lab run: never collected or built into ``gos_home``."""
+    if not RUN_ID.fullmatch(run_id):
+        raise ValueError(f"not a run id: {run_id!r}")
+    ids = sorted(lab_runs(gos_home) | {run_id})
+    atomic_write(gos_home / LAB_RUNS, "".join(f"{x}\n" for x in ids).encode("utf-8"))
+
+
 def find_runs(
-    root: Path, allow_harness: bool = False
+    root: Path, allow_harness: bool = False, skip: frozenset[str] = frozenset()
 ) -> tuple[list[Run], list[tuple[str, str]]]:
-    """The complete runs in ``root``, newest first, and (name, why) for every other entry."""
+    """The complete runs in ``root``, newest first, and (name, why) for every other entry
+    (``skip``: run ids never taken, the Lab runs)."""
     runs: list[Run] = []
     skipped: list[tuple[str, str]] = []
     for name in sorted(os.listdir(root)):
-        found = _candidate(root, name, allow_harness)
+        found = LAB_RUN if name in skip else _candidate(root, name, allow_harness)
         if isinstance(found, Run):
             runs.append(found)
         else:
@@ -498,7 +524,8 @@ def collect(
     forbidden: Sequence[Path] = (),
     allow_harness: bool = False,
 ) -> Result:
-    """Collect the newest complete run of ``game``'s exports into ``gos_home``.
+    """Collect the newest complete run of ``game``'s exports into ``gos_home``, never one of
+    its :func:`lab_runs`.
 
     ``allow_harness`` is for tests only: the contract keeps harness runs out of game data.
     Raises :class:`CollectError` (or ``OSError``); GOS_HOME then holds no part of the run.
@@ -506,12 +533,14 @@ def collect(
     source = exports_root(game)
     root = dest_root(gos_home, forbidden)
     with lock(gos_home):
-        return _collect(source, root, keep, allow_harness)
+        return _collect(source, root, keep, allow_harness, lab_runs(gos_home))
 
 
-def _collect(source: Path, root: Path, keep: int, allow_harness: bool) -> Result:
+def _collect(
+    source: Path, root: Path, keep: int, allow_harness: bool, skip: frozenset[str]
+) -> Result:
     leftovers = _cleanup(root)
-    runs, skipped = find_runs(source, allow_harness)
+    runs, skipped = find_runs(source, allow_harness, skip)
     if not runs:
         why = "".join(f"\n  skipped {_clean(n)}: {w}" for n, w in skipped) or " (empty)"
         raise CollectError(f"no complete run in {source}{why}")

@@ -530,6 +530,17 @@ class AddonCheck:
     verdict: str
 
 
+def version_in(tag: str, jar: str) -> bool:
+    """Whether release ``tag`` is the version in ``jar``'s name, on version boundaries: tag
+    ``1.2`` is in ``x-1.2.jar`` and ``x-1.2-GTNH.jar``, not in ``x-1.2.3.jar`` or
+    ``x-11.2.jar``."""
+    v = tag.lower().removeprefix("v")
+    if not v:
+        return False
+    pattern = rf"(?<![0-9.]){re.escape(v)}(?![0-9]|\.[0-9])"
+    return re.search(pattern, jar.lower()) is not None
+
+
 def check_addons(
     web: Web, addons: Sequence[Addon], files: Sequence[str]
 ) -> list[AddonCheck]:
@@ -550,8 +561,7 @@ def check_addons(
         elif not jars:
             verdict = f"not in Play; newest release {latest.tag} ({latest.updated})"
         else:
-            tag = latest.tag.lower().removeprefix("v")
-            same = any(tag in j.lower() for j in jars)
+            same = any(version_in(latest.tag, j) for j in jars)
             verdict = f"newest release {latest.tag} ({latest.updated}) " + (
                 "matches the installed jar"
                 if same
@@ -665,4 +675,8 @@ def stock(
     save_state(home, state)
     if not isinstance(manifest, dict) or not isinstance(assets, dict):
         return None, [f"no release data for GTNH {version}", *web.notes]
-    return stock_check(version, manifest, assets, play_mod_files(play)), web.notes
+    try:
+        files = play_mod_files(play)
+    except (OSError, fingerprint.FingerprintError) as exc:
+        return None, [f"Play's mods couldn't be listed ({exc})", *web.notes]
+    return stock_check(version, manifest, assets, files), web.notes

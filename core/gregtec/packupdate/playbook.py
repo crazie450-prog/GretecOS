@@ -49,6 +49,7 @@ from gregtec import config, locks, playhooks, prism, sync, tweaks
 from gregtec.db import access, build
 from gregtec.ingest import collect, fingerprint, rundiff
 from gregtec.packupdate import diff, gtpin, plans, releases
+from gregtec.vault import fts
 from gregtec.vault.io import VaultError, VaultIO
 
 FORMAT = "gos-pack-update/1"
@@ -248,7 +249,27 @@ def start(
     return u
 
 
+def prune_sandboxes(home: Path) -> list[str]:
+    """Delete the sandbox GOS_HOME (a DB and the collected Lab run) of every finished update;
+    called when a new update starts, so the last one's stays to look at until then. Its
+    ``state.json``, ``diff.txt`` and ``play-before/`` stay."""
+    lines = []
+    for u in all_updates(home):
+        if u.finished() and u.sandbox.is_dir():
+            try:
+                shutil.rmtree(u.sandbox)
+            except OSError as exc:
+                lines.append(
+                    f"couldn't delete {u.sandbox} ({exc}); the next start retries"
+                )
+            else:
+                lines.append(f"deleted update {u.id}'s sandbox {u.sandbox}")
+    return lines
+
+
 def abandon(u: Update, why: str) -> None:
+    if u.finished():
+        raise UpdateError(_finished(u))
     u.state["finished_utc"] = _now_utc()
     u.state["outcome"] = f"abandoned: {why}"
     u.save()
@@ -347,12 +368,39 @@ def step_release(ctx: Ctx, u: Update) -> Outcome:
     return Outcome(DONE, lines, data)
 
 
-def step_backup(ctx: Ctx, u: Update) -> Outcome:
-    folder = ctx.home / WORLD_BACKUPS
-    zips = sorted(
+def _backups(home: Path) -> list[Path]:
+    """The world backups in ``home``, oldest first."""
+    folder = home / WORLD_BACKUPS
+    return sorted(
         (p for p in folder.glob("*.zip") if p.is_file()) if folder.is_dir() else (),
         key=lambda p: p.stat().st_mtime,
     )
+
+
+def backup_problem(home: Path, u: Update, now: float) -> str | None:
+    """Why Play may not be written now for want of a recent world backup, or None. Checked
+    again when Play is written, not only at step 2: the newest backup file, or Clayton's hand
+    confirm, must be from the last :data:`BACKUP_MAX_AGE_H` hours."""
+    if u.status("backup") != DONE:
+        return "its world backup step isn't done (gos pack update)"
+    times = [p.stat().st_mtime for p in _backups(home)[-1:]]
+    confirmed = u.step("backup").get("data", {}).get("confirmed_at")
+    if isinstance(confirmed, int | float):
+        times.append(float(confirmed))
+    if times and (now - max(times)) / 3600 <= BACKUP_MAX_AGE_H:
+        return None
+    seen = f"the newest is {(now - max(times)) / 3600:.0f} h old" if times else "none"
+    return (
+        f"no world backup from the last {BACKUP_MAX_AGE_H} h ({seen}): make one first "
+        "(/backup start in Play, then the backup job's copy in "
+        f"{home / WORLD_BACKUPS}, or gos pack update --confirm backup for a copy made "
+        "another way)"
+    )
+
+
+def step_backup(ctx: Ctx, u: Update) -> Outcome:
+    folder = ctx.home / WORLD_BACKUPS
+    zips = _backups(ctx.home)
     if zips:
         newest = zips[-1]
         age_h = (ctx.now() - newest.stat().st_mtime) / 3600
@@ -443,8 +491,13 @@ def step_lab_export(ctx: Ctx, u: Update) -> Outcome:
     with lock:
         try:
             run = _lab_export_locked(ctx)
+            # At once, complete or not: gos export collect and gos db build never take it into
+            # the main DB, so no tool answers from a pack that isn't adopted (D148).
+            collect.mark_lab_run(home, run.name)
         except playhooks.ExportFailed as exc:
             return Outcome(FAILED, [f"Lab export failed: {exc}"])
+        except OSError as exc:
+            return Outcome(FAILED, [f"Lab export: can't record it as a Lab run: {exc}"])
     problems = playhooks.run_problems(run.manifest)
     if problems:
         return Outcome(FAILED, [f"Lab export {run.name}: {'; '.join(problems)}"])
@@ -466,7 +519,8 @@ def step_lab_export(ctx: Ctx, u: Update) -> Outcome:
         [
             (
                 f"Lab export {run.name} built into the update's sandbox DB {built.db} "
-                "(the main DB is unchanged)"
+                "(the main DB is unchanged; gos export collect and gos db build skip this "
+                f"run, listed in {home / collect.LAB_RUNS})"
             ),
             (
                 f"note: {ctx.cfg.export} now holds Lab's mods; the next gos export run "
@@ -616,8 +670,14 @@ def _vault_note(ctx: Ctx, u: Update, s: diff.Summary, flagged: list[str]) -> str
         *diff.note_lines(s, flagged),
         f"note: answer with gos pack adopt yes or no; the report is {u.folder / 'diff.txt'}",
     ]
+    db = access.db_path(ctx.home)
+
+    def mirror(rel: str) -> None:  # searchable at once, as the agents' notes (WO-2.5)
+        fts.mirror_one(db, root, rel)
+
     try:
-        return f"vault note: {VaultIO(root).propose(title, '\n'.join(body))}"
+        vault = VaultIO(root, on_write=mirror)
+        return f"vault note: {vault.propose(title, '\n'.join(body))}"
     except (VaultError, OSError) as exc:
         return f"warning: no vault note ({exc})"
 
@@ -657,6 +717,8 @@ def answer(home: Path, u: Update, yes: bool, note: str = "") -> list[str]:
     update records the mismatch and goes on)."""
     if config.running_as_dev():
         raise UpdateError(f"{config.DEV_ACCOUNT} can't answer: Clayton decides (D44)")
+    if u.finished():
+        raise UpdateError(_finished(u))
     d = u.decision()
     if d.get("status") != PENDING_DECISION:
         raise UpdateError(
@@ -664,9 +726,10 @@ def answer(home: Path, u: Update, yes: bool, note: str = "") -> list[str]:
             "gos pack update runs the steps before it"
         )
     lines = []
-    gt_problem = u.step("diff").get("data", {}).get("gt_problem")
-    gt_new = u.step("diff").get("data", {}).get("gt_new")
-    if yes and gt_problem and gtpin.problem(gt_new) is not None:
+    # Checked against the pin as it is now (a pin bump deployed since the diff counts), and
+    # refused when the diff recorded no GT version at all.
+    gt_problem = gtpin.problem(u.step("diff").get("data", {}).get("gt_new"))
+    if yes and gt_problem is not None:
         if not u.simulated:
             raise UpdateError(
                 f"not adopted: {gt_problem}. Do the GT pin bump, deploy it (gos deploy), "
@@ -876,17 +939,37 @@ def _record(u: Update, name: str, o: Outcome) -> None:
     u.save()
 
 
-def confirm(u: Update, name: str, note: str) -> None:
-    """Clayton marks the backup step done by hand (a backup made another way)."""
+def _finished(u: Update) -> str:
+    return (
+        f"update {u.id} is finished ({u.state.get('outcome')}); start a new one with "
+        "gos pack update --start VERSION"
+    )
+
+
+def confirm(u: Update, name: str, note: str, now: float | None = None) -> None:
+    """Clayton marks the backup step done by hand (a backup made another way). Its time is
+    recorded: like a backup file, it counts for :data:`BACKUP_MAX_AGE_H` hours."""
     if name != "backup":
         raise UpdateError("only the backup step can be confirmed by hand")
     if config.running_as_dev():
         raise UpdateError(f"{config.DEV_ACCOUNT} can't confirm steps for Clayton")
-    _record(u, name, Outcome(DONE, [f"confirmed by Clayton: {note or 'no note'}"]))
+    if u.finished():
+        raise UpdateError(_finished(u))
+    _record(
+        u,
+        name,
+        Outcome(
+            DONE,
+            [f"confirmed by Clayton: {note or 'no note'}"],
+            {"confirmed_at": time.time() if now is None else now},
+        ),
+    )
 
 
 def redo(u: Update, name: str) -> None:
     """Mark ``name`` and every step after it to run again (the decision too, from diff on)."""
+    if u.finished():
+        raise UpdateError(_finished(u))
     i = STEPS.index(name)
     for later in STEPS[i:]:
         u.state["steps"][later] = {"status": PENDING}

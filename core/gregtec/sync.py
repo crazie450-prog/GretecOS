@@ -214,16 +214,21 @@ def _overlap(a: Path, b: Path) -> bool:
 
 
 def plan_target(
-    role: str, source: Path, game: Path, patterns: Sequence[str], refusals: list[str]
+    role: str,
+    source: Path,
+    game: Path,
+    patterns: Sequence[str],
+    refusals: list[str],
+    source_label: str = "Play",
 ) -> Plan:
     plan = Plan(role, source, game)
     roots = [r for r in MIRRORED if os.path.lexists(source / r)]
     plan.notes = [
-        f"Play has no {r}/ folder, so {r}/ is left as it is"
+        f"{source_label} has no {r}/ folder, so {r}/ is left as it is"
         for r in MIRRORED
         if r not in roots
     ]
-    src = scan(source, roots, patterns, "Play")
+    src = scan(source, roots, patterns, source_label)
     dst = scan(game, roots, patterns, role)
     refusals.extend(src.refusals + dst.refusals)
     refusals.extend(
@@ -390,7 +395,7 @@ def plan_lab_to_export(cfg: config.Config) -> tuple[Plan | None, list[str]]:
     patterns = tuple(
         dict.fromkeys([*cfg.sync_exclude["export"], *cfg.sync_exclude.get("lab", ())])
     )
-    plan = plan_target("export", lab[1], export[1], patterns, refusals)
+    plan = plan_target("export", lab[1], export[1], patterns, refusals, "Lab")
     plan_install(plan, cfg.gos_app, cfg.sync_exclude["export"], refusals)
     return (None if refusals else plan), refusals
 

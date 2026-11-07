@@ -2,11 +2,14 @@ r"""Update GTNH-Play from the Lab that an adopted pack update tested (WO-1.9). C
 
     GOS_APP\current\.venv\Scripts\python.exe GOS_APP\current\scripts\update_play.py
     ... update_play.py --apply [--update ID] [--config PATH]
+    ... update_play.py --rollback [--update ID] [--config PATH]
 
 Close Play first. Without --apply it prints the plan and writes nothing. --apply needs the
-update adopted (gos pack adopt yes) and its world backup step done, backs up every Play file it
-replaces or deletes into the update's play-before\ folder, then mirrors Lab's mods\, config\ and
-scripts\ into Play. See gregtec.packupdate.playupdate and docs/runbooks/pack_update.md.
+update open and adopted (gos pack adopt yes) and a world backup from the last 24 hours, backs
+up every Play file it replaces or deletes into the update's play-before\ folder (with a
+manifest of what it adds), then mirrors Lab's mods\, config\ and scripts\ into Play.
+--rollback puts Play back from that folder. See gregtec.packupdate.playupdate and
+docs/runbooks/pack_update.md.
 """
 
 from gregtec.packupdate.playupdate import main

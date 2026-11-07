@@ -49,6 +49,7 @@ from gregtec.db import access, report
 from gregtec.db import crops as crop_db
 from gregtec.ingest import collect, crops, gtdump, machine_facts, machines, merge, nei
 from gregtec.ingest.normalize import FLUID, ITEM, Json, OreIndex, Recipe, Ref, canonical
+from gregtec.packupdate import gtpin
 
 REPORTS = Path("data", "reports")
 CURATION = Path("data", "curation")
@@ -113,7 +114,7 @@ def find_run(
     root = gos_home / collect.DATA_EXPORTS
     if not root.is_dir():
         raise BuildError(f"{root} doesn't exist: run `gos export collect` first")
-    runs, skipped = collect.find_runs(root, allow_harness)
+    runs, skipped = collect.find_runs(root, allow_harness, collect.lab_runs(gos_home))
     if run_key is not None:
         for r in runs:
             if r.run_id == run_key:
@@ -935,4 +936,13 @@ def main(config_path: Path | None, run_key: str | None, out: TextIO) -> int:
         return 1
     for line in report.lines(result, full=False):
         print(line, file=out)
+    # Built, but loudly not usable for GT math (WO-1.9, D148): exit 1, e.g. after Play was
+    # updated to another GT outside the pack-update playbook.
+    problem = gtpin.problem(result.loaded.run.manifest.get("gt_version"))
+    if problem is not None:
+        print(
+            f"\n!!! {problem}\n!!! (the DB was built: run {result.loaded.run.run_id})",
+            file=out,
+        )
+        return 1
     return 0

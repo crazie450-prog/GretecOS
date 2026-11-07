@@ -207,6 +207,8 @@ def _update(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     if args.start:
         u = playbook.start(home, args.start, simulate=args.simulate)
         print(f"opened update {u.id} ({u.folder})", file=out)
+        for line in playbook.prune_sandboxes(home):
+            print(f"  {line}", file=out)
         if args.fixture_plans:
             for line in playbook.copy_fixture_plans(u, args.fixture_plans):
                 print(f"  {line}", file=out)
