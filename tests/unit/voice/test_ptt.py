@@ -5,6 +5,7 @@ real pynput hook and inject keys with SendInput (F24, which nothing binds)."""
 from __future__ import annotations
 
 import ctypes
+import os
 import queue
 import sys
 import time
@@ -265,6 +266,14 @@ def send_key(vk: int, up: bool) -> int:
     return int(user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT)))
 
 
+def no_input() -> None:
+    """SendInput was refused (no interactive desktop): skip, except on GitHub's Windows runners,
+    which have one, so CI really exercises the hook."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.fail("SendInput was refused on the CI runner")
+    pytest.skip("SendInput is blocked here (no interactive desktop)")
+
+
 def take(got: queue.Queue[KeyEvent], n: int, timeout: float = 3.0) -> list[KeyEvent]:
     out = []
     deadline = time.monotonic() + timeout
@@ -278,7 +287,7 @@ def take(got: queue.Queue[KeyEvent], n: int, timeout: float = 3.0) -> list[KeyEv
 
 def press_and_release(vk: int) -> None:
     if send_key(vk, up=False) != 1:
-        pytest.skip("SendInput is blocked here (no interactive desktop)")
+        no_input()
     time.sleep(0.05)
     send_key(vk, up=True)
 
@@ -314,7 +323,7 @@ def test_the_watchdog_catches_a_removed_hook_with_the_real_key_state() -> None:
     dog = Watchdog(hook, state, key_filter)
     try:
         if send_key(F24, up=False) != 1:
-            pytest.skip("SendInput is blocked here (no interactive desktop)")
+            no_input()
         assert wait(lambda: state.is_down(F24))
         dog.check()  # the thread is gone: re-installed, but it missed the press
         dog.check()  # the key is down and the hook says up: the clock starts

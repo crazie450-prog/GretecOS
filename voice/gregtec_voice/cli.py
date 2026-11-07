@@ -217,7 +217,12 @@ def _run(
         else None
     )
     if voice_settings.wake_trigger and wake is None:
-        log.warning("no wake-word engine yet (WO-5.4): the talk key is the trigger")
+        log.warning(
+            "no wake-word engine yet (WO-5.4): the talk key is the trigger"
+            if voice_settings.key_trigger
+            else "no wake-word engine yet (WO-5.4) and the talk key is off: only the "
+            'hotkeys work (set [voice] backup_trigger = "key")'
+        )
     pipe, hook, watchdog = _windows_parts(voice, voice_settings.input_device)
     if wake is not None:
         pipe.sinks.append(wake)
