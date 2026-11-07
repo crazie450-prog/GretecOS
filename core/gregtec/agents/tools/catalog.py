@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import items, machines, notes, quests, recipes, sql
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
@@ -143,11 +144,13 @@ TOOLS = (
         needs_db=False,
         gate=notes.GATE,
     ),
+    HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
 )
 
 # Plan 7.0's other tools: none is registered, and no stub stands in for one.
 LATER: dict[str, str] = {
-    **dict.fromkeys(("handoff", "timer_set"), "WO-2.3 (router, instant commands)"),
+    "timer_set": "WO-5.3 (TTS: a timer has to ring by voice; the router's instant commands "
+    "came with WO-2.3, D150)",
     "export_diff": "WO-1.4 (fingerprint and diff report)",
     "ore_find": "WO-1.6 (ore mixes and veins; ore-intel WO-6.6)",
     "structure_get": "WO-1.8 (structure table, D123; its data reached this base late, so the "
@@ -201,16 +204,17 @@ def build_registry(
     key: bytes | None = None,
     page: int = PAGE,
     vault: VaultIO | None = None,
+    deep: DeepLane | None = None,
 ) -> Registry:
-    """Every tool over the DB at ``db`` and ``vault`` (``key``: the cursor key, default
-    random)."""
-    reg = Registry(Env(db, glossary or Glossary(), vault), key=key, page=page)
+    """Every tool over the DB at ``db`` and ``vault``, handing off to ``deep`` (``key``: the
+    cursor key, default random)."""
+    reg = Registry(Env(db, glossary or Glossary(), vault, deep), key=key, page=page)
     for tool in TOOLS:
         reg.add(tool)
     return reg
 
 
-def default_registry(gos_home: Path) -> Registry:
+def default_registry(gos_home: Path, deep: DeepLane | None = None) -> Registry:
     """The tools over ``GOS_HOME/data/gos.sqlite`` and the live vault (its glossary too); a
     note an agent writes is mirrored into ``note_fts`` at once."""
     db, root = access.db_path(gos_home), gos_home / "vault"
@@ -218,4 +222,6 @@ def default_registry(gos_home: Path) -> Registry:
     def mirror(rel: str) -> None:
         fts.mirror_one(db, root, rel)
 
-    return build_registry(db, Glossary.find(root), vault=VaultIO(root, on_write=mirror))
+    return build_registry(
+        db, Glossary.find(root), vault=VaultIO(root, on_write=mirror), deep=deep
+    )
