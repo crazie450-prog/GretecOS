@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import fnmatch
 import getpass
+import math
 import os
 import re
 import tomllib
@@ -533,7 +534,12 @@ def _monthly(budget: Mapping[str, Any], default: float) -> float:
 
 def _usd(budget: Mapping[str, Any], key: str, default: float) -> float:
     value = budget.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
         raise ConfigError(f"gos.toml: [budget] {key} must be a number of USD above 0")
     return float(value)
 

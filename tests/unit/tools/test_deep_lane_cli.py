@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -273,6 +274,93 @@ def test_the_orchestrator_cant_use_db_sql_or_unknown_agents(lane: Lane) -> None:
     assert any(
         "update-config is not in this session's skills" in r for r in lane.results()
     )
+
+
+def test_hooks_and_servers_written_into_the_vaults_gos_never_run(lane: Lane) -> None:
+    """Whatever writes into the live vault's _gos/ after the lane started (a sync, an Obsidian
+    plugin) gets no shell: the CLI loads the lane's own copy, manifest and skills only."""
+    gos = lane.home / "vault" / "_gos"
+    marks = [lane.home / f"mark-{n}" for n in range(4)]
+    hook = {"type": "command", "command": f"python -c \"open(r'{marks[0]}', 'w')\""}
+    hook2 = {"type": "command", "command": f"python -c \"open(r'{marks[1]}', 'w')\""}
+    hooks = {
+        "hooks": {
+            "SessionStart": [{"hooks": [hook]}],
+            "PreToolUse": [{"matcher": "*", "hooks": [hook2]}],
+        }
+    }
+    server = {"command": "python", "args": ["-c", f"open(r'{marks[2]}', 'w')"]}
+    manifest = gos / ".claude-plugin" / "plugin.json"
+    before = manifest.read_text(encoding="utf-8")
+    written = [gos / "hooks" / "hooks.json", gos / ".mcp.json"]
+    (gos / "hooks").mkdir()
+    written[0].write_text(json.dumps(hooks), encoding="utf-8")
+    written[1].write_text(json.dumps({"mcpServers": {"x": server}}), encoding="utf-8")
+    inline = {"name": "gos", "hooks": hooks["hooks"], "mcpServers": {"y": server}}
+    manifest.write_text(json.dumps(inline), encoding="utf-8")
+    try:
+        read = (qualified("note_read"), {"path": "INDEX.md"})
+        # the first task may still take the session warmed before these were written
+        for _ in range(2):
+            task = lane.run({SONNET: [ApiTurn("", [read]), ApiTurn("Read it.")]})
+            assert task.status == deep.DONE, task.error
+            assert task.init is not None
+            assert [s["name"] for s in task.init["mcp_servers"]] == ["gos"]
+        assert not any(m.exists() for m in marks)
+        copy = lane.home / "agent" / "plugin"
+        assert not (copy / "hooks").exists() and not (copy / ".mcp.json").exists()
+    finally:
+        for path in written:
+            path.unlink()
+        (gos / "hooks").rmdir()
+        manifest.write_text(before, encoding="utf-8")
+
+
+def test_no_inherited_claude_or_anthropic_setting_steers_the_cli(
+    tool_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parent Claude Code session, a gateway or model overrides in GOS's own environment
+    don't reach the lane's CLI: its own key, its own session, the models GOS chose."""
+    parent = "00000000-0000-4000-8000-000000000001"
+    for name, value in {
+        "CLAUDE_CODE_SESSION_ID": parent,
+        "ANTHROPIC_AUTH_TOKEN": "parent-token",
+        "ANTHROPIC_CUSTOM_HEADERS": "x-parent: leaked",
+        "ANTHROPIC_MODEL": "claude-opus-5-5",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-5-5",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5-5",
+    }.items():
+        monkeypatch.setenv(name, value)
+    root = tmp_path / "vault"
+    shutil.copytree(TEMPLATE, root)
+    reg = build_registry(tool_db, vault=VaultIO(root, today=dt.date.today))
+    call = {"subagent_type": "db-analyst", "description": "d", "prompt": "count"}
+    scripts = {
+        SONNET: [ApiTurn("", [("Agent", call)]), ApiTurn("Done.")],
+        HAIKU: [ApiTurn("Counted.")],
+    }
+    with FakeMessagesAPI(Scripted(scripts)) as api:
+        lane = deep.DeepLaneService(
+            reg,
+            deep_config.Settings(task_max_usd=1.0),
+            home=tmp_path / "agent",
+            key=lambda: KEY,
+            env=api.env(),
+        )
+        try:
+            task = lane.wait(lane.handoff("x", "count it", "router").id, WAIT_S)
+        finally:
+            lane.stop()
+    assert task is not None and task.status == deep.DONE, task.error
+    assert task.init is not None and task.init["apiKeySource"] == "ANTHROPIC_API_KEY"
+    assert task.session_id and task.session_id != parent
+    assert {str(b.get("model")) for b in api.requests} == {SONNET, HAIKU}
+    # (names and yes/no only: a failure must never print a credential)
+    assert api.headers
+    assert all(h.get("x-api-key") == KEY for h in api.headers), "not the lane's key"
+    leaked = {n for h in api.headers for n in h if n in ("authorization", "x-parent")}
+    assert not leaked
 
 
 def requests_with(lane: Lane, text: str) -> list[dict[str, Any]]:

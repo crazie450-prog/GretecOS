@@ -11,13 +11,18 @@ fast lane's ``handoff`` tool send work to. It runs one asyncio loop in its own t
 - **One task at a time,** in handoff order; ``handoff`` returns at once with the task queued.
 - **Locked down** (:mod:`gregtec.agents.deep_config`, :mod:`gregtec.agents.hooks`): only
   ``mcp__gos__*``, ``Skill`` and ``Agent`` (GOS's five subagents); the CLI's init message is
-  checked against that set before the task runs on, and a breach fails the task.
+  checked against that set as it arrives, and a breach interrupts and fails the task before
+  any tool runs (the first model request, with the prompt, may already be out: the CLI reports
+  its session only once a prompt is sent).
 - **Budget** (D156): every model message the session reports (the orchestrator's and, with
   ``forward_subagent_text``, every subagent's) is priced from ``prices.PRICES`` as it arrives.
   When the task's spend reaches its cap (``[budget] task_max_usd``) the lane interrupts the
   session and the task waits in ``needs_approval``, its client kept: :meth:`approve` adds
-  another cap's worth and the session continues where it stopped, :meth:`stop_task` ends it.
-  The model and the work are never cut down to fit (D16). The queue waits meanwhile.
+  another cap's worth and the session continues where it stopped, :meth:`stop_task` ends it,
+  and with no answer in :data:`APPROVAL_WAIT_S` it is stopped so the queue moves on (the queue
+  waits meanwhile). The model and the work are never cut down to fit (D16). A subagent's hidden
+  thinking only counts once its result arrives, so a pause can come late (up to the CLI's hard
+  ceiling). :meth:`stop_task` also stops a running task (it interrupts the session).
 - **Metered:** each result's cost (the SDK's ``total_cost_usd`` and per-model ``modelUsage``,
   the part not yet recorded) goes into ``llm_usage`` (lane ``deep``, task ``deep:<id>``, D118).
 - **Request vs task note:** the prompt quotes Clayton's words as ``<request>`` (the only
@@ -78,7 +83,9 @@ FINAL = frozenset({DONE, FAILED, STOPPED, OFFLINE})
 PROGRESS_KEEP = 40
 TRANSCRIPT_DAYS = 30  # Claude Code's session transcripts kept in the lane's folder
 STOP_WAIT_S = 10.0
-APPROVE, STOP = "approve", "stop"
+DECIDE_WAIT_S = 5.0  # approve/stop: how long the lane's loop has to take it
+APPROVAL_WAIT_S = 30 * 60.0  # a paused task with no answer by then is stopped
+APPROVE, STOP, TIMEOUT = "approve", "stop", "timeout"
 # The most a token costs at any listed price: an unknown model is priced at this (never zero).
 _TOP = Price(
     input=max(p.input for p in PRICES.values()),
@@ -86,7 +93,7 @@ _TOP = Price(
     cache_write=max(p.cache_write for p in PRICES.values()),
     cache_read=max(p.cache_read for p in PRICES.values()),
 )
-_CLOSERS = re.compile(r"</(?=\s*(?:request|task_note)\b)")
+_TAGS = re.compile(r"<(?=\s*/?\s*(?:request|task_note)\b)", re.IGNORECASE)
 
 
 class Client(Protocol):
@@ -122,8 +129,8 @@ def prune_transcripts(home: Path, days: int = TRANSCRIPT_DAYS) -> int:
 
 
 def _safe(text: str) -> str:
-    """Quoted text can't close the block it is quoted in."""
-    return _CLOSERS.sub("< /", text)
+    """Quoted text can't open or close a ``request`` or ``task_note`` block, in any case."""
+    return _TAGS.sub("< ", text)
 
 
 def prompt(request: str, task: str, source: str) -> str:
@@ -248,6 +255,7 @@ class DeepTask:
     models: dict[str, float] = field(default_factory=dict)  # model -> USD (SDK)
     denied: list[str] = field(default_factory=list)
     init: dict[str, Any] | None = None
+    stop_requested: bool = False  # Clayton stopped it while it ran
 
     def handoff(self) -> Handoff:
         return Handoff(
@@ -281,6 +289,7 @@ class DeepTask:
             "subagents": self.subagents,
             "models": {m: round(v, 6) for m, v in self.models.items()},
             "denied": self.denied,
+            "stopping": self.stop_requested and self.status not in FINAL,
         }
 
 
@@ -329,6 +338,7 @@ class DeepLaneService:
         self._decisions: dict[str, asyncio.Future[str]] = {}
         self._spare: tuple[Client, hooks.Gate] | None = None
         self._current: DeepTask | None = None
+        self._client: Client | None = None  # the current task's
         self._worker: asyncio.Task[None] | None = None
         self.problem: str | None = None  # why the lane can't connect right now
         self.last_init: dict[str, Any] | None = None
@@ -503,7 +513,8 @@ class DeepLaneService:
         return self._decide(task_id, APPROVE)
 
     def stop_task(self, task_id: str) -> bool:
-        """End a paused or queued task; False if it is neither."""
+        """End a queued or paused task, or stop a running one (its session is interrupted and
+        it ends as stopped once the CLI answers); False if it is none of these."""
         task = self.get(task_id)
         with self._lock:
             queued = task is not None and task.status == QUEUED
@@ -514,40 +525,85 @@ class DeepLaneService:
             assert task is not None
             self._finish(task, STOPPED, error="stopped by Clayton")
             return True
+        if task is not None and task.status == RUNNING:
+            return self._on_loop(lambda: self._request_stop(task))
         return self._decide(task_id, STOP)
 
-    def _decide(self, task_id: str, decision: str) -> bool:
-        loop = self._loop
-        task = self.get(task_id)
-        if loop is None or task is None or task.status != NEEDS_APPROVAL:
+    def _request_stop(self, task: DeepTask) -> bool:
+        if task.status != RUNNING:
             return False
-        done = threading.Event()
-        answered: list[bool] = []
+        task.stop_requested = True
+        client, loop = self._client, self._loop
+        if self._current is task and client is not None and loop is not None:
+            loop.create_task(self._interrupt(client))
+        self._changed(task)
+        return True
 
-        def set_it() -> None:
+    async def _interrupt(self, client: Client) -> None:
+        try:
+            await client.interrupt()
+        except Exception:
+            log.exception("deep-lane interrupt failed")
+
+    def _decide(self, task_id: str, decision: str) -> bool:
+        task = self.get(task_id)
+        if task is None or task.status != NEEDS_APPROVAL:
+            return False
+
+        def apply() -> bool:
             fut = self._decisions.get(task_id)
-            ok = fut is not None and not fut.done()
-            if ok:
-                assert fut is not None
-                fut.set_result(decision)
-                # The new state now, so a caller that waits next sees it.
-                if decision == APPROVE:
-                    with self._lock:
-                        task.status = RUNNING
-                else:
-                    self._finish(task, STOPPED, error="stopped at its cap by Clayton")
-            answered.append(ok)
-            done.set()
+            if fut is None or fut.done():
+                return False
+            fut.set_result(decision)
+            # The new state now, so a caller that waits next sees it.
+            if decision == APPROVE:
+                with self._lock:
+                    task.status = RUNNING
+            else:
+                self._finish(task, STOPPED, error="stopped at its cap by Clayton")
+            return True
 
-        loop.call_soon_threadsafe(set_it)
-        done.wait(5)
-        return bool(answered and answered[0])
+        return self._on_loop(apply)
+
+    def _on_loop(self, apply: Callable[[], bool]) -> bool:
+        """Run ``apply`` on the lane's loop and return its answer. If the loop hasn't run it
+        within :data:`DECIDE_WAIT_S`, it is called off (never applied late) and the answer is
+        False, so the caller's answer is always what happened."""
+        loop = self._loop
+        if loop is None:
+            return False
+        guard = threading.Lock()
+        done = threading.Event()
+        answer: list[bool] = []
+        called_off: list[bool] = []
+
+        def run() -> None:
+            try:
+                with guard:
+                    if not called_off:
+                        answer.append(apply())
+            finally:
+                done.set()
+
+        try:
+            loop.call_soon_threadsafe(run)
+        except RuntimeError:  # the loop already closed
+            return False
+        if not done.wait(DECIDE_WAIT_S):
+            with guard:
+                if not answer:
+                    called_off.append(True)
+        return bool(answer and answer[0])
 
     def health(self) -> tuple[str, str]:
         """The dashboard health strip's (status, detail) for the lane."""
         waiting = [t.id for t in self.tasks() if t.status == NEEDS_APPROVAL]
         if waiting:
-            return "warn", f"{waiting[0]} paused at its cap: approve or stop it"
+            minutes = f"{APPROVAL_WAIT_S / 60:g}"
+            return "warn", (
+                f"{waiting[0]} paused at its cap: approve or stop it (it stops by itself "
+                f"after {minutes} minutes)"
+            )
         current = self._current
         if current is not None:
             return "ok", f"working on {current.id}"
@@ -602,22 +658,35 @@ class DeepLaneService:
         )
         self._changed(task)
 
-    def _options(self, gate: hooks.Gate) -> ClaudeAgentOptions:
+    def _options(self, gate: hooks.Gate, plugin: Path | None) -> ClaudeAgentOptions:
         return deep_config.options(
             self.settings,
             self.registry,
             gate,
             key=self.key(),
             home=self.home,
-            vault=self.vault.root if self.vault is not None else None,
+            plugin=plugin,
             env=self.env,
             stderr=lambda line: log.debug("deep-lane cli", extra={"line": line[:300]}),
         )
 
+    def plugin_source(self) -> Path | None:
+        """Where the session's skills come from: the repo's ``vault-template/_gos/`` (what
+        the lane deploys into the vault), else the live vault's ``_gos/``."""
+        if self.template is not None:
+            source = self.template / vault_deploy.OWNED
+            if (source / deep_config.PLUGIN_MANIFEST).is_file():
+                return source
+        vault = self.vault
+        return None if vault is None else vault.root / vault_deploy.OWNED
+
     async def _connect(self) -> tuple[Client, hooks.Gate]:
-        vault_root = self.vault.root if self.vault is not None else None
-        gate = hooks.Gate(deep_config.policy(self.registry, vault_root), self.vault)
-        client = self.client_factory(self._options(gate))
+        # A fresh plugin copy for every session (no other CLI of the lane runs meanwhile).
+        plugin = deep_config.build_plugin(
+            self.plugin_source(), self.home / deep_config.PLUGIN_COPY
+        )
+        gate = hooks.Gate(deep_config.policy(self.registry, plugin), self.vault)
+        client = self.client_factory(self._options(gate, plugin))
         await client.connect()
         return client, gate
 
@@ -676,7 +745,15 @@ class DeepLaneService:
                 await self._turn(client, gate, task, first, recorded)
             while task.status == NEEDS_APPROVAL:
                 decision = await self._decision(task)
-                if decision != APPROVE:  # stop_task has ended it
+                if decision == TIMEOUT:
+                    minutes = f"{APPROVAL_WAIT_S / 60:g}"
+                    self._finish(
+                        task,
+                        STOPPED,
+                        error=f"no approval within {minutes} minutes: stopped, so the "
+                        "queue moves on",
+                    )
+                if decision != APPROVE:  # stop_task (or the wait) has ended it
                     break
                 with self._lock:
                     task.approvals += 1
@@ -699,7 +776,7 @@ class DeepLaneService:
             log.exception("deep-lane task failed")
             self._finish(task, FAILED, error=f"{type(exc).__name__}: {exc}"[:500])
         finally:
-            self._current = None
+            self._current = self._client = None
             self._decisions.pop(task.id, None)
             with self._lock:
                 task.denied = [
@@ -718,7 +795,9 @@ class DeepLaneService:
         fut: asyncio.Future[str] = self._loop.create_future()
         self._decisions[task.id] = fut
         try:
-            return await fut
+            return await asyncio.wait_for(fut, APPROVAL_WAIT_S)
+        except TimeoutError:
+            return TIMEOUT
         finally:
             self._decisions.pop(task.id, None)
 
@@ -745,11 +824,18 @@ class DeepLaneService:
         recorded: dict[str, dict[str, float]],
     ) -> None:
         """Send one user turn and read the session until its result."""
+        if task.stop_requested:
+            self._finish(task, STOPPED, error="stopped by Clayton")
+            return
+        self._client = client
         await client.query(text)
         meter = SpendMeter()
-        paused = broken = False
+        paused = broken = stopping = False
         result: ResultMessage | None = None
         async for msg in client.receive_response():
+            if task.stop_requested and not stopping:  # in case it came before the query
+                stopping = True
+                await client.interrupt()
             if isinstance(msg, SystemMessage) and msg.subtype == "init":
                 task.init = msg.data
                 self.last_init = msg.data
@@ -781,11 +867,17 @@ class DeepLaneService:
             elif isinstance(msg, ResultMessage):
                 result = msg
         if result is None:
+            if task.stop_requested:
+                self._finish(task, STOPPED, error="stopped by Clayton")
+                return
             raise _Fail("the session ended without a result")
         self._record(task, result, recorded)
         with self._lock:
             task.spent_usd = max(task.spent_usd, task.cost_usd)
             task.turns += result.num_turns or 0
+        if task.stop_requested:
+            self._finish(task, STOPPED, error="stopped by Clayton")
+            return
         if paused and result.terminal_reason != "completed":
             with self._lock:
                 task.status = NEEDS_APPROVAL

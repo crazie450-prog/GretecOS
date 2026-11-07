@@ -12,15 +12,18 @@ message) against them, so the lane fails closed if the CLI ever offers more:
   pre-approved. The hooks (:mod:`gregtec.agents.hooks`) check every call again.
 - **Subagents** (plan 7.0) are defined here with their models, effort and tools
   (:data:`SUBAGENTS`); Claude Code's built-in agents are disallowed.
-- **Skills** are the live vault's ``_gos/`` loaded as a local plugin named ``gos`` (its
-  ``.claude-plugin/plugin.json``), so a skill is ``gos:<name>``; only those are enabled, never
-  the CLI's bundled skills. ``gos vault deploy`` (and the deep lane at start) mirrors
-  ``vault-template/_gos/`` there.
+- **Skills** load as a local plugin named ``gos``, so a skill is ``gos:<name>``; only those are
+  enabled, never the CLI's bundled skills. ``gos vault deploy`` (and the deep lane at start)
+  mirrors ``vault-template/_gos/`` into the live vault, but the CLI gets the lane's own copy
+  (:func:`build_plugin`, rebuilt before every session): a manifest written here and the
+  ``skills/`` files, nothing else, so hooks, MCP servers, commands or settings that anything
+  writes into the vault's ``_gos/`` never reach the CLI.
 - **Hygiene** [D§1.8]: the system prompt is a file (Windows caps a command line at ~32 KB),
   auto memory and CLAUDE.md files are off, Claude Code's config, transcripts and caches live in
   ``GOS_HOME/data/agent/`` (so neither Clayton's nor gos-dev's own Claude Code settings,
-  sign-in, plugins or skills reach it), the working directory is an empty folder there, and
-  prompts are delivered verbatim (no ``@file`` expansion of Clayton's words).
+  sign-in, plugins or skills reach it), the working directory is an empty folder there, every
+  inherited ``CLAUDE*``/``ANTHROPIC_*`` variable is blanked (:func:`environment`), and prompts
+  are delivered verbatim (no ``@file`` expansion of Clayton's words).
 - **Caps**: spawn depth 1 and at most 3 subagents at once (CLI environment); the per-task cost
   cap is the lane's own (:mod:`gregtec.agents.deep_lane`, D156), because the CLI's
   ``--max-budget-usd`` counts a whole session and can't pause and ask.
@@ -28,6 +31,9 @@ message) against them, so the lane fails closed if the CLI ever offers more:
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +49,17 @@ from gregtec.agents.tools.registry import Registry
 PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "deep_lane.md"
 PLUGIN = "gos"  # vault-template/_gos/.claude-plugin/plugin.json's name
 PLUGIN_MANIFEST = Path(".claude-plugin") / "plugin.json"
+PLUGIN_COPY = "plugin"  # the lane's own copy of the plugin, in its home folder
+API_URL = "https://api.anthropic.com"
+# Inherited variables that stay as they are (the SDK sets or reads the first two at the CLI's
+# start; Windows installs may need the third); every other CLAUDE*/ANTHROPIC_* is blanked.
+INHERITED_KEEP = frozenset(
+    {
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SDK_READS_SESSION_STATE",
+        "CLAUDE_CODE_GIT_BASH_PATH",
+    }
+)
 BUILTIN_TOOLS = ["Skill", "Agent"]  # the only built-in tools (plan 4.4)
 # Claude Code's own agents (and the fork pseudo-agent): never offered (D155).
 BUILTIN_AGENTS = (
@@ -208,13 +225,13 @@ def agent_definitions(
     }
 
 
-def skill_names(vault: Path | None) -> list[str]:
-    """The deployed GOS skills as the plugin names them (``gos:<name>``), sorted: each
-    ``_gos/skills/<dir>/SKILL.md``, named by its frontmatter ``name`` or else its folder."""
-    if vault is None:
+def skill_names(plugin: Path | None) -> list[str]:
+    """The plugin's skills as the CLI names them (``gos:<name>``), sorted: each
+    ``skills/<dir>/SKILL.md``, named by its frontmatter ``name`` or else its folder."""
+    if plugin is None:
         return []
     found = set()
-    for path in sorted((vault / "_gos" / "skills").glob("*/SKILL.md")):
+    for path in sorted((plugin / "skills").glob("*/SKILL.md")):
         name = path.parent.name
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -232,18 +249,63 @@ def skill_names(vault: Path | None) -> list[str]:
     return sorted(found)
 
 
-def plugin_dir(vault: Path | None) -> Path | None:
-    """The live vault's ``_gos/`` when it is a GOS plugin (has the manifest), else None."""
-    if vault is None:
+def build_plugin(source: Path | None, dest: Path) -> Path | None:
+    """Rebuild the lane's own copy of a GOS plugin (a ``_gos/`` folder) at ``dest`` and return
+    it; None (and no copy) when ``source`` has no plugin manifest. The copy holds a manifest
+    written here (the source's name is always ``gos``; only its version and description are
+    kept) and the regular files under ``skills/``, never followed through links: whatever else
+    lands in the live vault's ``_gos/`` (``hooks/``, ``.mcp.json``, ``commands/``, ``bin/``,
+    settings, or hooks and MCP servers named in the manifest) never reaches the CLI."""
+    if dest.exists():
+        shutil.rmtree(dest, ignore_errors=True)  # only ever our own copy
+    if source is None or not (source / PLUGIN_MANIFEST).is_file():
         return None
-    root = vault / "_gos"
-    return root if (root / PLUGIN_MANIFEST).is_file() else None
+    try:
+        found = json.loads((source / PLUGIN_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        found = {}
+    manifest: dict[str, str] = {"name": PLUGIN}
+    for key in ("version", "description"):
+        if isinstance(found, dict) and isinstance(found.get(key), str):
+            manifest[key] = found[key]
+    (dest / PLUGIN_MANIFEST).parent.mkdir(parents=True)
+    (dest / PLUGIN_MANIFEST).write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    skills = source / "skills"
+    if skills.is_symlink() or not skills.is_dir():
+        return dest
+    for folder, _, files in os.walk(skills, followlinks=False):
+        for name in files:
+            src = Path(folder) / name
+            if src.is_symlink() or not src.is_file():
+                continue
+            dst = dest / "skills" / src.relative_to(skills)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+    return dest
 
 
-def environment(key: str, config_dir: Path) -> dict[str, str]:
-    """The CLI subprocess's environment on top of this process's (the key goes only here)."""
+def environment(
+    key: str, config_dir: Path, inherited: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """The CLI subprocess's environment on top of this process's (``inherited``, by default
+    ``os.environ``; the SDK always starts the CLI with it underneath). The key goes only here,
+    the API is Anthropic's own, and every other inherited ``CLAUDE*`` or ``ANTHROPIC_*``
+    variable is blanked: a base URL or gateway, another auth token, Bedrock or Vertex, model
+    overrides, extra directories, or a parent Claude Code session's id and sign-in must never
+    steer the lane (the CLI reads an empty variable as unset)."""
+    parent = os.environ if inherited is None else inherited
+    blanked = {
+        name: ""
+        for name in parent
+        if name.upper().startswith(("CLAUDE", "ANTHROPIC_"))
+        and name.upper() not in INHERITED_KEEP
+    }
     return {
+        **blanked,
         "ANTHROPIC_API_KEY": key,
+        "ANTHROPIC_BASE_URL": API_URL,
         "CLAUDE_CONFIG_DIR": str(config_dir),
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
         "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
@@ -260,18 +322,17 @@ def options(
     *,
     key: str,
     home: Path,
-    vault: Path | None,
+    plugin: Path | None,
     env: Mapping[str, str] | None = None,
     stderr: Callable[[str], None] | None = None,
 ) -> ClaudeAgentOptions:
     """One deep-lane session's options. ``home``: the lane's own folder (Claude Code's config
-    and the empty working directory live in it); ``env``: more environment (tests point the CLI
-    at a fake API)."""
+    and the empty working directory live in it); ``plugin``: the lane's plugin copy
+    (:func:`build_plugin`); ``env``: more environment (tests point the CLI at a fake API)."""
     config_dir, workdir = home / "claude", home / "work"
     config_dir.mkdir(parents=True, exist_ok=True)
     workdir.mkdir(parents=True, exist_ok=True)
-    plugin = plugin_dir(vault)
-    skills = skill_names(vault) if plugin is not None else []
+    skills = skill_names(plugin)
     return ClaudeAgentOptions(
         model=settings.orchestrator,
         effort=ORCHESTRATOR_EFFORT,  # type: ignore[arg-type]
@@ -300,10 +361,9 @@ def options(
     )
 
 
-def policy(registry: Registry, vault: Path | None) -> hooks.Policy:
+def policy(registry: Registry, plugin: Path | None) -> hooks.Policy:
     main, agents = tool_sets(registry)
-    skills = skill_names(vault) if plugin_dir(vault) is not None else []
-    return hooks.Policy(main, agents, frozenset(skills))
+    return hooks.Policy(main, agents, frozenset(skill_names(plugin)))
 
 
 def served(registry: Registry) -> list[str]:

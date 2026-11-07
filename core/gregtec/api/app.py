@@ -9,7 +9,7 @@
 | POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3) |
 | GET  /api/deep/tasks[/{id}]    | admin, client, device   | deep-lane tasks and their state       |
 | POST /api/deep/tasks/{id}/approve | admin, device        | a paused task may spend another cap   |
-| POST /api/deep/tasks/{id}/stop | admin, device           | end a paused or queued task           |
+| POST /api/deep/tasks/{id}/stop | admin, device           | end a queued, running or paused task  |
 | POST /api/pair/start           | anyone, dashboard name  | ask to pair; the code goes elsewhere  |
 | POST /api/pair/complete        | anyone, dashboard name  | the right code sets the device cookie |
 | GET  /api/pair/pending         | admin, device           | pending requests with their codes     |
@@ -496,7 +496,7 @@ def create_app(core: Core) -> FastAPI:
     async def deep_stop(task_id: str, who: Trusted) -> dict[str, Any]:
         lane = deep_lane()
         if not await asyncio.to_thread(lane.stop_task, task_id):
-            raise HTTPException(409, "that task isn't queued or waiting for approval")
+            raise HTTPException(409, "that task isn't queued, running or paused")
         log.info("deep-lane task stopped", extra={"task": task_id, "by": who.role})
         task = lane.get(task_id)
         return task.as_dict() if task else {}

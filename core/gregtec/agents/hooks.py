@@ -16,8 +16,9 @@ every subagent's (the CLI tells them apart by ``agent_type``):
   file outside the vault, and any shell command, is refused outright.
 
 A hook answers ``{}`` when it has nothing against a call; the permission mode (``dontAsk`` with
-the lane's tools pre-approved) decides the rest. Hook input is data from the CLI; a refusal's
-reason is what the model reads.
+the lane's tools pre-approved) decides the rest. Both fail closed: a hook that raises denies the
+call (the CLI would otherwise run a pre-approved tool when its hook errors). Hook input is data
+from the CLI; a refusal's reason is what the model reads.
 """
 
 from __future__ import annotations
@@ -116,9 +117,24 @@ class Gate:
         )
         return deny(why)
 
+    def _failed(self, hook: str, data: object) -> dict[str, Any]:
+        """A hook that raised: log it and deny the call."""
+        log.exception("deep-lane %s failed; the call is refused", hook)
+        tool, agent = "?", None
+        if isinstance(data, Mapping):
+            tool = str(data.get("tool_name") or "?")
+            agent = data.get("agent_type") or None
+        return self._denied(tool, agent, f"GOS's {hook} failed on this call")
+
     async def tool_gate(
         self, data: Mapping[str, Any], tool_use_id: str | None, context: object
     ) -> dict[str, Any]:
+        try:
+            return self._tool_gate(data)
+        except Exception:  # noqa: BLE001 (logged by _failed; any bug denies the call)
+            return self._failed("tool gate", data)
+
+    def _tool_gate(self, data: Mapping[str, Any]) -> dict[str, Any]:
         tool = str(data.get("tool_name", ""))
         agent = data.get("agent_type") or None
         args = data.get("tool_input") or {}
@@ -170,13 +186,16 @@ class Gate:
     async def path_guard(
         self, data: Mapping[str, Any], tool_use_id: str | None, context: object
     ) -> dict[str, Any]:
-        tool = str(data.get("tool_name", ""))
-        agent = data.get("agent_type") or None
-        args = data.get("tool_input") or {}
-        if not isinstance(args, dict):
-            args = {}
-        why = self.refusal(tool, args)
-        return {} if why is None else self._denied(tool, agent, why)
+        try:
+            tool = str(data.get("tool_name", ""))
+            agent = data.get("agent_type") or None
+            args = data.get("tool_input") or {}
+            if not isinstance(args, dict):
+                args = {}
+            why = self.refusal(tool, args)
+            return {} if why is None else self._denied(tool, agent, why)
+        except Exception:  # noqa: BLE001 (logged by _failed; any bug denies the call)
+            return self._failed("path guard", data)
 
     def refusal(self, tool: str, args: Mapping[str, Any]) -> str | None:
         """Why plan 6.5's path guard refuses this call, or None."""

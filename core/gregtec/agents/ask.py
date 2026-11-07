@@ -14,6 +14,7 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import re
@@ -476,7 +477,8 @@ def _ask_approval(task: DeepTask) -> bool:
 
 def main(config_path: Path | None, text: str, as_json: bool, out: TextIO) -> int:
     """``gos ask "<text>"``: 0 answered, 1 an error or no-AI answer, 2 bad gos.toml. A request
-    handed to the deep lane is waited for here (D157)."""
+    handed to the deep lane is waited for here (D157); with ``--json`` its outcome is the
+    reply's ``deep`` list, and a task that pauses at its cap is stopped (JSON can't ask)."""
     try:
         cfg = config.load(config_path)
     except (OSError, ValueError) as exc:
@@ -486,9 +488,14 @@ def main(config_path: Path | None, text: str, as_json: bool, out: TextIO) -> int
     try:
         reply = agents.asker().ask(text)
         deep = agents.deep
-        if isinstance(deep, DeepLaneService) and deep.tasks() and not as_json:
-            print(reply.text, file=out)
-            done = wait_deep(deep, out, _ask_approval)
+        if isinstance(deep, DeepLaneService) and deep.tasks():
+            if as_json:
+                done = wait_deep(deep, io.StringIO(), lambda _task: False)
+                data = {**reply.as_dict(), "deep": [t.as_dict() for t in done]}
+                print(json.dumps(data, indent=2, ensure_ascii=False), file=out)
+            else:
+                print(reply.text, file=out)
+                done = wait_deep(deep, out, _ask_approval)
             return 0 if done and all(t.status == DONE for t in done) else 1
     finally:
         agents.close()

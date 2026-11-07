@@ -8,7 +8,8 @@ turns are scripted. That is the deep lane's test seam: no key, no cost, no netwo
 The server answers ``POST /v1/messages`` with a streamed (SSE) message built from an
 :class:`ApiTurn` that the policy returns for the request body: text, tool calls and the usage
 it reports (so the lane's cost meter and budget cap can be driven). Every request body is kept
-in :attr:`FakeMessagesAPI.requests`. ``count_tokens`` gets a small count; anything else a 404.
+in :attr:`FakeMessagesAPI.requests`, its headers in :attr:`FakeMessagesAPI.headers`.
+``count_tokens`` gets a small count; anything else a 404.
 """
 
 from __future__ import annotations
@@ -153,6 +154,7 @@ class _Handler(BaseHTTPRequestHandler):
         api = self.server.api
         with api.lock:
             api.requests.append(body)
+            api.headers.append({k.lower(): v for k, v in self.headers.items()})
         turn = api.policy(body)
         self._send(
             200, api.stream(turn, str(body.get("model", ""))), "text/event-stream"
@@ -173,6 +175,7 @@ class FakeMessagesAPI:
     def __init__(self, policy: Policy = echo) -> None:
         self.policy = policy
         self.requests: list[dict[str, Any]] = []
+        self.headers: list[dict[str, str]] = []  # each request's, names lower-cased
         self.lock = threading.Lock()
         self._ids = itertools.count(1)
         self._server: _Server | None = None

@@ -27,6 +27,8 @@ Clayton runs these on the gaming PC after the WO-2.4 PR is merged: about 30 minu
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe eval deep-lane | Tee-Object -FilePath "$env:USERPROFILE\GregtecOS\data\reports\deep-lane-eval.txt"
    ```
    It runs the 10 tasks of `tests\evals\deep_lane_tasks.tsv` one at a time (a fresh session each) and prints a TSV row per task: `id kind status cost_usd turns tools subagents seconds by_model`, then `# total $..., mean $..., median $... over 10 tasks; N reached the $2.00 cap` and `Result: PASS`. The table is also written to `GregtecOS\data\reports\deep-lane-costs-<date>.tsv`, and every call is in `llm_usage` (task `eval:deep-lane:<id>`; the dashboard's Costs view, WO-2.6). A `capped` row means the task reached the cap and the eval stopped it (it never approves).
+
+   **The eval runs on the live vault.** Task d07 writes a `plans\` note and d09 may write an `inbox\` proposal (both through the guarded note tools; `me\` and `_gos\` stay untouched), and the lane's start may commit a `_gos` deploy. Afterwards `git -C "$env:USERPROFILE\GregtecOS\vault" log --stat -5` lists what it wrote; delete those notes (or `git revert` their commits) if you don't want them.
 6. Paste both files into the PR (or a chat with the PM). The PM sets `[budget] task_max_usd` and plan 4.4's cost sketch from them; WO-3.7 measures again on real design tasks.
 
 ## D. Pause and ask, live (optional)
@@ -36,7 +38,8 @@ Clayton runs these on the gaming PC after the WO-2.4 PR is merged: about 30 minu
    [budget]
    task_max_usd = 0.05
    ```
-   Ask `gos ask "compare the electric blast furnace with the bronze blast furnace for making steel at LV"`. When the task reaches $0.05 it pauses: `gos ask` asks `Approve another cap's worth? [y/N]` (the dashboard gets the same as `POST /api/deep/tasks/<id>/approve` in WO-2.6). `y` continues the task in the same session; `n` stops it. Set the cap back afterwards.
+   Ask `gos ask "compare the electric blast furnace with the bronze blast furnace for making steel at LV"`. When the task reaches $0.05 it pauses: `gos ask` asks `Approve another cap's worth? [y/N]` (the dashboard gets the same as `POST /api/deep/tasks/<id>/approve` in WO-2.6). `y` continues the task in the same session; `n` stops it. A task nobody answers is stopped after 30 minutes, so the next request isn't held up. The cap is checked as messages arrive, so a subagent's hidden thinking can carry a task a little past it before it pauses. Set the cap back afterwards.
+8. A running task can be stopped too: `POST /api/deep/tasks/<id>/stop` (the dashboard's Stop button arrives with WO-2.6) interrupts it, and it ends as `stopped` with its cost so far recorded.
 
 ## What to send back
 
