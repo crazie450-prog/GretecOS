@@ -584,6 +584,7 @@ public final class Harness {
             });
             check(checks, "machine_ebf_1000", ebf[0], "MTEElectricBlastFurnace at gregtech:gt.blockmachines@1000");
             checkOreMixes(dir, counts, manifest.getAsJsonObject("parts"));
+            checkOreDict(dir, counts, manifest.getAsJsonObject("parts"));
 
             Set<String> items = new HashSet<>();
             eachLine(dir.resolve("items.jsonl"), o -> items.add(refKey(o)));
@@ -869,6 +870,61 @@ public final class Harness {
             }
         }
 
+        /**
+         * oredict.jsonl (D145): every oredict name once, sorted, with its members as item refs; GT's steel ingot is in
+         * ingotSteel and vanilla's wildcard planks entry is kept raw in plankWood.
+         */
+        private void checkOreDict(Path dir, JsonObject counts, JsonObject parts) throws IOException {
+            JsonElement status = parts.get("oredict");
+            check(
+                checks,
+                "oredict_ok",
+                status != null && "ok".equals(status.getAsString())
+                    && counts.get("oredict_errors")
+                        .getAsInt() == 0,
+                "parts.oredict=" + status + " oredict_errors=" + counts.get("oredict_errors"));
+            List<String> names = new ArrayList<>();
+            int[] members = { 0 };
+            Map<String, Set<String>> wanted = new TreeMap<>();
+            wanted.put("ingotSteel", new TreeSet<String>());
+            wanted.put("plankWood", new TreeSet<String>());
+            eachLine(dir.resolve("oredict.jsonl"), o -> {
+                String name = o.get("ore")
+                    .getAsString();
+                names.add(name);
+                if (!o.has("members")) return;
+                Set<String> keep = wanted.get(name);
+                for (JsonElement m : o.getAsJsonArray("members")) {
+                    members[0]++;
+                    if (keep != null && m.getAsJsonObject()
+                        .get("item")
+                        .isJsonPrimitive()) keep.add(refKey(m.getAsJsonObject()));
+                }
+            });
+            List<String> sorted = new ArrayList<>(new TreeSet<>(names));
+            check(
+                checks,
+                "oredict_names_sorted_once",
+                names.size() >= 1000 && sorted.equals(names)
+                    && names.size() == counts.get("oredict")
+                        .getAsInt()
+                    && members[0] == counts.get("oredict_members")
+                        .getAsInt(),
+                names.size() + " names, " + members[0] + " members");
+            Set<String> steel = wanted.get("ingotSteel");
+            check(
+                checks,
+                "oredict_ingotSteel_has_gt_steel",
+                steel.contains("gregtech:gt.metaitem.01@11305"),
+                "ingotSteel members " + first(steel));
+            Set<String> planks = wanted.get("plankWood");
+            check(
+                checks,
+                "oredict_wildcard_kept",
+                planks.contains("minecraft:planks@32767"),
+                "plankWood members " + first(planks));
+        }
+
         /** gt_ore_mixes.json (D126): GT's ore layers with four keyed ores each, and the vanilla dimensions named. */
         private void checkOreMixes(Path dir, JsonObject counts, JsonObject parts) throws IOException {
             JsonElement status = parts.get("ore_mixes");
@@ -1080,7 +1136,7 @@ public final class Harness {
         private void checkFiles(Path dir, JsonObject files) throws IOException {
             List<String> bad = new ArrayList<>();
             String[] required = { "gt_recipe_maps.json", "gt_recipes.jsonl", "gt_machines.jsonl", "gt_ore_mixes.json",
-                "items.jsonl", "fluids.jsonl" };
+                "oredict.jsonl", "items.jsonl", "fluids.jsonl" };
             for (String name : required) {
                 if (!files.has(name)) bad.add(name + " not listed");
             }

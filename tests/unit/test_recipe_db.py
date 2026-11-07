@@ -20,8 +20,15 @@ import pytest
 
 from gregtec import cli, config
 from gregtec.db import access, build, report
-from gregtec.ingest import collect, merge
-from gregtec.ingest.normalize import CIRCUIT
+from gregtec.ingest import collect, gtdump, merge
+from gregtec.ingest.normalize import (
+    CIRCUIT,
+    ITEM,
+    WILDCARD,
+    Ref,
+    nbt_hash,
+    normalize_nbt,
+)
 
 RUN = "20261106T120000Z"
 WATER = {"fluid": "water", "mb": 1000}
@@ -1693,3 +1700,181 @@ def test_a_bad_curated_table_fails_before_the_db_is_touched(
     with pytest.raises(build.BuildError, match=r"curated machine facts: bad\.tsv:3: "):
         built(tmp_path, allow_list, curated=bad)
     assert not access.db_path(tmp_path).exists()
+
+
+# --- the full ore dictionary (D145) ---------------------------------------------------------
+
+PRESS = "test.press"  # an NEI-only handler
+
+
+def press_line(shown: tuple[str, int]) -> dict[str, object]:
+    """An NEI-only recipe: 2 of any test ingot (ours, and another mod's that GT's files never
+    reference, so items.jsonl doesn't list it) into a plate; NEI shows ``shown``."""
+    return nei_line(
+        PRESS,
+        [
+            stack(
+                shown[0],
+                shown[1],
+                2,
+                anyOf=[
+                    {"strId": "test:ingot", "Damage": 1},
+                    {"strId": "other:ingot", "Damage": 7},
+                ],
+            )
+        ],
+        [stack("test:plate", 0, 1)],
+        None,
+    )
+
+
+def oredict_lines() -> list[dict[str, object]]:
+    return [
+        {"ore": "dustTest", "members": [{"item": "test:dust", "meta": 1}]},
+        {"ore": "emptyName", "members": []},
+        {
+            "ore": "ingotTest",
+            "members": [
+                {"item": "other:ingot", "meta": 7},
+                {"item": "test:ingot", "meta": 1},
+            ],
+        },
+        {"ore": "plankWood", "members": [{"item": "minecraft:planks", "meta": 32767}]},
+    ]
+
+
+def with_press(
+    shown: tuple[str, int] = ("test:ingot", 1), oredict: bool = True
+) -> dict[str, bytes]:
+    files = default_files()
+    files["nei/Press.jsonl"] = jsonl([press_line(shown)], "\r\n")
+    if oredict:
+        files["oredict.jsonl"] = jsonl(oredict_lines())
+    return files
+
+
+def parts(oredict: str | None) -> dict[str, str]:
+    out = {
+        "gt_dump": "ok",
+        "machines": "ok",
+        "refs": "ok",
+        "nei": "ok",
+        "autoexport": "ok",
+    }
+    if oredict is not None:
+        out["oredict"] = oredict
+    return out
+
+
+PRESS_SLOT = (
+    "SELECT r.ref, o.name FROM recipe r JOIN nei_handler h ON h.id = r.nei_handler_id"
+    " JOIN recipe_input ri ON ri.recipe_id = r.id LEFT JOIN ore o ON o.id = ri.ore_id"
+    " JOIN export_run e ON e.id = r.run_id WHERE h.handler_name = ? AND e.run_key = ?"
+)
+
+
+def test_read_oredict_keys_members_as_items_are_keyed(tmp_path: Path) -> None:
+    lines = [
+        {
+            "ore": "plankWood",
+            "members": [{"item": "minecraft:planks", "meta": WILDCARD}],
+        },
+        {
+            "ore": "stickData",
+            "members": [{"item": "test:datastick", "meta": 0, "nbt": DATA_STICK_NBT}],
+        },
+        {"ore": "broken", "error": "IllegalStateException: no"},
+    ]
+    (tmp_path / gtdump.ORE_DICT).write_bytes(jsonl(lines))
+    ids: dict[int, str | None] = {}
+    got = list(gtdump.read_oredict(tmp_path, ids))
+    stick = nbt_hash(normalize_nbt(DATA_STICK_NBT))  # as items.jsonl's line is keyed
+    assert got == [
+        gtdump.OreName("plankWood", (Ref(ITEM, "minecraft:planks", WILDCARD),), None),
+        gtdump.OreName("stickData", (Ref(ITEM, "test:datastick", 0, stick),), None),
+        gtdump.OreName("broken", (), "IllegalStateException: no"),
+    ]
+    assert ids == {628: "test:plate"}  # the run's numeric ID table, for NEI's NBT
+    assert gtdump.oredict_status({"parts": {"oredict": "ok"}}) == "ok"
+    assert gtdump.oredict_status({"parts": {}}) == "absent"
+
+    (tmp_path / gtdump.ORE_DICT).write_bytes(jsonl([{"ore": "x", "members": [5]}]))
+    with pytest.raises(gtdump.FormatError, match=r"oredict\.jsonl:1: member"):
+        list(gtdump.read_oredict(tmp_path))
+
+
+def test_the_full_oredict_names_slots_items_jsonl_cannot(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    # Before D145 (no oredict.jsonl): other:ingot@7 is in no ore list, so the slot is keyed
+    # by the set of what it accepts.
+    make_run(tmp_path, files=with_press(oredict=False), parts=parts(None))
+    first = built(tmp_path, allow_list)
+    db = first.db
+    [(old_ref, old_ore)] = rows(db, PRESS_SLOT, PRESS, RUN)
+    assert old_ore is None
+    assert first.loaded.oredict is None
+
+    # With the full ore dictionary: keyed by ingotTest.
+    run2 = "20261107T120000Z"
+    make_run(tmp_path, run2, "2026-11-07T12:00:00Z", with_press(), parts=parts("ok"))
+    second = built(tmp_path, allow_list)
+    [(ref, ore)] = rows(db, PRESS_SLOT, PRESS, run2)
+    assert ore == "ingotTest"
+    assert ref != old_ref  # a new key, once: the slot is now keyed ore:ingotTest
+    assert first.loaded.stats is not None and second.loaded.stats is not None
+    assert second.loaded.stats.ore_named == first.loaded.stats.ore_named + 1
+    # Every name is in `ore`, the empty one too; members as registered, wildcard rows kept.
+    members = rows(
+        db,
+        "SELECT o.name, i.registry_name || '@' || i.meta FROM ore_member m"
+        " JOIN ore o ON o.id = m.ore_id JOIN item i ON i.id = m.item_id"
+        " WHERE o.name IN ('ingotTest', 'plankWood') ORDER BY 1, 2",
+    )
+    assert members == [
+        ("ingotTest", "other:ingot@7"),
+        ("ingotTest", "test:ingot@1"),
+        ("plankWood", "minecraft:planks@0"),  # its own ore list in items.jsonl
+        ("plankWood", "minecraft:planks@32767"),
+    ]
+    assert rows(db, "SELECT count(*) FROM ore WHERE name = 'emptyName'") == [(1,)]
+    text = "\n".join(report.lines(second, full=False))
+    assert "full ore dictionary (4 names)" in text
+
+    # NEI shows the other mod's ingot next time: the key holds.
+    run3 = "20261108T120000Z"
+    make_run(
+        tmp_path,
+        run3,
+        "2026-11-08T12:00:00Z",
+        with_press(("other:ingot", 7)),
+        parts=parts("ok"),
+    )
+    built(tmp_path, allow_list, keep=3)
+    assert rows(db, PRESS_SLOT, PRESS, run3) == [(ref, "ingotTest")]
+
+
+def test_a_failed_oredict_part_is_refused_when_nei_is_used(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    # items.jsonl's ore lists name fewer NEI-only slots, so building it would give those
+    # recipes other keys for one run (D145): refused, the DB untouched.
+    make_run(
+        tmp_path,
+        files=with_press(),
+        parts=parts("failed"),
+        part_errors={"oredict": "IllegalStateException: boom"},
+    )
+    with pytest.raises(
+        build.BuildError,
+        match=r"parts\.oredict is 'failed' \(IllegalStateException: boom\), so its NEI-only",
+    ):
+        built(tmp_path, allow_list)
+    assert not access.db_path(tmp_path).exists()
+
+    # Without NEI the oredict names no slot, so the GT-only run still builds.
+    gt_only = parts("failed") | {"nei": "absent"}
+    make_run(tmp_path, "20261107T120000Z", "2026-11-07T12:00:00Z", parts=gt_only)
+    result = built(tmp_path, allow_list)
+    assert result.loaded.oredict is None
+    assert result.loaded.oredict_status == "failed"

@@ -4,7 +4,7 @@ Gregtec OS's Forge mod for GTNH 2.9.0 (Minecraft 1.7.10, GT 5.09.54.265). It has
 
 | Module | Instance | Status |
 |---|---|---|
-| `export` | GTNH-Export only | WO-1.1: GT recipe-map dump, machine pass, item/fluid tables, NEI trigger, autoexport (V22), manifest; WO-1.6: ore mixes (`gt_ore_mixes.json`, D126); WO-1.10: CropsNH's crop dumpers (`crops/`, D134) |
+| `export` | GTNH-Export only | WO-1.1: GT recipe-map dump, machine pass, item/fluid tables, NEI trigger, autoexport (V22), manifest; WO-1.6: ore mixes (`gt_ore_mixes.json`, D126); WO-1.10: CropsNH's crop dumpers (`crops/`, D134); the full ore dictionary (`oredict.jsonl`, D145) |
 | `listener` | Play | WO-6.2; registers nothing yet |
 | `client` | Play (client side) | WO-8.1; registers nothing yet |
 
