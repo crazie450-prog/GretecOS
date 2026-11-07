@@ -102,7 +102,9 @@ class Release:
     replaced: str | None  # the commit it replaced, if any
     leftovers: tuple[Path, ...]  # old folders it couldn't delete yet
     gregteclink: dict[str, str] | None  # release.json's {"jar", "sha256"}, if mod/
-    dashboard: dict[str, str] | None = None  # release.json's {"index_sha256"}, if dashboard/
+    dashboard: dict[str, str] | None = (
+        None  # release.json's {"index_sha256"}, if dashboard/
+    )
 
 
 @dataclass(frozen=True)

@@ -71,7 +71,7 @@ def _check(node: dict[str, Any], value: object, path: str, errors: list[str]) ->
             _check_union(node[key], value, path, errors)
             return
     if "const" in node and value != node["const"]:
-        errors.append(f"{path}: must be {node['const']!r}")
+        errors.append(f"{path}: must be {json.dumps(node['const'])}")
         return
     if "type" in node:
         allowed = node["type"] if isinstance(node["type"], list) else [node["type"]]
@@ -79,7 +79,7 @@ def _check(node: dict[str, Any], value: object, path: str, errors: list[str]) ->
             errors.append(f"{path}: must be {' or '.join(allowed)}")
             return
     if "enum" in node and value not in node["enum"]:
-        errors.append(f"{path}: must be one of {node['enum']!r}")
+        errors.append(f"{path}: must be one of {json.dumps(node['enum'])}")
         return
     if isinstance(value, str):
         if len(value) > node.get("maxLength", len(value)):
@@ -123,7 +123,9 @@ def _check_union(
     consts = [b.get("properties", {}).get("type", {}).get("const") for b in resolved]
     if all(consts) and isinstance(value, dict):
         if value.get("type") not in consts:
-            errors.append(f"{path}.type: unknown card type {value.get('type')!r}")
+            errors.append(
+                f"{path}.type: unknown card type {json.dumps(value.get('type'))}"
+            )
             return
         _check(resolved[consts.index(value["type"])], value, path, errors)
         return

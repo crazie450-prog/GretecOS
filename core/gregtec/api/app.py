@@ -473,10 +473,12 @@ def create_app(core: Core) -> FastAPI:
                 "checked": reply.checked,
             },
         )
-        answer = board.answered(entry, dashboard.checked_reply(reply.as_dict()))
-        core.broadcast({"type": "answer", "data": answer})
+        answer = dashboard.checked_reply(reply.as_dict())
+        # Every answer's card shows on the dashboards, a spoken question's too (D23).
+        pushed = board.answered(entry, answer, who.name)
+        core.broadcast({"type": "ask.reply", "data": pushed}, trusted_only=True)
         await dashboard.push_state(core)
-        return answer["reply"]
+        return answer
 
     def deep_lane() -> DeepLaneService:
         if core.deep is None:

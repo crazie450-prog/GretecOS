@@ -5,7 +5,7 @@
 | GET  /                   | anyone (Host-checked) | the built dashboard (``dashboard/dist``)       |
 | GET  /assets/..., /fonts/... | anyone            | its files: scripts, styles, fonts, licences    |
 | GET  /api/state          | admin, client, device | game, data, AI, tier, alerts, approvals, jobs  |
-| GET  /api/answers        | admin, client, device | the last 50 answers, oldest first (Chat)       |
+| GET  /api/answers        | admin, device         | the last 50 answers, oldest first (Chat)       |
 | GET  /api/recipe?ref=    | admin, client, device | the recipe card of one r: id (citation chips)  |
 | POST /api/tools/{name}   | admin, client, device | a read-only lookup tool's result as a card     |
 | GET  /api/verify         | admin, client, device | the VERIFY list with doctor's last statuses    |
@@ -19,8 +19,10 @@ other page may frame it. ``/`` on bare ``127.0.0.1`` or ``localhost`` redirects 
 name, the only one pairing works on (D117).
 
 Pushed on ``/ws``: ``state`` (when it changes, at least every 15 s, and when a question starts or
-is answered) and ``answer`` (every answer of ``/api/ask``). Pairing codes go only to trusted
-sockets (admin, devices). A card that fails the catalog check (D160) is logged and left out.
+is answered) and, to trusted sockets (admin, devices), ``ask.reply``: every answer of
+``/api/ask`` as ``{"id", "by", "request", "asked_ts", "ts", ...the reply}``, so a spoken question's
+card shows on monitor 2 too. Pairing codes also go only to trusted sockets. A card that fails
+the catalog check (D160) is logged and left out.
 
 No ``from __future__ import annotations``: FastAPI reads the route signatures at runtime.
 """
@@ -112,8 +114,9 @@ class Board:
     export: dict[str, Any] | None = None  # who holds the instance lock (WO-1.4)
     data: dict[str, Any] = field(default_factory=dict)
     tier: dict[str, Any] | None = None
-    foreground: Callable[[], str | None] = desktop.foreground_program
-    clients: Callable[[Config], list[str]] = prism.running_clients
+    # None: the real ones (desktop.foreground_program, prism.running_clients), looked up per call
+    foreground: Callable[[], str | None] | None = None
+    clients: Callable[[Config], list[str]] | None = None
     next_focus: float = 0.0
     next_game: float = 0.0
     next_data: float = 0.0
@@ -139,13 +142,17 @@ class Board:
         with self._lock:
             self._asking.pop(entry["id"], None)
 
-    def answered(self, entry: dict[str, Any], reply: dict[str, Any]) -> dict[str, Any]:
+    def answered(
+        self, entry: dict[str, Any], reply: dict[str, Any], by: str
+    ) -> dict[str, Any]:
+        """Keep ``reply`` (an ``/api/ask`` answer) with who asked what, and when."""
         answer = {
+            **reply,
             "id": entry["id"],
-            "question": entry["text"],
-            "asked": entry["ts"],
+            "by": by,
+            "request": entry["text"],
+            "asked_ts": entry["ts"],
             "ts": int(time.time()),
-            "reply": reply,
         }
         with self._lock:
             self._asking.pop(entry["id"], None)
@@ -164,13 +171,15 @@ class Board:
 
     def refresh_focus(self) -> None:
         try:
-            self.focused = desktop.game_focused(self.foreground())
+            program = (self.foreground or desktop.foreground_program)()
+            self.focused = desktop.game_focused(program)
         except OSError:
             self.focused = None
 
     def refresh_game(self) -> None:
         try:
-            self.running, self.game_error = self.clients(self.cfg), None
+            found = (self.clients or prism.running_clients)(self.cfg)
+            self.running, self.game_error = found, None
         except OSError as exc:
             self.running, self.game_error = None, str(exc)[:200]
 
@@ -444,7 +453,7 @@ def add_routes(
         return state(core, who.role in ("admin", "device"))
 
     @app.get("/api/answers")
-    def get_answers(_: Anyone) -> list[dict[str, Any]]:
+    def get_answers(_: Trusted) -> list[dict[str, Any]]:
         return board.answers()
 
     @app.get("/api/recipe")
