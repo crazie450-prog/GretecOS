@@ -1,0 +1,51 @@
+id	kind	expect	question	truth	want
+r01	recipe	answer	How do I make a steel plate?	make gregtech:gt.metaitem.01@17305
+r02	recipe	answer	How do I make bronze?	make gregtech:gt.metaitem.01@11300
+r03	recipe	answer	How is red alloy made?	make gregtech:gt.metaitem.01@11308
+r04	recipe	answer	How do I make glass?	make minecraft:glass@0
+r05	recipe	answer	How do I make an LV motor?	make gregtech:gt.metaitem.01@32600
+r06	recipe	answer	recipe for steel gear	make gregtech:gt.metaitem.02@31305	count
+r07	recipe	answer	recipes for the red alloy ingot at LV	make gregtech:gt.metaitem.01@11308 tier=LV	count
+r08	machine	answer	What machine makes sulfuric acid?	make fluid:sulfuricacid	machine
+r09	machine	answer	What does the EBF do?	machine mte:1000
+r10	machine	answer	How many parallels does the electric blast furnace have?	machine mte:1000	fact=parallel
+r11	machine	answer	Tell me about the bricked blast furnace.	machine mte:140
+r12	machine	answer	What overclock does the Industrial Precision Lathe use?	machine mte:686	fact=oc
+r13	power	answer	How much EU/t does the EBF use to make steel?	make gregtech:gt.metaitem.01@11305 map=gt.recipe.blastfurnace	eut
+r14	time	answer	How long does the EBF take to make a steel ingot?	make gregtech:gt.metaitem.01@11305 map=gt.recipe.blastfurnace	dur
+r15	power	answer	What voltage tier does the EBF's steel recipe need?	make gregtech:gt.metaitem.01@11305 map=gt.recipe.blastfurnace	tier
+r16	power	answer	How much power does the alloy smelter need to make red alloy from copper dust?	make gregtech:gt.metaitem.01@11308 map=gt.recipe.alloysmelter in=gregtech:gt.metaitem.01@2035	eut
+r17	time	answer	How long does the lathe take to turn a steel ingot into a steel rod?	make gregtech:gt.metaitem.01@23305 map=gt.recipe.lathe in=gregtech:gt.metaitem.01@11305	dur
+r18	power	answer	How much EU/t and how long does the electrolyzer need to split water into hydrogen?	make fluid:hydrogen map=gt.recipe.electrolyzer in=fluid:water	eut,dur
+r19	time	answer	How long does the bricked blast furnace take to make steel from an iron ingot and charcoal?	make gregtech:gt.metaitem.01@11305 map=gt.recipe.primitiveblastfurnace in=minecraft:iron_ingot@0 in=minecraft:coal@1	dur
+r20	power	answer	Is it worth making red alloy in the alloy smelter?	make gregtech:gt.metaitem.01@11308 map=gt.recipe.alloysmelter	eut
+r21	chance	answer	What's the chance of nickel dust when I macerate iron ore?	make gregtech:gt.metaitem.01@2034 map=gt.recipe.macerator in=gregtech:gt.blockores2@32	chance=gregtech:gt.metaitem.01@2034
+r22	chance	answer	How likely is sticky resin when I centrifuge rubber wood?	make IC2:itemHarz@0 map=gt.recipe.centrifuge in=IC2:blockRubWood@32767	chance=IC2:itemHarz@0
+r23	chance	answer	What are the odds of an exquisite diamond from sifting purified diamond ore?	make gregtech:gt.metaitem.02@30500 map=gt.recipe.sifter in=gregtech:gt.metaitem.01@6500	chance=gregtech:gt.metaitem.02@30500
+r24	chance	answer	What's the chance of nickel dust from washing crushed iron ore?	make gregtech:gt.metaitem.01@2034 map=gt.recipe.orewasher in=gregtech:gt.metaitem.01@5032	chance=gregtech:gt.metaitem.01@2034
+r25	chance	answer	How often do I get a plantball from centrifuging dirt?	make IC2:itemFuelPlantBall@0 map=gt.recipe.centrifuge in=minecraft:dirt@32767	chance=IC2:itemFuelPlantBall@0
+r26	fluid	answer	How much water does the electrolyzer need to make hydrogen?	make fluid:hydrogen map=gt.recipe.electrolyzer in=fluid:water	in=fluid:water
+r27	fluid	answer	How much hydrogen does electrolyzing water give?	make fluid:hydrogen map=gt.recipe.electrolyzer in=fluid:water	out=fluid:hydrogen
+r28	fluid	answer	What makes oxygen?	make fluid:oxygen
+r29	fluid	answer	Where is lubricant used?	use fluid:lubricant
+r30	fluid	answer	How much soldering alloy does the wrap of ULV circuits take?	make GoodGenerator:circuitWrap@0 in=fluid:molten.solderingalloy	in=fluid:molten.solderingalloy
+r31	oredict	answer	Can I use any wood planks to make sticks?	make minecraft:stick@0 ore=plankWood
+r32	oredict	answer	Does the crafting table take any kind of planks?	make minecraft:crafting_table@0 ore=plankWood
+r33	oredict	answer	Can any copper wire go into the LV motor recipe?	make gregtech:gt.metaitem.01@32600 ore=wireGt01AnyCopper
+r34	oredict	answer	Which other glass can the chemical bath turn into plain glass?	make minecraft:glass@0 map=gt.recipe.chemicalbath	alts=minecraft:stained_glass@32767
+r35	multistep	answer	What makes a steel rod in the lathe, and what makes the steel ingot it takes?	make gregtech:gt.metaitem.01@23305 map=gt.recipe.lathe ; make gregtech:gt.metaitem.01@11305
+r36	multistep	answer	How do I make an LV motor, and then the copper wire it needs?	make gregtech:gt.metaitem.01@32600 ; make gregtech:gt.blockmachines@1360
+r37	multistep	answer	What makes a steel gear, and what makes the steel plate for it?	make gregtech:gt.metaitem.02@31305 ; make gregtech:gt.metaitem.01@17305
+r38	multistep	answer	Compare the EBF and the bricked blast furnace recipes for steel.	make gregtech:gt.metaitem.01@11305 map=gt.recipe.blastfurnace ; make gregtech:gt.metaitem.01@11305 map=gt.recipe.primitiveblastfurnace	eut,dur ; dur
+r39	ambiguous	ask	How do I make copper wire?
+r40	ambiguous	ask	How do I make stainless?
+r41	ambiguous	ask	What makes a hull?
+r42	ambiguous	ask	What uses a conveyor?
+r43	ambiguous	ask	How do I craft a gear?
+r44	ambiguous	ask	recipe for battery
+r45	none	none	How do I make a ghast tear?	make minecraft:ghast_tear@0
+r46	none	none	How do I craft a dragon egg?	make minecraft:dragon_egg@0
+r47	uses	answer	What uses red alloy?	use gregtech:gt.metaitem.01@11308	count
+r48	uses	answer	What is tin used for?	use gregtech:gt.metaitem.01@11057
+r49	uses	answer	What can I make with a vacuum tube?	use gregtech:gt.metaitem.01@32700
+r50	uses	answer	uses of glass	use minecraft:glass@0	count
