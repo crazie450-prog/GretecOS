@@ -20,7 +20,8 @@ How a deploy runs:
 3. Build the release in ``GOS_APP\.gos-staging-build-*``: ``git archive``, then
    ``uv venv --relocatable`` and ``uv sync --locked --no-dev`` with ``UV_LINK_MODE=copy``. Copies,
    not hardlinks into uv's cache, so every file is new in GOS_APP and inherits its ACL. The
-   editable install's ``.pth`` is made relative. If the commit has ``mod/``, run its Gradle
+   editable installs' ``.pth`` lines (core/, and voice/ for the voice client, D179) are made
+   relative. If the commit has ``mod/``, run its Gradle
    wrapper's ``build`` there (D98), copy the GregtecLink jar to ``mod-dist\``, record its name and
    SHA256 in ``release.json`` and delete everything the build added to the release
    (``mod\build\``, ``mod\.gradle\``, ``mod\run\``, ..., and anything outside ``mod\``), so
@@ -70,6 +71,8 @@ OLD = ".gos-old-"
 MOD, MOD_DIST = "mod", "mod-dist"
 # The scheduled world backup runs GOS_APP\scripts\backup_world.ps1 (setup_gos_dev.ps1 step 7).
 REQUIRED = ("scripts/backup_world.ps1",)
+# Editable installs uv makes in the release: the root project and the voice package (D179).
+EDITABLE = ("core", "voice")
 # Antivirus can hold a file in a freshly written folder for seconds (WinError 5 on the swap).
 RENAME_TRIES, RENAME_DELAY = 10, 1.0
 # Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.
@@ -230,30 +233,34 @@ def acl_problem(acl: Acl, me: str) -> str | None:
 
 
 def relocate_editable(release: Path) -> None:
-    """Make the editable install's ``.pth`` line relative to site-packages.
+    """Make the editable installs' ``.pth`` lines relative to site-packages.
 
-    uv writes the absolute path of ``release/core``; Python resolves a relative line against
-    the folder holding the ``.pth``, so the release keeps working after the rename.
+    uv writes the absolute path of ``release/core`` (the root project) and, when the release
+    has the workspace's ``voice/`` package (D179), of ``release/voice``; Python resolves a
+    relative line against the folder holding the ``.pth``, so the release keeps working after
+    the rename. Each must be there exactly once.
     """
-    core = _key(release / "core")
-    hits = 0
+    names = [n for n in EDITABLE if n == "core" or (release / n).is_dir()]
+    roots = {_key(release / name): name for name in names}
+    hits = dict.fromkeys(names, 0)
     for pth in sorted((release / ".venv").glob("**/site-packages/*.pth")):
         lines = pth.read_text("utf-8").splitlines()
-        found = [
-            i
-            for i, line in enumerate(lines)
-            if os.path.isabs(line.strip()) and _key(Path(line.strip())) == core
-        ]
-        for i in found:
-            lines[i] = os.path.relpath(release / "core", pth.parent)
-        if found:
+        changed = False
+        for i, line in enumerate(lines):
+            path = line.strip()
+            name = roots.get(_key(Path(path))) if os.path.isabs(path) else None
+            if name is not None:
+                lines[i] = os.path.relpath(release / name, pth.parent)
+                hits[name] += 1
+                changed = True
+        if changed:
             pth.write_text("\n".join(lines) + "\n", "utf-8")
-        hits += len(found)
-    if hits != 1:
-        raise DeployError(
-            f"expected one editable path to {release / 'core'} in the venv's .pth files, "
-            f"found {hits}; nothing was swapped"
-        )
+    for name, count in hits.items():
+        if count != 1:
+            raise DeployError(
+                f"expected one editable path to {release / name} in the venv's .pth "
+                f"files, found {count}; nothing was swapped"
+            )
 
 
 def _key(path: Path) -> Path:
@@ -414,20 +421,25 @@ def _delete(path: Path) -> bool:
 
 
 def _check_env(release: Path) -> None:
-    """The staged release imports gregtec from its own core/ and its gos launcher runs."""
-    probe = "import pathlib, gregtec; print(pathlib.Path(gregtec.__file__).resolve())"
-    out = subprocess.run(
-        [str(venv_exe(release, "python")), "-c", probe],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    found = Path(out.stdout.strip()) if out.returncode == 0 else None
-    if found is None or _key(release / "core") not in _key(found).parents:
-        raise DeployError(
-            f"the staged release imports gregtec from {found}, not its own core/: "
-            f"{out.stderr.strip()}"
+    """The staged release imports gregtec from its own core/ (and gregtec_voice from its own
+    voice/, D179) and its gos launcher runs."""
+    packages = [("gregtec", "core")]
+    if (release / "voice").is_dir():
+        packages.append(("gregtec_voice", "voice"))
+    for module, folder in packages:
+        probe = f"import pathlib, {module}; print(pathlib.Path({module}.__file__).resolve())"
+        out = subprocess.run(
+            [str(venv_exe(release, "python")), "-c", probe],
+            check=False,
+            capture_output=True,
+            text=True,
         )
+        found = Path(out.stdout.strip()) if out.returncode == 0 else None
+        if found is None or _key(release / folder) not in _key(found).parents:
+            raise DeployError(
+                f"the staged release imports {module} from {found}, not its own "
+                f"{folder}/: {out.stderr.strip()}"
+            )
     gos = subprocess.run(
         [str(venv_exe(release, "gos")), "--help"],
         check=False,

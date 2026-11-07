@@ -18,7 +18,7 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import config, control, doctor, locks, playhooks, servicecli
+from gregtec import config, control, doctor, locks, playhooks, servicecli, voicecli
 from gregtec import deploy as app_deploy
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
@@ -575,6 +575,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     servicecli.add_parsers(commands)
     pack_cli.add_parsers(commands)
+    voicecli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -635,6 +636,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return servicecli.run(args)
     if args.command in pack_cli.COMMANDS:
         return pack_cli.run(args, sys.stdout)
+    if args.command in voicecli.COMMANDS:
+        return voicecli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,

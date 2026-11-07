@@ -1,0 +1,866 @@
+"""The voice client (plan 4.2, 4.5; D179): trigger -> segment -> transcript -> core -> speech.
+
+**One controller thread owns the state.** The key hook, the watchdog, the audio worker, the
+speaker, the core's WebSocket and the turn workers only post events to its queue
+(:meth:`VoiceClient.post`), so nothing waits on anything slow: a model call never holds up a key.
+
+**A turn**: the talk key goes down (or the wake engine fires): speech stops (barge-in), the
+fast lane's prompt cache is warmed (``POST /api/prewarm``, D152) and a segment opens with its
+pre-roll. The key comes up: after the post-roll the segment closes, a worker transcribes it
+(WO-5.2's engine) and asks the core (``POST /api/ask``, D152), and the reply's text is spoken
+(WO-5.3's engine) while its card goes to the dashboards (the core pushes ``ask.reply``). A new
+turn supersedes one still in flight: its late reply isn't spoken. Each turn's timings go to
+``logs/voice.log`` as a ``turn`` record (never its text): ``gos voice bench`` reads them (PM14).
+
+**Hotkeys**: *confirm* and *cancel* are the router's instant commands (D59, D150), asked like a
+transcript; *cancel* first drops a segment being recorded and stops speech. *Next card* is
+``POST /api/ui {"action": "next_card"}``, which the core pushes to the dashboards.
+
+**The core**: the client's state (idle, listening, thinking, speaking) goes to the core
+(``POST /api/voice/state``) for the dashboard's voice strip and orb, again after a reconnect.
+The WebSocket brings ``deep.task`` pushes: a task this client handed off (by its id, or by its
+request text, which the deep lane keeps verbatim, D152) is spoken when it is done (its first
+sentence, the deep lane's spoken result), when it waits at its spending cap, and when it fails.
+When the core has been unreachable for 15 s, the client says "Core offline." once (plan 4.2); a
+supervisor restart (about 2 s, D115) stays quiet.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import queue
+import re
+import threading
+import time
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from gregtec import control
+from gregtec_voice.audio import AudioError, AudioPipe, Recorder, Segment
+from gregtec_voice.hooks import Speaker, Transcriber, WakeEngine
+from gregtec_voice.ptt import (
+    CANCEL,
+    START,
+    STOP,
+    Hook,
+    Hotkeys,
+    KeyEvent,
+    TalkKey,
+    Watchdog,
+)
+from gregtec_voice.settings import KEY, WAKE, VoiceSettings
+
+log = logging.getLogger(__name__)
+
+VOICE = "voice"  # this client's name; its token is gregtec-os/token-voice (D117)
+IDLE, LISTENING, THINKING, SPEAKING, OFF = (
+    "idle",
+    "listening",
+    "thinking",
+    "speaking",
+    "off",
+)
+CORE_OFFLINE = "Core offline."
+CORE_ERROR = "The core couldn't answer that."
+DEEP_CAP = (
+    "The deep-lane task stopped at its spending cap. Approve it on the dashboard."
+)
+DEEP_FAILED = "The deep-lane task failed. The dashboard has the error."
+OFFLINE_SAY_S = 15.0  # the core unreachable this long: say so, once per outage
+ASK_TIMEOUT_S = 60.0  # the fast lane gives up well within this (D152: 15 s, 1 retry)
+PREWARM_TIMEOUT_S = 30.0
+POST_TIMEOUT_S = 5.0
+WS_BACKOFF_S = (1.0, 2.0, 4.0, 8.0)
+SPEECH_QUEUE = 3  # utterances waiting to be said; older ones are dropped
+MINE_KEEP = 20  # recent asks remembered to recognise this client's deep-lane tasks
+TICK_S = 0.1
+
+
+class CoreError(Exception):
+    """The core didn't answer (``offline``) or answered with an error."""
+
+    def __init__(self, message: str, *, offline: bool) -> None:
+        super().__init__(message)
+        self.offline = offline
+
+
+class CoreApi(Protocol):
+    """What the controller needs from the core (:class:`CoreClient`; tests use a fake)."""
+
+    def ask(self, text: str) -> dict[str, Any]: ...
+
+    def prewarm(self) -> None: ...
+
+    def ui(self, action: str) -> None: ...
+
+    def state(self, state: str, trigger: str | None) -> None: ...
+
+
+# --- events for the controller ----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Closed:
+    segment: Segment
+
+
+@dataclass(frozen=True)
+class Answered:
+    turn: Turn
+    reply: dict[str, Any] | None
+    error: str | None = None
+    offline: bool = False
+
+
+@dataclass(frozen=True)
+class Pushed:
+    message: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class Online:
+    online: bool
+    t: float
+
+
+@dataclass(frozen=True)
+class Wake:
+    kind: str  # start, end, cancel or speech
+    t: float
+
+
+@dataclass(frozen=True)
+class Spoken:
+    utterance: int
+    kind: str  # first_audio or done
+    t: float
+
+
+@dataclass
+class Turn:
+    id: int
+    trigger: str  # key, wake, confirm or cancel
+    started: float  # key down, wake, or the hotkey press
+    stopped: float | None = None  # key up or end of speech (PM14's start point)
+    closed: float | None = None
+    text_at: float | None = None
+    replied: float | None = None
+    first_audio: float | None = None
+    seconds: float | None = None
+    stt_ms: int | None = None
+    lane: str | None = None
+    intent: str | None = None
+    core_ttft_ms: int | None = None
+    checked: bool | None = None
+    outcome: str = ""
+
+    def record(self) -> dict[str, Any]:
+        """The turn's timings in ms (no text: gos-dev reads the logs, D82)."""
+
+        def ms(a: float | None, b: float | None) -> int | None:
+            return None if a is None or b is None else round((b - a) * 1000)
+
+        return {
+            "turn": self.id,
+            "trigger": self.trigger,
+            "outcome": self.outcome,
+            "lane": self.lane,
+            "intent": self.intent,
+            "checked": self.checked,
+            "audio_s": None if self.seconds is None else round(self.seconds, 2),
+            "held_ms": ms(self.started, self.stopped),
+            "close_ms": ms(self.stopped, self.closed),
+            "stt_ms": self.stt_ms,
+            "core_ms": ms(self.text_at, self.replied),
+            "core_ttft_ms": self.core_ttft_ms,
+            "speak_ms": ms(self.replied, self.first_audio),
+            "total_ms": ms(self.stopped, self.first_audio),
+        }
+
+
+@dataclass
+class _Utterance:
+    id: int
+    text: str
+    turn: Turn | None
+
+
+def first_sentence(text: str) -> str:
+    """The deep lane's spoken result: its answer's first sentence (deep_lane.md)."""
+    text = text.strip()
+    end = re.search(r"(?<=[.!?])\s|\n", text)
+    return (text[: end.start()] if end else text).strip()
+
+
+def _normalise(text: str) -> str:
+    return " ".join(text.split())  # as gregtec.agents.ask does before it routes
+
+
+class VoiceClient:
+    """The controller (see the module docstring). :meth:`handle` and :meth:`tick` run on one
+    thread (:meth:`run`); tests call them directly."""
+
+    def __init__(
+        self,
+        settings: VoiceSettings,
+        core: CoreApi,
+        *,
+        transcriber: Transcriber,
+        speaker: Speaker,
+        transcript: str | None = None,
+        observer: Callable[[object], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.settings = settings
+        self.observer = (
+            observer  # sees each event first, on this thread (gos voice test)
+        )
+        self.core = core
+        self.transcriber = transcriber
+        self.speaker = speaker
+        self.transcript = (
+            transcript  # every segment says this (latency runs, --transcript)
+        )
+        self.clock = clock
+        self.events: queue.Queue[object] = queue.Queue()
+        self.recorder = Recorder(lambda seg: self.post(Closed(seg)), clock=clock)
+        self.talk = TalkKey(settings.talk_mode)
+        self.hotkeys = Hotkeys({k.vk: name for name, k in settings.hotkeys().items()})
+        self.state: tuple[str, str | None] = (OFF, None)
+        self.turns = 0
+        self._turn: Turn | None = (
+            None  # the newest turn; an older one's reply is dropped
+        )
+        self._thinking = False  # its worker is still running
+        self._speaking: _Utterance | None = None
+        self._queued: deque[_Utterance] = deque(maxlen=SPEECH_QUEUE)
+        self._utterances = 0
+        self._asked: deque[tuple[str, float]] = deque(maxlen=MINE_KEEP)
+        self._mine: dict[
+            str, int
+        ] = {}  # deep-lane task id -> approvals already announced
+        self._offline_since: float | None = None
+        self._told_offline = False
+
+    @property
+    def watched(self) -> set[int]:
+        """The virtual-key codes the hook passes on: the talk key (when enabled), the hotkeys."""
+        vks = {k.vk for k in self.settings.hotkeys().values()}
+        if self.settings.key_trigger:
+            vks.add(self.settings.talk_key.vk)
+        return vks
+
+    def post(self, event: object) -> None:
+        """Any thread: queue an event for the controller."""
+        self.events.put(event)
+
+    # The trigger bus a wake engine drives (gregtec_voice.hooks.TriggerBus, WO-5.4).
+    def wake(self, t: float) -> None:
+        self.post(Wake("start", t))
+
+    def end_of_speech(self, t: float) -> None:
+        self.post(Wake("end", t))
+
+    def cancel(self) -> None:
+        self.post(Wake("cancel", self.clock()))
+
+    def speech(self, active: bool, t: float) -> None:
+        if active:
+            self.post(Wake("speech", t))
+
+    # --- the loop
+
+    def run(
+        self, stop: threading.Event, on_tick: Callable[[float], None] | None = None
+    ) -> None:
+        self._set_state(IDLE)
+        while not stop.is_set():
+            try:
+                event = self.events.get(timeout=TICK_S)
+            except queue.Empty:
+                event = None
+            if event is not None:
+                try:
+                    self.handle(event)
+                except Exception:  # one bad event mustn't stop the voice client
+                    log.exception(
+                        "voice event failed", extra={"event": type(event).__name__}
+                    )
+            now = self.clock()
+            self.tick(now)
+            if on_tick is not None:
+                on_tick(now)
+        self._barge_in()
+        self.recorder.cancel()
+        self._set_state(OFF)
+
+    def drain(self) -> None:
+        """Handle every queued event now (tests)."""
+        while True:
+            try:
+                event = self.events.get_nowait()
+            except queue.Empty:
+                return
+            self.handle(event)
+
+    def handle(self, event: object) -> None:
+        if self.observer is not None:
+            self.observer(event)
+        if isinstance(event, KeyEvent):
+            self._key(event)
+        elif isinstance(event, Closed):
+            self._closed(event.segment)
+        elif isinstance(event, Answered):
+            self._answered(event)
+        elif isinstance(event, Spoken):
+            self._spoken(event)
+        elif isinstance(event, Wake):
+            self._wake(event)
+        elif isinstance(event, Pushed):
+            self._pushed(event.message)
+        elif isinstance(event, Online):
+            self._online(event)
+
+    def tick(self, now: float) -> None:
+        self.recorder.tick(now)
+        if (
+            self._offline_since is not None
+            and not self._told_offline
+            and now - self._offline_since >= OFFLINE_SAY_S
+        ):
+            self._told_offline = True
+            log.warning("the core is unreachable")
+            self.say(CORE_OFFLINE)
+
+    # --- triggers
+
+    def _key(self, ev: KeyEvent) -> None:
+        if ev.vk == self.settings.talk_key.vk:
+            if not self.settings.key_trigger:
+                return
+            action = self.talk.press(ev.t) if ev.down else self.talk.release(ev.t)
+            if action == START:
+                self._start(KEY, ev.t)
+            elif action == STOP:
+                self._stop_segment(KEY, ev.t)
+            elif action == CANCEL:
+                self._cancel_segment(KEY)
+            return
+        name = self.hotkeys.event(ev.vk, ev.down)
+        if name is not None:
+            self._hotkey(name, ev.t)
+
+    def _wake(self, ev: Wake) -> None:
+        if ev.kind == "start" and self.settings.wake_trigger:
+            self._start(WAKE, ev.t)
+        elif ev.kind == "end":
+            self._stop_segment(WAKE, ev.t)
+        elif ev.kind == "cancel":
+            self._cancel_segment(WAKE)
+        elif ev.kind == "speech" and self._speaking is not None:
+            log.info("barge-in by voice")
+            self._barge_in()
+            self._settle()
+
+    def _start(self, trigger: str, t: float) -> None:
+        self._barge_in()
+        if self.recorder.recording is not None:
+            return  # the other trigger has the open segment
+        self.turns += 1
+        self._turn = Turn(self.turns, trigger, t)  # supersedes a turn still in flight
+        self.recorder.start(trigger, t)
+        self.core.prewarm()
+        self._set_state(LISTENING, trigger)
+
+    def _stop_segment(self, trigger: str, t: float) -> None:
+        if self.recorder.recording == trigger:
+            self.recorder.stop(t)
+            if self._turn is not None and self._turn.trigger == trigger:
+                self._turn.stopped = t
+
+    def _cancel_segment(self, trigger: str) -> None:
+        if self.recorder.recording == trigger and self.recorder.cancel():
+            if self._turn is not None and self._turn.trigger == trigger:
+                self._turn = None
+            self._settle()
+
+    def _hotkey(self, name: str, t: float) -> None:
+        log.info("hotkey", extra={"hotkey": name})
+        if name == "next_card":
+            self.core.ui("next_card")
+            return
+        if self.recorder.cancel():  # confirm or cancel drop what was being recorded
+            self.talk.closed()
+        self._barge_in()
+        self.turns += 1
+        turn = Turn(self.turns, name, t, stopped=t, closed=t)
+        self._ask(turn, None, name)
+
+    # --- turns
+
+    def _closed(self, segment: Segment) -> None:
+        turn = self._turn
+        if segment.trigger == KEY:
+            self.talk.closed()
+        if turn is None or turn.started != segment.started:
+            return  # a cancelled or superseded segment
+        turn.closed = segment.closed
+        turn.seconds = segment.seconds
+        if segment.capped:
+            turn.stopped = segment.closed
+        self._ask(turn, segment, None)
+
+    def _ask(self, turn: Turn, segment: Segment | None, text: str | None) -> None:
+        self._turn = turn
+        self._thinking = True
+        self._set_state(THINKING, turn.trigger if turn.trigger in (KEY, WAKE) else None)
+        threading.Thread(
+            target=self._work,
+            args=(turn, segment, text),
+            name="gos-voice-turn",
+            daemon=True,
+        ).start()
+
+    def _work(self, turn: Turn, segment: Segment | None, text: str | None) -> None:
+        """A worker thread: transcribe, then ask the core. Posts :class:`Answered`."""
+        try:
+            if text is None:
+                assert segment is not None
+                began = self.clock()
+                said = (
+                    self.transcript
+                    if self.transcript is not None
+                    else self.transcriber.transcribe(segment)
+                )
+                turn.stt_ms = round((self.clock() - began) * 1000)
+                text = said.strip()
+            if not text:
+                self.post(Answered(turn, None))
+                return
+            turn.text_at = self.clock()
+            self._asked.append((_normalise(text), time.time()))
+            self.post(Answered(turn, self.core.ask(text)))
+        except CoreError as exc:
+            self.post(Answered(turn, None, str(exc), offline=exc.offline))
+        except Exception as exc:  # a failed engine must not kill the controller's turns
+            log.exception("voice turn failed")
+            self.post(Answered(turn, None, type(exc).__name__))
+
+    def _answered(self, ev: Answered) -> None:
+        turn = ev.turn
+        turn.replied = self.clock()
+        if turn is not self._turn:
+            turn.outcome = "superseded"
+            self._log_turn(turn)
+            return
+        self._thinking = False
+        if ev.error is not None:
+            turn.outcome = "offline" if ev.offline else "error"
+            log.warning("the core didn't answer", extra={"error": ev.error[:200]})
+            self.say(CORE_OFFLINE if ev.offline else CORE_ERROR, turn)
+            return
+        if ev.reply is None:
+            turn.outcome = "nothing said"
+            self._turn = None
+            self._log_turn(turn)
+            self._settle()
+            return
+        reply = ev.reply
+        turn.outcome = "answered"
+        turn.lane, turn.intent = reply.get("lane"), reply.get("intent")
+        turn.core_ttft_ms, turn.checked = reply.get("ttft_ms"), reply.get("checked")
+        handoff = reply.get("handoff")
+        if isinstance(handoff, dict) and isinstance(handoff.get("id"), str):
+            self._mine.setdefault(handoff["id"], 0)
+        self.say(str(reply.get("text") or ""), turn)
+
+    # --- speech
+
+    def say(self, text: str, turn: Turn | None = None) -> None:
+        """Speak ``text`` now, or after what is being said or recorded."""
+        if not text:
+            if turn is not None:
+                self._log_turn(turn)
+            self._settle()
+            return
+        self._utterances += 1
+        utterance = _Utterance(self._utterances, text, turn)
+        if self._speaking is not None or self.recorder.recording is not None:
+            self._queued.append(utterance)
+            return
+        self._speak(utterance)
+
+    def _speak(self, u: _Utterance) -> None:
+        self._speaking = u
+        self._set_state(SPEAKING, self.state[1])
+        self.speaker.speak(
+            u.text,
+            on_first_audio=lambda: self.post(Spoken(u.id, "first_audio", self.clock())),
+            on_done=lambda: self.post(Spoken(u.id, "done", self.clock())),
+        )
+
+    def _spoken(self, ev: Spoken) -> None:
+        u = self._speaking
+        if u is None or u.id != ev.utterance:
+            return  # a stopped utterance's late callback
+        if ev.kind == "first_audio":
+            if u.turn is not None and u.turn.first_audio is None:
+                u.turn.first_audio = ev.t
+            return
+        self._speaking = None
+        if u.turn is not None:
+            self._finish(u.turn)
+        if self._queued and self.recorder.recording is None:
+            self._speak(self._queued.popleft())
+        else:
+            self._settle()
+
+    def _barge_in(self) -> None:
+        """Stop speaking and forget what was waiting to be said."""
+        self._queued.clear()
+        u, self._speaking = self._speaking, None
+        if u is not None:
+            self.speaker.stop()
+            if u.turn is not None:
+                u.turn.outcome = "stopped"
+                self._finish(u.turn)
+
+    def _finish(self, turn: Turn) -> None:
+        if turn is self._turn:
+            self._turn = None
+        self._log_turn(turn)
+
+    def _log_turn(self, turn: Turn) -> None:
+        log.info("turn", extra=turn.record())
+
+    def _settle(self) -> None:
+        """The state from what is going on now."""
+        if self._speaking is not None:
+            self._set_state(SPEAKING, self.state[1])
+        elif self.recorder.recording is not None:
+            self._set_state(LISTENING, self.recorder.recording)
+        elif self._thinking:
+            self._set_state(THINKING, self.state[1])
+        elif self._queued:
+            self._speak(self._queued.popleft())
+        else:
+            self._set_state(IDLE)
+
+    def _set_state(self, state: str, trigger: str | None = None) -> None:
+        if (state, trigger) != self.state:
+            self.state = (state, trigger)
+            self.core.state(state, trigger)
+
+    # --- the core's pushes and reachability
+
+    def _pushed(self, message: dict[str, Any]) -> None:
+        if message.get("type") != "deep.task" or not isinstance(
+            message.get("data"), dict
+        ):
+            return
+        task = message["data"]
+        task_id, status = task.get("id"), task.get("status")
+        if not isinstance(task_id, str):
+            return
+        if task_id not in self._mine and self._asked_for(task):
+            self._mine[task_id] = 0
+        if task_id not in self._mine:
+            return
+        if status == "done":
+            del self._mine[task_id]
+            self.say(first_sentence(str(task.get("text") or "")))
+        elif status == "needs_approval":
+            approvals = int(task.get("approvals") or 0)
+            if self._mine[task_id] <= approvals:  # once per pause
+                self._mine[task_id] = approvals + 1
+                self.say(DEEP_CAP)
+        elif status == "failed":
+            del self._mine[task_id]
+            self.say(DEEP_FAILED)
+        elif status in ("stopped", "offline"):
+            del self._mine[task_id]
+
+    def _asked_for(self, task: dict[str, Any]) -> bool:
+        """Whether a task's request is one this client asked (a fast-lane handoff has no id
+        in the reply; the deep lane keeps Clayton's words verbatim, D152)."""
+        request, created = task.get("request"), task.get("created")
+        if not isinstance(request, str) or not isinstance(created, int | float):
+            return False
+        wanted = _normalise(request)
+        return any(
+            text == wanted and created >= asked - 2 for text, asked in self._asked
+        )
+
+    def _online(self, ev: Online) -> None:
+        if ev.online:
+            if self._offline_since is not None:
+                log.info("the core is reachable again")
+            self._offline_since, self._told_offline = None, False
+        elif self._offline_since is None:
+            self._offline_since = ev.t
+
+
+# --- the core connection ----------------------------------------------------------------------
+
+
+@dataclass
+class _Outbox:
+    state: dict[str, Any] | None = None
+    state_dirty: bool = False
+    actions: list[str] = field(default_factory=list)
+
+
+class CoreClient:
+    """HTTP to the core (WO-2.1's bearer token) and its WebSocket for pushes, with reconnects.
+
+    ``ask`` blocks (a turn worker calls it); ``prewarm`` runs on its own thread, at most one at a
+    time; the voice state and UI actions go out in order from one sender thread, the state
+    coalesced to the newest and sent again after every reconnect. Nothing goes through an HTTP
+    proxy (the bearer token stays on loopback, as ``gregtec.control`` does).
+    """
+
+    def __init__(
+        self,
+        port: int,
+        token: str,
+        *,
+        on_push: Callable[[dict[str, Any]], None],
+        on_online: Callable[[bool], None],
+        call: Callable[..., dict[str, Any]] = control.call,
+        connect: Callable[..., Any] | None = None,
+    ) -> None:
+        self.port = port
+        self.token = token
+        self.on_push = on_push
+        self.on_online = on_online
+        self.call = call
+        self.connect = connect
+        self.online: bool | None = None
+        self.url = f"ws://{control.LOOPBACK}:{port}/ws"
+        self._stop = threading.Event()
+        self._cond = threading.Condition()
+        self._outbox = _Outbox()
+        self._prewarming = threading.Lock()
+        self._threads: list[threading.Thread] = []
+        self._refused = False
+
+    def _post(
+        self, path: str, body: dict[str, Any] | None, timeout: float
+    ) -> dict[str, Any]:
+        return self.call(
+            self.port, "POST", path, token=self.token, body=body, timeout=timeout
+        )
+
+    def ask(self, text: str) -> dict[str, Any]:
+        try:
+            return self._post("/api/ask", {"text": text}, ASK_TIMEOUT_S)
+        except control.ControlError as exc:
+            raise CoreError(str(exc), offline=exc.status is None) from None
+
+    def prewarm(self) -> None:
+        if not self._prewarming.acquire(blocking=False):
+            return  # one is on its way
+
+        def run() -> None:
+            try:
+                status = self._post("/api/prewarm", None, PREWARM_TIMEOUT_S).get(
+                    "status"
+                )
+                log.debug("prewarm", extra={"status": status})
+            except control.ControlError as exc:
+                log.debug("prewarm failed", extra={"error": str(exc)[:200]})
+            finally:
+                self._prewarming.release()
+
+        threading.Thread(target=run, name="gos-voice-prewarm", daemon=True).start()
+
+    def ui(self, action: str) -> None:
+        with self._cond:
+            self._outbox.actions.append(action)
+            self._cond.notify()
+
+    def state(self, state: str, trigger: str | None) -> None:
+        with self._cond:
+            self._outbox.state = {"state": state, "trigger": trigger}
+            self._outbox.state_dirty = True
+            self._cond.notify()
+
+    def start(self) -> None:
+        self._stop.clear()
+        for target, name in (
+            (self._send_loop, "gos-voice-send"),
+            (self._ws_loop, "gos-voice-ws"),
+        ):
+            thread = threading.Thread(target=target, name=name, daemon=True)
+            thread.start()
+            self._threads.append(thread)
+
+    def stop(self, *, final_state: bool = True) -> None:
+        """Stop both threads; first tell the core the voice client is off."""
+        if final_state:
+            try:
+                self._post("/api/voice/state", {"state": OFF, "trigger": None}, 2.0)
+            except control.ControlError:
+                pass
+        self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
+        for thread in self._threads:
+            thread.join(timeout=5.0)
+        self._threads.clear()
+
+    def _send_loop(self) -> None:
+        while not self._stop.is_set():
+            with self._cond:
+                while not (
+                    self._stop.is_set()
+                    or self._outbox.state_dirty
+                    or self._outbox.actions
+                ):
+                    self._cond.wait()
+                if self._stop.is_set():
+                    return
+                state = self._outbox.state if self._outbox.state_dirty else None
+                self._outbox.state_dirty = False
+                actions, self._outbox.actions = self._outbox.actions, []
+            try:
+                if state is not None:
+                    self._post("/api/voice/state", state, POST_TIMEOUT_S)
+                for action in actions:
+                    self._post("/api/ui", {"action": action}, POST_TIMEOUT_S)
+            except control.ControlError as exc:
+                # The state goes out again after the WebSocket reconnects; an action is dropped.
+                log.debug("can't reach the core", extra={"error": str(exc)[:200]})
+
+    def _set_online(self, online: bool) -> None:
+        if online != self.online:
+            self.online = online
+            self.on_online(online)
+
+    def _ws_loop(self) -> None:
+        import websockets.exceptions
+        import websockets.sync.client
+
+        connect = self.connect or websockets.sync.client.connect
+        tries = 0
+        while not self._stop.is_set():
+            try:
+                with connect(
+                    self.url,
+                    additional_headers={"Authorization": f"Bearer {self.token}"},
+                    proxy=None,
+                    open_timeout=5,
+                    close_timeout=2,
+                ) as ws:
+                    tries = 0
+                    self._refused = False
+                    self._set_online(True)
+                    with (
+                        self._cond
+                    ):  # the core may have restarted: tell it the state again
+                        self._outbox.state_dirty = self._outbox.state is not None
+                        self._cond.notify()
+                    self._receive(ws)
+            except websockets.exceptions.InvalidStatus as exc:
+                if not self._refused:
+                    self._refused = True
+                    log.error(
+                        "the core refused the voice client's token: run gos token new voice",
+                        extra={"status": exc.response.status_code},
+                    )
+            except (
+                OSError,
+                websockets.exceptions.WebSocketException,
+                TimeoutError,
+            ) as exc:
+                log.debug("core WebSocket closed", extra={"error": str(exc)[:200]})
+            if self._stop.is_set():
+                return
+            self._set_online(False)
+            self._stop.wait(WS_BACKOFF_S[min(tries, len(WS_BACKOFF_S) - 1)])
+            tries += 1
+
+    def _receive(self, ws: Any) -> None:  # noqa: ANN401 - a websockets ClientConnection
+        while not self._stop.is_set():
+            try:
+                raw = ws.recv(timeout=0.5)
+            except TimeoutError:
+                continue
+            if not isinstance(raw, str):
+                continue
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(message, dict):
+                self.on_push(message)
+
+
+# --- the process ------------------------------------------------------------------------------
+
+AUDIO_STALL_S = 3.0  # no audio this long: re-open the microphone
+AUDIO_RETRY_S = 10.0
+
+
+class Process:
+    """The voice process's parts, started and stopped in order (``gos voice run`` and
+    ``gos voice test`` build it with the Windows parts, tests with fakes)."""
+
+    def __init__(
+        self,
+        voice: VoiceClient,
+        pipe: AudioPipe,
+        hook: Hook,
+        *,
+        watchdog: Watchdog | None = None,
+        core: CoreClient | None = None,
+        wake: WakeEngine | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.voice = voice
+        self.pipe = pipe
+        self.hook = hook
+        self.watchdog = watchdog
+        self.core = core
+        self.wake = wake
+        self.clock = clock
+        self.started = clock()
+        self._retry_at = 0.0
+
+    def run(self, stop: threading.Event) -> None:
+        """Start everything, run the controller until ``stop`` is set, stop everything."""
+        self.started = self.clock()
+        self.pipe.start()  # AudioError: the microphone can't be opened
+        try:
+            self.hook.install()
+            if self.watchdog is not None:
+                self.watchdog.start()
+            if self.core is not None:
+                self.core.start()
+            self.voice.run(stop, on_tick=self._tick)
+        finally:
+            if self.watchdog is not None:
+                self.watchdog.stop()
+            self.hook.uninstall()
+            self.pipe.stop()
+            if self.wake is not None:
+                self.wake.close()
+            if self.core is not None:
+                self.core.stop()
+
+    def _tick(self, now: float) -> None:
+        """Re-open a microphone that stopped delivering audio (a headset that went away)."""
+        last = (
+            self.pipe.last_block if self.pipe.last_block is not None else self.started
+        )
+        if now - last < AUDIO_STALL_S or now < self._retry_at:
+            return
+        self._retry_at = now + AUDIO_RETRY_S
+        log.warning("no audio from the microphone: re-opening it")
+        try:
+            self.pipe.restart_source()
+        except AudioError as exc:
+            log.warning("can't re-open the microphone", extra={"error": str(exc)})
