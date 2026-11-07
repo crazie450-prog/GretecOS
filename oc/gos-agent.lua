@@ -471,8 +471,12 @@ local function ignored(cfg, addr)
   return false
 end
 
+-- Computronics returns x, y, z (its doc string says a table; take either).
 local function coords(addr)
   local ok, x, y, z = call(addr, "getCoordinates")
+  if ok and type(x) == "table" then
+    x, y, z = x[1], x[2], x[3]
+  end
   if ok and int(x) and int(y) and int(z) then
     return json.array({ int(x), int(y), int(z) })
   end
