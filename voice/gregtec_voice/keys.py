@@ -69,6 +69,7 @@ KEYS: dict[str, Key] = {
     ]
 }
 BY_VK = {k.vk: k for k in KEYS.values()}
+_LABELS = {k.label.casefold(): k for k in KEYS.values()}
 
 ALIASES = {
     "scrolllock": "scroll_lock",
@@ -161,6 +162,8 @@ def parse(text: str) -> Key:
     """The key ``text`` names. Raises :class:`KeyNameError` saying why a name isn't allowed."""
     if not isinstance(text, str) or not text.strip():
         raise KeyNameError("a key name can't be empty")
+    if found := _LABELS.get(" ".join(text.split()).casefold()):
+        return found  # as gos voice prints it: "Num -", "Page Up"
     name = normalise(text)
     if "+" in name and name not in ALIASES and len(name) > 1:
         raise KeyNameError(f"{text!r}: one key only, no combinations")

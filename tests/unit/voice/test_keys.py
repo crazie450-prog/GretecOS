@@ -25,6 +25,8 @@ from gregtec_voice import keys
         ("Num 5", "num_5", 0x65, 0x4C),
         ("numpad0", "num_0", 0x60, 0x52),
         ("num +", "num_add", 0x6B, 0x4E),
+        ("Num -", "num_subtract", 0x6D, 0x4A),  # as gos voice prints it
+        ("num  /", "num_divide", 0x6F, 0xB5),
         ("Menu", "apps", 0x5D, 0xDD),
         ("  insert ", "insert", 0x2D, 0xD2),
     ],
