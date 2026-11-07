@@ -58,6 +58,19 @@ PREFETCHED = re.compile(
 REQUEST = re.compile(r"<request>\n(?P<text>.*?)\n</request>", re.DOTALL)
 _REF_IN = re.compile(r" \((?:r|mte):[^)]*\)")  # "(r:...)" in a sentence: not spoken
 TIERS = recipe_eval.TIERS
+# A cited recipe's detail line (the skill's section 4): the recipe tools' own columns
+DETAIL = (
+    "ref",
+    "machine",
+    "tier",
+    "eut",
+    "amps",
+    "dur_t",
+    "dur_s",
+    "in",
+    "out",
+    "cond",
+)
 
 
 @dataclass
@@ -137,9 +150,8 @@ def lookup(step: Step) -> tuple[str, dict[str, Any]]:
             args["tier_max"] = tier
         return "recipe_find", args
     out, machine = step.filter("out"), step.filter("map")
-    if (
-        out is not None and machine is not None
-    ):  # uses in one machine: its recipes for out
+    if out is not None and machine is not None:
+        # a use in one machine that gives one output: that machine's recipes for it
         return "recipe_find", {"item": out, "machine": machine}
     return "recipe_uses", {"item": step.key}
 
@@ -302,19 +314,7 @@ def detail(found: Found) -> str:
             f", {facts}" if facts else ""
         )
     row = found.row or {}
-    keys = (
-        "ref",
-        "machine",
-        "tier",
-        "eut",
-        "amps",
-        "dur_t",
-        "dur_s",
-        "in",
-        "out",
-        "cond",
-    )
-    return ", ".join(f"{k}: {row[k]}" for k in keys if row.get(k))
+    return ", ".join(f"{k}: {row[k]}" for k in DETAIL if row.get(k))
 
 
 @dataclass
