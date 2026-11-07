@@ -4,6 +4,11 @@ WO-2.4 puts the warm ``ClaudeSDKClient`` behind :class:`DeepLane`. Until then
 :class:`HandoffRecorder` is the stub: it records each handoff (in memory, the newest
 :data:`KEEP`, and as a log line) and says the deep lane isn't running yet, so the router, the
 fast lane and ``POST /api/ask`` are built against the interface WO-2.4 fills in (D152).
+
+A handoff carries two texts. ``request`` is what Clayton said, word for word: the deep lane's
+only instruction. ``task`` is the router's copy of it, or the fast lane model's summary (with
+items resolved), which tool results the fast lane read may have steered: WO-2.4 reads it as
+data, a hint about the request, never as instructions of its own.
 """
 
 from __future__ import annotations
@@ -30,8 +35,8 @@ NOT_YET = "recorded; the deep lane arrives with WO-2.4"
 class Handoff:
     id: str
     ts: int
-    task: str
-    request: str  # what Clayton asked, as the router got it
+    task: str  # the fast lane model's summary (data), or the request itself (router)
+    request: str  # what Clayton asked, as the router got it: the only instruction
     source: str  # router or fast_lane
     status: str
 
@@ -100,7 +105,11 @@ def handoff(call: Call, args: dict[str, Any], offset: int) -> Result:
     deep = call.env.deep
     if deep is None:
         raise ToolError("the deep lane isn't connected here; answer what you can")
-    item = deep.handoff(args["task"], args["task"], "fast_lane")
+    if not call.request:
+        # Only a lane answering one of Clayton's requests can hand off: the request it passes
+        # is the deep lane's instruction, so a call without one has nothing to hand over.
+        raise ToolError("handoff runs only for a request Clayton made")
+    item = deep.handoff(args["task"], call.request, "fast_lane")
     return Result(
         head=[("handoff", item.id), ("status", item.status)],
         notes=["tell Clayton in one sentence that the deep lane has the task"],

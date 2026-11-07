@@ -72,6 +72,15 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         # a question that only looks like "X recipe"
         ("what's the best steel recipe", "fast", "general", None, None),
         ("which is the cheapest steel recipe", "fast", "general", None, None),
+        # words that name no item, and a leading count
+        ("show me the recipes", "fast", "general", None, None),
+        ("recipes for 2 steel", "instant", "recipes", "steel", None),
+        ("recipe for 16x copper wire", "instant", "recipes", "16x copper wire", None),
+        # lookups that only sound quantitative or like planning
+        ("How many steel ingots does the EBF need?", "fast", "general", None, None),
+        ("what does the plan say about steel", "fast", "general", None, None),
+        ("plan my power line", "deep", "handoff", None, None),
+        ("how many macerators do I need", "deep", "handoff", None, None),
     ],
 )
 def test_route(

@@ -6,7 +6,7 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
 
 - An unsure item match asks (QA:D11): the reply is the question, its card the top three, and the
   next request may pick one ("the second one", "2", or its name), which re-runs the first request
-  on that item. Anything else starts afresh.
+  on that item. "Repeat" says the question again and keeps it open; anything else starts afresh.
 - With no fast lane (no key stored, or the API failing) a fast-lane request gets the instant
   answer for its card when pre-retrieval found one, else "AI is offline; I can do lookups"
   (plan 7.16; WO-2.8 adds the mode switch, banners and the credit flow).
@@ -27,7 +27,13 @@ from typing import Any, TextIO
 from gregtec import config
 from gregtec.agents import prefetch, router
 from gregtec.agents.deep_lane import DeepLane, HandoffRecorder
-from gregtec.agents.fast_lane import FastLane, LaneAnswer, LaneError, refs
+from gregtec.agents.fast_lane import (
+    NOT_CHECKED,
+    FastLane,
+    LaneAnswer,
+    LaneError,
+    refs,
+)
 from gregtec.agents.tools.catalog import default_registry
 from gregtec.agents.tools.registry import Registry
 from gregtec.agents.tools.tsv import Parsed
@@ -44,6 +50,11 @@ AI_OFFLINE = "AI is offline; I can do lookups."
 NOTHING_PENDING = "Nothing is waiting for confirmation."
 NOTHING_TO_REPEAT = "I haven't said anything yet."
 EMPTY = "Ask me something: a recipe, an item, a machine or a quest."
+# NOT_CHECKED for a turn with no card to point at (the model looked things up itself)
+NOT_CHECKED_NO_CARD = (
+    "I can't give that answer with checked numbers. Ask for the item's recipe or uses and "
+    "I'll show the rows with their ids."
+)
 HANDED_OFF = (
     "That's one for the deep lane; I've handed it over. It arrives with WO-2.4."
 )
@@ -191,6 +202,9 @@ class Asker:
         with self._lock:
             pending, self._pending = self._pending, None
         route = self._picked(pending, text) or router.route(text)
+        if route.intent == router.REPEAT and pending is not None:
+            with self._lock:  # the repeated question can still be answered
+                self._pending = pending
         reply = self._reply(route, started, task)
         reply.total_ms = round((self.clock() - started) * 1000)
         if reply.ttft_ms is None and reply.calls == 0:
@@ -281,7 +295,10 @@ class Asker:
     def _fast(
         self, route: router.Route, pre: prefetch.Prefetch, answer: LaneAnswer
     ) -> Reply:
-        reply = self._base(route, pre, router.FAST, answer.text)
+        text = answer.text
+        if text == NOT_CHECKED and pre.main is None:
+            text = NOT_CHECKED_NO_CARD
+        reply = self._base(route, pre, router.FAST, text)
         reply.checked = answer.checked
         reply.ttft_ms = answer.ttft_ms
         reply.calls = answer.calls
@@ -363,7 +380,8 @@ def setup(
     cfg: config.Config, *, store: Store | None = None, fake: bool = False
 ) -> Agents:
     """``store``: the core's own (else one is opened when the DB exists, for the meter).
-    ``fake``: the fast lane runs :class:`gregtec.llm.fake.EchoClient` (no key, no cost)."""
+    ``fake``: the fast lane runs :class:`gregtec.llm.fake.EchoClient` (no key, no cost) with no
+    meter, so its simulated calls never reach ``llm_usage`` (the credit alerts, the TTFT data)."""
     deep = HandoffRecorder()
     registry = default_registry(cfg.gos_home, deep=deep)
     vault = cfg.gos_home / "vault"
@@ -381,7 +399,7 @@ def setup(
         registry, deep, meter, vault if vault.is_dir() else None, store=opened
     )
     if fake:
-        agents.fast = FastLane(EchoClient(), registry, meter=meter, vault=agents.vault)
+        agents.fast = FastLane(EchoClient(), registry, meter=None, vault=agents.vault)
     return agents
 
 

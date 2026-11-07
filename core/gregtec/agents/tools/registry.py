@@ -81,6 +81,9 @@ class Call:
     env: Env
     page: int = PAGE
     deadline: float = math.inf
+    # What Clayton asked, when a lane calls the tool for one of his requests (handoff passes
+    # it on as the deep lane's instruction; the model's own words are only its data).
+    request: str | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -212,10 +215,18 @@ class Registry:
         """The lane's tools as the Messages API's ``tools`` list."""
         return [t.spec() for t in self.tools(lane)]
 
-    def call(self, name: str, args: object, *, lane: str | None = None) -> Output:
-        """Run tool ``name`` (``more`` for a cursor's next page); ``lane`` None is the shell."""
+    def call(
+        self,
+        name: str,
+        args: object,
+        *,
+        lane: str | None = None,
+        request: str | None = None,
+    ) -> Output:
+        """Run tool ``name`` (``more`` for a cursor's next page); ``lane`` None is the shell.
+        ``request``: Clayton's words the call is made for (see :attr:`Call.request`)."""
         try:
-            return Output(self._call(name, args, lane))
+            return Output(self._call(name, args, lane, request))
         except (ToolError, ArgumentError, CursorError) as exc:
             return Output(f"error: {exc}\n", is_error=True)
         except Exception:
@@ -236,7 +247,9 @@ class Registry:
             raise ToolError(f"{name} isn't offered in the {lane} lane")
         return tool
 
-    def _call(self, name: str, args: object, lane: str | None) -> str:
+    def _call(
+        self, name: str, args: object, lane: str | None, request: str | None
+    ) -> str:
         offset, issued = 0, None
         if name == MORE:
             self._tool(MORE, lane)
@@ -248,7 +261,9 @@ class Registry:
             raise ToolError("a cursor never points at more itself")
         values = validate(tool.input_schema, args)
         if not tool.needs_db:
-            result = tool.handler(Call(None, self.env, self.page), values, offset)
+            result = tool.handler(
+                Call(None, self.env, self.page, request=request), values, offset
+            )
             if result.more:
                 raise AssertionError(f"{tool.name} has no DB to page from")
             return render(result)
@@ -257,7 +272,7 @@ class Registry:
                 raise ToolError(
                     "the DB changed since this cursor was issued; call the tool again"
                 )
-            call = Call(conn, self.env, self.page, deadline)
+            call = Call(conn, self.env, self.page, deadline, request)
             result = tool.handler(call, values, offset)
             cursor = None
             if result.more:

@@ -13,8 +13,10 @@ conversation per row (no clarification carried over). A row passes when:
 The report gives each row's lane, time to first token, model calls and cache reads, then the
 P50 time to first token over the ``core`` rows the fast lane answered with the model (plan §8:
 P50 ≤ 1.2 s; instant and handed-off rows have no model call, so they would only flatter it),
-and how many ``ambiguous`` rows asked (plan §8: all 10). Exit code 0 when every row passes and,
-on the real API, the P50 is within :data:`P50_TARGET_MS`.
+and how many ``ambiguous`` rows asked (plan §8: all 10). Next to it, the P50 of ``total_ms``
+over the same rows: D152 speaks only checked text, so the whole answer (and any retry) is what
+Clayton waits for before he hears a word; the §8 gate is still the TTFT. Exit code 0 when every
+row passes and, on the real API, the TTFT P50 is within :data:`P50_TARGET_MS`.
 
 ``--fake`` runs :class:`gregtec.llm.fake.EchoClient` (no key, no cost; its timings are the
 code's own, not the model's). The real run uses the stored key and records every call in
@@ -142,12 +144,14 @@ def run(
             f"{reply.usage.get('cache_read', 0)}\t{why}\t{text}",
             file=out,
         )
-    model = [
-        r.reply.ttft_ms
+    answered = [
+        r
         for r in rows
         if r.q.set == "core" and r.reply.calls and r.reply.ttft_ms is not None
     ]
+    model = [r.reply.ttft_ms for r in answered if r.reply.ttft_ms is not None]
     median = p50(model)
+    total = p50([r.reply.total_ms for r in answered])
     asked = sum(1 for r in rows if r.q.set == "ambiguous" and r.reply.asked)
     ambiguous = sum(1 for r in rows if r.q.set == "ambiguous")
     passed = sum(r.passed for r in rows)
@@ -160,6 +164,12 @@ def run(
         "fake client: not a model timing" if fake else f"target <= {P50_TARGET_MS} ms"
     )
     print(f"p50 ttft (core rows answered by the model): {shown} ({target})", file=out)
+    if total is not None:
+        print(
+            f"p50 total (same rows; checked text is spoken only when complete): "
+            f"{total:.0f} ms",
+            file=out,
+        )
     print(f"ambiguous rows that asked: {asked} of {ambiguous}", file=out)
     print(
         f"turns with cache reads: {cached} of {sum(1 for r in rows if r.reply.calls)}",

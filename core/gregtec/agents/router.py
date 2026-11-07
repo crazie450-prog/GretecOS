@@ -50,6 +50,14 @@ _TIER = "|".join(t.casefold() for t in TIERS)
 _FILLER = re.compile(r"^(?:(?:hey |ok |okay )?gos[,:]? |please |can you |could you )+")
 _TRAIL = re.compile(r"(?:,? please| for me| in gtnh| in game)+$")
 _ARTICLE = re.compile(r"^(?:a|an|the|some|my|any)\s+")
+_COUNT = re.compile(
+    r"^\d+\s+(?=[^\d\s])"
+)  # "2 steel": the count isn't part of the item
+# Words that make no item on their own ("show me the recipes" names nothing)
+_NO_ITEM = frozenset(
+    {"show", "list", "give", "tell", "me", "us", "the", "all", "a", "an", "some", "my"}
+    | {"any", "of", "for"}
+)
 _AT_TIER = re.compile(rf"\s+(?:at|in|for|on)\s+(?P<tier>{_TIER})(?:\s+tier)?$")
 _QUESTION = re.compile(
     r"^(?:what|which|how|why|when|where|who|is|are|should|can|could|do|does|best)\b"
@@ -98,12 +106,16 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
 DEEP_RULES = [
     re.compile(p)
     for p in (
-        r"\b(?:design|plan|layout|blueprint)\b",
+        # "plan" as a verb or a plan to make; "what does the plan say" is a note lookup
+        r"\b(?:design|layout|blueprint|planning)\b",
+        r"\bplan (?:a|an|my|the|out|for|how)\b|\b(?:make|write|draw up) (?:me )?a plan\b",
+        r"\b(?:line|factory|setup|base|power|build) plans?\b",
         r"\bcompare\b|\bcomparison\b|\bversus\b|\bvs\.?\b",
         r"\boptimi[sz]e\b|\bbest way\b|\bmost efficient\b",
         r"\bworth (?:it|automating|building|making)\b|\bshould i\b",
         r"\bwhat (?:should i do|next|now)\b|\bnext steps?\b|\badvi[cs]e\b|\brecommend",
-        r"\bhow many\b.*\b(?:machines?|do i need|need)\b",
+        # machine counts and amounts for a goal; "how many X does the EBF need" is a lookup
+        r"\bhow many\b.*\b(?:machines?|do i need|i need|we need)\b",
         r"\bper (?:second|sec|minute|min|hour)\b|\b(?:/s|/min|/h)\b",
         r"\bratios?\b|\bcalculate\b|\bbudget\b|\boverclock",
         r"\b(?:set up|build|automate)\b.*\b(?:line|setup|factory|plant)\b",
@@ -188,8 +200,10 @@ def normalise(text: str) -> str:
 
 def subject_of(words: str) -> str | None:
     """The item words, articles off; None when they don't look like a short noun phrase."""
-    words = _ARTICLE.sub("", words.strip(" ,?")).strip()
+    words = _COUNT.sub("", _ARTICLE.sub("", words.strip(" ,?")).strip())
     if not words or len(words.split()) > MAX_SUBJECT_WORDS or _QUESTION.match(words):
+        return None
+    if set(words.split()) <= _NO_ITEM:
         return None
     return words
 

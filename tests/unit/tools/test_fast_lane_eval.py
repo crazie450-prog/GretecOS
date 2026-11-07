@@ -124,6 +124,9 @@ def test_run_reports_and_passes(lane_reg: Registry) -> None:
     assert "passed: 5 of 5" in report
     assert "ambiguous rows that asked: 2 of 2" in report
     assert "p50 ttft (core rows answered by the model): " in report
+    assert (
+        "p50 total (same rows; checked text is spoken only when complete): " in report
+    )
     assert report.rstrip().endswith("Result: PASS")
 
 

@@ -36,18 +36,20 @@ Clayton runs these on the gaming PC after the WO-2.3 PR is merged: about 10 minu
 
 7. Run the 50 questions and the 10 ambiguous items with the real model:
    ```powershell
+   New-Item -ItemType Directory -Force "$env:USERPROFILE\GregtecOS\data\reports" | Out-Null
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe eval fast-lane | Tee-Object -FilePath "$env:USERPROFILE\GregtecOS\data\reports\fast-lane-eval.txt"
    ```
    It pre-warms the prompt cache once, then asks each row; about 40 Haiku calls. The last lines are the result:
    ```text
    passed: 60 of 60
    p50 ttft (core rows answered by the model): <ms> ms over 40 turns (target <= 1200 ms)
+   p50 total (same rows; checked text is spoken only when complete): <ms> ms
    ambiguous rows that asked: 10 of 10
    turns with cache reads: <n> of 40
    cost: $0.0...
    Result: PASS
    ```
-   Paste the whole file into the PR (or a chat with the PM). Rows that fail say why in the `why` column: `resolved <key>, want <key>` means the full pack's names resolve an item differently from the dev runtime's (a question-set fix, not a lane bug); `numbers refused` means the model's numbers weren't in the tool results. `turns with cache reads` should be 39 or 40 of 40: fewer means the cached prefix changed between calls.
+   Paste the whole file into the PR (or a chat with the PM). Rows that fail say why in the `why` column: `resolved <key>, want <key>` means the full pack's names resolve an item differently from the dev runtime's (a question-set fix, not a lane bug); `numbers refused` means the model's numbers weren't in the tool results. `turns with cache reads` should be 39 or 40 of 40: fewer means the cached prefix changed between calls. `p50 total` is not part of the pass mark: it is how long the whole checked answer takes, which is what voice waits for before speaking (a question in the PR).
 8. To time only the model's part again later (each run costs about a cent): `gos eval fast-lane --limit 20`.
 
 ## What to send back

@@ -22,7 +22,7 @@ QUICK_TIMEOUT_MS = 50  # try_write's wait
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_usage(ts INT, lane TEXT, model TEXT, in_tok INT, out_tok INT,
-  cache_read INT, cache_write INT, usd REAL, task TEXT);
+  cache_read INT, cache_write INT, usd REAL, task TEXT, ttft_ms INT);
 CREATE INDEX IF NOT EXISTS ix_llm_usage_ts ON llm_usage(ts);
 CREATE TABLE IF NOT EXISTS device(id TEXT PRIMARY KEY, name TEXT, paired INT, last_seen INT,
   revoked INT);

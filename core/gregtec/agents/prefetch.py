@@ -17,6 +17,7 @@ gets them as quoted data in the user turn, so a cited answer usually needs no to
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from dataclasses import dataclass, field
@@ -117,14 +118,35 @@ def candidates(parsed: Parsed) -> list[Candidate]:
     ]
 
 
+def _natural(name: str) -> list[tuple[int, int | str]]:
+    """A sort key that reads digit runs as numbers: "1x Copper Wire" before "12x ..."."""
+    return [
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", name)
+        if part
+    ]
+
+
 def question_names(found: list[Candidate]) -> list[str]:
-    return list(dict.fromkeys(c.name or c.key for c in found))[:ASK_TOP]
+    """The top three distinct names, by score; names that differ only in their numbers
+    ("12x, 16x and 1x Copper Wire") are spoken in number order instead."""
+    names = list(dict.fromkeys(c.name or c.key for c in found))[:ASK_TOP]
+    if len({re.sub(r"\d+", "#", n) for n in names}) == 1:
+        names.sort(key=_natural)
+    return names
+
+
+def _pick(found: list[Candidate], name: str) -> Candidate:
+    """The candidate a spoken name stands for: the first (best scored) of that name without
+    an NBT hash, else the first; a charged battery or a filled cell is rarely what was meant."""
+    named = [c for c in found if (c.name or c.key) == name]
+    return next((c for c in named if "#" not in c.key), named[0])
 
 
 def question_for(subject: str, found: list[Candidate]) -> str:
     """ "Which steel did you mean: Steel Ingot, Steel Plate or Stainless Steel Ingot?" The
     first three distinct names are spoken; a name two candidates share (an item and its NBT
-    variant) is the first of them, and the card holds those three."""
+    variant) stands for the one without NBT (:func:`_pick`), and the card holds those three."""
     labels = question_names(found)
     if len(labels) == 1:
         return f"Did you mean {labels[0]}?"
@@ -161,6 +183,7 @@ def resolve(reg: Registry, pre: Prefetch, subject: str) -> Candidate | None:
     """The item ``subject`` names, or None (``pre.clarify`` or ``pre.unresolved`` set)."""
     block = _call(reg, pre, "item_resolve", {"text": subject, "limit": RESOLVE_LIMIT})
     if block.is_error:
+        pre.main = block  # the card and the no-model answer say why (e.g. no DB yet)
         return None
     parsed = block.parsed
     found = candidates(parsed)
@@ -175,10 +198,9 @@ def resolve(reg: Registry, pre: Prefetch, subject: str) -> Candidate | None:
         pre.unresolved = subject
         return None
     if parsed.head.get("ambiguous") == "1":
-        firsts = {c.name or c.key: c for c in reversed(found)}  # each name's first
         names = question_names(found)
         pre.clarify = Clarify(
-            subject, question_for(subject, found), [firsts[n] for n in names]
+            subject, question_for(subject, found), [_pick(found, n) for n in names]
         )
         pre.main = block
         return None
@@ -231,13 +253,17 @@ def quoted(pre: Prefetch) -> str:
         parts.append(f"<context>\nClayton's tier: {_safe(pre.tier)}\n</context>")
     for b in pre.blocks:
         args = json.dumps(b.args, ensure_ascii=False, sort_keys=True)
+        # attribute-escaped: an apostrophe in the args can't end the quoted value
+        args = html.escape(args, quote=False).replace("'", "&#x27;")
         parts.append(
-            f"<tool_result tool=\"{b.tool}\" args='{_safe(args)}'>\n"
+            f"<tool_result tool=\"{b.tool}\" args='{args}'>\n"
             f"{_safe(b.text).rstrip()}\n</tool_result>"
         )
     return "\n\n".join(parts)
 
 
 def _safe(text: str) -> str:
-    """Pack and quest text can't close the blocks it is quoted in."""
-    return re.sub(r"</(?=\s*(?:tool_result|context|request)\b)", "< /", text)
+    """Pack, quest and note text can't close the blocks it is quoted in."""
+    return re.sub(
+        r"</(?=\s*(?:tool_result|context|request|vault_index)\b)", "< /", text
+    )
