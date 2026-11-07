@@ -17,7 +17,7 @@ V14	Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general|rig
 V15	GuideNH `exportsite` embeds in the dashboard	Spike	10.1
 V16	worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta)	Lab paste	10.4
 V17	**Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW	—	10.0
-V18	Addon releases on 2.9.0 stable (§13.1)	Weekly; watcher reports	11.1
+V18	Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open	Weekly; watcher reports	11.1
 V19	Does Open to LAN avoid the pause freeze?	Test	7.2
 V20	`gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4]	`component.list()` in `lab-ops`	7.2
 V21	**Resolved** (`gos smoke`, 2026-11-05): Haiku 5.5 with thinking off, median first token 917 ms over 5 runs (525–1592 ms), median total 1162 ms [D§1.11]	—	0.4
