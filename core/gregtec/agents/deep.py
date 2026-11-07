@@ -78,7 +78,7 @@ FINAL = frozenset({DONE, FAILED, STOPPED, OFFLINE})
 PROGRESS_KEEP = 40
 TRANSCRIPT_DAYS = 30  # Claude Code's session transcripts kept in the lane's folder
 STOP_WAIT_S = 10.0
-APPROVE, STOP, SHUTDOWN = "approve", "stop", "shutdown"
+APPROVE, STOP = "approve", "stop"
 # The most a token costs at any listed price: an unknown model is priced at this (never zero).
 _TOP = Price(
     input=max(p.input for p in PRICES.values()),
@@ -318,6 +318,8 @@ class DeepLaneService:
         self.on_change = on_change
         self.task_label = task_label
         self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
+        self._stopping = False
         self._tasks: dict[str, DeepTask] = {}
         self._order: deque[str] = deque()
         self._thread: threading.Thread | None = None
@@ -368,7 +370,7 @@ class DeepLaneService:
     # --- the thread
 
     def start(self) -> None:
-        with self._lock:
+        with self._start_lock:
             if self._thread is not None:
                 return
             self._deploy_skills()
@@ -410,24 +412,22 @@ class DeepLaneService:
         thread.join(timeout)
 
     def _shutdown(self) -> None:
-        for fut in self._decisions.values():  # a paused task ends as stopped
-            if not fut.done():
-                fut.set_result(SHUTDOWN)
+        self._stopping = True
         if self._current is None and self._queue is not None:
-            self._queue.put_nowait(None)  # idle: end after the queue's turn
+            self._queue.put_nowait(None)  # idle: end at the queue
         elif self._worker is not None:
-            self._worker.cancel()
+            self._worker.cancel()  # a running or paused task ends as stopped
 
     async def _run(self) -> None:
         self._queue = asyncio.Queue()
         self._worker = asyncio.current_task()
         self._ready.set()
         try:
-            while True:
+            while not self._stopping:
                 if self._spare is None:
                     self._spare = await self._connect_quietly()
                 item = await self._queue.get()
-                if item is None:
+                if item is None or self._stopping:
                     break
                 await self._do(item)
         except asyncio.CancelledError:
@@ -505,7 +505,13 @@ class DeepLaneService:
     def stop_task(self, task_id: str) -> bool:
         """End a paused or queued task; False if it is neither."""
         task = self.get(task_id)
-        if task is not None and task.status == QUEUED:
+        with self._lock:
+            queued = task is not None and task.status == QUEUED
+            if queued:
+                assert task is not None
+                task.status = STOPPED  # the worker skips it now
+        if queued:
+            assert task is not None
             self._finish(task, STOPPED, error="stopped by Clayton")
             return True
         return self._decide(task_id, STOP)
@@ -636,8 +642,10 @@ class DeepLaneService:
             log.exception("deep-lane disconnect failed")
 
     async def _do(self, task: DeepTask) -> None:
-        if task.status != QUEUED:  # stopped while it waited
-            return
+        with self._lock:
+            if task.status != QUEUED:  # stopped while it waited
+                return
+            task.status, task.started = RUNNING, time.time()
         pair, self._spare = self._spare, None
         warm = pair is not None
         if pair is None:
@@ -648,8 +656,6 @@ class DeepLaneService:
             )
             return
         self._current = task
-        with self._lock:
-            task.status, task.started = RUNNING, time.time()
         self._changed(task)
         recorded: dict[str, dict[str, float]] = {}
         first = prompt(task.request, task.task, task.source)
@@ -670,9 +676,7 @@ class DeepLaneService:
                 await self._turn(client, gate, task, first, recorded)
             while task.status == NEEDS_APPROVAL:
                 decision = await self._decision(task)
-                if decision == SHUTDOWN:
-                    self._finish(task, STOPPED, error="GOS stopped")
-                if decision != APPROVE:
+                if decision != APPROVE:  # stop_task has ended it
                     break
                 with self._lock:
                     task.approvals += 1
@@ -791,6 +795,12 @@ class DeepLaneService:
             )
             self._changed(task)
             return
+        if result.subtype == "error_max_budget_usd":
+            ceiling = self.settings.task_max_usd * deep_config.HARD_CEILING
+            raise _Fail(
+                f"reached the hard ceiling of ${ceiling:.2f} for one task "
+                f"({deep_config.HARD_CEILING} caps); start it again as a new task"
+            )
         if result.is_error:
             why = result.result or "; ".join(result.errors or []) or result.subtype
             raise _Fail(f"{result.subtype}: {why}"[:500])

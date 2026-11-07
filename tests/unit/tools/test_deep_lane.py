@@ -721,3 +721,17 @@ def test_old_transcripts_are_pruned(tmp_path: Path) -> None:
     assert deep.prune_transcripts(tmp_path) == 1
     assert not old.exists() and new.exists()
     assert deep.prune_transcripts(tmp_path / "nowhere") == 0
+
+
+def test_the_hard_ceiling_ends_a_task(lane_reg: Registry, tmp_path: Path) -> None:
+    ceiling = result(
+        5.2, "budget_exhausted", text="", is_error=True, subtype="error_max_budget_usd"
+    )
+    lane, _ = service(lane_reg, tmp_path, [[[init(), ceiling]]])
+    try:
+        task = lane.wait(lane.handoff("x", "plan it", "router").id, 10)
+        assert task is not None and task.status == deep.FAILED
+        assert "hard ceiling of $5.00" in (task.error or "")
+        assert task.cost_usd == pytest.approx(5.2)
+    finally:
+        lane.stop()
