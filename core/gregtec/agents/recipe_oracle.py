@@ -259,6 +259,8 @@ def _value(step: Step, want: str, found: Found) -> str:
         if name == "chance":
             return f"{slot['chance_pct']}% chance of {slot['name']}"
         if name == "alts":
+            if slot["ore"]:
+                return f"any {slot['name']} (ore:{slot['ore']})"
             return f"{slot['name']} or {slot['alternatives']} other stacks"
         unit = "L" if slot["unit"] == "L" else "x"
         return f"{slot['amount']}{unit} {slot['name']}"

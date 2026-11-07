@@ -19,7 +19,7 @@ r17	time	answer	How long does the lathe take to turn a steel ingot into a steel 
 r18	power	answer	How much EU/t and how long does the electrolyzer need to split water into hydrogen?	make fluid:hydrogen map=gt.recipe.electrolyzer in=fluid:water	eut,dur
 r19	time	answer	How long does the bricked blast furnace take to make steel from an iron ingot and charcoal?	make gregtech:gt.metaitem.01@11305 map=gt.recipe.primitiveblastfurnace in=minecraft:iron_ingot@0 in=minecraft:coal@1	dur
 r20	power	answer	Is it worth making red alloy in the alloy smelter?	make gregtech:gt.metaitem.01@11308 map=gt.recipe.alloysmelter	eut
-r21	chance	answer	What's the chance of nickel dust when I macerate iron ore?	make gregtech:gt.metaitem.01@2034 map=gt.recipe.macerator in=gregtech:gt.blockores2@32	chance=gregtech:gt.metaitem.01@2034
+r21	chance	answer	What's the chance of nickel dust when I macerate iron ore?	use gregtech:gt.blockores2@32 map=gt.recipe.macerator out=gregtech:gt.metaitem.01@2034	chance=gregtech:gt.metaitem.01@2034
 r22	chance	answer	How likely is sticky resin when I centrifuge rubber wood?	make IC2:itemHarz@0 map=gt.recipe.centrifuge in=IC2:blockRubWood@32767	chance=IC2:itemHarz@0
 r23	chance	answer	What are the odds of an exquisite diamond from sifting purified diamond ore?	make gregtech:gt.metaitem.02@30500 map=gt.recipe.sifter in=gregtech:gt.metaitem.01@6500	chance=gregtech:gt.metaitem.02@30500
 r24	chance	answer	What's the chance of nickel dust from washing crushed iron ore?	make gregtech:gt.metaitem.01@2034 map=gt.recipe.orewasher in=gregtech:gt.metaitem.01@5032	chance=gregtech:gt.metaitem.01@2034

@@ -47,7 +47,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import TYPE_CHECKING, TextIO
 
 from gregtec import config
 from gregtec.agents import fast_lane
@@ -86,7 +86,7 @@ SLOT_WANTS = ("in", "out", "chance", "alts")  # keyed by an item or fluid key
 CORRECT_TARGET = 0.95  # plan 8: at least 95% correct
 TASK = "eval:recipe-lookup"
 DEEP_WAIT_S = 1800.0  # a deep-lane task, as gos ask waits
-STEP_SPLIT = re.compile(r"\s+;\s+")
+STEP_SPLIT = re.compile(r"\s*;\s*")  # steps and their want parts; keys have no ";"
 TIER_WORD = {t: re.compile(rf"(?<![A-Za-z]){re.escape(t)}(?![A-Za-z])") for t in TIERS}
 _DIGIT = re.compile(r"\d")
 
@@ -166,6 +166,32 @@ def _step(text: str, want: str, where: str) -> Step:
     return Step(op, key, tuple(filters), wants)
 
 
+def question(
+    id_: str,
+    kind: str,
+    expect: str,
+    text: str,
+    truth: str = "",
+    want: str = "",
+    where: str = "",
+) -> Question:
+    """One row of the file, checked (``where`` names it in an error)."""
+    where = where or id_
+    if kind not in KINDS or expect not in EXPECTS or not text.strip():
+        raise EvalError(f"{where}: bad kind, expect or question")
+    texts = STEP_SPLIT.split(truth.strip()) if truth.strip() else []
+    wants = STEP_SPLIT.split(want.strip()) if want.strip() else []
+    if len(wants) > len(texts):
+        raise EvalError(f"{where}: more want parts than truth steps")
+    wants += [""] * (len(texts) - len(wants))
+    steps = tuple(_step(t, w, where) for t, w in zip(texts, wants, strict=True))
+    if (expect == ASK) != (not steps):
+        raise EvalError(f"{where}: ask rows have no truth; the others need one")
+    if expect == NONE and (len(steps) != 1 or steps[0].op == MACHINE):
+        raise EvalError(f"{where}: a none row has one make or use step")
+    return Question(id_, kind, expect, text.strip(), steps)
+
+
 def load(path: Path = QUESTIONS) -> list[Question]:
     with open(path, encoding="utf-8", newline="") as f:
         reader = csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
@@ -180,21 +206,8 @@ def load(path: Path = QUESTIONS) -> list[Question]:
             if not 4 <= len(cells) <= len(COLUMNS):
                 raise EvalError(f"{path}:{n}: {len(cells)} cells, want {len(COLUMNS)}")
             cells += [""] * (len(COLUMNS) - len(cells))
-            id_, kind, expect, question, truth, want = (c.strip() for c in cells)
-            where = f"{path}:{n}"
-            if kind not in KINDS or expect not in EXPECTS or not question:
-                raise EvalError(f"{where}: bad kind, expect or question")
-            texts = STEP_SPLIT.split(truth) if truth else []
-            wants = STEP_SPLIT.split(want) if want else []
-            if len(wants) > len(texts):
-                raise EvalError(f"{where}: more want parts than truth steps")
-            wants += [""] * (len(texts) - len(wants))
-            steps = tuple(_step(t, w, where) for t, w in zip(texts, wants, strict=True))
-            if (expect == ASK) != (not steps):
-                raise EvalError(f"{where}: ask rows have no truth; the others need one")
-            if expect == NONE and (len(steps) != 1 or steps[0].op == MACHINE):
-                raise EvalError(f"{where}: a none row has one make or use step")
-            out.append(Question(id_, kind, expect, question, steps))
+            id_, kind, expect, text, truth, want = (c.strip() for c in cells)
+            out.append(question(id_, kind, expect, text, truth, want, f"{path}:{n}"))
     if len({q.id for q in out}) != len(out):
         raise EvalError(f"{path}: ids repeat")
     return out
@@ -263,7 +276,8 @@ def _tier_counts(rows: Iterable[Row]) -> set[str]:
 
 _RECIPE = """
 SELECT r.id, r.ref, r.eut, r.amperage, r.duration_ticks, r.voltage_tier, r.special_value,
-  m.name_en AS map_name, h.name_en AS handler_name, r.recipe_map_id
+  m.name_en AS map_name, h.name_en AS handler_name, m.unloc_name, h.handler_name AS handler,
+  r.recipe_map_id
 FROM recipe AS r
 LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id
 LEFT JOIN nei_handler AS h ON h.id = r.nei_handler_id
@@ -471,7 +485,9 @@ class Ground:
             row.name("tier", [TIERS[r["voltage_tier"]]])
         if r["special_value"]:
             row.numbers.add(value(r["special_value"]))
-        machines = {r["map_name"], r["handler_name"]}
+        # Every name the recipe tools may show for its machine: the map's or handler's NEI
+        # name, a machine that runs the map, else the map's or handler's own id.
+        machines = {r["map_name"], r["handler_name"], r["unloc_name"], r["handler"]}
         if r["recipe_map_id"] is not None:
             machines |= {
                 m[0]
@@ -575,17 +591,20 @@ def _mask(text: str, names: Iterable[str]) -> str:
 
 
 def _has(text: str, want: str, values: set[str], numbers: set[str]) -> bool:
-    """Whether ``text`` states one of a cited row's ``values`` for ``want``."""
+    """Whether ``text`` states one of a cited row's ``values`` for ``want`` (words are read
+    outside citations and keys: ``r:gt.recipe.blastfurnace/...`` doesn't name a machine)."""
+    words = fast_lane.KEY.sub(" ", fast_lane.REF.sub(" ", text))
     if want == "tier":
-        return any(TIER_WORD[v].search(text) for v in values if v in TIER_WORD)
+        return any(TIER_WORD[v].search(words) for v in values if v in TIER_WORD)
+    folded = words.casefold()
     if want == "machine":
-        folded = text.casefold()
         return any(v.casefold() in folded for v in values if v)
     hit = {fast_lane.value(n) for v in values for n in fast_lane.NUMBER.findall(v)}
     if hit:
         return bool(hit & numbers)
-    folded = text.casefold()  # a word-valued fact ("heat", "standard")
-    return any(v.casefold() in folded for v in values)
+    return any(
+        v.casefold() in folded for v in values
+    )  # a word fact ("heat", "standard")
 
 
 def asks(reply: Reply, text: str) -> bool:
@@ -615,7 +634,9 @@ def score(
     for t in truths:
         for c in t.rows.keys() & real.keys():
             shown |= t.rows[c].names
-    stated = fast_lane.numbers(_mask(text, shown), None)
+    # Citations and keys first: a name with digits can be part of one ("r:ic2.nei.../...").
+    bare = fast_lane.KEY.sub(" ", fast_lane.REF.sub(" ", text))
+    stated = fast_lane.numbers(_mask(bare, shown), None)
     backed = set().union(*(r.numbers for r in real.values()))
     for t in truths:
         if t.rows.keys() & real.keys():
@@ -739,8 +760,8 @@ def run(
         reply = asker_for().ask(q.question, task=TASK)
         text, lane, cost, why = reply.text, reply.lane, 0.0, None
         if reply.handoff is not None:
-            if deep is None:
-                why = "handed to the deep lane, which doesn't run here"
+            if deep is None:  # the answer never comes: score nothing
+                text, why = "", "handed to the deep lane, which doesn't run here"
             else:
                 text, cost, why = _deep_answer(deep, before, wait_s)
                 lane = "deep"
@@ -894,14 +915,3 @@ def _run_real(
 def plans(questions: Iterable[Question]) -> dict[str, Question]:
     """The questions by their text as a lane receives it (whitespace collapsed)."""
     return {" ".join(q.question.split()): q for q in questions}
-
-
-def describe(q: Question) -> dict[str, Any]:
-    """A row as data (for tests and the report)."""
-    return {
-        "id": q.id,
-        "kind": q.kind,
-        "expect": q.expect,
-        "steps": [s.text() for s in q.steps],
-        "want": [list(s.want) for s in q.steps],
-    }
