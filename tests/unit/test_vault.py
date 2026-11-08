@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from gregtec import cli
-from gregtec.vault import deploy, schema
+from gregtec.vault import deploy, io, schema
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "vault-template"
 TIERS = [
@@ -45,7 +45,12 @@ def commits(vault: Path) -> int:
 
 def test_every_template_note_follows_the_schema() -> None:
     types = schema.load_types(TEMPLATE / "_gos" / "schema.md")
-    notes = sorted(TEMPLATE.rglob("*.md"))
+    # Skills and subagent files are the SDK's, not notes (vault.io.NOT_NOTES).
+    notes = sorted(
+        n
+        for n in TEMPLATE.rglob("*.md")
+        if not n.relative_to(TEMPLATE).as_posix().startswith(io.NOT_NOTES)
+    )
     assert notes
     assert {str(n.relative_to(TEMPLATE)): schema.check(n, types) for n in notes} == {
         str(n.relative_to(TEMPLATE)): [] for n in notes
@@ -199,7 +204,7 @@ def test_redeploy_finishes_a_failed_commit(
     vault = tmp_path / "home" / "vault"
     deploy.deploy(vault, template)
     skill = template / "_gos" / "skills" / "recipe-lookup" / "SKILL.md"
-    skill.parent.mkdir()
+    skill.parent.mkdir(exist_ok=True)  # the template has the real skill
     skill.write_text("name: recipe-lookup\n")
     real_git = deploy._git
 
@@ -245,7 +250,7 @@ def test_new_template_version_is_committed(tmp_path: Path) -> None:
     vault = tmp_path / "home" / "vault"
     deploy.deploy(vault, template)
     skill = template / "_gos" / "skills" / "recipe-lookup" / "SKILL.md"
-    skill.parent.mkdir()
+    skill.parent.mkdir(exist_ok=True)  # the template has the real skill
     skill.write_text("name: recipe-lookup\n")
     goals = vault / "me" / "goals.md"
     goals.write_text(goals.read_text() + "goal: reach HV\n")
