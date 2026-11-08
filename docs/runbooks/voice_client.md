@@ -14,14 +14,14 @@ Clayton runs these on the gaming PC after the WO-5.1 PR is merged and deployed. 
 3. **The keys.** The defaults are talk F13 (hold), confirm F14, cancel F15, next card F16. GTNH and Discord bind none of F13-F24 by default, and nothing is suppressed, so the keys must stay unbound in both (QA:V8). Most keyboards have no F13-F16: map a mouse side button or a macro key to them in SteelSeries GG (or the mouse's own software), or pick other keys in `%USERPROFILE%\GregtecOS\config\gos.toml`:
    ```toml
    [voice]
-   talk_key = "F13"          # one key: F1-F24, Pause, Scroll Lock, Insert ... Page Down, arrows, Num 0-9, Menu
+   talk_key = "F13"          # one key: F13-F24, Pause or Scroll Lock
    talk_mode = "hold"        # or "toggle": press to start, press again to send
    confirm_key = "F14"
    cancel_key = "F15"
    next_card_key = "F16"
    input_device = ""         # "" = Windows' default microphone; else part of a name from step 4
    ```
-   Mouse buttons themselves, letters, digits, Space, Enter, modifiers and combinations are refused (D180). A wrong key makes every `gos voice` command say why.
+   Only F13-F24, Pause and Scroll Lock are allowed: they type and edit nothing, and neither GTNH nor Discord binds them by default. F1-F12 (Minecraft hard-codes F1 and F3), letters, digits, Space, Enter, Insert, Delete, Home, End, Page Up, Page Down, the arrows, the numpad, Menu, modifiers, mouse buttons themselves and combinations are refused (D180). A wrong key makes every `gos voice` command say why.
 4. **The microphone.**
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice devices
@@ -32,7 +32,7 @@ Clayton runs these on the gaming PC after the WO-5.1 PR is merged and deployed. 
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice keys play
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice keys lab
    ```
-   Expect `free in GTNH` for all four keys and exit code 0. `BOUND in GTNH to key.xyz` means a GTNH control uses that key: unbind it in GTNH's Controls menu, or pick another key in step 3. It reads `options.txt` once, read only, the way GOS reads game files. For F20-F24 it says GTNH's Java 8 build can't bind them; Play runs the Java 17+ build (D86), so check those in the Controls menu by hand.
+   Expect `free in GTNH` for all four keys and exit code 0. `BOUND in GTNH to key.xyz` means a GTNH control uses that key (NEI's show as `nei.options.keys...`: GTNH's NEI keeps its keys in `options.txt` too): unbind it in GTNH's Controls menu, or pick another key in step 3. It reads `options.txt` once, read only, the way GOS reads game files. For F20-F24 it says GTNH's Java 8 build can't bind them; Play runs the Java 17+ build (D86), so check those in the Controls menu by hand.
 6. **Discord's keybinds** live where GOS can't read them: open Discord, User Settings > Keybinds, and check that none of the four keys is there (Push to Talk, Push to Mute, Toggle Mute and the rest).
 
 ## B. Acceptance (§8 WO-5.1): the keys work with GTNH focused, fullscreen and borderless, and trigger nothing in GTNH or Discord
@@ -59,9 +59,10 @@ Clayton runs these on the gaming PC after the WO-5.1 PR is merged and deployed. 
     ```powershell
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice run --transcript "how do I make steel"
     ```
-    `--transcript` stands in for speech-to-text until WO-5.2: every segment "says" that text. Hold the talk key 1 s and release: the window prints `GOS: Steel Ingot: ...` (the fast lane's checked answer). Press confirm: `GOS: Nothing is waiting for confirmation.` Press next card: nothing is said (the dashboard, WO-2.6, moves to its next card).
-13. **Core offline.** In another window `gos stop`; within about 20 s the voice window prints `GOS: Core offline.` once. `gos serve`: the client reconnects by itself (the next talk-key press is answered again). Stop the client with Ctrl+C.
-14. **Latency so far** (PM14 needs speech-to-text and text-to-speech, WO-5.2 and WO-5.3; WO-5.7 measures it in full): after about 20 talk-key turns in step 12,
+    `--transcript` stands in for speech-to-text until WO-5.2: every segment "says" that text. Hold the talk key 1 s and release: the window prints `GOS: Steel Ingot: ...` (the fast lane's checked answer). Press confirm: `GOS: Nothing is waiting for confirmation.` Press cancel: nothing is said (nothing was waiting, and cancel never makes GOS talk then). Press next card: nothing is said (the dashboard, WO-2.6, moves to its next card).
+13. **Core offline.** In another window `gos stop`; within about 20 s the voice window prints `GOS: Core offline.` once. `gos serve`: the client reconnects by itself (the next talk-key press is answered again).
+14. **Microphone lost.** With the client still running, unplug the headset (or disable its microphone under Windows Settings > System > Sound > Input) for about 5 s: the window prints `GOS: Microphone lost.` once. Plug it back in (or enable it): within about 10 s the client opens it again by itself; a 2 s talk-key press is answered again. Stop the client with Ctrl+C.
+15. **Latency so far** (PM14 needs speech-to-text and text-to-speech, WO-5.2 and WO-5.3; WO-5.7 measures it in full): after about 20 talk-key turns in step 12,
     ```powershell
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice bench
     ```

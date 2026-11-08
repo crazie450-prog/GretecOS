@@ -40,6 +40,7 @@ from gregtec_voice.client import (
     Online,
     Process,
     Pushed,
+    Refused,
     VoiceClient,
 )
 from gregtec_voice.settings import VoiceSettings
@@ -70,7 +71,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "--transcript",
         metavar="TEXT",
         help="every segment 'says' TEXT instead of going through speech-to-text: measures "
-        "the rest of the path (key, capture, core, speech)",
+        "the rest of the path (key, capture, core; speech once WO-5.3's engine is there)",
     )
     run.add_argument(
         "--supervised",
@@ -104,7 +105,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         help="the configured keys and the GTNH bindings on them",
         description=(
             "Reads the instance's options.txt (read only, the way GOS reads game files) and "
-            "lists any GTNH binding on the talk key or a hotkey. Discord keeps its keybinds "
+            "lists any GTNH binding on the talk key or a hotkey: Minecraft's, every mod's "
+            "and NEI's (GTNH's NEI keeps its keys there too). Discord keeps its keybinds "
             "where GOS can't read them: check Discord's Settings > Keybinds by hand."
         ),
     )
@@ -204,6 +206,7 @@ def _run(
         token,
         on_push=lambda message: voice.post(Pushed(message)),
         on_online=lambda online: voice.post(Online(online, time.monotonic())),
+        on_refused=lambda: voice.post(Refused(time.monotonic())),
     )
     voice = VoiceClient(
         voice_settings,
@@ -350,8 +353,10 @@ def _test(
         file=out,
     )
     stop = threading.Event()
+    timer = threading.Timer(args.seconds, stop.set)
+    timer.daemon = True  # Ctrl+C before --seconds ran out mustn't leave it waiting
     if args.seconds > 0:
-        threading.Timer(args.seconds, stop.set).start()
+        timer.start()
     try:
         Process(voice, pipe, hook, watchdog=watchdog).run(stop)
     except AudioError as exc:
@@ -360,6 +365,7 @@ def _test(
     except KeyboardInterrupt:
         pass
     finally:
+        timer.cancel()
         stop.set()
     print("\nSummary", file=out)
     print(f"  microphone: {pipe.source.name}, {pipe.blocks} blocks", file=out)

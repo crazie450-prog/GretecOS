@@ -106,6 +106,9 @@ class Reply:
     problems: list[str] = field(default_factory=list)
     handoff: dict[str, Any] | None = None
     error: str | None = None
+    # confirm and cancel: whether an action was waiting for them (D59; actions arrive with
+    # WO-7.1). The voice client's cancel hotkey stays quiet when none was (D179).
+    pending: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -126,6 +129,7 @@ class Reply:
             "problems": self.problems,
             "handoff": self.handoff,
             "error": self.error,
+            "pending": self.pending,
         }
 
 
@@ -384,7 +388,7 @@ class Asker:
             )
         if intent in (router.CONFIRM, router.CANCEL):
             # The confirm flow (D59) arrives with WO-7.1's actions; nothing can be pending yet.
-            return Reply(NOTHING_PENDING, router.INSTANT, intent)
+            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
         if intent == router.TIER:
             out = self.registry.call("quest_frontier", {"n": 1}, lane="fast")
             block = prefetch.Block("quest_frontier", {"n": 1}, out.text, out.is_error)

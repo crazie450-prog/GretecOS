@@ -101,7 +101,11 @@ def test_ask_errors_say_whether_the_core_answered(live_core: Live) -> None:
     )
     with pytest.raises(CoreError) as refused:
         client.ask("x" * 1001)  # the core refuses it (400): it is there
-    assert not refused.value.offline
+    assert not refused.value.offline and not refused.value.refused
+    stranger = CoreClient(live_core.port, "wrong" * 9, on_push=print, on_online=print)
+    with pytest.raises(CoreError) as token:
+        stranger.ask("confirm")  # 401/403: the token, not an outage
+    assert token.value.refused and not token.value.offline
     sock = bind(0)
     nobody = sock.getsockname()[1]
     sock.close()
@@ -143,8 +147,13 @@ def test_a_refused_token_is_logged_once(
 ) -> None:
     caplog.set_level(logging.ERROR)
     online: list[bool] = []
+    told: list[int] = []
     client = CoreClient(
-        live_core.port, "wrong" * 9, on_push=print, on_online=online.append
+        live_core.port,
+        "wrong" * 9,
+        on_push=print,
+        on_online=online.append,
+        on_refused=lambda: told.append(1),
     )
     client.start()
     try:
@@ -158,3 +167,4 @@ def test_a_refused_token_is_logged_once(
         if "refused the voice client's token" in r.getMessage()
     ]
     assert len(refused) == 1 and refused[0].status == 403
+    assert told == [1]  # the voice client says so once (not "Core offline.")

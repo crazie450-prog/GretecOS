@@ -92,6 +92,46 @@ def test_cancel_drops_the_segment_and_start_needs_none_open() -> None:
     assert closed == []
 
 
+def test_a_new_segment_during_the_post_roll_leaves_the_old_one_its_post_roll() -> None:
+    """The talk key pressed again just after it came up: the first segment still gets every
+    block up to its cut, and the second starts at once with its pre-roll."""
+    closed: list[Segment] = []
+    rec = Recorder(closed.append)
+    t = feed(rec, blocks(1.0, 1), 0.0)
+    assert rec.start("key", t) and rec.started == pytest.approx(1.0)
+    t = feed(rec, blocks(1.0, 2), t)
+    rec.stop(t)
+    t = feed(rec, blocks(0.04, 3), t)  # 40 ms into the 120 ms post-roll
+    assert rec.start("key", t)  # not refused: the first one is only finishing
+    assert rec.recording == "key" and rec.started == pytest.approx(t)
+    assert not rec.start("wake", t)  # but the new one is being recorded
+    t = feed(rec, blocks(0.1, 4), t)  # passes the first one's cut
+    assert len(closed) == 1 and rec.recording == "key"
+    first = closed[0]
+    assert first.started == pytest.approx(1.0)
+    assert first.seconds == pytest.approx(0.3 + 1.0 + 0.12)  # the whole post-roll
+    assert first.pcm.endswith(b"".join(blocks(0.04, 3) + blocks(0.08, 4)))
+    rec.stop(t)
+    feed(rec, blocks(0.2, 5), t)
+    second = closed[1]
+    assert second.pre_roll_s == pytest.approx(0.3)
+    # its pre-roll is the 300 ms before its start: the end of the first question
+    assert second.pcm[:9600] == b"".join(blocks(0.26, 2) + blocks(0.04, 3))
+    assert second.pcm[9600 : 9600 + BLOCK * 5] == b"".join(blocks(0.1, 4))
+
+
+def test_cancel_drops_only_the_segment_being_recorded() -> None:
+    closed: list[Segment] = []
+    rec = Recorder(closed.append)
+    rec.start("key", 0.0)
+    feed(rec, blocks(0.5), 0.0)
+    rec.stop(0.5)
+    rec.start("key", 0.52)  # a tap during the first one's post-roll
+    assert rec.cancel()  # the tap is dropped
+    feed(rec, blocks(0.2), 0.52)
+    assert len(closed) == 1 and closed[0].started == 0.0
+
+
 def test_a_stopped_segment_closes_when_audio_stops_arriving() -> None:
     closed: list[Segment] = []
     rec = Recorder(closed.append)
@@ -259,6 +299,72 @@ def test_find_device_picks_the_default_or_by_name() -> None:
         audio.find_device("", [d for d in DEVICES if not d.default])
     with pytest.raises(AudioError, match="lists no capture device"):
         audio.find_device("", [])
+
+
+class FakePortAudio:
+    """``sounddevice`` as WasapiSource uses it: a device list that changes only when PortAudio
+    starts again (``_terminate`` + ``_initialize``), as the real one."""
+
+    class PortAudioError(Exception):
+        pass
+
+    def __init__(self) -> None:
+        self.plugged = [(3, "Microphone (Arctis Nova Elite Chat)")]
+        self._listed = list(self.plugged)
+        self.calls: list[str] = []
+        self.opened: list[int] = []
+
+    def _terminate(self) -> None:
+        self.calls.append("terminate")
+
+    def _initialize(self) -> None:
+        self.calls.append("initialize")
+        self._listed = list(self.plugged)
+
+    def query_hostapis(self) -> list[dict[str, object]]:
+        return [{"name": "MME"}, {"name": "Windows WASAPI", "default_input_device": 3}]
+
+    def query_devices(self) -> list[dict[str, object]]:
+        found: list[dict[str, object]] = [
+            {"name": "-", "hostapi": 0, "max_input_channels": 0} for _ in range(8)
+        ]
+        for index, name in self._listed:
+            found[index] = {"name": name, "hostapi": 1, "max_input_channels": 1}
+        return found
+
+    def WasapiSettings(self, auto_convert: bool) -> object:
+        return object()
+
+    def RawInputStream(self, device: int, **kw: object) -> object:
+        opened = self.opened
+
+        class Stream:
+            def start(self) -> None:
+                opened.append(device)
+
+            def stop(self) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        return Stream()
+
+
+def test_reopening_wasapi_lists_the_devices_afresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A headset that went away and came back has a new device entry; PortAudio's list is made
+    once, when it starts, so re-opening starts PortAudio again first (L5)."""
+    sd = FakePortAudio()
+    monkeypatch.setattr(audio, "_sounddevice", lambda: sd)
+    source = audio.WasapiSource("Arctis")
+    source.start(lambda block: None)
+    assert sd.opened == [3] and sd.calls == []  # the first open: PortAudio just started
+    source.stop()
+    sd.plugged = [(5, "Microphone (Arctis Nova Elite Chat)")]  # plugged in again
+    source.start(lambda block: None)
+    assert sd.calls == ["terminate", "initialize"] and sd.opened == [3, 5]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux: there is no WASAPI")

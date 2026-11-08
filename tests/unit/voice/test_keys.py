@@ -13,22 +13,15 @@ from gregtec_voice import keys
     [
         ("F13", "f13", 0x7C, 0x64),
         ("f16", "f16", 0x7F, 0x67),
+        ("F18", "f18", 0x81, 0x69),
         ("F19", "f19", 0x82, 0x71),
-        ("F24", "f24", 0x87, None),  # LWJGL 2 has no code past F19
-        ("F1", "f1", 0x70, 0x3B),
-        ("F11", "f11", 0x7A, 0x57),
+        ("F20", "f20", 0x83, None),  # LWJGL 2 has no code past F19
+        ("F24", "f24", 0x87, None),
         ("Scroll Lock", "scroll_lock", 0x91, 0x46),
         ("scrolllock", "scroll_lock", 0x91, 0x46),
+        ("  scroll-lock ", "scroll_lock", 0x91, 0x46),
         ("Pause", "pause", 0x13, 0xC5),
-        ("page-up", "page_up", 0x21, 0xC9),
-        ("PgDn", "page_down", 0x22, 0xD1),
-        ("Num 5", "num_5", 0x65, 0x4C),
-        ("numpad0", "num_0", 0x60, 0x52),
-        ("num +", "num_add", 0x6B, 0x4E),
-        ("Num -", "num_subtract", 0x6D, 0x4A),  # as gos voice prints it
-        ("num  /", "num_divide", 0x6F, 0xB5),
-        ("Menu", "apps", 0x5D, 0xDD),
-        ("  insert ", "insert", 0x2D, 0xD2),
+        ("break", "pause", 0x13, 0xC5),
     ],
 )
 def test_names_parse(text: str, name: str, vk: int, lwjgl: int | None) -> None:
@@ -44,6 +37,24 @@ def test_names_parse(text: str, name: str, vk: int, lwjgl: int | None) -> None:
         ("space", "types or edits text"),
         ("Enter", "types or edits text"),
         ("esc", "types or edits text"),
+        # F1-F12: hard-coded (F1 hides the HUD, F3 is the debug screen) or GTNH's
+        ("F1", "hard-codes F1 and F3"),
+        ("F3", "hard-codes F1 and F3"),
+        ("F11", "use one of F13-F24"),
+        # they edit or move in chat and Discord, and NEI binds some (QA:V8)
+        ("Delete", "types or edits text"),
+        ("  insert ", "types or edits text"),
+        ("Home", "types or edits text"),
+        ("Up", "NEI binds the arrows"),
+        ("arrow-left", "NEI binds the arrows"),
+        ("Page Up", "Page Up and Page Down"),
+        ("PgDn", "Page Up and Page Down"),
+        # the numpad types with Num Lock on; NEI binds Num 0
+        ("Num 5", "with Num Lock on"),
+        ("numpad0", "NEI binds Num 0"),
+        ("Num -", "with Num Lock on"),
+        ("num +", "with Num Lock on"),
+        ("Menu", "context menus"),
         ("left shift", "modifier"),
         ("RCtrl", "modifier"),
         ("caps lock", "lock key"),
@@ -59,6 +70,13 @@ def test_names_parse(text: str, name: str, vk: int, lwjgl: int | None) -> None:
 def test_refused_names_say_why(text: str, why: str) -> None:
     with pytest.raises(keys.KeyNameError, match=why):
         keys.parse(text)
+
+
+def test_only_keys_that_type_nothing_and_are_unbound_by_default_are_allowed() -> None:
+    """D180 after the review (M3): F13-F24, Pause and Scroll Lock, nothing else."""
+    assert sorted(k.label for k in keys.KEYS.values()) == sorted(
+        [f"F{n}" for n in range(13, 25)] + ["Pause", "Scroll Lock"]
+    )
 
 
 def test_every_key_has_a_distinct_virtual_key_and_lwjgl_code() -> None:
@@ -77,7 +95,8 @@ key_key.forward:17
 key_key.jump:57
 key_key.screenshot:60
 key_key.xaero_waypoint:100
-key_key.nei.recipe:19
+key_nei.options.keys.gui.recipe:19
+key_nei.options.keys.world.chunkoverlay:70
 key_gui.chatcolor:100:SHIFT
 key_key.unbound:0
 key_broken:notanumber
@@ -89,6 +108,8 @@ def test_bindings_read_options_txt() -> None:
     bound = keys.bindings(OPTIONS)
     assert bound[57] == ["key.jump"]
     assert bound[60] == ["key.screenshot"]  # F2
+    # GTNH's NEI registers its keys as Minecraft key bindings, so they are here too
+    assert bound[19] == ["nei.options.keys.gui.recipe"]
     # two bindings on F13 (0x64), one with a modifier suffix; mouse buttons and 0 are left out
     assert bound[100] == ["key.xaero_waypoint", "gui.chatcolor"]
     assert -100 not in bound and 0 not in bound
@@ -98,13 +119,13 @@ def test_conflicts_name_the_bindings_on_each_configured_key() -> None:
     configured = {
         "talk": keys.parse("F13"),
         "confirm": keys.parse("F14"),
-        "cancel": keys.parse("F2"),
+        "cancel": keys.parse("Scroll Lock"),  # rebound in NEI here (0x46)
         "next_card": keys.parse("F24"),
     }
     found = keys.conflicts(configured, keys.bindings(OPTIONS))
     assert found == {
         "talk": ["gui.chatcolor", "key.xaero_waypoint"],
         "confirm": [],
-        "cancel": ["key.screenshot"],
+        "cancel": ["nei.options.keys.world.chunkoverlay"],
         "next_card": None,  # GTNH's LWJGL 2 table has no F24: options.txt can't tell
     }

@@ -10,7 +10,7 @@ from typing import Any
 
 from gregtec_voice import audio
 from gregtec_voice.audio import AudioPipe, Block, FakeSource
-from gregtec_voice.client import Process, VoiceClient
+from gregtec_voice.client import MIC_LOST, Process, VoiceClient
 from gregtec_voice.ptt import FakeHook, FakeKeyState, KeyFilter, Watchdog
 from gregtec_voice.settings import VoiceSettings
 
@@ -107,6 +107,8 @@ def test_a_silent_microphone_is_reopened(
         assert source.started == 1  # 2 s of silence from the device: not yet
         process._tick(103.5)
         assert source.started == 2  # re-opened
+        voice.drain()  # the speaker's callbacks
+        assert speaker.said == [MIC_LOST]  # said once, when it went
         process._tick(110.0)
         assert source.started == 2  # at most every 10 s
         process._tick(114.0)
@@ -117,5 +119,10 @@ def test_a_silent_microphone_is_reopened(
         pipe.last_block = 124.9
         process._tick(126.0)
         assert source.started == 4
+        voice.drain()
+        assert speaker.said == [MIC_LOST]  # one loss, said once
+        process._tick(130.0)  # lost again later: said again
+        voice.drain()
+        assert speaker.said == [MIC_LOST, MIC_LOST]
     finally:
         pipe.stop()

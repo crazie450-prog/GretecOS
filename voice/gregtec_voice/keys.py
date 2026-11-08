@@ -1,20 +1,24 @@
 """Key names for the talk key and the hotkeys, and the check against GTNH's bindings (D180).
 
-A key is one keyboard key that types nothing: F1-F24, Pause, Scroll Lock, the navigation block
-(Insert, Delete, Home, End, Page Up, Page Down), the arrows, the numpad and the Menu key. Names are
-case-insensitive, and spaces or hyphens count as ``_`` ("F13", "Scroll Lock", "page-up", "num 5").
+A key is one of F13-F24, Pause or Scroll Lock: keys that type nothing, edit nothing, and that
+neither GTNH (Minecraft, its mods, NEI) nor Discord binds by default. Names are case-insensitive,
+and spaces or hyphens count as ``_`` ("F13", "Scroll Lock", "scroll-lock").
 
-Refused, with the reason: keys that type or edit text in GTNH's chat and Discord (letters,
-digits, Space, Enter, Tab, Escape, Backspace, punctuation), modifiers and lock keys, Print Screen
-(Windows takes it for screenshots), combinations, and mouse buttons. A mouse button would need a
-low-level *mouse* hook, which runs Python on every mouse movement in game; map the button to one
-of F13-F24 in the mouse's own software instead, which also makes it a key GTNH doesn't bind.
+Refused, with the reason: F1-F12 (Minecraft 1.7.10 hard-codes F1 and F3; GTNH binds most of the
+rest: screenshot, view, fullscreen, NEI's overlays), the keys that type or edit text in GTNH's
+chat and Discord (letters, digits, Space, Enter, Tab, Escape, Backspace, punctuation, Insert,
+Delete, Home, End, Page Up, Page Down, the arrows, the numpad), the Menu key, modifiers and lock
+keys, Print Screen (Windows takes it for screenshots), combinations, and mouse buttons. A mouse
+button would need a low-level *mouse* hook, which runs Python on every mouse movement in game;
+map the button to one of F13-F24 in the mouse's own software instead.
 
 **GTNH's bindings** are ``key_<name>:<code>`` lines in the game folder's ``options.txt``, coded
 as LWJGL 2's ``Keyboard.KEY_*`` (DirectInput scan codes; lwjgl3ify, on GTNH's Java 17+ build,
-keeps that format), mouse buttons as ``code - 100`` and ``0`` for unbound. :func:`bindings` reads
-them, :func:`conflicts` lists the ones on a configured key. F20-F24 have no LWJGL 2 code, so
-GTNH's Java 8 build can't bind them; on the Java 17+ build check its Controls menu by hand.
+keeps that format), mouse buttons as ``code - 100`` and ``0`` for unbound. GTNH's NEI registers
+its keys as Minecraft key bindings (``key_nei.options.keys.*``), so they are there too.
+:func:`bindings` reads them, :func:`conflicts` lists the ones on a configured key. F20-F24 have no
+LWJGL 2 code, so GTNH's Java 8 build can't bind them; on the Java 17+ build check its Controls
+menu by hand.
 """
 
 from __future__ import annotations
@@ -33,15 +37,13 @@ class Key:
 
 
 def _f_keys() -> list[Key]:
-    # LWJGL 2: F1-F10 0x3B-0x44, F11 0x57, F12 0x58, F13-F18 0x64-0x69, F19 0x71, none above.
-    lwjgl = [*range(0x3B, 0x45), 0x57, 0x58, *range(0x64, 0x6A), 0x71]
+    # LWJGL 2: F13-F18 0x64-0x69, F19 0x71, none above (GTNH's Java 8 build can't bind those).
+    lwjgl = [*range(0x64, 0x6A), 0x71]
     return [
-        Key(f"f{n}", f"F{n}", 0x6F + n, lwjgl[n - 1] if n <= len(lwjgl) else None)
-        for n in range(1, 25)
+        Key(f"f{n}", f"F{n}", 0x6F + n, lwjgl[n - 13] if n - 13 < len(lwjgl) else None)
+        for n in range(13, 25)
     ]
 
-
-_NUMPAD_LWJGL = (0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49)
 
 KEYS: dict[str, Key] = {
     k.name: k
@@ -49,23 +51,6 @@ KEYS: dict[str, Key] = {
         *_f_keys(),
         Key("pause", "Pause", 0x13, 0xC5),
         Key("scroll_lock", "Scroll Lock", 0x91, 0x46),
-        Key("insert", "Insert", 0x2D, 0xD2),
-        Key("delete", "Delete", 0x2E, 0xD3),
-        Key("home", "Home", 0x24, 0xC7),
-        Key("end", "End", 0x23, 0xCF),
-        Key("page_up", "Page Up", 0x21, 0xC9),
-        Key("page_down", "Page Down", 0x22, 0xD1),
-        Key("left", "Left", 0x25, 0xCB),
-        Key("up", "Up", 0x26, 0xC8),
-        Key("right", "Right", 0x27, 0xCD),
-        Key("down", "Down", 0x28, 0xD0),
-        *(Key(f"num_{n}", f"Num {n}", 0x60 + n, _NUMPAD_LWJGL[n]) for n in range(10)),
-        Key("num_multiply", "Num *", 0x6A, 0x37),
-        Key("num_add", "Num +", 0x6B, 0x4E),
-        Key("num_subtract", "Num -", 0x6D, 0x4A),
-        Key("num_decimal", "Num .", 0x6E, 0x53),
-        Key("num_divide", "Num /", 0x6F, 0xB5),
-        Key("apps", "Menu", 0x5D, 0xDD),
     ]
 }
 BY_VK = {k.vk: k for k in KEYS.values()}
@@ -76,6 +61,7 @@ ALIASES = {
     "scroll": "scroll_lock",
     "break": "pause",
     "pause_break": "pause",
+    # refused keys' other names, so the reason is given for them too
     "ins": "insert",
     "del": "delete",
     "pageup": "page_up",
@@ -84,6 +70,8 @@ ALIASES = {
     "pagedown": "page_down",
     "pgdn": "page_down",
     "next": "page_down",
+    **{f"arrow_{d}": d for d in ("left", "up", "right", "down")},
+    **{f"{d}_arrow": d for d in ("left", "up", "right", "down")},
     "menu": "apps",
     "context_menu": "apps",
     **{f"numpad{n}": f"num_{n}" for n in range(10)},
@@ -97,7 +85,12 @@ ALIASES = {
 }
 
 _TYPES = "it types or edits text in GTNH's chat and Discord"
+_F1_F12 = (
+    "Minecraft hard-codes F1 and F3, and GTNH binds most of F1-F12 (screenshot, view, "
+    "fullscreen, NEI's overlays): use one of F13-F24"
+)
 REFUSED = {
+    **dict.fromkeys([f"f{n}" for n in range(1, 13)], _F1_F12),
     **dict.fromkeys(
         [
             "space",
@@ -111,6 +104,33 @@ REFUSED = {
         ],
         _TYPES,
     ),
+    **dict.fromkeys(
+        [
+            "insert",
+            "delete",
+            "home",
+            "end",
+            "page_up",
+            "page_down",
+            "left",
+            "up",
+            "right",
+            "down",
+        ],
+        f"{_TYPES} (and NEI binds the arrows, Page Up and Page Down)",
+    ),
+    **dict.fromkeys(
+        [
+            *(f"num_{n}" for n in range(10)),
+            "num_multiply",
+            "num_add",
+            "num_subtract",
+            "num_decimal",
+            "num_divide",
+        ],
+        f"{_TYPES} with Num Lock on (and NEI binds Num 0)",
+    ),
+    "apps": "it opens context menus in Discord and other Windows apps",
     **dict.fromkeys(
         [
             m
@@ -154,6 +174,9 @@ class KeyNameError(ValueError):
     """A key name that isn't one of :data:`KEYS` (the message says why)."""
 
 
+_NUM_MINUS = re.compile(r"num(?:pad)?[\s_]*-")  # "-" is otherwise a word break
+
+
 def normalise(text: str) -> str:
     return re.sub(r"[\s\-]+", "_", text.strip().casefold())
 
@@ -162,9 +185,10 @@ def parse(text: str) -> Key:
     """The key ``text`` names. Raises :class:`KeyNameError` saying why a name isn't allowed."""
     if not isinstance(text, str) or not text.strip():
         raise KeyNameError("a key name can't be empty")
-    if found := _LABELS.get(" ".join(text.split()).casefold()):
-        return found  # as gos voice prints it: "Num -", "Page Up"
-    name = normalise(text)
+    squeezed = " ".join(text.split()).casefold()
+    if found := _LABELS.get(squeezed):
+        return found  # as gos voice prints it: "Scroll Lock"
+    name = "num_subtract" if _NUM_MINUS.fullmatch(squeezed) else normalise(text)
     if "+" in name and name not in ALIASES and len(name) > 1:
         raise KeyNameError(f"{text!r}: one key only, no combinations")
     name = ALIASES.get(name, name)
@@ -175,9 +199,8 @@ def parse(text: str) -> Key:
     if len(name) == 1:
         raise KeyNameError(f"{text!r}: {_TYPES}")
     raise KeyNameError(
-        f"{text!r} isn't a key name GOS knows; use one of F1-F24 (F13-F24 are free in "
-        "GTNH and Discord by default), Pause, Scroll Lock, Insert, Delete, Home, End, "
-        "Page Up, Page Down, the arrows, Num 0-9 or Menu"
+        f"{text!r} isn't a key name GOS knows; use one of F13-F24, Pause or Scroll Lock "
+        "(free in GTNH and Discord by default)"
     )
 
 

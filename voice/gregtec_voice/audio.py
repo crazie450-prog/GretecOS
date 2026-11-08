@@ -13,8 +13,12 @@ Audio is 16 kHz mono 16-bit PCM (little-endian bytes) in 20 ms blocks, everywher
   before the talk key went down and the first syllable isn't clipped.
 - **Post-roll**: a segment keeps the blocks captured up to 120 ms after the key came up, the
   audio still on its way through WASAPI and the queue when the key event arrives. A segment that
-  sees no audio for 0.5 s past that point is closed anyway (a device that stopped).
+  sees no audio for 0.5 s past that point is closed anyway (a device that stopped). A new segment
+  that starts meanwhile (the key pressed again at once) doesn't cut it short: both take the
+  blocks until the older one's post-roll is over.
 - **Length cap**: 30 s (Whisper's window), then the segment closes as if the key came up.
+- **Re-opening** (a headset that went away): PortAudio lists devices once, when it starts, so
+  :class:`WasapiSource` starts it again before it re-opens, and a headset that came back is found.
 """
 
 from __future__ import annotations
@@ -124,7 +128,8 @@ class _Open:
 class Recorder:
     """Keeps the pre-roll and the open segment. :meth:`feed` runs on the audio worker; the
     client calls :meth:`start`, :meth:`stop` and :meth:`cancel`. A closed segment goes to
-    ``on_closed`` on whichever thread closed it."""
+    ``on_closed`` on whichever thread closed it. A stopped segment still taking its post-roll
+    when a new one starts goes on taking it alongside the new one."""
 
     def __init__(
         self,
@@ -142,6 +147,7 @@ class Recorder:
         self._lock = threading.Lock()
         self._ring = Ring(pre_roll_s)
         self._open: _Open | None = None
+        self._closing: list[_Open] = []  # stopped, then replaced as the open one
 
     @property
     def recording(self) -> str | None:
@@ -149,11 +155,20 @@ class Recorder:
         seg = self._open
         return None if seg is None else seg.trigger
 
+    @property
+    def started(self) -> float | None:
+        """The open segment's start (key down or wake), or None."""
+        seg = self._open
+        return None if seg is None else seg.started
+
     def start(self, trigger: str, t: float) -> bool:
-        """Open a segment with the pre-roll; False when one is already open."""
+        """Open a segment with the pre-roll; False while one is being recorded. One that is
+        stopped and still taking its post-roll goes on taking it alongside."""
         with self._lock:
             if self._open is not None:
-                return False
+                if self._open.stop_at is None:
+                    return False
+                self._closing.append(self._open)
             pre = self._ring.snapshot()
             self._open = _Open(trigger, t, len(pre) / BYTES_PER_S, bytearray(pre))
             return True
@@ -171,38 +186,40 @@ class Recorder:
             dropped, self._open = self._open, None
             return dropped is not None
 
+    def _segments(self) -> list[_Open]:
+        """Every segment taking blocks, oldest first (lock held)."""
+        return self._closing + ([self._open] if self._open is not None else [])
+
     def feed(self, block: Block) -> None:
-        closed = None
+        closed = []
         with self._lock:
             self._ring.push(block.pcm)
-            seg = self._open
-            if seg is not None:
+            for seg in self._segments():
                 seg.buf += block.pcm
                 past_cut = seg.stop_at is not None and block.t_end >= seg.stop_at
                 too_long = len(seg.buf) >= self.max_bytes + round(
                     seg.pre_roll_s * BYTES_PER_S
                 )
                 if past_cut or too_long:
-                    closed = self._close(seg)
-        if closed is not None:
-            self.on_closed(closed)
+                    closed.append(self._close(seg))
+        for segment in closed:
+            self.on_closed(segment)
 
     def tick(self, now: float) -> None:
         """Close a stopped segment whose audio stopped arriving (a device that went away)."""
-        closed = None
+        closed = []
         with self._lock:
-            seg = self._open
-            if (
-                seg is not None
-                and seg.stop_at is not None
-                and now > seg.stop_at + STALL_S
-            ):
-                closed = self._close(seg)
-        if closed is not None:
-            self.on_closed(closed)
+            for seg in self._segments():
+                if seg.stop_at is not None and now > seg.stop_at + STALL_S:
+                    closed.append(self._close(seg))
+        for segment in closed:
+            self.on_closed(segment)
 
     def _close(self, seg: _Open) -> Segment:
-        self._open = None
+        if seg is self._open:
+            self._open = None
+        else:
+            self._closing = [s for s in self._closing if s is not seg]
         return Segment(
             bytes(seg.buf),
             seg.trigger,
@@ -334,6 +351,16 @@ def _sounddevice() -> Any:  # noqa: ANN401 - the sounddevice module (Windows onl
     return sounddevice
 
 
+def _rescan(sd: Any) -> None:  # noqa: ANN401 - sounddevice
+    """Start PortAudio again, so its device list is current (it is made once, when PortAudio
+    starts: a headset that went away and came back isn't in it). No stream may be open."""
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception as exc:  # noqa: BLE001 - PortAudioError, or a sounddevice without them
+        raise AudioError(f"PortAudio didn't restart: {exc}") from None
+
+
 def _wasapi(sd: Any) -> tuple[int, dict[str, Any]]:  # noqa: ANN401 - sounddevice
     for index, api in enumerate(sd.query_hostapis()):
         if api["name"] == "Windows WASAPI":
@@ -382,9 +409,15 @@ class WasapiSource:
         self.name = device or "default"
         self.overflows = 0
         self._stream: Any = None
+        self._starts = 0
 
     def start(self, on_block: Callable[[Block], None]) -> None:
         sd = _sounddevice()
+        self._starts += 1
+        if (
+            self._starts > 1
+        ):  # re-opening (the stream is closed): list the devices afresh
+            _rescan(sd)
         found = find_device(self.device, capture_devices())
         self.name = found.name
 
@@ -423,13 +456,11 @@ class WasapiSource:
 class WavSource:
     """A 16 kHz mono 16-bit WAV as a microphone (tests, and Linux where there is no WASAPI).
 
-    ``realtime``: one block every 20 ms, as a microphone; else as fast as the worker takes them.
-    After the file, ``loop`` starts it again, else silence follows (a microphone in a quiet room).
+    ``realtime``: one block every 20 ms, as a microphone, and silence after the file (a
+    microphone in a quiet room); else as fast as the worker takes them, and nothing after it.
     """
 
-    def __init__(
-        self, path: Path, *, realtime: bool = True, loop: bool = False
-    ) -> None:
+    def __init__(self, path: Path, *, realtime: bool = True) -> None:
         with wave.open(str(path), "rb") as w:
             if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (
                 SAMPLE_RATE,
@@ -440,7 +471,6 @@ class WavSource:
             self.pcm = w.readframes(w.getnframes())
         self.name = path.name
         self.realtime = realtime
-        self.loop = loop
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -460,9 +490,6 @@ class WavSource:
             if pos < len(self.pcm):
                 chunk = self.pcm[pos : pos + size].ljust(size, b"\0")
                 pos += size
-            elif self.loop and self.pcm:
-                pos = 0
-                continue
             elif not self.realtime:
                 return  # nothing more to give
             else:

@@ -91,16 +91,45 @@ def test_toggle_mode() -> None:
     assert talk.press(5.0) == START
 
 
-def test_a_segment_closed_elsewhere_resets_the_key() -> None:
+def test_after_the_cap_a_toggle_press_only_ends_the_turn() -> None:
     talk = TalkKey("toggle")
     talk.press(1.0)
     talk.release(1.1)
-    talk.closed()  # the 30 s cap, or the cancel hotkey
-    assert talk.press(40.0) == START
+    talk.capped(1.0)  # the 30 s cap sent the segment opened at 1.0
+    assert talk.press(40.0) is None  # the press meant to end it starts nothing
+    assert talk.release(40.1) is None
+    assert talk.press(41.0) == START
+
+
+def test_after_the_cap_a_hold_release_does_nothing() -> None:
     hold = TalkKey("hold")
     hold.press(1.0)
-    hold.closed()
+    hold.capped(1.0)
     assert hold.release(31.0) is None  # the cap already sent it
+    assert hold.press(32.0) == START
+
+
+def test_the_cap_of_an_older_segment_leaves_a_newer_press_alone() -> None:
+    hold = TalkKey("hold")
+    hold.press(1.0)
+    assert hold.release(2.0) == STOP
+    assert hold.press(2.05) == START  # pressed again during the first one's post-roll
+    hold.capped(1.0)  # the first segment, not this one
+    assert hold.release(3.0) == STOP
+
+
+def test_a_hotkey_dropping_the_segment_resets_the_key() -> None:
+    talk = TalkKey("toggle")
+    talk.press(1.0)
+    talk.dropped()  # the cancel hotkey dropped what was being recorded
+    talk.release(1.1)
+    assert talk.press(2.0) == START
+    capped = TalkKey("toggle")
+    capped.press(1.0)
+    capped.capped(1.0)
+    capped.release(31.0)
+    capped.dropped()  # a fresh start after cancel: the next press talks
+    assert capped.press(32.0) == START
 
 
 def test_talk_mode_must_be_known() -> None:
@@ -130,14 +159,31 @@ def make_watch() -> tuple[Watchdog, FakeHook, FakeKeyState, list[KeyEvent], Cloc
     return Watchdog(hook, state, key_filter, clock=clock), hook, state, got, clock
 
 
+def press(hook: FakeHook, state: FakeKeyState, vk: int) -> None:
+    """A key going down: Windows' key state, and the hook (which sees nothing when dead)."""
+    state.down.add(vk)
+    state.pressed.add(vk)
+    hook.press(vk)
+
+
+def release(hook: FakeHook, state: FakeKeyState, vk: int) -> None:
+    state.down.discard(vk)
+    hook.release(vk)
+
+
 def test_a_healthy_hook_is_left_alone() -> None:
     dog, hook, state, got, clock = make_watch()
-    state.down.add(F13)
-    hook.press(F13)  # the hook sees it as it happens
+    press(hook, state, F13)  # the hook sees it as it happens
     for _ in range(10):
-        clock.now += 0.1
+        clock.now += 0.05
         dog.check()
-    assert dog.reinstalls == 0 and len(got) == 1
+    release(hook, state, F13)
+    press(hook, state, F14)  # a tap between two polls, which the hook saw
+    release(hook, state, F14)
+    for _ in range(3):
+        clock.now += 0.05
+        dog.check()
+    assert dog.reinstalls == 0 and len(got) == 4
 
 
 def test_a_press_the_hook_missed_is_passed_on_and_the_hook_reinstalled(
@@ -145,20 +191,18 @@ def test_a_press_the_hook_missed_is_passed_on_and_the_hook_reinstalled(
 ) -> None:
     dog, hook, state, got, clock = make_watch()
     hook.dead = True  # Windows removed the hook after a timeout: it sees nothing now
-    state.down.add(F13)
-    hook.press(F13)
+    press(hook, state, F13)
+    first = clock.now
     dog.check()
-    clock.now += 0.2
-    dog.check()
-    assert got == [] and dog.reinstalls == 0  # under 300 ms: not yet
-    clock.now += 0.15
+    assert got == [] and dog.reinstalls == 0  # one poll: the hook may only be late
+    clock.now += 0.05
     dog.check()
     assert dog.reinstalls == 1 and hook.installed == 2 and not hook.dead
     assert [(e.vk, e.down, e.source) for e in got] == [(F13, True, "watchdog")]
+    assert got[0].t == first  # when the watchdog first saw it, not 50 ms later
     assert [getattr(r, "why", None) for r in caplog.records] == ["it missed F13 down"]
     # the new hook sees the release itself
-    state.down.discard(F13)
-    hook.release(F13)
+    release(hook, state, F13)
     clock.now += 1
     dog.check()
     assert [(e.down, e.source) for e in got] == [(True, "watchdog"), (False, "hook")]
@@ -166,18 +210,93 @@ def test_a_press_the_hook_missed_is_passed_on_and_the_hook_reinstalled(
 
 def test_a_missed_release_is_passed_on_too() -> None:
     dog, hook, state, got, clock = make_watch()
-    state.down.add(F14)
-    hook.press(F14)
+    press(hook, state, F14)
     hook.dead = True
-    state.down.discard(F14)
-    hook.release(F14)  # lost
+    release(hook, state, F14)  # lost
     dog.check()
-    clock.now += 0.31
+    clock.now += 0.05
     dog.check()
     assert [(e.vk, e.down, e.source) for e in got] == [
         (F14, True, "hook"),
         (F14, False, "watchdog"),
     ]
+
+
+def test_a_late_hook_is_not_a_miss() -> None:
+    """The hook's report can come after Windows' key state (a hook that ran late): one poll
+    that disagrees isn't a miss when the next one agrees."""
+    dog, hook, state, got, clock = make_watch()
+    state.down.add(F13)  # Windows has it; the hook hasn't run yet
+    dog.check()
+    hook.press(F13)  # now it has
+    clock.now += 0.05
+    dog.check()
+    assert dog.reinstalls == 0 and [(e.down, e.source) for e in got] == [(True, "hook")]
+
+
+def test_quick_taps_on_a_silently_removed_hook_are_caught() -> None:
+    """The review's case: five 150 ms taps of a hotkey with the hook removed but its thread
+    alive. The first is passed on within two polls and the hook re-installed; the new hook
+    sees the rest."""
+    dog, hook, state, got, clock = make_watch()
+    hook.dead = True
+    step, t = 0.01, 0.0
+    for _ in range(5):
+        for down in (True, False):
+            if down:
+                press(hook, state, F14)
+            else:
+                release(hook, state, F14)
+            for _ in range(15):  # 150 ms down, then 150 ms up
+                t += step
+                clock.now += step
+                if round(t / step) % 5 == 0:  # a poll every 50 ms
+                    dog.check()
+    presses = [e for e in got if e.down]
+    assert len(presses) == 5 and dog.reinstalls == 1
+    assert presses[0].source == "watchdog" and presses[1].source == "hook"
+
+
+def test_a_tap_between_two_polls_is_caught_by_the_pressed_bit() -> None:
+    """Shorter than a poll (a macro key's instant tap): only GetAsyncKeyState's "pressed since
+    the last call" bit shows it. Confirmed on the next poll, it is passed on as a tap."""
+    dog, hook, state, got, clock = make_watch()
+    dog.check()  # the first poll reads (and clears) each key's bit
+    hook.dead = True
+    press(hook, state, F14)
+    release(hook, state, F14)
+    clock.now += 0.05
+    dog.check()
+    assert got == [] and dog.reinstalls == 0  # the hook may only be late: one more poll
+    clock.now += 0.05
+    dog.check()
+    assert [(e.vk, e.down, e.source) for e in got] == [
+        (F14, True, "watchdog"),
+        (F14, False, "watchdog"),
+    ]
+    assert dog.reinstalls == 1 and not hook.dead
+
+
+def test_a_tap_the_hook_counted_late_is_not_a_miss() -> None:
+    dog, hook, state, got, clock = make_watch()
+    dog.check()
+    state.pressed.add(F14)  # Windows saw a tap; the hook's report comes after the poll
+    clock.now += 0.05
+    dog.check()
+    hook.press(F14)
+    hook.release(F14)
+    clock.now += 0.05
+    dog.check()
+    assert dog.reinstalls == 0 and [e.source for e in got] == ["hook", "hook"]
+
+
+def test_the_first_poll_ignores_a_pressed_bit_from_before_the_watchdog() -> None:
+    dog, _hook, state, got, clock = make_watch()
+    state.pressed.add(F13)  # pressed before the client started
+    dog.check()
+    clock.now += 0.05
+    dog.check()
+    assert got == [] and dog.reinstalls == 0
 
 
 def test_a_stopped_hook_thread_is_reinstalled_at_most_once_a_second() -> None:
@@ -229,6 +348,22 @@ def test_the_watchdog_thread_runs_and_stops() -> None:
 # --- Windows: the real hook -----------------------------------------------------------------
 
 windows = pytest.mark.skipif(sys.platform != "win32", reason="the hook is Windows only")
+# SendInput types into whatever window has focus: on the gaming PC (gos-dev shares Clayton's
+# desktop, D82) that could be Play. Injection runs only on GitHub's own Windows runners, or
+# where someone opted in with GOS_TEST_SENDINPUT=1 on a PC with no game open.
+injects = pytest.mark.skipif(
+    not (
+        sys.platform == "win32"
+        and (
+            (
+                os.environ.get("GITHUB_ACTIONS") == "true"
+                and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
+            )
+            or os.environ.get("GOS_TEST_SENDINPUT") == "1"
+        )
+    ),
+    reason="injects keys: GitHub-hosted Windows runners, or GOS_TEST_SENDINPUT=1",
+)
 
 
 def send_key(vk: int, up: bool) -> int:
@@ -292,7 +427,35 @@ def press_and_release(vk: int) -> None:
     send_key(vk, up=True)
 
 
+def thread_priority(native_id: int) -> int:
+    """GetThreadPriority of a thread of this process."""
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.OpenThread.restype = ctypes.c_void_p
+    kernel32.OpenThread.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.GetThreadPriority.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel32.OpenThread(0x0040, False, native_id)  # THREAD_QUERY_INFORMATION
+    assert handle
+    try:
+        return int(kernel32.GetThreadPriority(handle))
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 @windows
+def test_the_real_hook_runs_at_high_priority() -> None:
+    """Installs the real hook (it only watches F24 and injects nothing)."""
+    hook = ptt.WindowsHook(KeyFilter({F24}, lambda event: None))
+    hook.install()
+    try:
+        assert hook.alive()
+        native_id = hook._listener.native_id
+        assert thread_priority(native_id) == ptt.THREAD_PRIORITY_HIGHEST
+    finally:
+        hook.uninstall()
+
+
+@injects
 def test_the_real_hook_sees_an_injected_key() -> None:
     got: queue.Queue[KeyEvent] = queue.Queue()
     tick = ptt.tick_count()
@@ -310,10 +473,10 @@ def test_the_real_hook_sees_an_injected_key() -> None:
     assert not hook.alive()
 
 
-@windows
+@injects
 def test_the_watchdog_catches_a_removed_hook_with_the_real_key_state() -> None:
-    """The hook gone (as when Windows removes one that timed out): GetAsyncKeyState still sees
-    the injected F24, so the watchdog re-installs the hook and passes the press on."""
+    """The hook's thread gone: GetAsyncKeyState still sees the injected F24, so the watchdog
+    re-installs the hook and passes the press on."""
     got: queue.Queue[KeyEvent] = queue.Queue()
     key_filter = KeyFilter({F24}, got.put)
     hook = ptt.WindowsHook(key_filter)
@@ -326,14 +489,68 @@ def test_the_watchdog_catches_a_removed_hook_with_the_real_key_state() -> None:
             no_input()
         assert wait(lambda: state.is_down(F24))
         dog.check()  # the thread is gone: re-installed, but it missed the press
-        dog.check()  # the key is down and the hook says up: the clock starts
-        time.sleep(ptt.MISMATCH_S + 0.05)
-        dog.check()
+        for _ in range(ptt.MISSES):  # the key is down and the hook says up
+            time.sleep(ptt.WATCH_EVERY_S)
+            dog.check()
         events = take(got, 1)
         assert [(e.vk, e.down, e.source) for e in events] == [(F24, True, "watchdog")]
         send_key(F24, up=True)
         events = take(got, 1)
         assert [(e.vk, e.down, e.source) for e in events] == [(F24, False, "hook")]
+    finally:
+        send_key(F24, up=True)
+        hook.uninstall()
+
+
+def hooked(hook: ptt.WindowsHook) -> bool:
+    """pynput's listener has called SetWindowsHookEx (it does so after ``wait()`` returns).
+    pynput 1.8.2 (uv.lock) keeps each listener thread's hook in ``SystemHook._HOOKS``."""
+    from pynput._util.win32 import SystemHook
+
+    listener = hook._listener
+    return listener is not None and wait(lambda: listener.ident in SystemHook._HOOKS)
+
+
+def unhook(hook: ptt.WindowsHook) -> None:
+    """Remove the real hook while its thread runs on, as Windows does silently with a hook that
+    timed out."""
+    from ctypes import wintypes
+
+    from pynput._util.win32 import SystemHook
+
+    assert hooked(hook)
+    user32 = ctypes.WinDLL("user32")
+    user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+    assert user32.UnhookWindowsHookEx(SystemHook._HOOKS[hook._listener.ident]._hook)
+
+
+@injects
+def test_the_watchdog_catches_a_silently_removed_hook() -> None:
+    """The hook removed but its thread alive (the review's case): a 150 ms tap of F24 is
+    passed on within two polls and the hook re-installed; the new hook sees the next key."""
+    got: queue.Queue[KeyEvent] = queue.Queue()
+    key_filter = KeyFilter({F24}, got.put)
+    hook = ptt.WindowsHook(key_filter)
+    hook.install()
+    state = ptt.AsyncKeyState()
+    dog = Watchdog(hook, state, key_filter)
+    try:
+        unhook(hook)
+        dog.check()
+        if send_key(F24, up=False) != 1:
+            no_input()
+        assert wait(lambda: state.is_down(F24))
+        for _ in range(ptt.MISSES):
+            time.sleep(ptt.WATCH_EVERY_S)
+            dog.check()
+        assert dog.reinstalls == 1 and hooked(hook)  # the new hook is in place
+        send_key(F24, up=True)
+        events = take(got, 2)
+        assert [(e.down, e.source) for e in events] == [
+            (True, "watchdog"),
+            (False, "hook"),
+        ]
+        assert dog.reinstalls == 1 and hook.alive()
     finally:
         send_key(F24, up=True)
         hook.uninstall()

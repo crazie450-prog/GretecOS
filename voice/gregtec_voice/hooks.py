@@ -14,9 +14,12 @@ starts; until its WO lands the placeholder here runs instead:
 the client through the :class:`TriggerBus`: ``wake(t)`` opens a segment (the 300 ms pre-roll
 included, as for the key), ``end_of_speech(t)`` closes it, ``cancel()`` drops it (the 1.5 s cancel
 window, a failed second-stage check), and ``speech(True, t)`` while GOS speaks is barge-in by
-voice: speech stops. While a segment is open, the other trigger's start and end are ignored.
+voice: speech stops. Plan 4.5's "speaking stops speech" exists only once WO-5.4's VAD calls
+``speech(True, t)`` (D180): that WO owns it. While a segment is being recorded, the other
+trigger's start and end are ignored.
 
-**The transcriber** runs on a worker thread, one segment at a time; "" means nothing was said.
+**The transcriber** runs on a worker thread, one segment at a time (the client holds a lock
+around it); "" means nothing was said.
 **The speaker** returns at once and reports through its two callbacks, from any thread:
 ``on_first_audio`` when sound starts (PM14's end point) and ``on_done`` when it has finished or
 was stopped; :meth:`Speaker.stop` is barge-in. Text is what to say; the speech filter and the
@@ -106,7 +109,8 @@ class FixedTranscriber:
 
 class LogSpeaker:
     """No text-to-speech yet (WO-5.3): what would be said is printed when a terminal is
-    attached; the log gets only its length (gos-dev reads logs, D82)."""
+    attached; the log gets only its length (gos-dev reads logs, D82). There is no audio, so
+    ``on_first_audio`` is never called: a turn's ``speak_ms`` and ``total_ms`` stay empty."""
 
     name = "log"
 

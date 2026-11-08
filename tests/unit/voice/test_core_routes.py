@@ -5,6 +5,7 @@ their Host/auth rules (WO-2.1). Starlette's TestClient, no network."""
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -226,12 +227,18 @@ def test_every_answer_is_pushed_to_the_dashboards(
     ):
         messages(dashboard, 3)
         messages(voice_ws, 2)
+        before = time.time()
         reply = client.post("/api/ask", json={"text": "confirm"}, headers=bearer(token))
         assert reply.status_code == 200
         pushed = until(dashboard, "ask.reply")["data"]
         assert pushed["by"] == "voice" and pushed["request"] == "confirm"
         assert pushed["text"] == reply.json()["text"] == ask.NOTHING_PENDING
         assert pushed["lane"] == "instant"
+        # nothing was waiting for confirm: the voice client's cancel hotkey stays quiet
+        assert pushed["pending"] is False and reply.json()["pending"] is False
+        # when the question came, so a dashboard keeps the newest question's card
+        assert before - 1 <= pushed["asked_at"] <= time.time() + 1
+        assert "asked_at" not in reply.json()
         voice_ws.send_text(json.dumps({"type": "ping"}))
         assert until(voice_ws, "pong") == {
             "type": "pong"

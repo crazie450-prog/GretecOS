@@ -8,14 +8,17 @@ import builtins
 import io
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from gregtec import applog, voicecli
 from gregtec import cli as gos_cli
-from gregtec import voicecli
-from gregtec_voice import cli
+from gregtec.api.server import bind
+from gregtec_voice import audio, cli, ptt
 
 OPTIONS = "key_key.jump:57\nkey_key.journeymap.map:100\nkey_key.drop:16\n"
 
@@ -25,6 +28,7 @@ def setup(
     options: str | None = OPTIONS,
     voice: str = "",
     game: str = ".minecraft",
+    port: int | None = None,
 ) -> Path:
     instances = tmp_path / "instances"
     lab = instances / "GTNH-Lab"
@@ -33,8 +37,9 @@ def setup(
     if options is not None:
         (lab / game / "options.txt").write_text(options, encoding="utf-8")
     toml = tmp_path / "gos.toml"
+    core = "" if port is None else f"[core]\nport = {port}\n"
     toml.write_text(
-        f'[paths]\ngos_home = "{(tmp_path / "home").as_posix()}"\n'
+        f'{core}[paths]\ngos_home = "{(tmp_path / "home").as_posix()}"\n'
         f'prism_instances = "{instances.as_posix()}"\n[voice]\n{voice}\n',
         encoding="utf-8",
     )
@@ -150,6 +155,95 @@ def test_bench_without_audio_or_turns(tmp_path: Path) -> None:
 def test_the_windows_commands_say_so_elsewhere(tmp_path: Path, command: str) -> None:
     code, out = run(command, "--config", str(setup(tmp_path)))
     assert code == 2 and "run on Windows only" in out
+
+
+# --- gos voice run and test with the Windows parts faked (the microphone, hook, key state)
+
+
+def fake_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, interrupt: bool = False
+) -> None:
+    """``run`` and ``test`` past the Windows check, with a fake microphone, hook and key state.
+    ``interrupt``: Ctrl+C as the hook is installed."""
+
+    def parts(
+        voice: Any,  # noqa: ANN401 - a VoiceClient
+        device: str,
+    ) -> tuple[audio.AudioPipe, ptt.FakeHook, ptt.Watchdog]:
+        key_filter = ptt.KeyFilter(voice.watched, voice.post)
+        hook = ptt.FakeHook(key_filter)
+        if interrupt:
+
+            def ctrl_c() -> None:
+                raise KeyboardInterrupt
+
+            hook.install = ctrl_c  # type: ignore[method-assign]
+        watchdog = ptt.Watchdog(hook, ptt.FakeKeyState(), key_filter)
+        return audio.AudioPipe(audio.FakeSource(), voice.recorder), hook, watchdog
+
+    monkeypatch.setattr(cli, "_windows_only", lambda out: False)
+    monkeypatch.setattr(cli, "_windows_parts", parts)
+    # not the root logger's handlers: a file there would outlive tmp_path
+    monkeypatch.setattr(applog, "setup", lambda process, logs_dir: tmp_path / "x.log")
+
+
+def live_timers() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if isinstance(t, threading.Timer)]
+
+
+def test_voice_test_stops_after_its_seconds_and_sums_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_windows(monkeypatch, tmp_path)
+    code, out = run("test", "--seconds", "0.3", "--config", str(setup(tmp_path)))
+    assert code == 0
+    assert "Keys: talk F13 (hold); confirm F14, cancel F15, next card F16." in out
+    assert "blocks dropped: 0" in out and "watchdog: 0 re-installs" in out
+    assert "talk F13: 0 presses" in out
+
+
+def test_voice_test_ends_at_once_on_ctrl_c(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review's L4: Ctrl+C before --seconds ran out used to leave the timer's thread
+    holding the process until the seconds were over."""
+    fake_windows(monkeypatch, tmp_path, interrupt=True)
+    before = set(live_timers())
+    started = time.monotonic()
+    code, out = run("test", "--seconds", "600", "--config", str(setup(tmp_path)))
+    assert code == 0 and "Summary" in out
+    assert time.monotonic() - started < 5
+    deadline = time.monotonic() + 2
+    while set(live_timers()) - before:  # cancelled: its thread ends at once
+        assert time.monotonic() < deadline, "the --seconds timer is still waiting"
+        time.sleep(0.02)
+
+
+def test_voice_run_supervised_stops_on_a_stop_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_windows(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli.stored, "get_key", lambda name: "t" * 43)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"stop\n")))
+    sock = bind(0)  # a port nobody serves: the client is offline, and says so in time
+    port = sock.getsockname()[1]
+    sock.close()
+    toml = setup(tmp_path, port=port)
+    code, out = run("run", "--supervised", "--config", str(toml))
+    assert code == 0 and "Voice client: talk F13 (hold)" in out
+
+
+def test_voice_run_needs_the_voice_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_windows(monkeypatch, tmp_path)
+
+    def missing(name: str) -> str:
+        raise cli.stored.MissingKeyError(name)
+
+    monkeypatch.setattr(cli.stored, "get_key", missing)
+    code, out = run("run", "--config", str(setup(tmp_path)))
+    assert code == 2 and "gos token new voice" in out
 
 
 def test_gos_voice_hands_its_arguments_on(
