@@ -514,13 +514,20 @@ def test_websocket_pushes_health_and_pairing(client: TestClient) -> None:
         assert health["type"] == "health"
         assert {i["id"] for i in health["data"]["items"]} >= {"core", "db", "credits"}
         assert ws.receive_json() == {"type": "pair.pending", "data": []}
+        # The pong shares the socket's queue with the core's pushes (the dashboard's
+        # "state" pushes, WO-2.6), so wait for it before starting a pairing: otherwise
+        # the pairing push can arrive first and the order of the two is a race.
         ws.send_json({"type": "ping"})
+        before = []
+        while {"type": "pong"} not in before:
+            before.append(ws.receive_json())
         client.post("/api/pair/start", json={"name": "tablet"})
         seen = []
         while not any(m["type"] == "pair.pending" and m["data"] for m in seen):
             seen.append(ws.receive_json())
-        assert {"type": "pong"} in seen
-        pending = next(m for m in seen if m["type"] == "pair.pending")["data"]
+        pending = next(m for m in seen if m["type"] == "pair.pending" and m["data"])[
+            "data"
+        ]
         assert pending[0]["name"] == "tablet" and re.fullmatch(
             r"\d{8}", pending[0]["code"]
         )
