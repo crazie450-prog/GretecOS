@@ -12,9 +12,9 @@ opens it on demand; ``--print`` only shows the command.
   the window flags apply even while Clayton's own Chrome runs, and the dashboard's pairing cookie
   lives only there. That folder inherits GOS_HOME's ACL, which gives gos-dev nothing (D115 (4)),
   unlike ``data\``, which gos-dev reads (D82).
-- **Monitor 2**: the first monitor that isn't the primary and is 2560x1440 (D50), else any other
-  monitor, else the primary; the window fills that monitor's work area (the taskbar stays
-  visible). F11 makes it full screen.
+- **Monitor 2**: the first monitor that isn't the primary and is 2560x1440 physical pixels (D50,
+  whatever its display scaling), else any other monitor, else the primary; the window fills that
+  monitor's work area (the taskbar stays visible). F11 makes it full screen.
 - **No throttling**: Chrome's background timer, renderer and occluded-window throttling are off,
   so the glance view keeps updating while GTNH has focus on monitor 1.
 - **Windows only.** Elsewhere nothing is started: the command is logged (the Linux fake for
@@ -84,8 +84,18 @@ def chrome_path(env: dict[str, str] | None = None) -> Path | None:
     return None
 
 
+Rect = tuple[int, int, int, int]  # left, top, right, bottom
+
+
 def monitors() -> list[Monitor]:
-    """The monitors Windows reports (EnumDisplayMonitors); [] elsewhere or on failure."""
+    """The monitors Windows reports (EnumDisplayMonitors); [] elsewhere or on failure.
+
+    Listed twice. The work area, where the window goes, is read as before, in this (DPI-unaware)
+    process's logical pixels, which should match the device-independent pixels Chrome's
+    ``--window-*`` switches take (checked on the PC, D163). Each monitor's whole size is read
+    again with this thread per-monitor DPI aware: at a display scaling other than 100% an unaware
+    process sees a 2560x1440 monitor scaled down, and monitor 2 isn't recognised by its size.
+    """
     if sys.platform != "win32":
         return []
     import ctypes
@@ -100,7 +110,7 @@ def monitors() -> list[Monitor]:
         ]
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    found: list[Monitor] = []
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)]
     callback_type = ctypes.WINFUNCTYPE(
         wintypes.BOOL,
         wintypes.HMONITOR,
@@ -109,27 +119,57 @@ def monitors() -> list[Monitor]:
         wintypes.LPARAM,
     )
 
-    def one(handle: int, _dc: int, _rect: object, _data: int) -> bool:
-        info = MonitorInfo()
-        info.cbSize = ctypes.sizeof(MonitorInfo)
-        if user32.GetMonitorInfoW(handle, ctypes.byref(info)):
-            work, whole = info.rcWork, info.rcMonitor
-            found.append(
-                Monitor(
-                    work.left,
-                    work.top,
-                    work.right - work.left,
-                    work.bottom - work.top,
-                    bool(info.dwFlags & 1),  # MONITORINFOF_PRIMARY
-                    (whole.right - whole.left, whole.bottom - whole.top),
-                )
-            )
-        return True
+    def listing() -> dict[int, tuple[Rect, Rect, bool]] | None:
+        """Each monitor's (work area, whole monitor, primary), by handle."""
+        found: dict[int, tuple[Rect, Rect, bool]] = {}
 
-    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)]
-    if not user32.EnumDisplayMonitors(None, None, callback_type(one), 0):
+        def one(handle: int, _dc: int, _rect: object, _data: int) -> bool:
+            info = MonitorInfo()
+            info.cbSize = ctypes.sizeof(MonitorInfo)
+            if user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+                w, m = info.rcWork, info.rcMonitor
+                found[handle] = (
+                    (w.left, w.top, w.right, w.bottom),
+                    (m.left, m.top, m.right, m.bottom),
+                    bool(info.dwFlags & 1),  # MONITORINFOF_PRIMARY
+                )
+            return True
+
+        if not user32.EnumDisplayMonitors(None, None, callback_type(one), 0):
+            return None
+        return found
+
+    logical = listing()
+    if logical is None:
         return []
-    return found
+    physical: dict[int, tuple[Rect, Rect, bool]] = {}
+    set_context = getattr(
+        user32, "SetThreadDpiAwarenessContext", None
+    )  # Windows 10 1607+
+    if set_context is not None:
+        set_context.restype = ctypes.c_void_p
+        set_context.argtypes = [ctypes.c_void_p]
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, for this thread only, then put back
+        before = set_context(ctypes.c_void_p(-4))
+        if before:
+            try:
+                physical = listing() or {}
+            finally:
+                set_context(ctypes.c_void_p(before))
+    out = []
+    for handle, (work, whole, primary) in logical.items():
+        full = physical.get(handle, (work, whole, primary))[1]
+        out.append(
+            Monitor(
+                work[0],
+                work[1],
+                work[2] - work[0],
+                work[3] - work[1],
+                primary,
+                (full[2] - full[0], full[3] - full[1]),
+            )
+        )
+    return out
 
 
 def pick(found: Sequence[Monitor]) -> Monitor | None:

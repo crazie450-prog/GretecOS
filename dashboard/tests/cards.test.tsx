@@ -83,6 +83,14 @@ describe("drawing cards", () => {
     }
   });
 
+  it("cites a flow's rate beside it when the flow has its own source", () => {
+    const cited = { from: "n1", to: "n2", label: "Ethylene", rate: 1000, unit: "L/s", ref: "r:gt.recipe.chemicalreactor/0123456789ab" };
+    const { container } = draw({ ...VALID.flow, edges: [cited] });
+    const edge = container.querySelector('[data-edge="n1-n2"]');
+    expect(edge?.textContent).toContain("Ethylene 1000 L/s");
+    expect(edge?.querySelector("[data-cite]")?.getAttribute("data-cite")).toBe(cited.ref);
+  });
+
   it("replaces game-data chips with a data stale badge, and still opens them", () => {
     const openCite = vi.fn();
     const { container } = draw(VALID.recipe, { stale: true, openCite });

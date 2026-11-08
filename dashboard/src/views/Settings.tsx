@@ -85,6 +85,25 @@ function ThemeSettings(props: {
   );
 }
 
+/** A doctor run from the dashboard (App owns it: the Ctrl+K palette starts one too). */
+export interface DoctorRun {
+  running: boolean;
+  exit?: number;
+  output?: string;
+  error?: string;
+}
+
+/** Run `gos doctor` again through the core, reporting each step to `set`. */
+export async function runDoctor(set: (d: DoctorRun) => void): Promise<void> {
+  set({ running: true });
+  try {
+    const r = await api.doctor();
+    set({ running: false, exit: r.exit, output: r.output });
+  } catch (e) {
+    set({ running: false, error: e instanceof ApiError ? e.message : String(e) });
+  }
+}
+
 export function Settings(props: {
   core: CoreState | null;
   session: Session | null;
@@ -93,29 +112,23 @@ export function Settings(props: {
   setPrefs: (p: Partial<ThemePrefs>) => void;
   pin: ModePin;
   setPin: (p: ModePin) => void;
+  doctor: DoctorRun;
+  runDoctor: () => void;
 }) {
   const trusted = props.session?.role === "admin" || props.session?.role === "device";
   const [verify, setVerify] = useState<Verify | null>(null);
   const [devices, setDevices] = useState<Device[] | null>(null);
-  const [doctor, setDoctor] = useState<{ running: boolean; exit?: number; output?: string; error?: string }>({ running: false });
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
+  const doctor = props.doctor;
 
   const load = useCallback(() => {
     api.verify().then(setVerify, () => setVerify(null));
     if (trusted) api.devices().then(setDevices, () => setDevices(null));
   }, [trusted]);
-  useEffect(load, [load]);
-
-  const runDoctor = async (): Promise<void> => {
-    setDoctor({ running: true });
-    try {
-      const r = await api.doctor();
-      setDoctor({ running: false, exit: r.exit, output: r.output });
-      load();
-    } catch (e) {
-      setDoctor({ running: false, error: e instanceof ApiError ? e.message : String(e) });
-    }
-  };
+  // On the way in, and again when a doctor run ends (its statuses are new).
+  useEffect(() => {
+    if (!doctor.running) load();
+  }, [doctor.running, load]);
 
   const revoke = async (id: string): Promise<void> => {
     if (confirmRevoke !== id) {
@@ -199,7 +212,7 @@ export function Settings(props: {
             testId="verify"
             aside={
               trusted ? (
-                <Button onClick={() => void runDoctor()} disabled={doctor.running} testId="run-doctor">
+                <Button onClick={props.runDoctor} disabled={doctor.running} testId="run-doctor">
                   {doctor.running ? `${GLYPH.progress} Running doctor` : "Re-run doctor"}
                 </Button>
               ) : null

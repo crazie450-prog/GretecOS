@@ -26,6 +26,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DASHBOARD_HOST = "gos-e2e.localhost"
+# Written into every home this script makes: only such a home (or an empty folder) is wiped, so a
+# wrong --home or GOS_E2E_HOME can never delete a real folder.
+MARKER = ".gos-e2e-home"
 
 
 def _read(path: Path) -> str | None:
@@ -33,6 +36,25 @@ def _read(path: Path) -> str | None:
         return path.read_text("utf-8").strip()
     except OSError:
         return None
+
+
+def fresh_home(home: Path) -> None:
+    """Make ``home`` an empty e2e home, deleting the one an earlier run left there. Anything else
+    already at that path (no marker, not an empty folder, a link) is refused."""
+    if home.exists() or home.is_symlink():
+        folder = home.is_dir() and not home.is_symlink()
+        ours = folder and (home / MARKER).is_file()
+        if not (ours or (folder and not any(home.iterdir()))):
+            raise SystemExit(
+                f"serve_core.py: refusing to delete {home}: it isn't an e2e home this script "
+                f"made (no {MARKER} in it). Pick an empty or new folder."
+            )
+        shutil.rmtree(home)
+    (home / "e2e").mkdir(parents=True)
+    (home / MARKER).write_text(
+        "made by dashboard/e2e/serve_core.py, which deletes it on its next run\n",
+        "utf-8",
+    )
 
 
 def build_db(home: Path) -> None:
@@ -49,13 +71,16 @@ def build_db(home: Path) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="serve_core.py")
-    parser.add_argument("--home", type=Path, required=True, help="a fresh GOS_HOME")
+    parser.add_argument(
+        "--home",
+        type=Path,
+        required=True,
+        help="a new or empty folder, or one an earlier run made (it is wiped)",
+    )
     parser.add_argument("--port", type=int, default=8795)
     args = parser.parse_args(argv)
-    home: Path = args.home.resolve()
-    if home.exists():
-        shutil.rmtree(home)
-    (home / "e2e").mkdir(parents=True)
+    home: Path = args.home.absolute()
+    fresh_home(home)
     build_db(home)
 
     from gregtec import desktop, prism

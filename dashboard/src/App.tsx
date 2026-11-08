@@ -26,7 +26,7 @@ import { PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from
 import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
 import { Search, type SearchTarget } from "./views/Search";
-import { Settings } from "./views/Settings";
+import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
 
 const PIN_KEY = "gos.mode";
 
@@ -112,6 +112,8 @@ export function App() {
   const [modal, setModal] = useState<CardData | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [searchTarget, setSearchTarget] = useState<SearchTarget | null>(null);
+  const [doctor, setDoctor] = useState<DoctorRun>({ running: false });
+  const doctorNow = useCallback(() => void runDoctor(setDoctor), []);
   const nowS = useSeconds(15000);
 
   // Keyboard: number keys switch views, Ctrl+K opens the palette, Esc closes (workbench).
@@ -187,7 +189,10 @@ export function App() {
       setView("search");
     } else if (a.kind === "setting") {
       if (a.id === "motion") themeCtl.setPrefs({ pauseMotion: !themeCtl.prefs.pauseMotion });
-      else setView("settings");
+      else {
+        if (a.id === "doctor" && !doctor.running) doctorNow(); // its output shows in Settings
+        setView("settings");
+      }
     }
   };
 
@@ -221,6 +226,8 @@ export function App() {
             setPrefs={themeCtl.setPrefs}
             pin={pin}
             setPin={setPin}
+            doctor={doctor}
+            runDoctor={doctorNow}
           />
         );
       default:

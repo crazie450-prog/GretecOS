@@ -39,8 +39,6 @@ export const THEMES: readonly Theme[] = [
 
 export const AGES = THEMES.filter((t) => t.age !== null);
 export const COMFORT = THEMES.filter((t) => t.age === null);
-/** Day one needs ages 1-3 and both comfort modes (age_themes.md, ship order). */
-export const DAY_ONE: readonly Slug[] = ["brass", "machine", "alu", "calm", "manual"];
 export const FADE_MS = 1500; // the tier-up moment
 
 export function theme(slug: Slug): Theme {
@@ -62,7 +60,6 @@ export interface ThemePrefs {
   comfort: "calm" | "manual" | null; // replaces the age theme until he switches back
   pauseMotion: boolean;
   revealAges: boolean; // ages beyond his tier stay hidden like spoilers until he asks
-  lastAge: number | null; // the age last shown, to notice a tier-up
 }
 
 export const DEFAULT_PREFS: ThemePrefs = {
@@ -70,7 +67,6 @@ export const DEFAULT_PREFS: ThemePrefs = {
   comfort: null,
   pauseMotion: false,
   revealAges: false,
-  lastAge: null,
 };
 
 /** The theme to show for a detected stage and the device's preferences. */
@@ -87,7 +83,7 @@ export function reachedAges(stage: string | null | undefined): Theme[] {
   return AGES.filter((t) => (t.age ?? 0) <= reached);
 }
 
-/** A tier-up: his age went up since the last one shown (not a first load, not a pin). */
+/** A tier-up: his age went up since the last one this page showed (null: its first load). */
 export function isTierUp(lastAge: number | null, nowAge: number): boolean {
   return lastAge !== null && nowAge > lastAge;
 }
@@ -104,7 +100,6 @@ export function loadPrefs(storage: Pick<Storage, "getItem"> | null): ThemePrefs 
       comfort: p.comfort === "calm" || p.comfort === "manual" ? p.comfort : null,
       pauseMotion: p.pauseMotion === true,
       revealAges: p.revealAges === true,
-      lastAge: typeof p.lastAge === "number" ? p.lastAge : null,
     };
   } catch {
     return DEFAULT_PREFS;

@@ -440,13 +440,13 @@
       }
     },
     "TableCard": {
-      "description": "Any other tool result as its table (D130's TSV): head lines, columns, rows, notes. Cells holding citation ids are drawn as chips.",
+      "description": "Any other tool result as its table (D130's TSV): head lines, columns, rows, notes. Cells holding citation ids are drawn as chips. Always names the tool it shows, so it never stands in for a catalog card (rule 1).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "tool", "error", "title", "head", "columns", "rows", "span", "total", "notes"],
       "properties": {
         "type": {"const": "table"},
-        "tool": {"type": ["string", "null"], "maxLength": 64},
+        "tool": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64},
         "error": {"type": ["string", "null"], "maxLength": 2000},
         "title": {"type": "string", "maxLength": 300},
         "head": {"type": "array", "items": {"$ref": "#/$defs/HeadPair"}, "maxItems": 30},

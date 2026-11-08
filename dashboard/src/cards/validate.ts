@@ -1,7 +1,7 @@
 // The card catalog check, as gregtec.cards.validate does it, over the same schema file (D160).
 // A card that fails it is never drawn: the dashboard shows why instead.
 import schemaJson from "../../../core/gregtec/cards/schema.json";
-import type { Card, CardType } from "./types.gen";
+import type { CardType } from "./types.gen";
 
 interface Node {
   $ref?: string;
@@ -138,10 +138,6 @@ export function validate(card: unknown): string[] {
   const errors: string[] = [];
   check(schema, card, "card", errors);
   return errors;
-}
-
-export function isCard(card: unknown): card is Card {
-  return validate(card).length === 0;
 }
 
 /** The card types the schema lists, in catalog order. */

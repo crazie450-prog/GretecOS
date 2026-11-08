@@ -169,6 +169,13 @@ test("Settings + Health shows the processes, the last export, VERIFY, doctor and
   await expect(page.locator('[data-verify="V33"]')).toBeVisible();
   await page.getByTestId("run-doctor").click();
   await expect(page.locator(".doctor-output")).toContainText("doctor exited", { timeout: 30_000 });
+  // The palette's "Re-run doctor" runs it too, from any view, and Settings shows the run.
+  await page.keyboard.press("1");
+  await page.keyboard.press("Control+k");
+  await page.getByTestId("palette-input").fill("re-run doctor");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("view")).toHaveAttribute("data-view", "settings");
+  await expect(page.locator(".doctor-output")).toContainText("doctor exited", { timeout: 30_000 });
   await expect(page.getByTestId("devices")).toContainText("Monitor 2");
   await expect(page.getByTestId("devices")).toContainText("this device");
   await page.screenshot({ path: shot("settings") });

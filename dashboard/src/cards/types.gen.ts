@@ -295,10 +295,10 @@ export interface HeadPair {
   value: string;
 }
 
-/** Any other tool result as its table (D130's TSV): head lines, columns, rows, notes. Cells holding citation ids are drawn as chips. */
+/** Any other tool result as its table (D130's TSV): head lines, columns, rows, notes. Cells holding citation ids are drawn as chips. Always names the tool it shows, so it never stands in for a catalog card (rule 1). */
 export interface TableCard {
   type: "table";
-  tool: string | null;
+  tool: string;
   error: string | null;
   title: string;
   head: HeadPair[];

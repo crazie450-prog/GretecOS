@@ -220,6 +220,10 @@ def test_the_foreground_program_on_windows() -> None:
     assert program is None or (program == program.lower() and program.endswith(".exe"))
     monitors = appwindow.monitors()
     assert all(m.width > 0 and m.height > 0 for m in monitors)
+    # The whole size is in physical pixels (read per-monitor DPI aware): never below the work
+    # area, which is in this process's logical pixels.
+    assert all(m.full[0] >= m.width and m.full[1] >= m.height for m in monitors)
+    assert sum(m.primary for m in monitors) <= 1
 
 
 def test_the_launcher_starts_detached(monkeypatch: pytest.MonkeyPatch) -> None:

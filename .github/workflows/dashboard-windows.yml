@@ -1,19 +1,25 @@
 name: dashboard (Windows)
 
 # WO-2.6 (D159): gos deploy builds the dashboard with pnpm (pnpm.cmd) on Clayton's PC; this runs
-# that build on Windows, plus the unit tests. As mod (Windows), it runs only when the dashboard or
-# the deploy code changes. The end-to-end tests run on Linux, in CI's dashboard job.
+# that build on Windows, plus the unit tests. As mod (Windows), it runs only when the dashboard, what
+# its build reads, or the deploy code changes. The end-to-end tests run on Linux, in CI's dashboard job.
 on:
   push:
     branches: [main]
     paths:
       - "dashboard/**"
+      # what the build reads from outside dashboard/: the design system and the card schema
+      - "docs/design/system/**"
+      - "core/gregtec/cards/schema.json"
       - "core/gregtec/deploy.py"
       - "tests/unit/test_deploy.py"
       - ".github/workflows/dashboard-windows.yml"
   pull_request:
     paths:
       - "dashboard/**"
+      # what the build reads from outside dashboard/: the design system and the card schema
+      - "docs/design/system/**"
+      - "core/gregtec/cards/schema.json"
       - "core/gregtec/deploy.py"
       - "tests/unit/test_deploy.py"
       - ".github/workflows/dashboard-windows.yml"

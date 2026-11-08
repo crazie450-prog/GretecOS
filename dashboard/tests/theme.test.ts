@@ -1,12 +1,13 @@
 // Age themes (D81, docs/design/age_themes.md): the age follows the detected tier, any reached age
 // can be pinned, ages beyond stay hidden, comfort modes replace the age theme, a tier-up fades in.
-import { describe, expect, it } from "vitest";
-import { applyThemeClass } from "../src/theme/useTheme";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyThemeClass, useTheme } from "../src/theme/useTheme";
 import {
   AGES,
   COMFORT,
-  DAY_ONE,
   DEFAULT_PREFS,
+  FADE_MS,
   THEMES,
   activeTheme,
   ageOf,
@@ -21,7 +22,6 @@ describe("ages", () => {
     expect(AGES.map((t) => t.slug)).toEqual(["brass", "machine", "alu", "hud", "circuit", "tung", "holo", "fusion", "naq", "deep"]);
     expect(COMFORT.map((t) => t.slug)).toEqual(["calm", "manual"]);
     expect(THEMES).toHaveLength(12);
-    expect(DAY_ONE).toEqual(["brass", "machine", "alu", "calm", "manual"]);
   });
   it("follow the detected stage (D64)", () => {
     expect(ageOf("stone")).toBe(1);
@@ -56,6 +56,42 @@ describe("the active theme", () => {
     expect(isTierUp(2, 3)).toBe(true);
     expect(isTierUp(3, 3)).toBe(false);
     expect(isTierUp(3, 2)).toBe(false);
+  });
+});
+
+describe("the tier-up moment on the page (D162)", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.useRealTimers();
+  });
+  it("plays when the age rises while the page is open, never for a rise it didn't see", () => {
+    vi.useFakeTimers();
+    // What an earlier page stored: the age it showed last (a tier-up came while it was closed).
+    window.localStorage.setItem("gos.theme", JSON.stringify({ lastAge: 1 }));
+    const first: { stage: string | null } = { stage: null }; // no state from the core yet
+    const { result, rerender } = renderHook(({ stage }: { stage: string | null }) => useTheme(stage), {
+      initialProps: first,
+    });
+    rerender({ stage: "MV" }); // the first state from the core
+    expect(result.current.slug).toBe("alu");
+    expect(result.current.fading).toBe(false);
+    rerender({ stage: "HV" }); // he reaches HV while monitor 2 shows the dashboard
+    expect(result.current.slug).toBe("hud");
+    expect(result.current.fading).toBe(true);
+    expect(document.body.classList.contains("theme-fade")).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(FADE_MS);
+    });
+    expect(result.current.fading).toBe(false);
+  });
+  it("doesn't play with motion paused", () => {
+    window.localStorage.setItem("gos.theme", JSON.stringify({ pauseMotion: true }));
+    const { result, rerender } = renderHook(({ stage }: { stage: string }) => useTheme(stage), {
+      initialProps: { stage: "LV" },
+    });
+    rerender({ stage: "MV" });
+    expect(result.current.slug).toBe("alu");
+    expect(result.current.fading).toBe(false);
   });
 });
 

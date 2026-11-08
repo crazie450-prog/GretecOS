@@ -406,12 +406,22 @@ export function FlowView({ card }: { card: FlowCard }) {
           })}
         </svg>
       </div>
+      {/* The diagram is SVG: each node and flow that has its own source is listed with its chip
+          (plan 7.14 rule 2); the rest come from the plan cited in the head. */}
       <div className="flow-cites">
         {card.nodes
           .filter((n) => n.ref)
           .map((n) => (
             <span key={n.id} className="gos-src">
               {n.label} <Chip cite={n.ref} />
+            </span>
+          ))}
+        {card.edges
+          .filter((e) => e.ref)
+          .map((e, i) => (
+            <span key={`edge-${i}`} className="gos-src" data-edge={`${e.from}-${e.to}`}>
+              {e.label}
+              {e.rate !== null ? ` ${plain(e.rate)}${e.unit ? ` ${e.unit}` : ""}` : ""} <Chip cite={e.ref} />
             </span>
           ))}
       </div>

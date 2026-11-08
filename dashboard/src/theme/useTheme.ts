@@ -1,7 +1,7 @@
 // The theme on the page: the age of his detected tier (D64), or a pinned age, or a comfort mode,
 // per device (localStorage, D162). The class goes on <body>, so switching moves nothing. A
 // tier-up fades the new theme in once over 1.5 s, unless motion is paused.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Slug, type ThemePrefs, FADE_MS, activeTheme, ageOf, isTierUp, loadPrefs, savePrefs } from "./themes";
 
 function storage(): Storage | null {
@@ -27,6 +27,9 @@ export function applyThemeClass(root: HTMLElement, slug: Slug, prefs: ThemePrefs
 export function useTheme(stage: string | null | undefined): ThemeControl {
   const [prefs, setPrefsState] = useState<ThemePrefs>(() => loadPrefs(storage()));
   const [fading, setFading] = useState(false);
+  // The age this page last showed: only a rise while it is open is a tier-up, never one that
+  // happened while it was closed (so the first load sets it, and nothing about it is stored).
+  const shownAge = useRef<number | null>(null);
   const slug = useMemo(() => activeTheme(stage, prefs), [stage, prefs]);
 
   const setPrefs = useCallback((patch: Partial<ThemePrefs>) => {
@@ -41,11 +44,10 @@ export function useTheme(stage: string | null | undefined): ThemeControl {
   useEffect(() => {
     if (stage === null || stage === undefined) return;
     const age = ageOf(stage);
-    if (prefs.lastAge === age) return;
-    const up = isTierUp(prefs.lastAge, age) && !prefs.pauseMotion && !prefs.comfort && prefs.pinnedAge === null;
-    setPrefs({ lastAge: age });
+    const up = isTierUp(shownAge.current, age) && !prefs.pauseMotion && !prefs.comfort && prefs.pinnedAge === null;
+    shownAge.current = age;
     if (up) setFading(true);
-  }, [stage, prefs.lastAge, prefs.pauseMotion, prefs.comfort, prefs.pinnedAge, setPrefs]);
+  }, [stage, prefs.pauseMotion, prefs.comfort, prefs.pinnedAge]);
 
   useEffect(() => {
     if (!fading) return;

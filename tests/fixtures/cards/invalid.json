@@ -14,5 +14,6 @@
     {"id": "b", "name": "b", "rank": 2, "ref": "plan:p/b", "accepted": false, "metrics": [], "choices": []},
     {"id": "c", "name": "c", "rank": 3, "ref": "plan:p/c", "accepted": false, "metrics": [], "choices": []},
     {"id": "d", "name": "d", "rank": 4, "ref": "plan:p/d", "accepted": false, "metrics": [], "choices": []}]}},
-  {"why": "an approval action that isn't one", "error": "card.actions[0].id: must be one of", "card": {"type": "approval", "id": "x", "kind": "action", "title": "t", "readback": "r", "detail": null, "expires_at": null, "actions": [{"id": "rm -rf", "label": "Go", "primary": true}]}}
+  {"why": "an approval action that isn't one", "error": "card.actions[0].id: must be one of", "card": {"type": "approval", "id": "x", "kind": "action", "title": "t", "readback": "r", "detail": null, "expires_at": null, "actions": [{"id": "rm -rf", "label": "Go", "primary": true}]}},
+  {"why": "a table that is no tool's result (rule 1)", "error": "card.tool: must be string", "card": {"type": "table", "tool": null, "error": null, "title": "Anything", "head": [], "columns": ["a"], "rows": [["b"]], "span": null, "total": null, "notes": []}}
 ]
