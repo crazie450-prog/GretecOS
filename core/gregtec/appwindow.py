@@ -32,7 +32,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from gregtec import config
+from gregtec import config, prism
 from gregtec.config import Config
 
 log = logging.getLogger("gregtec.appwindow")
@@ -158,6 +158,17 @@ def command(cfg: Config, chrome: Path, monitor: Monitor | None) -> list[str]:
     return argv
 
 
+def already_open(cfg: Config, lines: Sequence[str] | None = None) -> bool:
+    """Whether a Chrome with the dashboard's own profile runs, so its window is open (Chrome runs
+    one browser per profile and quits with its last window). Raises OSError if the processes
+    can't be listed (Win32_Process, as :func:`gregtec.prism.command_lines`)."""
+    found = prism.command_lines(("chrome.exe",)) if lines is None else lines
+    flag = f"--user-data-dir={cfg.gos_home / PROFILE}".replace("\\", "/").lower()
+    return any(
+        flag in line.replace('"', "").replace("\\", "/").lower() for line in found
+    )
+
+
 def open_window(
     cfg: Config,
     *,
@@ -165,9 +176,12 @@ def open_window(
     find: Callable[[], Path | None] = chrome_path,
     screens: Callable[[], list[Monitor]] = monitors,
     start: Callable[[list[str]], object] | None = None,
+    is_open: Callable[[Config], bool] | None = None,
 ) -> list[str] | None:
     """Open the app window. Returns the command it ran (or would run elsewhere), or None when
-    Chrome isn't installed. Never raises for a launch that fails: it is logged."""
+    Chrome isn't installed or ``is_open`` says the window already is (the supervisor passes
+    :func:`already_open`: a deploy or ``gos serve`` restarts it, and Chrome would add a second
+    window). Never raises for a launch that fails: it is logged."""
     chrome = find() if platform == "win32" else Path("chrome")
     if chrome is None:
         log.warning(
@@ -179,6 +193,17 @@ def open_window(
     if platform != "win32":
         log.info("the dashboard window opens on Windows only", extra={"command": argv})
         return argv
+    if is_open is not None:
+        try:
+            if is_open(cfg):
+                log.info(
+                    "the dashboard window is already open", extra={"url": url(cfg)}
+                )
+                return None
+        except OSError as exc:  # can't tell: better a second window than none
+            log.warning(
+                "couldn't check for an open dashboard window", extra={"error": str(exc)}
+            )
     (cfg.gos_home / PROFILE).mkdir(parents=True, exist_ok=True)
     try:
         (start or _start)(argv)

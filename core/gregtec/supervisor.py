@@ -909,7 +909,11 @@ def run(cfg: Config, config_path: Path | None, *, login: bool = False) -> int:
     sup = Supervisor(
         cfg,
         [core_spec(cfg, config_path)],
-        on_ready=(lambda: appwindow.open_window(cfg)) if window else None,
+        on_ready=(
+            (lambda: appwindow.open_window(cfg, is_open=appwindow.already_open))
+            if window
+            else None
+        ),
     )
     try:
         sup.bind()

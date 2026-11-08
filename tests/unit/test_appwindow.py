@@ -79,6 +79,46 @@ def test_a_launch_that_fails_is_logged_not_raised(tmp_path: Path) -> None:
     assert argv is not None
 
 
+def test_an_open_window_is_found_by_its_profile(tmp_path: Path) -> None:
+    """Chrome's processes carry the profile on their command lines, quoted or not."""
+    cfg = Config(gos_home=tmp_path / "Gregtec OS")
+    profile = cfg.gos_home / "browser" / "dashboard"
+    ours = f'"C:\\Chrome\\chrome.exe" "--user-data-dir={profile}" --app=http://gos.localhost:8765/'
+    renderer = f'chrome.exe --type=renderer --user-data-dir="{profile}" --lang=en'
+    own_chrome = (
+        'chrome.exe --profile-directory=Default --user-data-dir="C:\\Users\\c\\Chrome"'
+    )
+    assert appwindow.already_open(cfg, [own_chrome, ours])
+    assert appwindow.already_open(cfg, [renderer.upper()])  # Windows paths ignore case
+    assert not appwindow.already_open(cfg, [own_chrome, ""])
+    assert not appwindow.already_open(cfg, [])
+
+
+def test_the_startup_window_isnt_opened_twice(tmp_path: Path) -> None:
+    """A deploy or gos serve restarts the supervisor: Chrome would add a second window."""
+    started: list[list[str]] = []
+
+    def opener(is_open: bool | Exception) -> list[str] | None:
+        def check(cfg: Config) -> bool:
+            if isinstance(is_open, Exception):
+                raise is_open
+            return is_open
+
+        return appwindow.open_window(
+            Config(gos_home=tmp_path),
+            platform="win32",
+            find=lambda: Path("chrome.exe"),
+            screens=list,
+            start=started.append,
+            is_open=check,
+        )
+
+    assert opener(True) is None and started == []
+    assert opener(False) is not None and len(started) == 1
+    # Can't tell (the process list failed): a second window beats none.
+    assert opener(OSError("PowerShell exited 1")) is not None and len(started) == 2
+
+
 def test_elsewhere_nothing_is_started(tmp_path: Path) -> None:
     """The Linux fake: the command is logged, never run."""
     started: list[list[str]] = []

@@ -42,6 +42,15 @@ def card_types() -> dict[str, str]:
     return out
 
 
+@cache
+def _pattern(pattern: str) -> re.Pattern[str]:
+    """``pattern`` as JSON Schema (ECMA-262) and the dashboard read it: a final ``$`` matches only
+    at the very end, where Python's would also match before a final newline."""
+    if pattern.endswith("$") and not pattern.endswith("\\$"):
+        pattern = pattern[:-1] + r"\Z"
+    return re.compile(pattern)
+
+
 def _resolve(node: dict[str, Any]) -> dict[str, Any]:
     while "$ref" in node:
         ref = node["$ref"]
@@ -86,7 +95,7 @@ def _check(node: dict[str, Any], value: object, path: str, errors: list[str]) ->
             errors.append(f"{path}: longer than {node['maxLength']} characters")
         if len(value) < node.get("minLength", 0):
             errors.append(f"{path}: shorter than {node['minLength']} characters")
-        if "pattern" in node and not re.search(node["pattern"], value):
+        if "pattern" in node and not _pattern(node["pattern"]).search(value):
             errors.append(f"{path}: doesn't match {node['pattern']}")
     elif isinstance(value, int | float) and not isinstance(value, bool):
         if "minimum" in node and value < node["minimum"]:
