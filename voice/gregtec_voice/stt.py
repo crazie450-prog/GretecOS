@@ -247,31 +247,48 @@ def _speech(audio: Any) -> Any:  # noqa: ANN401 - numpy float32 arrays
     return np.concatenate(collect_chunks(audio, chunks)[0])
 
 
-def whisper_files(model: str, folder: Path, note: Callable[[str], None]) -> str:
-    """The model's folder in ``folder`` (Hugging Face's cache layout), downloaded once."""
+def _whisper_local(model: str, folder: Path) -> str | None:
+    """The model's folder when it is in ``folder`` already (Hugging Face's cache layout)."""
     from faster_whisper.utils import download_model
 
-    if Path(model).is_absolute() and Path(model).is_dir():  # a converted model's folder
-        return model
+    if Path(model).is_absolute():  # a converted model's own folder
+        return model if Path(model).is_dir() else None
     repo, revision = WHISPER_REPOS.get(model, (model, None))
-    cache = str(folder)
     try:
-        return str(
-            download_model(
-                repo, cache_dir=cache, local_files_only=True, revision=revision
-            )
+        found = download_model(
+            repo, cache_dir=str(folder), local_files_only=True, revision=revision
         )
-    except (
-        OSError,
-        ValueError,
-    ):  # not downloaded yet: huggingface_hub's not-found errors
-        note(f"Downloading the Whisper model {model} to {folder} (once)...")
-        return str(download_model(repo, cache_dir=cache, revision=revision))
+    except (OSError, ValueError):  # huggingface_hub's not-found errors
+        return None
+    return str(found)
+
+
+def whisper_files(model: str, folder: Path, note: Callable[[str], None]) -> str:
+    """The model's folder in ``folder``, downloaded once."""
+    from faster_whisper.utils import download_model
+
+    found = _whisper_local(model, folder)
+    if found is not None:
+        return found
+    note(f"Downloading the Whisper model {model} to {folder} (once)...")
+    repo, revision = WHISPER_REPOS.get(model, (model, None))
+    return str(download_model(repo, cache_dir=str(folder), revision=revision))
+
+
+def _parakeet_local(folder: Path) -> bool:
+    return all((folder / name).is_file() for name in PARAKEET_FILES)
+
+
+def downloaded(choice: Choice, models: Path) -> bool:
+    """Whether ``choice``'s model is in ``models`` already; nothing is fetched."""
+    if choice.engine == PARAKEET:
+        return _parakeet_local(models / "parakeet" / PARAKEET_MODEL)
+    return _whisper_local(choice.model, models / "whisper") is not None
 
 
 def parakeet_files(folder: Path, note: Callable[[str], None]) -> Path:
     """Parakeet's int8 files in ``folder``, downloaded once (a cut-off download resumes)."""
-    if all((folder / name).is_file() for name in PARAKEET_FILES):
+    if _parakeet_local(folder):
         return folder
     from huggingface_hub import snapshot_download
 
