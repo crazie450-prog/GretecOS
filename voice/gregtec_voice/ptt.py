@@ -313,9 +313,8 @@ class Watchdog:
                 self.key_filter.put(KeyEvent(vk, True, now, "watchdog"))
                 self.key_filter.put(KeyEvent(vk, False, now, "watchdog"))
             elif pressed and counted is not None and presses == counted:
-                self._tapped[vk] = (
-                    presses  # the next poll tells a miss from a late hook
-                )
+                # a press the hook hasn't counted: the next poll tells a miss from a late hook
+                self._tapped[vk] = presses
 
     def _reinstall(self, now: float, why: str) -> None:
         """At most once a second; a transition missed meanwhile is still passed on."""

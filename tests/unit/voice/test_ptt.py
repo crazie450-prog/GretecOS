@@ -503,12 +503,17 @@ def test_the_watchdog_catches_a_removed_hook_with_the_real_key_state() -> None:
 
 
 def hooked(hook: ptt.WindowsHook) -> bool:
-    """pynput's listener has called SetWindowsHookEx (it does so after ``wait()`` returns).
-    pynput 1.8.2 (uv.lock) keeps each listener thread's hook in ``SystemHook._HOOKS``."""
+    """pynput's listener has its hook (SetWindowsHookEx runs after ``wait()`` returns).
+    pynput 1.8.2 (uv.lock) keeps each listener thread's ``SystemHook`` in ``_HOOKS``, before
+    its handle is set."""
     from pynput._util.win32 import SystemHook
 
     listener = hook._listener
-    return listener is not None and wait(lambda: listener.ident in SystemHook._HOOKS)
+    return listener is not None and wait(
+        lambda: (
+            getattr(SystemHook._HOOKS.get(listener.ident), "_hook", None) is not None
+        )
+    )
 
 
 def unhook(hook: ptt.WindowsHook) -> None:
