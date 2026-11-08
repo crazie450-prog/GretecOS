@@ -700,8 +700,10 @@ _LABEL_ROLE = {
     "seconds": "dur_s",
     "chance": "pct",
 }
-# Where a number's clause ends: a list or line break, or a sentence's full stop
-_CLAUSE = re.compile(r"[;,\n]|\.(?=\s|$)")
+# Where a number's clause ends after it (a comma, a list or line break, a full stop) and
+# starts before it (not at a comma: "Ashes: (r:...), 11.11% chance" is about the ashes)
+_AFTER_END = re.compile(r"[;,\n]|\.(?=\s|$)")
+_BEFORE_START = re.compile(r"[;\n]|\.(?=\s|$)")
 # A reply that says no recipe makes the item (a none row)
 NONE_SAID = re.compile(
     r"\bno (?:\w+ )?recipes?\b|\bnot in the (?:db|database)\b|\bnothing in the "
@@ -742,10 +744,10 @@ def mentions(text: str) -> list[Mention]:
         after = text[
             end : max(end, found[i + 1].start() if i + 1 < len(found) else len(text))
         ]
-        if c := _CLAUSE.search(after):
+        if c := _AFTER_END.search(after):
             after = after[: c.start()]
         before = head
-        if cuts := list(_CLAUSE.finditer(before)):
+        if cuts := list(_BEFORE_START.finditer(before)):
             before = before[cuts[-1].end() :]
         out.append(Mention(fast_lane.value(m[0]), role, label, before, after))
         start = end
@@ -759,7 +761,7 @@ def _mask(text: str, names: Iterable[str]) -> tuple[str, dict[str, str]]:
     tokens: dict[str, str] = {}
     marked = {n for n in names if n and (_DIGIT.search(n) or _tiers(n))}
     for i, name in enumerate(sorted(marked, key=len, reverse=True)):
-        token = f" {chr(0xE100 + i)} "
+        token = f" \ue000{chr(0xE100 + i)}\ue001 "  # private use: no digit, no letter
         text, hits = re.subn(re.escape(name), token, text, flags=re.IGNORECASE)
         if hits:
             tokens[name] = token.strip()

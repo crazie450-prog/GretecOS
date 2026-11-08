@@ -16,19 +16,22 @@ from typing import cast
 import pytest
 
 from gregtec import cli
-from gregtec.agents import cards, deep, deep_config, prefetch, recipe_eval, router
+from gregtec.agents import (
+    ask,
+    cards,
+    deep,
+    deep_config,
+    prefetch,
+    recipe_eval,
+    recipe_oracle,
+    router,
+)
 from gregtec.agents.ask import Asker, Reply
+from gregtec.agents.deep_eval import FAKE_KEY
 from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.fast_lane import FastLane, system_prompt
 from gregtec.agents.recipe_eval import ANSWER, ASK, NONE, Question, Truth
-from gregtec.agents.recipe_oracle import (
-    FAKE_KEY,
-    SKILL,
-    OracleClient,
-    Seen,
-    decide,
-    deep_policy,
-)
+from gregtec.agents.recipe_oracle import SKILL, OracleClient, Seen, decide, deep_policy
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Registry
@@ -74,9 +77,13 @@ def lane_reg(tool_db: Path, glossary: Glossary) -> Registry:
 
 
 def q(
-    truth: str, want: str = "", expect: str = ANSWER, kind: str = "recipe"
+    truth: str,
+    want: str = "",
+    expect: str = ANSWER,
+    kind: str = "recipe",
+    words: str = "",
 ) -> Question:
-    return recipe_eval.question("t1", kind, expect, "a question", truth, want)
+    return recipe_eval.question("t1", kind, expect, "a question", truth, want, words)
 
 
 def truths(ground: recipe_eval.Ground, question: Question) -> list[Truth]:
@@ -102,13 +109,25 @@ def test_the_question_set() -> None:
     assert filters == set(recipe_eval.FILTERS)
     wants = {w.split("=")[0] for x in qs for s in x.steps for w in s.want}
     assert {"eut", "dur", "tier", "machine", "count", "in", "out", "chance"} <= wants
-    assert {"fact", "alts"} <= wants
+    assert {"fact", "alts", "ore", "simplest"} <= wants
     assert {s.op for x in qs for s in x.steps} == set(recipe_eval.OPS)
+    # the oredict questions check the oredict, and "how do I make" the simplest recipe
+    assert all(any("ore=" in w for w in x.steps[0].want) for x in kinds["oredict"][:3])
+    how = [
+        x
+        for x in qs
+        if x.expect == ANSWER
+        and x.question.lower().startswith(("how do i make", "how is"))
+    ]
+    assert len(how) >= 5 and all("simplest" in x.steps[0].want for x in how)
+    # the fake models resolve every step (and every ask row) from the question's words
+    for x in qs:
+        assert len(x.words) == max(len(x.steps), 1) and all(x.words), x.id
 
 
 def test_the_file_holds_references_never_game_numbers() -> None:
-    """Truth and want cells hold keys, map and oredict names, tiers and field names: with
-    those out, no digit is left (a game number would be one)."""
+    """Truth, want and words cells hold keys, map and oredict names, tiers, field names and
+    the question's words: with the keys out, no digit is left (a game number would be one)."""
     keys_ = re.compile(
         r"(?:mte|fluid):\S+|[\w.|-]+:[\w.|-]+@\d+|gt\.recipe\.\w+|ore=\S+"
     )
@@ -120,15 +139,23 @@ def test_the_file_holds_references_never_game_numbers() -> None:
 
 def test_the_router_places_each_row() -> None:
     lanes = {}
+    asked: dict[str, list[str]] = {"prefetch": [], "fast": [], "deep": []}
     for x in recipe_eval.load():
         got = router.route(x.question)
         lanes[x.id] = got.kind
-        if x.expect == ASK:  # pre-retrieval asks: the router must find the item words
-            assert got.kind != router.DEEP and got.subject, x.id
+        if x.expect == ASK:  # who must ask: pre-retrieval, or a model's own lookup
+            way = (
+                "deep"
+                if got.kind == router.DEEP
+                else ("prefetch" if got.subject else "fast")
+            )
+            asked[way].append(x.id)
     counts = {k: sum(v == k for v in lanes.values()) for k in set(lanes.values())}
     # the eval goes through every lane: instant commands, the fast lane, the deep lane
-    assert counts[router.INSTANT] >= 4 and counts[router.DEEP] >= 2
+    assert counts[router.INSTANT] >= 4 and counts[router.DEEP] >= 3
     assert counts[router.FAST] >= 30
+    # unclear items asked about by pre-retrieval (no model), and by each lane's model
+    assert len(asked["prefetch"]) >= 3 and asked["fast"] and asked["deep"]
 
 
 def test_trailing_empty_cells_may_be_missing(tmp_path: Path) -> None:
@@ -137,12 +164,14 @@ def test_trailing_empty_cells_may_be_missing(tmp_path: Path) -> None:
         "\t".join(recipe_eval.COLUMNS)
         + "\nx1\trecipe\tanswer\tHow do I make steel?\tmake "
         + STEEL
-        + "\nx2\tambiguous\task\tHow do I make dust?\n",
+        + "\nx2\tambiguous\task\tHow do I make dust?\n"
+        + f"x3\trecipe\tanswer\tSteel?\tmake {STEEL}\t\tsteel\n",
         encoding="utf-8",
     )
     got = recipe_eval.load(path)
-    assert [x.id for x in got] == ["x1", "x2"]
-    assert got[0].steps[0].key == STEEL and got[1].steps == ()
+    assert [x.id for x in got] == ["x1", "x2", "x3"]
+    assert got[0].steps[0].key == STEEL and got[1].steps == () and got[0].words == ()
+    assert got[2].words == ("steel",)
 
 
 @pytest.mark.parametrize(
@@ -158,6 +187,8 @@ def test_trailing_empty_cells_may_be_missing(tmp_path: Path) -> None:
         (f"make {STEEL} in=steel", "", ANSWER, "not an item or fluid key"),
         (f"make {STEEL}", "fact=parallel", ANSWER, "can't be wanted"),
         ("machine mte:1000", "eut", ANSWER, "can't be wanted"),
+        ("machine mte:1000", "ore=ingotSteel", ANSWER, "can't be wanted"),
+        (f"use {STEEL}", "simplest", ANSWER, "can't be wanted"),
         (f"make {STEEL}", "speed", ANSWER, "can't be wanted"),
         (f"make {STEEL}", "chance=ashes", ANSWER, "can't be wanted"),
         (f"make {STEEL}", "eut ; dur", ANSWER, "more want parts"),
@@ -170,6 +201,13 @@ def test_trailing_empty_cells_may_be_missing(tmp_path: Path) -> None:
 def test_bad_rows_are_refused(truth: str, want: str, expect: str, error: str) -> None:
     with pytest.raises(recipe_eval.EvalError, match=error):
         recipe_eval.question("x", "recipe", expect, "a question", truth, want)
+
+
+def test_more_words_than_steps_are_refused() -> None:
+    with pytest.raises(recipe_eval.EvalError, match="more words parts"):
+        recipe_eval.question("x", "recipe", ANSWER, "q", f"make {STEEL}", "", "a ; b")
+    asks = recipe_eval.question("x", "ambiguous", ASK, "q", "", "", "dust")
+    assert asks.words == ("dust",)
 
 
 def test_load_refuses_a_bad_file(tmp_path: Path) -> None:
@@ -226,24 +264,39 @@ def test_the_truth_is_the_set_the_tools_mean(
     """The truth's own SQL and the tools agree on which rows a lookup means (the tools'
     answers are what the eval checks, so it can't take its truth from them)."""
     [t] = truths(ground, q(truth))
-    assert sorted(t.rows) == sorted(_all_refs(lane_reg, tool, args))
+    assert sorted(t.all) == sorted(_all_refs(lane_reg, tool, args))
 
 
 def test_filters_narrow_a_step(ground: recipe_eval.Ground) -> None:
-    def rows(truth: str) -> set[str]:
-        return set(truths(ground, q(truth))[0].rows)
+    def rows(truth: str) -> tuple[set[str], set[str]]:
+        t = truths(ground, q(truth))[0]
+        return set(t.rows), set(t.flagged)
 
-    assert rows(f"make {STEEL}") == {ARC, EBF_O2, EBF_CIRCUIT, PBF, KILN}
-    assert rows(f"make {STEEL} map=gt.recipe.blastfurnace") == {EBF_O2, EBF_CIRCUIT}
-    assert rows(f"make {STEEL} in=fluid:oxygen") == {ARC, EBF_O2}
-    assert rows(f"make {STEEL} in={IRON_DUST} in=fluid:oxygen") == {EBF_O2}
-    assert rows(f"make {STEEL} out={ASHES}") == {EBF_O2, PBF}
-    assert rows(f"make {STEEL} tier=LV") == {ARC, PBF, KILN}
-    assert rows(f"use {STEEL} ore=ingotSteel") == {MAC_ORE}
+    # fake? (the kiln) and recycling (the arc furnace) rows drop out: unflagged rows exist
+    assert rows(f"make {STEEL}") == ({EBF_O2, EBF_CIRCUIT, PBF}, {ARC, KILN})
+    assert rows(f"make {STEEL} map=gt.recipe.blastfurnace") == (
+        {EBF_O2, EBF_CIRCUIT},
+        set(),
+    )
+    assert rows(f"make {STEEL} in=fluid:oxygen") == ({EBF_O2}, {ARC})
+    assert rows(f"make {STEEL} in={IRON_DUST} in=fluid:oxygen") == ({EBF_O2}, set())
+    assert rows(f"make {STEEL} out={ASHES}") == ({EBF_O2, PBF}, set())
+    assert rows(f"make {STEEL} tier=LV") == ({PBF}, {ARC, KILN})
+    assert rows(f"use {STEEL} ore=ingotSteel") == ({MAC_ORE}, set())
+    # only flagged rows: they are the step's rows
+    assert rows(f"make {STEEL} map=gt.recipe.arcfurnace") == ({ARC}, set())
     # the oredict slot takes TConstruct's steel ingot too: a use of it, through the oredict
-    assert rows("use TConstruct:materials@16") == {MAC_ORE}
-    assert rows("make minecraft:planks@1") == set()
-    assert rows("make gregtech:gt.metaitem.01@99999") == set()  # not in the DB
+    assert rows("use TConstruct:materials@16") == ({MAC_ORE}, set())
+    assert rows("make minecraft:planks@1") == (set(), set())
+    assert rows("make gregtech:gt.metaitem.01@99999") == (set(), set())  # not in the DB
+
+
+def test_the_simplest_rows_and_the_counts(ground: recipe_eval.Ground) -> None:
+    [t] = truths(ground, q(f"make {STEEL}"))
+    assert t.simplest() == {PBF}  # the lowest tier among the rows without a flag
+    assert t.counts >= {"5", "3"}  # the tools' total, flagged rows in; 3 up to LV
+    [ebf] = truths(ground, q(f"make {STEEL} map=gt.recipe.blastfurnace"))
+    assert ebf.simplest() == {EBF_O2, EBF_CIRCUIT}  # both MV
 
 
 def test_a_rows_values_are_the_dbs(ground: recipe_eval.Ground) -> None:
@@ -251,15 +304,24 @@ def test_a_rows_values_are_the_dbs(ground: recipe_eval.Ground) -> None:
     row = t.rows[EBF_O2]
     assert row.fields["eut"] == {"120"} and row.fields["amps"] == {"1"}
     assert row.fields["dur"] == {"500", "25"}  # ticks and seconds, both exact
+    assert row.fields["dur_t"] == {"500"} and row.fields["dur_s"] == {"25"}
     assert row.fields["in=fluid:oxygen"] == {"1000"}
     assert row.fields[f"chance={ASHES}"] == {"11.11"}
     assert row.fields["cond=coil_heat"] == {"1000"}
     assert row.fields["tier"] == {"MV"}
     assert {"Blast Furnace", "Electric Blast Furnace"} <= row.fields["machine"]
     assert {"120", "500", "25", "1000", "11.11", "1"} <= row.numbers
+    assert not row.flags
+    oxygen = next(s for s in row.slots if "fluid:oxygen" in s.keys)
+    assert (oxygen.part, oxygen.amount, oxygen.names) == ("in", "1000", {"Oxygen"})
+    ashes = next(s for s in row.slots if ASHES in s.keys)
+    assert (ashes.part, ashes.chance) == ("out", "11.11")
     assert t.counts >= {"2", "0"}  # 2 in all, none at a cap under MV
     [mac] = truths(ground, q(f"use {STEEL} ore=ingotSteel"))
     assert mac.rows[MAC_ORE].fields[f"alts={STEEL}"] == {"1"}  # "(or 1 other)"
+    assert mac.rows[MAC_ORE].fields["ore=ingotSteel"] == {"ingotSteel"}
+    assert ground.row(ARC).flags == {"recycling"}  # type: ignore[union-attr]
+    assert ground.row(KILN).flags == {"fake?"}  # type: ignore[union-attr]
     [ebf] = truths(ground, q("machine mte:1000"))
     facts = ebf.rows["mte:1000"].fields
     assert facts["fact=parallel"] == {"1"} and facts["fact=oc"] == {"heat"}
@@ -267,9 +329,43 @@ def test_a_rows_values_are_the_dbs(ground: recipe_eval.Ground) -> None:
     assert ground.row("mte:99999") is None and ground.row("q:abc") is None
 
 
+# --- numbers in context -------------------------------------------------------------------
+
+
+def test_numbers_are_read_with_their_units() -> None:
+    said = recipe_eval.mentions(
+        "120 EU/t for 1000 ticks (50 s) at 1 A; 1,000L Water, 11.11% chance of Ashes; "
+        "2x Steel Ingot or 16 others; 7 recipes in all; eut: 30, dur_t: 20, coil_heat=1700, "
+        "speed 4"
+    )
+    assert [(m.value, m.role) for m in said] == [
+        ("120", "eut"),
+        ("1000", "dur_t"),
+        ("50", "dur_s"),
+        ("1", "amps"),
+        ("1000", "amount"),
+        ("11.11", "pct"),
+        ("2", "amount"),
+        ("16", "alts"),
+        ("7", "count"),
+        ("30", "eut"),
+        ("20", "dur_t"),
+        ("1700", "other"),
+        ("4", "other"),
+    ]
+    water, chance = said[4], said[5]
+    assert water.after.strip() == "Water" and "Ashes" in chance.after
+    assert said[11].label == "coil_heat" and "speed" in said[12].before
+
+
 # --- scoring ------------------------------------------------------------------------------
 
 EBF_STEEL = f"make {STEEL} map=gt.recipe.blastfurnace"
+EBF_AND_PBF = (
+    f"make {STEEL} map=gt.recipe.blastfurnace ; "
+    f"make {STEEL} map=gt.recipe.primitiveblastfurnace"
+)
+USE_ORE = f"use {STEEL} ore=ingotSteel"
 
 
 @pytest.mark.parametrize(
@@ -327,13 +423,7 @@ EBF_STEEL = f"make {STEEL} map=gt.recipe.blastfurnace"
             "doesn't state dur",
         ),
         (EBF_STEEL, "tier", f"Steel Ingot: {EBF_O2}, at MV.", True, ""),
-        (
-            EBF_STEEL,
-            "tier",
-            f"Steel Ingot: {EBF_O2}, at LV.",
-            False,
-            "doesn't state tier",
-        ),
+        (EBF_STEEL, "tier", f"Steel Ingot: {EBF_O2}, at LV.", False, "states a tier"),
         (
             EBF_STEEL,
             "machine",
@@ -366,7 +456,7 @@ EBF_STEEL = f"make {STEEL} map=gt.recipe.blastfurnace"
         (
             EBF_STEEL,
             "in=fluid:oxygen",
-            f"Steel Ingot: {EBF_O2} takes 1,000 L.",
+            f"Steel Ingot: {EBF_O2} takes 1,000 L of oxygen.",
             True,
             "",
         ),
@@ -378,16 +468,23 @@ EBF_STEEL = f"make {STEEL} map=gt.recipe.blastfurnace"
             "",
         ),
         (
+            EBF_STEEL,
+            "cond=coil_heat",
+            f"Steel Ingot: {EBF_O2}, 1000 L Oxygen, coil heat 1700.",
+            False,
+            "doesn't state cond=coil_heat",
+        ),
+        (
             f"make {STEEL}",
             "count",
-            f"Steel Ingot: 5 recipes in all; the first is {KILN}.",
+            f"Steel Ingot: 5 recipes in all; one is {PBF}.",
             True,
             "",
         ),
         (
             f"make {STEEL}",
             "count",
-            f"Steel Ingot: 6 recipes in all ({KILN}).",
+            f"Steel Ingot: 6 recipes in all ({PBF}).",
             False,
             "count",
         ),
@@ -395,7 +492,7 @@ EBF_STEEL = f"make {STEEL} map=gt.recipe.blastfurnace"
         (
             f"make {STEEL}",
             "count",
-            f"Steel Ingot: 3 recipes up to LV ({KILN}).",
+            f"Steel Ingot: 3 recipes up to LV ({PBF}).",
             True,
             "",
         ),
@@ -416,18 +513,127 @@ EBF_STEEL = f"make {STEEL} map=gt.recipe.blastfurnace"
             "",
         ),
         (
-            f"make {STEEL} map=gt.recipe.blastfurnace ; make {STEEL} map=gt.recipe.primitiveblastfurnace",
+            EBF_AND_PBF,
             "eut ; dur",
             f"EBF ({EBF_O2}) at 120 EU/t; the bricked one ({PBF}) takes 1200 ticks.",
             True,
             "",
         ),
         (
-            f"make {STEEL} map=gt.recipe.blastfurnace ; make {STEEL} map=gt.recipe.primitiveblastfurnace",
+            EBF_AND_PBF,
             "",
             f"Steel Ingot: the EBF ({EBF_O2}).",
             False,
             "cites no row of make",
+        ),
+        # HIGH-1: right numbers in the wrong field
+        (
+            EBF_STEEL,
+            "eut,dur",
+            f"Steel Ingot: {EBF_O2}, 500 EU/t, 120 ticks.",
+            False,
+            "doesn't state eut",
+        ),
+        (
+            EBF_STEEL,
+            "dur",
+            f"Steel Ingot: {EBF_O2}, 120 ticks at 500 EU/t.",
+            False,
+            "doesn't state dur",
+        ),
+        (
+            EBF_STEEL,
+            "dur",
+            f"Steel Ingot: {EBF_O2}, 25 ticks.",
+            False,
+            "doesn't state dur",
+        ),
+        (
+            EBF_STEEL,
+            "tier",
+            f"Steel Ingot: {EBF_O2} needs LV, not MV.",
+            False,
+            "states a tier",
+        ),
+        (
+            EBF_STEEL,
+            "in=fluid:oxygen",
+            f"Steel Ingot: {EBF_O2} takes 1000L Iron Dust and 1L Oxygen.",
+            False,
+            "doesn't state in=fluid:oxygen",
+        ),
+        (
+            EBF_STEEL,
+            "in=fluid:oxygen",
+            f"Steel Ingot: {EBF_O2} takes 1,000 L.",  # 1000 L of what?
+            False,
+            "doesn't state in=fluid:oxygen",
+        ),
+        (
+            EBF_STEEL,
+            f"chance={ASHES}",
+            f"Steel Ingot: {EBF_O2}, 100% Ashes and 11.11% Steel Ingot.",
+            False,
+            f"doesn't state chance={ASHES}",
+        ),
+        # an oredict question checks the oredict
+        (
+            USE_ORE,
+            "ore=ingotSteel",
+            f"Steel Ingot: {MAC_ORE} takes any ore:ingotSteel.",
+            True,
+            "",
+        ),
+        (
+            USE_ORE,
+            "ore=ingotSteel",
+            f"Steel Ingot: {MAC_ORE}; no, only GT's ingot works.",
+            False,
+            "doesn't state ore=ingotSteel",
+        ),
+        (
+            USE_ORE,
+            f"alts={STEEL}",
+            f"Steel Ingot: {MAC_ORE} or 1 other stack.",
+            True,
+            "",
+        ),
+        # HIGH-2: the simplest recipe without a flag
+        (
+            f"make {STEEL}",
+            "simplest",
+            f"Steel Ingot: the Bricked Blast Furnace ({PBF}).",
+            True,
+            "",
+        ),
+        (
+            f"make {STEEL}",
+            "simplest",
+            f"Steel Ingot: the EBF ({EBF_O2}).",
+            False,
+            "simplest",
+        ),
+        (
+            f"make {STEEL}",
+            "",
+            f"Steel Ingot: the Alloy Kiln ({KILN}).",
+            False,
+            "flagged rows",
+        ),
+        (
+            f"make {STEEL}",
+            "",
+            f"Steel Ingot: the Arc Furnace ({ARC}).",
+            False,
+            "recycling",
+        ),
+        # LOW-6: a step's count is a count only in a count phrase
+        (
+            f"make {STEEL}",
+            "",
+            f"Steel Ingot: ({PBF}) takes 5 L.",
+            False,
+            "uncited numbers: 5",
         ),
     ],
 )
@@ -459,7 +665,12 @@ def test_a_name_inside_a_citation_isnt_masked_out_of_it() -> None:
     """A handler id with digits ("ic2.nei...") is both a machine name the row holds and part
     of the recipe's id: masking names must not cut the id apart into stray numbers."""
     cite = "r:ic2.neiIntegration.Handler/f4610ee28395"
-    row = recipe_eval.Row(cite, names={"ic2.neiIntegration.Handler"}, numbers={"9"})
+    slot = recipe_eval.Slot(
+        "out", frozenset({STEEL}), frozenset({"Steel Ingot"}), "9", "100", 0, None
+    )
+    row = recipe_eval.Row(
+        cite, names={"ic2.neiIntegration.Handler"}, numbers={"9"}, slots=[slot]
+    )
     question = q(f"make {STEEL}")
     truth = Truth(question.steps[0], {cite: row}, {"1"})
     ground = cast(recipe_eval.Ground, _Rows({cite: row}))
@@ -487,21 +698,26 @@ def test_uncited_numbers_are_counted(ground: recipe_eval.Ground) -> None:
         ground,
     )
     assert not got.passed and got.uncited == ["25", "120"]
+    # a cited row's number in another unit is uncited too
+    swapped = recipe_eval.score(
+        question, f"Steel: {EBF_O2}, 25 ticks.", False, truths(ground, question), ground
+    )
+    assert swapped.uncited == ["25"]
 
 
 def test_ask_and_none_rows(ground: recipe_eval.Ground) -> None:
-    ask = q("", expect=ASK, kind="ambiguous")
+    ask_ = q("", expect=ASK, kind="ambiguous")
     question = "Which dust did you mean: Iron Dust, Steel Dust or Stainless Steel Dust?"
-    assert recipe_eval.score(ask, question, True, [], ground).passed
+    assert recipe_eval.score(ask_, question, True, [], ground).passed
     assert not recipe_eval.score(
-        ask, "Steel Dust: macerator.", False, [], ground
+        ask_, "Steel Dust: macerator.", False, [], ground
     ).passed
-    numbered = recipe_eval.score(ask, "Which one: 2 or 3?", True, [], ground)
+    numbered = recipe_eval.score(ask_, "Which one: 2 or 3?", True, [], ground)
     assert not numbered.passed and "numbers" in numbered.why
     # a name with digits in it, as the asker shows it, isn't a number
     wire = "Which wire did you mean: 1x Copper Wire or 2x Copper Wire?"
     names = ["1x Copper Wire", "2x Copper Wire"]
-    assert recipe_eval.score(ask, wire, True, [], ground, names).passed
+    assert recipe_eval.score(ask_, wire, True, [], ground, names).passed
 
     none = q(f"make {SPRUCE}", expect=NONE, kind="none")
     ts = truths(ground, none)
@@ -511,6 +727,9 @@ def test_ask_and_none_rows(ground: recipe_eval.Ground) -> None:
     assert not cited.passed and "where none exists" in cited.why
     made_up = recipe_eval.score(none, "Spruce takes 4 logs.", False, ts, ground)
     assert not made_up.passed and made_up.uncited == ["4"]
+    # a none row must say so: a refusal isn't an answer
+    shrug = recipe_eval.score(none, "Sorry, I can't help with that.", False, ts, ground)
+    assert not shrug.passed and "no recipe" in shrug.why
     steel = q(f"make {STEEL}", expect=NONE, kind="none")
     here = recipe_eval.score(steel, said, False, truths(ground, steel), ground)
     assert not here.passed and "not a none row here" in here.why
@@ -526,8 +745,24 @@ def test_a_question_back_counts_as_asking() -> None:
 # --- the run, with the fast lane's oracle --------------------------------------------------
 
 QUESTIONS = [
-    ("o1", "recipe", ANSWER, "How do I make steel?", f"make {STEEL}", ""),
-    ("o2", "recipe", ANSWER, "recipe for steel", f"make {STEEL}", "count"),
+    (
+        "o1",
+        "recipe",
+        ANSWER,
+        "How do I make steel?",
+        f"make {STEEL}",
+        "simplest",
+        "steel",
+    ),
+    (
+        "o2",
+        "recipe",
+        ANSWER,
+        "recipe for steel",
+        f"make {STEEL}",
+        "count,simplest",
+        "steel",
+    ),
     (
         "o3",
         "power",
@@ -535,6 +770,7 @@ QUESTIONS = [
         "How much EU/t does the EBF need to make steel from iron dust?",
         f"make {STEEL} map=gt.recipe.blastfurnace in={IRON_DUST}",
         "eut,dur",
+        "steel",
     ),
     (
         "o4",
@@ -543,6 +779,7 @@ QUESTIONS = [
         "What's the chance of ashes from the EBF's oxygen steel recipe?",
         f"make {STEEL} map=gt.recipe.blastfurnace in=fluid:oxygen",
         f"chance={ASHES},in=fluid:oxygen",
+        "steel",
     ),
     (
         "o5",
@@ -551,8 +788,9 @@ QUESTIONS = [
         "What makes steel dust, and then what makes the steel ingot?",
         f"make {STEEL_DUST} ; make {STEEL} map=gt.recipe.blastfurnace",
         " ; machine",
+        "steel dust ; steel ingot",
     ),
-    ("o6", "uses", ANSWER, "What is steel used for?", f"use {STEEL}", ""),
+    ("o6", "uses", ANSWER, "What is steel used for?", f"use {STEEL}", "", "steel"),
     (
         "o7",
         "machine",
@@ -560,17 +798,29 @@ QUESTIONS = [
         "How many parallels does the electric blast furnace have?",
         "machine mte:1000",
         "fact=parallel",
+        "electric blast furnace",
     ),
-    ("o8", "ambiguous", ASK, "How do I make dust?", "", ""),
-    ("o9", "none", NONE, "How do I make spruce wood planks?", f"make {SPRUCE}", ""),
+    ("o8", "ambiguous", ASK, "How do I make dust?", "", "", "dust"),
+    (
+        "o9",
+        "none",
+        NONE,
+        "How do I make spruce wood planks?",
+        f"make {SPRUCE}",
+        "",
+        "spruce wood planks",
+    ),
     (
         "o10",
         "oredict",
         ANSWER,
         "Can any steel ingot go in the macerator?",
         f"use {STEEL} ore=ingotSteel",
-        "",
+        "ore=ingotSteel",
+        "steel ingot",
     ),
+    # an unclear item no pre-retrieval reached: the model's own lookup must ask
+    ("o11", "ambiguous", ASK, "Which macerator recipes take a dust?", "", "", "dust"),
 ]
 
 
@@ -595,16 +845,25 @@ def test_the_oracle_passes_every_row(
 ) -> None:
     code, report, results = run_oracle(lane_reg, ground, oracle_questions())
     assert code == 0, report
-    assert "correct: 10 of 10 (100.0%; target >= 95%)" in report
+    assert "correct: 11 of 11 (100.0%; target >= 95%)" in report
     assert "uncited numbers: 0 (target 0)" in report
     assert report.rstrip().endswith("Result: PASS")
     by_id = {r.q.id: r for r in results}
     assert by_id["o2"].lane == "instant" and by_id["o8"].reply.asked
-    # o3 named no item the router could pre-retrieve: the oracle looked it up itself
+    # o1: the first row without a flag (the kiln's fake? row is listed first)
+    assert by_id["o1"].score.cited == [PBF]
+    assert (
+        f"The first unflagged one is Bricked Blast Furnace ({PBF})" in by_id["o2"].text
+    )
+    # o3 named no item the router could pre-retrieve: the oracle looked its words up
     assert by_id["o3"].reply.tool_calls == ["recipe_find"]
     assert EBF_O2 in by_id["o4"].score.cited
     assert len(by_id["o5"].score.cited) == 2
     assert by_id["o7"].score.cited == ["mte:1000"]
+    # o11: the model's own lookup was ambiguous, and it asked (no pre-retrieval did)
+    assert not by_id["o11"].reply.asked and by_id["o11"].reply.tool_calls == [
+        "item_resolve"
+    ]
 
 
 def test_the_oracle_follows_more_pages(
@@ -619,11 +878,31 @@ def test_the_oracle_follows_more_pages(
         "How long does the EBF take for steel from steel dust?",
         f"make {STEEL} map=gt.recipe.blastfurnace in={STEEL_DUST}",
         "dur",
+        "steel",
     )
     code, report, results = run_oracle(reg, ground, [question])
     assert code == 0, report
     assert results[0].reply.tool_calls == ["recipe_find", "more"]
     assert results[0].score.cited == [EBF_CIRCUIT]
+
+
+def test_words_that_name_another_item_fail_the_row(
+    lane_reg: Registry, ground: recipe_eval.Ground
+) -> None:
+    """The oracle looks the item up by the question's words, as a model would: words that
+    resolve to another item give a wrong answer, which the scorer fails."""
+    question = recipe_eval.question(
+        "w0",
+        "recipe",
+        ANSWER,
+        "How do I make stainless steel?",
+        f"make {STEEL}",
+        "",
+        "stainless steel",
+    )
+    code, _, results = run_oracle(lane_reg, ground, [question])
+    assert code == 1 and "cites no row of make" in results[0].score.why
+    assert "Stainless Steel Ingot" in results[0].text
 
 
 def test_a_wrong_answer_fails_the_run(
@@ -637,6 +916,7 @@ def test_a_wrong_answer_fails_the_run(
         "How much EU/t?",
         f"make {STEEL} map=gt.recipe.blastfurnace",
         "eut",
+        "steel",
     )
     other = recipe_eval.question(
         "w1",
@@ -645,6 +925,7 @@ def test_a_wrong_answer_fails_the_run(
         "How much EU/t?",
         f"make {STEEL} map=gt.recipe.arcfurnace",
         "eut",
+        "steel",
     )
     deep_lane = HandoffRecorder()
     fast = FastLane(OracleClient(plans=recipe_eval.plans([other])), lane_reg)
@@ -657,6 +938,8 @@ def test_a_wrong_answer_fails_the_run(
         0
     ].reply.checked  # the lane's number check passed it: its numbers are real
     assert "cites no row" in results[0].score.why
+    # the report and the table name the real id no step means
+    assert results[0].score.extra == [ARC] and f"\t{ARC}\t" in out.getvalue()
 
 
 def test_a_handoff_with_no_deep_lane_fails(
@@ -719,17 +1002,49 @@ def test_the_deep_lanes_answers_are_waited_for() -> None:
     assert text == "" and why is not None and "cap" in why
 
 
-def test_decide_asks_on_an_ambiguous_result(lane_reg: Registry) -> None:
+def test_decide_resolves_words_and_asks_when_unclear(lane_reg: Registry) -> None:
+    question = recipe_eval.question(
+        "a", "recipe", ANSWER, "x", f"make {STEEL}", "", "dust"
+    )
     out = lane_reg.call("item_resolve", {"text": "dust"}, lane="fast")
-    question = recipe_eval.question("a", "recipe", ANSWER, "x", f"make {STEEL}")
     plan = decide(
         question, [Seen("item_resolve", {"text": "dust"}, out.text)], tools=True
     )
     assert plan.ask and not plan.calls
-    # nothing yet: the step's lookup; tools off: no call, the answer says what's missing
-    plan = decide(question, [], tools=True)
-    assert plan.calls == [("recipe_find", {"item": STEEL})]
-    assert decide(question, [], tools=False).calls == []
+    # nothing yet: the fast lane passes the words to the lookup; the deep lane resolves
+    # them first (the skill's step 1); tools off: no call, the answer says what's missing
+    steel = recipe_eval.question(
+        "b", "recipe", ANSWER, "x", f"make {STEEL}", "", "steel"
+    )
+    assert decide(steel, [], tools=True).calls == [("recipe_find", {"item": "steel"})]
+    assert decide(steel, [], tools=True, resolve_first=True).calls == [
+        ("item_resolve", {"text": "steel"})
+    ]
+    assert decide(steel, [], tools=False).calls == []
+    # a recipe tool that says ambiguous: ask
+    unclear = lane_reg.call("recipe_find", {"item": "dust"}, lane="fast")
+    plan = decide(
+        recipe_eval.question("c", "recipe", ANSWER, "x", f"make {STEEL}", "", "dust"),
+        [Seen("recipe_find", {"item": "dust"}, unclear.text)],
+        tools=True,
+    )
+    assert plan.ask and len(plan.ask) == 3
+
+
+def test_a_step_takes_its_item_from_the_chosen_rows_in_cell() -> None:
+    """The skill's "what makes X, then its input Y": Y's key from the slot named Y."""
+    row = {
+        "in": "1x 1x Copper Wire [gregtech:gt.blockmachines@1360] (any ore:wireGt01AnyCopper); "
+        "1x Steel Rod [gregtech:gt.metaitem.01@23305]; "
+        "1x Refined Iron Plate [IC2:itemPlates@5] (any ore:plateSteel)"
+    }
+    assert recipe_oracle.chained("copper wire", row) == "gregtech:gt.blockmachines@1360"
+    assert recipe_oracle.chained("steel rods", row) == "gregtech:gt.metaitem.01@23305"
+    # an oredict slot that shows another item: no slot is named "steel plate"
+    assert recipe_oracle.chained("steel plate", row) is None
+    assert (
+        recipe_oracle.chained("steel", row) is None
+    )  # a word of a name isn't its name
 
 
 def test_the_eval_main(
@@ -781,9 +1096,12 @@ def test_gos_eval_recipe_lookup_fake(
     ]
     assert cli.main([*argv, "--out", str(table)]) == 0
     printed = capsys.readouterr().out
-    assert "correct: 10 of 10" in printed and "Result: PASS" in printed
+    assert "correct: 11 of 11" in printed and "Result: PASS" in printed
+    assert "\textra\twhy\t" in printed and "extra citations" in printed
     rows = table.read_text(encoding="utf-8").splitlines()
-    assert rows[0].split("\t")[:4] == ["id", "kind", "lane", "pass"] and len(rows) == 11
+    header = rows[0].split("\t")
+    assert header[:4] == ["id", "kind", "lane", "pass"] and len(rows) == 12
+    assert header[5:8] == ["cited", "extra", "why"]
     assert cli.main([*argv, "--limit", "2"]) == 0
     assert "correct: 2 of 2" in capsys.readouterr().out
     # nothing recorded, nothing written to a vault
@@ -799,6 +1117,24 @@ def test_the_cli_parser_stays_light() -> None:
     assert got.stdout.strip() == "False"
 
 
+# --- the instant template -------------------------------------------------------------------
+
+
+def test_the_instant_answer_names_the_first_row_without_a_flag(
+    lane_reg: Registry,
+) -> None:
+    """The kiln's fake? row is listed first; the instant answer names the first without a
+    flag, as the skill does, and says so."""
+    pre = prefetch.prefetch(lane_reg, router.route("recipe for steel"))
+    text = ask.card_text(pre, router.RECIPES)
+    assert text is not None and text.startswith("Steel Ingot: 5 recipes, lowest tier")
+    assert f"The first unflagged one is Bricked Blast Furnace ({PBF})." in text
+    assert pre.main is not None and pre.main.parsed.rows[0]["ref"] == KILN  # the card
+    uses = prefetch.prefetch(lane_reg, router.route("what uses steel"))
+    said = ask.card_text(uses, router.USES)
+    assert said is not None and MAC_REC not in said  # the recycling row isn't named
+
+
 # --- the deep lane, with the real CLI and the oracle model ----------------------------------
 
 DEEP_Q = recipe_eval.question(
@@ -806,8 +1142,9 @@ DEEP_Q = recipe_eval.question(
     "multistep",
     ANSWER,
     "Compare the EBF and the bricked blast furnace recipes for steel.",
-    f"make {STEEL} map=gt.recipe.blastfurnace ; make {STEEL} map=gt.recipe.primitiveblastfurnace",
+    EBF_AND_PBF,
     "eut,dur ; dur",
+    "steel ; steel",
 )
 
 
@@ -867,6 +1204,8 @@ def test_the_deep_lane_loads_the_skill_and_answers(
         if isinstance(b, dict) and b.get("type") == "tool_use"
     ]
     assert names[0] == "Skill" and "mcp__gos__recipe_find" in names
+    # the skill's step 1: the words resolved before the lookup
+    assert names.index("mcp__gos__item_resolve") < names.index("mcp__gos__recipe_find")
     # the spoken first line has no ids; the detail cites both rows
     first, _, rest = result.text.partition("\n")
     assert "r:" not in first and EBF_O2 in rest and PBF in rest
@@ -1005,21 +1344,29 @@ def test_the_recipe_lookup_skill(lane_reg: Registry, tmp_path: Path) -> None:
     assert named <= deep_tools  # every tool it names is one the deep lane has
     assert "r:<map>/<sig12>" in body and "mte:<id>" in body and "ambiguous: 1" in body
     assert "!`" not in body  # no shell: the deep lane has none (D154)
+    # the flag rule, and no game numbers: its example is placeholders, not a real recipe
+    assert "first row without a flag" in body
+    assert not re.search(r"r:[\w.]+/[0-9a-f]{12}", body)
+    assert not re.search(r"\b(?:eut|dur_t|dur_s): \d", body)
     # the deep lane's plugin copy carries it, as gos:recipe-lookup
     plugin = deep_config.build_plugin(TEMPLATE / "_gos", tmp_path / "plugin")
     assert deep_config.skill_names(plugin) == [SKILL]
     # deployed into a vault, the fast lane's cached prompt lists it (one line, plan 4.4)
+    # and carries its body: the fast lane answers recipe questions itself (plan 7.3)
     vault = tmp_path / "vault"
     deploy.deploy(vault)
     rules = system_prompt(vault)[0]["text"]
     assert f"- recipe-lookup: {meta['description']}" in rules
+    assert body.strip() in rules and rules.count("# Recipe lookup") == 1
+    # without a vault too (the release's copy): the body is the same one source
+    assert body.strip() in system_prompt(None)[0]["text"]
 
 
 def test_the_fast_lane_answers_with_the_card(lane_reg: Registry) -> None:
     """``/api/ask``'s reply carries the recipe card in its card's ``recipe`` key."""
     deep_lane = HandoffRecorder()
     question = recipe_eval.question(
-        "c1", "recipe", ANSWER, "How do I make steel?", f"make {STEEL}"
+        "c1", "recipe", ANSWER, "How do I make steel?", f"make {STEEL}", "", "steel"
     )
     fast = FastLane(OracleClient(plans=recipe_eval.plans([question])), lane_reg)
     reply = Asker(lane_reg, deep_lane, fast).ask("How do I make steel?")
