@@ -112,7 +112,9 @@ td.num {
   color: var(--shell-text-2);
 }
 
-.search-box {
+/* The header's controls: the search box, and in a held glance the way back (D161). */
+.search-box,
+.leave-glance {
   flex: 0 1 560px;
   display: flex;
   align-items: center;
@@ -130,13 +132,15 @@ td.num {
   overflow: hidden;
 }
 
-.search-box span {
+.search-box span,
+.leave-glance span {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .search-box kbd,
+.leave-glance kbd,
 .shell-nav kbd {
   font-size: 13px;
 }

@@ -74,14 +74,14 @@ export function App() {
   const phone = useMedia("(max-width: 760px)");
   const presence = usePresence(core?.game.focused ?? null);
   const [pin, setPinState] = useState<ModePin>(loadPin);
-  const setPin = (p: ModePin): void => {
+  const setPin = useCallback((p: ModePin): void => {
     setPinState(p);
     try {
       window.localStorage.setItem(PIN_KEY, p);
     } catch {
       // the choice lasts until reload
     }
-  };
+  }, []);
   const mode = modeFor({
     phone,
     pin,
@@ -93,6 +93,9 @@ export function App() {
     gamePaused: core?.game.paused ?? null,
   });
   const glance = mode === "glance";
+  // Glance has no nav and no Settings, so a held glance (Settings) ends when he clicks a glance
+  // block, presses Esc or uses the header's button: each goes back to automatic (D161).
+  const held = glance && pin === "glance";
 
   const [view, setViewState] = useState<ViewId>(() => viewFromHash(window.location.hash));
   const setView = useCallback((v: ViewId) => {
@@ -122,6 +125,7 @@ export function App() {
       if (e.key === "Escape") {
         setPalette(false);
         setModal(null);
+        if (held) setPin("auto");
         return;
       }
       if (glance || palette || modal || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
@@ -133,7 +137,7 @@ export function App() {
     };
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
-  }, [glance, palette, modal, setView]);
+  }, [glance, held, palette, modal, setView, setPin]);
 
   const show = (e: unknown): void => setNotice(e instanceof ApiError ? e.message : String(e));
 
@@ -167,6 +171,11 @@ export function App() {
     }),
     [core, act, ask],
   );
+
+  const openFromGlance = (v: ViewId): void => {
+    if (held) setPin("auto");
+    setView(v);
+  };
 
   const runPalette = (a: Action): void => {
     if (a.kind === "view") setView(a.view);
@@ -222,7 +231,7 @@ export function App() {
   return (
     <CardContext.Provider value={actions}>
       <div className={`shell ${mode}${phone ? " phone" : ""}`} data-testid="shell" data-mode={mode} data-socket={socket}>
-        <Header chips={chips} core={core} glance={glance} onSearch={() => setPalette(true)} />
+        <Header chips={chips} core={core} glance={glance} held={held} onLeave={() => setPin("auto")} onSearch={() => setPalette(true)} />
         {!glance && (
           <nav className="gos-shell shell-nav" data-testid="nav" aria-label="Views">
             {(phone ? VIEWS.filter((v) => PHONE_TABS.includes(v.id)) : VIEWS).map((v) => (
@@ -248,7 +257,7 @@ export function App() {
             </div>
           )}
           {glance ? (
-            <Glance core={core} answers={answers} slug={themeCtl.slug} look={look} motion={motion} nextCard={nextCard} open={setView} act={act} />
+            <Glance core={core} answers={answers} slug={themeCtl.slug} look={look} motion={motion} nextCard={nextCard} open={openFromGlance} act={act} />
           ) : (
             body()
           )}

@@ -88,7 +88,7 @@ const core: CoreState = {
 
 describe("the shell", () => {
   it("header shows the state chips, the tier and the clock", () => {
-    render(<Header chips={stateChips({ phase: "ready", reachable: true, core })} core={core} glance={false} onSearch={() => undefined} />);
+    render(<Header chips={stateChips({ phase: "ready", reachable: true, core })} core={core} glance={false} held={false} onLeave={() => undefined} onSearch={() => undefined} />);
     const chips = screen.getByTestId("status-chips");
     expect(chips.textContent).toContain("Game not running");
     expect(chips.textContent).toContain("Data stale");
@@ -97,8 +97,15 @@ describe("the shell", () => {
     expect(screen.getByLabelText("time").textContent).toMatch(/^\d\d:\d\d\d\d$/);
   });
   it("glance drops the search box", () => {
-    render(<Header chips={[]} core={null} glance onSearch={() => undefined} />);
+    render(<Header chips={[]} core={null} glance held={false} onLeave={() => undefined} onSearch={() => undefined} />);
     expect(screen.queryByTestId("open-palette")).toBeNull();
+    expect(screen.queryByTestId("leave-glance")).toBeNull();
+  });
+  it("a held glance shows the way back to automatic (D161)", () => {
+    const leave = vi.fn();
+    render(<Header chips={[]} core={null} glance held onLeave={leave} onSearch={() => undefined} />);
+    fireEvent.click(screen.getByTestId("leave-glance"));
+    expect(leave).toHaveBeenCalledOnce();
   });
   it("the rail shows what the agent does, what waits and the jobs", () => {
     const act = vi.fn();

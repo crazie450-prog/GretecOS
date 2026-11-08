@@ -144,6 +144,30 @@ export interface ContrastMiss {
   background: string;
 }
 
+export const THEMES = ["brass", "machine", "alu", "hud", "circuit", "tung", "holo", "fusion", "naq", "deep", "calm", "manual"];
+
+/** contrastMisses of what is on screen now, in each of the 12 themes (the theme class swapped on
+ * <body> as the app does, then put back), keyed by theme; empty when every theme reads. */
+export async function themeMisses(page: Page): Promise<Record<string, ContrastMiss[]>> {
+  const before = await page.evaluate(() => document.body.className);
+  const out: Record<string, ContrastMiss[]> = {};
+  try {
+    for (const slug of THEMES) {
+      await page.evaluate((s) => {
+        document.body.className = `theme-${s}`;
+      }, slug);
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      const found = await contrastMisses(page);
+      if (found.length) out[slug] = found;
+    }
+  } finally {
+    await page.evaluate((c) => {
+      document.body.className = c;
+    }, before);
+  }
+  return out;
+}
+
 /** Every visible text on the page against the colour under it (WCAG: 4.5:1, 3:1 when large).
  * Exempt, as the design system says: disabled controls and decoration (text-3), and blurred
  * spoilers. Background images are ignored; translucent backgrounds are composited. */

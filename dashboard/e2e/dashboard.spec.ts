@@ -3,10 +3,11 @@
 // comes with the game's focus and is clickable (D49), the keyboard drives the shell, and the
 // phone layout fits 390 px. Screenshots go to test-results/ (never into git).
 import { type Browser, type Page, expect, test } from "@playwright/test";
-import { asAdmin, clipped, contrastMisses, control, fingerprintState, holdInstanceLock, layout, pair, pendingCode } from "./harness";
+import { THEMES, asAdmin, clipped, contrastMisses, control, fingerprintState, holdInstanceLock, layout, pair, pendingCode, themeMisses } from "./harness";
 
-const THEMES = ["brass", "machine", "alu", "hud", "circuit", "tung", "holo", "fusion", "naq", "deep", "calm", "manual"];
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
+const MONITOR_2 = { width: 2560, height: 1440 };
+const PHONE = { width: 390, height: 844 };
 
 let page: Page;
 
@@ -176,6 +177,48 @@ test("Costs shows the cycle against the included credits", async () => {
   await expect(page.getByTestId("by-lane")).toBeVisible();
 });
 
+test("every view reads at WCAG contrast in every theme, on monitor 2 and on the phone", async () => {
+  // What the tests above left: answers on Now and in Chat, an item in Search (its recipe card,
+  // chips and all), doctor's output and the health card in Settings, the cycle in Costs.
+  const views: [string, string][] = [
+    ["now", "now-answer"],
+    ["chat", "chat-log"],
+    ["search", "search-detail"],
+    ["costs", "by-lane"],
+    ["settings", "verify"],
+    ["designer", "view-designer"], // a view a later WO builds: its designed empty state
+  ];
+  const misses: Record<string, unknown> = {};
+  for (const size of [MONITOR_2, PHONE]) {
+    await page.setViewportSize(size);
+    for (const [view, ready] of views) {
+      if (size === PHONE && view === "designer") continue; // not one of the phone's tabs
+      await page.evaluate((v) => {
+        window.location.hash = `/${v}`;
+      }, view);
+      await expect(page.getByTestId("view")).toHaveAttribute("data-view", view);
+      await expect(page.getByTestId(ready)).toBeVisible();
+      if (view === "search") {
+        const detail = page.getByTestId("search-detail");
+        await detail.getByRole("tab", { name: "Recipes" }).click();
+        await expect(detail.locator('[data-card="recipe"] li.recipe').first()).toBeVisible();
+      }
+      if (view === "settings") await expect(page.locator('[data-card="health"]')).toBeVisible();
+      for (const [slug, found] of Object.entries(await themeMisses(page))) misses[`${size.width}/${view}/${slug}`] = found;
+    }
+  }
+  // A card opened full size, over the page.
+  await page.setViewportSize(MONITOR_2);
+  await page.evaluate(() => {
+    window.location.hash = "/chat";
+  });
+  await page.getByTestId("chat-log").getByTestId("open-card").first().click();
+  await expect(page.getByTestId("card-modal").locator('[data-card="recipe"]')).toBeVisible();
+  for (const [slug, found] of Object.entries(await themeMisses(page))) misses[`2560/card-modal/${slug}`] = found;
+  await page.getByTestId("modal-close").click();
+  expect(misses).toEqual({});
+});
+
 test("a device asking to pair waits for Clayton on the rail, and Deny drops it", async ({ browser }) => {
   const phone = await browser.newPage();
   await phone.goto("/");
@@ -200,8 +243,11 @@ test("the designed states: stale data and AI offline", async () => {
   await expect(chips.locator('[data-state="ai_offline"]')).toBeVisible({ timeout: 15_000 });
   await expect(chips.locator('[data-state="game_not_running"]')).toBeVisible();
   await expect(page.locator('[data-alert="data-stale"]')).toBeVisible();
+  const now = await themeMisses(page); // the alerts and state chips in every theme
   await page.keyboard.press("2");
   await expect(page.locator('button[data-cite^="r:"]').first()).toContainText("data stale");
+  const chat = await themeMisses(page); // the "data stale" badges in every theme
+  expect({ now, chat }).toEqual({ now: {}, chat: {} });
   await page.screenshot({ path: shot("states-stale-ai-offline") });
   fingerprintState(false);
   control("key", "stored");
@@ -236,6 +282,7 @@ test("glance comes with the game's focus, is clickable, and the mouse brings the
   await expect(page.getByTestId("rail")).toHaveCount(0);
   const size = await page.locator(".view-glance").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
   expect(size).toBeGreaterThanOrEqual(22); // type-glance-body
+  expect(await themeMisses(page)).toEqual({});
   await page.screenshot({ path: shot("glance") });
   // Clickable (D49): a click opens its view, and the pointer coming in means workbench.
   await page.getByTestId("glance-answer").getByRole("button", { name: /Open/ }).click();
@@ -243,6 +290,36 @@ test("glance comes with the game's focus, is clickable, and the mouse brings the
   await expect(page.getByTestId("view")).toHaveAttribute("data-view", "chat");
   control("foreground", "chrome.exe");
   control("running", "[]");
+});
+
+test("a held glance always has a way back: Esc, a glance block, or the header's button", async () => {
+  const hold = async (): Promise<void> => {
+    await page.keyboard.press("9");
+    await page.getByTestId("mode-glance").click();
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "glance");
+  };
+  // Held, glance stays while the pointer is in the window and the game isn't running.
+  await hold();
+  await page.mouse.move(1200, 700);
+  await page.mouse.move(1210, 710);
+  await page.waitForTimeout(500); // past the 300 ms the pointer needs to count as in
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "glance");
+  expect(await themeMisses(page)).toEqual({}); // the header's way back reads in every theme
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "workbench");
+  expect(await page.evaluate(() => window.localStorage.getItem("gos.mode"))).toBe("auto");
+  // A click on a glance block opens its view in the workbench.
+  await hold();
+  await page.getByTestId("glance-alerts").getByRole("button", { name: /Open/ }).click();
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "workbench");
+  await expect(page.getByTestId("view")).toHaveAttribute("data-view", "now");
+  // The hold outlives a reload (it is kept per device); the header's button ends it.
+  await hold();
+  await page.reload();
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "glance");
+  await page.getByTestId("leave-glance").click();
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "workbench");
+  await expect(page.getByTestId("view")).toHaveAttribute("data-view", "settings");
 });
 
 test("the phone layout fits 390x844 with tabs at the bottom", async () => {

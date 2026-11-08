@@ -137,7 +137,11 @@ export function Settings(props: {
       </div>
       <div className="settings-grid">
         <div className="col">
-          {core?.health ? <Card card={core.health} /> : <p className="empty">{GLYPH.progress} Waiting for the health strip</p>}
+          {/* A card is drawn on a panel: in the light-panel themes (Machine GUI, Brushed
+              Aluminium) its text colours are for the panel, not the page behind it. */}
+          <Panel testId="health">
+            {core?.health ? <Card card={core.health} /> : <p className="empty">{GLYPH.progress} Waiting for the health strip</p>}
+          </Panel>
           <Panel label="Data · last export" testId="last-export">
             <dl className="facts">
               <dt>Last export</dt>

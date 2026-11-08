@@ -24,6 +24,8 @@ export function Header(props: {
   chips: StateChip[];
   core: CoreState | null;
   glance: boolean;
+  held: boolean; // glance held from Settings: the way back to automatic (D161)
+  onLeave: () => void;
   onSearch: () => void;
 }) {
   const tier = props.core?.tier;
@@ -36,6 +38,12 @@ export function Header(props: {
         <button type="button" className="search-box" onClick={props.onSearch} data-testid="open-palette">
           <span>Search items, recipes, quests, settings</span>
           <kbd>Ctrl K</kbd>
+        </button>
+      )}
+      {props.held && (
+        <button type="button" className="leave-glance" onClick={props.onLeave} title="Glance is held from Settings" data-testid="leave-glance">
+          <span>Glance held · back to automatic</span>
+          <kbd>Esc</kbd>
         </button>
       )}
       <div className="status-chips" data-testid="status-chips">
