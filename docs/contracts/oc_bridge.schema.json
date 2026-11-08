@@ -54,7 +54,7 @@
         "power": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/power" } },
         "machines": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/machine" } },
         "ae2": { "$ref": "#/$defs/ae2" },
-        "crafts": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/craft" } },
+        "crafts": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/craft" } },
         "results": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/result" } },
         "errors": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/error" } }
       }
@@ -131,7 +131,7 @@
       "properties": {
         "addr": { "$ref": "#/$defs/address" },
         "type": { "enum": ["me_controller", "me_interface"] },
-        "cpus": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/cpu" } },
+        "cpus": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/cpu" } },
         "items": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/item" } },
         "items_at": { "$ref": "#/$defs/seconds" }
       },

@@ -85,10 +85,14 @@ M.try = try
 
 local MAX_SENSOR_LINES = 32 -- an LSC returns 24
 local MAX_SENSOR_LINE = 200 -- bytes per line
+local SENSOR_BUDGET = 8192 -- bytes of sensor lines in one message; the rest go in a later one
 local MAX_ERRORS = 8 -- error records waiting for an ack
 local MAX_RESULTS = 16 -- command results waiting for an ack
 local MAX_DONE = 32 -- executed command ids remembered (and persisted) against re-delivery
 local MAX_CMDS = 8 -- commands taken from one reply
+local MAX_CPUS = 32 -- crafting CPUs reported
+local MAX_CRAFT_ENTRIES = 16 -- crafts listed: running, or finished and not acknowledged yet
+local MAX_NAME = 128 -- registry and meta names (the contract's limit)
 local MAX_ERR_MSG = 200
 local MAX_SAY = 256
 local CRAFT_COMPUTE_MAX_S = 300 -- AE2 still planning after this long: give up on the result
@@ -179,7 +183,7 @@ local function check_watch(list, max)
         return nil, ("watch[%d]: unknown key %s"):format(i, tostring(k))
       end
     end
-    if type(e.name) ~= "string" or not e.name:find(REGISTRY_NAME) then
+    if type(e.name) ~= "string" or not e.name:find(REGISTRY_NAME) or #e.name > MAX_NAME then
       return nil, ("watch[%d]: name must be a registry name like minecraft:iron_ingot"):format(i)
     end
     if mtype(e.damage) ~= "integer" or e.damage < 0 or e.damage > 32767 then
@@ -498,7 +502,9 @@ function M.discover(st)
   local me_rank
   for _, f in ipairs(found) do
     local addr, ctype = f[1], f[2]
-    inv.counts[ctype] = (inv.counts[ctype] or 0) + 1
+    if ctype:find("^[%w_]+$") then -- the contract's type names; any other isn't one the agent uses
+      inv.counts[ctype] = (inv.counts[ctype] or 0) + 1
+    end
     if not ignored(cfg, addr) then
       if GT_TYPES[ctype] then
         local e = old[addr] or { addr = addr, type = ctype }
@@ -507,7 +513,7 @@ function M.discover(st)
             e.name = "multimachine.supercapacitor"
           else
             local ok, name = call(addr, "getName")
-            if ok and type(name) == "string" then
+            if ok and type(name) == "string" and #name <= MAX_NAME then
               e.name = name
             end
           end
@@ -617,15 +623,24 @@ local function sample_fields(st, e, where, fields)
 end
 
 local DECIMAL = function(v)
-  if type(v) == "string" and v:find("^%d+$") then
+  if type(v) == "string" and v:find("^%d+$") and #v <= 80 then
+    return v
+  end
+  return nil
+end
+
+-- A stored amount: a whole number, never negative (anything else is left out).
+local function nonneg(v)
+  v = int(v)
+  if v and v >= 0 then
     return v
   end
   return nil
 end
 
 local BUFFER_FIELDS = {
-  { "eu", "getEUStored", int },
-  { "eu_max", "getEUMaxStored", int },
+  { "eu", "getEUStored", nonneg },
+  { "eu_max", "getEUMaxStored", nonneg },
   { "eu_in", "getEUInputAverage", int },
   { "eu_out", "getEUOutputAverage", int },
 }
@@ -641,8 +656,8 @@ local MACHINE_FIELDS = {
   { "work", "hasWork", bool },
   { "progress", "getWorkProgress", int },
   { "progress_max", "getWorkMaxProgress", int },
-  { "eu", "getEUStored", int },
-  { "eu_max", "getEUMaxStored", int },
+  { "eu", "getEUStored", nonneg },
+  { "eu_max", "getEUMaxStored", nonneg },
 }
 
 local function sample_power(st)
@@ -685,7 +700,7 @@ local function sample_sensors(st)
         M.record_error(st, "sensor", short(e.addr) .. ": " .. tostring(lines))
       end
     else
-      local out = json.array()
+      local out, bytes = json.array(), 0
       if type(lines) == "table" then
         for _, line in ipairs(lines) do
           if #out >= MAX_SENSOR_LINES then
@@ -693,10 +708,11 @@ local function sample_sensors(st)
           end
           if type(line) == "string" then
             out[#out + 1] = clip(line, MAX_SENSOR_LINE)
+            bytes = bytes + #out[#out]
           end
         end
       end
-      e.sensor, e.sensor_at, e.sensor_seq = out, round2(now()), nil
+      e.sensor, e.sensor_bytes, e.sensor_at, e.sensor_seq = out, bytes, round2(now()), nil
     end
   end
 end
@@ -717,11 +733,15 @@ local function sample_cpus(st)
   local out = json.array()
   if type(cpus) == "table" then
     for _, c in ipairs(cpus) do
+      if #out >= MAX_CPUS then
+        M.record_error(st, "ae2", ("%d crafting CPUs; the first %d are reported"):format(#cpus, MAX_CPUS))
+        break
+      end
       if type(c) == "table" then
         out[#out + 1] = {
           name = type(c.name) == "string" and clip(c.name, 64) or "",
-          storage = int(c.storage) or 0,
-          coprocessors = int(c.coprocessors) or 0,
+          storage = nonneg(c.storage) or 0,
+          coprocessors = nonneg(c.coprocessors) or 0,
           busy = c.busy == true,
         }
       end
@@ -755,7 +775,7 @@ local function sample_items(st)
               r = { size = 0, stacks = 0, craftable = false }
               totals[key] = r
             end
-            r.size = r.size + (int(s.size) or 0)
+            r.size = r.size + (nonneg(s.size) or 0)
             r.stacks = r.stacks + 1
             r.craftable = r.craftable or s.isCraftable == true
           end
@@ -866,7 +886,9 @@ local function load_state(st)
         at = round2(now()),
       }
       if type(r.err) == "string" then
-        rec.err = r.err
+        rec.err = clip(r.err, MAX_ERR_MSG)
+      elseif not rec.ok then
+        rec.err = "no reason was saved"
       end
       if rec.state == "pending" then
         -- It was still running (an AE2 craft planning) when the agent stopped: say so once.
@@ -961,7 +983,7 @@ function HANDLERS.craft(st, id, a)
   if not me then
     return failed(id, "craft", "no AE2 controller or interface found")
   end
-  if type(a.name) ~= "string" or not a.name:find(REGISTRY_NAME) then
+  if type(a.name) ~= "string" or not a.name:find(REGISTRY_NAME) or #a.name > MAX_NAME then
     return refused(id, "craft", "name must be a registry name")
   end
   if mtype(a.damage) ~= "integer" or a.damage < 0 or a.damage > 32767 then
@@ -1001,6 +1023,16 @@ function HANDLERS.craft(st, id, a)
   end
   if not status then
     return failed(id, "craft", reason or "AE2 refused the request")
+  end
+  if #st.crafts >= MAX_CRAFT_ENTRIES then
+    -- Fewer than max_crafts (at most 16) run, so a finished one is waiting for its ack: drop the oldest.
+    for i, c in ipairs(st.crafts) do
+      if c.state ~= "computing" and c.state ~= "crafting" then
+        table.remove(st.crafts, i)
+        M.record_error(st, "command", "craft " .. c.id .. "'s final state was dropped: too many unacknowledged crafts")
+        break
+      end
+    end
   end
   st.crafts[#st.crafts + 1] = {
     id = id,
@@ -1132,7 +1164,10 @@ end
 ---------------------------------------------------------------------------------------------
 -- The telemetry document (gos-oc-bridge/1, docs/contracts/oc_bridge.md)
 
-local function entry_doc(e, seq)
+-- Fresh sensor lines go until the core acks a message that carried them, as many entries' as fit
+-- in SENSOR_BUDGET bytes (one entry's fit: 32 lines of 200 bytes); the others wait for a later
+-- message. An entry left out loses its mark, so an ack never drops lines it didn't carry.
+local function entry_doc(e, seq, budget)
   local d = { addr = e.addr, type = e.type, name = e.name, xyz = e.xyz }
   if e.kind then
     d.kind = e.kind
@@ -1142,15 +1177,22 @@ local function entry_doc(e, seq)
     d.active, d.allowed, d.work = e.active, e.allowed, e.work
     d.progress, d.progress_max, d.eu, d.eu_max = e.progress, e.progress_max, e.eu, e.eu_max
   end
-  if e.sensor then -- fresh lines, until the core acks a message that carried them
-    d.sensor, d.sensor_at = e.sensor, e.sensor_at
-    e.sensor_seq = e.sensor_seq or seq
+  if e.sensor then
+    local bytes = e.sensor_bytes or 0
+    if bytes <= budget.left then
+      budget.left = budget.left - bytes
+      d.sensor, d.sensor_at = e.sensor, e.sensor_at
+      e.sensor_seq = e.sensor_seq or seq
+    else
+      e.sensor_seq = nil
+    end
   end
   return d
 end
 
 function M.build_payload(st)
   local seq = st.seq
+  local budget = { left = SENSOR_BUDGET }
   local p = {
     v = CONTRACT_V,
     kind = "telemetry",
@@ -1178,10 +1220,10 @@ function M.build_payload(st)
     errors = json.array(),
   }
   for _, e in ipairs(st.inv.power) do
-    p.power[#p.power + 1] = entry_doc(e, seq)
+    p.power[#p.power + 1] = entry_doc(e, seq, budget)
   end
   for _, e in ipairs(st.inv.machines) do
-    p.machines[#p.machines + 1] = entry_doc(e, seq)
+    p.machines[#p.machines + 1] = entry_doc(e, seq, budget)
   end
   local me = st.inv.me
   if me then
@@ -1232,7 +1274,7 @@ function M.ack(st, n)
   for _, list in ipairs({ st.inv.power, st.inv.machines }) do
     for _, e in ipairs(list) do
       if e.sensor_seq and e.sensor_seq <= n then
-        e.sensor, e.sensor_seq = nil, nil
+        e.sensor, e.sensor_bytes, e.sensor_seq = nil, nil, nil
       end
     end
   end
@@ -1240,6 +1282,34 @@ function M.ack(st, n)
   if me and me.items_seq and me.items_seq <= n then
     me.items, me.items_seq = nil, nil
   end
+end
+
+-- The core called a message bad_payload: it can't read what is waiting, so resending it would be
+-- refused forever. Drop everything that waits for an ack; the next message is a fresh snapshot.
+function M.drop_pending(st)
+  local n = #st.results + #st.errors
+  st.results, st.errors = {}, {}
+  for i = #st.crafts, 1, -1 do
+    local c = st.crafts[i]
+    if c.state ~= "computing" and c.state ~= "crafting" then
+      table.remove(st.crafts, i)
+      n = n + 1
+    end
+  end
+  for _, list in ipairs({ st.inv.power, st.inv.machines }) do
+    for _, e in ipairs(list) do
+      if e.sensor then
+        e.sensor, e.sensor_bytes, e.sensor_seq = nil, nil, nil
+        n = n + 1
+      end
+    end
+  end
+  local me = st.inv.me
+  if me and me.items then
+    me.items, me.items_seq = nil, nil
+    n = n + 1
+  end
+  M.log(st, "warn", ("the core can't read the messages (bad_payload); dropped %d waiting records"):format(n))
 end
 
 ---------------------------------------------------------------------------------------------
@@ -1382,6 +1452,9 @@ function M.handle_reply(st, reply, seq)
   if reply.ok ~= true then
     local why = type(reply.err) == "string" and reply.err or "no reason given"
     local long = why == "unauthorized" or why == "unsupported_version"
+    if why == "bad_payload" then
+      M.drop_pending(st)
+    end
     return false, "the core refused the message: " .. clip(why, 120), long
   end
   local ack = reply.ack

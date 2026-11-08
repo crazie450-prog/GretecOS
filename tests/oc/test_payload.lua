@@ -138,7 +138,7 @@ test("ok false keeps everything for the next try", function()
   w.server = function()
     n = n + 1
     if n == 1 then
-      return { body = '{"v":1,"ok":false,"cmds":[],"err":"bad_payload"}' }
+      return { body = '{"v":1,"ok":false,"cmds":[],"err":"internal"}' }
     end
     return { body = '{"v":1,"ok":true,"cmds":[]}' }
   end
@@ -148,11 +148,205 @@ test("ok false keeps everything for the next try", function()
   M.cycle(st)
   local b = T.bodies(w)
   T.ok(by_addr(b[2].machines, w.ebf.addr).sensor, "resent after the refusal")
+  T.ok(b[2].ae2.items, "the watchlist too")
   local err = b[2].errors[1]
   T.eq(err.where, "transport")
-  T.has(err.msg, "bad_payload")
+  T.has(err.msg, "internal")
   M.cycle(st)
   T.eq(#T.last_body(w).errors, 0, "the error was acked by message 2's reply")
+end)
+
+test("bad_payload drops what waits, so the next message gets through", function()
+  local w = T.base()
+  local n = 0
+  w.server = function()
+    n = n + 1
+    if n == 1 then
+      return { body = '{"v":1,"ok":false,"cmds":[],"err":"bad_payload"}' }
+    end
+    return { body = '{"v":1,"ok":true,"cmds":[]}' }
+  end
+  local M, st = T.agent(w)
+  M.record_error(st, "machines", "something the core can't read")
+  M.cycle(st)
+  local b1 = T.bodies(w)[1]
+  T.eq(#b1.errors, 1)
+  T.ok(by_addr(b1.machines, w.ebf.addr).sensor)
+  st.next_cycle = 0
+  M.cycle(st)
+  local b2 = T.bodies(w)[2]
+  T.eq(#b2.errors, 1, "only the refusal itself")
+  T.has(b2.errors[1].msg, "bad_payload")
+  T.eq(by_addr(b2.machines, w.ebf.addr).sensor, nil, "the refused message's sensor lines are dropped")
+  T.eq(b2.ae2.items, nil, "and its watchlist")
+  T.eq(#b2.machines, 1, "the snapshot itself still goes")
+  T.has(w:printed_text(), "bad_payload", "said on the screen")
+  M.cycle(st)
+  T.eq(#T.last_body(w).errors, 0)
+end)
+
+-- Sensor lines of 32 * 200 bytes, half of them section signs (6 bytes each in the JSON).
+local function heavy_lines(tag)
+  local out = {}
+  for i = 1, 32 do
+    local s = ("%s line %02d "):format(tag, i)
+    out[i] = (s .. ("\194\167a"):rep(100)):sub(1, 200)
+  end
+  return out
+end
+
+local function sensor_bytes(body)
+  local n = 0
+  for _, list in ipairs({ body.power, body.machines }) do
+    for _, e in ipairs(list) do
+      for _, line in ipairs(e.sensor or {}) do
+        n = n + #line
+      end
+    end
+  end
+  return n
+end
+
+test("a message carries at most 8 KB of sensor lines; the rest follow", function()
+  local w = T.base({ bare = true, extra = "sensor_per_cycle = 4," })
+  local devs = {}
+  for i = 1, 6 do
+    devs[i] = F.gt_machine(w, { prefix = ("2d%02x"):format(i), name = "multimachine.m" .. i, sensor = heavy_lines("m" .. i) })
+  end
+  local M, st = T.agent(w)
+  T.run_until(M, st, w, 61)
+  local first = {}
+  for i, body in ipairs(T.bodies(w)) do
+    T.ok(sensor_bytes(body) <= 8192, "message " .. i .. " has " .. sensor_bytes(body) .. " bytes of lines")
+    for _, m in ipairs(body.machines) do
+      if m.sensor then
+        T.eq(#m.sensor, 32)
+        first[m.addr] = first[m.addr] or i
+      end
+    end
+  end
+  for i, d in ipairs(devs) do
+    T.ok(first[d.addr], "machine " .. i .. "'s lines went out")
+  end
+end)
+
+test("an ack never drops sensor lines its message didn't carry", function()
+  local w = T.base({ bare = true })
+  local a = F.gt_machine(w, { prefix = "2a", name = "multimachine.a" })
+  local b = F.gt_machine(w, { prefix = "2b", name = "multimachine.b" })
+  local c = F.gt_machine(w, { prefix = "2c", name = "multimachine.c" })
+  local M, st = T.agent(w)
+  M.discover(st)
+  local ea, eb, ec = st.inv.by_addr[a.addr], st.inv.by_addr[b.addr], st.inv.by_addr[c.addr]
+  local function lines(e, bytes, seq)
+    e.sensor, e.sensor_bytes, e.sensor_at, e.sensor_seq = json.array({ ("x"):rep(bytes) }), bytes, 1, seq
+  end
+  lines(ec, 4000, 1) -- c went out in message 1, which the core never read (M1 overwrote it)
+  lines(ea, 6000, nil) -- then a and b got fresh lines that fill the budget first
+  lines(eb, 4000, nil)
+  st.seq = 2
+  local p = M.build_payload(st)
+  T.ok(p.machines[1].sensor, "a fits")
+  T.eq(p.machines[2].sensor, nil, "b doesn't")
+  T.eq(p.machines[3].sensor, nil, "c doesn't")
+  M.ack(st, 2) -- the core read message 2
+  T.eq(ea.sensor, nil, "a's lines were in message 2")
+  T.ok(eb.sensor, "b's weren't")
+  T.ok(ec.sensor, "c's weren't either: message 1's mark no longer counts")
+  st.seq = 3
+  p = M.build_payload(st)
+  T.ok(p.machines[2].sensor and p.machines[3].sensor, "both go in message 3")
+  M.ack(st, 3)
+  T.eq(eb.sensor, nil)
+  T.eq(ec.sensor, nil)
+end)
+
+-- The largest base the config allows, with everything waiting and nothing acked: the message
+-- the core must accept stays bounded (docs/contracts/oc_bridge.md, Size: about 50 KB; the core
+-- takes up to 128 KB).
+test("the largest message stays under 64 KB", function()
+  local watch = {}
+  for i = 1, 64 do
+    watch[#watch + 1] = ('    { name = "gregtech:gt.metaitem.%02d", damage = %d },'):format(i, 32000 + i)
+  end
+  local config = table.concat({
+    "{",
+    '  token = "' .. T.TOKEN .. '",',
+    "  max_machines = 64, max_power = 32, max_watch = 64, max_crafts = 16, sensor_per_cycle = 4,",
+    "  watch = {",
+    table.concat(watch, "\n"),
+    "  },",
+    "}",
+  }, "\n")
+  local w = T.base({ bare = true, config = config })
+  local cpus, items, patterns = {}, {}, {}
+  for i = 1, 40 do
+    cpus[i] = { name = ("cpu %02d "):format(i) .. ("x"):rep(60), storage = 65536 * i, coprocessors = i, busy = i % 2 == 0 }
+  end
+  for i = 1, 64 do
+    items[#items + 1] = { name = ("gregtech:gt.metaitem.%02d"):format(i), damage = 32000 + i, size = 2 ^ 40, isCraftable = true }
+    patterns[("gregtech:gt.metaitem.%02d@%d"):format(i, 32000 + i)] = { plan_ticks = 1, craft_ticks = 1 }
+  end
+  w.me = F.me(w, { prefix = "5e", cpus = cpus, items = items, patterns = patterns })
+  for i = 1, 64 do
+    F.gt_machine(w, { prefix = ("2%03x"):format(i), name = ("multimachine.some.long.addon.name.%03d"):format(i), sensor = heavy_lines("m" .. i) })
+  end
+  for i = 1, 32 do
+    F.battery_buffer(w, { prefix = ("3%03x"):format(i), sensor = heavy_lines("b" .. i) })
+  end
+  local id = 0
+  w.server = function(req, world)
+    -- Never acks; every reply carries crafts and a say without a chat box, so results pile up.
+    local cmds = json.array()
+    for _ = 1, 8 do
+      id = id + 1
+      local k = (id % 64) + 1
+      if id % 2 == 0 then
+        cmds[#cmds + 1] = T.cmd(id, "craft", { name = ("gregtech:gt.metaitem.%02d"):format(k), damage = 32000 + k, amount = 1 })
+      else
+        cmds[#cmds + 1] = T.cmd(id, "say", { text = ("y"):rep(256) })
+      end
+    end
+    return { body = json.encode({ v = 1, ok = true, cmds = cmds, ack = 0 }) }
+  end
+  local M, st = T.agent(w)
+  for i = 1, 30 do
+    M.record_error(st, "machines", ("error %02d "):format(i) .. ("z"):rep(190))
+  end
+  local biggest = 0
+  for _ = 1, 12 do
+    st.next_cycle = 0
+    M.cycle(st)
+    biggest = math.max(biggest, #w.requests[#w.requests].body)
+  end
+  local last = T.last_body(w)
+  T.eq(#last.machines, 64)
+  T.eq(#last.power, 32)
+  T.eq(#last.ae2.cpus, 32, "crafting CPUs are capped")
+  T.eq(#last.ae2.items, 64)
+  T.eq(#last.results, 16)
+  T.eq(#last.errors, 8)
+  T.ok(#last.crafts <= 16, "crafts are capped")
+  T.ok(sensor_bytes(last) <= 8192)
+  T.ok(biggest <= 64 * 1024, "the biggest message was " .. biggest .. " bytes")
+  T.dump("largest-stats.json", json.encode({ biggest_bytes = biggest }))
+end)
+
+test("values outside the contract are left out, so the core can always read the message", function()
+  local w = T.base({ bare = true })
+  local long = F.gt_machine(w, { prefix = "2a", name = ("n"):rep(129) })
+  local neg = F.gt_machine(w, { prefix = "2b", name = "multimachine.neg", eu = -5, eu_max = -1 })
+  F.plain(w, "odd-type.name", { prefix = "9a" })
+  w.me = F.me(w, { prefix = "5e", cpus = { { name = "c", storage = -1, coprocessors = -2, busy = true } } })
+  local M, st = T.agent(w)
+  M.cycle(st)
+  local p = T.last_body(w)
+  T.eq(by_addr(p.machines, long.addr).name, nil, "a name over 128 bytes is left out")
+  T.eq(by_addr(p.machines, neg.addr).eu, nil, "a negative stored EU is left out")
+  T.eq(by_addr(p.machines, neg.addr).eu_max, nil)
+  T.eq(p.components["odd-type.name"], nil, "a type name the contract can't carry isn't counted")
+  T.eq(p.ae2.cpus[1].storage, 0)
+  T.eq(p.ae2.cpus[1].coprocessors, 0)
 end)
 
 test("values a driver can't give are left out, not invented", function()

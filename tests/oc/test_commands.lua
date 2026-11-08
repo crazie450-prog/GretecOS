@@ -210,6 +210,36 @@ test("craft without AE2 fails, and max_crafts holds", function()
   T.has(r2[1].err, "no AE2")
 end)
 
+test("finished crafts the core never acknowledges stay at most 16", function()
+  local w = T.base()
+  w.me.patterns["minecraft:diamond@0"] = { plan_ticks = 1, craft_ticks = 1 }
+  local id = 0
+  w.server = function()
+    id = id + 1
+    local cmds = json.array({ T.cmd(id, "craft", { name = "minecraft:diamond", damage = 0, amount = 1 }) })
+    return { body = json.encode({ v = 1, ok = true, cmds = cmds, ack = 0 }) }
+  end
+  local M, st = T.agent(w)
+  for _ = 1, 24 do
+    st.next_cycle = 0
+    M.cycle(st)
+    T.ok(#st.crafts <= 16, "crafts kept: " .. #st.crafts)
+  end
+  T.eq(#st.crafts, 16)
+  local dropped = false
+  for _, e in ipairs(st.errors) do
+    dropped = dropped or e.msg:find("final state was dropped", 1, true) ~= nil
+  end
+  T.ok(dropped, "the drop is reported")
+  local running = 0
+  for _, c in ipairs(st.crafts) do
+    if c.state == "computing" or c.state == "crafting" then
+      running = running + 1
+    end
+  end
+  T.ok(running >= 1, "a running craft is never the one dropped")
+end)
+
 test("a craft AE2 never finishes planning gives up after 300 s", function()
   local w = T.base()
   w.me.patterns["minecraft:diamond@0"] = { plan_forever = true }

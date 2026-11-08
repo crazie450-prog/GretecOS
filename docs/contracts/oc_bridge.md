@@ -31,7 +31,11 @@ value from a stale one; gaps (a paused game, a broken link) are marked stale, ne
 
 A failed exchange (refused connection, a non-2xx code, a timeout, a reply that isn't one JSON object, an
 `ok: false` reply) leaves everything that was waiting for an ack waiting (see Acknowledgement) and is retried with
-backoff.
+backoff. The one exception is `ok: false` with `err: "bad_payload"`: resending what the core can't read would be
+refused forever, so the agent drops everything waiting for an ack (results, errors, finished crafts, sensor lines,
+the watchlist), says so on the OC screen and in its log, and its next message is a fresh snapshot carrying the
+refusal as an error. The agent never builds a message the schema refuses on purpose (see Size and limits); this is
+the way back if one slips through.
 
 ## M1: the file mailbox (WO-7.3)
 
@@ -80,6 +84,15 @@ With no `inbox.json` waiting, `exchange` returns `{v = 1, ok = true, cmds = {}}`
 Every message is a full snapshot of power, machines, AE2 CPUs and crafts, so a missed one is harmless. Sensor lines
 and the watchlist are sent when read and repeated until the core acknowledges a message that carried them.
 
+**Size and limits.** Every list is bounded, so a message is too: at most 32 power and 64 machine entries
+(`max_power` 16 and `max_machines` 32 by default), 32 crafting CPUs (more are left out and reported in `errors`),
+16 crafts, 16 results, 8 errors, 256 watchlist items (`max_watch`, 64 by default) and 8 KB of sensor lines (see
+Sensor lines). The largest message the agent's limits allow measured about 50 KB (`tests/oc/test_payload.lua`: every
+limit at its maximum, every list full, nothing acknowledged); a typical one is 2 to 8 KB. The core accepts bodies up
+to 128 KB. Readings outside the schema's ranges are left out, never sent: a name over 128 bytes, a negative stored
+EU, a decimal string over 80 digits; a component type that isn't letters, digits and `_` isn't counted in
+`components`.
+
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | 1 | Contract version |
@@ -116,8 +129,9 @@ out, Computronics' `getEUInputAverage`/`getEUOutputAverage`), and:
 `eu_max` (the controller's own EU store; 0 on most multiblocks, whose energy is in hatches), `sensor`, `sensor_at`.
 A field whose call failed is left out.
 
-**`ae2`**: `addr`, `type` (`me_controller` or `me_interface`), `cpus` (every crafting CPU: `name`, `storage` in
-bytes, `coprocessors`, `busy`), and when the watchlist was read and isn't acknowledged yet, `items` and `items_at`.
+**`ae2`**: `addr`, `type` (`me_controller` or `me_interface`), `cpus` (the crafting CPUs, at most 32: `name`,
+`storage` in bytes, `coprocessors`, `busy`), and when the watchlist was read and isn't acknowledged yet, `items` and
+`items_at`.
 `items` has one entry per watched (`name`, `damage`) in config order: `size` is the sum over every stack with that
 registry name and damage (NBT variants included), `stacks` how many stacks that was, `craftable` whether any of them
 has a pattern. An entry with `size` 0 was looked up and is not stored. A watched name the game doesn't know also
@@ -126,7 +140,8 @@ gives 0. The core resolves names through the DB by registry name and damage; the
 **Craft** (`crafts[]`): `id` (the command's id), `name`, `damage`, `amount`, `state`, `err` (why it failed), `at`
 (uptime of the last change). `state` goes `computing` (AE2 is planning) → `crafting` (submitted) → `done` or
 `canceled`, or `computing` → `failed`. A craft is listed while it runs and once more in its final state, until a
-message that carried that final state is acknowledged. The agent tracks at most `max_crafts` (8). After a restart (a
+message that carried that final state is acknowledged. The agent runs at most `max_crafts` (8) at once and lists at
+most 16: a new craft with 16 listed drops the oldest finished one and reports that in `errors`. After a restart (a
 new `boot`) it no longer reports the crafts it started before.
 
 **Result** (`results[]`): `id`, `kind`, `ok`, `state`, `err`, `at`. One per command, final:
@@ -181,13 +196,17 @@ may still run").
 
 The core has message `n` when a reply says `ack: n`, or, over HTTP, when a reply with `ok: true` answers message `n`.
 On an ack the agent drops what it had sent in messages up to `n`: results, errors, finished crafts, sensor lines and
-the watchlist. What arrives after an ack (a new reading, a repeated error) waits for the next one.
+the watchlist. What arrives after an ack (a new reading, a repeated error) waits for the next one. Everything waiting
+goes in every message, except sensor lines over the 8 KB budget; an entry whose lines are left out of a message
+loses its mark, so an ack drops only lines that went in every message since they were first sent.
 
 ## Sensor lines
 
 `getSensorInformation()` lines are passed on **exactly** as the driver returned them, at most 32 lines of at most
-200 bytes per entry. On GT 5.09.54.265 (GTNH 2.9.0) they come in two forms, often in one machine, both with
-section-sign (`§`, U+00A7) colour codes:
+200 bytes per entry. A message carries the waiting lines of as many entries as fit in 8 KB of line text, in list
+order (power, then machines); the others go in a later message, each with its own `sensor_at`. An LSC's 24 lines are
+about 1.8 KB. On GT 5.09.54.265 (GTNH 2.9.0) they come in two forms, often in one machine, both with section-sign
+(`§`, U+00A7) colour codes:
 
 - **Encoded** by `IGregTechDeviceInformation.encode`: the translation key, then each argument after **two backslash
   characters** (`\\`), e.g. `GT5U.infodata.battery_buffer.stored_items\\§a1,234,567§r\\§e2,000,000§r`. An argument
