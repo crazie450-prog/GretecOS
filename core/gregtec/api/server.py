@@ -32,6 +32,8 @@ from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
+from gregtec.bridge.ingest import Bridge
+from gregtec.bridge.mailbox import MailboxService
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
@@ -120,6 +122,9 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
     )
     agents = ask.setup(cfg, store=store)
+    bridge = Bridge()  # the OC ingest, shared by every transport (WO-7.3, D217)
+    # M1: the OC file mailboxes gos.toml names, polled from their own thread (WO-7.3).
+    mailboxes = MailboxService.from_config(cfg, bridge)
     core = Core(
         cfg=cfg,
         store=store,
@@ -128,6 +133,7 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter),
         asker=agents.asker(),
+        oc=bridge,
     )
     if isinstance(agents.deep, DeepLaneService):
         core.deep = agents.deep
@@ -169,9 +175,11 @@ def run(cfg: Config, *, supervised: bool = False) -> int:
         "core listening",
         extra={"port": cfg.core_port, "supervised": supervised, "pid": os.getpid()},
     )
+    mailboxes.start()
     try:
         server.run(sockets=[sock])
     finally:
+        mailboxes.stop()
         control.remove_run_file(run_file, os.getpid())
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         store.close()

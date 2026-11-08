@@ -64,6 +64,7 @@ from gregtec.api.security import (
     PairingError,
     Principal,
 )
+from gregtec.bridge.ingest import Bridge
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
@@ -138,6 +139,8 @@ class Core:
     stop_asked: float | None = None
     asker: Asker | None = None  # the router and the lanes (WO-2.3)
     deep: DeepLaneService | None = None  # the deep lane (WO-2.4)
+    # The OC bridge's ingest, shared by M1 (WO-7.3) and /oc/telemetry (WO-7.1).
+    oc: Bridge | None = None
 
     # --- pushing to WebSocket clients
 

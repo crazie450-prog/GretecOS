@@ -31,6 +31,9 @@
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
+| [mailbox.play] / [mailbox.lab] drive | none (no M1 mailbox)         | core (WO-7.3, D217)         |
+| [mailbox.<role>] dir     | home/gos/mailbox                         | core (WO-7.3)               |
+| [mailbox.<role>] world   | [paths] world (play), lab_world (lab)    | core (WO-7.3)               |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -40,7 +43,7 @@ delete the file it was meant to keep. ``allowed_hosts`` likewise adds to its def
 three names with ``:<port>``). Every other key in the Appendix C skeleton is ignored until its WO
 reads it.
 
-**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``) are read only by the core,
+**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``, ``[mailbox]``) are read only by the core,
 the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -99,6 +102,15 @@ PACK_PIN = "2.9.0"
 GT_PIN = "5.09.54.265"
 # [models] keys the deep lane reads (plan 4.4, Appendix C; vision arrives with WO-8.2)
 MODEL_ROLES = ("orchestrator", "planner", "architect", "analyst", "heavy")
+# M1, the OC file mailbox (plan 7.9, WO-7.3): the instances whose worlds can hold one, and the
+# agent's default folder on its drive (mailbox/ next to /home/gos/gos-agent.lua, oc/README.md).
+MAILBOX_ROLES = ("play", "lab")
+MAILBOX_DIR = "home/gos/mailbox"
+_OC_ADDRESS = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_MAILBOX_PART = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+_WORLD_NAME = re.compile(r'^[^/\\:*?"<>|\x00-\x1f]+$')
 
 
 def default_home() -> Path:
@@ -121,6 +133,17 @@ _DASHBOARD_ENTRY = re.compile(r"^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+localhost$")
 # Claude Code's account (setup_gos_dev.ps1 -DevUser). Its own core and supervisor must not use
 # Clayton's ports or dashboard name (D115): see service_problems.
 DEV_ACCOUNT = "gos-dev"
+
+
+@dataclass(frozen=True)
+class OcMailbox:
+    """``[mailbox.<role>]``: one OC agent's file mailbox (M1, WO-7.3), the folder
+    ``<world>/opencomputers/<drive>/<dir>/`` in a world of the play or lab instance."""
+
+    role: str  # "play" or "lab"
+    world: str  # the world's folder in saves/
+    drive: str  # the OC drive's address
+    dir: str = MAILBOX_DIR  # posix, relative to the drive's folder
 
 
 @dataclass(frozen=True)
@@ -159,6 +182,7 @@ class Config:
     launch_home: Path | None = None
     idle_minutes: int = 30  # [maintenance]: no input this long, game closed (plan 6.6)
     keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
+    mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
@@ -237,6 +261,11 @@ def service_problems(cfg: Config) -> list[str]:
             problems.append(
                 f"gos.toml: as {DEV_ACCOUNT}, [core] dashboard_host must not be Clayton's "
                 f'{DASHBOARD_HOST}; set e.g. dashboard_host = "gos-dev.localhost"'
+            )
+        if any(m.role == "play" for m in cfg.mailboxes):
+            problems.append(
+                f"gos.toml: as {DEV_ACCOUNT}, [mailbox.play] must not be set: Play's OC mailbox "
+                "is Clayton's core's (D75); test with [mailbox.lab]"
             )
     return problems
 
@@ -488,6 +517,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
             ),
             defaults.keep_backups,
         ),
+        "mailboxes": soft(lambda: _mailboxes(data), ()),
         "service_errors": tuple(problems),
     }
 
@@ -580,3 +610,57 @@ def _launch_home(launch: Mapping[str, Any]) -> Path | None:
     if home is not None and (not isinstance(home, str) or not home):
         raise ConfigError("gos.toml: [launch] home must be a non-empty string")
     return Path(home) if home else None
+
+
+def _mailboxes(data: Mapping[str, Any]) -> tuple[OcMailbox, ...]:
+    """``[mailbox.play]`` and ``[mailbox.lab]`` (WO-7.3). A table without ``drive`` is an error,
+    so a half-filled one can't silently do nothing."""
+    tables = _table(data, "mailbox", "")
+    paths = _table(data, "paths", "")
+    out: list[OcMailbox] = []
+    for role, spec in tables.items():
+        where = f"[mailbox.{role}]"
+        if role not in MAILBOX_ROLES:
+            raise ConfigError(
+                f"gos.toml: {where}: a mailbox belongs to the play or lab instance "
+                "([mailbox.play] or [mailbox.lab])"
+            )
+        if not isinstance(spec, dict):
+            raise ConfigError(f"gos.toml: {where} must be a table")
+        unknown = sorted(set(spec) - {"world", "drive", "dir"})
+        if unknown:
+            raise ConfigError(
+                f"gos.toml: {where} has unknown keys {', '.join(unknown)} "
+                "(it takes world, drive and dir)"
+            )
+        world = spec.get("world", paths.get("world" if role == "play" else "lab_world"))
+        if (
+            not isinstance(world, str)
+            or not _WORLD_NAME.match(world)
+            or world.strip(" .") != world
+            or len(world) > 255
+        ):
+            raise ConfigError(
+                f"gos.toml: {where} world must be a world's folder name in saves/ "
+                f"(or set [paths] {'world' if role == 'play' else 'lab_world'})"
+            )
+        drive = spec.get("drive")
+        if not isinstance(drive, str) or not _OC_ADDRESS.match(drive):
+            raise ConfigError(
+                f"gos.toml: {where} drive must be the OC drive's address, as the agent prints "
+                'it when it starts (e.g. "1d9f2c3a-6b1e-4c1b-9a7e-2f3c4d5e6f70")'
+            )
+        folder = spec.get("dir", MAILBOX_DIR)
+        parts = folder.split("/") if isinstance(folder, str) else []
+        if (
+            not parts
+            or len(parts) > 8
+            or len(folder) > 128
+            or not all(_MAILBOX_PART.match(p) for p in parts)
+        ):
+            raise ConfigError(
+                f"gos.toml: {where} dir must be a folder on the drive, written with / and "
+                f'relative to the drive, as the agent prints it (e.g. "{MAILBOX_DIR}")'
+            )
+        out.append(OcMailbox(role=role, world=world, drive=drive, dir=folder))
+    return tuple(out)

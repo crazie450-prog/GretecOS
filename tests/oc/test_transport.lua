@@ -253,16 +253,15 @@ test("poll_s asks for the next message sooner", function()
   end
 end)
 
-test("auto without an internet card and without the mailbox stops with a clear reason", function()
+test("auto without an internet card takes the M1 mailbox (WO-7.3)", function()
   local w = T.base({ no_internet = true })
-  local M = assert(F.load_agent(w))
-  local lines = {}
-  local code = M.main(table.pack("/home/gos/gos-agent.cfg"), { out = function(s)
-    lines[#lines + 1] = s
-  end })
-  T.eq(code, 1)
-  T.has(table.concat(lines, "\n"), "mailbox.lua, WO-7.3")
-  T.eq(#w.requests, 0)
+  local M, st = T.agent(w)
+  T.eq(st.transport.name, "mailbox")
+  T.eq(st.transport.implicit_ack, false)
+  T.eq(st.transport.dir, "/home/gos/mailbox", "mailbox/ next to the config by default")
+  local w2 = T.base()
+  local _, st2 = T.agent(w2)
+  T.eq(st2.transport.name, "http", "and HTTP once a card is in")
 end)
 
 test("the mailbox transport slot (WO-7.3) is used when mailbox.lua is there", function()

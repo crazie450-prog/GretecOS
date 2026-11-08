@@ -205,6 +205,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "jsonschema" },
     { name = "keyring" },
     { name = "uvicorn" },
     { name = "websockets" },
@@ -212,7 +213,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "jsonschema" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -222,6 +222,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=2.4.0" },
     { name = "claude-agent-sdk", specifier = ">=0.2.176" },
     { name = "fastapi", specifier = ">=0.162.0" },
+    { name = "jsonschema", specifier = ">=4.26" },
     { name = "keyring", specifier = ">=25.7.0" },
     { name = "uvicorn", specifier = ">=0.54.0" },
     { name = "websockets", specifier = ">=17.4" },
@@ -229,7 +230,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jsonschema", specifier = ">=4.26" },
     { name = "pytest", specifier = ">=9.2" },
     { name = "ruff", specifier = ">=0.17.3,<0.18" },
 ]
