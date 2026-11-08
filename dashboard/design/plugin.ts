@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { Plugin } from "vite";
-import { BUNDLE_FILE, TOKENS_FILE, designCss, fontsOf, readBundle, readTokens } from "./designSystem";
+import { BUNDLE_FILE, TOKENS_FILE, designCss, fontsOf, readBundle, readTokens } from "./designSystem.ts";
 
 const ID = "virtual:gos-design.css";
 const RESOLVED = `\0${ID}`;

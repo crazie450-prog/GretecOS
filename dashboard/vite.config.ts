@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import type { ProxyOptions } from "vite";
 import { defineConfig } from "vitest/config";
-import { gosDesign } from "./design/plugin";
-import { REPO_ROOT } from "./design/designSystem";
+import { gosDesign } from "./design/plugin.ts";
+import { REPO_ROOT } from "./design/designSystem.ts";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const core = new URL(process.env.GOS_CORE_URL ?? "http://127.0.0.1:8775");

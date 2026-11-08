@@ -29,9 +29,11 @@ const approval: ApprovalCard = {
 describe("status", () => {
   it("is a glyph and a word", () => {
     render(<StatusGlyph status="err" label="Core offline" />);
-    const el = screen.getByText(/Core offline/);
-    expect(el.textContent).toContain("\u25B2");
-    expect(el.getAttribute("data-status")).toBe("err");
+    // The word is its own span (the glyph is hidden from screen readers): check the whole status.
+    const el = screen.getByText("Core offline").closest(".gos-status");
+    expect(el?.textContent).toContain("\u25B2");
+    expect(el?.getAttribute("data-status")).toBe("err");
+    expect(el?.className).toContain("err");
   });
   it("tier chips always carry the tier's name", () => {
     render(<TierChip tier="LV" />);
