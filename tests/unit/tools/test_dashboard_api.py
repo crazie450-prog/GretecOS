@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import shutil
 import sqlite3
 import sys
@@ -101,8 +102,16 @@ def core(
         auth=Auth(store, ADMIN),
         meter=UsageMeter(store, 100.0, (80, 100)),
         asker=Asker(registry, deep, FastLane(EchoClient(), registry, meter=None)),  # type: ignore[arg-type]
+        # The core's watcher runs while a test client is open: its own refreshes never come
+        # due, so they can't race a test's (each test refreshes when it means to).
         board=dashboard.Board(
-            cfg, dist=dist, foreground=lambda: "javaw.exe", clients=lambda cfg: ["play"]
+            cfg,
+            dist=dist,
+            foreground=lambda: "javaw.exe",
+            clients=lambda cfg: ["play"],
+            next_focus=math.inf,
+            next_game=math.inf,
+            next_data=math.inf,
         ),
     )
     yield c
@@ -346,23 +355,23 @@ class FakeDeep:
         return self._health
 
 
-def test_the_deep_lane_alerts_only_what_nothing_else_says(
-    client: TestClient, core: Core
-) -> None:
+def test_the_deep_lane_alerts_only_what_nothing_else_says(core: Core) -> None:
+    def alert_ids() -> list[str]:
+        return [a["id"] for a in dashboard.state(core, True)["alerts"]]
+
+    core.key_status = ("ok", "stored")
     offline = ("warn", "offline: LookupError: no Anthropic key")
     core.deep = FakeDeep([], offline)  # type: ignore[assignment]
-    ids = [a["id"] for a in client.get("/api/state", headers=admin()).json()["alerts"]]
-    assert "health-deep_lane" in ids
+    assert "health-deep_lane" in alert_ids()
     # The AI is offline: the "AI offline" state says it, so no alert repeats it.
     core.key_status = ("warn", "not stored: gos key set anthropic")
-    ids = [a["id"] for a in client.get("/api/state", headers=admin()).json()["alerts"]]
-    assert "health-deep_lane" not in ids
+    assert "health-deep_lane" not in alert_ids()
     # A task paused at its cap: its approval card says it, with the countdown.
     core.key_status = ("ok", "stored")
     task = deep.DeepTask("h-1", "plan a steel line", "plan it", "router", 1.0)
     task.status, task.approve_by = deep.NEEDS_APPROVAL, time.time() + 1800
     core.deep = FakeDeep([task], ("warn", "h-1 paused at its cap: approve or stop it"))  # type: ignore[assignment]
-    s = client.get("/api/state", headers=admin()).json()
+    s = dashboard.state(core, True)
     assert "health-deep_lane" not in [a["id"] for a in s["alerts"]]
     assert [(a["id"], a["expires_at"]) for a in s["approvals"]] == [
         ("deep-h-1", int(task.approve_by))
