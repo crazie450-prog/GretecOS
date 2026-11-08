@@ -178,18 +178,19 @@ test("a Lua 5.2 CPU gets a clear message", function()
   T.has(w:printed_text(), "Lua 5.3")
 end)
 
+local function once(w)
+  local M = assert(F.load_agent(w))
+  local lines = {}
+  local code = M.main(table.pack("--once", "/home/gos/gos-agent.cfg"), {
+    out = function(s)
+      lines[#lines + 1] = s
+    end,
+    boot = "b0075eed",
+  })
+  return code, table.concat(lines, "\n")
+end
+
 test("--once: one cycle and an answer", function()
-  local function once(w)
-    local M = assert(F.load_agent(w))
-    local lines = {}
-    local code = M.main(table.pack("--once", "/home/gos/gos-agent.cfg"), {
-      out = function(s)
-        lines[#lines + 1] = s
-      end,
-      boot = "b0075eed",
-    })
-    return code, table.concat(lines, "\n")
-  end
   local w = T.base()
   local code, text = once(w)
   T.eq(code, 0)
@@ -206,6 +207,36 @@ test("--once: one cycle and an answer", function()
   code, text = once(w3)
   T.eq(code, 1)
   T.has(text, "token")
+end)
+
+test("--once with commands: it reports their results before it exits", function()
+  local w = T.base()
+  w.cmds_queue = {
+    T.cmd(1, "say", { text = "hello from --once" }),
+    T.cmd(2, "craft", { name = "gregtech:gt.metaitem.01", damage = 11305, amount = 1 }),
+  }
+  local code, text = once(w)
+  T.eq(code, 0)
+  T.has(text, "the core answered")
+  T.has(text, "their results went in the later ones")
+  local state = {}
+  for _, b in ipairs(T.bodies(w)) do
+    for _, r in ipairs(b.results) do
+      state[r.id] = r.state
+    end
+  end
+  T.eq(state[1], "done")
+  T.eq(state[2], "submitted", "AE2's answer, not 'restarted before AE2 answered' on the next run")
+  T.between(w.nrequests, 2, 4)
+  T.ok(w.clock < 10, "it doesn't linger")
+  -- AE2 never finishes planning: it stops waiting after 30 s and says what that means.
+  local w2 = T.base()
+  w2.me.patterns["minecraft:diamond@0"] = { plan_forever = true }
+  w2.cmds_queue = { T.cmd(3, "craft", { name = "minecraft:diamond", damage = 0, amount = 1 }) }
+  code, text = once(w2)
+  T.eq(code, 0)
+  T.has(text, "a result was still waiting after 30 s")
+  T.between(w2.clock, 30, 36)
 end)
 
 test("an unknown option is a usage error", function()

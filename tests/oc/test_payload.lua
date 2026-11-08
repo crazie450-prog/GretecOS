@@ -134,6 +134,52 @@ test("the watchlist: a pattern with none stored, an unknown name, a failing look
   T.has(p.errors[1].msg, "getItemInNetwork minecraft:iron_ingot@0: java.lang.IllegalStateException")
 end)
 
+test("a lookup with no usable size is left out, not sent as 0", function()
+  local w = T.base()
+  local real = w.me.methods.getItemInNetwork
+  w.me.methods.getItemInNetwork = { direct = false, fn = function(s, name, damage, nbt)
+    if name == "minecraft:diamond" then
+      return { name = name, damage = damage, size = -1, isCraftable = false }
+    end
+    return real.fn(s, name, damage, nbt)
+  end }
+  local M, st = T.agent(w)
+  M.cycle(st)
+  local p = T.last_body(w)
+  T.eq(#p.ae2.items, 3)
+  for _, it in ipairs(p.ae2.items) do
+    T.ok(it.name ~= "minecraft:diamond", "no guessed count")
+  end
+  T.has(p.errors[1].msg, "getItemInNetwork minecraft:diamond@0: no usable size")
+end)
+
+test("more than 32 crafting CPUs: the cut is reported once a discovery, not in every message", function()
+  local w = T.base()
+  local cpus = {}
+  for i = 1, 40 do
+    cpus[i] = { name = "cpu " .. i, storage = 65536, coprocessors = 1, busy = false }
+  end
+  w.me.cpus = cpus
+  local M, st = T.agent(w)
+  local function cut_notes()
+    local n = 0
+    for _, b in ipairs(T.bodies(w)) do
+      T.eq(#b.ae2.cpus, 32)
+      for _, e in ipairs(b.errors) do
+        if e.msg:find("40 crafting CPUs; the first 32 are reported", 1, true) then
+          n = n + 1
+        end
+      end
+    end
+    return n
+  end
+  T.run_until(M, st, w, 61)
+  T.ok(#w.requests >= 12)
+  T.eq(cut_notes(), 1, "one message carries it; the core acknowledged it there")
+  T.run_until(M, st, w, 311) -- discovery runs again at 300 s
+  T.eq(cut_notes(), 2, "and once more after the next discovery")
+end)
+
 test("a watchlist name with thousands of variants costs one small table per entry", function()
   local w = T.base()
   for i = 1, 3000 do

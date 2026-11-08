@@ -17,7 +17,7 @@ core parses them.
 
 Cost per cycle (non-direct calls take one server tick each, direct ones none): each storage entry
 (LSC) 2, at most sensor_per_cycle getSensorInformation, getCpus 1, the tps card 1, each tracked craft
-1 or 2, the POST about 3 to 5; every ae2_s seconds one getItemInNetwork per watched entry.
+1 to 3, the POST about 3 to 5; every ae2_s seconds one getItemInNetwork per watched entry.
 Everything else is a direct call. Between cycles it waits in event.pull, so it never holds the
 server tick, and every table it keeps is bounded.
 
@@ -771,6 +771,8 @@ local function sample_items(st)
         return
       end
       M.record_error(st, "ae2", ("getItemInNetwork %s@%d: %s"):format(w.name, w.damage, tostring(s)))
+    elseif type(s) == "table" and nonneg(s.size) == nil then
+      M.record_error(st, "ae2", ("getItemInNetwork %s@%d: no usable size"):format(w.name, w.damage))
     else
       -- nil: none stored and no pattern, or a name the game doesn't know.
       local found = type(s) == "table"
@@ -912,10 +914,17 @@ end
 
 -- OC keeps a crafting status across a world reload (the computer resumes) but not its AE2 link:
 -- the status then answers "no link", isCanceled true and isDone false for a craft that may well
--- still run (OC 1.12.68 NetworkControl CraftingStatus.save/load). Only a reload gives "no link"
--- with a failure, so it is reported as that, never as canceled.
+-- still run (OC 1.12.68 NetworkControl CraftingStatus.save/load). That is reported as lost track,
+-- never as canceled. Saving alone (an autosave) also sets the live status's failed flag while AE2
+-- is still planning, so a job AE2 accepted afterwards answers hasFailed with true, "no link" too;
+-- isDone tells them apart: with a link it answers from AE2's job, one value and no reason.
 local NO_LINK = "no link"
 local LOST = "lost track of it after a world reload (OC keeps no AE2 link); the craft may still run, check AE2"
+
+local function has_link(status)
+  local ok, _, why = pcall(status.isDone)
+  return ok and why == nil
+end
 
 local function poll_crafts(st)
   for _, c in ipairs(st.crafts) do
@@ -926,6 +935,9 @@ local function poll_crafts(st)
         c.result = result(c.id, "craft", false, "failed", computing)
       elseif computing == false then
         local okf, failed, reason = pcall(c.status.hasFailed)
+        if okf and failed and reason == NO_LINK and has_link(c.status) then
+          failed = false -- an autosave while AE2 planned, and AE2 has taken the job since
+        end
         if okf and failed then
           reason = reason == NO_LINK and LOST or reason or "request failed"
           craft_state(st, c, "failed", reason)

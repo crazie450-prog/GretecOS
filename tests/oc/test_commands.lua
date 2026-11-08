@@ -284,6 +284,93 @@ test("only allowlisted, confirmed commands with ids run", function()
   T.eq(ignored, 4, "commands without a usable id are reported as errors, not results")
 end)
 
+test("confirmed_via is one of the contract's four ways, nothing else", function()
+  local w = T.base()
+  w.bad_cmds = true
+  local M, st = T.agent(w)
+  local r = exchange(w, M, st, {
+    T.cmd(1, "say", { text = "by voice" }, "voice"),
+    T.cmd(2, "say", { text = "by the dashboard" }, "dashboard"),
+    T.cmd(3, "say", { text = "an agent" }, "agent"),
+    T.cmd(4, "say", { text = "a blank" }, " "),
+    T.cmd(5, "say", { text = "capitalised" }, "Voice"),
+    T.cmd(6, "say", { text = "padded" }, "phone "),
+    T.cmd(7, "say", { text = "a number" }, 1),
+  })
+  T.eq(r[1].state, "done")
+  T.eq(r[2].state, "done")
+  for id = 3, 7 do
+    T.eq(r[id].state, "refused", "command " .. id)
+    T.has(r[id].err, "not confirmed")
+  end
+  T.same(w.chat.said, { "by voice", "by the dashboard" })
+end)
+
+-- OC 1.12.68's CraftingStatus.save/load: after a reload the status has no AE2 link and answers
+-- with the saved flag and "no link" (fakeoc's reload_jobs).
+test("a world reload: crafts OC lost track of are said to be lost, never canceled", function()
+  local w = T.base()
+  w.me.patterns["minecraft:diamond@0"] = { plan_ticks = 400 } -- still planning at the reload
+  w.me.patterns["gregtech:gt.metaitem.01@11305"].craft_ticks = 4000 -- crafting at the reload
+  w.me.patterns["minecraft:gold_ingot@0"] = { plan_ticks = 2, craft_ticks = 4000 }
+  local M, st = T.agent(w)
+  exchange(w, M, st, {
+    T.cmd(1, "craft", { name = "minecraft:diamond", damage = 0, amount = 1 }),
+    T.cmd(2, "craft", { name = "gregtech:gt.metaitem.01", damage = 11305, amount = 1 }),
+    T.cmd(3, "craft", { name = "minecraft:gold_ingot", damage = 0, amount = 1 }),
+  }, 1)
+  T.run_until(M, st, w, w.clock + 6)
+  T.eq(st.crafts[1].state, "computing")
+  T.eq(st.crafts[2].state, "crafting")
+  T.eq(st.crafts[3].state, "crafting")
+  w.me.requests[3].done = true -- AE2 finished it after the agent's last look
+  w.me:reload_jobs()
+  T.run_until(M, st, w, w.clock + 12)
+  local r1 = result_of(w, 1)
+  T.eq(r1.state, "failed", "planning never comes back after a reload")
+  T.has(r1.err, "lost track of it after a world reload")
+  T.has(r1.err, "may still run")
+  T.eq(result_of(w, 2).state, "submitted", "its result went before the reload")
+  local last = {}
+  for _, b in ipairs(T.bodies(w)) do
+    for _, c in ipairs(b.crafts) do
+      T.ok(c.state ~= "canceled", "craft " .. c.id .. " is never reported canceled")
+      last[c.id] = c
+    end
+  end
+  T.eq(last[2].state, "failed")
+  T.has(last[2].err, "may still run, check AE2")
+  T.eq(last[3].state, "done", "a job done before the save reads done")
+end)
+
+-- CraftingStatus.save also runs at an autosave, with no reload, and sets the live status's
+-- failed flag while AE2 plans; AE2 then links the job, and isDone answers from the link.
+test("an autosave while AE2 plans doesn't turn a craft into a failure", function()
+  local w = T.base()
+  w.me.patterns["minecraft:diamond@0"] = { plan_ticks = 100, craft_ticks = 40 }
+  w.me.patterns["minecraft:gold_ingot@0"] = { plan_ticks = 100, fail = "missing resources" }
+  local M, st = T.agent(w)
+  exchange(w, M, st, {
+    T.cmd(1, "craft", { name = "minecraft:diamond", damage = 0, amount = 1 }),
+    T.cmd(2, "craft", { name = "minecraft:gold_ingot", damage = 0, amount = 1 }),
+  }, 1)
+  T.eq(st.crafts[1].state, "computing")
+  w.me:autosave_jobs()
+  T.run_until(M, st, w, w.clock + 20)
+  T.eq(result_of(w, 1).state, "submitted", "AE2 took the job after the save")
+  local states = {}
+  for _, b in ipairs(T.bodies(w)) do
+    for _, c in ipairs(b.crafts) do
+      if c.id == 1 and states[#states] ~= c.state then
+        states[#states + 1] = c.state
+      end
+    end
+  end
+  T.same(states, { "computing", "crafting", "done" })
+  T.eq(result_of(w, 2).state, "failed")
+  T.has(result_of(w, 2).err, "request failed (missing resources)", "AE2's own reason, not a lost link")
+end)
+
 test("a command is never run twice", function()
   local w = T.base()
   local M, st = T.agent(w)
@@ -358,7 +445,8 @@ test("property: nothing outside the rules ever runs", function()
   w.bad_cmds = true
   local M, st = T.agent(w)
   local kinds = { "craft", "machine_pause", "machine_resume", "say", "nuke", "waypoint", "", 5 }
-  local vias = { "voice", "dashboard", "phone", "discord", false, "", 7 }
+  local vias = { "voice", "dashboard", "phone", "discord", false, "", 7, "agent", " ", "Voice", "discord " }
+  local confirmed_by = { voice = true, dashboard = true, phone = true, discord = true }
   local expected_say, expected_pause, expected_craft = 0, 0, 0
   local next_id = 1
   for _ = 1, 60 do
@@ -379,7 +467,7 @@ test("property: nothing outside the rules ever runs", function()
         args = { x = 1 }
       end
       local id = math.random() < 0.1 and math.max(1, next_id - 3) or next_id
-      local confirmed = type(via) == "string" and via ~= ""
+      local confirmed = confirmed_by[via] == true
       local fresh = not st.done[id]
       local valid_args = not json.is_array(args)
       if fresh and confirmed and valid_args and id == next_id then

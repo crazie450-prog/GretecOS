@@ -573,6 +573,13 @@ function F.me(w, opts)
       job.computing, job.link, job.reloaded = false, nil, true
     end
   end
+  -- OC CraftingStatus.save alone (an autosave, no reload): it sets the live status's failed flag
+  -- (true without a link or while the linked job runs) and changes nothing else.
+  function d.autosave_jobs(s)
+    for _, job in ipairs(s.requests) do
+      job.failed = not (job.link and job.done)
+    end
+  end
   local m = d.methods
   m.getCpus = nondirect(function(s)
     local out = {}

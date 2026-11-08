@@ -138,6 +138,31 @@ test("unauthorized: wait the longest backoff, log once", function()
   T.between(logged, 1, 2, "logged at most once in 5 minutes")
 end)
 
+test("a note in an ok reply is logged once, and again when it changes", function()
+  local w = T.base()
+  local notes = { "core 0.3: please update the agent", "core 0.3: please update the agent", "", "another note" }
+  local n = 0
+  w.server = function()
+    n = n + 1
+    local reply = { v = 1, ok = true, cmds = json.array() }
+    if notes[n] and notes[n] ~= "" then
+      reply.err = notes[n]
+    end
+    return { body = json.encode(reply) }
+  end
+  local M, st = T.agent(w)
+  for _ = 1, 5 do
+    st.next_cycle = 0
+    T.ok(M.cycle(st), "a note doesn't make the exchange fail")
+  end
+  local log = w.files["/home/gos/gos-agent.log"] or ""
+  local _, said = log:gsub("the core says: core 0%.3: please update the agent", "")
+  T.eq(said, 1, "logged once while the core repeats it")
+  T.has(log, "the core says: another note")
+  T.has(w:printed_text(), "the core says: core 0.3", "and shown on the screen")
+  T.eq(#st.errors, 0, "a note is not an error")
+end)
+
 test("no internet access: the reason comes through", function()
   local w = T.base()
   w.inet_unavailable = true
