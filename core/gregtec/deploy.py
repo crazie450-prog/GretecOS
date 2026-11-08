@@ -18,7 +18,8 @@ How a deploy runs:
    Administrators), and no write access for anyone but SYSTEM, Administrators and the deployer.
 2. Refuse unless the commit is in ``origin/main`` and the working tree has no uncommitted changes.
 3. Build the release in ``GOS_APP\.gos-staging-build-*``: ``git archive``, then
-   ``uv venv --relocatable`` and ``uv sync --locked --no-dev`` with ``UV_LINK_MODE=copy``. Copies,
+   ``uv venv --relocatable`` and ``uv sync --locked --no-dev`` plus the engine groups
+   (:data:`GROUPS`: speech-to-text, D182) with ``UV_LINK_MODE=copy``. Copies,
    not hardlinks into uv's cache, so every file is new in GOS_APP and inherits its ACL. The
    editable installs' ``.pth`` lines (core/, and voice/ for the voice client, D179) are made
    relative. If the commit has ``mod/``, run its Gradle
@@ -54,6 +55,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -73,6 +75,9 @@ MOD, MOD_DIST = "mod", "mod-dist"
 REQUIRED = ("scripts/backup_world.ps1",)
 # Editable installs uv makes in the release: the root project and the voice package (D179).
 EDITABLE = ("core", "voice")
+# Dependency groups outside the default ones that GOS_APP needs: the voice client's engines,
+# which CI and dev clones leave out (D179; stt: WO-5.2, D182).
+GROUPS = ("stt",)
 # Antivirus can hold a file in a freshly written folder for seconds (WinError 5 on the swap).
 RENAME_TRIES, RENAME_DELAY = 10, 1.0
 # Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.
@@ -317,6 +322,17 @@ def _extract(repo: Path, commit: str, dest: Path) -> None:
         tar.extractall(dest, filter="data")
 
 
+def _group_args(release: Path) -> list[str]:
+    """``--group`` for each of :data:`GROUPS` the release's pyproject.toml defines (an older
+    commit may define fewer, and uv refuses a group that isn't there)."""
+    try:
+        with open(release / "pyproject.toml", "rb") as f:
+            defined = tomllib.load(f).get("dependency-groups", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    return [arg for group in GROUPS if group in defined for arg in ("--group", group)]
+
+
 def _build_env(release: Path) -> None:
     uv = os.environ.get("UV") or shutil.which("uv")  # `uv run` sets UV to itself
     if uv is None:
@@ -329,7 +345,7 @@ def _build_env(release: Path) -> None:
     env["UV_LINK_MODE"] = "copy"
     for args in (
         ["venv", "--relocatable", "--quiet", ".venv"],
-        ["sync", "--locked", "--no-dev", "--quiet"],
+        ["sync", "--locked", "--no-dev", *_group_args(release), "--quiet"],
     ):
         if subprocess.run([uv, *args], check=False, cwd=release, env=env).returncode:
             raise DeployError(f"uv {args[0]} failed (see above); nothing was swapped")

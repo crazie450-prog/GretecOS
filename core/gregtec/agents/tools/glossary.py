@@ -7,6 +7,9 @@ entries of the kinds in :data:`EXPANDS` are used: a tier ("LV") is part of item 
 The live vault's copy wins (agents may add to it); the repo's ``vault-template/glossary.tsv`` is
 the fallback, also when the live copy can't be used (``Glossary.problem`` says why, and
 ``gos tool`` shows it). Glossary text is data: it only ever becomes search words.
+
+The same entries bias speech-to-text (plan 6.4; ``gregtec_voice.stt``, D182): their forms are
+the Whisper prompt, ranked by ``say`` (a pronunciation marks a word speech engines don't know).
 """
 
 from __future__ import annotations
@@ -29,6 +32,9 @@ class Entry:
     term: str
     aliases: tuple[str, ...]
     kind: str
+    say: str = (
+        ""  # how it is pronounced ("L U V"); the STT prompt ranks these first (D182)
+    )
 
     @property
     def forms(self) -> tuple[str, ...]:
@@ -67,7 +73,12 @@ class Glossary:
                 if a.strip()
             )
             entries.append(
-                Entry(term, aliases, cols[2].strip() if len(cols) > 2 else "")
+                Entry(
+                    term,
+                    aliases,
+                    cols[2].strip() if len(cols) > 2 else "",
+                    cols[4].strip() if len(cols) > 4 else "",
+                )
             )
         return cls(tuple(entries), path)
 

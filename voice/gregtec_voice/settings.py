@@ -12,14 +12,23 @@
 | next_card_key    | F16     | global hotkey: the dashboard shows its next card                |
 | input_device     | ""      | "" = Windows' default capture device (WASAPI), else a part of   |
 |                  |         | a device name from ``gos voice devices``                        |
+| stt_engine       | auto    | speech-to-text (WO-5.2, D182): auto (Whisper on the GPU when    |
+|                  |         | it works, else Parakeet on the CPU), whisper-gpu, whisper-cpu   |
+|                  |         | or parakeet                                                     |
+| stt_model        | large-v3-turbo | the Whisper model (Appendix C): a faster-whisper name   |
+|                  |         | (large-v3-turbo, distil-large-v3, small.en, ...) or a Hugging   |
+|                  |         | Face id of a CTranslate2 conversion ("org/name")                |
 
-The four keys must differ. The other Appendix C ``[voice]`` keys (wake engine and phrase, STT,
-TTS, output endpoint) belong to WO-5.2 to WO-5.5 and are ignored here. The core's own keys
-(``[core] port``, ``[paths] gos_home``) come from :func:`gregtec.config.load`.
+The four keys must differ. The other Appendix C ``[voice]`` keys (wake engine and phrase, TTS,
+output endpoint) belong to WO-5.3 to WO-5.5 and are ignored here. The core's own keys
+(``[core] port``, ``[paths] gos_home``) come from :func:`gregtec.config.load`; ``gos_home``
+rides along here because the engines keep their models in ``GOS_HOME/models`` and read the
+vault's glossary.
 """
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -34,6 +43,12 @@ from gregtec_voice.keys import Key
 WAKE, KEY, NONE = "wake", "key", "none"
 HOLD, TOGGLE = "hold", "toggle"
 HOTKEYS = ("confirm", "cancel", "next_card")
+# speech-to-text engines (WO-5.2, D182); gregtec_voice.stt reads these
+STT_ENGINES = ("auto", "whisper-gpu", "whisper-cpu", "parakeet")
+STT_MODEL = "large-v3-turbo"  # Appendix C
+_MODEL_NAME = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?"
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +61,9 @@ class VoiceSettings:
     cancel_key: Key = field(default_factory=lambda: keys.KEYS["f15"])
     next_card_key: Key = field(default_factory=lambda: keys.KEYS["f16"])
     input_device: str = ""
+    stt_engine: str = "auto"
+    stt_model: str = STT_MODEL
+    gos_home: Path = field(default_factory=config.default_home)  # [paths] gos_home
 
     @property
     def key_trigger(self) -> bool:
@@ -68,8 +86,9 @@ class SettingsError(ValueError):
     """One or more ``[voice]`` keys are wrong; the message lists each."""
 
 
-def parse(table: Mapping[str, Any]) -> VoiceSettings:
-    """The ``[voice]`` table as settings. Raises :class:`SettingsError` listing every problem."""
+def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettings:
+    """The ``[voice]`` table as settings (``gos_home``: the core config's). Raises
+    :class:`SettingsError` listing every problem."""
     defaults = VoiceSettings()
     problems: list[str] = []
 
@@ -101,6 +120,13 @@ def parse(table: Mapping[str, Any]) -> VoiceSettings:
     if not isinstance(device, str):
         problems.append("[voice] input_device must be a string")
         device = defaults.input_device
+    model = table.get("stt_model", defaults.stt_model)
+    if not isinstance(model, str) or not _MODEL_NAME.fullmatch(model.strip()):
+        problems.append(
+            '[voice] stt_model must be a Whisper model name ("large-v3-turbo", '
+            '"distil-large-v3", ...) or a Hugging Face id ("org/name")'
+        )
+        model = defaults.stt_model
     found = VoiceSettings(
         primary_trigger=primary,
         backup_trigger=backup,
@@ -110,6 +136,9 @@ def parse(table: Mapping[str, Any]) -> VoiceSettings:
         cancel_key=key_of("cancel_key", defaults.cancel_key),
         next_card_key=key_of("next_card_key", defaults.next_card_key),
         input_device=device.strip(),
+        stt_engine=choice("stt_engine", STT_ENGINES, defaults.stt_engine),
+        stt_model=model.strip(),
+        gos_home=gos_home or defaults.gos_home,
     )
     roles: dict[str, list[str]] = {}
     for role, key in found.all_keys().items():
@@ -135,10 +164,10 @@ def load(path: Path | None = None) -> tuple[Config, VoiceSettings]:
     if path is None:
         path = config.default_path()
         if not path.is_file():
-            return cfg, VoiceSettings()
+            return cfg, VoiceSettings(gos_home=cfg.gos_home)
     with open(path, "rb") as f:
         data = tomllib.load(f)
     table = data.get("voice", {})
     if not isinstance(table, dict):
         raise SettingsError("[voice] must be a table")
-    return cfg, parse(table)
+    return cfg, parse(table, cfg.gos_home)

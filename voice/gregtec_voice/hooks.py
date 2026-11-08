@@ -2,7 +2,7 @@
 wake word (WO-5.4).
 
 Each engine is a module of this package with a ``create`` function, found when the client
-starts; until its WO lands the placeholder here runs instead:
+starts; until its WO lands the placeholder here runs instead (``stt`` is in: WO-5.2, D182):
 
 | module                  | ``create(...)`` returns                 | placeholder            |
 |-------------------------|-----------------------------------------|------------------------|

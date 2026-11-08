@@ -8,10 +8,14 @@
 | ``keys {play,lab}``          | the configured keys and the GTNH bindings on them             |
 | ``devices``                  | the WASAPI capture devices                                    |
 | ``bench``                    | turn timings from ``logs/voice.log`` against PM14             |
+| ``stt [WAV ...]``            | load speech-to-text (downloading its model once), say which   |
+|                              | engine and why, transcribe the WAVs (WO-5.2)                  |
+| ``record``                   | record the STT eval set: one talk-key segment per line        |
+| ``eval``                     | the STT eval: entity accuracy and WER (WO-5.2, D183)          |
 
-``run``, ``test`` and ``devices`` need Windows (WASAPI and the keyboard hook); ``keys`` and
-``bench`` run anywhere. ``run`` needs the core's voice token in this account's keyring
-(``gos token new voice``, D117).
+``run``, ``test``, ``devices`` and ``record`` need Windows (WASAPI and the keyboard hook);
+``keys``, ``bench``, ``stt`` and ``eval`` run anywhere. ``run`` needs the core's voice token in
+this account's keyring (``gos token new voice``, D117).
 """
 
 from __future__ import annotations
@@ -24,15 +28,17 @@ import sys
 import threading
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 from gregtec import applog
+from gregtec.agents.tools.glossary import Glossary
 from gregtec.config import Config
 from gregtec.gamestate.safe_open import read_bytes
 from gregtec.llm import keys as stored
-from gregtec_voice import audio, hooks, keys, ptt, settings
+from gregtec_voice import audio, hooks, keys, ptt, settings, stt, stt_eval
 from gregtec_voice.audio import AudioError, AudioPipe, Segment, WasapiSource
 from gregtec_voice.client import (
     VOICE,
@@ -50,6 +56,21 @@ log = logging.getLogger(__name__)
 TARGETS_MS = {"key": 1700, "wake": 2200}  # PM14: to first audio, P50
 GAME_DIRS = ("minecraft", ".minecraft")  # Prism's order (gregtec.tweaks)
 EXIT_PROBLEM, EXIT_SETUP = 1, 2
+EVAL_AUDIO = (
+    "GOS_HOME/data/evals/stt"  # gos voice record writes, gos voice eval reads (D183)
+)
+
+
+def eval_audio(cfg: Config) -> Path:
+    return cfg.data_dir / "evals" / "stt"
+
+
+def _model_name(value: str) -> str:
+    """argparse's check of --model: as gos.toml's [voice] stt_model."""
+    try:
+        return settings.parse({"stt_model": value}).stt_model
+    except settings.SettingsError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
@@ -124,7 +145,73 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     bench.add_argument(
         "--last", type=int, default=100, help="turns to use (default 100)"
     )
-    for each in (run, test, keys_cmd, commands.choices["devices"], bench):
+    stt_cmd = commands.add_parser(
+        "stt",
+        help="load speech-to-text and transcribe WAV files",
+        description=(
+            "Says whether Whisper can use the GPU here and why not, loads the configured "
+            "engine (downloading its model to GOS_HOME/models the first time), shows the "
+            "glossary prompt, then transcribes each 16 kHz mono WAV."
+        ),
+    )
+    stt_cmd.add_argument("wav", nargs="*", type=Path, help="16 kHz mono 16-bit WAVs")
+    record = commands.add_parser(
+        "record",
+        help="record your voice for the STT eval set",
+        description=(
+            "Shows each line of the STT eval set: hold the talk key, say it as you would ask "
+            "GOS, release. Each recording is saved as <id>.wav (your voice: it stays in "
+            "GOS_HOME). Without --only, only the lines with no recording yet are asked, so a "
+            "stopped session continues where it stopped."
+        ),
+    )
+    record.add_argument(
+        "--only", help="comma-separated ids to (re)record, e.g. s07,s23"
+    )
+    record.add_argument(
+        "--dir", type=Path, help=f"where to save (default: {EVAL_AUDIO})"
+    )
+    evaluate = commands.add_parser(
+        "eval",
+        help="the STT eval: entity accuracy and word error rate",
+        description=(
+            "Transcribes each recording of the STT eval set, resolves each transcript to an "
+            "item as the core does, and reports entity accuracy (target >= 95%%) and word "
+            "error rate (target <= 8%%), with a TSV report in GOS_HOME/data/reports. "
+            "--check only checks that every line of the set resolves to its key on this DB."
+        ),
+    )
+    evaluate.add_argument(
+        "--audio", type=Path, help=f"the recordings (default: {EVAL_AUDIO})"
+    )
+    evaluate.add_argument(
+        "--check", action="store_true", help="only check the set against this DB"
+    )
+    evaluate.add_argument("--limit", type=int, help="only the first N lines")
+    evaluate.add_argument("--out", type=Path, help="the TSV report's path")
+    for each in (record, evaluate):
+        each.add_argument(
+            "--set", type=Path, help="another set file (id kind key text)"
+        )
+    for each in (stt_cmd, evaluate):
+        each.add_argument(
+            "--engine",
+            choices=settings.STT_ENGINES,
+            help="instead of [voice] stt_engine",
+        )
+        each.add_argument(
+            "--model", type=_model_name, help="instead of [voice] stt_model"
+        )
+    for each in (
+        run,
+        test,
+        keys_cmd,
+        commands.choices["devices"],
+        bench,
+        stt_cmd,
+        record,
+        evaluate,
+    ):
         each.add_argument("--config", type=Path, help="gos.toml (default: GOS_HOME's)")
     args = parser.parse_args(argv)
     try:
@@ -138,6 +225,9 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "keys": _keys,
         "devices": _devices,
         "bench": _bench,
+        "stt": _stt,
+        "record": _record,
+        "eval": _eval,
     }[args.voice_command]
     return handler(cfg, voice_settings, args, out)
 
@@ -195,6 +285,8 @@ def _run(
         return EXIT_SETUP
     applog.setup(VOICE, cfg.logs_dir)
     stop = threading.Event()
+    if not args.transcript:  # the first run downloads the model: gos voice stt shows it
+        print("Loading speech-to-text...", file=out)
     transcriber = (
         hooks.FixedTranscriber(args.transcript)
         if args.transcript
@@ -235,7 +327,12 @@ def _run(
         "voice client starting",
         extra={"keys": _describe(voice_settings), "stt": transcriber.name},
     )
-    print(f"Voice client: {_describe(voice_settings)}. Ctrl+C stops it.", file=out)
+    stt_label = getattr(transcriber, "label", transcriber.name)
+    print(
+        f"Voice client: {_describe(voice_settings)}; speech-to-text: {stt_label}. "
+        "Ctrl+C stops it.",
+        file=out,
+    )
     process = Process(voice, pipe, hook, watchdog=watchdog, core=core, wake=wake)
     try:
         process.run(stop)
@@ -533,3 +630,198 @@ def _bench(
             file=out,
         )
     return 0 if met else EXIT_PROBLEM
+
+
+# --- gos voice stt, record, eval (WO-5.2) -----------------------------------------------------
+
+
+def _stt_settings(
+    voice_settings: VoiceSettings, args: argparse.Namespace
+) -> VoiceSettings:
+    """--engine and --model over gos.toml's [voice] stt_engine and stt_model."""
+    return replace(
+        voice_settings,
+        stt_engine=args.engine or voice_settings.stt_engine,
+        stt_model=args.model or voice_settings.stt_model,
+    )
+
+
+def _load_stt(
+    cfg: Config,
+    voice_settings: VoiceSettings,
+    out: TextIO,
+    glossary: Glossary | None = None,
+) -> stt.Stt | None:
+    """The engine, with what was tried first and why; None (said) when none starts."""
+    gpu = stt.cuda_problem()
+    print(f"GPU for Whisper: {'yes' if gpu is None else 'no, ' + gpu}", file=out)
+    try:
+        engine = stt.load(
+            voice_settings.stt_engine,
+            voice_settings.stt_model,
+            cfg.gos_home,
+            glossary=glossary,
+            note=lambda message: print(message, file=out),
+        )
+    except stt.SttError as exc:
+        print(f"No speech-to-text engine could start: {exc}", file=out)
+        return None
+    for skipped in engine.skipped:
+        print(f"  not used: {skipped}", file=out)
+    print(f"Speech-to-text: {engine.label}, loaded in {engine.load_ms} ms", file=out)
+    source = engine.glossary.path or "none"
+    if engine.backend.prompt:
+        forms = engine.backend.prompt.count(", ") + 1
+        print(f"  prompt: {forms} glossary forms from {source}", file=out)
+    else:
+        print(
+            f"  prompt: none ({engine.name} takes none); spellings from {source}",
+            file=out,
+        )
+    return engine
+
+
+def _stt(
+    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
+) -> int:
+    engine = _load_stt(cfg, _stt_settings(voice_settings, args), out)
+    if engine is None:
+        return EXIT_PROBLEM
+    code = 0
+    for path in args.wav:
+        try:
+            pcm = stt_eval.read_wav(path)
+        except (stt_eval.EvalError, OSError) as exc:
+            print(f"{path}: {exc}", file=out)
+            code = EXIT_PROBLEM
+            continue
+        started = time.perf_counter()
+        said = engine.transcribe(stt_eval.segment_of(pcm))
+        ms = round((time.perf_counter() - started) * 1000)
+        print(f"{path.name}: {said!r} ({ms} ms)", file=out)
+    return code
+
+
+@dataclass
+class _QuietCore:
+    """``gos voice record``'s core: nothing is sent, nothing is printed."""
+
+    def ask(self, text: str) -> dict[str, Any]:
+        return {"text": "", "lane": "record"}
+
+    def prewarm(self) -> None:
+        pass
+
+    def ui(self, action: str) -> None:
+        pass
+
+    def state(self, state: str, trigger: str | None) -> None:
+        pass
+
+
+def _record(
+    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
+) -> int:
+    if _windows_only(out):
+        return EXIT_SETUP
+    folder = args.dir or eval_audio(cfg)
+    try:
+        utterances = stt_eval.load_set(args.set or stt_eval.SET)
+        only = [i.strip() for i in (args.only or "").split(",") if i.strip()]
+        rows = stt_eval.to_record(utterances, folder, only)
+    except (OSError, stt_eval.EvalError) as exc:
+        print(f"Can't use the set: {exc}", file=out)
+        return EXIT_SETUP
+    if not rows:
+        print(
+            f"Every line has a recording in {folder}; --only s01,s02 records lines again.",
+            file=out,
+        )
+        return 0
+    applog.setup(f"{VOICE}-record", cfg.logs_dir)
+    talk = replace(
+        voice_settings, primary_trigger=settings.KEY, backup_trigger=settings.NONE
+    )
+    recording = stt_eval.Recording(rows, folder, out)
+    voice = VoiceClient(
+        talk,
+        _QuietCore(),
+        transcriber=recording,
+        speaker=hooks.LogSpeaker(lambda text: None),
+    )
+    pipe, hook, watchdog = _windows_parts(voice, talk.input_device)
+    print(
+        f"{len(rows)} lines to record into {folder}. For each: hold {talk.talk_key.label}, "
+        "say it as you would ask GOS, release. Ctrl+C stops; run it again to go on.",
+        file=out,
+    )
+    recording.prompt()
+    try:
+        Process(voice, pipe, hook, watchdog=watchdog).run(recording.done)
+    except AudioError as exc:
+        print(f"Can't open the microphone: {exc}", file=out)
+        return EXIT_PROBLEM
+    except KeyboardInterrupt:
+        pass
+    print(f"{recording.index} of {len(rows)} recorded.", file=out)
+    return 0
+
+
+def _eval(
+    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
+) -> int:
+    from gregtec.agents.tools import build_registry  # only this command needs the tools
+    from gregtec.db import access
+
+    try:
+        utterances = stt_eval.load_set(args.set or stt_eval.SET)
+    except (OSError, stt_eval.EvalError) as exc:
+        print(f"Can't use the set: {exc}", file=out)
+        return EXIT_SETUP
+    if args.limit is not None:
+        if args.limit < 1:
+            print("--limit must be at least 1", file=out)
+            return EXIT_SETUP
+        utterances = utterances[: args.limit]
+    db = access.db_path(cfg.gos_home)
+    if not db.is_file():
+        print(
+            f"No DB at {db}: run gos export collect and gos db build first.", file=out
+        )
+        return EXIT_SETUP
+    glossary = Glossary.find(cfg.gos_home / "vault")
+    registry = build_registry(db, glossary)
+    if args.check:
+        rows = stt_eval.run(utterances, registry, None, Path())
+        bad = [row for row in rows if not row.scorable]
+        for row in bad:
+            print(stt_eval.outcome(row), file=out)
+        print(
+            f"{len(rows) - len(bad)} of {len(rows)} lines resolve to their key on {db}",
+            file=out,
+        )
+        return EXIT_PROBLEM if bad else 0
+    audio_dir = args.audio or eval_audio(cfg)
+    if not audio_dir.is_dir():
+        print(
+            f"No recordings in {audio_dir}: run gos voice record first (or give --audio).",
+            file=out,
+        )
+        return EXIT_SETUP
+    engine = _load_stt(cfg, _stt_settings(voice_settings, args), out, glossary)
+    if engine is None:
+        return EXIT_PROBLEM
+    rows = stt_eval.run(
+        utterances,
+        registry,
+        engine,
+        audio_dir,
+        each=lambda row: print(stt_eval.outcome(row), file=out),
+    )
+    summary = stt_eval.summarise(rows)
+    stt_eval.report(summary, engine.label, out)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = args.out or cfg.data_dir / "reports" / f"stt-eval-{stamp}.tsv"
+    stt_eval.write_tsv(rows, path)
+    print(f"report: {path}", file=out)
+    return 0 if summary.met else EXIT_PROBLEM
