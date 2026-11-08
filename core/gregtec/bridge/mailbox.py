@@ -109,9 +109,9 @@ def _json_object(data: bytes) -> None:
     """``read_bytes``'s check: a whole JSON object, else retried (a partial write)."""
     try:
         doc = json.loads(data.decode("utf-8"))
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:  # RecursionError: nested too deep
         raise ValueError(
-            f"outbox.json is not one whole JSON document ({exc})"
+            f"outbox.json is not one whole JSON document ({type(exc).__name__})"
         ) from None
     if not isinstance(doc, dict):
         # ValueError, not TypeError: read_bytes retries a ValueError as a partial read.
@@ -151,13 +151,18 @@ class Mailbox:
         self._answer(folder)
 
     def folder(self) -> Path | None:
-        """The mailbox folder, resolved, or None while it isn't there or a link leads elsewhere."""
+        """The mailbox folder, resolved, or None while it isn't there or a link leads elsewhere.
+
+        Nothing between the instance folder and the mailbox folder may be a link or junction
+        (the game folder, ``saves``, the world, ``opencomputers``, the drive, ``dir``): gos-dev
+        can change Lab's folders (D75), so a link there could lead the core's writes anywhere.
+        """
         world = self.place.world_dir()
         expected = self.place.under(world) if world is not None else self.place.instance
         try:
             if world is None:
                 raise FileNotFoundError(expected)
-            real_world = world.resolve(strict=True)
+            real_instance = self.place.instance.resolve(strict=True)
             real = expected.resolve(strict=True)
         except OSError:
             self._to(
@@ -167,7 +172,7 @@ class Mailbox:
                 path=str(expected),
             )
             return None
-        want = self.place.under(real_world)
+        want = real_instance / expected.relative_to(self.place.instance)
         if os.path.normcase(real) != os.path.normcase(want) or not real.is_dir():
             self._to(
                 "refused",
@@ -283,8 +288,7 @@ class Mailbox:
         )
         doc, ids = self.bridge.reply(outcome, ack=ack)
         if self.folder() != folder or not self._install(folder, encode(doc)):
-            if ids:
-                self.bridge.commands.returned(ids, "the core couldn't write inbox.json")
+            self.bridge.give_back(ids, "the core couldn't write inbox.json")
             return  # still due: the next poll tries again
         self.reply_at, self.reply_ids, self.due = self.clock(), ids, False
         self.stats["replies"] += 1
@@ -342,12 +346,11 @@ class Mailbox:
                     "commands": ids,
                 },
             )
-            if ids:
-                self.bridge.commands.returned(
-                    ids,
-                    f"withdrawn: the OC agent didn't read inbox.json within {self.ttl_s:g} s "
-                    "(the game paused or the agent stopped)",
-                )
+            self.bridge.give_back(
+                ids,
+                f"withdrawn: the OC agent didn't read inbox.json within {self.ttl_s:g} s "
+                "(the game paused or the agent stopped)",
+            )
         self.reply_at, self.reply_ids = None, []
 
     # --- helpers
@@ -453,10 +456,13 @@ class MailboxService:
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Stop polling; each mailbox logs its stats one last time (the Lab soak reads them)."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout)
             self._thread = None
+            for box in self.boxes:
+                box.heartbeat()
 
     def poll_all(self) -> None:
         """One pass over every mailbox; one mailbox's failure never stops the others."""

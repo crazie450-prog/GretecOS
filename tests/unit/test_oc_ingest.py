@@ -107,6 +107,9 @@ def test_the_golden_messages_parse() -> None:
         (b'{"v": true}', "unsupported_version"),
         (b'{"kind": "telemetry"}', "unsupported_version"),
         (b'{"v": 1, "kind": "telemetry"}', "bad_payload"),
+        # Nested past Python's recursion limit: RecursionError, not a ValueError.
+        (b"[" * 100_000 + b"]" * 100_000, "bad_payload"),
+        (b'{"v": 1, "x": ' + b"[" * 100_000 + b"]" * 100_000 + b"}", "bad_payload"),
     ],
 )
 def test_parse_refuses(body: bytes, err: str) -> None:
@@ -313,6 +316,30 @@ def test_no_agent_no_commands() -> None:
     doc, ids = Bridge(Recording(), queue).reply(Outcome(ok=True))
     assert doc == {"v": 1, "ok": True, "cmds": []}
     assert ids == [] and queue.cmds
+
+
+def test_a_broken_queue_never_stops_the_reply_or_its_ack(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Broken(Queue):
+        def take(self, agent: str, limit: int) -> list[dict[str, Any]]:
+            raise RuntimeError("the DB is locked")
+
+        def returned(self, ids: Sequence[int], why: str) -> None:
+            raise RuntimeError("the DB is locked")
+
+    bridge = Bridge(Recording(), Broken())
+    with caplog.at_level(logging.ERROR, logger="gregtec.bridge"):
+        doc, ids = bridge.reply(
+            Outcome(ok=True, agent=AGENT, boot="b0075eed", seq=3),
+            ack=("b0075eed", 3),
+        )
+        bridge.give_back([5], "withdrawn")
+        bridge.give_back([], "nothing to hand back")
+    assert doc == {"v": 1, "ok": True, "cmds": [], "boot": "b0075eed", "ack": 3}
+    assert ids == []
+    assert "OC commands not taken" in caplog.text
+    assert caplog.text.count("OC commands not handed back") == 1
 
 
 def test_encode_is_ascii_compact_and_sorted() -> None:

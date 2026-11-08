@@ -268,6 +268,21 @@ def test_an_outbox_over_256_kb_is_refused_unread(
     assert reply_at(folder)["err"] == "bad_payload"
 
 
+def test_an_outbox_nested_too_deep_is_refused_not_stuck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """json.loads raises RecursionError, not ValueError, past Python's recursion limit: it is a
+    bad payload like any other, taken so OC can send again (never a poll that fails forever)."""
+    place, folder = layout(tmp_path)
+    monkeypatch.setattr(mb.safe_open.time, "sleep", lambda _s: None)
+    box = make_box(place)
+    oc_send(folder, b'{"v":1,"x":' + b"[" * 100_000 + b"]" * 100_000 + b"}")
+    box.poll()
+    assert reply_at(folder)["err"] == "bad_payload"
+    assert not (folder / "outbox.json").exists()
+    assert box.stats["refused_bad_payload"] == 1
+
+
 def test_a_message_of_another_contract_version(tmp_path: Path) -> None:
     place, folder = layout(tmp_path)
     box = make_box(place)
@@ -431,26 +446,31 @@ def _link_dir(link: Path, target: Path) -> None:
         link.symlink_to(target, target_is_directory=True)
 
 
+@pytest.mark.parametrize("level", [3, 5, 6])  # the drive, the world, saves/
 def test_a_folder_reached_through_a_link_or_junction_is_refused(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, level: int
 ) -> None:
+    """No link or junction anywhere below the instance folder: gos-dev can change Lab's
+    folders (D75), and a link would lead the core's writes elsewhere (D217)."""
     place, folder = layout(tmp_path)
-    drive = folder.parents[2]  # .../opencomputers/<drive>
+    linked = folder.parents[level - 1]
     elsewhere = tmp_path / "elsewhere"
-    (elsewhere / "home" / "gos" / "mailbox").mkdir(parents=True)
-    oc_send(elsewhere / "home" / "gos" / "mailbox", message())
-    for child in sorted(drive.rglob("*"), reverse=True):
+    moved = elsewhere / folder.relative_to(linked)
+    moved.mkdir(parents=True)
+    oc_send(moved, message())
+    for child in sorted(linked.rglob("*"), reverse=True):
         child.rmdir()
-    drive.rmdir()
-    _link_dir(drive, elsewhere)
+    linked.rmdir()
+    _link_dir(linked, elsewhere)
+    assert folder.resolve() == moved.resolve()
     sink = Recording()
     box = make_box(place, sink=sink)
     with caplog.at_level(logging.INFO, logger="gregtec.bridge"):
         box.poll()
         box.poll()
     assert sink.got == []
-    assert (elsewhere / "home" / "gos" / "mailbox" / "outbox.json").exists()
-    assert not (elsewhere / "home" / "gos" / "mailbox" / "inbox.json").exists()
+    assert (moved / "outbox.json").exists()
+    assert not (moved / "inbox.json").exists()
     assert caplog.text.count("leads its folder elsewhere") == 1
 
 
@@ -481,7 +501,9 @@ def test_the_world_is_found_in_minecraft_or_dot_minecraft(tmp_path: Path) -> Non
 # --- the service
 
 
-def test_the_service_polls_until_stopped(tmp_path: Path) -> None:
+def test_the_service_polls_until_stopped(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     place, folder = layout(tmp_path)
     box = Mailbox(place, Bridge(Recording()))
     service = MailboxService([box], poll_s=0.01)
@@ -493,8 +515,11 @@ def test_the_service_polls_until_stopped(tmp_path: Path) -> None:
             time.sleep(0.01)
         assert reply_at(folder)["ack"] == 1
     finally:
-        service.stop()
+        with caplog.at_level(logging.INFO, logger="gregtec.bridge"):
+            service.stop()
     assert service._thread is None
+    (last,) = [r for r in caplog.records if r.getMessage() == "OC mailbox stats"]
+    assert (last.taken, last.accepted, last.replies) == (1, 1, 1), "the final count"
 
 
 def test_one_failing_mailbox_doesnt_stop_the_others(tmp_path: Path) -> None:

@@ -94,7 +94,9 @@ def parse(raw: bytes) -> dict[str, Any]:
         raise Refused("bad_payload", f"{len(raw)} bytes, over {MAX_BODY}")
     try:
         doc = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
-    except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are ValueErrors
+    # UnicodeDecodeError and JSONDecodeError are ValueErrors; nesting deeper than Python's
+    # recursion limit (a 256 KB body can nest 100,000 deep) raises RecursionError.
+    except (ValueError, RecursionError) as exc:
         raise Refused("bad_payload", f"not JSON ({type(exc).__name__})") from None
     if not isinstance(doc, dict):
         raise Refused("bad_payload", "not a JSON object")
@@ -160,8 +162,11 @@ class Commands(Protocol):
         ...
 
     def returned(self, ids: Sequence[int], why: str) -> None:
-        """Commands :meth:`take` gave out that never reached the agent: a reply too full for
-        them, one the core couldn't write, or (M1) a reply withdrawn unread."""
+        """Commands :meth:`take` gave out that the agent didn't get: a reply too full for them,
+        one the core couldn't write, or (M1) a reply withdrawn unread. A withdrawn one may
+        still have been read if OC opened it at that very moment (the core can't see that on
+        every OS), so send these again under the same id, never as new commands: the agent
+        never runs an id twice and answers a repeat with the result it kept (D214, D217)."""
         ...
 
 
@@ -349,7 +354,11 @@ class Bridge:
             doc["poll_s"] = poll_s
         if outcome.agent is None:
             return doc, []
-        taken = self.commands.take(outcome.agent, MAX_CMDS)
+        try:
+            taken = self.commands.take(outcome.agent, MAX_CMDS)
+        except Exception:  # a broken queue must not stop the reply and its ack
+            log.exception("OC commands not taken; the reply goes without them")
+            taken = []
         # Room for poll_s 1 is kept while filling, so adding it after never breaks the limit.
         sized = dict(doc, poll_s=doc.get("poll_s", 1))
         sent: list[dict[str, Any]] = []
@@ -367,16 +376,27 @@ class Bridge:
                 full.append(_command_id(cmd))
         if bad:
             log.error("OC commands refused by the schema; not sent", extra={"ids": bad})
-            ids = [i for i in bad if i >= 1]
-            if ids:
-                self.commands.returned(
-                    ids, "not a valid command by the contract's schema"
-                )
+            self.give_back(
+                [i for i in bad if i >= 1],
+                "not a valid command by the contract's schema",
+            )
         if full:
-            self.commands.returned(full, "the reply was full; send it in the next one")
+            self.give_back(full, "the reply was full; send it in the next one")
             doc["poll_s"] = 1
         doc["cmds"] = sent
         return doc, [int(cmd["id"]) for cmd in sent]
+
+    def give_back(self, ids: Sequence[int], why: str) -> None:
+        """Hand commands back to the queue (:meth:`Commands.returned`). A failing queue is
+        logged, never raised: the transport's own step (a reply, a withdrawal) has happened."""
+        if not ids:
+            return
+        try:
+            self.commands.returned(list(ids), why)
+        except Exception:
+            log.exception(
+                "OC commands not handed back", extra={"ids": list(ids), "why": why}
+            )
 
 
 def _command_ok(cmd: object) -> bool:

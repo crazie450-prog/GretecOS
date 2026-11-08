@@ -1707,7 +1707,13 @@ function M.run(st, opts)
   event.ignore("interrupted", on_interrupt)
   event.ignore("component_added", on_component)
   event.ignore("component_removed", on_component)
+  -- The transport's counts go on the stop line too (the M1 Lab soak compares them with the core's).
+  local counts = ""
   if st.transport then
+    if st.transport.stats then
+      local okc, line = pcall(st.transport.stats, st.transport)
+      counts = okc and ("; " .. tostring(line)) or ""
+    end
     pcall(st.transport.close, st.transport)
   end
   if not ok then
@@ -1716,13 +1722,13 @@ function M.run(st, opts)
       return false, err.fatal
     end
     if err == "interrupted" then
-      M.log(st, "info", "stopped (interrupted)")
+      M.log(st, "info", "stopped (interrupted)" .. counts)
       return true
     end
-    M.log(st, "error", "stopped: " .. tostring(err))
+    M.log(st, "error", "stopped: " .. tostring(err) .. counts)
     return false, tostring(err)
   end
-  M.log(st, "info", "stopped")
+  M.log(st, "info", "stopped" .. counts)
   return true
 end
 
