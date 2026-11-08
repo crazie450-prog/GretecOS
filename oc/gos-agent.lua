@@ -2,20 +2,22 @@
 docs/contracts/oc_bridge.md). Written for this repo (MIT, see LICENSE at the repo root).
 
 Runs on OpenOS with a Lua 5.3 CPU. Every 5 to 10 s it reads power (LSC, battery buffers) and GT
-machines through GTNH 2.9's drivers, every 60 s an AE2 watchlist by item id (only
-getItemsInNetworkById), and sends one telemetry message to the core over a transport: M2 is an HTTP
-POST to the core, M1 the file mailbox (mailbox.lua, WO-7.3). The reply may carry commands Clayton has
-already confirmed; the agent runs only craft, machine_pause, machine_resume and say, and reports each
-result in a later message. Sensor lines go out raw; the core parses them.
+machines through GTNH 2.9's drivers, every 60 s an AE2 watchlist of items by registry name and
+damage (one exact getItemInNetwork per entry; D213), and sends one telemetry message to the core
+over a transport: M2 is an HTTP POST to the core, M1 the file mailbox (mailbox.lua, WO-7.3). The
+reply may carry commands Clayton has already confirmed; the agent runs only craft, machine_pause,
+machine_resume and say, and reports each result in a later message. Sensor lines go out raw; the
+core parses them.
 
   gos-agent [--list | --once] [config]     config: gos-agent.cfg next to this file
     --list   print what discovery finds, then exit (VERIFY V20: is gt_machine there?)
-    --once   one cycle: sample, send, print the reply, exit
+    --once   send one message and say whether the core answered; if the reply carried commands,
+             keep going (at most 30 s) until their results are reported, then exit
   Stop it with Ctrl+C.
 
 Cost per cycle (non-direct calls take one server tick each, direct ones none): each storage entry
 (LSC) 2, at most sensor_per_cycle getSensorInformation, getCpus 1, the tps card 1, each tracked craft
-1 or 2, the POST about 3 to 5; every ae2_s seconds one getItemsInNetworkById per distinct item name.
+1 or 2, the POST about 3 to 5; every ae2_s seconds one getItemInNetwork per watched entry.
 Everything else is a direct call. Between cycles it waits in event.pull, so it never holds the
 server tick, and every table it keeps is bounded.
 
@@ -78,7 +80,6 @@ local function try(fn, ...)
   end
   return table.unpack(r, 1, r.n)
 end
-M.try = try
 
 ---------------------------------------------------------------------------------------------
 -- Limits (bounded tables keep memory flat over hours)
@@ -96,8 +97,12 @@ local MAX_NAME = 128 -- registry and meta names (the contract's limit)
 local MAX_ERR_MSG = 200
 local MAX_SAY = 256
 local CRAFT_COMPUTE_MAX_S = 300 -- AE2 still planning after this long: give up on the result
+local ONCE_MAX_S = 30 -- --once waits this long at most for the results of commands it ran
 
 M.ALLOWED = { craft = true, machine_pause = true, machine_resume = true, say = true }
+M.MAX_BODY = 98304 -- bytes of JSON: over it, sensor lines and then the watchlist wait (D214)
+-- How Clayton confirmed a command (D59); the contract's four values, nothing else.
+M.CONFIRMED_VIA = { voice = true, dashboard = true, phone = true, discord = true }
 
 ---------------------------------------------------------------------------------------------
 -- Config
@@ -140,7 +145,7 @@ local RANGES = {
   discover_s = { 30, 3600 },
   max_machines = { 1, 64 },
   max_power = { 1, 32 },
-  max_watch = { 0, 256 },
+  max_watch = { 0, 64 }, -- one tick per watched entry every ae2_s
   max_crafts = { 1, 16 },
   craft_max = { 1, 1000000000 },
   log_max = { 4096, 262144 },
@@ -170,7 +175,7 @@ local function check_watch(list, max)
   if #list > max then
     return nil, ("watch has %d entries; max_watch is %d"):format(#list, max)
   end
-  local out, groups, by_name, seen = {}, {}, {}, {}
+  local out, seen = {}, {}
   for i, e in ipairs(list) do
     if type(e) ~= "table" then
       return nil, ("watch[%d] must be a table"):format(i)
@@ -193,16 +198,9 @@ local function check_watch(list, max)
     if not seen[key] then
       seen[key] = true
       out[#out + 1] = { name = e.name, damage = e.damage }
-      local g = by_name[e.name]
-      if not g then
-        g = { name = e.name, damages = {} }
-        by_name[e.name] = g
-        groups[#groups + 1] = g
-      end
-      g.damages[e.damage] = true
     end
   end
-  return out, groups
+  return out
 end
 
 local function check_strings(name, list, min_len)
@@ -258,12 +256,11 @@ function M.check_config(t)
       return nil, k .. " must be a whole number"
     end
   end
-  local groups
-  cfg.watch, groups = check_watch(cfg.watch, cfg.max_watch)
+  local werr
+  cfg.watch, werr = check_watch(cfg.watch, cfg.max_watch)
   if not cfg.watch then
-    return nil, groups
+    return nil, werr
   end
-  cfg.watch_groups = groups
   local ok, err = check_strings("power_names", cfg.power_names, 1)
   if not ok then
     return nil, err
@@ -324,7 +321,9 @@ local function dirname(path)
   return path:match("^(.*)/[^/]*$") or "."
 end
 
--- Read a config file (one Lua table, comments allowed; it can't call anything).
+-- Read a config file: one Lua table, comments allowed. It is evaluated with no globals, so it
+-- can't reach the computer's libraries, but it is still Lua (string methods and function literals
+-- work): it is Clayton's file, trusted like the program itself.
 function M.load_config(path)
   local text, err = read_file(path)
   if not text then
@@ -547,7 +546,7 @@ function M.discover(st)
         if (not me_rank or rank < me_rank) and (not cfg.me or rank == 0) then
           local ok, methods = pcall(component.methods, addr)
           -- An ME interface on a cable (a part) has no network methods in OC 1.12.68 [C 2.5].
-          if ok and type(methods) == "table" and methods.getItemsInNetworkById ~= nil and methods.getCpus ~= nil then
+          if ok and type(methods) == "table" and methods.getItemInNetwork ~= nil and methods.getCpus ~= nil then
             inv.me = { addr = addr, type = ctype }
             me_rank = rank
           end
@@ -734,7 +733,11 @@ local function sample_cpus(st)
   if type(cpus) == "table" then
     for _, c in ipairs(cpus) do
       if #out >= MAX_CPUS then
-        M.record_error(st, "ae2", ("%d crafting CPUs; the first %d are reported"):format(#cpus, MAX_CPUS))
+        -- Once per discovery (st.inv is new each time), not in every message.
+        if not st.inv.cpus_cut then
+          st.inv.cpus_cut = true
+          M.record_error(st, "ae2", ("%d crafting CPUs; the first %d are reported"):format(#cpus, MAX_CPUS))
+        end
         break
       end
       if type(c) == "table" then
@@ -750,46 +753,33 @@ local function sample_cpus(st)
   me.cpus = out
 end
 
--- The watchlist, one getItemsInNetworkById per distinct registry name: that call matches the item
--- only, so it returns every damage value (and NBT variant) of it, which are summed per watched
--- damage here and dropped at once. Never getItemsInNetwork or allItems [C 2.5].
+-- The watchlist: one getItemInNetwork(name, damage) per watched entry, an exact lookup of the
+-- stack with that registry name and damage and no NBT (AE2 treats OC's default empty tag as none),
+-- which returns one small table or nil. Never getItemsInNetworkById: it matches the Item only, so
+-- a name like gregtech:gt.metaitem.01 brings back every variant the network holds, converted on
+-- the server thread and held in this computer's memory at once (D213). Never getItemsInNetwork or
+-- allItems [C 2.5].
 local function sample_items(st)
   local me = st.inv.me
-  local totals = {}
-  for _, g in ipairs(st.cfg.watch_groups) do
-    local ok, stacks = call(me.addr, "getItemsInNetworkById", { g.name })
+  local items = json.array()
+  for _, w in ipairs(st.cfg.watch) do
+    local ok, s = call(me.addr, "getItemInNetwork", w.name, w.damage)
     if not ok then
-      if gone(stacks) then
+      if gone(s) then
         st.inv.me, st.rediscover = nil, true
         M.record_error(st, "ae2", short(me.addr) .. " is gone")
         return
       end
-      M.record_error(st, "ae2", "getItemsInNetworkById " .. g.name .. ": " .. tostring(stacks))
+      M.record_error(st, "ae2", ("getItemInNetwork %s@%d: %s"):format(w.name, w.damage, tostring(s)))
     else
-      if type(stacks) == "table" then
-        for _, s in ipairs(stacks) do
-          if type(s) == "table" and s.name == g.name and g.damages[s.damage] then
-            local key = g.name .. "@" .. s.damage
-            local r = totals[key]
-            if not r then
-              r = { size = 0, stacks = 0, craftable = false }
-              totals[key] = r
-            end
-            r.size = r.size + (nonneg(s.size) or 0)
-            r.stacks = r.stacks + 1
-            r.craftable = r.craftable or s.isCraftable == true
-          end
-        end
-      end
-      totals[g.name] = true -- this name was read
-    end
-    stacks = nil
-  end
-  local items = json.array()
-  for _, w in ipairs(st.cfg.watch) do
-    if totals[w.name] then
-      local r = totals[w.name .. "@" .. w.damage] or { size = 0, stacks = 0, craftable = false }
-      items[#items + 1] = { name = w.name, damage = w.damage, size = r.size, stacks = r.stacks, craftable = r.craftable }
+      -- nil: none stored and no pattern, or a name the game doesn't know.
+      local found = type(s) == "table"
+      items[#items + 1] = {
+        name = w.name,
+        damage = w.damage,
+        size = found and nonneg(s.size) or 0,
+        craftable = found and s.isCraftable == true,
+      }
     end
   end
   me.items, me.items_at, me.items_seq = items, round2(now()), nil
@@ -920,6 +910,13 @@ local function craft_state(st, c, state, err)
   end
 end
 
+-- OC keeps a crafting status across a world reload (the computer resumes) but not its AE2 link:
+-- the status then answers "no link", isCanceled true and isDone false for a craft that may well
+-- still run (OC 1.12.68 NetworkControl CraftingStatus.save/load). Only a reload gives "no link"
+-- with a failure, so it is reported as that, never as canceled.
+local NO_LINK = "no link"
+local LOST = "lost track of it after a world reload (OC keeps no AE2 link); the craft may still run, check AE2"
+
 local function poll_crafts(st)
   for _, c in ipairs(st.crafts) do
     if c.state == "computing" then
@@ -930,8 +927,9 @@ local function poll_crafts(st)
       elseif computing == false then
         local okf, failed, reason = pcall(c.status.hasFailed)
         if okf and failed then
-          craft_state(st, c, "failed", reason or "request failed")
-          c.result = result(c.id, "craft", false, "failed", reason or "request failed")
+          reason = reason == NO_LINK and LOST or reason or "request failed"
+          craft_state(st, c, "failed", reason)
+          c.result = result(c.id, "craft", false, "failed", reason)
         elseif okf then
           craft_state(st, c, "crafting")
           c.result = result(c.id, "craft", true, "submitted")
@@ -949,9 +947,11 @@ local function poll_crafts(st)
         c.result = nil
       end
     elseif c.state == "crafting" then
-      local ok, done = pcall(c.status.isDone)
+      local ok, done, why = pcall(c.status.isDone)
       if ok and done == true then
         craft_state(st, c, "done")
+      elseif ok and why == NO_LINK then
+        craft_state(st, c, "failed", LOST)
       else
         local okc, canceled = pcall(c.status.isCanceled)
         if okc and canceled == true then
@@ -1004,12 +1004,13 @@ function HANDLERS.craft(st, id, a)
   if active >= st.cfg.max_crafts then
     return failed(id, "craft", "already tracking " .. active .. " crafts (max_crafts)")
   end
-  local ok, list = call(me.addr, "getCraftables", { name = a.name, damage = a.damage })
+  -- One exact lookup (the stack with this name and damage, no NBT). getCraftables would convert
+  -- every craftable in the network on the server thread before filtering.
+  local ok, craftable = call(me.addr, "getCraftable", { name = a.name, damage = a.damage }, "item")
   if not ok then
-    return failed(id, "craft", "getCraftables: " .. tostring(list))
+    return failed(id, "craft", "getCraftable: " .. tostring(craftable))
   end
-  local craftable = type(list) == "table" and list[1] or nil
-  if not craftable then
+  if type(craftable) ~= "table" then
     return failed(id, "craft", ("AE2 has no pattern for %s@%d"):format(a.name, a.damage))
   end
   local okr, status, reason
@@ -1121,8 +1122,8 @@ function M.run_command(st, cmd)
   local r
   if not M.ALLOWED[kind] then
     r = refused(id, kind, "kind not allowed")
-  elseif type(cmd.confirmed_via) ~= "string" or cmd.confirmed_via == "" or #cmd.confirmed_via > 32 then
-    r = refused(id, kind, "not confirmed")
+  elseif not M.CONFIRMED_VIA[cmd.confirmed_via] then
+    r = refused(id, kind, "not confirmed (confirmed_via must be voice, dashboard, phone or discord)")
   elseif not json.is_object(cmd.args) then
     r = refused(id, kind, "args must be an object")
   else
@@ -1190,9 +1191,12 @@ local function entry_doc(e, seq, budget)
   return d
 end
 
-function M.build_payload(st)
+-- opts.no_sensor and opts.no_items leave the sensor lines or the watchlist out (they wait, their
+-- marks cleared like an entry over the sensor budget), for a message over M.MAX_BODY.
+function M.build_payload(st, opts)
+  opts = opts or {}
   local seq = st.seq
-  local budget = { left = SENSOR_BUDGET }
+  local budget = { left = opts.no_sensor and 0 or SENSOR_BUDGET }
   local p = {
     v = CONTRACT_V,
     kind = "telemetry",
@@ -1228,9 +1232,11 @@ function M.build_payload(st)
   local me = st.inv.me
   if me then
     p.ae2 = { addr = me.addr, type = me.type, cpus = me.cpus or json.array() }
-    if me.items then
+    if me.items and not opts.no_items then
       p.ae2.items, p.ae2.items_at = me.items, me.items_at
       me.items_seq = me.items_seq or seq
+    elseif me.items then
+      me.items_seq = nil
     end
   end
   for _, c in ipairs(st.crafts) do
@@ -1256,6 +1262,25 @@ function M.build_payload(st)
     e.seq = e.seq or seq
   end
   return p
+end
+
+-- The message as JSON, kept under M.MAX_BODY when it can be: over it, the sensor lines and then
+-- the watchlist wait for a later message (the core takes up to 256 KB; what remains is bounded
+-- by the limits above, D214).
+function M.encode_payload(st)
+  local body = json.encode(M.build_payload(st))
+  if #body <= M.MAX_BODY then
+    return body
+  end
+  local left = "sensor lines wait"
+  body = json.encode(M.build_payload(st, { no_sensor = true }))
+  if #body > M.MAX_BODY then
+    left = "sensor lines and the watchlist wait"
+    body = json.encode(M.build_payload(st, { no_sensor = true, no_items = true }))
+  end
+  -- The same text each time, so a repeat is counted rather than added.
+  M.record_error(st, "cycle", ("a message would be over %d bytes: %s for a smaller one"):format(M.MAX_BODY, left))
+  return body
 end
 
 -- The core has everything up to message n: drop what it acknowledged.
@@ -1426,7 +1451,7 @@ local function sample(st)
   if st.inv.me then
     sample_cpus(st)
   end
-  if st.inv.me and link_up and #st.cfg.watch_groups > 0 and t0 >= st.next_items then
+  if st.inv.me and link_up and #st.cfg.watch > 0 and t0 >= st.next_items then
     sample_items(st)
     st.next_items = t0 + st.cfg.ae2_s
   end
@@ -1456,6 +1481,11 @@ function M.handle_reply(st, reply, seq)
       M.drop_pending(st)
     end
     return false, "the core refused the message: " .. clip(why, 120), long
+  end
+  -- A note with ok: true is the core's to make; it is shown once, not on every reply.
+  if type(reply.err) == "string" and reply.err ~= st.note then
+    st.note = reply.err
+    M.log(st, "info", "the core says: " .. clip(reply.err, 200))
   end
   local ack = reply.ack
   if mtype(ack) ~= "integer" then
@@ -1489,9 +1519,7 @@ function M.cycle(st)
     M.record_error(st, "cycle", serr)
   end
   st.seq = st.seq + 1
-  local okb, body = pcall(function()
-    return json.encode(M.build_payload(st))
-  end)
+  local okb, body = pcall(M.encode_payload, st)
   if not okb then
     M.record_error(st, "cycle", "encode: " .. tostring(body))
     st.next_cycle = t0 + st.cfg.cycle_s
@@ -1596,7 +1624,22 @@ local function describe(inv)
   return lines
 end
 
--- Run until Ctrl+C (the interrupted signal), a hard interrupt, or opts.max_cycles.
+-- Results the core hasn't acknowledged yet, or a craft whose result AE2 hasn't given yet.
+function M.waiting(st)
+  if #st.results > 0 then
+    return true
+  end
+  for _, c in ipairs(st.crafts) do
+    if c.state == "computing" then
+      return true
+    end
+  end
+  return false
+end
+
+-- Run until Ctrl+C (the interrupted signal) or a hard interrupt. With opts.once: until the first
+-- message is answered and the results of any commands it brought are reported (at most
+-- ONCE_MAX_S), or an exchange fails.
 function M.run(st, opts)
   opts = opts or {}
   local function on_interrupt()
@@ -1617,10 +1660,11 @@ function M.run(st, opts)
       st.transport = t
     end
     M.log(st, "info", ("gos-agent %s started (boot %s, %s, every %s s)"):format(VERSION, st.boot, st.transport.name, st.cfg.cycle_s))
+    local once_until = now() + ONCE_MAX_S
     while not st.stop do
       if now() >= st.next_cycle then
         M.cycle(st)
-        if opts.max_cycles and st.cycles >= opts.max_cycles then
+        if opts.once and (st.failures > 0 or not M.waiting(st) or now() >= once_until) then
           break
         end
       end
@@ -1687,14 +1731,21 @@ function M.main(argv, opts)
     end
     return 0
   end
-  local ok, rerr = M.run(st, { max_cycles = mode == "--once" and 1 or nil })
+  local ok, rerr = M.run(st, { once = mode == "--once" })
   if not ok then
     out("gos-agent: " .. tostring(rerr))
     return 1
   end
   if mode == "--once" then
-    if st.failures == 0 and st.cycles == 1 then
+    if st.failures == 0 then
       out(("sent %d bytes; the core answered"):format(st.last_bytes or 0))
+      if st.sent > 1 then
+        out(("  %d messages: the reply carried commands, and their results went in the later ones"):format(st.sent))
+      end
+      if M.waiting(st) then
+        out(("  a result was still waiting after %d s: a craft AE2 is still planning is reported as failed"):format(ONCE_MAX_S)
+          .. " (restarted before AE2 answered) by the next run")
+      end
       return 0
     end
     local last = st.errors[#st.errors]

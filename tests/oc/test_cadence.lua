@@ -1,5 +1,6 @@
--- Cadence and cost: power and machines every 5 to 10 s, the AE2 watchlist every 60 s by id only,
--- sensor lines rarely, and a bounded number of server ticks per cycle (WO-7.2, plan 7.9).
+-- Cadence and cost: power and machines every 5 to 10 s, the AE2 watchlist every 60 s by exact
+-- lookups only, sensor lines rarely, and a bounded number of server ticks per cycle (WO-7.2,
+-- plan 7.9, D213).
 local T = require("testlib")
 local F = require("fakeoc")
 local json = require("json")
@@ -34,16 +35,17 @@ test("ten minutes at the default cadence", function()
   for i, d in ipairs(intervals(times)) do
     T.between(d, 4.5, 5.6, "gap before message " .. (i + 1))
   end
-  -- The watchlist: one getItemsInNetworkById per distinct name (3 of the 4 entries) every 60 s,
-  -- at 1, 61, ... 541 s (the run stops at 601).
-  local by_id = w:times_of("me_controller", "getItemsInNetworkById")
-  T.eq(#by_id, 3 * 10, "three names, ten reads")
-  for i = 4, #by_id do
-    T.between(by_id[i] - by_id[i - 3], 59.5, 60.6, "watchlist period")
+  -- The watchlist: one exact getItemInNetwork per watched entry (4) every 60 s, at 1, 61, ...
+  -- 541 s (the run stops at 601).
+  local lookups = w:times_of("me_controller", "getItemInNetwork")
+  T.eq(#lookups, 4 * 10, "four entries, ten reads")
+  for i = 5, #lookups do
+    T.between(lookups[i] - lookups[i - 4], 59.5, 60.6, "watchlist period")
   end
-  T.ok(by_id[3] - by_id[1] < 1, "one read's names go out together")
-  T.eq(w:calls_of("me_controller.getItemsInNetwork"), 0, "never getItemsInNetwork")
-  T.eq(w:calls_of("me_controller.allItems"), 0, "never allItems")
+  T.ok(lookups[4] - lookups[1] < 1, "one read's entries go out together")
+  for _, never in ipairs({ "getItemsInNetwork", "allItems", "getItemsInNetworkById", "getCraftables" }) do
+    T.eq(w:calls_of("me_controller." .. never), 0, "never " .. never)
+  end
   T.eq(w:calls_of("me_controller.getCpus"), #times, "CPUs every cycle")
   -- Sensor lines: each entry about once a minute, at most 2 reads in a cycle.
   local sensor_total = 0
@@ -77,7 +79,7 @@ test("ten minutes at the default cadence", function()
     nondirect_calls = w.nondirect,
     nondirect_per_cycle = math.floor(per * 100 + 0.5) / 100,
     sensor_calls = sensor_calls,
-    watchlist_calls = #by_id,
+    watchlist_calls = #lookups,
     cpus_calls = w:calls_of("me_controller.getCpus"),
   }))
 end)
@@ -91,7 +93,7 @@ test("cycle_s = 10", function()
   for _, d in ipairs(intervals(times)) do
     T.between(d, 9.5, 10.6, "gap")
   end
-  T.eq(#w:times_of("me_controller", "getItemsInNetworkById"), 3 * 5, "still every 60 s: 1, 61, ... 241")
+  T.eq(#w:times_of("me_controller", "getItemInNetwork"), 4 * 5, "still every 60 s: 1, 61, ... 241")
 end)
 
 test("power and machines in every message, cheaply", function()
@@ -164,7 +166,7 @@ test("while the core is down, no sensor or watchlist reads", function()
     end
   end
   T.eq(sensor_after_first, 0, "sensor reads wait for the link")
-  T.eq(#w:times_of("me_controller", "getItemsInNetworkById"), 3, "only the first cycle's watchlist read")
+  T.eq(#w:times_of("me_controller", "getItemInNetwork"), 4, "only the first cycle's watchlist read")
   -- Backoff: 5, 10, 20, 40, 60, 60 ...
   local gaps = intervals(request_times(w))
   T.near(gaps[1], 5, 0.6, "first retry")

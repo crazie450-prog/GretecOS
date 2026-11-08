@@ -94,20 +94,57 @@ test("sensor lines go out raw, byte for byte", function()
   T.eq(by_addr(p.machines, w.ebf.addr).sensor, nil, "acked lines are not sent again")
 end)
 
-test("the watchlist: totals per registry name and damage", function()
+test("the watchlist: one exact lookup per entry, the stack without NBT", function()
   local w = T.base()
   local M, st = T.agent(w)
   M.cycle(st)
   local items = T.last_body(w).ae2.items
   T.same(items, {
-    { name = "minecraft:iron_ingot", damage = 0, size = 1234, stacks = 1, craftable = true },
-    { name = "gregtech:gt.metaitem.01", damage = 11305, size = 643, stacks = 2, craftable = true },
-    { name = "gregtech:gt.metaitem.01", damage = 2305, size = 0, stacks = 0, craftable = false },
-    { name = "minecraft:diamond", damage = 0, size = 0, stacks = 0, craftable = false },
-  }, "a plain and an NBT stack of steel ingots add up; unwatched damages are left out")
-  T.eq(w.me.last_by_id, 0, "the last call (diamond) found nothing")
+    { name = "minecraft:iron_ingot", damage = 0, size = 1234, craftable = true },
+    { name = "gregtech:gt.metaitem.01", damage = 11305, size = 640, craftable = true },
+    { name = "gregtech:gt.metaitem.01", damage = 2305, size = 0, craftable = false },
+    { name = "minecraft:diamond", damage = 0, size = 0, craftable = false },
+  }, "the 3 steel ingots with NBT are another item (the core keys registry name + damage, no NBT)")
+  T.eq(w:calls_of("me_controller.getItemInNetwork"), 4, "one lookup per watched entry")
   M.cycle(st)
   T.eq(T.last_body(w).ae2.items, nil, "not sent again until the next read")
+end)
+
+test("the watchlist: a pattern with none stored, an unknown name, a failing lookup", function()
+  local w = T.base({ config = table.concat({
+    "{",
+    '  token = "' .. T.TOKEN .. '",',
+    "  watch = {",
+    '    { name = "minecraft:iron_ingot", damage = 0 },',
+    '    { name = "minecraft:diamond", damage = 0 },',
+    '    { name = "nosuchmod:thing", damage = 3 },',
+    "  },",
+    "}",
+  }, "\n") })
+  w.me.patterns["minecraft:diamond@0"] = { plan_ticks = 2 }
+  w.me.unknown["nosuchmod:thing"] = true
+  w.me.raise.getItemInNetwork = { "java.lang.IllegalStateException: grid not ready" }
+  local M, st = T.agent(w)
+  M.cycle(st)
+  local p = T.last_body(w)
+  T.same(p.ae2.items, {
+    { name = "minecraft:diamond", damage = 0, size = 0, craftable = true },
+    { name = "nosuchmod:thing", damage = 3, size = 0, craftable = false },
+  }, "a failed lookup is left out, not guessed; a pattern alone is craftable with 0 stored")
+  T.has(p.errors[1].msg, "getItemInNetwork minecraft:iron_ingot@0: java.lang.IllegalStateException")
+end)
+
+test("a watchlist name with thousands of variants costs one small table per entry", function()
+  local w = T.base()
+  for i = 1, 3000 do
+    w.me.items[#w.me.items + 1] = { name = "gregtech:gt.metaitem.01", damage = 20000 + i, size = i }
+  end
+  local M, st = T.agent(w)
+  M.cycle(st)
+  local items = T.last_body(w).ae2.items
+  T.eq(items[2].size, 640, "steel ingots, as before")
+  T.eq(w:calls_of("me_controller.getItemInNetwork"), 4)
+  T.eq(w:calls_of("me_controller.getItemsInNetworkById"), 0, "never the call that returns every variant")
 end)
 
 test("fresh data waits for an ack", function()
@@ -261,15 +298,18 @@ test("an ack never drops sensor lines its message didn't carry", function()
   T.eq(ec.sensor, nil)
 end)
 
--- The largest base the config allows, with everything waiting and nothing acked: the message
--- the core must accept stays bounded (docs/contracts/oc_bridge.md, Size: about 50 KB; the core
--- takes up to 128 KB).
-test("the largest message stays under 64 KB", function()
-  local watch = {}
-  for i = 1, 64 do
-    watch[#watch + 1] = ('    { name = "gregtech:gt.metaitem.%02d", damage = %d },'):format(i, 32000 + i)
+-- Decode every message, letting the yield watchdog know the test (not the agent) is busy.
+local function decoded(w)
+  local out = {}
+  for i, r in ipairs(w.requests) do
+    w:advance_to(w.clock)
+    out[i] = assert(json.decode(r.body))
   end
-  local config = table.concat({
+  return out
+end
+
+local function max_config(watch)
+  return table.concat({
     "{",
     '  token = "' .. T.TOKEN .. '",',
     "  max_machines = 64, max_power = 32, max_watch = 64, max_crafts = 16, sensor_per_cycle = 4,",
@@ -278,58 +318,202 @@ test("the largest message stays under 64 KB", function()
     "  },",
     "}",
   }, "\n")
-  local w = T.base({ bare = true, config = config })
-  local cpus, items, patterns = {}, {}, {}
-  for i = 1, 40 do
-    cpus[i] = { name = ("cpu %02d "):format(i) .. ("x"):rep(60), storage = 65536 * i, coprocessors = i, busy = i % 2 == 0 }
+end
+
+local function trimmed(bodies)
+  for _, b in ipairs(bodies) do
+    for _, e in ipairs(b.errors) do
+      if e.msg:find("wait for a smaller one", 1, true) then
+        return true
+      end
+    end
   end
+  return false
+end
+
+-- Every limit at the config's maximum with game-like names and lines, acknowledged as the core
+-- does: the agent sends whole messages, well under its 96 KB budget.
+test("a big base at the config's maxima sends whole messages", function()
+  local watch, items = {}, {}
   for i = 1, 64 do
-    items[#items + 1] = { name = ("gregtech:gt.metaitem.%02d"):format(i), damage = 32000 + i, size = 2 ^ 40, isCraftable = true }
-    patterns[("gregtech:gt.metaitem.%02d@%d"):format(i, 32000 + i)] = { plan_ticks = 1, craft_ticks = 1 }
+    local name = ("gregtech:gt.metaitem.0%d"):format(1 + i % 3)
+    watch[i] = ('    { name = "%s", damage = %d },'):format(name, 11000 + i)
+    items[i] = { name = name, damage = 11000 + i, size = 2 ^ 40, isCraftable = i % 2 == 0 }
   end
-  w.me = F.me(w, { prefix = "5e", cpus = cpus, items = items, patterns = patterns })
+  local w = T.base({ bare = true, config = max_config(watch) })
+  local cpus = {}
+  for i = 1, 32 do
+    cpus[i] = { name = ("Crafting CPU %02d"):format(i), storage = 2 ^ 26, coprocessors = 16, busy = i % 3 == 0 }
+  end
+  w.me = F.me(w, { prefix = "5e", cpus = cpus, items = items })
   for i = 1, 64 do
-    F.gt_machine(w, { prefix = ("2%03x"):format(i), name = ("multimachine.some.long.addon.name.%03d"):format(i), sensor = heavy_lines("m" .. i) })
+    F.gt_machine(w, { prefix = ("2%03x"):format(i), name = ("multimachine.processing.array.%02d"):format(i), sensor = heavy_lines("m" .. i) })
   end
   for i = 1, 32 do
-    F.battery_buffer(w, { prefix = ("3%03x"):format(i), sensor = heavy_lines("b" .. i) })
+    F.battery_buffer(w, { prefix = ("3%03x"):format(i), name = ("batterybuffer.16.tier.%02d"):format(i % 15), sensor = heavy_lines("b" .. i) })
+  end
+  local M, st = T.agent(w)
+  T.run_until(M, st, w, 61)
+  local bodies = decoded(w)
+  local biggest = 0
+  for i, r in ipairs(w.requests) do
+    T.ok(#r.body <= 96 * 1024, "message " .. i .. " is " .. #r.body .. " bytes")
+    biggest = math.max(biggest, #r.body)
+  end
+  T.eq(#bodies[1].ae2.items, 64, "the whole watchlist")
+  T.eq(#bodies[1].machines, 64)
+  T.eq(#bodies[1].power, 32)
+  T.ok(sensor_bytes(bodies[1]) > 0, "with sensor lines")
+  T.no(trimmed(bodies), "nothing had to wait for room")
+  T.dump("big-base-stats.json", json.encode({ biggest_bytes = biggest }))
+end)
+
+-- `text(prefix, n, unit)` fills a string field to its limit n with `unit`, which picks how long its
+-- JSON gets: "x" 1 byte per byte, a section sign (\194\167) or an e-acute (\195\169) 3, a control
+-- character (\1) or an invalid UTF-8 byte (\255) 6, the longest any byte gets.
+local function text(prefix, n, unit)
+  return (prefix .. unit:rep(n)):sub(1, n)
+end
+
+-- The worst a message can get: every list at the config's maximum and full, nothing acknowledged,
+-- every string at its limit. opts.unit fills names, CPU names, errors and AE2's failure reasons,
+-- opts.sensor_unit the sensor lines, opts.item_unit the watchlist's names (from the config) and
+-- opts.craft_unit the crafts' names (from the core's JSON, so valid UTF-8). opts.room leaves that
+-- many of the 8 error records to the agent.
+local function worst_base(opts)
+  local watch, items, patterns = {}, {}, {}
+  for i = 1, 64 do
+    local name = text(("gregtech:gt.metaitem.%02d."):format(i), 128, opts.item_unit)
+    watch[i] = ('    { name = "%s", damage = %d },'):format(name, 32000 + i)
+    items[i] = { name = name, damage = 32000 + i, size = 2 ^ 50, isCraftable = true }
+  end
+  local function craft_name(k)
+    return text(("gregtech:gt.metaitem.%02d."):format(k), 128, opts.craft_unit)
+  end
+  for k = 1, 64 do
+    -- Every craft fails with a reason as long as the contract allows: results and crafts carry it.
+    patterns[craft_name(k) .. "@" .. (32000 + k)] = { plan_ticks = 1, fail = text("", 200, opts.unit) }
+  end
+  local w = T.base({ bare = true, config = max_config(watch) })
+  local cpus = {}
+  for i = 1, 40 do
+    cpus[i] = { name = text(("cpu %02d "):format(i), 64, opts.unit), storage = 2 ^ 40, coprocessors = 2 ^ 20, busy = true }
+  end
+  w.me = F.me(w, { prefix = "5e", cpus = cpus, items = items, patterns = patterns })
+  local function lines(tag)
+    local out = {}
+    for i = 1, 32 do
+      out[i] = text(tag .. i .. " ", 200, opts.sensor_unit)
+    end
+    return out
+  end
+  for i = 1, 64 do
+    F.gt_machine(w, { prefix = ("2%03x"):format(i), name = text("multimachine." .. i .. ".", 128, opts.unit),
+      sensor = lines("m" .. i), progress = 2 ^ 31, progress_max = 2 ^ 31, eu = 2 ^ 62, eu_max = 2 ^ 62 })
+  end
+  for i = 1, 32 do
+    F.battery_buffer(w, { prefix = ("3%03x"):format(i), name = text("batterybuffer." .. i .. ".", 128, opts.unit),
+      sensor = lines("b" .. i), eu = 2 ^ 62, eu_max = 2 ^ 62, eu_in = -2 ^ 62, eu_out = -2 ^ 62 })
   end
   local id = 0
-  w.server = function(req, world)
-    -- Never acks; every reply carries crafts and a say without a chat box, so results pile up.
+  w.server = function()
+    -- Never acks; the first two replies carry 16 crafts that all fail, so results and crafts
+    -- reach their caps and stay there.
     local cmds = json.array()
-    for _ = 1, 8 do
+    for _ = 1, id < 16 and 8 or 0 do
       id = id + 1
       local k = (id % 64) + 1
-      if id % 2 == 0 then
-        cmds[#cmds + 1] = T.cmd(id, "craft", { name = ("gregtech:gt.metaitem.%02d"):format(k), damage = 32000 + k, amount = 1 })
-      else
-        cmds[#cmds + 1] = T.cmd(id, "say", { text = ("y"):rep(256) })
-      end
+      cmds[#cmds + 1] = T.cmd(id, "craft", { name = craft_name(k), damage = 32000 + k, amount = 1 })
     end
     return { body = json.encode({ v = 1, ok = true, cmds = cmds, ack = 0 }) }
   end
   local M, st = T.agent(w)
-  for i = 1, 30 do
-    M.record_error(st, "machines", ("error %02d "):format(i) .. ("z"):rep(190))
-  end
-  local biggest = 0
-  for _ = 1, 12 do
+  local sizes = {}
+  for _ = 1, 14 do
+    for i = 1, 8 - (opts.room or 0) do -- the same records each cycle: counted, not added
+      M.record_error(st, "machines", text(("e%d "):format(i), 200, opts.unit))
+    end
     st.next_cycle = 0
     M.cycle(st)
-    biggest = math.max(biggest, #w.requests[#w.requests].body)
+    sizes[#sizes + 1] = #w.requests[#w.requests].body
   end
-  local last = T.last_body(w)
+  local bodies = decoded(w)
+  local last = bodies[#bodies]
   T.eq(#last.machines, 64)
   T.eq(#last.power, 32)
   T.eq(#last.ae2.cpus, 32, "crafting CPUs are capped")
-  T.eq(#last.ae2.items, 64)
+  T.eq(#last.crafts, 16, "16 failed crafts, never acknowledged")
   T.eq(#last.results, 16)
   T.eq(#last.errors, 8)
-  T.ok(#last.crafts <= 16, "crafts are capped")
-  T.ok(sensor_bytes(last) <= 8192)
-  T.ok(biggest <= 64 * 1024, "the biggest message was " .. biggest .. " bytes")
+  for _, r in ipairs(last.results) do
+    T.has(r.err, "request failed", "each result carries AE2's longest reason")
+  end
+  return sizes, bodies
+end
+
+-- With game-like text (section signs in the lines, accented names and reasons, ASCII registry
+-- names) the full message would be over 96 KB: the sensor lines and the watchlist wait, so every
+-- message stays under it.
+test("every list full and nothing acknowledged: the 96 KB budget holds", function()
+  local sizes, bodies = worst_base({ unit = "\195\169", sensor_unit = "\194\167a", item_unit = "x", craft_unit = "x", room = 1 })
+  local biggest = 0
+  for i, n in ipairs(sizes) do
+    T.ok(n <= 96 * 1024, "message " .. i .. " is " .. n .. " bytes")
+    biggest = math.max(biggest, n)
+  end
+  T.ok(trimmed(bodies), "the agent says what waited")
   T.dump("largest-stats.json", json.encode({ biggest_bytes = biggest }))
+end)
+
+-- Every string at its limit in its longest JSON form: what remains after the sensor lines and the
+-- watchlist wait stays under the core's 256 KB.
+test("the pathological message stays under the core's 256 KB", function()
+  local sizes, bodies = worst_base({ unit = "\1", sensor_unit = "\1", item_unit = "\255", craft_unit = "\195\169", room = 1 })
+  local biggest = 0
+  for i, n in ipairs(sizes) do
+    T.ok(n <= 256 * 1024, "message " .. i .. " is " .. n .. " bytes")
+    biggest = math.max(biggest, n)
+  end
+  for _, b in ipairs(bodies) do
+    T.eq(sensor_bytes(b), 0, "sensor lines wait")
+    T.eq(b.ae2.items, nil, "the watchlist waits")
+  end
+  T.ok(trimmed(bodies), "the agent says what waited")
+  T.dump("pathological-stats.json", json.encode({ biggest_bytes = biggest }))
+end)
+
+-- The first message's size in a fresh standard base whose budget is max_body.
+local function first_message(max_body)
+  local w = T.base()
+  local M, st = T.agent(w)
+  M.MAX_BODY = max_body or M.MAX_BODY
+  M.cycle(st)
+  return w, M, st, #w.requests[1].body, T.last_body(w)
+end
+
+test("over the size budget: sensor lines wait first, then the watchlist, and an ack keeps them", function()
+  local _, _, _, full, b = first_message()
+  T.ok(sensor_bytes(b) > 0 and b.ae2.items, "the standard first message has both")
+  -- One byte short: the sensor lines wait, the watchlist still fits.
+  local w, M, st, size, b1 = first_message(full - 1)
+  T.ok(size < full)
+  T.eq(sensor_bytes(b1), 0, "lines left out")
+  T.ok(b1.ae2.items, "the watchlist fit")
+  T.ok(st.inv.by_addr[w.ebf.addr].sensor, "message 1 was acked, and the lines it didn't carry still wait")
+  T.has(st.errors[#st.errors].msg, ("over %d bytes: sensor lines wait for a smaller one"):format(full - 1))
+  M.MAX_BODY = 98304
+  M.cycle(st)
+  local b2 = T.last_body(w)
+  T.ok(by_addr(b2.machines, w.ebf.addr).sensor, "they go in the next message that has room")
+  T.has(b2.errors[1].msg, "sensor lines wait", "with the note of what happened")
+  -- Shorter than the message without lines: both wait.
+  local w3, _, st3, _, b3 = first_message(size - 1)
+  T.eq(sensor_bytes(b3), 0)
+  T.eq(b3.ae2.items, nil, "the watchlist waits too")
+  T.ok(st3.inv.me.items, "and is still there after the ack")
+  T.has(st3.errors[#st3.errors].msg, "sensor lines and the watchlist wait")
+  T.eq(#w3.requests, 1, "the rest still goes")
+  T.eq(#b3.machines, 1, "the snapshot is never cut")
 end)
 
 test("values outside the contract are left out, so the core can always read the message", function()

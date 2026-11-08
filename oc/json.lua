@@ -16,8 +16,8 @@ json.encode(value) -> string
 
 json.decode(text) -> value | nil, err
   * RFC 8259, strict: no comments, no trailing commas, no leading zeros, nothing after the value.
-  * null decodes to json.null, so arrays keep their positions; json.isnull(v) is true for nil
-    and json.null. Arrays and objects come back marked (json.is_array works on them).
+  * null decodes to json.null, so arrays keep their positions. Arrays and objects come back
+    marked (json.is_array works on them).
   * Whole numbers that fit in 64 bits are Lua integers on 5.3; other numbers are floats.
   * Nesting deeper than 32 is an error. It never raises; errors are returned.
 ]]
@@ -52,10 +52,6 @@ end
 
 function json.is_object(t)
   return type(t) == "table" and getmetatable(t) ~= ARRAY_MT and t ~= json.null
-end
-
-function json.isnull(v)
-  return v == nil or v == json.null
 end
 
 -- Lua 5.2 has no math.type; there every number is a float.

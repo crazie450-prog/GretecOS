@@ -496,15 +496,83 @@ function F.battery_buffer(w, opts)
   return d
 end
 
+-- An AE2 crafting job behind OC's Craftable.request: it plans, then crafts (or fails, or is
+-- canceled), and answers through a CraftingStatus as OC 1.12.68's does. w.me:reload_jobs() does
+-- what a world save and load do to it: OC keeps the status but not its AE2 link.
+local function craft_request(w, s, key, p)
+  return nondirect(function(amount, prioritize, cpu)
+    if p.no_controller then
+      return nil, "no controller"
+    end
+    local job = { key = key, amount = amount or 1, cpu = cpu, computing = true, failed = false, done = false, canceled = false, reason = "no link" }
+    s.requests[#s.requests + 1] = job
+    w:after_ticks(p.plan_ticks or 2, function()
+      if p.plan_forever or job.reloaded then
+        return
+      end
+      job.computing = false
+      if p.fail then
+        job.failed = true
+        job.reason = "request failed (" .. p.fail .. ")"
+      else
+        job.link = true
+        w:after_ticks(p.craft_ticks or 40, function()
+          if p.cancel then
+            job.canceled = true
+          else
+            job.done = true
+          end
+        end)
+      end
+    end)
+    return w:value("craftingstatus", {
+      isComputing = nondirect(function()
+        return job.computing
+      end),
+      hasFailed = nondirect(function()
+        return job.failed, job.reason
+      end),
+      isCanceled = nondirect(function()
+        if job.computing then
+          return false, "computing"
+        end
+        if job.link then
+          return job.canceled
+        end
+        return job.failed, job.reason
+      end),
+      isDone = nondirect(function()
+        if job.computing then
+          return false, "computing"
+        end
+        if job.link then
+          return job.done
+        end
+        return not job.failed, job.reason
+      end),
+    })
+  end)
+end
+
 -- AE2 through OC's NetworkControl (me_controller, or an ME interface block). Items carry OC's
--- ItemStack converter fields plus AE2's long size and isCraftable.
+-- ItemStack converter fields plus AE2's long size and isCraftable; hasTag marks an NBT variant.
+-- A name in opts.unknown is one the game doesn't know.
 function F.me(w, opts)
   opts = opts or {}
   local d = device(w, opts.type or "me_controller", opts)
   d.items = opts.items or {}
   d.cpus = opts.cpus or { { name = "", storage = 65536, coprocessors = 1, busy = false } }
   d.patterns = opts.patterns or {} -- "name@damage" -> { plan_ticks, fail = reason, craft_ticks, cancel = bool }
+  d.unknown = opts.unknown or {}
   d.requests = {}
+  -- OC CraftingStatus.save then load: isComputing false, the link gone, failed unless the job
+  -- was done, the reason kept ("no link" unless the request had failed).
+  function d.reload_jobs(s)
+    for _, job in ipairs(s.requests) do
+      job.failed = not (job.link and job.done)
+      job.computing, job.link, job.reloaded = false, nil, true
+    end
+  end
   local m = d.methods
   m.getCpus = nondirect(function(s)
     local out = {}
@@ -519,111 +587,69 @@ function F.me(w, opts)
     end
     return out
   end)
-  m.getItemsInNetworkById = nondirect(function(s, filter)
-    if type(filter) ~= "table" then
+  -- The agent makes exact lookups only; these walk or convert the whole network on the server
+  -- thread (getItemsInNetworkById every variant of a name, getCraftables every craftable).
+  for _, name in ipairs({ "getItemsInNetwork", "allItems", "getItemsInNetworkById", "getCraftables" }) do
+    m[name] = nondirect(function()
+      error("test: " .. name .. " must never be called", 0)
+    end)
+  end
+  -- OC: getItemInNetwork(name|id[, damage[, nbt]]): the stack of that item and damage with the
+  -- given NBT (default "{}", which AE2 reads as none), with AE2's merged size and craftable flag;
+  -- nil when none is stored and there is no pattern, or the game doesn't know the name.
+  m.getItemInNetwork = nondirect(function(s, name, damage, nbt)
+    if type(name) == "number" then
+      error("test: the agent never sends a numeric id (EndlessIDs)", 0)
+    end
+    if type(name) ~= "string" then
+      error("bad argument #1 (number expected, got " .. type(name) .. ")", 0)
+    end
+    damage = damage or 0
+    if nbt ~= nil and nbt ~= "{}" then
+      error("test: the agent looks up the stack without NBT", 0)
+    end
+    if s.unknown[name] then
+      return nil
+    end
+    local size, craftable, found = 0, s.patterns[name .. "@" .. damage] ~= nil, false
+    for _, it in ipairs(s.items) do
+      if it.name == name and it.damage == damage and not it.hasTag then
+        size, found = size + it.size, true
+        craftable = craftable or it.isCraftable == true
+      end
+    end
+    if not found and not craftable then
+      return nil
+    end
+    return { name = name, damage = damage, size = size, isCraftable = craftable, label = name, hasTag = false, maxDamage = 0, maxSize = 64 }
+  end)
+  -- OC: getCraftable(detail, type): the pattern for exactly that stack (no NBT), or nil; an item
+  -- name the game doesn't know is an error ("item not found"), as is a type OC didn't register.
+  m.getCraftable = nondirect(function(s, detail, tp)
+    if type(detail) ~= "table" then
       error("bad argument #1 (table expected)", 0)
     end
-    local want = {}
-    for i, id in ipairs(filter) do
-      if type(id) ~= "string" and type(id) ~= "number" then
-        error(("bad argument in filter table at index %d (number or string expected)"):format(i), 0)
-      end
-      want[id] = true
+    if type(tp) ~= "string" then
+      error("bad argument #2 (string expected)", 0)
     end
-    local out = {}
-    for _, it in ipairs(s.items) do
-      if want[it.name] then
-        out[#out + 1] = {
-          name = it.name,
-          damage = it.damage,
-          size = it.size,
-          isCraftable = it.isCraftable == true,
-          label = it.label or it.name,
-          hasTag = it.hasTag == true,
-          maxDamage = 0,
-          maxSize = 64,
-        }
-      end
+    if tp ~= "item" and tp ~= "fluid" then
+      error("Type " .. tp .. " hasn't been registered", 0)
     end
-    s.last_by_id = #out
-    return out
-  end)
-  m.getItemsInNetwork = nondirect(function()
-    error("test: getItemsInNetwork must never be called", 0)
-  end)
-  m.allItems = nondirect(function()
-    error("test: allItems must never be called", 0)
-  end)
-  m.getItemInNetwork = nondirect(function()
-    return nil
-  end)
-  m.getCraftables = nondirect(function(s, filter)
-    local out = {}
-    filter = filter or {}
-    for key, p in pairs(s.patterns) do
-      local name, damage = key:match("^(.*)@(%d+)$")
-      damage = tonumber(damage)
-      if (filter.name == nil or filter.name == name) and (filter.damage == nil or filter.damage == damage) then
-        out[#out + 1] = w:value("craftable", {
-          getStack = nondirect(function()
-            return { name = name, damage = damage, size = 1 }
-          end),
-          request = nondirect(function(amount, prioritize, cpu)
-            if p.no_controller then
-              return nil, "no controller"
-            end
-            local job = { key = key, amount = amount or 1, cpu = cpu, computing = true, failed = false, done = false, canceled = false, reason = "no link" }
-            s.requests[#s.requests + 1] = job
-            w:after_ticks(p.plan_ticks or 2, function()
-              if p.plan_forever then
-                return
-              end
-              job.computing = false
-              if p.fail then
-                job.failed = true
-                job.reason = "request failed (" .. p.fail .. ")"
-              else
-                job.link = true
-                w:after_ticks(p.craft_ticks or 40, function()
-                  if p.cancel then
-                    job.canceled = true
-                  else
-                    job.done = true
-                  end
-                end)
-              end
-            end)
-            return w:value("craftingstatus", {
-              isComputing = nondirect(function()
-                return job.computing
-              end),
-              hasFailed = nondirect(function()
-                return job.failed, job.reason
-              end),
-              isCanceled = nondirect(function()
-                if job.computing then
-                  return false, "computing"
-                end
-                if job.link then
-                  return job.canceled
-                end
-                return job.failed, job.reason
-              end),
-              isDone = nondirect(function()
-                if job.computing then
-                  return false, "computing"
-                end
-                if job.link then
-                  return job.done
-                end
-                return not job.failed, job.reason
-              end),
-            })
-          end),
-        })
-      end
+    if type(detail.name) ~= "string" or s.unknown[detail.name] then
+      error("item not found", 0)
     end
-    return out
+    local damage = detail.damage or 0
+    local key = detail.name .. "@" .. damage
+    local p = s.patterns[key]
+    if not p then
+      return nil
+    end
+    return w:value("craftable", {
+      getStack = nondirect(function()
+        return { name = detail.name, damage = damage, size = 1 }
+      end),
+      request = craft_request(w, s, key, p),
+    })
   end)
   m.getStoredPower = nondirect(function() return 1000.0 end)
   m.getMaxStoredPower = nondirect(function() return 8000.0 end)

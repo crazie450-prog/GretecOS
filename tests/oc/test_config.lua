@@ -119,10 +119,8 @@ test("the watchlist uses registry names, never numeric ids", function()
   cfg, err = watch('{ name = "gregtech:gt.metaitem.01", damage = 11305 }, { name = "gregtech:gt.metaitem.01", damage = 2305 }, '
     .. '{ name = "gregtech:gt.metaitem.01", damage = 11305 }, { name = "minecraft:iron_ingot", damage = 0 }')
   T.ok(cfg, err)
-  T.eq(#cfg.watch, 3, "a duplicate entry counts once")
-  T.eq(#cfg.watch_groups, 2, "one getItemsInNetworkById per distinct registry name")
-  T.eq(cfg.watch_groups[1].name, "gregtech:gt.metaitem.01")
-  T.ok(cfg.watch_groups[1].damages[11305] and cfg.watch_groups[1].damages[2305])
+  T.eq(#cfg.watch, 3, "a duplicate entry counts once (one lookup each)")
+  T.same(cfg.watch[2], { name = "gregtech:gt.metaitem.01", damage = 2305 }, "config order")
   local many = {}
   for i = 1, 65 do
     many[i] = ('{ name = "minecraft:stone", damage = %d }'):format(i)
@@ -130,15 +128,26 @@ test("the watchlist uses registry names, never numeric ids", function()
   cfg, err = watch(table.concat(many, ", "))
   T.no(cfg, "max_watch caps the list")
   T.has(err, "max_watch")
+  cfg, err = load_with('{ token = "' .. T.TOKEN .. '", max_watch = 65 }')
+  T.no(cfg, "64 at most: one tick per watched entry every ae2_s")
+  T.has(err, "max_watch must be a number from 0 to 64")
 end)
 
-test("the config can't run code", function()
+-- The config is Lua evaluated with no globals: it can't reach the computer's libraries (os, io,
+-- component), but it is still code (string methods and function literals work), trusted as
+-- Clayton's own file like the program itself.
+test("the config sees no globals", function()
   local cfg, err = load_with('{ token = os.getenv("TOKEN") }')
   T.no(cfg)
   T.has(err, "config")
   cfg, err = load_with('{ token = string.rep("a", 10) }')
-  T.no(cfg, "the config's environment is empty")
+  T.no(cfg, "no string library global")
   T.has(err, "string")
+  cfg, err = load_with('{ token = require("component").list() }')
+  T.no(cfg, "no require")
+  cfg, err = load_with('{ token = ("a"):rep(12) }')
+  T.ok(cfg, "but it is still Lua: a string method works (" .. tostring(err) .. ")")
+  T.eq(cfg.token, ("a"):rep(12))
 end)
 
 test("a missing or broken file says what to do", function()
