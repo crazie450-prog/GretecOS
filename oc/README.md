@@ -20,8 +20,8 @@ The wire format is [docs/contracts/oc_bridge.md](../docs/contracts/oc_bridge.md)
   start on Lua 5.2: hold the CPU (or APU), shift-right-click to switch it to Lua 5.3, put it back. On 5.2 the agent
   says so and stops. Lua 5.3's 64-bit integers keep EU values exact.
 - **Memory:** two T3.5 sticks is comfortable. The agent keeps its own tables bounded (two virtual hours of the test
-  base grew its heap by under 1 KB); a watchlist name like `gregtech:gt.metaitem.01` makes one large temporary
-  table every minute, because `getItemsInNetworkById` returns every damage value of a name.
+  base grew its heap by under 1 KB), and the watchlist reads one small table per entry (an exact
+  `getItemInNetwork(name, damage)`), however many variants a name like `gregtech:gt.metaitem.01` has in the network.
 - **Components** (adapters, or MFUs bound to the controller, count toward the CPU's component limit, 8/12/16):
   - an adapter touching each GT machine **controller** to watch (casings have no tile entity), each battery buffer
     and the LSC controller;
@@ -40,15 +40,15 @@ docs/runbooks/oc_agent.md has the exact steps for the Lab.
 
 In `gos-agent.cfg`, set `token` to the agent's token from the core. Every other key has a default (the example lists
 them): `cycle_s` (5), `ae2_s` (60), `sensor_s` (60), `sensor_per_cycle` (2), `watch` (the AE2 watchlist: registry
-name and damage, never numeric ids), `power_names`, `ignore`, `me`, `url`. Unknown keys are refused, so a typo
-can't pass silently.
+name and damage, never numeric ids, at most 64), `power_names`, `ignore`, `me`, `url`. Unknown keys are refused, so
+a typo can't pass silently. The file is Lua read with no globals: keep it to plain values.
 
 ## Run
 
 ```
 cd /home/gos
 gos-agent --list     # what it found; GT machines show as gt_machine (VERIFY V20)
-gos-agent --once     # one message to the core and its answer
+gos-agent --once     # one message and whether the core answered (and the results of any commands it sent)
 gos-agent            # run; Ctrl+C stops it at the next wait
 ```
 

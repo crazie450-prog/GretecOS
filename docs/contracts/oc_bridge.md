@@ -27,7 +27,7 @@ value from a stale one; gaps (a paused game, a broken link) are marked stale, ne
 | Reply | **Always HTTP 200** with one reply document, `Content-Type: application/json`, **at most 2048 bytes**. OC can't read the body of a non-2xx response (its `getInputStream` throws, [C§1.4]), so a refusal is `200` with `ok: false`. 2048 bytes is what OC returns from one read in GTNH's config (`maxReadBuffer`). The agent reads 2048-byte chunks until the stream ends and refuses a reply over 8192 bytes (`reply_max`) as a failed exchange, executing nothing from it. |
 | Time | The agent gives one exchange 12 s (`request_timeout_s`) from the request to the last byte, then closes it and counts a failure. OC's own `requestTimeout=10` (plan §5.6) bounds the read. |
 | Connections | The agent closes its handle on every path, success or not: OC allows 4 open connections per internet card, HTTP requests included [C§1.4]. |
-| Token | The bearer token is a client token for this agent (D117's named client tokens, e.g. `gos token new oc`; WO-7.1 decides the name and how the core checks it). It sits in plain text in the agent's config on the OC drive, inside the world's save, which gos-dev can read (D82), so it must grant nothing beyond `/oc/telemetry`. |
+| Token | The bearer token is a client token for this agent (D117's named client tokens, e.g. `gos token new oc`; WO-7.1 decides the name and how the core checks it). It sits in plain text in the agent's config on the OC drive, inside the world's save, which gos-dev can read (plan §4.6, D75: Lab modify, Play read only), so it must grant nothing beyond `/oc/telemetry`. Whoever holds it can pose as the agent: take the commands waiting for it (they then never run) or post false readings and results. So the core treats everything posted with it as data (shown, alerted on, recorded as a command's outcome) and never starts an action because of it; `gos token new` replaces a token that leaked, `gos token revoke` ends it. |
 
 A failed exchange (refused connection, a non-2xx code, a timeout, a reply that isn't one JSON object, an
 `ok: false` reply) leaves everything that was waiting for an ack waiting (see Acknowledgement) and is retried with
@@ -35,7 +35,8 @@ backoff. The one exception is `ok: false` with `err: "bad_payload"`: resending w
 refused forever, so the agent drops everything waiting for an ack (results, errors, finished crafts, sensor lines,
 the watchlist), says so on the OC screen and in its log, and its next message is a fresh snapshot carrying the
 refusal as an error. The agent never builds a message the schema refuses on purpose (see Size and limits); this is
-the way back if one slips through.
+the way back if one slips through. Results dropped this way never reach the core, so the commands they answered end
+in the core's timeout (see Delivery).
 
 ## M1: the file mailbox (WO-7.3)
 
@@ -64,9 +65,9 @@ With no `inbox.json` waiting, `exchange` returns `{v = 1, ok = true, cmds = {}}`
 | Machines (every other `gt_machine`) | every message | direct `isMachineActive`, `isWorkAllowed`, `hasWork`, `getWorkProgress`, `getWorkMaxProgress`, `getEUStored`, `getEUMaxStored` |
 | Sensor lines | each entry when its lines are `sensor_s` (60 s) old, oldest first, at most `sensor_per_cycle` (2) a message | `getSensorInformation`, 1 tick each |
 | AE2 crafting CPUs | every message | `getCpus`, 1 tick |
-| AE2 watchlist | every `ae2_s` (60 s) | one `getItemsInNetworkById` per distinct registry name, 1 tick each. **Never** `getItemsInNetwork` or `allItems` [C§2.5] |
+| AE2 watchlist | every `ae2_s` (60 s) | one `getItemInNetwork(name, damage)` per watched entry, 1 tick each: an exact lookup that returns one small table. **Never** `getItemsInNetworkById` (it matches the item only, so `gregtech:gt.metaitem.01` returns every variant the network holds, converted on the server thread and held in the computer's memory at once), `getItemsInNetwork` or `allItems` [C§2.5] (D213) |
 | Tick time (`tick_ms`) | every message, with a tps card in | `getOverallTickTime`, 1 tick |
-| Crafts in progress | every message | `isComputing`/`hasFailed` while AE2 plans, then `isDone`/`isCanceled`, 1 tick each |
+| Crafts in progress | every message | `isComputing`/`hasFailed` while AE2 plans (and `isDone` when `hasFailed` answers "no link", see Craft), then `isDone`/`isCanceled`, 1 tick each |
 | The exchange | every message | `request`, `finishConnect`, `read`: 3 to 5 ticks |
 
 - A message goes every `cycle_s` (5 s; 5 to 10 allowed), measured from the start of one cycle to the next. After a
@@ -76,7 +77,7 @@ With no `inbox.json` waiting, `exchange` returns `{v = 1, ok = true, cmds = {}}`
   `unsupported_version` or a reply with another `v`, 60 s at once. While the link is down the agent skips sensor and
   watchlist reads; power and machines are still read for the next try.
 - In the test base (an EBF, a battery buffer, an LSC, AE2 with a 4-entry watchlist, a tps card) a cycle costs about
-  9.5 server ticks on average (`tests/oc/test_cadence.lua`).
+  9.6 server ticks on average (`tests/oc/test_cadence.lua`).
 - Discovery reruns on `component_added` / `component_removed` and every `discover_s` (300 s), with direct calls only.
 
 ## The telemetry document
@@ -85,13 +86,19 @@ Every message is a full snapshot of power, machines, AE2 CPUs and crafts, so a m
 and the watchlist are sent when read and repeated until the core acknowledges a message that carried them.
 
 **Size and limits.** Every list is bounded, so a message is too: at most 32 power and 64 machine entries
-(`max_power` 16 and `max_machines` 32 by default), 32 crafting CPUs (more are left out and reported in `errors`),
-16 crafts, 16 results, 8 errors, 256 watchlist items (`max_watch`, 64 by default) and 8 KB of sensor lines (see
-Sensor lines). The largest message the agent's limits allow measured about 50 KB (`tests/oc/test_payload.lua`: every
-limit at its maximum, every list full, nothing acknowledged); a typical one is 2 to 8 KB. The core accepts bodies up
-to 128 KB. Readings outside the schema's ranges are left out, never sent: a name over 128 bytes, a negative stored
-EU, a decimal string over 80 digits; a component type that isn't letters, digits and `_` isn't counted in
-`components`.
+(`max_power` 16 and `max_machines` 32 by default), 32 crafting CPUs (more are left out and reported in `errors`
+once a discovery), 16 crafts, 16 results, 8 errors, 64 watchlist items (`max_watch`, also the default) and 8 KB of
+sensor lines (see Sensor lines). A typical message is 2 to 8 KB. The agent keeps a message under **96 KB** (98,304
+bytes) when it can: a message over that goes without its sensor lines and, if still over, without the watchlist too;
+what it leaves out waits for a later message, and it says so in `errors` (`a message would be over 98304 bytes:
+sensor lines wait for a smaller one`). What remains, the snapshot and the records waiting for an ack, is bounded
+by the limits above. In `tests/oc/test_payload.lua`, with every limit at the config's maximum: game-like text
+acknowledged as the core does, 43,823 bytes at most, nothing left out; game-like text with nothing acknowledged,
+97,597 bytes at most, sensor lines and watchlist waiting; every string at its limit in its longest JSON form (6
+bytes for each byte), 155,485 bytes. **The core accepts bodies up to 256 KB** (262,144 bytes). Readings outside
+the schema's ranges are left out, never sent: a name over 128 bytes, a negative stored EU, a decimal string over 80
+digits, a watchlist size that isn't a whole number ≥ 0; a component type that isn't letters, digits and `_` isn't
+counted in `components`.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -132,10 +139,12 @@ A field whose call failed is left out.
 **`ae2`**: `addr`, `type` (`me_controller` or `me_interface`), `cpus` (the crafting CPUs, at most 32: `name`,
 `storage` in bytes, `coprocessors`, `busy`), and when the watchlist was read and isn't acknowledged yet, `items` and
 `items_at`.
-`items` has one entry per watched (`name`, `damage`) in config order: `size` is the sum over every stack with that
-registry name and damage (NBT variants included), `stacks` how many stacks that was, `craftable` whether any of them
-has a pattern. An entry with `size` 0 was looked up and is not stored. A watched name the game doesn't know also
-gives 0. The core resolves names through the DB by registry name and damage; there is no NBT hash on the OC side.
+`items` has one entry per watched (`name`, `damage`) in config order, from one exact AE2 lookup
+(`getItemInNetwork(name, damage)`): `size` is how many of the stack with that registry name and damage and **no
+NBT** the network holds (OC sends an empty tag, which AE2 reads as none; a variant with NBT is another item and
+isn't counted), `craftable` whether AE2 has a pattern for that stack. An entry with `size` 0 was looked up and is
+not stored. A watched name the game doesn't know also gives 0. A lookup that failed is left out of `items` and
+reported in `errors`. The core resolves names through the DB by registry name and damage with no NBT, the same key.
 
 **Craft** (`crafts[]`): `id` (the command's id), `name`, `damage`, `amount`, `state`, `err` (why it failed), `at`
 (uptime of the last change). `state` goes `computing` (AE2 is planning) → `crafting` (submitted) → `done` or
@@ -144,14 +153,23 @@ message that carried that final state is acknowledged. The agent runs at most `m
 most 16: a new craft with 16 listed drops the oldest finished one and reports that in `errors`. After a restart (a
 new `boot`) it no longer reports the crafts it started before.
 
+**Lost track.** OC keeps a running program and its crafting statuses across a world reload, but not their link to
+AE2's job (OC 1.12.68 `CraftingStatus.save`/`load`): the status then answers "no link", with `isCanceled` true and
+`isDone` false for a craft that may well still run. The agent reports such a craft as `failed`, from `computing` or
+from `crafting`, with `err` exactly `lost track of it after a world reload (OC keeps no AE2 link); the craft may
+still run, check AE2`, never as `canceled`. An autosave alone also marks a status that is still planning as failed
+with "no link"; there the link appears once AE2 takes the job, so the agent asks `isDone` (which answers from the
+link) before calling a craft lost. A `failed` craft whose `err` says `may still run` is not known to have failed:
+the core shows it as "check AE2", not as a failure.
+
 **Result** (`results[]`): `id`, `kind`, `ok`, `state`, `err`, `at`. One per command, final:
 
 | `state` | `ok` | When |
 |---|---|---|
 | `done` | true | `say` said it; `machine_pause`/`machine_resume` set it and `isWorkAllowed` read it back on the next tick |
 | `submitted` | true | `craft`: AE2 planned it and accepted the job (its progress is in `crafts`) |
-| `failed` | false | It was allowed and tried, and didn't work: `err` says why (AE2 "missing resources", no pattern, no chat box, the machine didn't change, AE2 still planning after 300 s, the agent restarted before AE2 answered) |
-| `refused` | false | It never ran: a kind not allowed, no `confirmed_via`, bad arguments, a machine this agent didn't find. `err` says why |
+| `failed` | false | It was allowed and tried, and didn't work, or the agent can't tell: `err` says why (AE2 "missing resources", no pattern, no chat box, the machine didn't change, AE2 still planning after 300 s; "the agent restarted before AE2 answered; the craft may still run" and the lost-track text under Craft, which say `may still run`) |
+| `refused` | false | It never ran: a kind not allowed, a `confirmed_via` that isn't one of the four, bad arguments, a machine this agent didn't find. `err` says why |
 
 **Error** (`errors[]`): `at`, `where` (`discover`, `power`, `machines`, `sensor`, `ae2`, `tps`, `command`,
 `transport`, `state`, `cycle`), `msg` (at most 200 bytes), `count` (how often since it was last acknowledged). At most
@@ -164,20 +182,20 @@ new `boot`) it no longer reports the crafts it started before.
 | `v` | 1 | Contract version. The agent treats a reply with another `v` as a failed exchange |
 | `ok` | boolean | `true`: the core took the message. `false`: it didn't (nothing in it was recorded, nothing is acknowledged) |
 | `cmds` | array, ≤ 8 | Commands to run, below. Empty when `ok` is false; the agent ignores commands in a refused reply, and any after the 8th |
-| `err` | string or null | With `ok: false`, one of `unauthorized` (missing or wrong token), `bad_payload` (not valid by the schema), `unsupported_version`, `internal`. With `ok: true`, an optional note the agent logs |
+| `err` | string or null | With `ok: false`, one of `unauthorized` (missing or wrong token), `bad_payload` (not valid by the schema), `unsupported_version`, `internal`. With `ok: true`, an optional note the agent shows and logs once, and again when it changes |
 | `ack` | integer, optional | The highest `seq` of this `boot` the core has. HTTP may leave it out: a 200 with `ok: true` acknowledges the message it answers |
 | `poll_s` | integer 1–10, optional | Send the next message this soon (e.g. 1 while more commands wait) |
 
 **Command** (`cmds[]`): `id`, `kind`, `args`, `confirmed_via`.
 - `id`: the core's `action.id`.
-- `confirmed_via`: how Clayton confirmed it (D59): `voice`, `dashboard`, `phone` or `discord`. The core sends only
-  confirmed actions; the agent refuses a command without a `confirmed_via` as a second line of defence, never as
-  the check itself (agents can't confirm, plan §7.9).
+- `confirmed_via`: how Clayton confirmed it (D59): `voice`, `dashboard`, `phone` or `discord`, exactly. The core
+  sends only confirmed actions; the agent refuses a command whose `confirmed_via` isn't one of these four as a
+  second line of defence, never as the check itself (agents can't confirm, plan §7.9).
 - `kind` and `args`, the plan §7.9 safe actions (`waypoint` is the core's own file, not OC's):
 
 | `kind` | `args` | What the agent does |
 |---|---|---|
-| `craft` | `name` (registry name), `damage` (0–32767), `amount` (1 to the config's `craft_max`, default 1,000,000), `cpu` (optional CPU name) | `getCraftables({name, damage})` on the AE2 component, then `request(amount[, true, cpu])` on the first match, then tracks the status |
+| `craft` | `name` (registry name), `damage` (0–32767), `amount` (1 to the config's `craft_max`, default 1,000,000), `cpu` (optional CPU name) | `getCraftable({name, damage}, "item")` on the AE2 component (one exact lookup of the pattern for that stack with no NBT; never `getCraftables`, which converts every craftable in the network), then `request(amount[, true, cpu])` on it, then tracks the status |
 | `machine_pause` | `addr`: a `machines[]` address from this agent | `setWorkAllowed(false)`, then checks `isWorkAllowed` on the next tick |
 | `machine_resume` | `addr` | `setWorkAllowed(true)`, checked the same way |
 | `say` | `text`: 1–256 bytes | `chat_box.say(text)` with control characters and section-sign colour codes removed. 40 blocks around the chat box, in its dimension [F§4.2] |
@@ -186,7 +204,9 @@ Only a `machines[]` address can be paused or resumed: never a power entry (a bat
 component. No destructive kind exists (plan §7.9).
 
 **Delivery.** The core sends each confirmed command in one reply, marks it `sent`, and waits for its result; it
-doesn't resend it (at most once). A command with no result after a few minutes is the core's to time out. The agent
+doesn't resend it (at most once). A command with no result after a few minutes is the core's to time out, and the
+core reports it as "timed out; may have run": the agent may have run it and lost its result (a `bad_payload` drop,
+a computer that stopped before the result went out), or never got it (a stolen token, see Token). The agent
 also never runs an id twice: it remembers the last 32 ids it ran, with their results, in `gos-agent.state` next to
 its config, across restarts; a command that arrives again is answered with the stored result. A craft still planning
 when the agent stopped is reported as failed after the restart ("the agent restarted before AE2 answered; the craft
@@ -197,8 +217,9 @@ may still run").
 The core has message `n` when a reply says `ack: n`, or, over HTTP, when a reply with `ok: true` answers message `n`.
 On an ack the agent drops what it had sent in messages up to `n`: results, errors, finished crafts, sensor lines and
 the watchlist. What arrives after an ack (a new reading, a repeated error) waits for the next one. Everything waiting
-goes in every message, except sensor lines over the 8 KB budget; an entry whose lines are left out of a message
-loses its mark, so an ack drops only lines that went in every message since they were first sent.
+goes in every message, except sensor lines over the 8 KB budget and, in a message over 96 KB, the sensor lines and
+then the watchlist (see Size and limits); what is left out of a message loses its mark, so an ack drops only lines
+and watchlists that went in every message since they were first sent.
 
 ## Sensor lines
 
@@ -232,16 +253,18 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
   `tests/integration/test_oc_names_harness.py` checks on every harness run that no other kind of sharing appears.
   The DB's `machine` table has no `meta_name` column yet, so the core adds one or reads the export. No numeric
   block or item ID is ever sent (EndlessIDs).
-- **Items** are registry name + damage. The watchlist accepts only names (OC's `getItemsInNetworkById` would also
-  take numeric ids; the agent never sends one). The core looks them up in the DB's `item` table by `registry_name`
-  and `meta` with no NBT (`nbt_hash` empty); the same harness test checks the examples' items resolve that way.
+- **Items** are registry name + damage, with no NBT. The watchlist accepts only names (OC's `getItemInNetwork`
+  would also take a numeric id; the agent never sends one). The core looks them up in the DB's `item` table by
+  `registry_name` and `meta` with no NBT (`nbt_hash` empty); the same harness test checks the examples' items resolve
+  that way.
 
 ## Security
 
 - Payload text is data (plan §0.1 principle 8): sensor lines, machine names, CPU names, error messages and item
   names come from the game and from mods. The core shows and parses them; no agent treats them as instructions.
-- The agent runs only the four kinds above, with `confirmed_via` set and arguments checked, and has no free-form
-  code path (no `load` of anything it receives).
+- The agent runs only the four kinds above, with `confirmed_via` one of the four and arguments checked, and has no
+  free-form code path (no `load` of anything it receives).
+- Everything posted with the agent's token is data too (see Token): the core never starts an action because of it.
 
 ## Versioning
 
