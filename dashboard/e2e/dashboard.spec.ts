@@ -3,7 +3,7 @@
 // comes with the game's focus and is clickable (D49), the keyboard drives the shell, and the
 // phone layout fits 390 px. Screenshots go to test-results/ (never into git).
 import { type Browser, type Page, expect, test } from "@playwright/test";
-import { asAdmin, clipped, contrastMisses, control, fingerprintState, layout, pair, pendingCode } from "./harness";
+import { asAdmin, clipped, contrastMisses, control, fingerprintState, holdInstanceLock, layout, pair, pendingCode } from "./harness";
 
 const THEMES = ["brass", "machine", "alu", "hud", "circuit", "tung", "holo", "fusion", "naq", "deep", "calm", "manual"];
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
@@ -206,6 +206,22 @@ test("the designed states: stale data and AI offline", async () => {
   fingerprintState(false);
   control("key", "stored");
   await expect(chips.locator('[data-state="stale"]')).toHaveCount(0, { timeout: 15_000 });
+});
+
+test("the designed states: an export running is a state and a job on the rail", async () => {
+  await page.keyboard.press("1");
+  const release = await holdInstanceLock("e2e: export after the mods changed");
+  const chips = page.getByTestId("status-chips");
+  try {
+    await expect(chips.locator('[data-state="export_running"]')).toBeVisible({ timeout: 15_000 });
+    await expect(chips.locator('[data-state="game_not_running"]')).toHaveCount(0);
+    await expect(page.getByTestId("rail").locator('[data-job="export"]')).toContainText("Export running");
+    await page.screenshot({ path: shot("states-export-running") });
+  } finally {
+    await release();
+  }
+  await expect(chips.locator('[data-state="export_running"]')).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId("rail").locator('[data-job="export"]')).toHaveCount(0);
 });
 
 test("glance comes with the game's focus, is clickable, and the mouse brings the workbench back", async () => {

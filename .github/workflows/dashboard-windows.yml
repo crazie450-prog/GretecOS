@@ -1,0 +1,49 @@
+name: dashboard (Windows)
+
+# WO-2.6 (D159): gos deploy builds the dashboard with pnpm (pnpm.cmd) on Clayton's PC; this runs
+# that build on Windows, plus the unit tests. As mod (Windows), it runs only when the dashboard or
+# the deploy code changes. The end-to-end tests run on Linux, in CI's dashboard job.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/**"
+      - "core/gregtec/deploy.py"
+      - "tests/unit/test_deploy.py"
+      - ".github/workflows/dashboard-windows.yml"
+  pull_request:
+    paths:
+      - "dashboard/**"
+      - "core/gregtec/deploy.py"
+      - "tests/unit/test_deploy.py"
+      - ".github/workflows/dashboard-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dashboard-windows:
+    # deploy._build_dashboard on a git archive of this commit: pnpm install --frozen-lockfile and
+    # pnpm run build, keep dashboard\dist, delete node_modules and the build's caches.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - run: npm install -g pnpm@10.28.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+      - run: uv python install
+      - run: uv sync --locked
+      - run: uv run --locked pytest -rs tests/unit/test_deploy.py -k test_the_real_dashboard_builds_from_a_git_archive
+        env:
+          GOS_REAL_DASHBOARD_BUILD: "1"
+      - run: pnpm install --frozen-lockfile
+        working-directory: dashboard
+      - run: pnpm test
+        working-directory: dashboard

@@ -1,9 +1,13 @@
 // What the e2e tests share: where the harness core runs, its admin token (for pairing codes,
 // as `gos pair` reads them), the desktop controls it reads, and the in-page checks.
+import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
+
+const REPO = fileURLToPath(new URL("../..", import.meta.url));
 
 export const PORT = Number(process.env.GOS_E2E_PORT ?? 8795);
 export const HOST = "gos-e2e.localhost";
@@ -50,6 +54,35 @@ export function fingerprintState(stale: boolean): void {
     exports: [{ run_id: "20261106T120000Z", fingerprint: "e".repeat(64), recorded_utc: "2026-11-06T12:00:00Z" }],
   };
   writeFileSync(join(dir, "state.json"), JSON.stringify(state), "utf-8");
+}
+
+/** Hold the instance lock as `gos export run` does (WO-1.4, D121): a Python process takes it in
+ * the harness's GOS_HOME and keeps it until the returned function closes its stdin. */
+export async function holdInstanceLock(reason: string): Promise<() => Promise<void>> {
+  const code = [
+    "import sys",
+    "from pathlib import Path",
+    "from gregtec import locks",
+    "lock = locks.InstanceLock(Path(sys.argv[1])).acquire('export', sys.argv[2])",
+    "print('held', flush=True)",
+    "sys.stdin.read()",
+    "lock.release()",
+  ].join("\n");
+  const child = spawn("uv", ["run", "--quiet", "python", "-c", code, HOME, reason], {
+    cwd: REPO,
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  const exited = new Promise<void>((resolve) => child.on("exit", () => resolve()));
+  await new Promise<void>((resolve, reject) => {
+    child.stdout?.on("data", (d: Buffer) => {
+      if (d.toString().includes("held")) resolve();
+    });
+    child.on("exit", (status) => reject(new Error(`the lock holder exited (${status}) before taking the lock`)));
+  });
+  return async () => {
+    child.stdin?.end();
+    await exited;
+  };
 }
 
 export async function pair(page: Page, name = "Monitor 2"): Promise<void> {

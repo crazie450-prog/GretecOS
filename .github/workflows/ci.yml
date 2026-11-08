@@ -34,6 +34,52 @@ jobs:
           # Only the ephemeral Windows runner sets it; never set it on a real PC.
           GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && runner.environment == 'github-hosted' && '1' || '' }}
 
+  dashboard:
+    # WO-2.6: the dashboard (React + Vite + TypeScript, pnpm). Install from the lockfile, typecheck
+    # and build, the unit tests (vitest), deploy's real build of a git archive of this commit (as
+    # gos deploy runs it), then the end-to-end tests: Playwright's Chromium against a real core with
+    # a fake fast lane, at 2560x1440 (monitor 2) and 390x844 (the phone). Screenshots are uploaded
+    # as an artifact, never committed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The version package.json's packageManager names.
+      - run: npm install -g pnpm@10.28.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm test
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+      - run: uv python install
+        working-directory: .
+      - run: uv sync --locked
+        working-directory: .
+      - run: uv run --locked pytest -rs tests/unit/test_deploy.py -k test_the_real_dashboard_builds_from_a_git_archive
+        working-directory: .
+        env:
+          GOS_REAL_DASHBOARD_BUILD: "1"
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run e2e
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dashboard-e2e
+          path: |
+            dashboard/test-results/
+            dashboard/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
   mod:
     # WO-1.1: GregtecLink build, then the headless harness (dev server, scripted export, checks, exit),
     # then the client harness (dev client under Xvfb: autoexport world, export, NEI's dump, checks, exit).
