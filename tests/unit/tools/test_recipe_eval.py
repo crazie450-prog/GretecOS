@@ -5,6 +5,7 @@ lane's test runs the real Claude Code CLI against the fake Messages API (as WO-2
 from __future__ import annotations
 
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -1184,17 +1185,32 @@ def run_deep(
     return code, results, api, lane
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_the_deep_lane_loads_the_skill_and_answers(
-    tool_db: Path, glossary: Glossary, ground: recipe_eval.Ground, tmp_path: Path
+    tool_db: Path,
+    glossary: Glossary,
+    ground: recipe_eval.Ground,
+    tmp_path: Path,
+    newline: str,
 ) -> None:
+    """The skill file as a Linux or a Windows checkout has it (git's autocrlf writes CRLF):
+    the CLI leaves out a skill whose CRLF front matter doesn't parse as YAML."""
+    template = tmp_path / "vault-template"
+    shutil.copytree(TEMPLATE, template)
+    skill = template / "_gos" / "skills" / "recipe-lookup" / "SKILL.md"
+    text = SKILL_FILE.read_bytes().decode("utf-8").replace("\r\n", "\n")
+    skill.write_bytes(text.replace("\n", newline).encode("utf-8"))
     code, results, api, lane = run_deep(
-        tool_db, glossary, ground, tmp_path / "agent", TEMPLATE
+        tool_db, glossary, ground, tmp_path / "agent", template
     )
     [result] = results
     assert code == 0, (result.score, result.text)
     assert result.lane == "deep" and set(result.score.cited) == {EBF_O2, PBF}
     [task] = lane.tasks()
     assert task.init is not None and SKILL in task.init["skills"]
+    # the model is told about it, with its description, before it loads it
+    offered = f"{SKILL}: {skill_meta()[0]['description']}"
+    assert any(offered in json.dumps(body) for body in api.requests)
     names = [
         b.get("name")
         for body in api.requests
@@ -1221,7 +1237,32 @@ def test_a_missing_skill_fails_the_deep_row(
         tool_db, glossary, ground, tmp_path / "agent", template
     )
     assert code == 1 and not results[0].score.passed
-    assert "didn't load" in results[0].text
+    assert "isn't offered" in results[0].text
+
+
+def test_the_deep_oracle_loads_only_a_skill_it_is_offered() -> None:
+    """As a model would: no skill list naming it, no ``Skill`` call; a failed load ends."""
+    policy = deep_policy(recipe_eval.plans([DEEP_Q]))
+    request = {"type": "text", "text": f"<request>\n{DEEP_Q.question}\n</request>"}
+    listed = {"type": "text", "text": f"Skills:\n- {SKILL}: Recipe and item answers."}
+    call = {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": SKILL}}
+    error = {
+        "type": "tool_result",
+        "tool_use_id": "t1",
+        "is_error": True,
+        "content": "?",
+    }
+
+    def turn(*messages: list[dict[str, object]]) -> str:
+        roles = ("user", "assistant") * 2
+        got = policy(
+            {"messages": [{"role": r, "content": m} for r, m in zip(roles, messages)]}
+        )
+        return f"{got.text} {[name for name, _ in got.tools]}"
+
+    assert "isn't offered" in turn([request])
+    assert turn([listed, request]).endswith("['Skill']")
+    assert "didn't load" in turn([listed, request], [call], [error])
 
 
 # --- the recipe card ------------------------------------------------------------------------
@@ -1324,12 +1365,22 @@ def test_only_recipe_results_have_a_recipe_card(lane_reg: Registry) -> None:
 # --- the skill ------------------------------------------------------------------------------
 
 
-def test_the_recipe_lookup_skill(lane_reg: Registry, tmp_path: Path) -> None:
+def skill_meta() -> tuple[dict[str, str], str]:
+    """The skill file's front matter (``key: value`` lines) and its body."""
     text = SKILL_FILE.read_text(encoding="utf-8")
     head, _, body = text.removeprefix("---\n").partition("\n---\n")
-    meta = dict(line.split(": ", 1) for line in head.splitlines())
+    return dict(line.split(": ", 1) for line in head.splitlines()), body
+
+
+def test_the_recipe_lookup_skill(lane_reg: Registry, tmp_path: Path) -> None:
+    meta, body = skill_meta()
     assert meta["name"] == "recipe-lookup" and set(meta) == {"name", "description"}
     assert len(meta["description"]) <= 1024
+    # plain YAML scalars: the CLI leaves out a skill whose front matter doesn't parse when
+    # the file has CRLF line endings (a Windows checkout), and ": " or " #" in a value, or
+    # an indicator first, breaks the parse
+    for value in meta.values():
+        assert not re.search(r": | #|^[-?:,\[\]{}#&*!|>'\"%@`]", value), value
     for tool in ("item_resolve", "recipe_find", "recipe_uses", "machine_info"):
         assert tool in meta["description"], tool  # plan 7.0's main tools
     named = set(re.findall(r"`([a-z_]+)\(", body))

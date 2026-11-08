@@ -21,8 +21,9 @@ test oracle does, and does what the recipe-lookup skill says a careful model doe
   the real router, pre-retrieval, ``FastLane`` loop (at most 3 calls a turn), tools and number
   check run around it.
 - :func:`deep_policy` is the deep lane's: the real Claude Code CLI runs against
-  :class:`gregtec.llm.fake_api.FakeMessagesAPI` with it, so the skill must deploy and load
-  (``Skill`` ``gos:recipe-lookup``, first) and the tools come through the ``gos`` MCP server
+  :class:`gregtec.llm.fake_api.FakeMessagesAPI` with it, so the skill must deploy, be in the
+  skill list the CLI gives the model, and load (``Skill`` ``gos:recipe-lookup``, first; a model
+  loads only a skill it's told about), and the tools come through the ``gos`` MCP server
   and the hooks. Its answer is the deep lane's shape: a spoken first sentence without ids, then
   one ``key: value`` line per cited recipe (the skill's section 4).
 
@@ -592,6 +593,23 @@ def deep_seen(body: Mapping[str, Any]) -> tuple[list[Seen], bool, bool]:
     return seen, loaded, failed and not loaded
 
 
+def offered(body: Mapping[str, Any]) -> bool:
+    """Whether the CLI told the model about the skill (its skill list: the system prompt, a
+    tool's description, or the text of a turn that isn't the model's own). A model loads only
+    a skill it's told about, and the CLI leaves out one whose front matter it can't read."""
+    texts = [json.dumps(body.get("system")), json.dumps(body.get("tools"))]
+    for message in body.get("messages") or []:
+        if message.get("role") == "assistant":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+        texts += [
+            str(b.get("text", "")) for b in _blocks(content) if b.get("type") == "text"
+        ]
+    return any(SKILL in text for text in texts)
+
+
 def fake_text(block: Mapping[str, Any]) -> str:
     content = block.get("content")
     if isinstance(content, str):
@@ -613,6 +631,10 @@ def deep_policy(plans: Mapping[str, Question]) -> Policy:
         if failed:
             return ApiTurn(
                 text="The recipe-lookup skill didn't load, so I can't answer."
+            )
+        if not loaded and not offered(body):
+            return ApiTurn(
+                text="The recipe-lookup skill isn't offered, so I can't answer."
             )
         if not loaded:
             return ApiTurn(

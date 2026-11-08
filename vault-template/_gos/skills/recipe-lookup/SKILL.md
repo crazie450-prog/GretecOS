@@ -1,6 +1,6 @@
 ---
 name: recipe-lookup
-description: Recipe and item answers from Clayton's own export (what makes an item, what uses it, which machine, EU/t, time, chances, fluids, oredict alternatives) through item_resolve, recipe_find, recipe_uses and machine_info, every number cited by its r: or mte: id; asks when the item is unclear.
+description: Recipe and item answers from Clayton's own export (what makes an item, what uses it, which machine, EU/t, time, chances, fluids, oredict alternatives) through item_resolve, recipe_find, recipe_uses and machine_info, every number cited by its recipe or machine id; asks when the item is unclear.
 ---
 
 # Recipe lookup
