@@ -131,9 +131,8 @@ class Board:
 
     cfg: Config
     dist: Path = DIST
-    store: Store | None = (
-        None  # the core's DB, where answers outlive a restart; None: memory
-    )
+    # The core's DB, where answers outlive a restart (None: kept in memory only).
+    store: Store | None = None
     focused: bool | None = None
     running: list[str] | None = None  # roles with a GTNH client; None until checked
     game_error: str | None = None

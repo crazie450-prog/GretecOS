@@ -116,7 +116,8 @@ export function App() {
   const doctorNow = useCallback(() => void runDoctor(setDoctor), []);
   const nowS = useSeconds(15000);
 
-  // Keyboard: number keys switch views, Ctrl+K opens the palette, Esc closes (workbench).
+  // Keyboard: number keys switch views and Ctrl+K opens the palette (workbench); Esc closes, and
+  // ends a held glance.
   useEffect(() => {
     const on = (e: KeyboardEvent): void => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {

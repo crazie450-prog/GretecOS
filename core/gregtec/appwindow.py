@@ -143,9 +143,8 @@ def monitors() -> list[Monitor]:
     if logical is None:
         return []
     physical: dict[int, tuple[Rect, Rect, bool]] = {}
-    set_context = getattr(
-        user32, "SetThreadDpiAwarenessContext", None
-    )  # Windows 10 1607+
+    # Windows 10 1607 and later
+    set_context = getattr(user32, "SetThreadDpiAwarenessContext", None)
     if set_context is not None:
         set_context.restype = ctypes.c_void_p
         set_context.argtypes = [ctypes.c_void_p]

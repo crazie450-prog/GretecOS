@@ -20,9 +20,10 @@ fast lane's ``handoff`` tool send work to. It runs one asyncio loop in its own t
   session and the task waits in ``needs_approval``, its client kept: :meth:`approve` adds
   another cap's worth and the session continues where it stopped, :meth:`stop_task` ends it,
   and with no answer in :data:`APPROVAL_WAIT_S` it is stopped so the queue moves on (the queue
-  waits meanwhile; ``approve_by`` says when, for the approval card's countdown). The model and the work are never cut down to fit (D16). A subagent's hidden
-  thinking only counts once its result arrives, so a pause can come late (up to the CLI's hard
-  ceiling). :meth:`stop_task` also stops a running task (it interrupts the session).
+  waits meanwhile; the task's ``approve_by`` says when, for the approval card's countdown). The
+  model and the work are never cut down to fit (D16). A subagent's hidden thinking only counts
+  once its result arrives, so a pause can come late (up to the CLI's hard ceiling).
+  :meth:`stop_task` also stops a running task (it interrupts the session).
 - **Metered:** each result's cost (the SDK's ``total_cost_usd`` and per-model ``modelUsage``,
   the part not yet recorded) goes into ``llm_usage`` (lane ``deep``, task ``deep:<id>``, D118).
 - **Request vs task note:** the prompt quotes Clayton's words as ``<request>`` (the only
