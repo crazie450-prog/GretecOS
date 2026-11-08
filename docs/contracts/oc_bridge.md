@@ -233,7 +233,8 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
   The DB's `machine` table has no `meta_name` column yet, so the core adds one or reads the export. No numeric
   block or item ID is ever sent (EndlessIDs).
 - **Items** are registry name + damage. The watchlist accepts only names (OC's `getItemsInNetworkById` would also
-  take numeric ids; the agent never sends one).
+  take numeric ids; the agent never sends one). The core looks them up in the DB's `item` table by `registry_name`
+  and `meta` with no NBT (`nbt_hash` empty); the same harness test checks the examples' items resolve that way.
 
 ## Security
 
