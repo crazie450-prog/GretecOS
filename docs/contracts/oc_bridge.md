@@ -203,11 +203,16 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
 ## Identity
 
 - **Machines** are identified by `addr` (stable while the adapter or MFU stays; a new one gives a new address), and
-  by `name` + `xyz`. GT's meta name maps to the machine's `mte_id` through the export's `meta_name` in
-  `gt_machines.jsonl` (`docs/contracts/gregteclink-export-v1.md`); a name is one machine
-  (`tests/integration/test_oc_names_harness.py` checks it on a harness export). The DB's `machine` table has no
-  `meta_name` column yet, so the core adds one or reads the export. No numeric block or item ID is ever sent
-  (EndlessIDs).
+  by `name` + `xyz`. No OC or Computronics method gives the `mte_id`, so the core maps GT's meta name to `mte_id`s
+  through the export's `meta_name` in `gt_machines.jsonl` (`docs/contracts/gregteclink-export-v1.md`). Most names
+  are one machine, but not all: in the 2.9.0 harness export 3,041 of 3,094 names are one `mte_id`; 48 are a
+  controller and its deprecated twin (tooltip `DEPRECATED - Controller will be removed in next major update!`, the
+  `deprecated` machine fact, and a pointer to a conversion recipe; 47 of them `*Legacy` classes), and there the core
+  takes the one that isn't deprecated; 5 are TecTech's Tesla coils, one name per tier across four sizes (they show as
+  `gt_batterybuffer`), which the core keeps as a set rather than guess a size.
+  `tests/integration/test_oc_names_harness.py` checks on every harness run that no other kind of sharing appears.
+  The DB's `machine` table has no `meta_name` column yet, so the core adds one or reads the export. No numeric
+  block or item ID is ever sent (EndlessIDs).
 - **Items** are registry name + damage. The watchlist accepts only names (OC's `getItemsInNetworkById` would also
   take numeric ids; the agent never sends one).
 

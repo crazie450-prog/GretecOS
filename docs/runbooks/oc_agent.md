@@ -14,11 +14,12 @@ PowerShell window (not "Run as administrator"). Nothing here touches Play.
 1. In the profile clone: `git pull`, then `uv run gos deploy`. The agent's files are then in
    `C:\GregtecOS-app\current\oc\`.
 2. Check Lab has the OpenComputers tweaks (plan §5.6: `"allow ip:127.0.0.1"` first in `filteringRules`,
-   `requestTimeout=10`):
+   `requestTimeout=10`), with the game closed:
    ```powershell
-   & C:\GregtecOS-app\current\.venv\Scripts\python.exe C:\GregtecOS-app\current\scripts\check_tweaks.py --instance lab
+   & C:\GregtecOS-app\current\.venv\Scripts\python.exe C:\GregtecOS-app\current\scripts\check_tweaks.py C:\Games\PrismLauncher\instances\GTNH-Lab
    ```
-   Expect the OpenComputers lines `ok`. (If the flag differs, `check_tweaks.py --help` names it.)
+   Expect the `oc_loopback`, `oc_timeout` and `oc_rules` rows `ok`. If one isn't, run the same line with `--apply`
+   (Lab only; it asks first).
 3. Make the agent's token and keep the window open (it is printed once, D117):
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe token new oc-lab --show
