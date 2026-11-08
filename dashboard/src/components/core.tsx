@@ -95,7 +95,7 @@ export function StatusGlyph(props: { status: Status; label: string; glyph?: stri
   const tone = props.status === "error" ? "err" : props.status === "off" || props.status === "info" ? "" : props.status;
   return (
     <span className={`gos-status ${tone}`} data-status={props.status}>
-      <span aria-hidden="true">{props.glyph ?? STATUS_GLYPH[props.status]}</span> {props.label}
+      <span aria-hidden="true">{props.glyph ?? STATUS_GLYPH[props.status]}</span> <span className="word">{props.label}</span>
     </span>
   );
 }

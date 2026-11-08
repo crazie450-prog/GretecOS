@@ -10,7 +10,8 @@ real Host/Origin checks, cookie and pairing.
 What the dashboard reads from the desktop comes from files the tests write in ``<tmp>/e2e/``:
 ``foreground`` (the program in front, e.g. ``javaw.exe``: the core's focus signal), ``running``
 (a JSON list of running GTNH roles, default none) and ``key`` (``missing``: no Anthropic key, so
-"AI offline"). Test-only: production code never reads these files.
+"AI offline"); the core polls them every second. Test-only: production code never reads these
+files.
 """
 
 from __future__ import annotations
@@ -59,7 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from gregtec import desktop, prism
     from gregtec.agents import ask
-    from gregtec.api import server
+    from gregtec.api import app as core_app
+    from gregtec.api import dashboard, server
     from gregtec.config import Config
     from gregtec.llm import keys
     from gregtec.store import Store
@@ -79,6 +81,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     desktop.foreground_program = foreground
     prism.running_clients = running
     keys.has_key = has_key
+    # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
+    core_app.KEY_CHECK_S = 1.0
+    dashboard.GAME_EVERY_S = 1.0
+    dashboard.DATA_EVERY_S = 1.0
 
     def fake_agents(cfg: Config, store: Store) -> ask.Agents:
         return ask.setup(cfg, store=store, fake=True)

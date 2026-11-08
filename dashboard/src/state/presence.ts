@@ -1,6 +1,6 @@
 // Where the pointer and the keyboard focus are, for the glance/workbench switch (D49, D161).
 import { useEffect, useState } from "react";
-import { LEAVE_HOLD_MS } from "./mode";
+import { ENTER_DWELL_MS, LEAVE_HOLD_MS } from "./mode";
 
 export interface Presence {
   pointerInside: boolean;
@@ -17,9 +17,19 @@ export function usePresence(gameFocused: boolean | null): Presence & { msSinceLe
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    const inside = (): void => setP((s) => (s.pointerInside ? s : { ...s, pointerInside: true }));
+    let entering: ReturnType<typeof setTimeout> | undefined;
+    const inside = (): void => {
+      if (entering !== undefined) return;
+      entering = setTimeout(() => {
+        entering = undefined;
+        setP((s) => (s.pointerInside ? s : { ...s, pointerInside: true }));
+      }, ENTER_DWELL_MS);
+    };
     const leave = (e: MouseEvent): void => {
-      if (e.relatedTarget === null) setP((s) => ({ ...s, pointerInside: false, leftAt: performance.now() }));
+      if (e.relatedTarget !== null) return;
+      clearTimeout(entering);
+      entering = undefined;
+      setP((s) => ({ ...s, pointerInside: false, leftAt: performance.now() }));
     };
     const focus = (): void => setP((s) => ({ ...s, windowFocused: true }));
     const blur = (): void => setP((s) => ({ ...s, windowFocused: false }));
@@ -30,6 +40,7 @@ export function usePresence(gameFocused: boolean | null): Presence & { msSinceLe
     window.addEventListener("focus", focus);
     window.addEventListener("blur", blur);
     return () => {
+      clearTimeout(entering);
       document.removeEventListener("pointermove", inside);
       document.removeEventListener("pointerdown", inside);
       document.documentElement.removeEventListener("mouseleave", leave);

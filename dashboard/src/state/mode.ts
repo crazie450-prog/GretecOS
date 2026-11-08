@@ -1,11 +1,15 @@
 // Glance or workbench (plan 7.14, D49, D161). Glance while GTNH has focus: large type, still
 // clickable. Workbench when the mouse is on monitor 2, the game is paused or closed, or the
-// dashboard window itself has focus. Moving the mouse into the window switches at once; leaving
-// it switches back after a short hold, so crossing the screen edge doesn't flicker.
+// dashboard window itself has focus. The mouse switches to workbench once it has been in the
+// window for ENTER_DWELL_MS; leaving switches back after a short hold, so crossing the screen
+// edge doesn't flicker.
 export type Mode = "glance" | "workbench";
 export type ModePin = "auto" | Mode;
 
 export const LEAVE_HOLD_MS = 1500;
+// The mouse counts as in once it has been here this long: a quick click in glance still lands
+// on what it clicked (glance is clickable, D49), and a mouse that stays switches to workbench.
+export const ENTER_DWELL_MS = 300;
 export const GLANCE_FPS = 30; // glance mode's frame cap (plan 7.14 rule 6)
 
 export interface ModeInputs {

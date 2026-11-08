@@ -102,7 +102,9 @@ export function themeBlocks(bundle: string): Map<string, Map<string, string>> {
   const out = new Map<string, Map<string, string>>();
   const block = /([^{}]*\.theme-([a-z]+)[^{}]*)\{([^}]*)\}/g;
   for (const m of bundle.matchAll(block)) {
-    if (!/^\s*(:root,\s*)?\.theme-[a-z]+\s*$/.test(m[1].replace(/\/\*[\s\S]*?\*\//g, ""))) continue;
+    // The selector: what follows the last statement or comment before the brace.
+    const selector = m[1].replace(/\/\*[\s\S]*?\*\//g, ";").split(";").pop() ?? "";
+    if (!/^\s*(:root,\s*)?\.theme-[a-z]+\s*$/.test(selector)) continue;
     const vars = new Map<string, string>();
     for (const d of m[3].matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) vars.set(d[1], d[2].trim());
     out.set(m[2], vars);
