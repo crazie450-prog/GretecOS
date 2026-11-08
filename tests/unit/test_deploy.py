@@ -703,6 +703,25 @@ def test_relocate_editable_also_moves_the_voice_package(tmp_path: Path) -> None:
         assert (site / line).resolve() == (release / folder).resolve()
 
 
+def test_the_engine_groups_are_synced_where_the_release_has_them(
+    tmp_path: Path,
+) -> None:
+    """WO-5.2, D182: GOS_APP gets the speech-to-text engines (the stt group), which no
+    default group holds; an older commit without the group deploys as before."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[dependency-groups]\ndev = ["pytest"]\nstt = ["faster-whisper"]\n',
+        "utf-8",
+    )
+    assert dep._group_args(tmp_path) == ["--group", "stt"]
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[dependency-groups]\ndev = ["pytest"]\n', "utf-8"
+    )
+    assert dep._group_args(tmp_path) == []
+    (tmp_path / "pyproject.toml").write_text("not toml [", "utf-8")
+    assert dep._group_args(tmp_path) == []
+    assert dep._group_args(tmp_path / "missing") == []
+
+
 def test_config_reads_gos_app(tmp_path: Path) -> None:
     assert config.Config().gos_app == Path("C:/GregtecOS-app")
     toml = tmp_path / "gos.toml"
@@ -780,6 +799,20 @@ def test_real_uv_release_runs_after_the_swap(
             check=True,
         )
         assert (current / "voice").resolve() in Path(voice.stdout.strip()).parents
+    if "stt" in dep._group_args(
+        current
+    ):  # D182: the speech-to-text engines are installed
+        engines = subprocess.run(
+            [
+                str(dep.venv_exe(current, "python")),
+                "-c",
+                "import faster_whisper, onnx_asr, ctranslate2",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert engines.returncode == 0, engines.stderr
     gos = subprocess.run(
         [str(dep.venv_exe(current, "gos")), "--help"],
         check=False,

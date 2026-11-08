@@ -33,10 +33,11 @@ live vault or else vault-template) does two things:
    model's own tokenizer. Order: terms with a pronunciation in ``say`` (words speech engines
    don't know: tiers, EBF, naquadah), abbreviations, those terms' other aliases, the other
    terms, then the rest.
-2. **Spelling** (both engines, :class:`Snapper`): a run of up to four words, or one word with
-   inner punctuation, whose letters and digits are a glossary form's is written as the glossary
-   writes it: "E-B-F", "E B F" and "e.b.f." become "EBF", "ass line" "assline", "HS-SG" "HSS-G".
-   Only spacing, case and punctuation change; a word never becomes another word.
+2. **Spelling** (both engines, :class:`Snapper`): a run of up to four words whose letters and
+   digits are a glossary form's is written as the glossary writes it: "E-B-F", "E B F" and
+   "e.b.f." become "EBF", "ass line" "assline", "HS-SG" and "HSSG" "HSS-G". Only spacing, case
+   and punctuation change, so a word never becomes another word; and one plain word changes
+   only where the glossary adds punctuation or spaces to it ("me" stays "me", not "ME").
 
 The text is data (plan 0.1 principle 8): it is sent to the core as Clayton's question and
 nothing else; this module only writes it down.
@@ -199,17 +200,17 @@ class Snapper:
                 if n > 1:
                     _, last, trail = _edges(tokens[i + n - 1])
                     word = " ".join([word, *tokens[i + 1 : i + n - 1], last])
-                elif word.isalnum():  # one plain word stays as it is: "me" isn't "ME"
-                    continue
                 form = self.forms.get(compact(word))
-                if form is not None:
-                    if "." in word and trail.startswith(
-                        "."
-                    ):  # "e.b.f." ends in its own dot
-                        trail = trail[1:]
-                    out.append(f"{lead}{form}{trail}")
-                    i += n
-                    break
+                # One plain word changes only when the glossary writes it with more than
+                # letters and digits ("HSSG" is "HSS-G"): "me" stays "me", not "ME".
+                if form is None or (n == 1 and word.isalnum() and form.isalnum()):
+                    continue
+                # "e.b.f." ends in its own dot, not a full stop
+                if "." in word and trail.startswith("."):
+                    trail = trail[1:]
+                out.append(f"{lead}{form}{trail}")
+                i += n
+                break
             else:
                 out.append(tokens[i])
                 i += 1

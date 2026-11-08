@@ -126,6 +126,10 @@ def test_the_repo_glossary_leads_with_the_tiers_and_fits() -> None:
         ("How do I make an L V motor?", "How do I make an LV motor?"),
         ("recipe for the L.U.V. motor", "recipe for the LuV motor"),
         ("How do I make HS-SG?", "How do I make HSS-G?"),
+        (
+            "How do I make HSSG?",
+            "How do I make HSS-G?",
+        ),  # one word, but HSS-G has a hyphen
         ("How do I make H.S.S.-G?", "How do I make HSS-G?"),
         ("What does the ass line do?", "What does the assline do?"),
         ("Tell me about the clean room.", "Tell me about the cleanroom."),

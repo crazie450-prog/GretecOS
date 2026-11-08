@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 import uvicorn
@@ -24,6 +24,7 @@ from gregtec.config import Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
+from gregtec_voice import stt
 from gregtec_voice.client import CoreError, VoiceClient
 
 ADMIN = "admin-" + "v" * 40
@@ -231,6 +232,19 @@ def live_core(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[LiveC
 
 
 # The test modules can't import this file (pytest's importlib mode): they get these as fixtures.
+
+
+@pytest.fixture(autouse=True)
+def no_speech_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No unit test may fetch a speech model (WO-5.2): where the stt group is installed, an
+    engine that got this far would download hundreds of MB. The slow tests that use real
+    models live in tests/integration."""
+
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("a unit test tried to fetch a speech model")
+
+    monkeypatch.setattr(stt, "whisper_files", refuse)
+    monkeypatch.setattr(stt, "parakeet_files", refuse)
 
 
 @pytest.fixture

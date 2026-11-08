@@ -56,7 +56,9 @@ RESOLVED, ASKED, NO_MATCH, NO_ITEM, ERROR = (
     "no item named",
     "error",
 )
-MIN_RECORDING_S = 0.6  # the 0.42 s of pre- and post-roll and at least a short word
+# The 0.42 s of pre- and post-roll and the shortest line of the set ("Benzene recipe.") take
+# about a second; a shorter segment is a slip of the key.
+MIN_RECORDING_S = 1.0
 QUIET_DBFS = -45.0  # a segment whose loudest sample is quieter holds no speech
 _WORD = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)*")
 

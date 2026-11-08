@@ -99,6 +99,8 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
         _rx(
             r"(?:what|which recipes?) uses? (?P<item>.+)",
             r"(?:show |list )?(?:me )?(?:the )?uses (?:of|for) (?P<item>.+)",
+            # "what uses X" said aloud: speech-to-text often writes the homophone (D183)
+            r"what use is (?P<item>.+)",
         ),
     ),
 ]
