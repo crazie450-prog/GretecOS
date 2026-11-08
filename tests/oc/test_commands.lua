@@ -177,6 +177,7 @@ test("craft arguments are checked", function()
     { name = 265, damage = 0, amount = 1 },
     { name = "steel ingot", damage = 0, amount = 1 },
     { name = "gregtech:gt.metaitem.01", damage = 11305, amount = 1, cpu = 5 },
+    { name = "gregtech:" .. ("x"):rep(120), damage = 0, amount = 1 }, -- over 128 bytes
   }
   local cmds = {}
   for i, a in ipairs(bad) do

@@ -73,7 +73,8 @@ PowerShell window (not "Run as administrator"). Nothing here touches Play.
    which (and whether its adapter touches the controller).
 8. `gos-agent --once` should end with `sent N bytes; the core answered`. A failure names the reason: `unauthorized`
    (token, step 3), `Connection refused` (the core isn't running: `gos status`), `address is not allowed` (step 2's
-   tweak is missing or the game wasn't restarted after it).
+   tweak is missing or the game wasn't restarted after it), `http request headers are unavailable` (Lab's
+   `config\OpenComputers.cfg` has `enableHttpHeaders=false`; GTNH ships `true`).
 
 ## E. One hour
 
