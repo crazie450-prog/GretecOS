@@ -142,6 +142,23 @@ def test_health_alerts_skip_the_key_and_the_credits() -> None:
     assert alerts[0]["level"] == "err" and "restarting" in alerts[0]["body"]
 
 
+def test_health_alerts_skip_what_the_screen_already_says() -> None:
+    """The deep lane's warning while the AI is offline or a task waits at its cap (the state
+    chip and the approval card say it), never anything else."""
+    health = {
+        **HEALTH,
+        "items": [
+            *HEALTH["items"],
+            {"id": "deep_lane", "kind": "check", "label": "Deep lane", "status": "warn",
+             "detail": "offline: LookupError: no key"},
+        ],
+    }  # fmt: skip
+    ids = [a["id"] for a in build.health_alerts(health)]
+    assert ids == ["health-core", "health-maintenance", "health-deep_lane"]
+    quiet = [a["id"] for a in build.health_alerts(health, said=("deep_lane",))]
+    assert quiet == ["health-core", "health-maintenance"]
+
+
 def test_credit_alerts_follow_d48() -> None:
     cycle = {"spent_usd": 82.5, "budget_usd": 100.0, "pct": 82.5,
              "alerts_pct": [80, 100], "crossed_pct": [80]}  # fmt: skip
@@ -163,11 +180,13 @@ def test_the_stale_alert() -> None:
 
 def test_a_paused_deep_task_is_an_approval() -> None:
     task = {"id": "abc", "request": "plan a  steel\nline", "cap_usd": 2.0,
-            "spent_usd": 2.013, "approvals": 1}  # fmt: skip
+            "spent_usd": 2.013, "approvals": 1, "approve_by": 1700001800}  # fmt: skip
     card = cards.checked(build.deep_approval(task))
     assert card["id"] == "deep-abc" and card["kind"] == "deep_budget"
     assert card["readback"] == '"Spend up to $2.00 more on: plan a steel line"'
     assert [a["id"] for a in card["actions"]] == ["approve", "stop"]
+    # Counts down to when the lane stops it unanswered (plan 7.14: "with countdown").
+    assert card["expires_at"] == 1700001800
 
 
 def test_a_pairing_request_is_an_approval_with_its_code() -> None:

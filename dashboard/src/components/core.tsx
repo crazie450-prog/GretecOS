@@ -3,7 +3,7 @@
 // the semantic variables through bundle.css's gos-* classes, so a theme never touches it.
 import { type ReactNode, useEffect, useState } from "react";
 import type { AlertCard, ApprovalCard, Tier } from "../cards/types.gen";
-import { plain, secondsLeft, signed } from "../state/format";
+import { countdown, plain, secondsLeft, signed } from "../state/format";
 import { GLYPH } from "../state/states";
 
 export function Panel(props: {
@@ -221,7 +221,7 @@ export function ApprovalView(props: {
         </span>
         {left !== null && (
           <span className="gos-src countdown" data-testid="countdown">
-            {left} s
+            {countdown(left)}
           </span>
         )}
       </div>

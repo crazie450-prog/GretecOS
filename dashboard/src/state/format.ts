@@ -20,13 +20,11 @@ export function pct(n: number): string {
   return `${Number.isInteger(n) ? n : n.toFixed(1)}%`;
 }
 
-/** "4 s", "2 min", "3 h", "5 d" ago-style ages. */
-export function age(seconds: number): string {
+/** A countdown: "45 s" under a minute, else minutes and seconds ("29:59"). */
+export function countdown(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
   if (s < 60) return `${s} s`;
-  if (s < 3600) return `${Math.floor(s / 60)} min`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h`;
-  return `${Math.floor(s / 86400)} d`;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 export function clock(d: Date): { hm: string; s: string } {

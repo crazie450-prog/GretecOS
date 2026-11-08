@@ -457,9 +457,10 @@ def create_app(core: Core) -> FastAPI:
             raise HTTPException(400, f"text must be 1 to {TEXT_MAX} characters")
         board = dashboard.board_of(core)
         entry = board.asked(text)  # the rail shows what is being worked on
-        await dashboard.push_state(core)
-        # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
+        # Whatever happens next, the question stops showing as asked.
         try:
+            await dashboard.push_state(core)
+            # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
             reply = await asyncio.to_thread(core.asker.ask, text)
         finally:
             board.done(entry)
@@ -474,8 +475,9 @@ def create_app(core: Core) -> FastAPI:
             },
         )
         answer = dashboard.checked_reply(reply.as_dict())
-        # Every answer's card shows on the dashboards, a spoken question's too (D23).
-        pushed = board.answered(entry, answer, who.name)
+        # Every answer's card shows on the dashboards, a spoken question's too (D23); kept in
+        # the DB for Chat, so in a thread.
+        pushed = await asyncio.to_thread(board.answered, entry, answer, who.name)
         core.broadcast({"type": "ask.reply", "data": pushed}, trusted_only=True)
         await dashboard.push_state(core)
         return answer
@@ -627,7 +629,14 @@ def create_app(core: Core) -> FastAPI:
         sock = Socket(who, asyncio.Queue())
         core.sockets.add(sock)
         try:
-            hello = {"type": "hello", "role": who.role, "name": who.name}
+            # "build": the dashboard build served; a page that loaded another reloads (D159).
+            build = await asyncio.to_thread(dashboard.board_of(core).build)
+            hello = {
+                "type": "hello",
+                "role": who.role,
+                "name": who.name,
+                "build": build,
+            }
             await ws.send_text(json.dumps(hello))
             health = await asyncio.to_thread(core.health)
             await ws.send_text(json.dumps({"type": "health", "data": health}))

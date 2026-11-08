@@ -10,6 +10,7 @@ const MONITOR_2 = { width: 2560, height: 1440 };
 const PHONE = { width: 390, height: 844 };
 
 let page: Page;
+const refused: string[] = []; // what the page's Content-Security-Policy blocked (last test)
 
 test.describe.configure({ mode: "serial" });
 
@@ -19,6 +20,9 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   control("key", "stored");
   fingerprintState(false);
   page = await browser.newPage({ viewport: { width: 2560, height: 1440 } });
+  page.on("console", (m) => {
+    if (/Content Security Policy/i.test(m.text())) refused.push(m.text());
+  });
   await pair(page);
 });
 
@@ -356,4 +360,8 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   await page.screenshot({ path: shot("phone-now"), fullPage: true });
   expect(await contrastMisses(page)).toEqual([]);
   await page.setViewportSize({ width: 2560, height: 1440 });
+});
+
+test("nothing the page drew broke its Content-Security-Policy (no inline style or script)", () => {
+  expect(refused).toEqual([]);
 });

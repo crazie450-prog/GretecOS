@@ -8,10 +8,13 @@ catalog cards, the VERIFY list and doctor. Runs the real app in-process (Starlet
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import shutil
+import sqlite3
 import sys
+import time
 from collections.abc import Iterator
 from io import StringIO
 from pathlib import Path
@@ -21,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gregtec import cards, locks
+from gregtec.agents import deep
 from gregtec.agents.ask import Asker
 from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.fast_lane import FastLane
@@ -73,6 +77,7 @@ def dist(tmp_path: Path) -> Path:
     (d / "fonts" / "licenses").mkdir(parents=True)
     (d / "index.html").write_text("<!doctype html><title>Gregtec OS</title>", "utf-8")
     (d / "assets" / "index-1234.js").write_text("console.log(1)", "utf-8")
+    (d / "assets" / "index-1234.css").write_text("body{margin:0}", "utf-8")
     (d / "assets" / "font-1234.woff2").write_bytes(b"wOF2")
     (d / "fonts" / "licenses" / "README.txt").write_text("OFL", "utf-8")
     return d
@@ -124,19 +129,26 @@ def test_the_ui_is_served_with_a_strict_policy(client: TestClient) -> None:
     assert page.status_code == 200 and "Gregtec OS" in page.text
     csp = page.headers["content-security-policy"]
     for rule in ("default-src 'self'", "font-src 'self'", "connect-src 'self'",
-                 "frame-ancestors 'none'", "script-src 'self'"):  # fmt: skip
+                 "frame-ancestors 'none'", "script-src 'self'", "style-src 'self'"):  # fmt: skip
         assert rule in csp
-    assert "googleapis" not in csp
+    assert "googleapis" not in csp and "unsafe-inline" not in csp
     assert page.headers["x-frame-options"] == "DENY"
     assert page.headers["cache-control"] == "no-cache"
+    assert page.headers["content-type"].startswith("text/html")
     js = client.get("/assets/index-1234.js")
     assert js.status_code == 200 and js.headers["content-type"].startswith(
         "text/javascript"
     )
     assert "immutable" in js.headers["cache-control"]
+    # Types are fixed, never read from the Windows registry (nosniff would refuse a wrong one).
+    css = client.get("/assets/index-1234.css")
+    assert css.headers["content-type"].startswith("text/css")
     font = client.get("/assets/font-1234.woff2")
     assert font.headers["content-type"] == "font/woff2"
-    assert client.get("/fonts/licenses/README.txt").text == "OFL"
+    licence = client.get("/fonts/licenses/README.txt")
+    assert licence.text == "OFL" and licence.headers["content-type"].startswith(
+        "text/plain"
+    )
 
 
 def test_the_ui_needs_no_credential_but_the_api_does(client: TestClient) -> None:
@@ -155,7 +167,15 @@ def test_the_ui_still_checks_host_and_origin(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/assets/..%2Findex.html", "/assets/nope.js", "/assets/", "/fonts/../index.html"],
+    [
+        "/assets/..%2Findex.html",
+        "/assets/nope.js",
+        "/assets/",
+        "/fonts/../index.html",
+        "/assets/x%00",
+        "/assets/index-1234.js%00",
+        "/assets/index-1234.js%3A%3A%24DATA",
+    ],
 )
 def test_files_outside_dist_are_not_served(client: TestClient, path: str) -> None:
     assert client.get(path).status_code == 404
@@ -167,7 +187,8 @@ def test_file_lookup_refuses_escapes(tmp_path: Path) -> None:
     (root / "a.js").write_text("x", "utf-8")
     (tmp_path / "secret.txt").write_text("s", "utf-8")
     assert dashboard._file(root, "a.js") == (root / "a.js").resolve()
-    for rel in ("", "../secret.txt", "a/../a.js", "..\\secret.txt", ".", "nope.js"):
+    for rel in ("", "../secret.txt", "a/../a.js", "..\\secret.txt", ".", "nope.js",
+                "a.js\0", "x\0", "a.js:stream", "C:a.js"):  # fmt: skip
         assert dashboard._file(root, rel) is None
     if sys.platform != "win32":
         (root / "link.txt").symlink_to(tmp_path / "secret.txt")
@@ -188,7 +209,25 @@ def test_an_unbuilt_dashboard_says_how_to_build_it(
     shutil.rmtree(core.board.dist)
     r = client.get("/")
     assert r.status_code == 503 and "pnpm -C dashboard build" in r.text
-    assert "content-security-policy" in r.headers
+    # Static text with an inline style: nothing else may load.
+    csp = r.headers["content-security-policy"]
+    assert "default-src 'none'" in csp and "style-src 'unsafe-inline'" in csp
+    assert "script-src" not in csp
+
+
+def test_hello_names_the_dashboard_build(
+    client: TestClient, core: Core, dist: Path
+) -> None:
+    """A page that loaded another build reloads itself (M4: monitor 2 after a deploy)."""
+    built = hashlib.sha256((dist / "index.html").read_bytes()).hexdigest()
+    with client.websocket_connect(WS, headers=admin()) as ws:
+        assert ws.receive_json()["build"] == built
+    (dist / "index.html").write_text("<!doctype html><title>newer</title>", "utf-8")
+    with client.websocket_connect(WS, headers=admin()) as ws:
+        assert ws.receive_json()["build"] not in (built, None)
+    shutil.rmtree(dist)
+    with client.websocket_connect(WS, headers=admin()) as ws:
+        assert ws.receive_json()["build"] is None
 
 
 # --- state ------------------------------------------------------------------------------------
@@ -282,6 +321,54 @@ def test_pairing_codes_reach_trusted_callers_only(client: TestClient) -> None:
     assert client.get("/api/state", headers=voice).json()["approvals"] == []
 
 
+def test_questions_being_asked_reach_trusted_callers_only(
+    client: TestClient, core: Core
+) -> None:
+    """As the answers do (/api/answers): clients (voice, Discord, OC) see neither."""
+    assert core.board is not None
+    entry = core.board.asked("what uses steel")
+    asking = client.get("/api/state", headers=admin()).json()["asking"]
+    assert [q["text"] for q in asking] == ["what uses steel"]
+    assert client.get("/api/state", headers=token(client)).json()["asking"] == []
+    core.board.done(entry)
+
+
+class FakeDeep:
+    """The deep lane as the state reads it: its tasks and its health strip line."""
+
+    def __init__(self, tasks: list[deep.DeepTask], health: tuple[str, str]) -> None:
+        self._tasks, self._health = tasks, health
+
+    def tasks(self) -> list[deep.DeepTask]:
+        return self._tasks
+
+    def health(self) -> tuple[str, str]:
+        return self._health
+
+
+def test_the_deep_lane_alerts_only_what_nothing_else_says(
+    client: TestClient, core: Core
+) -> None:
+    offline = ("warn", "offline: LookupError: no Anthropic key")
+    core.deep = FakeDeep([], offline)  # type: ignore[assignment]
+    ids = [a["id"] for a in client.get("/api/state", headers=admin()).json()["alerts"]]
+    assert "health-deep_lane" in ids
+    # The AI is offline: the "AI offline" state says it, so no alert repeats it.
+    core.key_status = ("warn", "not stored: gos key set anthropic")
+    ids = [a["id"] for a in client.get("/api/state", headers=admin()).json()["alerts"]]
+    assert "health-deep_lane" not in ids
+    # A task paused at its cap: its approval card says it, with the countdown.
+    core.key_status = ("ok", "stored")
+    task = deep.DeepTask("h-1", "plan a steel line", "plan it", "router", 1.0)
+    task.status, task.approve_by = deep.NEEDS_APPROVAL, time.time() + 1800
+    core.deep = FakeDeep([task], ("warn", "h-1 paused at its cap: approve or stop it"))  # type: ignore[assignment]
+    s = client.get("/api/state", headers=admin()).json()
+    assert "health-deep_lane" not in [a["id"] for a in s["alerts"]]
+    assert [(a["id"], a["expires_at"]) for a in s["approvals"]] == [
+        ("deep-h-1", int(task.approve_by))
+    ]
+
+
 # --- answers ----------------------------------------------------------------------------------
 
 
@@ -322,6 +409,75 @@ def test_the_board_keeps_fifty_answers() -> None:
     kept = board.answers()
     assert len(kept) == 50 and kept[0]["request"] == "q10" and kept[-1]["text"] == "a59"
     assert board.asking() == []
+
+
+def test_answers_outlive_a_restart(tmp_path: Path) -> None:
+    """Chat re-opens any past card (plan 7.14): the newest 50 answers are kept in the DB."""
+    db = tmp_path / "gos.sqlite"
+    store = Store(db)
+    board = dashboard.Board(Config(gos_home=tmp_path), store=store)
+    for n in range(55):
+        board.answered(board.asked(f"q{n}"), {"text": f"a{n}", "card": None}, "admin")
+    assert store.rows("SELECT count(*) AS n FROM answer")[0]["n"] == 50
+    store.close()
+    store = Store(db)  # the core starts again
+    try:
+        again = dashboard.Board(Config(gos_home=tmp_path), store=store)
+        kept = again.answers()
+        assert [a["request"] for a in kept] == [f"q{n}" for n in range(5, 55)]
+        assert kept[-1] == board.answers()[-1]
+    finally:
+        store.close()
+
+
+def test_kept_answers_that_no_longer_read_are_skipped_or_lose_their_card(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path / "gos.sqlite")
+    try:
+        old = {"id": "a1", "ts": 1, "text": "x", "card": {"type": "recipe", "v": 0}}
+        with store.transaction() as conn:
+            conn.executemany(
+                "INSERT INTO answer(id, ts, body) VALUES (?, ?, ?)",
+                [("a0", 0, "{not json"), ("a1", 1, json.dumps(old)), ("a2", 2, "[]")],
+            )
+        kept = dashboard.Board(Config(gos_home=tmp_path), store=store).answers()
+        assert kept == [
+            {**old, "card": None}
+        ]  # a card from an older catalog: not drawn
+    finally:
+        store.close()
+
+
+def test_an_answer_that_cant_be_kept_is_still_answered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path / "gos.sqlite")
+    try:
+        board = dashboard.Board(Config(gos_home=tmp_path), store=store)
+
+        def locked(*_: object) -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(store, "transaction", locked)
+        answer = board.answered(board.asked("q"), {"text": "a"}, "admin")
+        assert board.answers() == [answer]
+    finally:
+        store.close()
+
+
+def test_a_question_never_stays_asked(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: whatever fails after a question starts, it stops showing as being asked."""
+
+    async def failing(core: Core) -> None:
+        raise RuntimeError("the push failed")
+
+    monkeypatch.setattr(dashboard, "push_state", failing)
+    with pytest.raises(RuntimeError):
+        client.post("/api/ask", json={"text": "recipe for steel"}, headers=admin())
+    assert client.get("/api/state", headers=admin()).json()["asking"] == []
 
 
 def test_a_card_outside_the_catalog_is_dropped_from_a_reply() -> None:
@@ -489,3 +645,41 @@ def test_tick_pushes_the_state_when_it_changes(core: Core) -> None:
         )
 
     asyncio.run(run())
+
+
+def test_a_socket_that_joins_while_the_state_is_built_gets_it(
+    core: Core, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: a client socket accepted while push_state waits on its thread got a KeyError."""
+    trusted = Socket(Principal("admin", "admin"), asyncio.Queue())
+    late = Socket(Principal("client", "voice"), asyncio.Queue())
+    core.sockets.add(trusted)
+    core.pairing.start("Pixel 9")
+    built = dashboard.snapshots
+
+    def joining(c: Core) -> dict[bool, dict[str, Any]]:
+        core.sockets.add(late)  # the voice client connects meanwhile
+        return built(c)
+
+    monkeypatch.setattr(dashboard, "snapshots", joining)
+    asyncio.run(dashboard.push_state(core))
+    to_trusted, to_late = trusted.queue.get_nowait(), late.queue.get_nowait()
+    assert to_trusted is not None and to_late is not None
+    assert [a["kind"] for a in json.loads(to_trusted)["data"]["approvals"]] == [
+        "pairing"
+    ]
+    assert json.loads(to_late)["data"]["approvals"] == []  # no pairing code for clients
+
+
+def test_a_failed_state_push_is_logged_never_raised(
+    core: Core, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    core.sockets.add(Socket(Principal("admin", "admin"), asyncio.Queue()))
+
+    def broken(c: Core) -> dict[bool, dict[str, Any]]:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(dashboard, "snapshots", broken)
+    with caplog.at_level(logging.ERROR, logger="gregtec.api"):
+        asyncio.run(dashboard.push_state(core))
+    assert "state push failed" in caplog.text

@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import type { Answer, CoreState } from "../src/api/types";
 import type { AlertCard } from "../src/cards/types.gen";
-import { age, clock, pct, plain, secondsLeft, signed, usd } from "../src/state/format";
+import { helloBuild, staleBuild } from "../src/api/connection";
+import { clock, countdown, pct, plain, secondsLeft, signed, usd } from "../src/state/format";
 import { GLANCE_FPS, LEAVE_HOLD_MS, type ModeInputs, frameDue, modeFor } from "../src/state/mode";
 import { ANSWER_FRESH_S, rankNow } from "../src/state/now";
 import { isStale, stateChips } from "../src/state/states";
@@ -177,6 +178,16 @@ describe("pushes from the core", () => {
     expect(kept[0].ts).toBe(10);
     expect(addAnswers(kept, [answer(59)])).toHaveLength(ANSWERS_KEEP);
   });
+  it("a page reloads when the core serves another build than the one it loaded (D159)", () => {
+    expect(helloBuild({ type: "hello", role: "device", name: "Monitor 2", build: "ab12" })).toBe("ab12");
+    expect(helloBuild({ type: "hello", build: null })).toBeNull(); // the dashboard isn't built
+    expect(helloBuild({ type: "state", build: "ab12" })).toBeNull();
+    expect(helloBuild("nonsense")).toBeNull();
+    expect(staleBuild(null, "ab12")).toBe(false); // the first hello: what this page loaded
+    expect(staleBuild("ab12", "ab12")).toBe(false); // a reconnect to the same build
+    expect(staleBuild("ab12", "cd34")).toBe(true); // a deploy: reload
+    expect(staleBuild("ab12", null)).toBe(false);
+  });
   it("notify subscribers on every change", () => {
     const store = createStore();
     let seen = 0;
@@ -198,8 +209,9 @@ describe("formats", () => {
     expect(plain(-5)).toBe("−5");
     expect(usd(82.5)).toBe("$82.50");
     expect(pct(82.5)).toBe("82.5%");
-    expect(age(4)).toBe("4 s");
-    expect(age(130)).toBe("2 min");
+    expect(countdown(4)).toBe("4 s");
+    expect(countdown(1799)).toBe("29:59"); // a deep-lane task paused at its cap (30 min)
+    expect(countdown(-3)).toBe("0 s");
     expect(clock(new Date(2026, 10, 7, 9, 4, 5))).toEqual({ hm: "09:04", s: "05" });
     expect(secondsLeft(100, 40_500)).toBe(60);
     expect(secondsLeft(100, 200_000)).toBe(0);

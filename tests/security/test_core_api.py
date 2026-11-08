@@ -502,7 +502,14 @@ def test_client_tokens(client: TestClient) -> None:
 
 def test_websocket_pushes_health_and_pairing(client: TestClient) -> None:
     with client.websocket_connect(WS, headers=admin_headers()) as ws:
-        assert ws.receive_json() == {"type": "hello", "role": "admin", "name": "admin"}
+        hello = ws.receive_json()
+        # "build": the dashboard build served (None while dashboard/dist isn't built, WO-2.6)
+        assert hello == {
+            "type": "hello",
+            "role": "admin",
+            "name": "admin",
+            "build": hello["build"],
+        }
         health = ws.receive_json()
         assert health["type"] == "health"
         assert {i["id"] for i in health["data"]["items"]} >= {"core", "db", "credits"}

@@ -391,12 +391,16 @@ def alert(
     }
 
 
-def health_alerts(health: dict[str, Any]) -> list[dict[str, Any]]:
-    """An alert per health item in error (``err``) or warning (``warn``), errors first."""
+def health_alerts(
+    health: dict[str, Any], *, said: Iterable[str] = ()
+) -> list[dict[str, Any]]:
+    """An alert per health item in error (``err``) or warning (``warn``), errors first, except
+    the items in ``said``, whose state the screen already shows another way."""
+    quiet = set(NO_ALERT) | set(said)
     out = []
     for item in health.get("items", []):
         status = item.get("status")
-        if status not in ("error", "warn") or item.get("id") in NO_ALERT:
+        if status not in ("error", "warn") or item.get("id") in quiet:
             continue
         if item.get("id") == CREDITS_ID:
             continue  # credit_alert says it with the number
@@ -445,7 +449,8 @@ def stale_alert(stale: bool | None, line: str | None) -> dict[str, Any] | None:
 
 
 def deep_approval(task: dict[str, Any]) -> dict[str, Any]:
-    """A deep-lane task paused at its cap (D156): approve another cap, or stop it."""
+    """A deep-lane task paused at its cap (D156): approve another cap, or stop it, counting down
+    to when the lane stops it unanswered (``approve_by``)."""
     request = clip(" ".join(str(task.get("request") or "").split()), 300)
     return {
         "type": "approval",
@@ -461,7 +466,7 @@ def deep_approval(task: dict[str, Any]) -> dict[str, Any]:
             f"approved {int(task.get('approvals') or 0)} times so far.",
             1000,
         ),
-        "expires_at": None,
+        "expires_at": task.get("approve_by"),
         "actions": [
             {"id": "approve", "label": "Approve", "primary": True},
             {"id": "stop", "label": "Stop", "primary": False},

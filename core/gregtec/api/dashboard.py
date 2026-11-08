@@ -13,21 +13,25 @@
 
 The UI is public code, so ``/`` and its files need no credential: an unpaired browser has to load
 the pairing screen. Everything under ``/api`` does, and every request still passes the Host and
-Origin checks (QA:A8). The page is sent with a Content-Security-Policy that allows scripts, fonts
-and connections to this origin only, so no font is ever fetched from Google at runtime, and no
-other page may frame it. ``/`` on bare ``127.0.0.1`` or ``localhost`` redirects to the dashboard
-name, the only one pairing works on (D117).
+Origin checks (QA:A8). The page is sent with a Content-Security-Policy that allows scripts, styles,
+fonts and connections from this origin only (no inline style or script), so no font is ever
+fetched from Google at runtime, and no other page may frame it. ``/`` on bare ``127.0.0.1`` or
+``localhost`` redirects to the dashboard name, the only one pairing works on (D117).
 
 Pushed on ``/ws``: ``state`` (when it changes, at least every 15 s, and when a question starts or
 is answered) and, to trusted sockets (admin, devices), ``ask.reply``: every answer of
 ``/api/ask`` as ``{"id", "by", "request", "asked_ts", "ts", ...the reply}``, so a spoken question's
-card shows on monitor 2 too. Pairing codes also go only to trusted sockets. A card that fails
-the catalog check (D160) is logged and left out.
+card shows on monitor 2 too. Pairing codes and the questions being asked also go only to trusted
+sockets. A card that fails the catalog check (D160) is logged and left out. The answers are kept
+in the core's DB (table ``answer``, the newest 50), so Chat outlives a restart. The socket's
+``hello`` names the dashboard build the core serves (:meth:`Board.build`); a page that loaded
+another build reloads itself, so monitor 2 never runs old code after a deploy.
 
 No ``from __future__ import annotations``: FastAPI reads the route signatures at runtime.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import mimetypes
@@ -53,6 +57,7 @@ from gregtec.db import access
 from gregtec.db import quests as quest_db
 from gregtec.ingest import fingerprint
 from gregtec.ingest import quests as bq
+from gregtec.store import Store
 
 if TYPE_CHECKING:
     from gregtec.api.app import Core
@@ -79,9 +84,19 @@ TOOLS = (
     "quest_for_item",
 )
 FILE_ROOTS = ("assets", "fonts")  # the folders of dist/ served as they are
-TYPES = {".woff2": "font/woff2", ".woff": "font/woff", ".js": "text/javascript"}
+# Fixed here, never from mimetypes, which reads the Windows registry: with nosniff, a wrong type
+# for a script or a style sheet would leave the dashboard blank or unstyled.
+TYPES = {
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".html": "text/html",
+    ".txt": "text/plain",
+    ".svg": "image/svg+xml",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+}
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
     "font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
@@ -91,6 +106,14 @@ PAGE_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "X-Frame-Options": "DENY",
     "Cross-Origin-Opener-Policy": "same-origin",
+}
+# The "not built" page is static text with an inline style and nothing else.
+NOT_BUILT_HEADERS = {
+    **PAGE_HEADERS,
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "frame-ancestors 'none'; form-action 'none'"
+    ),
 }
 NOT_BUILT = (
     "<!doctype html><meta charset=utf-8><title>Gregtec OS</title>"
@@ -108,6 +131,9 @@ class Board:
 
     cfg: Config
     dist: Path = DIST
+    store: Store | None = (
+        None  # the core's DB, where answers outlive a restart; None: memory
+    )
     focused: bool | None = None
     running: list[str] | None = None  # roles with a GTNH client; None until checked
     game_error: str | None = None
@@ -129,6 +155,19 @@ class Board:
     _asking: dict[str, dict[str, Any]] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def __post_init__(self) -> None:
+        if self.store is not None:
+            self._answers.extend(load_answers(self.store))
+
+    def build(self) -> str | None:
+        """The dashboard build served: the SHA-256 of ``dist/index.html`` (``gos deploy`` records
+        the same in release.json), or None when it isn't built. A page that loaded another build
+        reloads itself when its socket's ``hello`` names this one (D159)."""
+        try:
+            return hashlib.sha256((self.dist / "index.html").read_bytes()).hexdigest()
+        except OSError:
+            return None
+
     # --- answers (Chat, and Now's "last answer right after a question", D55)
 
     def asked(self, text: str) -> dict[str, Any]:
@@ -145,7 +184,8 @@ class Board:
     def answered(
         self, entry: dict[str, Any], reply: dict[str, Any], by: str
     ) -> dict[str, Any]:
-        """Keep ``reply`` (an ``/api/ask`` answer) with who asked what, and when."""
+        """Keep ``reply`` (an ``/api/ask`` answer) with who asked what, and when, in memory and
+        in the DB (blocking: run it in a thread)."""
         answer = {
             **reply,
             "id": entry["id"],
@@ -157,6 +197,8 @@ class Board:
         with self._lock:
             self._asking.pop(entry["id"], None)
             self._answers.append(answer)
+        if self.store is not None:
+            keep_answer(self.store, answer)
         return answer
 
     def answers(self) -> list[dict[str, Any]]:
@@ -252,11 +294,16 @@ def _valid(found: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def state(core: "Core", trusted: bool) -> dict[str, Any]:
-    """Everything the shell and Now read, as one snapshot (its cards built here, D160)."""
+def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
+    """Everything the shell and Now read, built once (its cards built here, D160), as trusted
+    callers (admin, devices: ``True``) and clients (voice, Discord, OC: ``False``) see it. Only
+    trusted callers see pairing codes and the questions being asked, as only they read answers."""
     board = board_of(core)
     now = time.time()
     health = core.health()
+    key_status, key_detail = core.key_status
+    tasks = [t.as_dict() for t in core.deep.tasks()] if core.deep is not None else []
+    deep_waiting = any(t["status"] == "needs_approval" for t in tasks)
     alerts: list[dict[str, Any]] = []
     stale = cards_build.stale_alert(board.data.get("stale"), board.data.get("line"))
     if stale is not None:
@@ -267,16 +314,17 @@ def state(core: "Core", trusted: bool) -> dict[str, Any]:
         credit = None
     if credit is not None:
         alerts.append(credit)
-    alerts += cards_build.health_alerts(health)
+    # The deep lane's warning is already on screen while the AI is offline (the state chip) or a
+    # task waits at its cap (its approval card).
+    said = ("deep_lane",) if key_status != "ok" or deep_waiting else ()
+    alerts += cards_build.health_alerts(health, said=said)
     alerts.sort(key=lambda a: a["level"] != "err")
-    tasks = [t.as_dict() for t in core.deep.tasks()] if core.deep is not None else []
-    approvals = [
-        cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"
-    ]
-    if trusted:
-        approvals += [
-            cards_build.pairing_approval(p, now) for p in core.pairing.pending()
-        ]
+    approvals = _valid(
+        [cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"]
+    )
+    pairing = _valid(
+        [cards_build.pairing_approval(p, now) for p in core.pairing.pending()]
+    )
     jobs = [
         {
             "id": t["id"],
@@ -300,9 +348,8 @@ def state(core: "Core", trusted: bool) -> dict[str, Any]:
                 "started": None,
             }
         )
-    key_status, key_detail = core.key_status
     health_card = _valid([cards_build.health_card(health)])
-    return {
+    shared = {
         "ts": int(now),
         "game": {
             "running": board.running,
@@ -316,34 +363,42 @@ def state(core: "Core", trusted: bool) -> dict[str, Any]:
         "oc": {"status": "not_set_up", "detail": "the OC bridge arrives with WO-7.1"},
         "tier": board.tier,
         "alerts": _valid(alerts),
-        "approvals": _valid(approvals),
         "jobs": jobs,
-        "asking": board.asking(),
         "health": health_card[0] if health_card else None,
     }
+    return {
+        True: {**shared, "approvals": approvals + pairing, "asking": board.asking()},
+        False: {**shared, "approvals": approvals, "asking": []},
+    }
+
+
+def state(core: "Core", trusted: bool) -> dict[str, Any]:
+    """The snapshot one caller sees (``/api/state``, a new socket's first ``state``)."""
+    return snapshots(core)[trusted]
 
 
 def board_of(core: "Core") -> Board:
     if core.board is None:
-        core.board = Board(core.cfg)
+        core.board = Board(core.cfg, store=core.store)
     return core.board
 
 
-def _variants(core: "Core", sockets: set[bool]) -> dict[bool, dict[str, Any]]:
-    return {trusted: state(core, trusted) for trusted in sockets | {True}}
-
-
 def _send(core: "Core", variants: dict[bool, dict[str, Any]]) -> None:
+    # Both variants always exist: a socket accepted while they were built gets its own.
     texts = {t: json.dumps({"type": "state", "data": s}) for t, s in variants.items()}
     for sock in list(core.sockets):
         sock.put(texts[sock.trusted])
 
 
 async def push_state(core: "Core") -> None:
-    """Build the state in a thread and send it to every socket (pairing codes to trusted only)."""
-    kinds = {s.trusted for s in core.sockets}
-    if kinds:
-        _send(core, await asyncio.to_thread(_variants, core, kinds))
+    """Build the state in a thread and send it to every socket. Never raises: a push that fails
+    is logged, and must not fail the question that caused it."""
+    if not core.sockets:
+        return
+    try:
+        _send(core, await asyncio.to_thread(snapshots, core))
+    except Exception:
+        log.exception("state push failed")
 
 
 async def tick(core: "Core") -> None:
@@ -359,9 +414,7 @@ async def tick(core: "Core") -> None:
     if now >= board.next_data:
         board.next_data = now + DATA_EVERY_S
         await asyncio.to_thread(board.refresh_data)
-    variants = await asyncio.to_thread(
-        _variants, core, {s.trusted for s in core.sockets}
-    )
+    variants = await asyncio.to_thread(snapshots, core)
     signature = json.dumps(
         {k: v for k, v in variants[True].items() if k != "ts"}, sort_keys=True
     )
@@ -379,16 +432,59 @@ def checked_reply(reply: dict[str, Any]) -> dict[str, Any]:
     return reply
 
 
+# --- answers in the DB (table ``answer``, gregtec.store) ----------------------------------------
+
+
+def load_answers(store: Store) -> list[dict[str, Any]]:
+    """The kept answers, oldest first. A row that doesn't read is skipped, and a card that no
+    longer passes the catalog (a later schema, D160) is dropped from its answer."""
+    try:
+        rows = store.rows("SELECT body FROM answer ORDER BY ts, rowid")
+    except sqlite3.Error as exc:
+        log.warning("answers not loaded", extra={"why": str(exc)[:200]})
+        return []
+    out = []
+    for row in rows[-ANSWERS_KEEP:]:
+        try:
+            answer = json.loads(row["body"])
+        except ValueError:
+            continue
+        if isinstance(answer, dict) and isinstance(answer.get("id"), str):
+            out.append(checked_reply(answer))
+    return out
+
+
+def keep_answer(store: Store, answer: dict[str, Any]) -> None:
+    """Add ``answer`` to the DB and drop all but the newest ANSWERS_KEEP. A DB that can't be
+    written loses it from the next start only: it is logged, never raised."""
+    try:
+        with store.transaction() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO answer(id, ts, body) VALUES (?, ?, ?)",
+                (answer["id"], answer["ts"], json.dumps(answer)),
+            )
+            conn.execute(
+                "DELETE FROM answer WHERE rowid NOT IN "
+                "(SELECT rowid FROM answer ORDER BY ts DESC, rowid DESC LIMIT ?)",
+                (ANSWERS_KEEP,),
+            )
+    except sqlite3.Error as exc:
+        log.warning("answer not kept in the DB", extra={"why": str(exc)[:200]})
+
+
 # --- the static UI ------------------------------------------------------------------------------
 
 
 def _file(root: Path, rel: str) -> Path | None:
-    """``root/rel`` when it is a file inside ``root`` (no ``..``, no link out of it)."""
-    if not rel or "\\" in rel or any(p in ("", ".", "..") for p in rel.split("/")):
+    """``root/rel`` when it is a file inside ``root`` (no ``..``, no link out of it, no NUL and
+    no ``:``, which on NTFS names a drive or an alternate data stream)."""
+    if not rel or any(c in rel for c in "\\\0:"):
+        return None
+    if any(p in ("", ".", "..") for p in rel.split("/")):
         return None
     try:
         resolved, base = (root / rel).resolve(strict=True), root.resolve(strict=True)
-    except OSError:
+    except (OSError, ValueError):
         return None
     if not resolved.is_relative_to(base) or not resolved.is_file():
         return None
@@ -437,8 +533,12 @@ def add_routes(
             )
         page = board.dist / "index.html"
         if not page.is_file():
-            return HTMLResponse(NOT_BUILT, status_code=503, headers=PAGE_HEADERS)
-        return FileResponse(page, headers={**PAGE_HEADERS, "Cache-Control": "no-cache"})
+            return HTMLResponse(NOT_BUILT, status_code=503, headers=NOT_BUILT_HEADERS)
+        return FileResponse(
+            page,
+            media_type=TYPES[".html"],
+            headers={**PAGE_HEADERS, "Cache-Control": "no-cache"},
+        )
 
     for top in FILE_ROOTS:
         app.add_api_route(

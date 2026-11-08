@@ -678,6 +678,9 @@ def test_the_cap_pauses_and_asks_then_continues(
         assert task is not None and task.status == deep.NEEDS_APPROVAL
         assert task.spent_usd == pytest.approx(1.20, rel=1e-3) and task.cap_usd == 1.0
         assert "interrupt" in log and lane.health()[0] == "warn"
+        # when it stops unanswered: the approval card's countdown (WO-2.6)
+        approve_by = task.as_dict()["approve_by"]
+        assert approve_by == pytest.approx(time.time() + deep.APPROVAL_WAIT_S, abs=30)
         assert lane.approve("h-nope") is False
         assert lane.approve(h.id) is True
         task = lane.wait(h.id, 10)
@@ -685,6 +688,7 @@ def test_the_cap_pauses_and_asks_then_continues(
             task is not None and task.status == deep.DONE and task.text == "Finished."
         )
         assert task.cap_usd == 2.0 and task.approvals == 1
+        assert task.as_dict()["approve_by"] is None
         assert any(e.startswith("query:Clayton approved") for e in log)
         # the interrupted turn's result was recorded, then only the rest
         assert sum(

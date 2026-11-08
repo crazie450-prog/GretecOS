@@ -1,5 +1,5 @@
-"""The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D)
-and ``client_token`` (D117).
+"""The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D),
+``client_token`` (D117) and ``answer`` (the dashboard's Chat: the newest 50 answers, D159).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS device(id TEXT PRIMARY KEY, name TEXT, paired INT, la
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);
 CREATE TABLE IF NOT EXISTS client_token(name TEXT PRIMARY KEY, token_sha256 TEXT NOT NULL,
   created INT NOT NULL, last_used INT, revoked INT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS answer(id TEXT PRIMARY KEY, ts INT NOT NULL, body TEXT NOT NULL);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (
