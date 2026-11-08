@@ -5,8 +5,9 @@
   tools but ``db_sql``, plus ``handoff``), in the registry's fixed order. At most
   :data:`MAX_ROUNDS` calls a turn; the last one may not call tools (``tool_choice: none``),
   so a turn always ends in an answer.
-- **Cache.** The system prompt is rules, then the skill catalog (one line per skill), then the
-  vault's INDEX.md, then the persona (WO-5.6), each a block with a ``cache_control``
+- **Cache.** The system prompt is rules, then the skill catalog (one line per skill) and the
+  body of the skills the fast lane follows itself (:data:`FAST_SKILLS`: recipe-lookup, D170),
+  then the vault's INDEX.md, then the persona (WO-5.6), each a block with a ``cache_control``
   breakpoint, and tools render before system, so the tools and rules are one cached prefix
   that a new INDEX.md or a persona switch doesn't rewrite. Nothing in it changes per request:
   the request, Clayton's tier and the pre-retrieved results go in the user turn.
