@@ -134,6 +134,11 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+def _flagged(row: dict[str, str]) -> bool:
+    """A recipe row flagged ``fake?`` (its NEI handler doesn't say) or ``recycling``."""
+    return bool({"fake?", "recycling"} & set(row.get("flags", "").split()))
+
+
 def card_text(pre: prefetch.Prefetch, intent: str) -> str | None:
     """The instant (no-model) answer for a pre-retrieved card; None when there is none."""
     main = pre.main
@@ -145,19 +150,25 @@ def card_text(pre: prefetch.Prefetch, intent: str) -> str | None:
     name = _name(pre.target) or p.head.get("item", "").split(" [")[0]
     first = p.rows[0] if p.rows else None
     total = p.total if p.total is not None else len(p.rows)
+    which = "first"
+    if main.tool in ("recipe_find", "recipe_uses") and first is not None:
+        # The recipe-lookup skill's rule (D172): the first row without a flag, if any.
+        plain = next((r for r in p.rows if not _flagged(r)), first)
+        which = "first" if plain is first else "first unflagged one"
+        first = plain
     if main.tool == "recipe_find":
         if first is None:
             return f"{name}: no recipe in the DB makes it."
         return (
-            f"{name}: {_count(total, 'recipe')}, lowest tier first. The first is "
+            f"{name}: {_count(total, 'recipe')}, lowest tier first. The {which} is "
             f"{first['machine']} ({first['ref']})."
         )
     if main.tool == "recipe_uses":
         if first is None:
             return f"{name}: no recipe in the DB takes it."
         return (
-            f"{name} goes into {_count(total, 'recipe')}. The first is {first['machine']} "
-            f"({first['ref']})."
+            f"{name} goes into {_count(total, 'recipe')}. The {which} is "
+            f"{first['machine']} ({first['ref']})."
         )
     if main.tool == "machine_info":
         return f"{p.head.get('name', name)} ({p.head.get('machine', '')}): the card lists its facts."
