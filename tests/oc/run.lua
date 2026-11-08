@@ -4,7 +4,8 @@
 
 Runs every test_*.lua suite here (or the suites/tests whose names contain a NAME) in a fresh fake
 OpenComputers world (fakeoc.lua) each, with a yield watchdog. --dump DIR writes every message the
-agent sent and every reply the fake core gave to DIR, for tests/oc/test_oc_agent.py to validate
+agent sent (as it sends it, so a long lean run holds none of them) and every reply the standard
+fake core built to DIR, one JSON document a line, for tests/oc/test_oc_agent.py to validate
 against docs/contracts/oc_bridge.schema.json. Exit status 0 when every test passed.
 ]]
 
@@ -51,19 +52,20 @@ local function wanted(suite, name)
   return false
 end
 
--- Every telemetry message a test's worlds received (the first 20 and the last 5 of each), and
--- the replies the standard fake core built, for the schema check in test_oc_agent.py.
-local function dump_world(id, wi, w)
-  local reqs = w.requests
-  for i, r in ipairs(reqs) do
-    if (i <= 20 or i > #reqs - 5) and type(r.body) == "string" then
-      T.dump(("%s-w%d-req-%03d.json"):format(id, wi, i), r.body)
+-- <test>-w<n>-req.jsonl: every telemetry message world n of a test received, written as it is
+-- sent; <test>-w<n>-reply.jsonl: the replies the standard fake core built there. For the schema
+-- check in test_oc_agent.py.
+local function dump_file(id, wi, kind)
+  return assert(io.open(("%s/%s-w%d-%s.jsonl"):format(T.dump_dir, id, wi, kind), "wb"))
+end
+
+local function dump_replies(id, wi, w)
+  if #(w.valid_replies or {}) > 0 then
+    local f = dump_file(id, wi, "reply")
+    for _, body in ipairs(w.valid_replies) do
+      f:write(body, "\n")
     end
-  end
-  for i, body in ipairs(w.valid_replies or {}) do
-    if i <= 20 then
-      T.dump(("%s-w%d-reply-%03d.json"):format(id, wi, i), body)
-    end
+    f:close()
   end
 end
 
@@ -74,10 +76,20 @@ for _, suite in ipairs(SUITES) do
     local name, fn = t[1], t[2]
     if wanted(suite, name) then
       T.current = suite .. "." .. name
+      local id = T.current:gsub("[^%w_%-]", "_")
       -- A fresh world for every test; the watchdog watches the newest one's clock.
-      local worlds = {}
+      local worlds, files = {}, {}
       T.on_world = function(w)
         worlds[#worlds + 1] = w
+        local wi = #worlds
+        if T.dump_dir then
+          w.on_request = function(body)
+            if type(body) == "string" then
+              files[wi] = files[wi] or dump_file(id, wi, "req")
+              files[wi]:write(body, "\n")
+            end
+          end
+        end
       end
       debug.sethook(function()
         local w = worlds[#worlds]
@@ -88,10 +100,12 @@ for _, suite in ipairs(SUITES) do
       local ok, err = xpcall(fn, debug.traceback)
       debug.sethook()
       T.on_world = nil
+      for _, f in pairs(files) do
+        f:close()
+      end
       if T.dump_dir then
-        local id = T.current:gsub("[^%w_%-]", "_")
         for wi, w in ipairs(worlds) do
-          dump_world(id, wi, w)
+          dump_replies(id, wi, w)
         end
       end
       if ok then

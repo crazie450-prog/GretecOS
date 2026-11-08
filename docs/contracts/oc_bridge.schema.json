@@ -132,7 +132,7 @@
         "addr": { "$ref": "#/$defs/address" },
         "type": { "enum": ["me_controller", "me_interface"] },
         "cpus": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/cpu" } },
-        "items": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/item" } },
+        "items": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/item" } },
         "items_at": { "$ref": "#/$defs/seconds" }
       },
       "dependentRequired": { "items": ["items_at"] }
@@ -149,15 +149,14 @@
       }
     },
     "item": {
-      "description": "One watchlist entry: every stack of that registry name and damage summed (NBT variants included; stacks counts them).",
+      "description": "One watchlist entry: the stack of that registry name and damage with no NBT, from one exact AE2 lookup (getItemInNetwork); size 0 when none is stored.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "damage", "size", "stacks", "craftable"],
+      "required": ["name", "damage", "size", "craftable"],
       "properties": {
         "name": { "$ref": "#/$defs/registry_name" },
         "damage": { "$ref": "#/$defs/damage" },
         "size": { "type": "integer", "minimum": 0 },
-        "stacks": { "type": "integer", "minimum": 0 },
         "craftable": { "type": "boolean" }
       }
     },

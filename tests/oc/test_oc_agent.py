@@ -3,7 +3,8 @@
 tests/oc/run.lua runs oc/gos-agent.lua in a fake OpenComputers world (tests/oc/fakeoc.lua) on
 plain Lua 5.3. This module runs that suite when a Lua 5.3 is on PATH (CI's Linux job installs one
 and sets GOS_REQUIRE_LUA=1, so a missing one fails there instead of skipping), validates every
-message the agent sent in it, and every reply the fake core built, against
+message the agent sent in it (the two-hour run's included: the runner writes each one to a
+``*-req.jsonl`` file as it is sent), and every reply the standard fake core built, against
 docs/contracts/oc_bridge.schema.json, and checks the golden examples in tests/fixtures/oc/ (the
 ones WO-7.1 builds the core side from) both against the schema and against what the agent sends
 today. The schema and golden checks need no Lua, so they run on Windows too.
@@ -135,28 +136,37 @@ def test_the_lua_suite_passes(dump: Path) -> None:
     assert (dump / "golden-telemetry-first.json").is_file()
 
 
+def _documents(dump: Path) -> list[tuple[str, str, str]]:
+    """(kind, where, text) for every message and reply the runner dumped."""
+    docs: list[tuple[str, str, str]] = []
+    for path in sorted(dump.glob("*.jsonl")):
+        kind = "reply" if path.name.endswith("-reply.jsonl") else "telemetry"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        docs.extend((kind, f"{path.name}:{n}", line) for n, line in enumerate(lines, 1))
+    for path in sorted(dump.glob("golden-*.json")):
+        docs.append((_kind(path), path.name, path.read_text(encoding="utf-8")))
+    return docs
+
+
 def test_every_message_the_agent_sent_matches_the_schema(dump: Path) -> None:
     validators = {"telemetry": _validator("telemetry"), "reply": _validator("reply")}
     checked = {"telemetry": 0, "reply": 0}
     bad: list[str] = []
-    for path in sorted(dump.glob("*.json")):
-        if path.name.endswith("-stats.json"):
-            continue
-        kind = _kind(path)
-        doc = json.loads(path.read_text(encoding="utf-8"))
+    for kind, where, text in _documents(dump):
         checked[kind] += 1
-        for error in validators[kind].iter_errors(doc):
+        for error in validators[kind].iter_errors(json.loads(text)):
             bad.append(
-                f"{path.name}: {'/'.join(map(str, error.absolute_path))}: {error.message[:200]}"
+                f"{where}: {'/'.join(map(str, error.absolute_path))}: {error.message[:200]}"
             )
     assert bad == []
-    assert checked["telemetry"] >= 300, checked
-    assert checked["reply"] >= 50, checked
+    # About 2,800 messages and 650 replies; the two-hour run alone sends over 1,300 messages.
+    assert checked["telemetry"] >= 2000, checked
+    assert checked["reply"] >= 400, checked
 
 
 def test_the_agent_sends_ascii_only(dump: Path) -> None:
     """OC writes the POST body with the JVM's default charset, so non-ASCII text goes as \\u escapes."""
-    for path in dump.glob("*-req-*.json"):
+    for path in dump.glob("*-req.jsonl"):
         assert max(path.read_bytes(), default=0) < 0x80, path.name
 
 

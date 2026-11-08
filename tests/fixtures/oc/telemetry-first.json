@@ -14,32 +14,28 @@
         "craftable": true,
         "damage": 0,
         "name": "minecraft:iron_ingot",
-        "size": 1234,
-        "stacks": 1
+        "size": 1234
       },
       {
         "craftable": true,
         "damage": 11305,
         "name": "gregtech:gt.metaitem.01",
-        "size": 643,
-        "stacks": 2
+        "size": 640
       },
       {
         "craftable": false,
         "damage": 2305,
         "name": "gregtech:gt.metaitem.01",
-        "size": 0,
-        "stacks": 0
+        "size": 0
       },
       {
         "craftable": false,
         "damage": 0,
         "name": "minecraft:diamond",
-        "size": 0,
-        "stacks": 0
+        "size": 0
       }
     ],
-    "items_at": 1.4,
+    "items_at": 1.45,
     "type": "me_controller"
   },
   "agent": "0.1.0",
@@ -139,10 +135,10 @@
     }
   ],
   "results": [],
-  "sample_s": 0.45,
+  "sample_s": 0.5,
   "seq": 1,
   "tick_ms": 12.35,
   "transport": "http",
-  "uptime": 1.45,
+  "uptime": 1.5,
   "v": 1
 }

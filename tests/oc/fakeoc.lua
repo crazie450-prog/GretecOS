@@ -740,6 +740,9 @@ function F.internet_card(w, opts)
     end
     local req = { url = url, body = post, headers = headers or {}, method = method, t = w.clock }
     w.nrequests = (w.nrequests or 0) + 1
+    if w.on_request then
+      w.on_request(post) -- the runner's --dump: every body, even in a lean world
+    end
     if w.lean then
       w.requests = { req } -- a long run keeps only the last request
     else
