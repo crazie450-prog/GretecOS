@@ -3,7 +3,7 @@
 // comes with the game's focus and is clickable (D49), the keyboard drives the shell, and the
 // phone layout fits 390 px. Screenshots go to test-results/ (never into git).
 import { type Browser, type Page, expect, test } from "@playwright/test";
-import { asAdmin, contrastMisses, control, fingerprintState, layout, pair, pendingCode } from "./harness";
+import { asAdmin, clipped, contrastMisses, control, fingerprintState, layout, pair, pendingCode } from "./harness";
 
 const THEMES = ["brass", "machine", "alu", "hud", "circuit", "tung", "holo", "fusion", "naq", "deep", "calm", "manual"];
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
@@ -243,9 +243,21 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   expect(await page.getByTestId("nav").locator("button").count()).toBe(5);
   const width = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(width).toBeLessThanOrEqual(390);
+  // Nothing in a view is cut off: panels grow with what they hold and the view scrolls.
+  await expect(page.getByTestId("now-answer")).toBeVisible();
+  expect(await clipped(page), "now").toEqual([]);
+  // The state chips keep one line of their own under the wordmark, never cut top or bottom.
+  const chips = page.getByTestId("status-chips");
+  await expect(chips.locator('[data-state="game_not_running"]')).toBeVisible();
+  expect(await chips.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
+  const header = await page.getByTestId("header").boundingBox();
+  const chipBox = await chips.boundingBox();
+  expect(chipBox && header && chipBox.y + chipBox.height <= header.y + header.height).toBe(true);
   for (const tab of ["chat", "search", "costs", "settings"]) {
     await page.getByTestId(`nav-${tab}`).click();
+    await expect(page.getByTestId("view")).toHaveAttribute("data-view", tab);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), tab).toBeLessThanOrEqual(390);
+    expect(await clipped(page), tab).toEqual([]);
   }
   await page.getByTestId("nav-now").click();
   await page.screenshot({ path: shot("phone-now"), fullPage: true });

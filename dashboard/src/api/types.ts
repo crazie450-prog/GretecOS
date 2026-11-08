@@ -92,6 +92,30 @@ export interface Reply {
   total_ms: number;
   calls: number;
   error: string | null;
+  // Work handed to the deep lane (D152): the router's hand-off names its task; the fast lane's
+  // `handoff` tool only says it happened (the task is found by its time, see state/deep.ts).
+  handoff?: { id?: string; source: string; status?: string } | null;
+}
+
+export type DeepStatus = "queued" | "running" | "needs_approval" | "done" | "failed" | "stopped" | "offline";
+
+/** A deep-lane task as `/api/deep/tasks` and the `deep.task` push show it (D154, D156). Its
+ * text is the deep lane's own: no number check runs on it (that is the fast lane's, D152). */
+export interface DeepTask {
+  id: string;
+  status: DeepStatus;
+  request: string;
+  source: string;
+  created: number;
+  started: number | null;
+  ended: number | null;
+  cap_usd: number;
+  spent_usd: number;
+  approvals: number;
+  text: string | null;
+  error: string | null;
+  progress: string[];
+  stopping?: boolean;
 }
 
 /** An answer as the core keeps and pushes it (`ask.reply`). */

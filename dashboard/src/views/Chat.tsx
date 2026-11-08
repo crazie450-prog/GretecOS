@@ -1,14 +1,38 @@
-// Chat (plan 7.14): the conversation as cards; any past card re-opens full size. Needs Clayton's
-// board approval (no board yet, D92/D158).
+// Chat (plan 7.14): the conversation as cards; any past card re-opens full size. Work handed to
+// the deep lane (WO-2.4) shows under the question that started it, from queued to its result.
+// Needs Clayton's board approval (no board yet, D92/D158).
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { Answer, CoreState } from "../api/types";
+import type { Answer, CoreState, DeepTask } from "../api/types";
 import { Card } from "../cards/Card";
 import type { Card as CardData } from "../cards/types.gen";
 import { Button, StatusGlyph } from "../components/core";
+import { deepLook, matchTasks } from "../state/deep";
 import { GLYPH } from "../state/states";
+
+/** A deep-lane task's state, its latest step while it works, and its result or error. */
+export function DeepResult({ task }: { task: DeepTask }) {
+  const look = deepLook(task.status);
+  const step = task.progress.length ? task.progress[task.progress.length - 1] : null;
+  return (
+    <div className="deep-result" data-deep={task.id} data-status={task.status}>
+      <StatusGlyph status={look.status} glyph={look.glyph} label={look.label} />
+      {task.status === "running" && step && <p className="gos-src">{step}</p>}
+      {task.text && (
+        <>
+          <p className="deep-text">{task.text}</p>
+          <StatusGlyph status="warn" label="numbers not checked" />
+        </>
+      )}
+      {task.error && <p className="gos-sub">{task.error}</p>}
+    </div>
+  );
+}
+
+type Entry = { kind: "answer"; at: number; answer: Answer } | { kind: "task"; at: number; task: DeepTask };
 
 export function Chat(props: {
   answers: Answer[];
+  deep: DeepTask[];
   core: CoreState | null;
   onAsk: (text: string) => Promise<void>;
   openCard: (card: CardData) => void;
@@ -17,10 +41,15 @@ export function Chat(props: {
   const [busy, setBusy] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const asking = props.core?.asking ?? [];
+  const { byAnswer, loose } = matchTasks(props.answers, props.deep);
+  const entries: Entry[] = [
+    ...props.answers.map((a): Entry => ({ kind: "answer", at: a.asked_ts, answer: a })),
+    ...loose.map((t): Entry => ({ kind: "task", at: t.created, task: t })),
+  ].sort((a, b) => a.at - b.at);
   // A block body: scrollIntoView may return a promise, which React would take for a cleanup.
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: "end" });
-  }, [props.answers.length, asking.length]);
+  }, [entries.length, asking.length]);
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -42,33 +71,48 @@ export function Chat(props: {
         <p className="lede">Every answer as a card, the newest at the bottom. Open any card full size.</p>
       </div>
       <div className="gos-panel chat-log" data-testid="chat-log">
-        {props.answers.length === 0 && asking.length === 0 && (
+        {entries.length === 0 && asking.length === 0 && (
           <p className="empty">{GLYPH.todo} No conversation yet. Ask about a recipe, an item, a machine or a quest.</p>
         )}
-        {props.answers.map((a) => (
-          <article key={a.id} className="exchange" data-answer={a.id}>
-            <p className="question">
-              <span className="gos-src">{a.by === "admin" ? "you, from gos" : a.by}</span> "{a.request}"
-            </p>
-            <div className="reply">
-              <p className="answer-text">{a.text}</p>
-              <div className="answer-meta">
-                <span className="gos-chip">{a.lane}</span>
-                {a.checked ? (
-                  <StatusGlyph status="ok" glyph={GLYPH.done} label="numbers checked" />
-                ) : (
-                  <StatusGlyph status="warn" label="numbers not checked" />
-                )}
-                {a.card && (
-                  <Button onClick={() => props.openCard(a.card as CardData)} testId="open-card">
-                    Open full size
-                  </Button>
-                )}
+        {entries.map((e) => {
+          if (e.kind === "task") {
+            return (
+              <article key={e.task.id} className="exchange" data-task={e.task.id}>
+                <p className="question">
+                  <span className="gos-src">deep lane, {e.task.source}</span> "{e.task.request}"
+                </p>
+                <DeepResult task={e.task} />
+              </article>
+            );
+          }
+          const a = e.answer;
+          const task = byAnswer.get(a.id);
+          return (
+            <article key={a.id} className="exchange" data-answer={a.id}>
+              <p className="question">
+                <span className="gos-src">{a.by === "admin" ? "you, from gos" : a.by}</span> "{a.request}"
+              </p>
+              <div className="reply">
+                <p className="answer-text">{a.text}</p>
+                <div className="answer-meta">
+                  <span className="gos-chip">{a.lane}</span>
+                  {a.checked ? (
+                    <StatusGlyph status="ok" glyph={GLYPH.done} label="numbers checked" />
+                  ) : (
+                    <StatusGlyph status="warn" label="numbers not checked" />
+                  )}
+                  {a.card && (
+                    <Button onClick={() => props.openCard(a.card as CardData)} testId="open-card">
+                      Open full size
+                    </Button>
+                  )}
+                </div>
+                {a.card && <Card card={a.card} compact />}
+                {task && <DeepResult task={task} />}
               </div>
-              {a.card && <Card card={a.card} compact />}
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
         {asking.map((q) => (
           <article key={q.id} className="exchange pending">
             <p className="question">"{q.text}"</p>

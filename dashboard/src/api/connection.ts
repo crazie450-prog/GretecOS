@@ -1,5 +1,6 @@
 // Getting to the core: the session check (paired or not), the first snapshot, then the WebSocket
 // for pushes, reconnecting with back-off. A core that stops answering is the "core offline" state.
+import { addTasks } from "../state/deep";
 import { addAnswers, applyMessage, type Store } from "../state/store";
 import { ApiError, api } from "./client";
 
@@ -44,10 +45,12 @@ export function connect(store: Store): Connection {
   }
 
   async function refresh(): Promise<void> {
-    const [state, answers] = await Promise.allSettled([api.state(), api.answers()]);
+    // A core without the deep lane answers 503 for its tasks: Chat then shows answers only.
+    const [state, answers, deep] = await Promise.allSettled([api.state(), api.answers(), api.deepTasks()]);
     store.set((s) => ({
       core: state.status === "fulfilled" ? state.value : s.core,
       answers: answers.status === "fulfilled" ? addAnswers(s.answers, answers.value) : s.answers,
+      deep: deep.status === "fulfilled" ? addTasks(s.deep, deep.value) : s.deep,
     }));
   }
 

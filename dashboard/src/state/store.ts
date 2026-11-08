@@ -2,7 +2,8 @@
 // (React reads it with useSyncExternalStore). Pure reducers live beside it (mode.ts, now.ts,
 // states.ts) so the logic is tested without a DOM.
 import { useSyncExternalStore } from "react";
-import type { Answer, CoreState, Health, Session, VoiceState } from "../api/types";
+import type { Answer, CoreState, DeepTask, Health, Session, VoiceState } from "../api/types";
+import { addTasks } from "./deep";
 
 export type Phase = "loading" | "unpaired" | "ready";
 export type Socket = "connecting" | "open" | "closed";
@@ -15,6 +16,7 @@ export interface AppState {
   core: CoreState | null;
   health: Health | null;
   answers: Answer[];
+  deep: DeepTask[]; // deep-lane tasks (WO-2.4), for Chat
   voice: { state: VoiceState; trigger: string | null; ts: number } | null;
   nextCard: number; // bumped by the "next card" hotkey (WO-5.1's ui push)
   error: string | null;
@@ -30,6 +32,7 @@ export const initialState: AppState = {
   core: null,
   health: null,
   answers: [],
+  deep: [],
   voice: null,
   nextCard: 0,
   error: null,
@@ -82,6 +85,8 @@ export function applyMessage(s: AppState, message: unknown): Partial<AppState> {
       return { core: m.data as CoreState };
     case "ask.reply":
       return { answers: addAnswers(s.answers, [m.data as Answer]) };
+    case "deep.task":
+      return { deep: addTasks(s.deep, [m.data as DeepTask]) };
     case "voice.state":
       return { voice: m.data as AppState["voice"] };
     case "ui":

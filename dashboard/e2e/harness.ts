@@ -83,6 +83,26 @@ export async function layout(page: Page): Promise<Record<string, Box>> {
   });
 }
 
+/** Elements in the view that cut their content off vertically (overflow hidden, or a scroll box
+ * inside the view). On the phone every panel is as tall as what it holds and only the view
+ * itself scrolls, so this must come back empty there. */
+export async function clipped(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const view = document.querySelector('[data-testid="view"]');
+    if (!view) return ["no view"];
+    const out: string[] = [];
+    for (const el of view.querySelectorAll("*")) {
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.overflowY === "visible") continue;
+      if (el.scrollHeight - el.clientHeight > 1) {
+        const name = typeof el.className === "string" && el.className ? el.className : el.tagName;
+        out.push(`${name}: ${el.scrollHeight} px of content in ${el.clientHeight} px`);
+      }
+    }
+    return out;
+  });
+}
+
 export interface ContrastMiss {
   text: string;
   ratio: number;

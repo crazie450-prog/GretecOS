@@ -58,6 +58,7 @@ export function App() {
   const reachable = useApp((s) => s.reachable);
   const core = useApp((s) => s.core);
   const answers = useApp((s) => s.answers);
+  const deep = useApp((s) => s.deep);
   const session = useApp((s) => s.session);
   const socket = useApp((s) => s.socket);
   const voice = useApp((s) => s.voice);
@@ -196,7 +197,7 @@ export function App() {
       case "now":
         return <Now core={core} answers={answers} phone={phone} nowS={nowS} act={act} />;
       case "chat":
-        return <Chat answers={answers} core={core} onAsk={ask} openCard={setModal} />;
+        return <Chat answers={answers} deep={deep} core={core} onAsk={ask} openCard={setModal} />;
       case "search":
         return <Search target={searchTarget} setTarget={setSearchTarget} />;
       case "costs":

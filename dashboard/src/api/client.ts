@@ -1,7 +1,7 @@
 // The core's REST API, same origin. The paired device's cookie (HttpOnly, SameSite=Strict) goes
 // with every request; nothing here ever sees it (D117).
 import type { ApprovalCard, Card } from "../cards/types.gen";
-import type { Answer, CoreState, Device, Health, Reply, Session, Usage, Verify } from "./types";
+import type { Answer, CoreState, DeepTask, Device, Health, Reply, Session, Usage, Verify } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -46,6 +46,7 @@ export const api = {
   health: () => get<Health>("/api/health"),
   usage: () => get<Usage>("/api/usage"),
   answers: () => get<Answer[]>("/api/answers"),
+  deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
   ask: (text: string) => post<Reply>("/api/ask", { text }),
   tool: (name: string, args: Record<string, unknown>) => post<{ card: Card }>(`/api/tools/${name}`, { args }),
   recipe: (ref: string) => get<Card>(`/api/recipe?ref=${encodeURIComponent(ref)}`),

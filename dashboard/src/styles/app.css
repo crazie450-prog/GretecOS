@@ -887,6 +887,23 @@ tr.depleted td {
   gap: var(--space-3);
 }
 
+/* A deep-lane task under the question that started it: its state, then its text as written
+   (plain text, line breaks kept; never markup). */
+.deep-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--rule);
+}
+
+.deep-text {
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .search-grid,
 .settings-grid,
 .costs-grid {
@@ -1173,7 +1190,8 @@ tr.depleted td {
   .shell,
   .shell.glance {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--header-h) minmax(0, 1fr) var(--voice-h) var(--tab-h);
+    /* The header grows by one fixed row while a state chip shows (below). */
+    grid-template-rows: auto minmax(0, 1fr) var(--voice-h) var(--tab-h);
     grid-template-areas:
       "header"
       "view"
@@ -1181,12 +1199,19 @@ tr.depleted td {
       "nav";
   }
 
+  /* Wordmark and clock on the first row; the state chips get a row of their own, one line
+     high whatever the theme (so a theme never changes the layout), scrolling sideways when
+     there are more than fit. Text is never cut mid-word. */
   .shell-header {
-    gap: var(--space-3);
-    padding: 0 var(--space-4);
+    flex-wrap: wrap;
+    align-content: center;
+    gap: var(--space-2) var(--space-3);
+    min-height: var(--header-h);
+    padding: var(--space-3) var(--space-4);
   }
 
   .wordmark {
+    flex: 1 1 auto;
     font-size: 22px;
   }
 
@@ -1204,7 +1229,15 @@ tr.depleted td {
   }
 
   .status-chips {
+    order: 3;
+    flex: 1 0 100%;
     justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .status-chips:empty {
+    display: none;
   }
 
   .shell-nav {
@@ -1257,8 +1290,22 @@ tr.depleted td {
     flex-direction: column;
   }
 
-  .slot {
+  /* One column that the view scrolls: every panel as tall as what it holds, never squeezed
+     into the screen's height (the desktop grid's slots scroll inside themselves instead). */
+  .now-grid {
+    flex: none;
+    min-height: auto;
+  }
+
+  .slot,
+  .slot-body {
+    flex: none;
+    min-height: auto;
     overflow: visible;
+  }
+
+  .answer-text.big {
+    font-size: calc(22px * var(--type-scale));
   }
 
   .voice-strip {
