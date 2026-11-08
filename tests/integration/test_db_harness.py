@@ -5,8 +5,8 @@ The runs are the dev runtime's (GT 5.09.54.265 and its dependencies, not the pac
 collision test, with the repo's allow-list), the same input gives byte-identical keys and
 hashes, two independent exports (the server and the client harness) give the same GT keys, two
 client exports give the same keys and hashes for every recipe, NEI-only ones too, and the same
-alternatives for every input (D188), no key or NBT holds a numeric item ID, and the counts
-report covers every mod. As in
+input alternatives (D188; a few GT slots' are also checked in each run), no key or NBT holds
+a numeric item ID, and the counts report covers every mod. As in
 test_collect_harness.py this runs only with GOS_REQUIRE_HARNESS_RUN=1 (CI's mod job, right
 after both harnesses): run them (mod/README.md), then
 ``GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration``. The two-client check also needs
@@ -179,6 +179,31 @@ def test_two_client_exports_give_the_same_alternatives_for_every_input(
     new = {r[0] for r in set(b) - set(a)}
     assert (sorted(gone)[:5], sorted(new)[:5]) == ([], [])
     assert a == b
+
+
+CRYSTAL_POWDERS = (
+    "SELECT s.meta, count(*), count(a.item_id) FROM recipe r"
+    " JOIN recipe_map m ON m.id = r.recipe_map_id"
+    " JOIN recipe_input i ON i.recipe_id = r.id JOIN item s ON s.id = i.item_id"
+    " LEFT JOIN recipe_input_alt a ON a.recipe_id = r.id AND a.slot = i.slot"
+    " AND a.item_id IN (SELECT id FROM item WHERE registry_name GLOB 'miscutils:itemDustInfused*')"
+    " WHERE m.unloc_name = 'gt.recipe.magicfuels' AND s.registry_name = 'gregtech:gt.metaitem.01'"
+    " AND s.meta BETWEEN 2540 AND 2543 GROUP BY s.meta ORDER BY s.meta"
+)
+
+
+@pytest.mark.parametrize("side", ["client", "client_b"])
+def test_gt_slots_keep_their_oredict_alternatives(
+    side: str, request: pytest.FixtureRequest
+) -> None:
+    # D188: slots the race emptied, checked in each run on its own, so a loss that both runs
+    # share fails too. magicfuels' Aer, Ignis, Terra and Aqua Crystal Powder
+    # (gregtech:gt.metaitem.01@2540-2543) also take GT++'s miscutils:itemDustInfused* dusts,
+    # which only NEI's anyOf lists (racy runs lost Terra's and Aqua's).
+    result: build.Result = request.getfixturevalue(side)
+    got = rows(result.db, CRYSTAL_POWDERS)
+    assert [meta for meta, _, _ in got] == [2540, 2541, 2542, 2543]
+    assert [(meta, alts) for meta, _, alts in got] == [(m, n) for m, n, _ in got]
 
 
 def test_the_same_run_again_is_byte_identical(

@@ -209,9 +209,13 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
 - Coverage limits: a handler hidden in NEI's config (Export mirrors Play's `config/NEI/`) is not dumped; a handler that
   fails to load is dropped by NEI without notice (it counts in `counts.nei_lookup_errors`); a recipe NEI can't
   serialise is left out (`counts.nei_skipped`). For the dump, GregtecLink has NEI load every handler on the client
-  thread, one after another (D188), so the same pack gives the same handlers and the same `anyOf` stacks on every
-  run. Runs made before D188 could drop a GT handler or, with no flag at all, miss some of a GT slot's `anyOf`
-  stacks: NEI loaded GT's handlers in parallel, which GT 5.09.54.265 doesn't support. Counts can also differ between runs of the same pack with config
+  thread, one after another, and has GT build its NEI recipe caches again, so a recipe lookup earlier in the session
+  (R or U in a world opened by hand) can't leak into the dump (D188). The same pack then gives the same handlers and
+  the same `anyOf` stacks on every run, except for handlers whose content varies by design: AE2's facades, NEI's fuel
+  list, Tinkers' tool materials and GT's Eye of Harmony (hash-ordered outputs). A run whose NEI didn't take its
+  handlers from the serial list says so (`counts.nei_serial_load` 0, `part_warnings.nei`). Runs made before D188
+  could drop a GT handler or, with no flag at all, miss some of a GT slot's `anyOf` stacks: NEI loaded GT's handlers
+  in parallel, which GT 5.09.54.265 doesn't support. Counts can also differ between runs of the same pack with config
   state: in the dev runtime, AE2's "Facade Crafting" had 2,403 recipes in a brand-new run folder and 2,631 in a
   reused one, where AE2 had rewritten its `config/AppliedEnergistics2/Facades.cfg` on joining the world. Compare NEI
   content, not counts.
@@ -256,7 +260,8 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
  "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",
            "ore_mixes","ore_mix_errors","dimensions","oredict","oredict_members","oredict_errors",
            "items","item_errors","fluids","unregistered",
-           "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_files"?,"nei_recipes"?,
+           "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_serial_load"?,"nei_files"?,
+           "nei_recipes"?,
            "crop_dumpers"?,"crop_files"?},
  "options":{"recipe_owners":true},
  "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","oredict":"ok|failed",
@@ -321,13 +326,17 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `part_warnings` is present only when a part is `ok` but left something out. Today only `nei`: NEI dropped one or
   more recipe handlers while loading them (`counts.nei_lookup_errors` > 0; NEI names them only on stderr), so their
   recipes are missing from `nei/` although the lines still equal NEI's count. Since D188 the handlers load one by
-  one on the client thread, so this is a handler that fails there too, not a race between NEI's threads. **Readers
-  that need every handler check that `part_warnings.nei` is absent.** And `crops` (WO-1.10): one of CropsNH's dumpers that Python doesn't
+  one on the client thread, so this is a handler that fails there too, not a race between NEI's threads. Also when
+  NEI didn't take its handlers from GregtecLink's serial list (`counts.nei_serial_load` 0): GT's handlers may then
+  have loaded in parallel and lost `anyOf` stacks. **Readers that need every handler check that `part_warnings.nei`
+  is absent.** And `crops` (WO-1.10): one of CropsNH's dumpers that Python doesn't
   read failed, so its file is missing from `crops/`.
 - The `nei_*` counts and the `nei_dump` and `nei_copy` durations are present only when the NEI step called
   `dumpAll`; `nei_wait` also when NEI was not ready in time. `nei_handlers` and `nei_reported` are -1 when NEI logged
-  no such line. `nei_wait` is the time from entering the world until the dump started (or the wait timed out);
-  `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy into `nei/`.
+  no such line. `nei_serial_load` (D188) is 1 when NEI read GregtecLink's serial handler list on the client thread
+  and the empty parallel one during the call, else 0. `nei_wait` is the time from entering the world until the dump
+  started (or the wait timed out); `nei_dump` is NEI's call, during which the game is frozen; `nei_copy` the copy
+  into `nei/`.
 - The `crop_*` counts and the `crops_dump` and `crops_copy` durations are present only when the crop step ran:
   `crop_dumpers` once it found CropsNH's dumpers, the rest once it called them.
 

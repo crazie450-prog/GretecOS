@@ -117,6 +117,7 @@ public final class ExportClient {
                 run.durations.put("nei_wait", now - inWorldMs);
                 if (Harness.clientRunActive()) Harness.beforeNeiStep(gameDir);
                 String nei = NeiTrigger.dump(run);
+                if (Harness.clientRunActive()) Harness.afterNeiStep();
                 run.crops = CropTrigger.dump(run);
                 done(mc, run, run.finish(nei, auto ? "ok" : "off"));
                 break;
