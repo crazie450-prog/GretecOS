@@ -1,11 +1,21 @@
 """The fake models of ``gos eval recipe-lookup --fake`` (WO-2.7, D172): oracles for both lanes.
 
 An oracle knows each eval row's references (its :class:`~gregtec.agents.recipe_eval.Step`
-list), as a test oracle does, and does what the recipe-lookup skill says a careful model does
-with them: it uses the pre-retrieved results first, calls the tools the skill names
-(``recipe_find``, ``recipe_uses``, ``machine_info``, ``more``) for what they don't cover,
-picks the row each step means from the tools' text (never from the DB), asks when a result is
-ambiguous, and answers by copying that row's numbers next to its id.
+list) and the words the question names each step's item by (the file's ``words`` cell), as a
+test oracle does, and does what the recipe-lookup skill says a careful model does:
+
+- **The item from the question's words, never the reference's key.** The fast lane's oracle
+  uses the pre-retrieved results when the router resolved the words, else passes the words to
+  the lookup tool, which resolves them as ``item_resolve`` does; the deep lane's oracle calls
+  ``item_resolve`` first (the skill's step 1). A step after the first takes its key from the
+  ``in`` cell of the row the previous step chose when a slot there is named by its words (the
+  skill's "what makes X, then its input Y"), else resolves its own words. Words that resolve to
+  another item lead to a wrong answer, which the scorer fails, as it would a model's.
+- **The row by the skill's rule.** Of the rows the step means (its filters, read off the tools'
+  text, never the DB) the first without a flag (``fake?``, ``recycling``); a flagged one only
+  when no other row matches, after the lookup's last page.
+- **Ask on** ``ambiguous: 1``, naming the top three, and answer otherwise by copying the row's
+  numbers next to its id.
 
 - :class:`OracleClient` is the fast lane's model (a :class:`gregtec.llm.fake.FakeClient`), so
   the real router, pre-retrieval, ``FastLane`` loop (at most 3 calls a turn), tools and number
@@ -17,8 +27,9 @@ ambiguous, and answers by copying that row's numbers next to its id.
   one ``key: value`` line per cited recipe (the skill's section 4).
 
 The scorer (:mod:`gregtec.agents.recipe_eval`) reads the DB itself, so the oracle can only pass
-by finding the right rows through the tools. It checks the plumbing, not a model: a question
-the oracle has no row for gets EchoClient's answer.
+by finding the right rows through the tools. It checks the plumbing, item resolution from the
+question's words and the scoring, not a model: a question the oracle has no row for gets
+EchoClient's answer.
 """
 
 from __future__ import annotations
@@ -35,10 +46,12 @@ from gregtec.agents import cards, recipe_eval
 from gregtec.agents.ask import Asker
 from gregtec.agents.deep import DeepLaneService
 from gregtec.agents.deep_config import Settings
+from gregtec.agents.deep_eval import FAKE_KEY
 from gregtec.agents.fast_lane import FastLane
-from gregtec.agents.recipe_eval import MACHINE, MAKE, Question, Step
+from gregtec.agents.recipe_eval import FLAGS, MACHINE, MAKE, Question, Step
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
+from gregtec.agents.tools.items import FLUID_KEY, ITEM_KEY, MTE_KEY, words
 from gregtec.agents.tools.mcp import PREFIX
 from gregtec.agents.tools.tsv import Parsed, parse
 from gregtec.db import access
@@ -49,7 +62,6 @@ from gregtec.vault import deploy as vault_deploy
 
 SKILL = "gos:recipe-lookup"
 SKILL_HEADING = "# Recipe lookup"  # the first line of the loaded skill's body
-FAKE_KEY = "sk-ant-fake-eval-000000000000000000000000000000"
 PREFETCHED = re.compile(
     r'<tool_result tool="(?P<tool>[a-z_]+)" args=\'(?P<args>[^\']*)\'>\n'
     r"(?P<text>.*?)\n</tool_result>",
@@ -57,6 +69,7 @@ PREFETCHED = re.compile(
 )
 REQUEST = re.compile(r"<request>\n(?P<text>.*?)\n</request>", re.DOTALL)
 _REF_IN = re.compile(r" \((?:r|mte):[^)]*\)")  # "(r:...)" in a sentence: not spoken
+_WIRE_SIZE = re.compile(r"\d+x")  # "1x Copper Wire": GT's wire size, part of the name
 TIERS = recipe_eval.TIERS
 # A cited recipe's detail line (the skill's section 4): the recipe tools' own columns
 DETAIL = (
@@ -71,6 +84,7 @@ DETAIL = (
     "out",
     "cond",
 )
+Call = tuple[str, dict[str, Any]]
 
 
 @dataclass
@@ -108,6 +122,16 @@ def head_name(p: Parsed) -> str:
     return p.head.get("item", "").rsplit(" [", 1)[0]
 
 
+def is_key(text: str) -> bool:
+    """A key the tools take as it is (an item, a fluid or a machine), not words."""
+    return any(k.fullmatch(text) for k in (ITEM_KEY, FLUID_KEY, MTE_KEY))
+
+
+def flagged(row: Mapping[str, str]) -> bool:
+    """A row the skill uses only when no other answers: ``fake?`` or ``recycling``."""
+    return bool(set(row.get("flags", "").split()) & set(FLAGS))
+
+
 def _slot(cell: str, key: str) -> dict[str, Any] | None:
     """The slot of a recipe row's ``in`` or ``out`` cell that holds ``key``."""
     return next((s for s in cards.slots(cell) if s.get("key") == key), None)
@@ -138,42 +162,20 @@ def matches(step: Step, row: dict[str, str]) -> bool:
     return True
 
 
-def lookup(step: Step) -> tuple[str, dict[str, Any]]:
-    """The call that answers ``step``: the tool the skill names for it."""
+def lookup(step: Step, item: str | None = None) -> Call:
+    """The call the skill names for ``step``, about ``item`` (words or a key; default the
+    step's own key)."""
+    item = item or step.key
     if step.op == MACHINE:
-        return "machine_info", {"machine": step.key}
+        return "machine_info", {"machine": item}
     if step.op == MAKE:
-        args: dict[str, Any] = {"item": step.key}
+        args: dict[str, Any] = {"item": item}
         if (machine := step.filter("map")) is not None:
             args["machine"] = machine
         if (tier := step.filter("tier")) is not None:
             args["tier_max"] = tier
         return "recipe_find", args
-    out, machine = step.filter("out"), step.filter("map")
-    if out is not None and machine is not None:
-        # a use in one machine that gives one output: that machine's recipes for it
-        return "recipe_find", {"item": out, "machine": machine}
-    return "recipe_uses", {"item": step.key}
-
-
-def _filters(tool: str, args: Mapping[str, Any]) -> str:
-    """The ``filters:`` head line a recipe tool writes for ``args`` ('' for none)."""
-    if tool != "recipe_find":
-        return ""
-    pairs = (("tier_max", args.get("tier_max")), ("machine", args.get("machine")))
-    return " ".join(f"{k}={v}" for k, v in pairs if v)
-
-
-def _about(step: Step, seen: Seen) -> bool:
-    """Whether a result is a page of ``step``'s own lookup (its item and filters; a ``more``
-    page repeats the head of the call it continues)."""
-    tool, args = lookup(step)
-    p = seen.parsed
-    if tool == "machine_info":
-        return seen.tool == tool and head_key(p) == step.key
-    if seen.tool not in (tool, "more") or head_key(p) != args["item"]:
-        return False
-    return p.head.get("filters", "") == _filters(tool, args)
+    return "recipe_uses", {"item": item}
 
 
 def _cursor(seen: Seen) -> str | None:
@@ -185,59 +187,152 @@ def _cursor(seen: Seen) -> str | None:
     return None
 
 
-def _source(step: Step, seen: Seen) -> bool:
-    """Whether a result can hold rows of ``step``: a recipe result about its item (or, for a
-    use step with ``out=``, about that output). A step that wants a count takes its rows
-    only from its own lookup, whose total is that count."""
-    p = seen.parsed
-    if seen.tool not in ("recipe_find", "recipe_uses", "more") or not p.columns:
-        return False
-    if "count" in step.want:
-        return _about(step, seen)
-    key = head_key(p)
-    if step.op == MAKE:
-        return key == step.key and seen.tool != "recipe_uses"
-    return key in (step.key, step.filter("out"))
+def _pages(call: Call, seen: Sequence[Seen]) -> list[Seen]:
+    """The results of ``call``: its first page, then the ``more`` pages that continue it (a
+    page repeats the head of the call it continues)."""
+    tool, args = call
+    first = [s for s in seen if s.tool == tool and s.args == args]
+    if not first:
+        return []
+    head = first[0].parsed.head
+    return first + [s for s in seen if s.tool == "more" and s.parsed.head == head]
 
 
-def find(step: Step, seen: Sequence[Seen]) -> Found | None:
-    """The row ``step`` means among the results, or its lookup's answer when that has no
-    row (and no further page): None while the oracle should look further."""
-    if step.op == MACHINE:
-        info = [s for s in seen if _about(step, s)]
-        return Found(info[0], None) if info else None
-    empty = None
+def _name_words(text: str) -> list[str]:
+    """A name's words as compared: no wire size in front, the last word singular."""
+    found = words(text)
+    if found and _WIRE_SIZE.fullmatch(found[0]):
+        found = found[1:]
+    if (
+        found
+        and len(found[-1]) > 3
+        and found[-1].endswith("s")
+        and found[-1][-2] != "s"
+    ):
+        found[-1] = found[-1][:-1]
+    return found
+
+
+def chained(said: str, row: Mapping[str, str]) -> str | None:
+    """The key of the slot of ``row``'s ``in`` cell that ``said`` names (the skill: take Y's
+    key from the chosen row's ``in`` cell), or None when no slot has that name (an oredict
+    slot may show another item of it)."""
+    want = _name_words(said)
+    for s in cards.slots(row.get("in", "")):
+        if s.get("key") and want and _name_words(s.get("name", "")) == want:
+            return str(s["key"])
+    return None
+
+
+def _resolution(said: str, kind: str | None, seen: Sequence[Seen]) -> Seen | None:
+    """The ``item_resolve`` result for these words (the pre-retrieved one included)."""
+    want = " ".join(said.split()).casefold()
     for s in seen:
-        if not _source(step, s):
-            continue
+        text = " ".join(str(s.args.get("text", "")).split()).casefold()
+        if (
+            s.tool == "item_resolve"
+            and text == want
+            and s.args.get("kind") in (None, kind)
+        ):
+            return s
+    return None
+
+
+def _top(p: Parsed) -> list[str]:
+    """The top three distinct candidate names of an ambiguous result."""
+    return list(dict.fromkeys(r.get("name", "") for r in p.rows if r.get("name")))[:3]
+
+
+@dataclass
+class State:
+    """Where one step is: the item to look up, a call to make, a question, or its row."""
+
+    item: str | None = None
+    call: Call | None = None
+    ask: list[str] | None = None
+    found: Found | None = None
+
+
+def _item(
+    step: Step, said: str, prev: Found | None, seen: Sequence[Seen], resolve_first: bool
+) -> State:
+    """The item a step's lookup is about: chained from the previous row, resolved from the
+    words, or the words themselves for the lookup tool to resolve."""
+    if (
+        prev is not None
+        and prev.row is not None
+        and (key := chained(said, prev.row)) is not None
+    ):
+        return State(item=key)
+    if not said:
+        return State(item=step.key)  # a file without words: the step's own key
+    kind = "machine" if step.op == MACHINE else None
+    resolved = _resolution(said, kind, seen)
+    if resolved is None:
+        if resolve_first:
+            return State(
+                call=("item_resolve", {"text": said} | ({"kind": kind} if kind else {}))
+            )
+        return State(item=said)
+    p = resolved.parsed
+    if p.head.get("ambiguous") == "1":
+        return State(ask=_top(p))
+    if not p.rows:
+        return State(found=Found(resolved, None))  # nothing in the DB matches the words
+    return State(item=p.rows[0]["key"])
+
+
+def _rows(step: Step, sources: Sequence[Seen]) -> list[tuple[Seen, dict[str, str]]]:
+    """The rows of the results that ``step`` means, in the tools' order."""
+    out = []
+    for s in sources:
         p = s.parsed
         own = head_key(p) == step.key
         for row in p.rows:
             takes = step.op == MAKE or own or _slot(row.get("in", ""), step.key)
             if takes and matches(step, row):
-                return Found(s, row)
-        if _about(step, s) and _cursor(s) is None:
-            empty = empty or Found(s, None)
-    return empty
+                out.append((s, row))
+    return out
 
 
-def next_call(step: Step, seen: Sequence[Seen]) -> tuple[str, dict[str, Any]] | None:
-    """The next call for a step with no row yet: its lookup, else that lookup's next page;
-    None when the pages ran out."""
-    mine = [s for s in seen if _about(step, s)]
-    if not mine:
-        return lookup(step)
-    cursor = _cursor(mine[-1])
-    return ("more", {"cursor": cursor}) if cursor else None
-
-
-def ambiguous(seen: Sequence[Seen]) -> list[str] | None:
-    """The top three names when a result says ambiguous (the skill: ask, don't guess)."""
-    for s in seen:
-        p = s.parsed
-        if p.head.get("ambiguous") == "1":
-            return [r.get("name", "") for r in p.rows[:3]]
-    return None
+def step_state(
+    step: Step,
+    said: str,
+    prev: Found | None,
+    seen: Sequence[Seen],
+    *,
+    tools: bool,
+    resolve_first: bool,
+) -> State:
+    got = _item(step, said, prev, seen, resolve_first)
+    if got.item is None:
+        return got
+    call = lookup(step, got.item)
+    pages = _pages(call, seen)
+    if pages and pages[0].parsed.head.get("ambiguous") == "1":
+        return State(ask=_top(pages[0].parsed))  # the tool resolved the words: unclear
+    if step.op == MACHINE:
+        return State(found=Found(pages[0], None)) if pages else State(call=call)
+    key = got.item if is_key(got.item) else (head_key(pages[0].parsed) if pages else "")
+    sources = list(pages)
+    if key and "count" not in step.want:  # a count is the step's own lookup's total
+        tool = call[0]
+        sources += [
+            s
+            for s in seen
+            if s.tool == tool and s not in pages and head_key(s.parsed) == key
+        ]
+    rows = _rows(step, sources)
+    if plain := next(((s, r) for s, r in rows if not flagged(r)), None):
+        return State(found=Found(*plain))
+    cursor = _cursor(pages[-1]) if pages else None
+    if cursor and tools:
+        return State(call=("more", {"cursor": cursor}))
+    if rows:
+        return State(found=Found(*rows[0]))
+    if pages:
+        return State(found=Found(pages[0], None))
+    return State(call=call)
 
 
 def _value(step: Step, want: str, found: Found) -> str:
@@ -264,6 +359,11 @@ def _value(step: Step, want: str, found: Found) -> str:
         return f"{total} recipes in all" if total is not None else ""
     if want == "machine":
         return f"in the {row.get('machine', '')}"
+    if name == "ore":
+        slot = next(
+            (s for s in cards.slots(row.get("in", "")) if s.get("ore") == key), None
+        )
+        return f"any ore:{key} item fits ({slot['name']} shown)" if slot else ""
     if name in recipe_eval.SLOT_WANTS:
         slot = _slot(row.get("out" if name in ("out", "chance") else "in", ""), key)
         if slot is None:
@@ -281,7 +381,7 @@ def _value(step: Step, want: str, found: Found) -> str:
             c.split("=", 1) for c in row.get("cond", "").split("; ") if "=" in c
         )
         return f"{key} {cond.get(key, '')}"
-    return ""
+    return ""  # simplest: the row itself is the answer
 
 
 def sentence(step: Step, found: Found | None) -> str:
@@ -289,6 +389,8 @@ def sentence(step: Step, found: Found | None) -> str:
     if found is None:
         return f"I couldn't find the row for {step.text()} through the tools."
     p = found.seen.parsed
+    if found.seen.tool == "item_resolve":
+        return f"Nothing in the DB matches {p.head.get('text', step.key)!r}."
     name = head_name(p) or step.key
     if found.seen.tool == "machine_info":
         parts = [v for w in step.want if (v := _value(step, w, found))]
@@ -296,6 +398,8 @@ def sentence(step: Step, found: Found | None) -> str:
         said = ", ".join(parts) if parts else f"it runs {maps.split(' [')[0]}"
         return f"{name} ({head_key(p)}): {said}."
     if found.row is None:
+        if p.rows:  # its lookup has rows, none of them the one asked about
+            return f"{name}: I couldn't find the recipe asked about among its rows."
         verb = "makes" if step.op == MAKE else "takes"
         return f"{name}: no recipe in the DB {verb} it."
     row = found.row
@@ -323,21 +427,49 @@ def detail(found: Found) -> str:
 class Plan:
     """What the oracle does next for a question: tool calls, or its answer."""
 
-    calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    calls: list[Call] = field(default_factory=list)
     found: list[Found | None] = field(default_factory=list)
     ask: list[str] | None = None
 
 
-def decide(q: Question, seen: Sequence[Seen], tools: bool) -> Plan:
-    plan = Plan(ask=ambiguous(seen))
-    if plan.ask:
+def decide(
+    q: Question, seen: Sequence[Seen], tools: bool, *, resolve_first: bool = False
+) -> Plan:
+    """The next calls, or the answer's rows. ``resolve_first``: ``item_resolve`` before a
+    lookup (the deep lane, as the skill's step 1 says); otherwise the lookup tools resolve the
+    words themselves (the fast lane, whose three calls a turn leave no round to spare).
+    Steps are taken in order: a later one may take its item from an earlier one's row."""
+    plan = Plan()
+    if not q.steps:  # an ask row: its words should be unclear
+        said = q.words[0] if q.words else ""
+        resolved = _resolution(said, None, seen) if said else None
+        if resolved is None:
+            if said and tools:
+                plan.calls.append(("item_resolve", {"text": said}))
+        elif resolved.parsed.head.get("ambiguous") == "1":
+            plan.ask = _top(resolved.parsed)
         return plan
-    for step in q.steps:
-        got = find(step, seen)
-        plan.found.append(got)
-        call = next_call(step, seen) if got is None and tools else None
-        if call is not None and call not in plan.calls:
-            plan.calls.append(call)
+    prev: Found | None = None
+    waiting = False  # an earlier step is still being looked up
+    for i, step in enumerate(q.steps):
+        if waiting:
+            plan.found.append(None)
+            continue
+        said = q.words[i] if i < len(q.words) else ""
+        state = step_state(
+            step, said, prev, seen, tools=tools, resolve_first=resolve_first
+        )
+        if state.ask is not None:
+            plan.ask = state.ask
+            return plan
+        if state.call is not None:
+            if tools:
+                plan.calls.append(state.call)
+            plan.found.append(None)
+            waiting = True
+            continue
+        plan.found.append(state.found)
+        prev = state.found
     return plan
 
 
@@ -350,6 +482,8 @@ def ask_text(names: list[str]) -> str:
 def fast_answer(q: Question, plan: Plan) -> str:
     if plan.ask is not None:
         return ask_text(plan.ask)
+    if not q.steps:
+        return "That names one item, so there is nothing to ask."
     return " ".join(sentence(s, f) for s, f in zip(q.steps, plan.found, strict=True))
 
 
@@ -358,6 +492,8 @@ def deep_answer(q: Question, plan: Plan) -> str:
     then one ``key: value`` line per cited row (a step with no row says so instead)."""
     if plan.ask is not None:
         return ask_text(plan.ask)
+    if not q.steps:
+        return "That names one item, so there is nothing to ask."
     said = [
         _REF_IN.sub("", sentence(s, f)).rstrip(". ")
         for s, f in zip(q.steps, plan.found, strict=True)
@@ -464,7 +600,7 @@ def fake_text(block: Mapping[str, Any]) -> str:
 
 
 def deep_policy(plans: Mapping[str, Question]) -> Policy:
-    """The deep lane's model in ``--fake``: load the skill, call its tools, answer."""
+    """The deep lane's model in ``--fake``: load the skill, resolve, call its tools, answer."""
 
     def policy(body: dict[str, Any]) -> ApiTurn:
         from gregtec.llm import fake_api
@@ -483,7 +619,7 @@ def deep_policy(plans: Mapping[str, Question]) -> Policy:
                 text="Loading the recipe-lookup skill.",
                 tools=[("Skill", {"skill": SKILL})],
             )
-        plan = decide(q, seen, tools=True)
+        plan = decide(q, seen, tools=True, resolve_first=True)
         if plan.calls and plan.ask is None:
             return ApiTurn(
                 text="Looking it up.",

@@ -40,6 +40,7 @@ from gregtec.agents.tools.registry import FAST, Registry
 from gregtec.llm import keys
 from gregtec.llm.prices import HAIKU, PRICES, Usage, estimate_cost
 from gregtec.llm.usage import UsageMeter
+from gregtec.vault import deploy as vault_deploy
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ NOT_CHECKED = (
 )
 REFUSED = "I can't answer that one."
 NO_TEXT = "I have no answer for that."
+# Skills whose procedure the fast lane follows itself (plan 7.3 runs recipe Q&A here): their
+# body joins the cached rules, not only their catalog line (D170, pending Clayton).
+FAST_SKILLS = ("recipe-lookup",)
 
 RULES = """\
 You are the fast lane of Gregtec OS, the assistant of Clayton, who plays GregTech: New Horizons \
@@ -190,6 +194,25 @@ def _skill_lines(vault: Path) -> list[str]:
     return lines
 
 
+def _skill_body(vault: Path | None, name: str) -> str | None:
+    """A skill's text after its front matter: the release's own copy in the repo's
+    vault-template first, as the deep lane takes its skills (D155), else the live vault's."""
+    roots = [vault_deploy.DEFAULT_TEMPLATE, *([vault] if vault is not None else [])]
+    for root in roots:
+        try:
+            text = (root / "_gos" / "skills" / name / "SKILL.md").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            continue
+        text = text.replace("\r\n", "\n")
+        if text.startswith("---\n"):
+            _, sep, rest = text[4:].partition("\n---\n")
+            text = rest if sep else text
+        return text.strip() or None
+    return None
+
+
 def _private_row(line: str) -> bool:
     """An INDEX.md row that points into ``me/`` (any case, as the vault guard reads it): its
     summary copies Clayton's own note, which the prompt leaves out as D143 (d) does; the
@@ -203,7 +226,8 @@ def _private_row(line: str) -> bool:
 def system_prompt(
     vault: Path | None, persona: str | None = None
 ) -> list[dict[str, Any]]:
-    """The cached system blocks: rules (+ skill catalog), INDEX.md, persona."""
+    """The cached system blocks: rules (+ skill catalog and the fast lane's own skills),
+    INDEX.md, persona."""
     first = RULES
     index = None
     if vault is not None:
@@ -214,6 +238,12 @@ def system_prompt(
             index = (vault / "INDEX.md").read_text(encoding="utf-8", errors="replace")
         except OSError:
             index = None
+    for name in FAST_SKILLS:
+        if body := _skill_body(vault, name):
+            first += (
+                f"\n\nThe {name} skill, which you follow for recipe and item questions "
+                f'(its tools are yours):\n<skill name="{name}">\n{body}\n</skill>'
+            )
     blocks = [first]
     if index:
         index = "\n".join(ln for ln in index.split("\n") if not _private_row(ln))
