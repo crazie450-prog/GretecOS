@@ -501,9 +501,8 @@ function M.discover(st)
     inv.counts[ctype] = (inv.counts[ctype] or 0) + 1
     if not ignored(cfg, addr) then
       if GT_TYPES[ctype] then
-        local e = old[addr]
-        if not e then
-          e = { addr = addr, type = ctype }
+        local e = old[addr] or { addr = addr, type = ctype }
+        if not e.name then -- new, or getName failed last time
           if ctype == "lsc" then
             e.name = "multimachine.supercapacitor"
           else
@@ -512,12 +511,17 @@ function M.discover(st)
               e.name = name
             end
           end
-          e.xyz = coords(addr)
-          if ctype == "gt_batterybuffer" then
-            e.kind = "battery_buffer"
-          elseif ctype == "lsc" or (e.name and cfg.power_set[e.name]) then
-            e.kind = "storage"
-          end
+        end
+        e.xyz = e.xyz or coords(addr)
+        local kind
+        if ctype == "gt_batterybuffer" then
+          kind = "battery_buffer"
+        elseif ctype == "lsc" or (e.name and cfg.power_set[e.name]) then
+          kind = "storage"
+        end
+        if kind ~= e.kind then
+          -- First sight, or a name that came late moved it (a machine that is an LSC): no old readings.
+          e = { addr = addr, type = ctype, name = e.name, xyz = e.xyz, kind = kind }
         end
         local list, max = inv.machines, cfg.max_machines
         if e.kind then

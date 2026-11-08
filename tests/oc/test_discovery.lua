@@ -89,6 +89,27 @@ test("a machine whose getName fails is still a machine", function()
   T.eq(inv.machines[1].name, nil)
 end)
 
+test("a name that answers late reclassifies the entry, with no stale readings", function()
+  local w = T.base({ bare = true })
+  local lsc = F.lsc(w, { prefix = "4c0", raise = { getName = { "busy" } } }) -- fails once
+  local M, st = T.agent(w)
+  M.cycle(st)
+  T.eq(#st.inv.machines, 1, "without a name the LSC looks like a machine")
+  T.ok(st.inv.machines[1].eu ~= nil, "and was read as one")
+  M.discover(st)
+  T.eq(#st.inv.machines, 0)
+  T.eq(#st.inv.power, 1)
+  local e = st.inv.power[1]
+  T.eq(e.addr, lsc.addr)
+  T.eq(e.kind, "storage")
+  T.eq(e.eu, nil, "the machine readings didn't carry over")
+  st.next_cycle = 0
+  M.cycle(st)
+  local p = T.last_body(w).power[1]
+  T.eq(p.eu_str, "123456789012345678901234")
+  T.eq(p.eu, nil)
+end)
+
 test("component signals trigger a rediscovery", function()
   local w = T.base()
   local M, st = T.agent(w)

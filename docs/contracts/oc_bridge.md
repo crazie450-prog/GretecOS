@@ -203,8 +203,11 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
 ## Identity
 
 - **Machines** are identified by `addr` (stable while the adapter or MFU stays; a new one gives a new address), and
-  by `name` + `xyz`. GT's meta name maps to the machine's `mte_id` through the export's `meta_name`
-  (`docs/contracts/gregteclink-export-v1.md`). No numeric block or item ID is ever sent (EndlessIDs).
+  by `name` + `xyz`. GT's meta name maps to the machine's `mte_id` through the export's `meta_name` in
+  `gt_machines.jsonl` (`docs/contracts/gregteclink-export-v1.md`); a name is one machine
+  (`tests/integration/test_oc_names_harness.py` checks it on a harness export). The DB's `machine` table has no
+  `meta_name` column yet, so the core adds one or reads the export. No numeric block or item ID is ever sent
+  (EndlessIDs).
 - **Items** are registry name + damage. The watchlist accepts only names (OC's `getItemsInNetworkById` would also
   take numeric ids; the agent never sends one).
 
