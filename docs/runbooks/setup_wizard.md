@@ -16,7 +16,13 @@ Saved settings take effect at GOS's next start (log in again, or `gos stop` then
 
 The dashboard opens on the wizard alone only on a first run (no gos.toml yet). An install whose gos.toml has no `[setup]` table (one from before this wizard) shows a "Setup isn't finished" banner with **Open setup** and **Dismiss** instead; the wizard then has a **Later** button.
 
-The wizard never moves Play: once gos.toml names Play, changing the Play instance or the instances folder is refused ("edit gos.toml by hand"), and Export or Lab can never be Play's folder. GOS_HOME and GOS_APP can never be inside Play or hold it, and a check never writes a file in Play (the GOS_HOME write probe is skipped there; the row is an error).
+The wizard never moves Play: once gos.toml names Play, changing the Play instance or the instances folder is refused ("edit gos.toml by hand"), and Export or Lab can never be Play's folder. GOS_HOME and GOS_APP can never be inside Play or hold it, and a check never opens, probes or creates a file of GOS's own in or around any Play, Prism's instances folder, Export or Lab, links and junctions followed: that covers GOS_HOME's data, logs, vault, backups and run folders too (one of them linked into Play is an error), the GOS_HOME write probe and the DB's GT pin (read immutable, so SQLite leaves no -wal or -shm file). `gos doctor` likewise reads no DB and writes no env.json through a GOS_HOME that leads into an instances folder (D223).
+
+### Former Plays (D223)
+
+Every folder that has ever been Play for this install is on record, in two places that are read together: `[setup] former_plays` in gos.toml and `former_plays.txt` beside gos.toml (`GOS_HOME\config\former_plays.txt`). The wizard adds gos.toml's Play and the running core's Play to both at every save and Finish (and to the file at every check once gos.toml exists), before it writes the new Play. It never removes an entry. Export or Lab in or around a folder on record is refused by the wizard, by Finish and by `sync_instances.py` (`gos launch` syncs, and the pack-update Lab export), whatever `[paths]` says now. So moving Play by hand, swapping Play and Lab by hand, restarting, or deleting gos.toml never turns the old Play into a sync target.
+
+To clear an entry on purpose (only when that folder is no longer a Play you keep, e.g. you deleted that instance and want its name for Lab): close GOS (`gos stop`), delete the line from `former_plays.txt` **and** the path from `[setup] former_plays` in gos.toml, then start GOS. Both must go; one left behind still blocks sync. A record file that can't be read stops sync and the core with a message naming it.
 
 ## Clayton's PC steps (deployment test)
 

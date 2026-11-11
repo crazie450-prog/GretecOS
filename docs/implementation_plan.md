@@ -1388,6 +1388,7 @@ discord_auto_mute = false     # D58
 
 [setup]
 completed_utc = "2026-11-11T10:00:00+00:00"   # written by the wizard's Finish (D167); absent = not finished
+former_plays = ["C:/Games/PrismLauncher/instances/GTNH-Play"]  # every folder that was Play, kept by the wizard with config/former_plays.txt; never Export or Lab (D223)
 
 [persona]
 default = "gt-veteran"        # D60
