@@ -36,6 +36,15 @@ gos.toml, and refuses an instance that is Play's folder. It also refuses while a
 (Play, Export or Lab) runs [A§5.5], and launches at most once per 30 s. Every request needs a
 loopback ``Host``, and any ``Origin`` or ``Sec-Fetch-*`` header (a browser) is refused.
 
+**The dashboard window.** The first time the core answers ``/health`` after the supervisor
+starts, it opens the dashboard's Chrome app window on monitor 2 (D52, ``gregtec.appwindow``),
+unless ``[startup] dashboard_window = false`` or it runs as gos-dev. A core restart doesn't open
+another one.
+
+**Stopped on request.** A managed process that exits with :data:`EXIT_STOPPED` (the core after
+D48's Stop on a credit alert, WO-2.8) is left stopped, as ``gos stop`` leaves it; ``gos serve``
+(or ``POST /start``) starts it again.
+
 **Refusing to start.** As gos-dev with Clayton's ports or dashboard name, with a bad service key
 in gos.toml (``config.service_problems``, exit 2), or elevated (exit 4): everything the
 supervisor starts would inherit an elevated token. Each refusal is in ``logs\supervisor.log``.
@@ -61,7 +70,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import IO, Any
 
-from gregtec import applog, config, control
+from gregtec import applog, appwindow, config, control
 from gregtec.config import LOOPBACK, Config
 
 log = logging.getLogger("gregtec.supervisor")
@@ -80,7 +89,13 @@ MAX_BODY = 4096
 STDERR_MAX = 5 * 1024 * 1024
 STDERR_TAIL = 64 * 1024
 # Exit codes a managed process uses to say why it stopped (gregtec.api.server).
-EXIT_DETAIL = {3: "its port is in use by another program"}
+EXIT_STOPPED = (
+    5  # stopped on request (D48's Stop, WO-2.8): left stopped, as `gos stop` leaves it
+)
+EXIT_DETAIL = {
+    3: "its port is in use by another program",
+    EXIT_STOPPED: "stopped from the credit alert (D48 Stop); gos serve starts it again",
+}
 CREATE_NO_WINDOW = 0x0800_0000
 CREATE_NEW_PROCESS_GROUP = 0x0000_0200
 DETACHED_PROCESS = 0x0000_0008
@@ -168,8 +183,12 @@ class Supervisor:
         *,
         status_token: str | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_ready: Callable[[], object] | None = None,
     ) -> None:
         self.cfg = cfg
+        # Called once, in its own thread, when the core first answers /health (D163).
+        self.on_ready = on_ready
+        self._ready = False
         self.admin_token = secrets.token_urlsafe(32)
         self.status_token = status_token or secrets.token_urlsafe(32)
         self.launch_token = secrets.token_urlsafe(32)
@@ -310,6 +329,7 @@ class Supervisor:
         """One pass: reap exits, start due restarts, probe health. Called every TICK_S."""
         to_probe: list[Managed] = []
         to_kill: list[tuple[Managed, str]] = []
+        ready: list[Callable[[], object]] = []
         with self._lock:
             now = self.clock()
             for managed in self.procs.values():
@@ -317,7 +337,10 @@ class Supervisor:
                     continue
                 if managed.proc is not None and managed.proc.poll() is not None:
                     code = self._reap(managed, expected=False)
-                    if managed.wanted:
+                    if code == EXIT_STOPPED:  # it asked to stay stopped
+                        managed.wanted = False
+                        managed.state, managed.detail = "stopped", EXIT_DETAIL[code]
+                    elif managed.wanted:
                         why = EXIT_DETAIL.get(code or 0, f"exited with code {code}")
                         self._schedule_restart(managed, why)
                     else:
@@ -351,6 +374,10 @@ class Supervisor:
                         managed.pid = reported
                     if managed.state != "running":
                         managed.state, managed.detail = "running", "running"
+                    if managed.spec.name == "core" and not self._ready:
+                        self._ready = True
+                        if self.on_ready is not None:
+                            ready.append(self.on_ready)
                     if (
                         managed.started_at is not None
                         and now - managed.started_at >= STABLE_AFTER_S
@@ -370,6 +397,8 @@ class Supervisor:
                     to_kill.append(
                         (managed, f"/health didn't answer for {int(silent)} s")
                     )
+        for hook in ready:
+            threading.Thread(target=_quietly, args=(hook,), daemon=True).start()
         for managed, why in to_kill:
             proc = managed.proc
             if proc is None or managed.stopping:
@@ -515,6 +544,13 @@ class Supervisor:
 
     def request_shutdown(self) -> None:
         self._stop.set()
+
+
+def _quietly(hook: Callable[[], object]) -> None:
+    try:
+        hook()
+    except Exception:  # a failed window must never stop the supervisor
+        log.exception("startup hook failed")
 
 
 def _same_path(a: Path, b: Path) -> bool:
@@ -883,7 +919,16 @@ def run(cfg: Config, config_path: Path | None, *, login: bool = False) -> int:
     if control.running(run_file, SERVICE) is not None:
         log.info("a supervisor is already running")
         return 0
-    sup = Supervisor(cfg, [core_spec(cfg, config_path)])
+    window = appwindow.at_startup(cfg)
+    sup = Supervisor(
+        cfg,
+        [core_spec(cfg, config_path)],
+        on_ready=(
+            (lambda: appwindow.open_window(cfg, is_open=appwindow.already_open))
+            if window
+            else None
+        ),
+    )
     try:
         sup.bind()
     except OSError as exc:

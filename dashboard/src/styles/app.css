@@ -1,0 +1,1371 @@
+/* The shell's layout and the app's own pieces (WO-2.6). Colours, faces, radii and spacing come
+   only from the design system's semantic variables and tokens (virtual:gos-design.css). Every
+   region has a fixed size, so switching theme never moves anything (D81): only text inside a
+   region can wrap differently. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+:root {
+  --header-h: 104px;
+  --voice-h: 96px;
+  --view-head-h: 104px;
+  --type-scale: 1; /* Calm Ops runs about 10% larger (design system: type) */
+}
+
+body {
+  background: var(--bg);
+  color: var(--shell-text);
+  font-family: var(--font-body);
+  font-size: calc(var(--type-body-size) * var(--type-scale));
+  line-height: var(--type-body-line);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}
+
+.num,
+.gos-value,
+.gos-big,
+.clock,
+td.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  font-size: 0.8em;
+  color: var(--text-2);
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- the shell grid ------------------------------------------------------------------------ */
+
+.shell {
+  display: grid;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  grid-template-columns: var(--nav-width) minmax(0, 1fr) var(--rail-width);
+  grid-template-rows: var(--header-h) minmax(0, 1fr) var(--voice-h);
+  grid-template-areas:
+    "header header header"
+    "nav view rail"
+    "voice voice voice";
+}
+
+.shell.glance {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "header"
+    "view"
+    "voice";
+}
+
+.shell-header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+  padding: 0 var(--space-8);
+  background: var(--shell-bg);
+  color: var(--shell-text);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.wordmark {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: var(--type-wordmark-size);
+  font-weight: var(--type-wordmark-weight);
+  letter-spacing: var(--type-wordmark-tracking);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.wordmark .slash {
+  color: var(--shell-text-2);
+}
+
+/* The header's controls: the search box, and in a held glance the way back (D161). */
+.search-box,
+.leave-glance {
+  flex: 0 1 560px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  height: var(--hit-min);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--shell-text-2);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+}
+
+.search-box span,
+.leave-glance span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.search-box kbd,
+.leave-glance kbd,
+.shell-nav kbd {
+  font-size: 13px;
+}
+
+.status-chips {
+  flex: 1 1 auto;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.state-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: var(--type-chip-size);
+  color: var(--shell-text);
+  white-space: nowrap;
+}
+
+.state-chip > span[aria-hidden] {
+  color: var(--shell-text-2);
+}
+
+.state-chip.tone-warn > span[aria-hidden] {
+  color: var(--warn);
+}
+
+.state-chip.tone-err > span[aria-hidden] {
+  color: var(--err);
+}
+
+.header-tier {
+  flex: none;
+}
+
+.clock {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: var(--type-clock-size);
+  font-weight: var(--type-clock-weight);
+  line-height: var(--type-clock-line);
+}
+
+.clock .seconds {
+  margin-left: 4px;
+  font-size: 26px;
+  color: var(--shell-text-2);
+}
+
+.shell-nav {
+  grid-area: nav;
+  width: auto;
+  min-width: 0;
+  padding: var(--space-5) var(--space-3);
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.shell-nav .gos-nav {
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.shell-view {
+  grid-area: view;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-8);
+  overflow: auto;
+}
+
+.shell.glance .shell-view {
+  padding: var(--space-9);
+}
+
+.shell-rail {
+  grid-area: rail;
+  min-width: 0;
+  padding: var(--space-7);
+  gap: var(--space-6);
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+}
+
+.rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.shell-rail .gos-src,
+.voice-strip .gos-src {
+  color: var(--shell-text-2);
+}
+
+.shell-rail .quote,
+.shell-rail .job-title {
+  color: var(--shell-text);
+}
+
+.activity,
+.jobs,
+.services,
+.devices,
+.health-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity li,
+.jobs li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voice-strip {
+  grid-area: voice;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+  padding: 0 var(--space-8);
+  border-top: 1px solid var(--border);
+}
+
+.voice-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.voice-state .gos-label {
+  color: var(--shell-text-2);
+}
+
+.last-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--shell-text);
+}
+
+.ask-form,
+.chat-form,
+.search-form,
+.pair-form {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.ask-form {
+  flex: 0 1 900px;
+}
+
+.ask-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--hit-min);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+}
+
+.voice-strip .ask-input {
+  background: transparent;
+  color: var(--shell-text);
+}
+
+.ask-input::placeholder {
+  color: var(--text-2);
+  opacity: 1;
+}
+
+.voice-strip .ask-input::placeholder,
+.search-box::placeholder {
+  color: var(--shell-text-2);
+}
+
+.core-art .standby-ring {
+  stroke: var(--accent);
+  opacity: 0.6;
+}
+
+.core-art.voice-off .standby-ring {
+  opacity: 0.25;
+}
+
+/* --- shared view pieces -------------------------------------------------------------------- */
+
+.view-head {
+  flex: none; /* a flex item may not shrink with its neighbours' content: themes differ there */
+  height: var(--view-head-h);
+  overflow: hidden;
+}
+
+.page-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: calc(var(--type-page-title-size) * var(--type-scale));
+  font-weight: var(--type-page-title-weight);
+  line-height: var(--type-page-title-line);
+  letter-spacing: var(--type-page-title-tracking);
+  color: var(--shell-text);
+}
+
+.lede {
+  margin: var(--space-3) 0 0;
+  font-size: calc(var(--type-lede-size) * var(--type-scale));
+  line-height: var(--type-lede-line);
+  color: var(--shell-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gos-panel {
+  position: relative;
+  min-width: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 24px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.gos-btn {
+  min-height: var(--hit-min);
+}
+
+.gos-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.gos-btn.choice {
+  text-align: left;
+}
+
+/* Status: bundle.css colours .gos-status by its status, which the glyph keeps; the word stays
+   in the surface's text colour, so it reads at 4.5:1 in all 12 themes (Machine GUI's and
+   Brushed Aluminium's ok and warn are about 3.2:1 on their light panels; D162). */
+.gos-status .word {
+  color: var(--text);
+}
+
+.gos-status.err .word {
+  font-weight: 800;
+}
+
+.shell-rail .gos-status .word,
+.voice-strip .gos-status .word {
+  color: var(--shell-text);
+}
+
+/* bundle.css has no ULV chip: GT's ULV red from the tokens, with the dark ink. */
+.tier-ulv {
+  background: var(--tier-ulv);
+  color: var(--tier-ink-dark);
+}
+
+.tier-none {
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.gos-chip.cite {
+  background: transparent;
+  cursor: default;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+button.gos-chip.cite {
+  cursor: pointer;
+}
+
+.gos-chip.cite.stale {
+  border-style: dashed;
+  border-color: var(--warn);
+  color: var(--text);
+}
+
+.gos-big.small {
+  font-size: 48px;
+}
+
+/* --- Now ------------------------------------------------------------------------------------- */
+
+.view-now,
+.view-chat,
+.view-search,
+.view-settings,
+.view-costs,
+.view-later {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-height: 100%;
+}
+
+.view-now {
+  height: 100%;
+}
+
+.now-grid {
+  flex: 1 1 0; /* its size comes from the view, never from what is in it */
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-6);
+  min-height: 0;
+}
+
+.slot {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.slot-a {
+  grid-row: 1 / 3;
+}
+
+.slot-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.stacked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.alerts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.answer-text {
+  margin: 0;
+  font-size: calc(var(--type-lede-size) * var(--type-scale));
+  line-height: var(--type-lede-line);
+  color: var(--text);
+}
+
+/* An answer is a sentence: the body face, large (display faces are for titles and numbers). */
+.answer-text.big {
+  font-size: calc(30px * var(--type-scale));
+  line-height: 1.3;
+  font-weight: 500;
+}
+
+.answer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.quote {
+  color: var(--text);
+}
+
+/* --- cards ----------------------------------------------------------------------------------- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  color: var(--text);
+}
+
+.card-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.card-title {
+  font-size: 26px;
+}
+
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.card .gos-src,
+.gos-panel .gos-src,
+.modal .gos-src {
+  color: var(--text-2);
+}
+
+.recipes,
+.quests,
+.choices,
+.result-list,
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recipe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.recipe-head,
+.quest-head,
+.route-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.recipe-machine,
+.route-name {
+  font-weight: 600;
+}
+
+.recipe-io {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.slots {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.conditions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.notes li {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.quest-name {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+
+/* Spoilers stay nudge-first (plan 7.14 rule 5): past the frontier is blurred until tapped. */
+.quest-name.spoiler,
+.spoiler-text {
+  filter: blur(5px);
+  user-select: none;
+}
+
+.quest-name.spoiler:hover,
+.quest-name.spoiler:focus-visible {
+  filter: blur(3px);
+}
+
+.quest-text {
+  margin: 0;
+  color: var(--text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--text);
+}
+
+th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--type-chip-size);
+  text-transform: var(--label-case);
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+
+th,
+td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.head,
+.facts,
+.metrics {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+
+.head dt,
+.facts dt,
+.metrics dt {
+  color: var(--text-2);
+}
+
+.head dd,
+.facts dd,
+.metrics dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.metrics dd.best {
+  font-weight: 700;
+}
+
+.routes {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.route {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.route.accepted {
+  border-color: var(--accent);
+}
+
+.route-choices {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.route-choices li.differs {
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-2);
+}
+
+.flow-wrap {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.flow .edge path {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 2;
+}
+
+.flow .edge text {
+  fill: var(--text-2);
+  font: 13px var(--font-mono);
+}
+
+.flow .node rect {
+  fill: var(--panel);
+  stroke: var(--border);
+}
+
+.flow .node text {
+  fill: var(--text);
+  font: 600 16px var(--font-body);
+}
+
+.flow .node text.sub {
+  fill: var(--text-2);
+  font: 13px var(--font-mono);
+}
+
+.flow .tier-band {
+  fill: var(--text-3);
+}
+
+.flow .tier-lv .tier-band { fill: var(--tier-lv); }
+.flow .tier-mv .tier-band { fill: var(--tier-mv); }
+.flow .tier-hv .tier-band { fill: var(--tier-hv); }
+.flow .tier-ev .tier-band { fill: var(--tier-ev); }
+.flow .tier-iv .tier-band { fill: var(--tier-iv); }
+.flow .tier-luv .tier-band { fill: var(--tier-luv); }
+.flow .tier-zpm .tier-band { fill: var(--tier-zpm); }
+.flow .tier-uv .tier-band { fill: var(--tier-uv); }
+.flow .tier-steam .tier-band { fill: var(--tier-steam); }
+
+.flow-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+tr.depleted td {
+  text-decoration: line-through;
+}
+
+.power-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.card-problem {
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+}
+
+.card-problem .gos-label {
+  color: var(--text);
+}
+
+/* --- approvals and alerts -------------------------------------------------------------------- */
+
+/* An approval card is a panel tinted with "needs" (its fill), wherever it sits: Brushed
+   Aluminium's tint is translucent and made for its light panels, not the graphite rail (D162). */
+.gos-approval {
+  background: linear-gradient(var(--needs-tint), var(--needs-tint)), var(--panel);
+}
+
+.approvals,
+.glance-approvals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Inside the card the heading reads in the card's text colour; magenta stays the border's and
+   the glyph's, since "needs" on the light Machine GUI and Aluminium fills is under 4.5:1. */
+.gos-approval .approval-head {
+  color: var(--text);
+}
+
+.gos-approval .needs-glyph {
+  color: var(--needs-border);
+}
+
+.approval-title {
+  font-size: 24px;
+}
+
+.readback {
+  margin: 0;
+  font-size: var(--type-lede-size);
+  line-height: var(--type-lede-line);
+}
+
+.gos-approval .gos-sub,
+.gos-approval .gos-src {
+  color: var(--text-2);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* --- Chat, Search, Settings, Costs ----------------------------------------------------------- */
+
+.chat-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.question {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* A deep-lane task under the question that started it: its state, then its text as written
+   (plain text, line breaks kept; never markup). */
+.deep-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--rule);
+}
+
+.deep-text {
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.search-grid,
+.settings-grid,
+.costs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.costs-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.result {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.result.on {
+  border-color: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.theme-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.doctor-output pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+.devices li,
+.services li,
+.health-items li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.credit-track {
+  height: 28px;
+}
+
+.credit-track .fill {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  background: var(--text-2);
+}
+
+.credit-track .fill.warn {
+  background: var(--warn);
+}
+
+.credit-track .fill.err {
+  background: var(--err);
+}
+
+.credit-track .mark {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--text);
+}
+
+/* --- glance ---------------------------------------------------------------------------------- */
+
+.view-glance {
+  display: grid;
+  height: 100%;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 220px;
+  gap: var(--space-6);
+  font-size: var(--type-glance-body-size);
+  line-height: var(--type-glance-body-line);
+}
+
+.g-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.g-core {
+  align-self: end;
+  justify-self: center;
+}
+
+.glance-block {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.glance-open {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: var(--hit-min);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.view-glance .gos-label {
+  font-size: 18px;
+}
+
+.view-glance .answer-text.big {
+  font-size: calc(44px * var(--type-scale));
+  line-height: 1.2;
+}
+
+/* --- palette and modal ----------------------------------------------------------------------- */
+
+.palette-backdrop,
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 55%);
+}
+
+.palette {
+  width: min(960px, calc(100vw - 32px));
+  max-height: 70vh;
+}
+
+.palette-input {
+  height: 56px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+}
+
+.palette-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+}
+
+.palette-group {
+  margin: var(--space-3) 0 var(--space-1);
+}
+
+.palette-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.palette-entry.on {
+  border-color: var(--accent);
+}
+
+.palette-entry.later {
+  color: var(--text-2);
+  cursor: default;
+}
+
+.modal {
+  width: min(1400px, calc(100vw - 32px));
+  max-height: 80vh;
+  overflow: auto;
+}
+
+.modal-head {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* --- banners (WO-2.8): the credit alert and "AI offline" above every view ------------------- */
+
+.banners {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.banner .actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.banner-ai {
+  border-color: var(--warn);
+}
+
+/* The heading in the panel's text colour; the glyph carries the warning colour (a word beside
+   it, never colour alone). */
+.banner-ai .banner-head {
+  color: var(--text);
+}
+
+.banner-ai .banner-glyph {
+  color: var(--warn);
+}
+
+.banner p {
+  margin: 0;
+}
+
+.notice {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+/* --- pairing --------------------------------------------------------------------------------- */
+
+.pairing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--space-4);
+}
+
+.pairing-panel {
+  width: min(640px, 100%);
+}
+
+.pair-form {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ask-input.code {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  letter-spacing: 0.2em;
+}
+
+/* --- motion ---------------------------------------------------------------------------------- */
+
+@keyframes gos-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The tier-up moment: the new theme fades in once (age_themes.md). */
+.theme-fade .shell {
+  animation: gos-fade-in var(--fade-ms, 1500ms) ease-out;
+}
+
+.motion-paused *,
+.motion-paused *::before,
+.motion-paused *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* --- the phone layout (D53): one column, tabs at the bottom, no rail ------------------------ */
+
+@media (max-width: 760px) {
+  :root {
+    --header-h: 64px;
+    --voice-h: 76px;
+    --tab-h: 64px;
+    --view-head-h: auto;
+  }
+
+  .shell,
+  .shell.glance {
+    grid-template-columns: minmax(0, 1fr);
+    /* The header grows by one fixed row while a state chip shows (below). */
+    grid-template-rows: auto minmax(0, 1fr) var(--voice-h) var(--tab-h);
+    grid-template-areas:
+      "header"
+      "view"
+      "voice"
+      "nav";
+  }
+
+  /* Wordmark and clock on the first row; the state chips get a row of their own, one line
+     high whatever the theme (so a theme never changes the layout), scrolling sideways when
+     there are more than fit. Text is never cut mid-word. */
+  .shell-header {
+    flex-wrap: wrap;
+    align-content: center;
+    gap: var(--space-2) var(--space-3);
+    min-height: var(--header-h);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .wordmark {
+    flex: 1 1 auto;
+    font-size: 22px;
+  }
+
+  .search-box,
+  .header-tier {
+    display: none;
+  }
+
+  .clock {
+    font-size: 24px;
+  }
+
+  .clock .seconds {
+    display: none;
+  }
+
+  .status-chips {
+    order: 3;
+    flex: 1 0 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .status-chips:empty {
+    display: none;
+  }
+
+  .shell-nav {
+    display: flex;
+    flex-direction: row;
+    padding: 0;
+    border-right: 0;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+  }
+
+  .shell-nav .gos-nav {
+    flex: 1 0 auto;
+    width: auto;
+    justify-content: center;
+    min-height: var(--tab-h);
+    border-radius: 0;
+  }
+
+  .shell-nav .gos-nav kbd,
+  .shell-nav .gos-nav em {
+    display: none;
+  }
+
+  .shell-rail {
+    display: none;
+  }
+
+  .shell-view {
+    padding: var(--space-4);
+  }
+
+  .page-title {
+    font-size: 28px;
+  }
+
+  .lede {
+    white-space: normal;
+  }
+
+  .view-now {
+    height: auto;
+  }
+
+  .now-grid,
+  .search-grid,
+  .settings-grid,
+  .costs-grid {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* One column that the view scrolls: every panel as tall as what it holds, never squeezed
+     into the screen's height (the desktop grid's slots scroll inside themselves instead). */
+  .now-grid {
+    flex: none;
+    min-height: auto;
+  }
+
+  .slot,
+  .slot-body {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .answer-text.big {
+    font-size: calc(22px * var(--type-scale));
+  }
+
+  .voice-strip {
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+  }
+
+  .voice-strip .voice-state {
+    display: none;
+  }
+
+  .ask-form {
+    flex: 1 1 auto;
+  }
+
+  .recipe-io {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recipe-io .arrow {
+    display: none;
+  }
+
+  .gos-big {
+    font-size: 44px;
+  }
+}

@@ -98,10 +98,30 @@ changes GT, before answering yes:
    `tests/unit/test_pack_update.py::test_the_pin_has_no_stale_copies` fails while
    `extractor.py`, `dependencies.gradle` or CLAUDE.md disagree with `config.py`. Re-run both
    harnesses (`mod/README.md`) so their runs carry the new GT, then the integration tests.
-2. If the new pack changes GT's tiers, overclock or parallel code, re-port those changes from the
-   new GT source tag into `planner/gtmath` and re-vendor GT's unit tests from that tag; all of
-   them must pass (`uv run pytest tests/unit -k gtmath`). Until WO-3.1 exists there is nothing
-   to port: the pin bump is then step 1 alone.
+2. Move the GT math port (`core/gregtec/planner/gtmath`, D173–D175) to the new GT, in the same
+   PR. Until this is done `tests/unit/gtmath` fails, which is the gate:
+   - Read GT's source at the new tag (GT is LGPL-3.0: read it, never copy it) and compare with
+     the old tag: `gregtech/api/util/OverclockCalculator.java`, `ParallelHelper.java`,
+     `VoidProtectionHelper.java`, `GTUtility.java` (`powInt`, `log4`, `getTier`, ...),
+     `GTRecipe.java` (`maxParallelCalculatedByInputs`), `gregtech/api/logic/ProcessingLogic.java`,
+     `MTEMultiBlockBase.java` (`setProcessingLogicPower`, `postCheckRecipe`),
+     `MTEExtendedPowerMultiBlockBase.java`, `MTEBasicMachine.java`, `ExoticEnergyInputHelper.java`,
+     `GTValues.java`, `HeatingCoilLevel.java`, `MTEElectricBlastFurnace.java`. Re-port what
+     changed.
+   - Set `GT_VERSION` and `GT_COMMIT` (the commit the tag names) in
+     `core/gregtec/planner/gtmath/__init__.py`.
+   - Re-vendor GT's unit tests into `tests/unit/gtmath/test_gt_unit_tests.py` as data (inputs
+     and expected outputs): `src/test/java/gregtech/overclock/GT_OverclockCalculator_UnitTest.java`,
+     the helpers' tests in `gregtech/api/util/GTUtilityTest.java` and
+     `gregtech/api/metatileentity/implementations/MTEMultiBlockBaseTest.java`.
+   - Regenerate the oracle vectors from the new GT's own classes (a JDK on PATH; the first run
+     builds the mod's classpath, a few minutes):
+     `uv run python tests/unit/gtmath/oracle/make_vectors.py`. It refuses to write them while
+     GT's classes disagree with a ported unit-test expectation. Commit `tests/unit/gtmath/vectors/`.
+   - `uv run pytest tests/unit/gtmath` must pass (GT's unit tests, the vectors replayed through
+     the port bit for bit, the property tests), then, after the harnesses,
+     `GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration/test_gtmath_harness.py` (the
+     vectors re-made from GT's jar, and every recipe of the harness DB).
 3. Merge, `gos deploy`, then `gos pack adopt yes`. `gos pack pin` exits 0 again once Play's new
    export is in the DB. Between the deploy and Play's new export, `gos pack pin`, `gos db build`
    and `gos doctor` report Play's current run as a mismatch: expected, and the reason to update

@@ -1001,7 +1001,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 3.4 | Staged MILP, alternatives (no-good cuts), **pins as fixed choices** (D61), integerisation; fixtures from PlanNH's test resources | Platline: all machines run, ≤ 2 externals. Light-fuel loop: 0 gates. 12 identical re-solves. Pinning a non-primary node changes only its branch |
 | 3.5 | Metrics including the **effort model** (§7.2) and **scarcity** (D62); **deterministic ranking** [QA:D2]; batch mode; planner explanations; **numeric validator with normalisation and fallback** [QA:D4] | The same request gives the same order every run; the validator catches injected wrong numbers and passes 20 normalisation cases; each benchmark returns 2–3 routes differing in ≥ 1 primary choice; ≥ 2 benchmarks show an addon column with `machine_fact` confidence; for 3 targets, batch totals equal rate × time within ±0.1% |
 | 3.6 | Outputs: BOM, React Flow/Mermaid/PNG diagrams, **gtnhplanner.com JSON (primary, D66)**, gtnh-flow YAML, bounding-box footprint | Exports open in gtnhplanner.com and render in gtnh-flow; BOM sums equal the plan JSON; footprints equal `structure` |
-| 3.7 | Designer view: side-by-side route cards with differences highlighted, **swap or pin any node and re-solve** (D61), accept; `line-designer` skill; plan notes; human plan names [QA:D13]; ledger hook (a `ledger_update` stub until WO-4.4); **deep-lane cost re-measured on 10 real design tasks → `task_max_usd`** [QA:A4] | End-to-end: **text** request → accepted plan in the vault (voice after G5); a pin made in the Designer survives reload and re-solve; `task_max_usd` is set from the measurements |
+| 3.7 | Designer view: side-by-side route cards with differences highlighted, **swap or pin any node and re-solve** (D61), accept; React Flow + elkjs (PM02) replace the flow card's own layered layout, never beside it (D159); `line-designer` skill; plan notes; human plan names [QA:D13]; ledger hook (a `ledger_update` stub until WO-4.4); **deep-lane cost re-measured on 10 real design tasks → `task_max_usd`** [QA:A4] | End-to-end: **text** request → accepted plan in the vault (voice after G5); a pin made in the Designer survives reload and re-solve; `task_max_usd` is set from the measurements |
 | 3.8 | **My base** panel [QA:D3] (D63, D64): tier (from quests, overridable), owned machines (manual ticks, plus placement events and the census once WO-6.2 lands), manual stock (none by default), feeding the designer boundary | A plan's boundary changes when stock or owned machines change; a tier override sticks |
 | **G3** | **14 production benchmark lines (D65)**, PM draft for Clayton to edit at G2. Early: steel (EBF), polyethylene, sulfuric acid, silicon, rubber. Mid: platline, rare earth, epoxid, stainless steel, nitric acid. Late: nanocircuits, polybenzimidazole, naquadah, wetware circuits. Plus the fuel chains of the 4 power lines (G4). Every distinct (machine, recipe, tier, OC, parallel) within ±2% of NEI or a single-machine Lab run; line totals within ±2% of gtnhplanner.com or PlanNH; **when references disagree, the Lab run decides and the report names the reference used** [QA:D12]; at most 2 small lines fully built in the Lab | Reviewer report; Clayton sign-off |
 
@@ -1033,7 +1033,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 |---|---|---|
 | 6.1 | Watchers (log tail, quest progress, level.dat/playerdata, stats, ServerUtilities world log, VP, JourneyMap) using `safe_open()` (§5.5, V27); started and stopped with Play by the supervisor (D77); **paused-state detection** (V29), emitting `game_paused` events (the away DM is sent and tested in WO-9.2) | No game save errors in a 2 h session; a pause shows on the dashboard within 5 s |
 | 6.2 | **Machine events** [QA:D6, S7] (D70): GregtecLink server-side place/break listener reporting `mID` (V26); tile-entity-only census of changed chunks; My base owned-machine counts. Replaces v1.0's EndlessIDs block decoder | Placing and breaking 10 different GT machines in the Lab yields events with the correct IDs; the census matches the Lab base |
-| 6.3 | Event store, sessions, `session-scribe` journal, **Activity view** | A scripted Lab session gives ≥ 95% event recall |
+| 6.3 | Event store, sessions, `session-scribe` journal, **Activity view**; the finished age's recap (hours played, machines built, best net power) when a tier-up re-themes the dashboard (D162) | A scripted Lab session gives ≥ 95% event recall |
 | 6.4 | `quest-guide` skill: 4 functions, global spoiler levels (D72), **Quests view** with spoiler blur | 20-question eval; L0 never spoils |
 | 6.5 | `advisor`; proactive notices with the D71 defaults on | Clayton rates 3 scenarios "useful"; both default notices fire in a Lab scenario |
 | 6.6 | `ore-intel`, **Ores view**, waypoint action (V23) | Nearest-vein answers check out in the Lab |
@@ -1064,7 +1064,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 |---|---|---|
 | 9.1 | Bot, commands, job queue; replies attach the PNG diagram and BOM file plus a phone-dashboard plan link [QA:V4]; Clayton-only checks on every command **and interaction** [QA:V9]; confirm buttons | Each command answers from his phone within 10 s (long design jobs acknowledged within 10 s); commands and clicks from other users are ignored |
 | 9.2 | Alert routing (Discord DM, dashboard, voice, in game) with dedupe, cooldown and quiet hours; AFK base alerts (D46); credit DMs with buttons (D48); "GOS offline" and "game paused" while he's away (D76) | Test matrix passes, including Esc-then-walk-away for the paused DM |
-| 9.3 | **Phone dashboard** (D53): Tailscale Serve to `127.0.0.1:8765` (V28), the WO-2.0 phone layout, device pairing, confirm buttons, live status | On cellular via the tailnet: a Discord plan link opens, a Lab action is confirmed, status updates live; outside the tailnet the dashboard is unreachable; the security tests pass |
+| 9.3 | **Phone dashboard** (D53): Tailscale Serve to `127.0.0.1:8765` (V28), the WO-2.0 phone layout, device pairing, confirm buttons, live status; views past the five phone tabs through a "More" tab (D159) | On cellular via the tailnet: a Discord plan link opens, a Lab action is confirmed, status updates live; outside the tailnet the dashboard is unreachable; the security tests pass |
 | **G9** | | Reviewer report; Clayton sign-off |
 
 ### Phase 10: Building design (absorbs img2schem, D74)
@@ -1286,7 +1286,7 @@ gregtec-os/
   CLAUDE.md  README.md
   docs/  implementation_plan.md  decisions.md  research/(A–I)  reviews/  img2schem_sow.md (WO-10.0)
   core/gregtec/
-    config.py  cli.py (gos doctor|export|serve|eval|stop|deploy|launch)  supervisor.py
+    config.py  cli.py (gos doctor|export|serve|eval|stop|deploy|launch)  supervisor.py (exit 5 = stopped on request: left stopped, D165)
     db/        schema.sql  migrations/  queries/*.sql  access.py
     ingest/    nei.py  gtdump.py  machines.py  normalize.py  quests.py  vp.py  journeymap.py  fingerprint.py
     gamestate/ safe_open.py  logs.py  saves.py  census.py  watchers.py  events.py  pause.py
@@ -1366,7 +1366,7 @@ fast_context_max_tokens = 60000
 [budget]
 monthly_included_usd = 100    # D47
 credit_alerts_pct = [80, 100] # D48
-on_credits_out = "no_ai"      # until Clayton picks: billing | no_ai | stop
+on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
 task_max_usd = 2.0            # placeholder until WO-3.7 measures; on hit: pause and ask (D16)
 
 [voice]

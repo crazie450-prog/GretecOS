@@ -21,11 +21,13 @@ import html
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from gregtec.agents import cards, router
+from gregtec.agents import router
 from gregtec.agents.tools.registry import FAST, Registry
 from gregtec.agents.tools.tsv import Parsed, parse
+from gregtec.cards import build as cards_build
 
 ASK_TOP = 3  # candidates named in the question (plan 4.4: the top 3 on the dashboard)
 RESOLVE_LIMIT = 5
@@ -46,26 +48,10 @@ class Block:
     def parsed(self) -> Parsed:
         return parse(self.text)
 
-    def card(self) -> dict[str, Any]:
-        """The result as a dashboard card (data only; WO-2.6 draws it). A recipe tool's
-        result also carries its structured recipe card (``recipe``, WO-2.7, D172)."""
-        p = self.parsed
-        card: dict[str, Any] = {
-            "type": "tool_result",
-            "tool": self.tool,
-            "args": self.args,
-            "error": self.text.removeprefix("error: ").strip()
-            if self.is_error
-            else None,
-            "head": p.head,
-            "columns": p.columns,
-            "rows": [[row[c] for c in p.columns] for row in p.rows],
-            "span": p.span,
-            "notes": p.notes,
-        }
-        if not self.is_error and (recipe := cards.recipe_card(self.tool, p)):
-            card["recipe"] = recipe
-        return card
+    def card(self, db: Path | None = None) -> dict[str, Any]:
+        """The result as a catalog card (data only; the dashboard draws it, D160). ``db``:
+        the DB the recipe tools read, so a recipe card's slots come structured from it."""
+        return cards_build.from_tool(self.tool, self.text, self.is_error, db)
 
 
 @dataclass(frozen=True)
