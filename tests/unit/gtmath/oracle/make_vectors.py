@@ -1,19 +1,20 @@
 """Write the GT oracle's test vectors (WO-3.1, D174): GT's own classes, run on cases for the port.
 
-GT 5.09.54.265 has unit tests for ``OverclockCalculator`` only, none for ``ParallelHelper``. So
-besides those tests (ported in ``../test_gt_unit_tests.py``), the port in
+GT 5.09.54.265 has unit tests for ``OverclockCalculator`` only, none for ``ParallelHelper`` or
+``ProcessingLogic``. So besides those tests (ported in ``../test_gt_unit_tests.py``), the port in
 ``core/gregtec/planner/gtmath`` is checked against GT's real classes: this script makes cases
 (GT's unit-test set-ups, edge cases and a seeded random sample), runs ``GtMathOracle.java`` on
-them with GT's jar, and writes what GT computed to ``../vectors/*.tsv``. ``test_oracle_vectors.py``
-replays every row through the port. Run it again after a GT pin bump
-(docs/runbooks/pack_update.md):
+them with GT's jar, and writes what GT computed to ``../vectors/*.tsv``.
+``../test_oracle_vectors.py`` replays every row through the port. Run it again after a GT pin
+bump (docs/runbooks/pack_update.md):
 
-    cd mod && ./gradlew build     # once: resolves GT at the pin, Minecraft and Forge
     uv run python tests/unit/gtmath/oracle/make_vectors.py
 
 It needs a JDK (``javac`` and ``java`` on PATH, or ``--jdk``); the classpath comes from the mod's
-Gradle build (``classpath.init.gradle``) unless ``--classpath`` names it. Nothing of GT is copied:
-the files hold inputs and GT's outputs.
+Gradle build (``classpath.init.gradle``: GT at the pin, Minecraft and Forge, a few minutes the
+first time) unless ``--classpath`` names it. Nothing of GT is copied: the files hold inputs and
+GT's outputs. A case GT would never return from (laser overclocks of a recipe power of 0, which
+the port refuses) is left out, and the run is stopped if GT hangs all the same.
 """
 
 from __future__ import annotations
@@ -32,15 +33,23 @@ from pathlib import Path
 
 from gregtec.planner.gtmath import GT_COMMIT, GT_VERSION
 from gregtec.planner.gtmath.jmath import INT_MAX, LONG_MAX, to_float
-from gregtec.planner.gtmath.overclock import Overclock
+from gregtec.planner.gtmath.overclock import (
+    Overclock,
+    calculate,
+    multiplier_under_one_tick,
+)
+from gregtec.planner.gtmath.parallel import Parallel, Supply, determine
+from gregtec.planner.gtmath.processing import Logic, Power, Recipe
 from gregtec.planner.gtmath.tiers import VP, V, coil_heat
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
 VECTORS = HERE.parent / "vectors"
 SEED = 310  # WO-3.1
-RANDOM_OC = 1200
-RANDOM_PAR = 800
+RANDOM_OC = 600
+RANDOM_PAR = 400
+RANDOM_LOGIC = 300
+ORACLE_TIMEOUT_S = 600
 
 OC_FIELDS = {f.name: f for f in dataclasses.fields(Overclock)}
 FLOAT_KEYS = {
@@ -63,6 +72,8 @@ BOOL_KEYS = {
     "heat_oc",
     "heat_discount",
     "default_calc",
+    "pool_fluid",
+    "check_heat",
 }
 STR_KEYS = {"check", "error"}
 
@@ -116,6 +127,67 @@ def overclock_fields(oc: Overclock) -> Fields:
 def overclock_from(fields: Fields) -> Overclock:
     """The ``Overclock`` a case's inputs describe (keys that aren't its fields are ignored)."""
     return Overclock(**{k: v for k, v in fields.items() if k in OC_FIELDS})  # type: ignore[arg-type]
+
+
+def supplies_from(fields: Fields) -> tuple[Supply, ...] | None:
+    """A case's one input pool (None: the inputs never limit)."""
+    if "available" not in fields:
+        return None
+    return (
+        Supply(
+            per_craft=int(fields.get("per_craft", 1)),
+            available=int(fields["available"]),
+            fluid=bool(fields.get("pool_fluid", False)),
+        ),
+    )
+
+
+def parallel_from(fields: Fields) -> Parallel:
+    """The ``Parallel`` a parallel case's inputs describe."""
+    oc = overclock_from(fields)
+    return Parallel(
+        recipe_eut=oc.recipe_eut,
+        duration=oc.duration,
+        available_eut=int(fields.get("available_eut", 0)),
+        max_parallel=int(fields.get("max_parallel", 1)),
+        eut_modifier=float(fields.get("par_eut_modifier", 1.0)),
+        batch_size=int(fields.get("batch_size", 1)),
+        overclock=None if fields.get("default_calc") else oc,
+        inputs=supplies_from(fields),
+    )
+
+
+def logic_from(fields: Fields) -> tuple[Recipe, Logic]:
+    """The recipe and the ``Logic`` a logic case's inputs describe: an extended-power
+    multiblock's (GT's ``ProcessingLogic`` itself has no int limit on its EU/t)."""
+    oc = overclock_from(fields)
+    recipe = Recipe(eut=oc.recipe_eut, duration=oc.duration, heat=oc.recipe_heat)
+    logic = Logic(
+        power=Power(
+            voltage=oc.voltage,
+            amperage=oc.amperage,
+            amperage_oc=oc.amperage_oc,
+            max_tier_skips=oc.max_tier_skips,
+        ),
+        max_parallel=int(fields.get("max_parallel", 1)),
+        eu_modifier=oc.eut_modifier,
+        speed_boost=oc.duration_modifier,
+        batch_size=int(fields.get("batch_size", 1)),
+        oc_time_reduction=oc.duration_decrease_per_oc,
+        oc_power_increase=oc.eut_increase_per_oc,
+        heat_oc=oc.heat_oc,
+        heat_discount=oc.heat_discount,
+        machine_heat=oc.machine_heat,
+        check_heat=bool(fields.get("check_heat", False)),
+        heat_discount_exponent=oc.heat_discount_exponent,
+        laser_oc=oc.laser_oc,
+        max_overclocks=oc.max_overclocks,
+        max_regular_overclocks=oc.max_regular_overclocks,
+        no_overclock=oc.no_overclock,
+        duration_under_one_tick=oc.duration_under_one_tick,
+        int_power=False,
+    )
+    return recipe, logic
 
 
 def _log_uniform(rng: random.Random, lo: float, hi: float) -> int:
@@ -328,14 +400,171 @@ def random_parallel(rng: random.Random) -> Fields:
     batch = rng.choice([1, 1, 128, rng.randint(2, 256)])
     if batch != 1:
         fields["batch_size"] = batch
+    _random_pool(rng, fields)
+    if rng.random() < 0.05:
+        fields["default_calc"] = True
+    return fields
+
+
+def _random_pool(rng: random.Random, fields: Fields) -> None:
     if rng.random() < 0.5:
         fields["per_craft"] = rng.choice([0, 1, 1, 2, 16, 64, rng.randint(1, 1000)])
         fields["available"] = rng.choice(
             [0, rng.randint(1, 100), _log_uniform(rng, 1, 10**7)]
         )
-    if rng.random() < 0.05:
-        fields["default_calc"] = True
+        if rng.random() < 0.3:
+            fields["pool_fluid"] = True
+
+
+def random_logic(rng: random.Random) -> Fields:
+    """A random ProcessingLogic case: a multiblock's power, parallel, modifiers, batch size and
+    overclock kind, the calculator changes machines make, and one input pool."""
+    oc = random_overclock(rng, for_parallel=True)
+    if oc.laser_oc and oc.recipe_eut < 1:
+        oc = dataclasses.replace(oc, recipe_eut=1)
+    fields: Fields = overclock_fields(oc)
+    fields.pop("parallel", None)
+    fields["max_parallel"] = rng.choice(
+        [1, 1, 4, 16, 64, 256, 2 ** rng.randint(0, 20), rng.randint(0, 100_000)]
+    )
+    batch = rng.choice([1, 1, 128, 128, rng.randint(2, 256)])
+    if batch != 1:
+        fields["batch_size"] = batch
+    _random_pool(rng, fields)
+    if rng.random() < 0.3:
+        fields["check_heat"] = True
     return fields
+
+
+def edge_logics() -> Iterator[tuple[str, Fields]]:
+    """Processing-logic corners: the heat check, the overflow checks, the batch stretch."""
+    ebf = {
+        "recipe_eut": 120,
+        "duration": 500,
+        "voltage": V[3],
+        "amperage": 2,
+        "amperage_oc": True,
+        "heat_oc": True,
+        "heat_discount": True,
+        "check_heat": True,
+        "recipe_heat": 1700,
+        "machine_heat": coil_heat(2),
+    }
+    yield "ebf", dict(ebf)
+    yield "ebf-too-cold", {**ebf, "recipe_heat": 4501}
+    yield "ebf-exact-heat", {**ebf, "recipe_heat": coil_heat(2)}
+    yield "ebf-hot", {**ebf, "voltage": V[6], "machine_heat": coil_heat(8) + 400}
+    yield "ebf-single-hatch", {**ebf, "amperage": 1}
+    multi = {
+        "recipe_eut": 30,
+        "duration": 200,
+        "voltage": V[4],
+        "amperage": 4,
+        "amperage_oc": True,
+    }
+    yield "plain", dict(multi)
+    yield "perfect", {**multi, "duration_decrease_per_oc": 4.0}
+    yield "speed-and-eu", {**multi, "duration_modifier": 0.5, "eut_modifier": 0.9}
+    yield "parallel-8", {**multi, "max_parallel": 8}
+    yield "parallel-0", {**multi, "max_parallel": 0}
+    for duration in (1, 20, 100, 127, 128, 400):
+        yield (
+            f"batch-{duration}",
+            {**multi, "duration": duration, "max_parallel": 8, "batch_size": 128},
+        )
+        yield (
+            f"batch-{duration}-inputs",
+            {
+                **multi,
+                "duration": duration,
+                "max_parallel": 8,
+                "batch_size": 128,
+                "per_craft": 3,
+                "available": 250,
+            },
+        )
+    yield "no-inputs", {**multi, "per_craft": 1, "available": 0}
+    yield (
+        "fluid-short",
+        {
+            **multi,
+            "max_parallel": 4,
+            "per_craft": 1000,
+            "available": 2500,
+            "pool_fluid": True,
+        },
+    )
+    yield "power-short", {**multi, "recipe_eut": V[4] * 4 + 1}
+    yield "voltage-short", {**multi, "recipe_eut": V[5] + 1, "amperage": 64}
+    yield "tier-skip", {**multi, "recipe_eut": V[5], "amperage": 64}
+    yield (
+        "total-eu",
+        {
+            **multi,
+            "voltage": V[4] * 4,
+            "amperage": 1,
+            "max_tier_skips": INT_MAX,
+            "recipe_eut": V[4] * 3,
+        },
+    )
+    # EU/t past an int (fine for an extended-power multiblock) and past a long (power overflow).
+    yield (
+        "eut-above-int",
+        {
+            **multi,
+            "recipe_eut": VP[13],
+            "voltage": V[13],
+            "amperage": 1024,
+            "max_parallel": 64,
+        },
+    )
+    yield (
+        "power-overflow",
+        {
+            **multi,
+            "voltage": LONG_MAX // 2,
+            "amperage": 1,
+            "eut_increase_per_oc": 6.0,
+        },
+    )
+    yield "duration-overflow", {**multi, "duration": INT_MAX, "no_overclock": True}
+    yield (
+        "duration-near-overflow",
+        {**multi, "duration": INT_MAX - 1, "no_overclock": True},
+    )
+    yield "no-overclock", {**multi, "no_overclock": True, "max_parallel": 4}
+    yield "laser", {**multi, "laser_oc": True, "voltage": V[9], "amperage": 256}
+    yield "max-overclocks-2", {**multi, "max_overclocks": 2, "voltage": V[8]}
+
+
+def port_refuses(kind: str, fields: Fields) -> bool:
+    """Whether the port refuses a case GT's own setters accept: one GT would never return
+    from, so it must not reach the oracle."""
+    try:
+        if kind == "oc":
+            oc = overclock_from(fields)
+            multiplier_under_one_tick(dataclasses.replace(oc, current_parallel=None))
+            multiplier_under_one_tick(oc)
+            calculate(oc)
+        elif kind == "par":
+            determine(parallel_from(fields))
+        else:
+            recipe, logic = logic_from(fields)
+            determine(
+                Parallel(
+                    recipe_eut=recipe.eut,
+                    duration=recipe.duration,
+                    available_eut=logic.power.voltage * logic.power.amperage,
+                    max_parallel=logic.max_parallel,
+                    eut_modifier=logic.eu_modifier,
+                    batch_size=logic.batch_size,
+                    overclock=logic.overclock(recipe),
+                    inputs=supplies_from(fields),
+                )
+            )
+    except ValueError:
+        return True
+    return False
 
 
 def edge_parallels() -> Iterator[tuple[str, Fields]]:
@@ -380,8 +609,8 @@ def edge_parallels() -> Iterator[tuple[str, Fields]]:
                 "available": 100,
             },
         )
-    yield "batch-1", {**multi, "max_parallel": 8, "batch_size": 1}
-    yield "batch-2", {**multi, "duration": 10, "max_parallel": 8, "batch_size": 2}
+    yield "batch-size-1", {**multi, "max_parallel": 8, "batch_size": 1}
+    yield "batch-size-2", {**multi, "duration": 10, "max_parallel": 8, "batch_size": 2}
     yield (
         "sub-tick",
         {
@@ -451,10 +680,13 @@ def gt_unit_cases() -> list[tuple[str, Overclock, int, int | None]]:
     return list(module.OC_CASES)
 
 
-def cases(seed: int) -> tuple[list[tuple[str, Fields]], list[tuple[str, Fields]]]:
-    """(overclock cases, parallel cases), each ``(id, inputs)``."""
+Cases = list[tuple[str, Fields]]
+
+
+def cases(seed: int) -> tuple[Cases, Cases, Cases]:
+    """(overclock cases, parallel cases, logic cases), each ``(id, inputs)``."""
     rng = random.Random(seed)
-    oc: list[tuple[str, Fields]] = []
+    oc: Cases = []
     for name, calc, _eut, _ticks in gt_unit_cases():
         oc.append((f"gt:{name}", overclock_fields(calc)))
     for name, calc in edge_overclocks():
@@ -468,12 +700,28 @@ def cases(seed: int) -> tuple[list[tuple[str, Fields]], list[tuple[str, Fields]]
             {**refused, "duration_decrease_per_oc": -1.0},
         )
     )
+    refused_ids = {case_id for case_id, _ in oc[-2:]}
     for n in range(RANDOM_OC):
         oc.append((f"fuzz:{n:04d}", overclock_fields(random_overclock(rng))))
     par = [(f"edge:{name}", fields) for name, fields in edge_parallels()]
     for n in range(RANDOM_PAR):
         par.append((f"fuzz:{n:04d}", random_parallel(rng)))
-    return oc, par
+    logic = [(f"edge:{name}", fields) for name, fields in edge_logics()]
+    for n in range(RANDOM_LOGIC):
+        logic.append((f"fuzz:{n:04d}", random_logic(rng)))
+    kept: list[Cases] = []
+    for kind, group in (("oc", oc), ("par", par), ("logic", logic)):
+        kept.append(
+            [
+                (case_id, fields)
+                for case_id, fields in group
+                if case_id in refused_ids or not port_refuses(kind, fields)
+            ]
+        )
+        left_out = len(group) - len(kept[-1])
+        if left_out:
+            print(f"{left_out} {kind} cases left out: GT would never return from them")
+    return kept[0], kept[1], kept[2]
 
 
 def gradle_classpath() -> str:
@@ -520,6 +768,7 @@ def run_oracle(
             [
                 javac,
                 "-nowarn",
+                "-proc:none",  # no annotation processors from the classpath
                 "-cp",
                 classpath,
                 "-d",
@@ -539,6 +788,8 @@ def run_oracle(
                 str(results),
             ],
             check=True,
+            timeout=ORACLE_TIMEOUT_S,
+            cwd=work,  # GT's logger writes logs/ where it runs
         )
         out_fields: dict[str, Fields] = {}
         for line in results.read_text(encoding="utf-8").splitlines():
@@ -571,15 +822,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--out", type=Path, default=VECTORS)
     args = parser.parse_args(argv)
-    oc_cases, par_cases = cases(args.seed)
+    oc_cases, par_cases, logic_cases = cases(args.seed)
     classpath = args.classpath or gradle_classpath()
-    rows = [("oc", i, f) for i, f in oc_cases] + [("par", i, f) for i, f in par_cases]
+    # The oracle's ids are unique per kind only.
+    rows = [
+        (kind, f"{kind}/{case_id}", fields)
+        for kind, group in (
+            ("oc", oc_cases),
+            ("par", par_cases),
+            ("logic", logic_cases),
+        )
+        for case_id, fields in group
+    ]
     results = run_oracle(rows, classpath, args.jdk)
 
     # GT's unit tests must hold on GT's own classes: the expected values ported from them (their
     # expressions, evaluated) must be what the oracle saw.
     for name, _calc, eut, ticks in gt_unit_cases():
-        got = results[f"gt:{name}"]
+        got = results[f"oc/gt:{name}"]
         if got.get("eut") != eut or (
             ticks is not None and got.get("duration") != ticks
         ):
@@ -591,18 +851,24 @@ def main(argv: list[str] | None = None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     header = (
-        f"# GT {GT_VERSION} (GT5-Unofficial commit {GT_COMMIT}): what its own OverclockCalculator and\n"
-        f"# ParallelHelper computed for these inputs. Written by tests/unit/gtmath/oracle/make_vectors.py\n"
-        f"# (seed {args.seed}); replayed by test_oracle_vectors.py. Doubles are in hex. Do not edit.\n"
+        f"# GT {GT_VERSION} (GT5-Unofficial commit {GT_COMMIT}): what its own OverclockCalculator,\n"
+        f"# ParallelHelper and ProcessingLogic computed for these inputs. Written by\n"
+        f"# tests/unit/gtmath/oracle/make_vectors.py (seed {args.seed}); replayed by\n"
+        f"# test_oracle_vectors.py. Doubles are in hex. Do not edit.\n"
     )
-    write_vectors(
-        args.out / "overclock.tsv", header, [(i, f, results[i]) for i, f in oc_cases]
-    )
-    write_vectors(
-        args.out / "parallel.tsv", header, [(i, f, results[i]) for i, f in par_cases]
-    )
+    for kind, name, group in (
+        ("oc", "overclock", oc_cases),
+        ("par", "parallel", par_cases),
+        ("logic", "logic", logic_cases),
+    ):
+        write_vectors(
+            args.out / f"{name}.tsv",
+            header,
+            [(i, f, results[f"{kind}/{i}"]) for i, f in group],
+        )
     print(
-        f"{len(oc_cases)} overclock and {len(par_cases)} parallel vectors in {args.out}"
+        f"{len(oc_cases)} overclock, {len(par_cases)} parallel and {len(logic_cases)} logic"
+        f" vectors in {args.out}"
     )
     return 0
 

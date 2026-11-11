@@ -75,16 +75,13 @@ class Overclock:
     eut_modifier: float = 1.0  # setEUtDiscount: 0.9 is 10% less EU
     duration_modifier: float = 1.0  # setDurationModifier: 0.9 is 10% faster
     eut_increase_per_oc: float = 4.0  # setEUtIncreasePerOC
-    duration_decrease_per_oc: float = (
-        2.0  # setDurationDecreasePerOC; enablePerfectOC: 4
-    )
+    # setDurationDecreasePerOC; enablePerfectOC sets 4.
+    duration_decrease_per_oc: float = 2.0
     max_overclocks: int = INT_MAX  # setMaxOverclocks (below 0 counts as 0)
-    max_regular_overclocks: int = (
-        INT_MAX  # setMaxRegularOverclocks (below 0 counts as 0)
-    )
-    max_tier_skips: int = (
-        1  # setMaxTierSkips; UNLIMITED_TIER_SKIPS: setUnlimitedTierSkips
-    )
+    # setMaxRegularOverclocks (below 0 counts as 0): regular before laser overclocks.
+    max_regular_overclocks: int = INT_MAX
+    # setMaxTierSkips; UNLIMITED_TIER_SKIPS is setUnlimitedTierSkips.
+    max_tier_skips: int = 1
     amperage_oc: bool = False  # setAmperageOC
     laser_oc: bool = False  # setLaserOC
     no_overclock: bool = False  # setNoOverclock
@@ -92,12 +89,10 @@ class Overclock:
     heat_discount: bool = False  # setHeatDiscount
     recipe_heat: int = 0  # setRecipeHeat
     machine_heat: int = 0  # setMachineHeat
-    heat_discount_exponent: float = (
-        DEFAULT_HEAT_DISCOUNT_EXPONENT  # setHeatDiscountMultiplier
-    )
-    duration_under_one_tick: float | None = (
-        None  # setDurationUnderOneTickSupplier's value
-    )
+    # setHeatDiscountMultiplier: the EU/t factor of each full 900 K.
+    heat_discount_exponent: float = DEFAULT_HEAT_DISCOUNT_EXPONENT
+    # setDurationUnderOneTickSupplier's value: a machine's own base duration.
+    duration_under_one_tick: float | None = None
 
     def __post_init__(self) -> None:
         # GT's setters refuse these (IllegalArgumentException).
@@ -202,15 +197,16 @@ def _laser(
         steps = ddiv(log(float(ratio)), log(oc.eut_increase_per_oc))
         regular = to_int(dmax(0.0, dmin(float(max_regular), steps)))
     eut = recipe_power * pow_int(oc.eut_increase_per_oc, regular)
-    if not eut > 0:
-        # GT multiplies a power of 0 (or below) forever and never leaves its loop.
-        raise ValueError(
-            f"laser overclocks need a recipe power above 0 EU/t (got {recipe_power})"
-        )
     used = eut
     lasers = 0
     eut *= oc.eut_increase_per_oc + 0.3 * (lasers + 1)
     while eut <= machine_power:
+        if eut <= 0:
+            # GT multiplies a power of 0 (or below) forever and never leaves this loop.
+            raise ValueError(
+                "laser overclocks need a recipe power above 0 EU/t"
+                f" (got {recipe_power})"
+            )
         lasers += 1
         used = eut
         eut *= oc.eut_increase_per_oc + 0.3 * (lasers + 1)

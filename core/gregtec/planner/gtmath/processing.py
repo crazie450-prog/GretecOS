@@ -127,9 +127,8 @@ class Power:
     voltage: int  # setAvailableVoltage
     amperage: int  # setAvailableAmperage
     amperage_oc: bool = True  # setAmperageOC
-    max_tier_skips: int = (
-        1  # setMaxTierSkips; UNLIMITED_TIER_SKIPS: setUnlimitedTierSkips
-    )
+    # setMaxTierSkips; UNLIMITED_TIER_SKIPS is setUnlimitedTierSkips.
+    max_tier_skips: int = 1
 
 
 def multiblock_power(
@@ -160,9 +159,8 @@ class Recipe:
 
     eut: int  # mEUt
     duration: int  # mDuration, ticks
-    heat: int = (
-        0  # the heat it needs (mSpecialValue, COIL_HEAT) on heat maps; 0 elsewhere
-    )
+    # The heat it needs (mSpecialValue, COIL_HEAT) on heat maps; 0 elsewhere.
+    heat: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,9 +186,8 @@ class Logic:
     heat_discount: bool = False
     machine_heat: int = 0
     recipe_heat: int | None = None  # the heat compared with; None: the recipe's own
-    check_heat: bool = (
-        False  # refuse recipes hotter than the machine (insufficient_heat)
-    )
+    # Refuse recipes hotter than the machine (insufficient_heat), as the EBF does.
+    check_heat: bool = False
     heat_discount_exponent: float = DEFAULT_HEAT_DISCOUNT_EXPONENT
     laser_oc: bool = False
     max_overclocks: int = INT_MAX
