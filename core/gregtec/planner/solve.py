@@ -45,8 +45,13 @@ WO-3.5).
 
 from __future__ import annotations
 
+import ctypes
 import math
-from collections.abc import Iterable, Mapping, Sequence
+import os
+import sys
+import threading
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -287,16 +292,57 @@ def _solve(
                 vals.append(coefs[k])
         a = coo_array((vals, (ri, ci)), shape=(len(rows), m.n)).tocsr()
         constraints = [LinearConstraint(a, [r[1] for r in rows], [r[2] for r in rows])]
-    res = milp(
-        c,
-        constraints=constraints,
-        integrality=np.array(m.integral),
-        bounds=Bounds(np.array(m.lb), np.array(m.ub)),
-        options={**_OPTIONS, "time_limit": TIME_LIMIT_S},
-    )
+    with _quiet_stdout():
+        res = milp(
+            c,
+            constraints=constraints,
+            integrality=np.array(m.integral),
+            bounds=Bounds(np.array(m.lb), np.array(m.ub)),
+            options={**_OPTIONS, "time_limit": TIME_LIMIT_S},
+        )
     if res.status != 0 or res.x is None:
         return None
     return np.asarray(res.x)
+
+
+_STDOUT_LOCK = threading.Lock()
+
+
+def _flush_c_stdio() -> None:
+    """Flush the C runtime's stdio buffers (HiGHS prints through them)."""
+    try:
+        if sys.platform == "win32":
+            ctypes.cdll.ucrtbase.fflush(None)
+        else:
+            ctypes.CDLL(None).fflush(None)
+    except (OSError, AttributeError):
+        pass
+
+
+@contextmanager
+def _quiet_stdout() -> Iterator[None]:
+    """fd 1 points at the null device while HiGHS runs: some HiGHS builds print MIP debug
+    lines straight to the C stdout, past ``disp=False`` and ``sys.stdout``, which would break
+    ``gos plan --json`` and any service whose stdout is a protocol. One solve at a time."""
+    with _STDOUT_LOCK:
+        try:
+            sys.stdout.flush()
+        except (AttributeError, ValueError, OSError):
+            pass
+        try:
+            saved = os.dup(1)
+        except OSError:  # no fd 1 (a windowless process): nothing to protect
+            yield
+            return
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, 1)
+            yield
+        finally:
+            _flush_c_stdio()
+            os.dup2(saved, 1)
+            os.close(saved)
+            os.close(null)
 
 
 def _value(obj: dict[int, float], x: np.ndarray) -> float:
