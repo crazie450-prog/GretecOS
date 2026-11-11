@@ -39,7 +39,8 @@ Evidence tags:
   - `uv run pytest`: **4520 passed, 194 skipped** on `610780e`, and **4676 passed, 194 skipped** after merging `main` at `d60edbf` (Linux; the skips are the harness, model and Windows-only tests). `ruff check` and `ruff format --check` are clean on both.
   - `GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest tests/integration` (CI's mod-job invocation): see "Integration suite" at the end.
   - `GOS_QUESTS_PACK=<2.9.0's .minecraft> uv run pytest tests/integration/test_quests_pack.py`: **7 passed**, on GTNH 2.9.0's real quest book (only `config/betterquesting/` read out of the release zip by HTTP range requests; CC BY-NC-SA game data, kept outside the repo).
-- **CI** [repo]: `CI` on `main` is green at `54d1e6f` (run 43072400497; checks on Ubuntu and Windows, the mod job with both harnesses and `tests/integration`), and `dashboard (Windows)` and `mod (Windows)` are green at `610780e` (runs 43074629777, 43074630203).
+- **CI on this branch** [repo]: run 43079682732 (`d5ec780`). The **mod** job passed: both harnesses ran on CI's runners and `tests/integration` ran with `test_golden_recipes` and `test_g1_stale_harness`, so the fixture's keys resolve in CI's own runs too. `checks (windows-latest)` and `dashboard` passed. `checks (ubuntu-latest)` failed on one test outside Phase 1, `tests/unit/voice/test_tts.py::test_a_new_utterance_stops_the_last` (WO-5.3, merged in #65; it passes locally). The open branch `fix/tts-test-race` addresses that race. Run 43081712006 (`990ecd1`) failed the same way.
+- **CI on `main`** [repo]: `CI` on `main` is green at `54d1e6f` (run 43072400497; checks on Ubuntu and Windows, the mod job with both harnesses and `tests/integration`), and `dashboard (Windows)` and `mod (Windows)` are green at `610780e` (runs 43074629777, 43074630203).
 
 ---
 
