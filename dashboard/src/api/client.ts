@@ -10,6 +10,8 @@ import type {
   DeepTask,
   Device,
   Health,
+  PersonaInfo,
+  PersonaState,
   Reply,
   Session,
   SetupCheck,
@@ -78,6 +80,8 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
+  // The persona (WO-5.6): the same switch the Discord /persona command will call.
+  persona: (id: string) => post<PersonaState & { persona: PersonaInfo }>("/api/persona", { id }),
   // The setup wizard (WO-2.9): admin and paired devices only. A secret goes in and never comes back.
   setup: () => get<SetupState>("/api/setup"),
   setupDevices: () => get<SetupDevices>("/api/setup/devices"),

@@ -7,9 +7,10 @@
   so a turn always ends in an answer.
 - **Cache.** The system prompt is rules, then the skill catalog (one line per skill) and the
   body of the skills the fast lane follows itself (:data:`FAST_SKILLS`: recipe-lookup, D170),
-  then the vault's INDEX.md, then the persona (WO-5.6), each a block with a ``cache_control``
-  breakpoint, and tools render before system, so the tools and rules are one cached prefix
-  that a new INDEX.md or a persona switch doesn't rewrite. Nothing in it changes per request:
+  then the vault's INDEX.md, then the persona (WO-5.6: :attr:`FastLane.persona`, the active
+  pack with the never-rules after it), each a block with a ``cache_control`` breakpoint, and
+  tools render before system, so the tools and rules are one cached prefix that a new INDEX.md
+  or a persona switch doesn't rewrite: a switch writes only the persona block again. Nothing in it changes per request:
   the request, Clayton's tier and the pre-retrieved results go in the user turn.
 - **Time to first token.** Each call's milliseconds from sending it to its first
   ``text_delta`` go into ``llm_usage.ttft_ms``; :attr:`LaneAnswer.ttft_ms` is the turn's, from
@@ -317,8 +318,11 @@ class FastLane:
         vault: Path | None = None,
         model: str = HAIKU,
         clock: Callable[[], float] = time.perf_counter,
+        persona: Callable[[], str | None] | None = None,
     ) -> None:
         self.client = client
+        # the active persona's prompt text, read per call (WO-5.6; None: no persona block)
+        self.persona = persona
         self.registry = registry
         self.meter = meter
         self.vault = vault
@@ -349,7 +353,9 @@ class FastLane:
             "thinking": {"type": "disabled"},
             "output_config": {"effort": "low"},
             # Read per call: the curator rewrites INDEX.md daily; a file read is cheap.
-            "system": system_prompt(self.vault),
+            "system": system_prompt(
+                self.vault, self.persona() if self.persona is not None else None
+            ),
             "tools": self.tools,
             "messages": messages,
         }

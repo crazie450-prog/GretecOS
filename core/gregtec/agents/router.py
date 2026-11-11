@@ -6,7 +6,8 @@
 - **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "what's
   my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
-  card, WO-2.8). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
+  card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
+  model call, D206). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice and anything quantitative over a line ("how many
   ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
@@ -36,6 +37,7 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
     "uses",
 )
 PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
+PERSONA = "persona"  # switch or name the persona (WO-5.6, plan 7.11)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -46,6 +48,12 @@ RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "general",
 )
 MAX_SUBJECT_WORDS = 8
+MAX_PERSONA_WORDS = 3  # "gt veteran", "the coop buddy one": a pack's name is short
+# Words no persona name holds: "persona recipes for steel" isn't a switch (it goes on)
+_NOT_A_NAME = frozenset(
+    {"for", "of", "about", "with", "from", "in", "on", "is", "are", "do", "does"}
+    | {"recipe", "recipes", "uses", "plan", "plans", "tier", "what", "how", "why"}
+)
 
 _TIER_NAMES = {t.casefold(): t for t in TIERS}
 _TIER = "|".join(t.casefold() for t in TIERS)
@@ -71,6 +79,16 @@ def _rx(*patterns: str) -> list[re.Pattern[str]]:
 
 
 INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
+    (
+        PERSONA,  # first: a persona's name could hold any other rule's words
+        _rx(
+            # STT punctuates: "Persona, ship AI." / "Persona: coop buddy!"
+            r"(?:switch |change |set )?(?:to |the )?persona[,:;]? (?:to )?(?P<name>[\w' ,-]+)",
+            r"(?:use|switch to|change to),? (?:the )?(?P<name>[\w' -]+?) persona",
+            r"(?:what|which) persona(?: is (?:this|on|active|it)| are you)?",
+            r"(?:list |show )?(?:me )?(?:the |my )?personas|(?:current )?persona",
+        ),
+    ),
     (
         REPEAT,
         _rx(
@@ -250,6 +268,17 @@ def route(text: str, *, plans: bool = True) -> Route:
                     ):
                         return Route(INSTANT, command, text, words)
                     continue
+                if command == PERSONA:  # the name, if one was said
+                    name = " ".join(
+                        (m.groupdict().get("name") or "").replace(",", " ").split()
+                    )
+                    if name and (
+                        deep
+                        or len(name.split()) > MAX_PERSONA_WORDS
+                        or _NOT_A_NAME & set(name.split())
+                    ):
+                        break  # not a pack's name: the other rules place it
+                    return Route(INSTANT, command, text, name or None)
                 if command not in (RECIPES, USES):
                     return Route(INSTANT, command, text)
                 subject = subject_of(m["item"])

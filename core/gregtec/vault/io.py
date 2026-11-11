@@ -12,7 +12,8 @@ or ``propose`` (a new inbox note: ``inbox_propose`` only):
 | ``me/``                                 | read; propose changes through ``inbox_propose``    |
 | ``_gos/``                               | read (repo-owned, deployed by ``gos vault deploy``)|
 | ``INDEX.md``, ``base/{tier,machines,storage}.md`` | read (generated: the curator, My base)   |
-| ``base/ plans/ quests/ themes/ personas/`` | read, write, append                             |
+| ``base/ plans/ quests/ themes/``         | read, write, append                                |
+| ``personas/``                           | read; write and append drafts in ``personas/drafts/`` only |
 | ``log/``                                | read; ``append`` to today's daily log only         |
 | ``inbox/``                              | read, ``append``; new notes only by ``propose``    |
 | anything else                           | read if it is a note; never write                  |
@@ -94,8 +95,13 @@ FOLDERS = {
     "log": JOURNAL,
     "inbox": INBOX,
 }
-# Folders the curator and the index skip: skills and agents are loaded by the SDK, not read.
-NOT_NOTES = ("_gos/skills/", "_gos/agents/")
+# Persona packs (WO-5.6, plan 6.5 "agents draft on request"): a pack in personas/ is live in
+# every prompt, so agents write only drafts, which the packs loader skips; Clayton makes one live
+# by moving it up a folder.
+PERSONA_DRAFTS = "personas/drafts/"
+# Folders the curator and the index skip: skills and agents are loaded by the SDK, not read;
+# the shipped persona packs are the repo's and read by gregtec.agents.personas (WO-5.6).
+NOT_NOTES = ("_gos/skills/", "_gos/agents/", "_gos/personas/")
 
 
 class VaultError(ValueError):
@@ -159,7 +165,14 @@ def write_refusal(rel: object, op: str, *, today: dt.date | None = None) -> str 
     if who == NOBODY:
         return (
             f"{path} isn't in a folder agents write: base/, plans/, quests/, themes/, "
-            "personas/, log/ (today's log, append only), inbox/"
+            "personas/drafts/, log/ (today's log, append only), inbox/"
+        )
+    if path.split("/", 1)[0].lower() == "personas" and not path.startswith(
+        PERSONA_DRAFTS
+    ):
+        return (
+            f"{path}: live persona packs are Clayton's; draft one at "
+            f"{PERSONA_DRAFTS}pe-<name>.md and he moves it up to make it live"
         )
     if who == JOURNAL:
         day = DAILY.fullmatch(path)
@@ -183,7 +196,7 @@ def write_refusal(rel: object, op: str, *, today: dt.date | None = None) -> str 
 
 def notes(root: Path) -> Iterator[str]:
     """Every note in the vault, as a path :func:`clean` accepts, sorted: hidden folders,
-    links and ``_gos/skills/`` and ``_gos/agents/`` are skipped."""
+    links and ``_gos/skills/``, ``_gos/agents/`` and ``_gos/personas/`` are skipped."""
     found: list[str] = []
     for top, dirs, files in os.walk(root):
         here = Path(top)

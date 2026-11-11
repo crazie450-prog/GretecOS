@@ -24,6 +24,7 @@ from gregtec import (
     control,
     doctor,
     locks,
+    personacli,
     playhooks,
     servicecli,
     voicecli,
@@ -591,6 +592,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     plancli.add_parsers(commands)
     appwindow.add_parsers(commands)
     voicecli.add_parsers(commands)
+    personacli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -659,6 +661,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return appwindow.run(args)
     if args.command in voicecli.COMMANDS:
         return voicecli.run(args)
+    if args.command in personacli.COMMANDS:
+        return personacli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
