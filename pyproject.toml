@@ -45,6 +45,11 @@ voice = ["gregtec-voice"]
 # onnx-asr), both MIT; models download at runtime to GOS_HOME/models. Not a default group (CI
 # and dev clones stay light); gos deploy adds it, so GOS_APP has them.
 stt = ["faster-whisper>=1.2.1", "onnx-asr[cpu,hub]>=0.12.0"]
+# WO-5.4, D185: the wake word: sherpa-onnx keyword spotting, and sentencepiece, which spells the
+# phrase in the model's word pieces (both Apache-2.0). A custom openWakeWord model runs on ONNX
+# Runtime (from the stt group, with the VAD and the second stage); the openwakeword package
+# isn't used (on Linux it needs tflite-runtime, which has no Python 3.12 wheel). gos deploy adds it.
+wake = ["sherpa-onnx>=2.0.1", "sentencepiece>=0.2.1"]
 
 [tool.uv]
 default-groups = ["dev", "voice"]
