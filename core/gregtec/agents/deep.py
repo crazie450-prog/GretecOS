@@ -344,6 +344,8 @@ class DeepLaneService:
         self._client: Client | None = None  # the current task's
         self._worker: asyncio.Task[None] | None = None
         self.problem: str | None = None  # why the lane can't connect right now
+        # the active persona's text for the UserPromptSubmit hook (WO-5.6; set by ask.setup)
+        self.persona: Callable[[], str | None] | None = None
         self.last_init: dict[str, Any] | None = None
 
     @classmethod
@@ -689,7 +691,9 @@ class DeepLaneService:
         plugin = deep_config.build_plugin(
             self.plugin_source(), self.home / deep_config.PLUGIN_COPY
         )
-        gate = hooks.Gate(deep_config.policy(self.registry, plugin), self.vault)
+        gate = hooks.Gate(
+            deep_config.policy(self.registry, plugin), self.vault, persona=self.persona
+        )
         client = self.client_factory(self._options(gate, plugin))
         await client.connect()
         return client, gate

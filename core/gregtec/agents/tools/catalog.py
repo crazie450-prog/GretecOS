@@ -116,8 +116,8 @@ TOOLS = (
     ),
     Tool(
         "note_write",
-        "Create or replace a note in base/, plans/, quests/, themes/ or personas/ in the note "
-        "grammar; the tool writes the frontmatter. me/, _gos/, INDEX.md and the generated "
+        "Create or replace a note in base/, plans/, quests/, themes/ or personas/drafts/ in "
+        "the note grammar; the tool writes the frontmatter. me/, _gos/, INDEX.md and the generated "
         "base notes are refused (propose with inbox_propose); logs take note_append.",
         notes.NOTE_WRITE_SCHEMA,
         notes.note_write,
@@ -214,7 +214,9 @@ LATER: dict[str, str] = {
     **dict.fromkeys(("ledger_get", "ledger_update"), "WO-4.4 (EU ledger)"),
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
     "agent tool needs a core-to-voice push, D205)",
-    "persona_set": "WO-5.6 (persona packs)",
+    "persona_set": "WO-5.6 follow-up, not yet a plan 8 row (switching is the router's "
+    "instant command and POST /api/persona; the model tool waits for the persona subagent, "
+    "D208)",
     "player_pos": "WO-6.1 (watchers)",
     **dict.fromkeys(
         ("events_recent", "session_summary"), "WO-6.3 (event store, sessions)"

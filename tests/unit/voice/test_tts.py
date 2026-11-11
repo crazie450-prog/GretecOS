@@ -299,6 +299,8 @@ def test_a_new_utterance_stops_the_last() -> None:
     speaker = speaker_with(FakeEngine(seconds=2.0), output=out)
     first = Done()
     speaker.speak("First answer.", first.on_first, first.on_done)
+    # The first utterance must be playing, or streams[0] would be the second one's stream.
+    wait_for(lambda: bool(out.streams and out.streams[0].writes))
     second = say(speaker, "Second answer.")
     first.wait()
     assert out.streams[0].aborted and second.count == 1

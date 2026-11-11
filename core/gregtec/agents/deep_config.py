@@ -349,7 +349,11 @@ def options(
         plugins=[{"type": "local", "path": str(plugin)}] if plugin is not None else [],
         agents=agent_definitions(settings, registry),
         permission_mode="dontAsk",
-        hooks={"PreToolUse": [HookMatcher(hooks=[gate.tool_gate, gate.path_guard])]},
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[gate.tool_gate, gate.path_guard])],
+            # the active persona on every prompt (WO-5.6, plan 4.4)
+            "UserPromptSubmit": [HookMatcher(hooks=[gate.prompt_context])],
+        },
         max_turns=MAX_TURNS,
         cwd=workdir,
         verbatim_prompts=True,
