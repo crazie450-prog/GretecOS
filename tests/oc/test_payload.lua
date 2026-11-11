@@ -123,7 +123,8 @@ test("the watchlist: a pattern with none stored, an unknown name, a failing look
   }, "\n") })
   w.me.patterns["minecraft:diamond@0"] = { plan_ticks = 2 }
   w.me.unknown["nosuchmod:thing"] = true
-  w.me.raise.getItemInNetwork = { "java.lang.IllegalStateException: grid not ready" }
+  -- AE2's GridAccessException (the grid isn't ready) has no message: OC returns nil, "unknown error".
+  w.me.fail.getItemInNetwork = { "unknown error" }
   local M, st = T.agent(w)
   M.cycle(st)
   local p = T.last_body(w)
@@ -131,7 +132,59 @@ test("the watchlist: a pattern with none stored, an unknown name, a failing look
     { name = "minecraft:diamond", damage = 0, size = 0, craftable = true },
     { name = "nosuchmod:thing", damage = 3, size = 0, craftable = false },
   }, "a failed lookup is left out, not guessed; a pattern alone is craftable with 0 stored")
-  T.has(p.errors[1].msg, "getItemInNetwork minecraft:iron_ingot@0: java.lang.IllegalStateException")
+  T.eq(p.errors[1].where, "ae2")
+  T.eq(p.errors[1].msg, "getItemInNetwork minecraft:iron_ingot@0: unknown error")
+end)
+
+-- OC hands a method's Java exception back as nil, reason; it doesn't raise. Taken as a reading,
+-- that nil is "0 stored", "no lines", "no CPUs" with nothing saying the call failed.
+test("a call OC answers with nil and a reason failed: left out and reported, never a reading", function()
+  local w = T.base()
+  for _, name in ipairs({ "getItemInNetwork", "getCpus" }) do
+    w.me.fail[name] = "unknown error"
+  end
+  w.ebf.fail.getSensorInformation = "Index: 3, Size: 2"
+  w.ebf.fail.hasWork = "unknown error"
+  w.lsc.raise.getSensorInformation = "bad argument #1 (number expected, got no value)" -- these do raise
+  local M, st = T.agent(w)
+  M.cycle(st)
+  M.cycle(st)
+  local seen = {}
+  for _, p in ipairs(T.bodies(w)) do
+    T.eq(#(p.ae2.items or {}), 0, "no entry, rather than every entry at size 0")
+    T.same(p.ae2.cpus, {}, "the schema wants the list; the error record says it failed")
+    local ebf = by_addr(p.machines, w.ebf.addr)
+    T.eq(ebf.sensor, nil, "no empty sensor list")
+    T.eq(ebf.sensor_at, nil)
+    T.eq(ebf.work, nil)
+    T.eq(ebf.active, true, "the readings that worked are there")
+    T.eq(by_addr(p.power, w.lsc.addr).sensor, nil)
+    for _, e in ipairs(p.errors) do
+      seen[e.where .. ": " .. e.msg] = true
+    end
+  end
+  local ebf, lsc = w.ebf.addr:sub(1, 8), w.lsc.addr:sub(1, 8)
+  for _, want in ipairs({
+    "ae2: getItemInNetwork minecraft:iron_ingot@0: unknown error",
+    "ae2: getItemInNetwork minecraft:diamond@0: unknown error",
+    "ae2: getCpus: unknown error",
+    "sensor: " .. ebf .. ": Index: 3, Size: 2",
+    "sensor: " .. lsc .. ": bad argument #1 (number expected, got no value)",
+    "machines: " .. ebf .. " hasWork: unknown error",
+  }) do
+    T.ok(seen[want], "reported: " .. want)
+  end
+  -- Once the calls work again the readings are back.
+  w.me.fail, w.ebf.fail, w.lsc.raise = {}, {}, {}
+  T.run_until(M, st, w, w.clock + 130)
+  local items, sensor
+  for _, p in ipairs(T.bodies(w)) do
+    items = p.ae2.items or items
+    sensor = by_addr(p.machines, w.ebf.addr).sensor or sensor
+  end
+  T.eq(items[1].size, 1234)
+  T.same(sensor, w.ebf.sensor)
+  T.eq(#T.last_body(w).ae2.cpus, #w.me.cpus)
 end)
 
 test("a lookup with no usable size is left out, not sent as 0", function()

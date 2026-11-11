@@ -69,6 +69,17 @@ test("say without a chat box fails", function()
   T.has(r[1].err, "no chat box")
 end)
 
+test("a chat box that answers nil and a reason didn't say it", function()
+  local w = T.base()
+  w.chat.fail.say = "unknown error" -- OC: the method's Java side threw
+  local M, st = T.agent(w)
+  local r = exchange(w, M, st, { T.cmd(1, "say", { text = "hi" }) })
+  T.eq(r[1].ok, false)
+  T.eq(r[1].state, "failed")
+  T.eq(r[1].err, "unknown error")
+  T.eq(#w.chat.said, 0)
+end)
+
 test("machine_pause and machine_resume", function()
   local w = T.base()
   local M, st = T.agent(w)
@@ -107,6 +118,27 @@ test("a pause the machine ignores is reported as failed", function()
   local r = exchange(w, M, st, { T.cmd(1, "machine_pause", { addr = w.ebf.addr }) })
   T.eq(r[1].state, "failed")
   T.has(r[1].err, "still says work allowed = true")
+end)
+
+test("a pause or a craft whose call OC answers with nil and a reason failed, with that reason", function()
+  local w = T.base()
+  w.ebf.fail.setWorkAllowed = { "unknown error" } -- once
+  w.me.fail.getCraftable = { "unknown error" }
+  local M, st = T.agent(w)
+  local r = exchange(w, M, st, {
+    T.cmd(1, "machine_pause", { addr = w.ebf.addr }),
+    T.cmd(2, "craft", { name = "gregtech:gt.metaitem.01", damage = 11305, amount = 4 }),
+  })
+  T.eq(r[1].state, "failed")
+  T.eq(r[1].err, "setWorkAllowed: unknown error")
+  T.eq(w.ebf.allowed, true)
+  T.eq(r[2].state, "failed")
+  T.eq(r[2].err, "getCraftable: unknown error", "not 'no pattern': the lookup failed")
+  T.eq(w:calls_of("craftable.request"), 0)
+  w.ebf.fail.isWorkAllowed = "Index: 3, Size: 2"
+  r = exchange(w, M, st, { T.cmd(3, "machine_pause", { addr = w.ebf.addr }) })
+  T.eq(r[3].state, "failed")
+  T.eq(r[3].err, "isWorkAllowed: Index: 3, Size: 2", "the check failed; it doesn't claim the machine said anything")
 end)
 
 test("craft: planned, submitted, crafted", function()

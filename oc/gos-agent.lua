@@ -455,8 +455,16 @@ function M.record_error(st, where, msg)
   end
 end
 
+-- A component call: true and the results, or false and the reason. OC raises only for a missing
+-- component or method and for bad arguments. A method whose Java side threw anything else comes
+-- back from component.invoke as nil, reason ("unknown error" when the exception has no message),
+-- which is a failed call here too, never a reading of nil.
 local function call(addr, method, ...)
-  return pcall(component.invoke, addr, method, ...)
+  local r = table.pack(pcall(component.invoke, addr, method, ...))
+  if r[1] and r[2] == nil and r[3] ~= nil then
+    return false, r[3]
+  end
+  return table.unpack(r, 1, r.n)
 end
 
 ---------------------------------------------------------------------------------------------
@@ -1071,7 +1079,10 @@ local function set_work(st, id, kind, a, allowed)
   end
   os.sleep(0.1) -- the driver applies it on the next server tick
   local ok2, now_allowed = call(e.addr, "isWorkAllowed")
-  if ok2 and now_allowed == allowed then
+  if not ok2 then
+    return failed(id, kind, "isWorkAllowed: " .. tostring(now_allowed))
+  end
+  if now_allowed == allowed then
     e.allowed = allowed
     return result(id, kind, true, "done")
   end
@@ -1372,6 +1383,9 @@ end
 
 -- POST the body, then read the reply in 2 KB chunks (OC reads at most 2048 bytes per call) until
 -- the stream ends. The handle is closed on every path: OC allows only 4 open connections per card.
+-- A request that failed (connection refused, a filtered address, a code of 400 or more, a
+-- connection lost in a world reload) doesn't raise: finishConnect and read return nil and the
+-- reason, where false and "" mean "not yet" and a lone nil from read the end of the reply.
 function Http:exchange(body, seq)
   local cfg = self.cfg
   local headers = {
@@ -1385,7 +1399,13 @@ function Http:exchange(body, seq)
   local deadline = now() + cfg.request_timeout_s
   local text
   local okx, err = pcall(function()
-    while not handle.finishConnect() do
+    while true do
+      local ready, why = handle.finishConnect()
+      if ready then
+        break
+      elseif why ~= nil then
+        error(tostring(why), 0)
+      end
       if now() >= deadline then
         error("no answer from the core in " .. cfg.request_timeout_s .. " s", 0)
       end
@@ -1397,8 +1417,11 @@ function Http:exchange(body, seq)
     end
     local parts, total = {}, 0
     while true do
-      local chunk = handle.read(2048)
+      local chunk, why = handle.read(2048)
       if chunk == nil then
+        if why ~= nil then
+          error(tostring(why), 0)
+        end
         break
       end
       if #chunk > 0 then
