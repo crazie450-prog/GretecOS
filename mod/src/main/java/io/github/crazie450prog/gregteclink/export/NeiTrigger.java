@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import gregtech.GTMod;
 import io.github.crazie450prog.gregteclink.GregtecLink;
 
 /**
@@ -27,6 +28,9 @@ final class NeiTrigger {
     static final long MTIME_SLACK_MS = 2000;
     /** Each copy is tried 3 times, as Windows may still hold a just-written file. */
     static final int COPY_ATTEMPTS = 3;
+    /** {@code part_warnings.nei} (after any other) when NEI's lookup didn't read the serial list (D188). */
+    static final String NOT_SERIAL = "NEI did not load its recipe handlers from the serial list (D188), so GT's may"
+        + " have loaded in parallel and lost oredict alternatives (anyOf)";
 
     private static Method isLoaded;
     private static Field loadFinished;
@@ -67,11 +71,12 @@ final class NeiTrigger {
     }
 
     /**
-     * Runs NEI's dump on the calling (client) thread, which freezes the game until it returns, then copies the files
-     * it wrote into the run. Records counts, durations and any error on the run. Returns "ok" only if the call threw
-     * nothing, NEI logged no "Error dumping recipes", at least one file was found, every copy succeeded and the lines
-     * copied equal the count NEI logged; otherwise "failed". An ok step whose NEI dropped a handler also gets
-     * {@code part_warnings.nei}. Never throws.
+     * Runs NEI's dump on the calling (client) thread, which freezes the game until it returns, with every recipe
+     * handler loaded on that thread ({@link NeiSerialLookup}) and GT's NEI recipe caches built again (D188), then
+     * copies the files it wrote into the run. Records counts, durations and any error on the run. Returns "ok" only if
+     * the call threw nothing, NEI logged no "Error dumping recipes", at least one file was found, every copy succeeded
+     * and the lines copied equal the count NEI logged; otherwise "failed". An ok step whose NEI dropped a handler, or
+     * didn't take its handlers from the serial list, also gets {@code part_warnings.nei}. Never throws.
      */
     static String dump(ExportRun run) {
         try {
@@ -82,7 +87,7 @@ final class NeiTrigger {
         }
     }
 
-    private static String dumpOrThrow(ExportRun run) {
+    private static String dumpOrThrow(ExportRun run) throws IllegalAccessException {
         // NEI deletes every file in dumps/recipes first: refuse a link or junction at dumps or dumps/recipes.
         PathGuard dumps;
         try {
@@ -104,6 +109,13 @@ final class NeiTrigger {
         } catch (Throwable t) {
             return failed(run, "NEI's log can't be captured: " + Json.error(t));
         }
+        NeiSerialLookup serial;
+        try {
+            serial = NeiSerialLookup.begin();
+        } catch (Throwable t) {
+            capture.detach();
+            return failed(run, "NEI's handler lookup can't be made serial: " + Json.error(t));
+        }
         long start = System.currentTimeMillis();
         Throwable thrown = null;
         try {
@@ -112,6 +124,10 @@ final class NeiTrigger {
                 run.runId,
                 Thread.currentThread()
                     .getName());
+            // GT keeps each recipe category's NEI recipes (GTNEIDefaultHandler.CACHE) until its NEI reload count
+            // changes. A recipe lookup earlier in this session (R or U in a world opened by hand) built them in
+            // parallel, maybe short: this has GT build them again during the call, on this thread (D188).
+            GTMod.proxy.reloadNEICache();
             dumpAll.invoke(null, true);
         } catch (InvocationTargetException e) {
             thrown = e.getCause();
@@ -119,12 +135,25 @@ final class NeiTrigger {
             thrown = t;
         } finally {
             capture.detach();
+            serial.restore();
         }
         run.durations.put("nei_dump", System.currentTimeMillis() - start);
+        boolean serialLoad = serial.loadedSeriallyOn(Thread.currentThread());
+        if (serialLoad) {
+            GregtecLink.LOG.info(
+                "export {}: NEI loaded all {} recipe handlers one after another on {}",
+                run.runId,
+                serial.handlers,
+                Thread.currentThread()
+                    .getName());
+        } else {
+            GregtecLink.LOG.warn("export {}: {} ({})", run.runId, NOT_SERIAL, serial.readers());
+        }
         run.counts.put("nei_handlers", log.handlers);
         run.counts.put("nei_reported", log.reported);
         run.counts.put("nei_skipped", log.skipped);
         run.counts.put("nei_lookup_errors", log.lookupErrors);
+        run.counts.put("nei_serial_load", serialLoad ? 1 : 0);
 
         long t = System.currentTimeMillis();
         List<String> copyErrors = new ArrayList<>();
@@ -159,6 +188,7 @@ final class NeiTrigger {
         else if (lines != log.reported) reason = lines + " lines copied, NEI reported " + log.reported;
         if (reason != null) return failed(run, reason);
         String warning = log.warning();
+        if (!serialLoad) warning = warning == null ? NOT_SERIAL : warning + "; " + NOT_SERIAL;
         if (warning != null) {
             GregtecLink.LOG.warn("export {}: NEI step ok, but {}", run.runId, warning);
             run.partWarnings.put("nei", warning);
