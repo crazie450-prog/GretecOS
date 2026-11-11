@@ -260,6 +260,11 @@ _ITEM_KEY_SQL = (
     "i.registry_name || '@' || i.meta || CASE WHEN i.nbt_hash != '' THEN '#' ||"
     " substr(i.nbt_hash, 1, 8) ELSE '' END"
 )
+# GT's recycling recipes take everything apart: not a use, nor a way to make (D142 (2)).
+_NOT_RECYCLING = (
+    "coalesce(r.category, '') NOT LIKE '%recycling' AND NOT EXISTS (SELECT 1 FROM recipe_meta"
+    " AS rm WHERE rm.recipe_id = r.id AND rm.key = 'recycle' AND rm.value_num != 0)"
+)
 
 
 @dataclass(frozen=True)
@@ -526,7 +531,11 @@ class _Reader:
         run's enabled recipes that use up ``key``, recycling aside. A recipe for ``key`` that
         consumes one of them undoes one of ``key``'s own uses (a two-step loop: zinc sulfate
         back to sulfuric acid, an alloy taken apart). Byproducts are left out: water or
-        hydrogen given off by a use doesn't make every recipe that takes them a reversal."""
+        hydrogen given off by a use doesn't make every recipe that takes them a reversal. So is
+        a main product that has a recipe of its own (as its main product) that doesn't use
+        ``key`` up: salt is made from salt water, but also from its ore, so salt and water in
+        the mixer is a way to make salt water, not a reversal; zinc sulfate is made only from
+        sulfuric acid, so its electrolysis still is one (D189)."""
         if key in self.uses:
             return self.uses[key]
         items, fluids = self.key_ids(key)
@@ -541,22 +550,50 @@ class _Reader:
                         " CROSS JOIN recipe AS r ON r.id = i.recipe_id"
                         " CROSS JOIN recipe_output AS o ON o.recipe_id = i.recipe_id"
                         " AND o.slot = 0 WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1"
-                        # GT's recycling recipes take everything apart: not a use (D142 (2)).
-                        " AND coalesce(r.category, '') NOT LIKE '%recycling' AND NOT EXISTS"
-                        " (SELECT 1 FROM recipe_meta AS rm WHERE rm.recipe_id = r.id"
-                        " AND rm.key = 'recycle' AND rm.value_num != 0)",
+                        f" AND {_NOT_RECYCLING}",
                         (json.dumps(ids), self.run),
                     )
                 )
+        found = {
+            (i, f)
+            for i, f in found
+            if (i is not None or f is not None)
+            and not self._made_without(i, f, items, fluids)
+        }
         self.load_items(i for i, _ in found if i is not None)
         self.load_fluids(f for i, f in found if i is None and f is not None)
         out = frozenset(
             self.items[i].key if i is not None else self.fluids[f].key
             for i, f in found
-            if i is not None or f is not None
         )
         self.uses[key] = out
         return out
+
+    def _made_without(
+        self, item: int | None, fluid: int | None, items: list[int], fluids: list[int]
+    ) -> bool:
+        """Whether a recipe of the run (enabled; not fake but the assembly line; recycling
+        aside) makes ``item`` (else ``fluid``) as its main product without using up any of
+        ``items``/``fluids``."""
+        col, value = ("item_id", item) if item is not None else ("fluid_id", fluid)
+        row = self.conn.execute(
+            "SELECT 1 FROM recipe_output AS o CROSS JOIN recipe AS r ON r.id = o.recipe_id"
+            " LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+            f" WHERE o.{col} = ? AND o.slot = 0 AND r.run_id = ? AND r.enabled = 1"
+            " AND (coalesce(r.fake, 0) = 0 OR m.unloc_name = ?)"
+            f" AND {_NOT_RECYCLING} AND NOT EXISTS (SELECT 1 FROM recipe_input AS i"
+            " WHERE i.recipe_id = r.id AND i.consumed = 1"
+            " AND (i.item_id IN (SELECT value FROM json_each(?))"
+            " OR i.fluid_id IN (SELECT value FROM json_each(?)))) LIMIT 1",
+            (
+                value,
+                self.run,
+                chains.ASSEMBLY_LINE_MAP,
+                json.dumps(items),
+                json.dumps(fluids),
+            ),
+        ).fetchone()
+        return row is not None
 
     def machines_for(self, recipe_map: str) -> list[machines.MachineInfo]:
         if recipe_map not in self.machines:
