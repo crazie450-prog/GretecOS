@@ -4,12 +4,14 @@ import type { ApprovalCard, Card } from "../cards/types.gen";
 import type {
   AiState,
   Answer,
+  BaseFind,
   CoreState,
   CreditChoice,
   CreditState,
   DeepTask,
   Device,
   Health,
+  MyBase,
   Reply,
   Session,
   Usage,
@@ -74,6 +76,15 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
+  // My base (WO-3.8): every edit answers with the whole of it.
+  base: () => get<MyBase>("/api/base"),
+  baseFind: (q: string, kind: "item" | "machine") =>
+    get<BaseFind>(`/api/base/find?q=${encodeURIComponent(q)}&kind=${kind}`),
+  baseTier: (stage: string | null) => post<MyBase>("/api/base/tier", { stage }),
+  baseMachine: (mteId: number, count: number) => post<MyBase>("/api/base/machines", { mte_id: mteId, count }),
+  baseMachineClear: (mteId: number) => request<MyBase>("DELETE", `/api/base/machines/${mteId}`),
+  baseStock: (key: string, qty: number) => post<MyBase>("/api/base/stock", { key, qty }),
+  baseStockRemove: (key: string) => request<MyBase>("DELETE", `/api/base/stock?key=${encodeURIComponent(key)}`),
   pairStart: (name: string) => post<{ request_id: string; expires_in: number }>("/api/pair/start", { name }),
   pairComplete: (requestId: string, code: string) =>
     post<{ device_id: string; name: string }>("/api/pair/complete", { request_id: requestId, code }),

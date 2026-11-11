@@ -465,6 +465,7 @@ button.gos-chip.cite {
 .view-search,
 .view-settings,
 .view-costs,
+.view-base,
 .view-later {
   display: flex;
   flex-direction: column;
@@ -921,6 +922,90 @@ tr.depleted td {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+/* --- Base (My base, WO-3.8) ------------------------------------------------------------------ */
+
+.base-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.base-grid .col,
+.base-grid .gos-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.base-grid .col {
+  gap: var(--space-6);
+}
+
+.base-tier-now {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.base-tier-now .gos-tier {
+  font-size: 22px;
+  padding: 6px 16px;
+}
+
+.base-select {
+  flex: 0 1 180px;
+  background: var(--panel);
+}
+
+.base-select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.base-finder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.base-table td {
+  vertical-align: middle;
+}
+
+.base-name {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.base-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.base-stepper .gos-btn {
+  min-width: var(--hit-min);
+  padding: 0;
+}
+
+.base-amount {
+  flex: 0 0 auto;
+  width: 9ch;
+  padding: 0 var(--space-2);
+  text-align: right;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .settings-grid .col {
   display: flex;
   flex-direction: column;
@@ -1321,7 +1406,8 @@ tr.depleted td {
   .now-grid,
   .search-grid,
   .settings-grid,
-  .costs-grid {
+  .costs-grid,
+  .base-grid {
     display: flex;
     flex-direction: column;
   }

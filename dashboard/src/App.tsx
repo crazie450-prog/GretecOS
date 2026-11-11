@@ -21,6 +21,7 @@ import { useMedia, usePresence } from "./state/presence";
 import { isStale, stateChips } from "./state/states";
 import { store, useApp } from "./state/store";
 import { useTheme } from "./theme/useTheme";
+import { Base } from "./views/Base";
 import { Chat } from "./views/Chat";
 import { Costs } from "./views/Costs";
 import { Glance } from "./views/Glance";
@@ -236,6 +237,8 @@ export function App() {
         return <Search target={searchTarget} setTarget={setSearchTarget} />;
       case "costs":
         return <Costs />;
+      case "base":
+        return <Base />;
       case "settings":
         return (
           <Settings

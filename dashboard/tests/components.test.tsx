@@ -131,11 +131,11 @@ describe("the nav", () => {
     ]);
     expect(viewForKey("8")?.id).toBe("costs");
     expect(viewForKey("0")).toBeNull();
-    expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "costs", "settings"]);
-    expect(PHONE_TABS).toEqual(["now", "chat", "search", "costs", "settings"]);
+    expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "costs", "settings", "base"]);
+    expect(PHONE_TABS).toEqual(["now", "chat", "search", "base", "costs", "settings"]);
   });
   it("marks the views with no approved board (D92)", () => {
-    expect(VIEWS.filter((v) => !v.later && !v.board).map((v) => v.id)).toEqual(["chat", "search", "costs"]);
+    expect(VIEWS.filter((v) => !v.later && !v.board).map((v) => v.id)).toEqual(["chat", "search", "costs", "base"]);
   });
   it("reads the view from the hash", () => {
     expect(viewFromHash("#/chat")).toBe("chat");
