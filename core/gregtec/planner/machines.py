@@ -58,10 +58,10 @@ from gregtec.planner.gtmath.processing import (
     Power,
     Recipe,
     Run,
+    average_input_voltage,
     basic_machine,
     max_input_eu,
     max_input_voltage,
-    average_input_voltage,
     multiblock_power,
     process,
     total_eu_power,
@@ -819,8 +819,10 @@ def options_for(
             reasons.append(str(e))
     if out:
         return out, None
+    # The last layout is the strongest (layouts go up in tier and hatches), so its reason is
+    # what stands between the player and the recipe.
     return rejected(
-        reasons[0] if reasons else "no energy hatch layout at the player's tier"
+        reasons[-1] if reasons else "no energy hatch layout at the player's tier"
     )
 
 
