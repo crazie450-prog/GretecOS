@@ -23,7 +23,8 @@ The GPU "works here" when CTranslate2 finds a CUDA device, cuBLAS 12 loads (the 
 alone isn't enough: NVIDIA's cuBLAS wheel, installed once into ``GOS_HOME/models/cuda``, is a
 PC step, docs/runbooks/stt.md) and the model loads and decodes a warm-up; any failure is the
 next engine's turn, and the log says why.
-Whisper decodes with ``language="en"`` and ``beam_size=1``. CPU engines use 4 threads, so a
+Whisper decodes with ``language="en"``, ``beam_size=1`` and ``temperature=0`` (greedy and
+deterministic: no re-decoding by sampling, so a recording always gives the same text). CPU engines use 4 threads, so a
 transcription burst never takes every core from GTNH.
 
 **The glossary** (``glossary.tsv``, plan 6.4: the entries ``item_resolve`` expands, from the
@@ -37,8 +38,10 @@ live vault or else vault-template) does two things:
 2. **Spelling** (both engines, :class:`Snapper`): a run of up to four words whose letters and
    digits are a glossary form's is written as the glossary writes it: "E-B-F", "E B F" and
    "e.b.f." become "EBF", "ass line" "assline", "HS-SG" and "HSSG" "HSS-G". Only spacing, case
-   and punctuation change, so a word never becomes another word; and one plain word changes
-   only where the glossary adds punctuation or spaces to it ("me" stays "me", not "ME").
+   and punctuation change, so a word never becomes another word: a lower-case single letter
+   ("a", "i") is a word and never joins a run, a run gives way to a longer one starting a word
+   later ("make a L U V hull" is "make a LuV hull"), and one plain word changes only where the
+   glossary adds punctuation or spaces to it ("me" stays "me", not "ME").
 
 The text is data (plan 0.1 principle 8): it is sent to the core as Clayton's question and
 nothing else; this module only writes it down.
@@ -192,27 +195,47 @@ class Snapper:
                 if len(key := compact(form)) >= 2:
                     self.forms.setdefault(key, form)
 
+    def _match(self, tokens: Sequence[str], i: int) -> tuple[int, str] | None:
+        """The longest run starting at ``tokens[i]`` that is a glossary form: its length and
+        the run as written (punctuation around it kept)."""
+        for n in range(min(SNAP_WORDS, len(tokens) - i), 0, -1):
+            run = tokens[i : i + n]
+            # A spelt letter is a capital ("L U V"): a lower-case one ("a", "i") is a word,
+            # and a word never joins a run ("make a L V" is not "make AL V").
+            if n > 1 and any(
+                len(w := _edges(t)[1]) == 1 and w.isalpha() and not w.isupper()
+                for t in run
+            ):
+                continue
+            lead, word, trail = _edges(run[0])
+            if n > 1:
+                _, last, trail = _edges(run[-1])
+                word = " ".join([word, *run[1:-1], last])
+            form = self.forms.get(compact(word))
+            # One plain word changes only when the glossary writes it with more than
+            # letters and digits ("HSSG" is "HSS-G"): "me" stays "me", not "ME".
+            if form is None or (n == 1 and word.isalnum() and form.isalnum()):
+                continue
+            # "e.b.f." ends in its own dot, not a full stop
+            if "." in word and trail.startswith("."):
+                trail = trail[1:]
+            return n, f"{lead}{form}{trail}"
+        return None
+
     def __call__(self, text: str) -> str:
         tokens = text.split()
         out = []
         i = 0
         while i < len(tokens):
-            for n in range(min(SNAP_WORDS, len(tokens) - i), 0, -1):
-                lead, word, trail = _edges(tokens[i])
-                if n > 1:
-                    _, last, trail = _edges(tokens[i + n - 1])
-                    word = " ".join([word, *tokens[i + 1 : i + n - 1], last])
-                form = self.forms.get(compact(word))
-                # One plain word changes only when the glossary writes it with more than
-                # letters and digits ("HSSG" is "HSS-G"): "me" stays "me", not "ME".
-                if form is None or (n == 1 and word.isalnum() and form.isalnum()):
-                    continue
-                # "e.b.f." ends in its own dot, not a full stop
-                if "." in word and trail.startswith("."):
-                    trail = trail[1:]
-                out.append(f"{lead}{form}{trail}")
-                i += n
-                break
+            found = self._match(tokens, i)
+            # A run that a run starting one word later outlasts gives way to it: in
+            # "A L U V" the letters are "LuV", not "AL" (aluminium) and a stray "V".
+            if found is not None and (
+                (later := self._match(tokens, i + 1)) is None
+                or later[0] + 1 <= found[0]
+            ):
+                out.append(found[1])
+                i += found[0]
             else:
                 out.append(tokens[i])
                 i += 1
@@ -253,8 +276,6 @@ def _whisper_local(model: str, folder: Path) -> str | None:
     """The model's folder when it is in ``folder`` already (Hugging Face's cache layout)."""
     from faster_whisper.utils import download_model
 
-    if Path(model).is_absolute():  # a converted model's own folder
-        return model if Path(model).is_dir() else None
     repo, revision = WHISPER_REPOS.get(model, (model, None))
     try:
         found = download_model(
@@ -351,6 +372,7 @@ class WhisperBackend:
             vad_filter=True,
             without_timestamps=True,
             condition_on_previous_text=False,
+            temperature=0.0,
             hotwords=self.prompt or None,
         )
         return " ".join(s.text.strip() for s in segments)
@@ -381,7 +403,11 @@ class ParakeetBackend:
             providers=["CPUExecutionProvider"],
         )
         backend = cls(model)
-        backend.model.recognize(floats(bytes(2 * SAMPLE_RATE)), sample_rate=SAMPLE_RATE)
+        # Both halves of :meth:`raw` run once now, so a failure (the VAD is faster-whisper's,
+        # which imports CTranslate2) stops this engine at load, named, not every turn.
+        silence = floats(bytes(2 * SAMPLE_RATE))
+        _speech(silence)
+        backend.model.recognize(silence, sample_rate=SAMPLE_RATE)
         return backend
 
     def raw(self, pcm: bytes) -> str:

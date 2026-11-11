@@ -18,9 +18,9 @@ What is measured here: with your own voice and headset, GOS must resolve the rig
    - `GPU for Whisper: no, no CUDA GPU ...`: the NVIDIA driver isn't working (update it from NVIDIA's site), or this PC has no NVIDIA GPU. Without one, skip to step 4: GOS uses the CPU engine.
 3. **cuBLAS** (only if step 2 asked for it). NVIDIA publishes it as a Python wheel; this puts it in GOS_HOME, where GOS looks for it on Windows, and changes nothing else on the PC (no PATH edit, no installer):
    ```powershell
-   uv pip install --python 3.12 --target "$env:USERPROFILE\GregtecOS\models\cuda" nvidia-cublas-cu12
+   uv pip install --python 3.12 --target "$env:USERPROFILE\GregtecOS\models\cuda" nvidia-cublas-cu12==12.8.4.1 nvidia-cuda-nvrtc-cu12==12.8.93
    ```
-   About 900 MB (cuBLAS 12 and the NVRTC library it loads; NVIDIA's own files under NVIDIA's licence, so they are never in the repo or in a release). Run step 2 again: it must now say `GPU for Whisper: yes`. If you already have NVIDIA's CUDA Toolkit 12 installed, step 2 says yes without this.
+   The versions are pinned so this step gives the same files every time: CTranslate2 loads `cublas64_12.dll`, which any cuBLAS 12 provides, and 12.8.4.1 is the newest cuBLAS with a Windows wheel when this was written (NVIDIA's 12.9.3 has none). About 900 MB (cuBLAS 12 and the NVRTC library it loads; NVIDIA's own files under NVIDIA's licence, so they are never in the repo or in a release). Run step 2 again: it must now say `GPU for Whisper: yes`. If you already have NVIDIA's CUDA Toolkit 12 installed, step 2 says yes without this.
 4. **The engine GOS will use** (`[voice] stt_engine = "auto"`, the default):
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice stt

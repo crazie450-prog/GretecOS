@@ -136,6 +136,14 @@ def test_the_repo_glossary_leads_with_the_tiers_and_fits() -> None:
         ("Tell me about the clean room.", "Tell me about the cleanroom."),
         ("How do I make an M E controller?", "How do I make an ME controller?"),
         ("Is A E 2 installed?", "Is AE2 installed?"),
+        # the article is a word, never a spelt letter ("alu" is aluminium's alias)
+        ("How do I make a L U V machine hull?", "How do I make a LuV machine hull?"),
+        ("make a L U V machine hull", "make a LuV machine hull"),
+        ("make a L V motor", "make a LV motor"),
+        ("how do I make a l v motor", "how do I make a l v motor"),
+        ("i E B F", "i EBF"),
+        # a capital "A" may be a letter, but the longer run a word later wins
+        ("A L U V machine hull", "A LuV machine hull"),
         # one plain word is never changed, even when a glossary form is that word
         ("Tell me about it", "Tell me about it"),
         ("show me the recipes", "show me the recipes"),
@@ -157,6 +165,20 @@ def test_snapper_never_changes_letters(glossary: Glossary) -> None:
         text = " ".join(rng.choice(pool) for _ in range(rng.randint(1, 8)))
         snapped = snap(text)
         assert stt.compact(snapped) == stt.compact(text), text
+
+
+def test_snapper_keeps_word_boundaries(glossary: Glossary) -> None:
+    """Same letters is not enough ("a L U" and "alu" have them): every word that is a word
+    ("a", "i", "make") comes out as itself, never inside a joined form."""
+    snap = stt.Snapper(glossary)
+    rng = random.Random(53)
+    words = ["a", "i", "make", "the"]
+    pool = [*words, *"LUVEBFAS", "l", "v", "u", "2"]
+    for _ in range(1000):
+        tokens = [rng.choice(pool) for _ in range(rng.randint(1, 8))]
+        snapped = snap(" ".join(tokens)).split()
+        for word in words:
+            assert snapped.count(word) == tokens.count(word), tokens
 
 
 def test_snapper_prefers_the_term_over_an_alias_spelt_alike(tmp_path: Path) -> None:
@@ -474,3 +496,38 @@ def test_only_windows_looks_in_gos_home_for_cublas(
         str(folders[0]),
         "first",
     ]
+
+
+def test_parakeet_fails_at_load_when_its_vad_cant_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The VAD is faster-whisper's (it imports CTranslate2): when it can't run, Parakeet
+    doesn't load, rather than loading and then failing every turn (review L1)."""
+    recognized: list[object] = []
+
+    class Model:
+        def recognize(self, audio: object, sample_rate: int) -> str:
+            recognized.append(audio)
+            return ""
+
+    class Options:
+        intra_op_num_threads = inter_op_num_threads = 0
+
+    onnx_asr = types.SimpleNamespace(load_model=lambda *a, **k: Model())
+    onnxruntime = types.SimpleNamespace(SessionOptions=Options)
+    monkeypatch.setitem(sys.modules, "onnx_asr", onnx_asr)
+    monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
+    monkeypatch.setattr(stt, "parakeet_files", lambda folder, note: folder)
+    monkeypatch.setattr(stt, "floats", lambda pcm: pcm)
+
+    def broken(audio: object) -> object:
+        raise ImportError("ctranslate2 won't import")
+
+    monkeypatch.setattr(stt, "_speech", broken)
+    with pytest.raises(ImportError, match="ctranslate2"):
+        stt.ParakeetBackend.load(tmp_path, print)
+    assert recognized == []
+
+    monkeypatch.setattr(stt, "_speech", lambda audio: audio)
+    assert stt.ParakeetBackend.load(tmp_path, print).prompt == ""
+    assert len(recognized) == 1
