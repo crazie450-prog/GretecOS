@@ -249,7 +249,16 @@ export function App() {
     return <Pairing onPaired={() => setBoot((n) => n + 1)} />;
   }
   if (phase === "ready" && trustedSession && (wizard || gate === "wizard")) {
-    return <Setup onClose={closeWizard} onDone={() => setSetupInfo({ done: true, config_exists: true })} />;
+    // Finishing goes back to the dashboard, however the wizard was opened (gate, banner or #/setup).
+    return (
+      <Setup
+        onClose={closeWizard}
+        onDone={() => {
+          setSetupInfo({ done: true, config_exists: true });
+          closeWizard();
+        }}
+      />
+    );
   }
 
   const chips = stateChips({ phase, reachable, core });
