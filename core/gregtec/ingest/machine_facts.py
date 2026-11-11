@@ -42,6 +42,7 @@ names what the row can't model, without flagging the machine.
 from __future__ import annotations
 
 import ast
+import functools
 import math
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -77,6 +78,9 @@ class Variable:
 
     kind: str  # one of KINDS
     doc: str
+    # A build input's documented "absent" value that still runs the machine: the worst case
+    # the planner sizes with when the player gives none (D111, D177 (6)); None: no such value.
+    worst: float | None = None
 
 
 # build: how the machine is built and equipped (hatches, coils, casings, parts in the controller
@@ -175,6 +179,7 @@ VARIABLES: dict[str, Variable] = {
     "singularity": Variable(
         "build",
         "1 with L.A.T.E.X.'s rubber singularity in the controller (hasSingularity), else 0",
+        worst=0.0,
     ),
     "nanites": Variable(
         "build", "PCB Factory: nanites in the nanite bus (numberOfNanites)"
@@ -466,6 +471,9 @@ def _walk(node: ast.AST, env: Mapping[str, float] | None) -> float:
     raise ValueError(f"not allowed in a formula: {ast.dump(node)[:60]}")
 
 
+# Cached: the planner (WO-3.2) evaluates the same few hundred formulas for every recipe. The
+# tree is only read, never changed.
+@functools.lru_cache(maxsize=4096)
 def _parse(text: str) -> ast.Expression:
     try:
         return ast.parse(text.strip(), mode="eval")
@@ -479,9 +487,14 @@ def check_formula(text: str) -> None:
 
 
 def variables(text: str) -> set[str]:
-    return {n.id for n in ast.walk(_parse(text)) if isinstance(n, ast.Name)} - set(
-        FUNCTIONS
-    )
+    return set(_variables(text))
+
+
+@functools.lru_cache(maxsize=4096)
+def _variables(text: str) -> frozenset[str]:
+    return frozenset(
+        n.id for n in ast.walk(_parse(text)) if isinstance(n, ast.Name)
+    ) - frozenset(FUNCTIONS)
 
 
 def evaluate(text: str, env: Mapping[str, float]) -> float:

@@ -426,6 +426,20 @@ async def push_state(core: "Core") -> None:
         log.exception("state push failed")
 
 
+def _steady(state: dict[str, Any]) -> dict[str, Any]:
+    """What a push is about: the state without its clocks (``ts`` and every ``uptime_s``, which
+    change each second on their own and ride along with the next push or heartbeat)."""
+
+    def strip(value: object) -> object:
+        if isinstance(value, dict):
+            return {k: strip(v) for k, v in value.items() if k != "uptime_s"}
+        if isinstance(value, list):
+            return [strip(v) for v in value]
+        return value
+
+    return {k: strip(v) for k, v in state.items() if k != "ts"}
+
+
 async def tick(core: "Core") -> None:
     """Once a second from the core's watcher: refresh what is due, push the state on change."""
     board = board_of(core)
@@ -440,9 +454,7 @@ async def tick(core: "Core") -> None:
         board.next_data = now + DATA_EVERY_S
         await asyncio.to_thread(board.refresh_data)
     variants = await asyncio.to_thread(snapshots, core)
-    signature = json.dumps(
-        {k: v for k, v in variants[True].items() if k != "ts"}, sort_keys=True
-    )
+    signature = json.dumps(_steady(variants[True]), sort_keys=True)
     if signature != board.signature or now - board.last_push >= HEARTBEAT_S:
         board.signature, board.last_push = signature, now
         _send(core, variants)
