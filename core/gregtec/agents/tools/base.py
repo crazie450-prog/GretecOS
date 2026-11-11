@@ -55,8 +55,10 @@ def base_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         for s in snap["stock"]
     ]
     notes = [
-        "machine count 0: Clayton said he has none (a manual 0 outranks placement events and "
-        "the census)",
+        (
+            "machine count 0: Clayton said he has none (a manual 0 outranks placement events "
+            "and the census)"
+        ),
         "stock is manual (D63): an item not listed is assumed not stocked",
         "accepted lines: none yet (plans are accepted from WO-3.7)",
     ]

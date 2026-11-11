@@ -76,7 +76,6 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.api import ai_routes, dashboard
-from gregtec.base import routes as base_routes
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -87,6 +86,7 @@ from gregtec.api.security import (
     PairingError,
     Principal,
 )
+from gregtec.base import routes as base_routes
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
