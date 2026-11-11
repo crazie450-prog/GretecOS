@@ -63,6 +63,7 @@ CONDITIONS = (
     ("game", 6.0),
 )
 NOISES = ("game", "clicks", "hum", "babble", "pink")
+MISSES_SHOWN = 8  # per phrase in the report (a phrase that fails would list all 40)
 LEAD_S, GAP_S, TAIL_S = (
     0.6,
     0.35,
@@ -477,8 +478,10 @@ def report(scores: Sequence[Score], out: TextIO, *, second_stage: bool) -> None:
     for s in scores:
         for label in s.offenders:
             print(f"  false wake, {s.phrase!r}: {label}", file=out)
-        for label in s.misses:
+        for label in s.misses[:MISSES_SHOWN]:
             print(f"  missed, {s.phrase!r}: {label}", file=out)
+        if len(s.misses) > MISSES_SHOWN:
+            print(f"  ... and {len(s.misses) - MISSES_SHOWN} more missed", file=out)
 
 
 def write_tsv(scores: Sequence[Score], path: Path, *, second_stage: bool) -> None:

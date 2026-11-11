@@ -140,6 +140,12 @@ def test_report_and_tsv(tmp_path: Path) -> None:
     assert "hey archivist" in text and "38/40" in text and "250 ms" in text
     assert "false wake, 'hey archivist': am_adam: hey, archive this" in text
     assert "missed, 'hey archivist': bm_george x1.3 game 6 dB" in text
+    s.misses = [f"m{i}" for i in range(12)]
+    out = io.StringIO()
+    wake_eval.report([s], out, second_stage=False)
+    assert "missed, 'hey archivist': m7" in out.getvalue()
+    assert "m8" not in out.getvalue() and "... and 4 more missed" in out.getvalue()
+    assert "stage 1 only" in out.getvalue()
     path = tmp_path / "r" / "wake.tsv"
     wake_eval.write_tsv([s], path, second_stage=True)
     with open(path, encoding="utf-8", newline="") as f:

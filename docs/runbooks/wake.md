@@ -25,7 +25,7 @@ What is measured here (plan 8, WO-5.4): with Discord's open mic and GTNH running
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice test --save "$env:USERPROFILE\GregtecOS\data\evals\wake\wake"
    ```
-   Press and hold the talk key, wait half a second, say the attempt, wait half a second, release. Do it 40 times with varied questions and the way you really talk (some quick, some tired, some over game noise). Ctrl+C when done. Keep a slip of the key: it is an attempt like any other.
+   Press and hold the talk key, wait half a second, say the attempt, wait half a second, release. Do it 40 times with varied questions and the way you really talk (some quick, some tired, some over game noise). Ctrl+C when done; do all 40 in one run (a new run numbers its files from `segment-1.wav` again and overwrites them). Keep a slip of the key: it is an attempt like any other.
 4. These are your voice: they stay in `%USERPROFILE%\GregtecOS\data\evals\wake\` and are never committed or sent anywhere.
 
 ## C. Record 2 hours of open-mic play
