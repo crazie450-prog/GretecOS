@@ -1387,8 +1387,15 @@ stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D18
 tts = "kokoro"                # | piper | elevenlabs (D203); gos voice tts-bench picks (D204)
 tts_device = "cpu"            # | gpu (ONNX Runtime CUDA or DirectML, D203)
 tts_voice = ""                # "" = the engine's default (D203)
-output_endpoint = "Chat"      # Arctis Nova Elite (D56); no single match: the default device (D205)
+output_endpoint = "Chat"      # Arctis Nova Elite (D56); a part of a device name; no single match: the default device (D205)
+input_device = ""             # "" = Windows' default microphone, else a part of its name (D181, D168)
 discord_auto_mute = false     # D58
+# The setup wizard (WO-2.9, D167-D169) writes [paths], and [voice] input_device, output_endpoint,
+# talk_key, talk_mode and wake_phrase, keeping every other line and comment.
+
+[setup]
+completed_utc = "2026-11-11T10:00:00+00:00"   # written by the wizard's Finish (D167); absent = not finished
+former_plays = ["C:/Games/PrismLauncher/instances/GTNH-Play"]  # every folder that was Play, kept by the wizard with config/former_plays.txt; never Export or Lab (D223)
 
 [persona]
 default = "gt-veteran"        # D60

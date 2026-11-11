@@ -225,7 +225,8 @@ def _update(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     if u.finished():
         print("\n".join(playbook.status_lines(u)), file=out)
         return 0
-    return playbook.walk(playbook.Ctx(cfg, out), u)
+    path = args.config or config.default_path()
+    return playbook.walk(playbook.Ctx(cfg, out, config_path=path), u)
 
 
 def _diff(cfg: config.Config, refs: list[str], out: TextIO) -> int:

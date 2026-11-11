@@ -306,6 +306,7 @@ class Ctx:
     sleep: Callable[[float], None] = time.sleep
     poll_s: float = playhooks.POLL_S
     now: Callable[[], float] = time.time
+    config_path: Path | None = None  # the gos.toml cfg came from (playhooks.run_export)
 
     @property
     def home(self) -> Path:
@@ -826,6 +827,7 @@ def step_play_export(ctx: Ctx, u: Update) -> Outcome:
         clock=ctx.clock,
         sleep=ctx.sleep,
         poll_s=ctx.poll_s,
+        config_path=ctx.config_path,
     )
     last = fingerprint.last_export(ctx.home)
     if code != 0 or last is None:

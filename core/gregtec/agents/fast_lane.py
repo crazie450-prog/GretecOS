@@ -299,6 +299,15 @@ def _content(message: Message) -> list[dict[str, Any]]:
     return out
 
 
+def client_for(key: str) -> anthropic.Anthropic:
+    """The fast lane's Messages API client with ``key`` (also the setup wizard's key test)."""
+    return anthropic.Anthropic(
+        api_key=key,
+        timeout=anthropic.Timeout(TIMEOUT_S, connect=CONNECT_S),
+        max_retries=RETRIES,
+    )
+
+
 class FastLane:
     def __init__(
         self,
@@ -333,12 +342,7 @@ class FastLane:
         except keyring.errors.KeyringError as exc:
             log.warning("keyring unavailable", extra={"error": type(exc).__name__})
             return None
-        client = anthropic.Anthropic(
-            api_key=key,
-            timeout=anthropic.Timeout(TIMEOUT_S, connect=CONNECT_S),
-            max_retries=RETRIES,
-        )
-        return cls(client, registry, meter=meter, vault=vault)
+        return cls(client_for(key), registry, meter=meter, vault=vault)
 
     def _request(
         self, messages: list[dict[str, Any]], *, tools_off: bool

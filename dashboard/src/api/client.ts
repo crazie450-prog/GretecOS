@@ -14,6 +14,9 @@ import type {
   PersonaState,
   Reply,
   Session,
+  SetupCheck,
+  SetupDevices,
+  SetupState,
   Usage,
   Verify,
 } from "./types";
@@ -22,6 +25,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly body: unknown = null, // the refusal's JSON (the wizard's problems and checks)
   ) {
     super(message);
   }
@@ -47,7 +51,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!response.ok) {
     const why = (data as { error?: unknown } | null)?.error;
-    throw new ApiError(response.status, typeof why === "string" ? why : `HTTP ${response.status}`);
+    throw new ApiError(response.status, typeof why === "string" ? why : `HTTP ${response.status}`, data);
   }
   return data as T;
 }
@@ -78,6 +82,24 @@ export const api = {
     ),
   // The persona (WO-5.6): the same switch the Discord /persona command will call.
   persona: (id: string) => post<PersonaState & { persona: PersonaInfo }>("/api/persona", { id }),
+  // The setup wizard (WO-2.9): admin and paired devices only. A secret goes in and never comes back.
+  setup: () => get<SetupState>("/api/setup"),
+  setupDevices: () => get<SetupDevices>("/api/setup/devices"),
+  setupCheck: (step: string, values: Record<string, string>) =>
+    post<{ problems: Record<string, string>; checks: SetupCheck[]; blocked: boolean }>(
+      `/api/setup/steps/${encodeURIComponent(step)}/check`,
+      { values },
+    ),
+  setupSave: (step: string, values: Record<string, string>) =>
+    post<{ saved: string[]; checks: SetupCheck[] }>(`/api/setup/steps/${encodeURIComponent(step)}`, { values }),
+  setupSecret: (name: string, value: string) =>
+    post<{ name: string; stored: boolean; replaced: boolean }>(`/api/setup/secrets/${encodeURIComponent(name)}`, { value }),
+  setupSecretDelete: (name: string) =>
+    request<{ name: string; stored: boolean }>("DELETE", `/api/setup/secrets/${encodeURIComponent(name)}`),
+  setupSecretTest: (name: string) =>
+    post<{ name: string; ok: boolean; detail: string }>(`/api/setup/secrets/${encodeURIComponent(name)}/test`),
+  setupChecklist: () => post<{ checks: SetupCheck[] }>("/api/setup/checklist"),
+  setupFinish: () => post<{ done: boolean; completed_utc: string; checks: SetupCheck[] }>("/api/setup/finish"),
   pairStart: (name: string) => post<{ request_id: string; expires_in: number }>("/api/pair/start", { name }),
   pairComplete: (requestId: string, code: string) =>
     post<{ device_id: string; name: string }>("/api/pair/complete", { request_id: requestId, code }),

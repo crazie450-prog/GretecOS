@@ -36,11 +36,21 @@ def db_path(gos_home: Path) -> Path:
     return gos_home / DB_FILE
 
 
-def connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
-    """Open ``path`` (made if missing, unless ``readonly``) with the schema applied."""
+def connect(
+    path: Path, *, readonly: bool = False, immutable: bool = False
+) -> sqlite3.Connection:
+    """Open ``path`` (made if missing, unless ``readonly``) with the schema applied.
+
+    ``immutable`` (with ``readonly``): SQLite takes no lock and makes no -wal or -shm file, and
+    reads only the main file, so a write still in the WAL is not seen. For a probe that must
+    leave nothing behind (``gos doctor``'s GT pin, D223), never for a DB that is being written.
+    """
+    if immutable and not readonly:
+        raise ValueError("immutable is read only")
     if readonly:
+        mode = "mode=ro&immutable=1" if immutable else "mode=ro"
         conn = sqlite3.connect(
-            f"{path.resolve().as_uri()}?mode=ro", uri=True, isolation_level=None
+            f"{path.resolve().as_uri()}?{mode}", uri=True, isolation_level=None
         )
     else:
         conn = sqlite3.connect(path, isolation_level=None, timeout=30)

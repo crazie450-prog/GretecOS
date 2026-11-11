@@ -951,7 +951,13 @@ def _export(args: argparse.Namespace) -> int:
         return 2
     if args.export_command == "run":
         notify = playhooks.notify_dialog if args.notify else None
-        return playhooks.run_export(cfg, sys.stdout, notify=notify, ticket=args.ticket)
+        return playhooks.run_export(
+            cfg,
+            sys.stdout,
+            notify=notify,
+            ticket=args.ticket,
+            config_path=args.config or config.default_path(),
+        )
     refs = args.runs
     if len(refs) not in (0, 2):
         print(
@@ -1037,7 +1043,7 @@ def _key(command: str, name: str | None) -> int:
     if not value:
         print("Nothing entered; nothing stored.", file=sys.stderr)
         return 1
-    if name == keys.ANTHROPIC and (problem := keys.anthropic_key_problem(value)):
+    if problem := keys.secret_problem(name, value):
         print(f"Not stored: {problem}.", file=sys.stderr)
         return 1
     replaced = keys.set_key(name, value)
