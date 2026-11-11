@@ -16,7 +16,7 @@ Saved settings take effect at GOS's next start (log in again, or `gos stop` then
 
 The dashboard opens on the wizard alone only on a first run (no gos.toml yet). An install whose gos.toml has no `[setup]` table (one from before this wizard) shows a "Setup isn't finished" banner with **Open setup** and **Dismiss** instead; the wizard then has a **Later** button.
 
-The wizard never moves Play: once gos.toml names Play, changing the Play instance or the instances folder is refused ("edit gos.toml by hand"), and Export or Lab can never be Play's folder.
+The wizard never moves Play: once gos.toml names Play, changing the Play instance or the instances folder is refused ("edit gos.toml by hand"), and Export or Lab can never be Play's folder. GOS_HOME and GOS_APP can never be inside Play or hold it, and a check never writes a file in Play (the GOS_HOME write probe is skipped there; the row is an error).
 
 ## Clayton's PC steps (deployment test)
 
