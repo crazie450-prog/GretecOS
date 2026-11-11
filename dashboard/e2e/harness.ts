@@ -85,6 +85,28 @@ export async function holdInstanceLock(reason: string): Promise<() => Promise<vo
   };
 }
 
+/** Simulated credit use (WO-2.8): one `llm_usage` row of `usd`, written the way the lanes' meter
+ * writes it, into the harness core's DB; the core's watcher reads the cycle every second. */
+export async function spend(usd: number): Promise<void> {
+  const code = [
+    "import sys",
+    "from pathlib import Path",
+    "from gregtec.llm.prices import Usage",
+    "from gregtec.llm.usage import UsageMeter",
+    "from gregtec.store import Store",
+    "store = Store(Path(sys.argv[1]) / 'data' / 'gos.sqlite')",
+    "UsageMeter(store, 100.0, (80, 100)).record('fast', 'claude-haiku-5-5', Usage(), usd=float(sys.argv[2]), task='e2e')",
+    "store.close()",
+  ].join("\n");
+  const child = spawn("uv", ["run", "--quiet", "python", "-c", code, HOME, String(usd)], {
+    cwd: REPO,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  await new Promise<void>((resolve, reject) =>
+    child.on("exit", (status) => (status === 0 ? resolve() : reject(new Error(`spend exited ${status}`)))),
+  );
+}
+
 export async function pair(page: Page, name = "Monitor 2"): Promise<void> {
   await page.goto("/");
   await page.getByTestId("pair-name").fill(name);
