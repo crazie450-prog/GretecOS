@@ -1,0 +1,1053 @@
+"""The recipe graph builder (WO-3.3, plan §7.1 steps 1 and 2, D11, D12, D61, D63, D64, D142).
+
+**Step 1, resolve** (:func:`resolve_target`): the target text goes through the tool layer's
+resolver (``item_resolve``: FTS + glossary, WO-2.2) and, when it is ambiguous, comes back as one
+clarifying question naming the top three (WO-2.3's unsure-match logic), never a guess.
+
+**Step 2, build** (:func:`build`): backward from the target, breadth first, from one export run
+of the DB. Every node is identified by a stable key, so the same request on the same DB gives
+the same graph (:meth:`Graph.canonical`):
+
+- **item nodes** by their stable key: ``registry@meta[#nbt8]`` items, ``fluid:<name>`` fluids,
+  ``ore:<name>`` oredict slots (D142 (h)), ``registry@32767`` wildcard slots, and ``eu``, the EU
+  pseudo-item (each machine recipe consumes ``eut x duration`` EU per craft from it, for
+  WO-3.4's conservation rows; power comes from WO-4's lines);
+- **recipe nodes** by their citation key ``r:<map>/<sig12>``;
+- **edges** ``in`` (item -> recipe, per craft), ``out`` (recipe -> item, expected per craft:
+  amount x chance) and ``member`` (an oredict or wildcard member -> its slot node).
+
+Loops are kept (it is a graph, not a tree): :attr:`Graph.cycles` lists every strongly connected
+set of nodes.
+
+**Candidate recipes** for an item are those of the run that output it, ``enabled`` and not
+``fake`` (except GT's assembly-line recipes, which GT lists only in its fake NEI map: their
+research recipe must be at the tier cap, D189). A candidate is rejected, with its reason, when:
+it is above the tier cap or ``max_eut``; it is excluded (``r:``, an input's key, every machine by
+``mte:``); it is an NEI-only recipe in a GT category (D142 (1)) or of an NEI handler with no
+machine model; a fluid fills two of its input slots (GT counts those slot by slot, D191); or no
+machine can run it for the player (:mod:`.machines`, WO-3.2: owned or unlockable at the tier,
+``require_owned``, cleanroom, low gravity off, coil heat, addons off for ``base``, D12). The
+machine check sizes multiblocks with one and two plain energy hatches of the tier cap only: by
+D175 a recipe that runs at a tier runs at every higher one, so that is enough to decide. A
+machine with a badge (flagged, low confidence, custom, D142 (a)) still counts, and a recipe that
+only badged machines run carries the badge as a warning. Crafting-table and furnace recipes
+(NEI's) are kept, flagged ``manual``.
+
+**Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling last,
+D142 (2); then a change of form of the same GT material last, D189; then avoid chanced-only;
+lower tier; fewer inputs; base machine first; machine before manual; unbadged first; key) and
+the first :data:`TOP_N` valid ones are **chosen** and expanded; every candidate stays listed with
+its status for D61's swap and "show all". A pin (D61) or a chain template (:mod:`.chains`)
+replaces the heuristic's choice for its node. Expansion stops at boundary items: the request's
+``boundary``, My base stock and line outputs (D63), items no valid recipe makes (raw), catalysts
+(inputs a recipe doesn't use up: circuits, moulds, lenses) and depth :data:`MAX_DEPTH`.
+Oredict and wildcard slots expand to at most :data:`TOP_N` members (GregTech's own first).
+An item slot with alternatives but no oredict name, and a fluid slot with alternatives, are
+keyed by the stack GT shows (always accepted).
+
+No solving here (WO-3.4) and no game number made up: every number is the DB's.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from collections.abc import Iterable, Sequence
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+from typing import Literal
+
+from gregtec.agents import prefetch
+from gregtec.agents.tools import items as item_tools
+from gregtec.agents.tools.glossary import Glossary
+from gregtec.agents.tools.registry import Call, Env
+from gregtec.planner import chains, machines
+from gregtec.planner.gtmath.parallel import Supply
+from gregtec.planner.gtmath.processing import EnergyHatch
+from gregtec.planner.request import BaseInputs, Request, RequestError
+
+MAX_DEPTH = 12
+TOP_N = 4
+EU_KEY = "eu"
+WILDCARD = 32767
+FULL = 10000
+MANUAL_SOURCES = frozenset({"crafting", "furnace"})
+RESEARCH_MAPS = ("gt.recipe.researchStation", "gt.recipe.scanner")
+GREGTECH = "gregtech"
+
+NodeKind = Literal["item", "fluid", "ore", "wildcard", "eu"]
+Status = Literal["chosen", "pruned", "unchecked", "rejected"]
+
+
+class GraphError(RuntimeError):
+    """The graph can't be built for this request; the message says why."""
+
+
+# --- the graph -------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Port:
+    """One input or output of a recipe node, per craft."""
+
+    key: str
+    amount: int  # items, L, or EU (the eu port)
+    chance_bp: int = FULL
+    consumed: bool = True
+    circuit: int | None = None  # a programmed circuit's number (not consumed)
+
+    @property
+    def expected(self) -> float:
+        return self.amount * self.chance_bp / FULL
+
+
+@dataclass(frozen=True)
+class RecipeNode:
+    id: str  # r:<map>/<sig12>
+    map: str | None
+    source: str
+    eut: int | None
+    duration: int | None
+    tier: int  # GT voltage tier of the recipe (0 for manual recipes)
+    inputs: tuple[Port, ...]  # the eu port last
+    outputs: tuple[Port, ...]
+    machines: tuple[int, ...]  # mte ids that can run it, base before addon
+    base: bool  # a base-pack machine runs it (D12)
+    badges: tuple[str, ...]  # warnings every machine option carries (D142 (a))
+    flags: tuple[str, ...]  # manual, recycling, research, cleanroom, low_gravity
+    research: str | None = None  # the research recipe (assembly line)
+
+    def supplies(self, crafts: int) -> tuple[Supply, ...]:
+        """What gtmath's parallel helper needs held for ``crafts`` crafts: an item that fills
+        several slots merged into one supply (GT merges item inputs); an input that isn't used
+        up (a circuit) present once, ``Supply(0, 1)`` (``Supply(0, 0)`` would mean it is
+        missing and GT allows 0 crafts). The graph refuses recipes whose fluid fills several
+        slots (D191), so each fluid is one slot here."""
+        if crafts < 1:
+            raise ValueError("crafts must be at least 1")
+        held: dict[tuple[str, bool], int] = {}
+        for p in self.inputs:
+            if p.key == EU_KEY:
+                continue
+            fluid = p.key.startswith("fluid:")
+            k = (p.key, fluid)
+            held[k] = held.get(k, 0) + (p.amount if p.consumed else 0)
+        return tuple(
+            Supply(per_craft, per_craft * crafts if per_craft else 1, fluid)
+            for (key, fluid), per_craft in sorted(held.items())
+        )
+
+
+@dataclass(frozen=True)
+class Candidate:
+    recipe: str
+    status: Status
+    reason: str = ""  # why it was rejected or pruned
+
+
+@dataclass(frozen=True)
+class ItemNode:
+    id: str  # stable key
+    kind: NodeKind
+    name: str
+    depth: int  # recipe steps from the target
+    boundary: str | None  # request, stock, line, raw, catalyst, depth, eu, byproduct
+    candidates: tuple[
+        Candidate, ...
+    ] = ()  # every recipe making it, heuristic order (D61)
+    chosen: tuple[str, ...] = ()  # the recipes expanded
+    members: tuple[
+        str, ...
+    ] = ()  # ore and wildcard slots: their members, expanded first
+    pinned: bool = False
+    template: str | None = None  # the chain template that chose its recipes
+    branch: str | None = None  # the template's branch-point id
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Edge:
+    src: str
+    dst: str
+    kind: Literal["in", "out", "member"]
+    amount: float  # per craft (out: expected, amount x chance)
+
+
+@dataclass(frozen=True)
+class Graph:
+    request: str  # the request's digest
+    run_id: int
+    target: str
+    tier_cap: int
+    items: tuple[ItemNode, ...]
+    recipes: tuple[RecipeNode, ...]
+    edges: tuple[Edge, ...]
+    cycles: tuple[tuple[str, ...], ...]
+    primary: tuple[str, ...]  # items whose recipe choice is primary (§7.1 step 3)
+    templates: tuple[str, ...]  # chain templates used
+    warnings: tuple[str, ...]
+
+    def item(self, key: str) -> ItemNode:
+        return next(i for i in self.items if i.id == key)
+
+    def recipe(self, ref: str) -> RecipeNode:
+        return next(r for r in self.recipes if r.id == ref)
+
+    def canonical(self) -> str:
+        return json.dumps(
+            asdict(self), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+
+    def digest(self) -> str:
+        return hashlib.sha256(self.canonical().encode("utf-8")).hexdigest()
+
+
+# --- step 1: resolve -------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Resolved:
+    key: str
+    kind: str  # item or fluid
+    name: str
+
+
+def resolve_target(
+    conn: sqlite3.Connection,
+    text: str,
+    glossary: Glossary | None = None,
+    db: Path | None = None,
+) -> Resolved | prefetch.Clarify:
+    """The item or fluid ``text`` names (a machine means its item), or the one question to ask
+    (QA:D11) when it isn't clear. Raises GraphError when nothing matches."""
+    call = Call(conn, Env(db or Path(), glossary or Glossary()))
+    res = item_tools.resolve(call, text)
+    if not res.candidates:
+        raise GraphError(f"nothing in the DB is called {text!r}")
+    if res.ambiguous:
+        found = [
+            prefetch.Candidate(c.key, c.name, c.kind, c.mod or "")
+            for c in res.candidates
+        ]
+        names = prefetch.question_names(found)
+        return prefetch.Clarify(
+            text,
+            prefetch.question_for(text, found),
+            [prefetch._pick(found, n) for n in names],
+        )
+    target = item_tools.target(call, text)
+    if not isinstance(target, item_tools.Target):  # pragma: no cover - resolved above
+        raise GraphError(f"{text!r} is ambiguous")
+    return Resolved(target.key, target.kind, target.name)
+
+
+# --- reading the DB --------------------------------------------------------------------------
+
+_ITEM_KEY_SQL = (
+    "i.registry_name || '@' || i.meta || CASE WHEN i.nbt_hash != '' THEN '#' ||"
+    " substr(i.nbt_hash, 1, 8) ELSE '' END"
+)
+
+
+@dataclass(frozen=True)
+class _Info:
+    key: str
+    kind: NodeKind
+    name: str
+    mod: str
+    material: str | None
+
+
+@dataclass
+class _Recipe:
+    id: int
+    ref: str
+    map: str | None
+    source: str
+    category: str | None
+    eut: int | None
+    duration: int | None
+    amperage: int | None
+    tier: int
+    special: int | None
+    fake: bool
+    map_amperage: int
+    inputs: list[tuple[int, Port, int | None]] = field(
+        default_factory=list
+    )  # slot, port, ore
+    outputs: list[Port] = field(default_factory=list)
+    meta: dict[str, float | str] = field(default_factory=dict)
+
+
+class _Reader:
+    """Batch reads of one export run, cached for the build."""
+
+    def __init__(self, conn: sqlite3.Connection, run_id: int) -> None:
+        self.conn = conn
+        self.run = run_id
+        self.items: dict[int, _Info] = {}
+        self.fluids: dict[int, _Info] = {}
+        self.ores: dict[int, str] = {}
+        self.recipes: dict[int, _Recipe] = {}
+        self.ids: dict[str, tuple[list[int], list[int]]] = {}  # key -> item, fluid ids
+        self.makers: dict[
+            str, list[tuple[int, int, int]]
+        ] = {}  # key -> recipe, amount, chance
+        self.machines: dict[str, list[machines.MachineInfo]] = {}
+
+    def _rows(self, sql: str, ids: Iterable[int]) -> list[sqlite3.Row]:
+        return self.conn.execute(sql, (json.dumps(sorted(set(ids))),)).fetchall()
+
+    def load_items(self, ids: Iterable[int]) -> None:
+        want = [i for i in ids if i not in self.items]
+        if not want:
+            return
+        for r in self._rows(
+            f"SELECT i.id, {_ITEM_KEY_SQL} AS key, coalesce(i.name_en, '') AS name,"
+            " coalesce(i.mod_id, '') AS mod, i.gt_material FROM item AS i"
+            " WHERE i.id IN (SELECT value FROM json_each(?))",
+            want,
+        ):
+            info = _Info(r["key"], "item", item_tools.clean(r["name"]), r["mod"], r[4])
+            self.items[int(r["id"])] = info
+            self.ids.setdefault(info.key, ([], []))[0].append(int(r["id"]))
+
+    def load_fluids(self, ids: Iterable[int]) -> None:
+        want = [i for i in ids if i not in self.fluids]
+        if not want:
+            return
+        for r in self._rows(
+            "SELECT id, name, coalesce(name_en, '') FROM fluid"
+            " WHERE id IN (SELECT value FROM json_each(?))",
+            want,
+        ):
+            info = _Info(f"fluid:{r[1]}", "fluid", item_tools.clean(r[2]), "", None)
+            self.fluids[int(r[0])] = info
+            self.ids.setdefault(info.key, ([], []))[1].append(int(r[0]))
+
+    def key_ids(self, key: str) -> tuple[list[int], list[int]]:
+        """The DB ids of a stable key (an NBT key's prefix matches its full hash)."""
+        if key in self.ids:
+            return self.ids[key]
+        items, fluids = chains._item_ids(self.conn, key)
+        self.load_items(items)
+        self.load_fluids(fluids)
+        return self.ids.setdefault(key, ([], []))
+
+    def info(self, key: str) -> _Info | None:
+        items, fluids = self.key_ids(key)
+        if items:
+            return self.items[items[0]]
+        if fluids:
+            return self.fluids[fluids[0]]
+        return None
+
+    def load_makers(self, keys: Sequence[str]) -> None:
+        """The recipes that output each of ``keys`` (enabled; not fake but the assembly line)."""
+        keys = [k for k in keys if k not in self.makers]
+        if not keys:
+            return
+        item_of: dict[int, str] = {}
+        fluid_of: dict[int, str] = {}
+        for k in keys:
+            self.makers[k] = []
+            items, fluids = self.key_ids(k)
+            item_of.update({i: k for i in items})
+            fluid_of.update({f: k for f in fluids})
+        sql = (
+            "SELECT o.recipe_id, o.{col}, o.amount, o.chance_bp FROM recipe_output AS o"
+            " JOIN recipe AS r ON r.id = o.recipe_id"
+            " LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+            " WHERE o.{col} IN (SELECT value FROM json_each(?)) AND r.run_id = ?"
+            " AND r.enabled = 1 AND (coalesce(r.fake, 0) = 0 OR m.unloc_name = ?)"
+        )
+        found: set[int] = set()
+        for col, of in (("item_id", item_of), ("fluid_id", fluid_of)):
+            if not of:
+                continue
+            for r in self.conn.execute(
+                sql.format(col=col),
+                (json.dumps(sorted(of)), self.run, chains.ASSEMBLY_LINE_MAP),
+            ):
+                self.makers[of[int(r[1])]].append((int(r[0]), int(r[2]), int(r[3])))
+                found.add(int(r[0]))
+        self.load_recipes(found)
+
+    def load_recipes(self, ids: Iterable[int]) -> None:
+        want = [i for i in ids if i not in self.recipes]
+        if not want:
+            return
+        for r in self._rows(
+            "SELECT r.id, r.ref, m.unloc_name, r.source, r.category, r.eut, r.duration_ticks,"
+            " r.amperage, r.voltage_tier, r.special_value, r.fake, m.amperage"
+            " FROM recipe AS r LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+            " WHERE r.id IN (SELECT value FROM json_each(?))",
+            want,
+        ):
+            self.recipes[int(r[0])] = _Recipe(
+                id=int(r[0]),
+                ref=str(r[1]),
+                map=r[2],
+                source=str(r[3]),
+                category=r[4],
+                eut=r[5],
+                duration=r[6],
+                amperage=r[7],
+                tier=int(r[8] or 0),
+                special=r[9],
+                fake=bool(r[10]),
+                map_amperage=int(r[11]) if r[11] else 1,
+            )
+        slots = self._rows(
+            "SELECT recipe_id, slot, item_id, fluid_id, ore_id, amount, consumed, chance_bp,"
+            " circuit FROM recipe_input WHERE recipe_id IN (SELECT value FROM json_each(?))"
+            " ORDER BY recipe_id, slot",
+            want,
+        )
+        outs = self._rows(
+            "SELECT recipe_id, slot, item_id, fluid_id, amount, chance_bp FROM recipe_output"
+            " WHERE recipe_id IN (SELECT value FROM json_each(?)) ORDER BY recipe_id, slot",
+            want,
+        )
+        self.load_items([r["item_id"] for r in [*slots, *outs] if r["item_id"]])
+        self.load_fluids([r["fluid_id"] for r in [*slots, *outs] if r["fluid_id"]])
+        ores = {int(r["ore_id"]) for r in slots if r["ore_id"]} - set(self.ores)
+        for o in self._rows(
+            "SELECT id, name FROM ore WHERE id IN (SELECT value FROM json_each(?))",
+            ores,
+        ):
+            self.ores[int(o[0])] = str(o[1])
+        for s in slots:
+            rec = self.recipes[int(s["recipe_id"])]
+            ore = int(s["ore_id"]) if s["ore_id"] else None
+            key = self._slot_key(s["item_id"], s["fluid_id"], ore)
+            if key is None:
+                continue
+            rec.inputs.append(
+                (
+                    int(s["slot"]),
+                    Port(
+                        key,
+                        int(s["amount"]),
+                        int(s["chance_bp"]),
+                        bool(s["consumed"]),
+                        s["circuit"],
+                    ),
+                    ore,
+                )
+            )
+        for o in outs:
+            key = self._slot_key(o["item_id"], o["fluid_id"], None)
+            if key is not None:
+                self.recipes[int(o["recipe_id"])].outputs.append(
+                    Port(key, int(o["amount"]), int(o["chance_bp"]))
+                )
+        for m in self._rows(
+            "SELECT recipe_id, key, value_num, value_text FROM recipe_meta"
+            " WHERE recipe_id IN (SELECT value FROM json_each(?))"
+            " AND key IN ('cleanroom', 'low_gravity', 'coil_heat', 'fusion_threshold',"
+            " 'recycle')",
+            want,
+        ):
+            value = m[2] if m[2] is not None else m[3]
+            if value is not None:
+                self.recipes[int(m[0])].meta[str(m[1])] = value
+
+    def _slot_key(
+        self, item_id: int | None, fluid_id: int | None, ore: int | None
+    ) -> str | None:
+        if ore is not None:
+            return f"ore:{self.ores[ore]}"
+        if fluid_id is not None:
+            return self.fluids[int(fluid_id)].key
+        if item_id is not None:
+            return self.items[int(item_id)].key
+        return None
+
+    def research(self, key: str, cap: int) -> tuple[str | None, int | None]:
+        """The research recipe for an assembly-line output (fake scanner or research station
+        recipes that show the item): the lowest-tier one, and that tier."""
+        items, _ = self.key_ids(key)
+        if not items:
+            return None, None
+        row = self.conn.execute(
+            "SELECT r.ref, r.voltage_tier FROM recipe_output AS o"
+            " JOIN recipe AS r ON r.id = o.recipe_id"
+            " JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+            " WHERE o.item_id IN (SELECT value FROM json_each(?)) AND r.run_id = ?"
+            " AND m.unloc_name IN (?, ?) ORDER BY r.voltage_tier, r.ref LIMIT 1",
+            (json.dumps(items), self.run, *RESEARCH_MAPS),
+        ).fetchone()
+        return (str(row[0]), int(row[1] or 0)) if row else (None, None)
+
+    def members(self, key: str) -> list[str]:
+        """The members of an oredict (``ore:``) or wildcard (``@32767``) slot."""
+        if key.startswith("ore:"):
+            rows = self.conn.execute(
+                f"SELECT i.id, {_ITEM_KEY_SQL} FROM ore_member AS om JOIN ore AS o"
+                " ON o.id = om.ore_id JOIN item AS i ON i.id = om.item_id WHERE o.name = ?",
+                (key[4:],),
+            ).fetchall()
+        else:
+            reg = key.rpartition("@")[0]
+            rows = self.conn.execute(
+                f"SELECT i.id, {_ITEM_KEY_SQL} FROM item AS i"
+                " WHERE i.registry_name = ? AND i.meta != ?",
+                (reg, WILDCARD),
+            ).fetchall()
+        self.load_items(int(r[0]) for r in rows)
+        keys = {self.items[int(r[0])].key for r in rows}
+        keys.discard(key)
+        return sorted(
+            keys,
+            key=lambda k: (self.info(k).mod != GREGTECH, k),  # type: ignore[union-attr]
+        )
+
+    def machines_for(self, recipe_map: str) -> list[machines.MachineInfo]:
+        if recipe_map not in self.machines:
+            self.machines[recipe_map] = machines.load_machines(
+                self.conn, recipe_map, self.run
+            )
+        return self.machines[recipe_map]
+
+
+# --- candidates ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Check:
+    """A recipe's validity for this request (independent of which item asked)."""
+
+    ok: bool
+    reason: str = ""
+    node: RecipeNode | None = None
+    fitted: bool = False  # the machine check has run
+
+
+def heuristic(item: str, rec: RecipeNode) -> tuple[object, ...]:
+    """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
+    recycling last (D142 (2)); avoid chanced-only; lower tier; fewer inputs; base machine
+    first (D12); machine before manual; unbadged first (D142 (a)); then the key. The first
+    five are known before the machine check (:func:`_cheap`)."""
+    return (
+        *_cheap(item, rec),
+        not rec.base,
+        "manual" in rec.flags,
+        bool(rec.badges),
+        rec.id,
+    )
+
+
+def _cheap(item: str, rec: RecipeNode) -> tuple[object, ...]:
+    outs = [p for p in rec.outputs if p.key == item]
+    chanced_only = bool(outs) and all(p.chance_bp < FULL for p in outs)
+    consumed = {p.key for p in rec.inputs if p.consumed and p.key != EU_KEY}
+    return ("recycling" in rec.flags, chanced_only, rec.tier, len(consumed))
+
+
+class _Builder:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        request: Request,
+        base: BaseInputs,
+        templates: chains.Templates,
+        run_id: int,
+    ) -> None:
+        self.req = request
+        self.reader = _Reader(conn, run_id)
+        self.templates = templates
+        cap = request.tier_cap if request.tier_cap is not None else base.tier_cap()
+        self.cap = cap
+        owned = frozenset(m for m, n in base.owned_machines().items() if n > 0)
+        cons = request.constraints
+        layouts = (
+            ((EnergyHatch(cap),), (EnergyHatch(cap), EnergyHatch(cap)))
+            if cap >= 1
+            else ()
+        )
+        self.player = machines.Player(
+            tier=cap,
+            owned=owned,
+            require_owned=cons.require_owned,
+            coil_max=cons.coil_max,
+            cleanroom=cons.cleanroom,
+            addons=request.addons,
+            hatches=layouts,
+        )
+        self.excluded_recipes = cons.excluded_recipes()
+        self.excluded_keys = cons.excluded_keys()
+        self.excluded_mtes = cons.excluded_mtes()
+        self.boundary: dict[str, str] = {}
+        for k, v in sorted(base.line_outputs().items()):
+            if v > 0:
+                self.boundary[k] = "line"
+        for k, v in sorted(base.stock().items()):
+            if v > 0:
+                self.boundary[k] = "stock"
+        for k in request.boundary:
+            self.boundary[k] = "request"
+        self.checks: dict[int, _Check] = {}
+        self.fit: dict[
+            tuple[object, ...], tuple[list[machines.MachineOption], str]
+        ] = {}
+        self.warnings: list[str] = []
+
+    # one recipe -----------------------------------------------------------------------------
+
+    def _machine_fit(self, r: _Recipe) -> tuple[list[machines.MachineOption], str]:
+        assert r.map is not None and r.eut is not None and r.duration is not None
+        info = machines.RecipeInfo(
+            ref=r.ref,
+            map=r.map,
+            eut=r.eut,
+            duration=r.duration,
+            map_amperage=r.map_amperage,
+            special_value=r.special,
+            meta={k: v for k, v in r.meta.items() if k != "recycle"},
+        )
+        key = (
+            info.map,
+            info.eut,
+            info.duration,
+            info.map_amperage,
+            info.special_value,
+            tuple(sorted(info.meta.items())),
+        )
+        if key not in self.fit:
+            ms = [
+                m
+                for m in self.reader.machines_for(r.map)
+                if m.mte_id not in self.excluded_mtes
+            ]
+            sel = machines.choose(info, ms, self.player)
+            reasons = sorted({f"{x.name}: {x.reason}" for x in sel.rejected})
+            why = "; ".join(reasons[:3]) or f"no machine runs {r.map}"
+            self.fit[key] = (list(sel.options), why)
+        return self.fit[key]
+
+    def check(self, rid: int, machines_too: bool = True) -> _Check:
+        """Recipe ``rid``'s validity: the cheap checks, then (``machines_too``) the machines."""
+        c = self.checks.get(rid)
+        if c is None:
+            c = self.checks[rid] = self._check(self.reader.recipes[rid])
+        if not machines_too or not c.ok or c.node is None or c.fitted:
+            return c
+        c = self.checks[rid] = self._fit(self.reader.recipes[rid], c.node)
+        return c
+
+    def _check(self, r: _Recipe) -> _Check:
+        if r.ref in self.excluded_recipes:
+            return _Check(False, "excluded")
+        consumed = [p for _, p, _ in r.inputs if p.consumed]
+        for p in consumed:
+            if p.key in self.excluded_keys:
+                return _Check(False, f"uses excluded {p.key}")
+        fluids = [p.key for p in consumed if p.key.startswith("fluid:")]
+        dup = sorted({k for k in fluids if fluids.count(k) > 1})
+        if dup:
+            return _Check(
+                False,
+                f"{dup[0]} fills {fluids.count(dup[0])} input slots: GT counts them slot "
+                "by slot, which the planner doesn't model (D191)",
+            )
+        manual = r.source in MANUAL_SOURCES
+        if r.source == "nei" and not manual:
+            if r.map is not None:
+                return _Check(False, "NEI-only recipe in a GT category (D142 (1))")
+            return _Check(False, "NEI-only handler: no machine model")
+        flags: list[str] = []
+        if manual:
+            flags.append("manual")
+        elif r.map is None or r.eut is None or r.duration is None:
+            return _Check(False, "no recipe map, EU/t or duration")
+        elif r.eut <= 0:
+            # Fuels, the Eye of Harmony, the neutron activator...: the machine powers or
+            # times it its own way, which isn't modelled (D189; fuels are WO-4's).
+            return _Check(
+                False, "EU/t 0: its machine runs it its own way, not modelled"
+            )
+        if r.tier > self.cap:
+            return _Check(False, f"tier {r.tier} is above the cap {self.cap}")
+        cons = self.req.constraints
+        if cons.max_eut is not None and r.eut is not None and r.eut > cons.max_eut:
+            return _Check(False, f"{r.eut} EU/t is above max_eut {cons.max_eut}")
+        if r.meta.get("recycle") or (r.category or "").endswith("_recycling"):
+            flags.append("recycling")
+        research: str | None = None
+        if r.map == chains.ASSEMBLY_LINE_MAP:
+            made = sorted({p.key for p in r.outputs})
+            research, tier = (
+                self.reader.research(made[0], self.cap) if made else (None, None)
+            )
+            if research is None or tier is None:
+                return _Check(False, "assembly line: no research recipe for its output")
+            if tier > self.cap:
+                return _Check(False, f"assembly line: its research needs tier {tier}")
+            flags.append("research")
+        inputs = [p for _, p, _ in sorted(r.inputs, key=lambda x: x[0])]
+        if r.eut is not None and r.duration is not None and r.eut > 0:
+            inputs.append(Port(EU_KEY, r.eut * r.duration))
+        node = RecipeNode(
+            id=r.ref,
+            map=r.map,
+            source=r.source,
+            eut=r.eut,
+            duration=r.duration,
+            tier=r.tier,
+            inputs=tuple(inputs),
+            outputs=tuple(r.outputs),
+            machines=(),
+            base=True,
+            badges=(),
+            flags=tuple(sorted(flags)),
+            research=research,
+        )
+        return _Check(True, node=node, fitted=manual)
+
+    def _fit(self, r: _Recipe, node: RecipeNode) -> _Check:
+        """The machine check (WO-3.2's model) of a recipe that passed the cheap ones."""
+        options, why = self._machine_fit(r)
+        if not options:
+            return _Check(False, f"no machine: {why}", fitted=True)
+        common = set(options[0].badges)
+        needs = set(options[0].requires)
+        for o in options[1:]:
+            common &= set(o.badges)
+            needs &= set(o.requires)
+        return _Check(
+            True,
+            node=replace(
+                node,
+                machines=tuple(dict.fromkeys(o.mte_id for o in options)),
+                base=any(not o.addon for o in options),
+                badges=tuple(sorted(common)),
+                flags=tuple(sorted({*node.flags, *needs})),
+            ),
+            fitted=True,
+        )
+
+    # one item -------------------------------------------------------------------------------
+
+    def candidates(
+        self, key: str
+    ) -> tuple[list[RecipeNode], list[Candidate], list[Candidate]]:
+        """(valid recipes in heuristic order, unchecked, rejected) for ``key``. The machine
+        check runs in heuristic order, a group of equal cheap keys at a time, until
+        :data:`TOP_N` are valid, and always for the recipes a pin or a template names; the
+        rest are listed unchecked (D61's "show all" checks one when it is picked)."""
+        need = (
+            set(self.templates.choices[key].recipes)
+            if key in self.templates.choices
+            else set()
+        )
+        if (pin := self.req.pin_for(key)) is not None:
+            need.add(pin)
+        cheap: list[tuple[tuple[object, ...], int, RecipeNode]] = []
+        rejected: list[Candidate] = []
+        seen: set[int] = set()
+        for rid, _, _ in self.reader.makers.get(key, []):
+            if rid in seen:
+                continue
+            seen.add(rid)
+            c = self.check(rid, machines_too=False)
+            if c.ok and c.node is not None:
+                cheap.append((_cheap(key, c.node), rid, c.node))
+            else:
+                rejected.append(
+                    Candidate(self.reader.recipes[rid].ref, "rejected", c.reason)
+                )
+        cheap.sort(key=lambda x: (x[0], x[2].id))
+        valid: list[RecipeNode] = []
+        unchecked: list[Candidate] = []
+        group: tuple[object, ...] | None = None
+        for prefix, rid, node in cheap:
+            if len(valid) >= TOP_N and prefix != group and node.id not in need:
+                unchecked.append(Candidate(node.id, "unchecked", "below the top 4"))
+                continue
+            group = prefix if len(valid) < TOP_N else group
+            c = self.check(rid)
+            if c.ok and c.node is not None:
+                valid.append(c.node)
+            else:
+                rejected.append(Candidate(node.id, "rejected", c.reason))
+        valid.sort(key=lambda n: heuristic(key, n))
+        rejected.sort(key=lambda c: c.recipe)
+        return valid, unchecked, rejected
+
+    def choose(
+        self, key: str, valid: list[RecipeNode], rejected: list[Candidate]
+    ) -> tuple[list[str], bool, str | None, str | None, list[str]]:
+        """(chosen refs, pinned, template, branch, warnings)."""
+        refs = [n.id for n in valid]
+        pin = self.req.pin_for(key)
+        if pin is not None:
+            if pin not in refs:
+                why = next(
+                    (c.reason for c in rejected if c.recipe == pin),
+                    "it doesn't make this item",
+                )
+                raise RequestError(f"pin {pin} for {key}: not a candidate here ({why})")
+            return [pin], True, None, None, []
+        choice = self.templates.choices.get(key)
+        if choice is not None:
+            picked = [r for r in choice.recipes if r in refs]
+            warns = [
+                f"chain {choice.chain}: {r} for {key} is not a candidate here"
+                for r in choice.recipes
+                if r not in refs
+            ]
+            if picked:
+                return picked, False, choice.chain, choice.branch, warns
+            warns.append(
+                f"chain {choice.chain}: none of its recipes for {key} fit; heuristic used"
+            )
+            return refs[:TOP_N], False, None, None, warns
+        return refs[:TOP_N], False, None, None, []
+
+
+# --- step 2: build ---------------------------------------------------------------------------
+
+
+def _kind(key: str) -> NodeKind:
+    if key == EU_KEY:
+        return "eu"
+    if key.startswith("fluid:"):
+        return "fluid"
+    if key.startswith("ore:"):
+        return "ore"
+    if key.endswith(f"@{WILDCARD}"):
+        return "wildcard"
+    return "item"
+
+
+def build(
+    conn: sqlite3.Connection,
+    request: Request,
+    base: BaseInputs,
+    *,
+    templates: chains.Templates | None = None,
+    run_id: int | None = None,
+    max_depth: int = MAX_DEPTH,
+) -> Graph:
+    """The recipe graph for ``request`` (see the module docstring)."""
+    run = machines.current_run(conn) if run_id is None else run_id
+    b = _Builder(
+        conn,
+        request,
+        base,
+        chains.load() if templates is None else templates,
+        run,
+    )
+    reader = b.reader
+    if reader.info(request.target) is None:
+        raise GraphError(f"{request.target} is not in export run {run}")
+    nodes: dict[str, ItemNode] = {}
+    recipes: dict[str, RecipeNode] = {}
+    edges: set[Edge] = set()
+    depth_of: dict[str, int] = {request.target: 0}
+    catalysts: set[str] = set()
+    made_at: dict[str, int] = {}  # recipe -> the depth of the item it was chosen for
+    level = [request.target]
+    depth = 0
+    while level:
+        upcoming: set[str] = set()
+        pending = sorted(set(level))
+        reader.load_makers(
+            [
+                k
+                for k in pending
+                if _kind(k) in ("item", "fluid") and k not in b.boundary
+            ]
+        )
+        while pending:
+            same: set[str] = set()
+            for key in pending:
+                if key in nodes:
+                    continue
+                kind = _kind(key)
+                info = reader.info(key) if kind in ("item", "fluid") else None
+                name = info.name if info else key
+                if key in b.boundary:
+                    nodes[key] = ItemNode(key, kind, name, depth, b.boundary[key])
+                    continue
+                if kind == "eu":
+                    nodes[key] = ItemNode(key, kind, "EU", depth, "eu")
+                    continue
+                if kind in ("ore", "wildcard"):
+                    members = reader.members(key)
+                    for m in members[:TOP_N]:
+                        edges.add(Edge(m, key, "member", 1.0))
+                        if m not in nodes:
+                            depth_of.setdefault(m, depth)
+                            same.add(m)
+                    boundary = None if members else "raw"
+                    nodes[key] = ItemNode(
+                        key, kind, key[4:] if kind == "ore" else name, depth, boundary,
+                        members=tuple(members),
+                    )  # fmt: skip
+                    continue
+                if depth >= max_depth:
+                    nodes[key] = ItemNode(key, kind, name, depth, "depth")
+                    continue
+                reader.load_makers([key])
+                valid, unchecked, rejected = b.candidates(key)
+                if not valid:
+                    if request.pin_for(key) is not None:
+                        b.choose(
+                            key, valid, rejected
+                        )  # raises: the pin can't be honoured
+                    nodes[key] = ItemNode(
+                        key, kind, name, depth, "raw", candidates=tuple(rejected)
+                    )
+                    continue
+                chosen, pinned, template, branch, warns = b.choose(key, valid, rejected)
+                status = {
+                    n.id: ("chosen" if n.id in chosen else "pruned") for n in valid
+                }
+                cands = (
+                    tuple(
+                        Candidate(
+                            n.id,
+                            status[n.id],  # type: ignore[arg-type]
+                            ""
+                            if status[n.id] == "chosen"
+                            else _pruned_reason(pinned, template),
+                        )
+                        for n in valid
+                    )
+                    + tuple(unchecked)
+                    + tuple(rejected)
+                )
+                nodes[key] = ItemNode(
+                    key, kind, name, depth, None, cands, tuple(chosen), (), pinned,
+                    template, branch, tuple(warns),
+                )  # fmt: skip
+                for ref in chosen:
+                    rec = next(n for n in valid if n.id == ref)
+                    recipes[ref] = rec
+                    made_at.setdefault(ref, depth)
+                    for p in rec.inputs:
+                        edges.add(Edge(p.key, ref, "in", float(p.amount)))
+                        if not p.consumed:
+                            catalysts.add(p.key)
+                            continue
+                        if p.key not in nodes and p.key not in depth_of:
+                            depth_of[p.key] = depth + 1
+                            upcoming.add(p.key)
+                    for p in rec.outputs:
+                        edges.add(Edge(ref, p.key, "out", p.expected))
+            pending = sorted(same - set(nodes))
+        level = sorted(upcoming - set(nodes))
+        depth += 1
+    # Catalysts and byproducts that nothing asked to make: listed, not expanded.
+    for key in sorted(catalysts - set(nodes)):
+        info = reader.info(key) if _kind(key) in ("item", "fluid") else None
+        nodes[key] = ItemNode(
+            key,
+            _kind(key),
+            info.name if info else key,
+            depth_of.get(key, 0),
+            "catalyst",
+        )
+    for e in sorted(edges, key=lambda e: (e.src, e.dst, e.kind)):
+        if e.kind == "out" and e.dst not in nodes:
+            info = reader.info(e.dst)
+            nodes[e.dst] = ItemNode(
+                e.dst, _kind(e.dst), info.name if info else e.dst, made_at[e.src],
+                "byproduct",
+            )  # fmt: skip
+    for p in request.pins:
+        if p.node not in nodes:
+            b.warnings.append(
+                f"pin {p.recipe} for {p.node}: that node isn't in the graph"
+            )
+    items = tuple(nodes[k] for k in sorted(nodes))
+    used = sorted({n.template for n in items if n.template})
+    primary = {request.target}
+    for ref in nodes[request.target].chosen:
+        primary.update(
+            p.key for p in recipes[ref].inputs if p.consumed and p.key != EU_KEY
+        )
+    primary.update(n.id for n in items if n.branch)
+    primary &= {n.id for n in items if n.chosen}
+    warnings = list(b.warnings)
+    for n in items:
+        warnings.extend(n.warnings)
+    for r in sorted(recipes.values(), key=lambda r: r.id):
+        if r.badges:
+            warnings.append(f"{r.id}: every machine for it is {', '.join(r.badges)}")
+    ordered_edges = tuple(sorted(edges, key=lambda e: (e.src, e.dst, e.kind, e.amount)))
+    return Graph(
+        request=request.digest(),
+        run_id=run,
+        target=request.target,
+        tier_cap=b.cap,
+        items=items,
+        recipes=tuple(recipes[k] for k in sorted(recipes)),
+        edges=ordered_edges,
+        cycles=cycles(ordered_edges),
+        primary=tuple(sorted(primary)),
+        templates=tuple(used),
+        warnings=tuple(warnings),
+    )
+
+
+def _pruned_reason(pinned: bool, template: str | None) -> str:
+    if pinned:
+        return "pinned to another recipe"
+    if template:
+        return f"chain template {template} chose others"
+    return f"below the top {TOP_N}"
+
+
+def cycles(edges: Sequence[Edge]) -> tuple[tuple[str, ...], ...]:
+    """Every strongly connected set of two or more nodes (loops), each sorted, in order
+    (Tarjan's algorithm, iterative)."""
+    succ: dict[str, list[str]] = {}
+    for e in edges:
+        succ.setdefault(e.src, []).append(e.dst)
+        succ.setdefault(e.dst, [])
+    for v in succ.values():
+        v.sort()
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on: set[str] = set()
+    stack: list[str] = []
+    out: list[tuple[str, ...]] = []
+    counter = 0
+    for root in sorted(succ):
+        if root in index:
+            continue
+        work: list[tuple[str, int]] = [(root, 0)]
+        while work:
+            v, i = work.pop()
+            if i == 0:
+                index[v] = low[v] = counter
+                counter += 1
+                stack.append(v)
+                on.add(v)
+            nexts = succ[v]
+            if i < len(nexts):
+                work.append((v, i + 1))
+                w = nexts[i]
+                if w not in index:
+                    work.append((w, 0))
+                elif w in on:
+                    low[v] = min(low[v], index[w])
+                continue
+            if low[v] == index[v]:
+                comp = []
+                while True:
+                    w = stack.pop()
+                    on.discard(w)
+                    comp.append(w)
+                    if w == v:
+                        break
+                if len(comp) > 1:
+                    out.append(tuple(sorted(comp)))
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[v])
+    return tuple(sorted(out))
