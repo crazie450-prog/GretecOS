@@ -1,0 +1,97 @@
+"""WO-5.1: gos.toml's [voice] keys (Appendix C; D180, D181)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from gregtec_voice import settings
+from gregtec_voice.settings import SettingsError, VoiceSettings
+
+
+def write(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "gos.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_defaults_follow_appendix_c(tmp_path: Path) -> None:
+    cfg, voice = settings.load(
+        write(tmp_path, f'[paths]\ngos_home = "{tmp_path.as_posix()}"\n')
+    )
+    assert cfg.gos_home == tmp_path
+    assert voice == VoiceSettings()
+    assert (voice.primary_trigger, voice.backup_trigger, voice.talk_mode) == (
+        "wake",
+        "key",
+        "hold",
+    )
+    assert [k.label for k in voice.all_keys().values()] == ["F13", "F14", "F15", "F16"]
+    assert voice.key_trigger and voice.wake_trigger
+    assert voice.input_device == ""
+
+
+def test_voice_keys_are_read(tmp_path: Path) -> None:
+    _, voice = settings.load(
+        write(
+            tmp_path,
+            """
+[voice]
+primary_trigger = "key"
+backup_trigger = "none"
+talk_key = "Scroll Lock"
+talk_mode = "toggle"
+confirm_key = "F20"
+cancel_key = "F21"
+next_card_key = "Pause"
+input_device = " Arctis Nova Elite "
+wake_phrase = "TBD (PM08)"   # WO-5.4's key: ignored here
+stt_model = "large-v3-turbo"
+""",
+        )
+    )
+    assert voice.talk_key.name == "scroll_lock" and voice.talk_mode == "toggle"
+    assert [k.name for k in voice.hotkeys().values()] == ["f20", "f21", "pause"]
+    assert voice.key_trigger and not voice.wake_trigger
+    assert voice.input_device == "Arctis Nova Elite"
+
+
+@pytest.mark.parametrize(
+    ("toml", "problem"),
+    [
+        ('primary_trigger = "voice"', "primary_trigger must be one of wake, key"),
+        ('backup_trigger = "wake"', "backup_trigger must differ from primary_trigger"),
+        ('talk_mode = "push"', "talk_mode must be one of hold, toggle"),
+        ('talk_key = "mouse5"', "talk_key: 'mouse5': it is a mouse button"),
+        ('talk_key = "TBD (unbound in GTNH and Discord)"', "talk_key: 'TBD"),
+        ("talk_key = 13", 'talk_key must be a key name, e.g. "F13"'),
+        (
+            'confirm_key = "F13"',
+            "talk and confirm are both F13: each needs its own key",
+        ),
+        ("input_device = 3", "input_device must be a string"),
+    ],
+)
+def test_bad_voice_keys_are_refused(tmp_path: Path, toml: str, problem: str) -> None:
+    with pytest.raises(SettingsError, match=problem.replace("(", r"\(")):
+        settings.load(write(tmp_path, f"[voice]\n{toml}\n"))
+
+
+def test_every_problem_is_listed_at_once(tmp_path: Path) -> None:
+    with pytest.raises(SettingsError) as raised:
+        settings.load(write(tmp_path, '[voice]\ntalk_mode = "x"\ncancel_key = "a"\n'))
+    assert "talk_mode" in str(raised.value) and "cancel_key" in str(raised.value)
+
+
+def test_voice_must_be_a_table(tmp_path: Path) -> None:
+    with pytest.raises(SettingsError, match=r"\[voice\] must be a table"):
+        settings.load(write(tmp_path, 'voice = "on"\n'))
+
+
+def test_no_config_file_means_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOS_HOME", str(tmp_path / "nowhere"))
+    cfg, voice = settings.load(None)
+    assert cfg.gos_home == tmp_path / "nowhere" and voice == VoiceSettings()

@@ -5,7 +5,9 @@ from their sources; nothing copied):
 
   * component: list (a table that is also its own iterator), type, methods, invoke, proxy,
     isAvailable, getPrimary and component.<type>. A missing block raises "no such component", a
-    missing method "no such method", as OC does.
+    missing method "no such method" and a bad argument its message, as OC does (dev.raise). A
+    method whose Java side threw anything else doesn't raise: OC's architecture hands the call
+    nil plus the exception's message, or "unknown error" when it has none (dev.fail).
   * Time: a virtual clock behind computer.uptime(). A non-direct component call costs one server
     tick (0.05 s), a direct call none. event.pull and os.sleep move the clock. Device changes
     happen at scheduled times (setWorkAllowed on the next tick, an AE2 job finishing, an HTTP
@@ -21,8 +23,8 @@ from their sources; nothing copied):
     drive in w.mounts (the boot drive at /, /tmp the RAM disk).
   * internet: OpenOS's library over a fake internet card: request() returns a handle whose
     finishConnect/read are non-direct and response/close direct, read returns "" until data is
-    there and nil at the end, at most 4 connections may be open, and failures raise the IOException
-    text OC would.
+    there and nil at the end, at most 4 connections may be open, and failures return nil plus the
+    IOException text, as OC's architecture does for a callback exception with a message.
   * A yield watchdog: 5 million Lua instructions without the clock moving raise "too long without
     yielding", as OC kills a computer that never yields.
 
@@ -319,17 +321,24 @@ function World:invoke(addr, method, ...)
       error("no such component", 0)
     end
   end
-  if dev.raise and dev.raise[method] then
-    local msg = dev.raise[method]
+  -- dev.raise[method] / dev.fail[method]: a message (every call) or a list (one call each).
+  local function injected(set)
+    local msg = set and set[method]
     if type(msg) == "table" then
       msg = table.remove(msg, 1)
-      if #dev.raise[method] == 0 then
-        dev.raise[method] = nil
+      if #set[method] == 0 then
+        set[method] = nil
       end
     end
-    if msg then
-      error(msg, 0)
-    end
+    return msg
+  end
+  local msg = injected(dev.raise)
+  if msg then
+    error(msg, 0) -- a Lua error: OC raises for bad arguments (IllegalArgumentException)
+  end
+  msg = injected(dev.fail)
+  if msg then
+    return nil, msg -- any other Java exception: nil, reason
   end
   return m.fn(dev, ...)
 end
@@ -350,7 +359,13 @@ function World:value(vtype, methods)
 end
 
 local function device(w, dtype, opts)
-  return { addr = opts.addr or F.addr(opts.prefix), type = dtype, methods = {}, raise = opts.raise or {} }
+  return {
+    addr = opts.addr or F.addr(opts.prefix),
+    type = dtype,
+    methods = {},
+    raise = opts.raise or {},
+    fail = opts.fail or {},
+  }
 end
 
 local function direct(fn)
@@ -721,8 +736,10 @@ function F.plain(w, dtype, opts)
 end
 
 -- The internet card. w.server(req, w) decides each answer; its fields:
---   fail = "IOException text"  finishConnect (and read) raise it, as for a refused connection,
---                               a filtered address ("address is not allowed") or a non-2xx code
+--   fail = "IOException text"  finishConnect (and read) return nil and it, as for a refused
+--                               connection, a filtered address ("address is not allowed") or a
+--                               code of 400 or more
+--   lost_after = n              the connection is lost after n chunks were read (a world reload)
 --   code, message               response() (default 200, "OK")
 --   body                        the reply text
 --   pieces = {n, ...}           split the body into pieces of these sizes as they arrive
@@ -783,13 +800,13 @@ function F.internet_card(w, opts)
     local v = w:value("request", {
       finishConnect = nondirect(function()
         if not s.open[h] then
-          error("connection lost", 0)
+          return nil, "connection lost"
         end
         if not ready() then
           return false
         end
         if spec.fail then
-          error(spec.fail, 0)
+          return nil, spec.fail
         end
         return true
       end),
@@ -800,8 +817,8 @@ function F.internet_card(w, opts)
         return spec.code or 200, spec.message or "OK", {}
       end),
       read = nondirect(function(n)
-        if not s.open[h] then
-          error("connection lost", 0)
+        if not s.open[h] or (spec.lost_after and (req.reads or 0) >= spec.lost_after) then
+          return nil, "connection lost"
         end
         n = math.min(2048, math.max(0, n or math.huge))
         req.max_read = math.max(req.max_read or 0, n)
@@ -809,7 +826,7 @@ function F.internet_card(w, opts)
           return ""
         end
         if spec.fail then
-          error(spec.fail, 0)
+          return nil, spec.fail
         end
         if spec.stall_read then
           return ""

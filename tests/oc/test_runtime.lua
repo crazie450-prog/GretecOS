@@ -77,19 +77,23 @@ end)
 
 test("errors inside a cycle never stop it", function()
   local w = T.base()
-  w.ebf.raise.isMachineActive = "java.lang.NullPointerException"
+  -- A Java exception without a message (a NullPointerException) is nil, "unknown error" in OC.
+  w.ebf.fail.isMachineActive = "unknown error"
   w.lsc.raise.getStoredEUString = "not enough memory"
   w.me.raise.getCpus = { "boom", "boom" }
   local M, st = T.agent(w)
   T.run_until(M, st, w, 61)
   T.ok(w.nrequests >= 11, "kept sending")
-  local wheres = {}
+  local wheres, msgs = {}, {}
   for _, b in ipairs(T.bodies(w)) do
     for _, e in ipairs(b.errors) do
       wheres[e.where .. ":" .. e.msg:match("[^:]+$")] = true
+      msgs[e.where .. ": " .. e.msg] = true
     end
+    T.eq(b.machines[1].active, nil, "the reading that failed is left out")
+    T.eq(b.machines[1].allowed, true, "the others are there")
   end
-  T.ok(wheres["machines: java.lang.NullPointerException"], "machine error reported")
+  T.ok(msgs["machines: " .. w.ebf.addr:sub(1, 8) .. " isMachineActive: unknown error"], "machine error reported")
   T.ok(wheres["power: not enough memory"], "an out-of-memory in a call is reported, not fatal")
   T.ok(wheres["ae2: boom"])
 end)

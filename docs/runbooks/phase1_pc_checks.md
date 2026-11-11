@@ -33,6 +33,7 @@ Allow a long afternoon. Most of the time is game launches and two idle half hour
     $m | Select-Object mode, world, complete, nei_version | Format-List
     "parts:"; $m.parts | Format-List; "part_errors:"; $m.part_errors | Format-List
     "part_warnings:"; $m.part_warnings | Format-List; "counts:"; $m.counts | Format-List; "java:"; $m.java | Format-List
+    "durations_ms:"; $m.durations_ms | Format-List
     "files:"; $m.files.PSObject.Properties.Name | Where-Object { $_ -like 'crops/*' -or $_ -eq 'gt_ore_mixes.json' }
   }
   ```
@@ -124,10 +125,16 @@ Details: [pc_setup_notes: WO-1.1 PR 1b](pc_setup_notes.md#wo-11-pr-1b-nei-swap-a
   - [ ] `mode : autoexport`, `world : gregteclink-autoexport`, `complete : True`, `nei_version : 2.8.172-GTNH` (**V03**).
   - [ ] parts: `gt_dump`, `machines`, `refs`, `nei` and `autoexport` all `ok`. `ore_mixes : ok` and `crops : ok`. **[#44]** `oredict : ok`.
   - [ ] No `part_errors`. Paste any `part_warnings` (for example `nei` dropped a handler).
-  - [ ] counts: `nei_files` is above 0 and `nei_recipes` equals `nei_reported`. `ore_mixes` is above 100 with `ore_mix_errors` 0. `crop_dumpers` equals `crop_files` (11). **[#44]** `oredict` is above 0 and `oredict_errors` is 0.
+  - [ ] counts: `nei_files` is above 0 and `nei_recipes` equals `nei_reported`. **(D188)** `nei_serial_load` is 1 and `nei_lookup_errors` is 0. `ore_mixes` is above 100 with `ore_mix_errors` 0. `crop_dumpers` equals `crop_files` (11). **[#44]** `oredict` is above 0 and `oredict_errors` is 0.
   - [ ] java: `charset : UTF-8`.
   - [ ] files: `crops/cropRegistry.csv`, `crops/deterministicMutations.csv`, `crops/mutationPools.csv`, `crops/soilRegistry.txt`, `crops/alternateSeed.csv` (and six more `crops/` files) and `gt_ore_mixes.json`.
   - [ ] Note the **size** line. D102 and D107 need the full-pack size, which nobody has measured yet.
+  - [ ] **(D188)** Note `durations_ms`'s `nei_dump`: the game's freeze for NEI's dump in the full pack, which nobody has measured yet.
+- [ ] **(D188)** Before the command-line launch below (it replaces the log), find the NEI step's lines in the game log:
+  ```powershell
+  Select-String -Path "$exp\logs\fml-client-latest.log" -Pattern 'Loading \d+ recipe handlers took','recipe handlers one after another','did not load its recipe handlers','Error while looking up crafting recipe'
+  ```
+  Expect NEI's `Loading <M> recipe handlers took ...`, then GregtecLink's `NEI loaded all <N> recipe handlers one after another on Client thread`, and no other line. If `part_warnings` lists `nei`, send `$exp\logs\fml-client-latest.log` now: its `[STDERR]` lines after `Error while looking up crafting recipe` name the handler that failed.
 - [ ] **V22, command line:** with Prism closed, run `& $prism --launch GTNH-Export`. A second run should appear the same way (if Prism was open, the command returns at once). `Show-NewestRun` should show a newer `run:`.
 - [ ] **Check (2), Play untouched:**
   ```powershell
@@ -143,7 +150,7 @@ Details: [pc_setup_notes: WO-1.1 PR 1b](pc_setup_notes.md#wo-11-pr-1b-nei-swap-a
 - If check (1) fails, use the fallback in [pc_setup_notes step 9](pc_setup_notes.md#wo-11-pr-1b-nei-swap-autoexport-and-the-two-closing-checks-d100) and send `$exp\logs\fml-client-latest.log`.
 - [ ] Step 3 is done: start step 8a now, in a second gos-dev window.
 
-**Paste back:** `Show-NewestRun`'s full output for the first run, the second run's `run:` line, and the output of check (2) (it should be empty).
+**Paste back:** `Show-NewestRun`'s full output for the first run (with `durations_ms`), the (D188) `Select-String` lines, the second run's `run:` line, and the output of check (2) (it should be empty).
 
 ## 4. Collect and build the DB
 
@@ -326,7 +333,7 @@ One message per step is fine. Claude Code turns these into VERIFY and decision u
 
 1. **Deploy:** the commit, the `Built GregtecLink` line and the sync's `gregteclink:` lines.
 2. **NEI swap:** the `Get-FileHash` line.
-3. **Export (V03, V22):** `Show-NewestRun`'s full output for the first run (size included), any dialog, the CLI run's `run:` line, and the output of check (2) (should be empty).
+3. **Export (V03, V22):** `Show-NewestRun`'s full output for the first run (size and `durations_ms` included), the (D188) `Select-String` lines (and the game log if `part_warnings` lists `nei`), any dialog, the CLI run's `run:` line, and the output of check (2) (should be empty).
 4. **DB:** collect's output, db build's whole report (Recipes, NEI, oredict [#44], Addons, Machine facts, Crops and CropsNH-tabs lines), the build time, and the `gos.sqlite` size (collect's `files, MB` line gives the run's). Whether 4b matched 4a.
 5. **Quests:** tier match for stone, LV and HV; each compared chapter, Feeding Yourself included; details for any mismatch.
 6. **Ores (V07):** the output of `ores load` and the three `ores list` commands, plus your two chat lines.

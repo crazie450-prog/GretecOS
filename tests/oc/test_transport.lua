@@ -74,8 +74,12 @@ test("a reply over reply_max is refused and closed", function()
   T.eq(w.card.nopen(), 0)
 end)
 
+-- OC doesn't raise for a failed request: finishConnect and read return nil and the reason (the
+-- fake does the same). Read as "not connected yet", every failure would take the whole
+-- request_timeout_s and lose its reason.
 test("connection refused, HTTP 500, odd codes, bad JSON", function()
   local cases = {
+    { { fail = "Connection refused: connect" }, "Connection refused: connect" },
     { { fail = "Connection refused (Connection refused)" }, "Connection refused" },
     { { fail = "Server returned HTTP response code: 500 for URL: http://127.0.0.1:8765/oc/telemetry" }, "response code: 500" },
     { { fail = "address is not allowed" }, "address is not allowed" },
@@ -91,12 +95,28 @@ test("connection refused, HTTP 500, odd codes, bad JSON", function()
       return c[1]
     end
     local M, st = T.agent(w)
+    local t0 = w.clock
     T.no(M.cycle(st), c[2])
     T.has(last_error(st).msg, c[2])
     T.eq(last_error(st).where, "transport")
     T.eq(w.card.nopen(), 0, "closed after " .. c[2])
     T.eq(st.failures, 1)
+    T.ok(w.clock - t0 < 2, "known at once, not after request_timeout_s: " .. c[2])
+    T.eq(w:calls_of("request.finishConnect"), 2, "one 'not yet', then the answer or the reason: " .. c[2])
   end
+end)
+
+test("a connection lost while the reply is read is named, not taken for the end of the reply", function()
+  local w = T.base()
+  w.server = function()
+    -- 5000 valid bytes: cut after the first 2048, what is left is not JSON.
+    return { body = reply_of_size(5000), lost_after = 1 }
+  end
+  local M, st = T.agent(w)
+  T.no(M.cycle(st))
+  T.eq(w.requests[1].reads, 1)
+  T.eq(last_error(st).msg, "connection lost", "OC's reason, not a bad reply")
+  T.eq(w.card.nopen(), 0)
 end)
 
 test("a core that never answers: the exchange gives up in time", function()
