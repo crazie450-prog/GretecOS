@@ -825,6 +825,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - `_template.md` for new packs. A passive-aggressive "dungeon announcer" pack is welcome but must be original: no names or lines copied from the books that inspired it.
 - **Switching:** say "persona <name>", use the dashboard dropdown or Discord `/persona`; optional random persona per session. Personas change **tone only** (PM09).
 - **Delivery:** the fast lane keeps the persona at the tail of its cached prompt; the deep lane gets it through `UserPromptSubmit` (§4.4). A new pack is a new file: no code change.
+- **Built** (WO-5.6, D206–D208): shipped packs and `_template.md` in `vault-template/_gos/personas/` (deployed), Clayton's in `personas/`; the never-rules are code after the quoted pack; `gos persona`; the TTS voice follows the pack's `engine:voice` entries. `persona_set` and the `persona` subagent are a follow-up (D208).
 
 ### 7.12 Off-PC: Discord and phone dashboard (D39, D53)
 - **Discord bot:** `discord.py` in a private server, answering **only Clayton's user ID** on commands and every interaction.
