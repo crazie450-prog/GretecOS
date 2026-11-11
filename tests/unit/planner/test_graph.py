@@ -12,6 +12,10 @@ Recipes making the target, ``test:item@1`` (Widget), at tier cap MV (2):
 - ``electrolyzer/0``: 1 Ore A -> Widget at 50 %, MV (chanced only);
 - ``electrolyzer/2``: IV, above the cap; ``chemicalreactor/4``: acid in two slots (D191);
 - a disabled and a fake one, never candidates.
+
+More for single paths: Gadget (``@20``) only from a fake assembly-line recipe at LV whose
+research (a fake scanner recipe) is HV; Gizmo (``@22``) from a wildcard slot or, in low gravity
+only, from Dust B; Salt (``@21``) from acid, giving water off as a byproduct.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from gregtec.ingest import collect
 from gregtec.ingest.normalize import CIRCUIT
 from gregtec.planner import chains, graph, graphcli
 from gregtec.planner.gtmath.parallel import Supply
+from gregtec.planner.machines import current_run
 from gregtec.planner.request import (
     BaseInputs,
     Constraints,
@@ -51,6 +56,8 @@ T = "test:item"
 BASIC = "gregtech.api.metatileentity.implementations.MTEBasicMachineWithRecipe"
 WIDGET, PLATE, DUST_A, DUST_B, ORE_A = (f"{T}@{n}" for n in (1, 2, 3, 4, 5))
 LOG_A, LOG_B, ACID_CELL, EMPTY_CELL = (f"{T}@{n}" for n in (8, 9, 10, 11))
+GADGET, SALT, GIZMO = (f"{T}@{n}" for n in (20, 21, 22))
+WILD = "test:wild"
 ACID, GAS, WATER = "fluid:testacid", "fluid:testgas", "fluid:water"
 MV = 2
 
@@ -118,10 +125,28 @@ def recipes() -> list[dict[str, object]]:
            ins=[ref(1)], outs=[ref(3)]),
         # EU/t 0 (a machine that powers it its own way): kept, ranked last (D189).
         gt("mixer", 4, 0, 70, ins=[ref(4)], outs=[ref(1)]),
+        # Gadget: assembly line at LV, its research at HV (both fake, as GT lists them).
+        gt("fakeAssemblylineProcess", 0, 30, 600, fake=True, ins=[ref(2, 4)],
+           outs=[ref(20)]),
+        gt("scanner", 0, 480, 1200, fake=True, ins=[ref(20)], outs=[ref(20)]),
+        # Gizmo: any meta of test:wild (a wildcard slot), or low gravity only (special -100).
+        gt("mixer", 5, 16, 80, ins=[ref(32767, 1, WILD)], outs=[ref(22)]),
+        gt("mixer", 6, 16, 90, special=-100, ins=[ref(4)], outs=[ref(22)]),
+        # Salt from acid; the water is a byproduct, not what the use makes (review M1).
+        gt("electrolyzer", 3, 30, 90, fin=[fl("testacid", 500)], outs=[ref(21)],
+           fout=[fl("water", 500)]),
     ]  # fmt: skip
 
 
-MAPS = ("mixer", "chemicalreactor", "electrolyzer", "canner", "arcfurnace")
+MAPS = (
+    "mixer",
+    "chemicalreactor",
+    "electrolyzer",
+    "canner",
+    "arcfurnace",
+    "fakeAssemblylineProcess",
+    "scanner",
+)
 
 
 def recipe_maps() -> list[dict[str, object]]:
@@ -163,6 +188,9 @@ def items() -> list[dict[str, object]]:
         (9, "Birch Test Log", ["logTest"], None),
         (10, "Acid Cell", [], ("cell", "Acid")),
         (11, "Empty Test Cell", [], None),
+        (20, "Gadget", [], None),
+        (21, "Salt", [], None),
+        (22, "Gizmo", [], None),
     ]
     out: list[dict[str, object]] = []
     for meta, name, ore, assoc in rows:
@@ -176,6 +204,16 @@ def items() -> list[dict[str, object]]:
         if assoc:
             line["gt"] = {"prefix": assoc[0], "material": assoc[1], "amount": 3628800}
         out.append(line)
+    for meta in (1, 2):
+        out.append(
+            {
+                "item": WILD,
+                "meta": meta,
+                "unlocalized": f"wild.{meta}",
+                "name": f"Wild {meta}",
+                "ore": [],
+            }
+        )
     out.append(
         {
             "item": CIRCUIT,
@@ -323,6 +361,10 @@ class Base:
         return self.lines
 
 
+def machine_run(conn: sqlite3.Connection) -> int:
+    return current_run(conn)
+
+
 def build_graph(
     conn: sqlite3.Connection,
     request: Request | None = None,
@@ -379,8 +421,10 @@ def test_request_canonical_form_is_stable_and_round_trips() -> None:
         ({"target": WIDGET, "qty": float("nan")}, "finite"),
         ({"target": WIDGET, "unit": "/day"}, "/s, /min or /h"),
         ({"target": WIDGET, "within_s": 60.0}, "batch mode only"),
-        ({"target": WIDGET, "mode": "batch"}, "no /unit"),
+        ({"target": WIDGET, "mode": "batch", "unit": "/s"}, "no /unit"),
         ({"target": WIDGET, "tier_cap": 15}, "not a voltage tier"),
+        ({"target": WIDGET, "tier_cap": 5.5}, "not a voltage tier"),
+        ({"target": WIDGET, "tier_cap": "XV"}, "unknown voltage tier"),
         ({"target": WIDGET, "machines": "all"}, r"base or base\+addons"),
         ({"target": WIDGET, "boundary": ("123",)}, "not an item or fluid key"),
         ({"target": WIDGET, "routes": 4}, "1 to 3"),
@@ -393,6 +437,18 @@ def test_request_canonical_form_is_stable_and_round_trips() -> None:
 def test_request_validation(kwargs: dict[str, object], match: str) -> None:
     with pytest.raises(RequestError, match=match):
         Request(**kwargs)  # type: ignore[arg-type]
+
+
+def test_request_normalises_tier_names_and_batch_unit() -> None:
+    # Review M3: a tier name is the same request as its index (one canonical form, one digest).
+    by_name = Request(WIDGET, tier_cap="IV")  # type: ignore[arg-type]
+    assert by_name.tier_cap == 5
+    assert by_name.canonical() == Request(WIDGET, tier_cap=5).canonical()
+    # Review L5: a batch needs no unit spelled out; a rate's unit defaults to /s.
+    assert Request(WIDGET, mode="batch", qty=64).unit is None
+    assert Request(WIDGET).unit == "/s"
+    with pytest.raises(RequestError, match="true or false"):
+        Request.from_dict({"target": WIDGET, "constraints": {"cleanroom": "false"}})
 
 
 def test_request_helpers_and_batch() -> None:
@@ -586,6 +642,73 @@ def test_pins(conn: sqlite3.Connection) -> None:
     assert any("that node isn't in the graph" in w for w in g.warnings)
 
 
+def test_pin_on_a_boundary_node_is_warned(conn: sqlite3.Connection) -> None:
+    # Review L3: water is raw (never expanded), so a pin on it can't be used: say so.
+    cr3 = ref_of(conn, "chemicalreactor", 3)
+    g = build_graph(conn, Request(WIDGET, pins=(Pin(WATER, cr3),)))
+    assert f"pin {cr3} for {WATER}: not used, the node is a raw boundary" in g.warnings
+    g = build_graph(conn, Request(WIDGET, boundary=(ACID,), pins=(Pin(ACID, cr3),)))
+    assert any("the node is a request boundary" in w for w in g.warnings)
+
+
+def test_assembly_line_research_gate(conn: sqlite3.Connection) -> None:
+    # Review L1: the recipe itself is LV, its research HV. At MV the research decides.
+    al = ref_of(conn, "fakeAssemblylineProcess", 0)
+    g = build_graph(conn, Request(GADGET, tier_cap=MV))
+    gadget = g.item(GADGET)
+    assert [(c.recipe, c.reason) for c in gadget.candidates] == [
+        (al, "assembly line: its research needs tier 3")
+    ]
+    # Something makes it, but not at this tier: locked, not a raw input (review L4).
+    assert gadget.boundary == "locked"
+    g = build_graph(conn, Request(GADGET, tier_cap=3))
+    (c,) = g.item(GADGET).candidates
+    assert "research" not in c.reason and c.reason.startswith("no machine")
+
+
+def test_low_gravity_wildcard_members_and_coil_cap(conn: sqlite3.Connection) -> None:
+    g = build_graph(conn, Request(GIZMO))
+    gizmo = {c.recipe: c for c in g.item(GIZMO).candidates}
+    low = gizmo[ref_of(conn, "mixer", 6)]
+    assert low.status == "rejected" and "low gravity" in low.reason
+    # A wildcard slot (meta 32767) expands to the item's metas (D142 (h)).
+    wild = g.item(f"{WILD}@32767")
+    assert wild.kind == "wildcard" and wild.members == (f"{WILD}@1", f"{WILD}@2")
+    assert graph.Edge(f"{WILD}@2", f"{WILD}@32767", "member", 1.0) in g.edges
+    # coil_max reaches WO-3.2's machine model (which tests the coil check itself).
+    b = graph._Builder(
+        conn, Request(GIZMO, constraints=Constraints(coil_max=3)), Base(),
+        chains.EMPTY, machine_run(conn),
+    )  # fmt: skip
+    assert b.player.coil_max == 3
+
+
+def test_nei_only_recipes_are_rejected(conn: sqlite3.Connection) -> None:
+    # D142 (1): an NEI-only recipe in a GT category has no GT recipe to run.
+    b = graph._Builder(conn, Request(WIDGET), Base(), chains.EMPTY, machine_run(conn))
+
+    def nei(map_: str | None) -> graph._Recipe:
+        return graph._Recipe(
+            1, "r:x/0123456789ab", map_, "nei", None, 30, 20, 1, 1, None, False, 1
+        )
+
+    assert b._check(nei("gt.recipe.mixer")).reason == (
+        "NEI-only recipe in a GT category (D142 (1))"
+    )
+    assert b._check(nei(None)).reason == "NEI-only handler: no machine model"
+
+
+def test_cells_container_and_reverse_use_flags(conn: sqlite3.Connection) -> None:
+    can = ref_of(conn, "canner", 0)
+    g = build_graph(conn, Request(WIDGET, machines="base+addons"))
+    assert g.recipe(can).flags == ("cells", "container")
+    acid = [c.recipe for c in g.item(ACID).candidates]
+    assert acid[-1] == can  # a container map ranks last (D189)
+    # Review M1: a use's main product counts, its byproducts don't (Salt's water).
+    b = graph._Builder(conn, Request(WIDGET), Base(), chains.EMPTY, machine_run(conn))
+    assert b.reader.made_from(ACID) == {WIDGET, GAS, SALT}
+
+
 def test_same_request_same_graph(db: Path, conn: sqlite3.Connection) -> None:
     first = build_graph(conn)
     other = access.connect(db, readonly=True)
@@ -721,11 +844,14 @@ def test_heuristic_order() -> None:
         chance: int = 10000,
         base: bool = True,
         badges: tuple[str, ...] = (),
+        byproduct: bool = False,
     ) -> graph.RecipeNode:
+        outs = (graph.Port("x@1", 1, chance),)
+        if byproduct:  # x@1 isn't the recipe's main (first) output
+            outs = (graph.Port("w@1", 1), *outs)
         return graph.RecipeNode(
             ref, "gt.recipe.x", "gt", 30, 20, tier,
-            tuple(graph.Port(k, 1) for k in ins), (graph.Port("x@1", 1, chance),),
-            (1,), base, badges, flags,
+            tuple(graph.Port(k, 1) for k in ins), outs, (1,), base, badges, flags,
         )  # fmt: skip
 
     nodes = [
@@ -738,11 +864,13 @@ def test_heuristic_order() -> None:
         node("r:a/000000000007", "y@1", badges=("flagged",)),
         node("r:a/000000000008", "y@1", flags=("cells",)),
         node("r:a/000000000009", "y@1"),
+        node("r:a/00000000000a", "y@1", byproduct=True),
     ]
     made_from = frozenset({"u@1"})
     ranked = sorted(nodes, key=lambda n: graph.heuristic("x@1", n, made_from))
-    # Recycling, reverse, chanced-only and cells first decide; then tier, inputs, base, badges.
-    assert [n.id[-1] for n in ranked] == list("976158432")
+    # Recycling (and container, EU-less), reverse and chanced-only decide first; then tier,
+    # main product before byproduct, cells as a tie-break, inputs, base, badges (review M2).
+    assert [n.id[-1] for n in ranked] == list("97618a5432")
 
 
 def test_shipped_templates_load() -> None:

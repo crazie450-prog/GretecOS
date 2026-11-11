@@ -14,7 +14,7 @@ bartworks:gt.bwMetaGenerateddust@46	r:gt.recipe.sifter/45ffbb2383d4		Refined Pla
 bartworks:gt.bwMetaGenerateddust@47	r:gt.recipe.macerator/38b2d998605f		Platinum Metallic Powder Dust from crushed platinum ore (macerator)
 bartworks:gt.bwMetaGenerateddust@47	r:gt.recipe.blastfurnace/0326704aa961		and back from refined platinum salt (EBF): the line's loop
 fluid:platinum concentrate	r:gt.recipe.chemicalreactor/4ccda2d40b75	concentrate	Platinum Concentrate: one metallic powder in aqua regia (chemical reactor)
-fluid:platinum concentrate	r:gt.recipe.chemicalreactor/40dd0af91d3b	concentrate	nine at once (more concentrate per powder, a whole platinum residue dust)
+fluid:platinum concentrate	r:gt.recipe.chemicalreactor/40dd0af91d3b	concentrate	the batch recipe (more concentrate per powder, and a platinum residue dust)
 fluid:aqua regia	r:gt.recipe.multimixer/249aa206bb77	aqua-regia	Aqua Regia from hydrochloric and nitric acid, all fluids (multiblock mixer)
 fluid:aqua regia	r:gt.recipe.mixer/b1b72a06a1a2	aqua-regia	the mixer, nitric acid in a cell
 fluid:ammonium chloride	r:gt.recipe.largechemicalreactor/cad7f029ab32	nh4cl	Ammonium Chloride from hydrochloric acid and ammonia (large chemical reactor)

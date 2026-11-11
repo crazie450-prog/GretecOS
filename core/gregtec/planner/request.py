@@ -9,8 +9,8 @@ same request always has the same text and digest, and the graph built from it th
   (:func:`gregtec.planner.graph.resolve_target`, plan §7.1 step 1);
 - ``mode`` ``rate`` (``qty`` per ``unit``: ``/s``, ``/min``, ``/h``) or ``batch`` (``qty`` items or
   L in all, optionally ``within_s`` seconds; D14);
-- ``tier_cap``: a GT voltage tier index (0 = ULV) that overrides My base's (D64); None takes
-  My base's;
+- ``tier_cap``: a GT voltage tier index (0 = ULV) or its GT name (``IV``, normalised to the
+  index), overriding My base's (D64); None takes My base's;
 - ``machines``: ``base`` or ``base+addons`` (D12);
 - ``boundary``: more stable keys to treat as supplied from outside, on top of raw inputs, My base
   stock and the outputs of accepted lines (D63);
@@ -79,7 +79,11 @@ def tier_index(value: int | str) -> int:
         if value.casefold() not in names:
             raise RequestError(f"unknown voltage tier {value!r}")
         return names[value.casefold()]
-    if isinstance(value, bool) or not 0 <= value <= MAX_TIER:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= MAX_TIER
+    ):
         raise RequestError(f"tier_cap {value!r} is not a voltage tier (0..{MAX_TIER})")
     return value
 
@@ -107,6 +111,12 @@ def _positive(name: str, value: float) -> float:
     value = float(value)
     if not math.isfinite(value) or value <= 0:
         raise RequestError(f"{name} must be a finite number above 0, not {value!r}")
+    return value
+
+
+def _flag(name: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise RequestError(f"{name} must be true or false, not {value!r}")
     return value
 
 
@@ -178,7 +188,7 @@ class Request:
     target: str
     mode: Mode = "rate"
     qty: float = 1.0
-    unit: str | None = "/s"  # rate only
+    unit: str | None = None  # rate only; None means /s for a rate
     within_s: float | None = None  # batch only
     tier_cap: int | None = None  # None: My base's (D64)
     machines: Machines = "base"
@@ -197,6 +207,8 @@ class Request:
         _positive("qty", self.qty)
         object.__setattr__(self, "qty", float(self.qty))
         if self.mode == "rate":
+            if self.unit is None:
+                object.__setattr__(self, "unit", "/s")
             if self.unit not in UNITS:
                 raise RequestError(
                     f"a rate needs a unit /s, /min or /h, not {self.unit!r}"
@@ -209,7 +221,7 @@ class Request:
             if self.within_s is not None:
                 object.__setattr__(self, "within_s", _positive("within", self.within_s))
         if self.tier_cap is not None:
-            tier_index(self.tier_cap)
+            object.__setattr__(self, "tier_cap", tier_index(self.tier_cap))
         if self.machines not in MACHINES:
             raise RequestError(f"machines {self.machines!r}: base or base+addons")
         object.__setattr__(self, "boundary", _keys("boundary", self.boundary))
@@ -313,8 +325,10 @@ class Request:
                 constraints=Constraints(
                     max_eut=cons.get("max_eut"),
                     exclude=tuple(cons.get("exclude") or ()),
-                    require_owned=bool(cons.get("require_owned", False)),
-                    cleanroom=bool(cons.get("cleanroom", True)),
+                    require_owned=_flag(
+                        "require_owned", cons.get("require_owned", False)
+                    ),
+                    cleanroom=_flag("cleanroom", cons.get("cleanroom", True)),
                     coil_max=cons.get("coil_max"),
                 ),
                 pins=tuple(

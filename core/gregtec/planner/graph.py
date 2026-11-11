@@ -163,7 +163,9 @@ class ItemNode:
     kind: NodeKind
     name: str
     depth: int  # recipe steps from the target
-    boundary: str | None  # request, stock, line, raw, catalyst, depth, eu, byproduct
+    boundary: (
+        str | None
+    )  # request, stock, line, raw, locked, catalyst, depth, eu, byproduct
     candidates: tuple[
         Candidate, ...
     ] = ()  # every recipe making it, heuristic order (D61)
@@ -241,12 +243,7 @@ def resolve_target(
             prefetch.Candidate(c.key, c.name, c.kind, c.mod or "")
             for c in res.candidates
         ]
-        names = prefetch.question_names(found)
-        return prefetch.Clarify(
-            text,
-            prefetch.question_for(text, found),
-            [prefetch._pick(found, n) for n in names],
-        )
+        return prefetch.clarify(text, found)
     target = item_tools.target(call, text)
     if not isinstance(target, item_tools.Target):  # pragma: no cover - resolved above
         raise GraphError(f"{text!r} is ambiguous")
@@ -480,7 +477,7 @@ class _Reader:
             return self.items[int(item_id)].key
         return None
 
-    def research(self, key: str, cap: int) -> tuple[str | None, int | None]:
+    def research(self, key: str) -> tuple[str | None, int | None]:
         """The research recipe for an assembly-line output (fake scanner or research station
         recipes that show the item): the lowest-tier one, and that tier."""
         items, _ = self.key_ids(key)
@@ -521,9 +518,11 @@ class _Reader:
         )
 
     def made_from(self, key: str) -> frozenset[str]:
-        """The keys of what the run's enabled recipes that use up ``key`` make (recycling
-        aside). A recipe for ``key`` that consumes one of them undoes one of ``key``'s own uses
-        (a two-step loop: zinc sulfate back to sulfuric acid, an alloy taken apart)."""
+        """The main products (first output slot: the first item, else the first fluid) of the
+        run's enabled recipes that use up ``key``, recycling aside. A recipe for ``key`` that
+        consumes one of them undoes one of ``key``'s own uses (a two-step loop: zinc sulfate
+        back to sulfuric acid, an alloy taken apart). Byproducts are left out: water or
+        hydrogen given off by a use doesn't make every recipe that takes them a reversal."""
         if key in self.uses:
             return self.uses[key]
         items, fluids = self.key_ids(key)
@@ -537,7 +536,7 @@ class _Reader:
                         f" CROSS JOIN recipe_input AS i ON i.{col} = j.value"
                         " CROSS JOIN recipe AS r ON r.id = i.recipe_id"
                         " CROSS JOIN recipe_output AS o ON o.recipe_id = i.recipe_id"
-                        " WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1"
+                        " AND o.slot = 0 WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1"
                         # GT's recycling recipes take everything apart: not a use (D142 (2)).
                         " AND coalesce(r.category, '') NOT LIKE '%recycling' AND NOT EXISTS"
                         " (SELECT 1 FROM recipe_meta AS rm WHERE rm.recipe_id = r.id"
@@ -580,11 +579,13 @@ def heuristic(
     item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
 ) -> tuple[object, ...]:
     """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
-    recycling and GT's container maps last (D142 (2), D189); then the reverse of one of
-    ``item``'s own uses (it consumes something ``made_from`` the item, D189); avoid
-    chanced-only; recipes that use fluid cells after those that don't (D189); lower tier;
-    fewer inputs; base machine first (D12); machine before manual; unbadged first (D142 (a));
-    then the key. All but the last four are known before the machine check (:func:`_cheap`)."""
+    recycling, GT's container maps and EU-less recipes last (D142 (2), D189); then the reverse
+    of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
+    up, ``made_from``, D189); avoid chanced-only; lower tier; ``item`` as the recipe's main
+    product (first output) before a byproduct route; recipes that use fluid cells after those
+    that don't (D189); fewer inputs; base machine first (D12); machine before manual; unbadged
+    first (D142 (a)); then the key. All but the last four are known before the machine check
+    (:func:`_cheap`)."""
     return (
         *_cheap(item, rec, made_from),
         not rec.base,
@@ -604,8 +605,9 @@ def _cheap(
         bool({"recycling", "container", "eu0"} & set(rec.flags)),
         bool(consumed & made_from),
         chanced_only,
-        "cells" in rec.flags,
         rec.tier,
+        not rec.outputs or rec.outputs[0].key != item,
+        "cells" in rec.flags,
         len(consumed),
     )
 
@@ -750,9 +752,7 @@ class _Builder:
         research: str | None = None
         if r.map == chains.ASSEMBLY_LINE_MAP:
             made = sorted({p.key for p in r.outputs})
-            research, tier = (
-                self.reader.research(made[0], self.cap) if made else (None, None)
-            )
+            research, tier = self.reader.research(made[0]) if made else (None, None)
             if research is None or tier is None:
                 return _Check(False, "assembly line: no research recipe for its output")
             if tier > self.cap:
@@ -830,7 +830,11 @@ class _Builder:
                 rejected.append(
                     Candidate(self.reader.recipes[rid].ref, "rejected", c.reason)
                 )
-        uses = self.reader.made_from(key) if len(passed) > 1 else frozenset()
+        uses = (
+            self.reader.made_from(key) - self.boundary.keys()
+            if len(passed) > 1
+            else frozenset()
+        )
         cheap = sorted(
             ((_cheap(key, n, uses), rid, n) for rid, n in passed),
             key=lambda x: (x[0], x[2].id),
@@ -949,6 +953,16 @@ def build(
     direct: set[str] = set()  # the target's direct inputs (primary choices)
     level = [request.target]
     depth = 0
+
+    def on_route(direct: set[str]) -> set[str]:
+        # The templates that choose the target's recipe or a direct input's: only their
+        # branch points are primary choices (D189); one met elsewhere fixes its first pick.
+        return {
+            c.chain
+            for k, c in b.templates.choices.items()
+            if k == request.target or k in direct
+        }
+
     while level:
         upcoming: set[str] = set()
         pending = sorted(set(level))
@@ -996,9 +1010,11 @@ def build(
                         b.choose(
                             key, valid, rejected
                         )  # raises: the pin can't be honoured
+                    # Recipes make it, but none this player can run: locked, not a raw input.
                     nodes[key] = ItemNode(
-                        key, kind, name, depth, "raw", candidates=tuple(rejected)
-                    )
+                        key, kind, name, depth, "locked" if rejected else "raw",
+                        candidates=tuple(rejected),
+                    )  # fmt: skip
                     continue
                 top, pinned, template, branch, warns = b.choose(key, valid, rejected)
                 # Only a primary choice (§7.1 step 3) keeps all of its top recipes in the
@@ -1007,8 +1023,7 @@ def build(
                 if (
                     key == request.target
                     or key in direct
-                    or branch is not None
-                    or template is not None
+                    or (template is not None and template in on_route(direct))
                 ):
                     chosen = top
                 else:
@@ -1083,6 +1098,10 @@ def build(
             b.warnings.append(
                 f"pin {p.recipe} for {p.node}: that node isn't in the graph"
             )
+        elif (bound := nodes[p.node].boundary) not in (None, "locked"):
+            b.warnings.append(
+                f"pin {p.recipe} for {p.node}: not used, the node is a {bound} boundary"
+            )
     items = tuple(nodes[k] for k in sorted(nodes))
     used = sorted({n.template for n in items if n.template})
     primary = {request.target}
@@ -1090,7 +1109,8 @@ def build(
         primary.update(
             p.key for p in recipes[ref].inputs if p.consumed and p.key != EU_KEY
         )
-    primary.update(n.id for n in items if n.branch)
+    routed = on_route(direct)
+    primary.update(n.id for n in items if n.branch and n.template in routed)
     primary &= {n.id for n in items if n.chosen}
     warnings = list(b.warnings)
     for n in items:
