@@ -102,6 +102,12 @@ test("the Discord token too", async () => {
   await page.getByTestId("setup-next").click();
 });
 
+test("the ElevenLabs key can wait: the local voices need none", async () => {
+  await expect(page.getByTestId("setup-step-elevenlabs")).toBeVisible();
+  await expect(page.getByTestId("setup-stored-key")).toHaveAttribute("data-stored", "no");
+  await page.getByTestId("setup-next").click();
+});
+
 test("the headset, the talk key and the wake phrase", async () => {
   await expect(page.getByTestId("setup-step-headset")).toBeVisible();
   const output = page.getByTestId("setup-field-output_endpoint");
