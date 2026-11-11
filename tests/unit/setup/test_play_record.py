@@ -484,6 +484,8 @@ def test_the_core_records_its_play_as_it_starts(
         raise OSError("taken")
 
     monkeypatch.setattr(server, "bind", no_port)
+    # applog's handlers are process-wide; other tests' caplog counts on the defaults.
+    monkeypatch.setattr(server.applog, "setup", lambda *args, **kwargs: None)
     cfg = config.load(svc.path)
     assert server.run(cfg, config_path=svc.path) == server.EXIT_PORT_IN_USE
     play2 = (prism / "instances" / "Play2").resolve()
