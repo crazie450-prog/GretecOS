@@ -191,6 +191,7 @@ def test_a_save_records_every_play_in_gos_toml_and_beside_it(
     assert Path(play) in cfg.former_plays
     record = (svc.path.parent / config.FORMER_PLAYS_FILE).read_text("utf-8")
     assert play in record.splitlines()
+    assert all(Path(x).is_absolute() for x in record.splitlines() if x[:1] != "#")
     # Gone from gos.toml by hand: the file beside it still has it, and vice versa.
     hand_edit(svc.path, "former_plays", "former_plays_gone")
     assert Path(play) in config.load(svc.path).former_plays

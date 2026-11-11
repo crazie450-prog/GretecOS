@@ -238,6 +238,8 @@ class SetupService:
         added here; a hand edit removes one (D223)."""
         record: dict[str, str] = {}
         for p in [*paths.plays(ctx), *(extra or [])]:
+            if not p.is_absolute():  # e.g. the Windows default on Linux: no folder here
+                continue
             try:
                 text = str(p.resolve())
             except (OSError, RuntimeError):  # a link loop: keep it as written
