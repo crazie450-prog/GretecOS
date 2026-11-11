@@ -7,10 +7,11 @@ The first-run setup wizard configures GOS from the dashboard alone (plan 7.14 ru
 1. **Paths:** Prism folder, instances folder, Play / Export / Lab instance names, GOS_APP, GOS_HOME. Checked with `gos doctor`'s checks before saving.
 2. **Anthropic API key:** stored in Windows Credential Manager; **Test** makes one tiny fast-lane call (metered as `setup-test`).
 3. **Discord bot token** (optional until WO-9.1): Credential Manager.
-4. **Headset:** microphone (`[voice] input_device`) and the output for spoken answers (`[voice] output_endpoint`, the Arctis Nova Elite's Chat endpoint, D56).
-5. **Talk key** and mode (QA:V8, D180).
-6. **Wake phrase** (optional, PM08; WO-5.4 has the last word).
-7. **Checklist:** doctor's checks with Re-run; **Finish setup** writes `[setup] completed_utc` to gos.toml.
+4. **ElevenLabs API key** (optional; only `[voice] tts = "elevenlabs"` uses it, D203): Credential Manager. The wizard stores every key `gos key` manages.
+5. **Headset:** microphone (`[voice] input_device`) and the output for spoken answers (`[voice] output_endpoint`, the Arctis Nova Elite's Chat endpoint, D56). The wizard always saves a name; `""` (Windows' default, D205) is set by hand.
+6. **Talk key** and mode (QA:V8, D180).
+7. **Wake phrase** (optional, PM08; WO-5.4 has the last word).
+8. **Checklist:** doctor's checks with Re-run; **Finish setup** writes `[setup] completed_utc` to gos.toml.
 
 Saved settings take effect at GOS's next start (log in again, or `gos stop` then `gos serve`). Secrets work at once. Re-open the wizard any time: Settings > Setup wizard (`#/setup`).
 
