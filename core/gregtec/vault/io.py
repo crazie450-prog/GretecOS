@@ -94,8 +94,9 @@ FOLDERS = {
     "log": JOURNAL,
     "inbox": INBOX,
 }
-# Folders the curator and the index skip: skills and agents are loaded by the SDK, not read.
-NOT_NOTES = ("_gos/skills/", "_gos/agents/")
+# Folders the curator and the index skip: skills and agents are loaded by the SDK, not read;
+# the shipped persona packs are the repo's and read by gregtec.agents.personas (WO-5.6).
+NOT_NOTES = ("_gos/skills/", "_gos/agents/", "_gos/personas/")
 
 
 class VaultError(ValueError):
@@ -183,7 +184,7 @@ def write_refusal(rel: object, op: str, *, today: dt.date | None = None) -> str 
 
 def notes(root: Path) -> Iterator[str]:
     """Every note in the vault, as a path :func:`clean` accepts, sorted: hidden folders,
-    links and ``_gos/skills/`` and ``_gos/agents/`` are skipped."""
+    links and ``_gos/skills/``, ``_gos/agents/`` and ``_gos/personas/`` are skipped."""
     found: list[str] = []
     for top, dirs, files in os.walk(root):
         here = Path(top)

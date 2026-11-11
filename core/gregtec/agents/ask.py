@@ -17,6 +17,9 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
   it needs the AI. A failed call tells the mode what it showed, a good one that the API is back.
 - Saved plans ("my plans", "show plan X", "BOM for X") are instant commands
   (:mod:`gregtec.agents.saved_plans`), so they work with the AI offline.
+- "persona <name>" switches the persona with no model call (WO-5.6, D206), "which persona"
+  names it; every reply carries the active persona (``persona``: id, name, voice), so the voice
+  client speaks it in that persona's voice (D207).
 - :meth:`Asker.prewarm` writes the fast lane's prompt cache ahead of a request (the voice client
   calls it as the talk key goes down, D152, D179), unless a fast-lane call started within the
   last 4 minutes: each call refreshes the 5-minute cache, so the cache is still warm then.
@@ -40,6 +43,7 @@ import anthropic
 
 from gregtec import config
 from gregtec.agents import prefetch, router, saved_plans
+from gregtec.agents.personas import STATE_FILE, Personas, UnknownPersona
 from gregtec.agents.deep import (
     DONE,
     NEEDS_APPROVAL,
@@ -117,6 +121,8 @@ class Reply:
     # confirm and cancel: whether an action was waiting for them (D59; actions arrive with
     # WO-7.1). The voice client's cancel hotkey stays quiet when none was (D179).
     pending: bool | None = None
+    # the persona the reply was made in (WO-5.6): id, name, voice, ...; None without packs
+    persona: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -138,6 +144,7 @@ class Reply:
             "handoff": self.handoff,
             "error": self.error,
             "pending": self.pending,
+            "persona": self.persona,
         }
 
 
@@ -213,8 +220,10 @@ class Asker:
         clock: Callable[[], float] = time.perf_counter,
         ai: AiMode | None = None,
         home: Path | None = None,
+        personas: Personas | None = None,
     ) -> None:
         self.registry = registry
+        self.personas = personas  # WO-5.6; None: no persona commands
         self.home = home  # GOS_HOME, for saved plans' JSON (None: the DB's own)
         self.deep = deep
         self.clock = clock
@@ -258,6 +267,8 @@ class Asker:
             with self._lock:  # the repeated question can still be answered
                 self._pending = pending
         reply = self._reply(route, started, task)
+        if self.personas is not None and reply.persona is None:
+            reply.persona = self.personas.info()
         reply.total_ms = round((self.clock() - started) * 1000)
         if reply.ttft_ms is None and reply.calls == 0:
             reply.ttft_ms = reply.total_ms
@@ -452,6 +463,8 @@ class Asker:
                 return Reply(card["error"], router.INSTANT, intent, card=card)
             tier = block.parsed.head.get("tier", "unknown")
             return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
+        if intent == router.PERSONA:
+            return self._persona(route)
         if intent in (router.PLANS, router.PLAN):
             reply = self._plans(route)
             assert reply is not None  # only fall_through gives None
@@ -464,6 +477,27 @@ class Asker:
         else:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
+
+    def _persona(self, route: router.Route) -> Reply:
+        """Switch to the persona named, or say which one is on (no model call, D206)."""
+        intent = route.intent
+        if self.personas is None:
+            return Reply("Personas aren't set up here.", router.INSTANT, intent)
+        if route.subject is None:
+            listing = self.personas.listing()
+            active = self.personas.active
+            names = ", ".join(str(p["name"]) for p in listing["packs"])  # type: ignore[union-attr]
+            if active is None:
+                return Reply("No persona pack loads.", router.INSTANT, intent)
+            text = f"Persona: {active.name}. Say persona and a name to switch: {names}."
+            return Reply(text, router.INSTANT, intent, persona=active.info())
+        try:
+            pack = self.personas.set(route.subject, by="router")
+        except UnknownPersona as exc:
+            return Reply(str(exc), router.INSTANT, intent, error="unknown persona")
+        greeting = pack.samples[0] if pack.samples else ""
+        text = f"{pack.name} here. {greeting}".strip()
+        return Reply(text, router.INSTANT, intent, persona=pack.info())
 
     def _plans(
         self, route: router.Route, *, fall_through: bool = False
@@ -524,16 +558,26 @@ class Agents:
     fast: FastLane | None = None
     store: Store | None = None  # closed by close() when setup() opened it
     home: Path | None = None  # GOS_HOME (saved plans' JSON)
+    personas: Personas | None = None  # the persona packs (WO-5.6)
 
     def lane(self) -> FastLane | None:
         """A fast lane with the stored key (None: no key stored)."""
-        return FastLane.from_keyring(self.registry, meter=self.meter, vault=self.vault)
+        lane = FastLane.from_keyring(self.registry, meter=self.meter, vault=self.vault)
+        if lane is not None and self.personas is not None:
+            lane.persona = self.personas.block
+        return lane
 
     def asker(self, ai: AiMode | None = None) -> Asker:
         """``ai``: the core's no-AI mode (WO-2.8); None for none."""
-        if self.fast is not None:
-            return Asker(self.registry, self.deep, self.fast, ai=ai, home=self.home)
-        return Asker(self.registry, self.deep, self.lane, ai=ai, home=self.home)
+        lane: FastLane | Callable[[], FastLane | None] = self.fast or self.lane
+        return Asker(
+            self.registry,
+            self.deep,
+            lane,
+            ai=ai,
+            home=self.home,
+            personas=self.personas,
+        )
 
     def close(self) -> None:
         if isinstance(self.deep, DeepLaneService):
@@ -575,6 +619,14 @@ def setup(
         deep = DeepLaneService.for_home(cfg.gos_home, Settings.from_config(cfg), meter)
         registry = default_registry(cfg.gos_home, deep=deep)
         deep.registry = registry
+    personas = Personas(
+        vault if vault.is_dir() else None,
+        default=cfg.persona_default,
+        random_per_session=cfg.persona_random,
+        state=cfg.data_dir / STATE_FILE,
+    )
+    if isinstance(deep, DeepLaneService):
+        deep.persona = personas.context  # its UserPromptSubmit hook (plan 4.4)
     agents = Agents(
         registry,
         deep,
@@ -582,9 +634,11 @@ def setup(
         vault if vault.is_dir() else None,
         store=opened,
         home=cfg.gos_home,
+        personas=personas,
     )
     if fake:
         agents.fast = FastLane(EchoClient(), registry, meter=None, vault=agents.vault)
+        agents.fast.persona = personas.block
     return agents
 
 

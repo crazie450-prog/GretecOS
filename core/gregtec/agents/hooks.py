@@ -1,4 +1,4 @@
-"""The deep lane's ``PreToolUse`` hooks (WO-2.4; plan 4.4 Hooks, 4.6, 6.5; [D§1.5]).
+"""The deep lane's hooks (WO-2.4, WO-5.6; plan 4.4 Hooks, 4.6, 6.5; [D§1.5]).
 
 Two hooks run on every tool call the Claude Code CLI is about to make, the orchestrator's and
 every subagent's (the CLI tells them apart by ``agent_type``):
@@ -15,7 +15,15 @@ every subagent's (the CLI tells them apart by ``agent_type``):
   ``me/`` is Clayton's, ``_gos/`` the repo's, generated notes and other logs read only, ...); a
   file outside the vault, and any shell command, is refused outright.
 
-A hook answers ``{}`` when it has nothing against a call; the permission mode (``dontAsk`` with
+:meth:`Gate.prompt_context` is the ``UserPromptSubmit`` hook (WO-5.6): it adds the active
+persona (:meth:`gregtec.agents.personas.Personas.context`, read when the prompt is sent, so a
+switch reaches the next reply of a session that was connected before it) as
+``additionalContext``. The deep lane's system prompt is fixed for a session ([D§1.6]), so this is
+how a persona reaches it (plan 4.4). It fails open: no persona is only a change of tone, never
+of rules, so a hook that raises adds nothing and the prompt goes ahead (the game-state snapshot
+joins it with WO-6.x).
+
+A ``PreToolUse`` hook answers ``{}`` when it has nothing against a call; the permission mode (``dontAsk`` with
 the lane's tools pre-approved) decides the rest. Both fail closed: a hook that raises denies the
 call (the CLI would otherwise run a pre-approved tool when its hook errors). Hook input is data
 from the CLI; a refusal's reason is what the model reads.
@@ -108,6 +116,7 @@ class Gate:
     vault: VaultIO | None
     on_event: Event | None = None
     denied: list[tuple[str, str | None, str]] = field(default_factory=list)
+    persona: Callable[[], str | None] | None = None  # the active persona's text (WO-5.6)
 
     def _denied(self, tool: str, agent: str | None, why: str) -> dict[str, Any]:
         self.denied.append((tool, agent, why))
@@ -180,6 +189,24 @@ class Gate:
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
                 "updatedInput": new,
+            }
+        }
+
+    async def prompt_context(
+        self, data: Mapping[str, Any], tool_use_id: str | None, context: object
+    ) -> dict[str, Any]:
+        """``UserPromptSubmit``: the active persona as additional context (or nothing)."""
+        try:
+            text = self.persona() if self.persona is not None else None
+        except Exception:  # noqa: BLE001 (tone only: the prompt goes ahead without it)
+            log.exception("deep-lane persona hook failed; the prompt has no persona")
+            return {}
+        if not text:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": text,
             }
         }
 

@@ -6,7 +6,8 @@
 - **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "what's
   my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
-  card, WO-2.8). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
+  card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
+  model call, D206). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice and anything quantitative over a line ("how many
   ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
@@ -36,6 +37,7 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
     "uses",
 )
 PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
+PERSONA = "persona"  # switch or name the persona (WO-5.6, plan 7.11)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -71,6 +73,15 @@ def _rx(*patterns: str) -> list[re.Pattern[str]]:
 
 
 INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
+    (
+        PERSONA,  # first: a persona's name could hold any other rule's words
+        _rx(
+            r"(?:switch |change |set )?(?:to |the )?persona (?:to )?(?P<name>[\w' -]+)",
+            r"(?:use|switch to|change to) (?:the )?(?P<name>[\w' -]+?) persona",
+            r"(?:what|which) persona(?: is (?:this|on|active|it)| are you)?",
+            r"(?:list |show )?(?:me )?(?:the |my )?personas|(?:current )?persona",
+        ),
+    ),
     (
         REPEAT,
         _rx(
@@ -250,6 +261,9 @@ def route(text: str, *, plans: bool = True) -> Route:
                     ):
                         return Route(INSTANT, command, text, words)
                     continue
+                if command == PERSONA:  # the name, if one was said
+                    name = (m.groupdict().get("name") or "").strip() or None
+                    return Route(INSTANT, command, text, name)
                 if command not in (RECIPES, USES):
                     return Route(INSTANT, command, text)
                 subject = subject_of(m["item"])

@@ -33,6 +33,8 @@
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
+| [persona] default        | gt-veteran (D60)                         | personas (WO-5.6, D206)     |
+| [persona] random_per_session | false                                | personas (WO-5.6, D206)     |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -42,7 +44,8 @@ delete the file it was meant to keep. ``allowed_hosts`` likewise adds to its def
 three names with ``:<port>``). Every other key in the Appendix C skeleton is ignored until its WO
 reads it.
 
-**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``) are read only by the core,
+**Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
+``[persona]``) are read only by the core,
 the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -162,6 +165,8 @@ class Config:
     launch_home: Path | None = None
     idle_minutes: int = 30  # [maintenance]: no input this long, game closed (plan 6.6)
     keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
+    persona_default: str = "gt-veteran"  # [persona] default (D60, WO-5.6)
+    persona_random: bool = False  # [persona] random_per_session (D206)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
@@ -407,6 +412,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         table(k) for k in ("core", "startup", "budget", "launch")
     )
     maintenance = table("maintenance")
+    persona = table("persona")
     models = table("models")
     host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
     port = soft(
@@ -475,6 +481,16 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         "use_heavy": soft(
             lambda: _bool(models, "use_heavy", defaults.use_heavy, "[models]"),
             defaults.use_heavy,
+        ),
+        "persona_default": soft(
+            lambda: _persona_name(persona, defaults.persona_default),
+            defaults.persona_default,
+        ),
+        "persona_random": soft(
+            lambda: _bool(
+                persona, "random_per_session", defaults.persona_random, "[persona]"
+            ),
+            defaults.persona_random,
         ),
         "idle_minutes": soft(
             lambda: _int(
@@ -594,6 +610,17 @@ def _on_credits_out(budget: Mapping[str, Any]) -> None:
             'gos.toml: [budget] on_credits_out can only be "no_ai" (D48: no-AI until you '
             "answer the credit alert)"
         )
+
+
+def _persona_name(persona: Mapping[str, Any], default: str) -> str:
+    """[persona] default: a pack's name (``gt-veteran``: lower case, digits and -). Whether
+    that pack exists is checked when the core starts (an unknown one falls back, D206)."""
+    value = persona.get("default", default)
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", value):
+        raise ConfigError(
+            'gos.toml: [persona] default must be a persona\'s name, e.g. "gt-veteran"'
+        )
+    return value
 
 
 def _launch_home(launch: Mapping[str, Any]) -> Path | None:
