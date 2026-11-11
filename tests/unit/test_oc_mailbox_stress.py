@@ -65,6 +65,7 @@ class LuaBox:
     reply_max: int = 8192
     rng: random.Random = field(default_factory=random.Random)
     n: Counter[str] = field(default_factory=Counter)
+    pause_s: float = 0.0  # the next exchange stops this long between send and receive
 
     POLL_S = 0.25
     RENAME_TRIES = 8
@@ -168,6 +169,9 @@ class LuaBox:
     def exchange(self, body: bytes) -> tuple[dict[str, Any] | None, str | None]:
         reply, rerr = self.receive(0)
         sent, serr = self.send(body)
+        if self.pause_s:  # the game paused mid-exchange: OC stops, the core doesn't
+            time.sleep(self.pause_s)
+            self.pause_s = 0.0
         if sent and reply is None and rerr is None:
             reply, rerr = self.receive(self.wait_s)
         if reply is not None:
@@ -302,14 +306,15 @@ def run(
     seconds: float,
     seed: int,
     ttl_s: float = mb.REPLY_TTL_S,
-    stall: float = 0.0,
+    stall_every: int = 0,
+    rate: float = 0.3,
     scale: float = 0.01,
 ) -> Run:
     """The writer and a real MailboxService for ``seconds``, then a drain: the queue closes and
     the agent keeps cycling until every command given out has reached it."""
     place, folder = layout(tmp_path)
     rng = random.Random(seed)
-    sink, queue = Recording(), Queue(random.Random(seed + 1))
+    sink, queue = Recording(), Queue(random.Random(seed + 1), rate)
     box = Mailbox(place, Bridge(sink, queue), ttl_s=ttl_s)
     service = MailboxService([box], poll_s=0.001)
     agent = Agent(
@@ -321,9 +326,9 @@ def run(
     start = time.monotonic()
     try:
         while time.monotonic() - start < seconds:
+            if stall_every and agent.seq % stall_every == stall_every - 1:
+                agent.box.pause_s = ttl_s * rng.uniform(2.0, 4.0)
             agent.cycle()
-            if stall and rng.random() < stall:
-                time.sleep(ttl_s * rng.uniform(0.5, 2.0))  # the game paused mid-run
         queue.open = False
         for _ in range(2000):
             with queue.lock:
@@ -398,10 +403,12 @@ def test_concurrent_writer_and_core(tmp_path: Path, seed: int) -> None:
 def test_withdrawn_replies_under_concurrency(tmp_path: Path) -> None:
     """A short TTL and an agent that stalls: replies are withdrawn and their commands sent again
     under their ids; OC runs each id once, and still nothing is lost or half-read."""
-    r = run(tmp_path, seconds=2.0, seed=7, ttl_s=0.05, stall=0.05)
+    r = run(tmp_path, seconds=2.0, seed=7, ttl_s=0.05, stall_every=10, rate=1.0)
     check(r)
     assert r.box.stats["withdrawn"] >= 1
+    # Every reply carried commands (rate 1), so every withdrawal handed some back.
     assert r.queue.back, "withdrawn commands went back to the queue"
+    assert len(r.queue.back) == r.box.stats["commands_returned"]
 
 
 def test_held_files_under_concurrency(
