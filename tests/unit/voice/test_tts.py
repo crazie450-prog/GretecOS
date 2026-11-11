@@ -21,7 +21,9 @@ import pytest
 from gregtec.llm import keys
 from gregtec_voice import hooks, playback, settings, tts
 from gregtec_voice.audio import AudioError, Device
+from gregtec_voice.client import IDLE, SPEAKING, VoiceClient
 from gregtec_voice.playback import FakeOutput, WavOutput
+from gregtec_voice.ptt import KeyEvent
 from gregtec_voice.settings import VoiceSettings
 from gregtec_voice.tts import CPU, ELEVENLABS, GPU, KOKORO, PIPER, Choice
 
@@ -577,3 +579,56 @@ def test_a_fallback_engine_uses_its_own_voice(monkeypatch: pytest.MonkeyPatch) -
     tts.load_engine(Choice(KOKORO), voice, print)
     tts.load_engine(Choice(PIPER), voice, print)
     assert seen == [(KOKORO, "bm_george"), (PIPER, "")]
+
+
+# --- with the voice client (WO-5.1's hooks) ---------------------------------------------------
+
+
+def wait_for(condition: Callable[[], bool], seconds: float = 5.0) -> None:
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+def test_the_voice_client_speaks_and_its_talk_key_barges_in(
+    clock: Any,  # noqa: ANN401 - the conftest Clock
+    core: Any,  # noqa: ANN401
+    transcriber: Any,  # noqa: ANN401
+    run_events: Callable[[VoiceClient, Callable[[], bool]], None],
+) -> None:
+    out = FakeOutput(realtime=True)
+    engine = FakeEngine(seconds=3.0)
+    voice = VoiceClient(
+        VoiceSettings(),
+        core,
+        transcriber=transcriber,
+        speaker=speaker_with(engine, output=out),
+        clock=clock,
+    )
+    voice.say("Steel Ingot (r:gt.recipe.x/3f9a0c2b1e7d) takes 25 s.")
+    assert voice.state[0] == SPEAKING
+    wait_for(lambda: bool(out.streams and out.streams[0].writes))
+    assert engine.said == ["Steel Ingot takes twenty-five seconds."]
+    voice.handle(KeyEvent(0x7C, True, clock()))  # F13 down: barge-in (D179)
+    wait_for(lambda: out.streams[0].closed, 1.0)
+    assert out.streams[0].aborted and out.streams[0].seconds < 1.5
+    voice.handle(KeyEvent(0x7C, False, clock()))
+
+
+def test_the_voice_client_hears_when_speech_ends(
+    clock: Any,  # noqa: ANN401
+    core: Any,  # noqa: ANN401
+    transcriber: Any,  # noqa: ANN401
+    run_events: Callable[[VoiceClient, Callable[[], bool]], None],
+) -> None:
+    voice = VoiceClient(
+        VoiceSettings(),
+        core,
+        transcriber=transcriber,
+        speaker=speaker_with(FakeEngine(seconds=0.05), output=FakeOutput()),
+        clock=clock,
+    )
+    voice._set_state(IDLE)
+    voice.say("Short answer.")
+    run_events(voice, lambda: voice.state == (IDLE, None))

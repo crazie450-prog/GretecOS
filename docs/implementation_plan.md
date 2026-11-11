@@ -1380,9 +1380,10 @@ talk_key = "TBD (unbound in GTNH and Discord)"
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
 stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D182)
-tts = "kokoro"
-tts_device = "cpu"
-output_endpoint = "Chat"      # Arctis Nova Elite (D56)
+tts = "kokoro"                # | piper | elevenlabs (D203); gos voice tts-bench picks (D204)
+tts_device = "cpu"            # | gpu (ONNX Runtime CUDA or DirectML, D203)
+tts_voice = ""                # "" = the engine's default (D203)
+output_endpoint = "Chat"      # Arctis Nova Elite (D56); no single match: the default device (D205)
 discord_auto_mute = false     # D58
 
 [persona]
