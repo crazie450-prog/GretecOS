@@ -4,8 +4,9 @@
 :class:`Route`:
 
 - **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "what's
-  my tier", "recipe(s) for X" / "X recipe" (a recipe card) and "what uses X" (a uses card).
-  These keep working with no API key or credits (plan 0.1 principle 9).
+  my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
+  saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
+  card, WO-2.8). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice and anything quantitative over a line ("how many
   ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
@@ -34,6 +35,7 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
     "recipes",
     "uses",
 )
+PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -92,6 +94,22 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
         _rx(
             r"(?:show |list )?(?:me )?(?:the |all )?recipes? (?:for|of) (?P<item>.+)",
             r"(?P<item>[^?]+?) recipes?",
+        ),
+    ),
+    (
+        PLANS,
+        _rx(
+            r"(?:show |list |open )?(?:me )?(?:all )?(?:of )?(?:my |the )?(?:saved )?plans",
+            r"what plans (?:do i have|are saved)",
+        ),
+    ),
+    (
+        PLAN,
+        _rx(
+            r"(?:show|open|load|view) (?:me )?(?:the |my )?(?:saved )?plan (?P<plan>.+)",
+            r"(?:show |open )?(?:me )?(?:the )?(?:bom|bill of materials) (?:for|of) "
+            r"(?:the |my )?(?:saved )?(?:plan )?(?P<plan>.+)",
+            r"(?P<plan>plan:\S+)",
         ),
     ),
     (
@@ -217,6 +235,11 @@ def route(text: str) -> Route:
     for command, patterns in INSTANT_RULES:
         for p in patterns:
             if m := p.match(said):
+                if command == PLAN:  # a saved plan's name or id; deep words still outrank it
+                    words = m["plan"].strip()
+                    if not deep and 0 < len(words.split()) <= MAX_SUBJECT_WORDS:
+                        return Route(INSTANT, command, text, words)
+                    continue
                 if command not in (RECIPES, USES):
                     return Route(INSTANT, command, text)
                 subject = subject_of(m["item"])
