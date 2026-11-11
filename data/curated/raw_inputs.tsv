@@ -1,0 +1,8 @@
+# Raw inputs the graph builder never expands (WO-3.3, D189): items and fluids a production line
+# takes from the world (a pump, an intake), although GT also has recipes that make them as a
+# byproduct. Read by gregtec.planner.graph; keys are stable keys (registry@meta or fluid:<name>),
+# never numeric ids. Keep it short: anything listed here is never planned as a recipe output.
+key	note
+fluid:water	pumped (GT pumps, the Water Pump, an infinite water hatch); GT's water recipes are byproducts
+fluid:lava	pumped from the world
+fluid:air	GT's air intakes and gas collectors take it from the world, not a recipe

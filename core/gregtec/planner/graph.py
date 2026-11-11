@@ -65,7 +65,7 @@ from gregtec.agents.tools.registry import Call, Env
 from gregtec.planner import chains, machines
 from gregtec.planner.gtmath.parallel import Supply
 from gregtec.planner.gtmath.processing import EnergyHatch
-from gregtec.planner.request import BaseInputs, Request, RequestError
+from gregtec.planner.request import BaseInputs, Request, RequestError, is_stable_key
 
 MAX_DEPTH = 12
 TOP_N = 4
@@ -74,10 +74,20 @@ WILDCARD = 32767
 FULL = 10000
 MANUAL_SOURCES = frozenset({"crafting", "furnace"})
 RESEARCH_MAPS = ("gt.recipe.researchStation", "gt.recipe.scanner")
+RAW_INPUTS = chains.REPO_ROOT / "data" / "curated" / "raw_inputs.tsv"
 GREGTECH = "gregtech"
+IC2_CELL = "IC2:itemCellEmpty"
+# GT maps that only move a material between containers or stack sizes (D189): ranked last.
+CONTAINER_MAPS = frozenset(
+    {
+        "gt.recipe.canner",
+        "gt.recipe.packager",
+        "gt.recipe.unpackager",
+    }
+)
 
 NodeKind = Literal["item", "fluid", "ore", "wildcard", "eu"]
-Status = Literal["chosen", "pruned", "unchecked", "rejected"]
+Status = Literal["chosen", "alternative", "pruned", "unchecked", "rejected"]
 
 
 class GraphError(RuntimeError):
@@ -256,7 +266,7 @@ class _Info:
     kind: NodeKind
     name: str
     mod: str
-    material: str | None
+    cell: bool  # a GT or IC2 fluid cell (gt_prefix cell*, IC2:itemCellEmpty)
 
 
 @dataclass
@@ -295,6 +305,7 @@ class _Reader:
             str, list[tuple[int, int, int]]
         ] = {}  # key -> recipe, amount, chance
         self.machines: dict[str, list[machines.MachineInfo]] = {}
+        self.uses: dict[str, frozenset[str]] = {}
 
     def _rows(self, sql: str, ids: Iterable[int]) -> list[sqlite3.Row]:
         return self.conn.execute(sql, (json.dumps(sorted(set(ids))),)).fetchall()
@@ -305,11 +316,12 @@ class _Reader:
             return
         for r in self._rows(
             f"SELECT i.id, {_ITEM_KEY_SQL} AS key, coalesce(i.name_en, '') AS name,"
-            " coalesce(i.mod_id, '') AS mod, i.gt_material FROM item AS i"
+            " coalesce(i.mod_id, '') AS mod, i.gt_prefix, i.registry_name FROM item AS i"
             " WHERE i.id IN (SELECT value FROM json_each(?))",
             want,
         ):
-            info = _Info(r["key"], "item", item_tools.clean(r["name"]), r["mod"], r[4])
+            cell = (r[4] or "").startswith("cell") or r[5] == IC2_CELL
+            info = _Info(r["key"], "item", item_tools.clean(r["name"]), r["mod"], cell)
             self.items[int(r["id"])] = info
             self.ids.setdefault(info.key, ([], []))[0].append(int(r["id"]))
 
@@ -322,7 +334,7 @@ class _Reader:
             " WHERE id IN (SELECT value FROM json_each(?))",
             want,
         ):
-            info = _Info(f"fluid:{r[1]}", "fluid", item_tools.clean(r[2]), "", None)
+            info = _Info(f"fluid:{r[1]}", "fluid", item_tools.clean(r[2]), "", False)
             self.fluids[int(r[0])] = info
             self.ids.setdefault(info.key, ([], []))[1].append(int(r[0]))
 
@@ -356,11 +368,13 @@ class _Reader:
             item_of.update({i: k for i in items})
             fluid_of.update({f: k for f in fluids})
         sql = (
-            "SELECT o.recipe_id, o.{col}, o.amount, o.chance_bp FROM recipe_output AS o"
-            " JOIN recipe AS r ON r.id = o.recipe_id"
+            # CROSS JOIN keeps SQLite's planner on the output index (it would scan the run).
+            "SELECT o.recipe_id, o.{col}, o.amount, o.chance_bp FROM json_each(?) AS j"
+            " CROSS JOIN recipe_output AS o ON o.{col} = j.value"
+            " CROSS JOIN recipe AS r ON r.id = o.recipe_id"
             " LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id"
-            " WHERE o.{col} IN (SELECT value FROM json_each(?)) AND r.run_id = ?"
-            " AND r.enabled = 1 AND (coalesce(r.fake, 0) = 0 OR m.unloc_name = ?)"
+            " WHERE r.run_id = ? AND r.enabled = 1"
+            " AND (coalesce(r.fake, 0) = 0 OR m.unloc_name = ?)"
         )
         found: set[int] = set()
         for col, of in (("item_id", item_of), ("fluid_id", fluid_of)):
@@ -472,10 +486,11 @@ class _Reader:
         if not items:
             return None, None
         row = self.conn.execute(
-            "SELECT r.ref, r.voltage_tier FROM recipe_output AS o"
-            " JOIN recipe AS r ON r.id = o.recipe_id"
+            "SELECT r.ref, r.voltage_tier FROM json_each(?) AS j"
+            " CROSS JOIN recipe_output AS o ON o.item_id = j.value"
+            " CROSS JOIN recipe AS r ON r.id = o.recipe_id"
             " JOIN recipe_map AS m ON m.id = r.recipe_map_id"
-            " WHERE o.item_id IN (SELECT value FROM json_each(?)) AND r.run_id = ?"
+            " WHERE r.run_id = ?"
             " AND m.unloc_name IN (?, ?) ORDER BY r.voltage_tier, r.ref LIMIT 1",
             (json.dumps(items), self.run, *RESEARCH_MAPS),
         ).fetchone()
@@ -504,6 +519,37 @@ class _Reader:
             key=lambda k: (self.info(k).mod != GREGTECH, k),  # type: ignore[union-attr]
         )
 
+    def made_from(self, key: str) -> frozenset[str]:
+        """The keys of what the run's enabled recipes that use up ``key`` make. A recipe for
+        ``key`` that consumes one of them undoes one of ``key``'s own uses (a two-step loop:
+        zinc sulfate back to sulfuric acid, an alloy taken apart)."""
+        if key in self.uses:
+            return self.uses[key]
+        items, fluids = self.key_ids(key)
+        found: set[tuple[int | None, int | None]] = set()
+        for col, ids in (("item_id", items), ("fluid_id", fluids)):
+            if ids:
+                found.update(
+                    (r[0], r[1])
+                    for r in self.conn.execute(
+                        "SELECT DISTINCT o.item_id, o.fluid_id FROM json_each(?) AS j"
+                        f" CROSS JOIN recipe_input AS i ON i.{col} = j.value"
+                        " CROSS JOIN recipe AS r ON r.id = i.recipe_id"
+                        " CROSS JOIN recipe_output AS o ON o.recipe_id = i.recipe_id"
+                        " WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1",
+                        (json.dumps(ids), self.run),
+                    )
+                )
+        self.load_items(i for i, _ in found if i is not None)
+        self.load_fluids(f for i, f in found if i is None and f is not None)
+        out = frozenset(
+            self.items[i].key if i is not None else self.fluids[f].key
+            for i, f in found
+            if i is not None or f is not None
+        )
+        self.uses[key] = out
+        return out
+
     def machines_for(self, recipe_map: str) -> list[machines.MachineInfo]:
         if recipe_map not in self.machines:
             self.machines[recipe_map] = machines.load_machines(
@@ -525,13 +571,17 @@ class _Check:
     fitted: bool = False  # the machine check has run
 
 
-def heuristic(item: str, rec: RecipeNode) -> tuple[object, ...]:
+def heuristic(
+    item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
+) -> tuple[object, ...]:
     """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
-    recycling last (D142 (2)); avoid chanced-only; lower tier; fewer inputs; base machine
-    first (D12); machine before manual; unbadged first (D142 (a)); then the key. The first
-    five are known before the machine check (:func:`_cheap`)."""
+    recycling and GT's container maps last (D142 (2), D189); then the reverse of one of
+    ``item``'s own uses (it consumes something ``made_from`` the item, D189); avoid
+    chanced-only; recipes that use fluid cells after those that don't (D189); lower tier;
+    fewer inputs; base machine first (D12); machine before manual; unbadged first (D142 (a));
+    then the key. All but the last four are known before the machine check (:func:`_cheap`)."""
     return (
-        *_cheap(item, rec),
+        *_cheap(item, rec, made_from),
         not rec.base,
         "manual" in rec.flags,
         bool(rec.badges),
@@ -539,11 +589,20 @@ def heuristic(item: str, rec: RecipeNode) -> tuple[object, ...]:
     )
 
 
-def _cheap(item: str, rec: RecipeNode) -> tuple[object, ...]:
+def _cheap(
+    item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
+) -> tuple[object, ...]:
     outs = [p for p in rec.outputs if p.key == item]
     chanced_only = bool(outs) and all(p.chance_bp < FULL for p in outs)
     consumed = {p.key for p in rec.inputs if p.consumed and p.key != EU_KEY}
-    return ("recycling" in rec.flags, chanced_only, rec.tier, len(consumed))
+    return (
+        bool({"recycling", "container", "eu0"} & set(rec.flags)),
+        bool(consumed & made_from),
+        chanced_only,
+        "cells" in rec.flags,
+        rec.tier,
+        len(consumed),
+    )
 
 
 class _Builder:
@@ -579,7 +638,7 @@ class _Builder:
         self.excluded_recipes = cons.excluded_recipes()
         self.excluded_keys = cons.excluded_keys()
         self.excluded_mtes = cons.excluded_mtes()
-        self.boundary: dict[str, str] = {}
+        self.boundary: dict[str, str] = dict.fromkeys(raw_inputs(), "raw")
         for k, v in sorted(base.line_outputs().items()):
             if v > 0:
                 self.boundary[k] = "line"
@@ -663,11 +722,10 @@ class _Builder:
         elif r.map is None or r.eut is None or r.duration is None:
             return _Check(False, "no recipe map, EU/t or duration")
         elif r.eut <= 0:
-            # Fuels, the Eye of Harmony, the neutron activator...: the machine powers or
-            # times it its own way, which isn't modelled (D189; fuels are WO-4's).
-            return _Check(
-                False, "EU/t 0: its machine runs it its own way, not modelled"
-            )
+            # The Eye of Harmony, the neutron activator...: the machine powers it its own
+            # way. Kept when a machine runs it (always a badged one), ranked last (D189);
+            # fuels are WO-4's and their generators run no production recipe (WO-3.2).
+            flags.append("eu0")
         if r.tier > self.cap:
             return _Check(False, f"tier {r.tier} is above the cap {self.cap}")
         cons = self.req.constraints
@@ -675,6 +733,15 @@ class _Builder:
             return _Check(False, f"{r.eut} EU/t is above max_eut {cons.max_eut}")
         if r.meta.get("recycle") or (r.category or "").endswith("_recycling"):
             flags.append("recycling")
+        if r.map in CONTAINER_MAPS:
+            flags.append("container")
+        if any(
+            _kind(p.key) == "item"
+            and (info := self.reader.info(p.key)) is not None
+            and info.cell
+            for p in consumed
+        ):
+            flags.append("cells")
         research: str | None = None
         if r.map == chains.ASSEMBLY_LINE_MAP:
             made = sorted({p.key for p in r.outputs})
@@ -744,7 +811,7 @@ class _Builder:
         )
         if (pin := self.req.pin_for(key)) is not None:
             need.add(pin)
-        cheap: list[tuple[tuple[object, ...], int, RecipeNode]] = []
+        passed: list[tuple[int, RecipeNode]] = []
         rejected: list[Candidate] = []
         seen: set[int] = set()
         for rid, _, _ in self.reader.makers.get(key, []):
@@ -753,12 +820,16 @@ class _Builder:
             seen.add(rid)
             c = self.check(rid, machines_too=False)
             if c.ok and c.node is not None:
-                cheap.append((_cheap(key, c.node), rid, c.node))
+                passed.append((rid, c.node))
             else:
                 rejected.append(
                     Candidate(self.reader.recipes[rid].ref, "rejected", c.reason)
                 )
-        cheap.sort(key=lambda x: (x[0], x[2].id))
+        uses = self.reader.made_from(key) if len(passed) > 1 else frozenset()
+        cheap = sorted(
+            ((_cheap(key, n, uses), rid, n) for rid, n in passed),
+            key=lambda x: (x[0], x[2].id),
+        )
         valid: list[RecipeNode] = []
         unchecked: list[Candidate] = []
         group: tuple[object, ...] | None = None
@@ -772,7 +843,7 @@ class _Builder:
                 valid.append(c.node)
             else:
                 rejected.append(Candidate(node.id, "rejected", c.reason))
-        valid.sort(key=lambda n: heuristic(key, n))
+        valid.sort(key=lambda n: heuristic(key, n, uses))
         rejected.sort(key=lambda c: c.recipe)
         return valid, unchecked, rejected
 
@@ -805,6 +876,27 @@ class _Builder:
             )
             return refs[:TOP_N], False, None, None, warns
         return refs[:TOP_N], False, None, None, []
+
+
+def raw_inputs(path: Path = RAW_INPUTS) -> tuple[str, ...]:
+    """``data/curated/raw_inputs.tsv``'s keys: inputs taken from the world (D189)."""
+    keys: list[str] = []
+    header = False
+    for n, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not text.strip() or text.startswith("#"):
+            continue
+        cells = text.split("\t")
+        if not header:
+            if cells[:2] != ["key", "note"]:
+                raise ValueError(f"{path.name}:{n}: header must be key, note")
+            header = True
+            continue
+        if not is_stable_key(cells[0]):
+            raise ValueError(
+                f"{path.name}:{n}: {cells[0]!r} is not an item or fluid key"
+            )
+        keys.append(cells[0])
+    return tuple(keys)
 
 
 # --- step 2: build ---------------------------------------------------------------------------
@@ -845,10 +937,11 @@ def build(
         raise GraphError(f"{request.target} is not in export run {run}")
     nodes: dict[str, ItemNode] = {}
     recipes: dict[str, RecipeNode] = {}
-    edges: set[Edge] = set()
+    flows: dict[tuple[str, str, str], float] = {}  # (src, dst, kind) -> per craft
     depth_of: dict[str, int] = {request.target: 0}
     catalysts: set[str] = set()
     made_at: dict[str, int] = {}  # recipe -> the depth of the item it was chosen for
+    direct: set[str] = set()  # the target's direct inputs (primary choices)
     level = [request.target]
     depth = 0
     while level:
@@ -878,7 +971,7 @@ def build(
                 if kind in ("ore", "wildcard"):
                     members = reader.members(key)
                     for m in members[:TOP_N]:
-                        edges.add(Edge(m, key, "member", 1.0))
+                        flows[(m, key, "member")] = 1.0
                         if m not in nodes:
                             depth_of.setdefault(m, depth)
                             same.add(m)
@@ -902,18 +995,35 @@ def build(
                         key, kind, name, depth, "raw", candidates=tuple(rejected)
                     )
                     continue
-                chosen, pinned, template, branch, warns = b.choose(key, valid, rejected)
-                status = {
-                    n.id: ("chosen" if n.id in chosen else "pruned") for n in valid
+                top, pinned, template, branch, warns = b.choose(key, valid, rejected)
+                # Only a primary choice (§7.1 step 3) keeps all of its top recipes in the
+                # graph; the heuristic fixes every other node's choice to its first (D11),
+                # and swapping one is a pin, which rebuilds (D61; D189).
+                if (
+                    key == request.target
+                    or key in direct
+                    or branch is not None
+                    or template is not None
+                ):
+                    chosen = top
+                else:
+                    chosen = top[:1]
+                if key == request.target:
+                    for ref in chosen:
+                        rec = next(n for n in valid if n.id == ref)
+                        direct.update(p.key for p in rec.inputs if p.consumed)
+                status: dict[str, Status] = {
+                    n.id: "chosen"
+                    if n.id in chosen
+                    else "alternative"
+                    if n.id in top
+                    else "pruned"
+                    for n in valid
                 }
                 cands = (
                     tuple(
                         Candidate(
-                            n.id,
-                            status[n.id],  # type: ignore[arg-type]
-                            ""
-                            if status[n.id] == "chosen"
-                            else _pruned_reason(pinned, template),
+                            n.id, status[n.id], _reason(status[n.id], pinned, template)
                         )
                         for n in valid
                     )
@@ -925,11 +1035,14 @@ def build(
                     template, branch, tuple(warns),
                 )  # fmt: skip
                 for ref in chosen:
+                    if ref in recipes:  # chosen for another item already
+                        continue
                     rec = next(n for n in valid if n.id == ref)
                     recipes[ref] = rec
-                    made_at.setdefault(ref, depth)
+                    made_at[ref] = depth
                     for p in rec.inputs:
-                        edges.add(Edge(p.key, ref, "in", float(p.amount)))
+                        k = (p.key, ref, "in")
+                        flows[k] = flows.get(k, 0.0) + p.amount
                         if not p.consumed:
                             catalysts.add(p.key)
                             continue
@@ -937,7 +1050,8 @@ def build(
                             depth_of[p.key] = depth + 1
                             upcoming.add(p.key)
                     for p in rec.outputs:
-                        edges.add(Edge(ref, p.key, "out", p.expected))
+                        k = (ref, p.key, "out")
+                        flows[k] = flows.get(k, 0.0) + p.expected
             pending = sorted(same - set(nodes))
         level = sorted(upcoming - set(nodes))
         depth += 1
@@ -951,7 +1065,8 @@ def build(
             depth_of.get(key, 0),
             "catalyst",
         )
-    for e in sorted(edges, key=lambda e: (e.src, e.dst, e.kind)):
+    edges = tuple(Edge(s, d, k, a) for (s, d, k), a in sorted(flows.items()))  # type: ignore[arg-type]
+    for e in edges:
         if e.kind == "out" and e.dst not in nodes:
             info = reader.info(e.dst)
             nodes[e.dst] = ItemNode(
@@ -978,7 +1093,6 @@ def build(
     for r in sorted(recipes.values(), key=lambda r: r.id):
         if r.badges:
             warnings.append(f"{r.id}: every machine for it is {', '.join(r.badges)}")
-    ordered_edges = tuple(sorted(edges, key=lambda e: (e.src, e.dst, e.kind, e.amount)))
     return Graph(
         request=request.digest(),
         run_id=run,
@@ -986,19 +1100,23 @@ def build(
         tier_cap=b.cap,
         items=items,
         recipes=tuple(recipes[k] for k in sorted(recipes)),
-        edges=ordered_edges,
-        cycles=cycles(ordered_edges),
+        edges=edges,
+        cycles=cycles(edges),
         primary=tuple(sorted(primary)),
         templates=tuple(used),
         warnings=tuple(warnings),
     )
 
 
-def _pruned_reason(pinned: bool, template: str | None) -> str:
+def _reason(status: Status, pinned: bool, template: str | None) -> str:
+    if status == "chosen":
+        return ""
     if pinned:
         return "pinned to another recipe"
     if template:
         return f"chain template {template} chose others"
+    if status == "alternative":
+        return "not a primary choice: the first is used unless pinned (D11, D61)"
     return f"below the top {TOP_N}"
 
 

@@ -1,0 +1,20 @@
+# Naquadah (GTNH 2.9.0, GoodGenerator's naquadah processing), WO-3.3. Format: README.md.
+# Naquadah oxide mixture in fluoroantimonic acid (EBF) gives an emulsion, centrifuged to a low
+# quality solution; with P-507 it becomes the naquadah-adamantium solution, which the neutron
+# activator splits into naquadah-rich solution (and more oxide mixture: the loop); sodium
+# hydroxide precipitates naquadahine (P-507 comes back), which sodium reduces to naquadah dust.
+# The neutron activator's recipes have EU/t 0 (it runs on neutron kinetic energy): the graph
+# keeps them with the eu0 flag and its machine's badges (D189). Enriched naquadah and naquadria
+# come from the line's byproducts and are left to the heuristic. Keys checked against the dev
+# runtime's server harness DB (run 20261111T104223Z).
+item	recipe	branch	note
+gregtech:gt.metaitem.01@2324	r:gt.recipe.largechemicalreactor/dc2cee4d1e1e	nq-reduction	Naquadah Dust: naquadahine + sodium (large chemical reactor)
+gregtech:gt.metaitem.01@2324	r:gt.recipe.chemicalreactor/bf9ebc2e4997	nq-reduction	the chemical reactor
+bartworks:gt.bwMetaGenerateddust@10063	r:gt.recipe.autoclave/37f065ec30c5		Naquadahine Dust: naquadah-rich solution + sodium hydroxide (autoclave)
+fluid:p-507	r:gt.recipe.autoclave/37f065ec30c5		P-507 comes back from the same step: the extractant loop
+fluid:naquadah-rich solution	r:gg.recipe.neutron_activator/8b84d3c2bc80		Naquadah-Rich Solution: the neutron activator
+bartworks:gt.bwMetaGenerateddust@10054	r:gg.recipe.neutron_activator/8b84d3c2bc80		Naquadah Oxide Mixture Dust: also back from the neutron activator (with mined ore)
+fluid:naquadah-adamantium solution	r:gt.recipe.largechemicalreactor/34af9ee5b0c1		Naquadah-Adamantium Solution: P-507 + low quality solution
+fluid:low quality naquadah solution	r:gt.recipe.centrifuge/f6b11e59be3e	lq-solution	Low Quality Naquadah Solution: centrifuging the emulsion with sodium hydroxide
+fluid:low quality naquadah solution	r:gt.recipe.multicentrifuge/3fa47c48d2c6	lq-solution	the multiblock centrifuge
+fluid:low quality naquadah emulsion	r:gt.recipe.blastfurnace/6fcf186a5b99		Low Quality Naquadah Emulsion: oxide mixture + fluoroantimonic acid (EBF)

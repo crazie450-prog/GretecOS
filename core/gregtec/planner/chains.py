@@ -11,9 +11,10 @@ then a header ``item recipe branch note`` and one row per (item, recipe):
 
 - ``item``: the item or fluid's stable key (``registry@meta``, ``fluid:<name>``);
 - ``recipe``: the recipe's citation key ``r:<map>/<sig12>``;
-- ``branch``: empty, or a branch-point id: an item with two or more rows must have one, the
-  same on each of its rows (the solver picks among them); one row with a branch id marks a
-  single recipe WO-3.4 may still swap;
+- ``branch``: empty, or a branch-point id, the same on each of the item's rows. With an id the
+  item is a **branch point**: WO-3.4 picks one of its recipes as a primary choice. Without one,
+  every recipe listed for the item is kept and the solver balances them (a chain's loop: the
+  platline's metallic powder comes from ore and from its own refined salt);
 - ``note``: why, for people.
 
 :func:`load` checks the format (ValueError names the file and line); :func:`validate` checks
@@ -119,7 +120,7 @@ def read_file(path: Path) -> list[Row]:
 
 def load(folder: Path = CHAINS_DIR) -> Templates:
     """Every ``*.tsv`` in ``folder``, checked: no row twice, an item in one template only, and
-    an item with several recipes has one branch id on all of them."""
+    one branch id (or none) on all of an item's rows."""
     rows: list[Row] = []
     for path in sorted(folder.glob("*.tsv")):
         rows.extend(read_file(path))
@@ -142,11 +143,6 @@ def load(folder: Path = CHAINS_DIR) -> Templates:
                 f"{chains[0]}.tsv: {item}'s rows have different branch ids"
             )
         branch = branches.pop() or None
-        if len(group) > 1 and branch is None:
-            raise ValueError(
-                f"{chains[0]}.tsv:{group[1].line}: {item} has several recipes, so it is a "
-                "branch point and needs a branch id"
-            )
         choices[item] = Choice(chains[0], item, tuple(recipes), branch)
     return Templates(tuple(rows), choices)
 
