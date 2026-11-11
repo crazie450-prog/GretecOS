@@ -12,9 +12,12 @@
 |                              | engine and why, transcribe the WAVs (WO-5.2)                  |
 | ``record``                   | record the STT eval set: one talk-key segment per line        |
 | ``eval``                     | the STT eval: entity accuracy and WER (WO-5.2, D183)          |
+| ``wake-eval``                | score wake phrases: hits and false wakes on synthetic speech  |
+|                              | and noise, or on recordings (WO-5.4, D187)                    |
+| ``capture OUT.wav``          | record the microphone to a WAV (open-mic play for wake-eval)  |
 
-``run``, ``test``, ``devices`` and ``record`` need Windows (WASAPI and the keyboard hook);
-``keys``, ``bench``, ``stt`` and ``eval`` run anywhere. ``run`` needs the core's voice token in
+``run``, ``test``, ``devices``, ``record`` and ``capture`` need Windows (WASAPI and the
+keyboard hook); ``keys``, ``bench``, ``stt``, ``eval`` and ``wake-eval`` run anywhere. ``run`` needs the core's voice token in
 this account's keyring (``gos token new voice``, D117).
 """
 
@@ -193,7 +196,77 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         each.add_argument(
             "--set", type=Path, help="another set file (id kind key text)"
         )
-    for each in (stt_cmd, evaluate):
+    wake_eval_cmd = commands.add_parser(
+        "wake-eval",
+        help="score wake phrases: hits and false wakes",
+        description=(
+            "Runs the wake engine (stage 1, the VAD, and stage 2 through speech-to-text "
+            "unless --no-verify) over wake attempts and over talk and noise that must not "
+            "wake GOS. --kokoro DIR: every candidate phrase (tests/evals/wake_phrases.tsv), "
+            "said 40 times by a local Kokoro model over generated noise, against the open-mic "
+            "lines of tests/evals/wake_chatter.txt and minutes of noise; nothing but the "
+            "report is written. --audio DIR: the configured phrase on recordings, "
+            "DIR/wake/*.wav (one attempt each) and DIR/play/*.wav (open-mic play, gos voice "
+            "capture), against plan 8's targets: >= 38 of 40 attempts whose question was "
+            "captured, <= 1 false wake an hour."
+        ),
+    )
+    wake_source = wake_eval_cmd.add_mutually_exclusive_group(required=True)
+    wake_source.add_argument(
+        "--kokoro",
+        type=Path,
+        metavar="DIR",
+        help="synthetic speech: Kokoro's kokoro-v1.0.onnx and voices-v1.0.bin in DIR",
+    )
+    wake_source.add_argument(
+        "--audio", type=Path, metavar="DIR", help="recordings: DIR/wake and DIR/play"
+    )
+    wake_eval_cmd.add_argument(
+        "--phrase",
+        action="append",
+        help="only this phrase (repeatable; with --kokoro it needn't be in the set)",
+    )
+    wake_eval_cmd.add_argument(
+        "--phrases", type=Path, help="another candidates file (phrase note near)"
+    )
+    wake_eval_cmd.add_argument(
+        "--noise-minutes",
+        type=float,
+        default=5.0,
+        help="--kokoro: minutes of noise alone in the negatives (default 5)",
+    )
+    wake_eval_cmd.add_argument(
+        "--wake-engine",
+        choices=settings.WAKE_ENGINES,
+        help="instead of [voice] wake_engine",
+    )
+    wake_eval_cmd.add_argument(
+        "--wake-model", help="instead of [voice] wake_model (openwakeword)"
+    )
+    wake_eval_cmd.add_argument(
+        "--threshold", type=float, help="instead of [voice] wake_threshold"
+    )
+    wake_eval_cmd.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="stage 1 only: no speech-to-text second stage",
+    )
+    wake_eval_cmd.add_argument("--out", type=Path, help="the TSV report's path")
+    capture = commands.add_parser(
+        "capture",
+        help="record the microphone to a WAV",
+        description=(
+            "Records the configured microphone (16 kHz mono, as the voice client hears it) "
+            "to OUT.wav until Ctrl+C or --minutes: the open-mic play wake-eval --audio "
+            "scores. It is your voice and your friends' names: keep it in GOS_HOME, never "
+            "share it."
+        ),
+    )
+    capture.add_argument("wav", type=Path, metavar="OUT.wav")
+    capture.add_argument(
+        "--minutes", type=float, default=0, help="stop after this long"
+    )
+    for each in (stt_cmd, evaluate, wake_eval_cmd):
         each.add_argument(
             "--engine",
             choices=settings.STT_ENGINES,
@@ -211,6 +284,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         stt_cmd,
         record,
         evaluate,
+        wake_eval_cmd,
+        capture,
     ):
         each.add_argument("--config", type=Path, help="gos.toml (default: GOS_HOME's)")
     args = parser.parse_args(argv)
@@ -228,6 +303,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "stt": _stt,
         "record": _record,
         "eval": _eval,
+        "wake-eval": _wake_eval,
+        "capture": _capture,
     }[args.voice_command]
     return handler(cfg, voice_settings, args, out)
 
@@ -306,18 +383,26 @@ def _run(
         transcriber=transcriber,
         speaker=hooks.speaker(voice_settings),
     )
+    if voice_settings.wake_trigger:  # the first run downloads the model
+        print("Loading the wake word...", file=out)
     wake = (
-        hooks.wake_engine(voice_settings, voice)
+        # stage 2 hears through speech-to-text; --transcript has none to hear with (D185)
+        hooks.wake_engine(
+            voice_settings, voice, None if args.transcript else transcriber
+        )
         if voice_settings.wake_trigger
         else None
     )
     if voice_settings.wake_trigger and wake is None:
-        log.warning(
-            "no wake-word engine yet (WO-5.4): the talk key is the trigger"
+        message = (
+            "The wake word can't start (logs/voice.log says why): the talk key is the "
+            "trigger"
             if voice_settings.key_trigger
-            else "no wake-word engine yet (WO-5.4) and the talk key is off: only the "
-            'hotkeys work (set [voice] backup_trigger = "key")'
+            else "The wake word can't start (logs/voice.log says why) and the talk key is "
+            'off: only the hotkeys work (set [voice] backup_trigger = "key")'
         )
+        log.warning(message)
+        print(message + ".", file=out)
     pipe, hook, watchdog = _windows_parts(voice, voice_settings.input_device)
     if wake is not None:
         pipe.sinks.append(wake)
@@ -328,8 +413,13 @@ def _run(
         extra={"keys": _describe(voice_settings), "stt": transcriber.name},
     )
     stt_label = getattr(transcriber, "label", transcriber.name)
+    heard = (
+        f'; wake phrase "{voice_settings.wake_phrase}" ({voice_settings.wake_engine})'
+        if wake is not None
+        else ""
+    )
     print(
-        f"Voice client: {_describe(voice_settings)}; speech-to-text: {stt_label}. "
+        f"Voice client: {_describe(voice_settings)}; speech-to-text: {stt_label}{heard}. "
         "Ctrl+C stops it.",
         file=out,
     )
@@ -560,9 +650,9 @@ def _devices(
 STAGES = ("held_ms", "close_ms", "stt_ms", "core_ms", "speak_ms", "total_ms")
 
 
-def turn_records(logs: Path) -> list[dict[str, Any]]:
-    """Every ``turn`` record in ``logs/voice.log`` and its rotated copies, oldest first
-    (applog keeps ``voice.log.1`` to ``.5``, ``.1`` the newest)."""
+def turn_records(logs: Path, msg: str = "turn") -> list[dict[str, Any]]:
+    """Every ``turn`` record (or ``msg`` record: ``wake``, D185) in ``logs/voice.log`` and its
+    rotated copies, oldest first (applog keeps ``voice.log.1`` to ``.5``, ``.1`` the newest)."""
     rotated = []
     for path in logs.glob(f"{VOICE}.log.*"):
         number = path.name.removeprefix(f"{VOICE}.log.")
@@ -578,7 +668,7 @@ def turn_records(logs: Path) -> list[dict[str, Any]]:
                 entry = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(entry, dict) and entry.get("msg") == "turn":
+            if isinstance(entry, dict) and entry.get("msg") == msg:
                 found.append(entry)
     return found
 
@@ -593,6 +683,16 @@ def _bench(
     cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
 ) -> int:
     turns = turn_records(cfg.logs_dir)[-max(1, args.last) :]
+    wakes = turn_records(cfg.logs_dir, "wake")
+    if wakes:  # D185: each wake's outcome; Clayton counts the chimes he didn't mean
+        outcomes: dict[str, int] = {}
+        for w in wakes:
+            outcomes[str(w.get("outcome"))] = outcomes.get(str(w.get("outcome")), 0) + 1
+        chimed = sum(n for o, n in outcomes.items() if o in ("asked", "no question"))
+        listed = ", ".join(f"{n} {o}" for o, n in sorted(outcomes.items()))
+        print(
+            f"wake word: {len(wakes)} detections, {chimed} chimed ({listed})", file=out
+        )
     answered = [t for t in turns if t.get("outcome") in ("answered", "stopped")]
     if not answered:
         print(f"No answered turns in {cfg.logs_dir / (VOICE + '.log')} yet.", file=out)
@@ -826,3 +926,158 @@ def _eval(
     stt_eval.write_tsv(rows, path)
     print(f"report: {path}", file=out)
     return 0 if summary.met else EXIT_PROBLEM
+
+
+# --- gos voice wake-eval, capture (WO-5.4) ----------------------------------------------------
+
+
+def _wake_eval(
+    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
+) -> int:
+    from gregtec_voice import wake, wake_eval
+
+    if args.threshold is not None and not 0.05 <= args.threshold <= 0.95:
+        print("--threshold must be 0.05 to 0.95", file=out)
+        return EXIT_SETUP
+    wake_settings = replace(
+        voice_settings,
+        wake_engine=args.wake_engine or voice_settings.wake_engine,
+        wake_model=args.wake_model or voice_settings.wake_model,
+        wake_threshold=args.threshold or voice_settings.wake_threshold,
+    )
+    try:
+        wanted = [settings.wake_phrase(p) for p in args.phrase or []]
+    except (TypeError, ValueError) as exc:
+        print(f"--phrase {exc}", file=out)
+        return EXIT_SETUP
+    tts: wake_eval.KokoroTts | None = None
+    positives: list[wake_eval.Clip] = []
+    questions: list[str] = []
+    babble = None
+    try:
+        if args.audio is not None:
+            folders = (args.audio / "wake", args.audio / "play")
+            missing = [str(f) for f in folders if not f.is_dir()]
+            if missing:
+                print(f"No folder {', '.join(missing)}.", file=out)
+                return EXIT_SETUP
+            phrases = wanted or [wake_settings.wake_phrase]
+            positives = wake_eval.recorded(folders[0], pad_s=wake_eval.PAD_S)
+            negatives = wake_eval.recorded(folders[1])
+        else:
+            candidates = wake_eval.load_phrases(args.phrases or wake_eval.PHRASES)
+            phrases = wanted or [c.phrase for c in candidates]
+            near = [n for c in candidates for n in c.near]
+            tts = wake_eval.KokoroTts(args.kokoro)
+            print("Speaking the negatives...", file=out)
+            negatives, babble = wake_eval.chatter(
+                wake_eval.load_lines() + near, tts, noise_minutes=args.noise_minutes
+            )
+            questions = wake_eval.load_questions()
+    except (OSError, wake_eval.EvalError) as exc:
+        print(f"Can't use the audio: {exc}", file=out)
+        return EXIT_SETUP
+    if wake_settings.wake_engine == settings.OPENWAKEWORD and not wanted:
+        phrases = [wake_settings.wake_phrase]  # a custom model knows one phrase
+    try:
+        wake.vad()  # loads now, so a missing group is said before any scoring
+    except wake.WakeError as exc:
+        print(f"Can't start the VAD: {exc}", file=out)
+        return EXIT_SETUP
+    verifier = None
+    if not args.no_verify:
+        engine = _load_stt(cfg, _stt_settings(voice_settings, args), out)
+        if engine is None:
+            return EXIT_PROBLEM
+        verifier = wake.verifier(engine)
+    scores = []
+    for phrase in phrases:
+        try:
+            found = wake.detector(
+                wake_settings,
+                phrase=phrase,
+                note=lambda message: print(message, file=out),
+            )
+        except wake.WakeError as exc:
+            print(f"Can't start the wake engine for {phrase!r}: {exc}", file=out)
+            return EXIT_SETUP
+        if tts is not None:
+            print(f"Speaking {wake_eval.ATTEMPTS} attempts of {phrase!r}...", file=out)
+            positives = wake_eval.attempts(phrase, tts, questions, babble=babble)
+        print(f"Scoring {phrase!r}...", file=out)
+        scores.append(
+            wake_eval.score(
+                phrase,
+                wake_settings.wake_engine,
+                found,
+                wake.vad,
+                positives,
+                negatives,
+                verifier,
+            )
+        )
+    wake_eval.report(scores, out, second_stage=verifier is not None)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = args.out or cfg.data_dir / "reports" / f"wake-eval-{stamp}.tsv"
+    wake_eval.write_tsv(scores, path, second_stage=verifier is not None)
+    print(f"report: {path}", file=out)
+    if args.audio is not None:
+        return 0 if all(s.met for s in scores) else EXIT_PROBLEM
+    return 0
+
+
+class _WavSink:
+    """``gos voice capture``: every block into a WAV file (on the audio worker)."""
+
+    def __init__(self, path: Path) -> None:
+        import wave
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.file = wave.open(str(path), "wb")  # noqa: SIM115 - closed by close()
+        self.file.setnchannels(1)
+        self.file.setsampwidth(audio.SAMPLE_BYTES)
+        self.file.setframerate(audio.SAMPLE_RATE)
+        self.seconds = 0.0
+
+    def feed(self, block: audio.Block) -> None:
+        self.file.writeframes(block.pcm)
+        self.seconds += len(block.pcm) / audio.BYTES_PER_S
+
+    def close(self) -> None:
+        self.file.close()
+
+
+def _capture(
+    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
+) -> int:
+    if _windows_only(out):
+        return EXIT_SETUP
+    if args.wav.exists():
+        print(f"{args.wav} exists: give a new file name.", file=out)
+        return EXIT_SETUP
+    sink = _WavSink(args.wav)
+    pipe = AudioPipe(
+        WasapiSource(voice_settings.input_device),
+        audio.Recorder(lambda segment: None),
+        [sink],
+    )
+    print(f"Recording to {args.wav}; Ctrl+C stops.", file=out)
+    try:
+        pipe.start()
+        # short waits: on Windows, Ctrl+C can't interrupt one long lock wait
+        deadline = (
+            time.monotonic() + args.minutes * 60 if args.minutes > 0 else math.inf
+        )
+        ticks = threading.Event()
+        while not ticks.wait(0.5) and time.monotonic() < deadline:
+            pass
+    except AudioError as exc:
+        print(f"Can't open the microphone: {exc}", file=out)
+        return EXIT_PROBLEM
+    except KeyboardInterrupt:
+        pass
+    finally:
+        pipe.stop()
+        sink.close()
+    print(f"{sink.seconds / 60:.1f} minutes recorded to {args.wav}.", file=out)
+    return 0
