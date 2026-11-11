@@ -290,6 +290,28 @@ def test_a_tap_the_hook_counted_late_is_not_a_miss() -> None:
     assert dog.reinstalls == 0 and [e.source for e in got] == ["hook", "hook"]
 
 
+def test_a_press_the_hook_counts_during_a_poll_is_not_a_tap() -> None:
+    """GetAsyncKeyState releases the GIL, so the hook thread can count a press while the
+    watchdog reads that key's state: the hook saw it, so it is no missed tap, and a talk key
+    still held isn't cancelled by a watchdog down and up."""
+    dog, hook, _state, got, clock = make_watch()
+    dog.check()
+
+    class Racing(FakeKeyState):
+        def read(self, vk: int) -> tuple[bool, bool]:
+            found = super().read(vk)  # Windows hasn't updated the key's state yet
+            if vk == F13 and not hook.key_filter.presses.get(F13):
+                press(hook, self, F13)  # the hook counts it before read() returns
+            return found
+
+    dog.key_state = racing = Racing()
+    for _ in range(4):  # the key stays held
+        clock.now += 0.05
+        dog.check()
+    assert racing.is_down(F13) and dog.reinstalls == 0
+    assert [(e.vk, e.down, e.source) for e in got] == [(F13, True, "hook")]
+
+
 def test_the_first_poll_ignores_a_pressed_bit_from_before_the_watchdog() -> None:
     dog, _hook, state, got, clock = make_watch()
     state.pressed.add(F13)  # pressed before the client started

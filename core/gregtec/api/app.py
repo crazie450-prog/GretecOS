@@ -40,8 +40,8 @@ error or off) and ``detail``; process items add ``state``, ``pid`` (the process'
 question's card shows on monitor 2 (D23); ``asked_at`` (epoch seconds, when the question came)
 lets a dashboard keep the newest question's card when an older answer finishes after it. A
 confirm or cancel that found nothing waiting (``pending`` false) changed nothing and isn't pushed.
-``/api/ui`` pushes ``{"type": "ui", "action", "by"}`` (the voice
-client's next-card hotkey). The voice client reports its state (``idle``, ``listening``,
+``/api/ui`` pushes ``{"type": "ui", "action", "by"}`` (the voice client's next-card hotkey).
+The voice client reports its state (``idle``, ``listening``,
 ``thinking``, ``speaking``, ``off``; ``trigger`` ``key`` or ``wake``) to ``/api/voice/state``; the
 core keeps the latest, pushes it as ``{"type": "voice.state", "data": {"state", "trigger",
 "ts"}}`` and sends it to each dashboard that connects; when the voice client's WebSocket closes

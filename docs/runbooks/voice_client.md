@@ -21,12 +21,12 @@ Clayton runs these on the gaming PC after the WO-5.1 PR is merged and deployed. 
    next_card_key = "F16"
    input_device = ""         # "" = Windows' default microphone; else part of a name from step 4
    ```
-   Only F13-F24, Pause and Scroll Lock are allowed: they type and edit nothing, and neither GTNH nor Discord binds them by default. F1-F12 (Minecraft hard-codes F1 and F3), letters, digits, Space, Enter, Insert, Delete, Home, End, Page Up, Page Down, the arrows, the numpad, Menu, modifiers, mouse buttons themselves and combinations are refused (D180). A wrong key makes every `gos voice` command say why.
+   Only F13-F24, Pause and Scroll Lock are allowed: they type and edit nothing, and neither GTNH nor Discord binds them by default. F1-F12 (Minecraft hard-codes F1 and F3), letters, digits, Space, Enter, Insert, Delete, Home, End, Page Up, Page Down, the arrows, the numpad, Menu, modifiers, mouse buttons themselves and combinations are refused (D180). A wrong key makes every `gos voice` command say why. A keyboard's own Pause key can report its release together with its press (the PS/2 Pause code has no release); as a `hold` talk key such a press is always under 0.3 s and only stops speech. If step 9's test lists Pause down and up at the same instant, use `talk_mode = "toggle"` or another key for talk; as a hotkey Pause is fine.
 4. **The microphone.**
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice devices
    ```
-   One line per WASAPI microphone; `[default, used]` marks the one the client opens. If `used` isn't the Arctis Nova Elite's microphone, set `input_device = "Arctis"` (any part of its name that matches only it) and run it again.
+   One line per WASAPI microphone; `[default, used]` marks the one the client opens. If `used` isn't the Arctis Nova Elite's microphone, or the list has any other microphone (a webcam's, a line-in), set `input_device = "Arctis"` (any part of its name that matches only it) and run it again. With `""` the client opens Windows' default microphone of the moment: while the headset is unplugged that is the other one, and the client would stay on it after the headset is back (D181).
 5. **GTNH's bindings.** Close GTNH first (it rewrites `options.txt` when it quits), then:
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice keys play
@@ -59,9 +59,9 @@ Clayton runs these on the gaming PC after the WO-5.1 PR is merged and deployed. 
     ```powershell
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice run --transcript "how do I make steel"
     ```
-    `--transcript` stands in for speech-to-text until WO-5.2: every segment "says" that text. Hold the talk key 1 s and release: the window prints `GOS: Steel Ingot: ...` (the fast lane's checked answer). Press confirm: `GOS: Nothing is waiting for confirmation.` Press cancel: nothing is said (nothing was waiting, and cancel never makes GOS talk then). Press next card: nothing is said (the dashboard, WO-2.6, moves to its next card).
+    `--transcript` stands in for speech-to-text until WO-5.2: every segment "says" that text. Hold the talk key 1 s and release: the window prints `GOS: Steel Ingot: ...` (the fast lane's checked answer). Press confirm: `GOS: Nothing is waiting for confirmation.` Press cancel: nothing is said (nothing was waiting, and cancel never makes GOS talk then), and it changes nothing in the core: the dashboard keeps the steel answer's card, and a talk-key question "repeat that" would still say the steel answer (D179). Press next card: nothing is said (the dashboard, WO-2.6, moves to its next card).
 13. **Core offline.** In another window `gos stop`; within about 20 s the voice window prints `GOS: Core offline.` once. `gos serve`: the client reconnects by itself (the next talk-key press is answered again).
-14. **Microphone lost.** With the client still running, unplug the headset (or disable its microphone under Windows Settings > System > Sound > Input) for about 5 s: the window prints `GOS: Microphone lost.` once. Plug it back in (or enable it): within about 10 s the client opens it again by itself; a 2 s talk-key press is answered again. Stop the client with Ctrl+C.
+14. **Microphone lost.** With the client still running, unplug the headset (or disable its microphone under Windows Settings > System > Sound > Input) for about 5 s: the window prints `GOS: Microphone lost.` once. Plug it back in (or enable it): within about 10 s the client opens it again by itself; a 2 s talk-key press is answered again. (With another microphone on the PC this needs step 4's `input_device`: without it the client moves to the other microphone when the headset goes, says nothing more, and stays there.) Stop the client with Ctrl+C.
 15. **Latency so far** (PM14 needs speech-to-text and text-to-speech, WO-5.2 and WO-5.3; WO-5.7 measures it in full): after about 20 talk-key turns in step 12,
     ```powershell
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice bench
