@@ -169,8 +169,14 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
     answered`. The agent's log starts with `mailbox /home/gos/mailbox on drive ...; in gos.toml: drive = "...", dir =
     "home/gos/mailbox"`: the drive and dir must match step 24. `no reply from the core yet` means the core doesn't
     watch this folder (step 24).
-26. Run `gos-agent` and note the time. Leave the game running for an hour, unpaused, as in step 11. Halfway, send one
-    `say` through the core (step 12); it should print in chat within about 10 s.
+26. Restart the core, so its mailbox counts start at 0 for the hour: they count everything since the core started,
+    and step 25's `--once` message must not be in them (step 27 compares them with the hour's run only):
+    ```powershell
+    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe stop
+    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe serve --detach
+    ```
+    Then run `gos-agent` and note the time. Leave the game running for an hour, unpaused, as in step 11. Halfway,
+    send one `say` through the core (step 12); it should print in chat within about 10 s.
 27. After the hour, compare the two sides' **final** counts. The `alive:` lines and the core's 5-minute stats lines
     come on different clocks, so don't compare those; each side writes its final counts when it stops:
     1. In the OC shell, stop the agent (Ctrl+C). Its last line in `gos-agent.log` is `stopped (interrupted); N cycles,
@@ -189,9 +195,10 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
        ```
     The pass, from those two lines: the agent's `failed` 0, `written` about 720 (one per 5 s) and `removes failed` 0;
     the core's `refused_bad_payload` absent or 0 (a half-read `outbox.json`), `accepted` equal to the agent's
-    `written` (none lost; a few `repeats` are harmless), `seq_gaps` equal to the agent's `waits for the core`,
-    `withdrawn` 0, `poll_errors` absent. The folder holds `outbox.tmp` and at most one `inbox.json` or `outbox.json`,
-    no `inbox.tmp`. Then `gos serve --detach` to start GOS again.
+    `written` (both count step 26's run only, after its restart; none lost; a few `repeats` are harmless),
+    `seq_gaps` equal to the agent's `waits for the core`, `withdrawn` 0, `poll_errors` absent. The folder holds
+    `outbox.tmp` and at most one `inbox.json` or `outbox.json`, no `inbox.tmp`. Then `gos serve --detach` to start GOS
+    again.
 
     The two `df` lines are not a pass or fail: send them back. OC never learns of a file the core writes, so its
     count of the drive's used space is expected to fall a little each exchange (by about 512 bytes plus the reply's

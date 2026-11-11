@@ -881,3 +881,49 @@ def test_a_folder_swapped_for_a_link_during_a_step_stops_the_mailbox(
     oc_send(moved, message(seq=2))
     box.poll()
     assert len(sink.got) == 1, "nothing more read until the core restarts"
+
+
+# --- the Lab soak's pass rule (docs/runbooks/oc_agent.md steps 25-27)
+
+RUNBOOK = Path(__file__).resolve().parents[2] / "docs" / "runbooks" / "oc_agent.md"
+
+
+def test_the_cores_counts_span_agent_boots_until_the_core_restarts(
+    tmp_path: Path,
+) -> None:
+    """Review M3 follow-up: step 25's `gos-agent --once` (boot A) and the hour's run (boot B)
+    reach the same core, whose counts are since the core started. Without a restart between
+    them `accepted` is the hour's written + 1, so a lost message would read as a pass."""
+    place, folder = layout(tmp_path)
+    box = make_box(place)
+    oc_send(folder, message(seq=1, boot="0000000a"))  # step 25's --once
+    box.poll()
+    oc_receive(folder)
+    hour = 5
+    for seq in range(1, hour + 1):  # the hour's run, written = 5
+        oc_send(folder, message(seq=seq, boot="0000000b"))
+        box.poll()
+        oc_receive(folder)
+    assert box.stats["accepted"] == hour + 1, "the same core counts both boots"
+    restarted = make_box(place)  # step 26 restarts the core before the hour's run
+    for seq in range(1, hour + 1):
+        oc_send(folder, message(seq=seq, boot="0000000c"))
+        restarted.poll()
+        oc_receive(folder)
+    assert restarted.stats["accepted"] == hour
+    assert restarted.stats["seq_gaps"] == 0
+
+
+def test_the_runbook_restarts_the_core_between_once_and_the_hour() -> None:
+    """The fix for the test above, in the runbook Clayton follows: after step 25's --once and
+    before the hour's `gos-agent`, step 26 stops and starts the core."""
+    text = RUNBOOK.read_text(encoding="utf-8")
+    once = text.index("then `gos-agent --once`")
+    step26 = text.index("\n26. ", once)
+    step27 = text.index("\n27. ", step26)
+    hour = text[step26:step27]
+    stop = hour.index("gos.exe stop")
+    serve = hour.index("gos.exe serve --detach", stop)
+    assert serve < hour.index("run `gos-agent`"), (
+        "the hour's run starts on a fresh core"
+    )
