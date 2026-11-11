@@ -47,7 +47,10 @@ confirm_key = "F20"
 cancel_key = "F21"
 next_card_key = "Pause"
 input_device = " Arctis Nova Elite "
-wake_phrase = "TBD (PM08)"   # WO-5.4's key: ignored here
+wake_phrase = " Okay,  Tessera "
+wake_engine = "openwakeword"
+wake_model = " C:/GOS/models/okay_tessera.onnx "
+wake_threshold = 0.6
 stt_engine = "parakeet"
 stt_model = " distil-large-v3 "
 """,
@@ -58,6 +61,19 @@ stt_model = " distil-large-v3 "
     assert [k.name for k in voice.hotkeys().values()] == ["f20", "f21", "pause"]
     assert voice.key_trigger and not voice.wake_trigger
     assert voice.input_device == "Arctis Nova Elite"
+    assert (voice.wake_phrase, voice.wake_engine, voice.wake_threshold) == (
+        "okay tessera",
+        "openwakeword",
+        0.6,
+    )
+    assert voice.wake_model == "C:/GOS/models/okay_tessera.onnx"
+
+
+def test_wake_defaults(tmp_path: Path) -> None:
+    """D185, D186: sherpa-onnx with PM08's provisional phrase and its tuned threshold."""
+    _, voice = settings.load(write(tmp_path, "[voice]\n"))
+    assert (voice.wake_engine, voice.wake_phrase) == ("sherpa-onnx", "hey archivist")
+    assert (voice.wake_model, voice.wake_threshold) == ("", 0.0)
 
 
 @pytest.mark.parametrize(
@@ -81,6 +97,19 @@ stt_model = " distil-large-v3 "
         ('stt_model = "../models/x"', "stt_model must be a Whisper model name"),
         ('stt_model = "C:/models/turbo"', "stt_model must be a Whisper model name"),
         ("stt_model = 3", "stt_model must be a Whisper model name"),
+        ('wake_phrase = "Hey GregTech"', 'must not contain "GregTech"'),
+        ('wake_phrase = "okay gregtec"', 'must not contain "GregTech"'),
+        ('wake_phrase = "greg"', 'must not contain "GregTech"'),
+        ('wake_phrase = "TBD (PM08)"', "must be 1 to 4 plain words"),
+        ('wake_phrase = "hey you there a b"', "must be 1 to 4 plain words"),
+        ('wake_phrase = "hi you"', "is too short"),
+        ("wake_phrase = 3", "wake_phrase must be a phrase in quotes"),
+        ('wake_engine = "porcupine"', "wake_engine must be one of sherpa-onnx"),
+        ('wake_engine = "openwakeword"', "wake_model must name the custom"),
+        ("wake_model = 3", "wake_model must be a path in quotes"),
+        ("wake_threshold = 1.5", "wake_threshold must be 0"),
+        ("wake_threshold = 0.01", "wake_threshold must be 0"),
+        ("wake_threshold = true", "wake_threshold must be 0"),
     ],
 )
 def test_bad_voice_keys_are_refused(tmp_path: Path, toml: str, problem: str) -> None:

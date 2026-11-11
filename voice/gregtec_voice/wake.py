@@ -82,7 +82,7 @@ VERIFY_TIMEOUT_S = 5.0  # stage 2 slower than this: the wake is dropped
 REFRACTORY_S = (
     0.5  # after a wake ends, the phrase's echo in the detector can't fire again
 )
-MATCH = 0.8  # stage 2: how close the transcript must come to the phrase (D186)
+MATCH = 0.85  # stage 2: how close the transcript must come to the phrase (D186)
 VAD_ON, VAD_OFF = (
     0.5,
     0.35,
@@ -157,7 +157,7 @@ def strip_phrase(text: str, phrase: str) -> str:
     cut = 0
     for k in range(1, min(len(words), len(phrase.split()) + 1) + 1):
         lead = _letters(" ".join(words[:k]))
-        if len(lead) < 2:
+        if not 2 <= len(lead) <= len(target) + 1:
             continue
         tail = target[-len(lead) :]
         if difflib.SequenceMatcher(None, lead, tail).ratio() >= MATCH:
