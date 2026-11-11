@@ -153,7 +153,7 @@ def test_paths_are_checked_with_doctors_checks_and_saved(
 def test_a_missing_play_instance_or_relative_path_blocks_the_save(
     svc: SetupService, prism: Path, home: Path, tmp_path: Path
 ) -> None:
-    values = path_values(prism, home, tmp_path)
+    values = path_values(prism, home, tmp_path / "app")
     values["play"] = "Nope"
     outcome, _ = svc.check("paths", values)
     assert outcome.blocked
@@ -161,10 +161,14 @@ def test_a_missing_play_instance_or_relative_path_blocks_the_save(
     with pytest.raises(SetupError) as err:
         svc.save("paths", values)
     assert err.value.status == 400 and not svc.path.exists()
-    values = path_values(prism, home, tmp_path) | {"prism_root": "relative/prism"}
+    values = path_values(prism, home, tmp_path / "app") | {
+        "prism_root": "relative/prism"
+    }
     outcome, _ = svc.check("paths", values)
     assert set(outcome.problems) == {"prism_root"}
-    outcome, _ = svc.check("paths", path_values(prism, home, tmp_path) | {"lab": "a/b"})
+    outcome, _ = svc.check(
+        "paths", path_values(prism, home, tmp_path / "app") | {"lab": "a/b"}
+    )
     assert set(outcome.problems) == {"lab"}
 
 
@@ -503,10 +507,11 @@ def test_a_save_that_config_would_refuse_writes_nothing(
 def test_doctor_checklist_on_a_fake_prism_tree_passes(
     prism: Path, tmp_path: Path
 ) -> None:
+    (tmp_path / "app").mkdir()
     cfg = Config(
         prism_root=prism,
         prism_instances=prism / "instances",
-        gos_app=prism,
+        gos_app=tmp_path / "app",
         gos_home=tmp_path / "home",
     )
     rows = doctor.checklist(cfg)
@@ -554,7 +559,7 @@ def test_a_step_check_is_called_with_the_merged_values(svc: SetupService) -> Non
 def test_swapping_play_with_lab_is_refused_once_play_is_saved(
     svc: SetupService, prism: Path, home: Path, tmp_path: Path
 ) -> None:
-    values = path_values(prism, home, tmp_path)
+    values = path_values(prism, home, tmp_path / "app")
     svc.save("paths", values)
     before = svc.path.read_text("utf-8")
     swapped = values | {"play": "GTNH-Lab", "lab": "GTNH-Play"}
@@ -584,7 +589,7 @@ def test_export_or_lab_can_never_be_the_play_the_core_runs_with(
         Config(gos_home=home, prism_instances=prism / "instances"),
         provider=FakeDevices(),
     )
-    values = path_values(prism, home, tmp_path) | {
+    values = path_values(prism, home, tmp_path / "app") | {
         "play": "GTNH-Lab",
         "export": "GTNH-Play",
         "lab": "GTNH-Export",
@@ -592,6 +597,84 @@ def test_export_or_lab_can_never_be_the_play_the_core_runs_with(
     outcome, _ = svc.check("paths", values)
     assert set(outcome.problems) == {"export"}  # Play itself isn't saved yet
     assert "Play's folder" in outcome.problems["export"]
+
+
+def _files_under(folder: Path) -> set[Path]:
+    return set(folder.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    ("key", "inside"),
+    [
+        ("gos_home", ".minecraft/GregtecOS"),  # not there yet: its parent is in Play
+        ("gos_home", ".minecraft"),  # there: the probe would write in it
+        ("gos_app", ""),  # Play's own folder
+        ("gos_app", ".minecraft/mods"),
+    ],
+)
+def test_gos_home_and_gos_app_can_never_be_in_play(
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+    inside: str,
+) -> None:
+    """Review MEDIUM: a check never writes in Play, and a save never points GOS there."""
+    values = path_values(prism, home, tmp_path / "app")
+    svc.save("paths", values)
+    before = svc.path.read_text("utf-8")
+    play = prism / "instances" / "GTNH-Play"
+    target = play / inside if inside else play
+    files = _files_under(play)
+    probed: list[Path] = []
+    real = doctor.tempfile.TemporaryFile
+
+    def spy(*args: object, **kwargs: object) -> object:
+        probed.append(Path(str(kwargs["dir"])))
+        return real(*args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(doctor.tempfile, "TemporaryFile", spy)
+    bad = values | {key: str(target)}
+    outcome, _ = svc.check("paths", bad)
+    assert set(outcome.problems) == {key}
+    assert "overlaps Play" in outcome.problems[key]
+    rows = by_id([c.as_dict() for c in outcome.checks])
+    assert rows[f"paths.{key}"]["status"] == "error"
+    assert not any(doctor.within(p, play) for p in probed)
+    assert _files_under(play) == files
+    with pytest.raises(SetupError) as err:
+        svc.save("paths", bad)
+    assert err.value.status == 400 and svc.path.read_text("utf-8") == before
+    assert not any(doctor.within(p, play) for p in probed)
+    assert _files_under(play) == files
+
+
+@pytest.mark.parametrize("key", ["gos_home", "gos_app"])
+def test_gos_home_and_gos_app_can_never_hold_play(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path, key: str
+) -> None:
+    values = path_values(prism, home, tmp_path / "app")
+    outcome, _ = svc.check("paths", values | {key: str(prism / "instances")})
+    assert set(outcome.problems) == {key}
+
+
+def test_the_doctor_checklist_never_probes_a_gos_home_in_play(
+    prism: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gos.toml edited by hand: the checklist row is an error and nothing is written."""
+    play = prism / "instances" / "GTNH-Play"
+    files = _files_under(play)
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise AssertionError("probed a folder")
+
+    monkeypatch.setattr(doctor.tempfile, "TemporaryFile", refuse)
+    cfg = Config(gos_home=play / ".minecraft", prism_instances=prism / "instances")
+    rows = by_id([c.as_dict() for c in doctor.checklist(cfg)])
+    assert rows["paths.gos_home"]["status"] == "error"
+    assert _files_under(play) == files
 
 
 def test_a_gt_pin_mismatch_only_warns(

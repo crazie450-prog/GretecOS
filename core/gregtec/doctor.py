@@ -18,7 +18,7 @@ import os
 import re
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -483,6 +483,17 @@ def _instance_check(cfg: Config, role: str) -> Check:
     )
 
 
+def folded(path: Path) -> Path:
+    """``path`` resolved and case-folded: Windows' file names ignore case."""
+    return Path(str(path.resolve()).casefold())
+
+
+def within(path: Path, folder: Path) -> bool:
+    """Whether ``path`` is ``folder`` or inside it (resolved, case ignored)."""
+    p, f = folded(path), folded(folder)
+    return p == f or f in p.parents
+
+
 def _writable(folder: Path) -> bool:
     """Whether this account can make a file in ``folder``: a temp file is made there and deleted
     at once. ``os.access`` isn't enough: on Windows it reads only the read-only attribute, never
@@ -494,8 +505,22 @@ def _writable(folder: Path) -> bool:
         return False
 
 
-def _home_check(home: Path) -> Check:
+def play_overlap(path: Path, plays: Sequence[Path]) -> Path | None:
+    """The Play folder ``path`` is in or holds, if any: GOS never writes in Play (CLAUDE.md)."""
+    return next((p for p in plays if within(path, p) or within(p, path)), None)
+
+
+def _home_check(home: Path, plays: Sequence[Path]) -> Check:
     label = f"GOS_HOME ({home})"
+    # Before any probe: a check never makes a file in Play (WO-2.9 review).
+    play = play_overlap(home, plays)
+    if play is not None:
+        return Check(
+            "paths.gos_home",
+            label,
+            ERROR,
+            f"overlaps Play ({play}): GOS writes in GOS_HOME and never in Play",
+        )
     if home.is_dir():
         if _writable(home):
             return Check("paths.gos_home", label, OK, "there and writable")
@@ -505,18 +530,22 @@ def _home_check(home: Path) -> Check:
     parent = home.parent
     while not parent.exists() and parent != parent.parent:
         parent = parent.parent
-    if parent.is_dir() and _writable(parent):
+    in_play = any(within(parent, p) for p in plays)  # a probe never writes in Play
+    if parent.is_dir() and not in_play and _writable(parent):
         return Check("paths.gos_home", label, OK, "not there yet: GOS makes it")
     return Check(
         "paths.gos_home", label, ERROR, f"can't be made: {parent} isn't writable"
     )
 
 
-def checklist(cfg: Config) -> list[Check]:
+def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
     """``gos doctor``'s checks of one config, as checklist rows (the setup wizard, WO-2.9): the
     Prism folders, Play, Export and Lab, GOS_APP, GOS_HOME and the DB's GT pin. Read only: game
     files go through ``safe_open`` and mods aren't hashed; the one write is a temp file made and
-    deleted at once in GOS_HOME (or the folder it will be made in), to see that it is writable."""
+    deleted at once in GOS_HOME (or the folder it will be made in), to see that it is writable.
+    GOS_APP or GOS_HOME in or around Play (``cfg``'s, and any of ``plays``) is an error, and then
+    nothing is probed, so a check never writes in Play."""
+    plays = [cfg.instance("play"), *plays]
     rows: list[Check] = []
     for key, label, path in (
         ("paths.prism_root", "Prism folder", cfg.prism_root),
@@ -544,17 +573,20 @@ def checklist(cfg: Config) -> list[Check]:
     elif cfg.prism_instances.is_dir():
         rows += [_instance_check(cfg, role) for role in ("play", "export", "lab")]
     app = cfg.gos_app.is_dir()
+    app_play = play_overlap(cfg.gos_app, plays)
     rows.append(
         Check(
             "paths.gos_app",
             f"GOS_APP ({cfg.gos_app})",
-            OK if app else WARN,
-            "found"
+            ERROR if app_play is not None else OK if app else WARN,
+            f"overlaps Play ({app_play}): gos deploy writes in GOS_APP and never in Play"
+            if app_play is not None
+            else "found"
             if app
             else "no release installed there yet: Clayton's gos deploy makes it (D91)",
         )
     )
-    rows.append(_home_check(cfg.gos_home))
+    rows.append(_home_check(cfg.gos_home, plays))
     # Plan 0.4: a pin mismatch is a warning (the recipe data is stale), not a stop.
     pin_ok, pin_line = gtpin.check_db(cfg.gos_home)
     rows.append(
