@@ -119,7 +119,9 @@ def add_routes(
     async def set_tier(request: Request, who: Trusted) -> dict[str, Any]:
         body = await json_body(request)
         if "stage" not in body:
-            raise HTTPException(400, "stage is required: a stage name, or null to clear")
+            raise HTTPException(
+                400, "stage is required: a stage name, or null to clear"
+            )
         stage = body["stage"]
         if stage is not None and not isinstance(stage, str):
             raise HTTPException(400, "stage must be a stage name or null")

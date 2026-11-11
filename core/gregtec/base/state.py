@@ -224,7 +224,10 @@ def _kind(key: str) -> str:
 def _item_name(conn: sqlite3.Connection, key: str) -> list[tuple[str, str, str]]:
     """``key``'s catalog entries as (kind, key, name): the tool layer's lookup by key
     (named queries ``fluid_by_name`` and ``item_by_key``)."""
-    from gregtec.agents.tools.items import FLUID_KEY, ITEM_KEY  # the tool layer's key forms
+    from gregtec.agents.tools.items import (
+        FLUID_KEY,
+        ITEM_KEY,
+    )  # the tool layer's key forms
 
     if not has_table(conn, "item"):
         return []
@@ -310,9 +313,7 @@ def remove_stock(conn: sqlite3.Connection, key: str) -> bool:
     if not isinstance(key, str) or not key or len(key) > MAX_KEY:
         raise BaseError("key must be an item or fluid key")
     with _write(conn):
-        gone = conn.execute(
-            f"DELETE FROM {STOCK_TABLE} WHERE key = ?", (key,)
-        ).rowcount
+        gone = conn.execute(f"DELETE FROM {STOCK_TABLE} WHERE key = ?", (key,)).rowcount
     return gone > 0
 
 

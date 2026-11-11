@@ -76,6 +76,7 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.api import ai_routes, dashboard
+from gregtec.base import routes as base_routes
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -734,6 +735,7 @@ def create_app(core: Core) -> FastAPI:
 
     dashboard.add_routes(app, core, principal, trusted, _json_body)
     ai_routes.add_routes(app, core, principal, trusted, _json_body)
+    base_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 
 
