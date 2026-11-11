@@ -1417,7 +1417,7 @@ def test_the_recipe_lookup_skill(lane_reg: Registry, tmp_path: Path) -> None:
 
 
 def test_the_fast_lane_answers_with_the_card(lane_reg: Registry) -> None:
-    """``/api/ask``'s reply carries the recipe card in its card's ``recipe`` key."""
+    """``/api/ask``'s reply carries the catalog recipe card (WO-2.6's, D160)."""
     deep_lane = HandoffRecorder()
     question = recipe_eval.question(
         "c1", "recipe", ANSWER, "How do I make steel?", f"make {STEEL}", "", "steel"
@@ -1425,4 +1425,4 @@ def test_the_fast_lane_answers_with_the_card(lane_reg: Registry) -> None:
     fast = FastLane(OracleClient(plans=recipe_eval.plans([question])), lane_reg)
     reply = Asker(lane_reg, deep_lane, fast).ask("How do I make steel?")
     card = reply.as_dict()["card"]
-    assert card["type"] == "tool_result" and card["recipe"]["total"] == 5
+    assert card["type"] == "recipe" and card["total"] == 5 and len(card["recipes"]) == 5

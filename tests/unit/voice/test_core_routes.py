@@ -264,3 +264,6 @@ def test_a_confirm_or_cancel_with_nothing_waiting_isnt_pushed(
         client.post("/api/ask", json={"text": "what's my tier"}, headers=voice)
         pushed = until(dashboard, "ask.reply")["data"]
         assert pushed["request"] == "what's my tier"  # the first answer pushed
+    # nor kept for Chat (WO-2.6's board, D160)
+    answers = client.get("/api/answers", headers=bearer(ADMIN)).json()
+    assert [a["request"] for a in answers] == ["what's my tier"]
