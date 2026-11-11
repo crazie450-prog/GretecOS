@@ -681,6 +681,8 @@ def _journal_lines(action: Action) -> list[str]:
     for key in ("craft", "err", "why"):
         if result.get(key):
             parts.append(f"{key} {result[key]}")
-    text = "; ".join(str(p) for p in parts)
-    readback = " ".join(action.readback.split()).replace("[[", "[ [")
-    return [f"action_{action.id}: {text}; {readback}"[:300]]
+    # OC text is game data: fold it to one line and defuse wiki links, so it can't add lines
+    # or links of its own to the journal.
+    text = "; ".join(" ".join(str(p).split()) for p in parts)
+    readback = " ".join(action.readback.split())
+    return [f"action_{action.id}: {text}; {readback}".replace("[[", "[ [")[:300]]

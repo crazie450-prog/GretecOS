@@ -307,6 +307,32 @@ def test_nothing_found_is_not_green(tmp_path: Path) -> None:
     assert "open: no GTNH-Play instance found yet" in out.getvalue()
 
 
+def test_doctor_surveys_the_prism_root_gos_toml_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA W4: plain ``gos doctor`` reads ``[paths] prism_root`` (what the setup wizard saves)."""
+    root = make_prism(tmp_path / "Prism")
+    home = tmp_path / "home"
+    (home / "config").mkdir(parents=True)
+    (home / "config" / "gos.toml").write_text(
+        f"[paths]\nprism_root = {json.dumps(root.as_posix())}\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("GOS_HOME", str(home))
+    monkeypatch.delenv("PRISMLAUNCHER_DATA_DIR", raising=False)
+    monkeypatch.setattr(doctor, "default_prism_roots", list)
+    assert cli.main(["doctor", "--no-hash"]) == 0
+    env = json.loads((home / "data" / "env.json").read_text())
+    assert [Path(r["path"]) for r in env["prism_roots"]] == [root]
+
+
+def test_doctor_runs_with_a_broken_gos_toml(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (home / "config").mkdir(parents=True)
+    (home / "config" / "gos.toml").write_text("[paths\n", encoding="utf-8")
+    out = io.StringIO()
+    assert doctor.main([], home, False, out) in (0, 1)  # defaults; never raises
+
+
 def test_instance_not_launched_yet_is_not_a_problem(tmp_path: Path) -> None:
     # A new Prism instance has only instance.cfg and mmc-pack.json until its first launch.
     root = make_prism(tmp_path / "Prism")
