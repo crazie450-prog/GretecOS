@@ -520,9 +520,9 @@ class _Reader:
         )
 
     def made_from(self, key: str) -> frozenset[str]:
-        """The keys of what the run's enabled recipes that use up ``key`` make. A recipe for
-        ``key`` that consumes one of them undoes one of ``key``'s own uses (a two-step loop:
-        zinc sulfate back to sulfuric acid, an alloy taken apart)."""
+        """The keys of what the run's enabled recipes that use up ``key`` make (recycling
+        aside). A recipe for ``key`` that consumes one of them undoes one of ``key``'s own uses
+        (a two-step loop: zinc sulfate back to sulfuric acid, an alloy taken apart)."""
         if key in self.uses:
             return self.uses[key]
         items, fluids = self.key_ids(key)
@@ -536,7 +536,11 @@ class _Reader:
                         f" CROSS JOIN recipe_input AS i ON i.{col} = j.value"
                         " CROSS JOIN recipe AS r ON r.id = i.recipe_id"
                         " CROSS JOIN recipe_output AS o ON o.recipe_id = i.recipe_id"
-                        " WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1",
+                        " WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1"
+                        # GT's recycling recipes take everything apart: not a use (D142 (2)).
+                        " AND coalesce(r.category, '') NOT LIKE '%recycling' AND NOT EXISTS"
+                        " (SELECT 1 FROM recipe_meta AS rm WHERE rm.recipe_id = r.id"
+                        " AND rm.key = 'recycle' AND rm.value_num != 0)",
                         (json.dumps(ids), self.run),
                     )
                 )

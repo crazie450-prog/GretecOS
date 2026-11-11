@@ -31,6 +31,7 @@ from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.packupdate import cli as pack_cli
+from gregtec.planner import graphcli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 
@@ -577,6 +578,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     servicecli.add_parsers(commands)
     pack_cli.add_parsers(commands)
+    graphcli.add_parsers(commands)
     voicecli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
@@ -638,6 +640,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return servicecli.run(args)
     if args.command in pack_cli.COMMANDS:
         return pack_cli.run(args, sys.stdout)
+    if args.command in graphcli.COMMANDS:
+        return graphcli.run(args, sys.stdout)
     if args.command in voicecli.COMMANDS:
         return voicecli.run(args)
     if args.command == "doctor":
