@@ -433,16 +433,17 @@ def _loadable(name: str) -> bool:
     return True
 
 
-def cuda_folder(gos_home: Path) -> Path:
-    """Where ``uv pip install --target GOS_HOME/models/cuda nvidia-cublas-cu12`` puts cuBLAS's
-    DLLs (docs/runbooks/stt.md): NVIDIA's own wheel, never part of a release."""
-    return gos_home / "models" / "cuda" / "nvidia" / "cublas" / "bin"
+def cuda_folders(gos_home: Path) -> list[Path]:
+    """The DLL folders of NVIDIA's own wheels under ``GOS_HOME/models/cuda`` (``uv pip install
+    --target``, docs/runbooks/stt.md; never part of a release): ``nvidia/cublas/bin``, and
+    ``nvidia/cuda_nvrtc/bin`` for the NVRTC that cuBLAS itself loads."""
+    return sorted((gos_home / "models" / "cuda" / "nvidia").glob("*/bin"))
 
 
 def add_to_path(folder: Path, environ: MutableMapping[str, str]) -> None:
-    """``folder`` first on ``environ``'s PATH, once, when it exists."""
+    """``folder`` first on ``environ``'s PATH, once."""
     parts = [part for part in environ.get("PATH", "").split(os.pathsep) if part]
-    if folder.is_dir() and str(folder) not in parts:
+    if str(folder) not in parts:
         environ["PATH"] = os.pathsep.join([str(folder), *parts])
 
 
@@ -451,7 +452,8 @@ def find_cuda(gos_home: Path) -> None:
     LoadLibrary looks for it (and :func:`_loadable` with it). Linux finds its own through the
     loader's configuration, which a running process can't change."""
     if sys.platform == "win32":
-        add_to_path(cuda_folder(gos_home), os.environ)
+        for folder in cuda_folders(gos_home):
+            add_to_path(folder, os.environ)
 
 
 def cuda_problem() -> str | None:

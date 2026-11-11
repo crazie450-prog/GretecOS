@@ -442,30 +442,35 @@ def test_a_library_that_is_not_there_is_not_loadable() -> None:
     assert not stt._loadable("libgos-no-such-library.so.99")
 
 
-def test_gos_homes_cublas_joins_the_path_once(tmp_path: Path) -> None:
-    folder = stt.cuda_folder(tmp_path)
-    assert folder == tmp_path / "models" / "cuda" / "nvidia" / "cublas" / "bin"
+def test_a_folder_joins_the_path_once() -> None:
     environ = {"PATH": os.pathsep.join(["first", "second"])}
-    stt.add_to_path(folder, environ)  # not installed: nothing changes
-    assert environ["PATH"] == os.pathsep.join(["first", "second"])
-    folder.mkdir(parents=True)
-    stt.add_to_path(folder, environ)
-    stt.add_to_path(folder, environ)
-    assert environ["PATH"] == os.pathsep.join([str(folder), "first", "second"])
+    stt.add_to_path(Path("cublas"), environ)
+    stt.add_to_path(Path("cublas"), environ)
+    assert environ["PATH"] == os.pathsep.join(["cublas", "first", "second"])
     empty: dict[str, str] = {}
-    stt.add_to_path(folder, empty)
-    assert empty == {"PATH": str(folder)}
+    stt.add_to_path(Path("cublas"), empty)
+    assert empty == {"PATH": "cublas"}
 
 
 def test_only_windows_looks_in_gos_home_for_cublas(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    folder = stt.cuda_folder(tmp_path)
-    folder.mkdir(parents=True)
+    assert stt.cuda_folders(tmp_path) == []  # not installed
+    nvidia = tmp_path / "models" / "cuda" / "nvidia"
+    folders = [nvidia / "cublas" / "bin", nvidia / "cuda_nvrtc" / "bin"]
+    for folder in folders:
+        folder.mkdir(parents=True)
+    (nvidia / "cublas" / "include").mkdir()
+    assert stt.cuda_folders(tmp_path) == folders
     monkeypatch.setenv("PATH", "first")
     monkeypatch.setattr(stt.sys, "platform", "linux")
     stt.find_cuda(tmp_path)
     assert os.environ["PATH"] == "first"
     monkeypatch.setattr(stt.sys, "platform", "win32")
     stt.find_cuda(tmp_path)
-    assert os.environ["PATH"] == os.pathsep.join([str(folder), "first"])
+    stt.find_cuda(tmp_path)
+    assert os.environ["PATH"].split(os.pathsep) == [
+        str(folders[1]),
+        str(folders[0]),
+        "first",
+    ]
