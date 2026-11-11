@@ -51,7 +51,13 @@ from pathlib import Path
 
 import keyring.errors
 
-from gregtec.llm.summarise import Summariser, SummaryError, count_lines, event_counts
+from gregtec.llm.summarise import (
+    Summariser,
+    SummariserOff,
+    SummaryError,
+    count_lines,
+    event_counts,
+)
 from gregtec.llm.usage import UsageMeter
 from gregtec.vault import fts, index, io, schema
 from gregtec.vault.deploy import _cmd
@@ -355,6 +361,8 @@ def compact(
         return JobResult("compact", SKIPPED, why)
     try:
         summ = summariser()
+    except SummariserOff as exc:
+        return JobResult("compact", SKIPPED, f"{exc}: the logs wait")
     except keyring.errors.KeyringError as exc:
         return JobResult(
             "compact",
@@ -396,6 +404,8 @@ def compact(
             if n >= MAX_REFUSALS:
                 held[period] = refused[period]
             failed.append(f"{period}: {exc}")
+        except SummariserOff as exc:
+            capped = str(exc)
         except (OSError, ValueError) as exc:
             failed.append(f"{period}: {exc}")
 

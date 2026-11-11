@@ -226,7 +226,9 @@ def subject_of(words: str) -> str | None:
     return words
 
 
-def route(text: str) -> Route:
+def route(text: str, *, plans: bool = True) -> Route:
+    """``plans=False``: a saved-plan command (PLAN) isn't matched, for a question that named no
+    saved plan and goes to the AI as before WO-2.8."""
     said = normalise(text)
     tier = None
     if m := _AT_TIER.search(said):  # "... at LV": the recipe tool's tier_max
@@ -239,7 +241,11 @@ def route(text: str) -> Route:
                     command == PLAN
                 ):  # a saved plan's name or id; deep words still outrank it
                     words = m["plan"].strip()
-                    if not deep and 0 < len(words.split()) <= MAX_SUBJECT_WORDS:
+                    if (
+                        plans
+                        and not deep
+                        and 0 < len(words.split()) <= MAX_SUBJECT_WORDS
+                    ):
                         return Route(INSTANT, command, text, words)
                     continue
                 if command not in (RECIPES, USES):

@@ -16,6 +16,7 @@ import pytest
 from gregtec.llm.prices import HAIKU, Usage
 from gregtec.llm.summarise import (
     HaikuSummariser,
+    SummariserOff,
     Summary,
     SummaryError,
     checked_lines,
@@ -713,6 +714,39 @@ def test_compaction_stops_between_periods_once_the_alert_is_reached(
     assert result.status == "ok"
     assert result.detail.startswith("compacted 2026-W43; stopped before the rest: ")
     assert "80% credit alert" in result.detail
+    assert (vault / "log" / "2026-10-26.md").exists()
+
+
+def test_no_ai_mode_skips_compaction_or_stops_it_between_periods(
+    vault: Path,
+) -> None:
+    for day in ("2026-10-19", "2026-10-26"):  # weeks 43 and 44
+        daily(vault, day, "ev: a\n")
+
+    def off() -> FakeSummariser:
+        raise SummariserOff("the AI is off (paused for credits)")
+
+    skipped = curator.compact(vault, LATER, off)
+    assert skipped.status == "skipped"
+    assert skipped.detail == "the AI is off (paused for credits): the logs wait"
+
+    class TurnedOff(FakeSummariser):
+        def summarise(
+            self,
+            period: str,
+            sources: Sequence[tuple[str, str]],
+            counts: Mapping[str, int],
+        ) -> Summary:
+            if self.calls:
+                raise SummariserOff("the AI is off (you turned the AI off)")
+            return super().summarise(period, sources, counts)
+
+    fake = TurnedOff(["ev: a"])
+    result = curator.compact(vault, LATER, fake, None)
+    assert result.status == "ok" and [p for p, _ in fake.calls] == ["2026-W43"]
+    assert result.detail.endswith(
+        "stopped before the rest: the AI is off (you turned the AI off)"
+    )
     assert (vault / "log" / "2026-10-26.md").exists()
 
 

@@ -12,7 +12,7 @@ import json
 import math
 import shutil
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ from gregtec.config import Config
 from gregtec.llm import keys
 from gregtec.llm.fake import EchoClient, FakeClient
 from gregtec.llm.prices import Usage
+from gregtec.llm.summarise import SummariserOff, Summary
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
 from gregtec.supervisor import EXIT_STOPPED
@@ -699,6 +700,8 @@ def test_stop_stops_the_core_with_the_stopped_exit_code(
 ) -> None:
     asked: list[int] = []
     core.shutdown = lambda: asked.append(1)
+    core.meter.record("fast", "claude-haiku-5-5", Usage(), usd=81.0)
+    ai_routes.refresh(core)  # the 80% alert is open
     out = client.post(
         "/api/credits/decision", headers=admin(), json={"choice": "stop"}
     ).json()
@@ -770,3 +773,135 @@ def test_saved_plan_routes(
 ) -> None:
     r = router.route(text)
     assert (r.kind, r.intent, r.subject) == (kind, intent, subject)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["bom for an ebf", "bill of materials for steel", "show plan of attack for nether"],
+)
+def test_words_that_name_no_saved_plan_route_as_before_without_plans(
+    text: str,
+) -> None:
+    r = router.route(text)
+    assert (r.kind, r.intent) == ("instant", router.PLAN)  # a saved plan first
+    assert router.route(text, plans=False).kind == "fast"  # then the AI, as before
+
+
+def test_a_bom_question_that_names_no_saved_plan_goes_to_the_ai(
+    tmp_path: Path, tool_db: Path, glossary: Glossary, deep: HandoffRecorder
+) -> None:
+    db = plan_home(tmp_path, tool_db, [STEEL_PLAN])
+    reg = build_registry(db, glossary, key=KEY, deep=deep)
+    mode = AiMode()
+    client = EchoClient()
+    a = asker(reg, deep, client, mode)
+    saved = a.ask("BOM for the steel plan")  # a saved plan: no model call
+    assert saved.lane == "instant" and saved.refs == ["plan:pl-steel"]
+    assert client.requests == []
+    for text in ("bom for an ebf", "show plan of attack for nether"):
+        assert a.ask(text).lane == "fast", text
+    assert len(client.requests) == 2
+    mode.set_choice(False)  # with the AI off the saved-plan answer stays
+    assert a.ask("bom for an ebf").text == "No saved plan matches 'an ebf'."
+    assert len(client.requests) == 2
+
+
+def test_plan_ids_match_in_any_case_and_long_refs_are_left_out() -> None:
+    plan = saved_plans.SavedPlan("PL-Steel", "Steel", "", None, RUN, None, None)
+    assert saved_plans.find([plan], "plan:PL-Steel") == [plan]
+    notes: list[str] = []
+    long_ref = "r:" + "x" * 199  # 201 characters: over the card schema's 200
+    rows = saved_plans._bom(
+        [{"key": "k", "name": "n", "amount": 1, "unit": "items", "ref": long_ref}],
+        notes,
+    )
+    assert rows == [] and notes == ["bom row 1 left out: its ref isn't a citation id"]
+
+
+def test_the_pause_is_at_100_percent_whatever_the_list_says(store: Store) -> None:
+    only80 = UsageMeter(store, 100.0, (80,))
+    mode = AiMode(store)
+    watch = CreditWatch(only80, mode)
+    spend(only80, 85.0)
+    s = watch.check(NOW)
+    assert (s["threshold"], s["level"], s["paused"]) == (80, "warn", False)
+    assert mode.allowed()  # 80% only asks, even as the last threshold
+    spend(only80, 15.0)  # 100%
+    s = watch.check(NOW)
+    assert (s["threshold"], s["level"], s["paused"]) == (100, "err", True)
+    assert mode.reasons() == [no_ai.CREDITS]
+
+
+def test_a_90_threshold_doesnt_pause(store: Store) -> None:
+    meter = UsageMeter(store, 100.0, (80, 90))
+    mode = AiMode(store)
+    watch = CreditWatch(meter, mode)
+    spend(meter, 95.0)
+    assert watch.check(NOW)["threshold"] == 90 and mode.allowed()
+
+
+def test_billing_or_stop_with_no_alert_open_is_refused(
+    meter: UsageMeter, client: TestClient
+) -> None:
+    watch = CreditWatch(meter, AiMode(meter.store))
+    for choice in ("billing", "stop"):
+        with pytest.raises(no_ai.NoAlert):
+            watch.decide(choice)
+    got = client.post("/api/credits/decision", headers=admin(), json={"choice": "stop"})
+    assert got.status_code == 409
+
+
+class FakeSummariser:
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.calls = 0
+        self.error = error
+
+    def summarise(
+        self,
+        period: str,
+        sources: Sequence[tuple[str, str]],
+        counts: Mapping[str, int],
+    ) -> Summary:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return Summary(["note: ok"], "claude-haiku-5-5", Usage())
+
+
+def test_maintenance_asks_the_mode_before_any_summariser_call(
+    meter: UsageMeter,
+) -> None:
+    mode = AiMode(meter.store)
+    inner = FakeSummariser()
+    made: list[int] = []
+
+    def make() -> FakeSummariser:
+        made.append(1)
+        return inner
+
+    factory = no_ai.guard_summariser(mode, make)
+    watch = CreditWatch(meter, mode)
+    spend(meter, 101.0)
+    watch.check(NOW)  # the credit pause
+    with pytest.raises(SummariserOff, match="paused for credits"):
+        factory()
+    assert made == [] and inner.calls == 0  # not even the key is read
+    watch.decide("resume")
+    guarded = factory()
+    assert guarded is not None
+    assert guarded.summarise("2026-W44", [], {}).lines == ["note: ok"]
+    mode.set_choice(False)  # turned off between two periods of one run
+    with pytest.raises(SummariserOff, match="you turned the AI off"):
+        guarded.summarise("2026-W45", [], {})
+    assert inner.calls == 1
+
+
+def test_maintenance_summariser_errors_take_the_ai_offline() -> None:
+    mode = AiMode()
+    inner = FakeSummariser(status_error(401, "invalid x-api-key"))
+    guarded = no_ai.guard_summariser(mode, lambda: inner)()
+    assert guarded is not None
+    with pytest.raises(anthropic.AuthenticationError):
+        guarded.summarise("2026-W44", [], {})
+    assert mode.reasons() == [no_ai.AUTH]
+    assert no_ai.guard_summariser(AiMode(), lambda: None)() is None  # no key stored

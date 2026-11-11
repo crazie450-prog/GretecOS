@@ -6,8 +6,9 @@
 - **the API refused or failed**: 401/403 (the key is wrong, revoked or not allowed), a network
   failure or timeout, a 5xx or overload, or the API's own "credit balance is too low" and spend
   limit errors (:func:`classify`; a plain 429 or a bad request is not an outage);
-- **the credit pause** (D48): the cycle's spend crossed the last of ``[budget] credit_alerts_pct``
-  (100%), or Clayton chose "No-AI mode" on a credit alert;
+- **the credit pause** (D48): the cycle's spend reached 100% of ``[budget]
+  monthly_included_usd`` (:data:`PAUSE_PCT`, whatever ``credit_alerts_pct`` lists), or Clayton
+  chose "No-AI mode" on a credit alert;
 - **Clayton's own switch** (Settings: "Turn the AI off").
 
 While it is off the router still answers instant commands, Search, recipe cards, uses, BOMs and
@@ -21,9 +22,10 @@ credits arrive; after his own switch, when he switches back.
 
 :class:`CreditWatch` meters the cycle (``llm_usage``, D118) against ``[budget]
 monthly_included_usd``: each threshold crossed raises the banner state once per cycle and waits
-for an answer (:data:`CHOICES`: ``billing``, ``no_ai``, ``stop``, plus ``resume``); crossing the
-last one switches to no-AI mode until he answers (D48). The answer is the decision API that the
-dashboard's banner calls now and WO-9.2's Discord buttons will call. Its state and the AI switch
+for an answer (:data:`CHOICES`: ``billing``, ``no_ai``, ``stop``, plus ``resume``); reaching 100%
+(raised as its own threshold if the list lacks it) switches to no-AI mode until he answers
+(D48). The answer is the decision API that the dashboard's banner calls now and WO-9.2's Discord
+buttons will call. Its state and the AI switch
 are kept in the core DB's ``kv`` table, so a restart neither forgets a pause nor raises a crossed
 threshold twice. GOS never buys credits.
 """
@@ -34,7 +36,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -43,6 +45,7 @@ import anthropic
 from keyring.errors import KeyringError
 
 from gregtec.llm.smoke import CREDIT_LOW, TIER_CAP, _error_parts, explain_api_error
+from gregtec.llm.summarise import Summariser, SummariserOff, Summary
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
 
@@ -82,8 +85,13 @@ KV_CHOICE = "ai.choice"
 KV_CREDITS = "credits.state"
 # D48's "Open billing": the Console's billing page (plan 4.4).
 BILLING_URL = "https://console.anthropic.com/settings/billing"
+PAUSE_PCT = 100  # D48: at 100% of the included credits the AI pauses until he answers
 BILLING, NO_AI, STOP, RESUME = "billing", "no_ai", "stop", "resume"
 CHOICES = (BILLING, NO_AI, STOP, RESUME)
+
+
+class NoAlert(RuntimeError):
+    """``billing`` or ``stop`` answered while no credit alert is open."""
 
 
 @dataclass(frozen=True)
@@ -131,7 +139,7 @@ def probe_api(key: str) -> Problem | None:
     """Whether the API answers with ``key``: ``models.list``, which costs nothing. It can't see
     credits (a model call can), so a credits problem is left for a real request to clear."""
     client = anthropic.Anthropic(
-        api_key=key, timeout=anthropic.Timeout(10.0, connect=3.0), max_retries=0
+        api_key=key, timeout=anthropic.Timeout(5.0, connect=2.0), max_retries=0
     )
     try:
         client.models.list(limit=1)
@@ -342,6 +350,46 @@ class AiMode:
         return LABELS[reasons[0]] if reasons else "it isn't answering"
 
 
+class GuardedSummariser:
+    """A summariser that asks :class:`AiMode` before each call and reports the API's answer to
+    it (idle maintenance's log compaction, WO-2.5): while the AI is off, no call is made."""
+
+    def __init__(self, inner: Summariser, mode: AiMode) -> None:
+        self.inner = inner
+        self.mode = mode
+
+    def summarise(
+        self,
+        period: str,
+        sources: Sequence[tuple[str, str]],
+        counts: Mapping[str, int],
+    ) -> Summary:
+        if self.mode.reasons():
+            raise SummariserOff(f"the AI is off ({self.mode.why()})")
+        try:
+            summary = self.inner.summarise(period, sources, counts)
+        except anthropic.APIError as exc:
+            self.mode.failed(exc)
+            raise
+        self.mode.succeeded()
+        return summary
+
+
+def guard_summariser(
+    mode: AiMode, make: Callable[[], Summariser | None]
+) -> Callable[[], Summariser | None]:
+    """``make`` (e.g. ``HaikuSummariser.from_keyring``) behind :class:`AiMode`: the factory
+    raises :class:`SummariserOff` while the AI is off, so no key is read and no call is made."""
+
+    def factory() -> Summariser | None:
+        if mode.reasons():
+            raise SummariserOff(f"the AI is off ({mode.why()})")
+        inner = make()
+        return None if inner is None else GuardedSummariser(inner, mode)
+
+    return factory
+
+
 @dataclass
 class _Cycle:
     """The credit flow's state for one cycle, as kept in ``kv``."""
@@ -379,7 +427,7 @@ class _Cycle:
 
 class CreditWatch:
     """D48: the cycle's spend against the included credits; a banner per threshold crossed,
-    the no-AI switch at the last one, and the answer (:meth:`decide`)."""
+    the no-AI switch at 100%, and the answer (:meth:`decide`)."""
 
     def __init__(
         self,
@@ -394,6 +442,7 @@ class CreditWatch:
         self._lock = threading.Lock()
         self._cycle: _Cycle | None = _Cycle.load(_kv(meter.store, KV_CREDITS))
         self._last: dict[str, Any] | None = None  # the newest cycle summary
+        # WO-9.2's Discord DM on each threshold raised; nothing sets it before then.
         self.on_raise: Callable[[int, dict[str, Any]], None] | None = None
         if self._cycle is not None:
             mode.set_credit_pause(self._cycle.hold)
@@ -403,7 +452,7 @@ class CreditWatch:
         _set_kv(self.meter.store, KV_CREDITS, self._cycle.as_json())
 
     def check(self, now: datetime | None = None) -> dict[str, Any]:
-        """Read the cycle; raise each newly crossed threshold once and, at the last one, pause
+        """Read the cycle; raise each newly crossed threshold once and, at 100% or more, pause
         the AI unless Clayton already resumed it at that threshold. A new cycle starts afresh
         ("the next cycle's credits arrive"). Returns :meth:`state`."""
         cycle = self.meter.cycle(now)
@@ -415,14 +464,18 @@ class CreditWatch:
                 dirty = True
             else:
                 dirty = False
-            top = max(self.meter.alerts_pct) if self.meter.alerts_pct else None
-            for pct in sorted(cycle["crossed_pct"]):
+            crossed = set(cycle["crossed_pct"])
+            if (
+                cycle["pct"] >= PAUSE_PCT
+            ):  # D48's pause is at 100%, whatever the list says
+                crossed.add(PAUSE_PCT)
+            for pct in sorted(crossed):
                 if pct in self._cycle.raised:
                     continue
                 self._cycle.raised.append(pct)
                 raised.append(pct)
                 dirty = True
-                if pct == top and self._cycle.answers.get(str(pct)) != RESUME:
+                if pct >= PAUSE_PCT and self._cycle.answers.get(str(pct)) != RESUME:
                     self._cycle.hold = True
             if dirty:
                 self._save()
@@ -442,17 +495,22 @@ class CreditWatch:
         - ``billing``: noted; the caller opens :data:`BILLING_URL`. Nothing else changes, so a
           pause holds and the banner offers "Resume AI".
         - ``no_ai``: no-AI mode until he resumes or the next cycle starts.
-        - ``resume``: the AI comes back for this cycle (the last threshold, once crossed, doesn't
-          pause it again; a later threshold still does).
+        - ``resume``: the AI comes back for this cycle (the threshold it answers, once crossed,
+          doesn't pause it again; a later threshold of 100% or more still does).
         - ``stop``: noted, then GOS stops (:attr:`stop`); any pause holds over the restart.
 
-        ValueError for any other choice. Returns :meth:`state`."""
+        ValueError for any other choice; :class:`NoAlert` for ``billing`` or ``stop`` while no
+        alert is open (``no_ai`` and ``resume`` work at any time). Returns :meth:`state`."""
         if choice not in CHOICES:
             raise ValueError(f"choice must be one of {', '.join(CHOICES)}")
         if self._last is None:
             self.check()
         with self._lock:
             assert self._cycle is not None
+            if choice in (BILLING, STOP) and not (
+                self._cycle.raised or self._cycle.hold
+            ):
+                raise NoAlert(f"no credit alert is open to answer with {choice!r}")
             at = max(self._cycle.raised) if self._cycle.raised else 0
             self._cycle.answers[str(at)] = choice
             if choice == NO_AI:
@@ -478,11 +536,10 @@ class CreditWatch:
             cycle, mine = self._last, self._cycle
             if cycle is None or mine is None:
                 return {"level": None, "threshold": None, "pending": False}
-            top = max(self.meter.alerts_pct) if self.meter.alerts_pct else None
             at = max(mine.raised) if mine.raised else None
             answer = mine.answers.get(str(at)) if at is not None else None
             hold = mine.hold
-        level = None if at is None else "err" if at == top else "warn"
+        level = None if at is None else "err" if at >= PAUSE_PCT else "warn"
         if hold:
             level = "err"
         actions = []

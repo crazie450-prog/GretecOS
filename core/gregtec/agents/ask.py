@@ -212,8 +212,10 @@ class Asker:
         *,
         clock: Callable[[], float] = time.perf_counter,
         ai: AiMode | None = None,
+        home: Path | None = None,
     ) -> None:
         self.registry = registry
+        self.home = home  # GOS_HOME, for saved plans' JSON (None: the DB's own)
         self.deep = deep
         self.clock = clock
         self.ai = (
@@ -289,6 +291,13 @@ class Asker:
 
     def _reply(self, route: router.Route, started: float, task: str) -> Reply:
         if route.kind == router.INSTANT:
+            if route.intent == router.PLAN and self._ai_usable():
+                reply = self._plans(route, fall_through=True)
+                if reply is None:  # names no saved plan: the AI answers it, as before
+                    return self._reply(
+                        router.route(route.text, plans=False), started, task
+                    )
+                return reply
             return self._instant(route)
         if route.kind == router.DEEP:
             reasons = self.ai.reasons() if self.ai is not None else []
@@ -319,6 +328,12 @@ class Asker:
         with self._lock:
             self._warm_at = started
         return self._fast(route, pre, answer)
+
+    def _ai_usable(self) -> bool:
+        """Whether a model could answer now: the AI isn't off and a fast lane is set up."""
+        if self.ai is not None and self.ai.reasons():
+            return False
+        return self.lane() is not None
 
     def prewarm(self) -> str:
         """Write the fast lane's prompt cache for the request about to come (D152, D179).
@@ -438,7 +453,9 @@ class Asker:
             tier = block.parsed.head.get("tier", "unknown")
             return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
         if intent in (router.PLANS, router.PLAN):
-            return self._plans(route)
+            reply = self._plans(route)
+            assert reply is not None  # only fall_through gives None
+            return reply
         pre = prefetch.prefetch(self.registry, route, tier=False)
         if pre.clarify is not None:
             return self._ask_back(route, pre)
@@ -448,9 +465,12 @@ class Asker:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
 
-    def _plans(self, route: router.Route) -> Reply:
-        """Saved plans from the DB and their JSON (WO-2.8): the list, or one plan's BOM card."""
-        found, problems = saved_plans.load(self.registry.env.db)
+    def _plans(
+        self, route: router.Route, *, fall_through: bool = False
+    ) -> Reply | None:
+        """Saved plans from the DB and their JSON (WO-2.8): the list, or one plan's BOM card.
+        ``fall_through``: None when no saved plan matches (the AI answers the question)."""
+        found, problems = saved_plans.load(self.registry.env.db, self.home)
         if route.intent == router.PLANS:
             card = saved_plans.list_card(found, problems)
             if not found:
@@ -462,6 +482,8 @@ class Asker:
             return Reply(text, router.INSTANT, route.intent, card=card)
         words = route.subject or ""
         hits = saved_plans.find(found, words)
+        if not hits and fall_through:
+            return None
         if not hits:
             return Reply(
                 f"No saved plan matches {words!r}.",
@@ -501,6 +523,7 @@ class Agents:
     vault: Path | None
     fast: FastLane | None = None
     store: Store | None = None  # closed by close() when setup() opened it
+    home: Path | None = None  # GOS_HOME (saved plans' JSON)
 
     def lane(self) -> FastLane | None:
         """A fast lane with the stored key (None: no key stored)."""
@@ -509,8 +532,8 @@ class Agents:
     def asker(self, ai: AiMode | None = None) -> Asker:
         """``ai``: the core's no-AI mode (WO-2.8); None for none."""
         if self.fast is not None:
-            return Asker(self.registry, self.deep, self.fast, ai=ai)
-        return Asker(self.registry, self.deep, self.lane, ai=ai)
+            return Asker(self.registry, self.deep, self.fast, ai=ai, home=self.home)
+        return Asker(self.registry, self.deep, self.lane, ai=ai, home=self.home)
 
     def close(self) -> None:
         if isinstance(self.deep, DeepLaneService):
@@ -553,7 +576,12 @@ def setup(
         registry = default_registry(cfg.gos_home, deep=deep)
         deep.registry = registry
     agents = Agents(
-        registry, deep, meter, vault if vault.is_dir() else None, store=opened
+        registry,
+        deep,
+        meter,
+        vault if vault.is_dir() else None,
+        store=opened,
+        home=cfg.gos_home,
     )
     if fake:
         agents.fast = FastLane(EchoClient(), registry, meter=None, vault=agents.vault)

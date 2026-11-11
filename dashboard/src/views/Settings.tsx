@@ -210,8 +210,9 @@ export function Settings(props: {
               <li>
                 <StatusGlyph status={core?.ai.online ? "ok" : "warn"} label={core?.ai.online ? "AI online" : "AI offline"} />
                 <span className="gos-src">{core?.ai.detail}</span>
-                {core?.ai.reason !== undefined && (core.ai.online || core.ai.reason === "choice") && (
-                  <AiSwitch on={core.ai.online} />
+                {core?.ai.reason !== undefined && (
+                  // His own switch: "Turn the AI off" whenever he hasn't, whatever else turned it off.
+                  <AiSwitch on={!(core.ai.reasons?.includes("choice") ?? core.ai.reason === "choice")} />
                 )}
               </li>
               <li>

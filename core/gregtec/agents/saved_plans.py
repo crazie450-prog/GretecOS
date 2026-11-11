@@ -30,6 +30,7 @@ from gregtec.gamestate.safe_open import read_bytes
 from gregtec.packupdate import plans as plan_format
 
 REF = re.compile(r"^(r|q|mte|crop|plan|w):\S+$")
+REF_MAX = 200  # the card schema's Ref maxLength
 BOM_MAX = 500  # the bom card's row limit
 LIST_MAX = 50  # the table card's row limit
 
@@ -79,7 +80,9 @@ def _bom(raw: object, problems: list[str]) -> list[BomRow] | None:
         ):
             problems.append(f"bom row {i + 1} left out: its amount isn't a number")
             continue
-        if ref is not None and not (isinstance(ref, str) and REF.match(ref)):
+        if ref is not None and not (
+            isinstance(ref, str) and len(ref) <= REF_MAX and REF.match(ref)
+        ):
             problems.append(f"bom row {i + 1} left out: its ref isn't a citation id")
             continue
         rows.append(BomRow(r["key"], r["name"], amount, r["unit"], ref))
@@ -97,12 +100,15 @@ def _read(home: Path, path: str, pid: str) -> tuple[plan_format.Plan, Any]:
     return plan, json.loads(data).get("bom")
 
 
-def load(db: Path) -> tuple[list[SavedPlan], list[str]]:
+def load(db: Path, home: Path | None = None) -> tuple[list[SavedPlan], list[str]]:
     """Every plan in the ``plan`` table, newest first, and why any row didn't read. No DB, or a
-    DB built before plans exist, has none."""
+    DB built before plans exist, has none. A relative ``json_path`` is from ``home`` (GOS_HOME,
+    as WO-1.9's :func:`gregtec.packupdate.plans.from_db` takes it); None: the DB's own GOS_HOME
+    (:func:`gregtec.db.access.db_path`)."""
     if not db.is_file():
         return [], []
-    home = db.parent.parent  # GOS_HOME/data/gos.sqlite
+    if home is None:
+        home = db.parent.parent  # GOS_HOME/data/gos.sqlite
     conn = access.connect(db, readonly=True)
     try:
         try:
@@ -147,7 +153,7 @@ def find(found: list[SavedPlan], words: str) -> list[SavedPlan]:
     whose name holds the words ("the steel plan" is "steel"). Several: all of them (the caller
     lists them)."""
     said = words.strip().casefold().removeprefix("plan:").removesuffix(" plan")
-    by_id = [p for p in found if p.id == said]
+    by_id = [p for p in found if p.id.casefold() == said]
     if by_id:
         return by_id
     exact = [p for p in found if p.name.casefold() == said]

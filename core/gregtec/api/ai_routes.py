@@ -36,6 +36,7 @@ from gregtec.agents.no_ai import (
     CREDITS,
     AiMode,
     CreditWatch,
+    NoAlert,
     Problem,
     probe_api,
 )
@@ -162,7 +163,10 @@ def add_routes(
         if choice not in CHOICES:
             raise HTTPException(400, f"choice must be one of {', '.join(CHOICES)}")
         log.info("credit decision", extra={"choice": choice, "by": who.name})
-        credits = await asyncio.to_thread(core.credits.decide, choice)
+        try:
+            credits = await asyncio.to_thread(core.credits.decide, choice)
+        except NoAlert as exc:
+            raise HTTPException(409, str(exc)) from exc
         push()
         return {
             "choice": choice,
