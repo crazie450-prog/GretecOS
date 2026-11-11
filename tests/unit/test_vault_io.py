@@ -108,6 +108,9 @@ W, A, P = io.WRITE, io.APPEND, io.PROPOSE
         ("inbox/ib-schema-check.md", W, "come from inbox_propose"),
         ("plans/pl-1.md", P, "proposals go in inbox/"),
         ("ME/goals.md", W, "Clayton's"),
+        ("personas/pe-ship.md", W, "live persona packs are Clayton's"),
+        ("personas/pe-ship.md", A, "live persona packs are Clayton's"),
+        ("personas/old/pe-ship.md", W, "live persona packs are Clayton's"),
         ("Plans/pl-1.md", W, "lower-case only"),
     ],
 )
@@ -125,7 +128,8 @@ def test_write_refusals(rel: str, op: str, why: str) -> None:
         ("plans/pl-0007.md", A),
         ("quests/qs-steam.md", W),
         ("themes/th-brass.md", W),
-        ("personas/pe-ship.md", A),
+        ("personas/drafts/pe-ship.md", W),
+        ("personas/drafts/pe-ship.md", A),
         ("inbox/ib-20261106-x.md", A),
         ("inbox/ib-20261106-x.md", P),
         ("log/2026-11-06.md", A),
@@ -170,6 +174,10 @@ def test_the_guard_matches_the_schema_writers() -> None:
             rel, op = f"log/{TODAY.isoformat()}.md", A
         elif kind.t == "inbox":
             op = P
+        elif (
+            kind.t == "persona"
+        ):  # both: Clayton's live packs, the agents' drafts (WO-5.6)
+            rel = f"personas/drafts/{kind.id.rstrip('*')}x.md"
         refused = io.write_refusal(rel, op, today=TODAY) is not None
         assert refused == (kind.writer in ("repo", "clayton", "generated")), kind.t
 

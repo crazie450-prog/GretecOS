@@ -48,6 +48,12 @@ RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "general",
 )
 MAX_SUBJECT_WORDS = 8
+MAX_PERSONA_WORDS = 3  # "gt veteran", "the coop buddy one": a pack's name is short
+# Words no persona name holds: "persona recipes for steel" isn't a switch (it goes on)
+_NOT_A_NAME = frozenset(
+    {"for", "of", "about", "with", "from", "in", "on", "is", "are", "do", "does"}
+    | {"recipe", "recipes", "uses", "plan", "plans", "tier", "what", "how", "why"}
+)
 
 _TIER_NAMES = {t.casefold(): t for t in TIERS}
 _TIER = "|".join(t.casefold() for t in TIERS)
@@ -76,8 +82,9 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     (
         PERSONA,  # first: a persona's name could hold any other rule's words
         _rx(
-            r"(?:switch |change |set )?(?:to |the )?persona (?:to )?(?P<name>[\w' -]+)",
-            r"(?:use|switch to|change to) (?:the )?(?P<name>[\w' -]+?) persona",
+            # STT punctuates: "Persona, ship AI." / "Persona: coop buddy!"
+            r"(?:switch |change |set )?(?:to |the )?persona[,:;]? (?:to )?(?P<name>[\w' ,-]+)",
+            r"(?:use|switch to|change to),? (?:the )?(?P<name>[\w' -]+?) persona",
             r"(?:what|which) persona(?: is (?:this|on|active|it)| are you)?",
             r"(?:list |show )?(?:me )?(?:the |my )?personas|(?:current )?persona",
         ),
@@ -262,8 +269,16 @@ def route(text: str, *, plans: bool = True) -> Route:
                         return Route(INSTANT, command, text, words)
                     continue
                 if command == PERSONA:  # the name, if one was said
-                    name = (m.groupdict().get("name") or "").strip() or None
-                    return Route(INSTANT, command, text, name)
+                    name = " ".join(
+                        (m.groupdict().get("name") or "").replace(",", " ").split()
+                    )
+                    if name and (
+                        deep
+                        or len(name.split()) > MAX_PERSONA_WORDS
+                        or _NOT_A_NAME & set(name.split())
+                    ):
+                        break  # not a pack's name: the other rules place it
+                    return Route(INSTANT, command, text, name or None)
                 if command not in (RECIPES, USES):
                     return Route(INSTANT, command, text)
                 subject = subject_of(m["item"])

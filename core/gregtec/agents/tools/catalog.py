@@ -116,8 +116,8 @@ TOOLS = (
     ),
     Tool(
         "note_write",
-        "Create or replace a note in base/, plans/, quests/, themes/ or personas/ in the note "
-        "grammar; the tool writes the frontmatter. me/, _gos/, INDEX.md and the generated "
+        "Create or replace a note in base/, plans/, quests/, themes/ or personas/drafts/ in "
+        "the note grammar; the tool writes the frontmatter. me/, _gos/, INDEX.md and the generated "
         "base notes are refused (propose with inbox_propose); logs take note_append.",
         notes.NOTE_WRITE_SCHEMA,
         notes.note_write,

@@ -743,7 +743,8 @@ class Speaker:
         self._current: _Utterance | None = None
         self._lock = threading.Lock()
         self._voices: dict[str, str] = {}  # engine -> the persona's voice (D207)
-        self._voiced: dict[tuple[int, str], Engine] = {}
+        # engine name -> (the engine, the voice, it in that voice): one per engine, last used
+        self._voiced: dict[str, tuple[Engine, str, Engine]] = {}
         self.last: dict[
             str, Any
         ] = {}  # the last utterance's record (the bench reads it)
@@ -785,24 +786,25 @@ class Speaker:
             log.info("speaking in the persona's voice", extra={"voices": spec[:200]})
 
     def voiced(self, engine: Engine) -> Engine:
-        """``engine`` in the persona's voice for it, if any (made once, then reused). A voice
+        """``engine`` in the persona's voice for it, if any (kept per engine until its voice changes:
+        a cheap copy, no model reload). A voice
         the engine doesn't have is logged and the engine's own voice speaks."""
         voice = self._voices.get(engine.name)
         change = getattr(engine, "with_voice", None)
         if not voice or change is None:
             return engine
-        key = (id(engine), voice)
-        found = self._voiced.get(key)
-        if found is None:
-            try:
-                found = change(voice)
-            except Exception as exc:  # noqa: BLE001 - its own voice still speaks
-                log.warning(
-                    "the persona's voice can't be used",
-                    extra={"engine": engine.label, "voice": voice, "error": str(exc)},
-                )
-                found = engine
-            self._voiced[key] = found
+        held = self._voiced.get(engine.name)
+        if held is not None and held[0] is engine and held[1] == voice:
+            return held[2]
+        try:
+            found = change(voice)
+        except Exception as exc:  # noqa: BLE001 - its own voice still speaks
+            log.warning(
+                "the persona's voice can't be used",
+                extra={"engine": engine.label, "voice": voice, "error": str(exc)},
+            )
+            found = engine
+        self._voiced[engine.name] = (engine, voice, found)
         return found
 
     def stop(self) -> None:

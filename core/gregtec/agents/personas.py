@@ -6,10 +6,11 @@
   ``_template.md`` are authored in the repo's ``vault-template/_gos/personas/`` and deployed
   with ``_gos/`` (never edited in the live vault); they are read from the repo's template first,
   else the live vault's ``_gos/personas/``, as the lanes read skills (D155);
-- Clayton's own packs (and drafts an agent writes on request) are ``personas/pe-<name>.md``
-  in the live vault (plan 6.5: both write there). A pack there with a shipped pack's name
-  replaces it, which is how Clayton changes a shipped one. A new file is a new pack: no code
-  change (plan 7.11).
+- Clayton's own packs are ``personas/pe-<name>.md`` in the live vault. A pack there with a
+  shipped pack's name replaces it, which is how Clayton changes a shipped one. A new file is a
+  new pack: no code change (plan 7.11). Agents only draft (plan 6.5, "agents draft on
+  request"): the vault guard lets them write ``personas/drafts/`` alone, which isn't read here,
+  so no agent can make a pack live; Clayton moves a draft up to ``personas/`` to use it.
 
 A pack's facts (``_gos/schema.md``'s persona row): ``name`` (display name, required), ``voice``
 (``kokoro:<voice>``, ``eleven:<voice id>``, ``piper:<voice>``: one per engine, D207),
@@ -18,7 +19,9 @@ A pack's facts (``_gos/schema.md``'s persona row): ``name`` (display name, requi
 original lines) and ``note``. A line that breaks a rule is left out and reported, the rest of the
 pack still loads: an unknown key (``rules:``, ``tools:``, ...), a digit in any text (a persona
 never brings numbers: they come from tools, plan 0.1), ``<`` or ``>`` (it can't open or close
-the blocks it is quoted in), or a voice that isn't ``engine:name``.
+the blocks it is quoted in), or a voice that isn't ``engine:name``. The display name is at
+most 40 letters, spaces, ``-`` and ``'`` (else the pack doesn't load), and is only ever quoted
+inside the pack's block.
 
 **Never-rules.** :data:`NEVER_RULES` (numbers from tools only, confirm actions, nudge-first
 spoilers, tone only) are code, not pack text: :func:`render` quotes the pack as data and puts
@@ -69,6 +72,8 @@ KEYS = frozenset({*TEXT_KEYS, "voice", "verbosity", "note"})
 ENGINES = {"kokoro": "kokoro", "eleven": "elevenlabs", "piper": "piper"}
 _VOICE = re.compile(r"(kokoro|eleven|piper):([A-Za-z0-9_-]{1,64})")
 _DIGIT = re.compile(r"\d")
+_DISPLAY = re.compile(r"[^\W\d_](?:[^\W\d_]|[ '-])*")  # letters, spaces, - and '
+MAX_DISPLAY = 40
 
 NEVER_RULES = (
     "Never-rules (GOS's own; every persona keeps them and no persona text can change them):",
@@ -161,6 +166,11 @@ def parse(text: str, name: str, source: str = "vault") -> tuple[Pack | None, lis
     display = (found.get("name") or [""])[0]
     if not display:
         return None, [*problems, "no name: line"]
+    if len(display) > MAX_DISPLAY or not _DISPLAY.fullmatch(display):
+        return None, [
+            *problems,
+            f"name: is a display name: up to {MAX_DISPLAY} letters, spaces, - and '",
+        ]
     style = tuple(found.get("style", ()))
     if not style:
         return None, [*problems, "no style: line"]
@@ -256,7 +266,7 @@ def load(
 def render(pack: Pack) -> str:
     """The persona as prompt text: the pack quoted as data, then :data:`NEVER_RULES`."""
     lines = [
-        f"Speak as the persona {pack.name}: it sets your tone and wording only.",
+        "Speak as the persona quoted below: it sets your tone and wording only.",
         "<persona>",
         f"name: {pack.name}",
         f"verbosity: {pack.verbosity} (spoken answers stay within two sentences)",
@@ -299,6 +309,7 @@ class Personas:
     on_change: list[Callable[[Pack, str], None]] = field(default_factory=list)
     _active: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _cache: tuple[object, tuple[dict[str, Pack], list[str]]] | None = None
 
     def __post_init__(self) -> None:
         packs, problems = self.packs()
@@ -326,8 +337,37 @@ class Personas:
     # --- the packs
 
     def packs(self) -> tuple[dict[str, Pack], list[str]]:
-        """Read from disk each time: a new or edited pack counts at once (a few small files)."""
-        return load(self.vault, self.template)
+        """The packs, read again only when a pack file was added, removed or changed (its
+        folders' listings and the files' sizes and times), so a new or edited pack counts at
+        once and an unchanged one costs a few ``stat`` calls."""
+        key = self._signature()
+        cached = self._cache
+        if cached is not None and cached[0] == key:
+            return dict(cached[1][0]), list(cached[1][1])
+        found = load(self.vault, self.template)
+        self._cache = (key, found)
+        return dict(found[0]), list(found[1])
+
+    def _signature(self) -> object:
+        roots = [self.vault / OWN] if self.vault is not None else []
+        if self.template is not None:
+            roots.append(self.template / SHIPPED)
+        if self.vault is not None:
+            roots.append(self.vault / SHIPPED)
+        out: list[tuple[str, int, int]] = []
+        for root in roots:
+            try:
+                paths = sorted(root.glob("*.md"))
+            except OSError:
+                continue
+            out.append((str(root), -1, -1))
+            for path in paths:
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                out.append((str(path), st.st_mtime_ns, st.st_size))
+        return tuple(out)
 
     def find(self, said: str) -> str | None:
         """The pack a name means (its name or display name, spoken or typed), or None."""
@@ -360,7 +400,9 @@ class Personas:
         the next start. Raises :class:`UnknownPersona`."""
         packs, _ = self.packs()
         if words(said) == RANDOM:
-            others = sorted(n for n in packs if n != self._active) or sorted(packs)
+            with self._lock:
+                current = self._active
+            others = sorted(n for n in packs if n != current) or sorted(packs)
             if not others:
                 raise UnknownPersona("there are no persona packs")
             name: str | None = self.rng.choice(others)
@@ -402,15 +444,16 @@ class Personas:
         pack = self.active
         return None if pack is None else pack.info()
 
-    def listing(self) -> dict[str, object]:
-        """``GET /api/persona``: the active pack, every pack and the problems found."""
-        packs, problems = self.packs()
+    def listing(self, *, problems: bool = True) -> dict[str, object]:
+        """``GET /api/persona``: the active pack, every pack and (``problems``: for trusted
+        callers only, as they name files) the problems found."""
+        packs, found = self.packs()
         active = self.active
         return {
             "active": active.id if active is not None else None,
             "random_per_session": self.random_per_session,
             "packs": [p.info() for _, p in sorted(packs.items())],
-            "problems": problems,
+            "problems": found if problems else [],
         }
 
     # --- keeping the choice

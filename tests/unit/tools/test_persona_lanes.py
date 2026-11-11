@@ -154,6 +154,29 @@ def test_a_switch_by_voice_is_pushed_to_the_dashboard(client: TestClient) -> Non
             raise AssertionError("no state push with the new persona")
 
 
+def test_pack_problems_reach_trusted_callers_only(
+    client: TestClient, core: Core, tmp_path: Path
+) -> None:
+    """Review L2: the problems name files and parse errors, so only admin and paired devices
+    (the trusted snapshot, the API as them) see them; clients get the packs alone."""
+    vault = tmp_path / "vault"
+    (vault / "personas").mkdir(parents=True)
+    (vault / "personas" / "Bad Name.md").write_text("x", encoding="utf-8")
+    core.personas = Personas(vault, template=TEMPLATE)
+    snaps = dashboard.snapshots(core)
+    assert snaps[True]["persona"]["problems"] == [
+        "Bad Name.md: a pack is pe-<name>.md (lower case, digits, -)"
+    ]
+    assert snaps[False]["persona"]["problems"] == []
+    assert snaps[False]["persona"]["active"] == snaps[True]["persona"]["active"]
+    assert client.get("/api/persona", headers=admin()).json()["problems"]
+    voice = token(client, "voice")
+    assert client.get("/api/persona", headers=voice).json()["problems"] == []
+    bot = token(client, "discord")
+    out = client.post("/api/persona", headers=bot, json={"id": "ship ai"})
+    assert out.status_code == 200 and out.json()["problems"] == []
+
+
 def test_no_personas_is_a_503(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keys, "has_key", lambda name: False)
     store = Store(tmp_path / "gos.sqlite")

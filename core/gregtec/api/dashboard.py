@@ -383,6 +383,11 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
             }
         )
     health_card = _valid([cards_build.health_card(health)])
+    persona: dict[str, Any] | None = None
+    persona_problems: list[str] = []
+    if core.personas is not None:
+        persona = core.personas.listing(problems=False)
+        persona_problems = core.personas.packs()[1]
     shared = {
         "ts": int(now),
         "game": {
@@ -400,11 +405,17 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         "alerts": _valid(alerts),
         "jobs": jobs,
         "health": health_card[0] if health_card else None,
-        # the persona packs and the active one (WO-5.6): Settings' dropdown
-        "persona": core.personas.listing() if core.personas is not None else None,
+        # the persona packs and the active one (WO-5.6): Settings' dropdown; the pack
+        # problems (file names, parse errors) only for trusted callers
+        "persona": persona,
     }
     return {
-        True: {**shared, "approvals": approvals + pairing, "asking": board.asking()},
+        True: {
+            **shared,
+            "persona": persona and {**persona, "problems": persona_problems},
+            "approvals": approvals + pairing,
+            "asking": board.asking(),
+        },
         False: {**shared, "approvals": approvals, "asking": []},
     }
 

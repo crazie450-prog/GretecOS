@@ -75,6 +75,10 @@ def test_the_speaker_uses_the_personas_voice_for_its_engine() -> None:
     say(speaker, "Back.")
     assert engine.log == ["am_michael", "bf_emma", "bf_emma", "am_michael"]
     assert engine.made == ["bf_emma"]  # made once, then reused
+    speaker.use_voice("kokoro:am_fenrir")
+    speaker.use_voice("kokoro:bf_emma")
+    say(speaker, "Once more.")
+    assert len(speaker._voiced) == 1  # one per engine, however many switches
 
 
 def test_a_voice_the_engine_lacks_falls_back_to_its_own() -> None:
@@ -182,7 +186,11 @@ class NoModel:
         raise AssertionError("the persona command called the model")
 
 
-def test_switch_by_voice_within_a_second(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "said",
+    ["persona ship AI", "Persona, Ship AI.", "Persona: ship AI!"],  # STT punctuates
+)
+def test_switch_by_voice_within_a_second(tmp_path: Path, said: str) -> None:
     deep = HandoffRecorder()
     found = Personas(None, state=tmp_path / "persona.json")
     asker = Asker(
@@ -197,7 +205,7 @@ def test_switch_by_voice_within_a_second(tmp_path: Path) -> None:
     voice = VoiceClient(
         VoiceSettings(),
         InProcessCore(asker),  # type: ignore[arg-type]
-        transcriber=Transcript("persona ship AI"),  # type: ignore[arg-type]
+        transcriber=Transcript(said),  # type: ignore[arg-type]
         speaker=speaker,  # type: ignore[arg-type]
         clock=clock,
     )

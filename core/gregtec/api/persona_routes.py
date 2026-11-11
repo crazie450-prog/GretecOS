@@ -2,7 +2,7 @@
 
 | route              | who                                  | what                                   |
 |--------------------|--------------------------------------|----------------------------------------|
-| GET  /api/persona  | admin, client, device                | the active pack, every pack, problems  |
+| GET  /api/persona  | admin, client, device                | the active pack, every pack, problems (admin, device only) |
 | POST /api/persona  | admin, device, the Discord bot       | ``{"id": "<name>" or "random"}``       |
 
 ``POST /api/persona`` is what the dashboard's Settings dropdown calls now and WO-9.x's Discord
@@ -63,8 +63,8 @@ def add_routes(
         return core.personas
 
     @app.get("/api/persona")
-    def get_persona(_: Anyone) -> dict[str, Any]:
-        return personas().listing()
+    def get_persona(who: Anyone) -> dict[str, Any]:
+        return personas().listing(problems=who.role in ("admin", "device"))
 
     @app.post("/api/persona")
     async def set_persona(request: Request, who: Anyone) -> dict[str, Any]:
@@ -85,4 +85,7 @@ def add_routes(
             pack = await asyncio.to_thread(found.set, name, who.name)
         except UnknownPersona as exc:
             raise HTTPException(404, str(exc)) from exc
-        return {"persona": pack.info(), **found.listing()}
+        return {
+            "persona": pack.info(),
+            **found.listing(problems=who.role in ("admin", "device")),
+        }
