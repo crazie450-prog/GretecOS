@@ -216,7 +216,9 @@ class Asker:
         self.registry = registry
         self.deep = deep
         self.clock = clock
-        self.ai = ai  # no-AI mode (WO-2.8); None: only a missing lane or an error stops it
+        self.ai = (
+            ai  # no-AI mode (WO-2.8); None: only a missing lane or an error stops it
+        )
         if callable(lane) and not isinstance(lane, FastLane):
             self._factory: Callable[[], FastLane | None] | None = lane
             self._lane: FastLane | None = None
@@ -445,7 +447,6 @@ class Asker:
         else:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
-
 
     def _plans(self, route: router.Route) -> Reply:
         """Saved plans from the DB and their JSON (WO-2.8): the list, or one plan's BOM card."""

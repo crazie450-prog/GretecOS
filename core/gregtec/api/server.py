@@ -30,6 +30,8 @@ import uvicorn
 from gregtec import applog, config, control, supervisor
 from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
+from gregtec.agents.no_ai import AiMode, CreditWatch
+from gregtec.api import ai_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
@@ -138,8 +140,10 @@ def run(
         meter=meter,
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter),
-        asker=agents.asker(),
     )
+    ai = AiMode(store)  # no-AI mode and the D48 credit flow (WO-2.8)
+    ai_routes.wire(core, ai, CreditWatch(meter, ai))
+    core.asker = agents.asker(ai=ai)
     if isinstance(agents.deep, DeepLaneService):
         core.deep = agents.deep
         agents.deep.on_change = core.deep_changed
@@ -187,5 +191,5 @@ def run(
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         store.close()
         sock.close()
-    log.info("core stopped")
-    return 0
+    log.info("core stopped", extra={"exit_code": core.exit_code})
+    return core.exit_code

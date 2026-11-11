@@ -308,7 +308,8 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
     board = board_of(core)
     now = time.time()
     health = core.health()
-    key_status, key_detail = core.key_status
+    key_status, _ = core.key_status
+    ai = ai_state(core)
     tasks = [t.as_dict() for t in core.deep.tasks()] if core.deep is not None else []
     deep_waiting = any(t["status"] == "needs_approval" for t in tasks)
     alerts: list[dict[str, Any]] = []
@@ -323,7 +324,9 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         alerts.append(credit)
     # The deep lane's warning is already on screen while the AI is offline (the state chip) or a
     # task waits at its cap (its approval card).
-    said = ("deep_lane",) if key_status != "ok" or deep_waiting else ()
+    said = (
+        ("deep_lane",) if key_status != "ok" or not ai["online"] or deep_waiting else ()
+    )
     alerts += cards_build.health_alerts(health, said=said)
     alerts.sort(key=lambda a: a["level"] != "err")
     approvals = _valid(
@@ -366,7 +369,8 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
             "error": board.game_error,
         },
         "data": board.data,
-        "ai": {"online": key_status == "ok", "detail": key_detail},
+        "ai": ai,
+        "credits": credits_state(core),
         "oc": {"status": "not_set_up", "detail": "the OC bridge arrives with WO-7.1"},
         "tier": board.tier,
         "alerts": _valid(alerts),
@@ -377,6 +381,20 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         True: {**shared, "approvals": approvals + pairing, "asking": board.asking()},
         False: {**shared, "approvals": approvals, "asking": []},
     }
+
+
+def ai_state(core: "Core") -> dict[str, Any]:
+    """The ``ai`` of the state: no-AI mode's status (WO-2.8: online, reason, reasons, detail,
+    since, works), or, in a core without it, whether a key is stored."""
+    if core.ai is None:
+        status, detail = core.key_status
+        return {"online": status == "ok", "detail": detail}
+    return core.ai.status()
+
+
+def credits_state(core: "Core") -> dict[str, Any] | None:
+    """The ``credits`` of the state: the D48 banner's (WO-2.8), or None without a watch."""
+    return core.credits.state() if core.credits is not None else None
 
 
 def state(core: "Core", trusted: bool) -> dict[str, Any]:

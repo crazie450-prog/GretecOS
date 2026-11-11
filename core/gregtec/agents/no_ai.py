@@ -75,7 +75,9 @@ NEEDS_AI = (
     "That needs the AI (design, advice, explanations, screen reading and wiki research), "
     "and it is offline: {why}. I can do lookups: recipes, uses, items, quests and saved plans."
 )
-PROBE_S = 60.0  # how often an API problem is checked again, by a probe or a real request
+PROBE_S = (
+    60.0  # how often an API problem is checked again, by a probe or a real request
+)
 KV_CHOICE = "ai.choice"
 KV_CREDITS = "credits.state"
 # D48's "Open billing": the Console's billing page (plan 4.4).
@@ -328,7 +330,9 @@ class AiMode:
             "reason": first,
             "reasons": reasons,
             "detail": detail[:500],
-            "since": int(since) if since is not None and first in API_PROBLEMS else None,
+            "since": int(since)
+            if since is not None and first in API_PROBLEMS
+            else None,
             "works": WORKS,
         }
 
@@ -460,7 +464,9 @@ class CreditWatch:
         log.info("credit decision", extra={"choice": choice, "at_pct": at})
         self.mode.set_credit_pause(hold)
         if choice == RESUME and self.mode.choice_off:
-            self.mode.set_choice(True)  # "Resume AI" means the AI, whatever turned it off
+            self.mode.set_choice(
+                True
+            )  # "Resume AI" means the AI, whatever turned it off
         state = self.state()
         if choice == STOP and self.stop is not None:
             self.stop()

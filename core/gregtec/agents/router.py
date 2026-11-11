@@ -235,7 +235,9 @@ def route(text: str) -> Route:
     for command, patterns in INSTANT_RULES:
         for p in patterns:
             if m := p.match(said):
-                if command == PLAN:  # a saved plan's name or id; deep words still outrank it
+                if (
+                    command == PLAN
+                ):  # a saved plan's name or id; deep words still outrank it
                     words = m["plan"].strip()
                     if not deep and 0 < len(words.split()) <= MAX_SUBJECT_WORDS:
                         return Route(INSTANT, command, text, words)

@@ -41,6 +41,10 @@ starts, it opens the dashboard's Chrome app window on monitor 2 (D52, ``gregtec.
 unless ``[startup] dashboard_window = false`` or it runs as gos-dev. A core restart doesn't open
 another one.
 
+**Stopped on request.** A managed process that exits with :data:`EXIT_STOPPED` (the core after
+D48's Stop on a credit alert, WO-2.8) is left stopped, as ``gos stop`` leaves it; ``gos serve``
+(or ``POST /start``) starts it again.
+
 **Refusing to start.** As gos-dev with Clayton's ports or dashboard name, with a bad service key
 in gos.toml (``config.service_problems``, exit 2), or elevated (exit 4): everything the
 supervisor starts would inherit an elevated token. Each refusal is in ``logs\supervisor.log``.
@@ -85,7 +89,13 @@ MAX_BODY = 4096
 STDERR_MAX = 5 * 1024 * 1024
 STDERR_TAIL = 64 * 1024
 # Exit codes a managed process uses to say why it stopped (gregtec.api.server).
-EXIT_DETAIL = {3: "its port is in use by another program"}
+EXIT_STOPPED = (
+    5  # stopped on request (D48's Stop, WO-2.8): left stopped, as `gos stop` leaves it
+)
+EXIT_DETAIL = {
+    3: "its port is in use by another program",
+    EXIT_STOPPED: "stopped from the credit alert (D48 Stop); gos serve starts it again",
+}
 CREATE_NO_WINDOW = 0x0800_0000
 CREATE_NEW_PROCESS_GROUP = 0x0000_0200
 DETACHED_PROCESS = 0x0000_0008
@@ -327,7 +337,10 @@ class Supervisor:
                     continue
                 if managed.proc is not None and managed.proc.poll() is not None:
                     code = self._reap(managed, expected=False)
-                    if managed.wanted:
+                    if code == EXIT_STOPPED:  # it asked to stay stopped
+                        managed.wanted = False
+                        managed.state, managed.detail = "stopped", EXIT_DETAIL[code]
+                    elif managed.wanted:
                         why = EXIT_DETAIL.get(code or 0, f"exited with code {code}")
                         self._schedule_restart(managed, why)
                     else:
