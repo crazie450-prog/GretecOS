@@ -1,0 +1,32 @@
+{
+  "cmds": [
+    {
+      "args": {
+        "text": "Craft started"
+      },
+      "confirmed_via": "dashboard",
+      "id": 101,
+      "kind": "say"
+    },
+    {
+      "args": {
+        "amount": 64,
+        "damage": 11305,
+        "name": "gregtech:gt.metaitem.01"
+      },
+      "confirmed_via": "voice",
+      "id": 102,
+      "kind": "craft"
+    },
+    {
+      "args": {
+        "addr": "2e000000-0000-4000-8000-000000000008"
+      },
+      "confirmed_via": "phone",
+      "id": 103,
+      "kind": "machine_pause"
+    }
+  ],
+  "ok": true,
+  "v": 1
+}

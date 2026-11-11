@@ -1,0 +1,144 @@
+{
+  "ae2": {
+    "addr": "5e000000-0000-4000-8000-00000000000b",
+    "cpus": [
+      {
+        "busy": false,
+        "coprocessors": 1,
+        "name": "",
+        "storage": 65536
+      }
+    ],
+    "items": [
+      {
+        "craftable": true,
+        "damage": 0,
+        "name": "minecraft:iron_ingot",
+        "size": 1234
+      },
+      {
+        "craftable": true,
+        "damage": 11305,
+        "name": "gregtech:gt.metaitem.01",
+        "size": 640
+      },
+      {
+        "craftable": false,
+        "damage": 2305,
+        "name": "gregtech:gt.metaitem.01",
+        "size": 0
+      },
+      {
+        "craftable": false,
+        "damage": 0,
+        "name": "minecraft:diamond",
+        "size": 0
+      }
+    ],
+    "items_at": 1.45,
+    "type": "me_controller"
+  },
+  "agent": "0.1.0",
+  "boot": "b0075eed",
+  "components": {
+    "chat_box": 1,
+    "computer": 1,
+    "eeprom": 1,
+    "filesystem": 1,
+    "gpu": 1,
+    "gt_batterybuffer": 1,
+    "gt_machine": 2,
+    "internet": 1,
+    "keyboard": 1,
+    "me_controller": 1,
+    "screen": 1,
+    "tps_card": 1
+  },
+  "computer": {
+    "address": "c0c0c0c0-0000-4000-8000-000000000001",
+    "arch": "Lua 5.3",
+    "energy": 4800,
+    "energy_max": 5000,
+    "mem_free": 900000,
+    "mem_total": 2097152
+  },
+  "crafts": [],
+  "cycle_s": 5,
+  "errors": [],
+  "kind": "telemetry",
+  "machines": [
+    {
+      "active": true,
+      "addr": "2e000000-0000-4000-8000-000000000008",
+      "allowed": true,
+      "eu": 0,
+      "eu_max": 0,
+      "name": "multimachine.blastfurnace",
+      "progress": 120,
+      "progress_max": 400,
+      "sensor": [
+        "Owned by: \u00a76Clayton",
+        "Meta-ID: \u00a761000 \u00a7avalid",
+        "Progress: \u00a7a6 \u00a7rs / \u00a7e20 \u00a7rs",
+        "Stored Energy: \u00a7a12,000 \u00a7rEU / \u00a7e16,000 \u00a7rEU",
+        "Problems: \u00a7c0",
+        "GT5U.multiblock.scanner.efficiency\\\\\u00a7e100\u00a7r",
+        "Total runtime: \u00a763\u00a7r hours"
+      ],
+      "sensor_at": 1.15,
+      "type": "gt_machine",
+      "work": true,
+      "xyz": [
+        120,
+        64,
+        -35
+      ]
+    }
+  ],
+  "power": [
+    {
+      "addr": "3b000000-0000-4000-8000-000000000009",
+      "eu": 8192,
+      "eu_in": 0,
+      "eu_max": 32768,
+      "eu_out": 0,
+      "kind": "battery_buffer",
+      "name": "batterybuffer.16.tier.04",
+      "sensor": [
+        "\u00a79Battery Buffer 16x EV\u00a7r",
+        "GT5U.infodata.battery_buffer.stored_items\\\\\u00a7a1,234,567\u00a7r\\\\\u00a7e2,000,000\u00a7r",
+        "GT5U.infodata.battery_buffer.average_input\\\\512",
+        "GT5U.infodata.battery_buffer.average_output\\\\300"
+      ],
+      "sensor_at": 1.2,
+      "type": "gt_batterybuffer",
+      "xyz": [
+        118,
+        64,
+        -30
+      ]
+    },
+    {
+      "addr": "4c000000-0000-4000-8000-00000000000a",
+      "eu_in": 0,
+      "eu_max_str": "999999999999999999999999",
+      "eu_out": 0,
+      "eu_str": "123456789012345678901234",
+      "kind": "storage",
+      "name": "multimachine.supercapacitor",
+      "type": "gt_machine",
+      "xyz": [
+        110,
+        60,
+        -40
+      ]
+    }
+  ],
+  "results": [],
+  "sample_s": 0.5,
+  "seq": 1,
+  "tick_ms": 12.35,
+  "transport": "http",
+  "uptime": 1.5,
+  "v": 1
+}
