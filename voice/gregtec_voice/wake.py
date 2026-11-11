@@ -15,15 +15,20 @@ bus: ``wake(t)``, ``end_of_speech(t)``, ``cancel()`` and ``speech(active, t)``.
 2. **The second stage**. The last :data:`VERIFY_S` seconds of audio (the phrase, and whatever
    came just before it) go to the client's own speech-to-text (faster-whisper on the GPU, the
    engine already loaded, WO-5.2) on a worker thread; the wake stands only when the transcript
-   holds the phrase (:func:`match_score` >= :data:`MATCH`), so an acoustic look-alike is
-   dropped ([H§1.3] point 4). A rejected wake is ``cancel()``: silent, nothing is sent.
+   holds the phrase (:func:`matches`: :func:`match_score` >= :data:`MATCH`, and the phrase's
+   longest word heard as one word, :data:`WORD_MATCH`), so an acoustic look-alike is dropped
+   ([H§1.3] point 4). A rejected wake is ``cancel()``: silent, nothing is sent.
 3. **The chime and the cancel window** (plan 8: chime + 1.5 s). A wake that passed stage 2
    plays a short chime in the headset (never into the microphone path). Clayton then has
-   :data:`CANCEL_WINDOW_S` to start his question; if he says nothing, the wake is dropped
+   :data:`CANCEL_WINDOW_S` to start his question (a fresh onset of speech, below); if he says
+   nothing, the wake is dropped
    (``cancel()``), so a false wake costs a chime and nothing more. The cancel hotkey drops it
    at any time, as for the talk key (D179).
-4. **End of speech**. Once the question has started (:data:`QUESTION_S` of speech after the
-   detection), :data:`END_SILENCE_S` of silence ends it: ``end_of_speech(t)`` with ``t`` the
+4. **End of speech**. The question starts at a fresh onset of speech after the detection (the
+   VAD going from silence to speech), or, for someone who runs straight on from the phrase,
+   after :data:`RUN_ON_S` of unbroken speech from the detection; the phrase's own tail never
+   starts it (stage 1 can fire before the phrase ends, and the VAD lingers after it). Then
+   :data:`END_SILENCE_S` of silence ends it: ``end_of_speech(t)`` with ``t`` the
    end of the last speech, PM14's start point (the silence wait is the "up to ~0.6 s" PM14
    allows for).
 
@@ -51,6 +56,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -72,8 +78,8 @@ log = logging.getLogger(__name__)
 
 CANCEL_WINDOW_S = 1.5  # plan 8 WO-5.4: after the chime, this long to start the question
 END_SILENCE_S = 0.6  # PM14: end-of-speech detection adds up to ~0.6 s
-QUESTION_S = (
-    0.2  # speech after the detection that makes it a question (not the phrase's tail)
+RUN_ON_S = (
+    0.5  # unbroken speech from the detection that starts a question with no pause
 )
 BARGE_IN_S = 0.3  # speech this long while GOS speaks stops it (D180)
 QUESTION_MAX_S = 30.0  # the recorder's cap (D181)
@@ -83,6 +89,7 @@ REFRACTORY_S = (
     0.5  # after a wake ends, the phrase's echo in the detector can't fire again
 )
 MATCH = 0.85  # stage 2: how close the transcript must come to the phrase (D186)
+WORD_MATCH = 0.9  # stage 2: and the phrase's longest word, to one heard word (D186)
 VAD_ON, VAD_OFF = (
     0.5,
     0.35,
@@ -145,6 +152,25 @@ def match_score(text: str, phrase: str) -> float:
             run = "".join(words[i : i + size])
             best = max(best, difflib.SequenceMatcher(None, run, target).ratio())
     return best
+
+
+def word_score(text: str, phrase: str) -> float:
+    """How closely one of ``text``'s words spells the phrase's longest word (0 to 1); two
+    neighbouring words that spell it exactly count as one ("quarter master" is 1.0)."""
+    target = max((_letters(w) for w in phrase.split()), key=len, default="")
+    words = [w for w in (_letters(x) for x in text.split()) if w]
+    if any(a + b == target for a, b in pairwise(words)):
+        return 1.0
+    return max(
+        (difflib.SequenceMatcher(None, w, target).ratio() for w in words), default=0.0
+    )
+
+
+def matches(text: str, phrase: str) -> bool:
+    """Stage 2's verdict: the transcript spells the phrase (:func:`match_score`), and its
+    longest word is one heard word, so two look-alike words can't merge into it ("hey,
+    archive it" is refused, D186)."""
+    return match_score(text, phrase) >= MATCH and word_score(text, phrase) >= WORD_MATCH
 
 
 def strip_phrase(text: str, phrase: str) -> str:
@@ -212,7 +238,10 @@ class _Wake:
     seq: int
     checked: float | None = None  # when stage 2 passed
     window_end: float | None = None
-    heard: float = 0.0  # seconds of speech since the detection
+    started: float | None = None  # when the question started
+    run_s: float = 0.0  # speech since the detection, before the question started
+    run_on: bool = True  # no silence yet since the detection
+    heard: float = 0.0  # seconds of the question's speech
     last_speech: float | None = None
     score: float | None = None
     check_ms: int | None = None
@@ -249,12 +278,15 @@ class WakeWord:
         self.chimes = 0  # wakes that passed stage 2
         self._ring = Ring(VERIFY_S)
         self._wake: _Wake | None = None
-        self._verdict: tuple[int, float | None, int] | None = None  # seq, score, ms
+        self._verdict: tuple[int, float | None, bool, int] | None = (
+            None  # seq, score, ok, ms
+        )
         self._lock = threading.Lock()
         self._quiet_until = 0.0
         self._speech_s = 0.0  # the current run of speech
         self._silence_s = 0.0
         self._talking = False  # speech(True) was sent and speech(False) not yet
+        self._was_speech = False  # the VAD on the previous block
 
     # --- the audio worker
 
@@ -262,6 +294,7 @@ class WakeWord:
         t = block.t_end
         self._ring.push(block.pcm)
         speech = self.vad.is_speech(block.pcm)
+        onset, self._was_speech = speech and not self._was_speech, speech
         self._barge_in(speech, t)
         fired = self.detector.accept(block.pcm)
         if self.state == IDLE:
@@ -270,9 +303,8 @@ class WakeWord:
             return
         wake = self._wake
         assert wake is not None
-        if t > wake.detected and speech:
-            wake.heard += BLOCK_S
-            wake.last_speech = t
+        if t > wake.detected:
+            self._follow(wake, speech, onset, t)
         if self.state == VERIFYING:
             self._take_verdict(wake, t)
         if self.state == VERIFIED:
@@ -297,6 +329,23 @@ class WakeWord:
                 self._talking = False
                 self.bus.speech(False, t)
 
+    def _follow(self, wake: _Wake, speech: bool, onset: bool, t: float) -> None:
+        """The question's start (a fresh onset, or :data:`RUN_ON_S` of unbroken speech from the
+        detection) and its speech."""
+        if not speech:
+            wake.run_on = False
+            return
+        if wake.started is None:
+            wake.run_s += BLOCK_S
+            if onset:
+                wake.started = t
+            elif wake.run_on and wake.run_s >= RUN_ON_S - 1e-9:
+                wake.started, wake.heard = t, wake.run_s - BLOCK_S
+            else:
+                return
+        wake.heard += BLOCK_S
+        wake.last_speech = t
+
     def _detected(self, t: float) -> None:
         self.wakes += 1
         wake = _Wake(t, self.wakes)
@@ -311,13 +360,17 @@ class WakeWord:
 
         def check() -> None:
             began = time.monotonic()
+            ok = False
             try:
-                score: float | None = match_score(verifier(pcm), self.phrase)
+                text = verifier(pcm)
+                score: float | None = match_score(text, self.phrase)
+                ok = matches(text, self.phrase)
             except Exception:
                 log.exception("the wake word's second stage failed")
                 score = None
+            ms = round((time.monotonic() - began) * 1000)
             with self._lock:
-                self._verdict = (seq, score, round((time.monotonic() - began) * 1000))
+                self._verdict = (seq, score, ok, ms)
 
         self.run(check)
 
@@ -328,11 +381,11 @@ class WakeWord:
             if t - wake.detected >= VERIFY_TIMEOUT_S:
                 self._end(wake, t, "check timed out")
             return
-        _, score, ms = verdict
+        _, score, ok, ms = verdict
         wake.score, wake.check_ms = score, ms
         if score is None:
             self._end(wake, t, "check failed")
-        elif score < MATCH:
+        elif not ok:
             self._end(wake, t, "rejected")
         else:
             self._passed(wake, t)
@@ -348,8 +401,7 @@ class WakeWord:
             log.exception("the wake chime failed")
 
     def _listen(self, wake: _Wake, t: float) -> None:
-        started = wake.heard >= QUESTION_S - 1e-9
-        if not started:
+        if wake.started is None:
             if wake.window_end is not None and t >= wake.window_end:
                 self._end(wake, t, "no question")
             return

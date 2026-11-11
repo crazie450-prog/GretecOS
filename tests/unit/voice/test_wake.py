@@ -24,7 +24,9 @@ from gregtec_voice.wake import (
     WakeError,
     WakeWord,
     match_score,
+    matches,
     strip_phrase,
+    word_score,
 )
 
 SPEECH = b"\x01\x10" * BLOCK_FRAMES  # the fake VAD hears any non-zero block as speech
@@ -188,13 +190,44 @@ def test_no_question_in_the_cancel_window_drops_the_wake(
 
 
 def test_the_phrases_own_tail_isnt_a_question() -> None:
-    """Under 0.2 s of speech after the detection is the phrase ending, not a question."""
+    """Speech that goes on from the detection for under 0.5 s is the phrase ending (the VAD
+    lingers), not a question."""
     engine, bus, _, _, _ = build(at={10})
     feed = Feeder(engine)
     feed.blocks(SPEECH, 0.2)
-    feed.blocks(SPEECH, 0.16)
+    feed.blocks(SPEECH, 0.46)
     feed.blocks(QUIET, CANCEL_WINDOW_S)
     assert bus.kinds() == ["wake", "cancel"]
+
+
+def test_an_early_detection_and_a_pause_for_the_chime_keep_the_question(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stage 1 fires 3 blocks before the phrase ends; Clayton waits 1 s (for the chime), then
+    asks: the question is the segment, not the phrase's tail (review finding 2)."""
+    caplog.set_level(logging.INFO, logger="gregtec_voice.wake")
+    engine, bus, chime, _, _ = build(at={37})
+    feed = Feeder(engine)
+    feed.blocks(SPEECH, 0.8)  # the phrase: blocks 1-40, the detection at block 37
+    feed.blocks(QUIET, 1.0)  # the pause; the chime with the first quiet block
+    assert chime.played == 1 and bus.kinds() == ["wake"]
+    feed.blocks(SPEECH, 1.0)  # the question, from t=101.82
+    feed.blocks(QUIET, END_SILENCE_S)
+    assert bus.kinds() == ["wake", "end"]
+    assert bus.events[-1] == ("end", pytest.approx(102.8))
+    assert wake_records(caplog)[0]["question_s"] == 1.0
+
+
+def test_the_cancel_window_counts_to_the_questions_first_onset() -> None:
+    """A question that starts just inside the 1.5 s window is kept, however short its first
+    sound (plan 8: 1.5 s to start the question)."""
+    engine, bus, _, _, _ = build(at={10})
+    feed = Feeder(engine)
+    feed.blocks(SPEECH, 0.2)
+    feed.blocks(QUIET, CANCEL_WINDOW_S)  # the chime comes with the first quiet block
+    feed.blocks(SPEECH, 0.04)
+    feed.blocks(QUIET, END_SILENCE_S)
+    assert bus.kinds() == ["wake", "end"]
 
 
 def test_a_question_said_before_the_verdict_ends_once_it_passes() -> None:
@@ -301,11 +334,25 @@ def test_match_score(text: str, score: float) -> None:
 
 
 def test_the_second_stage_needs_more_than_a_near_miss() -> None:
-    assert match_score("hey artist", PHRASE) < wake.MATCH
-    assert match_score("Hey, Archivists", PHRASE) >= wake.MATCH
-    assert match_score("okay tesseract", "okay tessera") >= wake.MATCH  # D186: 0.85
-    assert match_score("okay the sierra", "okay tessera") < wake.MATCH
-    assert match_score("OK, Tessera", "okay tessera") >= wake.MATCH
+    assert not matches("hey artist", PHRASE)
+    assert matches("Hey, Archivists", PHRASE)
+    assert matches("Hey Archivist, what uses tin?", PHRASE)
+    assert not matches("okay the sierra", "okay tessera")
+    assert matches("OK, Tessera", "okay tessera")
+    # look-alikes whose words merge into the phrase's letters (review finding 3): the run
+    # score passes, the longest word heard as one word doesn't
+    for said in (
+        "Hey, archive this.",
+        "Hey, archive it",
+        "hey archive is",
+        "hey activist",
+    ):
+        assert word_score(said, PHRASE) < wake.WORD_MATCH, said
+        assert not matches(said, PHRASE), said
+    assert match_score("Hey, archive it", PHRASE) >= wake.MATCH
+    assert not matches("okay tesseract", "okay tessera")  # 0.875 < 0.9
+    assert matches("Hello, quarter master.", "hello quartermaster")  # one word, split
+    assert not matches("hello quarter mister", "hello quartermaster")
 
 
 @pytest.mark.parametrize(
