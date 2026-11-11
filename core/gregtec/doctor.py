@@ -510,6 +510,43 @@ def play_overlap(path: Path, plays: Sequence[Path]) -> Path | None:
     return next((p for p in plays if within(path, p) or within(p, path)), None)
 
 
+_BAD_NAME = set('/\\:*?"<>|')
+
+
+def name_problem(value: str) -> str | None:
+    """Why ``value`` can't be an instance's folder name (Play, Export or Lab), if it can't."""
+    if value in (".", "..") or any(c in _BAD_NAME for c in value):
+        return "an instance's folder name in the instances folder, not a path"
+    if value != value.rstrip(". "):
+        # Windows drops a trailing dot or space: "GTNH-Play." is the folder GTNH-Play.
+        return "a folder name can't end in a dot or a space"
+    return None
+
+
+def _instances_problem(cfg: Config, plays: Sequence[Path]) -> str | None:
+    """Why Play, Export and Lab aren't three separate instances with Export and Lab clear of
+    every Play, if they aren't: the names, then the folders resolved and case-folded, so a
+    hand-edited ``../GTNH-Play`` or a link (a junction on Windows) to Play is Play (final check
+    round 3, D167). ``gregtec.sync`` writes and deletes in Export and Lab."""
+    for role in ("play", "export", "lab"):
+        why = name_problem(getattr(cfg, role))
+        if why is not None:
+            return f"{role.capitalize()} ({getattr(cfg, role)}): {why}"
+    if len({getattr(cfg, r).casefold() for r in ("play", "export", "lab")}) < 3:
+        return "Play, Export and Lab must be three different instances"
+    for role in ("export", "lab"):
+        play = play_overlap(cfg.instance(role), plays)
+        if play is not None:
+            return (
+                f"{role.capitalize()} ({cfg.instance(role)}) is Play's folder ({play}); GOS "
+                f"writes to {role.capitalize()}, so it must never be Play"
+            )
+    export, lab = cfg.instance("export"), cfg.instance("lab")
+    if within(export, lab) or within(lab, export):
+        return f"Export ({export}) and Lab ({lab}) are the same folder"
+    return None
+
+
 def _home_check(home: Path, plays: Sequence[Path], instances: Path) -> Check:
     label = f"GOS_HOME ({home})"
     # Before any probe: a check never makes a file in Play (WO-2.9 review).
@@ -555,7 +592,8 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
     deleted at once in GOS_HOME (or the folder it will be made in), to see that it is writable.
     GOS_APP or GOS_HOME in or around Play (``cfg``'s, and any of ``plays``), or anywhere in Prism's
     instances folder (a sync of Export or Lab deletes what its source lacks), is an error, and
-    then nothing is probed, so a check never writes in Play or another instance."""
+    then nothing is probed, so a check never writes in Play or another instance. So is Export or
+    Lab at a Play folder, by name, resolved path or link, or a name that isn't a folder name."""
     plays = [cfg.instance("play"), *plays]
     rows: list[Check] = []
     for key, label, path in (
@@ -571,15 +609,10 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
                 "found" if found else "no such folder",
             )
         )
-    names = {getattr(cfg, r).casefold() for r in ("play", "export", "lab")}
-    if len(names) < 3:
+    instances_problem = _instances_problem(cfg, plays)
+    if instances_problem is not None:
         rows.append(
-            Check(
-                "paths.instances",
-                "Instance names",
-                ERROR,
-                "Play, Export and Lab must be three different instances",
-            )
+            Check("paths.instances", "Instance names", ERROR, instances_problem)
         )
     elif cfg.prism_instances.is_dir():
         rows += [_instance_check(cfg, role) for role in ("play", "export", "lab")]
@@ -602,6 +635,20 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
         )
     )
     rows.append(_home_check(cfg.gos_home, plays, cfg.prism_instances))
+    if play_overlap(cfg.gos_home, plays) is not None or within(
+        cfg.gos_home, cfg.prism_instances
+    ):
+        # Not even a read-only open: SQLite makes -wal and -shm files beside a WAL DB, and they
+        # stay (final check round 3). The GOS_HOME row above is already an error.
+        rows.append(
+            Check(
+                "db.gt_pin",
+                "Recipe DB and GT pin",
+                WARN,
+                "not read: GOS_HOME is in or around Play or in the instances folder",
+            )
+        )
+        return rows
     # Plan 0.4: a pin mismatch is a warning (the recipe data is stale), not a stop.
     pin_ok, pin_line = gtpin.check_db(cfg.gos_home)
     rows.append(

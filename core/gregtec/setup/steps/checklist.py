@@ -9,11 +9,13 @@ from collections.abc import Mapping
 from gregtec import doctor
 from gregtec.llm import keys
 from gregtec.setup.registry import OK, WARN, Check, Context, Field, Outcome, Step
-from gregtec.setup.steps import voice
+from gregtec.setup.steps import paths, voice
 
 
 def rows(ctx: Context) -> list[Check]:
-    out = doctor.checklist(ctx.cfg)
+    # Every Play GOS knows of, so finishing refuses Export or Lab at the Play the running core
+    # syncs against too (final check round 3).
+    out = doctor.checklist(ctx.cfg, plays=paths.plays(ctx))
     try:
         backend = ", ".join(keys.backend_chain())
         out.append(Check("keyring", "Keyring", OK, backend))

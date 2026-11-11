@@ -6,7 +6,8 @@ from __future__ import annotations
 import functools
 import logging
 import os
-import sys
+import shutil
+import sqlite3
 import tomllib
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import pytest
 from gregtec import config, doctor
 from gregtec.agents.no_ai import AUTH, CHOICE, AiMode
 from gregtec.config import Config
+from gregtec.db import access
 from gregtec.llm import keys
 from gregtec.llm.fake import ScriptedClient
 from gregtec.llm.usage import UsageMeter
@@ -32,6 +34,7 @@ from .fakes import (
     ANTHROPIC_KEY,
     DISCORD_TOKEN,
     MemoryKeyring,
+    link_folder,
     make_instance,
     make_prism,
 )
@@ -713,16 +716,6 @@ def test_two_saves_never_swap_play_and_lab(
     _assert_play_kept(svc, play)
 
 
-def _link(link: Path, target: Path) -> None:
-    """A folder link: a junction on Windows (no privilege needed), else a symlink."""
-    if sys.platform == "win32":
-        import _winapi
-
-        _winapi.CreateJunction(str(target), str(link))
-    else:
-        link.symlink_to(target, target_is_directory=True)
-
-
 @pytest.mark.parametrize(
     ("change", "refused"),
     [
@@ -780,7 +773,7 @@ def test_a_link_to_play_is_play(
     prism = defaults_at
     play = prism / "instances" / "GTNH-Play"
     try:
-        _link(prism / "instances" / "Lab-Link", play)
+        link_folder(prism / "instances" / "Lab-Link", play)
     except OSError:
         pytest.skip("this account can't make folder links here")
     svc = _install(home, None)
@@ -789,8 +782,8 @@ def test_a_link_to_play_is_play(
     # Another instances folder whose GTNH-Play is a link to the real Play: the same Play.
     other = tmp_path / "Other" / "instances"
     other.mkdir(parents=True)
-    _link(other / "GTNH-Play", play)
-    _link(other / "GTNH-Lab", play)
+    link_folder(other / "GTNH-Play", play)
+    link_folder(other / "GTNH-Lab", play)
     make_instance(other, "GTNH-Export")
     moved = values | {"prism_instances": str(other)}
     problems = svc.check("paths", moved)[0].problems
@@ -1095,3 +1088,125 @@ def test_portaudio_lists_devices_one_at_a_time(monkeypatch: pytest.MonkeyPatch) 
         "outputs": [{"name": "Chat", "default": True}],
         "error": None,
     }
+
+
+# --- final check round 3: finishing guards Export and Lab like a paths save (d), and a check
+# never even opens a DB in Play (c) --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("role", "name"),
+    [
+        ("lab", "../instances/GTNH-Play"),  # resolves to Play
+        ("export", "..\\instances\\GTNH-Play"),
+        ("lab", "GTNH-Play."),  # Windows drops the dot
+    ],
+)
+def test_the_doctor_checklist_refuses_export_or_lab_at_play(
+    prism: Path, tmp_path: Path, role: str, name: str
+) -> None:
+    (tmp_path / "app").mkdir()
+    cfg = Config(
+        prism_root=prism,
+        prism_instances=prism / "instances",
+        gos_app=tmp_path / "app",
+        gos_home=tmp_path / "home",
+        **{role: name},  # type: ignore[arg-type]
+    )
+    rows = by_id([c.as_dict() for c in doctor.checklist(cfg)])
+    assert rows["paths.instances"]["status"] == "error"
+    assert "instance.lab" not in rows
+
+
+def test_the_doctor_checklist_refuses_export_and_lab_as_one_folder(
+    prism: Path, tmp_path: Path
+) -> None:
+    try:
+        link_folder(
+            prism / "instances" / "LabLink", prism / "instances" / "GTNH-Export"
+        )
+    except OSError:
+        pytest.skip("this account can't make folder links here")
+    cfg = Config(prism_root=prism, prism_instances=prism / "instances", lab="LabLink")
+    rows = by_id([c.as_dict() for c in doctor.checklist(cfg)])
+    assert "same folder" in rows["paths.instances"]["detail"]
+
+
+def test_finish_refuses_a_lab_that_became_a_link_to_play(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    """Final check round 3 (d), gos.toml untouched: Lab is saved as a name with no folder yet,
+    then that name becomes a link (a junction on Windows) to Play. Finish says no."""
+    configure(svc, prism, home, tmp_path / "app")
+    svc.save("paths", path_values(prism, home, tmp_path / "app") | {"lab": "LabLink"})
+    try:
+        link_folder(prism / "instances" / "LabLink", prism / "instances" / "GTNH-Play")
+    except OSError:
+        pytest.skip("this account can't make folder links here")
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["paths.instances"]["status"] == "error"
+    assert "Play's folder" in rows["paths.instances"]["detail"]
+    with pytest.raises(SetupError):
+        svc.finish()
+    assert "completed_utc" not in svc.path.read_text("utf-8")
+
+
+def test_finish_guards_the_play_the_running_core_syncs_against(
+    ring: MemoryKeyring, defaults_at: Path, home: Path, tmp_path: Path
+) -> None:
+    """gos.toml hand-edited to a new instances folder whose Lab is a link to the Play the core
+    still runs with: the checklist is an error until the core restarts with the new paths."""
+    prism = defaults_at
+    app = tmp_path / "app"
+    app.mkdir()
+    svc = _install(home, None)
+    configure(svc, prism, home, app)
+    other = make_prism(tmp_path / "Other") / "instances"
+    shutil.rmtree(other / "GTNH-Lab")
+    try:
+        link_folder(other / "GTNH-Lab", prism / "instances" / "GTNH-Play")
+    except OSError:
+        pytest.skip("this account can't make folder links here")
+    # As a hand edit would: straight to gos.toml, no paths step.
+    svc._write({("paths", "prism_instances"): other.as_posix()})
+    assert config.load(svc.path).prism_instances == other
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["paths.instances"]["status"] == "error"
+    with pytest.raises(SetupError):
+        svc.finish()
+
+
+def test_a_paths_check_never_opens_a_db_in_play(
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final check round 3 (c): Play holds a GOS DB in WAL mode (left by an earlier GOS_HOME
+    there). A read-only open would leave -wal and -shm files in Play; a check opens nothing."""
+    play = prism / "instances" / "GTNH-Play"
+    db = access.db_path(play)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t (x)")
+        conn.commit()
+    finally:
+        conn.close()
+    files = _files_under(play)
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise AssertionError("opened a DB")
+
+    monkeypatch.setattr(access, "connect", refuse)
+    values = path_values(prism, home, tmp_path / "app")
+    for target in (play, prism / "instances" / "GTNH-Lab"):
+        outcome, _ = svc.check("paths", values | {"gos_home": str(target)})
+        assert "gos_home" in outcome.problems or any(
+            c.status == "error" for c in outcome.checks
+        )
+        rows = by_id([c.as_dict() for c in outcome.checks])
+        assert rows["db.gt_pin"]["detail"].startswith("not read")
+    assert _files_under(play) == files

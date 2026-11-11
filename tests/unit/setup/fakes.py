@@ -5,6 +5,7 @@ Export and Lab instances shaped like the Java 17-26 Prism zip (tests/unit/test_d
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import keyring.backend
@@ -99,3 +100,13 @@ def make_prism(
     for name in names:
         make_instance(root / "instances", name)
     return root
+
+
+def link_folder(link: Path, target: Path) -> None:
+    """A folder link: a junction on Windows (no privilege needed), else a symlink."""
+    if sys.platform == "win32":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)

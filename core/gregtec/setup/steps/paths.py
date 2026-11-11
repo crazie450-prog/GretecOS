@@ -12,16 +12,6 @@ from gregtec.config import Config
 from gregtec.setup.registry import WARN, Check, Context, Field, Outcome, Step
 
 INSTANCE_ROLES = ("play", "export", "lab")
-_BAD_NAME = set('/\\:*?"<>|')
-
-
-def _name_problem(value: str) -> str | None:
-    if value in (".", "..") or any(c in _BAD_NAME for c in value):
-        return "an instance's folder name in the instances folder, not a path"
-    if value != value.rstrip(". "):
-        # Windows drops a trailing dot or space: "GTNH-Play." is the folder GTNH-Play.
-        return "a folder name can't end in a dot or a space"
-    return None
 
 
 def candidate(ctx: Context, values: Mapping[str, str]) -> Config:
@@ -101,7 +91,7 @@ def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
     problems = {
         role: why
         for role in INSTANCE_ROLES
-        if (why := _name_problem(values.get(role, ""))) is not None
+        if (why := doctor.name_problem(values.get(role, ""))) is not None
     }
     cfg = candidate(ctx, values)
     if not problems:

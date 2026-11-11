@@ -164,6 +164,31 @@ def test_a_fresh_home_is_configured_from_the_wizard_alone(
     assert ANTHROPIC_KEY not in caplog.text and DISCORD_TOKEN not in caplog.text
 
 
+def test_finish_refuses_a_hand_edited_lab_at_play(
+    client: TestClient,
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    ring: MemoryKeyring,
+) -> None:
+    """Final check round 3 (d): the paths saved, then ``[paths] lab`` edited by hand to a path
+    that resolves to Play. The checklist says so and Finish writes nothing."""
+    app = tmp_path / "app"
+    app.mkdir()
+    values = path_values(prism, home, app)
+    r = client.post("/api/setup/steps/paths", json={"values": values}, headers=admin())
+    assert r.status_code == 200, r.json()
+    text = svc.path.read_text("utf-8").replace('"GTNH-Lab"', '"../instances/GTNH-Play"')
+    svc.path.write_text(text, "utf-8")
+    assert config.load(svc.path).lab == "../instances/GTNH-Play"
+    rows = client.post("/api/setup/checklist", headers=admin()).json()["checks"]
+    assert {r["id"]: r["status"] for r in rows}["paths.instances"] == "error"
+    r = client.post("/api/setup/finish", headers=admin())
+    assert r.status_code == 400
+    assert "completed_utc" not in svc.path.read_text("utf-8")
+
+
 def test_refusals_come_back_with_their_reasons(
     client: TestClient, ring: MemoryKeyring
 ) -> None:
