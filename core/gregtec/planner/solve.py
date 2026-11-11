@@ -1,0 +1,548 @@
+"""The staged MILP (WO-3.4, plan §7.1 steps 3, 4 and 6, [E§3.4], D11, D14, D61, D192-D195).
+
+The solver works on a :class:`Network`, a plain list of recipe nodes (:class:`Proc`) with what
+each consumes and gives per craft and how many machine-seconds a craft takes. :mod:`.plan`
+builds one from WO-3.3's graph and WO-3.2's machine sizing; the tests also build them from
+gtnh-flow charts (PlanNH's test resources, D192). Nothing here knows what an item is worth: the
+objectives are structural only (**no per-item cost values**, §7.1 step 4).
+
+**Variables** (scipy.optimize.milp on HiGHS, single-threaded): ``x_r >= 0`` crafts/s per recipe;
+``imp_k``, ``exp_k >= 0`` per item port that may cross the boundary; a gate binary ``g_k`` per
+connected item whose crossing isn't free; a choice binary ``z_r`` per recipe of a primary
+choice (§7.1 step 3: exactly one recipe per primary item, the others idle).
+
+**Rows:** conservation per item, ``sum_r (out_rk - in_rk) x_r + imp_k - exp_k = 0`` (the target's
+export is its rate), each divided by ``c_k = max(1, the item's largest amount per craft)``, the
+row scaling PlanNH uses, so ``imp_k`` and ``exp_k`` are solved in row units. EU is an item like
+any other: a machine recipe consumes ``EU/t x ticks`` per craft from the ``eu`` port, which
+nothing in a production line makes, so it is imported (WO-4's generators will supply it).
+An item is **free** to import when nothing in the network makes it or the graph names it a
+boundary (raw, stock, line outputs, request, locked, depth) and free to export when nothing in
+the network uses it or the graph names it a boundary; any other crossing is a **gate**,
+``imp_k + exp_k <= M g_k``. M is per row in row units: 1e4, then 1e5 if HiGHS finds the stage
+infeasible (1e7 caused spurious infeasibility, [E§3.3]). The target rate is normalised to 1
+while solving.
+
+**Stages** (lexicographic; each optimum is kept as a row of the next stage): (1) minimise
+gates; (2) minimise the gated quantity, with a ``1e-6`` tiebreak on the raw inputs (free
+imports, EU left out); (3) minimise total machines ``sum_r x_r t_r``; (4) the every-machine-runs
+replay: every recipe of the route gets a floor of ``1e-3`` x the smallest running rate of
+stage 3 and stages 1-3 run again (a gate shortcut that leaves machines idle is refused,
+[E§3.3]). Integerising (step 6) is ``ceil`` and utilisation in :mod:`.sizing`, or, on request,
+:func:`exact_counts`: an integer machine count per recipe, minimising their sum under the
+same optima.
+
+**Routes** (:func:`routes`): the stages run once with the choice binaries free; the primary
+choices of the result are a route. A no-good cut (at least one primary choice differs) is
+added and the stages run again, up to ``n`` routes. Each route is then solved on its own
+(:func:`solve_route`), on the recipes it reaches from the target (:func:`active`), replay
+included. The order found is not a ranking: ranking is planner/rank.py's (WO-3.5).
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+
+import numpy as np
+from scipy.optimize import Bounds, LinearConstraint, milp
+from scipy.sparse import coo_array
+
+EU_KEY = "eu"
+BIG_M = (1e4, 1e5)
+FLOOR = 1e-3  # x the smallest running rate (stage 4)
+TIEBREAK = 1e-6  # raw-input weight in stage 2
+REL_TOL = 1e-7  # an optimum kept as a row may be this much worse (continuous stages)
+ABS_TOL = 1e-9
+RUNNING = 1e-9  # crafts/s (normalised) above which a recipe counts as running
+TIME_LIMIT_S = 60.0
+_OPTIONS = {"disp": False, "presolve": True, "mip_rel_gap": 0.0}
+
+
+class SolveError(RuntimeError):
+    """No route can be solved; the message says why."""
+
+
+@dataclass(frozen=True)
+class Proc:
+    """One recipe node: per-craft consumption and expected output, machine-seconds a craft."""
+
+    id: str
+    inputs: tuple[tuple[str, float], ...]  # consumed per craft (catalysts left out)
+    outputs: tuple[tuple[str, float], ...]  # expected per craft (amount x chance)
+    seconds: float  # machine-seconds per craft: 1 / crafts per second of one machine
+    makes: tuple[str, ...] = ()  # items it was chosen to make; () = all its outputs
+
+    def made(self) -> tuple[str, ...]:
+        return self.makes or tuple(dict.fromkeys(k for k, _ in self.outputs))
+
+
+@dataclass(frozen=True)
+class Network:
+    procs: tuple[Proc, ...]
+    targets: tuple[tuple[str, float], ...] = ()  # item, export per second
+    fixed: tuple[
+        tuple[str, float], ...
+    ] = ()  # proc, machine count (a gtnh-flow `number`)
+    free_in: frozenset[str] = frozenset()  # boundary items, imported without a gate
+    free_out: frozenset[str] = frozenset()  # boundary items, exported without a gate
+    choices: tuple[tuple[str, tuple[str, ...]], ...] = ()  # primary item -> its recipes
+    pinned: tuple[tuple[str, str], ...] = ()  # item -> recipe, fixed choices (D61)
+    prune: bool = (
+        True  # a route runs only what it reaches from the targets (False: all)
+    )
+
+    def proc(self, pid: str) -> Proc:
+        return next(p for p in self.procs if p.id == pid)
+
+
+@dataclass(frozen=True)
+class Flow:
+    """One solved route, in real units (per second)."""
+
+    choice: tuple[tuple[str, str], ...]  # primary item -> its recipe
+    crafts: tuple[
+        tuple[str, float], ...
+    ]  # recipe -> crafts/s (every recipe of the route)
+    imports: tuple[tuple[str, float], ...]  # item -> per second, above zero
+    exports: tuple[tuple[str, float], ...]  # item -> per second (targets included)
+    gates: tuple[str, ...]  # items crossing through a gate
+    all_run: bool  # every recipe of the route runs
+    floor: float | None  # the stage-4 floor, crafts/s, when the replay ran
+    objectives: tuple[
+        float, float, float
+    ]  # gates, gated quantity (row units), machines
+    big_m: float
+    warnings: tuple[str, ...] = ()
+
+    def rate(self, pid: str) -> float:
+        return dict(self.crafts).get(pid, 0.0)
+
+
+# --- the model ---------------------------------------------------------------------------------
+
+
+@dataclass
+class _Model:
+    """The variables and rows of one network, at one big-M."""
+
+    net: Network
+    procs: list[Proc]
+    big_m: float
+    scale: float
+    floors: Mapping[str, float]
+    cuts: Sequence[Mapping[str, str]]
+    n: int = 0
+    lb: list[float] = field(default_factory=list)
+    ub: list[float] = field(default_factory=list)
+    integral: list[int] = field(default_factory=list)
+    rows: list[tuple[dict[int, float], float, float]] = field(default_factory=list)
+    x: dict[str, int] = field(default_factory=dict)
+    imp: dict[str, int] = field(default_factory=dict)
+    exp: dict[str, int] = field(default_factory=dict)
+    gate: dict[str, int] = field(default_factory=dict)
+    z: dict[str, int] = field(default_factory=dict)
+    c: dict[str, float] = field(default_factory=dict)
+    gated: dict[str, list[int]] = field(default_factory=dict)
+    raw_imports: list[int] = field(default_factory=list)
+    target_rows: dict[str, dict[int, float]] = field(default_factory=dict)
+
+    def var(self, lb: float = 0.0, ub: float = math.inf, integer: bool = False) -> int:
+        self.lb.append(lb)
+        self.ub.append(ub)
+        self.integral.append(1 if integer else 0)
+        self.n += 1
+        return self.n - 1
+
+    def row(self, coefs: dict[int, float], lo: float, hi: float) -> None:
+        self.rows.append(({k: v for k, v in coefs.items() if v != 0.0}, lo, hi))
+
+
+def _items(procs: Iterable[Proc]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    made: dict[str, list[str]] = {}
+    used: dict[str, list[str]] = {}
+    for p in procs:
+        for k, a in p.outputs:
+            if a > 0:
+                made.setdefault(k, []).append(p.id)
+        for k, a in p.inputs:
+            if a > 0:
+                used.setdefault(k, []).append(p.id)
+    return made, used
+
+
+def _build(
+    net: Network,
+    procs: list[Proc],
+    big_m: float,
+    floors: Mapping[str, float],
+    cuts: Sequence[Mapping[str, str]],
+) -> _Model:
+    scale = max((r for _, r in net.targets), default=1.0)
+    m = _Model(net, procs, big_m, scale, floors, cuts)
+    ids = {p.id for p in procs}
+    fixed = {pid: n for pid, n in net.fixed if pid in ids}
+    for p in procs:
+        lb = floors.get(p.id, 0.0) / scale
+        if p.id in fixed and p.seconds > 0:
+            v = fixed[p.id] / p.seconds / scale
+            m.x[p.id] = m.var(v, v)
+        else:
+            m.x[p.id] = m.var(lb)
+    made, used = _items(procs)
+    targets = {k: r / scale for k, r in net.targets}
+    keys = sorted(set(made) | set(used) | set(targets))
+    for k in keys:
+        amounts = [a for p in procs for kk, a in (*p.inputs, *p.outputs) if kk == k]
+        m.c[k] = max([1.0, *amounts])
+    for k in keys:
+        coefs: dict[int, float] = {}
+        for p in procs:
+            a = sum(v for kk, v in p.outputs if kk == k) - sum(
+                v for kk, v in p.inputs if kk == k
+            )
+            if a:
+                coefs[m.x[p.id]] = coefs.get(m.x[p.id], 0.0) + a / m.c[k]
+        gated: list[int] = []
+        if k in targets:
+            # At least the rate: a byproduct share of the target is exported with it.
+            m.row(coefs, targets[k] / m.c[k], math.inf)
+            m.target_rows[k] = coefs
+            continue
+        if k in used:
+            i = m.imp[k] = m.var()
+            coefs[i] = 1.0
+            if k in made and k not in net.free_in:
+                gated.append(i)
+            elif k != EU_KEY:
+                m.raw_imports.append(i)
+        if k in made:
+            e = m.exp[k] = m.var()
+            coefs[e] = -1.0
+            if k in used and k not in net.free_out:
+                gated.append(e)
+        m.row(coefs, 0.0, 0.0)
+        if gated:
+            g = m.gate[k] = m.var(0.0, 1.0, integer=True)
+            m.gated[k] = gated
+            m.row({**dict.fromkeys(gated, 1.0), g: -big_m}, -math.inf, 0.0)
+    groups = [(k, [r for r in rs if r in ids]) for k, rs in net.choices]
+    for _, rs in groups:
+        for r in rs:
+            if r not in m.z:
+                m.z[r] = m.var(0.0, 1.0, integer=True)
+                m.row({m.x[r]: 1.0, m.z[r]: -big_m}, -math.inf, 0.0)
+    for _, rs in groups:
+        if rs:
+            m.row(dict.fromkeys((m.z[r] for r in rs), 1.0), 1.0, 1.0)
+    for cut in cuts:
+        picked = [m.z[r] for r in cut.values() if r in m.z]
+        if picked:
+            m.row(dict.fromkeys(picked, 1.0), -math.inf, len(picked) - 1.0)
+    return m
+
+
+def _objectives(m: _Model) -> list[dict[int, float]]:
+    gates = dict.fromkeys(m.gate.values(), 1.0)
+    quantity: dict[int, float] = {}
+    for vs in m.gated.values():
+        for v in vs:
+            quantity[v] = 1.0
+    for v in m.raw_imports:
+        quantity[v] = quantity.get(v, 0.0) + TIEBREAK
+    machines = {m.x[p.id]: p.seconds for p in m.procs if p.seconds > 0}
+    return [gates, quantity, machines]
+
+
+def _solve(
+    m: _Model,
+    objective: dict[int, float],
+    extra: list[tuple[dict[int, float], float, float]],
+) -> np.ndarray | None:
+    rows = m.rows + extra
+    c = np.zeros(m.n)
+    for k, v in objective.items():
+        c[k] = v
+    if not rows:
+        constraints: list[LinearConstraint] = []
+    else:
+        ri: list[int] = []
+        ci: list[int] = []
+        vals: list[float] = []
+        for i, (coefs, _, _) in enumerate(rows):
+            for k in sorted(coefs):
+                ri.append(i)
+                ci.append(k)
+                vals.append(coefs[k])
+        a = coo_array((vals, (ri, ci)), shape=(len(rows), m.n)).tocsr()
+        constraints = [LinearConstraint(a, [r[1] for r in rows], [r[2] for r in rows])]
+    res = milp(
+        c,
+        constraints=constraints,
+        integrality=np.array(m.integral),
+        bounds=Bounds(np.array(m.lb), np.array(m.ub)),
+        options={**_OPTIONS, "time_limit": TIME_LIMIT_S},
+    )
+    if res.status != 0 or res.x is None:
+        return None
+    return np.asarray(res.x)
+
+
+def _value(obj: dict[int, float], x: np.ndarray) -> float:
+    return float(sum(v * x[k] for k, v in obj.items()))
+
+
+def _keep(
+    obj: dict[int, float], best: float, integer: bool
+) -> tuple[dict[int, float], float, float]:
+    if integer:
+        return obj, -math.inf, round(best) + 0.5
+    return obj, -math.inf, best + max(ABS_TOL, REL_TOL * abs(best))
+
+
+def _lexicographic(m: _Model) -> tuple[np.ndarray, tuple[float, float, float]] | None:
+    """Stages 1-3; None when stage 1 is infeasible."""
+    extra: list[tuple[dict[int, float], float, float]] = []
+    found: list[float] = []
+    x: np.ndarray | None = None
+    for stage, obj in enumerate(_objectives(m)):
+        x = _solve(m, obj, extra)
+        if x is None:
+            if stage == 0:
+                return None
+            raise SolveError(f"stage {stage + 1} found no solution after stage {stage}")
+        best = _value(obj, x)
+        found.append(best)
+        extra.append(_keep(obj, best, stage == 0))
+    assert x is not None
+    return x, (round(found[0]), found[1], found[2])
+
+
+def _run(
+    net: Network,
+    procs: list[Proc],
+    floors: Mapping[str, float] | None = None,
+    cuts: Sequence[Mapping[str, str]] = (),
+) -> tuple[_Model, np.ndarray, tuple[float, float, float]] | None:
+    for big_m in BIG_M:
+        m = _build(net, procs, big_m, floors or {}, cuts)
+        out = _lexicographic(m)
+        if out is not None:
+            return m, out[0], out[1]
+    return None
+
+
+# --- routes ---------------------------------------------------------------------------------
+
+
+def _excluded(net: Network, choice: Mapping[str, str]) -> set[str]:
+    """Recipes of a primary choice that ``choice`` didn't pick (idle on this route)."""
+    out: set[str] = set()
+    for k, rs in net.choices:
+        if k in choice:
+            out.update(r for r in rs if r != choice[k])
+    picked = set(choice.values())
+    return out - picked
+
+
+def active(net: Network, choice: Mapping[str, str]) -> list[Proc]:
+    """The recipes a route runs: those reached from the targets and fixed recipes through the
+    items each was chosen to make, without the primary choices it didn't pick."""
+    skip = _excluded(net, choice)
+    procs = [p for p in net.procs if p.id not in skip]
+    if not net.prune:
+        return procs
+    makers: dict[str, list[Proc]] = {}
+    for p in procs:
+        for k in p.made():
+            makers.setdefault(k, []).append(p)
+    keep: dict[str, Proc] = {}
+    fixed = {pid for pid, _ in net.fixed}
+    todo = [k for k, _ in net.targets]
+    for p in procs:
+        if p.id in fixed:
+            keep[p.id] = p
+            todo.extend(k for k, _ in p.inputs)
+    seen: set[str] = set()
+    while todo:
+        k = todo.pop()
+        if k in seen:
+            continue
+        seen.add(k)
+        for p in makers.get(k, ()):
+            if p.id not in keep:
+                keep[p.id] = p
+                todo.extend(kk for kk, _ in p.inputs)
+    return [p for p in procs if p.id in keep]
+
+
+def _choice(m: _Model, x: np.ndarray) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, rs in m.net.choices:
+        on = [r for r in rs if r in m.z and x[m.z[r]] > 0.5]
+        if on:
+            out[k] = on[0]
+    return out
+
+
+def _flow(
+    m: _Model,
+    x: np.ndarray,
+    objectives: tuple[float, float, float],
+    choice: Mapping[str, str],
+    floor: float | None,
+    warnings: Sequence[str],
+) -> Flow:
+    s = m.scale
+
+    def val(i: int, c: float = 1.0) -> float:
+        v = float(x[i]) * c * s
+        return 0.0 if abs(v) < RUNNING * s else v
+
+    crafts = tuple(sorted((p.id, val(m.x[p.id])) for p in m.procs))
+    imports = tuple(
+        (k, val(i, m.c[k])) for k, i in sorted(m.imp.items()) if val(i, m.c[k]) > 0
+    )
+    exports = [
+        (k, val(i, m.c[k])) for k, i in sorted(m.exp.items()) if val(i, m.c[k]) > 0
+    ]
+    exports += [
+        (k, max(r, _value(m.target_rows[k], x) * m.c[k] * s)) for k, r in m.net.targets
+    ]
+    gates = tuple(sorted(k for k, g in m.gate.items() if x[g] > 0.5))
+    return Flow(
+        choice=tuple(sorted(choice.items())),
+        crafts=crafts,
+        imports=imports,
+        exports=tuple(sorted(exports)),
+        gates=gates,
+        all_run=all(v > 0 for _, v in crafts),
+        floor=floor,
+        objectives=(objectives[0], objectives[1] * s, objectives[2] * s),
+        big_m=m.big_m,
+        warnings=tuple(warnings),
+    )
+
+
+def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
+    """Stages 1-4 for one route: the primary choices fixed to ``choice`` (by default the
+    network's only recipe per choice; pins are always fixed)."""
+    pick = dict(net.pinned)
+    for k, rs in net.choices:
+        if k not in pick and len(rs) == 1:
+            pick[k] = rs[0]
+    pick.update(choice or {})
+    missing = sorted(k for k, _ in net.choices if k not in pick)
+    if missing:
+        raise SolveError(f"no recipe chosen for {', '.join(missing)}")
+    procs = active(net, pick)
+    if not procs:
+        raise SolveError("no recipe makes the target")
+    fixed = Network(
+        procs=tuple(procs),
+        targets=net.targets,
+        fixed=net.fixed,
+        free_in=net.free_in,
+        free_out=net.free_out,
+        prune=False,
+    )
+    first = _run(fixed, procs)
+    if first is None:
+        raise SolveError(
+            "the route has no solution (the target can't be made at this rate)"
+        )
+    m, x, objs = first
+    flow = _flow(m, x, objs, pick, None, ())
+    if flow.all_run:
+        return flow
+    running = [v for _, v in flow.crafts if v > 0]
+    if not running:
+        raise SolveError("no recipe runs")
+    floor = FLOOR * min(running)
+    replay = _run(fixed, procs, floors=dict.fromkeys((p.id for p in procs), floor))
+    if replay is None:
+        idle = [pid for pid, v in flow.crafts if v <= 0]
+        return _flow(
+            m,
+            x,
+            objs,
+            pick,
+            None,
+            [f"every-machine-runs replay infeasible; idle: {', '.join(idle)}"],
+        )
+    m2, x2, objs2 = replay
+    return _flow(m2, x2, objs2, pick, floor, ())
+
+
+def routes(net: Network, n: int = 3) -> list[Flow]:
+    """Up to ``n`` routes, each differing from the others in at least one primary choice
+    (no-good cuts), in the order found (not ranked: WO-3.5 ranks)."""
+    pins = dict(net.pinned)
+    open_choices = [(k, rs) for k, rs in net.choices if k not in pins and len(rs) > 1]
+    narrowed = Network(
+        procs=net.procs,
+        targets=net.targets,
+        fixed=net.fixed,
+        free_in=net.free_in,
+        free_out=net.free_out,
+        prune=net.prune,
+        choices=tuple(
+            (k, (pins[k],)) if k in pins else (k, rs) for k, rs in net.choices
+        ),
+        pinned=net.pinned,
+    )
+    if not open_choices:
+        return [solve_route(narrowed)]
+    procs = [p for p in narrowed.procs if p.id not in _excluded(narrowed, pins)]
+    cuts: list[dict[str, str]] = []
+    out: list[Flow] = []
+    while len(out) < n:
+        found = _run(narrowed, procs, cuts=cuts)
+        if found is None:
+            break
+        m, x, _ = found
+        choice = _choice(m, x)
+        out.append(solve_route(narrowed, choice))
+        cuts.append({k: choice[k] for k, _ in open_choices if k in choice})
+        if not cuts[-1]:
+            break
+    if not out:
+        raise SolveError("no route has a solution")
+    return out
+
+
+def exact_counts(
+    net: Network, flow: Flow, crafts_per_s: Mapping[str, float]
+) -> dict[str, int]:
+    """Step 6 on request: a whole machine count per recipe of ``flow``'s route, minimising
+    their sum with the route's gates and gated quantity (and the stage-4 floor) kept. A
+    recipe without a machine (``crafts_per_s`` 0 or missing) gets none."""
+    procs = active(net, dict(flow.choice))
+    fixed = Network(
+        procs=tuple(procs),
+        targets=net.targets,
+        fixed=net.fixed,
+        free_in=net.free_in,
+        free_out=net.free_out,
+        prune=False,
+    )
+    floors = dict.fromkeys((p.id for p in procs), flow.floor) if flow.floor else {}
+    for big_m in BIG_M:
+        m = _build(fixed, procs, big_m, floors, ())
+        gates, quantity, _ = _objectives(m)
+        extra = [
+            _keep(gates, flow.objectives[0], True),
+            _keep(quantity, flow.objectives[1] / m.scale, False),
+        ]
+        counts: dict[str, int] = {}
+        for p in procs:
+            cps = crafts_per_s.get(p.id, 0.0)
+            if cps > 0:
+                counts[p.id] = m.var(0.0, math.inf, integer=True)
+                # x (normalised) x scale <= count x crafts/s of one machine
+                extra.append(({m.x[p.id]: m.scale, counts[p.id]: -cps}, -math.inf, 0.0))
+        x = _solve(m, dict.fromkeys(counts.values(), 1.0), extra)
+        if x is not None:
+            return {pid: round(float(x[i])) for pid, i in sorted(counts.items())}
+    raise SolveError("no whole machine counts keep the route's optimum")
