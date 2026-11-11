@@ -228,14 +228,16 @@ def test_every_answer_is_pushed_to_the_dashboards(
         messages(dashboard, 3)
         messages(voice_ws, 2)
         before = time.time()
-        reply = client.post("/api/ask", json={"text": "confirm"}, headers=bearer(token))
+        reply = client.post(
+            "/api/ask", json={"text": "what's my tier"}, headers=bearer(token)
+        )
         assert reply.status_code == 200
         pushed = until(dashboard, "ask.reply")["data"]
-        assert pushed["by"] == "voice" and pushed["request"] == "confirm"
-        assert pushed["text"] == reply.json()["text"] == ask.NOTHING_PENDING
-        assert pushed["lane"] == "instant"
-        # nothing was waiting for confirm: the voice client's cancel hotkey stays quiet
-        assert pushed["pending"] is False and reply.json()["pending"] is False
+        assert pushed["by"] == "voice" and pushed["request"] == "what's my tier"
+        assert pushed["text"] == reply.json()["text"]
+        assert pushed["lane"] == "instant" and pushed["intent"] == "tier"
+        assert pushed["card"] is not None and pushed["card"] == reply.json()["card"]
+        assert pushed["pending"] is None  # only confirm and cancel say whether one was
         # when the question came, so a dashboard keeps the newest question's card
         assert before - 1 <= pushed["asked_at"] <= time.time() + 1
         assert "asked_at" not in reply.json()
@@ -243,3 +245,22 @@ def test_every_answer_is_pushed_to_the_dashboards(
         assert until(voice_ws, "pong") == {
             "type": "pong"
         }  # clients don't get answers pushed
+
+
+def test_a_confirm_or_cancel_with_nothing_waiting_isnt_pushed(
+    client: TestClient, core: Core
+) -> None:
+    """The cancel hotkey, pressed to silence GOS, changed nothing: no card-less "cancel" answer
+    replaces the card on the dashboards (D179)."""
+    voice = bearer(core.auth.issue_client_token("voice"))
+    with client.websocket_connect(WS, headers=bearer(ADMIN)) as dashboard:
+        messages(dashboard, 3)
+        for command in ("cancel", "confirm"):
+            reply = client.post("/api/ask", json={"text": command}, headers=voice)
+            assert reply.status_code == 200
+            assert reply.json()["text"] == ask.NOTHING_PENDING
+            # the voice client still learns that nothing was waiting: cancel stays quiet
+            assert reply.json()["pending"] is False
+        client.post("/api/ask", json={"text": "what's my tier"}, headers=voice)
+        pushed = until(dashboard, "ask.reply")["data"]
+        assert pushed["request"] == "what's my tier"  # the first answer pushed

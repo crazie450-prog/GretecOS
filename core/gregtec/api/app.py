@@ -38,7 +38,8 @@ error or off) and ``detail``; process items add ``state``, ``pid`` (the process'
 **Voice (WO-5.1, D179).** Every answer ``/api/ask`` gives is also pushed to the dashboards as
 ``{"type": "ask.reply", "data": {"by", "request", "asked_at", ...the reply}}``, so a spoken
 question's card shows on monitor 2 (D23); ``asked_at`` (epoch seconds, when the question came)
-lets a dashboard keep the newest question's card when an older answer finishes after it.
+lets a dashboard keep the newest question's card when an older answer finishes after it. A
+confirm or cancel that found nothing waiting (``pending`` false) changed nothing and isn't pushed.
 ``/api/ui`` pushes ``{"type": "ui", "action", "by"}`` (the voice
 client's next-card hotkey). The voice client reports its state (``idle``, ``listening``,
 ``thinking``, ``speaking``, ``off``; ``trigger`` ``key`` or ``wake``) to ``/api/voice/state``; the
@@ -495,9 +496,12 @@ def create_app(core: Core) -> FastAPI:
         answer = reply.as_dict()
         # The dashboards show every answer's card, a spoken question's too (D23, D179); an
         # answer to an older question that finishes later mustn't replace a newer one's card,
-        # so the push says when its question came (``asked_at``, epoch seconds).
-        pushed = {"by": who.name, "request": text, "asked_at": asked_at, **answer}
-        core.broadcast({"type": "ask.reply", "data": pushed}, trusted_only=True)
+        # so the push says when its question came (``asked_at``, epoch seconds). A confirm or
+        # cancel that found nothing waiting changed nothing and isn't pushed: the cancel
+        # hotkey, pressed to silence GOS, leaves the dashboards' card alone.
+        if reply.pending is not False:
+            pushed = {"by": who.name, "request": text, "asked_at": asked_at, **answer}
+            core.broadcast({"type": "ask.reply", "data": pushed}, trusted_only=True)
         return answer
 
     @app.post("/api/prewarm")

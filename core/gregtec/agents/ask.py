@@ -7,6 +7,8 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
 - An unsure item match asks (QA:D11): the reply is the question, its card the top three, and the
   next request may pick one ("the second one", "2", or its name), which re-runs the first request
   on that item. "Repeat" says the question again and keeps it open; anything else starts afresh.
+- A confirm or cancel that found nothing waiting (its reply's ``pending`` is False) changed
+  nothing, so it isn't kept as the last reply: "repeat" still says the answer before it (D179).
 - With no fast lane (no key stored, or the API failing) a fast-lane request gets the instant
   answer for its card when pre-retrieval found one, else "AI is offline; I can do lookups"
   (plan 7.16; WO-2.8 adds the mode switch, banners and the credit flow).
@@ -247,7 +249,9 @@ class Asker:
         reply.total_ms = round((self.clock() - started) * 1000)
         if reply.ttft_ms is None and reply.calls == 0:
             reply.ttft_ms = reply.total_ms
-        if route.intent != router.REPEAT:
+        # A confirm or cancel that found nothing waiting changed nothing (the voice client's
+        # cancel hotkey silences GOS with one, D179): "repeat" still says the answer before it.
+        if route.intent != router.REPEAT and reply.pending is not False:
             with self._lock:
                 self._last = reply
         return reply
