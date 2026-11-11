@@ -40,7 +40,8 @@ def check_db(home: Path) -> tuple[bool, str]:
     if not db.is_file():
         return True, f"{head}: no DB yet ({db})"
     try:
-        conn = access.connect(db, readonly=True)
+        # Immutable: SQLite makes no -wal or -shm file beside the DB (D223).
+        conn = access.connect(db, readonly=True, immutable=True)
         try:
             row = conn.execute(
                 "SELECT run_key, gt_version FROM export_run"
