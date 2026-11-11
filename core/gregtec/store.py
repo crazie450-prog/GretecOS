@@ -1,5 +1,7 @@
 """The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D),
-``client_token`` (D117) and ``answer`` (the dashboard's Chat: the newest 50 answers, D159).
+``client_token`` (D117), ``answer`` (the dashboard's Chat: the newest 50 answers, D159) and My base's
+``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable item/fluid
+keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes them).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -30,6 +32,11 @@ CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);
 CREATE TABLE IF NOT EXISTS client_token(name TEXT PRIMARY KEY, token_sha256 TEXT NOT NULL,
   created INT NOT NULL, last_used INT, revoked INT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS answer(id TEXT PRIMARY KEY, ts INT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS my_base_machine(mte_id INT NOT NULL,
+  source TEXT NOT NULL CHECK(source IN ('manual','event','census')),
+  count INT NOT NULL CHECK(count >= 0), upd INT NOT NULL, PRIMARY KEY(mte_id, source));
+CREATE TABLE IF NOT EXISTS my_base_stock(key TEXT PRIMARY KEY, qty REAL NOT NULL CHECK(qty > 0),
+  upd INT NOT NULL);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (

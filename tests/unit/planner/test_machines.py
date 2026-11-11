@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from gregtec import store
 from gregtec.db import access
 from gregtec.ingest.machine_facts import Fact
 from gregtec.planner import machines as m
@@ -1174,11 +1175,12 @@ def _db(tmp_path: Path) -> sqlite3.Connection:
             " VALUES (?,?,?,?,?, '')",
             (mid, key, value, source, conf),
         )
+    conn.executescript(store.SCHEMA)  # My base's tables are the core's (D210)
     x(
-        "INSERT INTO base_machine(machine_id, count, source, upd) VALUES (1, 2, 'manual', 0)"
+        "INSERT INTO my_base_machine(mte_id, source, count, upd) VALUES (1000, 'manual', 2, 0)"
     )
     x(
-        "INSERT INTO base_machine(machine_id, count, source, upd) VALUES (2, 0, 'manual', 0)"
+        "INSERT INTO my_base_machine(mte_id, source, count, upd) VALUES (12730, 'manual', 0, 0)"
     )
     return conn
 
