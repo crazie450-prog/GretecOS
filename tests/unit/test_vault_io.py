@@ -445,7 +445,7 @@ def test_notes_skips_hidden_folders_skills_and_other_files(vault: io.VaultIO) ->
     root = vault.root
     (root / ".obsidian").mkdir()
     (root / ".obsidian" / "x.md").write_text("x", encoding="utf-8")
-    (root / "_gos" / "skills" / "recipe-lookup").mkdir(parents=True)
+    (root / "_gos" / "skills" / "recipe-lookup").mkdir(parents=True, exist_ok=True)
     (root / "_gos" / "skills" / "recipe-lookup" / "SKILL.md").write_text(
         "x", encoding="utf-8"
     )
