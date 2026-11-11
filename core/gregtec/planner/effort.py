@@ -14,8 +14,11 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
   first, simplest recipe (D11), so loops balance as in a line. Whole crafts per recipe; a GT
   recipe costs its crafts x machine-seconds per craft; a crafting-table or furnace step (NEI's,
   no machine and no duration in the DB) costs ``craft_s`` per craft (default 2 s, ``craft_s``
-  in ``me/prefs.md``). An item the flow imports through a gate, or a component with no recipe
-  or no route at the tier, isn't counted, and a note names it.
+  in ``me/prefs.md``). An item the flow imports through a gate (WO-3.3's graph stopped before
+  it: an MV hull in a machine's flow) is made the same way, in the quantity imported, down to
+  :data:`GATE_DEPTH` levels and never inside its own making (D196, review M4). An item with no
+  recipe or no route at the tier, or gated deeper than that, isn't counted; one note per cause
+  lists them.
 - **Spread over his machines**: each recipe map's seconds are divided by the machines he owns
   on that map (My base), at least 1 (§7.2's default of one per recipe map).
 - **Unlocks** (``unlock_h``): with owned machines listed in My base, a component step on a
@@ -43,6 +46,9 @@ from gregtec.planner.request import BaseInputs, Request, RequestError, is_stable
 
 CRAFT_S = 2.0  # §7.2: a crafting-table step's default time
 UNLOCK_DEPTH = 3  # §7.2: unlock recursion depth
+GATE_DEPTH = (
+    3  # how deep make() follows items a component's flow imports through a gate
+)
 HAND = "crafting"  # the breakdown's map name for crafting-table and furnace steps
 
 
@@ -55,6 +61,9 @@ class Walk:
     seconds: dict[str, float] = field(default_factory=dict)
     machine: dict[str, int] = field(default_factory=dict)  # map -> mte (first met)
     missing: list[str] = field(default_factory=list)  # items with no recipe at the tier
+    deep: list[str] = field(
+        default_factory=list
+    )  # gated items past GATE_DEPTH or in a loop
 
     def add(self, other: Walk) -> None:
         for k, v in other.crafts.items():
@@ -66,6 +75,68 @@ class Walk:
         for k in other.missing:
             if k not in self.missing:
                 self.missing.append(k)
+        for k in other.deep:
+            if k not in self.deep:
+                self.deep.append(k)
+
+
+@dataclass
+class Need:
+    """Fractional crafts per recipe, summed over every component (and gated item) of one
+    walk, before :meth:`walk` rounds each recipe up to whole crafts once."""
+
+    crafts: dict[str, float] = field(default_factory=dict)  # recipe -> crafts
+    # recipe -> (map or HAND, seconds per craft, mte or None), first met
+    how: dict[str, tuple[str, float, int | None]] = field(default_factory=dict)
+    missing: list[str] = field(default_factory=list)
+    deep: list[str] = field(default_factory=list)
+
+    def add(self, other: Need) -> None:
+        for k, v in other.crafts.items():
+            self.crafts[k] = self.crafts.get(k, 0.0) + v
+        for k, h in other.how.items():
+            self.how.setdefault(k, h)
+        self.missing.extend(k for k in other.missing if k not in self.missing)
+        self.deep.extend(k for k in other.deep if k not in self.deep)
+
+    def walk(self) -> Walk:
+        """Whole crafts per recipe; a machine recipe costs crafts x its machine-seconds per
+        craft, a hand step its ``craft_s``."""
+        out = Walk(missing=list(self.missing), deep=list(self.deep))
+        for pid in sorted(self.crafts):
+            n = math.ceil(round(self.crafts[pid], 6))
+            if n <= 0:
+                continue
+            where, per, mte = self.how[pid]
+            if mte is not None:
+                out.machine.setdefault(where, mte)
+            out.crafts[where] = out.crafts.get(where, 0) + n
+            out.seconds[where] = out.seconds.get(where, 0.0) + n * per
+        return out
+
+
+def needs(
+    g: Graph,
+    sized: Mapping[str, sizing.Sized],
+    crafts: Mapping[str, float],
+    qty: float,
+    craft_s: float = CRAFT_S,
+) -> Need:
+    """The crafts to make ``qty`` components, from ``crafts``: each recipe's crafts for one
+    (a solved flow's); a hand step (crafting table, furnace) costs ``craft_s`` per craft."""
+    out = Need()
+    for pid in sorted(crafts):
+        c = crafts[pid] * qty
+        if c <= 0:
+            continue
+        rec = g.recipe(pid)
+        s = sized.get(pid)
+        if s is not None and s.option is not None and s.seconds > 0:
+            out.how[pid] = (rec.map or HAND, s.seconds, s.option.mte_id)
+        else:
+            out.how[pid] = (HAND, craft_s, None)
+        out.crafts[pid] = c
+    return out
 
 
 def steps(
@@ -75,24 +146,8 @@ def steps(
     qty: float,
     craft_s: float = CRAFT_S,
 ) -> Walk:
-    """The steps to make ``qty`` components, from ``crafts``: each recipe's crafts for one
-    (a solved flow's). Whole crafts per recipe; a machine recipe costs crafts x its
-    machine-seconds per craft, a hand step (crafting table, furnace) ``craft_s`` per craft."""
-    out = Walk()
-    for pid in sorted(crafts):
-        n = math.ceil(round(crafts[pid] * qty, 6))
-        if n <= 0:
-            continue
-        rec = g.recipe(pid)
-        s = sized.get(pid)
-        if s is not None and s.option is not None and s.seconds > 0:
-            where, secs = rec.map or HAND, n * s.seconds
-            out.machine.setdefault(where, s.option.mte_id)
-        else:
-            where, secs = HAND, n * craft_s
-        out.crafts[where] = out.crafts.get(where, 0) + n
-        out.seconds[where] = out.seconds.get(where, 0.0) + secs
-    return out
+    """:func:`needs` in whole crafts per recipe (:meth:`Need.walk`)."""
+    return needs(g, sized, crafts, qty, craft_s).walk()
 
 
 # --- the DB side ------------------------------------------------------------------------------
@@ -192,9 +247,7 @@ class _Solved:
     graph: Graph
     sized: Mapping[str, sizing.Sized]
     crafts: dict[str, float]  # recipe -> crafts for one component
-    gated: tuple[
-        str, ...
-    ]  # items the flow imports through a gate (their making not counted)
+    gated: tuple[tuple[str, float], ...]  # item -> qty imported through a gate, for one
 
 
 class Effort:
@@ -260,22 +313,37 @@ class Effort:
                 first = {k: options[0] for k, options in net.choices}
                 flow = solve.solve_route(net, first)
                 _, window = plan.rate_and_window(req)
-                assert window is not None
+                if window is None:  # a batch request always has one
+                    raise RuntimeError(f"{key}: batch request without a window")
                 crafts = {pid: x * window for pid, x in flow.crafts if x > 0}
-                gated = tuple(k for k in flow.gates if k != key)
+                imports = dict(flow.imports)
+                gated = tuple(
+                    (k, imports[k] * window)
+                    for k in flow.gates
+                    if k != key and imports.get(k, 0) > 0
+                )
                 out = _Solved(g, sized, crafts, gated)
         except (graph.GraphError, RequestError, LookupError, solve.SolveError):
             out = None
         self._solved[key] = out
         return out
 
-    def make(self, key: str, qty: int) -> Walk:
-        """The steps to make ``qty`` of ``key`` from boundary items at the tier."""
+    def make(self, key: str, qty: float, within: tuple[str, ...] = ()) -> Need:
+        """The steps to make ``qty`` of ``key`` from boundary items at the tier. An item its
+        flow imports through a gate (an MV hull in a machine's flow: WO-3.3's graph stops
+        before it) is made the same way, in the quantity imported, to :data:`GATE_DEPTH`
+        levels (``within``: the items being made above this one, which also stops loops)."""
         solved = self._solve(key)
         if solved is None:
-            return Walk(missing=[key])
-        w = steps(solved.graph, solved.sized, solved.crafts, float(qty), self.craft_s)
-        w.missing.extend(solved.gated)
+            return Need(missing=[key])
+        w = needs(solved.graph, solved.sized, solved.crafts, qty, self.craft_s)
+        path = (*within, key)
+        for k, per in solved.gated:
+            if len(path) > GATE_DEPTH or k in path:
+                if k not in w.deep:
+                    w.deep.append(k)
+            else:
+                w.add(self.make(k, per * qty, path))
         return w
 
     def _rows(self, part: str, w: Walk) -> list[dict[str, Any]]:
@@ -297,9 +365,10 @@ class Effort:
     def route(self, plan: Mapping[str, Any]) -> dict[str, Any]:
         """``eff_h``, ``build_h``, ``unlock_h`` and the breakdown for one route."""
         parts, notes = components(self.conn, plan)
-        build = Walk()
+        need = Need()
         for c in parts:
-            build.add(self.make(c.key, c.qty))
+            need.add(self.make(c.key, c.qty))
+        build = need.walk()
         unlocks: list[int] = []
         unlock = Walk()
         if not self.owned:
@@ -316,16 +385,17 @@ class Effort:
                 if not frontier:
                     break
                 item_of = machine_items(self.conn, [m for _, m in frontier])
-                level = Walk()
+                level_need = Need()
                 for name, mte in frontier:
                     if name in covered:
                         continue
                     covered.add(name)
                     unlocks.append(mte)
                     if mte in item_of:
-                        level.add(self.make(item_of[mte], 1))
+                        level_need.add(self.make(item_of[mte], 1))
                     else:
                         notes.append(f"unlock mte:{mte} has no item in the DB")
+                level = level_need.walk()
                 unlock.add(level)
                 frontier = _uncovered(level, covered)
                 if depth == UNLOCK_DEPTH and frontier:
@@ -333,10 +403,17 @@ class Effort:
                         "unlocks deeper than 3 levels are not counted: "
                         + ", ".join(f"mte:{m}" for _, m in frontier)
                     )
-        for k in build.missing + unlock.missing:
+        missing = sorted(set(build.missing + unlock.missing))
+        if missing:
             notes.append(
-                f"{k}: not made from boundary items at the tier (no recipe or route, or "
-                "imported through a gate): its making is not counted"
+                f"not counted, no recipe or route from boundary items at the tier "
+                f"({len(missing)}): " + ", ".join(missing)
+            )
+        deep = sorted(set(build.deep + unlock.deep) - set(missing))
+        if deep:
+            notes.append(
+                f"not counted, imported through a gate more than {GATE_DEPTH} levels down "
+                f"or in a loop ({len(deep)}): " + ", ".join(deep)
             )
         rows = self._rows("build", build) + self._rows("unlock", unlock)
         build_h = math.fsum(r["h"] for r in rows if r["part"] == "build")

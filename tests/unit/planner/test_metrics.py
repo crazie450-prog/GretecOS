@@ -216,6 +216,31 @@ def test_steps_counts_whole_crafts() -> None:
     assert w.machine == {"m": 7} and w.missing == ["x"]
 
 
+def test_make_follows_gated_items_to_the_depth_bound(conn: sqlite3.Connection) -> None:
+    """Review M4: an item a component's flow imports through a gate (an MV hull in a
+    machine's flow) is made too, in the quantity imported, to GATE_DEPTH levels; an item in
+    its own making, or deeper, is listed as not counted. Fractional crafts are summed over
+    the whole walk and rounded up once per recipe."""
+    chain = {"A": [("B", 2.0)], "B": [("C", 0.5)], "C": [("D", 1.0), ("A", 1.0)]}
+    chain["D"] = [("E", 1.0)]
+    recipes = SimpleNamespace(recipe=lambda pid: SimpleNamespace(map="gt.recipe.test"))
+    sized = {
+        f"r:{k}": SimpleNamespace(option=SimpleNamespace(mte_id=9), seconds=10.0)
+        for k in "ABCDE"
+    }
+    e = effort.Effort(conn, Request(WIDGET, qty=2), tg.Base(), 2)
+    e._solved = {
+        k: effort._Solved(recipes, sized, {f"r:{k}": 1.0}, tuple(chain.get(k, ())))  # type: ignore[arg-type]
+        for k in "ABCDE"
+    }
+    need = e.make("A", 0.5)
+    assert need.crafts == {"r:A": 0.5, "r:B": 1.0, "r:C": 0.5, "r:D": 0.5}
+    assert sorted(need.deep) == ["A", "E"] and need.missing == []
+    w = need.walk()
+    assert w.crafts == {"gt.recipe.test": 1 + 1 + 1 + 1}  # each recipe rounded up once
+    assert w.seconds == {"gt.recipe.test": 40.0} and w.machine == {"gt.recipe.test": 9}
+
+
 # --- route metrics (§7.1 step 7) -------------------------------------------------------------
 
 

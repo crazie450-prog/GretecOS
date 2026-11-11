@@ -24,6 +24,7 @@ import sqlite3
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -132,6 +133,39 @@ def test_benchmarks_return_two_or_three_ranked_routes(
     wrong = text.replace(f"{count} machines (", f"{_absent(doc)} machines (", 1)
     assert wrong != text
     assert validate.check(wrong, doc, names).offending == (_absent(doc),)
+    # Near misses (review L2): each must be refused unless the JSON happens to hold the wrong
+    # value too (any number it holds may be stated, D199), and at least one must be checked.
+    allowed = validate.Allowed(doc)
+    checked = 0
+    for wrong, token in _near_misses(text, doc):
+        (stated,) = validate.stated(token)
+        if allowed.has(stated):
+            continue
+        checked += 1
+        assert token in validate.check(wrong, doc, names).offending, (target, token)
+    assert checked >= 2, target
+
+
+def _near_misses(text: str, doc: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Wrong texts and the wrong token in each: the first route's machine count + 1, written
+    plain and as "x<count>"; its first input's rate x 1.05; and that rate per second instead
+    of per hour (the right number with the wrong unit)."""
+    m = doc["routes"][0]["metrics"]
+    count = explain.fmt(m["machines"])
+    out = []
+    for token in (explain.fmt(m["machines"] + 1), f"x{explain.fmt(m['machines'] + 1)}"):
+        out.append(
+            (text.replace(f"{count} machines (", f"{token} machines (", 1), token)
+        )
+    if m["raw_in_h"]:
+        p = m["raw_in_h"][0]
+        right = f"{p['name']} {explain.fmt(p['per_h'])}/h"
+        for token in (
+            f"{explain.fmt(p['per_h'] * 1.05)}/h",
+            f"{explain.fmt(p['per_h'])}/s",
+        ):
+            out.append((text.replace(right, f"{p['name']} {token}", 1), token))
+    return [(w, t) for w, t in out if w != text]
 
 
 def _absent(doc: object) -> str:
@@ -158,11 +192,24 @@ def test_batch_totals_equal_rate_times_time(
 ) -> None:
     tier, qty, within = batch
     request = Request(target, tier_cap=tier, mode="batch", qty=qty, within_s=within)
-    for p in design(conn, request).plans:
+    d = design(conn, request)
+    for p in d.plans:
         rate = p["target"]["rate_s"]
         b = p["metrics"]["batch"]
         assert b["window_s"] == within and b["qty"] == qty
         assert rate * within == pytest.approx(qty, rel=TOL)
+        # §7.1 step 6's own definition (review L6): the recipes' whole-window crafts times
+        # their expected yield of the target, less what the route consumes of it, is qty.
+        made = 0.0
+        for n in p["nodes"]:
+            rec = d.graph.recipe(n["recipe"])
+            made += n["crafts"] * sum(
+                o.expected for o in rec.outputs if o.key == target
+            )
+            made -= n["crafts"] * sum(
+                float(i.amount) for i in rec.inputs if i.key == target and i.consumed
+            )
+        assert made == pytest.approx(qty, rel=TOL), target
         rates = {x["id"]: x["rate_s"] for x in p["boundary"]["in"]}
         for x in b["inputs"]:
             assert x["qty"] == pytest.approx(rates[x["id"]] * within, rel=TOL)
@@ -224,6 +271,17 @@ def test_effort_on_a_run_with_crafting_recipes(client: sqlite3.Connection) -> No
         assert hand and hand[0]["h"] == pytest.approx(
             hand[0]["crafts"] * effort.CRAFT_S / 3600, rel=1e-6
         )
+    # Review M4: the MV machine hull, gated inside each MV machine's own flow, is made too.
+    hull = "gregtech:gt.blockmachines@12"
+    e = effort.Effort(client, steel, DefaultBaseInputs(0), 2)
+    parts = [c["id"] for p in d.plans for c in p["metrics"]["effort"]["components"]]
+    gating = [k for k in dict.fromkeys(parts) if hull in dict(_gated(e, k))]
+    assert gating, "no component's flow gates the MV hull: re-check this test"
+    own = e._solve(hull)
+    assert own is not None and own.crafts
+    assert set(own.crafts) <= set(e.make(gating[0], 1).crafts)
+    for p in d.plans:
+        assert not any(hull in note for note in p["metrics"]["effort"]["notes"])
     best = d.plans[0]
     owned = ((best["metrics"]["by_type"][0]["mte"], 1),)
     again = plan.design(client, steel, Owned(0, owned=owned))
@@ -233,3 +291,8 @@ def test_effort_on_a_run_with_crafting_recipes(client: sqlite3.Connection) -> No
     assert m["eff_h"] == pytest.approx(
         m["build_h"] + m["unlock_h"], rel=1e-8, abs=1e-12
     )
+
+
+def _gated(e: effort.Effort, key: str) -> tuple[tuple[str, float], ...]:
+    solved = e._solve(key)
+    return solved.gated if solved is not None else ()
