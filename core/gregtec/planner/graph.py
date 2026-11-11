@@ -671,6 +671,26 @@ def side_route(
     return None
 
 
+def player(request: Request, base: BaseInputs) -> machines.Player:
+    """The player the machine check sizes for: the tier cap (the request's, else My base's),
+    owned machines, the request's constraints, and multiblocks with one and two plain energy
+    hatches of the tier cap (WO-3.4 sizes with the same player)."""
+    cap = request.tier_cap if request.tier_cap is not None else base.tier_cap()
+    cons = request.constraints
+    layouts = (
+        ((EnergyHatch(cap),), (EnergyHatch(cap), EnergyHatch(cap))) if cap >= 1 else ()
+    )
+    return machines.Player(
+        tier=cap,
+        owned=frozenset(m for m, n in base.owned_machines().items() if n > 0),
+        require_owned=cons.require_owned,
+        coil_max=cons.coil_max,
+        cleanroom=cons.cleanroom,
+        addons=request.addons,
+        hatches=layouts,
+    )
+
+
 class _Builder:
     def __init__(
         self,
@@ -684,24 +704,9 @@ class _Builder:
         self.reader = _Reader(conn, run_id)
         self.templates = templates
         self.loops: dict[str, frozenset[str]] = {}  # chain -> items on its loops
-        cap = request.tier_cap if request.tier_cap is not None else base.tier_cap()
-        self.cap = cap
-        owned = frozenset(m for m, n in base.owned_machines().items() if n > 0)
+        self.player = player(request, base)
+        self.cap = self.player.tier
         cons = request.constraints
-        layouts = (
-            ((EnergyHatch(cap),), (EnergyHatch(cap), EnergyHatch(cap)))
-            if cap >= 1
-            else ()
-        )
-        self.player = machines.Player(
-            tier=cap,
-            owned=owned,
-            require_owned=cons.require_owned,
-            coil_max=cons.coil_max,
-            cleanroom=cons.cleanroom,
-            addons=request.addons,
-            hatches=layouts,
-        )
         self.excluded_recipes = cons.excluded_recipes()
         self.excluded_keys = cons.excluded_keys()
         self.excluded_mtes = cons.excluded_mtes()
