@@ -92,7 +92,7 @@ VAD_CHUNK, VAD_CONTEXT = (
     64,
 )  # Silero v6 at 16 kHz: 32 ms chunks with 4 ms of context
 OWW_FRAME = 1280  # openWakeWord's 80 ms frame
-DEFAULT_THRESHOLD = {SHERPA: 0.25, OPENWAKEWORD: 0.5}  # D186
+DEFAULT_THRESHOLD = {SHERPA: 0.15, OPENWAKEWORD: 0.5}  # D186
 SHERPA_BOOST = 1.5  # keywords_score for the phrase (D186)
 TIMEOUT_S = 60.0
 USER_AGENT = "gregtec-os-voice (model download)"
