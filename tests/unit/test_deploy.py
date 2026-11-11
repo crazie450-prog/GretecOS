@@ -125,6 +125,9 @@ def stub_uv(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> 
         # This repo's real mod/ needs Gradle, JDKs and minutes: the mod CI job builds it, and
         # the fake wrapper below checks what deploy does around the build.
         monkeypatch.setattr(dep, "_build_mod", lambda release, version: None)
+        # The real dashboard needs Node, pnpm and the network: the dashboard CI job builds it
+        # from a git archive (test_the_real_dashboard_builds_from_a_git_archive).
+        monkeypatch.setattr(dep, "_build_dashboard", lambda release: None)
         return
     monkeypatch.setattr(dep, "_build_env", fake_env)
     monkeypatch.setattr(dep, "relocate_editable", lambda release: None)
@@ -500,6 +503,136 @@ def test_the_real_mod_builds_from_a_git_archive(tmp_path: Path) -> None:
     assert {k: after.get(k) for k in before} == before  # nothing changed or left behind
 
 
+FAKE_PNPM = '''"""A stand-in for pnpm: install fills node_modules, run build writes dist/."""
+import os
+import sys
+from pathlib import Path
+
+mode = os.environ.get("GOS_TEST_PNPM", "")
+args = sys.argv[1:]
+if args[:1] == ["install"]:
+    if mode == "fail":
+        print("ERR_PNPM_OUTDATED_LOCKFILE", file=sys.stderr)
+        sys.exit(1)
+    Path("node_modules/react").mkdir(parents=True, exist_ok=True)
+    Path("node_modules/react/index.js").write_text("module.exports = 1\\n")
+    sys.exit(0)
+if args[:2] == ["run", "build"]:
+    Path("node_modules/.vite").mkdir(parents=True, exist_ok=True)
+    Path("node_modules/.vite/cache").write_text("cache\\n")
+    if mode == "no-index":
+        sys.exit(0)
+    Path("dist/assets").mkdir(parents=True, exist_ok=True)
+    Path("dist/index.html").write_text("<!doctype html>" + " ".join(args) + os.environ["CI"])
+    Path("dist/assets/app-1234.js").write_text("js\\n")
+    sys.exit(0)
+sys.exit(2)
+'''
+
+
+@pytest.fixture
+def fake_pnpm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    script = tmp_path / "fake_pnpm.py"
+    script.write_text(FAKE_PNPM, "utf-8")
+    monkeypatch.setattr(dep, "_pnpm", lambda: [sys.executable, str(script)])
+    return script
+
+
+def add_dashboard(repo: Path) -> str:
+    return commit(
+        repo,
+        {
+            "dashboard/package.json": '{"name": "gos-dashboard"}\\n',
+            "dashboard/src/main.tsx": "export {}\\n",
+        },
+    )
+
+
+def test_builds_the_dashboard_and_keeps_only_dist(
+    repo: Path, app: Path, fake_pnpm: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    add_dashboard(repo)
+    release = dep.deploy(repo, "HEAD", app)
+
+    dash = app / "current" / "dashboard"
+    index = dash / "dist" / "index.html"
+    assert index.read_text("utf-8") == "<!doctype html>run build1"  # CI=1: no prompts
+    assert (dash / "dist" / "assets" / "app-1234.js").is_file()
+    entry = {"index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()}
+    assert release.dashboard == entry
+    record = json.loads((app / "current" / "release.json").read_text("utf-8"))
+    assert record["dashboard"] == entry
+    # The sources and dist stay; node_modules and the build's caches are gone.
+    kept = set(snapshot(dash))
+    assert kept == set(snapshot(repo / "dashboard")) | {
+        "dist",
+        "dist/index.html",
+        "dist/assets",
+        "dist/assets/app-1234.js",
+    }
+    assert "Building the dashboard with pnpm" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("fail", "the dashboard build failed"),
+        ("no-index", "the build made no"),
+        ("no-pnpm", "pnpm isn't on PATH"),
+        ("in-use", "couldn't delete the build's"),
+    ],
+)
+def test_a_failed_dashboard_build_leaves_gos_app_unchanged(
+    repo: Path,
+    app: Path,
+    fake_pnpm: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    message: str,
+) -> None:
+    dep.deploy(repo, "HEAD", app)
+    add_dashboard(repo)
+    before = snapshot(app)
+    monkeypatch.setenv("GOS_TEST_PNPM", mode)
+    if mode == "no-pnpm":
+        monkeypatch.setattr(dep, "_pnpm", lambda: None)
+    if mode == "in-use":
+        monkeypatch.setattr(dep, "_delete", lambda path: False)
+    with pytest.raises(dep.DeployError, match=message):
+        dep.deploy(repo, "HEAD", app)
+    assert snapshot(app) == before
+
+
+def test_a_release_without_a_dashboard_builds_none(repo: Path, app: Path) -> None:
+    assert dep.deploy(repo, "HEAD", app).dashboard is None
+    assert "dashboard" not in json.loads(
+        (app / "current" / "release.json").read_text("utf-8")
+    )
+
+
+@pytest.mark.skipif(
+    os.environ.get("GOS_REAL_DASHBOARD_BUILD") != "1",
+    reason="needs Node, pnpm and the network: CI's dashboard job sets "
+    "GOS_REAL_DASHBOARD_BUILD=1",
+)
+def test_the_real_dashboard_builds_from_a_git_archive(tmp_path: Path) -> None:
+    """Deploy's real dashboard build on a git archive of this commit, as on Clayton's PC: it
+    adds dashboard/dist and nothing else."""
+    commit_id = git(REPO, "rev-parse", "HEAD")
+    release = tmp_path / "r"
+    release.mkdir()
+    dep._extract(REPO, commit_id, release)
+    before = snapshot(release)
+    entry = dep._build_dashboard(release)
+
+    index = release / "dashboard" / "dist" / "index.html"
+    assert entry == {"index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()}
+    after = snapshot(release)
+    added = sorted(set(after) - set(before))
+    assert added and all(p.startswith("dashboard/dist") for p in added)
+    assert {k: after.get(k) for k in before} == before  # nothing changed or left behind
+
+
 def failing_rename(n: int) -> Callable[[Path, Path], None]:
     """os.rename that fails, every time, for the pair it is given on its nth call."""
     real = os.rename
@@ -703,6 +836,25 @@ def test_relocate_editable_also_moves_the_voice_package(tmp_path: Path) -> None:
         assert (site / line).resolve() == (release / folder).resolve()
 
 
+def test_the_engine_groups_are_synced_where_the_release_has_them(
+    tmp_path: Path,
+) -> None:
+    """WO-5.2, D182: GOS_APP gets the speech-to-text engines (the stt group), which no
+    default group holds; an older commit without the group deploys as before."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[dependency-groups]\ndev = ["pytest"]\nstt = ["faster-whisper"]\n',
+        "utf-8",
+    )
+    assert dep._group_args(tmp_path) == ["--group", "stt"]
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[dependency-groups]\ndev = ["pytest"]\n', "utf-8"
+    )
+    assert dep._group_args(tmp_path) == []
+    (tmp_path / "pyproject.toml").write_text("not toml [", "utf-8")
+    assert dep._group_args(tmp_path) == []
+    assert dep._group_args(tmp_path / "missing") == []
+
+
 def test_config_reads_gos_app(tmp_path: Path) -> None:
     assert config.Config().gos_app == Path("C:/GregtecOS-app")
     toml = tmp_path / "gos.toml"
@@ -780,6 +932,20 @@ def test_real_uv_release_runs_after_the_swap(
             check=True,
         )
         assert (current / "voice").resolve() in Path(voice.stdout.strip()).parents
+    if "stt" in dep._group_args(
+        current
+    ):  # D182: the speech-to-text engines are installed
+        engines = subprocess.run(
+            [
+                str(dep.venv_exe(current, "python")),
+                "-c",
+                "import faster_whisper, onnx_asr, ctranslate2",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert engines.returncode == 0, engines.stderr
     gos = subprocess.run(
         [str(dep.venv_exe(current, "gos")), "--help"],
         check=False,

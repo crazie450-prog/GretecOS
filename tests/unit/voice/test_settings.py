@@ -21,7 +21,8 @@ def test_defaults_follow_appendix_c(tmp_path: Path) -> None:
         write(tmp_path, f'[paths]\ngos_home = "{tmp_path.as_posix()}"\n')
     )
     assert cfg.gos_home == tmp_path
-    assert voice == VoiceSettings()
+    assert voice == VoiceSettings(gos_home=tmp_path)  # the engines' models and glossary
+    assert (voice.stt_engine, voice.stt_model) == ("auto", "large-v3-turbo")  # D182
     assert (voice.primary_trigger, voice.backup_trigger, voice.talk_mode) == (
         "wake",
         "key",
@@ -47,10 +48,12 @@ cancel_key = "F21"
 next_card_key = "Pause"
 input_device = " Arctis Nova Elite "
 wake_phrase = "TBD (PM08)"   # WO-5.4's key: ignored here
-stt_model = "large-v3-turbo"
+stt_engine = "parakeet"
+stt_model = " distil-large-v3 "
 """,
         )
     )
+    assert (voice.stt_engine, voice.stt_model) == ("parakeet", "distil-large-v3")
     assert voice.talk_key.name == "scroll_lock" and voice.talk_mode == "toggle"
     assert [k.name for k in voice.hotkeys().values()] == ["f20", "f21", "pause"]
     assert voice.key_trigger and not voice.wake_trigger
@@ -71,6 +74,13 @@ stt_model = "large-v3-turbo"
             "talk and confirm are both F13: each needs its own key",
         ),
         ("input_device = 3", "input_device must be a string"),
+        (
+            'stt_engine = "whisper"',
+            "stt_engine must be one of auto, whisper-gpu, whisper-cpu, parakeet",
+        ),
+        ('stt_model = "../models/x"', "stt_model must be a Whisper model name"),
+        ('stt_model = "C:/models/turbo"', "stt_model must be a Whisper model name"),
+        ("stt_model = 3", "stt_model must be a Whisper model name"),
     ],
 )
 def test_bad_voice_keys_are_refused(tmp_path: Path, toml: str, problem: str) -> None:
@@ -95,3 +105,12 @@ def test_no_config_file_means_defaults(
     monkeypatch.setenv("GOS_HOME", str(tmp_path / "nowhere"))
     cfg, voice = settings.load(None)
     assert cfg.gos_home == tmp_path / "nowhere" and voice == VoiceSettings()
+    assert voice.gos_home == tmp_path / "nowhere"
+
+
+@pytest.mark.parametrize(
+    "model", ["large-v3-turbo", "small.en", "Systran/faster-whisper-small.en"]
+)
+def test_whisper_model_names_and_hub_ids_are_taken(tmp_path: Path, model: str) -> None:
+    _, voice = settings.load(write(tmp_path, f'[voice]\nstt_model = "{model}"\n'))
+    assert voice.stt_model == model

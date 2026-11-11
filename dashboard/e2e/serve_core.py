@@ -1,0 +1,131 @@
+"""A real core for the dashboard's end-to-end tests (WO-2.6), with fake lanes and a fake desktop.
+
+``uv run python dashboard/e2e/serve_core.py --home <tmp> --port 8795`` builds the tool tests' own
+made-up export run and quest book into ``<tmp>/data/gos.sqlite`` (tests/unit/tools/conftest.py),
+then runs ``gregtec.api.server.run`` on ``gos-e2e.localhost:<port>`` with the fast lane on
+:class:`gregtec.llm.fake.EchoClient` (no key, no cost) and the deep lane only recorded. It serves
+``dashboard/dist`` (build it first), so Playwright tests the built dashboard with the core's
+real Host/Origin checks, cookie and pairing.
+
+What the dashboard reads from the desktop comes from files the tests write in ``<tmp>/e2e/``:
+``foreground`` (the program in front, e.g. ``javaw.exe``: the core's focus signal), ``running``
+(a JSON list of running GTNH roles, default none) and ``key`` (``missing``: no Anthropic key, so
+"AI offline"); the core polls them every second. Test-only: production code never reads these
+files.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import shutil
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+DASHBOARD_HOST = "gos-e2e.localhost"
+# Written into every home this script makes: only such a home (or an empty folder) is wiped, so a
+# wrong --home or GOS_E2E_HOME can never delete a real folder.
+MARKER = ".gos-e2e-home"
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text("utf-8").strip()
+    except OSError:
+        return None
+
+
+def fresh_home(home: Path) -> None:
+    """Make ``home`` an empty e2e home, deleting the one an earlier run left there. Anything else
+    already at that path (no marker, not an empty folder, a link) is refused."""
+    if home.exists() or home.is_symlink():
+        folder = home.is_dir() and not home.is_symlink()
+        ours = folder and (home / MARKER).is_file()
+        if not (ours or (folder and not any(home.iterdir()))):
+            raise SystemExit(
+                f"serve_core.py: refusing to delete {home}: it isn't an e2e home this script "
+                f"made (no {MARKER} in it). Pick an empty or new folder."
+            )
+        shutil.rmtree(home)
+    (home / "e2e").mkdir(parents=True)
+    (home / MARKER).write_text(
+        "made by dashboard/e2e/serve_core.py, which deletes it on its next run\n",
+        "utf-8",
+    )
+
+
+def build_db(home: Path) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "tool_fixtures", REPO / "tests" / "unit" / "tools" / "conftest.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the tool test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["tool_fixtures"] = module
+    spec.loader.exec_module(module)
+    module.build_home(home)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="serve_core.py")
+    parser.add_argument(
+        "--home",
+        type=Path,
+        required=True,
+        help="a new or empty folder, or one an earlier run made (it is wiped)",
+    )
+    parser.add_argument("--port", type=int, default=8795)
+    args = parser.parse_args(argv)
+    home: Path = args.home.absolute()
+    fresh_home(home)
+    build_db(home)
+
+    from gregtec import desktop, prism
+    from gregtec.agents import ask
+    from gregtec.api import app as core_app
+    from gregtec.api import dashboard, server
+    from gregtec.config import Config
+    from gregtec.llm import keys
+    from gregtec.store import Store
+
+    controls = home / "e2e"
+
+    def foreground() -> str | None:
+        return _read(controls / "foreground") or None
+
+    def running(cfg: Config, lines: Sequence[str] | None = None) -> list[str]:
+        found = json.loads(_read(controls / "running") or "[]")
+        return [str(role) for role in found]
+
+    def has_key(name: str) -> bool:
+        return _read(controls / "key") != "missing"
+
+    desktop.foreground_program = foreground
+    prism.running_clients = running
+    keys.has_key = has_key
+    # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
+    core_app.KEY_CHECK_S = 1.0
+    dashboard.GAME_EVERY_S = 1.0
+    dashboard.DATA_EVERY_S = 1.0
+
+    def fake_agents(cfg: Config, store: Store) -> ask.Agents:
+        return ask.setup(cfg, store=store, fake=True)
+
+    cfg = Config(
+        gos_home=home,
+        core_port=args.port,
+        supervisor_port=args.port + 1,
+        dashboard_host=DASHBOARD_HOST,
+    )
+    print(
+        f"e2e core on http://{DASHBOARD_HOST}:{args.port}/ (GOS_HOME {home})",
+        flush=True,
+    )
+    return server.run(cfg, setup_agents=fake_agents)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

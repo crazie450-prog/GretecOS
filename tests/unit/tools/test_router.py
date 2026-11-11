@@ -24,6 +24,9 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         ("recipes for a vacuum tube at LV", "instant", "recipes", "vacuum tube", "LV"),
         ("what uses red alloy?", "instant", "uses", "red alloy", None),
         ("uses of tin", "instant", "uses", "tin", None),
+        # "what uses PTFE", as speech-to-text hears it (WO-5.2, D183)
+        ("What use is PTFE?", "instant", "uses", "ptfe", None),
+        ("what use is a NAND chip", "instant", "uses", "nand chip", None),
         # deep lane
         ("Design me a steel line at MV", "deep", "handoff", None, None),
         (
