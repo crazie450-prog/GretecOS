@@ -1,7 +1,9 @@
 // End-to-end tests (WO-2.6): the built dashboard (pnpm build first) against a real core with a
 // fake fast lane (e2e/serve_core.py), in Chromium at 2560x1440 (monitor 2, D50) and 390x844 (the
-// phone, D53). Screenshots go to test-results/, which git ignores.
+// phone, D53). Screenshots go to test-results/, which git ignores. The setup wizard's tests
+// (WO-2.9, e2e/setup.spec.ts) run against a second core with an empty GOS_HOME (--fresh).
 import { defineConfig } from "@playwright/test";
+import { FRESH_HOST, FRESH_PORT, FRESH_ROOT } from "./e2e/fresh";
 import { BASE, HOME, PORT } from "./e2e/harness";
 
 export default defineConfig({
@@ -18,12 +20,22 @@ export default defineConfig({
     launchOptions: { args: ["--host-resolver-rules=MAP *.localhost 127.0.0.1"] },
     trace: "retain-on-failure",
   },
-  webServer: {
-    command: `uv run python dashboard/e2e/serve_core.py --home "${HOME}" --port ${PORT}`,
-    cwd: "..",
-    url: `http://127.0.0.1:${PORT}/health`,
-    timeout: 120_000,
-    reuseExistingServer: false,
-    stdout: "pipe",
-  },
+  webServer: [
+    {
+      command: `uv run python dashboard/e2e/serve_core.py --home "${HOME}" --port ${PORT}`,
+      cwd: "..",
+      url: `http://127.0.0.1:${PORT}/health`,
+      timeout: 120_000,
+      reuseExistingServer: false,
+      stdout: "pipe",
+    },
+    {
+      command: `uv run python dashboard/e2e/serve_core.py --home "${FRESH_ROOT}" --port ${FRESH_PORT} --fresh --host-name ${FRESH_HOST}`,
+      cwd: "..",
+      url: `http://127.0.0.1:${FRESH_PORT}/health`,
+      timeout: 120_000,
+      reuseExistingServer: false,
+      stdout: "pipe",
+    },
+  ],
 });

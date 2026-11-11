@@ -248,7 +248,7 @@ def _serve(cfg: Config, args: argparse.Namespace) -> int:
         # Imported here: FastAPI takes a moment to import.
         from gregtec.api import server
 
-        return server.run(cfg)
+        return server.run(cfg, config_path=getattr(args, "config", None))
     sup = _supervisor(cfg)
     if sup is not None:
         status = control.call(sup["port"], "POST", "/start", token=sup["token"])

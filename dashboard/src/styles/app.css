@@ -1190,6 +1190,196 @@ tr.depleted td {
   letter-spacing: 0.2em;
 }
 
+/* --- the setup wizard (WO-2.9) ----------------------------------------------------------------- */
+
+.setup {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--space-6);
+}
+
+.setup-panel {
+  width: min(1480px, 100%);
+  gap: var(--space-6);
+}
+
+.setup-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.setup-head .wordmark .slash {
+  color: var(--text-2);
+}
+
+.setup-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.setup-title code,
+.setup-key {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.setup-body {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+}
+
+.setup-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.setup-step-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  font: 600 15px var(--font-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-step-link.current {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.setup-step-link.done .setup-glyph {
+  color: var(--ok);
+}
+
+.setup-num {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.setup-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.setup-optional {
+  color: var(--text-2);
+  font-size: 0.6em;
+}
+
+.setup-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4) var(--space-6);
+}
+
+.setup-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.setup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.setup-row .ask-input {
+  flex: 1 1 280px;
+}
+
+select.ask-input option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.setup-help,
+.setup-note {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.setup-note {
+  color: var(--text);
+}
+
+.setup-note.bad {
+  color: var(--err);
+}
+
+.setup-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-checks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.setup-detail {
+  font-size: 14px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 760px) {
+  .setup {
+    padding: var(--space-3);
+  }
+
+  .setup-head {
+    flex-direction: column;
+  }
+
+  .setup-body,
+  .setup-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .setup-actions .gos-btn {
+    flex: 1 1 auto;
+  }
+}
+
 /* --- motion ---------------------------------------------------------------------------------- */
 
 @keyframes gos-fade-in {
