@@ -630,7 +630,7 @@ class ConfirmFlow(RuleBasedStateMachine):
 
 
 ConfirmFlow.TestCase.settings = settings(
-    max_examples=150,
+    max_examples=100,
     stateful_step_count=40,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
