@@ -7,13 +7,16 @@
 2. **Citations and ids out** (plan 0.1 principle 2 puts them in every answer; they are for the
    card, never for the ear): ``r:``, ``q:``, ``mte:``, ``crop:``, ``plan:`` and ``w:...@rev``
    references, item keys (``mod:name@meta#hash``, ``fluid:name``), registry names, dotted and
-   snake_case names, hex hashes and UUIDs, "id 1234", and the brackets they leave empty.
+   snake_case names, hex hashes and UUIDs, "id 1234", and the brackets they leave empty. A
+   registry name starts with a letter, so "3:1" and "12:30" stay numbers.
 3. **D23's length**: at most :data:`MAX_SENTENCES` sentences and :data:`MAX_WORDS` words, counted
    here, before pronunciations and numbers are spelt out (the card has the rest).
 4. **The pronunciation lexicon** (``gregtec_voice.lexicon``): LuV is "L U V".
 5. **Numbers and units in words**: "1920 EU/t" is "nineteen-twenty E U per tick" (a four-digit
    number is read in pairs, as players say voltages), "2A" "two amps", "1.5M" "one point five
-   million", "95%" "ninety-five percent", "3rd" "third", "2-3" "two to three".
+   million", "95%" "ninety-five percent", "3rd" "third", "2-3" "two to three", "3:1" "three
+   to one", "12:30" "twelve thirty"; digits after letters are a word of their own ("T1" is
+   "T one", "IC2" "I C two").
 6. **Abbreviations spelt**: a word of 2 to 5 capitals the lexicon doesn't know ("GTNH") is said
    letter by letter.
 7. **Only words leave**: anything but letters, spaces and ``. , ! ? ' - ;`` is dropped, so no
@@ -53,10 +56,12 @@ REF = re.compile(
     r"\bw:[^\s@]+@\d+"
     r"|\b(?:r|q|mte|crop|plan|w):[A-Za-z0-9_./@#:+%-]*[A-Za-z0-9_/#%-]"
 )
-# Item keys (registry name @ meta # NBT hash, fluid:name) and bare registry names.
+# Item keys (registry name @ meta # NBT hash, fluid:name), bare registry names and NEI's
+# "mod:name:meta". The namespace starts with a letter, so "3:1" and "12:30" are not keys.
 KEY = re.compile(
     r"\bfluid:[A-Za-z0-9_.]+"
-    r"|[A-Za-z0-9_.|-]+:[A-Za-z0-9_.|/-]+(?:@\d+)?(?:#[0-9a-fA-F]{4,64})?"
+    r"|(?<![A-Za-z0-9_.|-])[A-Za-z][A-Za-z0-9_.|-]*:[A-Za-z0-9_.|/-]+"
+    r"(?:[:@]\d+)?(?:#[0-9a-fA-F]{4,64})?"
 )
 _UUID = re.compile(r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b")
 # A hash: 8+ hex digits with a letter and a digit in them ("3f9a0c2b1e7d").
@@ -81,7 +86,12 @@ _EMPTY_BRACKETS = re.compile(
 
 # --- 3. sentences ------------------------------------------------------------------------------
 
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[\"'(]?[A-Z0-9])")
+# A sentence ends at . ! ? before a capital or a digit, but not after a title ("Mr. Smith").
+_TITLES = ("Mr", "Mrs", "Ms", "Dr", "St", "Jr", "Sr", "No", "vs", "approx")
+_SENTENCE_END = re.compile(
+    "".join(rf"(?<!\b{title}\.)" for title in _TITLES)
+    + r"(?<=[.!?])\s+(?=[\"'(]?[A-Z0-9])"
+)
 _CLAUSE_END = re.compile(r"[,;:]$")
 
 # --- 5. numbers --------------------------------------------------------------------------------
@@ -135,9 +145,17 @@ _ORDINAL = {
     "nine": "ninth",
     "twelve": "twelfth",
 }
-# "k" is thousand; a capital K after a number is kelvin (GT's heat: "1800K").
-_MAGNITUDE = {"k": "thousand", "M": "million", "B": "billion", "G": "billion"}
+# "k" is thousand; a capital K after a number is kelvin (GT's heat: "1800K"), unless an energy
+# or fluid unit follows it ("10K EU" is ten thousand E U).
+_MAGNITUDE = {
+    "k": "thousand",
+    "K": "thousand",
+    "M": "million",
+    "B": "billion",
+    "G": "billion",
+}
 
+_LINKING = "(?:of|per|at|each|and|or|to|in|on|for|from)"
 # Units after a number: (pattern, singular, plural). Longest first; case matters ("mB", "K").
 _UNITS: tuple[tuple[str, str, str], ...] = (
     (r"EU/t(?:ick)?", "E U per tick", "E U per tick"),
@@ -150,10 +168,16 @@ _UNITS: tuple[tuple[str, str, str], ...] = (
     (r"(?:L|mB)/min", "litre per minute", "litres per minute"),
     (r"L", "litre", "litres"),
     (r"mB", "millibucket", "millibuckets"),
-    (r"A", "amp", "amps"),
+    # "4A", "2 A of LV", "1 A."; but a spaced "A" before a word is a letter ("4 A circuits").
+    (rf"(?<=\d)A|A(?!\s+(?!{_LINKING}\b)[A-Za-z])", "amp", "amps"),
     (r"ms", "millisecond", "milliseconds"),
     (r"(?:s|sec|secs)", "second", "seconds"),
     (r"min", "minute", "minutes"),
+    (
+        r"m(?=\s*(?:[.,!?;]|$))",
+        "minute",
+        "minutes",
+    ),  # "done in 5m." ("5 m long" is not)
     (r"h", "hour", "hours"),
     (r"t", "tick", "ticks"),
     (r"%", "percent", "percent"),
@@ -161,7 +185,7 @@ _UNITS: tuple[tuple[str, str, str], ...] = (
     (r"K", "kelvin", "kelvin"),
 )
 _NUMBER = r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-_MAG = r"(?P<mag>[kMBG](?![A-Za-z0-9]))?"
+_MAG = r"(?P<mag>[kMBG](?![A-Za-z0-9])|K(?=\s?(?:EU|RF|L|mB)(?![a-z])))?"
 _UNIT_ALT = "|".join(f"(?P<u{i}>{pattern})" for i, (pattern, _, _) in enumerate(_UNITS))
 _MEASURE = re.compile(
     rf"(?<![\w.]){_NUMBER}{_MAG}(?:\s?(?:{_UNIT_ALT})(?![A-Za-z0-9]))?"
@@ -179,6 +203,8 @@ _FRACTION = re.compile(r"(?<![\w./])(\d+)/(\d+)(?![\w/])")
 _DOLLARS = re.compile(r"\$(\d+)(?:\.(\d{2}))?")
 _HASH_NUMBER = re.compile(r"#\s?(?=\d)")
 _PER_WORD = re.compile(r"(?<=[A-Za-z])/(s|sec|t|tick|min|h)\b")
+_RATIO = re.compile(r"(?<![\w.:])(\d+):(\d+)(?![\w:])")  # "3:1", "12:30"
+_GLUED = re.compile(r"\b([A-Za-z]+)(\d+)(?![A-Za-z0-9])")  # "T1", "IC2", "Mk2"
 
 # --- 6, 7 --------------------------------------------------------------------------------------
 
@@ -261,6 +287,18 @@ def _measure(m: re.Match[str]) -> str:
     return said
 
 
+def _ratio(m: re.Match[str]) -> str:
+    """A time ("twelve thirty", "nine oh five", "ten o'clock") or a ratio ("three to one")."""
+    first, second = m[1], m[2]
+    if len(second) == 2 and int(first) <= 24 and int(second) < 60:
+        minutes = int(second)
+        if minutes == 0:
+            return f"{cardinal(int(first))} o'clock"
+        tail = f"oh {cardinal(minutes)}" if minutes < 10 else cardinal(minutes)
+        return f"{cardinal(int(first))} {tail}"
+    return f"{number(first)} to {number(second)}"
+
+
 def numbers(text: str) -> str:
     """Every number in ``text`` in words, with its unit (step 5 of the module docstring)."""
     text = _VERSION.sub(
@@ -274,6 +312,8 @@ def numbers(text: str) -> str:
         text,
     )
     text = _HASH_NUMBER.sub("number ", text)
+    text = _GLUED.sub(r"\1 \2", text)
+    text = _RATIO.sub(_ratio, text)
     text = _ORDINAL_NUM.sub(lambda m: ordinal(int(m[1])), text)
     text = _WIRE.sub(lambda m: f"{number(m[1])} x", text)
     text = _TIMES_AFTER.sub(

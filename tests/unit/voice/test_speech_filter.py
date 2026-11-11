@@ -148,6 +148,17 @@ def test_ordinals(n: int, words: str) -> None:
         ("items/s", "items per second."),
         ("-5", "minus five."),
         ("~5 s", "about five seconds."),
+        ("The ratio is 3:1.", "The ratio is three to one."),
+        ("At 12:30 it starts.", "At twelve thirty it starts."),
+        ("At 9:05 or 10:00.", "At nine oh five or ten o'clock."),
+        ("IC2 cables and a T1 rocket", "I C two cables and a T one rocket."),
+        ("Q12 and Mk2.", "Q twelve and Mk two."),
+        ("10K EU", "ten thousand E U."),
+        ("10K EU/t", "ten thousand E U per tick."),
+        ("Use 4 A circuits", "Use four A circuits."),
+        ("2 A of LV", "two amps of L V."),
+        ("Done in 5m.", "Done in five minutes."),
+        ("5 m long", "five m long."),
     ],
 )
 def test_numbers_and_units(text: str, said: str) -> None:
@@ -198,6 +209,8 @@ def test_markup_goes(text: str, said: str) -> None:
         ("It is gt.metaitem.01 there.", "It is there."),
         ("The id 32600 and meta: 5 go.", "The go."),
         ("Crop crop:stickreed is ready.", "Crop is ready."),
+        ("Use gregtech:gt.blockmachines:1022 here.", "Use here."),
+        ("Use minecraft:wool:14 here.", "Use here."),
         ("e.g. Steel.", "e.g. Steel."),
     ],
 )
@@ -205,9 +218,16 @@ def test_citations_and_ids_go(text: str, said: str) -> None:
     assert spoken(text) == said
 
 
+# An id's digits are all 7s and its hex has a 7 in it, and the answers' own words and numbers
+# have no 7, so any id digit that is spoken shows as "seven" (or "seventy", "seventeen").
+SENTINEL = re.compile(r"seven", re.IGNORECASE)
+
+
 def _ids(rng: random.Random) -> str:
-    hexes = "".join(rng.choice("0123456789abcdef") for _ in range(12))
-    digits = str(rng.randint(0, 99999))
+    hex_chars = [rng.choice("7abcdef") for _ in range(10)] + ["7", "a"]
+    rng.shuffle(hex_chars)
+    hexes = "".join(hex_chars)
+    digits = "7" * rng.randint(1, 6)
     word = rng.choice(
         ["blastfurnace", "assembler", "Steel_Ingot", "gt.metaitem.01", "x"]
     )
@@ -222,6 +242,8 @@ def _ids(rng: random.Random) -> str:
             f"w:{word}@{digits}",
             f"gregtech:gt.metaitem.01@{digits}",
             f"gregtech:gt.blockmachines@{digits}#{hexes}",
+            f"gregtech:gt.blockmachines:{digits}",
+            f"minecraft:{word}:{digits}",
             f"fluid:{word}",
             f"minecraft:{word}",
             hexes,
@@ -271,6 +293,7 @@ def test_property_no_citation_or_id_is_ever_spoken() -> None:
         said = spoken(text)
         assert SAID.fullmatch(said), (text, said)
         assert not re.search(r"\d", said)
+        assert not SENTINEL.search(said), (text, said)
         for found in ids:
             for token in re.findall(r"[A-Za-z0-9]{6,}", found):
                 if token.isalpha() and token in text.replace(found, ""):
@@ -286,6 +309,7 @@ def test_the_filter_removes_whatever_the_fast_lane_calls_a_ref_or_key() -> None:
         text = f"Steel {_ids(rng)} at 32 EU/t ({_ids(rng)})."
         said = spoken(text)
         assert not fast_lane.REF.search(said) and not fast_lane.KEY.search(said)
+        assert not SENTINEL.search(said), (text, said)
 
 
 def test_the_bench_answers_lose_their_ids() -> None:
@@ -325,6 +349,9 @@ def test_decimals_and_abbreviations_do_not_end_sentences() -> None:
     assert spoken("It is 1.5 times faster. Next one. Third.") == (
         "It is one point five times faster. Next one."
     )
+    assert spoken("Mr. Smith says hi. Then it runs at 30 EU/t. Not this.") == (
+        "Mr. Smith says hi. Then it runs at thirty E U per tick."
+    )
 
 
 def test_nothing_left_is_empty() -> None:
@@ -359,7 +386,10 @@ def test_lexicon_case_whole_words_and_plurals() -> None:
     assert lx.apply("Naquadah, NAQUADAH") == "nah-kwa-dah, nah-kwa-dah"
     assert lx.apply("HSS-G not HSS-GX or xHSS-G") == "H S S G not HSS-GX or xHSS-G"
     assert lx.apply("a pyrolyse  oven") == "a pie-ro-lize oven"
-    assert lx.apply("EBF-ish") == "EBF-ish"  # part of a hyphenated name
+    assert lx.apply("EBF-ish") == "E B F-ish"  # a term, a hyphen, a lower-case word
+    assert lx.apply("LuV-tier, EBF-2 and naquadah-based") == (
+        "L U V-tier, EBF-2 and nah-kwa-dah-based"
+    )
 
 
 def test_lexicon_ignores_a_say_that_is_not_plain_words() -> None:

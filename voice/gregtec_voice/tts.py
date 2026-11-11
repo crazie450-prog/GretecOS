@@ -487,65 +487,99 @@ def load_engine(
     raise TtsError(f"unknown tts engine {choice.engine!r}")
 
 
+STRIKES = 3  # chunk failures in a row before an engine is dropped for the session
+
+
 @dataclass
 class Engines:
-    """The engines to speak with: the first that loaded, then (on a failure) the next."""
+    """The engines to speak with, in :func:`choices` order. One that won't load is dropped.
+    One that fails on a chunk hands the rest of that utterance to the next, and the next
+    utterance tries it again (a CUDA out-of-memory beside GTNH or a network blip passes); only
+    :data:`STRIKES` failures in a row drop it for the session."""
 
     choices: list[Choice]
     settings: VoiceSettings
     loader: Loader | None = None  # None: load_engine
     note: Callable[[str], None] = field(default=lambda message: log.info(message))
-    skipped: list[str] = field(default_factory=list)  # choices that failed, and why
+    skipped: list[str] = field(default_factory=list)  # choices dropped, and why
     _loaded: dict[Choice, Engine] = field(default_factory=dict)
-    _at: int = 0
+    _dropped: set[Choice] = field(default_factory=set)
+    _strikes: dict[Choice, int] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def current(self) -> Engine | None:
-        """The engine to use now, loading it (and giving up on ones that won't) as needed."""
+        """The engine to start an utterance with, loading it (and dropping ones that won't)."""
         with self._lock:
-            while self._at < len(self.choices):
-                choice = self.choices[self._at]
-                if choice in self._loaded:
-                    return self._loaded[choice]
-                started = time.monotonic()
-                try:
-                    engine = (self.loader or load_engine)(
-                        choice, self.settings, self.note
-                    )
-                except Exception as exc:  # noqa: BLE001 - any engine failure: the next one's turn
-                    self.skipped.append(f"{choice.label}: {type(exc).__name__}: {exc}")
-                    log.warning(
-                        "a text-to-speech engine can't start",
-                        extra={
-                            "engine": choice.label,
-                            "error": f"{type(exc).__name__}: {exc}",
-                        },
-                    )
-                    self._at += 1
-                    continue
-                self._loaded[choice] = engine
-                log.info(
-                    "text-to-speech ready",
+            return self._first(0)
+
+    def _first(self, start: int) -> Engine | None:
+        for choice in self.choices[start:]:
+            if choice in self._dropped:
+                continue
+            if choice in self._loaded:
+                return self._loaded[choice]
+            started = time.monotonic()
+            try:
+                engine = (self.loader or load_engine)(choice, self.settings, self.note)
+            except Exception as exc:  # noqa: BLE001 - any engine failure: the next one's turn
+                self._dropped.add(choice)
+                self.skipped.append(f"{choice.label}: {type(exc).__name__}: {exc}")
+                log.warning(
+                    "a text-to-speech engine can't start",
                     extra={
-                        "engine": engine.label,
-                        "load_ms": round((time.monotonic() - started) * 1000),
+                        "engine": choice.label,
+                        "error": f"{type(exc).__name__}: {exc}",
                     },
                 )
-                return engine
-            return None
+                continue
+            self._loaded[choice] = engine
+            log.info(
+                "text-to-speech ready",
+                extra={
+                    "engine": engine.label,
+                    "load_ms": round((time.monotonic() - started) * 1000),
+                },
+            )
+            return engine
+        return None
+
+    def _choice_of(self, engine: Engine) -> Choice | None:
+        return next((c for c, e in self._loaded.items() if e is engine), None)
 
     def failed(self, engine: Engine, error: Exception) -> Engine | None:
-        """``engine`` failed on a chunk: the next engine, or None."""
+        """``engine`` failed on a chunk: the engine after it for the rest of this utterance, or
+        None. The :data:`STRIKES`-th failure in a row drops it."""
+        error_text = f"{type(error).__name__}: {error}"
         with self._lock:
-            self.skipped.append(f"{engine.label}: {type(error).__name__}: {error}")
-            at = self.choices[self._at] if self._at < len(self.choices) else None
-            if at is not None and self._loaded.get(at) is engine:
-                self._at += 1  # another utterance may have moved on already
+            choice = self._choice_of(engine)
+            if choice is None:  # not one of these engines
+                return None
+            strikes = self._strikes.get(choice, 0) + 1
+            self._strikes[choice] = strikes
+            if strikes >= STRIKES and choice not in self._dropped:
+                self._dropped.add(choice)
+                self.skipped.append(
+                    f"{engine.label}: {strikes} failures in a row, last {error_text}"
+                )
+            following = self._first(self.choices.index(choice) + 1)
         log.warning(
             "text-to-speech failed on a chunk",
-            extra={"engine": engine.label, "error": f"{type(error).__name__}: {error}"},
+            extra={
+                "engine": engine.label,
+                "error": error_text,
+                "strikes": strikes,
+                "dropped": choice in self._dropped,
+                "next": following.label if following is not None else "none",
+            },
         )
-        return self.current()
+        return following
+
+    def worked(self, engine: Engine) -> None:
+        """``engine`` said a chunk: its failures in a row start again from zero."""
+        with self._lock:
+            choice = self._choice_of(engine)
+            if choice is not None:
+                self._strikes.pop(choice, None)
 
 
 # --- the speaker ------------------------------------------------------------------------------
@@ -596,8 +630,8 @@ class _Utterance:
     def _synth(self) -> None:
         engines = self.speaker.engines
         try:
+            engine = engines.current()  # after a failure, the next one says the rest
             for i, part in enumerate(self.parts):
-                engine = engines.current()
                 while engine is not None and not self.stopped.is_set():
                     try:
                         for pcm in engine.stream(part):
@@ -606,6 +640,7 @@ class _Utterance:
                                 self.record["engine"] = engine.label
                             if not self._put((engine.rate, pcm)):
                                 return
+                        engines.worked(engine)
                         break
                     except Exception as exc:  # noqa: BLE001 - say the rest with the next one
                         engine = engines.failed(engine, exc)

@@ -165,8 +165,42 @@ def test_engines_move_on_after_a_failure_on_a_chunk() -> None:
     )
     assert engines.current() is first
     assert engines.failed(first, tts.TtsError("down")) is second
-    assert engines.failed(first, tts.TtsError("late")) is second  # an older utterance's
     assert engines.failed(second, tts.TtsError("down")) is None
+    assert engines.current() is first  # the next utterance tries it again
+    assert engines.skipped == []
+
+
+def test_an_engine_is_dropped_only_after_failures_in_a_row() -> None:
+    first, second = FakeEngine(KOKORO), FakeEngine(PIPER)
+    engines = tts.Engines(
+        [Choice(KOKORO, GPU), Choice(PIPER)], VoiceSettings(), loader_of(first, second)
+    )
+    assert engines.current() is first
+    for _ in range(tts.STRIKES - 1):
+        assert engines.failed(first, tts.TtsError("CUDA out of memory")) is second
+    engines.worked(first)  # a chunk said: the count starts again
+    for _ in range(tts.STRIKES - 1):
+        engines.failed(first, tts.TtsError("CUDA out of memory"))
+    assert engines.current() is first and engines.skipped == []
+    assert engines.failed(first, tts.TtsError("CUDA out of memory")) is second
+    assert engines.current() is second
+    assert engines.skipped == [
+        f"fake kokoro: {tts.STRIKES} failures in a row, last TtsError: CUDA out of memory"
+    ]
+
+
+def test_one_failed_chunk_hands_only_that_utterance_to_the_next() -> None:
+    out = FakeOutput()
+    flaky, good = FakeEngine(KOKORO), FakeEngine(PIPER, rate=2000)
+    speaker = speaker_with(
+        flaky, good, output=out, choices=[Choice(KOKORO), Choice(PIPER)]
+    )
+    flaky.fail = True
+    say(speaker, "First sentence is here. Second one.")
+    assert good.said == ["First sentence is here.", "Second one."]  # the rest, too
+    flaky.fail = False
+    say(speaker, "Hello there.")
+    assert flaky.said == ["Hello there."] and speaker.last["engine"] == "fake kokoro"
 
 
 def test_create_with_no_engine_is_unavailable_and_still_finishes_turns(
@@ -282,7 +316,7 @@ def test_a_failing_engine_hands_the_chunk_to_the_next() -> None:
     done = say(speaker, "Hello there.")
     assert done.first == 1 and good.said == ["Hello there."]
     assert [s.rate for s in out.streams] == [2000]
-    assert any("broken" in s for s in speaker.engines.skipped)
+    assert speaker.last["engine"] == "fake piper"
 
 
 def test_no_engine_left_ends_the_utterance_quietly() -> None:
@@ -497,6 +531,21 @@ def test_no_match_or_two_matches_fall_back_to_the_default() -> None:
     assert two.device == DEVICES[0] and "2 device names" in two.why
     with pytest.raises(AudioError):
         playback.pick_device("Chat", [])
+
+
+def test_of_several_matches_the_exact_name_wins() -> None:
+    devices = [
+        Device(0, "Speakers (Realtek)", True),
+        Device(1, "Chat (Arctis Nova Elite)", False),
+        Device(
+            2,
+            "SteelSeries Sonar - Chat (SteelSeries Sonar Virtual Audio Device)",
+            False,
+        ),
+    ]
+    exact = playback.pick_device("chat (arctis nova elite)", devices)
+    assert exact == playback.Pick(devices[1], "")
+    assert "2 device names" in playback.pick_device("Chat", devices).why
 
 
 def test_wav_output_writes_each_stream(tmp_path: Path) -> None:

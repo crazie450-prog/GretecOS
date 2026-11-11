@@ -13,7 +13,7 @@ What is measured here (plan 8 WO-5.3): first audio <= 400 ms after the first sen
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice devices
    ```
-   Under `Output (output_endpoint = 'Chat')` the Arctis Nova Elite's Chat endpoint must be marked `[used]`. If a line `(no output device's name contains 'Chat' ...)` or `('Chat' is in 2 device names ...)` shows, set a longer part of the right device's name in `%USERPROFILE%\GregtecOS\config\gos.toml`:
+   Under `Output (output_endpoint = 'Chat')` the Arctis Nova Elite's Chat endpoint must be marked `[used]`. If a line `(no output device's name contains 'Chat' ...)` or `('Chat' is in 2 device names ...)` shows, set the right device's whole name (an exact name wins over other matches) or a longer part of it in `%USERPROFILE%\GregtecOS\config\gos.toml`:
    ```toml
    [voice]
    output_endpoint = "Chat (Arctis Nova Elite)"   # a part of the device name above; "" = Windows' default
@@ -26,7 +26,7 @@ What is measured here (plan 8 WO-5.3): first audio <= 400 ms after the first sen
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice tts-bench
    ```
-   It says ten sample answers with Piper and Kokoro on the CPU (and ElevenLabs if its key is stored, step 6) through the headset's Chat endpoint, and prints per engine `P50 ... ms, P90 ..., load ... ms: meets/misses the target`, then `Pick: ...` with the two `gos.toml` lines, and a TSV report path. You will hear the samples (placeholder answers, not game data). Paste the output into the PR.
+   It says ten sample answers with Piper and Kokoro on the CPU (and ElevenLabs if its key is stored, step 6) through the headset's Chat endpoint, and prints per engine `P50 ... ms, P90 ..., load ... ms: meets/misses the target`, then `Latency pick: ...` with the two `gos.toml` lines, and a TSV report path. The latency pick only says which engine is fast enough; it does not say the voice is understandable (in the build container Piper was the latency pick but the less intelligible voice, D204), so step 5 also needs step 7. You will hear the samples (placeholder answers, not game data). Paste the output into the PR.
 4. **GPU (optional; only if no CPU engine met the target, or Kokoro's voice is wanted and missed it).** ONNX Runtime's GPU build replaces the CPU one, so try it in a throwaway clone, never in the release:
    ```powershell
    git clone https://github.com/crazie450-prog/GretecOS.git $env:TEMP\gos-tts-gpu
@@ -37,7 +37,7 @@ What is measured here (plan 8 WO-5.3): first audio <= 400 ms after the first sen
    uv run --no-sync gos voice tts-bench --engine kokoro-gpu --engine piper-gpu
    ```
    The bench prints `VRAM +... MB` per GPU engine (from `nvidia-smi`). If it says `ONNX Runtime has no GPU provider here`, try `uv pip uninstall onnxruntime-gpu` then `uv pip install onnxruntime-directml==1.24.4` in its place (any GPU, through DirectML). Paste the output; delete the folder afterwards. Running on the GPU in play would need a follow-up change to the release (D203).
-5. Set the pick in `gos.toml` (`tts = "piper"` or `"kokoro"`, `tts_device = "cpu"` or `"gpu"`) only if step 7 also passes with it. Appendix C's default stays `kokoro` on the CPU.
+5. Set the latency pick in `gos.toml` (`tts = "piper"` or `"kokoro"`, `tts_device = "cpu"`) only if step 7 also passes with it. Latency alone does not decide. Kokoro on the CPU took 1.3 to 3.5 s to first audio in the build container, which would also break PM14's 1.7 s talk-key target, so keep it only if the bench here says it meets 400 ms. A `gpu` pick cannot be set in the release yet (step 4, D203): note it in the PR instead. Appendix C's default stays `kokoro` on the CPU until this run decides.
 
 ## C. ElevenLabs (optional, paid)
 
@@ -66,7 +66,7 @@ Windows turns other sounds down by 80% while it sees a "communication session" (
 9. ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File C:\GregtecOS-app\current\scripts\set_comm_ducking.ps1
    ```
-   It prints what it was and what it is now, and keeps the old value in `%USERPROFILE%\GregtecOS\data\comm_ducking_before.txt`. Restart Discord and GTNH (or sign out and in). Check: Control Panel > Sound > Communications shows "Do nothing".
+   It prints what it was and what it is now, and keeps the old value in `%USERPROFILE%\GregtecOS\data\comm_ducking_before.txt` (under `%GOS_HOME%` instead when that is set). Restart Discord and GTNH (or sign out and in). Check: Control Panel > Sound > Communications shows "Do nothing".
    - Show only: add `-Show`.
    - **Undo**: add `-Undo` (puts back the value it found; with none saved it removes the value, which is Windows' default, "Reduce the volume of other sounds by 80%"). Or by hand: Sound > Communications > "Reduce the volume of other sounds by 80%".
 

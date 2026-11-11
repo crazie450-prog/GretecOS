@@ -14,7 +14,9 @@
         2 = reduce by 50%, 3 = do nothing
 
     It is Clayton's sound setting, so Clayton runs it himself, in his own account (a PC step:
-    GOS never runs it). The value it found is printed and kept in -BackupFile, so -Undo puts
+    GOS never runs it). The value it found is printed and kept in -BackupFile (by default
+    GOS_HOME\data\comm_ducking_before.txt, GOS_HOME being %GOS_HOME% or
+    %USERPROFILE%\GregtecOS), so -Undo puts
     that back; with no backup, -Undo removes the value, which is Windows' default (80%).
     Apps that are already playing pick the change up the next time they open their audio:
     restart Discord and GTNH, or sign out and in.
@@ -30,8 +32,13 @@ param(
     [switch]$Show,
     # Tests point these at a throwaway key and file; nothing else should change them.
     [string]$KeyPath = 'HKCU:\Software\Microsoft\Multimedia\Audio',
-    [string]$BackupFile = (Join-Path $env:USERPROFILE 'GregtecOS\data\comm_ducking_before.txt')
+    [string]$BackupFile = ''
 )
+if (-not $BackupFile) {
+    # GOS_HOME when it is set (as gos itself reads it), else the default %USERPROFILE%\GregtecOS.
+    $GosHome = if ($env:GOS_HOME) { $env:GOS_HOME } else { Join-Path $env:USERPROFILE 'GregtecOS' }
+    $BackupFile = Join-Path $GosHome 'data\comm_ducking_before.txt'
+}
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'

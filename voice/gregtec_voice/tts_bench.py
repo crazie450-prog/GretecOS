@@ -203,7 +203,9 @@ def report(results: Sequence[Result], out: TextIO) -> Result | None:
         print("No engine measured here meets the target.", file=out)
         return None
     print(
-        f"Pick: {chosen.label} (the cheapest that meets it). In gos.toml's [voice]:\n"
+        f"Latency pick: {chosen.label} (the cheapest that meets it). Latency alone does not"
+        " decide: set it only if `gos voice say --phrases` (and `gos voice tts-check`) also"
+        " pass with it. In gos.toml's [voice]:\n"
         f'  tts = "{chosen.choice.engine}"\n  tts_device = "{chosen.choice.device}"',
         file=out,
     )

@@ -263,7 +263,9 @@ def test_gos_voice_tts_bench_end_to_end(
     text = out.getvalue()
     assert code == 0, text
     assert (
-        "Pick: slow piper" in text and "slow kokoro: P50" in text and "misses" in text
+        "Latency pick: slow piper" in text
+        and "slow kokoro: P50" in text
+        and "misses" in text
     )
     assert report.is_file()
 

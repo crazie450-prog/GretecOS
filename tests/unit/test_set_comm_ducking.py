@@ -37,7 +37,13 @@ def key() -> Iterator[str]:
                 pass
 
 
-def run(key: str, backup: Path, *extra: str) -> str:
+def run(
+    key: str, backup: Path | None, *extra: str, gos_home: Path | None = None
+) -> str:
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    if gos_home is not None:
+        env["GOS_HOME"] = str(gos_home)
+    backup_args = ["-BackupFile", str(backup)] if backup is not None else []
     done = subprocess.run(
         [
             "powershell.exe",
@@ -49,14 +55,13 @@ def run(key: str, backup: Path, *extra: str) -> str:
             str(SCRIPT),
             "-KeyPath",
             key,
-            "-BackupFile",
-            str(backup),
+            *backup_args,
             *extra,
         ],
         capture_output=True,
         text=True,
         check=False,
-        env={k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"},
+        env=env,
         timeout=120,
     )
     assert done.returncode == 0, done.stderr
@@ -87,6 +92,16 @@ def test_sets_do_nothing_and_undo_restores_the_default(
     )
     assert "already" in run(key, backup)
     run(key, backup, "-Undo")
+    assert value(key) is None and not backup.exists()
+
+
+def test_the_backup_goes_under_gos_home_when_it_is_set(
+    key: str, tmp_path: Path
+) -> None:
+    run(key, None, gos_home=tmp_path)
+    backup = tmp_path / "data" / "comm_ducking_before.txt"
+    assert value(key) == 3 and backup.read_text().strip() == "unset"
+    run(key, None, "-Undo", gos_home=tmp_path)
     assert value(key) is None and not backup.exists()
 
 

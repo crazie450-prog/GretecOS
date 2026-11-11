@@ -5,7 +5,8 @@
   (``auto_convert``), so Windows resamples to the headset's format. The device is picked by
   name: ``[voice] output_endpoint`` is a part of a device's name ("Chat": the Arctis Nova
   Elite's Chat endpoint, D56, so the ChatMix dial balances GOS against the game [D§2.6]); ""
-  is Windows' default output device. A name that matches no device, or several, falls back to
+  is Windows' default output device. Of several matches, one named exactly so wins. A name
+  that matches no device, or several and none exactly, falls back to
   the default device with a warning (plan 0.1 principle 9: GOS still talks), and
   ``gos voice devices`` shows which device is used and why.
 - **Linux** (tests, the build container, the bench): :class:`FakeOutput` takes the audio and
@@ -75,8 +76,8 @@ class Pick:
 
 def pick_device(name: str, devices: Sequence[Device]) -> Pick:
     """The device ``[voice] output_endpoint`` picks: the one whose name contains ``name``
-    (any case), else the default device and why (D205). Raises :class:`AudioError` when there
-    is no output device at all."""
+    (any case); of several, the one whose whole name is ``name``; else the default device and
+    why (D205). Raises :class:`AudioError` when there is no output device at all."""
     if not devices:
         raise AudioError("Windows lists no output device (is the headset connected?)")
     default = next((d for d in devices if d.default), devices[0])
@@ -85,6 +86,9 @@ def pick_device(name: str, devices: Sequence[Device]) -> Pick:
     hits = [d for d in devices if name.casefold() in d.name.casefold()]
     if len(hits) == 1:
         return Pick(hits[0], "")
+    exact = [d for d in hits if d.name.casefold() == name.casefold()]
+    if len(exact) == 1:  # SteelSeries Sonar can add a second "...Chat" device
+        return Pick(exact[0], "")
     if not hits:
         why = f"no output device's name contains {name!r}"
     else:
@@ -111,7 +115,12 @@ class _WasapiStream:
 
 class WasapiOutput:
     """Windows: the output device ``endpoint`` names (see :func:`pick_device`), looked up
-    again for each utterance, so a headset plugged in later is found."""
+    again for each utterance in PortAudio's device list. That list is made when PortAudio
+    starts and is refreshed only when capture restarts (``audio._rescan``), so a headset that
+    comes back is found once capture has restarted (it does when the same headset's microphone
+    went away) or the client restarts; until then speech plays on the default device or, with
+    none, fails and is logged. A write to a stream that capture's restart closed fails the
+    utterance (logged), never the client."""
 
     def __init__(self, endpoint: str = DEFAULT_ENDPOINT) -> None:
         self.endpoint = endpoint
