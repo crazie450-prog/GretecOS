@@ -16,6 +16,11 @@ from their sources; nothing copied):
     os.sleep's too), push. Ctrl+C is an "interrupted" signal; Ctrl+Alt+C a hard "interrupted"
     error from the pull.
   * filesystem: OpenOS's library over an in-memory drive; handles read at most 2048 bytes a call.
+    rename and remove are non-direct (a tick each). The drive counts its space as OC's Capacity
+    does: a new file adds fileCost (512) and every byte OC writes, a file OC truncates or deletes
+    is subtracted, and files changed from outside (tests writing w.files, the fake core) are never
+    counted (w.used; w.capacity makes writes fail with "not enough space"). get() finds a path's
+    drive in w.mounts (the boot drive at /, /tmp the RAM disk).
   * internet: OpenOS's library over a fake internet card: request() returns a handle whose
     finishConnect/read are non-direct and response/close direct, read returns "" until data is
     there and nil at the end, at most 4 connections may be open, and failures return nil plus the
@@ -78,6 +83,12 @@ function F.world(opts)
     server = nil,
     hard_interrupt_at = nil,
     fail = {}, -- one-shot failure injection: fs ops
+    used = 0, -- the drive's space count, as OC's Capacity keeps it
+    capacity = nil, -- bytes; nil: unlimited
+    file_cost = 512, -- GTNH's fileCost
+    tmp_address = "7f000000-0000-4000-8000-00000000ffff", -- computer.tmpAddress()
+    mounts = nil, -- path -> { address, readonly }; nil: the boot drive at / and the tmpfs at /tmp
+    fs_reads = {}, -- path -> read calls on handles of that path
     stuck = 0,
     seen_clock = nil,
   }, World)
@@ -956,6 +967,9 @@ function F.computer_lib(w)
     getArchitecture = function()
       return w.arch
     end,
+    tmpAddress = function()
+      return w.tmp_address
+    end,
     pushSignal = function(name, ...)
       w:push(name, ...)
       return true
@@ -1054,9 +1068,38 @@ function F.filesystem_lib(w)
     local acc = ""
     for seg in p:gmatch("[^/]+") do
       acc = acc .. "/" .. seg
-      w.dirs[acc] = true
+      if not w.dirs[acc] then
+        w.dirs[acc] = true
+        w.used = w.used + w.file_cost
+      end
     end
     return true
+  end
+  -- OpenOS: the drive's proxy and its mount path. The test base's boot drive is at /, the RAM
+  -- disk at /tmp; w.mounts replaces both.
+  function fs.get(p)
+    p = norm(p)
+    local mounts = w.mounts or {
+      ["/"] = { address = w.boot_fs or "0f000000-0000-4000-8000-0000000000f0" },
+      ["/tmp"] = { address = w.tmp_address },
+    }
+    local best
+    for mount in pairs(mounts) do
+      local inside = mount == "/" or p == mount or p:sub(1, #mount + 1) == mount .. "/"
+      if inside and (not best or #mount > #best) then
+        best = mount
+      end
+    end
+    if not best then
+      return nil, "no such file system"
+    end
+    local m = mounts[best]
+    return {
+      address = m.address,
+      isReadOnly = function()
+        return m.readonly == true
+      end,
+    }, best
   end
   function fs.size(p)
     local f = w.files[norm(p)]
@@ -1065,9 +1108,18 @@ function F.filesystem_lib(w)
   function fs.lastModified(p)
     return w.mtimes[norm(p)] or 0
   end
+  -- Not direct in OC: one tick. OC subtracts what it frees (fileCost and the size), whoever
+  -- wrote the file.
   function fs.remove(p)
+    w:count("filesystem", "remove", false)
+    w:tick()
     p = norm(p)
+    if w.fail.remove and w.fail.remove > 0 then
+      w.fail.remove = w.fail.remove - 1
+      return false
+    end
     if w.files[p] then
+      w.used = w.used - w.file_cost - #w.files[p]
       w.files[p] = nil
       return true
     end
@@ -1117,7 +1169,14 @@ function F.filesystem_lib(w)
       w.fail.open_write = w.fail.open_write - 1
       return nil, "not enough space"
     else
-      if mode == "w" or mode == "wb" then
+      -- OC's Capacity: a new file costs fileCost; mode w subtracts the old size first.
+      local truncate = mode == "w" or mode == "wb"
+      local delta = w.files[p] and (truncate and -#w.files[p] or 0) or w.file_cost
+      if w.capacity and w.capacity - w.used < delta then
+        return nil, "not enough space"
+      end
+      w.used = w.used + delta
+      if truncate then
         w.files[p] = ""
       else
         w.files[p] = w.files[p] or ""
@@ -1131,6 +1190,7 @@ function F.filesystem_lib(w)
         return nil, "file is closed"
       end
       n = math.min(2048, n or math.huge)
+      w.fs_reads[p] = (w.fs_reads[p] or 0) + 1
       local data = w.files[p] or ""
       if pos > #data then
         return nil
@@ -1143,6 +1203,10 @@ function F.filesystem_lib(w)
       if closed then
         return nil, "file is closed"
       end
+      if w.capacity and w.capacity - w.used < #s then
+        return nil, "not enough space"
+      end
+      w.used = w.used + #s
       w.files[p] = (w.files[p] or "") .. s
       w.mtimes[p] = w.clock * 1000
       return true

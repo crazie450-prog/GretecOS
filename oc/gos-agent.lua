@@ -342,6 +342,7 @@ function M.load_config(path)
     return nil, "config: " .. cerr
   end
   local base = dirname(path)
+  cfg.base = base -- the config's folder: the log, the state and the M1 mailbox go there by default
   cfg.log_path = cfg.log == true and base .. "/gos-agent.log" or cfg.log or nil
   cfg.state_path = cfg.state == true and base .. "/gos-agent.state" or cfg.state or nil
   return cfg
@@ -1466,9 +1467,14 @@ function M.open_transport(st)
   if not mod then
     return nil, "no internet card, and the M1 mailbox (mailbox.lua, WO-7.3) is not installed: " .. tostring(err)
   end
-  return mod.new(cfg, { json = json, log = function(level, msg)
-    M.log(st, level, msg)
-  end })
+  return mod.new(cfg, {
+    json = json,
+    dir = cfg.base or DIR, -- the default mailbox folder is mailbox/ next to the config
+    sleep = os.sleep,
+    log = function(level, msg)
+      M.log(st, level, msg)
+    end,
+  })
 end
 
 ---------------------------------------------------------------------------------------------
@@ -1525,6 +1531,10 @@ function M.handle_reply(st, reply, seq)
   local ack = reply.ack
   if mtype(ack) ~= "integer" then
     ack = st.transport.implicit_ack and seq or nil
+  elseif reply.boot ~= nil and reply.boot ~= st.boot then
+    -- An ack for an earlier run of this agent (a reply left in the M1 inbox): its seqs aren't
+    -- this run's, so it acknowledges nothing here (D216). Its commands still count.
+    ack = nil
   end
   if ack and ack >= 1 and ack <= seq then
     M.ack(st, ack)
@@ -1588,8 +1598,12 @@ function M.cycle(st)
   st.cycles = st.cycles + 1
   if t0 >= st.next_heartbeat then
     st.next_heartbeat = t0 + 300
-    M.log(st, "info", ("alive: %d cycles, %d sent, %d failed, %d bytes last, %d bytes free, %.2f s sampling")
-      :format(st.cycles, st.sent, st.failed, st.last_bytes or 0, int(computer.freeMemory()) or 0, st.sample_s or 0))
+    local line = ("alive: %d cycles, %d sent, %d failed, %d bytes last, %d bytes free, %.2f s sampling")
+      :format(st.cycles, st.sent, st.failed, st.last_bytes or 0, int(computer.freeMemory()) or 0, st.sample_s or 0)
+    if st.transport.stats then
+      line = line .. "; " .. st.transport:stats()
+    end
+    M.log(st, "info", line)
   end
   return ok
 end
@@ -1716,7 +1730,14 @@ function M.run(st, opts)
   event.ignore("interrupted", on_interrupt)
   event.ignore("component_added", on_component)
   event.ignore("component_removed", on_component)
+  -- The final counts, the transport's too, go on the stop line: the M1 Lab soak compares them
+  -- with the core's last stats line, written at its stop (the alive: lines come on another clock).
+  local counts = ("; %d cycles, %d sent, %d failed"):format(st.cycles or 0, st.sent or 0, st.failed or 0)
   if st.transport then
+    if st.transport.stats then
+      local okc, line = pcall(st.transport.stats, st.transport)
+      counts = counts .. (okc and ("; " .. tostring(line)) or "")
+    end
     pcall(st.transport.close, st.transport)
   end
   if not ok then
@@ -1725,13 +1746,13 @@ function M.run(st, opts)
       return false, err.fatal
     end
     if err == "interrupted" then
-      M.log(st, "info", "stopped (interrupted)")
+      M.log(st, "info", "stopped (interrupted)" .. counts)
       return true
     end
-    M.log(st, "error", "stopped: " .. tostring(err))
+    M.log(st, "error", "stopped: " .. tostring(err) .. counts)
     return false, tostring(err)
   end
-  M.log(st, "info", "stopped")
+  M.log(st, "info", "stopped" .. counts)
   return true
 end
 
@@ -1772,6 +1793,12 @@ function M.main(argv, opts)
     return 1
   end
   if mode == "--once" then
+    if st.failures == 0 and st.transport and st.transport.answered == false then
+      -- M1: the message is in the mailbox, but no reply came within wait_s.
+      out(("sent %d bytes to the mailbox; no reply from the core yet (is it running with this drive in gos.toml?)")
+        :format(st.last_bytes or 0))
+      return 1
+    end
     if st.failures == 0 then
       out(("sent %d bytes; the core answered"):format(st.last_bytes or 0))
       if st.sent > 1 then

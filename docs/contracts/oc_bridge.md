@@ -29,6 +29,16 @@ value from a stale one; gaps (a paused game, a broken link) are marked stale, ne
 | Connections | The agent closes its handle on every path, success or not: OC allows 4 open connections per internet card, HTTP requests included [C§1.4]. |
 | Token | The bearer token is a client token for this agent (D117's named client tokens, e.g. `gos token new oc`; WO-7.1 decides the name and how the core checks it). It sits in plain text in the agent's config on the OC drive, inside the world's save, which gos-dev can read (plan §4.6, D75: Lab modify, Play read only), so it must grant nothing beyond `/oc/telemetry` (D117's client tokens can also read health and usage; WO-7.1 scopes this one to `/oc/telemetry` alone). Whoever holds it can pose as the agent: take the commands waiting for it (they then never run) or post false readings and results. So the core treats everything posted with it as data (shown, alerted on, recorded as a command's outcome) and never starts an action because of it; `gos token new` replaces a token that leaked, `gos token revoke` ends it. The token proves the agent to the core, never the core to the agent: see Security for a program that answers in the core's place. |
 
+**As built (WO-7.1, D219-D221).** The token is a client token named `oc-play` or `oc-lab` (optionally
+`-<label>` for a second computer, e.g. `oc-lab-crops`; `gos token new oc-lab --show`). It opens
+`/oc/telemetry` and nothing else: every other route answers it 401. The core compares its hash with every live
+OC token's in constant time and never logs it; the name's instance (`play` or `lab`) is the binding (D217). The
+body must be `application/json` (else `bad_payload`) and at most 256 KB (a larger `Content-Length` or chunked
+body is refused unread past the limit). One token may send a burst of 10 messages, then one a second; more is
+`ok: false`, `err: "internal"`, so the agent backs off; so is a message from a 17th OC computer of one instance (at most 16 per instance until the core restarts). (The log lines of requests with
+no valid token are rate-limited too). An `ok: true` reply carries `boot` and `ack` (the highest seq of that boot the core has) like M1's.
+Whatever is refused is not processed: nothing is recorded and no command is taken.
+
 A failed exchange (refused connection, a non-2xx code, a timeout, a reply that isn't one JSON object, an
 `ok: false` reply) leaves everything that was waiting for an ack waiting (see Acknowledgement) and is retried with
 backoff. The one exception is `ok: false` with `err: "bad_payload"`: resending what the core can't read would be
@@ -53,8 +63,28 @@ t:close()
 ```
 
 With no `inbox.json` waiting, `exchange` returns `{v = 1, ok = true, cmds = {}}` with no `ack`. A core reply in
-`inbox.json` carries `ack`, the highest `seq` it has read. The config's `mailbox` table holds M1's own options; with
-`transport = "auto"` the agent uses HTTP when an internet card is in and M1 otherwise.
+`inbox.json` carries `ack`, the highest `seq` it has read, and the `boot` that `ack` counts in (an ack for another
+boot, a reply left from an earlier run, acknowledges nothing). The config's `mailbox` table holds M1's own options
+(`dir`, `wait_s`); with `transport = "auto"` the agent uses HTTP when an internet card is in and M1 otherwise.
+
+The files, all in one folder of one **managed** drive (`<world>/opencomputers/<drive address>/<dir>/`; an
+unmanaged drive, a read-only disk and `/tmp` are refused by the agent). Decisions D216 (OC), D217 (core), D218
+(tests and the Lab soak).
+
+| File | Written by | Steps |
+|---|---|---|
+| `outbox.tmp` | OC | Opened `"w"`, the whole message written, closed. Then renamed to `outbox.json`, **only while there is no `outbox.json`** (OC waits up to `wait_s`, default 2 s, polling `exists`); a rename that returns false (Windows: another program holds the target) is tried again, 8 times 50 ms apart. |
+| `outbox.json` | OC (rename) | The core stats it every 0.25 s, reads it with `safe_open()` (open, read, close; share-delete; a read that isn't one whole JSON object is retried 3 times), hands it to the ingest, then **renames it back to `outbox.tmp`**: that is the acknowledgement OC sees (`outbox.json` gone). Why back to `outbox.tmp` and not a delete: OC's drive counts every byte OC writes to a new file and never learns of a file removed from outside until the world loads again [F§2.3]; OC writing over the old `outbox.tmp` keeps its count flat. |
+| `inbox.tmp` | core | The reply written, flushed, fsynced, closed (`"x"`: never through a link), then `os.replace`-d to `inbox.json`, retried on `PermissionError` (20 ms doubling, 6 tries; then the next poll). |
+| `inbox.json` | core (replace) | Written **only while there is none**. OC polls it with `exists` (a direct call), checks its size against `reply_max`, reads it in 2048-byte chunks, closes it, then removes it: the acknowledgement the core sees. A reply OC hasn't taken in 30 s (the game paused, the agent stopped) is withdrawn by the core and its commands go back to the queue under the same ids; the core then writes no reply for 2 s, so OC's remove (a tick after its close) can't take a new reply unread. |
+
+Every message carries `boot` and `seq`; the core records a message only once per (agent, boot, seq) and its reply
+acks the highest seq it has. An agent is the computer's `address` *within one binding* the core vouches for (the
+mailbox's gos.toml role, `lab` or `play`; for M2 the instance the token is issued for), never the address alone: a
+Lab message naming Play's computer is another agent (D217). So a message read twice (the core read it, then couldn't rename it back), a reply read
+twice (OC couldn't remove it) or a reply withdrawn while OC read it changes nothing: the core doesn't record it
+again, and the agent never runs a command id twice. One exchange costs OC one rename and, when a reply came, one
+remove (a server tick each); everything else is a direct call.
 
 ## Cadence
 
