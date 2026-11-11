@@ -289,8 +289,11 @@ class Watchdog:
             self._reinstall(now, "its thread stopped")
             return
         for vk in sorted(self.key_filter.watched):
-            down, pressed = self.key_state.read(vk)
+            # The count first: reading the key's state lets the hook thread run, and a press it
+            # counts meanwhile (before Windows sets the "pressed" bit) must show as counted
+            # since this poll at the next one, not as a tap it missed.
             presses = self.key_filter.presses.get(vk, 0)
+            down, pressed = self.key_state.read(vk)
             counted, self._counted[vk] = self._counted.get(vk), presses
             tapped = self._tapped.pop(vk, None)
             if down != self.key_filter.seen.get(vk, False):

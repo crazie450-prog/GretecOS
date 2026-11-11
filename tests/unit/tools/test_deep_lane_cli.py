@@ -80,7 +80,7 @@ def lane(tool_db: Path, tmp_path_factory: pytest.TempPathFactory) -> Iterator[La
     root = home / "vault"
     shutil.copytree(TEMPLATE, root)
     skill = root / "_gos" / "skills" / "recipe-lookup"
-    skill.mkdir(parents=True)
+    skill.mkdir(parents=True, exist_ok=True)
     (skill / "SKILL.md").write_text(SKILL, encoding="utf-8")
     vault = VaultIO(root, today=dt.date.today)
     reg = build_registry(tool_db, vault=vault)

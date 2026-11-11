@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from gregtec.agents import router
+from gregtec.agents import cards, router
 from gregtec.agents.tools.registry import FAST, Registry
 from gregtec.agents.tools.tsv import Parsed, parse
 
@@ -47,9 +47,10 @@ class Block:
         return parse(self.text)
 
     def card(self) -> dict[str, Any]:
-        """The result as a dashboard card (data only; WO-2.6 draws it)."""
+        """The result as a dashboard card (data only; WO-2.6 draws it). A recipe tool's
+        result also carries its structured recipe card (``recipe``, WO-2.7, D172)."""
         p = self.parsed
-        return {
+        card: dict[str, Any] = {
             "type": "tool_result",
             "tool": self.tool,
             "args": self.args,
@@ -62,6 +63,9 @@ class Block:
             "span": p.span,
             "notes": p.notes,
         }
+        if not self.is_error and (recipe := cards.recipe_card(self.tool, p)):
+            card["recipe"] = recipe
+        return card
 
 
 @dataclass(frozen=True)

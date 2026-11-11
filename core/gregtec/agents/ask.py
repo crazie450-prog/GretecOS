@@ -7,6 +7,8 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
 - An unsure item match asks (QA:D11): the reply is the question, its card the top three, and the
   next request may pick one ("the second one", "2", or its name), which re-runs the first request
   on that item. "Repeat" says the question again and keeps it open; anything else starts afresh.
+- A confirm or cancel that found nothing waiting (its reply's ``pending`` is False) changed
+  nothing, so it isn't kept as the last reply: "repeat" still says the answer before it (D179).
 - With no fast lane (no key stored, or the API failing) a fast-lane request gets the instant
   answer for its card when pre-retrieval found one, else "AI is offline; I can do lookups"
   (plan 7.16; WO-2.8 adds the mode switch, banners and the credit flow).
@@ -147,6 +149,11 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+def _flagged(row: dict[str, str]) -> bool:
+    """A recipe row flagged ``fake?`` (its NEI handler doesn't say) or ``recycling``."""
+    return bool({"fake?", "recycling"} & set(row.get("flags", "").split()))
+
+
 def card_text(pre: prefetch.Prefetch, intent: str) -> str | None:
     """The instant (no-model) answer for a pre-retrieved card; None when there is none."""
     main = pre.main
@@ -158,19 +165,25 @@ def card_text(pre: prefetch.Prefetch, intent: str) -> str | None:
     name = _name(pre.target) or p.head.get("item", "").split(" [")[0]
     first = p.rows[0] if p.rows else None
     total = p.total if p.total is not None else len(p.rows)
+    which = "first"
+    if main.tool in ("recipe_find", "recipe_uses") and first is not None:
+        # The recipe-lookup skill's rule (D172): the first row without a flag, if any.
+        plain = next((r for r in p.rows if not _flagged(r)), first)
+        which = "first" if plain is first else "first unflagged one"
+        first = plain
     if main.tool == "recipe_find":
         if first is None:
             return f"{name}: no recipe in the DB makes it."
         return (
-            f"{name}: {_count(total, 'recipe')}, lowest tier first. The first is "
+            f"{name}: {_count(total, 'recipe')}, lowest tier first. The {which} is "
             f"{first['machine']} ({first['ref']})."
         )
     if main.tool == "recipe_uses":
         if first is None:
             return f"{name}: no recipe in the DB takes it."
         return (
-            f"{name} goes into {_count(total, 'recipe')}. The first is {first['machine']} "
-            f"({first['ref']})."
+            f"{name} goes into {_count(total, 'recipe')}. The {which} is "
+            f"{first['machine']} ({first['ref']})."
         )
     if main.tool == "machine_info":
         return f"{p.head.get('name', name)} ({p.head.get('machine', '')}): the card lists its facts."
@@ -236,7 +249,9 @@ class Asker:
         reply.total_ms = round((self.clock() - started) * 1000)
         if reply.ttft_ms is None and reply.calls == 0:
             reply.ttft_ms = reply.total_ms
-        if route.intent != router.REPEAT:
+        # A confirm or cancel that found nothing waiting changed nothing (the voice client's
+        # cancel hotkey silences GOS with one, D179): "repeat" still says the answer before it.
+        if route.intent != router.REPEAT and reply.pending is not False:
             with self._lock:
                 self._last = reply
         return reply

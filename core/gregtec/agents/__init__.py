@@ -9,6 +9,9 @@
 - ``deep``, ``deep_config``, ``hooks``: the deep lane itself (WO-2.4, D154-D156): a warm Claude
   Agent SDK session per task, its locked-down options and subagents, the ``PreToolUse`` tool
   gate and path guard, the per-task cap; ``deep_eval``: ``gos eval deep-lane`` (D157).
+- ``cards``: the recipe card (WO-2.7, D172); ``recipe_eval`` (with ``recipe_eval_cli``):
+  ``gos eval recipe-lookup``, the recipe-lookup skill's 50 questions scored against the DB
+  (D171); ``recipe_oracle``: its fake models for both lanes (D172).
 
 Personas arrive with WO-5.6.
 """
