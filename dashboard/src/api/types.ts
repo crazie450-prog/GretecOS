@@ -245,6 +245,7 @@ export interface SetupStep {
 export interface SetupState {
   done: boolean;
   completed_utc: string | null;
+  config_exists: boolean; // false: a first run, which opens on the wizard (D167)
   config_path: string;
   config_error: string | null;
   steps: SetupStep[];

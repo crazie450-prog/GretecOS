@@ -358,6 +358,31 @@ function StepView(props: {
   );
 }
 
+/** Above every view when gos.toml exists but setup was never finished (an install from before the
+ * wizard, D167): a way into the wizard that never blocks the dashboard. Designed to the system
+ * without a board: needs Clayton's board approval (D92, D158). */
+export function SetupBanner(props: { open: () => void; dismiss: () => void }) {
+  return (
+    <section className="gos-panel banner banner-ai" data-testid="banner-setup" role="status">
+      <span className="gos-label banner-head">
+        <span className="banner-glyph" aria-hidden="true">
+          {GLYPH.warn}
+        </span>{" "}
+        Setup isn't finished
+      </span>
+      <p className="gos-sub">gos.toml is there, but the setup wizard's checklist hasn't been run. Everything works meanwhile.</p>
+      <div className="actions">
+        <Button variant="primary" onClick={props.open} testId="setup-banner-open">
+          Open setup
+        </Button>
+        <Button onClick={props.dismiss} testId="setup-banner-dismiss">
+          Dismiss
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function Setup(props: { onClose: () => void; onDone: () => void }) {
   const [state, setState] = useState<SetupState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -401,9 +426,10 @@ export function Setup(props: { onClose: () => void; onDone: () => void }) {
               Settings go into <code>{state.config_path}</code>; keys and tokens into Windows Credential Manager, never into a file.
             </p>
           </div>
-          {state.done && (
+          {/* Only a first run (no gos.toml) has no way out: GOS has nothing to run with yet. */}
+          {(state.done || state.config_exists) && (
             <Button onClick={props.onClose} testId="setup-close">
-              Close
+              {state.done ? "Close" : "Later"}
             </Button>
           )}
         </header>

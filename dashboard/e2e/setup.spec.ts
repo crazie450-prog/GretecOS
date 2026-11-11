@@ -2,8 +2,10 @@
 // GOS_HOME (serve_core.py --fresh) -> pair -> the wizard -> gos.toml written (config.py reads it
 // back), the (fake) keyring holds the key and the token, and doctor passes on a fake Prism tree.
 // Then the wizard re-opens from Settings to edit a setting. Screenshots go to test-results/.
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Browser, type Page, expect, test } from "@playwright/test";
 import { FIXTURES, FRESH_BASE, FRESH_GOS_HOME, PRISM, freshCode, python } from "./fresh";
 import { contrastMisses } from "./harness";
@@ -12,6 +14,7 @@ const shot = (name: string) => test.info().outputPath(`${name}.png`);
 const KEY = `sk-ant-api03-${"E2eW1zard".repeat(8)}`; // fake, the shape of a real key
 const TOKEN = `MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.GaBcDe.${"y".repeat(38)}`; // fake, a token's shape
 const CONFIG = join(FRESH_GOS_HOME, "config", "gos.toml");
+const REPO = fileURLToPath(new URL("../..", import.meta.url));
 
 let page: Page;
 
@@ -168,6 +171,15 @@ test("gos.toml reads back, the keyring holds the secrets, doctor passes", async 
   const ring = JSON.parse(readFileSync(join(FIXTURES, "keyring.json"), "utf-8")) as Record<string, string>;
   expect(ring["gregtec-os/anthropic|anthropic"]).toBe(KEY);
   expect(ring["gregtec-os/discord|discord"]).toBe(TOKEN);
+  // The gos doctor command itself (not only the wizard's checklist, which is its read-only subset)
+  // passes on the Prism tree and GOS_HOME gos.toml now names.
+  const doctor = spawnSync(
+    "uv",
+    ["run", "--quiet", "gos", "doctor", "--prism-root", PRISM, "--gos-home", found.gos_home, "--no-hash"],
+    { cwd: REPO, encoding: "utf-8" },
+  );
+  expect(doctor.status, doctor.stdout + doctor.stderr).toBe(0);
+  expect(doctor.stdout).toContain("GTNH-Play");
 });
 
 test("re-entering the wizard from Settings edits a setting", async () => {
@@ -175,6 +187,13 @@ test("re-entering the wizard from Settings edits a setting", async () => {
   await page.getByTestId("open-setup").click();
   await expect(page.getByTestId("setup")).toHaveAttribute("data-done", "yes");
   await expect(page.getByTestId("setup-field-play")).toHaveValue("GTNH-Play");
+  // Play is never moved by a click, and Lab can never be Play (the review's H1).
+  await fill("play", "GTNH-Lab");
+  await fill("lab", "GTNH-Play");
+  await page.getByTestId("setup-save").click();
+  await expect(page.getByTestId("setup-problem-play")).toContainText("never moves Play");
+  await expect(page.getByTestId("setup-problem-lab")).toContainText("Play's folder");
+  expect(readFileSync(CONFIG, "utf-8")).toContain('play = "GTNH-Play"');
   await page.getByTestId("setup-nav-talk_key").click();
   await expect(page.getByTestId("setup-field-talk_key")).toHaveValue("F13");
   await fill("talk_key", "F18");

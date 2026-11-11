@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../src/api/client";
 import type { SetupDevices, SetupField, SetupState, SetupStep } from "../src/api/types";
-import { canFinish, deviceChoices, startValues, stepMark, wizardInHash } from "../src/state/setup";
+import { canFinish, deviceChoices, startValues, stepMark, wizardGate, wizardInHash } from "../src/state/setup";
 import { Setup } from "../src/views/Setup";
 
 afterEach(() => {
@@ -50,7 +50,7 @@ const checklist: SetupStep = {
 };
 
 function state(over: Partial<SetupState> = {}): SetupState {
-  return { done: false, completed_utc: null, config_path: "C:/Users/c/GregtecOS/config/gos.toml", config_error: null, steps: [paths, anthropic, later, checklist], ...over };
+  return { done: false, completed_utc: null, config_exists: false, config_path: "C:/Users/c/GregtecOS/config/gos.toml", config_error: null, steps: [paths, anthropic, later, checklist], ...over };
 }
 
 describe("setup logic", () => {
@@ -87,6 +87,16 @@ describe("setup logic", () => {
     expect(choices[3].label).toBe('"Chat" · Headphones (Arctis Nova Elite Chat)');
     expect(deviceChoices(out, listing, "USB").at(-1)?.label).toBe('"USB" · not connected now');
     expect(deviceChoices(out, null, "")).toEqual([{ value: "", label: "Windows' default" }]);
+    // A field that must name a device (the spoken answers' output) has no default to fall back to.
+    const named = field({ id: "output_endpoint", kind: "device", devices: "outputs", required: true });
+    expect(deviceChoices(named, listing, "Chat").map((c) => c.value)).toEqual(["Headphones (Arctis Nova Elite Game)", "Headphones (Arctis Nova Elite Chat)", "Chat"]);
+  });
+
+  it("opens on the wizard only on a first run; an unfinished setup gets a banner", () => {
+    expect(wizardGate(null)).toBe("none");
+    expect(wizardGate({ done: false, config_exists: false })).toBe("wizard");
+    expect(wizardGate({ done: false, config_exists: true })).toBe("banner");
+    expect(wizardGate({ done: true, config_exists: true })).toBe("none");
   });
 
   it("finishes only with a checklist and no error row", () => {
@@ -176,6 +186,16 @@ describe("the wizard view", () => {
     const onClose = vi.fn();
     render(<Setup onClose={onClose} onDone={() => undefined} />);
     fireEvent.click(await screen.findByTestId("setup-close"));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("can be left for later when gos.toml exists but setup isn't done", async () => {
+    vi.spyOn(api, "setup").mockResolvedValue(state({ config_exists: true }));
+    const onClose = vi.fn();
+    render(<Setup onClose={onClose} onDone={() => undefined} />);
+    const later = await screen.findByTestId("setup-close");
+    expect(later.textContent).toBe("Later");
+    fireEvent.click(later);
     expect(onClose).toHaveBeenCalled();
   });
 });

@@ -26,12 +26,13 @@ export interface Choice {
   label: string;
 }
 
-/** A device field's choices: Windows' default (empty), each listed device, and the saved value
- * when it isn't connected now (so opening the step never changes it). */
+/** A device field's choices: Windows' default (empty, for a field that may be empty: the
+ * microphone), each listed device, and the saved value when it isn't connected now (so opening the
+ * step never changes it). */
 export function deviceChoices(field: SetupField, listing: SetupDevices | null, value: string): Choice[] {
   const list = field.devices === "outputs" ? (listing?.outputs ?? []) : (listing?.inputs ?? []);
   const fallback = list.find((d) => d.default);
-  const out: Choice[] = [{ value: "", label: fallback ? `Windows' default (${fallback.name})` : "Windows' default" }];
+  const out: Choice[] = field.required ? [] : [{ value: "", label: fallback ? `Windows' default (${fallback.name})` : "Windows' default" }];
   for (const d of list) out.push({ value: d.name, label: d.default ? `${d.name} · default` : d.name });
   if (value && !list.some((d) => d.name === value)) {
     // A part of a name is enough (the voice client matches it), e.g. Appendix C's "Chat".
@@ -45,6 +46,16 @@ export function deviceChoices(field: SetupField, listing: SetupDevices | null, v
 /** Whether setup may be finished: no row of the checklist is an error. */
 export function canFinish(checks: readonly SetupCheck[] | null): boolean {
   return checks !== null && checks.length > 0 && !checks.some((c) => c.status === "error");
+}
+
+export type WizardGate = "wizard" | "banner" | "none";
+
+/** What an unfinished setup shows (D167, the WO-2.9 review's H2): only a first run (no gos.toml)
+ * opens on the wizard alone; a gos.toml without [setup] (an install from before the wizard) gets a
+ * banner he can dismiss, so the dashboard is never locked. None when the core can't say. */
+export function wizardGate(s: { done: boolean; config_exists: boolean } | null): WizardGate {
+  if (s === null || s.done) return "none";
+  return s.config_exists ? "banner" : "wizard";
 }
 
 /** The wizard's location: #/setup opens it at any time (Settings links there). */

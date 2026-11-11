@@ -30,8 +30,8 @@ import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
 import { Search, type SearchTarget } from "./views/Search";
 import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
-import { Setup } from "./views/Setup";
-import { wizardInHash } from "./state/setup";
+import { Setup, SetupBanner } from "./views/Setup";
+import { wizardGate, wizardInHash } from "./state/setup";
 
 const PIN_KEY = "gos.mode";
 
@@ -107,20 +107,28 @@ export function App() {
     setViewState(v);
     if (window.location.hash !== `#/${v}`) window.location.hash = `/${v}`;
   }, []);
-  // The setup wizard (WO-2.9): on its own until setup is done (first run), and at #/setup later.
-  const [setupDone, setSetupDone] = useState<boolean | null>(null);
+  // The setup wizard (WO-2.9): on its own on a first run (no gos.toml) until setup is done, a
+  // banner when an existing gos.toml has no [setup] (D167), and at #/setup at any time.
+  const [setupInfo, setSetupInfo] = useState<{ done: boolean; config_exists: boolean } | null>(null);
+  const [setupBanner, setSetupBanner] = useState(true);
   const [wizard, setWizard] = useState(() => wizardInHash(window.location.hash));
   const trustedSession = session?.role === "admin" || session?.role === "device";
   useEffect(() => {
     if (phase !== "ready" || !trustedSession) return;
     api.setup().then(
-      (s) => setSetupDone(s.done),
-      () => setSetupDone(null), // can't tell: the shell, as before
+      (s) => setSetupInfo({ done: s.done, config_exists: s.config_exists }),
+      () => setSetupInfo(null), // can't tell: the shell, as before
     );
   }, [phase, trustedSession, boot]);
+  const gate = wizardGate(setupInfo);
   const closeWizard = useCallback(() => {
     setWizard(false);
     setView("now");
+    // Saving a step wrote gos.toml, so an unfinished first run is now a banner, not the gate.
+    api.setup().then(
+      (s) => setSetupInfo({ done: s.done, config_exists: s.config_exists }),
+      () => undefined,
+    );
   }, [setView]);
 
   useEffect(() => {
@@ -240,8 +248,8 @@ export function App() {
   if (phase === "unpaired") {
     return <Pairing onPaired={() => setBoot((n) => n + 1)} />;
   }
-  if (phase === "ready" && trustedSession && (wizard || setupDone === false)) {
-    return <Setup onClose={closeWizard} onDone={() => setSetupDone(true)} />;
+  if (phase === "ready" && trustedSession && (wizard || gate === "wizard")) {
+    return <Setup onClose={closeWizard} onDone={() => setSetupInfo({ done: true, config_exists: true })} />;
   }
 
   const chips = stateChips({ phase, reachable, core });
@@ -305,6 +313,11 @@ export function App() {
               <button type="button" className="gos-btn" onClick={() => setNotice(null)}>
                 Dismiss
               </button>
+            </div>
+          )}
+          {trustedSession && gate === "banner" && setupBanner && (
+            <div className="banners">
+              <SetupBanner open={() => (window.location.hash = "/setup")} dismiss={() => setSetupBanner(false)} />
             </div>
           )}
           <Banners banners={bannersFor(core)} decide={decide} turnOn={turnOn} />
