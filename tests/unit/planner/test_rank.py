@@ -108,7 +108,9 @@ def test_addon_column_comes_last_scored_against_the_base_routes() -> None:
     r = out[-1]["rank"]
     assert r["column"] == "addon" and r["position"] == 1 and r["of"] == 1
     assert r["terms"]["machines"] == 0.25  # 5 of the largest, 20
-    assert out[0]["rank"]["terms"]["machines"] == 0.5  # base routes ranked among themselves
+    assert (
+        out[0]["rank"]["terms"]["machines"] == 0.5
+    )  # base routes ranked among themselves
 
 
 def test_weights_change_the_order() -> None:
@@ -157,7 +159,9 @@ def test_balanced_by_default(tmp_path: Path) -> None:
 
 
 def test_read_prefs_reads_the_template_and_never_writes(tmp_path: Path) -> None:
-    template = Path(__file__).resolve().parents[3] / "vault-template" / "me" / "prefs.md"
+    template = (
+        Path(__file__).resolve().parents[3] / "vault-template" / "me" / "prefs.md"
+    )
     me = tmp_path / "me"
     me.mkdir()
     (me / "prefs.md").write_bytes(template.read_bytes())

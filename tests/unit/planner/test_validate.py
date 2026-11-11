@@ -32,7 +32,12 @@ DOC: dict[str, Any] = {
                 "scarcity": 0.4,
                 "by_type": [
                     {"name": "Mixer", "tier": "MV", "count": 4, "confidence": 0.9},
-                    {"name": "Quantum Tank IV", "tier": "MV", "count": 6, "confidence": 1},
+                    {
+                        "name": "Quantum Tank IV",
+                        "tier": "MV",
+                        "count": 6,
+                        "confidence": 1,
+                    },
                 ],
                 "raw_in_h": [{"name": "Circuit 1", "per_h": 7200.0}],
                 "batch": {"qty": 64, "eta_s": 1800, "window_s": 3600},
