@@ -32,4 +32,8 @@
 
   ignore = {},            -- address prefixes of components to leave out
   me = false,             -- address prefix of the AE2 controller/interface to use
+
+  -- M1, the file mailbox (no internet card, WO-7.3): its folder on this managed drive and how
+  -- long an exchange waits for the core (0 to 4 s). Needs mailbox.lua next to gos-agent.lua.
+  -- mailbox = { dir = "/home/gos/mailbox", wait_s = 2 },
 }

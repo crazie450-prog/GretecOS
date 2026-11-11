@@ -15,6 +15,10 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
   it first, so in no-AI mode (no key, an API problem, the credit pause, Clayton's switch) no
   model is called: a fast-lane request gets those lookups, and deep-lane work gets a line saying
   it needs the AI. A failed call tells the mode what it showed, a good one that the API is back.
+- "Confirm" and "cancel" (D59, WO-7.1) go to the action desk with the way the request came in
+  (``via``: ``voice`` from the voice client, ``dashboard`` or ``phone`` from a paired browser,
+  ``discord`` from the bot): plain "confirm" confirms whatever action is pending. A request with
+  no such way (``gos ask``, any other client) can't confirm, and is told how to.
 - Saved plans ("my plans", "show plan X", "BOM for X") are instant commands
   (:mod:`gregtec.agents.saved_plans`), so they work with the AI offline.
 - "persona <name>" switches the persona with no model call (WO-5.6, D206), "which persona"
@@ -37,7 +41,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 import anthropic
 
@@ -64,10 +68,14 @@ from gregtec.agents.personas import STATE_FILE, Personas, UnknownPersona
 from gregtec.agents.tools.catalog import default_registry
 from gregtec.agents.tools.registry import Registry
 from gregtec.agents.tools.tsv import Parsed
+from gregtec.bridge.actions import VIAS, ActionDesk
 from gregtec.db import access
 from gregtec.llm.fake import EchoClient
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
+
+if TYPE_CHECKING:
+    from gregtec.bridge.ops import Ops
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +88,7 @@ PREWARM_FRESH_S = 240.0
 WARMED, WARM, BUSY, NO_LANE, FAILED = "warmed", "warm", "busy", "offline", "failed"
 AI_OFFLINE = "AI is offline; I can do lookups."
 NOTHING_PENDING = "Nothing is waiting for confirmation."
+CONFIRM_ELSEWHERE = "Confirm by voice, on the dashboard, on the phone or in Discord; this way in can't confirm."
 NOTHING_TO_REPEAT = "I haven't said anything yet."
 EMPTY = "Ask me something: a recipe, an item, a machine or a quest."
 # NOT_CHECKED for a turn with no card to point at (the model looked things up itself)
@@ -221,9 +230,13 @@ class Asker:
         ai: AiMode | None = None,
         home: Path | None = None,
         personas: Personas | None = None,
+        actions: ActionDesk | None = None,
     ) -> None:
         self.registry = registry
         self.personas = personas  # WO-5.6; None: no persona commands
+        self.actions = (
+            actions  # the confirm flow (WO-7.1); None: nothing can be pending
+        )
         self.home = home  # GOS_HOME, for saved plans' JSON (None: the DB's own)
         self.deep = deep
         self.clock = clock
@@ -255,7 +268,8 @@ class Asker:
                         log.exception("can't set up the fast lane")
             return self._lane
 
-    def ask(self, text: str, *, task: str = "ask") -> Reply:
+    def ask(self, text: str, *, task: str = "ask", via: str | None = None) -> Reply:
+        """``via``: how the request came in, if it may confirm an action (:data:`VIAS`)."""
         started = self.clock()
         text = " ".join(text.split())[:TEXT_MAX]
         if not text:
@@ -266,7 +280,7 @@ class Asker:
         if route.intent == router.REPEAT and pending is not None:
             with self._lock:  # the repeated question can still be answered
                 self._pending = pending
-        reply = self._reply(route, started, task)
+        reply = self._reply(route, started, task, via)
         if self.personas is not None and reply.persona is None:
             reply.persona = self.personas.info()
         reply.total_ms = round((self.clock() - started) * 1000)
@@ -300,16 +314,18 @@ class Asker:
             return None
         return replace(pending.route, subject=found[index].key)
 
-    def _reply(self, route: router.Route, started: float, task: str) -> Reply:
+    def _reply(
+        self, route: router.Route, started: float, task: str, via: str | None = None
+    ) -> Reply:
         if route.kind == router.INSTANT:
             if route.intent == router.PLAN and self._ai_usable():
                 reply = self._plans(route, fall_through=True)
                 if reply is None:  # names no saved plan: the AI answers it, as before
                     return self._reply(
-                        router.route(route.text, plans=False), started, task
+                        router.route(route.text, plans=False), started, task, via
                     )
                 return reply
-            return self._instant(route)
+            return self._instant(route, via)
         if route.kind == router.DEEP:
             reasons = self.ai.reasons() if self.ai is not None else []
             if reasons:
@@ -442,7 +458,7 @@ class Asker:
             reply.handoff = {"source": "fast_lane"}
         return reply
 
-    def _instant(self, route: router.Route) -> Reply:
+    def _instant(self, route: router.Route, via: str | None = None) -> Reply:
         intent = route.intent
         if intent == router.REPEAT:
             with self._lock:
@@ -453,8 +469,7 @@ class Asker:
                 last, lane=router.INSTANT, intent=intent, calls=0, ttft_ms=None
             )
         if intent in (router.CONFIRM, router.CANCEL):
-            # The confirm flow (D59) arrives with WO-7.1's actions; nothing can be pending yet.
-            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+            return self._decide(intent, via)
         if intent == router.TIER:
             out = self.registry.call("quest_frontier", {"n": 1}, lane="fast")
             block = prefetch.Block("quest_frontier", {"n": 1}, out.text, out.is_error)
@@ -498,6 +513,27 @@ class Asker:
         greeting = pack.samples[0] if pack.samples else ""
         text = f"{pack.name} here. {greeting}".strip()
         return Reply(text, router.INSTANT, intent, persona=pack.info())
+
+    def _decide(self, intent: str, via: str | None) -> Reply:
+        """The instant "confirm" or "cancel" (D59): the pending action, whichever it is."""
+        desk = self.actions
+        if desk is None or desk.pending() is None:
+            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+        if intent == router.CONFIRM:
+            if via not in VIAS:
+                return Reply(CONFIRM_ELSEWHERE, router.INSTANT, intent, pending=True)
+            out = desk.confirm(via)
+        else:
+            out = desk.cancel(via)
+        if out.action is None:  # it expired or changed between the two looks
+            return Reply(out.text, router.INSTANT, intent, pending=False)
+        return Reply(
+            out.text,
+            router.INSTANT,
+            intent,
+            pending=True,
+            refs=[f"action:{out.action.id}"],
+        )
 
     def _plans(
         self, route: router.Route, *, fall_through: bool = False
@@ -567,9 +603,13 @@ class Agents:
             lane.persona = self.personas.block
         return lane
 
-    def asker(self, ai: AiMode | None = None) -> Asker:
-        """``ai``: the core's no-AI mode (WO-2.8); None for none."""
-        lane: FastLane | Callable[[], FastLane | None] = self.fast or self.lane
+    def asker(
+        self, ai: AiMode | None = None, actions: ActionDesk | None = None
+    ) -> Asker:
+        """``ai``: the core's no-AI mode (WO-2.8); ``actions``: its action desk (WO-7.1)."""
+        lane: FastLane | Callable[[], FastLane | None] = (
+            self.fast if self.fast is not None else self.lane
+        )
         return Asker(
             self.registry,
             self.deep,
@@ -577,6 +617,7 @@ class Agents:
             ai=ai,
             home=self.home,
             personas=self.personas,
+            actions=actions,
         )
 
     def close(self) -> None:
@@ -593,13 +634,14 @@ def setup(
     store: Store | None = None,
     fake: bool = False,
     deep_lane: bool = True,
+    ops: Ops | None = None,
 ) -> Agents:
     """``store``: the core's own (else one is opened when the DB exists, for the meter).
     ``fake``: the fast lane runs :class:`gregtec.llm.fake.EchoClient` (no key, no cost) with no
     meter, so its simulated calls never reach ``llm_usage`` (the credit alerts, the TTFT data).
     ``deep_lane`` False (or ``fake``): handoffs are only recorded (:class:`HandoffRecorder`), as
     ``gos eval fast-lane`` needs; else the real deep lane (WO-2.4), started on the first
-    handoff or by the core."""
+    handoff or by the core. ``ops``: the core's OC bridge, for the ops tools (WO-7.1)."""
     vault = cfg.gos_home / "vault"
     opened = None
     if store is None and access.db_path(cfg.gos_home).is_file():
@@ -614,10 +656,10 @@ def setup(
     deep: HandoffRecorder | DeepLaneService
     if fake or not deep_lane:
         deep = HandoffRecorder()
-        registry = default_registry(cfg.gos_home, deep=deep)
+        registry = default_registry(cfg.gos_home, deep=deep, ops=ops)
     else:
         deep = DeepLaneService.for_home(cfg.gos_home, Settings.from_config(cfg), meter)
-        registry = default_registry(cfg.gos_home, deep=deep)
+        registry = default_registry(cfg.gos_home, deep=deep, ops=ops)
         deep.registry = registry
     personas = Personas(
         vault if vault.is_dir() else None,

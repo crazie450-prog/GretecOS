@@ -95,5 +95,11 @@ export async function act(card: ApprovalCard, action: string): Promise<void> {
     await post(`/api/pair/${id}/deny`);
     return;
   }
+  // A world action (WO-7.1, D59): the button confirms or cancels this action by its id, so an
+  // old card can never confirm a newer one; the core sets confirmed_via from who asked.
+  if (card.kind === "action" && kind === "action" && (action === "confirm" || action === "cancel")) {
+    await post(`/api/actions/${id}/${action}`);
+    return;
+  }
   throw new ApiError(400, `${action} isn't an action for this card`);
 }

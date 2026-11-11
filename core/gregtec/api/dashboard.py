@@ -348,6 +348,7 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
     alerts.sort(key=lambda a: a["level"] != "err")
     approvals = _valid(
         [cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"]
+        + action_cards(core)
     )
     pairing = _valid(
         [
@@ -394,7 +395,7 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         "data": board.data,
         "ai": ai,
         "credits": credits_state(core),
-        "oc": {"status": "not_set_up", "detail": "the OC bridge arrives with WO-7.1"},
+        "oc": oc_state(core),
         "tier": board.tier,
         "alerts": _valid(alerts),
         "jobs": jobs,
@@ -405,6 +406,45 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
     return {
         True: {**shared, "approvals": approvals + pairing, "asking": board.asking()},
         False: {**shared, "approvals": approvals, "asking": []},
+    }
+
+
+def action_cards(core: "Core") -> list[dict[str, Any]]:
+    """The pending world action's approval card (WO-7.1, D59), if one is waiting."""
+    if core.ops is None:
+        return []
+    try:
+        pending = core.ops.desk.pending()
+    except sqlite3.Error as exc:
+        log.info("pending action not read", extra={"why": str(exc)[:200]})
+        return []
+    return (
+        [cards_build.action_approval(pending.as_dict())] if pending is not None else []
+    )
+
+
+def oc_state(core: "Core") -> dict[str, Any]:
+    """The ``oc`` of the state (WO-7.1): ``connected`` while an OC agent was heard within the
+    stale limit, ``disconnected`` when all have gone quiet, ``not_set_up`` before any spoke."""
+    if core.ops is None:
+        return {
+            "status": "not_set_up",
+            "detail": "the OC bridge isn't running in this core",
+        }
+    agents = core.ops.telemetry.snapshot()["agents"]
+    if not agents:
+        return {"status": "not_set_up", "detail": "no OC computer has reported yet"}
+    fresh = [a for a in agents if not a["stale"]]
+    if fresh:
+        names = ", ".join(sorted({a["binding"] for a in fresh}))
+        return {
+            "status": "connected",
+            "detail": f"{len(fresh)} OC computer(s) reporting ({names})",
+        }
+    newest = min(a["age_s"] for a in agents)
+    return {
+        "status": "disconnected",
+        "detail": f"no OC report for {newest} s (the game may be paused); readings are stale",
     }
 
 

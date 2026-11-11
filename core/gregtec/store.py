@@ -1,5 +1,6 @@
 """The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D),
-``client_token`` (D117) and ``answer`` (the dashboard's Chat: the newest 50 answers, D159).
+``client_token`` (D117), ``answer`` (the dashboard's Chat: the newest 50 answers, D159), and the
+OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -30,6 +31,13 @@ CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);
 CREATE TABLE IF NOT EXISTS client_token(name TEXT PRIMARY KEY, token_sha256 TEXT NOT NULL,
   created INT NOT NULL, last_used INT, revoked INT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS answer(id TEXT PRIMARY KEY, ts INT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tel_machine(id TEXT PRIMARY KEY, name TEXT, mte_id INT, dim INT, x INT, y INT,
+  z INT, line_id TEXT, last_seen INT, status TEXT);
+CREATE TABLE IF NOT EXISTS tel_sample(ts INT, src TEXT, key TEXT, value REAL, text TEXT);
+CREATE INDEX IF NOT EXISTS ix_tel ON tel_sample(src, key, ts);
+CREATE TABLE IF NOT EXISTS action(id INTEGER PRIMARY KEY, created INT, kind TEXT, args TEXT,
+  state TEXT CHECK(state IN ('proposed','confirmed','sent','done','failed','cancelled','expired')),
+  confirmed_via TEXT, confirmed_ts INT, result TEXT);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (
@@ -39,6 +47,14 @@ ADDED_COLUMNS = (
         "ttft_ms",
         "INT",
     ),  # a streamed call's time to first text token (D152)
+    # The confirm flow (WO-7.1, D220): which instance's OC computer an action is for, what
+    # GOS read back, who proposed it, and when it was sent and finished.
+    ("action", "target", "TEXT"),
+    ("action", "computer", "TEXT"),
+    ("action", "readback", "TEXT"),
+    ("action", "source", "TEXT"),
+    ("action", "sent_ts", "INT"),
+    ("action", "done_ts", "INT"),
 )
 
 
