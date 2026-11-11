@@ -6,8 +6,11 @@ curated scarcity table's weight times one, or the effort model's (:mod:`.effort`
 
 - ``machines`` (total) and ``by_type``: per machine (``mte``), its name, kind, tier, count, addon
   flag, ``machine_fact`` confidence and whether it is new to him;
-- ``new_types``: the unlock list, the route's machines My base doesn't list as owned
-  (``mte:<id>``, sorted);
+- ``new_types``: the unlock list (``mte:<id>``, sorted): the route's machines that run a recipe
+  map on which My base lists no owned machine, the same test the effort model's unlocks use
+  (D198, review M3). Owning an LV mixer makes an MV mixer not new: the tier-up's cost is in the
+  build effort. With no owned machines listed, every map counts as one he has (§7.2's default,
+  D196), so nothing is new;
 - ``eu``: per tier, average and peak EU/t and amps (``count x amps`` per machine), and the
   totals ``eut_avg``, ``eut_peak``; ``tier`` is the highest machine tier;
 - ``raw_in_h`` and ``byproducts_h``: the boundary's inputs and outputs per hour (EU and the
@@ -176,7 +179,7 @@ def complexity(g: Graph, plan: Mapping[str, Any]) -> dict[str, int]:
 
 
 def _machines(
-    plan: Mapping[str, Any], owned: Mapping[int, int]
+    plan: Mapping[str, Any], on_map: Mapping[str, int]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     types: dict[int, dict[str, Any]] = {}
     tiers: dict[str, dict[str, Any]] = {}
@@ -194,9 +197,11 @@ def _machines(
                 "count": 0,
                 "addon": m["addon"],
                 "confidence": m["confidence"],
-                "new": owned.get(m["mte"], 0) <= 0,
+                "new": False,
             },
         )
+        if on_map and on_map.get(n["map"], 0) <= 0:
+            t["new"] = True
         t["count"] += n["count"]
         t["confidence"] = min(t["confidence"], m["confidence"])
         e = tiers.setdefault(
@@ -215,12 +220,13 @@ def route(
     conn: sqlite3.Connection,
     g: Graph,
     plan: Mapping[str, Any],
-    owned: Mapping[int, int],
+    on_map: Mapping[str, int],
     table: Mapping[str, Weight],
     effort: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """The ``metrics`` object of one plan (see the module docstring)."""
-    by_type, eu = _machines(plan, owned)
+    """The ``metrics`` object of one plan (see the module docstring); ``on_map``: per recipe
+    map, the machines My base lists as owned on it (:attr:`.effort.Effort.on_map`)."""
+    by_type, eu = _machines(plan, on_map)
     target = plan["target"]["id"]
     raw = _per_h(plan["boundary"]["in"], {EU_KEY, target})
     byproducts = _per_h(plan["boundary"]["out"], {EU_KEY, target})

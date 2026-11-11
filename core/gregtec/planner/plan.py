@@ -176,10 +176,11 @@ def design(
         templates=templates,
         run_id=g.run_id,
     )
-    owned = base.owned_machines()
     table = metrics.load_scarcity()
     for p in built:
-        p["metrics"] = metrics.route(conn, g, p, owned, table, measure.route(p))
+        p["metrics"] = metrics.route(
+            conn, g, p, measure.on_map, table, measure.route(p)
+        )
     ranked = rank.order(built, prefs)
     for p in ranked:
         r = p["rank"]

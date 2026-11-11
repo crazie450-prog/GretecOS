@@ -226,10 +226,13 @@ def test_machines_new_types_and_eu(conn: sqlite3.Connection) -> None:
         nodes = [n for n in p["nodes"] if n["machine"]]
         assert m["machines"] == sum(n["count"] for n in nodes)
         assert sum(t["count"] for t in m["by_type"]) == m["machines"]
-        mtes = sorted({n["machine"]["mte"] for n in nodes})
-        assert m["new_types"] == [f"mte:{x}" for x in mtes if x != MIXER]
+        # New: a machine on a map where he owns none (the mixer's map is covered, D198).
+        new = sorted(
+            {n["machine"]["mte"] for n in nodes if n["map"] != "gt.recipe.mixer"}
+        )
+        assert m["new_types"] == [f"mte:{x}" for x in new]
         assert [t["new"] for t in m["by_type"]] == [
-            t["mte"] != MIXER for t in m["by_type"]
+            t["mte"] in new for t in m["by_type"]
         ]
         assert m["eut_avg"] == pytest.approx(math.fsum(n["eut_avg"] for n in nodes))
         assert m["eut_peak"] == sum(n["eut_peak"] for n in nodes)
@@ -238,6 +241,21 @@ def test_machines_new_types_and_eu(conn: sqlite3.Connection) -> None:
             assert e["amps"] == sum(n["count"] * n["amps"] for n in at)
         assert m["footprint"] is None
         assert m["tier"] in {"LV", "MV"}
+
+
+def test_new_types_use_the_effort_models_map_test(conn: sqlite3.Connection) -> None:
+    """Review M3: owning a mixer covers every mixer on its map (the addon MV mixer too), as
+    the effort model's unlocks do; with no owned machines listed, nothing is new (D196)."""
+    request = Request(WIDGET, qty=2, machines="base+addons")
+    addon = with_mte(design(conn, request, {MIXER: 1}), tp.ADDON_MIXER)
+    t = next(t for t in addon["metrics"]["by_type"] if t["mte"] == tp.ADDON_MIXER)
+    assert t["new"] is False
+    assert f"mte:{tp.ADDON_MIXER}" not in addon["metrics"]["new_types"]
+    others = with_mte(design(conn, request, {REACTOR: 1}), tp.ADDON_MIXER)
+    assert f"mte:{tp.ADDON_MIXER}" in others["metrics"]["new_types"]
+    for p in design(conn, request).plans:
+        assert p["metrics"]["new_types"] == []
+        assert not any(t["new"] for t in p["metrics"]["by_type"])
 
 
 def test_raw_inputs_byproducts_per_hour_and_scarcity(conn: sqlite3.Connection) -> None:
