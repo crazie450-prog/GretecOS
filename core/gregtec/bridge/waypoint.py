@@ -137,22 +137,9 @@ def write(where: Place, args: Mapping[str, Any]) -> str:
         raise WaypointError(
             f"JourneyMap has no data for the world {where.world!r} yet (open it once in game)"
         )
+    _real(where, folder.parent)  # no link leads elsewhere before anything is created
     folder.mkdir(exist_ok=True)
-    try:
-        real_instance = where.instance.resolve(strict=True)
-        real = folder.resolve(strict=True)
-    except OSError as exc:
-        raise WaypointError(
-            f"can't reach the waypoints folder ({type(exc).__name__})"
-        ) from None
-    want = real_instance / folder.relative_to(where.instance)
-    if (
-        os.path.normcase(real) != os.path.normcase(want)
-        or _identity(real_instance, real) is None
-    ):
-        raise WaypointError(
-            "a link or junction leads the waypoints folder elsewhere; nothing written"
-        )
+    real = _real(where, folder)
     target = real / file_name
     if os.path.lexists(target):
         return f"waypoint {file_name} is already there"
@@ -177,3 +164,24 @@ def write(where: Place, args: Mapping[str, Any]) -> str:
         if tmp.exists():
             tmp.unlink()
     return f"wrote waypoint {file_name}"
+
+
+def _real(where: Place, path: Path) -> Path:
+    """``path`` resolved, if no link or junction on the way leads it out of its own place
+    under the instance; else WaypointError (nothing is written or created)."""
+    try:
+        real_instance = where.instance.resolve(strict=True)
+        real = path.resolve(strict=True)
+    except OSError as exc:
+        raise WaypointError(
+            f"can't reach the waypoints folder ({type(exc).__name__})"
+        ) from None
+    want = real_instance / path.relative_to(where.instance)
+    if (
+        os.path.normcase(real) != os.path.normcase(want)
+        or _identity(real_instance, real) is None
+    ):
+        raise WaypointError(
+            "a link or junction leads the waypoints folder elsewhere; nothing written"
+        )
+    return real

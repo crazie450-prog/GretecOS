@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.registry import DEEP, FAST, Registry
 from gregtec.bridge import ops as bridge_ops
+from gregtec.bridge.actions import SETTLE_S
 from gregtec.bridge.ingest import Bridge
 from gregtec.config import Config
 from gregtec.store import Store
@@ -153,6 +155,7 @@ def test_the_instant_confirm_needs_one_of_claytons_ways(
     for via in (None, "agent", "admin"):
         reply = asker.ask("confirm", via=via)
         assert reply.text == CONFIRM_ELSEWHERE and reply.pending is True
+    ops.desk.clock = lambda: time.time() + SETTLE_S  # read back before a plain confirm
     reply = asker.ask("yes, confirm it", via="voice")
     assert reply.intent == router.CONFIRM and reply.text.startswith("Confirmed:")
     assert reply.refs == ["action:1"]

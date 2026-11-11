@@ -33,12 +33,14 @@ from gregtec.bridge.actions import (
     PENDING_S,
     QUEUE_S,
     RESULT_S,
+    SETTLE_S,
     VIAS,
     Action,
     ActionDesk,
     ActionError,
 )
-from gregtec.bridge.ingest import AgentId
+from gregtec.bridge.ingest import REPLY_MAX, AgentId, Bridge, encode
+from gregtec.bridge.ingest import Outcome as BridgeOutcome
 from gregtec.bridge.ops import journal_to
 from gregtec.store import Store
 from gregtec.vault import schema
@@ -104,8 +106,10 @@ def d(tmp_path: Path) -> Iterator[Desk]:
 
 
 def propose(d: Desk, kind: str = "craft", target: str = "lab") -> Action:
+    """Propose, then let it be read back (:data:`SETTLE_S`), so a plain confirm takes it."""
     out = d.desk.propose(kind, ARGS[kind], target=target)
     assert out.ok and out.action is not None
+    d.clock.now += SETTLE_S
     return out.action
 
 
@@ -212,9 +216,41 @@ def test_a_button_confirms_only_its_own_action(d: Desk) -> None:
     assert d.desk.confirm("phone", a.id).ok
 
 
+def test_a_plain_confirm_waits_for_the_read_back(d: Desk) -> None:
+    """Review M3: "confirm" names no action, so it never takes one proposed a moment ago
+    (perhaps replacing what Clayton heard); a button names its action and isn't held."""
+    first = d.desk.propose("craft", CRAFT, target="lab").action
+    assert first is not None
+    d.clock.now += SETTLE_S - 1
+    soon = d.desk.confirm("voice")
+    assert not soon.ok and soon.action == first
+    assert (
+        soon.text
+        == "Just proposed: Craft 64 Stainless Steel Ingot in Lab. Say confirm."
+    )
+    d.clock.now += 1
+    second = d.desk.propose(
+        "say", ARGS["say"], target="lab"
+    ).action  # replaces the first
+    assert second is not None
+    d.clock.now += 1
+    replaced = d.desk.confirm("voice")
+    assert not replaced.ok and replaced.action == second
+    assert replaced.text == (
+        'A new action just replaced it: Say "hello" in chat in Lab. Say confirm.'
+    )
+    assert d.desk.get(second.id).state == "proposed"  # type: ignore[union-attr]
+    assert d.desk.get(first.id).state == "cancelled"  # type: ignore[union-attr]
+    d.clock.now += SETTLE_S - 1
+    assert d.desk.confirm("voice").ok
+    third = d.desk.propose("say", ARGS["say"], target="lab").action
+    assert third is not None
+    assert d.desk.confirm("dashboard", third.id).ok  # by id: at once
+
+
 def test_an_expired_action_cant_be_confirmed(d: Desk) -> None:
     a = propose(d)
-    d.clock.now += PENDING_S - 1
+    d.clock.now = a.created + PENDING_S - 1
     assert d.desk.pending() is not None
     d.clock.now += 1
     by_id = d.desk.confirm("dashboard", a.id)
@@ -392,6 +428,12 @@ def test_a_restart_drops_what_wasnt_sent(tmp_path: Path) -> None:
             c.id: "failed",
             d_.id: "expired",
         }
+        # Review L1: the restart's changes are journalled like any other.
+        assert [line.split(":")[0] for line in again.journal] == [
+            f"action_{c.id}",
+            f"action_{d_.id}",
+        ]
+        assert "restarted" in again.journal[0] and "restarted" in again.journal[1]
     finally:
         again.store.close()
 
@@ -420,6 +462,19 @@ def test_a_waypoint_that_cant_be_written_fails(tmp_path: Path) -> None:
         assert "JourneyMap has no data" in out.text
     finally:
         d.store.close()
+
+
+def test_an_unexpected_waypoint_error_fails_it_too(d: Desk) -> None:
+    """Review L2: any error from the writer fails the action; it never stays confirmed."""
+
+    def broken(target: str, args: Mapping[str, Any]) -> str:
+        raise ValueError("not under the instance")
+
+    d.desk.mark = broken
+    a = propose(d, "waypoint")
+    out = d.desk.confirm("voice")
+    assert not out.ok and d.desk.get(a.id).state == "failed"  # type: ignore[union-attr]
+    assert out.text.endswith("ValueError")
 
 
 # --- the journal ----------------------------------------------------------------------------
@@ -497,6 +552,7 @@ class ConfirmFlow(RuleBasedStateMachine):
         super().__init__()
         self._dir = tempfile.TemporaryDirectory()
         self.d = Desk(Path(self._dir.name))
+        self.bridge = Bridge(commands=self.d.desk)
         self.pending: tuple[int, int] | None = None  # (id, created)
         self.confirmed: dict[int, int] = {}  # id -> when the model saw it confirmed
         self.cancelled: set[int] = set()
@@ -514,10 +570,12 @@ class ConfirmFlow(RuleBasedStateMachine):
             self.cancelled.add(self.pending[0])
             self.pending = None
 
-    @rule(target=proposed, kind=st.sampled_from(KINDS))
-    def propose(self, kind: str) -> int:
+    @rule(target=proposed, kind=st.sampled_from(KINDS), long=st.booleans())
+    def propose(self, kind: str, long: bool) -> int:
         self._expire_model()
-        out = self.d.desk.propose(kind, ARGS[kind], target="lab")
+        # A long chat line fills a reply after a few, so Bridge.reply gives some back.
+        args = {"text": "x" * 256} if kind == "say" and long else ARGS[kind]
+        out = self.d.desk.propose(kind, args, target="lab")
         assert out.action is not None
         if self.pending is not None:
             assert out.cancelled is not None and out.cancelled.id == self.pending[0]
@@ -535,7 +593,11 @@ class ConfirmFlow(RuleBasedStateMachine):
     def confirm(self, via: str, which: int | None) -> None:
         self._expire_model()
         out = self.d.desk.confirm(via, which)
-        expect = self.pending is not None and which in (None, self.pending[0])
+        # By id: at once; a plain confirm: only once read back (SETTLE_S, review M3).
+        expect = self.pending is not None and (
+            which == self.pending[0]
+            or (which is None and int(self.d.clock.now) - self.pending[1] >= SETTLE_S)
+        )
         assert out.ok == expect or (
             expect and out.action is not None and out.action.kind == "waypoint"
         ), (out, self.pending, which)
@@ -545,6 +607,14 @@ class ConfirmFlow(RuleBasedStateMachine):
             if out.action is not None and out.action.kind == "waypoint":
                 self.finished.add(self.pending[0])
             self.pending = None
+
+    @rule(n=st.integers(min_value=1, max_value=8))
+    def long_lines_confirmed_by_their_buttons(self, n: int) -> None:
+        """A burst of these fills a reply, so Bridge.reply gives the rest back (review L6)."""
+        for _ in range(n):
+            self.propose("say", True)
+            assert self.pending is not None
+            self.confirm("dashboard", self.pending[0])
 
     @rule(which=st.one_of(st.none(), proposed))
     def cancel(self, which: int | None) -> None:
@@ -557,7 +627,7 @@ class ConfirmFlow(RuleBasedStateMachine):
             self.cancelled.add(self.pending[0])
             self.pending = None
 
-    @rule(seconds=st.sampled_from([0, 1, 30, 59, 60, 61, 120, 299, 300, 301]))
+    @rule(seconds=st.sampled_from([0, 1, 2, 3, 30, 59, 60, 61, 120, 299, 300, 301]))
     def advance(self, seconds: int) -> None:
         self.d.clock.now += seconds
         self.d.desk.tick()
@@ -580,6 +650,25 @@ class ConfirmFlow(RuleBasedStateMachine):
             assert cmd["confirmed_via"] in VIAS
             self.in_flight.add(cid)
             self.delivered.append(cid)
+
+    @rule(agent=st.sampled_from([LAB, AgentId("play", ADDR), AgentId("lab", OTHER)]))
+    def deliver_in_a_reply(self, agent: AgentId) -> None:
+        """The real wiring (review L6): Bridge.reply takes, sizes and gives back the rest."""
+        self._expire_model()
+        doc, ids = self.bridge.reply(BridgeOutcome(ok=True, agent=agent))
+        assert len(encode(doc)) <= REPLY_MAX
+        assert ids == [cmd["id"] for cmd in doc["cmds"]]
+        for cmd in doc["cmds"]:
+            cid = cmd["id"]
+            assert agent == LAB
+            assert cid in self.confirmed, f"action {cid} ran unconfirmed"
+            assert cid not in self.cancelled
+            assert cid not in self.in_flight and cid not in self.finished
+            assert cmd["confirmed_via"] in VIAS
+            self.in_flight.add(cid)
+            self.delivered.append(cid)
+        for row in self.d.store.rows("SELECT id FROM action WHERE state = 'sent'"):
+            assert row["id"] in self.in_flight, "given back commands stay queued"
 
     @precondition(lambda self: bool(self.in_flight))
     @rule(data=st.data())

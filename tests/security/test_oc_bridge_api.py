@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ from gregtec.agents.tools.catalog import build_registry
 from gregtec.api.app import Core, create_app
 from gregtec.api.security import Auth
 from gregtec.bridge import ops as bridge_ops
-from gregtec.bridge.actions import PENDING_S
+from gregtec.bridge.actions import PENDING_S, SETTLE_S
 from gregtec.bridge.http import RATE
 from gregtec.bridge.ingest import MAX_BODY, REPLY_MAX, validators
 from gregtec.cards import build as cards_build
@@ -379,6 +380,12 @@ def test_saying_confirm(client: TestClient, core: Core, token: str) -> None:
     admin = client.post("/api/ask", json={"text": "confirm"}, headers=bearer(ADMIN))
     assert admin.status_code == 200 and admin.json()["text"] == CONFIRM_ELSEWHERE
     voice = bearer(core.auth.issue_client_token("voice"))
+    # Review M3: a plain "confirm" right after a proposal reads it back instead.
+    soon = client.post("/api/ask", json={"text": "confirm"}, headers=voice)
+    assert soon.json()["pending"] is True
+    assert soon.json()["text"] == 'Just proposed: Say "hi" in chat in Lab. Say confirm.'
+    assert core.ops.desk.get(aid).state == "proposed"  # type: ignore[union-attr]
+    core.ops.desk.clock = lambda: time.time() + SETTLE_S  # type: ignore[union-attr]
     r = client.post("/api/ask", json={"text": "confirm"}, headers=voice)
     assert r.status_code == 200, r.text
     assert r.json()["pending"] is True and r.json()["text"].startswith(

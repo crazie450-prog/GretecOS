@@ -53,7 +53,9 @@ MACHINE_KEYS = ("active", "allowed", "work", "progress", "progress_max", "eu", "
 POWER_KEYS = ("eu", "eu_max", "eu_in", "eu_out")
 POWER_TEXT_KEYS = ("eu_str", "eu_max_str")
 COMPUTER_KEYS = ("mem_free", "mem_total", "energy", "energy_max")
-MAX_AGENTS_PER_BINDING = 16  # OC computers one binding may have (until the core restarts)
+MAX_AGENTS_PER_BINDING = (
+    16  # OC computers one binding may have (until the core restarts)
+)
 
 Results = Callable[[AgentId, Mapping[str, Any]], None]
 

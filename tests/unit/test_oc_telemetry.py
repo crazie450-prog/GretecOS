@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from gregtec.bridge import waypoint
-from gregtec.bridge.actions import ActionDesk, ActionError
+from gregtec.bridge.actions import SETTLE_S, ActionDesk, ActionError
 from gregtec.bridge.ingest import Bridge, Outcome
 from gregtec.bridge.telemetry import HEARTBEAT_S, STALE_S, Telemetry
 from gregtec.config import Config
@@ -238,6 +238,7 @@ def test_the_whole_loop_through_the_bridge(rig: Rig) -> None:
     # Unconfirmed: the reply carries nothing.
     accepted = rig.send(msg(2))
     assert rig.bridge.reply(accepted)[0]["cmds"] == []
+    rig.clock.now += SETTLE_S  # a plain "confirm" takes a proposal read back first
     rig.desk.confirm("voice")
     accepted = rig.send(msg(3))
     doc, ids = rig.bridge.reply(accepted)
@@ -343,6 +344,21 @@ def test_a_waypoint_never_goes_through_a_link(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     os.symlink(outside, sp / "waypoints")
+    with pytest.raises(waypoint.WaypointError, match="link or junction"):
+        waypoint.write(waypoint.place(cfg, "lab", as_dev=False), WP)
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="symlinks need privileges on Windows"
+)
+def test_no_folder_is_made_through_a_linked_world(tmp_path: Path) -> None:
+    """Review L3: the world folder itself a link: nothing is created at its target."""
+    cfg, sp = world(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sp.rmdir()
+    os.symlink(outside, sp)
     with pytest.raises(waypoint.WaypointError, match="link or junction"):
         waypoint.write(waypoint.place(cfg, "lab", as_dev=False), WP)
     assert list(outside.iterdir()) == []

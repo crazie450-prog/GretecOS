@@ -22,7 +22,9 @@ changes it. The life of one action::
   ``dashboard``, ``phone``, ``discord``), which only the core's own routes pass: the router's
   instant command "confirm", the approval card's button and the confirm-by-id API the phone
   and Discord buttons call. A button names the action it confirms (by id), so an old card can't
-  confirm a newer action; plain "confirm" takes whatever is pending. No tool, agent or OC
+  confirm a newer action; plain "confirm" takes whatever is pending, once it has been pending
+  :data:`SETTLE_S` (a younger one, perhaps replacing what Clayton heard, is read back again
+  instead: "A new action just replaced it: ... Say confirm."). No tool, agent or OC
   message can reach it: the agents' tools only propose and read, and an OC message only reports
   results. A pending action expires 60 s after it was proposed and can't be confirmed after.
 - **Queue and deliver** (:class:`gregtec.bridge.ingest.Commands`): a confirmed ``waypoint`` runs
@@ -62,6 +64,9 @@ KINDS = (*OC_KINDS, "waypoint")  # plan 7.9's safe actions; nothing destructive 
 VIAS = ("voice", "dashboard", "phone", "discord")  # how Clayton confirms (D59, D214)
 TARGETS = ("play", "lab")
 PENDING_S = 60  # a proposal Clayton hasn't confirmed by then expires (D59)
+SETTLE_S = (
+    3  # a plain "confirm" won't take a proposal younger than this (read back first)
+)
 QUEUE_S = (
     300  # a confirmed action its OC computer hasn't collected by then fails, unrun
 )
@@ -293,6 +298,18 @@ class ActionDesk:
             if pending is None or (action_id is not None and action_id != pending.id):
                 return Outcome(False, self._not_pending(action_id))
             now = int(self.clock())
+            if action_id is None and now - pending.created < SETTLE_S:
+                # A plain "confirm" names no action: one proposed this recently may not have
+                # been read back yet (an async deep lane, a second proposal in one turn).
+                replaced = self.store.rows(
+                    "SELECT 1 FROM action WHERE state = 'cancelled' AND id < ? AND "
+                    "done_ts >= ? AND result LIKE '%replaced by a newer proposal%' LIMIT 1",
+                    (pending.id, pending.created),
+                )
+                lead = "A new action just replaced it" if replaced else "Just proposed"
+                return Outcome(
+                    False, f"{lead}: {pending.readback}. {SAY_CONFIRM}", pending
+                )
             with self.store.transaction() as conn:
                 conn.execute(
                     "UPDATE action SET state = 'confirmed', confirmed_via = ?, confirmed_ts = ? "
@@ -529,7 +546,11 @@ class ActionDesk:
                 {"state": "done", "ok": True, "note": what},
                 True,
             )
-        except (waypoint.WaypointError, OSError) as exc:
+        except (
+            Exception
+        ) as exc:  # any failure fails the action; it never stays confirmed
+            if not isinstance(exc, waypoint.WaypointError | OSError):
+                log.exception("waypoint not written", extra={"action": action.id})
             msg = (
                 str(exc)
                 if isinstance(exc, waypoint.WaypointError)
@@ -554,6 +575,9 @@ class ActionDesk:
     def _recover(self) -> None:
         """At start: no proposal or unsent command outlives the core that read it back."""
         now = int(self.clock())
+        due = self.store.rows(
+            "SELECT id FROM action WHERE state IN ('proposed', 'confirmed') ORDER BY id"
+        )
         with self.store.transaction() as conn:
             conn.execute(
                 "UPDATE action SET state = 'expired', done_ts = ?, result = ? "
@@ -568,6 +592,14 @@ class ActionDesk:
                     _json({"why": "the core restarted before sending it; nothing ran"}),
                 ),
             )
+        # Journalled like every change (nothing is listening for on_change yet).
+        for row in due:
+            after = self.get(int(row["id"]))
+            if after is not None and self.journal is not None:
+                try:
+                    self.journal(_journal_lines(after))
+                except Exception:
+                    log.exception("action not journalled", extra={"action": after.id})
 
     def _changed(self, action: Action, say: str) -> None:
         log.info(
