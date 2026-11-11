@@ -168,8 +168,9 @@ class SetupService:
         }
         values.update(self._values(step, given))
         problems = self._field_problems(step, values)
-        outcome = step.check(ctx, values)
-        return Outcome({**outcome.problems, **problems}, outcome.checks), ctx
+        if problems:  # the step's own check may count on well-formed values
+            return Outcome(problems), ctx
+        return step.check(ctx, values), ctx
 
     def save(self, step_id: str, given: Mapping[str, Any]) -> dict[str, Any]:
         step = self.step(step_id)
