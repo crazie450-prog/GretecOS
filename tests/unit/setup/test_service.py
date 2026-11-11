@@ -3,7 +3,10 @@ the keyring (never echoed), the key's test call, the device list and finishing s
 
 from __future__ import annotations
 
+import functools
 import logging
+import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -583,7 +586,8 @@ def test_swapping_play_with_lab_is_refused_once_play_is_saved(
 def test_export_or_lab_can_never_be_the_play_the_core_runs_with(
     ring: MemoryKeyring, prism: Path, home: Path, tmp_path: Path
 ) -> None:
-    """No gos.toml yet: the core runs with its defaults, so their Play is guarded too."""
+    """No gos.toml yet: the core runs with its defaults, so their Play is guarded too, and as it
+    is a folder there it can't move either (final check round 2)."""
     svc = SetupService(
         home / "config" / "gos.toml",
         Config(gos_home=home, prism_instances=prism / "instances"),
@@ -595,8 +599,207 @@ def test_export_or_lab_can_never_be_the_play_the_core_runs_with(
         "lab": "GTNH-Export",
     }
     outcome, _ = svc.check("paths", values)
-    assert set(outcome.problems) == {"export"}  # Play itself isn't saved yet
+    assert set(outcome.problems) == {"play", "export"}
     assert "Play's folder" in outcome.problems["export"]
+    assert "never moves Play" in outcome.problems["play"]
+
+
+def test_a_first_run_chooses_play_while_the_defaults_name_no_folder(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    """The defaults' Play (C:/Games/PrismLauncher/...) isn't there: nothing is Play yet, so the
+    first save picks it. Export or Lab is still never the Play entered, and once saved Play is
+    fixed (final check round 2)."""
+    values = path_values(prism, home, tmp_path / "app")
+    chosen = values | {"play": "GTNH-Lab", "lab": "GTNH-Play"}
+    assert svc.check("paths", chosen)[0].problems == {}
+    clash = values | {"play": "GTNH-Lab", "export": "GTNH-Lab", "lab": "GTNH-Play"}
+    assert "export" in svc.check("paths", clash)[0].problems
+    svc.save("paths", chosen)
+    back = values | {"play": "GTNH-Play", "lab": "GTNH-Lab"}
+    assert set(svc.check("paths", back)[0].problems) == {"play", "lab"}
+
+
+@pytest.fixture
+def defaults_at(monkeypatch: pytest.MonkeyPatch, prism: Path) -> Path:
+    """The core's default Prism folders are ``prism`` (as C:/Games/PrismLauncher is on Clayton's
+    PC), so a gos.toml that doesn't name them still runs with the real Play."""
+    monkeypatch.setattr(
+        config,
+        "Config",
+        functools.partial(
+            Config, prism_root=prism, prism_instances=prism / "instances"
+        ),
+    )
+    return prism
+
+
+def _install(home: Path, toml: str | None) -> SetupService:
+    """The wizard of a core started with ``toml`` as its gos.toml (None: no gos.toml)."""
+    path = home / "config" / "gos.toml"
+    if toml is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(toml, "utf-8")
+    base = config.load(path) if path.exists() else config.Config(gos_home=home)
+    return SetupService(path, base, provider=FakeDevices())
+
+
+def _try(svc: SetupService, values: dict[str, str], restart: bool) -> bool:
+    try:
+        svc.save("paths", values)
+    except SetupError:
+        return False
+    if restart:  # the core now runs with what was saved
+        svc.base = config.load(svc.path)
+    return True
+
+
+def _assert_play_kept(svc: SetupService, play: Path) -> None:
+    cfg = config.load(svc.path) if svc.path.exists() else svc.base
+    assert doctor.folded(cfg.instance("play")) == doctor.folded(play)
+    for role in ("export", "lab"):
+        assert not doctor.within(cfg.instance(role), play), role
+
+
+OLD_TOML = "[paths]\ngos_home = '{home}'\nprism_root = '{prism}'\ngos_app = '{app}'\n"
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "toml",
+    [
+        None,  # a first run: the core's default Play is the real folder
+        "",  # an empty gos.toml
+        # Final check round 2: a gos.toml from before the wizard that names neither Play nor
+        # the instances folder, and has no [setup].
+        OLD_TOML,
+    ],
+)
+def test_two_saves_never_swap_play_and_lab(
+    ring: MemoryKeyring,
+    defaults_at: Path,
+    home: Path,
+    tmp_path: Path,
+    toml: str | None,
+    restart: bool,
+) -> None:
+    """Final check round 2 (H1): save 1 moves Play to Lab and Lab elsewhere, save 2 makes Lab the
+    old Play, save 3 rotates all three. Each is refused, and gos.toml never has Export or Lab at
+    the old Play folder."""
+    prism = defaults_at
+    app = tmp_path / "app"
+    app.mkdir()
+    make_instance(prism / "instances", "GTNH-Play2")
+    text = (
+        None
+        if toml is None
+        else toml.format(
+            home=home.as_posix(), prism=prism.as_posix(), app=app.as_posix()
+        )
+    )
+    svc = _install(home, text)
+    play = prism / "instances" / "GTNH-Play"
+    values = path_values(prism, home, app)
+    for step in (
+        {"play": "GTNH-Lab", "lab": "GTNH-Play2"},
+        {"play": "GTNH-Lab", "lab": "GTNH-Play"},
+        {"play": "GTNH-Export", "export": "GTNH-Lab", "lab": "GTNH-Play"},
+        {"play": "GTNH-Lab", "export": "GTNH-Play", "lab": "GTNH-Export"},
+    ):
+        assert not _try(svc, values | step, restart), step
+        assert "play" in svc.check("paths", values | step)[0].problems
+    # The paths as they are still save, and Play is the real folder.
+    assert _try(svc, values, restart)
+    _assert_play_kept(svc, play)
+
+
+def _link(link: Path, target: Path) -> None:
+    """A folder link: a junction on Windows (no privilege needed), else a symlink."""
+    if sys.platform == "win32":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+@pytest.mark.parametrize(
+    ("change", "refused"),
+    [
+        ({"lab": "gtnh-play"}, "lab"),  # case: Windows' names ignore it
+        ({"export": "GTNH-PLAY"}, "export"),
+        ({"lab": "GTNH-Play."}, "lab"),  # Windows drops a trailing dot
+        ({"lab": "GTNH-Play.."}, "lab"),
+        ({"lab": "GTNH-Play ."}, "lab"),
+        ({"lab": "GTNH-Play/"}, "lab"),  # a path, not a name
+        ({"lab": "GTNH-Play\\"}, "lab"),
+        ({"play": "gtnh-lab"}, "play"),
+    ],
+)
+def test_export_and_lab_never_reach_play_by_spelling(
+    ring: MemoryKeyring,
+    defaults_at: Path,
+    home: Path,
+    tmp_path: Path,
+    change: dict[str, str],
+    refused: str,
+) -> None:
+    prism = defaults_at
+    app = tmp_path / "app"
+    app.mkdir()
+    svc = _install(
+        home,
+        OLD_TOML.format(
+            home=home.as_posix(), prism=prism.as_posix(), app=app.as_posix()
+        ),
+    )
+    before = svc.path.read_text("utf-8")
+    values = path_values(prism, home, app) | change
+    assert refused in svc.check("paths", values)[0].problems
+    assert not _try(svc, values, restart=True)
+    assert svc.path.read_text("utf-8") == before
+
+
+def test_a_trailing_slash_on_the_instances_folder_is_the_same_play(
+    ring: MemoryKeyring, defaults_at: Path, home: Path, tmp_path: Path
+) -> None:
+    prism = defaults_at
+    svc = _install(home, None)
+    values = path_values(prism, home, tmp_path / "app")
+    slashed = values | {"prism_instances": str(prism / "instances") + os.sep}
+    assert svc.check("paths", slashed)[0].problems == {}
+    swapped = slashed | {"play": "GTNH-Lab", "lab": "GTNH-Play"}
+    assert set(svc.check("paths", swapped)[0].problems) == {"play", "lab"}
+
+
+def test_a_link_to_play_is_play(
+    ring: MemoryKeyring, defaults_at: Path, home: Path, tmp_path: Path
+) -> None:
+    """Symlinks (junctions on Windows) resolve to the folder they name: Lab through a link to
+    Play is Play, and an instances folder whose same names lead elsewhere moves Play."""
+    prism = defaults_at
+    play = prism / "instances" / "GTNH-Play"
+    try:
+        _link(prism / "instances" / "Lab-Link", play)
+    except OSError:
+        pytest.skip("this account can't make folder links here")
+    svc = _install(home, None)
+    values = path_values(prism, home, tmp_path / "app")
+    assert "lab" in svc.check("paths", values | {"lab": "Lab-Link"})[0].problems
+    # Another instances folder whose GTNH-Play is a link to the real Play: the same Play.
+    other = tmp_path / "Other" / "instances"
+    other.mkdir(parents=True)
+    _link(other / "GTNH-Play", play)
+    _link(other / "GTNH-Lab", play)
+    make_instance(other, "GTNH-Export")
+    moved = values | {"prism_instances": str(other)}
+    problems = svc.check("paths", moved)[0].problems
+    assert "play" not in problems and "lab" in problems
+    # The same names in a folder of other instances: Play would move.
+    third = make_prism(tmp_path / "Third") / "instances"
+    elsewhere = values | {"prism_instances": str(third)}
+    assert "play" in svc.check("paths", elsewhere)[0].problems
+    assert not _try(svc, elsewhere, restart=True)
 
 
 def _files_under(folder: Path) -> set[Path]:
@@ -675,6 +878,45 @@ def test_the_doctor_checklist_never_probes_a_gos_home_in_play(
     rows = by_id([c.as_dict() for c in doctor.checklist(cfg)])
     assert rows["paths.gos_home"]["status"] == "error"
     assert _files_under(play) == files
+
+
+@pytest.mark.parametrize("key", ["gos_home", "gos_app"])
+@pytest.mark.parametrize(
+    "inside",
+    [
+        "GTNH-Lab/.minecraft/mods/GregtecOS",  # not there yet: Lab's mods folder is
+        "GTNH-Export/.minecraft/config",  # there: a sync would delete it
+        "GregtecOS",  # a folder of its own in the instances folder
+    ],
+)
+def test_gos_home_and_gos_app_stay_out_of_every_instance(
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+    inside: str,
+) -> None:
+    """Final check round 2 (lows): GOS_HOME or GOS_APP in Export's or Lab's mirrored folders would
+    be deleted by a sync, and the GOS_HOME probe never writes in an instance."""
+    instances = prism / "instances"
+    probed: list[Path] = []
+    real = doctor.tempfile.TemporaryFile
+
+    def spy(*args: object, **kwargs: object) -> object:
+        probed.append(Path(str(kwargs["dir"])))
+        return real(*args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(doctor.tempfile, "TemporaryFile", spy)
+    files = _files_under(instances)
+    values = path_values(prism, home, tmp_path / "app") | {key: str(instances / inside)}
+    outcome, _ = svc.check("paths", values)
+    row = by_id([c.as_dict() for c in outcome.checks])[f"paths.{key}"]
+    assert row["status"] == "error" and "instances folder" in row["detail"]
+    assert outcome.blocked
+    assert not any(doctor.within(p, instances) for p in probed)
+    assert _files_under(instances) == files
 
 
 def test_a_gt_pin_mismatch_only_warns(

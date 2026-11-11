@@ -510,7 +510,7 @@ def play_overlap(path: Path, plays: Sequence[Path]) -> Path | None:
     return next((p for p in plays if within(path, p) or within(p, path)), None)
 
 
-def _home_check(home: Path, plays: Sequence[Path]) -> Check:
+def _home_check(home: Path, plays: Sequence[Path], instances: Path) -> Check:
     label = f"GOS_HOME ({home})"
     # Before any probe: a check never makes a file in Play (WO-2.9 review).
     play = play_overlap(home, plays)
@@ -520,6 +520,16 @@ def _home_check(home: Path, plays: Sequence[Path]) -> Check:
             label,
             ERROR,
             f"overlaps Play ({play}): GOS writes in GOS_HOME and never in Play",
+        )
+    # Nor in another instance: GOS_HOME there could be deleted by a sync, and its nearest
+    # existing folder would be an instance's (final check round 2).
+    if within(home, instances):
+        return Check(
+            "paths.gos_home",
+            label,
+            ERROR,
+            f"in Prism's instances folder ({instances}): a sync of Export or Lab can delete "
+            "it; keep GOS_HOME outside the instances",
         )
     if home.is_dir():
         if _writable(home):
@@ -543,8 +553,9 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
     Prism folders, Play, Export and Lab, GOS_APP, GOS_HOME and the DB's GT pin. Read only: game
     files go through ``safe_open`` and mods aren't hashed; the one write is a temp file made and
     deleted at once in GOS_HOME (or the folder it will be made in), to see that it is writable.
-    GOS_APP or GOS_HOME in or around Play (``cfg``'s, and any of ``plays``) is an error, and then
-    nothing is probed, so a check never writes in Play."""
+    GOS_APP or GOS_HOME in or around Play (``cfg``'s, and any of ``plays``), or anywhere in Prism's
+    instances folder (a sync of Export or Lab deletes what its source lacks), is an error, and
+    then nothing is probed, so a check never writes in Play or another instance."""
     plays = [cfg.instance("play"), *plays]
     rows: list[Check] = []
     for key, label, path in (
@@ -574,19 +585,23 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
         rows += [_instance_check(cfg, role) for role in ("play", "export", "lab")]
     app = cfg.gos_app.is_dir()
     app_play = play_overlap(cfg.gos_app, plays)
+    app_inst = within(cfg.gos_app, cfg.prism_instances)
     rows.append(
         Check(
             "paths.gos_app",
             f"GOS_APP ({cfg.gos_app})",
-            ERROR if app_play is not None else OK if app else WARN,
+            ERROR if app_play is not None or app_inst else OK if app else WARN,
             f"overlaps Play ({app_play}): gos deploy writes in GOS_APP and never in Play"
             if app_play is not None
+            else f"in Prism's instances folder ({cfg.prism_instances}): a sync of Export or "
+            "Lab can delete it; keep GOS_APP outside the instances"
+            if app_inst
             else "found"
             if app
             else "no release installed there yet: Clayton's gos deploy makes it (D91)",
         )
     )
-    rows.append(_home_check(cfg.gos_home, plays))
+    rows.append(_home_check(cfg.gos_home, plays, cfg.prism_instances))
     # Plan 0.4: a pin mismatch is a warning (the recipe data is stale), not a stop.
     pin_ok, pin_line = gtpin.check_db(cfg.gos_home)
     rows.append(

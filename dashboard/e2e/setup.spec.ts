@@ -65,6 +65,17 @@ test("paths are checked with doctor's checks, then saved", async () => {
   await expect(page.getByTestId("setup-nav-paths")).toHaveAttribute("data-mark", "done");
 });
 
+test("once gos.toml exists an unfinished setup is a banner, never a lock (H2)", async () => {
+  await page.goto("/");
+  await expect(page.getByTestId("shell")).toBeVisible();
+  await expect(page.getByTestId("banner-setup")).toBeVisible();
+  await expect(page.getByTestId("setup")).toHaveCount(0);
+  await page.getByTestId("setup-banner-open").click();
+  await expect(page.getByTestId("setup")).toHaveAttribute("data-done", "no");
+  await page.getByTestId("setup-nav-anthropic").click();
+  await expect(page.getByTestId("setup-step-anthropic")).toBeVisible();
+});
+
 test("the API key goes to the keyring, never back to the page, and its test call works", async () => {
   const input = page.getByTestId("setup-secret-key");
   await expect(input).toHaveAttribute("type", "password");

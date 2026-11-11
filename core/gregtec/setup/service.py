@@ -101,7 +101,7 @@ class SetupService:
 
     def context(self) -> tuple[Context, str | None]:
         cfg, data, error = self._read()
-        ctx = Context(cfg, data, self.path, self.has_secret, self.devices)
+        ctx = Context(cfg, data, self.path, self.has_secret, self.devices, self.base)
         return ctx, error
 
     def step(self, step_id: str) -> Step:

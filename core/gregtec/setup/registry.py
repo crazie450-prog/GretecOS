@@ -54,13 +54,15 @@ class TestEnv:
 @dataclass
 class Context:
     """What a step sees: the config as gos.toml has it now (defaults for what it lacks), its raw
-    tables, where it lives, and the keyring and device lookups of the wizard's service."""
+    tables, where it lives, the keyring and device lookups of the wizard's service, and the config
+    the core started with (``running``; it runs with that until its next start)."""
 
     cfg: Config
     data: Mapping[str, Any]
     path: Path
     has_secret: Callable[[str], bool]
     devices: Callable[[], dict[str, Any]]
+    running: Config | None = None
 
     def toml(self, table: str, key: str) -> Any:  # noqa: ANN401 - any TOML value
         section = self.data.get(table)

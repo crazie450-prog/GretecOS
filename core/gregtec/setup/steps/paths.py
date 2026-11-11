@@ -18,6 +18,9 @@ _BAD_NAME = set('/\\:*?"<>|')
 def _name_problem(value: str) -> str | None:
     if value in (".", "..") or any(c in _BAD_NAME for c in value):
         return "an instance's folder name in the instances folder, not a path"
+    if value != value.rstrip(". "):
+        # Windows drops a trailing dot or space: "GTNH-Play." is the folder GTNH-Play.
+        return "a folder name can't end in a dot or a space"
     return None
 
 
@@ -43,33 +46,52 @@ def play_saved(ctx: Context) -> bool:
     )
 
 
+def plays(ctx: Context) -> list[Path]:
+    """Every folder that is Play to GOS now: gos.toml's (defaults for what it lacks) and the one
+    the running core started with, which it syncs against until its next start."""
+    found = [ctx.cfg.instance("play")]
+    if ctx.running is not None:
+        found.append(ctx.running.instance("play"))
+    return found
+
+
+def play_fixed(ctx: Context) -> bool:
+    """Whether Play may no longer move by a click: gos.toml says where it is, or the Play GOS runs
+    with (defaults included) is a folder there, so it may be the real Play (final check round 2).
+    Only a Play that names no folder yet, on a first run, is chosen in the wizard."""
+    return play_saved(ctx) or any(p.is_dir() for p in plays(ctx))
+
+
 def play_guard(ctx: Context, cfg: Config) -> dict[str, str]:
-    """Problems by field that would point GOS's writes at Play (H1 of the WO-2.9 review, D167):
-    Export or Lab in the Play folder gos.toml has now (``gregtec.sync`` mirrors into Export and
-    Lab and deletes what the source lacks), GOS_HOME or GOS_APP in or around Play (GOS keeps its
-    DB, logs and backups in GOS_HOME, and ``gos deploy`` writes GOS_APP), or Play moved once it is
-    saved. Moving Play is a hand edit of gos.toml, never a click."""
+    """Problems by field that would point GOS's writes at Play (H1 of the WO-2.9 review and the
+    final check's round 2, D167): Play moved away from the folder GOS runs with, Export or Lab in
+    or around a folder that is or was Play (``gregtec.sync`` mirrors into Export and Lab and
+    deletes what the source lacks), or GOS_HOME or GOS_APP in or around one (GOS keeps its DB,
+    logs and backups in GOS_HOME, and ``gos deploy`` writes GOS_APP). Since Play can't move once
+    it is a folder, no sequence of saves turns the old Play into Export or Lab. Moving Play is a
+    hand edit of gos.toml, never a click."""
     play_now = ctx.cfg.instance("play")
     problems: dict[str, str] = {}
-    if play_saved(ctx) and doctor.folded(cfg.instance("play")) != doctor.folded(
+    if play_fixed(ctx) and doctor.folded(cfg.instance("play")) != doctor.folded(
         play_now
     ):
         problems["play"] = (
-            f"Play is {play_now} in gos.toml; the wizard never moves Play. To change it, edit "
-            "[paths] in gos.toml by hand"
+            f"Play is {play_now}; the wizard never moves Play. To change it, edit [paths] in "
+            "gos.toml by hand"
         )
-    plays = (play_now, cfg.instance("play"))
+    guarded = [*plays(ctx), cfg.instance("play")]
     for key, name in (("gos_home", "GOS_HOME"), ("gos_app", "GOS_APP")):
-        play = doctor.play_overlap(getattr(cfg, key), plays)
+        play = doctor.play_overlap(getattr(cfg, key), guarded)
         if play is not None:
             problems[key] = (
                 f"that overlaps Play ({play}); GOS writes in {name}, so it must be outside "
                 "Play and must not hold it"
             )
     for role in ("export", "lab"):
-        if doctor.within(cfg.instance(role), play_now):
+        play = doctor.play_overlap(cfg.instance(role), guarded)
+        if play is not None:
             problems[role] = (
-                f"that is Play's folder ({play_now}); GOS writes to {role.capitalize()}, so it "
+                f"that is Play's folder ({play}); GOS writes to {role.capitalize()}, so it "
                 "must never be Play"
             )
     return problems
@@ -85,7 +107,7 @@ def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
     if not problems:
         problems = play_guard(ctx, cfg)
     # The guard runs first; the checklist then probes nothing in or around either Play.
-    rows = doctor.checklist(cfg, plays=(ctx.cfg.instance("play"),))
+    rows = doctor.checklist(cfg, plays=plays(ctx))
     config_home = ctx.path.parent.parent
     if cfg.gos_home.resolve() != config_home.resolve():
         rows.append(
