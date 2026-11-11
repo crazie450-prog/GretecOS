@@ -546,7 +546,7 @@ def test_the_writes_are_guarded_against_the_values_being_saved(
 def test_the_route_writes_nothing_in_the_play_it_saves(
     prism: Path,
     tmp_path: Path,
-    client: TestClient,
+    client: TestClient,  # noqa: F811
     core,  # noqa: ANN001, F811
 ) -> None:
     play = prism / "instances" / "GTNH-Play"
