@@ -14,6 +14,10 @@ The first-run setup wizard configures GOS from the dashboard alone (plan 7.14 ru
 
 Saved settings take effect at GOS's next start (log in again, or `gos stop` then `gos serve`). Secrets work at once. Re-open the wizard any time: Settings > Setup wizard (`#/setup`).
 
+The dashboard opens on the wizard alone only on a first run (no gos.toml yet). An install whose gos.toml has no `[setup]` table (one from before this wizard) shows a "Setup isn't finished" banner with **Open setup** and **Dismiss** instead; the wizard then has a **Later** button.
+
+The wizard never moves Play: once gos.toml names Play, changing the Play instance or the instances folder is refused ("edit gos.toml by hand"), and Export or Lab can never be Play's folder.
+
 ## Clayton's PC steps (deployment test)
 
 ```powershell
@@ -28,7 +32,7 @@ Then open the dashboard on monitor 2 (`http://gos.localhost:8765/`), pair it if 
 - Paths: every row green for Play, Export and Lab.
 - Store the Anthropic key and press **Test**: "the API answered on claude-haiku-5-5".
 - Headset: pick the Arctis Nova Elite **Chat** endpoint for spoken answers; check the microphone.
-- Talk key: keep F13 (or your mapped key); run `uv run gos voice keys play` to list GTNH's bindings on it, and check Discord's Keybinds page by hand.
+- Talk key: keep F13 (or your mapped key); the "Talk key in GTNH" row reads Play's options.txt (read only) and should say it is free. Check Discord's Keybinds page by hand.
 - Finish, then `gos stop` and `gos serve` so the core reads the new gos.toml.
 - Compare the wizard with the approved "First-run setup wizard" board (D92) and note differences.
 
@@ -36,4 +40,4 @@ Then open the dashboard on monitor 2 (`http://gos.localhost:8765/`), pair it if 
 
 - `uv run pytest tests/unit/setup` (gos.toml edits, steps, secrets, routes; fake keyring and fake Prism tree).
 - `pnpm -C dashboard test` (`tests/setup.test.tsx`).
-- `pnpm -C dashboard e2e` (`e2e/setup.spec.ts`: an empty GOS_HOME configured by the wizard alone, against `serve_core.py --fresh`).
+- `pnpm -C dashboard e2e` (`e2e/setup.spec.ts`: an empty GOS_HOME configured by the wizard alone, against `serve_core.py --fresh`; then `gos doctor --prism-root <fake Prism> --gos-home <fresh GOS_HOME> --no-hash` must exit 0, and a Play/Lab swap is refused).

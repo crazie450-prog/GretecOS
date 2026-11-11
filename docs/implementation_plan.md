@@ -1379,8 +1379,14 @@ talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
 tts = "kokoro"
 tts_device = "cpu"
-output_endpoint = "Chat"      # Arctis Nova Elite (D56)
+output_endpoint = "Chat"      # Arctis Nova Elite (D56); a part of a device name, never empty (D168)
+input_device = ""             # "" = Windows' default microphone, else a part of its name (D181, D168)
 discord_auto_mute = false     # D58
+# The setup wizard (WO-2.9, D167-D169) writes [paths], and [voice] input_device, output_endpoint,
+# talk_key, talk_mode and wake_phrase, keeping every other line and comment.
+
+[setup]
+completed_utc = "2026-11-11T10:00:00+00:00"   # written by the wizard's Finish (D167); absent = not finished
 
 [persona]
 default = "gt-veteran"        # D60
