@@ -4,6 +4,7 @@ with fake engines (no model, no GPU)."""
 from __future__ import annotations
 
 import logging
+import os
 import random
 import string
 import sys
@@ -439,3 +440,32 @@ def test_cuda_problem_names_what_is_missing(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_a_library_that_is_not_there_is_not_loadable() -> None:
     assert not stt._loadable("libgos-no-such-library.so.99")
+
+
+def test_gos_homes_cublas_joins_the_path_once(tmp_path: Path) -> None:
+    folder = stt.cuda_folder(tmp_path)
+    assert folder == tmp_path / "models" / "cuda" / "nvidia" / "cublas" / "bin"
+    environ = {"PATH": os.pathsep.join(["first", "second"])}
+    stt.add_to_path(folder, environ)  # not installed: nothing changes
+    assert environ["PATH"] == os.pathsep.join(["first", "second"])
+    folder.mkdir(parents=True)
+    stt.add_to_path(folder, environ)
+    stt.add_to_path(folder, environ)
+    assert environ["PATH"] == os.pathsep.join([str(folder), "first", "second"])
+    empty: dict[str, str] = {}
+    stt.add_to_path(folder, empty)
+    assert empty == {"PATH": str(folder)}
+
+
+def test_only_windows_looks_in_gos_home_for_cublas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = stt.cuda_folder(tmp_path)
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("PATH", "first")
+    monkeypatch.setattr(stt.sys, "platform", "linux")
+    stt.find_cuda(tmp_path)
+    assert os.environ["PATH"] == "first"
+    monkeypatch.setattr(stt.sys, "platform", "win32")
+    stt.find_cuda(tmp_path)
+    assert os.environ["PATH"] == os.pathsep.join([str(folder), "first"])

@@ -20,8 +20,9 @@ parakeet       Parakeet TDT 0.6B v3 through onnx-asr on the CPU, ``int8`` (no pr
 =============  ================================================================================
 
 The GPU "works here" when CTranslate2 finds a CUDA device, cuBLAS 12 loads (the NVIDIA driver
-alone isn't enough; the CUDA 12 runtime libraries are a PC step, docs/runbooks/stt.md) and the
-model loads and decodes a warm-up; any failure is the next engine's turn, and the log says why.
+alone isn't enough: NVIDIA's cuBLAS wheel, installed once into ``GOS_HOME/models/cuda``, is a
+PC step, docs/runbooks/stt.md) and the model loads and decodes a warm-up; any failure is the
+next engine's turn, and the log says why.
 Whisper decodes with ``language="en"`` and ``beam_size=1``. CPU engines use 4 threads, so a
 transcription burst never takes every core from GTNH.
 
@@ -48,9 +49,10 @@ from __future__ import annotations
 import ctypes
 import importlib.util
 import logging
+import os
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -431,6 +433,27 @@ def _loadable(name: str) -> bool:
     return True
 
 
+def cuda_folder(gos_home: Path) -> Path:
+    """Where ``uv pip install --target GOS_HOME/models/cuda nvidia-cublas-cu12`` puts cuBLAS's
+    DLLs (docs/runbooks/stt.md): NVIDIA's own wheel, never part of a release."""
+    return gos_home / "models" / "cuda" / "nvidia" / "cublas" / "bin"
+
+
+def add_to_path(folder: Path, environ: MutableMapping[str, str]) -> None:
+    """``folder`` first on ``environ``'s PATH, once, when it exists."""
+    parts = [part for part in environ.get("PATH", "").split(os.pathsep) if part]
+    if folder.is_dir() and str(folder) not in parts:
+        environ["PATH"] = os.pathsep.join([str(folder), *parts])
+
+
+def find_cuda(gos_home: Path) -> None:
+    """Windows: GOS_HOME's cuBLAS joins this process's PATH, which is where CTranslate2's
+    LoadLibrary looks for it (and :func:`_loadable` with it). Linux finds its own through the
+    loader's configuration, which a running process can't change."""
+    if sys.platform == "win32":
+        add_to_path(cuda_folder(gos_home), os.environ)
+
+
 def cuda_problem() -> str | None:
     """Why Whisper can't run on the GPU here, or None when it may (the warm-up decides)."""
     try:
@@ -529,6 +552,7 @@ def load(
                 extra={"problem": glossary.problem},
             )
     tell = note or (lambda message: log.info(message))
+    find_cuda(gos_home)
     snap = Snapper(glossary)
     skipped: list[str] = []
     for choice in choices(engine, model):

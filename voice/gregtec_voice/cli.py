@@ -653,6 +653,7 @@ def _load_stt(
     glossary: Glossary | None = None,
 ) -> stt.Stt | None:
     """The engine, with what was tried first and why; None (said) when none starts."""
+    stt.find_cuda(cfg.gos_home)
     gpu = stt.cuda_problem()
     print(f"GPU for Whisper: {'yes' if gpu is None else 'no, ' + gpu}", file=out)
     try:
