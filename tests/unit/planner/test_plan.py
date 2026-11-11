@@ -433,6 +433,17 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         and "Widget line · 2/s · MV" in text
         and "every machine runs: True" in text
     )
+    assert text.startswith("ranked by weights (balanced): machines 1,")
+    assert "  score " in text and "Ranked by code" not in text
+    prefs = home / "vault" / "me" / "prefs.md"
+    prefs.parent.mkdir(parents=True, exist_ok=True)
+    prefs.write_text("weights: balanced\nw_eut: 3\n", encoding="utf-8")
+    try:
+        code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--explain")
+    finally:
+        prefs.unlink()
+    assert code == 0 and text.startswith("ranked by weights (custom):")
+    assert "EU/t 3" in text and "Ranked by code, weights (custom)" in text
     code, text = run_cli(
         home, monkeypatch, WIDGET, "--tier", "MV", "--json", "--routes", "1"
     )

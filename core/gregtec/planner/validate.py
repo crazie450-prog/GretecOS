@@ -17,8 +17,9 @@ reads every number in its text and accepts it only when the JSON holds it (plan 
 - **Tiers**: a tier name (LV ... MAX) must be one the JSON names, and "tier N" must be one of
   their indices.
 - **Sums** (and, between routes, differences, D199): per list in the JSON, the total of each
-  key and the sum of any two entries; per scalar metric, the sum and the difference of any two
-  routes'.
+  key, and for counts (:data:`COUNTS`) the sum of any two entries; per scalar metric, the sum
+  and the difference of any two routes'. Sums of any two rates or hours are not allowed: in a
+  big design they would cover so many values that a wrong number would often pass.
 
 Numbers written as words aren't read (as in WO-2.3's check, D152). The result lists the
 offending numbers as written, for the retry prompt.
@@ -37,6 +38,9 @@ from typing import Any
 from gregtec.agents.fast_lane import KEY, REF
 from gregtec.planner.gtmath.tiers import VN
 
+COUNTS = frozenset(
+    {"count", "machines", "crafts", "nodes", "fluids", "loops", "new_types"}
+)
 TOLERANCE = 0.01  # §7.1 step 11: ±1% rounding
 APPROX_TOLERANCE = 0.05  # after "about" or "~"
 PLAN_ID = re.compile(r"\bpl-[a-z0-9._-]+")
@@ -104,12 +108,13 @@ class Allowed:
         derived: list[float] = []
         for key, values in groups:
             vals = [abs(v) for v in values]
-            sums = [math.fsum(vals)] + [
-                a + b for a, b in itertools.combinations(vals, 2)
-            ]
-            diffs = [abs(a - b) for a, b in itertools.combinations(vals, 2)]
-            extra = sums + (diffs if key.startswith("route:") else [])
             name = key.removeprefix("route:")
+            pairs = key.startswith("route:") or name in COUNTS
+            extra = [math.fsum(vals)]
+            if pairs:
+                extra += [a + b for a, b in itertools.combinations(vals, 2)]
+            if key.startswith("route:"):
+                extra += [abs(a - b) for a, b in itertools.combinations(vals, 2)]
             kind = _kind(name)
             if kind == "rate":
                 scale = 1 / 3600 if name.endswith("per_h") else 1.0

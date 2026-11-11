@@ -1,11 +1,14 @@
-"""``gos plan``: the designer's routes from the command line (WO-3.4).
+"""``gos plan``: the designer's routes from the command line (WO-3.4, WO-3.5).
 
 - ``gos plan TARGET [--tier T] [--qty 2/s | --batch N [--within 2h]] [--routes N] [--addons]
   [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
   and prints a summary per route, or the plans as canonical JSON lines (``--json``), or writes
-  each plan to ``DIR/<id>.json`` (``--out``; persisting into GOS_HOME is WO-3.7's).
+  each plan to ``DIR/<id>.json`` (``--out``; persisting into GOS_HOME is WO-3.7's). Routes come
+  ranked (WO-3.5) with the weights from the vault's ``me/prefs.md`` (read only; balanced
+  without one, D67), and the summary prints the weights first; ``--explain`` adds the templated
+  explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
 - ``--request FILE``: a request as JSON (``Request.from_json``) instead of TARGET and the flags.
 - ``gos plan TARGET --alternatives ITEM [--all]``: the candidate recipes for one node of the
   graph (D61), with ``--all`` the unchecked and rejected ones too.
@@ -24,7 +27,7 @@ from gregtec import config
 from gregtec.agents import prefetch
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.db import access
-from gregtec.planner import alternatives, graph, plan, solve
+from gregtec.planner import alternatives, explain, graph, plan, rank, solve
 from gregtec.planner.request import (
     DefaultBaseInputs,
     Pin,
@@ -75,6 +78,11 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument("--all", action="store_true", help="with --alternatives: show all")
     p.add_argument("--json", action="store_true", help="print the plans as JSON lines")
     p.add_argument(
+        "--explain",
+        action="store_true",
+        help="add the explanation built from the metrics",
+    )
+    p.add_argument(
         "--out", type=Path, default=None, help="write DIR/<id>.json per plan"
     )
     p.add_argument("--config", type=Path, default=None, help="gos.toml to read")
@@ -94,7 +102,9 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         return 2
     conn = access.connect(db, readonly=True)
     try:
-        return _run(conn, db, Glossary.find(cfg.gos_home / "vault"), args, out)
+        vault = cfg.gos_home / "vault"
+        prefs = rank.read_prefs(vault)
+        return _run(conn, db, Glossary.find(vault), args, out, prefs)
     finally:
         conn.close()
 
@@ -152,6 +162,7 @@ def _run(
     glossary: Glossary,
     args: argparse.Namespace,
     out: TextIO,
+    prefs: rank.Prefs = rank.BALANCED,
 ) -> int:
     try:
         request = _request(conn, db, glossary, args, out)
@@ -164,7 +175,7 @@ def _run(
                 reason = f"  ({a['reason']})" if a["reason"] else ""
                 print(f"{a['status']:<11} {a['recipe']}{reason}", file=out)
             return 0
-        design = plan.design(conn, request, base, exact=args.exact)
+        design = plan.design(conn, request, base, exact=args.exact, prefs=prefs)
     except (
         OSError,
         KeyError,
@@ -183,10 +194,20 @@ def _run(
         for p in design.plans:
             print(plan.dumps(p), file=out)
         return 0
+    print(rank.describe(prefs), file=out)
+    for note in prefs.notes:
+        print(f"  prefs: {note}", file=out)
     for p in design.plans:
         r = p["route"]
+        m, k = p["metrics"], p["rank"]
         machines = sum(n["count"] or 0 for n in p["nodes"])
         print(f"{p['id']}  {p['name']}  [{r['column']}]", file=out)
+        print(
+            f"  score {k['score']:g}: {m['machines']} machines, {len(m['new_types'])} new "
+            f"types, {m['eut_avg']:g} EU/t avg, effort {m['eff_h']:g} h, scarcity "
+            f"{m['scarcity']:g}, complexity {m['complexity']['score']}",
+            file=out,
+        )
         print(
             f"  {len(p['nodes'])} nodes, {machines} machines, gates: "
             f"{', '.join(r['gates']) or 'none'}, every machine runs: {r['all_run']}",
@@ -196,4 +217,8 @@ def _run(
             print(f"  choice {c['node']}: {c['recipe']}", file=out)
         for w in p["warnings"]:
             print(f"  warning: {w}", file=out)
+    if args.explain and design.plans:
+        g = design.graph
+        doc = explain.facts(design.plans, g.item(g.target).name, prefs)
+        print(explain.template(doc), file=out)
     return 0
