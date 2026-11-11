@@ -58,7 +58,7 @@ class Design:
     graph: Graph
     plans: tuple[
         dict[str, Any], ...
-    ]  # the routes in the order found, the addon route last
+    ]  # the base routes in rank order (WO-3.5), the addon route last
 
 
 def rate_and_window(request: Request) -> tuple[float, float | None]:
