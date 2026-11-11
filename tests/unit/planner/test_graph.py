@@ -701,9 +701,15 @@ def test_nei_only_recipes_are_rejected(conn: sqlite3.Connection) -> None:
 def test_cells_container_and_reverse_use_flags(conn: sqlite3.Connection) -> None:
     can = ref_of(conn, "canner", 0)
     g = build_graph(conn, Request(WIDGET, machines="base+addons"))
+    acid = g.item(ACID).candidates
+    # A container map ranks last (D189), and as a side route a primary node doesn't expand
+    # it while it has another (review M2); a pin does.
+    assert acid[-1].recipe == can and acid[-1].status == "alternative"
+    assert acid[-1].reason.startswith("a side route (ranked last)")
+    g = build_graph(
+        conn, Request(WIDGET, machines="base+addons", pins=(Pin(ACID, can),))
+    )
     assert g.recipe(can).flags == ("cells", "container")
-    acid = [c.recipe for c in g.item(ACID).candidates]
-    assert acid[-1] == can  # a container map ranks last (D189)
     # Review M1: a use's main product counts, its byproducts don't (Salt's water).
     b = graph._Builder(conn, Request(WIDGET), Base(), chains.EMPTY, machine_run(conn))
     assert b.reader.made_from(ACID) == {WIDGET, GAS, SALT}

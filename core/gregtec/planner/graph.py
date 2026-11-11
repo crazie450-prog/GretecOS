@@ -35,13 +35,17 @@ only badged machines run carries the badge as a warning. Crafting-table and furn
 
 **Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling,
 GT's container maps and EU-less recipes last, D142 (2), D189; then the reverse of one of the
-item's own uses; avoid chanced-only; fluid cells after none; lower tier; fewer inputs; base
-machine first; machine before manual; unbadged first; key) and
-the first :data:`TOP_N` valid ones are **chosen** and expanded; every candidate stays listed with
-its status for D61's swap and "show all". A pin (D61) or a chain template (:mod:`.chains`)
+item's own uses; avoid chanced-only; lower tier; the item as the main product before a
+byproduct route; fluid cells after none; fewer inputs; base machine first; machine before
+manual; unbadged first; key) and the first :data:`TOP_N` valid ones are kept; every candidate
+stays listed with its status for D61's swap and "show all". Only primary choices (§7.1 step 3)
+expand more than their first: the target and its direct inputs expand their top recipes but
+their side routes (:func:`side_route`), and a chain template on the target's route expands its
+recipes, its branch points primary (D189). A pin (D61) or a chain template (:mod:`.chains`)
 replaces the heuristic's choice for its node. Expansion stops at boundary items: the request's
-``boundary``, My base stock and line outputs (D63), items no valid recipe makes (raw), catalysts
-(inputs a recipe doesn't use up: circuits, moulds, lenses) and depth :data:`MAX_DEPTH`.
+``boundary``, My base stock and line outputs (D63), items no recipe makes (raw), items whose
+every recipe was rejected (locked), catalysts (inputs a recipe doesn't use up: circuits,
+moulds, lenses) and depth :data:`MAX_DEPTH`.
 Oredict and wildcard slots expand to at most :data:`TOP_N` members (GregTech's own first).
 An item slot with alternatives but no oredict name, and a fluid slot with alternatives, are
 keyed by the stack GT shows (always accepted).
@@ -612,6 +616,23 @@ def _cheap(
     )
 
 
+def side_route(
+    item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
+) -> str | None:
+    """Why ``rec`` is a side route to ``item``, or None: ranked last (recycling, a container
+    map, EU-less), the reverse of one of the item's uses, or ``item`` only as a byproduct.
+    A primary node doesn't expand its side routes while it has another (D189): the platline
+    step that gives nitrogen dioxide off is no way to plan nitric acid."""
+    cheap = _cheap(item, rec, made_from)
+    if cheap[0]:
+        return "ranked last"
+    if cheap[1]:
+        return "the reverse of one of its uses"
+    if cheap[4]:
+        return "makes it as a byproduct"
+    return None
+
+
 class _Builder:
     def __init__(
         self,
@@ -654,6 +675,7 @@ class _Builder:
                 self.boundary[k] = "stock"
         for k in request.boundary:
             self.boundary[k] = "request"
+        self.uses: dict[str, frozenset[str]] = {}  # item -> made_from, minus boundaries
         self.checks: dict[int, _Check] = {}
         self.fit: dict[
             tuple[object, ...], tuple[list[machines.MachineOption], str]
@@ -830,7 +852,7 @@ class _Builder:
                 rejected.append(
                     Candidate(self.reader.recipes[rid].ref, "rejected", c.reason)
                 )
-        uses = (
+        uses = self.uses[key] = (
             self.reader.made_from(key) - self.boundary.keys()
             if len(passed) > 1
             else frozenset()
@@ -1020,12 +1042,18 @@ def build(
                 # Only a primary choice (§7.1 step 3) keeps all of its top recipes in the
                 # graph; the heuristic fixes every other node's choice to its first (D11),
                 # and swapping one is a pin, which rebuilds (D61; D189).
-                if (
-                    key == request.target
-                    or key in direct
-                    or (template is not None and template in on_route(direct))
-                ):
+                side = {
+                    n.id: why
+                    for n in valid
+                    if (why := side_route(key, n, b.uses.get(key, frozenset())))
+                }
+                if template is not None and template in on_route(direct):
                     chosen = top
+                elif key == request.target or key in direct:
+                    # A primary choice, but not between side routes while it has others.
+                    chosen = (
+                        top if pinned else [r for r in top if r not in side] or top[:1]
+                    )
                 else:
                     chosen = top[:1]
                 if key == request.target:
@@ -1043,7 +1071,9 @@ def build(
                 cands = (
                     tuple(
                         Candidate(
-                            n.id, status[n.id], _reason(status[n.id], pinned, template)
+                            n.id,
+                            status[n.id],
+                            _reason(status[n.id], pinned, template, side.get(n.id)),
                         )
                         for n in valid
                     )
@@ -1133,13 +1163,17 @@ def build(
     )
 
 
-def _reason(status: Status, pinned: bool, template: str | None) -> str:
+def _reason(
+    status: Status, pinned: bool, template: str | None, side: str | None = None
+) -> str:
     if status == "chosen":
         return ""
     if pinned:
         return "pinned to another recipe"
     if template:
         return f"chain template {template} chose others"
+    if status == "alternative" and side:
+        return f"a side route ({side}): not expanded unless pinned (D61, D189)"
     if status == "alternative":
         return "not a primary choice: the first is used unless pinned (D11, D61)"
     return f"below the top {TOP_N}"

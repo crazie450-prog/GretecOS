@@ -148,6 +148,32 @@ def test_other_g3_targets_build(
     assert all(r.tier <= tier for r in g.recipes)
 
 
+# The platline's own items: a nitric or sulfuric acid graph must not reach them through a
+# byproduct route (review M2).
+PLATLINE_ITEMS = {PMP, REFINED_SALT, "fluid:aqua regia", "fluid:platinum concentrate"}
+
+
+@pytest.mark.parametrize(
+    ("target", "tier"), [("fluid:sulfuricacid", MV), ("fluid:nitricacid", 3)]
+)
+def test_acids_stay_out_of_the_platline(
+    conn: sqlite3.Connection, target: str, tier: int
+) -> None:
+    g, _ = timed(conn, target, tier)
+    assert not PLATLINE_ITEMS & {i.id for i in g.items}
+    assert len(g.items) < 60, len(g.items)  # 19 and 34 on the dev runtime's run
+    assert not [p for p in g.primary if g.item(p).template == "platline"]
+
+
+def test_sulfuric_acid_first_choice_takes_no_cells(conn: sqlite3.Connection) -> None:
+    # Review M1: water given off by one of the acid's uses doesn't make every recipe that
+    # takes water a "reversal"; the first choice is the LCR's, no IC2 cells.
+    g, _ = timed(conn, "fluid:sulfuricacid", MV)
+    first = g.recipe(g.item("fluid:sulfuricacid").chosen[0])
+    assert "cells" not in first.flags
+    assert first.id == "r:gt.recipe.largechemicalreactor/7e955d56eb0f"
+
+
 def test_assembly_line_recipes_need_their_research(conn: sqlite3.Connection) -> None:
     # GT lists its assembly-line recipes only in a fake NEI map; the graph admits them when
     # their research recipe is at the tier cap (D189).
