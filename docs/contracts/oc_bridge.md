@@ -27,7 +27,7 @@ value from a stale one; gaps (a paused game, a broken link) are marked stale, ne
 | Reply | **Always HTTP 200** with one reply document, `Content-Type: application/json`, **at most 2048 bytes**. OC can't read the body of a non-2xx response (its `getInputStream` throws, [C§1.4]), so a refusal is `200` with `ok: false`. 2048 bytes is what OC returns from one read in GTNH's config (`maxReadBuffer`). The agent reads 2048-byte chunks until the stream ends and refuses a reply over 8192 bytes (`reply_max`) as a failed exchange, executing nothing from it. |
 | Time | The agent gives one exchange 12 s (`request_timeout_s`) from the request to the last byte, then closes it and counts a failure. OC's own `requestTimeout=10` (plan §5.6) bounds the read. |
 | Connections | The agent closes its handle on every path, success or not: OC allows 4 open connections per internet card, HTTP requests included [C§1.4]. |
-| Token | The bearer token is a client token for this agent (D117's named client tokens, e.g. `gos token new oc`; WO-7.1 decides the name and how the core checks it). It sits in plain text in the agent's config on the OC drive, inside the world's save, which gos-dev can read (plan §4.6, D75: Lab modify, Play read only), so it must grant nothing beyond `/oc/telemetry` (D117's client tokens can also read health and usage; WO-7.1 scopes this one to `/oc/telemetry` alone). Whoever holds it can pose as the agent: take the commands waiting for it (they then never run) or post false readings and results. So the core treats everything posted with it as data (shown, alerted on, recorded as a command's outcome) and never starts an action because of it; `gos token new` replaces a token that leaked, `gos token revoke` ends it. |
+| Token | The bearer token is a client token for this agent (D117's named client tokens, e.g. `gos token new oc`; WO-7.1 decides the name and how the core checks it). It sits in plain text in the agent's config on the OC drive, inside the world's save, which gos-dev can read (plan §4.6, D75: Lab modify, Play read only), so it must grant nothing beyond `/oc/telemetry` (D117's client tokens can also read health and usage; WO-7.1 scopes this one to `/oc/telemetry` alone). Whoever holds it can pose as the agent: take the commands waiting for it (they then never run) or post false readings and results. So the core treats everything posted with it as data (shown, alerted on, recorded as a command's outcome) and never starts an action because of it; `gos token new` replaces a token that leaked, `gos token revoke` ends it. The token proves the agent to the core, never the core to the agent: see Security for a program that answers in the core's place. |
 
 A failed exchange (refused connection, a non-2xx code, a timeout, a reply that isn't one JSON object, an
 `ok: false` reply) leaves everything that was waiting for an ack waiting (see Acknowledgement) and is retried with
@@ -265,6 +265,16 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
 - The agent runs only the four kinds above, with `confirmed_via` one of the four and arguments checked, and has no
   free-form code path (no `load` of anything it receives).
 - Everything posted with the agent's token is data too (see Token): the core never starts an action because of it.
+- **The agent can't tell the core from any other program on `127.0.0.1:<port>`.** A reply isn't authenticated: the
+  token only goes from agent to core, and `confirmed_via` is a plain value. A program that binds the port while the
+  core is down (a restart back-off, `gos stop`, a deploy swap: D115 (2), (3), (6); while the core is up nothing else
+  can bind it, D115 (7)) receives the token and the telemetry. The agent then runs any allowed, well-formed command
+  it sends back: a craft up to `craft_max`, a pause or resume, or a say, none of them confirmed by Clayton. This is
+  D117 (4)'s residual risk, inside D82's accepted shared-desktop risk; with this agent it grows from a leaked token
+  to those four kinds of world action. If gos-dev ever gets its own Windows session, or before Play uses M2, choose
+  one of these: keep Play on M1 (gos-dev can't write Play's `inbox.json`), or have the core sign each command with a
+  key in Clayton's keyring and the agent check it with a T3 data card's `ecdsa` (a new `v`). An HMAC keyed with the
+  token would not help, because gos-dev can read the token. The choice is Clayton's (the PR's Question 5).
 
 ## Versioning
 
