@@ -1,0 +1,13 @@
+// Gregtec OS, WO-3.1 (D174): prints GregtecLink's test runtime classpath (GT at the pin in
+// mod/dependencies.gradle, Minecraft, Forge and their libraries), so make_vectors.py can run GT's own
+// classes without a change to the mod's build. Run from mod/:
+//   ./gradlew --init-script ../tests/unit/gtmath/oracle/classpath.init.gradle -q gtmathClasspath
+gradle.projectsEvaluated {
+    rootProject.tasks.register("gtmathClasspath") {
+        def classpath = rootProject.sourceSets.test.runtimeClasspath
+        dependsOn(rootProject.tasks.named("testClasses"))
+        doLast {
+            println("GTMATH_CLASSPATH=" + classpath.asPath)
+        }
+    }
+}
