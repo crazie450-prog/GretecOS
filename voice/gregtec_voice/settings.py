@@ -25,9 +25,19 @@
 | wake_model       | ""      | openwakeword only: the custom model's ``.onnx`` file            |
 | wake_threshold   | 0       | 0 = the engine's tuned default (D186), else 0.05-0.95: higher   |
 |                  |         | wakes less often, on noise and on Clayton alike                 |
+| tts              | kokoro  | text-to-speech (WO-5.3, D203): kokoro, piper or elevenlabs     |
+|                  |         | (Appendix C; ``gos voice tts-bench`` says which meets PM14)     |
+| tts_device       | cpu     | cpu or gpu (ONNX Runtime's CUDA or DirectML provider): kokoro  |
+|                  |         | and piper; elevenlabs runs at ElevenLabs                        |
+| tts_voice        | ""      | "" = the engine's default (kokoro am_michael, piper            |
+|                  |         | en_US-joe-medium, an ElevenLabs premade voice), else its name   |
+|                  |         | or ElevenLabs voice id                                          |
+| output_endpoint  | Chat    | where speech plays: a part of an output device's name (the     |
+|                  |         | Arctis Nova Elite's Chat endpoint, D56), "" = Windows' default; |
+|                  |         | no single match falls back to the default (D205)                |
 
-The four keys must differ. The other Appendix C ``[voice]`` keys (TTS, output endpoint) belong
-to WO-5.3 and WO-5.5 and are ignored here. The core's own keys
+The four keys must differ. Appendix C's ``discord_auto_mute`` belongs to WO-5.5 and is
+ignored here. The core's own keys
 (``[core] port``, ``[paths] gos_home``) come from :func:`gregtec.config.load`; ``gos_home``
 rides along here because the engines keep their models in ``GOS_HOME/models`` and read the
 vault's glossary.
@@ -59,6 +69,11 @@ WAKE_ENGINES = (SHERPA, OPENWAKEWORD)
 WAKE_PHRASE = (
     "hey archivist"  # PM08's pick from the WO-5.4 harness, pending Clayton (D186)
 )
+# text-to-speech (WO-5.3, D203, D205); gregtec_voice.tts reads these
+TTS_ENGINES = ("kokoro", "piper", "elevenlabs")
+TTS_DEVICES = ("cpu", "gpu")
+OUTPUT_ENDPOINT = "Chat"  # D56: the Arctis Nova Elite's Chat endpoint (Appendix C)
+_VOICE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 _PHRASE_WORD = re.compile(r"[a-z]+(?:'[a-z]+)?")
 _MODEL_NAME = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?"
@@ -81,6 +96,10 @@ class VoiceSettings:
     wake_phrase: str = WAKE_PHRASE
     wake_model: str = ""
     wake_threshold: float = 0.0  # 0: the engine's default
+    tts: str = "kokoro"
+    tts_device: str = "cpu"
+    tts_voice: str = ""  # "": the engine's default
+    output_endpoint: str = OUTPUT_ENDPOINT
     gos_home: Path = field(default_factory=config.default_home)  # [paths] gos_home
 
     @property
@@ -189,6 +208,20 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
             "[voice] wake_threshold must be 0 (the default) or 0.05 to 0.95"
         )
         threshold = defaults.wake_threshold
+    tts_voice = table.get("tts_voice", defaults.tts_voice)
+    if not isinstance(tts_voice, str) or not (
+        tts_voice.strip() == "" or _VOICE_NAME.fullmatch(tts_voice.strip())
+    ):
+        problems.append(
+            '[voice] tts_voice must be "" (the default) or a voice name, e.g. "am_michael"'
+        )
+        tts_voice = defaults.tts_voice
+    endpoint = table.get("output_endpoint", defaults.output_endpoint)
+    if not isinstance(endpoint, str):
+        problems.append(
+            "[voice] output_endpoint must be a part of a device name in quotes"
+        )
+        endpoint = defaults.output_endpoint
     found = VoiceSettings(
         primary_trigger=primary,
         backup_trigger=backup,
@@ -204,6 +237,10 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
         wake_phrase=phrase,
         wake_model=wake_model,
         wake_threshold=float(threshold),
+        tts=choice("tts", TTS_ENGINES, defaults.tts),
+        tts_device=choice("tts_device", TTS_DEVICES, defaults.tts_device),
+        tts_voice=tts_voice.strip(),
+        output_endpoint=endpoint.strip(),
         gos_home=gos_home or defaults.gos_home,
     )
     roles: dict[str, list[str]] = {}

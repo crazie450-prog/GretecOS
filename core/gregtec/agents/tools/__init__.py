@@ -3,7 +3,8 @@
 One set of Python functions serves the fast lane (Messages API tool schemas,
 ``Registry.specs("fast")``), the deep lane (WO-2.4 wraps the same tools in the in-process MCP
 server, ``read_only`` -> ``readOnlyHint``) and the shell (``gos tool``). Every tool is
-read-only but three note tools (WO-2.5), which write behind the vault path guard; results are TSV, at most 50 rows a page with a ``more`` cursor, and every row that
+read-only but three note tools (WO-2.5), which write behind the vault path guard, and
+``action_propose`` (WO-7.1), which only records a proposal for Clayton to confirm; results are TSV, at most 50 rows a page with a ``more`` cursor, and every row that
 states a game number carries the citation the DB gives it (``r:`` recipes, ``q:`` quests,
 ``mte:`` machines). The tools never compute game numbers; the only derived numbers are exact
 unit changes (ticks to seconds, basis points to percent).
@@ -27,6 +28,9 @@ note_write(path, body)    deep   :mod:`.notes` (writes, behind the vault path gu
 note_append(path, lines)  deep   :mod:`.notes` (writes; logs append-only)
 inbox_propose(title, ...) deep   :mod:`.notes` (writes a new ``inbox/`` note)
 handoff(task)             fast   :mod:`gregtec.agents.deep_lane` (WO-2.3; to the deep lane)
+telemetry_get(scope)      both   :mod:`.ops` (WO-7.1; OC readings with age and stale flag)
+action_propose(kind,args) deep   :mod:`.ops` (WO-7.1; proposes only: Clayton confirms, D59)
+action_status(id)         both   :mod:`.ops` (WO-7.1)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
@@ -35,7 +39,7 @@ with WO-5.3; export_diff with WO-1.4; ore_find with WO-1.6; structure_get after 
 WO-1.9; crop_* with WO-1.10 and WO-6.7; plan_*, design_production, effort_estimate and
 layout_estimate with Phase 3; base_get with WO-3.8; design_power with WO-4.2; ledger_* with
 WO-4.4; speak with WO-5.3; persona_set with WO-5.6; player_pos with WO-6.1; events_recent and
-session_summary with WO-6.3; telemetry_get and action_* with WO-7.1; screen_snapshot with
+session_summary with WO-6.3; screen_snapshot with
 WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
 with Phase 10.
 """

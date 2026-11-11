@@ -1,0 +1,13 @@
+# Basic chemicals every chain above uses (GTNH 2.9.0), WO-3.3. Format: README.md.
+# Without these the heuristic's "fewer inputs" picks a byproduct route for the commonest gases
+# and acids (hydrochloric acid distilled out of ferrocene waste, chlorine from a rare mineral),
+# which drags unrelated chains into every graph. Each is the textbook GT route from water, salt
+# and air. Keys checked against the dev runtime's server harness DB (run 20261106T014148Z).
+item	recipe	branch	note
+fluid:hydrogen	r:gt.recipe.multielectro/599bf7b376e7	h2	Hydrogen: electrolysing water (multiblock electrolyzer, no cells)
+fluid:hydrogen	r:gt.recipe.electrolyzer/f84860fd1207	h2	the single-block electrolyzer (oxygen comes out in a cell)
+fluid:oxygen	r:gt.recipe.multielectro/599bf7b376e7		Oxygen: the same water electrolysis
+fluid:chlorine	r:gt.recipe.electrolyzer/800e278da1d1	cl2	Chlorine: electrolysing salt
+fluid:chlorine	r:gt.recipe.multielectro/3ab9905dcf00	cl2	the multiblock electrolyzer
+fluid:hydrochloricacid_gt5u	r:gt.recipe.largechemicalreactor/da5716588b66		Hydrochloric Acid: hydrogen + chlorine (large chemical reactor)
+fluid:ammonia	r:gt.recipe.largechemicalreactor/078449475317		Ammonia: nitrogen + hydrogen (large chemical reactor)

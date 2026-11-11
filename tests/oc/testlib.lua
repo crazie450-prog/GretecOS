@@ -134,7 +134,7 @@ function T.base(opts)
   end
   F.plain(w, "computer", { prefix = "0c" })
   F.plain(w, "eeprom", { prefix = "0e" })
-  F.plain(w, "filesystem", { prefix = "0f" })
+  w.boot_fs = F.plain(w, "filesystem", { prefix = "0f" }).addr -- the managed drive OpenOS boots from
   F.plain(w, "screen", { prefix = "05" })
   F.plain(w, "gpu", { prefix = "06" })
   F.plain(w, "keyboard", { prefix = "07" })
