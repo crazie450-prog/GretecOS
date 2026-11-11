@@ -450,7 +450,8 @@ vault/
   plans/<plan_id>.md    ≤40-line summaries → data/plans/<id>.json
   quests/<line>.md      cached questline summaries, quest decisions
   themes/<id>.md        building themes (D36)
-  personas/<id>.md      persona packs (D28)
+  personas/pe-<id>.md   Clayton's persona packs (D28); drafts/ holds agent drafts (D206)
+  _gos/personas/        shipped persona packs + _template.md (deployed, D206)
   log/YYYY-MM-DD.md     session journal (append-only) · log/wk/YYYY-Www.md · log/mo/YYYY-MM.md
   inbox/                agent → human proposals, export diffs, curation tasks
   _gos/schema.md        note types and allowed keys (the single source of truth for writers)
@@ -504,7 +505,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 |---|---|---|
 | `me/` | Clayton only, directly or through dashboard Settings | Agents read only and propose changes through `inbox/` |
 | `base/ plans/ quests/ themes/ log/ inbox/ INDEX.md glossary.tsv` | agents | Atomic writes (temp file + `os.replace`); logs append-only |
-| `personas/` | both | Agents draft on request; Clayton edits freely |
+| `personas/` | both | Agents draft on request, in `personas/drafts/` only (never live until Clayton moves one up, D206); Clayton edits freely |
 | `_gos/` | **repo only** | Source in `vault-template/_gos/`, deployed by script. Runtime agents can't rewrite their own skills; they propose changes through `inbox/`. |
 - The `PreToolUse` path guard enforces this table.
 - Git auto-commits agent writes in batches (every 10 min and at session end), so any change can be undone.
@@ -1307,7 +1308,7 @@ gregtec-os/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
-  vault-template/        _gos/{skills,agents,schema.md}  personas/  me/(stubs)
+  vault-template/        _gos/{skills,agents,personas,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
   tests/                 unit/  fixtures/{gt_oc_tests,plannh}/  golden/  evals/*.tsv  security/
