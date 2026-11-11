@@ -13,21 +13,23 @@ server harness; locally: mod/README.md) and writes nothing outside tmp_path. §8
 The addon column criterion is tested on the fixture DB (tests/unit/planner/test_metrics.py):
 the dev runtime has no addon machines. The server harness exports no NEI crafting recipes and
 no structures, so machine items can't be made here and ``eff_h`` is 0 with notes saying so;
-the effort model is tested on the fixture.
+the effort model is tested on the fixture and, with NEI's crafting-table recipes, on the
+client harness run.
 """
 
 from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from gregtec.db import access, build
 from gregtec.ingest import collect
-from gregtec.planner import explain, graph, plan, rank, sizing, validate
+from gregtec.planner import effort, explain, graph, plan, rank, sizing, validate
 from gregtec.planner.request import DefaultBaseInputs, Request
 
 REPO = Path(__file__).resolve().parents[2]
@@ -118,7 +120,9 @@ def test_benchmarks_return_two_or_three_ranked_routes(
         assert p["rank"]["w"] == rank.BALANCED.as_dict()
         m = p["metrics"]
         assert m["machines"] >= 1 and m["eut_avg"] >= 0 and m["scarcity"] >= 0
-        assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], abs=1e-9)
+        assert m["eff_h"] == pytest.approx(
+            m["build_h"] + m["unlock_h"], rel=1e-8, abs=1e-12
+        )
     doc = explain.facts(d.plans, d.graph.item(d.graph.target).name, rank.BALANCED)
     text = explain.template(doc)
     names = explain.names(doc)
@@ -172,3 +176,60 @@ def test_batch_totals_equal_rate_times_time(
             sum(n["eut_avg"] or 0 for n in p["nodes"]) * 20 * within, rel=TOL
         )
         assert 0 < b["eta_s"] <= within * (1 + TOL)
+
+
+# --- the effort model on the client run (NEI's crafting-table recipes) ------------------------
+
+
+@dataclass(frozen=True)
+class Owned(DefaultBaseInputs):
+    """No stock or lines, the default tier, and these machines owned."""
+
+    owned: tuple[tuple[int, int], ...] = ()
+
+    def owned_machines(self) -> Mapping[int, int]:
+        return dict(self.owned)
+
+
+@pytest.fixture(scope="module")
+def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connection]:
+    if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
+        pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
+    game = REPO / "mod" / "run" / "client"
+    if not (game / collect.EXPORTS).is_dir():
+        pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
+    home = tmp_path_factory.mktemp("rank-client")
+    collect.collect(game, home, 1, allow_harness=True)
+    build.build(home, allow_harness=True)
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        yield c
+    finally:
+        c.close()
+
+
+def test_effort_on_a_run_with_crafting_recipes(client: sqlite3.Connection) -> None:
+    """The client run has NEI's crafting-table recipes, so machine items can be made: each
+    route's build effort is positive, crafting-table steps cost craft_s each, and owning only
+    some machines unlocks the rest (each map once, depth <= 3)."""
+    steel = Request("gregtech:gt.metaitem.01@11305", tier_cap=2)
+    d = plan.design(client, steel, DefaultBaseInputs(0))
+    for p in d.plans:
+        m = p["metrics"]
+        assert m["build_h"] > 0 and m["unlock_h"] == 0
+        assert m["eff_h"] == pytest.approx(
+            m["build_h"] + m["unlock_h"], rel=1e-8, abs=1e-12
+        )
+        hand = [r for r in m["effort"]["rows"] if r["map"] == effort.HAND]
+        assert hand and hand[0]["h"] == pytest.approx(
+            hand[0]["crafts"] * effort.CRAFT_S / 3600, rel=1e-6
+        )
+    best = d.plans[0]
+    owned = ((best["metrics"]["by_type"][0]["mte"], 1),)
+    again = plan.design(client, steel, Owned(0, owned=owned))
+    m = next(p for p in again.plans if p["id"] == best["id"])["metrics"]
+    assert m["unlock_h"] > 0 and m["effort"]["unlocks"]
+    assert len(set(m["effort"]["unlocks"])) == len(m["effort"]["unlocks"])
+    assert m["eff_h"] == pytest.approx(
+        m["build_h"] + m["unlock_h"], rel=1e-8, abs=1e-12
+    )
