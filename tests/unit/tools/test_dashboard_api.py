@@ -666,6 +666,7 @@ def test_tick_pushes_the_state_when_it_changes(core: Core) -> None:
         assert first_t is not None and first_c is not None
         assert json.loads(first_t)["data"]["approvals"][0]["kind"] == "pairing"
         assert json.loads(first_c)["data"]["approvals"] == []
+        core.started -= 5  # uptimes move on their own: not a change worth a push
         await dashboard.tick(core)  # nothing changed, heartbeat not due
         assert trusted.queue.empty()
         assert core.board is not None
