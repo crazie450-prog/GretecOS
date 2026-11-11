@@ -140,7 +140,7 @@ def test_the_repo_glossary_leads_with_the_tiers_and_fits() -> None:
         ("How do I make a L U V machine hull?", "How do I make a LuV machine hull?"),
         ("make a L U V machine hull", "make a LuV machine hull"),
         ("make a L V motor", "make a LV motor"),
-        ("how do I make a l v motor", "how do I make a l v motor"),
+        ("how do I make a l v motor", "how do I make a LV motor"),
         ("i E B F", "i EBF"),
         # a capital "A" may be a letter, but the longer run a word later wins
         ("A L U V machine hull", "A LuV machine hull"),

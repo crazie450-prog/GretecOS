@@ -38,8 +38,8 @@ live vault or else vault-template) does two things:
 2. **Spelling** (both engines, :class:`Snapper`): a run of up to four words whose letters and
    digits are a glossary form's is written as the glossary writes it: "E-B-F", "E B F" and
    "e.b.f." become "EBF", "ass line" "assline", "HS-SG" and "HSSG" "HSS-G". Only spacing, case
-   and punctuation change, so a word never becomes another word: a lower-case single letter
-   ("a", "i") is a word and never joins a run, a run gives way to a longer one starting a word
+   and punctuation change, so a word never becomes another word: lower-case "a" and "i" are
+   words and never join a run, a run gives way to a longer one starting a word
    later ("make a L U V hull" is "make a LuV hull"), and one plain word changes only where the
    glossary adds punctuation or spaces to it ("me" stays "me", not "ME").
 
@@ -81,6 +81,9 @@ CPU_THREADS = 4
 PROMPT_TOKENS = 220
 PROMPT_KINDS = frozenset({"tier", "machine", "material", "item", "line", "mod"})
 SNAP_WORDS = 4
+WORD_LETTERS = frozenset(
+    {"a", "i"}
+)  # English's one-letter words, as engines write them
 WARM_UP_S = 0.5
 MIN_SPEECH_S = 0.1  # shorter than this, a segment can't hold a word
 # Models pinned to the revision WO-5.2 measured (Hugging Face repo, commit). Other faster-whisper
@@ -200,12 +203,9 @@ class Snapper:
         the run as written (punctuation around it kept)."""
         for n in range(min(SNAP_WORDS, len(tokens) - i), 0, -1):
             run = tokens[i : i + n]
-            # A spelt letter is a capital ("L U V"): a lower-case one ("a", "i") is a word,
-            # and a word never joins a run ("make a L V" is not "make AL V").
-            if n > 1 and any(
-                len(w := _edges(t)[1]) == 1 and w.isalpha() and not w.isupper()
-                for t in run
-            ):
+            # Lower-case "a" and "i" are words, not spelt letters, and a word never joins a
+            # run ("make a L V" is not "make AL V").
+            if n > 1 and any(_edges(t)[1] in WORD_LETTERS for t in run):
                 continue
             lead, word, trail = _edges(run[0])
             if n > 1:
