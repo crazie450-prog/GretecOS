@@ -107,18 +107,26 @@ class SetupService:
 
     def _read(self) -> tuple[Config, dict[str, Any], str | None]:
         if not self.path.is_file():
-            try:  # no gos.toml (a first run, or deleted): the record beside it still counts
-                found = config.read_former_plays(self.path.parent)
-            except config.ConfigError as exc:
-                return self.base, {}, str(exc)
-            former = tuple(dict.fromkeys([*self.base.former_plays, *found]))
-            return dataclasses.replace(self.base, former_plays=former), {}, None
+            # No gos.toml (a first run, or deleted): the record beside it still counts.
+            return self._with_record(None)
         try:
             with open(self.path, "rb") as f:
                 data = tomllib.load(f)
             return config.load(self.path), data, None
         except (OSError, ValueError) as exc:
-            return self.base, {}, f"gos.toml can't be read ({exc}); fix it by hand"
+            # Unreadable gos.toml: the running core's config, plus the record beside it, so a
+            # Play recorded since the core started still counts (final check round 7).
+            return self._with_record(f"gos.toml can't be read ({exc}); fix it by hand")
+
+    def _with_record(
+        self, error: str | None
+    ) -> tuple[Config, dict[str, Any], str | None]:
+        try:
+            found = config.read_former_plays(self.path.parent)
+        except config.ConfigError as exc:
+            return self.base, {}, error or str(exc)
+        former = tuple(dict.fromkeys([*self.base.former_plays, *found]))
+        return dataclasses.replace(self.base, former_plays=former), {}, error
 
     def has_secret(self, name: str) -> bool:
         try:
@@ -275,24 +283,31 @@ class SetupService:
         """Add every Play ``ctx`` knows of (and ``extra``) to ``former_plays.txt`` beside gos.toml,
         each made absolute and resolved, however it was spelled (a Windows ``/Games/...`` has no
         drive yet resolves); return the whole record for ``[setup] former_plays``. Entries are
-        only ever added here; a hand edit removes one (D223). Two spellings are one entry only
-        where the file system says so (``os.path.normcase``: case ignored on Windows alone)."""
-        record: dict[str, str] = {}
-        for p in [*paths.plays(ctx), *(extra or [])]:
-            try:
-                text = str(p.resolve())
-            except (OSError, RuntimeError):  # a link loop: keep it as written
-                text = str(p.absolute())
-            record.setdefault(os.path.normcase(text), text)
+        only ever added here: the file's own entries are always kept, whatever ``ctx`` read (an
+        unreadable gos.toml leaves it the core's start-up config), and a record that can't be
+        read is refused, never overwritten; a hand edit removes one (D223). Two spellings are
+        one entry only where the file system says so (``os.path.normcase``: case ignored on
+        Windows alone)."""
         target = self.path.parent / config.FORMER_PLAYS_FILE
-        listed = list(record.values())
-        text = RECORD_HEADER + "".join(f"{p}\n" for p in listed)
         with self._lock:
+            try:
+                kept = config.read_former_plays(self.path.parent)
+            except config.ConfigError as exc:
+                raise SetupError(409, f"not saved: {exc}; fix it by hand") from None
+            record: dict[str, str] = {}
+            for p in [*kept, *paths.plays(ctx), *(extra or [])]:
+                try:
+                    resolved = str(p.resolve())
+                except (OSError, RuntimeError):  # a link loop: keep it as written
+                    resolved = str(p.absolute())
+                record.setdefault(os.path.normcase(resolved), resolved)
+            listed = list(record.values())
+            text = RECORD_HEADER + "".join(f"{p}\n" for p in listed)
             try:
                 if target.is_file() and target.read_text("utf-8") == text:
                     return listed
             except (OSError, UnicodeDecodeError):
-                pass  # rewritten below; config.load refuses a record it can't read
+                pass  # rewritten below
             self._guard(ctx, target, extra, cand)
             try:
                 tomledit.write_atomic(target, text)

@@ -641,3 +641,100 @@ def test_sync_ignores_case_when_it_compares_a_former_play(tmp_path: Path) -> Non
     target = tmp_path / "GTNH-Play"
     cfg = Config(former_plays=(tmp_path / "gtnh-play",))
     assert sync._former_play(target, cfg, "lab") is not None
+
+
+# --- (5) an unreadable gos.toml never shrinks the record (final check round 7)
+
+
+def break_gos_toml(path: Path, how: str) -> None:
+    """A hand edit that leaves gos.toml unreadable: a path emptied mid-edit, or a Windows path
+    in a basic string (``\\G`` is a TOML escape error)."""
+    if how == "emptied":
+        hand_set(path, "gos_app", "")
+        return
+    text = re.sub(
+        r"^gos_app = .*$",
+        lambda _: 'gos_app = "C:\\Games\\GOS"',
+        path.read_text("utf-8"),
+        flags=re.MULTILINE,
+    )
+    path.write_text(text, "utf-8")
+
+
+@pytest.mark.parametrize("how", ["emptied", "escape"])
+def test_an_unreadable_gos_toml_keeps_a_play_recorded_since_the_start(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path, how: str
+) -> None:
+    """A Play recorded only in former_plays.txt (by a describe) after the core started stays on
+    record while gos.toml can't be read, so it is never finished or synced as Lab after."""
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    running = SetupService(svc.path, config.load(svc.path), provider=FakeDevices())
+    hand_play(svc, prism, "Play2")
+    running.describe()  # Play2 goes on record (the file only)
+    rec = svc.path.parent / config.FORMER_PLAYS_FILE
+    play2 = str((prism / "instances" / "Play2").resolve())
+    assert play2 in rec.read_text("utf-8")
+    break_gos_toml(svc.path, how)
+    with pytest.raises(ValueError):
+        config.load(svc.path)
+    assert running.describe()["config_error"]
+    running.check("paths", {})
+    assert play2 in rec.read_text("utf-8")
+    ctx, _ = running.context()  # an unreadable gos.toml still counts the record's Plays
+    assert play2 in {str(p) for p in ctx.cfg.former_plays}
+    hand_set(svc.path, "gos_app", str(tmp_path / "app"))
+    hand_set(svc.path, "play", "GTNH-Play")
+    hand_set(svc.path, "lab", "Play2")
+    restarted = SetupService(svc.path, config.load(svc.path), provider=FakeDevices())
+    for s in (running, restarted):
+        with pytest.raises(SetupError):
+            s.finish()
+    plans, refusals = sync.plan_all(config.load(svc.path), ["lab"])
+    assert not plans and any("was Play" in r for r in refusals)
+    assert (prism / "instances/Play2/.minecraft/config/only_in_old_play.cfg").is_file()
+
+
+def test_the_route_keeps_the_record_while_gos_toml_cant_be_read(
+    client: TestClient,  # noqa: F811
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app").mkdir()
+    vals = path_values(prism, home, tmp_path / "app")
+    r = client.post("/api/setup/steps/paths", json={"values": vals}, headers=admin())
+    assert r.status_code == 200, r.text
+    path = home / "config" / "gos.toml"
+    make_instance(prism / "instances", "Play2")
+    hand_set(path, "play", "Play2")
+    assert client.get("/api/setup", headers=admin()).status_code == 200
+    rec = path.parent / config.FORMER_PLAYS_FILE
+    play2 = str((prism / "instances" / "Play2").resolve())
+    assert play2 in rec.read_text("utf-8")
+    hand_set(path, "gos_app", "")  # a path cleared mid-edit, the dashboard reloaded
+    r = client.get("/api/setup", headers=admin())
+    assert r.status_code == 200 and r.json()["config_error"]
+    assert play2 in rec.read_text("utf-8")
+    hand_set(path, "gos_app", str(tmp_path / "app"))
+    hand_set(path, "play", "GTNH-Play")
+    hand_set(path, "lab", "Play2")
+    assert client.post("/api/setup/finish", headers=admin()).status_code == 400
+    plans, refusals = sync.plan_all(config.load(path), ["lab"])
+    assert not plans and any("was Play" in r for r in refusals)
+
+
+def test_a_record_that_cant_be_read_is_never_overwritten(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    rec = svc.path.parent / config.FORMER_PLAYS_FILE
+    rec.write_bytes(b"\xff\xfe not utf-8\n")
+    with pytest.raises(SetupError) as refused:
+        svc.record()
+    assert refused.value.status == 409
+    svc.describe()  # logged, not raised
+    with pytest.raises(SetupError):
+        svc.save("paths", {"lab": "GTNH-Lab"})
+    assert rec.read_bytes() == b"\xff\xfe not utf-8\n"
