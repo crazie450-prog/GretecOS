@@ -23,8 +23,10 @@ from importlib import resources
 from pathlib import Path
 from typing import TextIO
 
+from gregtec.config import PACK_PIN, Config
 from gregtec.gamestate.safe_open import read_text, sha256_file
 from gregtec.packupdate import gtpin
+from gregtec.setup.registry import ERROR, OK, WARN, Check
 
 PLAY = "GTNH-Play"  # gos.toml [paths] play (Appendix C)
 JAVA8 = "java8"
@@ -425,6 +427,105 @@ def verify_status(item: VerifyItem, roots: list[PrismRoot]) -> str:
         if item.item.startswith(f"**{word}**"):
             return word.lower()
     return f"open: {item.how} (WO-{item.wo})"
+
+
+def _instance_check(cfg: Config, role: str) -> Check:
+    """One of Play, Export or Lab: there, GTNH, the pinned pack (read only, mods not hashed)."""
+    name = getattr(cfg, role)
+    folder = cfg.instance(role)
+    label = f"{role.capitalize()} instance ({name})"
+    try:
+        there = (folder / "instance.cfg").is_file()
+    except OSError as exc:
+        return Check(f"instance.{role}", label, ERROR, f"can't look in {folder}: {exc}")
+    if not there:
+        # Play is the one GOS can't make; Export and Lab come from it (WO-0.3, WO-0.7).
+        status = ERROR if role == "play" else WARN
+        return Check(
+            f"instance.{role}", label, status, f"no Prism instance at {folder}"
+        )
+    inst = read_instance(folder, False, {})
+    notes = list(inst.problems)
+    if not inst.gtnh:
+        notes.append("not a GTNH instance (no GTNH components or dreamcraft.cfg)")
+    elif inst.pack_version not in (None, PACK_PIN):
+        notes.append(f"pack {inst.pack_version}; GOS is pinned to {PACK_PIN}")
+    if notes:
+        return Check(f"instance.{role}", label, WARN, "; ".join(notes))
+    game = inst.game_dir or "not launched yet"
+    return Check(
+        f"instance.{role}",
+        label,
+        OK,
+        f"GTNH {inst.pack_version or '?'}, {inst.java_build} build, game folder {game}",
+    )
+
+
+def _home_check(home: Path) -> Check:
+    label = f"GOS_HOME ({home})"
+    if home.is_dir():
+        if os.access(home, os.W_OK):
+            return Check("paths.gos_home", label, OK, "there and writable")
+        return Check("paths.gos_home", label, ERROR, "this account can't write there")
+    if home.exists():
+        return Check("paths.gos_home", label, ERROR, "that is a file, not a folder")
+    parent = home.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if parent.is_dir() and os.access(parent, os.W_OK):
+        return Check("paths.gos_home", label, OK, "not there yet: GOS makes it")
+    return Check(
+        "paths.gos_home", label, ERROR, f"can't be made: {parent} isn't writable"
+    )
+
+
+def checklist(cfg: Config) -> list[Check]:
+    """``gos doctor``'s checks of one config, as checklist rows (the setup wizard, WO-2.9): the
+    Prism folders, Play, Export and Lab, GOS_APP, GOS_HOME and the DB's GT pin. Read only: game
+    files go through ``safe_open``, mods aren't hashed and nothing is written."""
+    rows: list[Check] = []
+    for key, label, path in (
+        ("paths.prism_root", "Prism folder", cfg.prism_root),
+        ("paths.prism_instances", "Prism instances folder", cfg.prism_instances),
+    ):
+        found = path.is_dir()
+        rows.append(
+            Check(
+                key,
+                f"{label} ({path})",
+                OK if found else ERROR,
+                "found" if found else "no such folder",
+            )
+        )
+    names = {getattr(cfg, r).casefold() for r in ("play", "export", "lab")}
+    if len(names) < 3:
+        rows.append(
+            Check(
+                "paths.instances",
+                "Instance names",
+                ERROR,
+                "Play, Export and Lab must be three different instances",
+            )
+        )
+    elif cfg.prism_instances.is_dir():
+        rows += [_instance_check(cfg, role) for role in ("play", "export", "lab")]
+    app = cfg.gos_app.is_dir()
+    rows.append(
+        Check(
+            "paths.gos_app",
+            f"GOS_APP ({cfg.gos_app})",
+            OK if app else WARN,
+            "found"
+            if app
+            else "no release installed there yet: Clayton's gos deploy makes it (D91)",
+        )
+    )
+    rows.append(_home_check(cfg.gos_home))
+    pin_ok, pin_line = gtpin.check_db(cfg.gos_home)
+    rows.append(
+        Check("db.gt_pin", "Recipe DB and GT pin", OK if pin_ok else ERROR, pin_line)
+    )
+    return rows
 
 
 def write_env(roots: list[PrismRoot], gos_home: Path, verify: dict[str, str]) -> Path:

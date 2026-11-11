@@ -15,8 +15,9 @@ import keyring.errors
 
 SERVICE = "gregtec-os"
 ANTHROPIC = "anthropic"
-# The secrets `gos key` manages. The Discord token and any cloud TTS key join in later WOs.
-NAMES = (ANTHROPIC,)
+DISCORD = "discord"  # the Discord bot's token (stored by the setup wizard, WO-2.9; used by WO-9.1)
+# The secrets `gos key` manages. Any cloud TTS key joins in a later WO.
+NAMES = (ANTHROPIC, DISCORD)
 
 
 class MissingKeyError(LookupError):
@@ -85,4 +86,32 @@ def anthropic_key_problem(value: str) -> str | None:
         return "that is an Admin API key; create a regular API key in the gregtec workspace"
     if any(c.isspace() for c in value) or len(value) < 40:
         return "the key looks cut off or has spaces in it; copy it again"
+    return None
+
+
+def discord_token_problem(value: str) -> str | None:
+    """Why ``value`` doesn't look like a Discord bot token, or None. A loose shape check only:
+    three dot-separated base64url parts (the bot's id, a timestamp, an HMAC)."""
+    if value.lower().startswith("bot "):
+        return "paste the token alone, without 'Bot '"
+    parts = value.split(".")
+    if (
+        len(parts) != 3
+        or not all(parts)
+        or not all(c.isalnum() or c in "-_" for p in parts for c in p)
+        or len(value) < 50
+    ):
+        return (
+            "that doesn't look like a bot token: copy it from the Discord developer "
+            "portal (Bot > Reset Token)"
+        )
+    return None
+
+
+def secret_problem(name: str, value: str) -> str | None:
+    """Why ``value`` can't be the ``name`` secret (its loose shape check), or None."""
+    if name == ANTHROPIC:
+        return anthropic_key_problem(value)
+    if name == DISCORD:
+        return discord_token_problem(value)
     return None

@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import uvicorn
 
@@ -113,9 +114,12 @@ def run(
     *,
     supervised: bool = False,
     setup_agents: Callable[[Config, Store], ask.Agents] | None = None,
+    config_path: Path | None = None,
 ) -> int:
     """Run the core until it is stopped. ``setup_agents``: how the router and lanes are set up
-    (default :func:`gregtec.agents.ask.setup`; the dashboard e2e harness passes fake lanes)."""
+    (default :func:`gregtec.agents.ask.setup`; the dashboard e2e harness passes fake lanes).
+    ``config_path``: the gos.toml ``cfg`` came from, which the setup wizard edits (default
+    ``config.default_path()``)."""
     applog.setup("core", cfg.logs_dir)
     if (why := supervisor.elevation_problem()) is not None:
         log.error("refusing to start", extra={"why": why})
@@ -149,6 +153,7 @@ def run(
         meter=meter,
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter, ai),
+        config_path=config_path,
     )
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
     core.asker = agents.asker(ai=ai)

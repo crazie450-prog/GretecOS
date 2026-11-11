@@ -1026,7 +1026,7 @@ def _key(command: str, name: str | None) -> int:
     if not value:
         print("Nothing entered; nothing stored.", file=sys.stderr)
         return 1
-    if name == keys.ANTHROPIC and (problem := keys.anthropic_key_problem(value)):
+    if problem := keys.secret_problem(name, value):
         print(f"Not stored: {problem}.", file=sys.stderr)
         return 1
     replaced = keys.set_key(name, value)

@@ -21,7 +21,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"Can't read gos.toml: {exc}", file=sys.stderr)
         return 2
-    return server.run(cfg, supervised=args.supervised)
+    return server.run(cfg, supervised=args.supervised, config_path=args.config)
 
 
 if __name__ == "__main__":

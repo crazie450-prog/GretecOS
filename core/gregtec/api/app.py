@@ -26,6 +26,7 @@
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state`` and ``state`` (D179)|
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
+| /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -63,6 +64,7 @@ import sqlite3
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Any
 
 import keyring.errors
@@ -75,7 +77,7 @@ from gregtec import control
 from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
-from gregtec.api import ai_routes, dashboard
+from gregtec.api import ai_routes, dashboard, setup_routes
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -89,6 +91,7 @@ from gregtec.api.security import (
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
+from gregtec.setup.service import SetupService
 from gregtec.store import Store
 from gregtec.vault.scheduler import STOP_DEADLINE_S, TICK_S, Maintenance
 
@@ -172,6 +175,10 @@ class Core:
         None  # None: the API with the stored key
     )
     exit_code: int = 0  # what server.run returns (D48 Stop: supervisor.EXIT_STOPPED)
+    config_path: Path | None = (
+        None  # the gos.toml it read (None: config.default_path())
+    )
+    setup: SetupService | None = None  # the setup wizard (WO-2.9), made on first use
 
     # --- pushing to WebSocket clients
 
@@ -734,6 +741,7 @@ def create_app(core: Core) -> FastAPI:
 
     dashboard.add_routes(app, core, principal, trusted, _json_body)
     ai_routes.add_routes(app, core, principal, trusted, _json_body)
+    setup_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 
 
