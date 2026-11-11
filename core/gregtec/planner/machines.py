@@ -9,7 +9,9 @@ number comes from the recipe, a machine fact or GT's math, and each carries its 
 
 **Machine kinds** (GT's class decides which rules apply; D176):
 
-- ``singleblock``: ``MTEBasicMachineWithRecipe``, GT's electric single blocks. A machine of tier
+- ``singleblock``: ``MTEBasicMachineWithRecipe``, GT's electric single blocks (and the 1 A
+  ``MTEBoxinator`` and ``MTEPotionBrewer``, which run a map recipe the same way before trying
+  their own). A machine of tier
   t finds recipes up to V[t] x the recipe map's amperage and overclocks at V[t] x that amperage
   as one amp (:func:`gtmath.basic_machine`). It needs a cleanroom around it for a cleanroom
   recipe and a space dimension for a low-gravity one (``MTEBasicMachine.checkRecipe`` reads
@@ -28,14 +30,17 @@ number comes from the recipe, a machine fact or GT's math, and each carries its 
 
 **Variables** (D109): build variables come from the hatches (``vt``, ``vt_avg``, ``vt_eu``,
 ``vt_eu_floor``, ``input_eu``), the coils (``coil_tier``, ``coil_heat``) or the player's
-:attr:`Player.build`; recipe variables from the recipe; state variables are sized for the worst
-case by default with a steady alternative (D111, D142 (b)); choice variables belong to custom
+:attr:`Player.build` (only inputs the hatches and coils don't set); a build input with a
+documented absent value (``singularity`` 0) gets it when not given, the worst case (D177 (6));
+recipe variables from the recipe; state variables are sized for the worst case by default with
+the steady state as the ``alternative`` (D111, D142 (b)); choice variables belong to custom
 machines with no recipe map, which no recipe selects. A formula whose variable has no value
 rejects the machine and names the variable.
 
 **Badges** (D142 (a), D144): a ``flag`` fact, a fact under 0.8 confidence, a ``partial`` fact,
-a ``deprecated`` controller or a ``processing custom`` machine (its own recipe check) is still
-offered, with a badge and the fact's note. Addon machines (not from GT's own jar) say so (D12).
+a ``deprecated`` controller or a ``processing custom`` machine (its own recipe check, also
+``low_confidence`` until D176's question is answered) is still offered, with a badge and the
+fact's note. Addon machines (not from GT's own jar) say so (D12).
 """
 
 from __future__ import annotations
@@ -75,6 +80,14 @@ from gregtec.planner.gtmath.tiers import (
 )
 
 BASIC_MACHINE = "gregtech.api.metatileentity.implementations.MTEBasicMachineWithRecipe"
+# MTEBasicMachine subclasses whose checkRecipe() returns MTEBasicMachine.checkRecipe()'s result
+# first (a map recipe runs as on any single block) and only then tries its own: 1 A machines.
+MAP_FIRST_SINGLE_BLOCKS = frozenset(
+    {
+        "gregtech.common.tileentities.machines.basic.MTEBoxinator",
+        "gregtech.common.tileentities.machines.basic.MTEPotionBrewer",
+    }
+)
 STEAM_PACKAGE = "gregtech.common.tileentities.machines.steam.MTESteam"
 # SteamOverclockDescriber: (EU/t multiplier, duration multiplier) per variant.
 STEAM_VARIANTS = {"Bronze": (1, 2), "Steel": (2, 1)}
@@ -102,6 +115,13 @@ SIZING_KEYS = (
     "tier_skips",
     "machine_heat",
 )
+
+# Build variables the planner derives from the hatches and coils; Player.build can't set them.
+DERIVED = frozenset(
+    {"vt", "vt_avg", "vt_eu", "vt_eu_floor", "input_eu", "coil_tier", "coil_heat"}
+)
+# TecTech's laser target hatches start at 256 A; its multi-amp hatches stop at 64 A.
+LASER_MIN_AMPS = 256
 
 Kind = Literal["singleblock", "steam", "multiblock"]
 State = Literal["worst", "steady"]
@@ -184,7 +204,10 @@ class MachineInfo:
     def kind(self) -> Kind | None:
         if self.multiblock:
             return "multiblock"
-        if self.class_name == BASIC_MACHINE:
+        if (
+            self.class_name == BASIC_MACHINE
+            or self.class_name in MAP_FIRST_SINGLE_BLOCKS
+        ):
             return "singleblock"
         if self.class_name.startswith(STEAM_PACKAGE) and _steam_variant(
             self.class_name
@@ -224,6 +247,28 @@ class Player:
     addons: bool = True
     hatches: tuple[tuple[EnergyHatch, ...], ...] | None = None
     build: Mapping[int, Mapping[str, float]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.tier < len(V):
+            raise ValueError(
+                f"tier {self.tier} is not a GT voltage tier (0..{len(V) - 1})"
+            )
+        if self.coil_max is not None and not 0 <= self.coil_max < len(COILS):
+            raise ValueError(
+                f"coil_max {self.coil_max} is not a coil tier (0..{len(COILS) - 1})"
+            )
+        for layout in self.hatches or ():
+            for h in layout:
+                if not 0 < h.tier < len(V) or h.amps < 1:
+                    raise ValueError(f"{h} is not an energy hatch GT has")
+        for mte, inputs in self.build.items():
+            for key in inputs:
+                var = mf.VARIABLES.get(key)
+                if var is None or var.kind != "build" or key in DERIVED:
+                    raise ValueError(
+                        f"build[{mte}][{key!r}]: only build inputs the hatches and coils "
+                        "don't set can be given"
+                    )
 
     def hatch_layouts(self) -> list[tuple[EnergyHatch, ...]]:
         if self.hatches is not None:
@@ -288,7 +333,9 @@ class MachineOption:
     notes: tuple[str, ...]
     facts: tuple[UsedFact, ...]
     sizing: Sizing  # the player's state (worst by default)
-    steady: Sizing | None = None  # the other state, when a state variable changes it
+    alternative: Sizing | None = (
+        None  # the other state, when a state variable changes it
+    )
 
     @property
     def ref(self) -> str:
@@ -356,11 +403,13 @@ def size_singleblock(
     if tier > player.tier:
         raise Unsized(f"tier {tier} is above the player's tier {player.tier}")
     needs = _requirements(recipe, player)
+    # MTEBasicMachineWithRecipe takes the map's amperage; the map-first classes are 1 A.
+    amps = 1 if machine.class_name in MAP_FIRST_SINGLE_BLOCKS else recipe.map_amperage
     run = basic_machine(
         Recipe(eut=recipe.eut, duration=recipe.duration),
         tier,
-        amperage=recipe.map_amperage,
-        map_amperage=recipe.map_amperage,
+        amperage=amps,
+        map_amperage=amps,
     )
     if not run.ok:
         raise Unsized(f"{run.check}: the recipe needs {recipe.eut} EU/t")
@@ -444,6 +493,7 @@ class _Plan:
     oc: str
     power: str
     extended: bool
+    exotic: str | None  # the exotic_hatches fact: multiamp, laser or any
     batch: bool
     custom: bool
 
@@ -488,6 +538,7 @@ def _plan(machine: MachineInfo, recipe_map: str) -> _Plan:
         oc=oc,
         power=power,
         extended=power == "total_eu" or "exotic_hatches" in facts,
+        exotic=facts["exotic_hatches"].value if "exotic_hatches" in facts else None,
         batch=batch is not None and batch.value == "true",
         custom=proc is not None and proc.value == "custom",
     )
@@ -539,9 +590,12 @@ def _logic(
         if "eu_modifier" in f and f["eu_modifier"].value != mf.NA
         else 1.0
     )
+    parallel = _int(_number(f["parallel"], env))
+    if parallel < 1:
+        raise Unsized(f"parallel {f['parallel'].value} is {parallel} here")
     logic = Logic(
         power=power,
-        max_parallel=_int(_number(f["parallel"], env)),
+        max_parallel=parallel,
         eu_modifier=eu,
         speed_boost=1.0 / speed,
         batch_size=MAX_BATCH_SIZE if batch else 1,
@@ -613,11 +667,27 @@ def size_multiblock(
         raise Unsized(f"a tier {top} hatch is above the player's tier {player.tier}")
     if any(h.exotic for h in hatches) and not plan.extended:
         raise Unsized("it takes no exotic energy hatches")
+    for h in hatches:
+        if h.exotic and plan.exotic in ("multiamp", "laser"):
+            laser = h.amps >= LASER_MIN_AMPS
+            if laser != (plan.exotic == "laser"):
+                kind = "laser" if laser else "multi-amp"
+                raise Unsized(f"exotic_hatches {plan.exotic}: it takes no {kind} hatch")
     names = plan.variables()
+    given = {k: float(v) for k, v in player.build.get(machine.mte_id, {}).items()}
+    # A build input with a documented absent value gets it (the worst case, D177 (6)).
+    # (names holds the oc fact's word too, so look each name up.)
+    defaulted: dict[str, float] = {}
+    for n in sorted(names - set(given)):
+        var = mf.VARIABLES.get(n)
+        if var is not None and var.worst is not None:
+            defaulted[n] = var.worst
+    # Player.build first: what the hatches and the recipe set always wins.
     base: dict[str, float] = {
+        **defaulted,
+        **given,
         **recipe.variables(),
         **_hatch_variables(hatches, plan.extended),
-        **{k: float(v) for k, v in player.build.get(machine.mte_id, {}).items()},
     }
     coils = bool(names & {"coil_tier", "coil_heat"})
     batch = player.batch_mode and plan.batch
@@ -683,7 +753,11 @@ def size_multiblock(
         coil=coil,
         min_coil=min_coil,
     )
-    return replace(option, steady=other)
+    notes = tuple(
+        f"sized without {n}: {n} = {w:g}, the worst case (D177 (6))"
+        for n, w in defaulted.items()
+    )
+    return replace(option, alternative=other, notes=(*option.notes, *notes))
 
 
 def _why(run: Run) -> str:
@@ -721,17 +795,20 @@ def _badges(
         notes.append(f"flagged: {flag.note}")
     if plan is not None:
         low = [f for f in plan.facts.values() if f.confidence < THRESHOLD]
-        if low:
+        if low or plan.custom:
             badges.append("low_confidence")
+        if low:
             notes.append(
                 "low confidence: "
                 + ", ".join(f"{f.key} {f.confidence:.2f} ({f.source})" for f in low)
             )
         if plan.custom:
+            # A D142 (a) machine until Clayton answers (D176): no fact says its own check
+            # sizes like ProcessingLogic.
             badges.append("custom")
             notes.append(
                 "its own recipe check (processing custom): sized from its facts with GT's "
-                "processing-logic rules"
+                "processing-logic rules, which no fact confirms for it (low confidence)"
             )
     partial = machine.facts.get("partial")
     if partial is not None:
@@ -811,18 +888,18 @@ def options_for(
     except Unsized as e:
         return rejected(str(e))
     out: list[MachineOption] = []
-    reasons: list[str] = []
-    for hatches in player.hatch_layouts():
+    reasons: list[tuple[int, int, str]] = []
+    for i, hatches in enumerate(player.hatch_layouts()):
         try:
             out.append(size_multiblock(recipe, machine, player, hatches))
         except Unsized as e:
-            reasons.append(str(e))
+            reasons.append((max_input_eu(hatches, extended=True), i, str(e)))
     if out:
         return out, None
-    # The last layout is the strongest (layouts go up in tier and hatches), so its reason is
-    # what stands between the player and the recipe.
+    # The strongest layout's reason (the most input EU/t, the later one on a tie) is what
+    # stands between the player and the recipe.
     return rejected(
-        reasons[-1] if reasons else "no energy hatch layout at the player's tier"
+        max(reasons)[2] if reasons else "no energy hatch layout at the player's tier"
     )
 
 

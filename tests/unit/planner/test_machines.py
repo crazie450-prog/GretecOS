@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -142,9 +142,7 @@ class Case:
         None  # (EU/t, ticks, parallel) of the first option
     )
     batch: bool = False
-    steady: Callable[[], Run] | None = (
-        None  # the steady alternative of the first option
-    )
+    alternative: Callable[[], Run] | None = None  # the other state of the first option
     tags: frozenset[str] = field(default_factory=frozenset)
 
 
@@ -245,6 +243,21 @@ SCANNER = m.MachineInfo(
     "gregtech",
     False,
     1,
+    ("gt.recipe.a",),
+)
+
+ZERO_PARALLEL = multi(1021, logic_facts("0", "1", "1", "standard"))
+LATEX = multi(1022, logic_facts("1 + 8*singularity", "1", "1", "standard"))
+LASER = multi(
+    1023, logic_facts("4", "1", "1", "standard", fact("exotic_hatches", "laser"))
+)
+BOXINATOR = m.MachineInfo(
+    1024,
+    "Packager",
+    "gregtech.common.tileentities.machines.basic.MTEBoxinator",
+    "gregtech",
+    False,
+    MV,
     ("gt.recipe.a",),
 )
 
@@ -609,7 +622,7 @@ CASES: list[Case] = [
                 ),
             )
         ],
-        steady=lambda: run(
+        alternative=lambda: run(
             R_LV,
             mlogic(
                 hatches(HV, 2), max_parallel=8 * 4, speed_boost=1 / 3, eu_modifier=0.9
@@ -635,7 +648,7 @@ CASES: list[Case] = [
                 ),
             )
         ],
-        steady=lambda: run(
+        alternative=lambda: run(
             R_LV,
             mlogic(
                 hatches(HV, 2), max_parallel=4 * 4, speed_boost=1 / 2, eu_modifier=0.9
@@ -720,12 +733,76 @@ CASES: list[Case] = [
         badges=("partial",),
     ),
     Case(
-        "custom processing is sized from its facts with a badge",
+        "custom processing is sized from its facts as a low-confidence machine",
         R_LV,
         CUSTOM_PROC,
         m.Player(tier=LV, hatches=(hatches(LV),)),
         lambda: [(hatches(LV), run(R_LV, mlogic(hatches(LV))))],
-        badges=("custom",),
+        badges=("custom", "low_confidence"),
+    ),
+    Case(
+        "a parallel formula below 1 rejects with its value",
+        R_LV,
+        ZERO_PARALLEL,
+        m.Player(tier=LV, hatches=(hatches(LV),)),
+        "parallel 0 is 0 here",
+    ),
+    Case(
+        "an absent build input is sized at its worst case",
+        R_LV,
+        LATEX,
+        m.Player(tier=LV, hatches=(hatches(LV),)),
+        lambda: [(hatches(LV), run(R_LV, mlogic(hatches(LV), max_parallel=1)))],
+    ),
+    Case(
+        "a build input the player gives beats its worst case",
+        R_LV,
+        LATEX,
+        m.Player(tier=LV, hatches=(hatches(LV),), build={1022: {"singularity": 1}}),
+        lambda: [(hatches(LV), run(R_LV, mlogic(hatches(LV), max_parallel=9)))],
+    ),
+    Case(
+        "a laser hatch on a multi-amp machine",
+        R_LV,
+        EXOTIC,
+        m.Player(tier=HV, hatches=((EnergyHatch.multi_amp(HV, 256),),)),
+        "takes no laser hatch",
+    ),
+    Case(
+        "a multi-amp hatch on a laser machine",
+        R_LV,
+        LASER,
+        m.Player(tier=HV, hatches=((EnergyHatch.multi_amp(HV, 16),),)),
+        "takes no multi-amp hatch",
+    ),
+    Case(
+        "a laser hatch on a laser machine",
+        R_LV,
+        LASER,
+        m.Player(tier=HV, hatches=((EnergyHatch.multi_amp(HV, 256),),)),
+        lambda: [
+            (
+                (EnergyHatch.multi_amp(HV, 256),),
+                run(
+                    R_LV,
+                    Logic(
+                        power=multiblock_power(
+                            (EnergyHatch.multi_amp(HV, 256),), extended=True
+                        ),
+                        max_parallel=4,
+                        int_power=False,
+                    ),
+                ),
+            )
+        ],
+    ),
+    Case(
+        "boxinator runs a map recipe as a 1 A single block",
+        R_TWO_AMP,
+        BOXINATOR,
+        m.Player(tier=MV),
+        lambda: [(MV, basic_machine(Recipe(60, 100), MV))],
+        literal=(60, 100, 1),
     ),
     Case(
         "deprecated controller is offered with a badge",
@@ -819,21 +896,25 @@ def test_table(case: Case) -> None:
             o.sizing.crafts_per_second,
         ):
             assert value.refs == (case.recipe.ref, f"mte:{case.machine.mte_id}")
-    if case.steady is not None:
-        alt = case.steady()
-        assert first.steady is not None
+    if case.alternative is not None:
+        alt = case.alternative()
+        assert first.alternative is not None
         assert (
-            first.steady.eut.value,
-            first.steady.duration.value,
-            first.steady.parallel.value,
+            first.alternative.eut.value,
+            first.alternative.duration.value,
+            first.alternative.parallel.value,
         ) == (
             alt.eut,
             alt.duration,
             alt.parallel,
         )
-        assert first.sizing.state != first.steady.state
+        assert first.sizing.state == case.player.state
+        assert (
+            first.alternative.state
+            == {"worst": "steady", "steady": "worst"}[case.player.state]
+        )
     else:
-        assert first.steady is None
+        assert first.alternative is None
 
 
 def test_table_covers_the_acceptance_kinds() -> None:
@@ -937,6 +1018,71 @@ def test_default_layouts() -> None:
     layouts = m.Player(tier=MV).hatch_layouts()
     assert layouts == [hatches(LV), hatches(LV, 2), hatches(MV), hatches(MV, 2)]
     assert m.Player(tier=0).hatch_layouts() == []
+
+
+@pytest.mark.parametrize(
+    "key", ["vt", "vt_eu", "input_eu", "recipe_tier", "coil_tier", "ramp", "nope"]
+)
+def test_build_inputs_cant_override_derived_values(key: str) -> None:
+    # Review MEDIUM-1: a build entry for `vt` once turned 8 parallels at LV into 32.
+    with pytest.raises(ValueError, match="build"):
+        m.Player(tier=LV, build={1: {key: 14}})
+
+
+def test_build_inputs_go_under_hatch_values() -> None:
+    vt_multi = multi(1030, logic_facts("8*vt", "1", "1", "standard"))
+    player = m.Player(tier=LV, hatches=(hatches(LV),))
+    options, _ = m.options_for(recipe(1, 100), vt_multi, player)
+    assert options[0].sizing.parallel.value == 8
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"tier": -1},
+        {"tier": len(V)},
+        {"tier": LV, "coil_max": 14},
+        {"tier": LV, "coil_max": -1},
+        {"tier": LV, "hatches": ((EnergyHatch(0),),)},
+        {"tier": LV, "hatches": ((EnergyHatch(len(V)),),)},
+        {"tier": LV, "hatches": ((EnergyHatch(LV, amps=0),),)},
+    ],
+)
+def test_player_out_of_range(kw: dict[str, object]) -> None:
+    # Review LOW-1: these used to raise from deep inside selection and abort choose().
+    with pytest.raises(ValueError):
+        m.Player(**kw)  # type: ignore[arg-type]
+
+
+def test_absent_build_input_is_noted() -> None:
+    options, _ = m.options_for(R_LV, LATEX, m.Player(tier=LV, hatches=(hatches(LV),)))
+    assert any("singularity = 0" in n for n in options[0].notes)
+    options, _ = m.options_for(
+        R_LV,
+        LATEX,
+        m.Player(tier=LV, hatches=(hatches(LV),), build={1022: {"singularity": 1}}),
+    )
+    assert not any("singularity" in n for n in options[0].notes)
+
+
+def test_rejection_names_the_strongest_layout_whatever_the_order() -> None:
+    # Review LOW-5: callers can pass layouts in any order.
+    strong, weak = hatches(MV, 2), hatches(LV)
+    for layouts in ((strong, weak), (weak, strong)):
+        _, why = m.options_for(R_HOT, LCR, m.Player(tier=MV, hatches=layouts))
+        assert why is not None
+        _, alone = m.options_for(R_HOT, LCR, m.Player(tier=MV, hatches=(strong,)))
+        assert alone is not None and why.reason == alone.reason
+
+
+def test_map_first_single_blocks() -> None:
+    assert BOXINATOR.kind == "singleblock"
+    brewer = replace(
+        BOXINATOR,
+        class_name="gregtech.common.tileentities.machines.basic.MTEPotionBrewer",
+    )
+    assert brewer.kind == "singleblock"
+    assert SCANNER.kind is None
 
 
 def test_unlimited_tier_skips_and_overflow_guard() -> None:

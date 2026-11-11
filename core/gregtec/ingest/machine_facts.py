@@ -78,6 +78,9 @@ class Variable:
 
     kind: str  # one of KINDS
     doc: str
+    # A build input's documented "absent" value that still runs the machine: the worst case
+    # the planner sizes with when the player gives none (D111, D177 (6)); None: no such value.
+    worst: float | None = None
 
 
 # build: how the machine is built and equipped (hatches, coils, casings, parts in the controller
@@ -176,6 +179,7 @@ VARIABLES: dict[str, Variable] = {
     "singularity": Variable(
         "build",
         "1 with L.A.T.E.X.'s rubber singularity in the controller (hasSingularity), else 0",
+        worst=0.0,
     ),
     "nanites": Variable(
         "build", "PCB Factory: nanites in the nanite bus (numberOfNanites)"
