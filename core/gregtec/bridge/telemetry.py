@@ -29,6 +29,7 @@ Samples older than :data:`KEEP_S` are pruned once an hour.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -183,20 +184,23 @@ class Telemetry:
     def sweep(self) -> None:
         """Mark machines nothing was heard of for :data:`STALE_S` stale; prune old samples."""
         now = self.clock()
-        with self.store.transaction() as conn:
-            conn.execute(
+        # Each a quick write: while another writer (a DB build, a backup) holds the DB, the
+        # sweep waits for the next second instead of stalling the core's watcher.
+        try:
+            self.store.try_write(
                 "UPDATE tel_machine SET status = 'stale' WHERE last_seen < ? AND "
                 "COALESCE(status, '') != 'stale'",
                 (int(now) - STALE_S,),
             )
             if now - self._pruned >= PRUNE_EVERY_S:
-                self._pruned = now
-                conn.execute(
+                self.store.try_write(
                     "DELETE FROM tel_sample WHERE ts < ?", (int(now) - KEEP_S,)
                 )
-        with (
-            self._lock
-        ):  # forget write marks of readings no message has carried for a while
+                self._pruned = now
+        except sqlite3.OperationalError as exc:
+            log.info("telemetry sweep skipped", extra={"why": str(exc)[:100]})
+        # Forget the write marks of readings no message has carried for a while.
+        with self._lock:
             cut = int(now) - 2 * HEARTBEAT_S
             for k in [k for k, v in self._written.items() if v[2] < cut]:
                 del self._written[k]

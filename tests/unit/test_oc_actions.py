@@ -468,10 +468,13 @@ def test_nothing_but_the_routes_and_the_router_calls_confirm() -> None:
                 and node.func.attr == "confirm"
             ):
                 callers.append(path.relative_to(REPO).as_posix())
-    assert sorted(set(callers)) == [
-        "core/gregtec/agents/ask.py",  # the instant "confirm", its via from the HTTP caller
-        "core/gregtec/packupdate/cli.py",  # the pack-update playbook's own step, not a desk
-    ], callers
+    assert (
+        sorted(set(callers))
+        == [
+            "core/gregtec/agents/ask.py",  # the instant "confirm", its via from the HTTP caller
+            "core/gregtec/packupdate/cli.py",  # the pack-update playbook's own step, not a desk
+        ]
+    ), callers
     http = (REPO / "core" / "gregtec" / "bridge" / "http.py").read_text(
         encoding="utf-8"
     )

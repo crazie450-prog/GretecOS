@@ -770,6 +770,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
     - Only one action can be pending; a new proposal cancels the old one out loud.
     - A pending action expires after 60 s.
   - **Agents cannot confirm. Destructive actions are not implemented.** Every action is logged to the `action` table and the journal.
+  - As built (WO-7.1, D219–D221): `POST /oc/telemetry` and M1 feed one ingest into `tel_machine`/`tel_sample` (change-only samples with a 60 s heartbeat; stale after 30 s, never extrapolated); `gregtec.bridge.actions.ActionDesk` owns the `action` table; the agents' `action_propose` (deep lane only) proposes, and only the router's "confirm", the approval card and `POST /api/actions/{id}/confirm` (phone, Discord) confirm, each with the way Clayton used; a confirmed action its OC computer hasn't collected in 5 min fails unrun, and one sent with no result in 5 min is "timed out; may have run". OC tokens are `oc-play`/`oc-lab[-label]` and open `/oc/telemetry` only.
 
 ### 7.10 Building design (D33–D36, D73, D74)
 - **Footprint library.**
