@@ -520,10 +520,33 @@ def lab_lines(conn: sqlite3.Connection, run_id: int, g: dict[str, str]) -> list[
     return [
         f"{g['id']}  {g['what']}",
         f"    {g['ref']}  NEI tab: {side.handler}  (look up: {g['output']})",
-        f"    {_fmt_side(side)}",
-        f"    amperage={amps} special_value={special}"
+        f"    eut={side.eut} ticks={side.duration} amperage={amps} special_value={special}"
         + (f" | {' '.join(meta)}" if meta else ""),
+        *(f"    {part}: {_named(conn, x)}" for part, x in _slots(side)),
     ]
+
+
+def _slots(side: Side) -> Iterator[tuple[str, Stack]]:
+    yield from (("in ", x) for x in side.inputs)
+    yield from (("out", x) for x in side.outputs)
+
+
+def _named(conn: sqlite3.Connection, x: Stack) -> str:
+    """``<amount> x <key> (<English name>)``, plus the chance when there is one."""
+    if x.key.startswith("fluid:"):
+        row = conn.execute(
+            "SELECT name_en FROM fluid WHERE name = ?", (x.key[6:],)
+        ).fetchone()
+    else:
+        reg, _, meta = x.key.rpartition("@")
+        row = conn.execute(
+            "SELECT name_en FROM item WHERE registry_name = ? AND meta = ?"
+            " ORDER BY nbt_hash IS NOT NULL LIMIT 1",
+            (reg, int(meta)),
+        ).fetchone()
+    name = f" ({row[0]})" if row and row[0] else ""
+    chance = f" chance {x.chance}bp" if x.chance != FULL else ""
+    return f"{x.amount} x {x.key}{name}{chance}"
 
 
 def _fmt_side(s: Side) -> str:
@@ -689,7 +712,7 @@ def test_golden_recipes_match_nei_in_a_real_run(tmp_path: Path) -> None:
         shown = [lab_lines(conn, run_id, g) for g in read_fixture()]
     finally:
         conn.close()
-    assert all(len(lines) == 4 for lines in shown), shown
+    assert all(len(lines) >= 4 and "not in" not in lines[0] for lines in shown), shown
     bad = [v for v in verdicts if not v.ok]
     assert not bad, report(verdicts)
 
