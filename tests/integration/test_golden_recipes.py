@@ -35,7 +35,9 @@ Running the check:
   report (``--reselect`` applies the rule to that DB instead of the fixture, for a full-pack DB
   whose keys differ from the dev runtime's);
 - ``uv run python tests/integration/test_golden_recipes.py select <GOS_HOME>`` prints the
-  fixture the rule picks from that DB (how the committed one was made).
+  fixture the rule picks from that DB (how the committed one was made);
+- ``... show <GOS_HOME> [--reselect]`` prints each golden recipe as the DB has it, with the
+  values NEI's dump doesn't carry, for the Lab checklist.
 """
 
 from __future__ import annotations
@@ -493,6 +495,37 @@ def run_check(
     return out
 
 
+# What NEI's JSON dump doesn't carry, which the Lab check reads off NEI's page (D222).
+LAB_ONLY = ("coil_heat", "cleanroom", "low_gravity", "special_items", "additives")
+
+
+def lab_lines(conn: sqlite3.Connection, run_id: int, g: dict[str, str]) -> list[str]:
+    """One golden recipe as the Lab checklist shows it, every number read from the DB."""
+    side = db_side(conn, run_id, g["ref"])
+    if side is None:
+        return [f"{g['id']}  {g['what']}  {g['ref']}: not in this DB's run"]
+    amps, special = conn.execute(
+        "SELECT amperage, special_value FROM recipe WHERE run_id = ? AND ref = ?",
+        (run_id, g["ref"]),
+    ).fetchone()
+    meta = [
+        f"{k}={num if text is None else text}"
+        for k, num, text in conn.execute(
+            "SELECT m.key, m.value_num, m.value_text FROM recipe_meta AS m"
+            " JOIN recipe AS r ON r.id = m.recipe_id WHERE r.run_id = ? AND r.ref = ?"
+            f" AND m.key IN ({', '.join('?' * len(LAB_ONLY))}) ORDER BY m.key",
+            (run_id, g["ref"], *LAB_ONLY),
+        )
+    ]
+    return [
+        f"{g['id']}  {g['what']}",
+        f"    {g['ref']}  NEI tab: {side.handler}  (look up: {g['output']})",
+        f"    {_fmt_side(side)}",
+        f"    amperage={amps} special_value={special}"
+        + (f" | {' '.join(meta)}" if meta else ""),
+    ]
+
+
 def _fmt_side(s: Side) -> str:
     def stacks(xs: list[Stack]) -> str:
         return ", ".join(
@@ -653,8 +686,10 @@ def test_golden_recipes_match_nei_in_a_real_run(tmp_path: Path) -> None:
     conn, run_dir, run_id = _open(_golden_home(tmp_path))
     try:
         verdicts = run_check(conn, run_dir, run_id, read_fixture())
+        shown = [lab_lines(conn, run_id, g) for g in read_fixture()]
     finally:
         conn.close()
+    assert all(len(lines) == 4 for lines in shown), shown
     bad = [v for v in verdicts if not v.ok]
     assert not bad, report(verdicts)
 
@@ -664,7 +699,7 @@ def test_golden_recipes_match_nei_in_a_real_run(tmp_path: Path) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("action", choices=("report", "select"))
+    p.add_argument("action", choices=("report", "select", "show"))
     p.add_argument(
         "home", type=Path, help="a GOS_HOME with data/gos.sqlite and its run"
     )
@@ -681,6 +716,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("\t".join(COLUMNS))
             for g in golden:
                 print("\t".join(g[c] for c in COLUMNS))
+            return 0
+        if a.action == "show":
+            for g in golden:
+                print("\n".join(lab_lines(conn, run_id, g)))
             return 0
         verdicts = run_check(conn, run_dir, run_id, golden)
     finally:
