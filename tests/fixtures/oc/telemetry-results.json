@@ -1,0 +1,131 @@
+{
+  "ae2": {
+    "addr": "5e000000-0000-4000-8000-00000000000b",
+    "cpus": [
+      {
+        "busy": false,
+        "coprocessors": 1,
+        "name": "",
+        "storage": 65536
+      }
+    ],
+    "type": "me_controller"
+  },
+  "agent": "0.1.0",
+  "boot": "b0075eed",
+  "components": {
+    "chat_box": 1,
+    "computer": 1,
+    "eeprom": 1,
+    "filesystem": 1,
+    "gpu": 1,
+    "gt_batterybuffer": 1,
+    "gt_machine": 2,
+    "internet": 1,
+    "keyboard": 1,
+    "me_controller": 1,
+    "screen": 1,
+    "tps_card": 1
+  },
+  "computer": {
+    "address": "c0c0c0c0-0000-4000-8000-000000000001",
+    "arch": "Lua 5.3",
+    "energy": 4800,
+    "energy_max": 5000,
+    "mem_free": 900000,
+    "mem_total": 2097152
+  },
+  "crafts": [
+    {
+      "amount": 64,
+      "at": 3.05,
+      "damage": 11305,
+      "id": 102,
+      "name": "gregtech:gt.metaitem.01",
+      "state": "crafting"
+    }
+  ],
+  "cycle_s": 5,
+  "errors": [],
+  "kind": "telemetry",
+  "machines": [
+    {
+      "active": false,
+      "addr": "2e000000-0000-4000-8000-000000000008",
+      "allowed": false,
+      "eu": 0,
+      "eu_max": 0,
+      "name": "multimachine.blastfurnace",
+      "progress": 120,
+      "progress_max": 400,
+      "type": "gt_machine",
+      "work": true,
+      "xyz": [
+        120,
+        64,
+        -35
+      ]
+    }
+  ],
+  "power": [
+    {
+      "addr": "3b000000-0000-4000-8000-000000000009",
+      "eu": 8192,
+      "eu_in": 0,
+      "eu_max": 32768,
+      "eu_out": 0,
+      "kind": "battery_buffer",
+      "name": "batterybuffer.16.tier.04",
+      "type": "gt_batterybuffer",
+      "xyz": [
+        118,
+        64,
+        -30
+      ]
+    },
+    {
+      "addr": "4c000000-0000-4000-8000-00000000000a",
+      "eu_in": 0,
+      "eu_max_str": "999999999999999999999999",
+      "eu_out": 0,
+      "eu_str": "123456789012345678901234",
+      "kind": "storage",
+      "name": "multimachine.supercapacitor",
+      "type": "gt_machine",
+      "xyz": [
+        110,
+        60,
+        -40
+      ]
+    }
+  ],
+  "results": [
+    {
+      "at": 2.4,
+      "id": 101,
+      "kind": "say",
+      "ok": true,
+      "state": "done"
+    },
+    {
+      "at": 2.7,
+      "id": 103,
+      "kind": "machine_pause",
+      "ok": true,
+      "state": "done"
+    },
+    {
+      "at": 3.05,
+      "id": 102,
+      "kind": "craft",
+      "ok": true,
+      "state": "submitted"
+    }
+  ],
+  "sample_s": 0.35,
+  "seq": 3,
+  "tick_ms": 12.35,
+  "transport": "http",
+  "uptime": 3.1,
+  "v": 1
+}
