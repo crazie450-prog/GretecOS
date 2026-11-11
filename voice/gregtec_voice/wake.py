@@ -751,7 +751,12 @@ def vad() -> Vad:
 
 
 def verifier(transcriber: Transcriber) -> Callable[[bytes], str]:
-    """Stage 2 through the client's own speech-to-text (the model already loaded)."""
+    """Stage 2 through the client's own speech-to-text (the model already loaded), without
+    the glossary prompt where the engine has one (``Stt.plain``): GTNH hotwords pull the
+    phrase towards GTNH words, so real wakes fail the check (D186)."""
+    plain = getattr(transcriber, "plain", None)
+    if callable(plain):
+        return plain
 
     def heard(pcm: bytes) -> str:
         now = time.monotonic()

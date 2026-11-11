@@ -378,6 +378,20 @@ def test_create_builds_the_engine_with_the_transcriber_as_second_stage(
     assert wake.create(VoiceSettings(), bus, None).verifier is None  # type: ignore[union-attr]
 
 
+def test_the_second_stage_hears_without_the_glossary_prompt() -> None:
+    @dataclass
+    class Plain:
+        name: str = "fake"
+
+        def transcribe(self, segment: Any) -> str:  # noqa: ANN401
+            raise AssertionError("the prompted path")
+
+        def plain(self, pcm: bytes) -> str:
+            return f"heard {len(pcm)}"
+
+    assert wake.verifier(Plain())(b"1234") == "heard 4"
+
+
 def test_a_missing_library_names_the_group(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
