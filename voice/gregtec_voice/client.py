@@ -62,6 +62,7 @@ from gregtec_voice.ptt import (
     Watchdog,
 )
 from gregtec_voice.settings import KEY, WAKE, VoiceSettings
+from gregtec_voice.wake import strip_phrase
 
 log = logging.getLogger(__name__)
 
@@ -488,6 +489,8 @@ class VoiceClient:
             with self._stt:
                 began = self.clock()
                 said = self.transcriber.transcribe(segment)
+                if turn.trigger == WAKE:  # the pre-roll holds the phrase's tail (D185)
+                    said = strip_phrase(said, self.settings.wake_phrase)
                 turn.stt_ms = round((self.clock() - began) * 1000)
         except Exception as exc:  # a failed engine must not kill the controller's turns
             log.exception("speech-to-text failed")

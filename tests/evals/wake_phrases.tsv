@@ -1,0 +1,9 @@
+phrase	note	near
+hey archivist	[H§1.3]'s first example; four uncommon syllables after "hey"	hey, archive this|the archivist said no|hey artist, nice build
+okay tessera	[H§1.3]'s second example; a made-up proper noun	okay, tesseract time|ok, the sierra map|okay, test it here
+hey tessera	the same noun after "hey"	hey, tesseract first|hey, test the rest|hey Tessa, look
+hey jarvis	a pretrained openWakeWord phrase (a control)	hey, Travis is here|a jar of this stuff|hey, carve this out
+hey foreman	a GTNH-flavoured word (a factory foreman)	hey, four men in the base|the foreman block|hey, for when we're done
+okay vesper	a made-up name, two syllables	okay, whisper it|vespers at noon|ok, let's spur on
+hello quartermaster	five syllables, long	a quarter master plan|hello, quarter left|hello there master
+hey computer	[H§1.3] says avoid: OpenComputers talk (a control)	the computer is off|hey, compute it|OC computer case
