@@ -11,6 +11,8 @@ rules, which Python's don't follow:
 - ``Math.ceil``, ``Math.floor``, ``Math.log`` and ``/`` on doubles return a double for every
   input (Python's raise on infinities, NaN or 0), ``Math.max``/``Math.min`` return NaN when
   either side is NaN, and ``Math.round`` rounds half up to a ``long``;
+- ``Math.log`` is computed here as the correctly rounded logarithm, not with the platform's C
+  library, so the port gives the same numbers on every machine (D175);
 - ``float`` steps round to IEEE single precision;
 - GT's own ``GTUtility`` helpers (``powInt``, ``log4``, ``log4ceil``, ``safeInt``, ``clamp``,
   ``ceilDiv``, ``addSafe``, ``mulSafe``) compute in their own ways; ``powInt`` multiplies by
@@ -23,6 +25,8 @@ read to learn the behaviour, nothing was copied).
 
 from __future__ import annotations
 
+import decimal
+import functools
 import math
 import struct
 
@@ -151,14 +155,26 @@ def dmin(a: float, b: float) -> float:
 
 
 def log(x: float) -> float:
-    """``Math.log``: the natural logarithm; -Infinity at 0, NaN below 0 and at NaN."""
+    """``Math.log``: the natural logarithm; -Infinity at 0, NaN below 0 and at NaN.
+
+    The correctly rounded one. Java allows ``Math.log`` an error of one unit in the last place
+    and C libraries take it (glibc's differs from Java's on a few inputs in 100 000), so
+    ``math.log`` would make GT's numbers depend on the machine. The JVM's own ``Math.log`` on
+    x86-64 gave the correctly rounded value on every one of 146 000 inputs tried (D175)."""
     if math.isnan(x) or x < 0:
         return math.nan
     if x == 0:
         return -math.inf
     if x == math.inf:
         return math.inf
-    return math.log(x)
+    return _ln(x)
+
+
+@functools.lru_cache(maxsize=4096)
+def _ln(x: float) -> float:
+    # decimal's ln is correctly rounded at its precision; 40 digits then round once more to
+    # the nearest double.
+    return float(decimal.Decimal(x).ln(decimal.Context(prec=40)))
 
 
 def _bits_to_double(bits: int) -> float:
