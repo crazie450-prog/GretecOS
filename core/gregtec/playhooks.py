@@ -527,8 +527,11 @@ def run_export(
     sleep: Callable[[float], None] = time.sleep,
     poll_s: float = POLL_S,
     ticket: str = "",
+    config_path: Path | None = None,
 ) -> int:
-    """``gos export run``. 0: exported; 1: refused or failed (the stale flag is kept)."""
+    """``gos export run``. 0: exported; 1: refused or failed (the stale flag is kept).
+    ``config_path`` is the gos.toml ``cfg`` was read from (default: ``config`` in GOS_HOME):
+    its former-Plays record gets Play before Export is planned (D223)."""
     if getpass.getuser().lower() == prism.DEV_ACCOUNT:
         _say(
             out,
@@ -547,7 +550,15 @@ def run_export(
     with lock:
         try:
             result = _export_locked(
-                cfg, out, launch, clients, allow_harness, clock, sleep, poll_s
+                cfg,
+                out,
+                launch,
+                clients,
+                allow_harness,
+                clock,
+                sleep,
+                poll_s,
+                config_path or home / "config" / "gos.toml",
             )
         except ExportFailed as exc:
             _say(out, f"export failed: {exc}. Recipe data stays stale.")
@@ -571,6 +582,7 @@ def _export_locked(
     clock: Callable[[], float],
     sleep: Callable[[float], None],
     poll_s: float,
+    config_path: Path,
 ) -> tuple[int, str]:
     home = cfg.gos_home
     try:
@@ -601,6 +613,12 @@ def _export_locked(
         raise ExportFailed(f"can't fingerprint Play: {exc}") from None
     _say(out, f"Play's fingerprint {exported.digest[:12]} ({exported.counts()}).")
 
+    # The Play this export syncs from is on record before Export is planned, as gos sync does
+    # (D223): a later hand edit of [paths] play never frees it. Not recorded: refuse.
+    from gregtec.setup.service import record_plays  # lazy: doctor imports sync
+
+    if (why := record_plays(config_path, cfg)) is not None:
+        raise ExportFailed(f"former Plays not recorded: {why}")
     plans, refusals = sync.plan_all(cfg, ["export"])
     if refusals:
         raise ExportFailed("sync refused: " + "; ".join(refusals))

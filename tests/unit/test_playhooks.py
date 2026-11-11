@@ -119,6 +119,7 @@ class Env:
             "launch": self.launch,
             "clients": self.clients,
             "poll_s": 0.02,
+            "config_path": self.config_path,
         }
         code = playhooks.run_export(self.cfg, out, **{**defaults, **kwargs})
         for t in self.threads:
@@ -294,6 +295,29 @@ def test_spawned_export_runs_outside_plays_folder(
     argv, kwargs = seen[0]
     assert argv[:4] == [sys.executable, "-P", "-m", "gregtec.cli"]
     assert kwargs["cwd"] == env.home and started.log.parent == env.home / "logs"
+
+
+def test_export_records_its_play_before_it_plans(env: Env) -> None:
+    """Round 6 C: the export's sync from Play puts Play on record first (D223), as gos sync
+    does, so a later hand edit of [paths] play never frees it to be Export or Lab."""
+    assert env.run_export()[0] == 0
+    assert env.play.resolve() in config.load(env.config_path).former_plays
+
+
+def test_export_refuses_when_the_record_cant_be_written(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gregtec.setup import tomledit
+
+    def disk_full(target: Path, text: str, verify: object = None) -> None:
+        raise OSError("no space left")
+
+    monkeypatch.setattr(tomledit, "write_atomic", disk_full)
+    before = sorted(p.name for p in (env.export / ".minecraft/mods").iterdir())
+    code, text = env.run_export()
+    assert code == 1 and "former Plays not recorded" in text
+    assert sorted(p.name for p in (env.export / ".minecraft/mods").iterdir()) == before
+    assert env.launched == []
 
 
 def test_export_refusals(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:

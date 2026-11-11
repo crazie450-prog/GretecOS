@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import uvicorn
 
@@ -39,6 +40,7 @@ from gregtec.bridge.mailbox import MailboxService
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
+from gregtec.setup.service import record_plays
 from gregtec.store import DB_NAME, Store
 from gregtec.vault.curator import Curator
 from gregtec.vault.scheduler import Maintenance, game_running
@@ -117,9 +119,12 @@ def run(
     *,
     supervised: bool = False,
     setup_agents: Callable[..., ask.Agents] | None = None,
+    config_path: Path | None = None,
 ) -> int:
     """Run the core until it is stopped. ``setup_agents``: how the router and lanes are set up
-    (default :func:`gregtec.agents.ask.setup`; the dashboard e2e harness passes fake lanes)."""
+    (default :func:`gregtec.agents.ask.setup`; the dashboard e2e harness passes fake lanes).
+    ``config_path``: the gos.toml ``cfg`` came from, which the setup wizard edits (default
+    ``config.default_path()``)."""
     applog.setup("core", cfg.logs_dir)
     if (why := supervisor.elevation_problem()) is not None:
         log.error("refusing to start", extra={"why": why})
@@ -128,6 +133,10 @@ def run(
         for problem in problems:
             log.error("refusing to start: fix gos.toml", extra={"why": problem})
         return 2
+    # Every Play GOS runs with is on record before anything else (D223); if it can't be
+    # written, the wizard's saves and sync refuse on their own.
+    if (why := record_plays(config_path or config.default_path(), cfg)) is not None:
+        log.error("former Plays not recorded", extra={"why": why})
     supervisor_token = (
         os.environ.pop(SUPERVISOR_TOKEN_ENV, None) if supervised else None
     )
@@ -162,6 +171,7 @@ def run(
         meter=meter,
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter, ai),
+        config_path=config_path,
         oc=ops.bridge,
         ops=ops,
     )
