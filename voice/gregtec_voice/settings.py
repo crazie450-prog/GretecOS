@@ -18,9 +18,16 @@
 | stt_model        | large-v3-turbo | the Whisper model (Appendix C): a faster-whisper name   |
 |                  |         | (large-v3-turbo, distil-large-v3, small.en, ...) or a Hugging   |
 |                  |         | Face id of a CTranslate2 conversion ("org/name")                |
+| wake_engine      | sherpa-onnx | the wake word (WO-5.4, D185): sherpa-onnx (keyword spotting, |
+|                  |         | no training) or openwakeword (a custom model, ``wake_model``)   |
+| wake_phrase      | hey archivist | what wakes GOS: 1-4 plain words, never "GregTech" or    |
+|                  |         | "Gregtec" (PM08); sherpa-onnx spots it as written              |
+| wake_model       | ""      | openwakeword only: the custom model's ``.onnx`` file            |
+| wake_threshold   | 0       | 0 = the engine's tuned default (D186), else 0.05-0.95: higher   |
+|                  |         | wakes less often, on noise and on Clayton alike                 |
 
-The four keys must differ. The other Appendix C ``[voice]`` keys (wake engine and phrase, TTS,
-output endpoint) belong to WO-5.3 to WO-5.5 and are ignored here. The core's own keys
+The four keys must differ. The other Appendix C ``[voice]`` keys (TTS, output endpoint) belong
+to WO-5.3 and WO-5.5 and are ignored here. The core's own keys
 (``[core] port``, ``[paths] gos_home``) come from :func:`gregtec.config.load`; ``gos_home``
 rides along here because the engines keep their models in ``GOS_HOME/models`` and read the
 vault's glossary.
@@ -46,6 +53,13 @@ HOTKEYS = ("confirm", "cancel", "next_card")
 # speech-to-text engines (WO-5.2, D182); gregtec_voice.stt reads these
 STT_ENGINES = ("auto", "whisper-gpu", "whisper-cpu", "parakeet")
 STT_MODEL = "large-v3-turbo"  # Appendix C
+# the wake word (WO-5.4, D185, D186); gregtec_voice.wake reads these
+SHERPA, OPENWAKEWORD = "sherpa-onnx", "openwakeword"
+WAKE_ENGINES = (SHERPA, OPENWAKEWORD)
+WAKE_PHRASE = (
+    "hey archivist"  # PM08's pick from the WO-5.4 harness, pending Clayton (D186)
+)
+_PHRASE_WORD = re.compile(r"[a-z]+(?:'[a-z]+)?")
 _MODEL_NAME = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?"
 )
@@ -63,6 +77,10 @@ class VoiceSettings:
     input_device: str = ""
     stt_engine: str = "auto"
     stt_model: str = STT_MODEL
+    wake_engine: str = SHERPA
+    wake_phrase: str = WAKE_PHRASE
+    wake_model: str = ""
+    wake_threshold: float = 0.0  # 0: the engine's default
     gos_home: Path = field(default_factory=config.default_home)  # [paths] gos_home
 
     @property
@@ -84,6 +102,24 @@ class VoiceSettings:
 
 class SettingsError(ValueError):
     """One or more ``[voice]`` keys are wrong; the message lists each."""
+
+
+def wake_phrase(value: object) -> str:
+    """``value`` as a wake phrase: lower case, single spaces. Raises ``ValueError`` (or
+    ``TypeError`` for a non-string) saying why it can't be one (PM08: never "GregTech" or
+    "Gregtec", which Clayton says all session)."""
+    if not isinstance(value, str):
+        raise TypeError("must be a phrase in quotes")
+    words = value.casefold().replace(",", " ").split()
+    if not 1 <= len(words) <= 4 or not all(_PHRASE_WORD.fullmatch(w) for w in words):
+        raise ValueError("must be 1 to 4 plain words (letters only)")
+    if any(w.startswith("greg") for w in words) or "gregte" in "".join(words):
+        raise ValueError(
+            'must not contain "GregTech" or "Gregtec": you say them all session (PM08)'
+        )
+    if len("".join(words)) < 6:
+        raise ValueError("is too short: short phrases wake on everyday words")
+    return " ".join(words)
 
 
 def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettings:
@@ -127,6 +163,32 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
             '"distil-large-v3", ...) or a Hugging Face id ("org/name")'
         )
         model = defaults.stt_model
+    try:
+        phrase = wake_phrase(table.get("wake_phrase", defaults.wake_phrase))
+    except (TypeError, ValueError) as exc:
+        problems.append(f"[voice] wake_phrase {exc}")
+        phrase = defaults.wake_phrase
+    engine = choice("wake_engine", WAKE_ENGINES, defaults.wake_engine)
+    wake_model = table.get("wake_model", defaults.wake_model)
+    if not isinstance(wake_model, str):
+        problems.append("[voice] wake_model must be a path in quotes")
+        wake_model = defaults.wake_model
+    wake_model = wake_model.strip()
+    if engine == OPENWAKEWORD and not wake_model.casefold().endswith(".onnx"):
+        problems.append(
+            "[voice] wake_model must name the custom openWakeWord model's .onnx file "
+            '(wake_engine = "openwakeword")'
+        )
+    threshold = table.get("wake_threshold", defaults.wake_threshold)
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, int | float)
+        or not (threshold == 0 or 0.05 <= threshold <= 0.95)
+    ):
+        problems.append(
+            "[voice] wake_threshold must be 0 (the default) or 0.05 to 0.95"
+        )
+        threshold = defaults.wake_threshold
     found = VoiceSettings(
         primary_trigger=primary,
         backup_trigger=backup,
@@ -138,6 +200,10 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
         input_device=device.strip(),
         stt_engine=choice("stt_engine", STT_ENGINES, defaults.stt_engine),
         stt_model=model.strip(),
+        wake_engine=engine,
+        wake_phrase=phrase,
+        wake_model=wake_model,
+        wake_threshold=float(threshold),
         gos_home=gos_home or defaults.gos_home,
     )
     roles: dict[str, list[str]] = {}
