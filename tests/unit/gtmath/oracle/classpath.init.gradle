@@ -1,0 +1,16 @@
+// Gregtec OS, WO-3.1 (D174): prints the classpath GT's own classes run on outside the game: GregtecLink's
+// test runtime classpath (GT at the pin in mod/dependencies.gradle, Minecraft, Forge and their libraries) and
+// its compile classpath (JOML, which GT's utility class loads and only the game's launcher brings at run
+// time) without the Jabel compiler plugin (javac would load it), so make_vectors.py can run them without a
+// change to the mod's build. Run from mod/:
+//   ./gradlew --init-script ../tests/unit/gtmath/oracle/classpath.init.gradle -q gtmathClasspath
+gradle.projectsEvaluated {
+    rootProject.tasks.register("gtmathClasspath") {
+        def compileOnly = rootProject.sourceSets.main.compileClasspath.filter { !it.name.startsWith("jabel-javac-plugin") }
+        def classpath = rootProject.sourceSets.test.runtimeClasspath + compileOnly
+        dependsOn(rootProject.tasks.named("testClasses"))
+        doLast {
+            println("GTMATH_CLASSPATH=" + classpath.asPath)
+        }
+    }
+}
