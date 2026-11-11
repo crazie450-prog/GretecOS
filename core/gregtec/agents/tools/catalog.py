@@ -149,7 +149,7 @@ TOOLS = (
 
 # Plan 7.0's other tools: none is registered, and no stub stands in for one.
 LATER: dict[str, str] = {
-    "timer_set": "a follow-up to WO-5.3, not yet in plan 8 (a timer has to ring by voice and "
+    "timer_set": "WO-5.3 follow-up, not yet a plan 8 row (a timer has to ring by voice and "
     "needs a core-to-voice push, D205; the router's instant commands came with WO-2.3, D150)",
     "export_diff": "WO-1.4 (fingerprint and diff report)",
     "ore_find": "WO-1.6 (ore mixes and veins; ore-intel WO-6.6)",
@@ -178,7 +178,7 @@ LATER: dict[str, str] = {
     "base_get": "WO-3.8 (My base)",
     "design_power": "WO-4.2 (power objective modes)",
     **dict.fromkeys(("ledger_get", "ledger_update"), "WO-4.4 (EU ledger)"),
-    "speak": "a follow-up to WO-5.3, not yet in plan 8 (WO-5.3 built the speaker; the "
+    "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
     "agent tool needs a core-to-voice push, D205)",
     "persona_set": "WO-5.6 (persona packs)",
     "player_pos": "WO-6.1 (watchers)",
