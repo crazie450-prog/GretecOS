@@ -11,8 +11,8 @@ import org.apache.logging.log4j.core.appender.AbstractAppender;
 /**
  * Captures the logger NEI writes to ({@code NEIClientConfig.logger}, named {@code NotEnoughItems}) for the duration of
  * one {@code dumpAll} call (into a {@link NeiLog}) or of the crop step's dumper calls (into {@link Lines}).
- * Errors arrive from NEI's ForkJoin threads too, so {@link #append} is synchronized. Only API that exists both in
- * Minecraft's log4j 2.0-beta9 and in the log4j 2.x of the Java 17+ runtime is used.
+ * NEI's other threads (its ForkJoin pool) may log during a call too, so {@link #append} is synchronized. Only API
+ * that exists both in Minecraft's log4j 2.0-beta9 and in the log4j 2.x of the Java 17+ runtime is used.
  */
 final class NeiLogCapture extends AbstractAppender {
 
