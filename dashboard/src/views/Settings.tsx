@@ -295,6 +295,19 @@ export function Settings(props: {
               ))}
             </ul>
           </Panel>
+          {trusted && (
+            <Panel label="Setup wizard" testId="setup-link">
+              <p className="gos-sub">Paths, the Anthropic key, the Discord token, the headset, the talk key, the wake phrase and doctor's checklist.</p>
+              <Button
+                onClick={() => {
+                  window.location.hash = "/setup";
+                }}
+                testId="open-setup"
+              >
+                Open the setup wizard
+              </Button>
+            </Panel>
+          )}
           <Panel label="me/ settings">
             <p className="gos-src">Your ranking weights (vault/me/prefs.md) arrive with the Designer (WO-3.5).</p>
           </Panel>

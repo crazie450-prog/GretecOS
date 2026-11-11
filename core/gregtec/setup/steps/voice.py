@@ -1,0 +1,357 @@
+"""Steps 40 to 60: the headset, the talk key and the wake phrase (``[voice]`` in gos.toml).
+
+- **Headset** (D56, D168): the microphone (``input_device``, the voice client's key, D181; empty
+  is Windows' default) and the output the spoken answers go to (``output_endpoint``, Appendix C;
+  "Chat", the Arctis Nova Elite's Chat endpoint, by default). Both are a part of a device name,
+  picked from the devices the core lists (:mod:`gregtec.setup.devices`).
+- **Talk key** (QA:V8, D180): checked by the voice client's own rules (``gregtec_voice.keys``):
+  F13-F24, Pause or Scroll Lock, none bound by GTNH or Discord by default, and different from the
+  confirm, cancel and next-card hotkeys.
+- **Wake phrase** (PM08): never "GregTech" or "Gregtec", which Clayton says all session. WO-5.4
+  picks the phrase after its false-trigger tests, so what is saved here is his choice until then.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from typing import Any
+
+from gregtec.setup.registry import ERROR, OK, WARN, Check, Context, Field, Outcome, Step
+
+KEY_SUGGESTIONS = (
+    *(f"F{n}" for n in range(13, 25)),
+    "Pause",
+    "Scroll Lock",
+)
+# [H§1.3]'s examples: uncommon syllables, a made-up proper noun.
+WAKE_SUGGESTIONS = ("hey archivist", "okay tessera")
+_PHRASE = re.compile(r"^[a-z]+(?:[ '-][a-z]+){1,4}$")
+_FORBIDDEN = re.compile(r"greg\s*-?\s*te(ch|c|k)")  # PM08
+# [H§1.3]: words said all session in GTNH talk; allowed, with a warning.
+_RISKY = {"computer", "lv", "mv", "hv", "ev", "iv", "luv", "zpm", "uv", "uhv", "gt"}
+
+
+def voice_table(ctx: Context, changes: Mapping[str, str]) -> dict[str, Any]:
+    """gos.toml's ``[voice]`` with ``changes`` made (an empty value drops the key)."""
+    table = dict(ctx.data.get("voice") or {})
+    for key, value in changes.items():
+        if value:
+            table[key] = value
+        else:
+            table.pop(key, None)
+    return table
+
+
+def voice_problem(table: Mapping[str, Any]) -> str | None:
+    """Why the voice client would refuse ``table``, or None (its own parser decides)."""
+    try:
+        from gregtec_voice import settings
+    except ImportError:
+        return "the voice client isn't installed here (uv sync installs it)"
+    try:
+        settings.parse(table)
+    except settings.SettingsError as exc:
+        return str(exc)
+    return None
+
+
+def _device_rows(ctx: Context, values: Mapping[str, str]) -> list[Check]:
+    listing = ctx.devices()
+    if listing.get("error"):
+        return [Check("voice.devices", "Audio devices", WARN, str(listing["error"]))]
+    rows = []
+    for fid, kind, label in (
+        ("input_device", "inputs", "Microphone"),
+        ("output_endpoint", "outputs", "Spoken answers"),
+    ):
+        value = values.get(fid, "")
+        names = [str(d["name"]) for d in listing.get(kind, [])]
+        if not value:
+            default = next(
+                (str(d["name"]) for d in listing.get(kind, []) if d.get("default")),
+                None,
+            )
+            rows.append(
+                Check(
+                    f"voice.{fid}",
+                    label,
+                    OK if default else WARN,
+                    f"Windows' default: {default}"
+                    if default
+                    else "Windows has no default",
+                )
+            )
+            continue
+        hits = [n for n in names if value.casefold() in n.casefold()]
+        if len(hits) == 1:
+            rows.append(Check(f"voice.{fid}", label, OK, hits[0]))
+        elif hits:
+            # The voice client refuses a microphone name that matches more than one device
+            # (gregtec_voice.audio.find_device), so that one can't be saved.
+            rows.append(
+                Check(
+                    f"voice.{fid}",
+                    label,
+                    ERROR if fid == "input_device" else WARN,
+                    f"{value!r} matches {len(hits)} devices: {'; '.join(hits)}",
+                )
+            )
+        else:
+            rows.append(
+                Check(f"voice.{fid}", label, WARN, f"{value!r} isn't connected now")
+            )
+    if listing.get("provider") == "fake":
+        rows.append(
+            Check(
+                "voice.provider",
+                "Device list",
+                WARN,
+                "test devices: this core isn't on Windows, so no real device is listed",
+            )
+        )
+    return rows
+
+
+def check_headset(ctx: Context, values: Mapping[str, str]) -> Outcome:
+    return Outcome(checks=_device_rows(ctx, values))
+
+
+def _key_refusal(why: str) -> Outcome:
+    """The voice parser's refusal, each part on the field it is about: ``talk_mode``, the talk
+    key (its name, or a clash with another key), else a row for keys this step doesn't show."""
+    problems: dict[str, list[str]] = {}
+    other: list[str] = []
+    for part in why.split("; "):
+        if "talk_mode" in part:
+            problems.setdefault("talk_mode", []).append(part)
+        elif "talk_key" in part or re.search(r"\btalk and\b", part):
+            problems.setdefault("talk_key", []).append(part)
+        else:
+            other.append(part)
+    checks = []
+    if other:
+        checks.append(
+            Check(
+                "voice.other",
+                "Other [voice] settings",
+                ERROR,
+                "; ".join(other) + " (not set in this step: edit gos.toml by hand)",
+            )
+        )
+    return Outcome(
+        problems={k: "; ".join(v) for k, v in problems.items()}, checks=checks
+    )
+
+
+def _gtnh_row(ctx: Context, values: Mapping[str, str]) -> Check:
+    """QA:V8: the GTNH bindings on the talk key, from Play's ``options.txt`` (read once through
+    ``safe_open``, as ``gos voice keys play`` does). A warning when it is bound or can't be read."""
+    from gregtec.gamestate.safe_open import read_bytes
+    from gregtec_voice import keys
+
+    label = "Talk key in GTNH"
+    try:
+        key = keys.parse(values.get("talk_key", ""))
+    except keys.KeyNameError:
+        return Check("voice.talk_key_gtnh", label, WARN, "not a key name")
+    if key.lwjgl is None:
+        return Check(
+            "voice.talk_key_gtnh",
+            label,
+            OK,
+            "GTNH's Java 8 build can't bind it; on the Java 17+ build check Controls",
+        )
+    instance = ctx.cfg.instance("play")
+    game = next(
+        (instance / d for d in ("minecraft", ".minecraft") if (instance / d).is_dir()),
+        None,
+    )
+    options = game / "options.txt" if game is not None else None
+    if options is None or not options.is_file():
+        return Check(
+            "voice.talk_key_gtnh",
+            label,
+            WARN,
+            f"no options.txt in {instance} yet: start Play once, then check again",
+        )
+    try:
+        text = read_bytes(options).decode("utf-8", "replace")
+    except OSError as exc:
+        return Check("voice.talk_key_gtnh", label, WARN, f"can't read {options}: {exc}")
+    bound = sorted(keys.bindings(text).get(key.lwjgl, []))
+    if bound:
+        return Check(
+            "voice.talk_key_gtnh",
+            label,
+            WARN,
+            f"{key.label} is bound in Play to {', '.join(bound)}: unbind it there or pick another",
+        )
+    return Check("voice.talk_key_gtnh", label, OK, f"{key.label} is free in Play")
+
+
+def check_keys(ctx: Context, values: Mapping[str, str]) -> Outcome:
+    why = voice_problem(voice_table(ctx, values))
+    if why is not None:
+        return _key_refusal(why)
+    return Outcome(
+        checks=[
+            _gtnh_row(ctx, values),
+            Check(
+                "voice.talk_key",
+                "Talk key in Discord",
+                OK,
+                "a key Discord leaves free by default; check Settings > Keybinds",
+            ),
+        ]
+    )
+
+
+def phrase_problem(phrase: str) -> str | None:
+    if _FORBIDDEN.search(phrase.replace("_", " ")):
+        return "never GregTech or Gregtec: you say those all session (PM08)"
+    if not _PHRASE.match(phrase):
+        return "two to five words, letters only, e.g. 'hey archivist'"
+    return None
+
+
+def check_wake(ctx: Context, values: Mapping[str, str]) -> Outcome:
+    phrase = " ".join(values.get("wake_phrase", "").casefold().split())
+    if not phrase:
+        return Outcome(
+            checks=[
+                Check(
+                    "voice.wake_phrase",
+                    "Wake phrase",
+                    WARN,
+                    "none yet: the talk key works alone until one is set (WO-5.4)",
+                )
+            ]
+        )
+    why = phrase_problem(phrase)
+    if why is not None:
+        return Outcome(problems={"wake_phrase": why})
+    risky = sorted(set(phrase.split()) & _RISKY)
+    if risky:
+        return Outcome(
+            checks=[
+                Check(
+                    "voice.wake_phrase",
+                    "Wake phrase",
+                    WARN,
+                    f"{', '.join(risky)}: words of GTNH talk can wake GOS by mistake [H§1.3]",
+                )
+            ]
+        )
+    return Outcome(
+        checks=[
+            Check(
+                "voice.wake_phrase",
+                "Wake phrase",
+                OK,
+                "WO-5.4's false-trigger tests have the last word",
+            )
+        ]
+    )
+
+
+def readback(table: Mapping[str, Any]) -> list[Check]:
+    """The final checklist's voice row: the saved ``[voice]`` as the voice client reads it."""
+    why = voice_problem(table)
+    if why is not None:
+        return [Check("voice.settings", "Voice settings", ERROR, why)]
+    return [
+        Check("voice.settings", "Voice settings", OK, "the voice client reads them")
+    ]
+
+
+STEPS = [
+    Step(
+        id="headset",
+        title="Headset",
+        order=40,
+        intro=(
+            "The microphone GOS listens on and the output its spoken answers go to. On the "
+            "Arctis Nova Elite that is the Chat endpoint, so the Game/Chat dial sets the mix "
+            "(D56)."
+        ),
+        fields=(
+            Field(
+                "input_device",
+                "Microphone",
+                "device",
+                toml=("voice", "input_device"),
+                devices="inputs",
+                help="Empty: Windows' default recording device",
+            ),
+            Field(
+                "output_endpoint",
+                "Spoken answers",
+                "device",
+                toml=("voice", "output_endpoint"),
+                devices="outputs",
+                help="A part of the device's name is enough, e.g. Chat",
+                # The wizard always saves a name (Appendix C: "Chat", D168): an empty field would
+                # drop the key, which means "Chat". "" (Windows' default, D205) is set by hand.
+                required=True,
+                default="Chat",
+            ),
+        ),
+        check=check_headset,
+    ),
+    Step(
+        id="talk_key",
+        title="Talk key",
+        order=50,
+        intro=(
+            "Hold it to talk (or press it twice, in toggle mode). It must be a key neither GTNH "
+            "nor Discord uses (QA:V8): F13-F24, Pause or Scroll Lock. A mouse button works when "
+            "its software maps it to one of F13-F24."
+        ),
+        fields=(
+            Field(
+                "talk_key",
+                "Talk key",
+                "key",
+                toml=("voice", "talk_key"),
+                suggestions=KEY_SUGGESTIONS,
+                required=True,
+                default="F13",
+            ),
+            Field(
+                "talk_mode",
+                "Mode",
+                "choice",
+                toml=("voice", "talk_mode"),
+                options=(
+                    ("hold", "Hold to talk"),
+                    ("toggle", "Press to start and stop"),
+                ),
+                required=True,
+                default="hold",
+            ),
+        ),
+        check=check_keys,
+    ),
+    Step(
+        id="wake",
+        title="Wake phrase",
+        order=60,
+        intro=(
+            "What you say to wake GOS (the main trigger, D57). Never GregTech or Gregtec (PM08). "
+            "WO-5.4 tests candidates for false wakes and may suggest another."
+        ),
+        fields=(
+            Field(
+                "wake_phrase",
+                "Wake phrase",
+                "phrase",
+                toml=("voice", "wake_phrase"),
+                suggestions=WAKE_SUGGESTIONS,
+                placeholder="hey archivist",
+            ),
+        ),
+        check=check_wake,
+        optional=True,
+    ),
+]

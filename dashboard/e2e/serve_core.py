@@ -11,7 +11,10 @@ What the dashboard reads from the desktop comes from files the tests write in ``
 ``foreground`` (the program in front, e.g. ``javaw.exe``: the core's focus signal), ``running``
 (a JSON list of running GTNH roles, default none) and ``key`` (``missing``: no Anthropic key, so
 "AI offline"); the core polls them every second. Test-only: production code never reads these
-files.
+files. Its gos.toml marks setup done, so the shell shows.
+
+``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
+``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
 
 from __future__ import annotations
@@ -69,6 +72,38 @@ def build_db(home: Path) -> None:
     module.build_home(home)
 
 
+def _load_fakes() -> object:
+    """tests/unit/setup/fakes.py: the file keyring and the fake Prism tree (WO-2.9)."""
+    spec = importlib.util.spec_from_file_location(
+        "setup_fakes", REPO / "tests" / "unit" / "setup" / "fakes.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the setup test fakes")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["setup_fakes"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def setup_fresh(root: Path) -> Path:
+    """``--fresh`` (WO-2.9): GOS_HOME is ``<root>/GregtecOS``, which doesn't exist yet (no
+    gos.toml, no DB); ``<root>/fixtures`` holds a fake Prism tree with GTNH 2.9.0 Play, Export
+    and Lab, an empty GOS_APP and the keyring the core writes to (``keyring.json``). The core's
+    test call to the API gets a scripted answer. Returns GOS_HOME."""
+    import keyring
+
+    from gregtec.agents import fast_lane
+    from gregtec.llm.fake import ScriptedClient, Turn
+
+    fakes = _load_fakes()
+    fixtures = root / "fixtures"
+    fakes.make_prism(fixtures / "PrismLauncher")  # type: ignore[attr-defined]
+    (fixtures / "GregtecOS-app").mkdir()
+    keyring.set_keyring(fakes.FileKeyring(fixtures / "keyring.json"))  # type: ignore[attr-defined]
+    fast_lane.client_for = lambda key: ScriptedClient(turns=[Turn(text="ok")])  # type: ignore[assignment,misc]
+    return root / "GregtecOS"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="serve_core.py")
     parser.add_argument(
@@ -78,10 +113,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="a new or empty folder, or one an earlier run made (it is wiped)",
     )
     parser.add_argument("--port", type=int, default=8795)
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="a first run (WO-2.9): no gos.toml and no DB; see setup_fresh",
+    )
+    parser.add_argument("--host-name", default=DASHBOARD_HOST)
     args = parser.parse_args(argv)
-    home: Path = args.home.absolute()
-    fresh_home(home)
-    build_db(home)
+    root: Path = args.home.absolute()
+    fresh_home(root)
+    if args.fresh:
+        home = setup_fresh(root)
+    else:
+        home = root
+        build_db(home)
+        # Setup is done here (the wizard's own e2e uses --fresh), so the shell shows.
+        (home / "config").mkdir()
+        (home / "config" / "gos.toml").write_text(
+            '[setup]\ncompleted_utc = "2026-11-11T00:00:00+00:00"\n', "utf-8"
+        )
 
     from gregtec import desktop, prism
     from gregtec.agents import ask
@@ -91,7 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from gregtec.llm import keys
     from gregtec.store import Store
 
-    controls = home / "e2e"
+    controls = root / "e2e"
 
     def foreground() -> str | None:
         return _read(controls / "foreground") or None
@@ -105,7 +155,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     desktop.foreground_program = foreground
     prism.running_clients = running
-    keys.has_key = has_key
+    if not args.fresh:  # --fresh: the real check, against the file keyring
+        keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
     core_app.KEY_CHECK_S = 1.0
     dashboard.GAME_EVERY_S = 1.0
@@ -118,13 +169,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         gos_home=home,
         core_port=args.port,
         supervisor_port=args.port + 1,
-        dashboard_host=DASHBOARD_HOST,
+        dashboard_host=args.host_name,
     )
     print(
-        f"e2e core on http://{DASHBOARD_HOST}:{args.port}/ (GOS_HOME {home})",
+        f"e2e core on http://{args.host_name}:{args.port}/ (GOS_HOME {home})",
         flush=True,
     )
-    return server.run(cfg, setup_agents=fake_agents)
+    return server.run(
+        cfg,
+        setup_agents=fake_agents,
+        config_path=home / "config" / "gos.toml",
+    )
 
 
 if __name__ == "__main__":
