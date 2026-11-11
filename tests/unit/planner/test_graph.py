@@ -710,9 +710,15 @@ def test_cells_container_and_reverse_use_flags(conn: sqlite3.Connection) -> None
         conn, Request(WIDGET, machines="base+addons", pins=(Pin(ACID, can),))
     )
     assert g.recipe(can).flags == ("cells", "container")
-    # Review M1: a use's main product counts, its byproducts don't (Salt's water).
+    # Review M1 and the final check: what a use makes counts only when it has no way of its
+    # own. Widget has one (mixer/0 takes no acid), so a Widget-to-acid recipe would be a way
+    # to make acid, not a reversal; gas and salt are made only from acid; water (no recipe
+    # in the fixture) counts here, but it is a raw input, a boundary, so the builder drops it.
     b = graph._Builder(conn, Request(WIDGET), Base(), chains.EMPTY, machine_run(conn))
-    assert b.reader.made_from(ACID) == {WIDGET, GAS, SALT}
+    assert b.reader.made_from(ACID) == {GAS, SALT, WATER}
+    b.reader.load_makers([ACID])
+    b.candidates(ACID)
+    assert b.uses[ACID] == {GAS, SALT}
 
 
 def test_same_request_same_graph(db: Path, conn: sqlite3.Connection) -> None:

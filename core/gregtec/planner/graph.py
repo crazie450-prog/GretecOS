@@ -527,15 +527,14 @@ class _Reader:
         )
 
     def made_from(self, key: str) -> frozenset[str]:
-        """The main products (first output slot: the first item, else the first fluid) of the
-        run's enabled recipes that use up ``key``, recycling aside. A recipe for ``key`` that
-        consumes one of them undoes one of ``key``'s own uses (a two-step loop: zinc sulfate
-        back to sulfuric acid, an alloy taken apart). Byproducts are left out: water or
-        hydrogen given off by a use doesn't make every recipe that takes them a reversal. So is
-        a main product that has a recipe of its own (as its main product) that doesn't use
-        ``key`` up: salt is made from salt water, but also from its ore, so salt and water in
-        the mixer is a way to make salt water, not a reversal; zinc sulfate is made only from
-        sulfuric acid, so its electrolysis still is one (D189)."""
+        """What the run's enabled recipes that use up ``key`` make (recycling aside), less
+        what has a way of its own: a main-product recipe (not a container map, D189) that
+        doesn't use ``key`` up. A recipe for ``key`` that consumes one of them undoes one of
+        ``key``'s own uses (a loop: zinc sulfate, made only from sulfuric acid, back to the
+        acid; sodium oxide, given off only by a recipe that takes sodium, back to sodium; an
+        alloy taken apart). Water or hydrogen given off by a use, or salt made from salt water,
+        have ways of their own, so salt and water in the mixer is a way to make salt water,
+        not a reversal (review M1, D189)."""
         if key in self.uses:
             return self.uses[key]
         items, fluids = self.key_ids(key)
@@ -549,7 +548,7 @@ class _Reader:
                         f" CROSS JOIN recipe_input AS i ON i.{col} = j.value"
                         " CROSS JOIN recipe AS r ON r.id = i.recipe_id"
                         " CROSS JOIN recipe_output AS o ON o.recipe_id = i.recipe_id"
-                        " AND o.slot = 0 WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1"
+                        " WHERE i.consumed = 1 AND r.run_id = ? AND r.enabled = 1"
                         f" AND {_NOT_RECYCLING}",
                         (json.dumps(ids), self.run),
                     )
@@ -572,15 +571,16 @@ class _Reader:
     def _made_without(
         self, item: int | None, fluid: int | None, items: list[int], fluids: list[int]
     ) -> bool:
-        """Whether a recipe of the run (enabled; not fake but the assembly line; recycling
-        aside) makes ``item`` (else ``fluid``) as its main product without using up any of
-        ``items``/``fluids``."""
+        """Whether a recipe of the run (enabled; not fake but the assembly line; recycling and
+        container maps aside) makes ``item`` (else ``fluid``) as its main product without
+        using up any of ``items``/``fluids``."""
         col, value = ("item_id", item) if item is not None else ("fluid_id", fluid)
         row = self.conn.execute(
             "SELECT 1 FROM recipe_output AS o CROSS JOIN recipe AS r ON r.id = o.recipe_id"
             " LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id"
             f" WHERE o.{col} = ? AND o.slot = 0 AND r.run_id = ? AND r.enabled = 1"
             " AND (coalesce(r.fake, 0) = 0 OR m.unloc_name = ?)"
+            " AND coalesce(m.unloc_name, '') NOT IN (SELECT value FROM json_each(?))"
             f" AND {_NOT_RECYCLING} AND NOT EXISTS (SELECT 1 FROM recipe_input AS i"
             " WHERE i.recipe_id = r.id AND i.consumed = 1"
             " AND (i.item_id IN (SELECT value FROM json_each(?))"
@@ -589,6 +589,7 @@ class _Reader:
                 value,
                 self.run,
                 chains.ASSEMBLY_LINE_MAP,
+                json.dumps(sorted(CONTAINER_MAPS)),
                 json.dumps(items),
                 json.dumps(fluids),
             ),
