@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
-from gregtec.agents.tools import items, machines, notes, quests, recipes, sql
+from gregtec.agents.tools import items, machines, notes, ops, quests, recipes, sql
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
 from gregtec.agents.tools.tsv import PAGE
 from gregtec.db import access
 from gregtec.vault import fts
 from gregtec.vault.io import VaultIO
+
+if TYPE_CHECKING:
+    from gregtec.bridge.ops import Ops
 
 CITE = "Quote numbers only from the rows, each with the row's id."
 
@@ -145,6 +149,36 @@ TOOLS = (
         gate=notes.GATE,
     ),
     HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
+    Tool(
+        "telemetry_get",
+        "What Clayton's OC computers last reported (WO-7.1): the computers, and the GT machines "
+        "and power they see with their last readings, each with its age and a stale flag; "
+        "cite rows by their tel: ref. A stale reading is old data, never a current value.",
+        ops.TELEMETRY_GET_SCHEMA,
+        ops.telemetry_get,
+        needs_db=False,
+    ),
+    Tool(
+        "action_propose",
+        "Propose one safe world action (an AE2 craft, pausing or resuming a GT machine, a "
+        "chat-box line, a JourneyMap waypoint). It only proposes: GOS reads it back and Clayton "
+        "confirms it himself (you can't), within 60 s. One action waits at a time; a new "
+        "proposal cancels the last. Say the returned `say` line to Clayton word for word.",
+        ops.ACTION_PROPOSE_SCHEMA,
+        ops.action_propose,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        gate=ops.GATE,
+    ),
+    Tool(
+        "action_status",
+        "One world action by id (state, read-back, how it was confirmed, its result), or the "
+        "pending one and the newest ten.",
+        ops.ACTION_STATUS_SCHEMA,
+        ops.action_status,
+        needs_db=False,
+    ),
 )
 
 # Plan 7.0's other tools: none is registered, and no stub stands in for one.
@@ -184,10 +218,6 @@ LATER: dict[str, str] = {
     **dict.fromkeys(
         ("events_recent", "session_summary"), "WO-6.3 (event store, sessions)"
     ),
-    **dict.fromkeys(
-        ("telemetry_get", "action_propose", "action_status"),
-        "WO-7.1 (bridge, confirm flow)",
-    ),
     "screen_snapshot": "WO-8.2 (screen reading)",
     **dict.fromkeys(("wiki_search", "wiki_fetch"), "WO-8.3 (wiki cache)"),
     "notify": "WO-9.2 (alert routing)",
@@ -205,16 +235,21 @@ def build_registry(
     page: int = PAGE,
     vault: VaultIO | None = None,
     deep: DeepLane | None = None,
+    ops: Ops | None = None,
 ) -> Registry:
-    """Every tool over the DB at ``db`` and ``vault``, handing off to ``deep`` (``key``: the
-    cursor key, default random)."""
-    reg = Registry(Env(db, glossary or Glossary(), vault, deep), key=key, page=page)
+    """Every tool over the DB at ``db`` and ``vault``, handing off to ``deep``, with the OC
+    bridge ``ops`` (``key``: the cursor key, default random)."""
+    reg = Registry(
+        Env(db, glossary or Glossary(), vault, deep, ops), key=key, page=page
+    )
     for tool in TOOLS:
         reg.add(tool)
     return reg
 
 
-def default_registry(gos_home: Path, deep: DeepLane | None = None) -> Registry:
+def default_registry(
+    gos_home: Path, deep: DeepLane | None = None, ops: Ops | None = None
+) -> Registry:
     """The tools over ``GOS_HOME/data/gos.sqlite`` and the live vault (its glossary too); a
     note an agent writes is mirrored into ``note_fts`` at once."""
     db, root = access.db_path(gos_home), gos_home / "vault"
@@ -223,5 +258,9 @@ def default_registry(gos_home: Path, deep: DeepLane | None = None) -> Registry:
         fts.mirror_one(db, root, rel)
 
     return build_registry(
-        db, Glossary.find(root), vault=VaultIO(root, on_write=mirror), deep=deep
+        db,
+        Glossary.find(root),
+        vault=VaultIO(root, on_write=mirror),
+        deep=deep,
+        ops=ops,
     )
