@@ -6,7 +6,8 @@ builds one from WO-3.3's graph and WO-3.2's machine sizing; the tests also build
 gtnh-flow charts (PlanNH's test resources, D192). Nothing here knows what an item is worth: the
 objectives are structural only (**no per-item cost values**, §7.1 step 4).
 
-**Variables** (scipy.optimize.milp on HiGHS, single-threaded): ``x_r >= 0`` crafts/s per recipe;
+**Variables** (scipy.optimize.milp on HiGHS with SciPy's defaults: its MIP search is serial,
+and SciPy exposes no thread option to set): ``x_r >= 0`` crafts/s per recipe;
 ``imp_k``, ``exp_k >= 0`` per item port that may cross the boundary; a gate binary ``g_k`` per
 connected item whose crossing isn't free; a choice binary ``z_r`` per recipe of a primary
 choice (§7.1 step 3: exactly one recipe per primary item, the others idle).
@@ -37,8 +38,10 @@ same optima.
 
 **Routes** (:func:`routes`): the stages run with the choice binaries free and propose the
 primary choices of a route; it is solved on its own (:func:`solve_route`, on the recipes it
-reaches from the target, :func:`active`, replay included); a no-good cut (at least one primary
-choice differs) is added and the MILP runs again. Of ``n`` + :data:`EXPLORE` routes the best
+reaches from the target, :func:`active`, replay included) and keeps only the choices it
+depends on (:func:`effective`: a choice for an input of a target recipe it didn't pick is
+dropped); a no-good cut on those (at least one of them differs) is added and the MILP runs
+again. A route whose recipes equal an earlier one's is dropped. Of ``n`` + :data:`EXPLORE` routes the best
 ``n`` by their exact objectives are kept, in that order; it is not a ranking (planner/rank.py's,
 WO-3.5).
 """
@@ -459,6 +462,22 @@ def active(net: Network, choice: Mapping[str, str]) -> list[Proc]:
     return [p for p in procs if p.id in keep]
 
 
+def effective(net: Network, choice: Mapping[str, str]) -> dict[str, str]:
+    """The entries of ``choice`` the route depends on: an entry whose recipe the route doesn't
+    run (:func:`active`) is dropped when leaving it out gives the same recipes, e.g. the
+    choice for an input of a target recipe the route didn't pick. Two routes with the same
+    effective choice run the same recipes."""
+    ids = {p.id for p in active(net, choice)}
+    out = dict(choice)
+    for k in sorted(choice):
+        if choice[k] in ids:
+            continue
+        trial = {kk: r for kk, r in out.items() if kk != k}
+        if {p.id for p in active(net, trial)} == ids:
+            out = trial
+    return out
+
+
 def _choice(m: _Model, x: np.ndarray) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, rs in m.net.choices:
@@ -535,6 +554,7 @@ def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
             "the route has no solution (the target can't be made at this rate)"
         )
     m, x, objs = first
+    pick = effective(net, pick)
     flow = _flow(m, x, objs, pick, None, ())
     if flow.all_run:
         return flow
@@ -572,9 +592,12 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
     still counts as a user of what it takes, and HiGHS may let an unchosen recipe run a
     little within its integrality tolerance; so it only proposes a choice (stages 1-3, as far
     as they go). Each proposal is solved exactly as a route (:func:`solve_route`), a no-good
-    cut excludes it, and the MILP runs again, for ``n`` + :data:`EXPLORE` routes. The best
-    ``n`` by their exact objectives (gates, gated quantity, machines), then their choices,
-    are returned in that order: a fixed order, not a ranking (WO-3.5 ranks)."""
+    cut on its effective choices (:func:`effective`) excludes it, and the MILP runs again,
+    until ``n`` + :data:`EXPLORE` routes run every machine (at most that many x
+    :data:`MAX_TRIES` proposals). A route with the same recipes as an earlier one is dropped,
+    and so is a route whose every-machine-runs replay failed when another route runs every
+    machine. The best ``n`` by their exact objectives (gates, gated quantity, machines), then
+    their choices, are returned in that order: a fixed order, not a ranking (WO-3.5 ranks)."""
     pins = dict(net.pinned)
     open_choices = [(k, rs) for k, rs in net.choices if k not in pins and len(rs) > 1]
     narrowed = Network(
@@ -594,24 +617,44 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
     procs = [p for p in narrowed.procs if p.id not in _excluded(narrowed, pins)]
     cuts: list[dict[str, str]] = []
     out: list[Flow] = []
+    seen: set[frozenset[str]] = set()
     failed: list[str] = []
-    while len(out) < n + EXPLORE and len(cuts) < (n + EXPLORE) * MAX_TRIES:
+    while (
+        sum(f.all_run for f in out) < n + EXPLORE
+        and len(cuts) < (n + EXPLORE) * MAX_TRIES
+    ):
         found = _run(narrowed, procs, cuts=cuts, strict=False)
         if found is None:
             break
         m, x, _ = found
         choice = _choice(m, x)
-        cut = {k: choice[k] for k, _ in open_choices if k in choice}
-        if len(cut) < len(open_choices) or cut in cuts:
+        proposed = {k: choice[k] for k, _ in open_choices if k in choice}
+        if len(proposed) < len(open_choices) or proposed in cuts:
             break
-        cuts.append(cut)
         try:
-            out.append(solve_route(narrowed, choice))
+            flow = solve_route(narrowed, choice)
         except SolveError as exc:
             failed.append(str(exc))
+            cuts.append(proposed)
+            continue
+        # The cut is on the choices the route depends on: every other assignment of the
+        # choices it doesn't reach gives the same recipes, so it is excluded at once.
+        chosen = dict(flow.choice)
+        cut = {k: chosen[k] for k, _ in open_choices if k in chosen}
+        cuts.append(cut if cut and cut not in cuts else proposed)
+        recipes = frozenset(pid for pid, _ in flow.crafts)
+        if recipes not in seen:
+            seen.add(recipes)
+            out.append(flow)
+        if not cut:  # no open choice is reached: every route is this one
+            break
     if not out:
         why = f": {failed[0]}" if failed else ""
         raise SolveError(f"no route has a solution{why}")
+    if any(
+        f.all_run for f in out
+    ):  # a route that leaves machines idle is refused (step 4)
+        out = [f for f in out if f.all_run]
     out.sort(key=lambda f: (len(f.gates), f.objectives[1:], f.choice))
     return out[:n]
 
@@ -622,7 +665,8 @@ def exact_counts(
     """Step 6 on request: a whole machine count per recipe of ``flow``'s route, minimising
     their sum with the route's gates and gated quantity (and the stage-4 floor) kept. A
     recipe without a machine (``crafts_per_s`` 0 or missing) gets none."""
-    procs = active(net, dict(flow.choice))
+    route = {pid for pid, _ in flow.crafts}
+    procs = [p for p in net.procs if p.id in route]
     fixed = Network(
         procs=tuple(procs),
         targets=net.targets,

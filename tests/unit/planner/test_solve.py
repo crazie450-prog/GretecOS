@@ -8,6 +8,7 @@ externals; the light-fuel loop closes with 0 gates; 12 re-solves give the same r
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 
 import pytest
@@ -200,6 +201,51 @@ def test_exact_counts_are_whole_and_cover_the_rate() -> None:
     for pid, n in counts.items():
         assert n * cps[pid] >= flow.rate(pid) - 1e-9
         assert n == math.ceil(flow.rate(pid) / cps[pid] - 1e-9)
+
+
+def a_or_b() -> Network:
+    """The target t from A (which takes x, made by X1 or X2) or from B (cheapest, no x)."""
+    return Network(
+        procs=(
+            Proc("A", (("x", 1.0),), (("t", 1.0),), 2.0),
+            Proc("B", (("ore", 1.0),), (("t", 1.0),), 1.0),
+            Proc("X1", (("ore", 1.0),), (("x", 1.0),), 1.0),
+            Proc("X2", (("ore", 2.0),), (("x", 1.0),), 1.0),
+        ),
+        targets=(("t", 1.0),),
+        choices=(("t", ("A", "B")), ("x", ("X1", "X2"))),
+    )
+
+
+def test_routes_are_distinct_and_name_only_the_choices_they_run() -> None:
+    """Review HIGH-1: picking B leaves x's choice unreached; it isn't a second route."""
+    found = solve.routes(a_or_b(), 3)
+    recipes = [frozenset(pid for pid, _ in f.crafts) for f in found]
+    assert len(set(recipes)) == len(found) == 3
+    assert [dict(f.choice) for f in found] == [
+        {"t": "B"},
+        {"t": "A", "x": "X1"},
+        {"t": "A", "x": "X2"},
+    ]
+    for f in found:
+        assert set(dict(f.choice).values()) <= {pid for pid, _ in f.crafts}
+
+
+def test_effective_choice_drops_unreached_entries() -> None:
+    net = a_or_b()
+    assert solve.effective(net, {"t": "B", "x": "X2"}) == {"t": "B"}
+    assert solve.effective(net, {"t": "A", "x": "X2"}) == {"t": "A", "x": "X2"}
+    flow = solve.solve_route(net, {"t": "B", "x": "X1"})
+    assert flow.choice == (("t", "B"),)
+
+
+def test_solver_output_never_reaches_stdout(capfd: pytest.CaptureFixture[str]) -> None:
+    """Review HIGH-2: HiGHS can print to the C stdout past disp=False."""
+    with solve._quiet_stdout():
+        os.write(1, b"HighsMipSolverData::debug\n")
+    print("after")
+    solve.routes(a_or_b(), 3)
+    assert capfd.readouterr().out == "after\n"
 
 
 def test_an_unreachable_target_is_refused() -> None:

@@ -97,6 +97,15 @@ def test_platline_all_machines_run_with_at_most_two_externals(
         assert all(n["count"] >= 1 for n in p["nodes"] if n["machine"])
     choices = [json.dumps(p["route"]["choices"]) for p in d.plans]
     assert len(set(choices)) == len(choices)
+    assert_distinct_routes(d)
+
+
+def assert_distinct_routes(d: plan.Design) -> None:
+    """Review HIGH-1: each route runs its own recipes and names only choices it runs."""
+    recipes = [frozenset(n["recipe"] for n in p["nodes"]) for p in d.plans]
+    assert len(set(recipes)) == len(recipes), [p["route"]["choices"] for p in d.plans]
+    for p, ids in zip(d.plans, recipes, strict=True):
+        assert {c["recipe"] for c in p["route"]["choices"]} <= ids
 
 
 def test_light_fuel_closes_with_no_gates(conn: sqlite3.Connection) -> None:
@@ -156,6 +165,7 @@ def test_g3_lines_run_every_machine(
     d = design(conn, Request(target, tier_cap=tier))
     folder = tmp_path / "plans"
     folder.mkdir()
+    assert_distinct_routes(d)
     for p in d.plans:
         assert p["route"]["all_run"], (target, p["warnings"])
         (folder / f"{p['id']}.json").write_text(plan.dumps(p), encoding="utf-8")
@@ -165,6 +175,15 @@ def test_g3_lines_run_every_machine(
     view = pack_plans.view(conn, key)
     assert view is not None
     assert pack_plans.check(read, lambda k: pack_plans.view(conn, k), view) == []
+
+
+def test_solver_prints_nothing_to_stdout(
+    conn: sqlite3.Connection, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Review HIGH-2: the epoxid line made HiGHS print hundreds of debug lines to fd 1."""
+    capfd.readouterr()
+    design(conn, Request("fluid:molten.epoxid", tier_cap=4))
+    assert capfd.readouterr().out == ""
 
 
 def test_batch_totals(conn: sqlite3.Connection) -> None:
