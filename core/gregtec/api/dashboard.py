@@ -153,6 +153,10 @@ class Board:
         default_factory=lambda: deque(maxlen=ANSWERS_KEEP)
     )
     _asking: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # On the wall clock: when each health alert first showed and when each pending pairing
+    # runs out.
+    _alert_since: dict[str, int | None] = field(default_factory=dict)
+    _pair_expiry: dict[str, int] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
@@ -327,13 +331,32 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
     said = (
         ("deep_lane",) if key_status != "ok" or not ai["online"] or deep_waiting else ()
     )
-    alerts += cards_build.health_alerts(health, said=said)
+    health_alerts = cards_build.health_alerts(health, said=said)
+    pending = core.pairing.pending()
+    with board._lock:
+        # Fixed when first seen, so a second passing changes nothing in the state.
+        since = board._alert_since = {
+            a["id"]: board._alert_since.get(a["id"], a["ts"]) for a in health_alerts
+        }
+        expiry = board._pair_expiry = {
+            p["request_id"]: board._pair_expiry.get(
+                p["request_id"], int(now) + int(p["expires_in"])
+            )
+            for p in pending
+        }
+    alerts += [{**a, "ts": since[a["id"]]} for a in health_alerts]
     alerts.sort(key=lambda a: a["level"] != "err")
     approvals = _valid(
         [cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"]
     )
     pairing = _valid(
-        [cards_build.pairing_approval(p, now) for p in core.pairing.pending()]
+        [
+            {
+                **cards_build.pairing_approval(p, now),
+                "expires_at": expiry[p["request_id"]],
+            }
+            for p in pending
+        ]
     )
     jobs = [
         {
