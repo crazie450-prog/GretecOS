@@ -426,8 +426,8 @@ class CreditWatch:
                     self._cycle.hold = True
             if dirty:
                 self._save()
-            hold = self._cycle.hold
-        self.mode.set_credit_pause(hold)
+            # Under the lock, so a decision in another thread can't be undone by a stale read.
+            self.mode.set_credit_pause(self._cycle.hold)
         for pct in raised:
             log.warning(
                 "credit alert", extra={"pct": pct, "spent_usd": cycle["spent_usd"]}
@@ -460,9 +460,8 @@ class CreditWatch:
             elif choice == RESUME:
                 self._cycle.hold = False
             self._save()
-            hold = self._cycle.hold
+            self.mode.set_credit_pause(self._cycle.hold)
         log.info("credit decision", extra={"choice": choice, "at_pct": at})
-        self.mode.set_credit_pause(hold)
         if choice == RESUME and self.mode.choice_off:
             self.mode.set_choice(
                 True
