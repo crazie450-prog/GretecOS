@@ -15,7 +15,7 @@ COMMANDS = ("voice",)
 def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     voice = commands.add_parser(
         "voice",
-        help="the voice client: run, test, keys, devices, bench (WO-5.1)",
+        help="the voice client: run, test, keys, devices, bench, stt, record, eval",
         add_help=False,
         prefix_chars="+",  # every argument, --help included, goes on to gos voice's parser
     )

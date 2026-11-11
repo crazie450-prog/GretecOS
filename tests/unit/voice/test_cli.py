@@ -18,7 +18,7 @@ import pytest
 from gregtec import applog, voicecli
 from gregtec import cli as gos_cli
 from gregtec.api.server import bind
-from gregtec_voice import audio, cli, ptt
+from gregtec_voice import audio, cli, hooks, ptt
 
 OPTIONS = "key_key.jump:57\nkey_key.journeymap.map:100\nkey_key.drop:16\n"
 
@@ -151,7 +151,7 @@ def test_bench_without_audio_or_turns(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux: no WASAPI or key hook")
-@pytest.mark.parametrize("command", ["run", "test", "devices"])
+@pytest.mark.parametrize("command", ["run", "test", "devices", "record"])
 def test_the_windows_commands_say_so_elsewhere(tmp_path: Path, command: str) -> None:
     code, out = run(command, "--config", str(setup(tmp_path)))
     assert code == 2 and "run on Windows only" in out
@@ -183,6 +183,10 @@ def fake_windows(
 
     monkeypatch.setattr(cli, "_windows_only", lambda out: False)
     monkeypatch.setattr(cli, "_windows_parts", parts)
+    # no speech engine (WO-5.2): run would load one, with its model
+    monkeypatch.setattr(
+        cli.hooks, "transcriber", lambda settings: hooks.NoTranscriber()
+    )
     # not the root logger's handlers: a file there would outlive tmp_path
     monkeypatch.setattr(applog, "setup", lambda process, logs_dir: tmp_path / "x.log")
 

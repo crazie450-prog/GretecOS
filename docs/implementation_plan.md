@@ -1377,6 +1377,7 @@ wake_phrase = "TBD (PM08)"
 talk_key = "TBD (unbound in GTNH and Discord)"
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
+stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D182)
 tts = "kokoro"
 tts_device = "cpu"
 output_endpoint = "Chat"      # Arctis Nova Elite (D56); a part of a device name, never empty (D168)
