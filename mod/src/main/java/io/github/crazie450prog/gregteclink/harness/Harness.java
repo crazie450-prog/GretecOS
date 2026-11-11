@@ -4,6 +4,10 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
@@ -15,14 +19,19 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
+import net.minecraft.init.Items;
+import net.minecraft.item.ItemStack;
 import net.minecraft.launchwrapper.Launch;
 import net.minecraft.server.MinecraftServer;
 
@@ -55,6 +64,13 @@ public final class Harness {
     public static final String RESULT = "harness-result.json";
     /** Set by {@code -PharnessNeiFail}: the client harness expects NEI's dump to fail. */
     private static final String NEI_FAIL_PROPERTY = "gregtec.harness.neiFail";
+    /** Set by {@code -PharnessNeiHandlerFail}: the NEI step gets one more recipe handler, which always fails (D188). */
+    private static final String NEI_HANDLER_FAIL_PROPERTY = "gregtec.harness.neiHandlerFail";
+    /** Set by {@code -PharnessNeiLookupFirst}: an item's recipes are looked up, as R does, just before the NEI step. */
+    private static final String NEI_LOOKUP_FIRST_PROPERTY = "gregtec.harness.neiLookupFirst";
+    private static final String NEI_CRAFTING = "codechicken.nei.recipe.GuiCraftingRecipe";
+    private static final String NEI_HANDLER = "codechicken.nei.recipe.ICraftingHandler";
+    private static final String GT_NEI_HANDLER = "gregtech.nei.GTNEIDefaultHandler";
 
     /** Numeric-ID fields that must never appear (EndlessIDs: key on registry name + meta). NBT is not searched. */
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
@@ -97,6 +113,16 @@ public final class Harness {
     private static List<JsonObject> clientChecks;
     /** The client game dir just before the NEI step; null until then. */
     private static Map<String, String> neiBefore;
+    /** NEI's crafting handler lists just before the NEI step ({@link #neiHandlerLists}); null until then. */
+    private static Object[] neiListsBefore;
+    /** The harness's own handlers in NEI's parallel list during the NEI step ({@link #addTestHandlers}). */
+    private static final List<Object> neiTestHandlers = new ArrayList<>();
+    /** The NEI step's thread; null until then. */
+    private static String neiStepThread;
+    /** Each "thread (output id)" NEI asked the harness's handlers for recipes on. */
+    private static final Set<String> neiAskedOn = ConcurrentHashMap.newKeySet();
+    /** {@code -PharnessNeiLookupFirst}: GT's cached recipe list per category after that lookup, weakly held. */
+    private static Map<Object, WeakReference<Object>> gtCachesBefore;
     private static long clientT0;
     /** Set by {@link #onClientFinished}, written by {@link #onClientShutdown}. */
     private static String clientRunId;
@@ -193,11 +219,208 @@ public final class Harness {
 
     /** Called by {@link ExportClient} on the client thread just before NEI's dump. */
     public static void beforeNeiStep(File gameDir) {
+        if (Boolean.getBoolean(NEI_LOOKUP_FIRST_PROPERTY)) {
+            try {
+                gtCachesBefore = lookUpRecipesFirst();
+            } catch (Throwable t) {
+                GregtecLink.LOG.error("client harness: the recipe lookup before the NEI step failed", t);
+            }
+        }
         try {
             neiBefore = snapshot(gameDir, "saves");
+            neiListsBefore = neiHandlerLists();
+            neiStepThread = Thread.currentThread()
+                .getName();
+            addTestHandlers();
         } catch (Throwable t) {
             GregtecLink.LOG.error("client harness: no snapshot before the NEI step", t);
         }
+    }
+
+    /** Called by {@link ExportClient} on the client thread right after NEI's dump: takes the harness's handlers out. */
+    public static void afterNeiStep() {
+        try {
+            List<?> parallel = (List<?>) Class.forName(NEI_CRAFTING)
+                .getField("craftinghandlers")
+                .get(null);
+            for (Object h : neiTestHandlers) parallel.remove(h);
+        } catch (Throwable t) {
+            GregtecLink.LOG.error("client harness: its NEI handlers can't be taken out", t);
+        }
+    }
+
+    /**
+     * Puts the harness's own crafting handlers at the end of NEI's parallel list, where GT puts its handlers
+     * ({@code NEIGTConfig.addHandler}), for the NEI step (D188). Each notes the thread NEI asks it for recipes on. One
+     * then returns none, so NEI dumps nothing for it; with {@code -PharnessNeiHandlerFail} a second one always fails,
+     * as a handler NEI drops.
+     */
+    @SuppressWarnings("unchecked")
+    private static void addTestHandlers() throws ReflectiveOperationException {
+        Class<?> api = Class.forName(NEI_HANDLER);
+        neiTestHandlers.add(testHandler(api, "gregteclink.harness.probe", false));
+        if (Boolean.getBoolean(NEI_HANDLER_FAIL_PROPERTY))
+            neiTestHandlers.add(testHandler(api, "gregteclink.harness.failing", true));
+        ((List<Object>) Class.forName(NEI_CRAFTING)
+            .getField("craftinghandlers")
+            .get(null)).addAll(neiTestHandlers);
+    }
+
+    private static Object testHandler(Class<?> api, String id, boolean fails) {
+        return Proxy.newProxyInstance(api.getClassLoader(), new Class<?>[] { api }, (proxy, m, args) -> {
+            switch (m.getName()) {
+                case "getRecipeHandler":
+                    neiAskedOn.add(
+                        Thread.currentThread()
+                            .getName() + " ("
+                            + (args == null || args.length == 0 ? "" : args[0])
+                            + ")");
+                    if (fails) throw new IllegalStateException("the client harness's handler " + id + " always fails");
+                    return null;
+                case "equals":
+                    return proxy == args[0];
+                case "hashCode":
+                    return System.identityHashCode(proxy);
+                default:
+                    return zero(m.getReturnType(), id);
+            }
+        });
+    }
+
+    /** What the harness's handlers answer to anything else: their id for a String, else false, 0 or null. */
+    private static Object zero(Class<?> type, String id) {
+        if (type == String.class) return id;
+        if (type == boolean.class) return false;
+        if (type == char.class) return '\0';
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == float.class) return 0f;
+        if (type == double.class) return 0d;
+        return null;
+    }
+
+    /**
+     * {@code -PharnessNeiLookupFirst}: looks up an iron ingot's recipes as NEI does when R is pressed, on NEI's own
+     * lists (in parallel), so GT builds its NEI recipe caches before the NEI step, as in a world opened by hand.
+     * Returns GT's cached list for each recipe category after it.
+     */
+    private static Map<Object, WeakReference<Object>> lookUpRecipesFirst() throws ReflectiveOperationException {
+        Class.forName(NEI_CRAFTING)
+            .getMethod("getCraftingHandlers", String.class, Object[].class)
+            .invoke(null, "item", new Object[] { new ItemStack(Items.iron_ingot) });
+        return gtCaches();
+    }
+
+    /**
+     * GT's NEI recipe caches ({@code GTNEIDefaultHandler.CACHE}): the list each recipe category holds now, weakly, so
+     * a list GT has let go of can be collected.
+     */
+    private static Map<Object, WeakReference<Object>> gtCaches() throws ReflectiveOperationException {
+        Field cache = Class.forName(GT_NEI_HANDLER)
+            .getDeclaredField("CACHE");
+        cache.setAccessible(true);
+        Map<Object, WeakReference<Object>> out = new IdentityHashMap<>();
+        for (Map.Entry<?, ?> e : ((Map<?, ?>) cache.get(null)).entrySet()) {
+            Method recipes = e.getValue()
+                .getClass()
+                .getDeclaredMethod("getCachedRecipes");
+            recipes.setAccessible(true);
+            Object list = recipes.invoke(e.getValue());
+            if (list != null) out.put(e.getKey(), new WeakReference<>(list));
+        }
+        return out;
+    }
+
+    /**
+     * {@code -PharnessNeiLookupFirst}: the NEI step built every GT recipe category's NEI cache again, so none of the
+     * lists the lookup before it built (in parallel, maybe short) reached the dump (D188).
+     */
+    private static void checkGtCaches(List<JsonObject> checks) throws ReflectiveOperationException {
+        if (gtCachesBefore == null) {
+            check(checks, "nei_gt_caches_rebuilt", false, "the recipe lookup before the NEI step failed");
+            return;
+        }
+        Set<Object> now = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (WeakReference<Object> r : gtCaches().values()) {
+            Object list = r.get();
+            if (list != null) now.add(list);
+        }
+        Set<String> kept = new TreeSet<>();
+        for (Map.Entry<Object, WeakReference<Object>> e : gtCachesBefore.entrySet()) {
+            Object list = e.getValue()
+                .get();
+            if (list != null && now.contains(list)) kept.add(String.valueOf(e.getKey()));
+        }
+        check(
+            checks,
+            "nei_gt_caches_rebuilt",
+            gtCachesBefore.size() >= 100 && kept.isEmpty(),
+            gtCachesBefore.size() + " GT recipe categories cached by an item lookup before the NEI step (want >= 100), "
+                + kept.size()
+                + " of them still the same list after it"
+                + (kept.isEmpty() ? "" : ", e.g. " + Verifier.first(kept)));
+    }
+
+    /**
+     * The NEI step loaded every recipe handler on its own thread (D188): NEI asked the harness's handlers, which sit in
+     * its parallel list as GT's do, on that thread only, and the run records that NEI read GregtecLink's serial list
+     * there ({@code counts.nei_serial_load} 1).
+     */
+    private static void checkNeiThreads(List<JsonObject> checks, JsonElement counts) {
+        Set<String> asked = new TreeSet<>(neiAskedOn);
+        boolean onStep = neiStepThread != null && !asked.isEmpty();
+        for (String a : asked) {
+            if (!a.startsWith(neiStepThread + " (")) onStep = false;
+        }
+        JsonElement serial = counts != null && counts.isJsonObject() ? counts.getAsJsonObject()
+            .get("nei_serial_load") : null;
+        check(
+            checks,
+            "nei_handlers_loaded_on_client_thread",
+            onStep && serial != null && serial.getAsInt() == 1,
+            "NEI asked the harness's handlers on " + asked
+                + ", the NEI step ran on "
+                + neiStepThread
+                + "; counts.nei_serial_load="
+                + serial);
+    }
+
+    /**
+     * NEI's two crafting handler lists ({@code GuiCraftingRecipe.craftinghandlers}, loaded in parallel, and
+     * {@code serialCraftingHandlers}) and their sizes. The NEI step swaps them for its call (D188).
+     */
+    private static Object[] neiHandlerLists() throws ReflectiveOperationException {
+        Class<?> c = Class.forName(NEI_CRAFTING);
+        Object parallel = c.getField("craftinghandlers")
+            .get(null);
+        Object serial = c.getField("serialCraftingHandlers")
+            .get(null);
+        return new Object[] { parallel, serial, ((List<?>) parallel).size(), ((List<?>) serial).size() };
+    }
+
+    /** After the NEI step, NEI holds its own two handler lists again, the same objects with the same sizes. */
+    private static void checkNeiLists(List<JsonObject> checks) throws ReflectiveOperationException {
+        if (neiListsBefore == null) {
+            check(checks, "nei_handler_lists_restored", false, "not recorded before the NEI step");
+            return;
+        }
+        Object[] now = neiHandlerLists();
+        boolean same = now[0] == neiListsBefore[0] && now[1] == neiListsBefore[1];
+        check(
+            checks,
+            "nei_handler_lists_restored",
+            same && now[2].equals(neiListsBefore[2]) && now[3].equals(neiListsBefore[3]),
+            "craftinghandlers " + now[2]
+                + ", serialCraftingHandlers "
+                + now[3]
+                + " ("
+                + neiListsBefore[2]
+                + " and "
+                + neiListsBefore[3]
+                + " before the NEI step, "
+                + (same ? "the same lists)" : "other lists)"));
     }
 
     /**
@@ -219,6 +442,8 @@ public final class Harness {
             } else {
                 checkWrites(checks, "nei_step_writes_only_gregteclink_and_dumps", neiBefore, after, clientWrites(r));
             }
+            checkNeiLists(checks);
+            if (Boolean.getBoolean(NEI_LOOKUP_FIRST_PROPERTY)) checkGtCaches(checks);
             if (r != null) {
                 checkPrune(checks, r);
                 long t1 = System.currentTimeMillis();
@@ -226,6 +451,7 @@ public final class Harness {
                 checkWorlds(checks, gameDir);
                 durations.addProperty("verify_ms", System.currentTimeMillis() - t1);
             }
+            checkNeiThreads(checks, counts);
         } catch (Throwable t) {
             GregtecLink.LOG.error("client harness failed", t);
             check(checks, "harness_ran", false, Json.error(t));
@@ -700,15 +926,39 @@ public final class Harness {
                     "parts.nei=" + nei + " part_errors.nei=" + why);
                 return counts;
             }
-            // The dev runtime's NEI drops no handler, so a warning fails the check here.
             JsonElement warnings = manifest.get("part_warnings");
-            check(
-                checks,
-                "nei_ok",
-                "ok".equals(nei) && warnings == null,
-                "parts.nei=" + nei
-                    + (errors == null ? "" : " part_errors=" + errors)
-                    + (warnings == null ? "" : " part_warnings=" + warnings));
+            if (Boolean.getBoolean(NEI_HANDLER_FAIL_PROPERTY)) {
+                // -PharnessNeiHandlerFail: NEI drops the harness's failing handler, and the step is ok but says so in
+                // part_warnings.nei, with nothing else (D100 (1), D188).
+                long lookupErrors = counts.has("nei_lookup_errors") ? counts.get("nei_lookup_errors")
+                    .getAsLong() : -1;
+                JsonObject w = warnings != null && warnings.isJsonObject() ? warnings.getAsJsonObject()
+                    : new JsonObject();
+                String neiWarning = w.has("nei") ? w.get("nei")
+                    .getAsString() : "";
+                check(
+                    checks,
+                    "nei_handler_failure_reported",
+                    "ok".equals(nei) && lookupErrors == 1
+                        && w.entrySet()
+                            .size() == 1
+                        && neiWarning.startsWith("1 recipe handler(s) failed to load"),
+                    "parts.nei=" + nei
+                        + " nei_lookup_errors="
+                        + lookupErrors
+                        + (errors == null ? "" : " part_errors=" + errors)
+                        + " part_warnings="
+                        + warnings);
+            } else {
+                // The dev runtime's NEI drops no handler, so a warning fails the check here.
+                check(
+                    checks,
+                    "nei_ok",
+                    "ok".equals(nei) && warnings == null,
+                    "parts.nei=" + nei
+                        + (errors == null ? "" : " part_errors=" + errors)
+                        + (warnings == null ? "" : " part_warnings=" + warnings));
+            }
             checkNei(dir, manifest.getAsJsonObject("files"), counts);
             return counts;
         }

@@ -74,8 +74,14 @@ if (providers.gradleProperty("harness").isPresent) {
     // and quits. Seeds: an old marked autoexport world (rebuilt) and a marked decoy world (left alone).
     // Add -PharnessNeiFail to make dumps/recipes a file: NEI's dump then fails, and the harness expects
     // "nei": "failed" in a run that is still complete.
+    // Add -PharnessNeiHandlerFail to give NEI one more recipe handler, which always fails, for the NEI step: the
+    // harness then expects "nei": "ok" with part_warnings.nei for it (D188). Add -PharnessNeiLookupFirst to look up an
+    // item's recipes, as R does, just before the NEI step: the harness then expects the dump to have built GT's NEI
+    // recipe caches again (D188). CI runs these two together, after the integration tests.
     val clientDir = layout.projectDirectory.dir("run/client")
     val neiFail = providers.gradleProperty("harnessNeiFail").isPresent
+    val neiHandlerFail = providers.gradleProperty("harnessNeiHandlerFail").isPresent
+    val neiLookupFirst = providers.gradleProperty("harnessNeiLookupFirst").isPresent
 
     val cleanClientHarness = tasks.register<Delete>("cleanClientHarness") {
         description = "Deletes the client harness's worlds, NEI dump and earlier GregtecLink output from run/client."
@@ -118,6 +124,8 @@ if (providers.gradleProperty("harness").isPresent) {
             dependsOn(prepareClientHarness)
             jvmArgs("-Dgregtec.harness=true", "-Dgregtec.autoexport=true", "-Xmx6G")
             if (neiFail) jvmArgs("-Dgregtec.harness.neiFail=true")
+            if (neiHandlerFail) jvmArgs("-Dgregtec.harness.neiHandlerFail=true")
+            if (neiLookupFirst) jvmArgs("-Dgregtec.harness.neiLookupFirst=true")
             // lwjgl3ify writes a .desktop entry under $XDG_DATA_HOME (else ~/.local/share) and refuses to
             // start when neither exists, as on CI runners. Point it inside run/client instead.
             val xdgData = clientDir.dir("xdg-data").asFile
