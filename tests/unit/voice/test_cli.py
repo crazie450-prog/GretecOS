@@ -121,6 +121,10 @@ def test_bench_reports_pm14_from_the_turn_records(tmp_path: Path) -> None:
                 turn("wake", 2600),
                 turn("key", None, outcome="nothing said"),
                 '{"msg": "voice client starting"}',
+                '{"msg": "wake", "outcome": "asked"}',
+                '{"msg": "wake", "outcome": "rejected"}',
+                '{"msg": "wake", "outcome": "no question"}',
+                '{"msg": "wake", "outcome": "asked"}',
                 "not json",
             ]
         )
@@ -130,6 +134,9 @@ def test_bench_reports_pm14_from_the_turn_records(tmp_path: Path) -> None:
     (logs / "voice-test.log").write_text(turn("key", 99999) + "\n", encoding="utf-8")
     code, out = run("bench", "--config", str(toml))
     assert "key: 5 turns" in out and "wake: 3 turns" in out
+    assert (
+        "wake word: 4 detections, 3 chimed (2 asked, 1 no question, 1 rejected)" in out
+    )
     assert "PM14: P50 1650 ms to first audio, target 1700 ms: met" in out
     assert "PM14: P50 2500 ms to first audio, target 2200 ms: MISSED" in out
     assert "   stt: P50 250 ms, P90 250 ms (5)" in out

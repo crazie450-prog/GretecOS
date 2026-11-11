@@ -536,6 +536,31 @@ def test_the_wake_hook_point(
     assert speaker.stopped == 1 and voice.state == (IDLE, None)
 
 
+def test_a_wake_turn_is_asked_without_the_phrases_tail(
+    make: Callable[..., VoiceClient],
+    clock: Any,  # noqa: ANN401
+    core: Any,  # noqa: ANN401
+    transcriber: Any,  # noqa: ANN401
+    run_events: Pump,
+) -> None:
+    """D185: the wake segment's pre-roll holds the end of the phrase, which speech-to-text may
+    write out; a talk-key turn's text is sent as it is."""
+    voice = make()
+    transcriber.text = "vist, how do I make steel"
+    voice.wake(clock())
+    voice.drain()
+    audio_for(voice, clock, 1.0)
+    voice.end_of_speech(clock())
+    voice.drain()
+    audio_for(voice, clock, 0.2)
+    run_events(voice, lambda: len(core.asked) == 1)
+    assert core.asked == ["how do I make steel"]
+    transcriber.text = "Archivist, what does vist mean"
+    talk(voice, clock)
+    run_events(voice, lambda: len(core.asked) == 2)
+    assert core.asked[1] == "Archivist, what does vist mean"
+
+
 def test_without_the_wake_trigger_a_wake_does_nothing(
     make: Callable[..., VoiceClient],
     clock: Any,  # noqa: ANN401
