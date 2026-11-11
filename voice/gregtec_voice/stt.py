@@ -377,6 +377,20 @@ class WhisperBackend:
         )
         return " ".join(s.text.strip() for s in segments)
 
+    def plain(self, pcm: bytes) -> str:
+        """As :meth:`raw`, without the glossary's hotwords: the wake word's second stage
+        (D185), where they pull a wake phrase towards GTNH words ("Hey, OCOVist")."""
+        segments, _ = self.model.transcribe(
+            floats(pcm),
+            language=LANGUAGE,
+            beam_size=BEAM,
+            vad_filter=True,
+            without_timestamps=True,
+            condition_on_previous_text=False,
+            temperature=0.0,
+        )
+        return " ".join(s.text.strip() for s in segments)
+
 
 class ParakeetBackend:
     """Parakeet TDT 0.6B v3 through onnx-asr (MIT) on ONNX Runtime's CPU provider."""
@@ -557,6 +571,12 @@ class Stt:
         if segment.seconds < MIN_SPEECH_S:  # nothing to decode
             return ""
         return self.text(self.backend.raw(segment.pcm))
+
+    def plain(self, pcm: bytes) -> str:
+        """The engine's words with no glossary prompt and no glossary spellings: the wake
+        word's second stage (D185). Parakeet takes no prompt, so it is its usual text."""
+        heard = getattr(self.backend, "plain", self.backend.raw)
+        return " ".join(heard(pcm).split())
 
 
 def load(

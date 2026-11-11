@@ -11,8 +11,13 @@ clients, same-origin GETs) pass this check and still need a credential.
 
 - ``admin``: ``Authorization: Bearer`` with the core's admin token, which lives only in memory and
   in ``GOS_HOME/run/core.json`` (Clayton's ``gos`` commands; gos-dev can't read ``run``).
-- ``client``: a bearer token issued to a named client (voice, discord, mod, oc). The DB keeps only
+- ``client``: a bearer token issued to a named client (voice, discord, mod). The DB keeps only
   its SHA-256.
+- An OC computer's token (``oc-play`` or ``oc-lab``, optionally ``-<label>`` for a second
+  computer: ``gos token new oc-lab``; WO-7.1, D221) is **not** a client: it sits in plain text in
+  the agent's config inside a world save gos-dev can read (D214), so it opens
+  ``POST /oc/telemetry`` and nothing else (:meth:`Auth.oc_binding`; :meth:`Auth.bearer` never
+  accepts it). Its instance is the binding the bridge vouches for (D217).
 - ``device``: a paired browser's ``gos_device`` cookie (HttpOnly, SameSite=Strict, ``Secure`` on
   the tailnet name). The value is ``<device id>.<secret>``; the DB keeps the secret's SHA-256.
 
@@ -54,6 +59,8 @@ PAIR_MAX_PENDING = 3
 PAIR_RATE = (10, 600)  # at most 10 pairing requests per 600 s
 LAST_SEEN_EVERY_S = 60
 CLIENT_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+# An OC computer's token name: its instance, then an optional label (WO-7.1, D221).
+OC_TOKEN = re.compile(r"^oc-(play|lab)(-[a-z0-9]+)*$")
 _DEVICE_ID = re.compile(r"^[0-9a-f]{16}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -197,6 +204,8 @@ class Auth:
         if not rows:
             return None
         name, last_used = rows[0]["name"], rows[0]["last_used"]
+        if is_oc_name(name):  # an OC token opens /oc/telemetry only (D214, D221)
+            return None
         now = int(time.time())
         if last_used is None or now - last_used >= LAST_SEEN_EVERY_S:
             self._stamp(
@@ -233,6 +242,33 @@ class Auth:
         except sqlite3.OperationalError as exc:
             log.info("last-used stamp skipped", extra={"why": str(exc)})
 
+    def oc_binding(self, token: str) -> tuple[str, str] | None:
+        """(instance, token name) of the OC computer ``token`` belongs to, or None.
+
+        Every live OC token's hash is compared, in constant time and without stopping at a
+        match, so neither the answer nor the time it takes says which one nearly matched."""
+        given = sha256(token).encode()
+        rows = self.store.rows(
+            "SELECT name, token_sha256, last_used FROM client_token WHERE revoked = 0 "
+            "AND name LIKE 'oc-%'"
+        )
+        found = None
+        for row in rows:
+            same = hmac.compare_digest(given, str(row["token_sha256"]).encode())
+            if same and found is None and OC_TOKEN.match(row["name"]):
+                found = row
+        if found is None:
+            return None
+        now = int(time.time())
+        if found["last_used"] is None or now - found["last_used"] >= LAST_SEEN_EVERY_S:
+            self._stamp(
+                "UPDATE client_token SET last_used = ? WHERE name = ?",
+                (now, found["name"]),
+            )
+        m = OC_TOKEN.match(found["name"])
+        assert m is not None
+        return m[1], found["name"]
+
     # client tokens
 
     def issue_client_token(self, name: str) -> str:
@@ -240,6 +276,11 @@ class Auth:
         if not CLIENT_NAME.match(name):
             raise ValueError(
                 "a client name is lower-case letters, digits and -, starting with a letter"
+            )
+        if is_oc_name(name) and not OC_TOKEN.match(name):
+            raise ValueError(
+                "an OC computer's token is named oc-play or oc-lab, optionally with a label "
+                "(oc-lab-crops)"
             )
         token = secrets.token_urlsafe(32)
         with self.store.transaction() as conn:
@@ -312,6 +353,11 @@ class Auth:
             }
             for r in rows
         ]
+
+
+def is_oc_name(name: str) -> bool:
+    """Whether ``name`` is (or looks like) an OC computer's token name."""
+    return name == "oc" or name.startswith("oc-")
 
 
 # --- pairing ------------------------------------------------------------------------------------

@@ -197,10 +197,11 @@ def test_sensor_lines_go_out_raw() -> None:
 
 
 def test_the_agent_compiles_on_lua_5_2() -> None:
-    """OC computers default to Lua 5.2; the agent must load there to say it needs 5.3."""
+    """OC computers default to Lua 5.2; the agent (and the M1 mailbox it loads) must load there
+    to say it needs 5.3."""
     luac = _need(_which("luac5.2", "luac52"), "luac5.2")
     run = subprocess.run(
-        [luac, "-p", "oc/gos-agent.lua", "oc/json.lua"],
+        [luac, "-p", "oc/gos-agent.lua", "oc/json.lua", "oc/mailbox.lua"],
         check=False,
         cwd=REPO,
         capture_output=True,

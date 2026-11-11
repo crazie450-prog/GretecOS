@@ -376,6 +376,29 @@ def test_transcribe_tidies_and_spells(glossary: Glossary) -> None:
     assert backend.heard == [one.pcm]
 
 
+def test_plain_is_the_engines_words_without_the_glossary(glossary: Glossary) -> None:
+    """D185: the wake word's second stage hears without hotwords and spellings."""
+
+    @dataclass
+    class Prompted(FakeBackend):
+        plained: list[bytes] = field(default_factory=list)
+
+        def plain(self, pcm: bytes) -> str:
+            self.plained.append(pcm)
+            return " Hey,  archivist "
+
+    backend = Prompted(text="E B F")
+    found = stt.Stt(
+        stt.Choice(stt.WHISPER, stt.CPU, "base.en"), backend, stt.Snapper(glossary), 5
+    )
+    assert found.plain(b"pcm") == "Hey, archivist"
+    assert backend.plained == [b"pcm"] and backend.heard == []
+    no_prompt = stt.Stt(
+        stt.Choice(stt.PARAKEET, stt.CPU, "x"), FakeBackend(), stt.Snapper(glossary), 5
+    )
+    assert no_prompt.plain(b"pcm") == "what does the E B F do"  # no spellings either
+
+
 def test_floats_scale_int16_to_unit_range() -> None:
     np = pytest.importorskip("numpy")  # the engines' own dependency (the stt group)
     pcm = np.array([0, 16384, -32768, 32767], dtype="<i2").tobytes()

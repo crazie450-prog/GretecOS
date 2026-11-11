@@ -2,21 +2,24 @@
 wake word (WO-5.4).
 
 Each engine is a module of this package with a ``create`` function, found when the client
-starts; until its WO lands the placeholder here runs instead (``stt`` is in: WO-5.2, D182):
+starts; until its WO lands the placeholder here runs instead (``stt`` is in: WO-5.2, D182;
+``wake`` too: WO-5.4, D185):
 
 | module                  | ``create(...)`` returns                 | placeholder            |
 |-------------------------|-----------------------------------------|------------------------|
 | ``gregtec_voice.stt``   | ``create(settings) -> Transcriber``     | :class:`NoTranscriber` |
 | ``gregtec_voice.tts``   | ``create(settings) -> Speaker``         | :class:`LogSpeaker`    |
-| ``gregtec_voice.wake``  | ``create(settings, bus) -> WakeEngine`` | none: talk key only    |
+| ``gregtec_voice.wake``  | ``create(settings, bus, transcriber)``  | none: talk key only    |
+|                         | ``-> WakeEngine | None``                |                        |
 
 **The wake engine** gets every 16 kHz block (``feed``, on the audio worker thread) and drives
 the client through the :class:`TriggerBus`: ``wake(t)`` opens a segment (the 300 ms pre-roll
 included, as for the key), ``end_of_speech(t)`` closes it, ``cancel()`` drops it (the 1.5 s cancel
 window, a failed second-stage check), and ``speech(True, t)`` while GOS speaks is barge-in by
-voice: speech stops. Plan 4.5's "speaking stops speech" exists only once WO-5.4's VAD calls
-``speech(True, t)`` (D180): that WO owns it. While a segment is being recorded, the other
-trigger's start and end are ignored.
+voice: speech stops. Plan 4.5's "speaking stops speech" is WO-5.4's VAD calling
+``speech(True, t)`` (D180, D185). While a segment is being recorded, the other
+trigger's start and end are ignored. ``create`` gets the client's transcriber for its second
+stage (D185) and returns None when it can't start: the talk key is then the trigger.
 
 **The transcriber** runs on a worker thread, one segment at a time (the client holds a lock
 around it); "" means nothing was said.
@@ -153,6 +156,10 @@ def speaker(settings: VoiceSettings) -> Speaker:
     return LogSpeaker() if create is None else create(settings)
 
 
-def wake_engine(settings: VoiceSettings, bus: TriggerBus) -> WakeEngine | None:
+def wake_engine(
+    settings: VoiceSettings,
+    bus: TriggerBus,
+    transcriber: Transcriber | None = None,
+) -> WakeEngine | None:
     create = _engine("wake")
-    return None if create is None else create(settings, bus)
+    return None if create is None else create(settings, bus, transcriber)

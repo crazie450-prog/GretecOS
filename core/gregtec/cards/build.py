@@ -474,6 +474,29 @@ def deep_approval(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def action_approval(action: dict[str, Any]) -> dict[str, Any]:
+    """The pending world action (WO-7.1, D59): its read-back in quotes, Confirm and Cancel (the
+    card adds "Or just say confirm."), counting down to its 60 s expiry. The buttons confirm or
+    cancel by its id, so an old card can't confirm a newer action."""
+    return {
+        "type": "approval",
+        "id": clip(f"action-{action.get('id')}", 100),
+        "kind": "action",
+        "title": "Confirm a world action",
+        "readback": clip(f'"{action.get("readback")}"', 1000),
+        "detail": clip(
+            f"Proposed by {action.get('source') or 'an agent'} for {action.get('target')}; "
+            "nothing runs until you confirm.",
+            1000,
+        ),
+        "expires_at": action.get("expires"),
+        "actions": [
+            {"id": "confirm", "label": "Confirm", "primary": True},
+            {"id": "cancel", "label": "Cancel", "primary": False},
+        ],
+    }
+
+
 def pairing_approval(pending: dict[str, Any], now: float) -> dict[str, Any]:
     """A device asking to pair (D117): its code, shown only on trusted displays, and Deny."""
     code = str(pending.get("code") or "")

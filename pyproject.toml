@@ -8,6 +8,9 @@ dependencies = [
     "anthropic>=2.4.0",
     "claude-agent-sdk>=0.2.176",
     "fastapi>=0.162.0",
+    # WO-7.3: the core checks every OC bridge message against docs/contracts/oc_bridge.schema.json
+    # (gregtec.bridge.ingest); tests/oc uses it too. Already installed through mcp.
+    "jsonschema>=4.26",
     "keyring>=25.7.0",
     "uvicorn>=0.54.0",
     "websockets>=17.4",
@@ -31,8 +34,7 @@ module-name = "gregtec"
 
 [dependency-groups]
 dev = [
-    # WO-7.2: tests/oc validates the OC bridge messages against docs/contracts/oc_bridge.schema.json.
-    "jsonschema>=4.26",
+    "hypothesis>=6.100",
     "pytest>=9.2",
     # Ruff changed its default rule set in 0.16 and 0.17; take minor bumps on purpose.
     "ruff>=0.17.3,<0.18",
@@ -45,6 +47,11 @@ voice = ["gregtec-voice"]
 # onnx-asr), both MIT; models download at runtime to GOS_HOME/models. Not a default group (CI
 # and dev clones stay light); gos deploy adds it, so GOS_APP has them.
 stt = ["faster-whisper>=1.2.1", "onnx-asr[cpu,hub]>=0.12.0"]
+# WO-5.4, D185: the wake word: sherpa-onnx keyword spotting, and sentencepiece, which spells the
+# phrase in the model's word pieces (both Apache-2.0). A custom openWakeWord model runs on ONNX
+# Runtime (from the stt group, with the VAD and the second stage); the openwakeword package
+# isn't used (on Linux it needs tflite-runtime, which has no Python 3.12 wheel). gos deploy adds it.
+wake = ["sherpa-onnx>=2.0.1", "sentencepiece>=0.2.1"]
 
 [tool.uv]
 default-groups = ["dev", "voice"]
