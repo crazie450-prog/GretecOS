@@ -682,6 +682,40 @@ def test_tick_pushes_the_state_when_it_changes(core: Core) -> None:
     asyncio.run(run())
 
 
+def test_a_second_passing_changes_nothing_in_the_state(
+    core: Core, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Else the core would push the state every second: a health alert keeps the time it first
+    showed, and a pending pairing keeps one expiry however the two clocks' seconds fall."""
+    wall, mono = [5000.9], [1000.1]
+    monkeypatch.setattr(time, "time", lambda: wall[0])
+    monkeypatch.setattr(time, "monotonic", lambda: mono[0])
+    core.pairing._clock = lambda: mono[0]
+    core.pairing.start("Pixel 9")
+    core.key_status = ("ok", "stored")
+    core.deep = FakeDeep([], ("warn", "offline: LookupError: no Anthropic key"))  # type: ignore[assignment]
+    first = dashboard.snapshots(core)[True]
+    assert [a["kind"] for a in first["approvals"]] == ["pairing"]
+    assert first["approvals"][0]["expires_at"] == 5000 + 299
+    alert = next(a for a in first["alerts"] if a["id"] == "health-deep_lane")
+    assert alert["ts"] == 5000
+    for step in (0.2, 0.9, 2.0):
+        wall[0] += step
+        mono[0] += step
+        later = dashboard.snapshots(core)[True]
+        assert later["ts"] > 5000 or step == 0.2
+        assert dashboard._steady(later) == dashboard._steady(first)
+    # An alert that went away and came back shows its new time.
+    core.deep = FakeDeep([], ("ok", "ready"))  # type: ignore[assignment]
+    assert "health-deep_lane" not in [
+        a["id"] for a in dashboard.snapshots(core)[True]["alerts"]
+    ]
+    wall[0] = 5010.5
+    core.deep = FakeDeep([], ("warn", "offline: LookupError: no Anthropic key"))  # type: ignore[assignment]
+    again = dashboard.snapshots(core)[True]["alerts"]
+    assert next(a for a in again if a["id"] == "health-deep_lane")["ts"] == 5010
+
+
 def test_a_socket_that_joins_while_the_state_is_built_gets_it(
     core: Core, monkeypatch: pytest.MonkeyPatch
 ) -> None:
