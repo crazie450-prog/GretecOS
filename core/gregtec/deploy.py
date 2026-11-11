@@ -7,7 +7,8 @@ outside it::
 
     GOS_APP\
       current\     git archive of the commit, its .venv, mod-dist\ (the GregtecLink jar, when the
-                   commit has mod/) and release.json (what, when, from where, the jar's SHA256)
+                   commit has mod/), dashboard\dist\ (the built dashboard, when it has
+                   dashboard/) and release.json (what, when, from where, the jar's SHA256)
       scripts\     a copy of current\scripts: fixed paths for the world backup task and Prism hooks
 
 How a deploy runs:
@@ -27,7 +28,10 @@ How a deploy runs:
    SHA256 in ``release.json`` and delete everything the build added to the release
    (``mod\build\``, ``mod\.gradle\``, ``mod\run\``, ..., and anything outside ``mod\``), so
    the release holds only the sources and the jar;
-   ``sync_instances.py`` installs that jar into Export. Then rename the build folder to
+   ``sync_instances.py`` installs that jar into Export. If the commit has ``dashboard/``, run
+   ``pnpm install --frozen-lockfile`` and ``pnpm run build`` there (D159), keep
+   ``dashboard\dist\`` (the core serves it at ``/``) and delete everything else the build added
+   (``node_modules``, caches). Then rename the build folder to
    ``.gos-staging-*`` and check the venv there, so a path left pointing at the build folder fails
    the check instead of breaking the deployed release.
 4. Swap by renames inside GOS_APP (``current`` and ``scripts`` aside, the staged ones in). A folder
@@ -80,6 +84,8 @@ EDITABLE = ("core", "voice")
 GROUPS = ("stt", "wake")
 # Antivirus can hold a file in a freshly written folder for seconds (WinError 5 on the swap).
 RENAME_TRIES, RENAME_DELAY = 10, 1.0
+# The dashboard's sources and what the core serves from them (D159).
+DASHBOARD = "dashboard"
 # Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.
 CLEAN_TRIES, CLEAN_DELAY = 10, 1.0
 SYSTEM, ADMINS = "S-1-5-18", "S-1-5-32-544"
@@ -104,6 +110,9 @@ class Release:
     replaced: str | None  # the commit it replaced, if any
     leftovers: tuple[Path, ...]  # old folders it couldn't delete yet
     gregteclink: dict[str, str] | None  # release.json's {"jar", "sha256"}, if mod/
+    dashboard: dict[str, str] | None = (
+        None  # release.json's {"index_sha256"}, if dashboard/
+    )
 
 
 @dataclass(frozen=True)
@@ -169,6 +178,7 @@ def deploy(
         _build_env(build)
         relocate_editable(build)
         gregteclink = _build_mod(build, commit[:12])
+        dashboard = _build_dashboard(build)
         _rename(build, staged)  # a path still pointing at build now fails the check
         _check_env(staged)
         shutil.copytree(staged / SCRIPTS, staged_scripts, copy_function=shutil.copyfile)
@@ -180,6 +190,8 @@ def deploy(
         }
         if gregteclink is not None:
             record["gregteclink"] = gregteclink
+        if dashboard is not None:
+            record["dashboard"] = dashboard
         (staged / RECORD).write_text(json.dumps(record, indent=2) + "\n", "utf-8")
         if before_swap is not None:
             before_swap()
@@ -190,7 +202,9 @@ def deploy(
                 _remove(path)
         raise
     leftovers = tuple(p for p in old if not _remove(p))
-    return Release(commit, ref, deployed_at, current, replaced, leftovers, gregteclink)
+    return Release(
+        commit, ref, deployed_at, current, replaced, leftovers, gregteclink, dashboard
+    )
 
 
 def check_app(app: Path, forbidden: Sequence[Path]) -> None:
@@ -401,6 +415,61 @@ def _build_mod(release: Path, version: str) -> dict[str, str] | None:
                 )
             time.sleep(CLEAN_DELAY)
     return {"jar": name, "sha256": sha256}
+
+
+def _pnpm() -> list[str] | None:
+    """pnpm as a command, or None when it isn't on PATH (``pnpm.cmd`` on Windows)."""
+    found = shutil.which("pnpm")
+    return [found] if found else None
+
+
+def _build_dashboard(release: Path) -> dict[str, str] | None:
+    """Build ``dashboard/`` with pnpm, keep ``dashboard/dist/``, delete the rest it added.
+
+    Returns release.json's ``dashboard`` entry, or None if the release has no
+    ``dashboard/package.json``. pnpm's package store stays in the deployer's profile.
+    """
+    dash = release / DASHBOARD
+    if not (dash / "package.json").is_file():
+        return None
+    pnpm = _pnpm()
+    if pnpm is None:
+        raise DeployError(
+            "pnpm isn't on PATH, so the dashboard can't be built (install Node LTS and pnpm: "
+            "docs/runbooks/dashboard.md); nothing was swapped"
+        )
+    before = _tree(release)
+    print(
+        "Building the dashboard with pnpm (the first deploy downloads its packages: a "
+        "minute or two)...",
+        flush=True,
+    )
+    env = {**os.environ, "CI": "1"}  # no prompts; install keeps to the lockfile
+    for args in (["install", "--frozen-lockfile"], ["run", "build"]):
+        done = subprocess.run(
+            [*pnpm, *args], check=False, cwd=dash, env=env, stdin=subprocess.DEVNULL
+        )
+        if done.returncode:
+            raise DeployError(
+                f"the dashboard build failed (pnpm {args[0]} exit {done.returncode}, see "
+                "above); nothing was swapped"
+            )
+    index = dash / "dist" / "index.html"
+    if not index.is_file():
+        raise DeployError(f"the build made no {index}; nothing was swapped")
+    for path in _added(release, before):
+        if path == dash / "dist":
+            continue
+        for attempt in range(CLEAN_TRIES):
+            if _delete(path):
+                break
+            if attempt == CLEAN_TRIES - 1:
+                raise DeployError(
+                    f"couldn't delete the build's {path} (in use?); nothing was swapped. "
+                    "Deploy again in a minute"
+                )
+            time.sleep(CLEAN_DELAY)
+    return {"index_sha256": hashlib.sha256(index.read_bytes()).hexdigest()}
 
 
 def _tree(root: Path) -> set[str]:

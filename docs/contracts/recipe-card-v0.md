@@ -1,5 +1,7 @@
 # Recipe card, version 0 (WO-2.7, D172)
 
+> **Superseded on `/api/ask` by WO-2.6 (D160).** A reply's `card` is now the dashboard catalog's card (`core/gregtec/cards/schema.json`): for `recipe_find` and `recipe_uses`, a `type: recipe` card whose recipes are read from the DB by the rows' r: ids, with the same fields per recipe and slot as below. The `tool_result` card with its `recipe` key is no longer sent. `gregtec.agents.cards` (this shape's parser) remains for the recipe eval's oracle.
+
 The dashboard's recipe card (plan §7.3, §7.14 rule 1) as data, for WO-2.6 to adopt or replace with its own card schema. Agents return cards, never HTML; this one is built by code (`gregtec.agents.cards.recipe_card`) from a `recipe_find` or `recipe_uses` result, the same rows the model read and cited, so the card's numbers are the DB's (D131): nothing is rounded, converted or added up here.
 
 ## Where it is

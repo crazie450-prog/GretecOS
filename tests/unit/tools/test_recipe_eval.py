@@ -1351,15 +1351,18 @@ def test_slots(text: str, want: dict[str, object]) -> None:
 
 
 def test_only_recipe_results_have_a_recipe_card(lane_reg: Registry) -> None:
+    # The dashboard's card is WO-2.6's catalog recipe card (D160), read from the DB by the
+    # rows' r: ids; this module's v0 shape stays the oracle's slot parser.
     pre = prefetch.prefetch(lane_reg, router.route("how do I make steel"))
-    assert pre.main is not None and pre.main.card()["recipe"]["type"] == "recipe"
-    resolved = pre.blocks[0].card()
-    assert resolved["tool"] == "item_resolve" and "recipe" not in resolved
+    assert pre.main is not None
+    assert pre.main.card(lane_reg.env.db)["type"] == "recipe"
+    resolved = pre.blocks[0].card(lane_reg.env.db)
+    assert resolved["tool"] == "item_resolve" and resolved["type"] != "recipe"
     ambiguous = lane_reg.call("recipe_find", {"item": "dust"}, lane="fast")
     assert cards.recipe_card("recipe_find", parse(ambiguous.text)) is None
     assert cards.recipe_card("machine_info", parse(ambiguous.text)) is None
     error = prefetch.Block("recipe_find", {}, "error: no DB\n", True)
-    assert "recipe" not in error.card()
+    assert error.card(lane_reg.env.db)["type"] != "recipe"
 
 
 # --- the skill ------------------------------------------------------------------------------
@@ -1414,7 +1417,7 @@ def test_the_recipe_lookup_skill(lane_reg: Registry, tmp_path: Path) -> None:
 
 
 def test_the_fast_lane_answers_with_the_card(lane_reg: Registry) -> None:
-    """``/api/ask``'s reply carries the recipe card in its card's ``recipe`` key."""
+    """``/api/ask``'s reply carries the catalog recipe card (WO-2.6's, D160)."""
     deep_lane = HandoffRecorder()
     question = recipe_eval.question(
         "c1", "recipe", ANSWER, "How do I make steel?", f"make {STEEL}", "", "steel"
@@ -1422,4 +1425,4 @@ def test_the_fast_lane_answers_with_the_card(lane_reg: Registry) -> None:
     fast = FastLane(OracleClient(plans=recipe_eval.plans([question])), lane_reg)
     reply = Asker(lane_reg, deep_lane, fast).ask("How do I make steel?")
     card = reply.as_dict()["card"]
-    assert card["type"] == "tool_result" and card["recipe"]["total"] == 5
+    assert card["type"] == "recipe" and card["total"] == 5 and len(card["recipes"]) == 5

@@ -20,9 +20,10 @@ fast lane's ``handoff`` tool send work to. It runs one asyncio loop in its own t
   session and the task waits in ``needs_approval``, its client kept: :meth:`approve` adds
   another cap's worth and the session continues where it stopped, :meth:`stop_task` ends it,
   and with no answer in :data:`APPROVAL_WAIT_S` it is stopped so the queue moves on (the queue
-  waits meanwhile). The model and the work are never cut down to fit (D16). A subagent's hidden
-  thinking only counts once its result arrives, so a pause can come late (up to the CLI's hard
-  ceiling). :meth:`stop_task` also stops a running task (it interrupts the session).
+  waits meanwhile; the task's ``approve_by`` says when, for the approval card's countdown). The
+  model and the work are never cut down to fit (D16). A subagent's hidden thinking only counts
+  once its result arrives, so a pause can come late (up to the CLI's hard ceiling).
+  :meth:`stop_task` also stops a running task (it interrupts the session).
 - **Metered:** each result's cost (the SDK's ``total_cost_usd`` and per-model ``modelUsage``,
   the part not yet recorded) goes into ``llm_usage`` (lane ``deep``, task ``deep:<id>``, D118).
 - **Request vs task note:** the prompt quotes Clayton's words as ``<request>`` (the only
@@ -245,6 +246,7 @@ class DeepTask:
     spent_usd: float = 0.0  # the lane's running estimate (drives the cap)
     cost_usd: float = 0.0  # the SDK's total for the session (recorded in llm_usage)
     approvals: int = 0
+    approve_by: float | None = None  # paused at its cap: stopped if unanswered by then
     text: str | None = None
     error: str | None = None
     progress: deque[str] = field(default_factory=lambda: deque(maxlen=PROGRESS_KEEP))
@@ -281,6 +283,7 @@ class DeepTask:
             "spent_usd": round(self.spent_usd, 6),
             "cost_usd": round(self.cost_usd, 6),
             "approvals": self.approvals,
+            "approve_by": None if self.approve_by is None else int(self.approve_by),
             "text": self.text,
             "error": self.error,
             "progress": list(self.progress),
@@ -643,6 +646,7 @@ class DeepLaneService:
         with self._lock:
             task.status = status
             task.ended = time.time()
+            task.approve_by = None
             if text is not None:
                 task.text = text
             if error is not None:
@@ -759,6 +763,7 @@ class DeepLaneService:
                     task.approvals += 1
                     task.cap_usd += self.settings.task_max_usd
                     task.status = RUNNING
+                    task.approve_by = None
                 self._changed(task)
                 await self._turn(
                     client,
@@ -881,6 +886,7 @@ class DeepLaneService:
         if paused and result.terminal_reason != "completed":
             with self._lock:
                 task.status = NEEDS_APPROVAL
+                task.approve_by = time.time() + APPROVAL_WAIT_S
             log.info(
                 "deep-lane task paused at its cap",
                 extra={"task": task.id, "spent_usd": round(task.spent_usd, 6)},
