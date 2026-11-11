@@ -260,19 +260,26 @@ class Board:
             try:
                 conn = access.connect(db, readonly=True)
                 try:
-                    run = access.query(conn, "current_run")
-                    if run:
-                        data["db_run"] = {
-                            "run_key": run[0]["run_key"],
-                            "created_at": run[0]["created_at"],
+                    # Before the first `gos db build` the file holds only the core's own tables
+                    # (gregtec.store): no run or tier to show yet, and no error to log every 5 s.
+                    built = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        ("export_run",),
+                    ).fetchone()
+                    if built is not None:
+                        run = access.query(conn, "current_run")
+                        if run:
+                            data["db_run"] = {
+                                "run_key": run[0]["run_key"],
+                                "created_at": run[0]["created_at"],
+                            }
+                        stage, how, detected = quest_db.effective_tier(conn)
+                        tier = {
+                            "stage": stage,
+                            "tier": bq.STAGES.get(stage),
+                            "how": how,
+                            "detected": detected,
                         }
-                    stage, how, detected = quest_db.effective_tier(conn)
-                    tier = {
-                        "stage": stage,
-                        "tier": bq.STAGES.get(stage),
-                        "how": how,
-                        "detected": detected,
-                    }
                 finally:
                     conn.close()
             except (sqlite3.Error, ValueError) as exc:

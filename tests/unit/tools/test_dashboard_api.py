@@ -320,6 +320,29 @@ def test_a_running_export_is_a_job(client: TestClient, core: Core) -> None:
     ]  # fmt: skip
 
 
+def test_a_home_without_a_recipe_db_yet_is_no_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Before the first `gos db build` the DB file holds only the core's own tables: no run and
+    no tier, and nothing logged (the core's watcher refreshes this every 5 s). A file that isn't
+    a DB still says why."""
+    store = Store(tmp_path / "data" / "gos.sqlite")
+    try:
+        board = dashboard.Board(Config(gos_home=tmp_path), store=store)
+        with caplog.at_level(logging.DEBUG, logger="gregtec.api"):
+            board.refresh_data()
+        assert board.data["db_run"] is None and board.tier is None
+        assert caplog.records == []
+    finally:
+        store.close()
+    broken = tmp_path / "broken"
+    (broken / "data").mkdir(parents=True)
+    (broken / "data" / "gos.sqlite").write_bytes(b"not a database " * 100)
+    with caplog.at_level(logging.DEBUG, logger="gregtec.api"):
+        dashboard.Board(Config(gos_home=broken)).refresh_data()
+    assert [r.getMessage() for r in caplog.records] == ["dashboard data refresh skipped"]
+
+
 def test_pairing_codes_reach_trusted_callers_only(client: TestClient) -> None:
     voice = token(client)
     assert client.post("/api/pair/start", json={"name": "Pixel 9"}).status_code == 200
