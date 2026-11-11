@@ -25,7 +25,9 @@ bus: ``wake(t)``, ``end_of_speech(t)``, ``cancel()`` and ``speech(active, t)``.
    (``cancel()``), so a false wake costs a chime and nothing more. The cancel hotkey drops it
    at any time, as for the talk key (D179).
 4. **End of speech**. The question starts at a fresh onset of speech after the detection (the
-   VAD going from silence to speech), or, for someone who runs straight on from the phrase,
+   VAD going from silence to speech) once the speech after it runs unbroken for
+   :data:`ONSET_S` (a click or a blast in the game between the phrase and the question is not
+   its start; the onset's time counts for the cancel window), or, for someone who runs straight on from the phrase,
    after :data:`RUN_ON_S` of unbroken speech from the detection; the phrase's own tail never
    starts it (stage 1 can fire before the phrase ends, and the VAD lingers after it). Then
    :data:`END_SILENCE_S` of silence ends it: ``end_of_speech(t)`` with ``t`` the
@@ -81,6 +83,7 @@ END_SILENCE_S = 0.6  # PM14: end-of-speech detection adds up to ~0.6 s
 RUN_ON_S = (
     0.5  # unbroken speech from the detection that starts a question with no pause
 )
+ONSET_S = 0.1  # unbroken speech after an onset that makes it the question's start
 BARGE_IN_S = 0.3  # speech this long while GOS speaks stops it (D180)
 QUESTION_MAX_S = 30.0  # the recorder's cap (D181)
 VERIFY_S = 2.0  # audio before the detection that stage 2 hears ([H§1.3]: ~2 s)
@@ -241,6 +244,8 @@ class _Wake:
     started: float | None = None  # when the question started
     run_s: float = 0.0  # speech since the detection, before the question started
     run_on: bool = True  # no silence yet since the detection
+    onset_at: float | None = None  # a fresh onset not yet ONSET_S long
+    onset_s: float = 0.0  # unbroken speech since that onset
     heard: float = 0.0  # seconds of the question's speech
     last_speech: float | None = None
     score: float | None = None
@@ -330,15 +335,23 @@ class WakeWord:
                 self.bus.speech(False, t)
 
     def _follow(self, wake: _Wake, speech: bool, onset: bool, t: float) -> None:
-        """The question's start (a fresh onset, or :data:`RUN_ON_S` of unbroken speech from the
-        detection) and its speech."""
+        """The question's start (a fresh onset followed by :data:`ONSET_S` of unbroken speech,
+        or :data:`RUN_ON_S` of unbroken speech from the detection) and its speech."""
         if not speech:
             wake.run_on = False
+            wake.onset_at = (
+                None  # a blip: silence before ONSET_S drops the pending onset
+            )
             return
         if wake.started is None:
             wake.run_s += BLOCK_S
             if onset:
-                wake.started = t
+                wake.onset_at, wake.onset_s = t, 0.0
+            if wake.onset_at is not None:
+                wake.onset_s += BLOCK_S
+                if wake.onset_s < ONSET_S - 1e-9:
+                    return
+                wake.started, wake.heard = wake.onset_at, wake.onset_s - BLOCK_S
             elif wake.run_on and wake.run_s >= RUN_ON_S - 1e-9:
                 wake.started, wake.heard = t, wake.run_s - BLOCK_S
             else:
@@ -402,7 +415,12 @@ class WakeWord:
 
     def _listen(self, wake: _Wake, t: float) -> None:
         if wake.started is None:
-            if wake.window_end is not None and t >= wake.window_end:
+            end = wake.window_end
+            # an onset inside the window that may still become the question keeps it open
+            pending = (
+                wake.onset_at is not None and end is not None and wake.onset_at <= end
+            )
+            if end is not None and t >= end and not pending:
                 self._end(wake, t, "no question")
             return
         assert wake.last_speech is not None

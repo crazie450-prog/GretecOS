@@ -20,6 +20,7 @@ from gregtec_voice.settings import VoiceSettings
 from gregtec_voice.wake import (
     CANCEL_WINDOW_S,
     END_SILENCE_S,
+    ONSET_S,
     VERIFY_TIMEOUT_S,
     WakeError,
     WakeWord,
@@ -219,15 +220,49 @@ def test_an_early_detection_and_a_pause_for_the_chime_keep_the_question(
 
 
 def test_the_cancel_window_counts_to_the_questions_first_onset() -> None:
-    """A question that starts just inside the 1.5 s window is kept, however short its first
-    sound (plan 8: 1.5 s to start the question)."""
+    """A question whose onset comes right at the end of the 1.5 s window is kept, though its
+    first ONSET_S of speech runs past the window (plan 8: 1.5 s to start the question)."""
     engine, bus, _, _, _ = build(at={10})
     feed = Feeder(engine)
     feed.blocks(SPEECH, 0.2)
     feed.blocks(QUIET, CANCEL_WINDOW_S)  # the chime comes with the first quiet block
-    feed.blocks(SPEECH, 0.04)
+    feed.blocks(SPEECH, ONSET_S)
     feed.blocks(QUIET, END_SILENCE_S)
     assert bus.kinds() == ["wake", "end"]
+
+
+def test_a_blip_between_the_phrase_and_the_question_doesnt_start_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A game click (2 blocks) after the phrase is not the question's start: the question that
+    follows it is the segment (final-check finding)."""
+    caplog.set_level(logging.INFO, logger="gregtec_voice.wake")
+    engine, bus, _, _, _ = build(at={40})
+    feed = Feeder(engine)
+    feed.blocks(SPEECH, 0.8)  # the phrase, the detection at its last block (t=100.8)
+    feed.blocks(QUIET, 0.2)
+    feed.blocks(SPEECH, 0.04)  # the blip
+    feed.blocks(QUIET, 0.9)
+    assert bus.kinds() == ["wake"]
+    feed.blocks(SPEECH, 1.0)  # the question, from t=101.96
+    feed.blocks(QUIET, END_SILENCE_S)
+    assert bus.kinds() == ["wake", "end"]
+    assert bus.events[-1] == ("end", pytest.approx(102.94))
+    assert wake_records(caplog)[0]["question_s"] == 1.0
+
+
+def test_a_blip_alone_in_the_window_is_no_question() -> None:
+    """A blip inside the window and nothing after it: the window closes as for silence."""
+    engine, bus, _, _, _ = build(at={10})
+    feed = Feeder(engine)
+    feed.blocks(SPEECH, 0.2)
+    feed.blocks(QUIET, CANCEL_WINDOW_S - 0.04)
+    feed.blocks(
+        SPEECH, ONSET_S - 0.02
+    )  # one block short of a start, across the window's end
+    assert bus.kinds() == ["wake"]
+    feed.blocks(QUIET, 0.02)
+    assert bus.kinds() == ["wake", "cancel"]
 
 
 def test_a_question_said_before_the_verdict_ends_once_it_passes() -> None:
