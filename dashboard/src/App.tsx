@@ -30,6 +30,8 @@ import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
 import { Search, type SearchTarget } from "./views/Search";
 import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
+import { Setup } from "./views/Setup";
+import { wizardInHash } from "./state/setup";
 
 const PIN_KEY = "gos.mode";
 
@@ -105,8 +107,27 @@ export function App() {
     setViewState(v);
     if (window.location.hash !== `#/${v}`) window.location.hash = `/${v}`;
   }, []);
+  // The setup wizard (WO-2.9): on its own until setup is done (first run), and at #/setup later.
+  const [setupDone, setSetupDone] = useState<boolean | null>(null);
+  const [wizard, setWizard] = useState(() => wizardInHash(window.location.hash));
+  const trustedSession = session?.role === "admin" || session?.role === "device";
   useEffect(() => {
-    const on = (): void => setViewState(viewFromHash(window.location.hash));
+    if (phase !== "ready" || !trustedSession) return;
+    api.setup().then(
+      (s) => setSetupDone(s.done),
+      () => setSetupDone(null), // can't tell: the shell, as before
+    );
+  }, [phase, trustedSession, boot]);
+  const closeWizard = useCallback(() => {
+    setWizard(false);
+    setView("now");
+  }, [setView]);
+
+  useEffect(() => {
+    const on = (): void => {
+      setViewState(viewFromHash(window.location.hash));
+      setWizard(wizardInHash(window.location.hash));
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
@@ -218,6 +239,9 @@ export function App() {
 
   if (phase === "unpaired") {
     return <Pairing onPaired={() => setBoot((n) => n + 1)} />;
+  }
+  if (phase === "ready" && trustedSession && (wizard || setupDone === false)) {
+    return <Setup onClose={closeWizard} onDone={() => setSetupDone(true)} />;
   }
 
   const chips = stateChips({ phase, reachable, core });

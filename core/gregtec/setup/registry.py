@@ -169,6 +169,7 @@ class Step:
                 "suggestions": list(f.suggestions),
             }
             if f.kind == "secret":
+                item["secret"] = f.secret
                 item["stored"] = ctx.has_secret(str(f.secret))
                 item["test"] = f.tester is not None
             elif f.kind != "checks":

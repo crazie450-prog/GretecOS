@@ -211,3 +211,60 @@ export interface PairPending {
 }
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "off";
+
+// The setup wizard (WO-2.9, gregtec.api.setup_routes). Steps come from the core's registry, so a
+// later phase's step needs no dashboard code: each field says how it is drawn.
+export type SetupKind = "path" | "text" | "choice" | "device" | "key" | "phrase" | "secret" | "checks";
+export type CheckStatus = "ok" | "warn" | "error";
+
+export interface SetupField {
+  id: string;
+  label: string;
+  kind: SetupKind;
+  help: string;
+  required: boolean;
+  placeholder: string;
+  options: { value: string; label: string }[];
+  suggestions: string[];
+  value?: string; // value fields: gos.toml's value, else the default
+  key?: string | null; // value fields: "[table] key"
+  devices?: "inputs" | "outputs" | null; // device fields
+  secret?: string; // secret fields: its keyring name (the route's {name})
+  stored?: boolean; // secret fields: whether one is stored (never the value)
+  test?: boolean; // secret fields: a test call exists
+}
+
+export interface SetupStep {
+  id: string;
+  title: string;
+  intro: string;
+  optional: boolean;
+  fields: SetupField[];
+}
+
+export interface SetupState {
+  done: boolean;
+  completed_utc: string | null;
+  config_path: string;
+  config_error: string | null;
+  steps: SetupStep[];
+}
+
+export interface SetupCheck {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  detail: string;
+}
+
+export interface SetupDevice {
+  name: string;
+  default: boolean;
+}
+
+export interface SetupDevices {
+  provider: string;
+  inputs: SetupDevice[];
+  outputs: SetupDevice[];
+  error: string | null;
+}
