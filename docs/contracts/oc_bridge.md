@@ -29,6 +29,16 @@ value from a stale one; gaps (a paused game, a broken link) are marked stale, ne
 | Connections | The agent closes its handle on every path, success or not: OC allows 4 open connections per internet card, HTTP requests included [C§1.4]. |
 | Token | The bearer token is a client token for this agent (D117's named client tokens, e.g. `gos token new oc`; WO-7.1 decides the name and how the core checks it). It sits in plain text in the agent's config on the OC drive, inside the world's save, which gos-dev can read (plan §4.6, D75: Lab modify, Play read only), so it must grant nothing beyond `/oc/telemetry` (D117's client tokens can also read health and usage; WO-7.1 scopes this one to `/oc/telemetry` alone). Whoever holds it can pose as the agent: take the commands waiting for it (they then never run) or post false readings and results. So the core treats everything posted with it as data (shown, alerted on, recorded as a command's outcome) and never starts an action because of it; `gos token new` replaces a token that leaked, `gos token revoke` ends it. The token proves the agent to the core, never the core to the agent: see Security for a program that answers in the core's place. |
 
+**As built (WO-7.1, D219-D221).** The token is a client token named `oc-play` or `oc-lab` (optionally
+`-<label>` for a second computer, e.g. `oc-lab-crops`; `gos token new oc-lab --show`). It opens
+`/oc/telemetry` and nothing else: every other route answers it 401. The core compares its hash with every live
+OC token's in constant time and never logs it; the name's instance (`play` or `lab`) is the binding (D217). The
+body must be `application/json` (else `bad_payload`) and at most 256 KB (a larger `Content-Length` or chunked
+body is refused unread past the limit). One token may send a burst of 10 messages, then one a second; more is
+`ok: false`, `err: "internal"`, so the agent backs off; so is a message from a 17th OC computer of one instance (at most 16 per instance until the core restarts). (The log lines of requests with
+no valid token are rate-limited too). An `ok: true` reply carries `boot` and `ack` (the highest seq of that boot the core has) like M1's.
+Whatever is refused is not processed: nothing is recorded and no command is taken.
+
 A failed exchange (refused connection, a non-2xx code, a timeout, a reply that isn't one JSON object, an
 `ok: false` reply) leaves everything that was waiting for an ack waiting (see Acknowledgement) and is retried with
 backoff. The one exception is `ok: false` with `err: "bad_payload"`: resending what the core can't read would be

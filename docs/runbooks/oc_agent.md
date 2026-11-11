@@ -28,7 +28,9 @@ PowerShell window (not "Run as administrator"). Nothing here touches Play.
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe token new oc-lab --show
    ```
-   If WO-7.1's runbook names another token command for the OC endpoint, use that one.
+   An OC token is named `oc-lab` or `oc-play`, optionally with a label for a second computer (`oc-lab-crops`);
+   it opens `POST /oc/telemetry` only, and its instance is the one the core files the readings under (WO-7.1,
+   D221). `gos token new` with the same name replaces it; `gos token revoke oc-lab` ends it.
 
 ## B. The computer in `lab-ops`
 
