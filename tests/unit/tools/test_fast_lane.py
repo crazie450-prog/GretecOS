@@ -548,15 +548,13 @@ def test_instant_commands(agents_reg: Registry, deep: HandoffRecorder) -> None:
     assert a.ask("repeat").text == "I haven't said anything yet."
     card = a.ask("recipe for steel")
     assert card.lane == "instant" and card.text.startswith("Steel Ingot: ")
-    # the card's first row without a flag (fake?, recycling), as the skill picks it (D172)
-    assert card.card is not None
-    flags = card.card["columns"].index("flags")
+    # The reply's card is a catalog recipe card (D160); the citation is its first recipe
+    # without a flag (fake?, recycling), as the skill picks it (D172).
+    assert card.card is not None and card.card["type"] == "recipe"
     plain = next(
-        r
-        for r in card.card["rows"]
-        if not {"fake?", "recycling"} & set(r[flags].split())
+        r for r in card.card["recipes"] if not {"fake?", "recycling"} & set(r["flags"])
     )
-    assert card.refs and card.refs[0] == plain[0]
+    assert card.refs and card.refs[0] == plain["ref"]
     again = a.ask("say that again")
     assert again.text == card.text and again.intent == "repeat"
     assert a.ask("what uses steel").text.startswith("Steel Ingot goes into ")

@@ -26,6 +26,9 @@ __pycache__/
 # Node (dashboard/)
 node_modules/
 /dashboard/dist/
+# Playwright's own output (dashboard e2e): screenshots and traces stay out of git (WO-2.6).
+/dashboard/test-results/
+/dashboard/playwright-report/
 
 # Gradle (mod/). /mod/run/ is the runServer test world: saves never go in git.
 # Anchor build dirs: a bare build/ would also hide the source package core/gregtec/build/.

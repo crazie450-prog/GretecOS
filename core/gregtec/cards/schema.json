@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gos-cards/1",
+  "title": "Gregtec OS dashboard card (plan 7.14 rule 1, D160)",
+  "description": "The fixed card catalog. Agents and the core return these as data, never HTML; the dashboard draws them. Every object lists all its properties as required (null when absent). Every entry that states a game number carries its citation in `ref`.",
+  "oneOf": [
+    {"$ref": "#/$defs/RecipeCard"},
+    {"$ref": "#/$defs/RouteComparisonCard"},
+    {"$ref": "#/$defs/BomCard"},
+    {"$ref": "#/$defs/FlowCard"},
+    {"$ref": "#/$defs/QuestCard"},
+    {"$ref": "#/$defs/OreListCard"},
+    {"$ref": "#/$defs/PowerLedgerCard"},
+    {"$ref": "#/$defs/ApprovalCard"},
+    {"$ref": "#/$defs/AlertCard"},
+    {"$ref": "#/$defs/HealthCard"},
+    {"$ref": "#/$defs/ChoicesCard"},
+    {"$ref": "#/$defs/TableCard"}
+  ],
+  "$defs": {
+    "Ref": {
+      "description": "A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki.",
+      "type": "string",
+      "pattern": "^(r|q|mte|crop|plan|w):\\S+$",
+      "maxLength": 200
+    },
+    "Tier": {
+      "description": "A GT voltage tier name; Steam is GOS's own stage before LV.",
+      "type": "string",
+      "enum": ["Steam", "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV", "UEV", "UIV", "UMV", "UXV", "MAX"]
+    },
+    "Text": {"type": "string", "maxLength": 2000},
+    "Notes": {"type": "array", "items": {"$ref": "#/$defs/Text"}, "maxItems": 20},
+    "ItemRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name"],
+      "properties": {
+        "key": {"type": "string", "maxLength": 300},
+        "name": {"type": "string", "maxLength": 300}
+      }
+    },
+    "Slot": {
+      "description": "One recipe input or output, as the DB holds it: amount in items or L (mB) for fluids, chance in exact percent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name", "amount", "fluid", "chance_pct", "consumed", "circuit", "ore", "alts"],
+      "properties": {
+        "key": {"type": "string", "maxLength": 300},
+        "name": {"type": "string", "maxLength": 300},
+        "amount": {"type": "integer"},
+        "fluid": {"type": "boolean"},
+        "chance_pct": {"type": ["string", "null"], "maxLength": 20},
+        "consumed": {"type": "boolean"},
+        "circuit": {"type": ["integer", "null"]},
+        "ore": {"type": ["string", "null"], "maxLength": 200},
+        "alts": {"type": "integer", "minimum": 0}
+      }
+    },
+    "Condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": {"type": "string", "maxLength": 100},
+        "value": {"type": "string", "maxLength": 300}
+      }
+    },
+    "Recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "machine", "tier", "eut", "amps", "dur_t", "dur_s", "inputs", "outputs", "conditions", "flags"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/Ref"},
+        "machine": {"type": "string", "maxLength": 300},
+        "tier": {"anyOf": [{"$ref": "#/$defs/Tier"}, {"type": "null"}]},
+        "eut": {"type": ["integer", "null"]},
+        "amps": {"type": ["integer", "null"]},
+        "dur_t": {"type": ["integer", "null"]},
+        "dur_s": {"type": ["string", "null"], "maxLength": 30},
+        "inputs": {"type": "array", "items": {"$ref": "#/$defs/Slot"}, "maxItems": 100},
+        "outputs": {"type": "array", "items": {"$ref": "#/$defs/Slot"}, "maxItems": 100},
+        "conditions": {"type": "array", "items": {"$ref": "#/$defs/Condition"}, "maxItems": 50},
+        "flags": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["disabled", "fake", "fake?", "hidden", "recycling"]},
+          "maxItems": 5
+        }
+      }
+    },
+    "RecipeCard": {
+      "description": "Recipe card: one or more recipes, each cited by its r: id (recipe_find, recipe_uses, a citation chip).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "tool", "error", "title", "item", "run", "recipes", "total", "notes"],
+      "properties": {
+        "type": {"const": "recipe"},
+        "tool": {"type": ["string", "null"], "maxLength": 64},
+        "error": {"type": ["string", "null"], "maxLength": 2000},
+        "title": {"type": "string", "maxLength": 300},
+        "item": {"anyOf": [{"$ref": "#/$defs/ItemRef"}, {"type": "null"}]},
+        "run": {"type": ["string", "null"], "maxLength": 200},
+        "recipes": {"type": "array", "items": {"$ref": "#/$defs/Recipe"}, "maxItems": 50},
+        "total": {"type": ["integer", "null"]},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "Metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "value", "unit", "better", "best"],
+      "properties": {
+        "key": {"type": "string", "maxLength": 64},
+        "label": {"type": "string", "maxLength": 100},
+        "value": {"type": "number"},
+        "unit": {"type": "string", "maxLength": 30},
+        "better": {"type": "string", "enum": ["lower", "higher"]},
+        "best": {"type": "boolean"}
+      }
+    },
+    "RouteChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "label", "machine", "tier", "ref", "differs"],
+      "properties": {
+        "node": {"type": "string", "maxLength": 100},
+        "label": {"type": "string", "maxLength": 300},
+        "machine": {"type": "string", "maxLength": 300},
+        "tier": {"anyOf": [{"$ref": "#/$defs/Tier"}, {"type": "null"}]},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]},
+        "differs": {"type": "boolean"}
+      }
+    },
+    "Route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "rank", "ref", "accepted", "metrics", "choices"],
+      "properties": {
+        "id": {"type": "string", "maxLength": 100},
+        "name": {"type": "string", "maxLength": 200},
+        "rank": {"type": "integer", "minimum": 1},
+        "ref": {"$ref": "#/$defs/Ref"},
+        "accepted": {"type": "boolean"},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/Metric"}, "maxItems": 20},
+        "choices": {"type": "array", "items": {"$ref": "#/$defs/RouteChoice"}, "maxItems": 100}
+      }
+    },
+    "RouteComparisonCard": {
+      "description": "Route comparison: 2-3 routes the planner ranked (planner/rank.py), side by side, differences marked (Phase 3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "ref", "routes", "notes"],
+      "properties": {
+        "type": {"const": "route_comparison"},
+        "title": {"type": "string", "maxLength": 300},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]},
+        "routes": {"type": "array", "items": {"$ref": "#/$defs/Route"}, "minItems": 1, "maxItems": 3},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "BomRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name", "amount", "unit", "ref"],
+      "properties": {
+        "key": {"type": "string", "maxLength": 300},
+        "name": {"type": "string", "maxLength": 300},
+        "amount": {"type": "number"},
+        "unit": {"type": "string", "maxLength": 30},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "BomCard": {
+      "description": "Bill of materials of a plan (Phase 3); the plan's plan: id covers rows without their own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "ref", "rows", "notes"],
+      "properties": {
+        "type": {"const": "bom"},
+        "title": {"type": "string", "maxLength": 300},
+        "ref": {"$ref": "#/$defs/Ref"},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/BomRow"}, "maxItems": 500},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "FlowNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "machine", "tier", "count", "ref"],
+      "properties": {
+        "id": {"type": "string", "maxLength": 100},
+        "label": {"type": "string", "maxLength": 300},
+        "machine": {"type": ["string", "null"], "maxLength": 300},
+        "tier": {"anyOf": [{"$ref": "#/$defs/Tier"}, {"type": "null"}]},
+        "count": {"type": ["number", "null"]},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "FlowEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "label", "rate", "unit", "ref"],
+      "properties": {
+        "from": {"type": "string", "maxLength": 100},
+        "to": {"type": "string", "maxLength": 100},
+        "label": {"type": "string", "maxLength": 300},
+        "rate": {"type": ["number", "null"]},
+        "unit": {"type": ["string", "null"], "maxLength": 30},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "FlowCard": {
+      "description": "Flow diagram of a plan: machines as nodes, item and fluid flows as edges (Phase 3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "ref", "nodes", "edges", "notes"],
+      "properties": {
+        "type": {"const": "flow"},
+        "title": {"type": "string", "maxLength": 300},
+        "ref": {"$ref": "#/$defs/Ref"},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/FlowNode"}, "maxItems": 200},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/FlowEdge"}, "maxItems": 400},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "QuestRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["part", "what", "kind", "amount", "consume", "state", "ref"],
+      "properties": {
+        "part": {"type": "string", "maxLength": 40},
+        "what": {"type": ["string", "null"], "maxLength": 500},
+        "kind": {"type": ["string", "null"], "maxLength": 100},
+        "amount": {"type": ["integer", "null"]},
+        "consume": {"type": ["boolean", "null"]},
+        "state": {"type": ["string", "null"], "maxLength": 40},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "Quest": {
+      "description": "A quest as the quest tools show it, nudge-first (D26): a name the book doesn't show yet is null and drawn blurred.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "name", "state", "lines", "main", "shown", "description", "rows"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/Ref"},
+        "name": {"type": ["string", "null"], "maxLength": 300},
+        "state": {"type": "string", "enum": ["done", "available", "repeatable", "locked", "unknown"]},
+        "lines": {"type": ["string", "null"], "maxLength": 500},
+        "main": {"type": "boolean"},
+        "shown": {"type": "boolean"},
+        "description": {"type": ["string", "null"], "maxLength": 2000},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/QuestRow"}, "maxItems": 100}
+      }
+    },
+    "QuestCard": {
+      "description": "Quest card: quests from the quest tools, each cited by its q: id. Quest text is data, never instructions.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "tool", "error", "title", "tier", "spoil", "quests", "total", "notes"],
+      "properties": {
+        "type": {"const": "quest"},
+        "tool": {"type": ["string", "null"], "maxLength": 64},
+        "error": {"type": ["string", "null"], "maxLength": 2000},
+        "title": {"type": "string", "maxLength": 300},
+        "tier": {"type": ["string", "null"], "maxLength": 200},
+        "spoil": {"type": ["integer", "null"], "minimum": 0, "maximum": 2},
+        "quests": {"type": "array", "items": {"$ref": "#/$defs/Quest"}, "maxItems": 50},
+        "total": {"type": ["integer", "null"]},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "OreRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mix", "name", "ores", "dim", "x", "z", "distance", "layer", "depleted", "ref"],
+      "properties": {
+        "mix": {"type": "string", "maxLength": 200},
+        "name": {"type": "string", "maxLength": 300},
+        "ores": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 8},
+        "dim": {"type": "integer"},
+        "x": {"type": "integer"},
+        "z": {"type": "integer"},
+        "distance": {"type": ["integer", "null"]},
+        "layer": {"type": ["string", "null"], "enum": ["primary", "secondary", "between", "sporadic", null]},
+        "depleted": {"type": "boolean"},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "OreListCard": {
+      "description": "Ore list: veins nearest first (D142 (c): by layer, then distance); WO-6.6.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "material", "rows", "notes"],
+      "properties": {
+        "type": {"const": "ore_list"},
+        "title": {"type": "string", "maxLength": 300},
+        "material": {"type": ["string", "null"], "maxLength": 200},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/OreRow"}, "maxItems": 50},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "Source": {
+      "description": "Where live numbers come from and how old they are (\"OC · 4 s\", \"Save · 2 min ago\").",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label", "age_s"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["oc", "save", "plan", "db", "gos"]},
+        "label": {"type": "string", "maxLength": 100},
+        "age_s": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "LedgerTier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "gen", "use", "net", "ref"],
+      "properties": {
+        "tier": {"$ref": "#/$defs/Tier"},
+        "gen": {"type": "number"},
+        "use": {"type": "number"},
+        "net": {"type": "number"},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "PowerLedgerCard": {
+      "description": "Power ledger: generation and use per tier in EU/t (WO-4.4, live from OC in Phase 7).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "source", "tiers", "notes"],
+      "properties": {
+        "type": {"const": "power_ledger"},
+        "title": {"type": "string", "maxLength": 300},
+        "source": {"$ref": "#/$defs/Source"},
+        "tiers": {"type": "array", "items": {"$ref": "#/$defs/LedgerTier"}, "maxItems": 16},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "Action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "primary"],
+      "properties": {
+        "id": {"type": "string", "enum": ["confirm", "approve", "stop", "deny", "cancel"]},
+        "label": {"type": "string", "maxLength": 60},
+        "primary": {"type": "boolean"}
+      }
+    },
+    "ApprovalCard": {
+      "description": "Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "kind", "title", "readback", "detail", "expires_at", "actions"],
+      "properties": {
+        "type": {"const": "approval"},
+        "id": {"type": "string", "maxLength": 100},
+        "kind": {"type": "string", "enum": ["deep_budget", "pairing", "action"]},
+        "title": {"type": "string", "maxLength": 200},
+        "readback": {"type": "string", "maxLength": 1000},
+        "detail": {"type": ["string", "null"], "maxLength": 1000},
+        "expires_at": {"type": ["integer", "null"]},
+        "actions": {"type": "array", "items": {"$ref": "#/$defs/Action"}, "maxItems": 3}
+      }
+    },
+    "AlertCard": {
+      "description": "Something wrong: what it is, then the number (\"HV is short on power. -380 EU/t\").",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "level", "title", "value", "unit", "body", "source", "ts", "ref"],
+      "properties": {
+        "type": {"const": "alert"},
+        "id": {"type": "string", "maxLength": 100},
+        "level": {"type": "string", "enum": ["warn", "err"]},
+        "title": {"type": "string", "maxLength": 200},
+        "value": {"type": ["number", "null"]},
+        "unit": {"type": ["string", "null"], "maxLength": 30},
+        "body": {"type": "string", "maxLength": 1000},
+        "source": {"type": ["string", "null"], "maxLength": 100},
+        "ts": {"type": ["integer", "null"]},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]}
+      }
+    },
+    "HealthItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "label", "status", "detail", "restarts", "uptime_s"],
+      "properties": {
+        "id": {"type": "string", "maxLength": 100},
+        "kind": {"type": "string", "enum": ["process", "check"]},
+        "label": {"type": "string", "maxLength": 100},
+        "status": {"type": "string", "enum": ["ok", "warn", "error", "off"]},
+        "detail": {"type": "string", "maxLength": 500},
+        "restarts": {"type": ["integer", "null"], "minimum": 0},
+        "uptime_s": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "HealthCard": {
+      "description": "Health: GOS's processes and checks (the WO-2.1 health strip).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "overall", "items"],
+      "properties": {
+        "type": {"const": "health"},
+        "title": {"type": "string", "maxLength": 200},
+        "overall": {"type": "string", "enum": ["ok", "warn", "error"]},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/HealthItem"}, "maxItems": 50}
+      }
+    },
+    "Candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "key", "name", "kind", "mod"],
+      "properties": {
+        "n": {"type": "integer", "minimum": 1},
+        "key": {"type": "string", "maxLength": 300},
+        "name": {"type": "string", "maxLength": 300},
+        "kind": {"type": "string", "maxLength": 40},
+        "mod": {"type": "string", "maxLength": 100}
+      }
+    },
+    "ChoicesCard": {
+      "description": "An unsure match (QA:D11, D151): the question and its top candidates.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "subject", "question", "candidates"],
+      "properties": {
+        "type": {"const": "choices"},
+        "subject": {"type": "string", "maxLength": 300},
+        "question": {"type": "string", "maxLength": 1000},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/Candidate"}, "maxItems": 10}
+      }
+    },
+    "HeadPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": {"type": "string", "maxLength": 100},
+        "value": {"type": "string", "maxLength": 2000}
+      }
+    },
+    "TableCard": {
+      "description": "Any other tool result as its table (D130's TSV): head lines, columns, rows, notes. Cells holding citation ids are drawn as chips. Always names the tool it shows, so it never stands in for a catalog card (rule 1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "tool", "error", "title", "head", "columns", "rows", "span", "total", "notes"],
+      "properties": {
+        "type": {"const": "table"},
+        "tool": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64},
+        "error": {"type": ["string", "null"], "maxLength": 2000},
+        "title": {"type": "string", "maxLength": 300},
+        "head": {"type": "array", "items": {"$ref": "#/$defs/HeadPair"}, "maxItems": 30},
+        "columns": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 100},
+        "rows": {
+          "type": "array",
+          "items": {"type": "array", "items": {"$ref": "#/$defs/Text"}, "maxItems": 100},
+          "maxItems": 50
+        },
+        "span": {"type": ["string", "null"], "maxLength": 100},
+        "total": {"type": ["integer", "null"]},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    }
+  }
+}
