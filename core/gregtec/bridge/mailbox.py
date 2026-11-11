@@ -37,7 +37,11 @@ the next poll with nothing changed.
 The core writes nothing else in the world: inbox.tmp and inbox.json, and the rename of
 outbox.json to outbox.tmp, in that one folder, each only after checking the folder is still the
 one gos.toml names under the world's ``opencomputers`` folder, reached through no link or
-junction (gos-dev can change Lab's worlds, D75), and never through a file that is a link.
+junction (gos-dev can change Lab's worlds, D75), and never through a file that is a link. The
+check comes before the step, so a folder swapped for a junction in between could still redirect
+that one step; each step is therefore followed by a second check that every folder from the
+instance down is still the same one (device and file id), and a mailbox whose folder changed
+under a step stops until the core restarts, with an error in the log (D217's residual risk).
 """
 
 from __future__ import annotations
@@ -143,6 +147,10 @@ class Mailbox:
     max_age_s: float = (
         0.0  # the oldest message taken since the last heartbeat (now - mtime)
     )
+    stopped: bool = (
+        False  # its folder changed under a step: nothing more until a restart
+    )
+    _ident: tuple[tuple[int, int], ...] = ()  # (device, file id) from the instance down
     _state: str = "new"
     _warned: dict[str, float] = field(default_factory=dict)
 
@@ -151,6 +159,8 @@ class Mailbox:
     def poll(self) -> None:
         """Take a waiting message, then answer it when inbox.json is free (or withdraw a reply OC
         hasn't read in :attr:`ttl_s`)."""
+        if self.stopped:
+            return
         folder = self.folder()
         if folder is None:
             return
@@ -180,7 +190,12 @@ class Mailbox:
             )
             return None
         want = real_instance / expected.relative_to(self.place.instance)
-        if os.path.normcase(real) != os.path.normcase(want) or not real.is_dir():
+        ident = (
+            _identity(real_instance, real)
+            if os.path.normcase(real) == os.path.normcase(want)
+            else None
+        )
+        if ident is None:
             self._to(
                 "refused",
                 logging.ERROR,
@@ -190,7 +205,23 @@ class Mailbox:
             )
             return None
         self._to("ready", logging.INFO, "OC mailbox ready", path=str(real))
+        self._ident = ident
         return real
+
+    def _held(self, folder: Path) -> bool:
+        """After a step: is the folder still the one checked before it? If not, a link or
+        junction was swapped in while the step ran (it may have gone elsewhere): stop."""
+        before = self._ident
+        if self.folder() == folder and self._ident == before:
+            return True
+        self.stopped = True
+        self._state = "stopped"
+        log.error(
+            "OC mailbox: its folder changed while the core wrote to it (a link or junction "
+            "swapped in?); stopped until the core restarts. Check the folder, then restart",
+            extra={"source": self.place.source, "path": str(folder)},
+        )
+        return False
 
     # --- OC -> core
 
@@ -265,7 +296,9 @@ class Mailbox:
             ):  # gone already: the slot is free
                 os.replace(folder / OUTBOX, folder / OUTBOX_TMP)
 
-        return self._retry(rename, "rename outbox.json to outbox.tmp")
+        return self._retry(rename, "rename outbox.json to outbox.tmp") and self._held(
+            folder
+        )
 
     # --- core -> OC
 
@@ -302,6 +335,9 @@ class Mailbox:
         if self.folder() != folder or not self._install(folder, encode(doc)):
             self.bridge.give_back(ids, "the core couldn't write inbox.json")
             return  # still due: the next poll tries again
+        if not self._held(folder):
+            self.bridge.give_back(ids, "the mailbox folder changed under the write")
+            return
         self.reply_at, self.reply_ids, self.due = self.clock(), ids, False
         self.stats["replies"] += 1
         self.stats["commands_sent"] += len(ids)
@@ -343,7 +379,7 @@ class Mailbox:
             except FileNotFoundError:  # OC took it this very moment
                 gone = True
 
-        if not self._retry(remove, "withdraw inbox.json"):
+        if not self._retry(remove, "withdraw inbox.json") or not self._held(folder):
             return
         if gone:
             self.stats["consumed"] += 1
@@ -418,6 +454,23 @@ class Mailbox:
             },
         )
         self.max_age_s = 0.0
+
+
+def _identity(top: Path, folder: Path) -> tuple[tuple[int, int], ...] | None:
+    """(device, file id) of ``top`` and of every folder below it down to ``folder``, or None
+    if one is a link, a junction or not a folder."""
+    out: list[tuple[int, int]] = []
+    path = top
+    for part in ("", *folder.relative_to(top).parts):
+        path = path / part if part else path
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return None
+        if _is_link(st) or not stat.S_ISDIR(st.st_mode):
+            return None
+        out.append((st.st_dev, st.st_ino))
+    return tuple(out)
 
 
 def _command_ids(inbox: Path) -> list[int]:

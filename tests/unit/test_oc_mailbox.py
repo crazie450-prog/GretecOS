@@ -841,3 +841,40 @@ def test_no_reply_follows_a_withdrawal_within_the_quiet_period(tmp_path: Path) -
     assert [ids for ids, _ in queue.back] == [[5, 6]], (
         "the withdrawn commands went back"
     )
+
+
+def test_a_folder_swapped_for_a_link_during_a_step_stops_the_mailbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review L2: the check comes before the step, so gos-dev could swap the drive's folder for
+    a junction in between. The step after it sees the folder changed and stops the mailbox
+    (until a restart), loudly, so a swap redirects one step at most (D217)."""
+    place, folder = layout(tmp_path)
+    drive = folder.parents[2]
+    elsewhere = tmp_path / "elsewhere"
+    oc_send(folder, message())
+    real_replace = os.replace
+    swapped: list[str] = []
+
+    def swap_then_replace(
+        src: str | os.PathLike[str], dst: str | os.PathLike[str]
+    ) -> None:
+        if not swapped:
+            swapped.append(str(src))
+            os.rename(drive, elsewhere)
+            _link_dir(drive, elsewhere)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", swap_then_replace)
+    sink = Recording()
+    box = make_box(place, sink=sink)
+    with caplog.at_level(logging.INFO, logger="gregtec.bridge"):
+        box.poll()
+    monkeypatch.setattr(os, "replace", real_replace)
+    assert swapped and box.stopped
+    assert "its folder changed while the core wrote to it" in caplog.text
+    moved = elsewhere / folder.relative_to(drive)
+    assert not (moved / "inbox.json").exists(), "no reply written after the swap"
+    oc_send(moved, message(seq=2))
+    box.poll()
+    assert len(sink.got) == 1, "nothing more read until the core restarts"
