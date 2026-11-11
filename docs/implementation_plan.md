@@ -748,6 +748,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - **OC side:** write `outbox.tmp`, close it, `rename` to `outbox.json`. Retry if `rename` returns false, which happens while Python has the target open. Read `inbox.json` in 2 KB chunks, then delete it to acknowledge.
   - **Core side:** write `inbox.tmp`, flush, fsync, close, `os.replace`. **Retry on PermissionError**, because files OC holds open can't be replaced. Read `outbox.json` with `safe_open()` and open-read-close only, then rename it to acknowledge.
   - Managed drives only (unmanaged drives and `/tmp` aren't plain folders).
+  - As built (WO-7.3, D216–D218): the core acknowledges by renaming `outbox.json` back to `outbox.tmp` (not a delete, which OC's drive space count never sees until the world reloads), writes `inbox.json` only while there is none, withdraws a reply OC hasn't taken in 30 s, and records each (agent, boot, seq) once; gos.toml `[mailbox.lab]`/`[mailbox.play]` names the drive. The ingest it feeds (`gregtec.bridge.ingest.Bridge`) is the one WO-7.1's `/oc/telemetry` uses.
 - **Payload** (2.9 drivers) [C§2]:
   - power: LSC `getStoredEUString`, battery buffers;
   - machines: `isMachineActive`, work progress, the "Problems" count from sensor lines (2.9 format `translationKey\\args`, parsed in Python);
@@ -1406,6 +1407,13 @@ notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71
 
 [maintenance]
 idle_minutes = 30             # QA:A9
+
+# M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
+# drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.
+# [mailbox.lab]
+# world = "lab-ops"
+# drive = "<OC drive address>"
+# dir = "home/gos/mailbox"
 ```
 
 ## Appendix D. SQLite schema

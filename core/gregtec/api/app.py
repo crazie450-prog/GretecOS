@@ -86,6 +86,7 @@ from gregtec.api.security import (
     PairingError,
     Principal,
 )
+from gregtec.bridge.ingest import Bridge
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
@@ -172,6 +173,8 @@ class Core:
         None  # None: the API with the stored key
     )
     exit_code: int = 0  # what server.run returns (D48 Stop: supervisor.EXIT_STOPPED)
+    # The OC bridge's ingest, shared by M1 (WO-7.3) and /oc/telemetry (WO-7.1).
+    oc: Bridge | None = None
 
     # --- pushing to WebSocket clients
 

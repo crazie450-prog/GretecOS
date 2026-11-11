@@ -34,6 +34,8 @@ from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
 from gregtec.api import ai_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
+from gregtec.bridge.ingest import Bridge
+from gregtec.bridge.mailbox import MailboxService
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
@@ -141,6 +143,9 @@ def run(
         store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
     )
     agents = (setup_agents or _default_agents)(cfg, store)
+    bridge = Bridge()  # the OC ingest, shared by every transport (WO-7.3, D217)
+    # M1: the OC file mailboxes gos.toml names, polled from their own thread (WO-7.3).
+    mailboxes = MailboxService.from_config(cfg, bridge)
     ai = AiMode(store)  # no-AI mode and the D48 credit flow (WO-2.8)
     core = Core(
         cfg=cfg,
@@ -149,6 +154,7 @@ def run(
         meter=meter,
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter, ai),
+        oc=bridge,
     )
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
     core.asker = agents.asker(ai=ai)
@@ -192,9 +198,11 @@ def run(
         "core listening",
         extra={"port": cfg.core_port, "supervised": supervised, "pid": os.getpid()},
     )
+    mailboxes.start()
     try:
         server.run(sockets=[sock])
     finally:
+        mailboxes.stop()
         control.remove_run_file(run_file, os.getpid())
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         store.close()
