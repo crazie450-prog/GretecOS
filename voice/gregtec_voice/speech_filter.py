@@ -43,7 +43,7 @@ _BULLET = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+", re.MULTILINE)
 _LINK = re.compile(r"!?\[([^\]\n]*)\]\([^)\n]*\)")
 _TAG = re.compile(r"</?[A-Za-z][^<>\n]{0,200}>")
 _URL = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
-_EMPHASIS = re.compile(r"(\*{1,3}|_{2,3}|~~)(?=\S)(.+?)(?<=\S)\1")
+_EMPHASIS = re.compile(r"(?<![\w*])(\*{1,3}|_{1,3}|~~)(?=\S)(.+?)(?<=\S)\1(?![\w*])")
 
 # --- 2. citations and ids ------------------------------------------------------------------------
 
@@ -183,6 +183,7 @@ _PER_WORD = re.compile(r"(?<=[A-Za-z])/(s|sec|t|tick|min|h)\b")
 # --- 6, 7 --------------------------------------------------------------------------------------
 
 _CAPS = re.compile(r"\b([A-Z]{2,5})(s?)\b")
+_COLON = re.compile(r"[:—–](?=\s)")  # a pause: said as a comma
 _NOT_SAID = re.compile(r"[^A-Za-z\s.,!?'\-;]")
 _SPACES = re.compile(r"[ \t]+")
 
@@ -345,7 +346,7 @@ def tidy(text: str) -> str:
     text = re.sub(r"([,;])(?:\s*[,;])+", r"\1", text)
     text = re.sub(r"[,;]\s*([.!?])", r"\1", text)
     text = re.sub(r"([.!?])(?:\s*[.!?,;])+", r"\1", text)
-    text = re.sub(r"^[\s,.;!?-]+", "", text)
+    text = re.sub(r"^(?:[\s,.;!?]|-(?!\d))+", "", text)
     return text.strip()
 
 
@@ -400,7 +401,7 @@ def spoken(
     if pronounce is not None:
         text = pronounce(text)
     text = spell_caps(numbers(text))
-    text = tidy(_NOT_SAID.sub(" ", text))
+    text = tidy(_NOT_SAID.sub(" ", _COLON.sub(",", text)))
     if text and text[-1] not in ".!?":
         text += "."
     return "" if not any(ch.isalpha() for ch in text) else text

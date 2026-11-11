@@ -226,12 +226,14 @@ class KokoroEngine:
         device: str,
         voice: str,
         note: Callable[[str], None],
-        fetch: Fetch = wake.fetch,
+        fetch: Fetch | None = None,
     ) -> KokoroEngine:
         _installed()
         from kokoro_onnx import Kokoro
 
-        folder = model_files(models / "kokoro", KOKORO_FILES, KOKORO_URL, note, fetch)
+        folder = model_files(
+            models / "kokoro", KOKORO_FILES, KOKORO_URL, note, fetch or wake.fetch
+        )
         loaded = Kokoro.from_session(
             session(folder / "kokoro-v1.0.onnx", device),
             str(folder / "voices-v1.0.bin"),
@@ -308,7 +310,7 @@ class PiperEngine:
         device: str,
         voice: str,
         note: Callable[[str], None],
-        fetch: Fetch = wake.fetch,
+        fetch: Fetch | None = None,
     ) -> PiperEngine:
         _installed()  # phonemizer and espeak-ng come with kokoro-onnx (the tts group)
         voice = voice or PIPER_VOICE
@@ -318,7 +320,9 @@ class PiperEngine:
             )
         path, onnx_sha, json_sha = PIPER_VOICES[voice]
         files = {f"{voice}.onnx": onnx_sha, f"{voice}.onnx.json": json_sha}
-        folder = model_files(models / "piper", files, PIPER_URL + path, note, fetch)
+        folder = model_files(
+            models / "piper", files, PIPER_URL + path, note, fetch or wake.fetch
+        )
         config = json.loads((folder / f"{voice}.onnx.json").read_text(encoding="utf-8"))
         backend = espeak(str(config.get("espeak", {}).get("voice", "en-us")))
 
@@ -372,6 +376,20 @@ class PiperEngine:
 Opener = Callable[..., Any]
 
 
+def elevenlabs_key() -> str:
+    """The ElevenLabs key from this account's keyring; :class:`TtsError` says why not."""
+    import keyring.errors
+
+    from gregtec.llm import keys
+
+    try:
+        return keys.get_key(ELEVENLABS_KEY)
+    except keys.MissingKeyError as exc:
+        raise TtsError(str(exc)) from None
+    except keyring.errors.KeyringError as exc:
+        raise TtsError(f"the keyring can't be read ({type(exc).__name__})") from None
+
+
 class ElevenLabsEngine:
     """ElevenLabs Flash v2.5 (D203): each chunk is one streaming request; audio comes back as
     raw 24 kHz PCM and is played as it arrives. The text is already filtered (numbers in
@@ -398,13 +416,7 @@ class ElevenLabsEngine:
     def load(
         cls, voice: str, opener: Opener = urllib.request.urlopen
     ) -> ElevenLabsEngine:
-        from gregtec.llm import keys
-
-        try:
-            key = keys.get_key(ELEVENLABS_KEY)
-        except keys.MissingKeyError as exc:
-            raise TtsError(str(exc)) from None
-        return cls(key, voice, opener=opener)
+        return cls(elevenlabs_key(), voice, opener=opener)
 
     def request(self, text: str) -> urllib.request.Request:
         url = (
@@ -460,7 +472,7 @@ def choices(engine: str, device: str) -> list[Choice]:
 Loader = Callable[[Choice, VoiceSettings, Callable[[str], None]], Engine]
 
 
-def _load(
+def load_engine(
     choice: Choice, settings: VoiceSettings, note: Callable[[str], None]
 ) -> Engine:
     models = settings.gos_home / "models"
@@ -481,7 +493,7 @@ class Engines:
 
     choices: list[Choice]
     settings: VoiceSettings
-    loader: Loader = _load
+    loader: Loader | None = None  # None: load_engine
     note: Callable[[str], None] = field(default=lambda message: log.info(message))
     skipped: list[str] = field(default_factory=list)  # choices that failed, and why
     _loaded: dict[Choice, Engine] = field(default_factory=dict)
@@ -497,7 +509,9 @@ class Engines:
                     return self._loaded[choice]
                 started = time.monotonic()
                 try:
-                    engine = self.loader(choice, self.settings, self.note)
+                    engine = (self.loader or load_engine)(
+                        choice, self.settings, self.note
+                    )
                 except Exception as exc:  # noqa: BLE001 - any engine failure: the next one's turn
                     self.skipped.append(f"{choice.label}: {type(exc).__name__}: {exc}")
                     log.warning(
@@ -747,7 +761,7 @@ def create(
     settings: VoiceSettings,
     *,
     output: Output | None = None,
-    loader: Loader = _load,
+    loader: Loader | None = None,
     note: Callable[[str], None] | None = None,
 ) -> Speaker | Unavailable:
     """The voice client's speaker (``gregtec_voice.hooks``, D179): the first engine of
