@@ -18,6 +18,28 @@ function when(ts: number | null): string {
   return ts ? new Date(ts * 1000).toLocaleString() : "—";
 }
 
+/** His own no-AI switch (plan 7.16, WO-2.8): off holds until he turns it back on. */
+function AiSwitch(props: { on: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const flip = (): void => {
+    setBusy(true);
+    setError(null);
+    api
+      .aiSwitch(!props.on)
+      .catch((e: unknown) => setError(e instanceof ApiError ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <Button disabled={busy} onClick={flip} testId="ai-switch">
+        {props.on ? "Turn the AI off" : "Turn the AI on"}
+      </Button>
+      {error && <span className="gos-src">{error}</span>}
+    </>
+  );
+}
+
 function ThemeSettings(props: {
   stage: string | null;
   slug: Slug;
@@ -188,6 +210,9 @@ export function Settings(props: {
               <li>
                 <StatusGlyph status={core?.ai.online ? "ok" : "warn"} label={core?.ai.online ? "AI online" : "AI offline"} />
                 <span className="gos-src">{core?.ai.detail}</span>
+                {core?.ai.reason !== undefined && (core.ai.online || core.ai.reason === "choice") && (
+                  <AiSwitch on={core.ai.online} />
+                )}
               </li>
               <li>
                 <StatusGlyph status={core?.oc.status === "connected" ? "ok" : core?.oc.status === "disconnected" ? "err" : "info"} label={`OC bridge: ${(core?.oc.status ?? "unknown").replace(/_/g, " ")}`} />

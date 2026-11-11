@@ -1,7 +1,20 @@
 // The core's REST API, same origin. The paired device's cookie (HttpOnly, SameSite=Strict) goes
 // with every request; nothing here ever sees it (D117).
 import type { ApprovalCard, Card } from "../cards/types.gen";
-import type { Answer, CoreState, DeepTask, Device, Health, Reply, Session, Usage, Verify } from "./types";
+import type {
+  AiState,
+  Answer,
+  CoreState,
+  CreditChoice,
+  CreditState,
+  DeepTask,
+  Device,
+  Health,
+  Reply,
+  Session,
+  Usage,
+  Verify,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -54,6 +67,13 @@ export const api = {
   doctor: () => post<{ exit: number; output: string }>("/api/doctor"),
   devices: () => get<Device[]>("/api/devices"),
   revokeDevice: (id: string) => request<unknown>("DELETE", `/api/devices/${encodeURIComponent(id)}`),
+  // No-AI mode and the D48 credit flow (WO-2.8): his switch, and his answer to a credit alert.
+  aiSwitch: (online: boolean) => post<{ ai: AiState; credits: CreditState | null }>("/api/ai", { online }),
+  creditDecision: (choice: CreditChoice) =>
+    post<{ choice: CreditChoice; open: string | null; stopping: boolean; ai: AiState; credits: CreditState }>(
+      "/api/credits/decision",
+      { choice },
+    ),
   pairStart: (name: string) => post<{ request_id: string; expires_in: number }>("/api/pair/start", { name }),
   pairComplete: (requestId: string, code: string) =>
     post<{ device_id: string; name: string }>("/api/pair/complete", { request_id: requestId, code }),

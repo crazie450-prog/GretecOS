@@ -4,9 +4,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, act as runAction, api } from "./api/client";
 import { connect } from "./api/connection";
+import type { CreditChoice } from "./api/types";
 import { Card } from "./cards/Card";
 import { CardContext, type CardActions } from "./cards/context";
 import type { ApprovalCard, Card as CardData } from "./cards/types.gen";
+import { Banners } from "./components/Banners";
 import { CommandPalette } from "./components/CommandPalette";
 import { Header } from "./components/Header";
 import type { Action } from "./components/palette";
@@ -14,6 +16,7 @@ import { NavItem } from "./components/core";
 import { Rail } from "./components/Rail";
 import { VoiceStrip, voiceLook } from "./components/VoiceStrip";
 import { type ModePin, modeFor } from "./state/mode";
+import { bannersFor } from "./state/banners";
 import { useMedia, usePresence } from "./state/presence";
 import { isStale, stateChips } from "./state/states";
 import { store, useApp } from "./state/store";
@@ -160,6 +163,22 @@ export function App() {
     runAction(card, action).catch(show);
   }, []);
 
+  // The credit alert's answer and the AI switch (WO-2.8); the core pushes the new state.
+  const decide = useCallback(async (choice: CreditChoice): Promise<void> => {
+    try {
+      await api.creditDecision(choice);
+    } catch (e) {
+      show(e);
+    }
+  }, []);
+  const turnOn = useCallback(async (): Promise<void> => {
+    try {
+      await api.aiSwitch(true);
+    } catch (e) {
+      show(e);
+    }
+  }, []);
+
   const actions: CardActions = useMemo(
     () => ({
       stale: isStale(core),
@@ -264,6 +283,7 @@ export function App() {
               </button>
             </div>
           )}
+          <Banners banners={bannersFor(core)} decide={decide} turnOn={turnOn} />
           {glance ? (
             <Glance core={core} answers={answers} slug={themeCtl.slug} look={look} motion={motion} nextCard={nextCard} open={openFromGlance} act={act} />
           ) : (

@@ -1126,6 +1126,38 @@ tr.depleted td {
   justify-content: flex-end;
 }
 
+/* --- banners (WO-2.8): the credit alert and "AI offline" above every view ------------------- */
+
+.banners {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.banner .actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.banner-ai {
+  border-color: var(--warn);
+}
+
+/* The heading in the panel's text colour; the glyph carries the warning colour (a word beside
+   it, never colour alone). */
+.banner-ai .banner-head {
+  color: var(--text);
+}
+
+.banner-ai .banner-glyph {
+  color: var(--warn);
+}
+
+.banner p {
+  margin: 0;
+}
+
 .notice {
   flex-direction: row;
   justify-content: space-between;
