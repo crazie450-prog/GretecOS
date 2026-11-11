@@ -22,6 +22,7 @@
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
 | GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
+| GET/POST /api/persona          | see ``persona_routes``  | the persona and switching (WO-5.6)    |
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state`` and ``state`` (D179)|
@@ -75,7 +76,8 @@ from gregtec import control
 from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
-from gregtec.api import ai_routes, dashboard
+from gregtec.agents.personas import Personas
+from gregtec.api import ai_routes, dashboard, persona_routes
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -168,6 +170,7 @@ class Core:
     voice: dict[str, Any] | None = None  # the voice client's latest state (WO-5.1)
     ai: AiMode | None = None  # no-AI mode (WO-2.8)
     credits: CreditWatch | None = None  # the D48 credit flow (WO-2.8)
+    personas: Personas | None = None  # the persona packs (WO-5.6)
     probe: Callable[[], Problem | None] | None = (
         None  # None: the API with the stored key
     )
@@ -734,6 +737,7 @@ def create_app(core: Core) -> FastAPI:
 
     dashboard.add_routes(app, core, principal, trusted, _json_body)
     ai_routes.add_routes(app, core, principal, trusted, _json_body)
+    persona_routes.add_routes(app, core, principal, _json_body)
     return app
 
 

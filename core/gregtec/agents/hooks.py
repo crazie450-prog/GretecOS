@@ -116,7 +116,9 @@ class Gate:
     vault: VaultIO | None
     on_event: Event | None = None
     denied: list[tuple[str, str | None, str]] = field(default_factory=list)
-    persona: Callable[[], str | None] | None = None  # the active persona's text (WO-5.6)
+    persona: Callable[[], str | None] | None = (
+        None  # the active persona's text (WO-5.6)
+    )
 
     def _denied(self, tool: str, agent: str | None, why: str) -> dict[str, Any]:
         self.denied.append((tool, agent, why))
@@ -198,7 +200,7 @@ class Gate:
         """``UserPromptSubmit``: the active persona as additional context (or nothing)."""
         try:
             text = self.persona() if self.persona is not None else None
-        except Exception:  # noqa: BLE001 (tone only: the prompt goes ahead without it)
+        except Exception:  # tone only: the prompt goes ahead without it
             log.exception("deep-lane persona hook failed; the prompt has no persona")
             return {}
         if not text:

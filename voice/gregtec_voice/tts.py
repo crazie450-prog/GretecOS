@@ -76,6 +76,8 @@ KOKORO_FILES = {
     "voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
 }
 KOKORO_VOICE = "am_michael"  # American English, male (personas choose theirs: WO-5.6)
+# A persona's voice entries (WO-5.6, D207): its prefix -> the engine it is for.
+VOICE_PREFIXES = {"kokoro": "kokoro", "eleven": "elevenlabs", "piper": "piper"}
 KOKORO_RATE = 24_000
 # Piper voices (rhasspy/piper-voices, MIT repo; each voice's data licence in its MODEL_CARD),
 # pinned to a commit. joe: CC0 data.
@@ -247,6 +249,16 @@ class KokoroEngine:
         list(engine.stream("Ready."))  # the first run is slow: not on a real answer
         return engine
 
+    def with_voice(self, voice: str) -> KokoroEngine:
+        """The same loaded model in another of its voices (a persona's, D207): no reload."""
+        if voice == self.voice:
+            return self
+        if voice not in self.kokoro.voices:
+            raise TtsError(f"Kokoro has no voice {voice!r}")
+        return KokoroEngine(
+            self.kokoro, voice, self.label.replace(self.voice, voice, 1)
+        )
+
     def stream(self, text: str) -> Iterator[bytes]:
         samples, _ = self.kokoro.create(
             text, voice=self.voice, speed=1.0, lang=self.lang
@@ -411,6 +423,12 @@ class ElevenLabsEngine:
         self.model = model
         self.opener = opener
         self.label = f"elevenlabs {model} {self.voice}"
+
+    def with_voice(self, voice: str) -> ElevenLabsEngine:
+        """Another voice id with the same key and model (a persona's, D207)."""
+        if voice == self.voice:
+            return self
+        return ElevenLabsEngine(self._key, voice, model=self.model, opener=self.opener)
 
     @classmethod
     def load(
@@ -634,10 +652,12 @@ class _Utterance:
             for i, part in enumerate(self.parts):
                 while engine is not None and not self.stopped.is_set():
                     try:
-                        for pcm in engine.stream(part):
+                        # in the persona's voice when it names one for this engine (D207)
+                        voiced = self.speaker.voiced(engine)
+                        for pcm in voiced.stream(part):
                             if i == 0 and "synth_ms" not in self.record:
                                 self.record["synth_ms"] = self._ms()
-                                self.record["engine"] = engine.label
+                                self.record["engine"] = voiced.label
                             if not self._put((engine.rate, pcm)):
                                 return
                         engines.worked(engine)
@@ -722,6 +742,8 @@ class Speaker:
         self.clock = clock
         self._current: _Utterance | None = None
         self._lock = threading.Lock()
+        self._voices: dict[str, str] = {}  # engine -> the persona's voice (D207)
+        self._voiced: dict[tuple[int, str], Engine] = {}
         self.last: dict[
             str, Any
         ] = {}  # the last utterance's record (the bench reads it)
@@ -746,6 +768,42 @@ class Speaker:
         with self._lock:
             self._current = utterance
         utterance.start()
+
+    def use_voice(self, spec: str) -> None:
+        """The persona's voices (WO-5.6, D207), e.g. ``kokoro:am_fenrir, eleven:<id>``: from
+        the next chunk on, each engine speaks in its entry's voice, over ``[voice] tts_voice``;
+        an engine with no entry (or "") keeps its configured voice. Piper has one pinned voice,
+        so a ``piper:`` entry changes nothing until it has more."""
+        voices: dict[str, str] = {}
+        for entry in spec.split(","):
+            prefix, sep, voice = entry.strip().partition(":")
+            engine = VOICE_PREFIXES.get(prefix)
+            if sep and engine is not None and voice:
+                voices[engine] = voice
+        if voices != self._voices:
+            self._voices = voices
+            log.info("speaking in the persona's voice", extra={"voices": spec[:200]})
+
+    def voiced(self, engine: Engine) -> Engine:
+        """``engine`` in the persona's voice for it, if any (made once, then reused). A voice
+        the engine doesn't have is logged and the engine's own voice speaks."""
+        voice = self._voices.get(engine.name)
+        change = getattr(engine, "with_voice", None)
+        if not voice or change is None:
+            return engine
+        key = (id(engine), voice)
+        found = self._voiced.get(key)
+        if found is None:
+            try:
+                found = change(voice)
+            except Exception as exc:  # noqa: BLE001 - its own voice still speaks
+                log.warning(
+                    "the persona's voice can't be used",
+                    extra={"engine": engine.label, "voice": voice, "error": str(exc)},
+                )
+                found = engine
+            self._voiced[key] = found
+        return found
 
     def stop(self) -> None:
         """Barge-in: what is playing stops within one block; nothing waiting is said."""

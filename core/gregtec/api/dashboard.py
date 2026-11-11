@@ -399,6 +399,8 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         "alerts": _valid(alerts),
         "jobs": jobs,
         "health": health_card[0] if health_card else None,
+        # the persona packs and the active one (WO-5.6): Settings' dropdown
+        "persona": core.personas.listing() if core.personas is not None else None,
     }
     return {
         True: {**shared, "approvals": approvals + pairing, "asking": board.asking()},

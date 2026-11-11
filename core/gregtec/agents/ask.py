@@ -43,7 +43,6 @@ import anthropic
 
 from gregtec import config
 from gregtec.agents import prefetch, router, saved_plans
-from gregtec.agents.personas import STATE_FILE, Personas, UnknownPersona
 from gregtec.agents.deep import (
     DONE,
     NEEDS_APPROVAL,
@@ -61,6 +60,7 @@ from gregtec.agents.fast_lane import (
     refs,
 )
 from gregtec.agents.no_ai import NEEDS_AI, AiMode
+from gregtec.agents.personas import STATE_FILE, Personas, UnknownPersona
 from gregtec.agents.tools.catalog import default_registry
 from gregtec.agents.tools.registry import Registry
 from gregtec.agents.tools.tsv import Parsed

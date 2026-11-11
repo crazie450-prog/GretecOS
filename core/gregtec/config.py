@@ -616,7 +616,9 @@ def _persona_name(persona: Mapping[str, Any], default: str) -> str:
     """[persona] default: a pack's name (``gt-veteran``: lower case, digits and -). Whether
     that pack exists is checked when the core starts (an unknown one falls back, D206)."""
     value = persona.get("default", default)
-    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", value):
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9-]{0,39}", value
+    ):
         raise ConfigError(
             'gos.toml: [persona] default must be a persona\'s name, e.g. "gt-veteran"'
         )
