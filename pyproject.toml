@@ -37,9 +37,22 @@ dev = [
     # Ruff changed its default rule set in 0.16 and 0.17; take minor bumps on purpose.
     "ruff>=0.17.3,<0.18",
 ]
+# WO-5.1, D179: the voice client (voice/, a workspace package). A default group, so GOS_APP
+# (`uv sync --no-dev`) and CI get it; it stays light: its own extra dependencies are
+# Windows-only (sounddevice, pynput). Heavy engines (STT, TTS, wake word) get groups of their own.
+voice = ["gregtec-voice"]
+
+[tool.uv]
+default-groups = ["dev", "voice"]
+
+[tool.uv.workspace]
+members = ["voice"]
+
+[tool.uv.sources]
+gregtec-voice = { workspace = true }
 
 [tool.ruff]
-src = ["core"]
+src = ["core", "voice"]  # first-party: gregtec and gregtec_voice (D179)
 # Ruff formats Python blocks inside Markdown by default; keep it off CLAUDE.md, README.md and docs/.
 extend-exclude = ["*.md"]
 
