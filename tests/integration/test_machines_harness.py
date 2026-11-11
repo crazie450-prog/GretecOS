@@ -112,6 +112,15 @@ def test_a_sample_of_every_gt_recipe(conn: sqlite3.Connection) -> None:
     assert len(rows) > 1500
     player = m.Player(tier=13, coil_max=13)
     cache: dict[str, list[m.MachineInfo]] = {}
+    # Flagged machines straight from the DB, not from the facts selection read (review LOW-6).
+    flagged_mtes = {
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT m.mte_id FROM machine_fact AS f"
+            " JOIN machine AS m ON m.id = f.machine_id WHERE f.key = 'flag'"
+        )
+    }
+    assert flagged_mtes
     with_options = 0
     for ref, recipe_map in rows:
         recipe = m.load_recipe(conn, ref, run)
@@ -129,7 +138,6 @@ def test_a_sample_of_every_gt_recipe(conn: sqlite3.Connection) -> None:
             if o.kind == "singleblock":
                 assert s.eut.value <= V[o.tier] * recipe.map_amperage, (ref, o.mte_id)
                 assert s.duration.value <= recipe.duration, (ref, o.mte_id)
-            flagged = any(f.key == "flag" for f in o.facts)
-            assert ("flagged" in o.badges) is flagged
+            assert ("flagged" in o.badges) is (o.mte_id in flagged_mtes), (ref, o.mte_id)
     # The rest need a build input, a fixed-power machine (D176) or a tier above UXV.
     assert with_options / len(rows) > 0.9, (with_options, len(rows))
