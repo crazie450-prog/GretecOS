@@ -1,0 +1,24 @@
+# Platinum line (GTNH 2.9.0, bartworks' platinum group processing), WO-3.3. Format: README.md.
+# Platinum metallic powder (from ore, and from the line's own refined salt) dissolves in aqua
+# regia; the concentrate with ammonium chloride gives platinum salt (sifted, then smelted back
+# to metallic powder) and reprecipitated platinum, which calcium reduces to platinum dust; the
+# calcium chloride is electrolysed back to calcium. Keys checked against the dev runtime's
+# server harness DB (run 20261106T014148Z); the palladium, rhodium, ruthenium, osmium and
+# iridium branches of the line start from its byproducts and are left to the heuristic.
+item	recipe	branch	note
+gregtech:gt.metaitem.01@2085	r:gt.recipe.chemicalreactor/84f6e790939d	pt-reduction	Platinum Dust: reprecipitated platinum + calcium, chemical reactor
+gregtech:gt.metaitem.01@2085	r:gt.recipe.largechemicalreactor/807352b03513	pt-reduction	the same in the large chemical reactor
+bartworks:gt.bwMetaGenerateddust@51	r:gt.recipe.largechemicalreactor/15f7ac05d418		Reprecipitated Platinum Dust: concentrate + ammonium chloride (large chemical reactor only)
+bartworks:gt.bwMetaGenerateddust@45	r:gt.recipe.largechemicalreactor/15f7ac05d418		Platinum Salt Dust: the same reaction
+bartworks:gt.bwMetaGenerateddust@46	r:gt.recipe.sifter/45ffbb2383d4		Refined Platinum Salt Dust: sifting platinum salt
+bartworks:gt.bwMetaGenerateddust@47	r:gt.recipe.macerator/38b2d998605f		Platinum Metallic Powder Dust from crushed platinum ore (macerator)
+bartworks:gt.bwMetaGenerateddust@47	r:gt.recipe.blastfurnace/0326704aa961		and back from refined platinum salt (EBF): the line's loop
+fluid:platinum concentrate	r:gt.recipe.chemicalreactor/4ccda2d40b75	concentrate	Platinum Concentrate: one metallic powder in aqua regia (chemical reactor)
+fluid:platinum concentrate	r:gt.recipe.chemicalreactor/40dd0af91d3b	concentrate	the batch recipe (more concentrate per powder, and a platinum residue dust)
+fluid:aqua regia	r:gt.recipe.multimixer/249aa206bb77	aqua-regia	Aqua Regia from hydrochloric and nitric acid, all fluids (multiblock mixer)
+fluid:aqua regia	r:gt.recipe.mixer/b1b72a06a1a2	aqua-regia	the mixer, nitric acid in a cell
+fluid:ammonium chloride	r:gt.recipe.largechemicalreactor/cad7f029ab32	nh4cl	Ammonium Chloride from hydrochloric acid and ammonia (large chemical reactor)
+fluid:ammonium chloride	r:gt.recipe.chemicalreactor/5cfc16335fe5	nh4cl	the chemical reactor, hydrochloric acid in a cell
+gregtech:gt.metaitem.01@2026	r:gt.recipe.electrolyzer/dec8a8a0dd6e		Calcium Dust back from the calcium chloride the reduction leaves
+bartworks:gt.bwMetaGenerateddust@63	r:gt.recipe.chemicalreactor/84f6e790939d		Calcium Chloride Dust: left by the platinum reduction (chemical reactor)
+bartworks:gt.bwMetaGenerateddust@63	r:gt.recipe.largechemicalreactor/807352b03513		or the large chemical reactor: the calcium loop

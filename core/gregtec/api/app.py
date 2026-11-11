@@ -20,11 +20,13 @@
 | GET  /api/devices              | admin, device           | paired devices                        |
 | DELETE /api/devices/{id}       | admin, device           | revoke a device                       |
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
+| POST /oc/telemetry, /api/actions... | see ``gregtec.bridge.http`` | the OC bridge, confirm flow (WO-7.1)|
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
 | GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
-|                                |                         | ``ui``, ``voice.state`` and ``state`` (D179)|
+|                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
+|                                |                         | and ``action`` (WO-7.1)               |
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
@@ -87,6 +89,10 @@ from gregtec.api.security import (
     Principal,
 )
 from gregtec.base import routes as base_routes
+from gregtec.bridge import http as bridge_http
+from gregtec.bridge.actions import Action
+from gregtec.bridge.ingest import Bridge
+from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
@@ -173,6 +179,9 @@ class Core:
         None  # None: the API with the stored key
     )
     exit_code: int = 0  # what server.run returns (D48 Stop: supervisor.EXIT_STOPPED)
+    # The OC bridge's ingest, shared by M1 (WO-7.3) and /oc/telemetry (WO-7.1).
+    oc: Bridge | None = None
+    ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
 
     # --- pushing to WebSocket clients
 
@@ -192,6 +201,19 @@ class Core:
         """The deep lane's ``on_change`` (its own thread): push the task to every socket."""
         data = task.as_dict()
         self._threadsafe(lambda: self.broadcast({"type": "deep.task", "data": data}))
+
+    def action_changed(self, action: Action, say: str) -> None:
+        """The action desk's ``on_change`` (any thread): push the action and the words GOS says
+        about it (the read-back, a cancellation, a result) to every socket, and refresh the
+        state so the approval card comes and goes."""
+        data = {**action.as_dict(), "say": say}
+
+        def push() -> None:
+            self.broadcast({"type": "action", "data": data})
+            if self.loop is not None:
+                self.loop.create_task(dashboard.push_state(self))
+
+        self._threadsafe(push)
 
     def set_voice(self, state: str, trigger: str | None) -> dict[str, Any]:
         """Keep the voice client's state and push it to the dashboards (loop only)."""
@@ -501,7 +523,10 @@ def create_app(core: Core) -> FastAPI:
         try:
             await dashboard.push_state(core)
             # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
-            reply = await asyncio.to_thread(core.asker.ask, text)
+            via = bridge_http.confirm_via(
+                who, request.headers.get("host"), core.cfg.dashboard_host
+            )
+            reply = await asyncio.to_thread(core.asker.ask, text, via=via)
         finally:
             board.done(entry)
         log.info(
@@ -734,6 +759,7 @@ def create_app(core: Core) -> FastAPI:
                 core.set_voice("off", None)  # the voice client went away (D179)
 
     dashboard.add_routes(app, core, principal, trusted, _json_body)
+    bridge_http.add_routes(app, core, principal)
     ai_routes.add_routes(app, core, principal, trusted, _json_body)
     base_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
@@ -832,6 +858,10 @@ async def _watch(core: Core) -> None:
             await asyncio.to_thread(
                 ai_routes.refresh, core
             )  # credits, API probe (WO-2.8)
+            if (
+                core.ops is not None
+            ):  # action expiry and timeouts, stale telemetry (WO-7.1)
+                await asyncio.to_thread(core.ops.tick)
             health = await asyncio.to_thread(core.health)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:

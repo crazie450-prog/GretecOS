@@ -15,8 +15,10 @@ import keyring.errors
 
 SERVICE = "gregtec-os"
 ANTHROPIC = "anthropic"
-# The secrets `gos key` manages. The Discord token and any cloud TTS key join in later WOs.
-NAMES = (ANTHROPIC,)
+# The secrets `gos key` manages: the Anthropic key, and ElevenLabs' for the optional cloud voice
+# (WO-5.3, D203). The Discord token joins in a later WO.
+ELEVENLABS = "elevenlabs"
+NAMES = (ANTHROPIC, ELEVENLABS)
 
 
 class MissingKeyError(LookupError):

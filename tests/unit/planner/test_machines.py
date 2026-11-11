@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from gregtec import store
 from gregtec.db import access
 from gregtec.ingest.machine_facts import Fact
 from gregtec.planner import machines as m
@@ -1175,13 +1174,6 @@ def _db(tmp_path: Path) -> sqlite3.Connection:
             " VALUES (?,?,?,?,?, '')",
             (mid, key, value, source, conf),
         )
-    conn.executescript(store.SCHEMA)  # My base's tables are the core's (D210)
-    x(
-        "INSERT INTO my_base_machine(mte_id, source, count, upd) VALUES (1000, 'manual', 2, 0)"
-    )
-    x(
-        "INSERT INTO my_base_machine(mte_id, source, count, upd) VALUES (12730, 'manual', 0, 0)"
-    )
     return conn
 
 
@@ -1197,8 +1189,7 @@ def test_select_from_the_db(tmp_path: Path) -> None:
             1,
         )
         assert r.meta == {"coil_heat": 1500.0}  # nei_desc is left out
-        owned = m.owned_machines(conn)
-        assert owned == frozenset({1000})
+        owned = frozenset({1000})  # My base's (gregtec.base.state, through BaseInputs)
         player = m.Player(tier=HV, owned=owned, hatches=(hatches(HV, 2),))
         sel = m.select(conn, ref, player)
         by = {o.mte_id: o for o in sel.options}

@@ -51,7 +51,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from gregtec.base import state as my_base
 from gregtec.db import access
 from gregtec.ingest import machine_facts as mf
 from gregtec.planner.gtmath import overclock as ocm
@@ -1042,11 +1041,6 @@ def load_machines(
             )
         )
     return out
-
-
-def owned_machines(conn: sqlite3.Connection) -> frozenset[int]:
-    """The mte ids My base lists with a count above 0 (:mod:`gregtec.base.state`, D63, D210)."""
-    return frozenset(my_base.owned_machines(conn))
 
 
 def select(

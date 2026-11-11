@@ -211,8 +211,10 @@
         "cmds": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/command" } },
         "err": { "type": ["string", "null"], "maxLength": 200 },
         "ack": { "type": "integer", "minimum": 1 },
+        "boot": { "description": "The agent's boot that ack counts in; it always comes with ack (D216).", "type": "string", "pattern": "^[0-9a-f]{8}$" },
         "poll_s": { "type": "integer", "minimum": 1, "maximum": 10 }
       },
+      "dependentRequired": { "ack": ["boot"] },
       "if": { "properties": { "ok": { "const": false } } },
       "then": {
         "required": ["err"],

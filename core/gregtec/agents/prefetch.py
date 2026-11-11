@@ -133,6 +133,14 @@ def _pick(found: list[Candidate], name: str) -> Candidate:
     return next((c for c in named if "#" not in c.key), named[0])
 
 
+def clarify(subject: str, found: list[Candidate]) -> Clarify:
+    """The one clarifying question for an ambiguous ``subject`` and the three it names."""
+    names = question_names(found)
+    return Clarify(
+        subject, question_for(subject, found), [_pick(found, n) for n in names]
+    )
+
+
 def question_for(subject: str, found: list[Candidate]) -> str:
     """ "Which steel did you mean: Steel Ingot, Steel Plate or Stainless Steel Ingot?" The
     first three distinct names are spoken; a name two candidates share (an item and its NBT
@@ -188,10 +196,7 @@ def resolve(reg: Registry, pre: Prefetch, subject: str) -> Candidate | None:
         pre.unresolved = subject
         return None
     if parsed.head.get("ambiguous") == "1":
-        names = question_names(found)
-        pre.clarify = Clarify(
-            subject, question_for(subject, found), [_pick(found, n) for n in names]
-        )
+        pre.clarify = clarify(subject, found)
         pre.main = block
         return None
     pre.target = found[0]

@@ -748,6 +748,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - **OC side:** write `outbox.tmp`, close it, `rename` to `outbox.json`. Retry if `rename` returns false, which happens while Python has the target open. Read `inbox.json` in 2 KB chunks, then delete it to acknowledge.
   - **Core side:** write `inbox.tmp`, flush, fsync, close, `os.replace`. **Retry on PermissionError**, because files OC holds open can't be replaced. Read `outbox.json` with `safe_open()` and open-read-close only, then rename it to acknowledge.
   - Managed drives only (unmanaged drives and `/tmp` aren't plain folders).
+  - As built (WO-7.3, D216–D218): the core acknowledges by renaming `outbox.json` back to `outbox.tmp` (not a delete, which OC's drive space count never sees until the world reloads), writes `inbox.json` only while there is none, withdraws a reply OC hasn't taken in 30 s, and records each (agent, boot, seq) once; gos.toml `[mailbox.lab]`/`[mailbox.play]` names the drive. The ingest it feeds (`gregtec.bridge.ingest.Bridge`) is the one WO-7.1's `/oc/telemetry` uses.
 - **Payload** (2.9 drivers) [C§2]:
   - power: LSC `getStoredEUString`, battery buffers;
   - machines: `isMachineActive`, work progress, the "Problems" count from sensor lines (2.9 format `translationKey\\args`, parsed in Python);
@@ -769,6 +770,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
     - Only one action can be pending; a new proposal cancels the old one out loud.
     - A pending action expires after 60 s.
   - **Agents cannot confirm. Destructive actions are not implemented.** Every action is logged to the `action` table and the journal.
+  - As built (WO-7.1, D219–D221): `POST /oc/telemetry` and M1 feed one ingest into `tel_machine`/`tel_sample` (change-only samples with a 60 s heartbeat; stale after 30 s, never extrapolated); `gregtec.bridge.actions.ActionDesk` owns the `action` table; the agents' `action_propose` (deep lane only) proposes, and only the router's "confirm", the approval card and `POST /api/actions/{id}/confirm` (phone, Discord) confirm, each with the way Clayton used; a confirmed action its OC computer hasn't collected in 5 min fails unrun, and one sent with no result in 5 min is "timed out; may have run". OC tokens are `oc-play`/`oc-lab[-label]` and open `/oc/telemetry` only.
 
 ### 7.10 Building design (D33–D36, D73, D74)
 - **Footprint library.**
@@ -1062,7 +1064,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 ### Phase 9: Discord, alerts and phone
 | WO | Deliverable | Acceptance |
 |---|---|---|
-| 9.1 | Bot, commands, job queue; replies attach the PNG diagram and BOM file plus a phone-dashboard plan link [QA:V4]; Clayton-only checks on every command **and interaction** [QA:V9]; confirm buttons | Each command answers from his phone within 10 s (long design jobs acknowledged within 10 s); commands and clicks from other users are ignored |
+| 9.1 | Bot, commands, job queue; replies attach the PNG diagram and BOM file plus a phone-dashboard plan link [QA:V4]; Clayton-only checks on every command **and interaction** [QA:V9] (text relayed to `/api/ask` only from Clayton, so no one else's "confirm" confirms as `discord`, D220); confirm buttons | Each command answers from his phone within 10 s (long design jobs acknowledged within 10 s); commands and clicks from other users are ignored |
 | 9.2 | Alert routing (Discord DM, dashboard, voice, in game) with dedupe, cooldown and quiet hours; AFK base alerts (D46); credit DMs with buttons (D48); "GOS offline" and "game paused" while he's away (D76) | Test matrix passes, including Esc-then-walk-away for the paused DM |
 | 9.3 | **Phone dashboard** (D53): Tailscale Serve to `127.0.0.1:8765` (V28), the WO-2.0 phone layout, device pairing, confirm buttons, live status; views past the five phone tabs through a "More" tab (D159) | On cellular via the tailnet: a Discord plan link opens, a Lab action is confirmed, status updates live; outside the tailnet the dashboard is unreachable; the security tests pass |
 | **G9** | | Reviewer report; Clayton sign-off |
@@ -1380,9 +1382,10 @@ talk_key = "TBD (unbound in GTNH and Discord)"
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
 stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D182)
-tts = "kokoro"
-tts_device = "cpu"
-output_endpoint = "Chat"      # Arctis Nova Elite (D56)
+tts = "kokoro"                # | piper | elevenlabs (D203); gos voice tts-bench picks (D204)
+tts_device = "cpu"            # | gpu (ONNX Runtime CUDA or DirectML, D203)
+tts_voice = ""                # "" = the engine's default (D203)
+output_endpoint = "Chat"      # Arctis Nova Elite (D56); no single match: the default device (D205)
 discord_auto_mute = false     # D58
 
 [persona]
@@ -1406,6 +1409,13 @@ notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71
 
 [maintenance]
 idle_minutes = 30             # QA:A9
+
+# M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
+# drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.
+# [mailbox.lab]
+# world = "lab-ops"
+# drive = "<OC drive address>"
+# dir = "home/gos/mailbox"
 ```
 
 ## Appendix D. SQLite schema
