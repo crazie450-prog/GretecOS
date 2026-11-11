@@ -19,7 +19,7 @@ The open items before sign-off, none of which needs new design work:
 1. **The PC sitting** (`docs/runbooks/phase1_pc_checks.md` steps 1–8 and 10) has not happened yet. It closes V03, V07, V09, V22, V25 and V33 and every "in the Lab" clause of WO-1.1–1.10.
 2. **WO-1.8 is not met:** no gtnh-extractor dump has been made, in the cloud or on the PC, so "≥ 250 base controllers" is unshown (V09). PR #32's Question 4 (may a cloud session run the extractor?) has no answer.
 3. **Two new PC checks** that `phase1_pc_checks.md` does not have: the golden-recipe Lab check (G1-A) and WO-1.9's Lab dry run (G1-B). They are in the ordered list at the end.
-4. **19 Phase 1 PR questions have no recorded answer** (listed below). None blocks the gate; each needs a verdict or a decision row.
+4. **23 Phase 1 PR questions have no recorded answer** (listed below). Only PR #32 Q4 bears on the gate, through WO-1.8. Each needs a verdict or a decision row.
 
 Evidence tags:
 - **[run]:** this reviewer ran it in this session, on the code at `review/g1` (= `origin/main` `610780e` plus this branch's test and doc files; no product code changed).
@@ -151,7 +151,7 @@ Phase 1 left no golden set (nothing in `tests/` or `docs/` named one), so this r
 
 - PR #29 (`3c38b12`; D112–D114) [repo].
 - `test_quests_pack.py`, 7 of 7, on GTNH 2.9.0's own `config/betterquesting/` [run]:
-  - `test_the_runbook_states`: stone 1 quest, LV 4, HV 17, the repeatable step 21 with Chef Training repeatable;
+  - `test_the_runbook_states`: the runbook's stone (one quest, *Your First Night*), LV (4 quests, tier LV) and HV (17 quests, 4 in HV, tier HV) states, and the repeatable step with Chef Training repeatable;
   - `test_tier_and_frontier_at_every_stage`.
 - Unit tests in `tests/unit/` pass [run]. Comparing with the book in the game is the acceptance's "in `lab-progress`" clause.
 
