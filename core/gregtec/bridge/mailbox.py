@@ -17,7 +17,9 @@ so only a managed drive can hold a mailbox (the agent refuses the others).
   ``inbox.json``.
 - ``inbox.json`` (the core, then OC): the core writes it only while there is none. OC reads it in
   2 KB chunks and deletes it, the acknowledgement the core sees. A reply OC hasn't read in
-  :data:`REPLY_TTL_S` is withdrawn and its commands go back to the queue.
+  :data:`REPLY_TTL_S` is withdrawn and its commands go back to the queue; then no reply is
+  written for :data:`QUIET_S`, so a reply OC was reading as it was withdrawn can't be followed
+  by a new one that OC's delete (after its close, a tick later) would take unread.
 
 Why outbox.json goes back to outbox.tmp: OC's drive adds every byte OC writes to a new file to
 its count and never learns of a file deleted or replaced from outside until the world loads
@@ -67,6 +69,9 @@ INBOX_TMP = "inbox.tmp"
 POLL_S = 0.25  # how often the core looks for outbox.json (a stat; OC waits up to 2 s for a reply)
 REPLY_TTL_S = (
     30.0  # a reply OC hasn't read in this long is withdrawn (3 cycles at OC's slowest)
+)
+QUIET_S = (
+    2.0  # after a withdrawal: far longer than OC's close-to-remove (a tick, 50 ms)
 )
 RETRIES = (
     6  # tries of a step Windows refuses while a file is held: 20 ms, doubling (0.6 s)
@@ -133,6 +138,8 @@ class Mailbox:
     due: bool = False  # a message taken since the last reply was written
     reply_at: float | None = None  # when this core wrote the reply now in inbox.json
     reply_ids: list[int] = field(default_factory=list)  # the commands in it
+    quiet_s: float = QUIET_S  # no reply this long after a withdrawal
+    quiet_until: float | None = None  # set by a withdrawal
     max_age_s: float = (
         0.0  # the oldest message taken since the last heartbeat (now - mtime)
     )
@@ -281,6 +288,10 @@ class Mailbox:
             self.reply_at, self.reply_ids = None, []
         if not self.due or self.latest is None:
             return
+        if self.quiet_until is not None:
+            if self.clock() < self.quiet_until:
+                return  # still due: written once the quiet period is over
+            self.quiet_until = None
         outcome = self.latest
         ack = (
             self.bridge.seqs.highest(outcome.agent)
@@ -339,6 +350,9 @@ class Mailbox:
         else:
             self.stats["withdrawn"] += 1
             self.stats["commands_returned"] += len(ids)
+            # OC may have had it open this instant (its remove comes a tick after its close):
+            # a reply written before that remove would be deleted unread (D217).
+            self.quiet_until = self.clock() + self.quiet_s
             log.warning(
                 "OC mailbox: the agent didn't read its reply in time; withdrawn",
                 extra={

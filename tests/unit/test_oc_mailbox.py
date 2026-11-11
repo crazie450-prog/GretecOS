@@ -321,6 +321,12 @@ def test_an_unread_reply_is_withdrawn_and_its_commands_returned(tmp_path: Path) 
     assert box.stats["withdrawn"] == 1 and box.stats["commands_returned"] == 1
     oc_send(folder, message(seq=2))
     box.poll()
+    assert not (folder / "inbox.json").exists(), (
+        "quiet after a withdrawal: OC may have been reading the withdrawn reply"
+    )
+    assert box.due
+    clock.t += mb.QUIET_S
+    box.poll()
     assert reply_at(folder) == {
         "ack": 2,
         "boot": "b0075eed",
@@ -808,3 +814,30 @@ def test_lab_naming_plays_computer_is_a_different_agent(tmp_path: Path) -> None:
     assert newest.source == play_place.source
     lab_newest = sink.latest(AgentId("lab", AGENT))
     assert lab_newest is not None and lab_newest.source == lab_place.source
+
+
+def test_no_reply_follows_a_withdrawal_within_the_quiet_period(tmp_path: Path) -> None:
+    """Review L1: OC opens inbox.json, the core withdraws it (OC's handle doesn't stop that on
+    Linux; on Windows it is gone after OC's close), and OC's remove comes a tick later. A new
+    reply written in between would be removed unread, so none is written for QUIET_S."""
+    place, folder = layout(tmp_path)
+    clock, queue = Clock(), Queue([say(5), say(6)])
+    box = make_box(place, queue=queue, clock=clock)
+    oc_send(folder, message(seq=1))
+    box.poll()
+    clock.t += mb.REPLY_TTL_S
+    oc_send(folder, message(seq=2))  # OC sent again, then opened the old reply
+    box.poll()  # withdrawn, and seq 2 taken
+    assert box.stats["withdrawn"] == 1 and box.due
+    for _ in range(3):
+        clock.t += mb.QUIET_S / 4
+        box.poll()
+        assert not (folder / "inbox.json").exists()
+    (folder / "inbox.json").unlink(missing_ok=True)  # OC's late remove finds nothing
+    clock.t += mb.QUIET_S / 4
+    box.poll()
+    reply = oc_receive(folder)
+    assert reply is not None and reply["ack"] == 2
+    assert [ids for ids, _ in queue.back] == [[5, 6]], (
+        "the withdrawn commands went back"
+    )

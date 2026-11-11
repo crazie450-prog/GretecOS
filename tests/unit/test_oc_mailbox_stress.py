@@ -315,7 +315,7 @@ def run(
     place, folder = layout(tmp_path)
     rng = random.Random(seed)
     sink, queue = Recording(), Queue(random.Random(seed + 1), rate)
-    box = Mailbox(place, Bridge(sink, queue), ttl_s=ttl_s)
+    box = Mailbox(place, Bridge(sink, queue), ttl_s=ttl_s, quiet_s=mb.QUIET_S * scale)
     service = MailboxService([box], poll_s=0.001)
     agent = Agent(
         LuaBox(folder, scale=scale, rng=random.Random(seed + 2)),
