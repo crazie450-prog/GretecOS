@@ -21,6 +21,7 @@
 | DELETE /api/devices/{id}       | admin, device           | revoke a device                       |
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
+| GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state`` and ``state`` (D179)|
@@ -73,7 +74,8 @@ from starlette.websockets import WebSocketDisconnect
 from gregtec import control
 from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
-from gregtec.api import dashboard
+from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
+from gregtec.api import ai_routes, dashboard
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -164,6 +166,12 @@ class Core:
     deep: DeepLaneService | None = None  # the deep lane (WO-2.4)
     board: dashboard.Board | None = None  # the dashboard's own state (WO-2.6)
     voice: dict[str, Any] | None = None  # the voice client's latest state (WO-5.1)
+    ai: AiMode | None = None  # no-AI mode (WO-2.8)
+    credits: CreditWatch | None = None  # the D48 credit flow (WO-2.8)
+    probe: Callable[[], Problem | None] | None = (
+        None  # None: the API with the stored key
+    )
+    exit_code: int = 0  # what server.run returns (D48 Stop: supervisor.EXIT_STOPPED)
 
     # --- pushing to WebSocket clients
 
@@ -238,6 +246,8 @@ class Core:
         except keyring.errors.KeyringError as exc:
             self.key_status = ("warn", f"keyring unavailable ({type(exc).__name__})")
             return
+        if self.ai is not None:
+            self.ai.key_seen(stored)
         self.key_status = (
             ("ok", "stored")
             if stored
@@ -723,6 +733,7 @@ def create_app(core: Core) -> FastAPI:
                 core.set_voice("off", None)  # the voice client went away (D179)
 
     dashboard.add_routes(app, core, principal, trusted, _json_body)
+    ai_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 
 
@@ -816,6 +827,9 @@ async def _watch(core: Core) -> None:
                 await asyncio.to_thread(core.refresh_key)
                 last_key = now
             await asyncio.to_thread(core.refresh_supervisor)
+            await asyncio.to_thread(
+                ai_routes.refresh, core
+            )  # credits, API probe (WO-2.8)
             health = await asyncio.to_thread(core.health)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:

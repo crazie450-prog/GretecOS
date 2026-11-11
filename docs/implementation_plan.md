@@ -1286,7 +1286,7 @@ gregtec-os/
   CLAUDE.md  README.md
   docs/  implementation_plan.md  decisions.md  research/(A–I)  reviews/  img2schem_sow.md (WO-10.0)
   core/gregtec/
-    config.py  cli.py (gos doctor|export|serve|eval|stop|deploy|launch)  supervisor.py
+    config.py  cli.py (gos doctor|export|serve|eval|stop|deploy|launch)  supervisor.py (exit 5 = stopped on request: left stopped, D165)
     db/        schema.sql  migrations/  queries/*.sql  access.py
     ingest/    nei.py  gtdump.py  machines.py  normalize.py  quests.py  vp.py  journeymap.py  fingerprint.py
     gamestate/ safe_open.py  logs.py  saves.py  census.py  watchers.py  events.py  pause.py
@@ -1366,7 +1366,7 @@ fast_context_max_tokens = 60000
 [budget]
 monthly_included_usd = 100    # D47
 credit_alerts_pct = [80, 100] # D48
-on_credits_out = "no_ai"      # until Clayton picks: billing | no_ai | stop
+on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
 task_max_usd = 2.0            # placeholder until WO-3.7 measures; on hit: pause and ask (D16)
 
 [voice]

@@ -71,3 +71,21 @@ The look follows your tier (D64): Brass and Steam until LV is detected. Settings
 - The window: close it; `gos dashboard` opens it again.
 - At startup: `[startup] dashboard_window = false` in `gos.toml`.
 - Unpair a device: Settings + Health → Paired devices → **Revoke**, or `gos devices revoke <id>`.
+
+## No-AI mode and the credit alert (WO-2.8, D164-D166)
+
+The AI goes off when no key is stored, the API refuses or doesn't answer, the credits run out
+(D48: at 100% of `[budget] monthly_included_usd`), or you turn it off (Settings → Services →
+"Turn the AI off"). Lookups keep working; a banner above every view says why and what needs the AI.
+At 80% and 100% a "Waiting for you · API credits" banner offers **Open billing**, **No-AI mode**
+(or **Resume AI** while paused) and **Stop** (asks once more; `uv run gos serve` starts GOS again).
+
+Check on the PC (deployment test):
+
+1. `uv run gos key delete anthropic` → within 30 s the dashboard shows "AI offline"; "recipe for
+   steel" and Search still answer. `uv run gos key set anthropic` → it clears within a minute.
+2. Pull the network cable (or turn Wi-Fi off) and ask "how do I make steel": the card answers,
+   "AI offline · the API can't be reached" shows, and it clears within a minute of reconnecting.
+3. Open billing goes to the Console's billing page (if the Console has moved, note the new URL).
+4. Stop on the credit banner leaves the core stopped in `uv run gos status`; `uv run gos serve`
+   starts it again.

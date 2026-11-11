@@ -65,11 +65,42 @@ export interface Asking {
   ts: number;
 }
 
+/** No-AI mode (WO-2.8, plan 7.16): why the AI is off, if it is. A core without the mode sends
+ * only `online` and `detail`. */
+export interface AiState {
+  online: boolean;
+  detail: string;
+  reason?: "choice" | "credits" | "no_key" | "auth" | "credits_api" | "network" | "outage" | null;
+  reasons?: string[];
+  since?: number | null;
+  works?: string;
+}
+
+export type CreditChoice = "billing" | "no_ai" | "resume" | "stop";
+
+/** The D48 credit flow's banner state (WO-2.8): the threshold crossed, whether it waits for an
+ * answer, the pause, and the buttons. `level` null: nothing crossed this cycle. */
+export interface CreditState {
+  level: "warn" | "err" | null;
+  threshold: number | null;
+  pending: boolean;
+  pct: number;
+  spent_usd: number;
+  budget_usd: number;
+  cycle_start: string;
+  cycle_end: string;
+  answer: CreditChoice | null;
+  paused: boolean;
+  actions: CreditChoice[];
+  billing_url: string;
+}
+
 export interface CoreState {
   ts: number;
   game: GameState;
   data: DataState;
-  ai: { online: boolean; detail: string };
+  ai: AiState;
+  credits?: CreditState | null;
   oc: { status: "not_set_up" | "connected" | "disconnected"; detail: string };
   tier: TierState | null;
   alerts: AlertCard[];

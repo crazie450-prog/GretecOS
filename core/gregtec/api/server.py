@@ -30,6 +30,8 @@ import uvicorn
 from gregtec import applog, config, control, supervisor
 from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
+from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
+from gregtec.api import ai_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
@@ -79,13 +81,21 @@ def _stop_on_stdin(stop: Callable[[], None]) -> None:
     stop()
 
 
-def maintenance(cfg: Config, store: Store, meter: UsageMeter) -> Maintenance:
-    """Idle maintenance of ``GOS_HOME/vault`` and the DB (WO-2.5, plan 6.6)."""
+def maintenance(
+    cfg: Config, store: Store, meter: UsageMeter, ai: AiMode | None = None
+) -> Maintenance:
+    """Idle maintenance of ``GOS_HOME/vault`` and the DB (WO-2.5, plan 6.6). With ``ai``, the
+    log summariser asks it before each model call (no-AI mode, WO-2.8)."""
+    summariser = (
+        HaikuSummariser.from_keyring
+        if ai is None
+        else guard_summariser(ai, HaikuSummariser.from_keyring)
+    )
     curator = Curator(
         vault=cfg.gos_home / "vault",
         db=cfg.data_dir / DB_NAME,
         backups=cfg.data_dir / "backups",
-        summariser=HaikuSummariser.from_keyring,
+        summariser=summariser,
         meter=meter,
         keep_backups=cfg.keep_backups,
     )
@@ -131,15 +141,17 @@ def run(
         store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
     )
     agents = (setup_agents or _default_agents)(cfg, store)
+    ai = AiMode(store)  # no-AI mode and the D48 credit flow (WO-2.8)
     core = Core(
         cfg=cfg,
         store=store,
         auth=Auth(store, admin_token),
         meter=meter,
         supervisor_token=supervisor_token,
-        maintenance=maintenance(cfg, store, meter),
-        asker=agents.asker(),
+        maintenance=maintenance(cfg, store, meter, ai),
     )
+    ai_routes.wire(core, ai, CreditWatch(meter, ai))
+    core.asker = agents.asker(ai=ai)
     if isinstance(agents.deep, DeepLaneService):
         core.deep = agents.deep
         agents.deep.on_change = core.deep_changed
@@ -187,5 +199,5 @@ def run(
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         store.close()
         sock.close()
-    log.info("core stopped")
-    return 0
+    log.info("core stopped", extra={"exit_code": core.exit_code})
+    return core.exit_code

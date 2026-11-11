@@ -16,9 +16,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gregtec import config, locks, playhooks, prism, supervisor
+from gregtec.agents.no_ai import AiMode
 from gregtec.api.app import Core, create_app
 from gregtec.api.security import Auth
 from gregtec.api.server import maintenance as core_maintenance
+from gregtec.llm.summarise import SummariserOff
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
 from gregtec.vault import deploy, scheduler
@@ -258,6 +260,26 @@ def test_the_core_builds_its_maintenance_from_gos_toml(
     assert m.curator.db == tmp_path / "data" / "gos.sqlite"
     assert m.curator.backups == tmp_path / "data" / "backups"
     assert m.curator.keep_backups == 3
+
+
+def test_the_cores_maintenance_asks_the_ai_mode_first(
+    tmp_path: Path, store: Store
+) -> None:
+    ai = AiMode(store)
+    ai.set_credit_pause(True)  # D48: paused at 100%
+    cfg = config.Config(gos_home=tmp_path)
+    m = core_maintenance(cfg, store, UsageMeter(store, 100.0, (80, 100)), ai)
+    with pytest.raises(SummariserOff, match="paused for credits"):
+        m.curator.summariser()  # before the keyring is read, so no Haiku call either
+
+
+def test_on_credits_out_can_only_be_no_ai(tmp_path: Path) -> None:
+    path = tmp_path / "gos.toml"
+    path.write_text('[budget]\non_credits_out = "no_ai"\n', encoding="utf-8")
+    assert config.load(path).service_errors == ()
+    path.write_text('[budget]\non_credits_out = "stop"\n', encoding="utf-8")
+    [problem] = config.load(path).service_errors
+    assert problem.startswith('gos.toml: [budget] on_credits_out can only be "no_ai"')
 
 
 def test_maintenance_keys(tmp_path: Path) -> None:

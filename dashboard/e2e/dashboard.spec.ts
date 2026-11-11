@@ -3,7 +3,7 @@
 // comes with the game's focus and is clickable (D49), the keyboard drives the shell, and the
 // phone layout fits 390 px. Screenshots go to test-results/ (never into git).
 import { type Browser, type Page, expect, test } from "@playwright/test";
-import { THEMES, asAdmin, clipped, contrastMisses, control, fingerprintState, holdInstanceLock, layout, pair, pendingCode, themeMisses } from "./harness";
+import { THEMES, asAdmin, clipped, contrastMisses, control, fingerprintState, holdInstanceLock, layout, pair, pendingCode, spend, themeMisses } from "./harness";
 
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
 const MONITOR_2 = { width: 2560, height: 1440 };
@@ -367,6 +367,95 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   await page.screenshot({ path: shot("phone-now"), fullPage: true });
   expect(await contrastMisses(page)).toEqual([]);
   await page.setViewportSize({ width: 2560, height: 1440 });
+});
+
+// --- WO-2.8: no-AI mode (plan 7.16) and the credits flow (D48) ---------------------------------
+
+async function askInChat(text: string): Promise<string> {
+  const log = page.getByTestId("chat-log");
+  const before = await log.locator("[data-answer]").count();
+  await page.getByTestId("chat-input").fill(text);
+  await page.getByTestId("chat-send").click();
+  await expect(log.locator("[data-answer]")).toHaveCount(before + 1);
+  return (await log.locator("[data-answer]").last().locator(".answer-text").textContent()) ?? "";
+}
+
+test("with the key revoked: instant commands, Search and recipe cards work, and AI offline shows", async () => {
+  await page.keyboard.press("1");
+  control("key", "missing");
+  const banner = page.getByTestId("banner-ai");
+  await expect(banner).toBeVisible({ timeout: 15_000 });
+  await expect(banner).toContainText("no Anthropic key is stored");
+  await expect(banner).toContainText("Still works: instant commands, Search, recipe cards");
+  await expect(banner).toContainText("Needs the AI: design, advice");
+  await expect(page.getByTestId("status-chips").locator('[data-state="ai_offline"]')).toBeVisible();
+  const now = await themeMisses(page); // the banner reads in every theme
+  await page.screenshot({ path: shot("no-ai-key-revoked") });
+  await page.keyboard.press("2");
+  expect(await askInChat("recipe for steel")).toMatch(/^Steel Ingot: /); // an instant command
+  const log = page.getByTestId("chat-log");
+  await expect(log.locator("[data-answer]").last().locator('[data-card="recipe"]')).toBeVisible();
+  const fast = await askInChat("how do I make steel"); // a fast-lane question: its card, no model
+  expect(fast).toMatch(/^Steel Ingot: .*\(AI is offline; I can do lookups\.\)$/);
+  await expect(log.locator("[data-answer]").last().locator('[data-card="recipe"]')).toBeVisible();
+  expect(await askInChat("what's my tier")).toMatch(/^Your tier: /);
+  expect(await askInChat("show my plans")).toBe("No plans are saved yet.");
+  expect(await askInChat("design a steel line for me")).toContain("needs the AI");
+  await page.keyboard.press("3");
+  await page.getByTestId("search-input").fill("steel");
+  await page.getByTestId("search-go").click();
+  await page.locator('[data-result="gregtech:gt.metaitem.01@11305"]').click();
+  await expect(page.getByTestId("search-detail").locator('[data-card="recipe"] li.recipe')).toHaveCount(5);
+  expect({ now }).toEqual({ now: {} });
+  control("key", "stored"); // recovery: the key works again
+  await expect(banner).toHaveCount(0, { timeout: 15_000 });
+  await page.keyboard.press("2");
+  expect(await askInChat("how do I make steel")).not.toContain("AI is offline");
+});
+
+test("simulated 80% and 100% credit use raise the banner and switch to no-AI mode", async () => {
+  await page.keyboard.press("1");
+  await spend(81);
+  const banner = page.getByTestId("banner-credits");
+  await expect(banner).toBeVisible({ timeout: 15_000 });
+  await expect(banner).toHaveAttribute("data-level", "warn");
+  await expect(banner).toContainText("API credits at 81%");
+  await expect(banner.getByTestId("credit-billing")).toBeVisible();
+  await expect(banner.getByTestId("credit-no_ai")).toBeVisible();
+  await expect(banner.getByTestId("credit-stop")).toBeVisible();
+  await expect(page.getByTestId("banner-ai")).toHaveCount(0); // 80% only asks
+  const at80 = await themeMisses(page);
+  await page.screenshot({ path: shot("credits-80") });
+  await spend(20);
+  await expect(banner).toHaveAttribute("data-paused", "true", { timeout: 15_000 });
+  await expect(banner).toHaveAttribute("data-level", "err");
+  await expect(banner).toContainText("API credits at 101%: AI paused");
+  await expect(page.getByTestId("status-chips").locator('[data-state="ai_offline"]')).toBeVisible();
+  const at100 = await themeMisses(page);
+  await page.screenshot({ path: shot("credits-100") });
+  await page.keyboard.press("2");
+  expect(await askInChat("how do I make steel")).toContain("AI is offline"); // the switch
+  expect(await askInChat("recipe for steel")).toMatch(/^Steel Ingot: /);
+  // Open billing opens the Console and keeps the pause; Resume AI ends it for this cycle.
+  await page.evaluate(() => {
+    (window as unknown as { opened: unknown[] }).opened = [];
+    window.open = (...args: unknown[]) => {
+      (window as unknown as { opened: unknown[] }).opened.push(args[0]);
+      return null;
+    };
+  });
+  await banner.getByTestId("credit-billing").click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { opened: unknown[] }).opened)).toEqual([
+    "https://console.anthropic.com/settings/billing",
+  ]);
+  await expect(banner).toHaveAttribute("data-paused", "true");
+  await banner.getByTestId("credit-resume").click();
+  await expect(banner).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId("status-chips").locator('[data-state="ai_offline"]')).toHaveCount(0);
+  expect(await askInChat("how do I make steel")).not.toContain("AI is offline");
+  const state = await asAdmin<{ credits: { answer: string; paused: boolean } }>("/api/state");
+  expect(state.credits).toMatchObject({ answer: "resume", paused: false });
+  expect({ at80, at100 }).toEqual({ at80: {}, at100: {} });
 });
 
 test("nothing the page drew broke its Content-Security-Policy (no inline style or script)", () => {
