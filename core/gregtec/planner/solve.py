@@ -52,11 +52,16 @@ from scipy.sparse import coo_array
 EU_KEY = "eu"
 BIG_M = (1e4, 1e5)
 FLOOR = 1e-3  # x the smallest running rate (stage 4)
+FLOOR_MIN = 1e-6  # a floor in row units (target 1/s) that HiGHS doesn't round to 0
 TIEBREAK = 1e-6  # raw-input weight in stage 2
 REL_TOL = 1e-7  # an optimum kept as a row may be this much worse (continuous stages)
 ABS_TOL = 1e-9
-RUNNING = 1e-9  # crafts/s (normalised) above which a recipe counts as running
+RUNNING = 1e-7  # crafts/s at a target rate of 1/s: above this a recipe runs (below: solver noise)
 TIME_LIMIT_S = 60.0
+EXPLORE = (
+    2  # routes solved beyond those asked for, the best kept (the proposals are rough)
+)
+MAX_TRIES = 3  # choice proposals per route solved, before giving up on more
 _OPTIONS = {"disp": False, "presolve": True, "mip_rel_gap": 0.0}
 
 
@@ -142,7 +147,8 @@ class _Model:
     exp: dict[str, int] = field(default_factory=dict)
     gate: dict[str, int] = field(default_factory=dict)
     z: dict[str, int] = field(default_factory=dict)
-    c: dict[str, float] = field(default_factory=dict)
+    c: dict[str, float] = field(default_factory=dict)  # item -> its row scale
+    cr: dict[str, float] = field(default_factory=dict)  # recipe -> its column scale
     gated: dict[str, list[int]] = field(default_factory=dict)
     raw_imports: list[int] = field(default_factory=list)
     target_rows: dict[str, dict[int, float]] = field(default_factory=dict)
@@ -183,12 +189,12 @@ def _build(
     ids = {p.id for p in procs}
     fixed = {pid: n for pid, n in net.fixed if pid in ids}
     for p in procs:
-        lb = floors.get(p.id, 0.0) / scale
+        m.cr[p.id] = max([1.0, *(a for k, a in (*p.inputs, *p.outputs) if k != EU_KEY)])
         if p.id in fixed and p.seconds > 0:
-            v = fixed[p.id] / p.seconds / scale
+            v = fixed[p.id] / p.seconds / scale * m.cr[p.id]
             m.x[p.id] = m.var(v, v)
         else:
-            m.x[p.id] = m.var(lb)
+            m.x[p.id] = m.var(floors.get(p.id, 0.0))
     made, used = _items(procs)
     targets = {k: r / scale for k, r in net.targets}
     keys = sorted(set(made) | set(used) | set(targets))
@@ -202,7 +208,8 @@ def _build(
                 v for kk, v in p.inputs if kk == k
             )
             if a:
-                coefs[m.x[p.id]] = coefs.get(m.x[p.id], 0.0) + a / m.c[k]
+                v = a / m.c[k] / m.cr[p.id]
+                coefs[m.x[p.id]] = coefs.get(m.x[p.id], 0.0) + v
         gated: list[int] = []
         if k in targets:
             # At least the rate: a byproduct share of the target is exported with it.
@@ -250,7 +257,7 @@ def _objectives(m: _Model) -> list[dict[int, float]]:
             quantity[v] = 1.0
     for v in m.raw_imports:
         quantity[v] = quantity.get(v, 0.0) + TIEBREAK
-    machines = {m.x[p.id]: p.seconds for p in m.procs if p.seconds > 0}
+    machines = {m.x[p.id]: p.seconds / m.cr[p.id] for p in m.procs if p.seconds > 0}
     return [gates, quantity, machines]
 
 
@@ -307,27 +314,40 @@ def _open_gates(m: _Model, x: np.ndarray) -> dict[str, float]:
     }
 
 
-def _lexicographic(m: _Model) -> tuple[np.ndarray, tuple[float, float, float]] | None:
-    """Stages 1-3; None when a stage finds no solution. Stage 2 keeps stage 1's gate count;
-    stage 3 keeps stage 2's gates (fixed, so nothing leaks) and its gated quantity."""
+def _lexicographic(
+    m: _Model, strict: bool = True
+) -> tuple[np.ndarray, tuple[float, float, float]] | None:
+    """Stages 1-3; None when a stage finds no solution (``strict`` False: the last stage that
+    found one). Stage 2 keeps stage 1's gate count; stage 3 keeps stage 2's gates (fixed, so
+    nothing leaks) and its gated quantity."""
     gates, quantity, machines = _objectives(m)
+
+    def result(x: np.ndarray) -> tuple[np.ndarray, tuple[float, float, float]]:
+        return x, (_value(gates, x), _value(quantity, x), _value(machines, x))
+
     x = _solve(m, gates, [])
     if x is None:
         return None
+    # Stage 1's count, leaks included; if exact arithmetic needs more (many leaks below the
+    # noise threshold), one more gate at a time.
     n1 = sum(_open_gates(m, x).values())
-    x2 = _solve(m, quantity, [(gates, -math.inf, n1 + 0.5)])
+    x2 = None
+    for n in range(int(n1), len(m.gate) + 1):
+        x2 = _solve(m, quantity, [(gates, -math.inf, n + 0.5)])
+        if x2 is not None:
+            break
     if x2 is None:
-        return None
+        return None if strict else result(x)
     for k, value in _open_gates(m, x2).items():
         m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
-    x2 = _solve(m, quantity, [])
-    if x2 is None:
-        return None
-    q = _value(quantity, x2)
+    x2b = _solve(m, quantity, [])
+    if x2b is None:
+        return None if strict else result(x2)
+    q = _value(quantity, x2b)
     x3 = _solve(m, machines, [_keep(quantity, q)])
     if x3 is None:
-        return None
-    return x3, (_value(gates, x3), q, _value(machines, x3))
+        return None if strict else result(x2b)
+    return result(x3)
 
 
 def _run(
@@ -335,10 +355,11 @@ def _run(
     procs: list[Proc],
     floors: Mapping[str, float] | None = None,
     cuts: Sequence[Mapping[str, str]] = (),
+    strict: bool = True,
 ) -> tuple[_Model, np.ndarray, tuple[float, float, float]] | None:
     for big_m in BIG_M:
         m = _build(net, procs, big_m, floors or {}, cuts)
-        out = _lexicographic(m)
+        out = _lexicographic(m, strict)
         if out is not None:
             return m, out[0], out[1]
     return None
@@ -408,10 +429,10 @@ def _flow(
     s = m.scale
 
     def val(i: int, c: float = 1.0) -> float:
-        v = float(x[i]) * c * s
-        return 0.0 if abs(v) < RUNNING * s else v
+        v = float(x[i])
+        return 0.0 if abs(v) < RUNNING else v * c * s
 
-    crafts = tuple(sorted((p.id, val(m.x[p.id])) for p in m.procs))
+    crafts = tuple(sorted((p.id, val(m.x[p.id], 1 / m.cr[p.id])) for p in m.procs))
     imports = tuple(
         (k, val(i, m.c[k])) for k, i in sorted(m.imp.items()) if val(i, m.c[k]) > 0
     )
@@ -467,11 +488,13 @@ def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
     flow = _flow(m, x, objs, pick, None, ())
     if flow.all_run:
         return flow
-    running = [v for _, v in flow.crafts if v > 0]
+    running = [
+        float(x[m.x[p.id]]) / m.cr[p.id] for p in procs if x[m.x[p.id]] >= RUNNING
+    ]
     if not running:
         raise SolveError("no recipe runs")
-    floor = FLOOR * min(running)
-    replay = _run(fixed, procs, floors=dict.fromkeys((p.id for p in procs), floor))
+    floor = FLOOR * min(running)  # crafts/s at a target of 1/s
+    replay = _run(fixed, procs, floors=_floors(m, procs, floor))
     if replay is None:
         idle = [pid for pid, v in flow.crafts if v <= 0]
         return _flow(
@@ -483,12 +506,25 @@ def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
             [f"every-machine-runs replay infeasible; idle: {', '.join(idle)}"],
         )
     m2, x2, objs2 = replay
-    return _flow(m2, x2, objs2, pick, floor, ())
+    return _flow(m2, x2, objs2, pick, floor * m2.scale, ())
+
+
+def _floors(m: _Model, procs: Sequence[Proc], floor: float) -> dict[str, float]:
+    """Each recipe's stage-4 floor in its column's units: ``floor`` crafts/s (at a target of
+    1/s), but at least FLOOR_MIN, which HiGHS doesn't round to 0."""
+    return {p.id: max(floor * m.cr[p.id], FLOOR_MIN) for p in procs}
 
 
 def routes(net: Network, n: int = 3) -> list[Flow]:
-    """Up to ``n`` routes, each differing from the others in at least one primary choice
-    (no-good cuts), in the order found (not ranked: WO-3.5 ranks)."""
+    """Up to ``n`` routes, each differing from the others in at least one primary choice.
+
+    The choice MILP runs on the whole network, where a recipe of a branch that isn't chosen
+    still counts as a user of what it takes, and HiGHS may let an unchosen recipe run a
+    little within its integrality tolerance; so it only proposes a choice (stages 1-3, as far
+    as they go). Each proposal is solved exactly as a route (:func:`solve_route`), a no-good
+    cut excludes it, and the MILP runs again, for ``n`` + :data:`EXPLORE` routes. The best
+    ``n`` by their exact objectives (gates, gated quantity, machines), then their choices,
+    are returned in that order: a fixed order, not a ranking (WO-3.5 ranks)."""
     pins = dict(net.pinned)
     open_choices = [(k, rs) for k, rs in net.choices if k not in pins and len(rs) > 1]
     narrowed = Network(
@@ -508,19 +544,26 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
     procs = [p for p in narrowed.procs if p.id not in _excluded(narrowed, pins)]
     cuts: list[dict[str, str]] = []
     out: list[Flow] = []
-    while len(out) < n:
-        found = _run(narrowed, procs, cuts=cuts)
+    failed: list[str] = []
+    while len(out) < n + EXPLORE and len(cuts) < (n + EXPLORE) * MAX_TRIES:
+        found = _run(narrowed, procs, cuts=cuts, strict=False)
         if found is None:
             break
         m, x, _ = found
         choice = _choice(m, x)
-        out.append(solve_route(narrowed, choice))
-        cuts.append({k: choice[k] for k, _ in open_choices if k in choice})
-        if not cuts[-1]:
+        cut = {k: choice[k] for k, _ in open_choices if k in choice}
+        if len(cut) < len(open_choices) or cut in cuts:
             break
+        cuts.append(cut)
+        try:
+            out.append(solve_route(narrowed, choice))
+        except SolveError as exc:
+            failed.append(str(exc))
     if not out:
-        raise SolveError("no route has a solution")
-    return out
+        why = f": {failed[0]}" if failed else ""
+        raise SolveError(f"no route has a solution{why}")
+    out.sort(key=lambda f: (len(f.gates), f.objectives[1:], f.choice))
+    return out[:n]
 
 
 def exact_counts(
@@ -538,9 +581,12 @@ def exact_counts(
         free_out=net.free_out,
         prune=False,
     )
-    floors = dict.fromkeys((p.id for p in procs), flow.floor) if flow.floor else {}
+    scale = max((r for _, r in net.targets), default=1.0)
+    floor = flow.floor / scale if flow.floor else 0.0
     for big_m in BIG_M:
-        m = _build(fixed, procs, big_m, floors, ())
+        m = _build(fixed, procs, big_m, {}, ())
+        if floor:
+            m = _build(fixed, procs, big_m, _floors(m, procs, floor), ())
         _, quantity, _ = _objectives(m)
         for k, g in m.gate.items():
             m.lb[g] = m.ub[g] = 1.0 if k in flow.gates else 0.0
@@ -551,7 +597,8 @@ def exact_counts(
             if cps > 0:
                 counts[p.id] = m.var(0.0, math.inf, integer=True)
                 # x (normalised) x scale <= count x crafts/s of one machine
-                extra.append(({m.x[p.id]: m.scale, counts[p.id]: -cps}, -math.inf, 0.0))
+                x_real = m.scale / m.cr[p.id]
+                extra.append(({m.x[p.id]: x_real, counts[p.id]: -cps}, -math.inf, 0.0))
         x = _solve(m, dict.fromkeys(counts.values(), 1.0), extra)
         if x is not None:
             return {pid: round(float(x[i])) for pid, i in sorted(counts.items())}

@@ -25,7 +25,7 @@ from gregtec.packupdate import plans as pack_plans
 from gregtec.planner import alternatives, chains, plan, plancli, sizing, solve
 from gregtec.planner.gtmath.processing import EnergyHatch
 from gregtec.planner.machines import Cited, MachineOption, Sizing
-from gregtec.planner.request import Request, RequestError
+from gregtec.planner.request import Pin, Request, RequestError
 
 
 def _graph_fixture() -> ModuleType:
@@ -154,16 +154,16 @@ def test_node_numbers_trace_to_recipes_and_machines(conn: sqlite3.Connection) ->
 
 
 def test_flows_balance(conn: sqlite3.Connection) -> None:
-    """The acid loop route: every item's makers equal its users plus net exports."""
-    d = design(conn, Request(WIDGET, qty=2))
-    loop = next(
-        p for p in d.plans if any(n["for"] == ["fluid:testacid"] for n in p["nodes"])
-    )
+    """The acid loop route (pinned): the acid made is the acid taken."""
+    acid = ref_of(conn, "chemicalreactor", 0)
+    d = design(conn, Request(WIDGET, qty=2, pins=(Pin(WIDGET, acid),)))
+    loop = d.plans[0]
+    assert any(n["for"] == ["fluid:testacid"] for n in loop["nodes"])
     by_n = {n["n"]: n for n in loop["nodes"]}
     into = {(e["to"], e["item"]): e["rate_s"] for e in loop["edges"]}
-    acid = sum(v for (to, item), v in into.items() if item == "fluid:testacid")
+    taken = sum(v for (_, item), v in into.items() if item == "fluid:testacid")
     maker = next(n for n in loop["nodes"] if n["for"] == ["fluid:testacid"])
-    assert acid == pytest.approx(maker["crafts_s"] * 2000)
+    assert taken == pytest.approx(maker["crafts_s"] * 2000)
     assert all(e["from"] in by_n and e["to"] in by_n for e in loop["edges"])
     assert loop["target"]["rate_s"] == pytest.approx(2.0)
 
