@@ -20,23 +20,27 @@ An item is **free** to import when nothing in the network makes it or the graph 
 boundary (raw, stock, line outputs, request, locked, depth) and free to export when nothing in
 the network uses it or the graph names it a boundary; any other crossing is a **gate**,
 ``imp_k + exp_k <= M g_k``. M is per row in row units: 1e4, then 1e5 if HiGHS finds the stage
-infeasible (1e7 caused spurious infeasibility, [E§3.3]). The target rate is normalised to 1
-while solving.
+infeasible (1e7 caused spurious infeasibility, [E§3.3]). Each recipe's column is scaled by its
+largest port too, and the target rate is normalised to 1 while solving, so small rates stay
+clear of HiGHS's tolerances. Those tolerances let a "closed" gate leak about ``M x 1e-6``, so
+a gate whose item crosses at all counts as open (:func:`_open_gates`), and stage 3 runs with
+stage 2's gates fixed.
 
 **Stages** (lexicographic; each optimum is kept as a row of the next stage): (1) minimise
 gates; (2) minimise the gated quantity, with a ``1e-6`` tiebreak on the raw inputs (free
 imports, EU left out); (3) minimise total machines ``sum_r x_r t_r``; (4) the every-machine-runs
 replay: every recipe of the route gets a floor of ``1e-3`` x the smallest running rate of
-stage 3 and stages 1-3 run again (a gate shortcut that leaves machines idle is refused,
+stage 3 (at least :data:`FLOOR_MIN` row units) and stages 1-3 run again (a gate shortcut that leaves machines idle is refused,
 [E§3.3]). Integerising (step 6) is ``ceil`` and utilisation in :mod:`.sizing`, or, on request,
 :func:`exact_counts`: an integer machine count per recipe, minimising their sum under the
 same optima.
 
-**Routes** (:func:`routes`): the stages run once with the choice binaries free; the primary
-choices of the result are a route. A no-good cut (at least one primary choice differs) is
-added and the stages run again, up to ``n`` routes. Each route is then solved on its own
-(:func:`solve_route`), on the recipes it reaches from the target (:func:`active`), replay
-included. The order found is not a ranking: ranking is planner/rank.py's (WO-3.5).
+**Routes** (:func:`routes`): the stages run with the choice binaries free and propose the
+primary choices of a route; it is solved on its own (:func:`solve_route`, on the recipes it
+reaches from the target, :func:`active`, replay included); a no-good cut (at least one primary
+choice differs) is added and the MILP runs again. Of ``n`` + :data:`EXPLORE` routes the best
+``n`` by their exact objectives are kept, in that order; it is not a ranking (planner/rank.py's,
+WO-3.5).
 """
 
 from __future__ import annotations
