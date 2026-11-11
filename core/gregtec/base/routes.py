@@ -31,6 +31,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from gregtec import store
 from gregtec.agents.tools import items
+from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Call, Env, ToolError
 from gregtec.api import dashboard
 from gregtec.api.security import Principal
@@ -91,7 +92,9 @@ def add_routes(
         log.info("my base edited", extra={"what": what, "by": who.name})
         if what == "tier":  # the header's tier and theme follow at once, not in 5 s
             await asyncio.to_thread(dashboard.board_of(core).refresh_data)
-            asyncio.ensure_future(dashboard.push_state(core))
+            await dashboard.push_state(
+                core
+            )  # never raises (logged), as /api/ask awaits it
         return out
 
     @app.get("/api/base")
@@ -162,7 +165,11 @@ def _find(core: "Core", q: str, kind: str) -> dict[str, Any]:
     db = access.db_path(core.cfg.gos_home)
     if not db.is_file():
         raise HTTPException(404, "no recipe DB yet: run gos db build")
-    env = core.asker.registry.env if core.asker is not None else Env(db=db)
+    env = (  # the glossary's aliases ("EBF") before the assistant starts, too
+        core.asker.registry.env
+        if core.asker is not None
+        else Env(db=db, glossary=Glossary.find(core.cfg.gos_home / "vault"))
+    )
     try:
         conn = access.connect(db, readonly=True)
     except (access.SchemaError, sqlite3.Error) as exc:

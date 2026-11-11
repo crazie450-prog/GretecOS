@@ -6,8 +6,8 @@ server harness; locally: mod/README.md), and writes nothing outside tmp_path:
 - the Electric Blast Furnace (mte:1000) and an item and a fluid of the real export are kept by
   their stable keys, and all of it, the tier override too, outlives a second ``gos db build``
   and a reopened connection (a restarted core);
-- the planner's machine model follows My base: with ``require_owned`` a real EBF recipe gets
-  the EBF only once it is ticked.
+- the designer follows My base: with ``require_owned``, the player WO-3.3's graph builder sizes
+  for (``graph.player`` on :class:`MyBase`) gets a real EBF recipe's EBF only once it is ticked.
 """
 
 from __future__ import annotations
@@ -21,7 +21,9 @@ from gregtec import store
 from gregtec.base import state
 from gregtec.db import access, build
 from gregtec.ingest import collect
+from gregtec.planner import graph
 from gregtec.planner import machines as m
+from gregtec.planner.request import Constraints, Request
 
 REPO = Path(__file__).resolve().parents[2]
 EBF = 1000
@@ -70,14 +72,17 @@ def test_my_base_outlives_a_rebuild_on_real_data(home: Path) -> None:
         conn.close()
 
 
-def test_the_machine_model_follows_my_base_on_real_data(home: Path) -> None:
+def test_the_designer_follows_my_base_on_real_data(home: Path) -> None:
     conn = store.connect(access.db_path(home))
     try:
         row = conn.execute(EBF_RECIPE).fetchone()
         assert row is not None, "the harness run has no EBF recipe at MV or below"
 
         def options() -> set[int]:
-            player = m.Player(tier=2, owned=m.owned_machines(conn), require_owned=True)
+            request = Request(
+                IRON, tier_cap=2, constraints=Constraints(require_owned=True)
+            )
+            player = graph.player(request, state.MyBase.from_db(conn))
             return {o.mte_id for o in m.select(conn, row[0], player).options}
 
         state.set_machine(conn, EBF, 0)

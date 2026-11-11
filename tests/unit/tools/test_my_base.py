@@ -2,19 +2,18 @@
 
 Defaults (D63, D64): the quests' tier, nothing owned, nothing stocked, no lines. Edits keyed on
 stable keys (GT mte ids, item and fluid keys, D210); which source's machine count is used (D211);
-the tier override; and that all of it outlives ``gos db build`` and a restart. WO-3.3's graph
-builder isn't on main yet, so the boundary is checked through what the designer reads
-(``BaseInputs``) and through the machine model's ``require_owned``; WO-3.7 adds the
-end-to-end plan test.
+the tier override; and that all of it outlives ``gos db build`` and a restart. The plan's
+boundary moving with each edit, through WO-3.3's graph builder and `gos plan`, is
+tests/unit/planner/test_my_base_designer.py.
 """
 
 from __future__ import annotations
 
 import inspect
+import shutil
 import sqlite3
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 
 import pytest
 
@@ -25,22 +24,14 @@ from gregtec.agents.tools.registry import Registry
 from gregtec.base import state
 from gregtec.db import access, build
 from gregtec.db import quests as quest_db
+from gregtec.planner import graph
 from gregtec.planner import machines as m
+from gregtec.planner.request import BaseInputs, Constraints, Request
 
 from .conftest import GT, JET_FUEL, KEY, STEEL, Runner
 
 EBF, MACERATOR, BBF = 1000, 31, 140
 EBF_RECIPE = "r:gt.recipe.blastfurnace/9c40869458cb"
-
-
-@runtime_checkable
-class BaseInputs(Protocol):
-    """WO-3.3's interface (core/gregtec/planner/request.py), as the work orders give it."""
-
-    def tier_cap(self) -> int: ...
-    def owned_machines(self) -> Mapping[int, int]: ...
-    def stock(self) -> Mapping[str, float]: ...
-    def line_outputs(self) -> Mapping[str, float]: ...
 
 
 @pytest.fixture
@@ -85,14 +76,26 @@ def test_my_base_implements_the_interface_exactly() -> None:
         assert str(got.return_annotation) == str(want.return_annotation)
 
 
-def test_a_db_without_my_base_tables_reads_as_empty(tool_db: Path) -> None:
+def test_a_db_without_my_base_tables_reads_as_empty(
+    tool_db: Path, tmp_path: Path
+) -> None:
     """The game DB opened read-only before the core ever ran: nothing owned, nothing stocked."""
-    c = access.connect(tool_db, readonly=True)
+    db = tmp_path / "game.sqlite"
+    shutil.copyfile(tool_db, db)
+    raw = sqlite3.connect(
+        db
+    )  # a copy without the core's tables, whatever opened tool_db
     try:
-        if state.has_table(c, state.MACHINE_TABLE):
-            pytest.skip("this DB already has My base's tables")
+        for table in (state.MACHINE_TABLE, state.STOCK_TABLE):
+            raw.execute(f"DROP TABLE IF EXISTS {table}")
+        raw.commit()
+    finally:
+        raw.close()
+    c = access.connect(db, readonly=True)
+    try:
+        assert not state.has_table(c, state.MACHINE_TABLE)
         assert state.machines(c) == [] and state.stock(c) == []
-        assert m.owned_machines(c) == frozenset()
+        assert state.MyBase.from_db(c).owned_machines() == {}
         with pytest.raises(state.BaseError, match="gregtec.store.connect"):
             state.clear_machine(c, EBF)
     finally:
@@ -266,18 +269,15 @@ def test_my_base_outlives_gos_db_build_and_a_restart(
 # --- the designer's inputs -----------------------------------------------------------------------
 
 
-def test_owned_machines_change_what_the_machine_model_allows(
+def test_owned_machines_change_what_the_designer_allows(
     conn: sqlite3.Connection,
 ) -> None:
-    """The planner's own reader (machines.owned_machines) follows My base, so a request with
-    require_owned gets the EBF only once Clayton ticks it."""
+    """The player WO-3.3's graph builder sizes for (graph.player on MyBase) follows My base, so
+    a request with require_owned gets the EBF only once Clayton ticks it."""
+    request = Request(STEEL, constraints=Constraints(require_owned=True))
 
     def ebf_options() -> set[int]:
-        player = m.Player(
-            tier=state.MyBase.from_db(conn).tier_cap(),
-            owned=m.owned_machines(conn),
-            require_owned=True,
-        )
+        player = graph.player(request, state.MyBase.from_db(conn))
         return {o.mte_id for o in m.select(conn, EBF_RECIPE, player).options}
 
     state.set_tier(conn, "HV")
@@ -299,6 +299,32 @@ def test_the_designer_sees_every_edit(conn: sqlite3.Connection) -> None:
     assert second.stock() == {STEEL: 16.0} and second.owned_machines() == {BBF: 1}
     second.stock()[STEEL] = 0  # type: ignore[index]  # a copy: the snapshot stays as it was
     assert second.stock() == {STEEL: 16.0}
+
+
+def test_from_db_reads_one_state(
+    conn: sqlite3.Connection, fresh_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edit landing between from_db's reads (tier, machines, stock) isn't half seen."""
+    other = store.connect(fresh_db)  # the dashboard's edit, on another connection
+    owned = state.owned_machines
+
+    def edit_meanwhile(c: sqlite3.Connection) -> dict[int, int]:
+        state.set_stock(other, STEEL, 16)
+        return owned(c)
+
+    monkeypatch.setattr(state, "owned_machines", edit_meanwhile)
+    try:
+        assert state.MyBase.from_db(conn).stock() == {}
+        assert not conn.in_transaction
+        monkeypatch.undo()
+        assert state.MyBase.from_db(conn).stock() == {STEEL: 16.0}
+    finally:
+        other.close()
+
+
+def test_clear_machine_refuses_an_unknown_source(conn: sqlite3.Connection) -> None:
+    with pytest.raises(state.BaseError, match="source must be"):
+        state.clear_machine(conn, EBF, source="guess")
 
 
 # --- base_get ----------------------------------------------------------------------------------

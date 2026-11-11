@@ -247,6 +247,11 @@ def test_find_items_and_machines(client: TestClient) -> None:
     assert machines["candidates"][0]["mte_id"] == EBF
     r = client.get("/api/base/find", params={"q": "x", "kind": "ore"}, headers=admin())
     assert r.status_code == 400
+    # The glossary's aliases resolve before the assistant starts (this core has none).
+    alias = client.get(
+        "/api/base/find", params={"q": "EBF", "kind": "machine"}, headers=admin()
+    ).json()
+    assert alias["candidates"][0]["mte_id"] == EBF
 
 
 def test_find_before_a_db_build(tmp_path: Path) -> None:

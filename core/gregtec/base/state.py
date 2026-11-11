@@ -20,7 +20,8 @@ written and stored in the form the catalog gives it, so the designer meets the s
 recipe graph. A key a later pack update drops stays listed, marked as not in the current DB.
 
 :class:`MyBase` is what the designer reads: WO-3.3's ``BaseInputs`` interface
-(``gregtec.planner.request``), implemented structurally with exactly its four methods. Accepted
+(``gregtec.planner.request``), implemented structurally with exactly its four methods; `gos plan`
+and `gos graph` build with it, read in one transaction (:meth:`MyBase.from_db`). Accepted
 lines have no source yet (plans are accepted from WO-3.7, the EU ledger is WO-4.4), so
 :meth:`MyBase.line_outputs` is empty until one exists (D211).
 
@@ -78,6 +79,20 @@ def _write(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+@contextmanager
+def _read(conn: sqlite3.Connection) -> Iterator[None]:
+    """One read transaction, so the reads inside see one state of the DB (a write lands wholly
+    before or after them); inside a caller's transaction, that one."""
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        conn.execute("COMMIT")
 
 
 # --- owned machines ------------------------------------------------------------------------
@@ -193,6 +208,8 @@ def clear_machine(
     """Drop ``source``'s row for ``mte_id`` (the other sources' counts apply again). False when
     there was none."""
     mte_id = _mte(mte_id)
+    if source not in SOURCES:
+        raise BaseError(f"source must be one of {', '.join(SOURCES)}")
     with _write(conn):
         gone = conn.execute(
             f"DELETE FROM {MACHINE_TABLE} WHERE mte_id = ? AND source = ?",
@@ -369,12 +386,15 @@ class MyBase:
 
     @classmethod
     def from_db(cls, conn: sqlite3.Connection) -> MyBase:
-        return cls(
-            tier(conn).tier,
-            owned_machines(conn),
-            {s.key: s.qty for s in stock(conn)},
-            {},  # accepted lines have no source yet (D211)
-        )
+        """Tier, machines and stock read in one transaction (a dashboard edit made meanwhile
+        is wholly in it or not at all)."""
+        with _read(conn):
+            return cls(
+                tier(conn).tier,
+                owned_machines(conn),
+                {s.key: s.qty for s in stock(conn)},
+                {},  # accepted lines have no source yet (D211)
+            )
 
     def tier_cap(self) -> int:
         """The GT voltage tier index (0 = ULV), after any override."""
