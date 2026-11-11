@@ -189,7 +189,7 @@ def design(
     return Design(g, tuple(ranked))
 
 
-def _rounded(value: Any) -> Any:
+def _rounded(value: object) -> object:
     """Every float in ``value`` to 9 significant digits (stable text, :func:`_num`)."""
     if isinstance(value, float):
         return _num(value)

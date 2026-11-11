@@ -74,7 +74,9 @@ def load_scarcity(path: Path = SCARCITY) -> dict[str, Weight]:
         try:
             w = float(weight)
         except ValueError:
-            raise ValueError(f"{path.name}:{n}: weight {weight!r} is not a number") from None
+            raise ValueError(
+                f"{path.name}:{n}: weight {weight!r} is not a number"
+            ) from None
         if not math.isfinite(w) or not 0 <= w <= 1:
             raise ValueError(f"{path.name}:{n}: weight {w} must be between 0 and 1")
         if key in out:
@@ -83,7 +85,9 @@ def load_scarcity(path: Path = SCARCITY) -> dict[str, Weight]:
     return out
 
 
-def materials(conn: sqlite3.Connection, keys: list[str]) -> dict[str, tuple[str, float]]:
+def materials(
+    conn: sqlite3.Connection, keys: list[str]
+) -> dict[str, tuple[str, float]]:
     """Item key -> (GT material, units per item) for the items GT tags with a material."""
     out: dict[str, tuple[str, float]] = {}
     for key in keys:
@@ -228,8 +232,11 @@ def route(
     out: dict[str, Any] = {
         "machines": sum(t["count"] for t in by_type),
         "by_type": by_type,
-        "new_types": [f"mte:{t['mte']}" for t in sorted(by_type, key=lambda t: t["mte"])
-                      if t["new"]],  # fmt: skip
+        "new_types": [
+            f"mte:{t['mte']}"
+            for t in sorted(by_type, key=lambda t: t["mte"])
+            if t["new"]
+        ],
         "eu": eu,
         "eut_avg": math.fsum(e["eut_avg"] for e in eu),
         "eut_peak": sum(e["eut_peak"] for e in eu),
@@ -244,8 +251,9 @@ def route(
         "eff_h": effort["eff_h"],
         "build_h": effort["build_h"],
         "unlock_h": effort["unlock_h"],
-        "effort": {k: effort[k] for k in ("craft_s", "rows", "components", "unlocks",
-                                          "notes")},  # fmt: skip
+        "effort": {
+            k: effort[k] for k in ("craft_s", "rows", "components", "unlocks", "notes")
+        },
         "complexity": complexity(g, plan),
     }
     window = plan["target"].get("window_s")

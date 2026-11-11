@@ -129,7 +129,9 @@ def read_prefs(vault: Path | None) -> Prefs:
     except FileNotFoundError:
         return BALANCED
     except (OSError, UnicodeDecodeError) as exc:
-        return Prefs(notes=(f"me/prefs.md unreadable ({type(exc).__name__}); balanced",))
+        return Prefs(
+            notes=(f"me/prefs.md unreadable ({type(exc).__name__}); balanced",)
+        )
     return parse_prefs(text)
 
 
@@ -169,7 +171,9 @@ def _tier(m: Mapping[str, Any]) -> int:
     return metrics.TIERS[t] if t else -1
 
 
-def order(plans: Sequence[dict[str, Any]], prefs: Prefs = BALANCED) -> list[dict[str, Any]]:
+def order(
+    plans: Sequence[dict[str, Any]], prefs: Prefs = BALANCED
+) -> list[dict[str, Any]]:
     """The plans ranked: each gets its ``rank``; the base routes in rank order, then the addon
     column. Plans need their ``metrics``."""
     base = [p for p in plans if p["route"]["column"] != "addon"]

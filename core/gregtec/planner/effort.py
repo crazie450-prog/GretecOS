@@ -140,7 +140,9 @@ def structure_blocks(conn: sqlite3.Connection, mte: int) -> dict[str, int] | Non
     return best
 
 
-def maps_of(conn: sqlite3.Connection, mtes: Sequence[int]) -> dict[int, tuple[str, ...]]:
+def maps_of(
+    conn: sqlite3.Connection, mtes: Sequence[int]
+) -> dict[int, tuple[str, ...]]:
     """mte id -> the recipe maps it runs."""
     out: dict[int, list[str]] = {}
     for mte, name in conn.execute(
@@ -190,7 +192,9 @@ class _Solved:
     graph: Graph
     sized: Mapping[str, sizing.Sized]
     crafts: dict[str, float]  # recipe -> crafts for one component
-    gated: tuple[str, ...]  # items the flow imports through a gate (their making not counted)
+    gated: tuple[
+        str, ...
+    ]  # items the flow imports through a gate (their making not counted)
 
 
 class Effort:
@@ -355,4 +359,3 @@ class Effort:
 def _uncovered(w: Walk, covered: set[str]) -> list[tuple[str, int]]:
     """(map, mte) of the walk's machine steps on maps not yet covered, in map order."""
     return sorted((n, m) for n, m in w.machine.items() if n not in covered)
-
