@@ -1,4 +1,4 @@
-# OC agent: Lab steps (WO-7.2)
+# OC agent: Lab steps (WO-7.2, WO-7.3)
 
 Clayton runs these in Lab's `lab-ops` world once WO-7.2 and WO-7.1 (the core's `/oc/telemetry` endpoint) are merged
 and deployed: about 1.5 hours, most of it the agent running on its own. They check what the build container can't:
@@ -133,6 +133,55 @@ network holds; the Lab's small ME system can't show it. This makes it bigger.
     watched items match the terminal's; the OC screen shows no `not enough memory`; `bytes free` in the log's
     `alive:` lines stays roughly level.
 
+## H. M1: the file mailbox, one hour (WO-7.3, about 70 minutes)
+
+The acceptance of plan §8 WO-7.3: **1 h in `lab-ops` with no lost or half-read files**. The same computer, with the
+agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
+[oc_bridge.md](../contracts/oc_bridge.md); decisions D216-D218. The core then writes in `lab-ops`'s OC folder only
+(`inbox.tmp`, `inbox.json`, and the rename of `outbox.json` back to `outbox.tmp`); nothing here touches Play.
+
+22. With WO-7.3 deployed (step 1), copy the mailbox transport next to the agent. If the step-6 window is closed, run
+    its first three lines again to set `$oc`, `$drive` and `$gos`:
+    ```powershell
+    Copy-Item C:\GregtecOS-app\current\oc\mailbox.lua $gos
+    $drive.Name              # the drive's address, for step 24
+    ```
+23. In `gos-agent.cfg` (step 6), change `transport = "auto",` to `transport = "mailbox",` and save.
+24. Add this to `%USERPROFILE%\GregtecOS\config\gos.toml`, with step 22's address, and save:
+    ```toml
+    [mailbox.lab]
+    world = "lab-ops"
+    drive = "<the address from step 22>"
+    dir = "home/gos/mailbox"
+    ```
+    Restart the core so it reads it, then check it watches the folder:
+    ```powershell
+    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe stop
+    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe serve --detach
+    Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern 'OC mailbox' | Select-Object -Last 3
+    ```
+    Expect `OC mailbox watched` (and, once the agent has made the folder, `OC mailbox ready`). A gos.toml mistake is
+    logged as the reason and stops only the mailbox.
+25. In the OC shell, stop the agent if it runs (Ctrl+C), then `gos-agent --once`. Expect `sent N bytes; the core
+    answered`. The agent's log starts with `mailbox /home/gos/mailbox on drive ...; in gos.toml: drive = "...", dir =
+    "home/gos/mailbox"`: the drive and dir must match step 24. `no reply from the core yet` means the core doesn't
+    watch this folder (step 24).
+26. Run `gos-agent` and note the time. Leave the game running for an hour, unpaused, as in step 11. Halfway, send one
+    `say` through the core (step 12); it should print in chat within about 10 s.
+27. After the hour, stop the agent (Ctrl+C) and read both sides' numbers:
+    ```powershell
+    Select-String -Path (Join-Path $gos 'gos-agent.log') -Pattern 'alive:' | Select-Object -Last 2
+    Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern 'OC mailbox stats' | Select-Object -Last 2
+    Get-ChildItem (Join-Path $gos 'mailbox') | Select-Object Name, Length, LastWriteTime
+    ```
+    The pass: in the last `alive:` line, `failed` 0 and `N written` about 720 (one per 5 s), `removes failed` 0; in
+    the core's last stats line, `refused_bad_payload` absent or 0 (a half-read `outbox.json`), `accepted` equal to
+    the agent's `written` (none lost; a few `repeats` are harmless), `seq_gaps` equal to the agent's `waits for the
+    core`, `withdrawn` 0, `poll_errors` absent. The folder holds `outbox.tmp` and at most one `inbox.json` or
+    `outbox.json`, no `inbox.tmp`.
+28. Set `transport` back to `"auto"` in `gos-agent.cfg` if section E should use HTTP again. Leave `[mailbox.lab]` in
+    gos.toml or remove it; with it, the core keeps watching the folder.
+
 ## What to send back
 
 - Step 7's `--list` output (V20) and step 8's line.
@@ -140,3 +189,4 @@ network holds; the Lab's small ME system can't show it. This makes it bigger.
 - The last three `alive:` lines of `gos-agent.log`, and any warning lines.
 - Steps 12, 13 (the ingot counts), 16 and 17's outcomes, and any step whose output differed from what is written here.
 - Section G's two sets of mean tick times and step 21's checks.
+- Section H: step 25's line and step 27's output.
