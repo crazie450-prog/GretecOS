@@ -1,0 +1,35 @@
+-- Gregtec OS OC agent config (WO-7.2). Copy to gos-agent.cfg next to gos-agent.lua.
+-- One Lua table of plain values; comments are fine. It is read with no globals (no os, io or
+-- component), but it is still Lua, so keep it to values like these. Unknown keys are refused, so a
+-- typo can't hide. Every key but token is optional; the values below are the defaults.
+{
+  -- http: the internet card POSTs to the core (M2). mailbox: the file mailbox (M1, WO-7.3).
+  -- auto: http when an internet card is in, otherwise the mailbox.
+  transport = "auto",
+
+  -- The core's OC endpoint. Always 127.0.0.1, never localhost: OpenComputers.cfg allows only
+  -- 127.0.0.1 (plan 5.6, Appendix C). Change the port if gos.toml's [core] port isn't 8765.
+  url = "http://127.0.0.1:8765/oc/telemetry",
+
+  -- The bearer token the core issued for this agent. Replace the text between the quotes.
+  token = "paste the OC agent token here",
+
+  cycle_s = 5,            -- power and machines, 5 to 10 s (plan 7.9)
+  ae2_s = 60,             -- the AE2 watchlist, 60 s or slower
+  sensor_s = 60,          -- how old a machine's sensor lines may get (one tick per read)
+  sensor_per_cycle = 2,   -- sensor reads per cycle at most
+
+  -- AE2 watchlist: registry name and damage (meta), never numeric ids (EndlessIDs); at most 64.
+  -- Each entry is one exact lookup (one server tick) of the stack with that name and damage and
+  -- no NBT, so a name with thousands of variants, like gregtech:gt.metaitem.01, costs no more.
+  watch = {
+    { name = "minecraft:iron_ingot", damage = 0 },
+    { name = "gregtech:gt.metaitem.01", damage = 11305 },  -- steel ingot
+  },
+
+  -- gt_machine names read as power storage (exact EU as decimal strings).
+  power_names = { "multimachine.supercapacitor" },
+
+  ignore = {},            -- address prefixes of components to leave out
+  me = false,             -- address prefix of the AE2 controller/interface to use
+}

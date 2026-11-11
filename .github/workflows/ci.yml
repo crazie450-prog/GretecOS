@@ -26,6 +26,9 @@ jobs:
       # Managed CPython 3.12 from .python-version, the same kind uv installs on the PC.
       - run: uv python install
       - run: uv sync --locked
+      # WO-7.2: Lua 5.3 runs the OC agent's tests (tests/oc); luac5.2 checks it still loads on a 5.2 CPU.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lua5.3 lua5.2
       - run: uv run --locked ruff check --output-format=github .
       - run: uv run --locked ruff format --check .
       - run: uv run --locked pytest
@@ -33,6 +36,8 @@ jobs:
           # WO-0.8: lets tests/security/test_gos_dev_setup.py create a user and change ACLs.
           # Only the ephemeral Windows runner sets it; never set it on a real PC.
           GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && runner.environment == 'github-hosted' && '1' || '' }}
+          # WO-7.2: on Linux a missing Lua fails tests/oc instead of skipping it (Windows has none).
+          GOS_REQUIRE_LUA: ${{ runner.os == 'Linux' && '1' || '' }}
 
   mod:
     # WO-1.1: GregtecLink build, then the headless harness (dev server, scripted export, checks, exit),
