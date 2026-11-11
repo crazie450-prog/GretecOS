@@ -66,10 +66,12 @@ unmanaged drive, a read-only disk and `/tmp` are refused by the agent). Decision
 | `outbox.tmp` | OC | Opened `"w"`, the whole message written, closed. Then renamed to `outbox.json`, **only while there is no `outbox.json`** (OC waits up to `wait_s`, default 2 s, polling `exists`); a rename that returns false (Windows: another program holds the target) is tried again, 8 times 50 ms apart. |
 | `outbox.json` | OC (rename) | The core stats it every 0.25 s, reads it with `safe_open()` (open, read, close; share-delete; a read that isn't one whole JSON object is retried 3 times), hands it to the ingest, then **renames it back to `outbox.tmp`**: that is the acknowledgement OC sees (`outbox.json` gone). Why back to `outbox.tmp` and not a delete: OC's drive counts every byte OC writes to a new file and never learns of a file removed from outside until the world loads again [F§2.3]; OC writing over the old `outbox.tmp` keeps its count flat. |
 | `inbox.tmp` | core | The reply written, flushed, fsynced, closed (`"x"`: never through a link), then `os.replace`-d to `inbox.json`, retried on `PermissionError` (20 ms doubling, 6 tries; then the next poll). |
-| `inbox.json` | core (replace) | Written **only while there is none**. OC polls it with `exists` (a direct call), checks its size against `reply_max`, reads it in 2048-byte chunks, closes it, then removes it: the acknowledgement the core sees. A reply OC hasn't taken in 30 s (the game paused, the agent stopped) is withdrawn by the core and its commands go back to the queue under the same ids. |
+| `inbox.json` | core (replace) | Written **only while there is none**. OC polls it with `exists` (a direct call), checks its size against `reply_max`, reads it in 2048-byte chunks, closes it, then removes it: the acknowledgement the core sees. A reply OC hasn't taken in 30 s (the game paused, the agent stopped) is withdrawn by the core and its commands go back to the queue under the same ids; the core then writes no reply for 2 s, so OC's remove (a tick after its close) can't take a new reply unread. |
 
 Every message carries `boot` and `seq`; the core records a message only once per (agent, boot, seq) and its reply
-acks the highest seq it has. So a message read twice (the core read it, then couldn't rename it back), a reply read
+acks the highest seq it has. An agent is the computer's `address` *within one binding* the core vouches for (the
+mailbox's gos.toml role, `lab` or `play`; for M2 the instance the token is issued for), never the address alone: a
+Lab message naming Play's computer is another agent (D217). So a message read twice (the core read it, then couldn't rename it back), a reply read
 twice (OC couldn't remove it) or a reply withdrawn while OC read it changes nothing: the core doesn't record it
 again, and the agent never runs a command id twice. One exchange costs OC one rename and, when a reply came, one
 remove (a server tick each); everything else is a direct call.

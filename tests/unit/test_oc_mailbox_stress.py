@@ -5,8 +5,10 @@ in lab-ops with no lost or half-read files; D218).
 ``exists`` to poll, outbox.tmp opened "w", written, closed, then renamed to outbox.json only while
 there is none (a rename that fails is OC's ``false``, tried again 8 times); inbox.json's size
 checked, read in 2048-byte chunks, closed, then removed (a failed remove is OC's ``false``). Its
-writes to outbox.tmp go in several flushed pieces with a yield between them, a wider window than
-OC's single write, so a core that read a file still being written would see it here.
+writes to outbox.tmp go in several flushed pieces with a yield between them. That is a
+regression guard, not a proof: the core never opens outbox.tmp, and outbox.json only appears by
+an atomic rename, so a half-written outbox.json can't occur with this protocol; the pieces would
+catch a change that made the core read outbox.tmp, or OC write outbox.json in place (D218).
 
 A real :class:`MailboxService` thread polls the folder while the writer runs in another thread,
 and the fake queue hands out commands as the action queue would (a returned command goes out

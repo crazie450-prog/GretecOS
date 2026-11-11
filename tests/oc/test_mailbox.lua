@@ -517,7 +517,7 @@ test("--once over the mailbox: answered, or written with no reply yet", function
   T.eq(code, 0)
   T.has(table.concat(lines, "\n"), "the core answered")
   -- The stop line carries the mailbox's counts (the Lab soak compares them with the core's).
-  T.has(table.concat(lines, "\n"), "stopped; mailbox: 1 written, 1 replies, 0 waits for the core")
+  T.has(table.concat(lines, "\n"), "stopped; 1 cycles, 1 sent, 0 failed; mailbox: 1 written, 1 replies, 0 waits for the core")
   local w2 = T.base({ no_internet = true, extra = MAILBOX })
   core(w2, { down = true })
   local M2 = assert(require("fakeoc").load_agent(w2))

@@ -160,25 +160,42 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe serve --detach
     Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern 'OC mailbox' | Select-Object -Last 3
     ```
-    Expect `OC mailbox watched` (and, once the agent has made the folder, `OC mailbox ready`). A gos.toml mistake is
-    logged as the reason and stops only the mailbox.
-25. In the OC shell, stop the agent if it runs (Ctrl+C), then `gos-agent --once`. Expect `sent N bytes; the core
+    Expect `OC mailbox watched` (and, once the agent has made the folder, `OC mailbox ready`). **A mistake in this
+    table stops the whole GOS, not only the mailbox** (like any other service key in gos.toml): `gos serve` prints
+    `Not starting GOS: <the reason>` and exits, and `core.log` has `refusing to start: fix gos.toml` with the same
+    reason. Fix the line it names (or remove the table), then run `gos serve --detach` again.
+25. In the OC shell, stop the agent if it runs (Ctrl+C), then run `df` and note the line of the drive whose address
+    starts like step 22's (its used and available space), then `gos-agent --once`. Expect `sent N bytes; the core
     answered`. The agent's log starts with `mailbox /home/gos/mailbox on drive ...; in gos.toml: drive = "...", dir =
     "home/gos/mailbox"`: the drive and dir must match step 24. `no reply from the core yet` means the core doesn't
     watch this folder (step 24).
 26. Run `gos-agent` and note the time. Leave the game running for an hour, unpaused, as in step 11. Halfway, send one
     `say` through the core (step 12); it should print in chat within about 10 s.
-27. After the hour, stop the agent (Ctrl+C) and read both sides' numbers:
-    ```powershell
-    Select-String -Path (Join-Path $gos 'gos-agent.log') -Pattern 'alive:' | Select-Object -Last 2
-    Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern 'OC mailbox stats' | Select-Object -Last 2
-    Get-ChildItem (Join-Path $gos 'mailbox') | Select-Object Name, Length, LastWriteTime
-    ```
-    The pass: in the last `alive:` line, `failed` 0 and `N written` about 720 (one per 5 s), `removes failed` 0; in
-    the core's last stats line, `refused_bad_payload` absent or 0 (a half-read `outbox.json`), `accepted` equal to
-    the agent's `written` (none lost; a few `repeats` are harmless), `seq_gaps` equal to the agent's `waits for the
-    core`, `withdrawn` 0, `poll_errors` absent. The folder holds `outbox.tmp` and at most one `inbox.json` or
-    `outbox.json`, no `inbox.tmp`.
+27. After the hour, compare the two sides' **final** counts. The `alive:` lines and the core's 5-minute stats lines
+    come on different clocks, so don't compare those; each side writes its final counts when it stops:
+    1. In the OC shell, stop the agent (Ctrl+C). Its last line in `gos-agent.log` is `stopped (interrupted); N cycles,
+       N sent, N failed; mailbox: N written, N replies, N waits for the core, ...`. Then run `df` again and note the
+       same drive's line.
+    2. Wait 5 seconds (the core takes the last message), then stop the core, which writes its final `OC mailbox
+       stats` line as it stops:
+       ```powershell
+       & C:\GregtecOS-app\current\.venv\Scripts\gos.exe stop
+       ```
+    3. Read both lines and the folder:
+       ```powershell
+       Select-String -Path (Join-Path $gos 'gos-agent.log') -Pattern 'stopped' | Select-Object -Last 1
+       Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern 'OC mailbox stats' | Select-Object -Last 1
+       Get-ChildItem (Join-Path $gos 'mailbox') | Select-Object Name, Length, LastWriteTime
+       ```
+    The pass, from those two lines: the agent's `failed` 0, `written` about 720 (one per 5 s) and `removes failed` 0;
+    the core's `refused_bad_payload` absent or 0 (a half-read `outbox.json`), `accepted` equal to the agent's
+    `written` (none lost; a few `repeats` are harmless), `seq_gaps` equal to the agent's `waits for the core`,
+    `withdrawn` 0, `poll_errors` absent. The folder holds `outbox.tmp` and at most one `inbox.json` or `outbox.json`,
+    no `inbox.tmp`. Then `gos serve --detach` to start GOS again.
+
+    The two `df` lines are not a pass or fail: send them back. OC never learns of a file the core writes, so its
+    count of the drive's used space is expected to fall a little each exchange (by about 512 bytes plus the reply's
+    size when OC deletes `inbox.json`), not to grow (D216); the two lines check that against the real OC.
 28. Set `transport` back to `"auto"` in `gos-agent.cfg` if section E should use HTTP again. Leave `[mailbox.lab]` in
     gos.toml or remove it; with it, the core keeps watching the folder.
 
@@ -189,4 +206,4 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
 - The last three `alive:` lines of `gos-agent.log`, and any warning lines.
 - Steps 12, 13 (the ingot counts), 16 and 17's outcomes, and any step whose output differed from what is written here.
 - Section G's two sets of mean tick times and step 21's checks.
-- Section H: step 25's line and step 27's output.
+- Section H: step 25's line, both `df` lines (steps 25 and 27), and step 27's output.

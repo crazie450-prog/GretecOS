@@ -620,12 +620,15 @@ world = "Other World"
         ('mailbox = "lab"', "mailbox must be a table"),
     ],
 )
-def test_bad_mailbox_config_stops_only_the_service(
+def test_bad_mailbox_config_is_a_service_problem(
     tmp_path: Path, table: str, why: str
 ) -> None:
+    """A bad table is a service problem: like any service key, ``gos serve`` refuses to start
+    with the reason in the log, and ``gos doctor`` names it (review M2, D217)."""
     cfg = _cfg(tmp_path, table.replace("{d}", DRIVE) + "\n")
     assert cfg.mailboxes == ()
     assert any(why in e for e in cfg.service_errors), cfg.service_errors
+    assert any(why in e for e in config.service_problems(cfg))
 
 
 def test_gos_dev_may_not_watch_plays_mailbox(

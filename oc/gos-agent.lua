@@ -1730,12 +1730,13 @@ function M.run(st, opts)
   event.ignore("interrupted", on_interrupt)
   event.ignore("component_added", on_component)
   event.ignore("component_removed", on_component)
-  -- The transport's counts go on the stop line too (the M1 Lab soak compares them with the core's).
-  local counts = ""
+  -- The final counts, the transport's too, go on the stop line: the M1 Lab soak compares them
+  -- with the core's last stats line, written at its stop (the alive: lines come on another clock).
+  local counts = ("; %d cycles, %d sent, %d failed"):format(st.cycles or 0, st.sent or 0, st.failed or 0)
   if st.transport then
     if st.transport.stats then
       local okc, line = pcall(st.transport.stats, st.transport)
-      counts = okc and ("; " .. tostring(line)) or ""
+      counts = counts .. (okc and ("; " .. tostring(line)) or "")
     end
     pcall(st.transport.close, st.transport)
   end
