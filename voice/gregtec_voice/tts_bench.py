@@ -23,6 +23,7 @@ one's; Clayton's listening check on the PC is the acceptance.
 from __future__ import annotations
 
 import csv
+import math
 import re
 import shutil
 import subprocess
@@ -31,7 +32,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from gregtec_voice import speech_filter, tts
 from gregtec_voice.audio import SAMPLE_RATE, Segment
@@ -108,7 +109,7 @@ def percentile(values: Sequence[int], q: float) -> int | None:
     if not values:
         return None
     ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, max(0, round(q * len(ordered) + 0.5) - 1))]
+    return ordered[min(len(ordered), max(1, math.ceil(q * len(ordered)))) - 1]
 
 
 def vram_used_mb() -> int | None:
@@ -301,15 +302,28 @@ def synthesise(engine: tts.Engine, text: str) -> bytes:
     """``text`` (already filtered) as 16 kHz int16 PCM, as the microphone would deliver it."""
     import numpy as np
 
-    from gregtec_voice.wake_eval import resample
-
     pcm = b"".join(piece for part in tts.chunks(text) for piece in engine.stream(part))
     samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
     silence = np.zeros(SAMPLE_RATE // 4, dtype=np.float32)
-    audio = np.concatenate(
-        [silence, resample(samples, engine.rate, SAMPLE_RATE), silence]
-    )
+    audio = np.concatenate([silence, to_16k(samples, engine.rate), silence])
     return (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+
+
+def to_16k(samples: Any, rate: int) -> Any:  # noqa: ANN401 - numpy float32 arrays
+    """``samples`` at 16 kHz: wake_eval's windowed-sinc resampler for a small ratio (Kokoro's
+    and ElevenLabs' 24 kHz), else low-passed (a moving average) and linearly interpolated
+    (Piper's 22.05 kHz, whose 320/441 ratio would make that resampler's filter enormous)."""
+
+    import numpy as np
+
+    from gregtec_voice.wake_eval import resample
+
+    g = math.gcd(rate, SAMPLE_RATE)
+    if max(rate, SAMPLE_RATE) // g <= 8:
+        return resample(samples, rate, SAMPLE_RATE)
+    smoothed = np.convolve(samples, np.ones(2, np.float32) / 2, mode="same")
+    times = np.arange(0, len(samples) / rate, 1 / SAMPLE_RATE)
+    return np.interp(times, np.arange(len(samples)) / rate, smoothed).astype(np.float32)
 
 
 def check(
