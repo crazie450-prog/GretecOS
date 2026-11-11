@@ -74,10 +74,14 @@ class Check(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Supply:
-    """One recipe input and what the machine holds of it. Merge an item or a fluid that fills
-    several recipe slots into one supply with the summed ``per_craft``, as GT merges a recipe's
-    item inputs and pools the machine's fluids: two supplies of the same fluid would each be
-    counted against the whole tank."""
+    """One recipe input and what the machine holds of it. Merge an item that fills several
+    recipe slots into one supply with the summed ``per_craft``: GT merges a recipe's item
+    inputs (``getCachedCombinedItemInputs``). A fluid that fills several slots can't be one
+    supply: ``GTRecipe.maxParallelCalculatedByInputs`` pools the machine's fluids, then goes
+    through the recipe's fluid slots in order, each taking ``amount x min(parallels so far,
+    pool / amount)`` from the pool, so two 100 L slots of one fluid with 1000 L held and max
+    parallel 8 give 2 parallels where one merged supply would give 5 (D191, correcting D174).
+    The planner refuses such recipes (WO-3.3's graph builder), so it never overstates."""
 
     # What one craft takes; 0 when it isn't consumed (a circuit, a catalyst).
     per_craft: int

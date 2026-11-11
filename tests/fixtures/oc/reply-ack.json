@@ -1,0 +1,16 @@
+{
+  "ack": 2,
+  "boot": "b0075eed",
+  "cmds": [
+    {
+      "args": {
+        "text": "Mailbox up"
+      },
+      "confirmed_via": "voice",
+      "id": 104,
+      "kind": "say"
+    }
+  ],
+  "ok": true,
+  "v": 1
+}

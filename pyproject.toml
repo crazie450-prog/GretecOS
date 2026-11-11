@@ -8,7 +8,12 @@ dependencies = [
     "anthropic>=2.4.0",
     "claude-agent-sdk>=0.2.176",
     "fastapi>=0.162.0",
+    # WO-7.3: the core checks every OC bridge message against docs/contracts/oc_bridge.schema.json
+    # (gregtec.bridge.ingest); tests/oc uses it too. Already installed through mcp.
+    "jsonschema>=4.26",
     "keyring>=25.7.0",
+    # WO-3.4, D192: the planner's staged MILP (scipy.optimize.milp on HiGHS; BSD-3-Clause).
+    "scipy>=1.16",
     "uvicorn>=0.54.0",
     "websockets>=17.4",
 ]
@@ -31,8 +36,7 @@ module-name = "gregtec"
 
 [dependency-groups]
 dev = [
-    # WO-7.2: tests/oc validates the OC bridge messages against docs/contracts/oc_bridge.schema.json.
-    "jsonschema>=4.26",
+    "hypothesis>=6.100",
     "pytest>=9.2",
     # Ruff changed its default rule set in 0.16 and 0.17; take minor bumps on purpose.
     "ruff>=0.17.3,<0.18",

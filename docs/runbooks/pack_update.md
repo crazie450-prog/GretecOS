@@ -73,6 +73,8 @@ $upd = "C:\GregtecOS-app\current\scripts\update_play.py"
 9. **flag**: every plan citing a recipe or crop that changed or vanished gets
    `plan.affected_run`; the pack is recorded as adopted (`data\packupdate\adopted.json`).
    Re-check the G1 golden recipes in the Lab when they exist.
+   Then run `gos graph --check-chains`: it lists the line designer's chain templates whose
+   recipes the new run changed or dropped (WO-3.3, D190); a stale row is a WO for the template.
 
 A **simulated** update (`--simulate`) walks the same steps, but `update_play.py` only plans,
 `play_export` is skipped, the flags are the diff's preview, and nothing is adopted.

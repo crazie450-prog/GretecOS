@@ -234,12 +234,16 @@ def test_the_plugin_copy_has_only_the_manifest_and_skills(
     files = sorted(
         p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()
     )
-    assert files == [
-        ".claude-plugin/plugin.json",
-        "skills/.gitkeep",
-        "skills/recipe-lookup/SKILL.md",
-        "skills/recipe-lookup/notes.md",
-    ]
+    # the template's skill files (WO-3.3's line-designer chain references among them)
+    shipped = sorted(
+        p.relative_to(gos).as_posix()
+        for p in (gos / "skills").rglob("*")
+        if p.is_file() and p.name != "notes.md"
+    )
+    assert "skills/line-designer/references/chains/README.md" in shipped
+    assert files == sorted(
+        [".claude-plugin/plugin.json", "skills/recipe-lookup/notes.md", *shipped]
+    )
     written = json.loads((dest / ".claude-plugin" / "plugin.json").read_text("utf-8"))
     assert written == {"name": "gos", "version": "1.2.3"}
     assert deep_config.skill_names(dest) == ["gos:recipe-lookup"]

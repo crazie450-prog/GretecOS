@@ -10,8 +10,8 @@
   back as text with ``is_error`` set, the way Anthropic's ``tool_result`` carries them; so
   does a tool's own bug (logged), so a lane's turn never ends on an exception.
 - A tool that writes runs only with its own gate, named in ``Tool.gate``: the note tools'
-  is the vault path guard (:mod:`gregtec.vault.io`, WO-2.5); world actions get the confirm flow
-  (WO-7.1). :meth:`Registry.add` refuses a writing tool without one. A tool with
+  is the vault path guard (:mod:`gregtec.vault.io`, WO-2.5); ``action_propose``'s is the confirm
+  flow (WO-7.1: it only proposes; only Clayton confirms). :meth:`Registry.add` refuses a writing tool without one. A tool with
   ``needs_db=False`` (the note tools but ``vault_search``) runs without opening the DB, so it
   works before the first ``gos db build``.
 """
@@ -40,6 +40,7 @@ from gregtec.vault.io import VaultIO
 
 if TYPE_CHECKING:
     from gregtec.agents.deep_lane import DeepLane
+    from gregtec.bridge.ops import Ops
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class Env:
     glossary: Glossary = field(default_factory=Glossary)
     vault: VaultIO | None = None  # GOS_HOME/vault, for the note tools
     deep: DeepLane | None = None  # where handoff sends a task (WO-2.3; WO-2.4 runs it)
+    ops: Ops | None = None  # the OC bridge: telemetry and the action desk (WO-7.1)
 
 
 @dataclass
