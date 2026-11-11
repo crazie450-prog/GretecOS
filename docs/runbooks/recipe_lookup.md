@@ -10,9 +10,9 @@ Clayton runs these on the gaming PC after the WO-2.7 PR is merged: about 15 minu
 2. Check the skill reached both lanes:
    ```powershell
    Test-Path "$env:USERPROFILE\GregtecOS\vault\_gos\skills\recipe-lookup\SKILL.md"
-   & C:\GregtecOS-app\current\.venv\Scripts\gos.exe ask "how do I make steel" --json | Select-String '"recipe"'
+   (& C:\GregtecOS-app\current\.venv\Scripts\gos.exe ask "how do I make steel" --json | Out-String | ConvertFrom-Json).card.type
    ```
-   Expect `True`, then a line with `"recipe": {` (the structured recipe card in the reply's card, for the dashboard).
+   Expect `True`, then `recipe` (the type of the structured recipe card in the reply's `card`, for the dashboard). Anything else, or a blank line (`"card": null`), fails this step.
 
 ## B. The eval (plan §8 acceptance)
 

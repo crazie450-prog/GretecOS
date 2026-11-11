@@ -1349,11 +1349,14 @@ world_backups = "C:/Users/<you>/GregtecOS/backups/world"   # no gos-dev access (
 [core]
 host = "127.0.0.1"
 port = 8765
+supervisor_port = 8766        # D115; gos-dev sets its own port, port and dashboard_host (D115, D117)
+dashboard_host = "gos.localhost"   # pairing and the dashboard (D117)
 allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]   # QA:A8, D53
 
 [startup]
 core_at_login = true          # D77
 voice_with_play = true
+dashboard_window = true       # the Chrome app window on monitor 2 (D52, D163)
 
 [models]
 fast = "claude-haiku-5-5"
@@ -1364,12 +1367,14 @@ analyst = "claude-haiku-5-5"
 vision = "claude-sonnet-5-5"
 heavy = "claude-fable-5-1"    # opt-in only
 fast_context_max_tokens = 60000
+use_heavy = false             # true: planner and architect run on heavy (D155)
 
 [budget]
 monthly_included_usd = 100    # D47
 credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
 task_max_usd = 2.0            # placeholder until WO-3.7 measures; on hit: pause and ask (D16)
+cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
 
 [voice]
 primary_trigger = "wake"      # D57
@@ -1378,7 +1383,10 @@ wake_engine = "sherpa-onnx"   # | openwakeword (a custom model in wake_model; D1
 wake_phrase = "hey archivist" # PM08's provisional pick from the WO-5.4 harness, pending Clayton (D186, D187)
 wake_model = ""               # openwakeword only: the custom model's .onnx
 wake_threshold = 0            # 0 = the engine's tuned default (D186)
-talk_key = "TBD (unbound in GTNH and Discord)"
+talk_key = "F13"              # one key unbound in GTNH and Discord: F13-F24, Pause or Scroll Lock (D180)
+confirm_key = "F14"           # global hotkeys (D180)
+cancel_key = "F15"
+next_card_key = "F16"
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
 stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D182)
@@ -1414,8 +1422,15 @@ tier_source = "quests"        # D64, overridable
 export_on_quit = "ask"        # D69
 notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71
 
+[launch]
+# home = "C:/Users/<you>/GregtecOS"   # GOS_HOME for gos launch; default [paths] gos_home (D115)
+
+[fingerprint]
+configs = []                  # recipe-affecting configs added to GT's defaults, each under config/ (D120)
+
 [maintenance]
 idle_minutes = 30             # QA:A9
+keep_backups = 7              # daily DB backups kept (D139)
 
 # M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
 # drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.
