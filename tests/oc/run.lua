@@ -25,6 +25,7 @@ local SUITES = {
   "test_payload",
   "test_commands",
   "test_transport",
+  "test_mailbox",
   "test_runtime",
 }
 

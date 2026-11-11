@@ -43,6 +43,20 @@ them): `cycle_s` (5), `ae2_s` (60), `sensor_s` (60), `sensor_per_cycle` (2), `wa
 name and damage, never numeric ids, at most 64), `power_names`, `ignore`, `me`, `url`. Unknown keys are refused, so
 a typo can't pass silently. The file is Lua read with no globals: keep it to plain values.
 
+## M1: the file mailbox (MV, no internet card)
+
+Before an internet card (HV/EV), the agent talks to the core through two files on its own managed drive (plan 7.9,
+D216-D218): copy `mailbox.lua` next to `gos-agent.lua` too. With `transport = "auto"` (the default) it uses the
+mailbox whenever no internet card is in; `transport = "mailbox"` forces it. It needs no token. Options, in the
+config's `mailbox` table: `dir` (default `mailbox/` next to the config, e.g. `/home/gos/mailbox`; absolute, on a
+managed writable drive, never `/tmp`) and `wait_s` (default 2, 0 to 4: how long an exchange waits for the core).
+
+When it starts, the agent logs the line gos.toml needs, e.g.
+`in gos.toml: drive = "1d9f2c3a-...", dir = "home/gos/mailbox"`. Put those in `[mailbox.lab]` (or, on Clayton's
+own core, `[mailbox.play]`) with the world's folder name, and restart the core. The core writes nothing in the world
+but `inbox.tmp`, `inbox.json` and the rename of `outbox.json` back to `outbox.tmp`, in that one folder. Files and
+steps: docs/contracts/oc_bridge.md, "M1".
+
 ## Run
 
 ```
