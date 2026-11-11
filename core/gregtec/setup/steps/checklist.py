@@ -31,6 +31,8 @@ def rows(ctx: Context) -> list[Check]:
                 f"unavailable ({type(exc).__name__}): no key can be stored, so no AI",
             )
         )
+    found = ctx.data.get("voice")
+    table = found if isinstance(found, Mapping) else {}
     for name, label, missing in (
         (
             keys.ANTHROPIC,
@@ -38,8 +40,17 @@ def rows(ctx: Context) -> list[Check]:
             "not stored: GOS runs in no-AI mode (plan 7.16)",
         ),
         (keys.DISCORD, "Discord bot token", "not stored: needed from WO-9.1 (Discord)"),
+        (
+            keys.ELEVENLABS,
+            "ElevenLabs API key",
+            'not stored: [voice] tts = "elevenlabs" needs it (D203)',
+        ),
     ):
         stored = ctx.has_secret(name)
+        if not stored and name == keys.ELEVENLABS and table.get("tts") != "elevenlabs":
+            # Only the cloud voice uses it; the local voices need no key.
+            out.append(Check(f"secret.{name}", label, OK, "not stored (not needed)"))
+            continue
         out.append(
             Check(
                 f"secret.{name}",
@@ -48,8 +59,7 @@ def rows(ctx: Context) -> list[Check]:
                 "stored" if stored else missing,
             )
         )
-    table = ctx.data.get("voice")
-    out += voice.readback(table if isinstance(table, Mapping) else {})
+    out += voice.readback(table)
     return out
 
 

@@ -16,8 +16,10 @@ import keyring.errors
 SERVICE = "gregtec-os"
 ANTHROPIC = "anthropic"
 DISCORD = "discord"  # the Discord bot's token (stored by the setup wizard, WO-2.9; used by WO-9.1)
-# The secrets `gos key` manages. Any cloud TTS key joins in a later WO.
-NAMES = (ANTHROPIC, DISCORD)
+# ElevenLabs' key, for the optional cloud voice (WO-5.3, D203).
+ELEVENLABS = "elevenlabs"
+# The secrets `gos key` manages; the setup wizard stores each of them too (WO-2.9).
+NAMES = (ANTHROPIC, DISCORD, ELEVENLABS)
 
 
 class MissingKeyError(LookupError):

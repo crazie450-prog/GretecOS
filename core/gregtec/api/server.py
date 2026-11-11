@@ -35,6 +35,8 @@ from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
 from gregtec.api import ai_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
+from gregtec.bridge import ops as bridge_ops
+from gregtec.bridge.mailbox import MailboxService
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
@@ -106,15 +108,17 @@ def maintenance(
     )
 
 
-def _default_agents(cfg: Config, store: Store) -> ask.Agents:
-    return ask.setup(cfg, store=store)
+def _default_agents(
+    cfg: Config, store: Store, ops: bridge_ops.Ops | None = None
+) -> ask.Agents:
+    return ask.setup(cfg, store=store, ops=ops)
 
 
 def run(
     cfg: Config,
     *,
     supervised: bool = False,
-    setup_agents: Callable[[Config, Store], ask.Agents] | None = None,
+    setup_agents: Callable[..., ask.Agents] | None = None,
     config_path: Path | None = None,
 ) -> int:
     """Run the core until it is stopped. ``setup_agents``: how the router and lanes are set up
@@ -149,7 +153,16 @@ def run(
     meter = UsageMeter(
         store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
     )
-    agents = (setup_agents or _default_agents)(cfg, store)
+    # The OC bridge: one ingest shared by every transport (D217), its telemetry tables and the
+    # action desk (WO-7.1); the ops tools reach it through the agents' registry.
+    ops = bridge_ops.build(cfg, store)
+    agents = (
+        _default_agents(cfg, store, ops)
+        if setup_agents is None
+        else setup_agents(cfg, store)
+    )
+    # M1: the OC file mailboxes gos.toml names, polled from their own thread (WO-7.3).
+    mailboxes = MailboxService.from_config(cfg, ops.bridge)
     ai = AiMode(store)  # no-AI mode and the D48 credit flow (WO-2.8)
     core = Core(
         cfg=cfg,
@@ -159,9 +172,12 @@ def run(
         supervisor_token=supervisor_token,
         maintenance=maintenance(cfg, store, meter, ai),
         config_path=config_path,
+        oc=ops.bridge,
+        ops=ops,
     )
+    ops.desk.on_change = core.action_changed
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
-    core.asker = agents.asker(ai=ai)
+    core.asker = agents.asker(ai=ai, actions=ops.desk)
     if isinstance(agents.deep, DeepLaneService):
         core.deep = agents.deep
         agents.deep.on_change = core.deep_changed
@@ -202,9 +218,11 @@ def run(
         "core listening",
         extra={"port": cfg.core_port, "supervised": supervised, "pid": os.getpid()},
     )
+    mailboxes.start()
     try:
         server.run(sockets=[sock])
     finally:
+        mailboxes.stop()
         control.remove_run_file(run_file, os.getpid())
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         store.close()

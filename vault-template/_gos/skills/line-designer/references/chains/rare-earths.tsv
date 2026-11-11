@@ -1,0 +1,16 @@
+# Rare earths: neodymium from samarium ore (GTNH 2.9.0, GTNH-Lanthanides' samarium line), WO-3.3.
+# Format: README.md. Crushed samarium ore digests in nitric acid to a muddy solution; nitric acid
+# makes the mud, water in the dissolution tank leaves neodymium rare-earth concentrate, which
+# hydrochloric acid turns into neodymium oxide, electrolysed to neodymium. The other lanthanides
+# of the line (cerium, lanthanum, samarium) come from its byproducts and are left to the
+# heuristic. Keys checked against the dev runtime's server harness DB (run 20261106T014148Z).
+item	recipe	branch	note
+gregtech:gt.metaitem.01@2067	r:gt.recipe.electrolyzer/fe672bf696dc		Neodymium Dust: electrolysing neodymium oxide
+bartworks:gt.bwMetaGenerateddust@11122	r:gt.recipe.chemicalreactor/4921b7adc4b2	nd-oxide	Neodymium Oxide Dust: rare-earth concentrate + hydrochloric acid (chemical reactor)
+bartworks:gt.bwMetaGenerateddust@11122	r:gt.recipe.largechemicalreactor/c2ccf0fa760a	nd-oxide	the same in the large chemical reactor
+bartworks:gt.bwMetaGenerateddust@11117	r:gtnhlanth.recipe.disstank/848a4d4653c6	nd-concentrate	Neodymium Rare Earth Concentrate Dust: samarium mud in water (dissolution tank)
+bartworks:gt.bwMetaGenerateddust@11117	r:gtnhlanth.recipe.disstank/94684b6d6eb8	nd-concentrate	the batch recipe
+fluid:samarium rare earth mud	r:gt.recipe.largechemicalreactor/d80f8b342c3b	sm-mud	Samarium Rare Earth Mud: the muddy solution + nitric acid (large chemical reactor)
+fluid:samarium rare earth mud	r:gtnhlanth.recipe.disstank/1e16c1642995	sm-mud	the dissolution tank (more mud, cerium-rich byproduct)
+fluid:muddy samarium rare earth solution	r:gtnhlanth.recipe.digester/f0668b9cd444	sm-digest	Muddy Samarium Rare Earth Solution: crushed samarium ore in nitric acid (digester)
+fluid:muddy samarium rare earth solution	r:gtnhlanth.recipe.digester/77a69eff6390	sm-digest	from samarium ore concentrate

@@ -291,7 +291,8 @@ STEPS = [
                 toml=("voice", "output_endpoint"),
                 devices="outputs",
                 help="A part of the device's name is enough, e.g. Chat",
-                # Always a name: gos.toml has no "Windows' default" for it (Appendix C: "Chat").
+                # The wizard always saves a name (Appendix C: "Chat", D168): an empty field would
+                # drop the key, which means "Chat". "" (Windows' default, D205) is set by hand.
                 required=True,
                 default="Chat",
             ),

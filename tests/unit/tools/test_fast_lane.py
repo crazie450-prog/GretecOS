@@ -197,13 +197,28 @@ def test_check_answer() -> None:
     made_up = check_answer(f"Steel Ingot: 240 EU/t ({EBF_RECIPE}).", [source])
     assert made_up == ["numbers that no tool result holds: 240"]
     assert check_answer("Steel Ingot: 120 EU/t.", [source]) == [
-        "numbers without a citation (r:, q:, mte: or crop: id)"
+        "numbers without a citation (r:, q:, mte:, crop: or tel: id)"
     ]
     fake_ref = check_answer(
         "It runs at 120 EU/t (r:gt.recipe.x/ffffffffffff).", [source]
     )
     assert fake_ref == [
         "citations that no tool result holds: r:gt.recipe.x/ffffffffffff"
+    ]
+
+
+def test_check_answer_takes_telemetry_citations() -> None:
+    """Review M2: telemetry_get cites its rows tel:<binding>/<address> (D219)."""
+    tel = "tel:lab/2e000000-0000-4000-8000-000000000008"
+    source = (
+        "stale_after_s: 30\nref\tkind\tname\tstatus\tage_s\tstale\treadings\n"
+        f"{tel}\tmachine\tmultimachine.blastfurnace\trunning\t3\tFalse\tprogress=120.0\n"
+        "\nrows: 1-1 of 1\n"
+    )
+    assert check_answer(f"Your EBF is at progress 120 ({tel}).", [source]) == []
+    made_up = "tel:lab/2e000000-0000-4000-8000-000000000009"
+    assert check_answer(f"Your EBF is at progress 120 ({made_up}).", [source]) == [
+        f"citations that no tool result holds: {made_up}"
     ]
 
 
@@ -225,7 +240,7 @@ def test_a_number_from_the_request_needs_a_tool_result() -> None:
     ]
     assert check_answer("Yes, the EBF uses 512 EU/t.", [source]) == [
         "numbers that no tool result holds: 512",
-        "numbers without a citation (r:, q:, mte: or crop: id)",
+        "numbers without a citation (r:, q:, mte:, crop: or tel: id)",
     ]
 
 

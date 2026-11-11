@@ -53,6 +53,7 @@ def test_the_registry_finds_every_built_in_step_in_order() -> None:
         "paths",
         "anthropic",
         "discord",
+        "elevenlabs",
         "headset",
         "talk_key",
         "wake",
@@ -469,6 +470,12 @@ def test_finish_needs_a_clean_checklist_and_marks_setup_done(
     rows = by_id([c.as_dict() for c in svc.checklist()])
     assert rows["secret.anthropic"]["status"] == "ok"
     assert rows["secret.discord"]["status"] == "warn"
+    # The default voice is local: ElevenLabs' key isn't needed (WO-5.3, D203).
+    assert rows["secret.elevenlabs"] == {
+        **rows["secret.elevenlabs"],
+        "status": "ok",
+        "detail": "not stored (not needed)",
+    }
     assert (
         rows["voice.settings"]["status"] == "ok" and rows["keyring"]["status"] == "ok"
     )
@@ -1216,3 +1223,61 @@ def test_a_paths_check_never_opens_a_db_in_play(
         rows = by_id([c.as_dict() for c in outcome.checks])
         assert rows["db.gt_pin"]["detail"].startswith("not read")
     assert _files_under(play) == files
+
+
+# --- the merged OC bridge and TTS work (WO-7.1, WO-7.3, WO-5.3) ---------------------------------
+
+MERGED_TOML = """\
+[voice]
+tts = "piper"                 # chosen by hand (D203)
+tts_device = "gpu"
+tts_voice = ""                # the engine's default
+output_endpoint = "Chat"
+
+[mailbox.lab]                 # M1 (WO-7.3)
+world = "Lab World"
+drive = "1d9f2c3a-6b1e-4c1b-9a7e-2f3c4d5e6f70"
+dir = "home/gos/mailbox"
+"""
+
+
+def test_saves_keep_the_mailbox_and_tts_settings(
+    home: Path, ring: MemoryKeyring, prism: Path, tmp_path: Path
+) -> None:
+    svc = _install(home, MERGED_TOML)
+    app = tmp_path / "app"
+    app.mkdir()
+    svc.save("paths", path_values(prism, home, app))
+    svc.save("headset", {"input_device": "Arctis", "output_endpoint": "Elite Chat"})
+    svc.save("talk_key", {"talk_key": "F13", "talk_mode": "hold"})
+    text = svc.path.read_text("utf-8")
+    for line in MERGED_TOML.splitlines():
+        if not line.startswith("output_endpoint"):
+            assert line in text, line
+    cfg = config.load(svc.path)
+    assert [(m.role, m.world, m.drive) for m in cfg.mailboxes] == [
+        ("lab", "Lab World", "1d9f2c3a-6b1e-4c1b-9a7e-2f3c4d5e6f70")
+    ]
+    voice_table = tomllib.loads(text)["voice"]
+    assert voice_table["tts"] == "piper" and voice_table["tts_device"] == "gpu"
+    assert voice.voice_problem(voice_table) is None
+
+
+def test_every_key_gos_key_manages_has_a_wizard_step(svc: SetupService) -> None:
+    named = {f.secret for s in registry.steps() for f in s.fields if f.secret}
+    assert named == set(keys.NAMES)
+
+
+def test_elevenlabs_key_is_stored_and_needed_only_for_the_cloud_voice(
+    svc: SetupService, ring: MemoryKeyring
+) -> None:
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["secret.elevenlabs"]["status"] == "ok"
+    svc.path.parent.mkdir(parents=True, exist_ok=True)
+    svc.path.write_text('[voice]\ntts = "elevenlabs"\n', "utf-8")
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["secret.elevenlabs"]["status"] == "warn"
+    svc.store_secret("elevenlabs", "sk_" + "a" * 48)
+    assert keys.get_key(keys.ELEVENLABS) == "sk_" + "a" * 48
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["secret.elevenlabs"]["status"] == "ok"

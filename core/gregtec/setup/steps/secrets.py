@@ -1,6 +1,7 @@
-"""Steps 20 and 30: the Anthropic API key and the Discord bot token, in the keyring (plan 4.6).
+"""Steps 20, 30 and 35: the Anthropic API key, the Discord bot token and the ElevenLabs API key,
+in the keyring (plan 4.6): every secret ``gos key`` manages (``keys.NAMES``).
 
-Neither is ever written to gos.toml or a log, or sent back to the dashboard: the wizard sees
+None is ever written to gos.toml or a log, or sent back to the dashboard: the wizard sees
 only whether one is stored. The Anthropic key's test is one small call to the fast lane's model
 through the fast lane's own client (D168): ``models.list``, the free probe no-AI mode uses,
 can't see credits, and the fast lane is what has to work.
@@ -101,6 +102,26 @@ STEPS = [
                 "secret",
                 secret=keys.DISCORD,
                 help="Discord developer portal > your app > Bot > Reset Token",
+            ),
+        ),
+        optional=True,
+    ),
+    Step(
+        id="elevenlabs",
+        title="ElevenLabs API key",
+        order=35,
+        intro=(
+            'Only for the optional cloud voice ([voice] tts = "elevenlabs", D203); the local '
+            "voices need no key. Stored in Windows Credential Manager and never shown again. "
+            "You can add it later."
+        ),
+        fields=(
+            Field(
+                "key",
+                "API key",
+                "secret",
+                secret=keys.ELEVENLABS,
+                help="elevenlabs.io > Developers > API Keys",
             ),
         ),
         optional=True,
