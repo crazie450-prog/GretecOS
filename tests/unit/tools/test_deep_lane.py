@@ -52,7 +52,7 @@ SKILL = (
 def vault(tmp_path: Path) -> VaultIO:
     root = tmp_path / "vault"
     shutil.copytree(TEMPLATE, root)
-    (root / "_gos" / "skills" / "recipe-lookup").mkdir(parents=True)
+    (root / "_gos" / "skills" / "recipe-lookup").mkdir(parents=True, exist_ok=True)
     (root / "_gos" / "skills" / "recipe-lookup" / "SKILL.md").write_text(
         SKILL, encoding="utf-8"
     )

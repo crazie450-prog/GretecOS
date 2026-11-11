@@ -67,11 +67,13 @@ export function useApp<T>(select: (s: AppState) => T, from: Store = store): T {
   return useSyncExternalStore(from.subscribe, () => select(from.get()));
 }
 
-/** Add an answer (from /api/answers or an ask.reply push) once, keeping the newest 50. */
+/** Add an answer (from /api/answers or an ask.reply push) once, keeping the newest 50. Ordered
+ * by when the question came (then when it was answered), so an older question's answer that
+ * finishes later never replaces a newer question's card on Now (D160, D179). */
 export function addAnswers(list: Answer[], more: Answer[]): Answer[] {
   const byId = new Map(list.map((a) => [a.id, a]));
   for (const a of more) byId.set(a.id, a);
-  return [...byId.values()].sort((a, b) => a.ts - b.ts).slice(-ANSWERS_KEEP);
+  return [...byId.values()].sort((a, b) => a.asked_ts - b.asked_ts || a.ts - b.ts).slice(-ANSWERS_KEEP);
 }
 
 /** What one WebSocket message from the core changes (unknown messages change nothing). */

@@ -18,8 +18,18 @@ from pathlib import Path
 import keyring
 import keyring.errors
 
-from gregtec import appwindow, config, control, doctor, locks, playhooks, servicecli
+from gregtec import (
+    appwindow,
+    config,
+    control,
+    doctor,
+    locks,
+    playhooks,
+    servicecli,
+    voicecli,
+)
 from gregtec import deploy as app_deploy
+from gregtec.agents import recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -464,6 +474,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
+    recipe_eval_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -576,6 +587,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     servicecli.add_parsers(commands)
     pack_cli.add_parsers(commands)
     appwindow.add_parsers(commands)
+    voicecli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -638,6 +650,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return pack_cli.run(args, sys.stdout)
     if args.command in appwindow.COMMANDS:
         return appwindow.run(args)
+    if args.command in voicecli.COMMANDS:
+        return voicecli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
@@ -717,6 +731,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return agents_ask.main(args.config, args.text, args.json, sys.stdout)
         if args.limit is not None and args.limit < 1:
             parser.error("--limit must be at least 1")
+        if args.eval_command == recipe_eval_cli.COMMAND:
+            return recipe_eval_cli.run(args, sys.stdout)
         if args.eval_command == "deep-lane":
             from gregtec.agents import deep_eval
 

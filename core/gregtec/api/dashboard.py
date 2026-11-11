@@ -21,7 +21,8 @@ fetched from Google at runtime, and no other page may frame it. ``/`` on bare ``
 Pushed on ``/ws``: ``state`` (when it changes, at least every 15 s, and when a question starts or
 is answered) and, to trusted sockets (admin, devices), ``ask.reply``: every answer of
 ``/api/ask`` as ``{"id", "by", "request", "asked_ts", "ts", ...the reply}``, so a spoken question's
-card shows on monitor 2 too. Pairing codes and the questions being asked also go only to trusted
+card shows on monitor 2 too; a confirm or cancel that found nothing waiting (``pending`` false) is
+neither kept nor pushed (D179). Pairing codes and the questions being asked also go only to trusted
 sockets. A card that fails the catalog check (D160) is logged and left out. The answers are kept
 in the core's DB (table ``answer``, the newest 50), so Chat outlives a restart. The socket's
 ``hello`` names the dashboard build the core serves (:meth:`Board.build`); a page that loaded

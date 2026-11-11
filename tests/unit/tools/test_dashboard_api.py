@@ -340,7 +340,9 @@ def test_a_home_without_a_recipe_db_yet_is_no_error(
     (broken / "data" / "gos.sqlite").write_bytes(b"not a database " * 100)
     with caplog.at_level(logging.DEBUG, logger="gregtec.api"):
         dashboard.Board(Config(gos_home=broken)).refresh_data()
-    assert [r.getMessage() for r in caplog.records] == ["dashboard data refresh skipped"]
+    assert [r.getMessage() for r in caplog.records] == [
+        "dashboard data refresh skipped"
+    ]
 
 
 def test_pairing_codes_reach_trusted_callers_only(client: TestClient) -> None:

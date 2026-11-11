@@ -178,6 +178,12 @@ describe("pushes from the core", () => {
     expect(kept[0].ts).toBe(10);
     expect(addAnswers(kept, [answer(59)])).toHaveLength(ANSWERS_KEEP);
   });
+  it("an older question answered later doesn't replace the newer question's card", () => {
+    const newer = answer(20);
+    const older = { ...answer(10), id: "late", ts: 30 }; // asked at 10, answered at 30
+    const kept = addAnswers([newer], [older]);
+    expect(kept[kept.length - 1].id).toBe(newer.id);
+  });
   it("a page reloads when the core serves another build than the one it loaded (D159)", () => {
     expect(helloBuild({ type: "hello", role: "device", name: "Monitor 2", build: "ab12" })).toBe("ab12");
     expect(helloBuild({ type: "hello", build: null })).toBeNull(); // the dashboard isn't built

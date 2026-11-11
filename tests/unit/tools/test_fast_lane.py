@@ -548,9 +548,13 @@ def test_instant_commands(agents_reg: Registry, deep: HandoffRecorder) -> None:
     assert a.ask("repeat").text == "I haven't said anything yet."
     card = a.ask("recipe for steel")
     assert card.lane == "instant" and card.text.startswith("Steel Ingot: ")
-    # The reply's card is a catalog recipe card (D160), its first recipe the one cited.
+    # The reply's card is a catalog recipe card (D160); the citation is its first recipe
+    # without a flag (fake?, recycling), as the skill picks it (D172).
     assert card.card is not None and card.card["type"] == "recipe"
-    assert card.refs and card.refs[0] == card.card["recipes"][0]["ref"]
+    plain = next(
+        r for r in card.card["recipes"] if not {"fake?", "recycling"} & set(r["flags"])
+    )
+    assert card.refs and card.refs[0] == plain["ref"]
     again = a.ask("say that again")
     assert again.text == card.text and again.intent == "repeat"
     assert a.ask("what uses steel").text.startswith("Steel Ingot goes into ")
@@ -560,6 +564,22 @@ def test_instant_commands(agents_reg: Registry, deep: HandoffRecorder) -> None:
     assert a.ask("recipe for unobtainium").text.startswith("No item matches")
     assert a.ask("   ").intent == "empty"
     assert client.requests == []
+
+
+def test_a_confirm_or_cancel_with_nothing_waiting_changes_nothing(
+    agents_reg: Registry, deep: HandoffRecorder
+) -> None:
+    """The voice client's cancel hotkey silences GOS by sending "cancel" (D179): with nothing
+    waiting it isn't kept as the last reply, so "repeat" still says the answer it cut off."""
+    a = asker(agents_reg, deep, EchoClient())
+    answer = a.ask("recipe for steel")
+    assert answer.text.startswith("Steel Ingot: ")
+    for command in ("cancel", "confirm"):
+        reply = a.ask(command)
+        assert reply.text == NOTHING_PENDING and reply.pending is False
+    again = a.ask("repeat")
+    assert again.intent == "repeat" and again.text == answer.text
+    assert again.pending is None
 
 
 def test_deep_requests_are_handed_off(

@@ -3,7 +3,8 @@ r"""``gos-supervisor`` (plan 4.2, D77, QA:A5, D115): starts, watches and restart
 It starts at Windows login from the HKCU Run key that ``scripts/install_login_start.ps1`` writes
 (D116), as ``GOS_APP\current\.venv\Scripts\gos-supervisor.exe --login``, a windowless launcher.
 ``gos serve`` runs it in the foreground instead. Today it manages one process, the core; the
-Discord bot (WO-9.1), voice and the game watchers (with Play, WO-1.4 and WO-5.x) join later.
+Discord bot (WO-9.1) joins later, and so do, started with Play by its pre-launch hook (WO-1.4),
+voice (WO-5.7, D179; until then ``gos voice run``) and the game watchers (WO-6.1).
 
 **Restarts.** A process that exits, or whose ``/health`` stops answering for 20 s, is restarted
 after a back-off of 1, 2, 4, 8, 16, 30, then 60 s between tries. A run that lasted 60 s resets the

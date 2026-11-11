@@ -814,6 +814,28 @@ def test_relocate_editable_makes_the_path_relative(tmp_path: Path) -> None:
         RELOCATE(release)  # nothing absolute is left to fix
 
 
+def test_relocate_editable_also_moves_the_voice_package(tmp_path: Path) -> None:
+    """WO-5.1, D179: the workspace's voice/ package is an editable install too."""
+    release = tmp_path / "release"
+    site = release / ".venv" / "lib" / "python3.12" / "site-packages"
+    site.mkdir(parents=True)
+    (release / "core").mkdir()
+    (release / "voice").mkdir()
+    (site / "gregtec_os.pth").write_text(f"{release / 'core'}\n", "utf-8")
+    with pytest.raises(
+        dep.DeployError, match=r"voice in the venv's .pth files, found 0"
+    ):
+        RELOCATE(release)  # voice/ is in the release but uv didn't install it
+    (site / "gregtec_os.pth").write_text(f"{release / 'core'}\n", "utf-8")
+    # uv writes the member's folder with a trailing separator
+    (site / "gregtec_voice.pth").write_text(f"{release / 'voice'}{os.sep}", "utf-8")
+    RELOCATE(release)
+    for name, folder in (("gregtec_os.pth", "core"), ("gregtec_voice.pth", "voice")):
+        line = (site / name).read_text("utf-8").strip()
+        assert not os.path.isabs(line)
+        assert (site / line).resolve() == (release / folder).resolve()
+
+
 def test_config_reads_gos_app(tmp_path: Path) -> None:
     assert config.Config().gos_app == Path("C:/GregtecOS-app")
     toml = tmp_path / "gos.toml"
@@ -879,6 +901,18 @@ def test_real_uv_release_runs_after_the_swap(
         check=True,
     )
     assert (current / "core").resolve() in Path(out.stdout.strip()).parents
+    if (current / "voice").is_dir():  # D179: the voice client runs from GOS_APP too
+        voice = subprocess.run(
+            [
+                str(dep.venv_exe(current, "python")),
+                "-c",
+                probe.replace("gregtec", "gregtec_voice"),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert (current / "voice").resolve() in Path(voice.stdout.strip()).parents
     gos = subprocess.run(
         [str(dep.venv_exe(current, "gos")), "--help"],
         check=False,
