@@ -9,7 +9,7 @@ from pathlib import Path
 
 from gregtec import doctor
 from gregtec.config import Config
-from gregtec.setup.registry import WARN, Check, Context, Field, Outcome, Step
+from gregtec.setup.registry import ERROR, WARN, Check, Context, Field, Outcome, Step
 
 INSTANCE_ROLES = ("play", "export", "lab")
 
@@ -114,8 +114,10 @@ def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
         problems = play_guard(ctx, cfg)
     # The guard runs first; the checklist then probes nothing in or around either Play.
     rows = doctor.checklist(cfg, plays=plays(ctx))
-    config_home = ctx.path.parent.parent
-    if not same_folder(cfg.gos_home, config_home):
+    row = config_row(ctx, cfg)
+    if row is not None:
+        rows.append(row)
+    elif not same_folder(cfg.gos_home, ctx.path.parent.parent):
         rows.append(
             Check(
                 "paths.config",
@@ -125,6 +127,26 @@ def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
             )
         )
     return Outcome(problems=problems, checks=rows)
+
+
+def config_row(ctx: Context, cfg: Config | None = None) -> Check | None:
+    """An error row if gos.toml itself (``ctx.path``, and so the former-Plays record beside it)
+    is in or around a folder GOS never writes in (D223): every Play of :func:`plays`, gos.toml's
+    instances and, given ``cfg`` (the values being checked), its Play and instances as well."""
+    found = plays(ctx)
+    folders = doctor.guarded(ctx.cfg, found)
+    if cfg is not None:
+        folders += doctor.guarded(cfg, found)
+    why = doctor.touch_problem(ctx.path, folders)
+    if why is None:
+        return None
+    return Check(
+        "paths.config",
+        "Where gos.toml lives",
+        ERROR,
+        f"gos.toml ({ctx.path}) {why}: GOS writes gos.toml and its former-Plays record "
+        "there, so start GOS with GOS_HOME (or --config) outside every Play and instance",
+    )
 
 
 def _str(attr: str) -> Callable[[Context], str]:

@@ -216,10 +216,20 @@ def _overlap(a: Path, b: Path) -> bool:
     return a == b or a in b.parents or b in a.parents
 
 
+def _folded_overlap(a: Path, b: Path) -> bool:
+    """:func:`_overlap` with case ignored on every OS, as ``doctor.within`` compares (a link
+    loop counts as an overlap): a former Play is refused however its case is spelled."""
+    try:
+        a, b = (Path(str(p.resolve()).casefold()) for p in (a, b))
+    except (OSError, RuntimeError):
+        return True
+    return a == b or a in b.parents or b in a.parents
+
+
 def _former_play(target: Path, cfg: config.Config, role: str) -> str | None:
-    """A refusal if ``target`` (resolved) is, is inside or holds a folder that has been Play
-    (``cfg.former_plays``, D223): sync never mirrors over a world that was Play's."""
-    former = next((p for p in cfg.former_plays if _overlap(target, p)), None)
+    """A refusal if ``target`` (resolved, case ignored) is, is inside or holds a folder that has
+    been Play (``cfg.former_plays``, D223): sync never mirrors over a world that was Play's."""
+    former = next((p for p in cfg.former_plays if _folded_overlap(target, p)), None)
     if former is None:
         return None
     return (
@@ -569,7 +579,8 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
     if not args.dry_run and (why := record_plays(path, cfg)) is not None:
         refusals.append(f"former Plays not recorded: {why}")
     if refusals:
-        print("Refused, nothing written:", file=out)
+        # The former-Plays record may have been added to above; no instance is written.
+        print("Refused, nothing written in any instance:", file=out)
         for refusal in refusals:
             print(f"  {refusal}", file=out)
         return 1

@@ -16,6 +16,8 @@ def rows(ctx: Context) -> list[Check]:
     # Every Play GOS knows of, so finishing refuses Export or Lab at the Play the running core
     # syncs against too (final check round 3).
     out = doctor.checklist(ctx.cfg, plays=paths.plays(ctx))
+    if (row := paths.config_row(ctx)) is not None:
+        out.append(row)
     try:
         backend = ", ".join(keys.backend_chain())
         out.append(Check("keyring", "Keyring", OK, backend))

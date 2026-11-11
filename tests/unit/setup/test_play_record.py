@@ -10,6 +10,7 @@ old Play be saved or finished as Lab.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import io
 import os
 import re
@@ -463,7 +464,7 @@ def test_sync_refuses_when_the_record_cant_be_written(
     monkeypatch.setattr(tomledit, "write_atomic", disk_full)
     out = io.StringIO()
     assert sync.run(sync_args(svc.path), out) == 1
-    assert "Refused, nothing written" in out.getvalue()
+    assert "Refused, nothing written in any instance:" in out.getvalue()
     assert snapshot(prism / "instances" / "GTNH-Lab") == lab
 
 
@@ -484,9 +485,159 @@ def test_the_core_records_its_play_as_it_starts(
         raise OSError("taken")
 
     monkeypatch.setattr(server, "bind", no_port)
+    # GitHub's Windows runner is elevated: without this, run() stops at the elevation guard
+    # (EXIT_ELEVATED) before it records anything (round 6 A).
+    monkeypatch.setattr(server.supervisor, "elevation_problem", lambda: None)
+    # ... and so the test proves the same on Linux as on that runner.
+    monkeypatch.setattr(server.supervisor, "is_elevated", lambda: True)
     # applog's handlers are process-wide; other tests' caplog counts on the defaults.
     monkeypatch.setattr(server.applog, "setup", lambda *args, **kwargs: None)
     cfg = config.load(svc.path)
     assert server.run(cfg, config_path=svc.path) == server.EXIT_PORT_IN_USE
     play2 = (prism / "instances" / "Play2").resolve()
     assert play2 in config.load(svc.path).former_plays
+
+
+# --- round 6: paths normalised at the boundary, every write guarded before it is made
+
+
+def test_a_gos_toml_inside_the_play_a_first_save_names_writes_nothing_there(
+    prism: Path, tmp_path: Path
+) -> None:
+    """Round 6 B(c): a first run whose gos.toml lies inside the Play this save chooses. The
+    paths check shows an error row and the save writes neither the record nor gos.toml (nor a
+    folder for them) in Play."""
+    play = prism / "instances" / "GTNH-Play"
+    before = snapshot(play)
+    path = play / ".minecraft" / "GregtecOS" / "config" / "gos.toml"
+    svc = SetupService(
+        path, Config(gos_home=path.parent.parent), provider=FakeDevices()
+    )
+    (tmp_path / "app").mkdir()
+    values = path_values(prism, tmp_path / "GregtecOS", tmp_path / "app")
+    outcome, _ = svc.check("paths", values)
+    row = next(c for c in outcome.checks if c.id == "paths.config")
+    assert row.status == "error" and "overlaps Play" in row.detail
+    with pytest.raises(SetupError):
+        svc.save("paths", values)
+    assert snapshot(play) == before
+
+
+def test_the_writes_are_guarded_against_the_values_being_saved(
+    prism: Path, tmp_path: Path
+) -> None:
+    """The record's and gos.toml's own guard sees the candidate's Play even past the check."""
+    play = prism / "instances" / "GTNH-Play"
+    before = snapshot(play)
+    path = play / ".minecraft" / "GregtecOS" / "config" / "gos.toml"
+    svc = SetupService(
+        path, Config(gos_home=path.parent.parent), provider=FakeDevices()
+    )
+    ctx, _ = svc.context()
+    cand = dataclasses.replace(ctx.cfg, prism_instances=prism / "instances")
+    with pytest.raises(SetupError) as err:
+        svc._remember(ctx, [cand.instance("play")], cand)
+    assert err.value.status == 409
+    with pytest.raises(SetupError):
+        svc._write({("setup", "completed_utc"): "x"}, [cand.instance("play")], cand)
+    assert snapshot(play) == before
+
+
+def test_the_route_writes_nothing_in_the_play_it_saves(
+    prism: Path,
+    tmp_path: Path,
+    client: TestClient,
+    core,  # noqa: ANN001, F811
+) -> None:
+    play = prism / "instances" / "GTNH-Play"
+    before = snapshot(play)
+    path = play / ".minecraft" / "GregtecOS" / "config" / "gos.toml"
+    core.setup = SetupService(
+        path, Config(gos_home=path.parent.parent), provider=FakeDevices()
+    )
+    (tmp_path / "app").mkdir()
+    values = path_values(prism, tmp_path / "GregtecOS", tmp_path / "app")
+    r = client.post("/api/setup/steps/paths", json={"values": values}, headers=admin())
+    assert r.status_code in (400, 409)
+    assert snapshot(play) == before
+
+
+def test_the_checklist_flags_a_gos_toml_inside_play(
+    prism: Path, ring: MemoryKeyring
+) -> None:
+    inside = SetupService(
+        prism / "instances" / "GTNH-Play" / "gos.toml",
+        Config(prism_instances=prism / "instances"),
+        provider=FakeDevices(),
+    )
+    rows = {c.id: c.status for c in inside.checklist()}
+    assert rows["paths.config"] == "error"
+
+
+def test_a_relative_instances_path_still_records_its_play(
+    prism: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 6 B(a,b,d): a hand-written prism_instances with no drive ("/Games/..." on Windows,
+    so not is_absolute(), yet a real folder; a cwd-relative path stands in on Linux). Its Play
+    is recorded resolved, so after Play moves by hand the old one is never Lab."""
+    make_instance(prism / "instances", "Play2")
+    app = tmp_path / "app"
+    app.mkdir()
+    home = tmp_path / "GregtecOS"
+    gos = home / "config" / "gos.toml"
+    gos.parent.mkdir(parents=True)
+    monkeypatch.chdir(prism.parent)
+    rel = prism.relative_to(prism.parent) / "instances"
+    gos.write_text(
+        "[paths]\n"
+        f'prism_root = "{prism.as_posix()}"\n'
+        f'prism_instances = "{rel.as_posix()}"\n'
+        'play = "GTNH-Play"\nexport = "GTNH-Export"\nlab = "GTNH-Lab"\n'
+        f'gos_app = "{app.as_posix()}"\ngos_home = "{home.as_posix()}"\n',
+        "utf-8",
+    )
+    assert record_plays(gos, config.load(gos)) is None  # what core start does
+    old = (prism / "instances" / "GTNH-Play").resolve()
+    assert old in config.load(gos).former_plays
+    hand_set(gos, "play", "Play2")
+    svc = SetupService(gos, config.load(gos), provider=FakeDevices())
+    with pytest.raises(SetupError) as err:
+        svc.save(
+            "paths", {"prism_instances": str(prism / "instances"), "lab": "GTNH-Play"}
+        )
+    assert "lab" in err.value.body["problems"]
+    hand_set(gos, "lab", "GTNH-Play")
+    _, refusals = sync.plan_all(config.load(gos), ["lab"])
+    assert any("was Play" in r for r in refusals)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows folders can't differ by case alone"
+)
+def test_a_play_that_differs_only_by_case_stays_on_record(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    """Round 6 C: on a case-keeping file system GTNH-Play and gtnh-play are two folders; moving
+    Play from one to the other keeps both on record, and sync refuses either as Lab."""
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    make_instance(prism / "instances", "gtnh-play")
+    make_instance(prism / "instances", "Play3")
+    hand_set(svc.path, "play", "gtnh-play")
+    assert record_plays(svc.path, config.load(svc.path)) is None
+    svc = SetupService(svc.path, config.load(svc.path), provider=FakeDevices())
+    svc.save("paths", {"gos_home": str(home)})
+    cfg = config.load(svc.path)
+    for name in ("GTNH-Play", "gtnh-play"):
+        assert (prism / "instances" / name).resolve() in cfg.former_plays
+    hand_set(svc.path, "play", "Play3")
+    hand_set(svc.path, "lab", "GTNH-Play")
+    _, refusals = sync.plan_all(config.load(svc.path), ["lab"])
+    assert any("was Play" in r for r in refusals)
+
+
+def test_sync_ignores_case_when_it_compares_a_former_play(tmp_path: Path) -> None:
+    """sync compares a former Play case-folded, as doctor.within does, on every OS."""
+    target = tmp_path / "GTNH-Play"
+    cfg = Config(former_plays=(tmp_path / "gtnh-play",))
+    assert sync._former_play(target, cfg, "lab") is not None

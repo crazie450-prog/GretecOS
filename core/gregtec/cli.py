@@ -940,7 +940,13 @@ def _export(args: argparse.Namespace) -> int:
         return 2
     if args.export_command == "run":
         notify = playhooks.notify_dialog if args.notify else None
-        return playhooks.run_export(cfg, sys.stdout, notify=notify, ticket=args.ticket)
+        return playhooks.run_export(
+            cfg,
+            sys.stdout,
+            notify=notify,
+            ticket=args.ticket,
+            config_path=args.config or config.default_path(),
+        )
     refs = args.runs
     if len(refs) not in (0, 2):
         print(

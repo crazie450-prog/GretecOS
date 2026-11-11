@@ -26,6 +26,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import logging
+import os
 import threading
 import tomllib
 from collections.abc import Callable, Mapping
@@ -223,10 +224,12 @@ class SetupService:
                 f = step.field(fid)
                 assert f is not None and f.toml is not None
                 updates[f.toml] = value if value else None
-            # The Play this save makes is on record before gos.toml names it (D223).
-            new_play = paths.candidate(ctx, values).instance("play")
-            updates[("setup", "former_plays")] = self._remember(ctx, [new_play])
-            self._write(updates)
+            # The Play this save makes is on record before gos.toml names it (D223). Both
+            # writes are guarded against the values being saved too, before either is made.
+            cand = paths.candidate(ctx, values)
+            new_play = [cand.instance("play")]
+            updates[("setup", "former_plays")] = self._remember(ctx, new_play, cand)
+            self._write(updates, new_play, cand)
         log.info("setup step saved", extra={"step": step.id, "keys": sorted(values)})
         return {
             "saved": sorted(f"[{t}] {k}" for t, k in updates),
@@ -235,9 +238,21 @@ class SetupService:
 
     # --- every Play, remembered (D223)
 
-    def _guard(self, ctx: Context, target: Path) -> None:
-        """Refuse to write ``target`` (gos.toml or the record) in or around a Play or an instance."""
-        why = doctor.touch_problem(target, doctor.guarded(ctx.cfg, paths.plays(ctx)))
+    def _guard(
+        self,
+        ctx: Context,
+        target: Path,
+        extra: list[Path] | None = None,
+        cand: Config | None = None,
+    ) -> None:
+        """Refuse to write ``target`` (gos.toml or the record, and so any folder made for it) in
+        or around a Play or an instance: gos.toml's, the running core's, the record's, ``extra``
+        (the Play a save makes) and the candidate config's (``cand``, the values being saved)."""
+        plays = [*paths.plays(ctx), *(extra or [])]
+        folders = doctor.guarded(ctx.cfg, plays)
+        if cand is not None:
+            folders += doctor.guarded(cand, plays)
+        why = doctor.touch_problem(target, folders)
         if why is not None:
             raise SetupError(409, f"not written: {target} {why}")
 
@@ -254,19 +269,21 @@ class SetupService:
             except SetupError as exc:
                 log.warning("former Plays not recorded: %s", exc.body["error"])
 
-    def _remember(self, ctx: Context, extra: list[Path] | None = None) -> list[str]:
+    def _remember(
+        self, ctx: Context, extra: list[Path] | None = None, cand: Config | None = None
+    ) -> list[str]:
         """Add every Play ``ctx`` knows of (and ``extra``) to ``former_plays.txt`` beside gos.toml,
-        resolved; return the whole record for ``[setup] former_plays``. Entries are only ever
-        added here; a hand edit removes one (D223)."""
+        each made absolute and resolved, however it was spelled (a Windows ``/Games/...`` has no
+        drive yet resolves); return the whole record for ``[setup] former_plays``. Entries are
+        only ever added here; a hand edit removes one (D223). Two spellings are one entry only
+        where the file system says so (``os.path.normcase``: case ignored on Windows alone)."""
         record: dict[str, str] = {}
         for p in [*paths.plays(ctx), *(extra or [])]:
-            if not p.is_absolute():  # e.g. the Windows default on Linux: no folder here
-                continue
             try:
                 text = str(p.resolve())
             except (OSError, RuntimeError):  # a link loop: keep it as written
                 text = str(p.absolute())
-            record.setdefault(text.casefold(), text)
+            record.setdefault(os.path.normcase(text), text)
         target = self.path.parent / config.FORMER_PLAYS_FILE
         listed = list(record.values())
         text = RECORD_HEADER + "".join(f"{p}\n" for p in listed)
@@ -276,7 +293,7 @@ class SetupService:
                     return listed
             except (OSError, UnicodeDecodeError):
                 pass  # rewritten below; config.load refuses a record it can't read
-            self._guard(ctx, target)
+            self._guard(ctx, target, extra, cand)
             try:
                 tomledit.write_atomic(target, text)
             except OSError as exc:
@@ -285,9 +302,14 @@ class SetupService:
                 ) from None
         return listed
 
-    def _write(self, updates: Mapping[tuple[str, str], tomledit.Value | None]) -> None:
+    def _write(
+        self,
+        updates: Mapping[tuple[str, str], tomledit.Value | None],
+        extra: list[Path] | None = None,
+        cand: Config | None = None,
+    ) -> None:
         ctx, _ = self.context()
-        self._guard(ctx, self.path)
+        self._guard(ctx, self.path, extra, cand)
         try:
             text = self.path.read_text("utf-8") if self.path.is_file() else ""
             new = tomledit.set_values(text, updates)

@@ -212,7 +212,7 @@ def _refuses(
     before = env.targets()
     assert env.sync(*args) == 1
     out = capsys.readouterr().out
-    assert "Refused, nothing written:" in out
+    assert "Refused, nothing written in any instance:" in out
     assert why in out
     assert env.targets() == before  # neither target was written
     env.assert_play_untouched()
@@ -674,7 +674,7 @@ def test_a_target_that_was_play_refuses_everything(
     before = snapshot(env.play.parent)
     assert env.sync("--only", "lab") == 1
     out = capsys.readouterr().out
-    assert "Refused, nothing written:" in out
+    assert "Refused, nothing written in any instance:" in out
     assert "was Play" in out and "former_plays" in out
     assert snapshot(env.play.parent) == before
 
