@@ -42,14 +42,15 @@ class FakeVad:
 MARK = b"WW" + SPEECH[2:]
 
 
-def attempt(question_s: float = 1.0) -> bytes:
-    """The phrase (0.4 s, ending in the marker), a pause, a question, then silence."""
+def attempt(question_s: float = 1.0, tail: int = 100) -> bytes:
+    """The phrase (0.4 s, ending in the marker), a pause, a question, then ``tail`` blocks of
+    silence; the question starts at 0.6 s."""
     return (
         SPEECH * 19
         + MARK
         + QUIET * 10
         + SPEECH * round(question_s / 0.02)
-        + QUIET * 100
+        + QUIET * tail
     )
 
 
@@ -76,8 +77,8 @@ def test_a_bad_candidate_is_refused(tmp_path: Path) -> None:
 
 def test_score_counts_hits_misses_and_false_wakes() -> None:
     positives = [
-        Clip(attempt(), "a1", 0.4),
-        Clip(attempt(), "a2", 0.4),
+        Clip(attempt(), "a1", 0.4, 0.6),
+        Clip(attempt(), "a2", 0.4, 0.6),
         Clip(SPEECH * 30 + QUIET * 100, "missed", 0.4),  # no marker: stage 1 misses
     ]
     negatives = [
@@ -95,12 +96,53 @@ def test_score_counts_hits_misses_and_false_wakes() -> None:
         negatives,
         lambda pcm: next(heard),
     )
-    assert (result.attempts, result.detected, result.hits) == (3, 2, 2)
-    assert result.misses == ["missed"]
+    assert (result.attempts, result.detected, result.chimed, result.hits) == (
+        3,
+        2,
+        2,
+        2,
+    )
+    assert result.misses == ["missed (not detected)"]
     assert result.latency_ms == [0, 0]  # the marker block ends the phrase
     assert (result.false_detected, result.false_wakes) == (1, 0)  # stage 2 dropped it
     assert result.negative_s == pytest.approx(0.02 * 3221)
     assert result.offenders == []
+
+
+def test_a_hit_is_a_captured_question_not_a_chime() -> None:
+    """Review finding 1: an attempt that chimed but whose question was dropped, cut off or
+    never ended is a miss, with the reason; the chimes are counted apart."""
+    positives = [
+        Clip(SPEECH * 19 + MARK + QUIET * 200, "silent", 0.4),  # chimed, no question
+        Clip(attempt(tail=0), "open", 0.4, 0.6),  # speech to the clip's end
+        Clip(attempt(), "early", 0.4, 3.0),  # ended before the (later) question
+        Clip(SPEECH * 19 + MARK + QUIET * 200, "look-alike", 0.4),
+        Clip(attempt(), "asked", 0.4, 0.6),
+    ]
+    heard = iter(["hey archivist"] * 3 + ["hey artist", "hey archivist"])
+    result = wake_eval.score(
+        "hey archivist",
+        "fake",
+        MarkDetector(),
+        FakeVad,
+        positives,
+        [],
+        lambda pcm: next(heard),
+    )
+    assert (result.detected, result.chimed, result.hits) == (5, 4, 1)
+    assert result.misses == [
+        "silent (no question)",
+        "open (no end of speech)",
+        "early (question cut off)",
+        "look-alike (rejected)",
+    ]
+
+
+def test_recorded_attempts_get_silence_for_end_of_speech(tmp_path: Path) -> None:
+    write_wav(tmp_path / "w.wav", SPEECH * 10)
+    (clip,) = wake_eval.recorded(tmp_path, pad_s=wake_eval.PAD_S)
+    assert clip.seconds == pytest.approx(0.2 + wake_eval.PAD_S)
+    assert clip.pcm.endswith(bytes(640 * 100))
 
 
 def test_stage_one_only_counts_every_detection_as_a_false_wake() -> None:
@@ -126,6 +168,7 @@ def test_report_and_tsv(tmp_path: Path) -> None:
         "sherpa-onnx",
         attempts=40,
         detected=39,
+        chimed=39,
         hits=38,
         latency_ms=[200, 300, 250],
         misses=["bm_george x1.3 game 6 dB", "af_heart x1 quiet 60 dB"],
@@ -137,7 +180,8 @@ def test_report_and_tsv(tmp_path: Path) -> None:
     out = io.StringIO()
     wake_eval.report([s], out, second_stage=True)
     text = out.getvalue()
-    assert "hey archivist" in text and "38/40" in text and "250 ms" in text
+    assert "hey archivist" in text and "39/40   38/40" in text and "250 ms" in text
+    assert "38/40 asked" in text
     assert "false wake, 'hey archivist': am_adam: hey, archive this" in text
     assert "missed, 'hey archivist': bm_george x1.3 game 6 dB" in text
     s.misses = [f"m{i}" for i in range(12)]
@@ -150,7 +194,12 @@ def test_report_and_tsv(tmp_path: Path) -> None:
     wake_eval.write_tsv([s], path, second_stage=True)
     with open(path, encoding="utf-8", newline="") as f:
         row = next(csv.DictReader(f, delimiter="\t"))
-    assert row["hits"] == "38" and row["false_per_hour"] == "2.0" and row["met"] == "0"
+    assert (
+        row["hits"] == "38"
+        and row["chimed"] == "39"
+        and row["false_per_hour"] == "2.0"
+        and row["met"] == "0"
+    )
     assert row["latency_p50_ms"] == "250"
 
 
@@ -198,7 +247,10 @@ def test_wake_eval_on_recordings_meets_the_targets(
 ) -> None:
     audio = tmp_path / "rec"
     for i in range(40):
-        write_wav(audio / "wake" / f"w{i:02}.wav", attempt() if i else SPEECH * 50)
+        # a talk-key attempt ends soon after the question: the harness adds the silence
+        write_wav(
+            audio / "wake" / f"w{i:02}.wav", attempt(tail=25) if i else SPEECH * 50
+        )
     write_wav(audio / "play" / "evening.wav", SPEECH * 3000 + MARK + QUIET * 200)
     toml = setup(tmp_path, 'wake_phrase = "okay tessera"')
     out_tsv = tmp_path / "wake.tsv"
@@ -207,7 +259,7 @@ def test_wake_eval_on_recordings_meets_the_targets(
         "--out", str(out_tsv),
     )  # fmt: skip
     assert fake_engine == ["okay tessera"]
-    assert "39/40" in text and "missed, 'okay tessera': w00.wav" in text
+    assert "39/40" in text and "missed, 'okay tessera': w00.wav (not detected)" in text
     # one false wake in 64 s of play is far over 1 an hour
     assert "false wake, 'okay tessera': evening.wav" in text
     assert code == cli.EXIT_PROBLEM and out_tsv.is_file()

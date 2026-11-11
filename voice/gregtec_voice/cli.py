@@ -207,7 +207,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
             "lines of tests/evals/wake_chatter.txt and minutes of noise; nothing but the "
             "report is written. --audio DIR: the configured phrase on recordings, "
             "DIR/wake/*.wav (one attempt each) and DIR/play/*.wav (open-mic play, gos voice "
-            "capture), against plan 8's targets: >= 38 of 40 hits, <= 1 false wake an hour."
+            "capture), against plan 8's targets: >= 38 of 40 attempts whose question was "
+            "captured, <= 1 false wake an hour."
         ),
     )
     wake_source = wake_eval_cmd.add_mutually_exclusive_group(required=True)
@@ -961,7 +962,7 @@ def _wake_eval(
                 print(f"No folder {', '.join(missing)}.", file=out)
                 return EXIT_SETUP
             phrases = wanted or [wake_settings.wake_phrase]
-            positives = wake_eval.recorded(folders[0])
+            positives = wake_eval.recorded(folders[0], pad_s=wake_eval.PAD_S)
             negatives = wake_eval.recorded(folders[1])
         else:
             candidates = wake_eval.load_phrases(args.phrases or wake_eval.PHRASES)
@@ -1063,7 +1064,13 @@ def _capture(
     print(f"Recording to {args.wav}; Ctrl+C stops.", file=out)
     try:
         pipe.start()
-        threading.Event().wait(args.minutes * 60 if args.minutes > 0 else None)
+        # short waits: on Windows, Ctrl+C can't interrupt one long lock wait
+        deadline = (
+            time.monotonic() + args.minutes * 60 if args.minutes > 0 else math.inf
+        )
+        ticks = threading.Event()
+        while not ticks.wait(0.5) and time.monotonic() < deadline:
+            pass
     except AudioError as exc:
         print(f"Can't open the microphone: {exc}", file=out)
         return EXIT_PROBLEM

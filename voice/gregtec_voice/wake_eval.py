@@ -13,13 +13,17 @@ capture times, as the voice client feeds it:
   every candidate) and each candidate's own near misses, said by the same voices over the same
   noise, then minutes of noise alone. Nothing is written but the report: no audio, no model.
 - **Recorded** (``--audio DIR``, Clayton's PC): ``DIR/wake/*.wav`` are wake attempts (each
-  file one attempt, the phrase and a question), ``DIR/play/*.wav`` are hours of open-mic
+  file one attempt, the phrase and a question; :data:`PAD_S` of silence is added after each,
+  as a talk-key recording ends too soon after the question for end of speech),
+  ``DIR/play/*.wav`` are hours of open-mic
   gameplay (``gos voice capture``), all 16 kHz mono 16-bit; only the configured phrase is
   scored, against plan 8's acceptance: >= 38 of 40 attempts and <= 1 false wake per hour.
 
-A **hit** is an attempt that chimed (stage 2 passed, or stage 1 without it); a **false wake**
-is a chime in the negatives. Each is counted at stage 1 too, so the report shows what the
-second stage removes. Times are the audio's own, so the scores don't depend on the CPU.
+A **hit** is an attempt whose question was captured: the wake chimed (stage 2 passed, or stage
+1 without it), then ended once in end of speech, with no cancel, and (synthetic attempts,
+where the question's start is known) after the question started; the attempts that only
+chimed are counted too, and each miss says why. A **false wake** is a chime in the negatives.
+Detections are counted at stage 1 too, so the report shows what the second stage removes. Times are the audio's own, so the scores don't depend on the CPU.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ CONDITIONS = (
     ("game", 6.0),
 )
 NOISES = ("game", "clicks", "hum", "babble", "pink")
+PAD_S = 2.0  # silence after a recorded attempt: the cancel window and end of speech fit
 MISSES_SHOWN = 8  # per phrase in the report (a phrase that fails would list all 40)
 LEAD_S, GAP_S, TAIL_S = (
     0.6,
@@ -243,6 +248,7 @@ class Clip:
     pcm: bytes
     label: str
     phrase_end: float | None = None  # seconds into the clip, for attempts
+    question_start: float | None = None  # seconds into the clip, synthetic attempts
 
     @property
     def seconds(self) -> float:
@@ -271,11 +277,13 @@ def attempts(
         speech = np.concatenate(
             [silence(LEAD_S), said, silence(GAP_S), question, silence(TAIL_S)]
         )
+        phrase_end = LEAD_S + len(said) / SAMPLE_RATE
         clips.append(
             Clip(
                 pcm16(mix(speech, _background(kind, speech, rng, babble), snr)),
                 f"{voice} x{speed} {kind} {snr:g} dB",
-                LEAD_S + len(said) / SAMPLE_RATE,
+                phrase_end,
+                phrase_end + GAP_S,
             )
         )
     return clips
@@ -374,7 +382,8 @@ class Score:
     engine: str
     attempts: int = 0
     detected: int = 0  # stage 1
-    hits: int = 0  # chimed
+    chimed: int = 0  # passed stage 2
+    hits: int = 0  # the question captured (ended in end of speech after it started)
     latency_ms: list[int] = field(default_factory=list)  # phrase end to detection
     misses: list[str] = field(default_factory=list)
     negative_s: float = 0.0
@@ -431,9 +440,13 @@ def score(
                     round((bus.wakes[0] - start - clip.phrase_end) * 1000)
                 )
         if wake.chimes:
+            result.chimed += 1
+        asked = None if clip.question_start is None else start + clip.question_start
+        why = _missed(wake, bus, asked)
+        if why is None:
             result.hits += 1
         else:
-            result.misses.append(clip.label)
+            result.misses.append(f"{clip.label} ({why})")
     bus = Bus()
     wake = engine(bus)
     t = 1000.0
@@ -448,6 +461,21 @@ def score(
     return result
 
 
+def _missed(wake: WakeWord, bus: Bus, question_start: float | None) -> str | None:
+    """Why an attempt's question wasn't captured, or None when it was."""
+    if not wake.wakes:
+        return "not detected"
+    if not wake.chimes:
+        return "rejected"
+    if bus.cancels:
+        return "no question"
+    if len(bus.ends) != 1:
+        return "no end of speech" if not bus.ends else "woke twice"
+    if question_start is not None and bus.ends[0] <= question_start:
+        return "question cut off"
+    return None
+
+
 def median(values: Sequence[int]) -> int | None:
     if not values:
         return None
@@ -458,10 +486,11 @@ def median(values: Sequence[int]) -> int | None:
 def report(scores: Sequence[Score], out: TextIO, *, second_stage: bool) -> None:
     stage = "stage 2 on" if second_stage else "stage 1 only (no second stage)"
     print(
-        f"Wake phrases ({stage}); targets: >= 38/40 hits, <= 1 false wake/h", file=out
+        f"Wake phrases ({stage}); targets: >= 38/40 asked, <= 1 false wake/h", file=out
     )
     print(
-        f"{'phrase':<22}{'engine':<14}{'stage-1':>9}{'hits':>8}{'latency':>9}"
+        f"{'phrase':<22}{'engine':<14}{'stage-1':>9}{'chimed':>8}{'asked':>8}"
+        f"{'latency':>9}"
         f"{'neg. min':>10}{'stage-1 FA':>11}{'false':>7}{'per h':>8}",
         file=out,
     )
@@ -469,7 +498,7 @@ def report(scores: Sequence[Score], out: TextIO, *, second_stage: bool) -> None:
         lat = median(s.latency_ms)
         print(
             f"{s.phrase:<22}{s.engine:<14}{s.detected:>5}/{s.attempts:<3}"
-            f"{s.hits:>4}/{s.attempts:<3}"
+            f"{s.chimed:>4}/{s.attempts:<3}{s.hits:>4}/{s.attempts:<3}"
             f"{'' if lat is None else f'{lat} ms':>9}"
             f"{s.negative_s / 60:>10.1f}{s.false_detected:>11}{s.false_wakes:>7}"
             f"{s.per_hour:>8.1f}",
@@ -495,6 +524,7 @@ def write_tsv(scores: Sequence[Score], path: Path, *, second_stage: bool) -> Non
                 "second_stage",
                 "attempts",
                 "stage1_hits",
+                "chimed",
                 "hits",
                 "latency_p50_ms",
                 "negative_s",
@@ -512,6 +542,7 @@ def write_tsv(scores: Sequence[Score], path: Path, *, second_stage: bool) -> Non
                     int(second_stage),
                     s.attempts,
                     s.detected,
+                    s.chimed,
                     s.hits,
                     median(s.latency_ms) if s.latency_ms else "",
                     round(s.negative_s, 1),
@@ -523,15 +554,17 @@ def write_tsv(scores: Sequence[Score], path: Path, *, second_stage: bool) -> Non
             )
 
 
-def recorded(folder: Path) -> list[Clip]:
-    """``folder``'s WAVs (16 kHz mono 16-bit), by name."""
+def recorded(folder: Path, *, pad_s: float = 0.0) -> list[Clip]:
+    """``folder``'s WAVs (16 kHz mono 16-bit), by name, each followed by ``pad_s`` of
+    silence."""
     from gregtec_voice.stt_eval import EvalError as WavError
     from gregtec_voice.stt_eval import read_wav
 
     clips = []
     for path in sorted(folder.glob("*.wav")):
         try:
-            clips.append(Clip(read_wav(path), path.name))
+            pcm = read_wav(path) + bytes(round(pad_s * SAMPLE_RATE) * SAMPLE_BYTES)
+            clips.append(Clip(pcm, path.name))
         except WavError as exc:
             raise EvalError(str(exc)) from None
     return clips
