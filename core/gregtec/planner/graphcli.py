@@ -45,7 +45,9 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     p.add_argument("target", nargs="?", help="an item or fluid: words or its key")
     p.add_argument(
-        "--tier", default=None, help="tier cap (LV, IV, ... or 0-14); default: My base's"
+        "--tier",
+        default=None,
+        help="tier cap (LV, IV, ... or 0-14); default: My base's",
     )
     p.add_argument("--addons", action="store_true", help="allow addon machines (D12)")
     p.add_argument("--json", action="store_true", help="print the graph as JSON")

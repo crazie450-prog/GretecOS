@@ -130,7 +130,10 @@ def recipe_maps() -> list[dict[str, object]]:
         cats = [{"name": f"gt.recipe.{m}", "owner_mod": "gregtech"}]
         if m == "arcfurnace":
             cats.append(
-                {"name": "gt.recipe.category.arc_furnace_recycling", "owner_mod": "gregtech"}
+                {
+                    "name": "gt.recipe.category.arc_furnace_recycling",
+                    "owner_mod": "gregtech",
+                }
             )
         out.append(
             {
@@ -174,7 +177,13 @@ def items() -> list[dict[str, object]]:
             line["gt"] = {"prefix": assoc[0], "material": assoc[1], "amount": 3628800}
         out.append(line)
     out.append(
-        {"item": CIRCUIT, "meta": 1, "unlocalized": "circuit", "name": "Circuit 1", "ore": []}
+        {
+            "item": CIRCUIT,
+            "meta": 1,
+            "unlocalized": "circuit",
+            "name": "Circuit 1",
+            "ore": [],
+        }
     )
     return out
 
@@ -279,7 +288,9 @@ def conn(db: Path) -> Iterator[sqlite3.Connection]:
 def ref_of(conn: sqlite3.Connection, map_: str, idx: int) -> str:
     """The citation key of fixture recipe (map, idx): its only (or first) output's maker with
     that map and EU/t and duration."""
-    line = next(x for x in recipes() if x["map"] == f"gt.recipe.{map_}" and x["idx"] == idx)
+    line = next(
+        x for x in recipes() if x["map"] == f"gt.recipe.{map_}" and x["idx"] == idx
+    )
     rows = conn.execute(
         "SELECT r.ref FROM recipe AS r JOIN recipe_map AS m ON m.id = r.recipe_map_id"
         " WHERE m.unloc_name = ? AND r.eut = ? AND r.duration_ticks = ?"
@@ -338,7 +349,10 @@ def test_request_canonical_form_is_stable_and_round_trips() -> None:
         unit="/min",
         boundary=(ACID, DUST_B, ACID),
         constraints=Constraints(exclude=("mte:5", "r:gt.recipe.x/0123456789ab", WATER)),
-        pins=(Pin(PLATE, "r:gt.recipe.x/0123456789ab"), Pin(DUST_A, "r:gt.recipe.y/a1b2c3d4e5f6")),
+        pins=(
+            Pin(PLATE, "r:gt.recipe.x/0123456789ab"),
+            Pin(DUST_A, "r:gt.recipe.y/a1b2c3d4e5f6"),
+        ),
     )
     b = Request.from_json(a.canonical())
     assert a == b and a.canonical() == b.canonical() and a.digest() == b.digest()
@@ -347,7 +361,9 @@ def test_request_canonical_form_is_stable_and_round_trips() -> None:
     assert [p["node"] for p in data["pins"]] == [PLATE, DUST_A][::-1] or [
         p["node"] for p in data["pins"]
     ] == sorted([PLATE, DUST_A])
-    assert data["constraints"]["exclude"] == sorted(["mte:5", "r:gt.recipe.x/0123456789ab", WATER])
+    assert data["constraints"]["exclude"] == sorted(
+        ["mte:5", "r:gt.recipe.x/0123456789ab", WATER]
+    )
     assert a.rate_per_s == pytest.approx(2 / 60)
     assert ", " not in a.canonical() and a.canonical() == json.dumps(
         data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -437,11 +453,15 @@ def test_candidates_order_and_rejections(conn: sqlite3.Connection) -> None:
     g = build_graph(conn)
     w = g.item(WIDGET)
     cands = {c.recipe: c for c in w.candidates}
-    mix0, cr0, cr5 = ref_of(conn, "mixer", 0), ref_of(conn, "chemicalreactor", 0), ref_of(
-        conn, "chemicalreactor", 5
+    mix0, cr0, cr5 = (
+        ref_of(conn, "mixer", 0),
+        ref_of(conn, "chemicalreactor", 0),
+        ref_of(conn, "chemicalreactor", 5),
     )
-    el0, el2, cr4 = ref_of(conn, "electrolyzer", 0), ref_of(conn, "electrolyzer", 2), ref_of(
-        conn, "chemicalreactor", 4
+    el0, el2, cr4 = (
+        ref_of(conn, "electrolyzer", 0),
+        ref_of(conn, "electrolyzer", 2),
+        ref_of(conn, "chemicalreactor", 4),
     )
     # §7.1: avoid chanced-only; lower tier; fewer inputs (consumed ones; the circuit isn't),
     # then the key.
@@ -491,7 +511,9 @@ def test_exclusions_and_addons(conn: sqlite3.Connection) -> None:
     assert acid_base[can].status == "rejected" and "addon" in acid_base[can].reason
     acid = {
         c.recipe: c
-        for c in build_graph(conn, Request(WIDGET, machines="base+addons")).item(ACID).candidates
+        for c in build_graph(conn, Request(WIDGET, machines="base+addons"))
+        .item(ACID)
+        .candidates
     }
     assert acid[can].status != "rejected"
 
@@ -522,7 +544,10 @@ def test_non_primary_nodes_keep_their_first_choice(conn: sqlite3.Connection) -> 
     g = build_graph(conn)
     gas = g.item(GAS)
     assert GAS not in g.primary and len(gas.chosen) == 1
-    assert all(c.status in ("chosen", "alternative", "pruned", "rejected") for c in gas.candidates)
+    assert all(
+        c.status in ("chosen", "alternative", "pruned", "rejected")
+        for c in gas.candidates
+    )
 
 
 def test_boundaries_from_my_base_and_the_request(conn: sqlite3.Connection) -> None:
@@ -540,7 +565,10 @@ def test_require_owned(conn: sqlite3.Connection) -> None:
     req = Request(WIDGET, constraints=Constraints(require_owned=True))
     g = build_graph(conn, req, Base(owned={102: 1}))
     chosen = [c.recipe for c in g.item(WIDGET).candidates if c.status == "chosen"]
-    assert chosen == [ref_of(conn, "chemicalreactor", 5), ref_of(conn, "chemicalreactor", 0)]
+    assert chosen == [
+        ref_of(conn, "chemicalreactor", 5),
+        ref_of(conn, "chemicalreactor", 0),
+    ]
 
 
 def test_pins(conn: sqlite3.Connection) -> None:
@@ -567,7 +595,9 @@ def test_same_request_same_graph(db: Path, conn: sqlite3.Connection) -> None:
         other.close()
     assert first.canonical() == again.canonical() and first.digest() == again.digest()
     assert [i.id for i in first.items] == sorted(i.id for i in first.items)
-    assert [e for e in first.edges] == sorted(first.edges, key=lambda e: (e.src, e.dst, e.kind))
+    assert [e for e in first.edges] == sorted(
+        first.edges, key=lambda e: (e.src, e.dst, e.kind)
+    )
     assert first.request == Request(WIDGET).digest()
 
 
@@ -645,7 +675,7 @@ def test_stale_template_rows(conn: sqlite3.Connection, tmp_path: Path) -> None:
     ("files", "match"),
     [
         ({"a": ["x\ty"]}, "4 tab-separated"),
-        ({"a": [f"Widget\tr:gt.recipe.a/0123456789ab\t\t"]}, "not an item or fluid key"),
+        ({"a": ["Widget\tr:gt.recipe.a/0123456789ab\t\t"]}, "not an item or fluid key"),
         ({"a": [f"{WIDGET}\tmixer/0\t\t"]}, "not an r: key"),
         (
             {"a": [f"{WIDGET}\tr:gt.recipe.a/0123456789ab\t\t"],
@@ -683,9 +713,15 @@ def test_template_without_header(tmp_path: Path) -> None:
 
 
 def test_heuristic_order() -> None:
-    def node(ref: str, *ins: str, flags: tuple[str, ...] = (), tier: int = 1,
-             chance: int = 10000, base: bool = True, badges: tuple[str, ...] = ()
-             ) -> graph.RecipeNode:
+    def node(
+        ref: str,
+        *ins: str,
+        flags: tuple[str, ...] = (),
+        tier: int = 1,
+        chance: int = 10000,
+        base: bool = True,
+        badges: tuple[str, ...] = (),
+    ) -> graph.RecipeNode:
         return graph.RecipeNode(
             ref, "gt.recipe.x", "gt", 30, 20, tier,
             tuple(graph.Port(k, 1) for k in ins), (graph.Port("x@1", 1, chance),),

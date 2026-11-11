@@ -72,7 +72,9 @@ def conn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connectio
         c.close()
 
 
-def timed(conn: sqlite3.Connection, target: str, tier: int) -> tuple[graph.Graph, float]:
+def timed(
+    conn: sqlite3.Connection, target: str, tier: int
+) -> tuple[graph.Graph, float]:
     started = time.perf_counter()
     g = graph.build(conn, Request(target, tier_cap=tier), DefaultBaseInputs(0))
     return g, time.perf_counter() - started
@@ -85,7 +87,9 @@ def test_templates_hold(conn: sqlite3.Connection) -> None:
 
 def test_platline(conn: sqlite3.Connection) -> None:
     g, took = timed(conn, PLATINUM, IV)
-    print(f"platline graph: {took:.3f} s, {len(g.items)} items, {len(g.recipes)} recipes")
+    print(
+        f"platline graph: {took:.3f} s, {len(g.items)} items, {len(g.recipes)} recipes"
+    )
     assert took < LIMIT_S
     assert "platline" in g.templates
     target = g.item(PLATINUM)
@@ -116,7 +120,9 @@ def test_steel_in_the_ebf(conn: sqlite3.Connection) -> None:
     ("target", "tier", "chain"),
     [(NEODYMIUM, LUV, "rare-earths"), (NAQUADAH, ZPM, "naquadah")],
 )
-def test_template_lines(conn: sqlite3.Connection, target: str, tier: int, chain: str) -> None:
+def test_template_lines(
+    conn: sqlite3.Connection, target: str, tier: int, chain: str
+) -> None:
     g, took = timed(conn, target, tier)
     assert took < LIMIT_S
     assert chain in g.templates and g.item(target).template == chain
@@ -133,7 +139,9 @@ def test_naquadah_keeps_the_neutron_activator(conn: sqlite3.Connection) -> None:
 
 
 @pytest.mark.parametrize(("target", "tier"), sorted(OTHER_G3.items()))
-def test_other_g3_targets_build(conn: sqlite3.Connection, target: str, tier: int) -> None:
+def test_other_g3_targets_build(
+    conn: sqlite3.Connection, target: str, tier: int
+) -> None:
     g, took = timed(conn, target, tier)
     assert took < LIMIT_S
     assert g.item(target).chosen, g.item(target).candidates[:5]
@@ -145,10 +153,12 @@ def test_assembly_line_recipes_need_their_research(conn: sqlite3.Connection) -> 
     # their research recipe is at the tier cap (D189).
     arm = "gregtech:gt.metaitem.01@32657"  # Robot Arm (UV)
     al = "r:gt.recipe.fakeAssemblylineProcess/0657ced2c028"
-    g, _ = timed(conn, arm, 8)
+    g, _ = timed(conn, arm, 7)  # a ZPM recipe in the run
     rec = g.recipe(al)
     assert "research" in rec.flags and rec.research is not None
-    assert rec.research.startswith(("r:gt.recipe.scanner/", "r:gt.recipe.researchStation/"))
-    low, _ = timed(conn, arm, 7)
+    assert rec.research.startswith(
+        ("r:gt.recipe.scanner/", "r:gt.recipe.researchStation/")
+    )
+    low, _ = timed(conn, arm, 6)
     c = {c.recipe: c for c in low.item(arm).candidates}[al]
     assert c.status == "rejected" and "above the cap" in c.reason
