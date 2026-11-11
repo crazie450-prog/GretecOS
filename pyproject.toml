@@ -54,6 +54,10 @@ stt = ["faster-whisper>=1.2.1", "onnx-asr[cpu,hub]>=0.12.0"]
 # Runtime (from the stt group, with the VAD and the second stage); the openwakeword package
 # isn't used (on Linux it needs tflite-runtime, which has no Python 3.12 wheel). gos deploy adds it.
 wake = ["sherpa-onnx>=2.0.1", "sentencepiece>=0.2.1"]
+# WO-5.3, D203: text-to-speech. kokoro-onnx (MIT) runs Kokoro and, through the same ONNX Runtime
+# and phonemizer, GOS's own Piper runner; its phonemizer and espeak-ng are GPL-3.0, installed
+# from PyPI as libraries, never vendored (D203, a PR question). gos deploy adds it.
+tts = ["kokoro-onnx>=0.6.1"]
 
 [tool.uv]
 default-groups = ["dev", "voice"]

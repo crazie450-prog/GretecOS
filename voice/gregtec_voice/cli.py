@@ -15,9 +15,14 @@
 | ``wake-eval``                | score wake phrases: hits and false wakes on synthetic speech  |
 |                              | and noise, or on recordings (WO-5.4, D187)                    |
 | ``capture OUT.wav``          | record the microphone to a WAV (open-mic play for wake-eval)  |
+| ``tts-bench``                | time text-to-speech per engine, pick the cheapest that meets  |
+|                              | the target (WO-5.3, D204)                                     |
+| ``tts-check``                | the 40 check phrases through TTS and back through STT         |
+| ``say [TEXT]``               | say a text (or ``--phrases``) on the output device            |
 
 ``run``, ``test``, ``devices``, ``record`` and ``capture`` need Windows (WASAPI and the
-keyboard hook); ``keys``, ``bench``, ``stt``, ``eval`` and ``wake-eval`` run anywhere. ``run`` needs the core's voice token in
+keyboard hook); ``keys``, ``bench``, ``stt``, ``eval``, ``wake-eval``, ``tts-bench``, ``tts-check`` and ``say`` run
+anywhere (``devices`` lists the capture and the output devices). ``run`` needs the core's voice token in
 this account's keyring (``gos token new voice``, D117).
 """
 
@@ -41,7 +46,17 @@ from gregtec.agents.tools.glossary import Glossary
 from gregtec.config import Config
 from gregtec.gamestate.safe_open import read_bytes
 from gregtec.llm import keys as stored
-from gregtec_voice import audio, hooks, keys, ptt, settings, stt, stt_eval
+from gregtec_voice import (
+    audio,
+    hooks,
+    keys,
+    playback,
+    ptt,
+    settings,
+    stt,
+    stt_eval,
+    tts_cli,
+)
 from gregtec_voice.audio import AudioError, AudioPipe, Segment, WasapiSource
 from gregtec_voice.client import (
     VOICE,
@@ -95,7 +110,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "--transcript",
         metavar="TEXT",
         help="every segment 'says' TEXT instead of going through speech-to-text: measures "
-        "the rest of the path (key, capture, core; speech once WO-5.3's engine is there)",
+        "the rest of the path (key, capture, core, speech)",
     )
     run.add_argument(
         "--supervised",
@@ -135,7 +150,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         ),
     )
     keys_cmd.add_argument("instance", choices=("play", "lab"))
-    commands.add_parser("devices", help="list the WASAPI capture devices")
+    commands.add_parser("devices", help="list the WASAPI capture and output devices")
     bench = commands.add_parser(
         "bench",
         help="turn timings from logs/voice.log against PM14",
@@ -288,6 +303,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         capture,
     ):
         each.add_argument("--config", type=Path, help="gos.toml (default: GOS_HOME's)")
+    tts_handlers = tts_cli.add_parsers(commands)  # WO-5.3: tts-bench, tts-check, say
     args = parser.parse_args(argv)
     try:
         cfg, voice_settings = settings.load(args.config)
@@ -305,6 +321,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "eval": _eval,
         "wake-eval": _wake_eval,
         "capture": _capture,
+        **tts_handlers,
     }[args.voice_command]
     return handler(cfg, voice_settings, args, out)
 
@@ -633,6 +650,7 @@ def _devices(
     except AudioError as exc:
         print(f"Capture devices: {exc}", file=out)
         return EXIT_PROBLEM
+    print("Capture:", file=out)
     for device in devices:
         marks = [
             m
@@ -642,6 +660,24 @@ def _devices(
         print(
             f"  {device.name}" + (f"  [{', '.join(marks)}]" if marks else ""), file=out
         )
+    try:  # WO-5.3: where speech plays ([voice] output_endpoint, D56, D205)
+        outputs = playback.playback_devices()
+        pick = playback.pick_device(voice_settings.output_endpoint, outputs)
+    except AudioError as exc:
+        print(f"Output devices: {exc}", file=out)
+        return EXIT_PROBLEM
+    print(f"Output (output_endpoint = {voice_settings.output_endpoint!r}):", file=out)
+    for device in outputs:
+        marks = [
+            m
+            for m, on in (("default", device.default), ("used", device == pick.device))
+            if on
+        ]
+        print(
+            f"  {device.name}" + (f"  [{', '.join(marks)}]" if marks else ""), file=out
+        )
+    if pick.why:
+        print(f"  ({pick.why})", file=out)
     return 0
 
 

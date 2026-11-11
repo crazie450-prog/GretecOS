@@ -24,7 +24,7 @@ from gregtec.config import Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
-from gregtec_voice import stt
+from gregtec_voice import stt, tts
 from gregtec_voice.client import CoreError, VoiceClient
 
 ADMIN = "admin-" + "v" * 40
@@ -245,6 +245,7 @@ def no_speech_models(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(stt, "whisper_files", refuse)
     monkeypatch.setattr(stt, "parakeet_files", refuse)
+    monkeypatch.setattr(tts, "model_files", refuse)  # WO-5.3: Kokoro and Piper
 
 
 @pytest.fixture

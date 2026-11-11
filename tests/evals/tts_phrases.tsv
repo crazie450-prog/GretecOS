@@ -1,0 +1,41 @@
+id	kind	text	say	heard
+t01	term	You need ULV for this.	You need U L V for this.	ULV
+t02	term	You need LV for this.	You need L V for this.	LV
+t03	term	You need MV for this.	You need M V for this.	MV
+t04	term	You need HV for this.	You need H V for this.	HV
+t05	term	You need EV for this.	You need E V for this.	EV
+t06	term	You need IV for this.	You need I V for this.	IV
+t07	term	You need LuV for this.	You need L U V for this.	LuV
+t08	term	You need ZPM for this.	You need Z P M for this.	ZPM
+t09	term	You need UV for this.	You need U V for this.	UV
+t10	term	You need UHV for this.	You need U H V for this.	UHV
+t11	term	You need UEV for this.	You need U E V for this.	UEV
+t12	term	Build an EBF first.	Build an E B F first.	EBF
+t13	term	Build a BBF first.	Build a B B F first.	BBF
+t14	term	Build an LCR first.	Build an L C R first.	LCR
+t15	term	Build a DT first.	Build a D T first.	DT
+t16	term	Build an LSC first.	Build an L S C first.	LSC
+t17	term	Build an LGT first.	Build an L G T first.	LGT
+t18	term	Set up AE2 first.	Set up A E two first.	AE2|AE 2
+t19	term	You need naquadah for this.	You need nah-kwa-dah for this.	naquadah
+t20	term	You need naquadria for this.	You need nah-kwa-dree-ah for this.	naquadria
+t21	term	You need neutronium for this.	You need new-tro-nee-um for this.	neutronium
+t22	term	You need osmiridium for this.	You need oz-mi-rid-ee-um for this.	osmiridium
+t23	term	You need HSS-G for this.	You need H S S G for this.	HSS-G|HSSG
+t24	term	You need cupronickel for this.	You need cue-pro-nickel for this.	cupronickel
+t25	term	You need kanthal for this.	You need kan-thal for this.	kanthal
+t26	term	You need nichrome for this.	You need nye-chrome for this.	nichrome
+t27	term	You need PTFE for this.	You need P T F E for this.	PTFE
+t28	term	You need epoxid for this.	You need eh-pox-id for this.	epoxid|epoxide
+t29	term	Build a pyrolyse oven first.	Build a pie-ro-lize oven first.	pyrolyse oven|pyrolyze oven
+t30	term	That is a GTNH quirk.	That is a G T N H quirk.	GTNH
+n01	number	It runs at 1920 EU/t.	It runs at nineteen-twenty E U per tick.	1920 EU per tick|19-20 EU per tick
+n02	number	It needs 32 EU/t.	It needs thirty-two E U per tick.	32 EU per tick
+n03	number	Run it at 2048 EU/t with 2A.	Run it at twenty forty-eight E U per tick with two amps.	2048 EU per tick with 2 amps|20 48 EU per tick with 2 amps
+n04	number	That takes 144 L of oxygen.	That takes one hundred forty-four litres of oxygen.	144 liters of oxygen|144 litres of oxygen
+n05	number	It takes 20 s per craft.	It takes twenty seconds per craft.	20 seconds
+n06	number	The coils give 1800K of heat.	The coils give eighteen hundred kelvin of heat.	1800 kelvin|1,800 kelvin
+n07	number	The chance is 95%.	The chance is ninety-five percent.	95 percent|95%
+n08	number	You have 1.5M EU stored.	You have one point five million E U stored.	1.5 million EU
+n09	number	Make 64 mB per batch.	Make sixty-four millibuckets per batch.	64 millibuckets|64 milli buckets
+n10	number	It is the 3rd step at 131072 EU/t.	It is the third step at one hundred thirty-one thousand seventy-two E U per tick.	3rd step at 131,072 EU per tick|third step at 131,072 EU per tick
