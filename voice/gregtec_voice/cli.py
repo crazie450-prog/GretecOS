@@ -649,9 +649,9 @@ def _devices(
 STAGES = ("held_ms", "close_ms", "stt_ms", "core_ms", "speak_ms", "total_ms")
 
 
-def turn_records(logs: Path) -> list[dict[str, Any]]:
-    """Every ``turn`` record in ``logs/voice.log`` and its rotated copies, oldest first
-    (applog keeps ``voice.log.1`` to ``.5``, ``.1`` the newest)."""
+def turn_records(logs: Path, msg: str = "turn") -> list[dict[str, Any]]:
+    """Every ``turn`` record (or ``msg`` record: ``wake``, D185) in ``logs/voice.log`` and its
+    rotated copies, oldest first (applog keeps ``voice.log.1`` to ``.5``, ``.1`` the newest)."""
     rotated = []
     for path in logs.glob(f"{VOICE}.log.*"):
         number = path.name.removeprefix(f"{VOICE}.log.")
@@ -667,7 +667,7 @@ def turn_records(logs: Path) -> list[dict[str, Any]]:
                 entry = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(entry, dict) and entry.get("msg") == "turn":
+            if isinstance(entry, dict) and entry.get("msg") == msg:
                 found.append(entry)
     return found
 
@@ -682,6 +682,16 @@ def _bench(
     cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
 ) -> int:
     turns = turn_records(cfg.logs_dir)[-max(1, args.last) :]
+    wakes = turn_records(cfg.logs_dir, "wake")
+    if wakes:  # D185: each wake's outcome; Clayton counts the chimes he didn't mean
+        outcomes: dict[str, int] = {}
+        for w in wakes:
+            outcomes[str(w.get("outcome"))] = outcomes.get(str(w.get("outcome")), 0) + 1
+        chimed = sum(n for o, n in outcomes.items() if o in ("asked", "no question"))
+        listed = ", ".join(f"{n} {o}" for o, n in sorted(outcomes.items()))
+        print(
+            f"wake word: {len(wakes)} detections, {chimed} chimed ({listed})", file=out
+        )
     answered = [t for t in turns if t.get("outcome") in ("answered", "stopped")]
     if not answered:
         print(f"No answered turns in {cfg.logs_dir / (VOICE + '.log')} yet.", file=out)
