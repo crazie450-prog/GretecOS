@@ -391,7 +391,7 @@ def numbers(r: Run) -> dict[str, Any]:
 def test_concurrent_writer_and_core(tmp_path: Path, seed: int) -> None:
     r = run(tmp_path, seconds=1.5, seed=seed)
     check(r)
-    assert r.agent.seq > 50
+    assert r.agent.seq > 20  # Windows runners sleep coarsely
     assert r.box.stats["withdrawn"] == 0
 
 
