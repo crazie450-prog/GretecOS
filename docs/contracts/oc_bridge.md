@@ -35,7 +35,7 @@ value from a stale one; gaps (a paused game, a broken link) are marked stale, ne
 OC token's in constant time and never logs it; the name's instance (`play` or `lab`) is the binding (D217). The
 body must be `application/json` (else `bad_payload`) and at most 256 KB (a larger `Content-Length` or chunked
 body is refused unread past the limit). One token may send a burst of 10 messages, then one a second; more is
-`ok: false`, `err: "internal"`, so the agent backs off (the log lines of requests with
+`ok: false`, `err: "internal"`, so the agent backs off; so is a message from a 17th OC computer of one instance (at most 16 per instance until the core restarts). (The log lines of requests with
 no valid token are rate-limited too). An `ok: true` reply carries `boot` and `ack` (the highest seq of that boot the core has) like M1's.
 Whatever is refused is not processed: nothing is recorded and no command is taken.
 
