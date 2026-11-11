@@ -11,8 +11,14 @@ answer a message the same way (D217)::
   valid against ``#/$defs/telemetry`` (else ``bad_payload``). NaN and infinities are refused, as
   JSON itself has none. A refusal's log line names where the message broke the schema, never
   its text: everything in a message is game or mod data (plan 0.1 principle 8).
-- :class:`Seqs` (dedupe): per agent (the OC computer's address) the core keeps the agent's
-  ``boot`` and the highest ``seq`` it has. A message it already has (a repeated read, a retried
+- :class:`AgentId`: an agent is its OC computer's address *as seen through one binding*, the
+  sender the transport vouches for (a mailbox: its gos.toml role, ``lab`` or ``play``; WO-7.1's
+  HTTP endpoint: the instance its token is issued for). The address is only what a message says
+  about itself, and Lab runs any Lua gos-dev puts there (D75), so a Lab message naming Play's
+  computer is a different agent: it never dedupes against, replaces or takes the commands of
+  Play's (a Lab world copied from Play even has the same addresses) (D217).
+- :class:`Seqs` (dedupe): per agent the core keeps the agent's ``boot`` and the highest ``seq``
+  it has. A message it already has (a repeated read, a retried
   POST) is answered and acknowledged but not recorded again. A new ``boot`` is a restarted agent,
   whose ``seq`` starts at 1 again. ``seq`` may jump: the agent counts a message it couldn't send.
 - :class:`Sink` records a new message (WO-7.1, 7.4 and 7.5 add the tables and alerts; until
@@ -34,10 +40,10 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import Any, NamedTuple, NoReturn, Protocol
 
 from jsonschema import Draft202012Validator
 
@@ -120,6 +126,18 @@ def encode(doc: Mapping[str, Any]) -> bytes:
     ).encode("ascii")
 
 
+class AgentId(NamedTuple):
+    """Who an agent is: the binding a transport vouches for, and the OC computer's address."""
+
+    binding: (
+        str  # e.g. "play" or "lab" (a mailbox's role); never taken from the message
+    )
+    address: str  # the message's computer.address
+
+    def __str__(self) -> str:
+        return f"{self.binding}/{self.address}"
+
+
 @dataclass(frozen=True)
 class Received:
     """One accepted telemetry message and how it arrived."""
@@ -129,11 +147,12 @@ class Received:
     source: str  # where it came from, e.g. "mailbox:lab/lab-ops/<drive>/<dir>"
     received_at: float  # time.time() when the core read it
     written_at: float | None = None  # M1: when OC wrote outbox.json (its mtime)
+    binding: str = field(default="", kw_only=True)  # who the transport vouches for
 
     @property
-    def agent(self) -> str:
-        """The agent's identity: its OC computer's address."""
-        return str(self.doc["computer"]["address"])
+    def agent(self) -> AgentId:
+        """The agent's identity: the binding and its OC computer's address (D217)."""
+        return AgentId(self.binding, str(self.doc["computer"]["address"]))
 
     @property
     def boot(self) -> str:
@@ -156,8 +175,9 @@ class Sink(Protocol):
 class Commands(Protocol):
     """The confirmed commands waiting for agents (WO-7.1's action queue, D59, D214)."""
 
-    def take(self, agent: str, limit: int) -> list[dict[str, Any]]:
-        """Up to ``limit`` confirmed commands for ``agent``, now counted as sent: each goes out
+    def take(self, agent: AgentId, limit: int) -> list[dict[str, Any]]:
+        """Up to ``limit`` confirmed commands for ``agent`` (a command is confirmed for one
+        binding's computer, never for an address alone), now counted as sent: each goes out
         once (at most once, D214)."""
         ...
 
@@ -173,7 +193,7 @@ class Commands(Protocol):
 class NoCommands:
     """No action queue yet (WO-7.1 brings one): nothing to send."""
 
-    def take(self, agent: str, limit: int) -> list[dict[str, Any]]:
+    def take(self, agent: AgentId, limit: int) -> list[dict[str, Any]]:
         return []
 
     def returned(self, ids: Sequence[int], why: str) -> None:
@@ -186,7 +206,7 @@ class Latest:
 
     def __init__(self, limit: int = MAX_AGENTS) -> None:
         self._lock = threading.Lock()
-        self._latest: OrderedDict[str, Received] = OrderedDict()
+        self._latest: OrderedDict[AgentId, Received] = OrderedDict()
         self._limit = limit
         self.count = 0
 
@@ -201,7 +221,8 @@ class Latest:
             log.info(
                 "OC agent seen",
                 extra={
-                    "agent": msg.agent,
+                    "agent": msg.agent.address,
+                    "binding": msg.agent.binding,
                     "boot": msg.boot,
                     "seq": msg.seq,
                     "transport": msg.transport,
@@ -210,11 +231,11 @@ class Latest:
             )
         return None
 
-    def latest(self, agent: str) -> Received | None:
+    def latest(self, agent: AgentId) -> Received | None:
         with self._lock:
             return self._latest.get(agent)
 
-    def agents(self) -> list[str]:
+    def agents(self) -> list[AgentId]:
         with self._lock:
             return list(self._latest)
 
@@ -224,16 +245,16 @@ class Seqs:
 
     def __init__(self, limit: int = MAX_AGENTS) -> None:
         self._lock = threading.Lock()
-        self._by_agent: OrderedDict[str, tuple[str, int]] = OrderedDict()
+        self._by_agent: OrderedDict[AgentId, tuple[str, int]] = OrderedDict()
         self._limit = limit
 
-    def has(self, agent: str, boot: str, seq: int) -> bool:
+    def has(self, agent: AgentId, boot: str, seq: int) -> bool:
         """Whether the core already has this message (same boot, seq at most the highest)."""
         with self._lock:
             last = self._by_agent.get(agent)
             return last is not None and last[0] == boot and seq <= last[1]
 
-    def record(self, agent: str, boot: str, seq: int) -> int:
+    def record(self, agent: AgentId, boot: str, seq: int) -> int:
         """Remember a new message. Returns how many seqs it skipped within its boot (0 for the
         first message of a boot): messages the agent counted but never sent, or lost."""
         with self._lock:
@@ -247,7 +268,7 @@ class Seqs:
                 self._by_agent.popitem(last=False)
             return gap
 
-    def highest(self, agent: str) -> tuple[str, int] | None:
+    def highest(self, agent: AgentId) -> tuple[str, int] | None:
         """(boot, seq): the newest boot of ``agent`` and the highest seq the core has of it."""
         with self._lock:
             return self._by_agent.get(agent)
@@ -261,7 +282,7 @@ class Outcome:
     err: str | None = (
         None  # ok False: one of REFUSALS; ok True: a note for the agent or None
     )
-    agent: str | None = None
+    agent: AgentId | None = None
     boot: str | None = None
     seq: int | None = None
     repeat: bool = False  # the core had it already, so it wasn't recorded again
@@ -295,18 +316,29 @@ class Bridge:
         *,
         transport: str,
         source: str,
+        binding: str,
         written_at: float | None = None,
         now: float | None = None,
     ) -> Outcome:
-        """Check one message, record it unless the core has it already, and say what became of it."""
+        """Check one message, record it unless the core has it already, and say what became of it.
+
+        ``binding``: who the transport vouches the sender is (a mailbox's role, an HTTP token's
+        instance); with the message's computer address it is the agent (:class:`AgentId`)."""
         if transport not in TRANSPORTS:
             raise ValueError(f"unknown transport {transport!r}")
+        if not binding:
+            raise ValueError("a message needs the binding its transport vouches for")
         try:
             doc = parse(raw)
         except Refused as exc:
             return self.refuse(exc.err, exc.why, source=source)
         msg = Received(
-            doc, transport, source, time.time() if now is None else now, written_at
+            doc,
+            transport,
+            source,
+            time.time() if now is None else now,
+            written_at,
+            binding=binding,
         )
         agent, boot, seq = msg.agent, msg.boot, msg.seq
         with self._lock:

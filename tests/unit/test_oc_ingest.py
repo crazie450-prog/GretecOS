@@ -16,6 +16,7 @@ from gregtec.bridge import ingest
 from gregtec.bridge.ingest import (
     MAX_BODY,
     REPLY_MAX,
+    AgentId,
     Bridge,
     Latest,
     Outcome,
@@ -29,6 +30,7 @@ from gregtec.bridge.ingest import (
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "oc"
 AGENT = "c0c0c0c0-0000-4000-8000-000000000001"
+LAB = AgentId("lab", AGENT)
 SOURCE = "mailbox:lab/lab-ops/0f000000-0000-4000-8000-000000000003/home/gos/mailbox"
 
 
@@ -154,28 +156,33 @@ def test_receive_records_a_new_message_with_how_it_came() -> None:
         raw(message(seq=7)),
         transport="mailbox",
         source=SOURCE,
+        binding="lab",
         written_at=99.5,
         now=100.0,
     )
-    assert out == Outcome(ok=True, agent=AGENT, boot="b0075eed", seq=7)
+    assert out == Outcome(ok=True, agent=LAB, boot="b0075eed", seq=7)
     (msg,) = sink.got
-    assert (msg.agent, msg.boot, msg.seq) == (AGENT, "b0075eed", 7)
+    assert (msg.agent, msg.boot, msg.seq) == (LAB, "b0075eed", 7)
     assert (msg.transport, msg.source, msg.received_at, msg.written_at) == (
         "mailbox",
         SOURCE,
         100.0,
         99.5,
     )
-    assert bridge.seqs.highest(AGENT) == ("b0075eed", 7)
+    assert bridge.seqs.highest(LAB) == ("b0075eed", 7)
 
 
 def test_a_message_the_core_has_is_answered_not_recorded_again() -> None:
     sink = Recording()
     bridge = Bridge(sink)
     for seq in (1, 2, 2, 1):
-        bridge.receive(raw(message(seq=seq)), transport="mailbox", source=SOURCE)
+        bridge.receive(
+            raw(message(seq=seq)), transport="mailbox", source=SOURCE, binding="lab"
+        )
     assert [m.seq for m in sink.got] == [1, 2]
-    again = bridge.receive(raw(message(seq=2)), transport="http", source="http")
+    again = bridge.receive(
+        raw(message(seq=2)), transport="http", source="http", binding="lab"
+    )
     assert again.ok and again.repeat and again.seq == 2
 
 
@@ -184,7 +191,10 @@ def test_a_new_boot_starts_again_and_gaps_are_counted() -> None:
     bridge = Bridge(sink)
     gaps = [
         bridge.receive(
-            raw(message(seq=s, boot=b)), transport="mailbox", source=SOURCE
+            raw(message(seq=s, boot=b)),
+            transport="mailbox",
+            source=SOURCE,
+            binding="lab",
         ).gap
         for b, s in (("aaaaaaaa", 1), ("aaaaaaaa", 4), ("bbbbbbbb", 1), ("bbbbbbbb", 2))
     ]
@@ -201,23 +211,33 @@ def test_refusals_and_a_failing_sink(caplog: pytest.LogCaptureFixture) -> None:
     sink = Recording(fail=True)
     bridge = Bridge(sink)
     with caplog.at_level(logging.WARNING, logger="gregtec.bridge"):
-        bad = bridge.receive(b"{oops", transport="mailbox", source=SOURCE)
-        failed = bridge.receive(raw(message()), transport="mailbox", source=SOURCE)
+        bad = bridge.receive(
+            b"{oops", transport="mailbox", source=SOURCE, binding="lab"
+        )
+        failed = bridge.receive(
+            raw(message()), transport="mailbox", source=SOURCE, binding="lab"
+        )
     assert bad == Outcome(ok=False, err="bad_payload")
     assert failed.ok is False and failed.err == "internal"
-    assert bridge.seqs.highest(AGENT) is None, (
+    assert bridge.seqs.highest(LAB) is None, (
         "not recorded, so the agent's resend counts"
     )
     sink.fail = False
-    assert bridge.receive(raw(message()), transport="mailbox", source=SOURCE).ok
+    assert bridge.receive(
+        raw(message()), transport="mailbox", source=SOURCE, binding="lab"
+    ).ok
     assert len(sink.got) == 1
     assert "oops" not in caplog.text
 
 
 def test_unknown_transport_and_refusal_are_programming_errors() -> None:
     bridge = Bridge()
+    with pytest.raises(ValueError, match="binding"):
+        bridge.receive(raw(message()), transport="mailbox", source=SOURCE, binding="")
     with pytest.raises(ValueError, match="transport"):
-        bridge.receive(raw(message()), transport="carrier pigeon", source=SOURCE)
+        bridge.receive(
+            raw(message()), transport="carrier pigeon", source=SOURCE, binding="lab"
+        )
     with pytest.raises(ValueError, match="refusal"):
         bridge.refuse("teapot", "why", source=SOURCE)
 
@@ -227,23 +247,33 @@ def test_seqs_and_latest_are_bounded() -> None:
     latest = Latest(limit=3)
     for i in range(5):
         agent = f"{i:08x}-0000-4000-8000-000000000001"
-        seqs.record(agent, "b0075eed", 1)
+        seqs.record(AgentId("lab", agent), "b0075eed", 1)
         latest.ingest(
-            Received(message(agent=agent), "mailbox", SOURCE, received_at=float(i))
+            Received(
+                message(agent=agent),
+                "mailbox",
+                SOURCE,
+                received_at=float(i),
+                binding="lab",
+            )
         )
-    assert seqs.highest("00000000-0000-4000-8000-000000000001") is None
-    assert seqs.highest("00000004-0000-4000-8000-000000000001") == ("b0075eed", 1)
+    first = AgentId("lab", "00000000-0000-4000-8000-000000000001")
+    last = AgentId("lab", "00000004-0000-4000-8000-000000000001")
+    assert seqs.highest(first) is None
+    assert seqs.highest(last) == ("b0075eed", 1)
     assert len(latest.agents()) == 3
-    assert latest.latest("00000004-0000-4000-8000-000000000001") is not None
+    assert latest.latest(last) is not None
     assert latest.count == 5
 
 
 def test_the_default_sink_keeps_the_newest_message() -> None:
     bridge = Bridge()
     for seq in (1, 2):
-        bridge.receive(raw(message(seq=seq)), transport="mailbox", source=SOURCE)
+        bridge.receive(
+            raw(message(seq=seq)), transport="mailbox", source=SOURCE, binding="lab"
+        )
     assert isinstance(bridge.sink, Latest)
-    newest = bridge.sink.latest(AGENT)
+    newest = bridge.sink.latest(LAB)
     assert newest is not None and newest.seq == 2
 
 
@@ -263,7 +293,7 @@ def test_the_golden_mailbox_reply_is_what_the_core_builds() -> None:
     reply); the core builds the same document for the same state."""
     queue = Queue([say(104, "Mailbox up")])
     bridge = Bridge(Recording(), queue)
-    out = Outcome(ok=True, agent=AGENT, boot="b0075eed", seq=2)
+    out = Outcome(ok=True, agent=LAB, boot="b0075eed", seq=2)
     doc, ids = bridge.reply(out, ack=("b0075eed", 2))
     assert doc == golden("reply-ack.json")
     assert ids == [104]
@@ -273,7 +303,7 @@ def test_commands_that_dont_fit_go_back_and_poll_soon() -> None:
     long = "\U0001f525" * 64  # 256 bytes of UTF-8, 768 as JSON escapes
     queue = Queue([say(i, long) for i in range(1, 9)])
     bridge = Bridge(Recording(), queue)
-    doc, ids = bridge.reply(Outcome(ok=True, agent=AGENT), ack=("b0075eed", 9))
+    doc, ids = bridge.reply(Outcome(ok=True, agent=LAB), ack=("b0075eed", 9))
     assert len(encode(doc)) <= REPLY_MAX
     assert ids == [1, 2]
     assert doc["poll_s"] == 1
@@ -287,7 +317,7 @@ def test_commands_the_schema_refuses_are_never_sent() -> None:
     bad = {"id": 5, "kind": "rm_rf", "args": {}, "confirmed_via": "voice"}
     unconfirmed = say(6, via="agent")
     queue = Queue([bad, say(7), unconfirmed, {"kind": "say"}])
-    doc, ids = Bridge(Recording(), queue).reply(Outcome(ok=True, agent=AGENT))
+    doc, ids = Bridge(Recording(), queue).reply(Outcome(ok=True, agent=LAB))
     assert ids == [7]
     assert queue.back == [([5, 6], "not a valid command by the contract's schema")]
     assert "poll_s" not in doc
@@ -302,12 +332,12 @@ def test_a_note_is_clipped_and_more_than_8_commands_go_back() -> None:
 
     greedy = Greedy([say(i) for i in range(1, 12)])
     doc, ids = Bridge(Recording(), greedy).reply(
-        Outcome(ok=True, err="n" * 500, agent=AGENT)
+        Outcome(ok=True, err="n" * 500, agent=LAB)
     )
     assert len(doc["err"]) == 200
     assert ids == list(range(1, 9))
     assert greedy.back[0][0] == [9, 10, 11]
-    doc, ids = Bridge(Recording(), queue).reply(Outcome(ok=True, agent=AGENT))
+    doc, ids = Bridge(Recording(), queue).reply(Outcome(ok=True, agent=LAB))
     assert ids == list(range(1, 9)), "take() is asked for 8"
 
 
@@ -331,7 +361,7 @@ def test_a_broken_queue_never_stops_the_reply_or_its_ack(
     bridge = Bridge(Recording(), Broken())
     with caplog.at_level(logging.ERROR, logger="gregtec.bridge"):
         doc, ids = bridge.reply(
-            Outcome(ok=True, agent=AGENT, boot="b0075eed", seq=3),
+            Outcome(ok=True, agent=LAB, boot="b0075eed", seq=3),
             ack=("b0075eed", 3),
         )
         bridge.give_back([5], "withdrawn")
@@ -375,14 +405,16 @@ def test_dedupe_property(seed: int) -> None:
         copies = rng.choices([0, 1, 2, 3], weights=[10, 70, 15, 5])[0]
         first = True
         for _ in range(copies):
-            out = bridge.receive(raw(doc), transport="mailbox", source=SOURCE)
+            out = bridge.receive(
+                raw(doc), transport="mailbox", source=SOURCE, binding="lab"
+            )
             assert out.ok
             assert out.repeat is (not first)
             if first:
                 expected.append((agent, boot, seq))
                 first = False
-            assert bridge.seqs.highest(agent) == (boot, seq)
-    got = [(m.agent, m.boot, m.seq) for m in sink.got]
+            assert bridge.seqs.highest(AgentId("lab", agent)) == (boot, seq)
+    got = [(m.agent.address, m.boot, m.seq) for m in sink.got]
     assert got == expected
     assert len(set(got)) == len(got)
 

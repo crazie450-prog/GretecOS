@@ -18,7 +18,7 @@ import pytest
 
 from gregtec import config
 from gregtec.bridge import mailbox as mb
-from gregtec.bridge.ingest import MAX_BODY, Bridge, Received
+from gregtec.bridge.ingest import MAX_BODY, AgentId, Bridge, Latest, Received
 from gregtec.bridge.mailbox import Mailbox, MailboxService, Place
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "oc"
@@ -47,7 +47,7 @@ class Queue:
         self.cmds = list(cmds)
         self.back: list[tuple[list[int], str]] = []
 
-    def take(self, agent: str, limit: int) -> list[dict[str, Any]]:
+    def take(self, agent: AgentId, limit: int) -> list[dict[str, Any]]:
         out, self.cmds = self.cmds[:limit], self.cmds[limit:]
         return out
 
@@ -170,7 +170,7 @@ def test_a_message_taken_and_answered(tmp_path: Path) -> None:
     assert not (folder / "inbox.tmp").exists()
     (msg,) = sink.got
     assert (msg.agent, msg.seq, msg.transport, msg.source) == (
-        AGENT,
+        AgentId("lab", AGENT),
         1,
         "mailbox",
         place.source,
@@ -749,3 +749,62 @@ def test_windows_the_core_reads_outbox_while_another_program_holds_it(
     assert len(sink.got) == 1
     box.poll()
     assert not (folder / "outbox.json").exists()
+
+
+# --- one address, two mailboxes (review M1, D217)
+
+
+class PerAgent:
+    """A command queue keyed the way WO-7.1's is: by the agent (binding and address)."""
+
+    def __init__(self, cmds: dict[AgentId, list[dict[str, Any]]]) -> None:
+        self.cmds = cmds
+        self.back: list[list[int]] = []
+
+    def take(self, agent: AgentId, limit: int) -> list[dict[str, Any]]:
+        out = self.cmds.get(agent, [])[:limit]
+        self.cmds[agent] = self.cmds.get(agent, [])[limit:]
+        return out
+
+    def returned(self, ids: Sequence[int], why: str) -> None:
+        self.back.append(list(ids))
+
+
+def test_lab_naming_plays_computer_is_a_different_agent(tmp_path: Path) -> None:
+    """Lab runs any Lua (D75), and a Lab world copied from Play has Play's addresses: a Lab
+    message claiming Play's computer never dedupes against Play's messages, replaces Play's
+    latest message or takes Play's commands."""
+    lab_place, lab = layout(tmp_path)
+    play_instance = tmp_path / "GTNH-Play"
+    play = play_instance.joinpath(
+        "minecraft", "saves", "main", "opencomputers", DRIVE, "home", "gos", "mailbox"
+    )
+    play.mkdir(parents=True)
+    play_place = Place("play", play_instance, "main", DRIVE, "home/gos/mailbox")
+    sink = Latest()
+    queue = PerAgent({AgentId("play", AGENT): [say(41)]})
+    bridge = Bridge(sink, queue)
+    clock = Clock()
+    boxes = [Mailbox(p, bridge, clock=clock) for p in (play_place, lab_place)]
+    service = MailboxService(boxes)
+
+    oc_send(play, message(seq=5))
+    oc_send(lab, message(seq=1_000_000))  # Play's address and boot, a seq far ahead
+    service.poll_all()
+    lab_reply, play_reply = oc_receive(lab), oc_receive(play)
+    assert lab_reply is not None and play_reply is not None
+    assert lab_reply["cmds"] == [], "Lab never takes Play's commands"
+    assert [c["id"] for c in play_reply["cmds"]] == [41]
+    assert play_reply["ack"] == 5 and lab_reply["ack"] == 1_000_000
+
+    oc_send(play, message(seq=6))
+    service.poll_all()
+    play_reply = oc_receive(play)
+    assert play_reply is not None and play_reply["ack"] == 6
+    assert boxes[0].latest is not None and not boxes[0].latest.repeat
+    assert boxes[0].stats["accepted"] == 2 and boxes[0].stats["repeats"] == 0
+    newest = sink.latest(AgentId("play", AGENT))
+    assert newest is not None and newest.seq == 6
+    assert newest.source == play_place.source
+    lab_newest = sink.latest(AgentId("lab", AGENT))
+    assert lab_newest is not None and lab_newest.source == lab_place.source

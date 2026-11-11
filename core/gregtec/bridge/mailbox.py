@@ -229,6 +229,7 @@ class Mailbox:
                     raw,
                     transport="mailbox",
                     source=source,
+                    binding=self.place.role,
                     written_at=st.st_mtime,
                     now=now,
                 )

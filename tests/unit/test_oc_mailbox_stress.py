@@ -35,7 +35,7 @@ from typing import Any
 import pytest
 
 from gregtec.bridge import mailbox as mb
-from gregtec.bridge.ingest import Bridge, Received
+from gregtec.bridge.ingest import AgentId, Bridge, Received
 from gregtec.bridge.mailbox import Mailbox, MailboxService, Place
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "oc"
@@ -257,7 +257,7 @@ class Queue:
         self.back: list[int] = []
         self.open = True
 
-    def take(self, agent: str, limit: int) -> list[dict[str, Any]]:
+    def take(self, agent: AgentId, limit: int) -> list[dict[str, Any]]:
         with self.lock:
             if self.open and self.rng.random() < self.rate:
                 for _ in range(self.rng.randint(1, 3)):
