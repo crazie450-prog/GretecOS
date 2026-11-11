@@ -36,7 +36,7 @@ Evidence tags:
 - **DB build** of run `20261111T181015Z` [run]: 143,635 citation keys (GT 6,335, GT+NEI 92,391, NEI only 44,909); `Collision test: passed` (22 allow-listed); NEI-only oredict slots 48,286 keyed by name; base multiblocks 299: covered 132, n/a 107, flagged 60, **missing 0**; crops 131, NEI's Crop Breeding tab 91 recipes with 104 crops, all 129 crops NEI shows are in the dump. The four Clayton-pack addons (TST, GT-Not-Leisure, 123Technology, Programmable Hatches) are listed as `not loaded`, as expected in the dev runtime.
 - **Tests** [run]:
   - `uv run ruff check .`: all checks passed; `uv run ruff format --check .`: 284 files already formatted.
-  - `uv run pytest`: **4520 passed, 194 skipped** (Linux; the skips are the harness, model and Windows-only tests).
+  - `uv run pytest`: **4520 passed, 194 skipped** on `610780e`, and **4676 passed, 194 skipped** after merging `main` at `d60edbf` (Linux; the skips are the harness, model and Windows-only tests). `ruff check` and `ruff format --check` are clean on both.
   - `GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest tests/integration` (CI's mod-job invocation): see "Integration suite" at the end.
   - `GOS_QUESTS_PACK=<2.9.0's .minecraft> uv run pytest tests/integration/test_quests_pack.py`: **7 passed**, on GTNH 2.9.0's real quest book (only `config/betterquesting/` read out of the release zip by HTTP range requests; CC BY-NC-SA game data, kept outside the repo).
 - **CI** [repo]: `CI` on `main` is green at `54d1e6f` (run 43072400497; checks on Ubuntu and Windows, the mod job with both harnesses and `tests/integration`), and `dashboard (Windows)` and `mod (Windows)` are green at `610780e` (runs 43074629777, 43074630203).
@@ -292,4 +292,6 @@ Not needed for G1: `phase1_pc_checks.md` steps 9, 11 and 13 (Phase 2: WO-2.1, WO
 
 ## Integration suite
 
-`GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest -rs tests/integration` on today's three harness runs [run]: RESULT_PLACEHOLDER
+`GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest -rs tests/integration` on today's three harness runs [run]: **95 passed, 18 skipped, 10 errors in 20 min**. All ten errors were `sqlite3.OperationalError: database or disk is full` at fixture setup in `test_tools_harness.py`, `test_vault_harness.py` and `test_voice_harness.py`: the container's disk, shared with two other agents, filled up. After freeing space, those three files gave **9 passed, 1 skipped** [run]. Every Phase 1 file passed in the full run: `test_collect_harness`, `test_crops_harness`, `test_db_harness` (13, the two-client checks on `20261111T181015Z` vs `20261111T181723Z`), `test_export_harness`, `test_g1_stale_harness`, `test_golden_recipes` (7), `test_ores_harness`, `test_pack_update_harness` and `test_oc_names_harness`.
+
+The skips are only tests that need data this container doesn't have: the quest book (run on its own above, 7 passed), a structures dump (WO-1.8, V09), and the speech models (Phase 5).
