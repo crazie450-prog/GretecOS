@@ -1372,8 +1372,10 @@ task_max_usd = 2.0            # placeholder until WO-3.7 measures; on hit: pause
 [voice]
 primary_trigger = "wake"      # D57
 backup_trigger = "key"
-wake_engine = "sherpa-onnx"   # | openwakeword
-wake_phrase = "TBD (PM08)"
+wake_engine = "sherpa-onnx"   # | openwakeword (a custom model in wake_model; D185)
+wake_phrase = "hey archivist" # PM08's provisional pick from the WO-5.4 harness, pending Clayton (D186, D187)
+wake_model = ""               # openwakeword only: the custom model's .onnx
+wake_threshold = 0            # 0 = the engine's tuned default (D186)
 talk_key = "TBD (unbound in GTNH and Discord)"
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
