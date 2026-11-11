@@ -265,7 +265,7 @@ function MachinesPanel(props: { base: MyBase; run: Run; busy: boolean }) {
     void props.run(() => api.baseMachine(c.mte_id as number, Math.max(1, have?.count ?? 0)));
   };
   return (
-    <Panel label="Machines" testId="base-machines" aside={<span className="gos-src">{owned} types owned</span>}>
+    <Panel label="Machines" testId="base-machines" aside={<span className="gos-src">{owned} {owned === 1 ? "type" : "types"} owned</span>}>
       <Finder
         kind="machine"
         disabled={props.busy || !props.base.has_db}
@@ -285,8 +285,7 @@ function MachinesPanel(props: { base: MyBase; run: Run; busy: boolean }) {
                 <th>machine</th>
                 <th className="num">count</th>
                 <th>from</th>
-                <th>
-                  <span className="sr-only">remove</span>
+                <th aria-label="remove">
                 </th>
               </tr>
             </thead>
@@ -382,8 +381,7 @@ function StockPanel(props: { base: MyBase; run: Run; busy: boolean }) {
               <tr>
                 <th>item or fluid</th>
                 <th className="num">on hand</th>
-                <th>
-                  <span className="sr-only">remove</span>
+                <th aria-label="remove">
                 </th>
               </tr>
             </thead>
