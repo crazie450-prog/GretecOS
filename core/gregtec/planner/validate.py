@@ -35,8 +35,14 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from gregtec.agents.fast_lane import KEY, REF
 from gregtec.planner.gtmath.tiers import VN
+
+# Citations and DB keys, as gregtec.agents.fast_lane reads them (copied: importing the lane
+# would load the Anthropic SDK into every `gos` command, and `gos plan` imports this module).
+REF = re.compile(r"\b(?:r|q|mte|crop|plan|w|tel):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]")
+KEY = re.compile(
+    r"\bfluid:[A-Za-z0-9_.]+|[A-Za-z0-9_.|-]+:[A-Za-z0-9_.|-]+@\d+(?:#[0-9a-f]{8,64})?"
+)
 
 COUNTS = frozenset(
     {"count", "machines", "crafts", "nodes", "fluids", "loops", "new_types"}

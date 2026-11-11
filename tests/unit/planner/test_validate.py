@@ -157,3 +157,12 @@ def test_ordinals_and_positions() -> None:
 def test_an_empty_doc_allows_no_numbers() -> None:
     assert validate.check("nothing here", {}).ok
     assert not validate.check("3 machines", {}).ok
+
+
+def test_masks_match_the_fast_lanes() -> None:
+    """validate keeps its own copy of the lane's citation and key patterns (the lane imports
+    the Anthropic SDK, which `gos plan` must not load)."""
+    from gregtec.agents import fast_lane
+
+    assert validate.REF.pattern == fast_lane.REF.pattern
+    assert validate.KEY.pattern == fast_lane.KEY.pattern
