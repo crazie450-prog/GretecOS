@@ -13,6 +13,9 @@ Safety (CLAUDE.md, plan 4.6 residual risk, D82):
 - Each target file is written to a new ``<name>.<random>.gos-tmp`` beside it, then
   ``os.replace``'d. The temp file is created with O_EXCL, so a link planted at a temp path
   (gos-dev can write Export and Lab) makes the write fail instead of writing through it.
+- Export or Lab at a folder that has ever been Play (``[setup] former_plays`` in gos.toml plus
+  ``former_plays.txt`` beside it, kept by the setup wizard, D223) is refused, whatever
+  ``[paths]`` says now: a hand edit that moves Play never makes the old Play a sync target.
 - Everything is planned before anything is written, and any refusal writes nothing at all:
   a symlink, junction or other reparse point anywhere sync would traverse (both trees, the
   instance and game folders included); a hard link in a target, which is what Prism's "Link
@@ -213,6 +216,20 @@ def _overlap(a: Path, b: Path) -> bool:
     return a == b or a in b.parents or b in a.parents
 
 
+def _former_play(target: Path, cfg: config.Config, role: str) -> str | None:
+    """A refusal if ``target`` (resolved) is, is inside or holds a folder that has been Play
+    (``cfg.former_plays``, D223): sync never mirrors over a world that was Play's."""
+    former = next((p for p in cfg.former_plays if _overlap(target, p)), None)
+    if former is None:
+        return None
+    return (
+        f"{role}: {target} was Play ({former}), so sync never writes there. If that folder "
+        "is no longer a Play you keep, remove it from [setup] former_plays in gos.toml and "
+        f"from {config.FORMER_PLAYS_FILE} beside it by hand "
+        "(docs/runbooks/setup_wizard.md, 'Former Plays')"
+    )
+
+
 def plan_target(
     role: str,
     source: Path,
@@ -347,6 +364,10 @@ def plan_all(cfg: config.Config, roles: Sequence[str]) -> tuple[list[Plan], list
         if play is not None and _overlap(found[0], play[0]):
             refusals.append(f"{role}: {found[0]} is Play, is inside Play or holds it")
             continue
+        former = _former_play(found[0], cfg, role)
+        if former is not None:
+            refusals.append(former)
+            continue
         # Against every configured target, not just those in ``roles``: ``--only lab`` with
         # lab = Export's folder would mirror into Export without Export's excludes.
         clash = [
@@ -390,6 +411,8 @@ def plan_lab_to_export(cfg: config.Config) -> tuple[Plan | None, list[str]]:
     ):
         if _overlap(a[0], b[0]):
             refusals.append(f"{a[0]} is {what}, is inside it or holds it")
+    if (former := _former_play(export[0], cfg, "export")) is not None:
+        refusals.append(former)  # Lab is only read here
     if refusals:
         return None, refusals
     patterns = tuple(

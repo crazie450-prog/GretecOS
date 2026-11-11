@@ -648,3 +648,53 @@ def test_only_lab_skips_the_install_and_install_never_writes_lab_or_play(
             sync.apply_install(plan)
     assert env.targets() == before
     env.assert_play_untouched()
+
+
+@pytest.mark.parametrize("where", ["gos.toml", "record file"])
+def test_a_target_that_was_play_refuses_everything(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    """D223: Play moved by hand to Play2 and the old Play named as Lab. Whether the record of
+    former Plays is in gos.toml or only beside it, sync refuses and says how to clear it."""
+    env = Env(tmp_path)
+    make_instance(env.instances, "Play2", ".minecraft")
+    old = str(env.play.parent.resolve())
+    record = (
+        f"[setup]\nformer_plays = [{json.dumps(old)}]\n" if where == "gos.toml" else ""
+    )
+    if where == "record file":
+        (tmp_path / config.FORMER_PLAYS_FILE).write_text(
+            f"# comment\n{old}\n", encoding="utf-8"
+        )
+    env.write_config(
+        f'[paths]\nprism_instances = "{env.instances.as_posix()}"\n'
+        f'gos_app = "{env.app.as_posix()}"\nplay = "Play2"\nlab = "GTNH-Play"\n'
+        f'export = "GTNH-Export"\n{record}'
+    )
+    before = snapshot(env.play.parent)
+    assert env.sync("--only", "lab") == 1
+    out = capsys.readouterr().out
+    assert "Refused, nothing written:" in out
+    assert "was Play" in out and "former_plays" in out
+    assert snapshot(env.play.parent) == before
+
+
+def test_lab_to_export_refuses_an_export_that_was_play(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    cfg = config.load(env.config)
+    cfg = config.Config(
+        prism_instances=cfg.prism_instances,
+        gos_app=cfg.gos_app,
+        former_plays=(env.export.parent,),
+    )
+    plan, refusals = sync.plan_lab_to_export(cfg)
+    assert plan is None and any("was Play" in r for r in refusals)
+
+
+def test_a_record_that_cant_be_read_stops_sync(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = Env(tmp_path)
+    (tmp_path / config.FORMER_PLAYS_FILE).write_bytes(b"\xff\xfe bad")
+    assert env.sync() == 2
+    assert "former_plays.txt" in capsys.readouterr().out

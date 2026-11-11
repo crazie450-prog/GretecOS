@@ -1004,9 +1004,15 @@ def test_the_talk_key_is_checked_against_plays_bindings(
 
 def test_gos_home_writability_is_tried_not_assumed(tmp_path: Path) -> None:
     """L4: a temp file is made and deleted (os.access ignores Windows ACLs)."""
-    assert doctor._writable(tmp_path)
+    assert doctor._writable(tmp_path, [])
     assert list(tmp_path.iterdir()) == []
-    assert not doctor._writable(tmp_path / "missing")
+    assert not doctor._writable(tmp_path / "missing", [])
+    # D223: never even tried in or under a guarded folder, nor through a link into one.
+    (tmp_path / "Play").mkdir()
+    assert not doctor._writable(tmp_path / "Play", [("Play", tmp_path / "Play")])
+    link_folder(tmp_path / "link", tmp_path / "Play")
+    assert not doctor._writable(tmp_path / "link", [("Play", tmp_path / "Play")])
+    assert list((tmp_path / "Play").iterdir()) == []
 
 
 def test_portaudio_lists_devices_one_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:

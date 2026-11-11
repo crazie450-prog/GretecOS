@@ -33,6 +33,7 @@
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
+| [setup] former_plays     | none; plus config/former_plays.txt (D223)| sync, setup wizard (WO-2.9) |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -169,6 +170,9 @@ class Config:
     keep_collected: int = 5  # collected export runs kept in GOS_HOME (D102)
     keep_runs: int = 2  # export runs kept in gos.sqlite (D107)
     ore_server_cache: bool = True  # read VisualProspecting's server cache (D27)
+    # Every folder that has been Play ([setup] former_plays plus FORMER_PLAYS_FILE beside
+    # gos.toml): sync never writes Export or Lab there (D223).
+    former_plays: tuple[Path, ...] = ()
 
     def instance(self, role: str) -> Path:
         """The instance folder of ``role`` ("play", "export" or "lab")."""
@@ -206,6 +210,27 @@ class ConfigError(ValueError):
 
 def default_path() -> Path:
     return default_home() / "config" / "gos.toml"
+
+
+FORMER_PLAYS_FILE = "former_plays.txt"  # beside gos.toml (D223)
+
+
+def read_former_plays(folder: Path) -> tuple[Path, ...]:
+    """The former-Plays record in ``folder`` (gos.toml's folder, D223): one folder per line,
+    ``#`` comments. None yet is empty; one that can't be read raises :class:`ConfigError`, so
+    sync refuses rather than forget a Play."""
+    target = folder / FORMER_PLAYS_FILE
+    try:
+        text = target.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"{target} can't be read ({exc})") from None
+    return tuple(
+        Path(s)
+        for line in text.splitlines()
+        if (s := line.strip()) and not s.startswith("#")
+    )
 
 
 def running_as_dev() -> bool:
@@ -297,7 +322,7 @@ def load(path: Path | None = None) -> Config:
     if path is None:
         path = default_path()
         if not path.is_file():
-            return Config()
+            return Config(former_plays=read_former_plays(path.parent))
     with open(path, "rb") as f:
         data = tomllib.load(f)  # TOMLDecodeError is a ValueError
     defaults = Config()
@@ -361,6 +386,16 @@ def load(path: Path | None = None) -> Config:
     )
     if type(server_cache) is not bool:
         raise ConfigError("gos.toml: [policy] ore_server_cache must be true or false")
+    former = _table(data, "setup", "").get("former_plays", [])
+    if not isinstance(former, list) or not all(
+        isinstance(p, str) and p for p in former
+    ):
+        raise ConfigError(
+            "gos.toml: [setup] former_plays must be a list of folder paths"
+        )
+    former_plays = tuple(
+        dict.fromkeys([*map(Path, former), *read_former_plays(path.parent)])
+    )
     return Config(
         gos_app=Path(_string(paths, "gos_app", str(defaults.gos_app), "[paths]")),
         prism_instances=Path(
@@ -386,6 +421,7 @@ def load(path: Path | None = None) -> Config:
         keep_collected=keep,
         keep_runs=keep_runs,
         ore_server_cache=server_cache,
+        former_plays=former_plays,
     )
 
 

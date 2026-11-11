@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TextIO
 
 from gregtec.config import PACK_PIN, Config
+from gregtec.db import access
 from gregtec.gamestate.safe_open import read_text, sha256_file
 from gregtec.packupdate import gtpin
 
@@ -484,20 +485,55 @@ def _instance_check(cfg: Config, role: str) -> Check:
 
 
 def folded(path: Path) -> Path:
-    """``path`` resolved and case-folded: Windows' file names ignore case."""
+    """``path`` resolved and case-folded: Windows' file names ignore case. Raises
+    ``RuntimeError`` or ``OSError`` on a link loop; :func:`within` treats that as an overlap."""
     return Path(str(path.resolve()).casefold())
 
 
 def within(path: Path, folder: Path) -> bool:
-    """Whether ``path`` is ``folder`` or inside it (resolved, case ignored)."""
-    p, f = folded(path), folded(folder)
+    """Whether ``path`` is ``folder`` or inside it (resolved, case ignored). A path that can't be
+    resolved (a link loop) counts as inside, so a check refuses it instead of raising."""
+    try:
+        p, f = folded(path), folded(folder)
+    except (OSError, RuntimeError):
+        return True
     return p == f or f in p.parents
 
 
-def _writable(folder: Path) -> bool:
+# What no setup or doctor code may open, probe or create anything in or around (D223): each
+# folder with what it is, for the message.
+Guarded = Sequence[tuple[str, Path]]
+
+
+def guarded(cfg: Config, plays: Sequence[Path] = ()) -> list[tuple[str, Path]]:
+    """Every Play (``cfg``'s and ``plays``: the running core's and the former Plays, D223),
+    Prism's instances folder, Export and Lab: GOS's own files never go there."""
+    return [
+        *(("Play", p) for p in dict.fromkeys([cfg.instance("play"), *plays])),
+        ("Prism's instances folder", cfg.prism_instances),
+        ("Export", cfg.instance("export")),
+        ("Lab", cfg.instance("lab")),
+    ]
+
+
+def touch_problem(path: Path, folders: Guarded) -> str | None:
+    """Why GOS must not open, probe or create ``path`` (D223), or None if it may: ``path`` or its
+    parent resolves (links and junctions followed, case ignored) into one of ``folders``, or
+    ``path`` holds one. The one gate in front of every file of GOS's own that the wizard and
+    ``gos doctor`` touch (the DB's GT pin, the GOS_HOME write probe, env.json)."""
+    for label, folder in folders:
+        if within(path, folder) or within(path.parent, folder) or within(folder, path):
+            return f"overlaps {label} ({folder})"
+    return None
+
+
+def _writable(folder: Path, folders: Guarded) -> bool:
     """Whether this account can make a file in ``folder``: a temp file is made there and deleted
-    at once. ``os.access`` isn't enough: on Windows it reads only the read-only attribute, never
-    the folder's ACL (the gos-dev account, WO-0.8)."""
+    at once, unless :func:`touch_problem` refuses the folder. ``os.access`` isn't enough: on
+    Windows it reads only the read-only attribute, never the folder's ACL (the gos-dev account,
+    WO-0.8)."""
+    if touch_problem(folder / "gos-probe.tmp", folders) is not None:
+        return False
     try:
         with tempfile.TemporaryFile(dir=folder):
             return True
@@ -508,6 +544,23 @@ def _writable(folder: Path) -> bool:
 def play_overlap(path: Path, plays: Sequence[Path]) -> Path | None:
     """The Play folder ``path`` is in or holds, if any: GOS never writes in Play (CLAUDE.md)."""
     return next((p for p in plays if within(path, p) or within(p, path)), None)
+
+
+HOME_FOLDERS = ("data", "logs", "vault", "backups", "run")  # what GOS keeps in GOS_HOME
+
+
+def home_problem(home: Path, folders: Guarded) -> str | None:
+    """Why ``home`` can't be GOS_HOME, if it can't (D223): it, or its data, logs, vault, backups or
+    run folder (resolved, so a link one level down counts), is in or around a guarded folder."""
+    for path in (home, *(home / name for name in HOME_FOLDERS)):
+        why = touch_problem(path, folders)
+        if why is not None:
+            where = "GOS_HOME" if path == home else f"GOS_HOME's {path.name} folder"
+            return (
+                f"{where} {why}: GOS writes in GOS_HOME, so it and its folders must resolve "
+                "outside every Play and Prism's instances folder"
+            )
+    return None
 
 
 _BAD_NAME = set('/\\:*?"<>|')
@@ -547,29 +600,14 @@ def _instances_problem(cfg: Config, plays: Sequence[Path]) -> str | None:
     return None
 
 
-def _home_check(home: Path, plays: Sequence[Path], instances: Path) -> Check:
+def _home_check(home: Path, folders: Guarded) -> Check:
     label = f"GOS_HOME ({home})"
-    # Before any probe: a check never makes a file in Play (WO-2.9 review).
-    play = play_overlap(home, plays)
-    if play is not None:
-        return Check(
-            "paths.gos_home",
-            label,
-            ERROR,
-            f"overlaps Play ({play}): GOS writes in GOS_HOME and never in Play",
-        )
-    # Nor in another instance: GOS_HOME there could be deleted by a sync, and its nearest
-    # existing folder would be an instance's (final check round 2).
-    if within(home, instances):
-        return Check(
-            "paths.gos_home",
-            label,
-            ERROR,
-            f"in Prism's instances folder ({instances}): a sync of Export or Lab can delete "
-            "it; keep GOS_HOME outside the instances",
-        )
+    # Before any probe: a check never makes a file in Play or another instance (D223).
+    why = home_problem(home, folders)
+    if why is not None:
+        return Check("paths.gos_home", label, ERROR, why)
     if home.is_dir():
-        if _writable(home):
+        if _writable(home, folders):
             return Check("paths.gos_home", label, OK, "there and writable")
         return Check("paths.gos_home", label, ERROR, "this account can't write there")
     if home.exists():
@@ -577,8 +615,7 @@ def _home_check(home: Path, plays: Sequence[Path], instances: Path) -> Check:
     parent = home.parent
     while not parent.exists() and parent != parent.parent:
         parent = parent.parent
-    in_play = any(within(parent, p) for p in plays)  # a probe never writes in Play
-    if parent.is_dir() and not in_play and _writable(parent):
+    if parent.is_dir() and _writable(parent, folders):
         return Check("paths.gos_home", label, OK, "not there yet: GOS makes it")
     return Check(
         "paths.gos_home", label, ERROR, f"can't be made: {parent} isn't writable"
@@ -590,10 +627,11 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
     Prism folders, Play, Export and Lab, GOS_APP, GOS_HOME and the DB's GT pin. Read only: game
     files go through ``safe_open`` and mods aren't hashed; the one write is a temp file made and
     deleted at once in GOS_HOME (or the folder it will be made in), to see that it is writable.
-    GOS_APP or GOS_HOME in or around Play (``cfg``'s, and any of ``plays``), or anywhere in Prism's
-    instances folder (a sync of Export or Lab deletes what its source lacks), is an error, and
-    then nothing is probed, so a check never writes in Play or another instance. So is Export or
-    Lab at a Play folder, by name, resolved path or link, or a name that isn't a folder name."""
+    Every file of GOS's own goes through :func:`touch_problem` first (D223): GOS_APP, or GOS_HOME
+    or its data, logs, vault, backups or run folder, resolving in or around any Play (``cfg``'s
+    and ``plays``: the running core's and the former Plays), Prism's instances folder, Export or
+    Lab is an error, and then nothing there is probed or opened. So is Export or Lab at a Play
+    folder, by name, resolved path or link, or a name that isn't a folder name."""
     plays = [cfg.instance("play"), *plays]
     rows: list[Check] = []
     for key, label, path in (
@@ -616,45 +654,37 @@ def checklist(cfg: Config, plays: Sequence[Path] = ()) -> list[Check]:
         )
     elif cfg.prism_instances.is_dir():
         rows += [_instance_check(cfg, role) for role in ("play", "export", "lab")]
-    app = cfg.gos_app.is_dir()
-    app_play = play_overlap(cfg.gos_app, plays)
-    app_inst = within(cfg.gos_app, cfg.prism_instances)
+    folders = guarded(cfg, plays)
+    app_why = touch_problem(cfg.gos_app, folders)
+    app = app_why is None and cfg.gos_app.is_dir()
     rows.append(
         Check(
             "paths.gos_app",
             f"GOS_APP ({cfg.gos_app})",
-            ERROR if app_play is not None or app_inst else OK if app else WARN,
-            f"overlaps Play ({app_play}): gos deploy writes in GOS_APP and never in Play"
-            if app_play is not None
-            else f"in Prism's instances folder ({cfg.prism_instances}): a sync of Export or "
-            "Lab can delete it; keep GOS_APP outside the instances"
-            if app_inst
+            ERROR if app_why is not None else OK if app else WARN,
+            f"{app_why}: gos deploy writes in GOS_APP, so it must be outside every Play and "
+            "Prism's instances folder (a sync of Export or Lab can delete what is there)"
+            if app_why is not None
             else "found"
             if app
             else "no release installed there yet: Clayton's gos deploy makes it (D91)",
         )
     )
-    rows.append(_home_check(cfg.gos_home, plays, cfg.prism_instances))
-    if play_overlap(cfg.gos_home, plays) is not None or within(
-        cfg.gos_home, cfg.prism_instances
-    ):
-        # Not even a read-only open: SQLite makes -wal and -shm files beside a WAL DB, and they
-        # stay (final check round 3). The GOS_HOME row above is already an error.
-        rows.append(
-            Check(
-                "db.gt_pin",
-                "Recipe DB and GT pin",
-                WARN,
-                "not read: GOS_HOME is in or around Play or in the instances folder",
-            )
-        )
-        return rows
-    # Plan 0.4: a pin mismatch is a warning (the recipe data is stale), not a stop.
-    pin_ok, pin_line = gtpin.check_db(cfg.gos_home)
-    rows.append(
-        Check("db.gt_pin", "Recipe DB and GT pin", OK if pin_ok else WARN, pin_line)
-    )
+    rows.append(_home_check(cfg.gos_home, folders))
+    rows.append(pin_check(cfg.gos_home, folders))
     return rows
+
+
+def pin_check(home: Path, folders: Guarded) -> Check:
+    """The DB's GT pin row (plan 0.4: a mismatch is a warning, the recipe data is stale). The DB
+    is opened only when :func:`touch_problem` allows it, and then immutable, so not even SQLite's
+    -wal and -shm files are made (D223)."""
+    db = access.db_path(home)
+    why = touch_problem(db, folders)
+    if why is not None:
+        return Check("db.gt_pin", "Recipe DB and GT pin", WARN, f"not read: {db} {why}")
+    pin_ok, pin_line = gtpin.check_db(home)
+    return Check("db.gt_pin", "Recipe DB and GT pin", OK if pin_ok else WARN, pin_line)
 
 
 def write_env(roots: list[PrismRoot], gos_home: Path, verify: dict[str, str]) -> Path:
@@ -708,13 +738,22 @@ def main(
                 healthy = False
                 print(f"    problem: {problem}", file=out)
 
-    pin_ok, pin_line = gtpin.check_db(home)  # WO-1.9, D148: loud on a mismatch
-    healthy = healthy and pin_ok
-    print(f"\n{pin_line}", file=out)
+    # GOS's own files never go in or around an instance (D223): no DB read, no env.json.
+    folders = [("Prism's instances folder", Path(r.instances_dir)) for r in roots]
+    home_why = home_problem(home, folders)
+    if home_why is not None:
+        healthy = False
+        print(f"\nproblem: {home_why}; nothing read or written there", file=out)
+    else:
+        pin_ok, pin_line = gtpin.check_db(home)  # WO-1.9, D148: loud on a mismatch
+        healthy = healthy and pin_ok
+        print(f"\n{pin_line}", file=out)
 
     verify = {v.id: verify_status(v, roots) for v in load_verify_list()}
-    env = write_env(roots, home, verify)
-    print(f"\nWrote {env}\n\nVERIFY (plan section 13.2)", file=out)
+    if home_why is None:
+        env = write_env(roots, home, verify)
+        print(f"\nWrote {env}", file=out)
+    print("\nVERIFY (plan section 13.2)", file=out)
     for v in load_verify_list():
         print(f"  {v.id}\t{verify[v.id]}\t{v.item}", file=out)
     return 0 if healthy else 1

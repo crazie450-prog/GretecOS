@@ -10,6 +10,11 @@
 - :meth:`store_secret`, :meth:`delete_secret`, :meth:`test_secret`: the keyring (plan 4.6). A
   secret never goes into gos.toml, a log line or a reply.
 - :meth:`finish`: the checklist again; with no error row, ``[setup] completed_utc`` is written.
+- Every Play is remembered (D223): each check, save and finish adds gos.toml's Play and the
+  running core's to ``former_plays.txt`` beside gos.toml, and each save and finish writes the
+  same list to ``[setup] former_plays``. The paths step and the checklist count them all as Play,
+  and so does ``gregtec.sync``. Nothing GOS writes here goes in or around a Play or an instance
+  (``doctor.touch_problem``).
 
 Settings take effect when GOS next starts (the core read gos.toml when it started); the
 secrets at once (the core looks for the key every 30 s, and is told now).
@@ -17,6 +22,7 @@ secrets at once (the core looks for the key every 30 s, and is told now).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import logging
 import threading
@@ -27,17 +33,22 @@ from typing import Any
 
 import keyring.errors
 
-from gregtec import config
+from gregtec import config, doctor
 from gregtec.config import Config
 from gregtec.llm import keys
 from gregtec.setup import devices as devices_mod
 from gregtec.setup import registry, tomledit
 from gregtec.setup.registry import Check, Context, Outcome, Step, TestEnv
-from gregtec.setup.steps import checklist, voice
+from gregtec.setup.steps import checklist, paths, voice
 
 log = logging.getLogger("gregtec.setup")
 
 SECRET_MAX = 400
+RECORD_HEADER = (
+    "# Every folder that has been Play for this GOS (D223). The setup wizard adds to it; sync\n"
+    "# never writes Export or Lab in or around one. Remove a line only by hand, on purpose, and\n"
+    "# from [setup] former_plays in gos.toml too (docs/runbooks/setup_wizard.md, Former Plays).\n"
+)
 CONTROL = {chr(c) for c in range(0x20)} | {"\x7f"}
 
 
@@ -76,13 +87,18 @@ class SetupService:
         self.env = TestEnv(client_factory, meter, ai)
         self.on_secret = on_secret
         self.steps = steps if steps is not None else registry.steps()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # save() checks under it
 
     # --- reading
 
     def _read(self) -> tuple[Config, dict[str, Any], str | None]:
         if not self.path.is_file():
-            return self.base, {}, None
+            try:  # no gos.toml (a first run, or deleted): the record beside it still counts
+                found = config.read_former_plays(self.path.parent)
+            except config.ConfigError as exc:
+                return self.base, {}, str(exc)
+            former = tuple(dict.fromkeys([*self.base.former_plays, *found]))
+            return dataclasses.replace(self.base, former_plays=former), {}, None
         try:
             with open(self.path, "rb") as f:
                 data = tomllib.load(f)
@@ -169,6 +185,13 @@ class SetupService:
             if f.kind not in ("secret", "checks")
         }
         values.update(self._values(step, given))
+        # A first run's check makes no file (its first save records); a check still answers
+        # when the record can't be written, and a save then refuses.
+        if self.path.is_file():
+            try:
+                self._remember(ctx)
+            except SetupError as exc:
+                log.warning("former Plays not recorded: %s", exc.body["error"])
         problems = self._field_problems(step, values)
         if problems:  # the step's own check may count on well-formed values
             return Outcome(problems), ctx
@@ -178,7 +201,7 @@ class SetupService:
         step = self.step(step_id)
         values = self._values(step, given)
         with self._lock:
-            outcome, _ = self.check(step_id, given)
+            outcome, ctx = self.check(step_id, given)
             if outcome.blocked:
                 raise SetupError(
                     400,
@@ -191,6 +214,9 @@ class SetupService:
                 f = step.field(fid)
                 assert f is not None and f.toml is not None
                 updates[f.toml] = value if value else None
+            # The Play this save makes is on record before gos.toml names it (D223).
+            new_play = paths.candidate(ctx, values).instance("play")
+            updates[("setup", "former_plays")] = self._remember(ctx, [new_play])
             self._write(updates)
         log.info("setup step saved", extra={"step": step.id, "keys": sorted(values)})
         return {
@@ -198,7 +224,46 @@ class SetupService:
             "checks": [c.as_dict() for c in outcome.checks],
         }
 
+    # --- every Play, remembered (D223)
+
+    def _guard(self, ctx: Context, target: Path) -> None:
+        """Refuse to write ``target`` (gos.toml or the record) in or around a Play or an instance."""
+        why = doctor.touch_problem(target, doctor.guarded(ctx.cfg, paths.plays(ctx)))
+        if why is not None:
+            raise SetupError(409, f"not written: {target} {why}")
+
+    def _remember(self, ctx: Context, extra: list[Path] | None = None) -> list[str]:
+        """Add every Play ``ctx`` knows of (and ``extra``) to ``former_plays.txt`` beside gos.toml,
+        resolved; return the whole record for ``[setup] former_plays``. Entries are only ever
+        added here; a hand edit removes one (D223)."""
+        record: dict[str, str] = {}
+        for p in [*paths.plays(ctx), *(extra or [])]:
+            try:
+                text = str(p.resolve())
+            except (OSError, RuntimeError):  # a link loop: keep it as written
+                text = str(p.absolute())
+            record.setdefault(text.casefold(), text)
+        target = self.path.parent / config.FORMER_PLAYS_FILE
+        listed = list(record.values())
+        text = RECORD_HEADER + "".join(f"{p}\n" for p in listed)
+        with self._lock:
+            try:
+                if target.is_file() and target.read_text("utf-8") == text:
+                    return listed
+            except (OSError, UnicodeDecodeError):
+                pass  # rewritten below; config.load refuses a record it can't read
+            self._guard(ctx, target)
+            try:
+                tomledit.write_atomic(target, text)
+            except OSError as exc:
+                raise SetupError(
+                    409, f"not saved: can't write {target} ({exc})"
+                ) from None
+        return listed
+
     def _write(self, updates: Mapping[tuple[str, str], tomledit.Value | None]) -> None:
+        ctx, _ = self.context()
+        self._guard(ctx, self.path)
         try:
             text = self.path.read_text("utf-8") if self.path.is_file() else ""
             new = tomledit.set_values(text, updates)
@@ -307,7 +372,13 @@ class SetupService:
                     checks=[r.as_dict() for r in rows],
                 )
             when = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
-            self._write({("setup", "completed_utc"): when})
+            ctx, _ = self.context()
+            self._write(
+                {
+                    ("setup", "completed_utc"): when,
+                    ("setup", "former_plays"): self._remember(ctx),
+                }
+            )
         log.info("setup finished")
         return {
             "done": True,

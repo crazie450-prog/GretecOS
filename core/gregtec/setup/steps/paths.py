@@ -37,19 +37,35 @@ def play_saved(ctx: Context) -> bool:
 
 
 def plays(ctx: Context) -> list[Path]:
-    """Every folder that is Play to GOS now: gos.toml's (defaults for what it lacks) and the one
-    the running core started with, which it syncs against until its next start."""
-    found = [ctx.cfg.instance("play")]
+    """Every folder that is or was Play to GOS: gos.toml's (defaults for what it lacks), the one
+    the running core started with (it syncs against that until its next start) and every former
+    Play on record (``[setup] former_plays`` and ``former_plays.txt`` beside gos.toml, D223), so
+    a hand edit of ``[paths] play`` or a restart never frees the old Play to be Export or Lab."""
+    found = [ctx.cfg.instance("play"), *ctx.cfg.former_plays]
     if ctx.running is not None:
-        found.append(ctx.running.instance("play"))
-    return found
+        found += [ctx.running.instance("play"), *ctx.running.former_plays]
+    return list(dict.fromkeys(found))
+
+
+def same_folder(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` are one folder (resolved, case ignored); one that can't be
+    resolved (a link loop) is never the same."""
+    try:
+        return doctor.folded(a) == doctor.folded(b)
+    except (OSError, RuntimeError):
+        return False
 
 
 def play_fixed(ctx: Context) -> bool:
     """Whether Play may no longer move by a click: gos.toml says where it is, or the Play GOS runs
     with (defaults included) is a folder there, so it may be the real Play (final check round 2).
     Only a Play that names no folder yet, on a first run, is chosen in the wizard."""
-    return play_saved(ctx) or any(p.is_dir() for p in plays(ctx))
+    now = [ctx.cfg.instance("play")]
+    if ctx.running is not None:
+        now.append(ctx.running.instance("play"))
+    # Former Plays don't fix Play (a new gos.toml may choose one); they only stay off Export
+    # and Lab (D223).
+    return play_saved(ctx) or any(p.is_dir() for p in now)
 
 
 def play_guard(ctx: Context, cfg: Config) -> dict[str, str]:
@@ -57,26 +73,26 @@ def play_guard(ctx: Context, cfg: Config) -> dict[str, str]:
     final check's round 2, D167): Play moved away from the folder GOS runs with, Export or Lab in
     or around a folder that is or was Play (``gregtec.sync`` mirrors into Export and Lab and
     deletes what the source lacks), or GOS_HOME or GOS_APP in or around one (GOS keeps its DB,
-    logs and backups in GOS_HOME, and ``gos deploy`` writes GOS_APP). Since Play can't move once
-    it is a folder, no sequence of saves turns the old Play into Export or Lab. Moving Play is a
-    hand edit of gos.toml, never a click."""
+    logs and backups in GOS_HOME, and ``gos deploy`` writes GOS_APP; D223: GOS_HOME's own folders
+    resolved too, and Prism's instances folder, Export and Lab as well as every Play). Moving
+    Play is a hand edit of gos.toml, never a click, and every Play is on record (:func:`plays`),
+    so neither a hand edit nor a restart turns an old Play into Export or Lab (D223)."""
     play_now = ctx.cfg.instance("play")
     problems: dict[str, str] = {}
-    if play_fixed(ctx) and doctor.folded(cfg.instance("play")) != doctor.folded(
-        play_now
-    ):
+    if play_fixed(ctx) and not same_folder(cfg.instance("play"), play_now):
         problems["play"] = (
             f"Play is {play_now}; the wizard never moves Play. To change it, edit [paths] in "
-            "gos.toml by hand"
+            "gos.toml by hand (the old Play stays on record and is never Export or Lab)"
         )
     guarded = [*plays(ctx), cfg.instance("play")]
-    for key, name in (("gos_home", "GOS_HOME"), ("gos_app", "GOS_APP")):
-        play = doctor.play_overlap(getattr(cfg, key), guarded)
-        if play is not None:
-            problems[key] = (
-                f"that overlaps Play ({play}); GOS writes in {name}, so it must be outside "
-                "Play and must not hold it"
-            )
+    folders = doctor.guarded(cfg, guarded)
+    if (why := doctor.home_problem(cfg.gos_home, folders)) is not None:
+        problems["gos_home"] = why
+    if (why := doctor.touch_problem(cfg.gos_app, folders)) is not None:
+        problems["gos_app"] = (
+            f"GOS_APP {why}; gos deploy writes in GOS_APP, so it must be outside every Play "
+            "and Prism's instances folder"
+        )
     for role in ("export", "lab"):
         play = doctor.play_overlap(cfg.instance(role), guarded)
         if play is not None:
@@ -99,7 +115,7 @@ def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
     # The guard runs first; the checklist then probes nothing in or around either Play.
     rows = doctor.checklist(cfg, plays=plays(ctx))
     config_home = ctx.path.parent.parent
-    if cfg.gos_home.resolve() != config_home.resolve():
+    if not same_folder(cfg.gos_home, config_home):
         rows.append(
             Check(
                 "paths.config",
