@@ -1,0 +1,59 @@
+Test fixtures from PlanNH's test resources (WO-3.4, D192)
+
+light_fuel_hydrogen_loop.yaml and 230_platline.yaml are copied unchanged from
+https://github.com/GTNewHorizons/PlanNH, src/test/resources/gtnh-flow/, at commit
+6506cdc035149e3545e3414eccbde6ecaa1b52a8 (2026-11-09). They are gtnh-flow charts
+(https://github.com/OrderedSet86/gtnh-flow, MIT, Copyright (c) 2022 OrderedSet86).
+PlanNH's ground truth (GroundTruthTest.java, [E§3.2]): the platline solves with every
+machine running and at most 2 externals; the light-fuel loop closes with 0 gates.
+
+They are test data only; nothing in core/ reads them. PlanNH's licence follows, then gtnh-flow's
+(the same MIT permission notice, with gtnh-flow's copyright line).
+
+MIT License
+
+Copyright (c) 2026 Sbancuz
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+gtnh-flow (https://github.com/OrderedSet86/gtnh-flow):
+
+MIT License
+
+Copyright (c) 2022 OrderedSet86
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
