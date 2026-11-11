@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/crazie450-prog/GretecOS/core/gregtec/planner/plan_schema.json",
+  "title": "Gregtec OS canonical plan (plan section 7.1, WO-3.4, D194)",
+  "description": "One route of the production line designer. Numbers come from the DB (r: recipes, mte: machines and their facts) and GT's math; metrics and rank are WO-3.5's, layout WO-3.6's.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "v", "gt", "run", "kind", "target", "tier_cap", "machines", "pins", "nodes", "edges", "boundary", "metrics", "rank", "alternatives", "layout", "request", "route", "warnings"],
+  "$defs": {
+    "planId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "recipe": {"type": "string", "pattern": "^r:[^/\\s]+/[0-9a-f]{12}(-[0-9]+)?$"},
+    "key": {"type": "string", "minLength": 1},
+    "tier": {"enum": ["ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV", "UEV", "UIV", "UMV", "UXV", "MAX"]},
+    "rate": {"type": "number", "minimum": 0},
+    "nullableNumber": {"type": ["number", "null"]},
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "recipe"],
+      "properties": {"node": {"$ref": "#/$defs/key"}, "recipe": {"$ref": "#/$defs/recipe"}}
+    },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rate_s", "gated"],
+      "properties": {
+        "id": {"$ref": "#/$defs/key"},
+        "rate_s": {"$ref": "#/$defs/rate"},
+        "gated": {"type": "boolean"},
+        "qty": {"$ref": "#/$defs/rate"}
+      }
+    },
+    "sizes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "util", "eut", "eut_avg", "eut_peak", "amps", "ticks_eff", "parallel", "oc"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "util": {"type": "number", "minimum": 0},
+        "eut": {"type": "integer"},
+        "eut_avg": {"type": "number"},
+        "eut_peak": {"type": "integer"},
+        "amps": {"type": "integer", "minimum": 0},
+        "ticks_eff": {"type": "integer", "minimum": 0},
+        "parallel": {"type": "integer", "minimum": 0},
+        "oc": {"type": "integer", "minimum": 0},
+        "steam_lt": {"type": "number"},
+        "state": {"type": "string"}
+      }
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mte", "name", "kind", "tier", "hatches", "coil_tier", "oc", "oc_mode", "parallel", "perfect", "batch_mode", "addon", "mod", "confidence", "requires"],
+      "properties": {
+        "mte": {"type": "integer", "minimum": 0},
+        "name": {"type": "string"},
+        "kind": {"enum": ["singleblock", "multiblock", "steam"]},
+        "tier": {"$ref": "#/$defs/tier"},
+        "hatches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tier", "amps"],
+            "properties": {"tier": {"$ref": "#/$defs/tier"}, "amps": {"type": "integer", "minimum": 1}}
+          }
+        },
+        "coil_tier": {"type": ["integer", "null"]},
+        "oc": {"type": "integer", "minimum": 0},
+        "oc_mode": {"type": "string"},
+        "parallel": {"type": "integer", "minimum": 0},
+        "perfect": {"type": "boolean"},
+        "batch_mode": {"type": "boolean"},
+        "addon": {"type": "boolean"},
+        "mod": {"type": ["string", "null"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "requires": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "recipe", "for", "map", "crafts_s", "flags", "pinned", "primary", "machine", "count", "util", "eut", "eut_avg", "eut_peak", "amps", "ticks_eff", "steady", "badges", "warnings", "facts"],
+      "properties": {
+        "n": {"type": "string", "pattern": "^n[1-9][0-9]*$"},
+        "recipe": {"$ref": "#/$defs/recipe"},
+        "for": {"type": "array", "items": {"$ref": "#/$defs/key"}},
+        "map": {"type": ["string", "null"]},
+        "crafts_s": {"$ref": "#/$defs/rate"},
+        "crafts": {"$ref": "#/$defs/rate"},
+        "flags": {"type": "array", "items": {"type": "string"}},
+        "pinned": {"type": "boolean"},
+        "primary": {"type": "boolean"},
+        "machine": {"oneOf": [{"$ref": "#/$defs/machine"}, {"type": "null"}]},
+        "count": {"type": ["integer", "null"], "minimum": 0},
+        "util": {"$ref": "#/$defs/nullableNumber"},
+        "eut": {"type": ["integer", "null"]},
+        "eut_avg": {"$ref": "#/$defs/nullableNumber"},
+        "eut_peak": {"type": ["integer", "null"]},
+        "amps": {"type": ["integer", "null"]},
+        "ticks_eff": {"type": ["integer", "null"]},
+        "parallel": {"type": "integer", "minimum": 0},
+        "oc": {"type": "integer", "minimum": 0},
+        "steam_lt": {"type": "number"},
+        "state": {"type": "string"},
+        "steady": {"oneOf": [{"$ref": "#/$defs/sizes"}, {"type": "null"}]},
+        "badges": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "value", "source", "confidence"],
+            "properties": {
+              "key": {"type": "string"},
+              "value": {"type": "string"},
+              "source": {"type": "string"},
+              "confidence": {"type": "number"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "id": {"$ref": "#/$defs/planId"},
+    "name": {"type": "string", "minLength": 1},
+    "v": {"const": 1},
+    "gt": {"type": "string"},
+    "run": {"type": "string", "minLength": 1, "description": "the export run key it was solved on (WO-1.9 reads it)"},
+    "kind": {"const": "production"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rate_s"],
+      "properties": {
+        "id": {"$ref": "#/$defs/key"},
+        "rate_s": {"$ref": "#/$defs/rate"},
+        "qty": {"$ref": "#/$defs/rate"},
+        "window_s": {"$ref": "#/$defs/rate"},
+        "eta_s": {"$ref": "#/$defs/rate"}
+      }
+    },
+    "tier_cap": {"$ref": "#/$defs/tier"},
+    "machines": {"enum": ["base", "base+addons"]},
+    "pins": {"type": "array", "items": {"$ref": "#/$defs/pin"}},
+    "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "item", "rate_s"],
+        "properties": {
+          "from": {"type": "string", "pattern": "^n[1-9][0-9]*$"},
+          "to": {"type": "string", "pattern": "^n[1-9][0-9]*$"},
+          "item": {"$ref": "#/$defs/key"},
+          "rate_s": {"$ref": "#/$defs/rate"}
+        }
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["in", "out"],
+      "properties": {
+        "in": {"type": "array", "items": {"$ref": "#/$defs/port"}},
+        "out": {"type": "array", "items": {"$ref": "#/$defs/port"}}
+      }
+    },
+    "metrics": {"type": "object", "description": "WO-3.5"},
+    "rank": {"type": "object", "description": "WO-3.5"},
+    "alternatives": {"type": "array", "items": {"$ref": "#/$defs/planId"}},
+    "layout": {"type": "object", "description": "WO-3.6"},
+    "request": {"type": "object", "description": "the planner request (gregtec.planner.request.Request.as_dict)"},
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "column", "mode", "exact", "choices", "gates", "all_run", "floor", "objectives", "big_m"],
+      "properties": {
+        "n": {"type": "integer", "minimum": 1},
+        "column": {"enum": ["base", "addon"]},
+        "mode": {"enum": ["rate", "batch"]},
+        "exact": {"type": "boolean"},
+        "choices": {"type": "array", "items": {"$ref": "#/$defs/pin"}},
+        "gates": {"type": "array", "items": {"$ref": "#/$defs/key"}},
+        "all_run": {"type": "boolean"},
+        "floor": {"$ref": "#/$defs/nullableNumber"},
+        "objectives": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gates", "gated", "machines"],
+          "properties": {
+            "gates": {"type": "integer", "minimum": 0},
+            "gated": {"type": "number"},
+            "machines": {"type": "number"}
+          }
+        },
+        "big_m": {"type": "number"}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}

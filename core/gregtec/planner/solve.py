@@ -110,9 +110,8 @@ class Flow:
     gates: tuple[str, ...]  # items crossing through a gate
     all_run: bool  # every recipe of the route runs
     floor: float | None  # the stage-4 floor, crafts/s, when the replay ran
-    objectives: tuple[
-        float, float, float
-    ]  # gates, gated quantity (row units), machines
+    # gates, gated quantity (row units x the target rate), machines
+    objectives: tuple[int, float, float]
     big_m: float
     warnings: tuple[str, ...] = ()
 
@@ -293,30 +292,42 @@ def _value(obj: dict[int, float], x: np.ndarray) -> float:
     return float(sum(v * x[k] for k, v in obj.items()))
 
 
-def _keep(
-    obj: dict[int, float], best: float, integer: bool
-) -> tuple[dict[int, float], float, float]:
-    if integer:
-        return obj, -math.inf, round(best) + 0.5
+def _keep(obj: dict[int, float], best: float) -> tuple[dict[int, float], float, float]:
+    """``obj`` kept at its optimum ``best`` (a row of the next stage)."""
     return obj, -math.inf, best + max(ABS_TOL, REL_TOL * abs(best))
 
 
+def _open_gates(m: _Model, x: np.ndarray) -> dict[str, float]:
+    """Each gate's state in ``x``: open when its binary is, or when its item crosses at all.
+    HiGHS accepts a binary within its integrality tolerance of 0, which lets
+    ``imp + exp <= M g`` leak up to about ``M x 1e-6``; such a crossing counts as a gate."""
+    return {
+        k: 1.0 if x[g] > 0.5 or sum(float(x[v]) for v in m.gated[k]) > RUNNING else 0.0
+        for k, g in m.gate.items()
+    }
+
+
 def _lexicographic(m: _Model) -> tuple[np.ndarray, tuple[float, float, float]] | None:
-    """Stages 1-3; None when stage 1 is infeasible."""
-    extra: list[tuple[dict[int, float], float, float]] = []
-    found: list[float] = []
-    x: np.ndarray | None = None
-    for stage, obj in enumerate(_objectives(m)):
-        x = _solve(m, obj, extra)
-        if x is None:
-            if stage == 0:
-                return None
-            raise SolveError(f"stage {stage + 1} found no solution after stage {stage}")
-        best = _value(obj, x)
-        found.append(best)
-        extra.append(_keep(obj, best, stage == 0))
-    assert x is not None
-    return x, (round(found[0]), found[1], found[2])
+    """Stages 1-3; None when a stage finds no solution. Stage 2 keeps stage 1's gate count;
+    stage 3 keeps stage 2's gates (fixed, so nothing leaks) and its gated quantity."""
+    gates, quantity, machines = _objectives(m)
+    x = _solve(m, gates, [])
+    if x is None:
+        return None
+    n1 = sum(_open_gates(m, x).values())
+    x2 = _solve(m, quantity, [(gates, -math.inf, n1 + 0.5)])
+    if x2 is None:
+        return None
+    for k, value in _open_gates(m, x2).items():
+        m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
+    x2 = _solve(m, quantity, [])
+    if x2 is None:
+        return None
+    q = _value(quantity, x2)
+    x3 = _solve(m, machines, [_keep(quantity, q)])
+    if x3 is None:
+        return None
+    return x3, (_value(gates, x3), q, _value(machines, x3))
 
 
 def _run(
@@ -419,7 +430,7 @@ def _flow(
         gates=gates,
         all_run=all(v > 0 for _, v in crafts),
         floor=floor,
-        objectives=(objectives[0], objectives[1] * s, objectives[2] * s),
+        objectives=(round(objectives[0]), objectives[1] * s, objectives[2] * s),
         big_m=m.big_m,
         warnings=tuple(warnings),
     )
@@ -530,11 +541,10 @@ def exact_counts(
     floors = dict.fromkeys((p.id for p in procs), flow.floor) if flow.floor else {}
     for big_m in BIG_M:
         m = _build(fixed, procs, big_m, floors, ())
-        gates, quantity, _ = _objectives(m)
-        extra = [
-            _keep(gates, flow.objectives[0], True),
-            _keep(quantity, flow.objectives[1] / m.scale, False),
-        ]
+        _, quantity, _ = _objectives(m)
+        for k, g in m.gate.items():
+            m.lb[g] = m.ub[g] = 1.0 if k in flow.gates else 0.0
+        extra = [_keep(quantity, flow.objectives[1] / m.scale)]
         counts: dict[str, int] = {}
         for p in procs:
             cps = crafts_per_s.get(p.id, 0.0)

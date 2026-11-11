@@ -1,9 +1,14 @@
 """Affected-plan flags (WO-1.9, plan sections 5.2 step 3 and 7.13, QA:D9, D147).
 
-Plans arrive in Phase 3. What this needs of them is fixed by Appendix D's ``plan`` table: a plan
-names the export run it was solved on (``plan.run_id``) and cites recipe keys; its JSON
-(``plan.json_path``, ``data/plans/<id>.json``) lists them. Until Phase 3 writes plans, this reads
-that shape from a small JSON format, ``gos-plan/0``::
+What this needs of a plan is fixed by Appendix D's ``plan`` table: a plan names the export run
+it was solved on (``plan.run_id``) and cites recipe keys; its JSON (``plan.json_path``,
+``data/plans/<id>.json``) lists them. Two JSON shapes are read:
+
+- the canonical plan JSON of plan 7.1 (WO-3.4, ``gregtec.planner.plan``, ``v`` 1): its ``run``
+  is the export run key, and its cites are the ``r:`` recipes of its nodes and pins and the
+  ``mte:`` machines of its nodes (``gregtec.planner.plan.cites``, re-read here so a pack
+  update needn't load the solver); its status lives in the DB row, so it reads as "";
+- ``gos-plan/0``, the stand-in that fixtures and dry runs still use::
 
     {"format": "gos-plan/0", "id": "pl-0001", "name": "Steel", "status": "accepted",
      "run": "<export run key>", "cites": ["r:gt.recipe.blastfurnace/0123456789ab", "crop:..."]}
@@ -34,6 +39,7 @@ from gregtec.gamestate.safe_open import read_bytes
 from gregtec.ingest import crops
 
 FORMAT = "gos-plan/0"
+PLAN_V = 1  # the canonical plan JSON's version (gregtec.planner.plan.VERSION)
 PLAN_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 RECIPE, CROP = "r:", "crop:"
 MAX_PLAN = 4 << 20  # bytes
@@ -48,14 +54,41 @@ class Plan:
     cites: tuple[str, ...]
 
 
+def plan_cites(d: dict[str, object]) -> list[str]:
+    """The cites of a canonical plan: ``r:`` recipes of its nodes and pins, ``mte:`` machines
+    of its nodes, in order, each once (the same as ``gregtec.planner.plan.cites``)."""
+    out: list[str] = []
+    nodes = d.get("nodes")
+    for node in nodes if isinstance(nodes, list) else ():
+        if isinstance(node, dict):
+            if isinstance(node.get("recipe"), str):
+                out.append(node["recipe"])
+            machine = node.get("machine")
+            if isinstance(machine, dict) and isinstance(machine.get("mte"), int):
+                out.append(f"mte:{machine['mte']}")
+    pins = d.get("pins")
+    for pin in pins if isinstance(pins, list) else ():
+        if isinstance(pin, dict) and isinstance(pin.get("recipe"), str):
+            out.append(pin["recipe"])
+    return list(dict.fromkeys(out))
+
+
 def parse(data: bytes, where: str) -> Plan:
-    """A ``gos-plan/0`` document; ValueError when it isn't one."""
+    """A canonical plan or a ``gos-plan/0`` document; ValueError when it is neither."""
     try:
         d = json.loads(data)
     except ValueError as exc:
         raise ValueError(f"{where} isn't JSON: {exc}") from None
-    if not isinstance(d, dict) or d.get("format") != FORMAT:
-        raise ValueError(f"{where} isn't a {FORMAT} plan")
+    canonical = (
+        isinstance(d, dict)
+        and "format" not in d
+        and d.get("v") == PLAN_V
+        and isinstance(d.get("nodes"), list)
+    )
+    if not isinstance(d, dict) or not (canonical or d.get("format") == FORMAT):
+        raise ValueError(f"{where} isn't a {FORMAT} plan or a v{PLAN_V} plan")
+    if canonical:
+        d = {**d, "status": "", "cites": plan_cites(d)}
     pid, run, cites = d.get("id"), d.get("run"), d.get("cites")
     if not isinstance(pid, str) or not PLAN_ID.fullmatch(pid):
         raise ValueError(f"{where}: id must match {PLAN_ID.pattern}")
