@@ -683,6 +683,7 @@ class _Builder:
         self.req = request
         self.reader = _Reader(conn, run_id)
         self.templates = templates
+        self.loops: dict[str, frozenset[str]] = {}  # chain -> items on its loops
         cap = request.tier_cap if request.tier_cap is not None else base.tier_cap()
         self.cap = cap
         owned = frozenset(m for m, n in base.owned_machines().items() if n > 0)
@@ -917,9 +918,14 @@ class _Builder:
         return valid, unchecked, rejected
 
     def choose(
-        self, key: str, valid: list[RecipeNode], rejected: list[Candidate]
+        self,
+        key: str,
+        valid: list[RecipeNode],
+        rejected: list[Candidate],
+        template: bool = True,
     ) -> tuple[list[str], bool, str | None, str | None, list[str]]:
-        """(chosen refs, pinned, template, branch, warnings)."""
+        """(chosen refs, pinned, template, branch, warnings); ``template`` False leaves
+        ``key``'s chain template out (a loop of the chain entered from outside it)."""
         refs = [n.id for n in valid]
         pin = self.req.pin_for(key)
         if pin is not None:
@@ -930,7 +936,7 @@ class _Builder:
                 )
                 raise RequestError(f"pin {pin} for {key}: not a candidate here ({why})")
             return [pin], True, None, None, []
-        choice = self.templates.choices.get(key)
+        choice = self.templates.choices.get(key) if template else None
         if choice is not None:
             picked = [r for r in choice.recipes if r in refs]
             warns = [
@@ -945,6 +951,45 @@ class _Builder:
             )
             return refs[:TOP_N], False, None, None, warns
         return refs[:TOP_N], False, None, None, []
+
+    def in_loop(self, key: str) -> bool:
+        """Whether ``key`` is on a loop of its chain template: its template recipes use up,
+        through the template's own rows, an item made from ``key`` (the platline's calcium,
+        electrolysed back from the calcium chloride its platinum step gives off)."""
+        choice = self.templates.choices[key]
+        if choice.chain not in self.loops:
+            rows = {k: c for k, c in self.templates.choices.items() if c.chain == choice.chain}
+            refs = sorted({r for c in rows.values() for r in c.recipes})
+            ids = [
+                int(r[0])
+                for r in self.reader.conn.execute(
+                    "SELECT id FROM recipe WHERE run_id = ?"
+                    " AND ref IN (SELECT value FROM json_each(?))",
+                    (self.reader.run, json.dumps(refs)),
+                )
+            ]
+            self.reader.load_recipes(ids)
+            inputs: dict[str, set[str]] = {}
+            for r in self.reader.recipes.values():
+                inputs[r.ref] = {p.key for _, p, _ in r.inputs if p.consumed}
+            feeds = {
+                k: {i for r in c.recipes for i in inputs.get(r, ()) if i in rows}
+                for k, c in rows.items()
+            }
+            looped: set[str] = set()
+            for start in feeds:
+                seen: set[str] = set()
+                stack = list(feeds[start])
+                while stack:
+                    k = stack.pop()
+                    if k == start:
+                        looped.add(start)
+                        break
+                    if k not in seen:
+                        seen.add(k)
+                        stack.extend(feeds.get(k, ()))
+            self.loops[choice.chain] = frozenset(looped)
+        return key in self.loops[choice.chain]
 
 
 def raw_inputs(path: Path = RAW_INPUTS) -> tuple[str, ...]:
@@ -1011,6 +1056,7 @@ def build(
     catalysts: set[str] = set()
     made_at: dict[str, int] = {}  # recipe -> the depth of the item it was chosen for
     direct: set[str] = set()  # the target's direct inputs (primary choices)
+    via: dict[str, set[str]] = {}  # item -> the chain templates that asked for it
     level = [request.target]
     depth = 0
 
@@ -1076,7 +1122,19 @@ def build(
                         candidates=tuple(rejected),
                     )  # fmt: skip
                     continue
-                top, pinned, template, branch, warns = b.choose(key, valid, rejected)
+                # A chain template off the route fixes its first pick, but a loop of the
+                # chain is entered only from within it: calcium for an epoxid's calcium
+                # acetate is no reason to run the platline (D189).
+                choice = b.templates.choices.get(key)
+                use = (
+                    choice is None
+                    or choice.chain in on_route(direct)
+                    or choice.chain in via.get(key, ())
+                    or not b.in_loop(key)
+                )
+                top, pinned, template, branch, warns = b.choose(
+                    key, valid, rejected, use
+                )
                 # Only a primary choice (§7.1 step 3) keeps all of its top recipes in the
                 # graph; the heuristic fixes every other node's choice to its first (D11),
                 # and swapping one is a pin, which rebuilds (D61; D189).
@@ -1134,6 +1192,8 @@ def build(
                         if not p.consumed:
                             catalysts.add(p.key)
                             continue
+                        if template is not None:
+                            via.setdefault(p.key, set()).add(template)
                         if p.key not in nodes and p.key not in depth_of:
                             depth_of[p.key] = depth + 1
                             upcoming.add(p.key)
