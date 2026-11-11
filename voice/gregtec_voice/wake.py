@@ -235,7 +235,6 @@ class WakeWord:
         verifier: Callable[[bytes], str] | None = None,
         chime: Chime | None = None,
         run: Run = _thread,
-        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.detector = detector
         self.vad = vad
@@ -244,7 +243,6 @@ class WakeWord:
         self.verifier = verifier
         self.chime = chime or NoChime()
         self.run = run
-        self.clock = clock
         self.name = getattr(detector, "name", "wake")
         self.state = IDLE
         self.wakes = 0  # stage-1 detections

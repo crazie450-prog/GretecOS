@@ -16,8 +16,8 @@ starts; until its WO lands the placeholder here runs instead (``stt`` is in: WO-
 the client through the :class:`TriggerBus`: ``wake(t)`` opens a segment (the 300 ms pre-roll
 included, as for the key), ``end_of_speech(t)`` closes it, ``cancel()`` drops it (the 1.5 s cancel
 window, a failed second-stage check), and ``speech(True, t)`` while GOS speaks is barge-in by
-voice: speech stops. Plan 4.5's "speaking stops speech" exists only once WO-5.4's VAD calls
-``speech(True, t)`` (D180): that WO owns it. While a segment is being recorded, the other
+voice: speech stops. Plan 4.5's "speaking stops speech" is WO-5.4's VAD calling
+``speech(True, t)`` (D180, D185). While a segment is being recorded, the other
 trigger's start and end are ignored. ``create`` gets the client's transcriber for its second
 stage (D185) and returns None when it can't start: the talk key is then the trigger.
 
