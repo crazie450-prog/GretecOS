@@ -33,9 +33,10 @@ machine with a badge (flagged, low confidence, custom, D142 (a)) still counts, a
 only badged machines run carries the badge as a warning. Crafting-table and furnace recipes
 (NEI's) are kept, flagged ``manual``.
 
-**Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling last,
-D142 (2); then a change of form of the same GT material last, D189; then avoid chanced-only;
-lower tier; fewer inputs; base machine first; machine before manual; unbadged first; key) and
+**Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling,
+GT's container maps and EU-less recipes last, D142 (2), D189; then the reverse of one of the
+item's own uses; avoid chanced-only; fluid cells after none; lower tier; fewer inputs; base
+machine first; machine before manual; unbadged first; key) and
 the first :data:`TOP_N` valid ones are **chosen** and expanded; every candidate stays listed with
 its status for D61's swap and "show all". A pin (D61) or a chain template (:mod:`.chains`)
 replaces the heuristic's choice for its node. Expansion stops at boundary items: the request's

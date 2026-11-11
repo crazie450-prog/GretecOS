@@ -3,7 +3,7 @@
 # regia; the concentrate with ammonium chloride gives platinum salt (sifted, then smelted back
 # to metallic powder) and reprecipitated platinum, which calcium reduces to platinum dust; the
 # calcium chloride is electrolysed back to calcium. Keys checked against the dev runtime's
-# server harness DB (run 20261111T104223Z); the palladium, rhodium, ruthenium, osmium and
+# server harness DB (run 20261106T014148Z); the palladium, rhodium, ruthenium, osmium and
 # iridium branches of the line start from its byproducts and are left to the heuristic.
 item	recipe	branch	note
 gregtech:gt.metaitem.01@2085	r:gt.recipe.chemicalreactor/84f6e790939d	pt-reduction	Platinum Dust: reprecipitated platinum + calcium, chemical reactor

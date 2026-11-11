@@ -25,7 +25,7 @@ comments. Then one header line and one row per (item, recipe), tab-separated:
 
 A template goes stale when a pack update changes or removes a recipe. `gos graph --check-chains`
 validates every row against the newest export run in the DB (the recipe exists, is enabled, is
-not a display-only recipe, and makes the item) and lists the stale ones; the pack-update
-playbook runs it. A stale row is skipped with a warning on the graph, never guessed around.
+not a display-only recipe, and makes the item) and lists the stale ones; run it after a pack
+update (docs/runbooks/pack_update.md, step 9). A stale row is skipped with a warning on the graph, never guessed around.
 
 Add a template only when a chain's graph blows up or picks the wrong route without one.

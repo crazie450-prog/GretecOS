@@ -3,7 +3,7 @@
 # makes the mud, water in the dissolution tank leaves neodymium rare-earth concentrate, which
 # hydrochloric acid turns into neodymium oxide, electrolysed to neodymium. The other lanthanides
 # of the line (cerium, lanthanum, samarium) come from its byproducts and are left to the
-# heuristic. Keys checked against the dev runtime's server harness DB (run 20261111T104223Z).
+# heuristic. Keys checked against the dev runtime's server harness DB (run 20261106T014148Z).
 item	recipe	branch	note
 gregtech:gt.metaitem.01@2067	r:gt.recipe.electrolyzer/fe672bf696dc		Neodymium Dust: electrolysing neodymium oxide
 bartworks:gt.bwMetaGenerateddust@11122	r:gt.recipe.chemicalreactor/4921b7adc4b2	nd-oxide	Neodymium Oxide Dust: rare-earth concentrate + hydrochloric acid (chemical reactor)
