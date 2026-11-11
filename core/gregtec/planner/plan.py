@@ -357,6 +357,14 @@ def _plan(
             default=0.0,
         )
         target.update(qty=_num(request.qty), window_s=_num(window), eta_s=_num(eta))
+    available = {p.id for p in net.procs}
+    for p in request.pins:
+        if p.recipe not in available:
+            # The base column's network has no addon recipe: the pin can't hold there.
+            how = "imported" if p.node in dict(flow.imports) else "made another way"
+            warnings.append(
+                f"pin {p.node}={p.recipe} not available on base machines; {p.node} {how}"
+            )
     for w in g.warnings:
         if w not in warnings:
             warnings.append(w)

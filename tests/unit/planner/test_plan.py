@@ -7,13 +7,14 @@ for the side-by-side addon column (D12). Every item, recipe and machine is made 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import io
 import json
 import math
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
 
@@ -23,6 +24,7 @@ import pytest
 from gregtec.db import access
 from gregtec.packupdate import plans as pack_plans
 from gregtec.planner import alternatives, chains, plan, plancli, sizing, solve
+from gregtec.planner.graph import Graph
 from gregtec.planner.gtmath.processing import EnergyHatch
 from gregtec.planner.machines import Cited, MachineOption, Sizing
 from gregtec.planner.request import Pin, Request, RequestError
@@ -219,6 +221,45 @@ def test_pinning_a_non_primary_node_changes_only_its_branch(
         assert set((old.get(ref) or new[ref])["for"]) <= branch
     assert other in new and new[other]["pinned"]
     assert {"node": GAS, "recipe": other} in after.plans[0]["pins"]
+
+
+def test_a_pin_the_column_cannot_run_is_a_warning(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review LOW-4: a pin to a recipe only addon machines run, in the base column."""
+    acid_route = alternatives.pin(
+        Request(WIDGET), WIDGET, ref_of(conn, "chemicalreactor", 0)
+    )
+    g = design(conn, acid_route).graph
+    other = next(
+        a["recipe"]
+        for a in alternatives.node_alternatives(g, GAS)
+        if a["status"] != "chosen"
+    )
+    real = plan.network
+
+    def base_without_other(
+        g: Graph,
+        request: Request,
+        sized: Mapping[str, sizing.Sized],
+        *,
+        base_only: bool,
+    ) -> solve.Network:
+        net = real(g, request, sized, base_only=base_only)
+        return dataclasses.replace(
+            net,
+            procs=tuple(p for p in net.procs if p.id != other),
+            pinned=tuple(pin for pin in net.pinned if pin[1] != other),
+        )
+
+    monkeypatch.setattr(plan, "network", base_without_other)
+    p = design(conn, alternatives.pin(acid_route, GAS, other)).plans[0]
+    assert other not in {n["recipe"] for n in p["nodes"]}
+    assert (
+        f"pin {GAS}={other} not available on base machines; {GAS} imported"
+        in (p["warnings"])
+    )
+    valid(p)
 
 
 def test_alternatives_list_and_show_all(conn: sqlite3.Connection) -> None:
