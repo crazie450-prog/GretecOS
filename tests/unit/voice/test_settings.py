@@ -154,4 +154,3 @@ def test_the_plans_appendix_c_skeleton_loads(tmp_path: Path) -> None:
     _, voice = settings.load(write(tmp_path, block))
     assert [k.label for k in (voice.talk_key, voice.confirm_key)] == ["F13", "F14"]
     assert [k.label for k in (voice.cancel_key, voice.next_card_key)] == ["F15", "F16"]
-
