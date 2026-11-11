@@ -164,6 +164,52 @@ def test_staleness_is_marked_never_extrapolated(rig: Rig) -> None:
     )
 
 
+def test_a_reading_the_newest_message_left_out_is_not_shown_as_current(
+    rig: Rig, tmp_path: Path
+) -> None:
+    """Review M1: a failed call leaves a key out; its old value isn't shown with a fresh age."""
+    rig.send(msg(1))
+    ebf_id = f"lab/{EBF}"
+
+    def readings(tel: Telemetry) -> dict[str, Any]:
+        snap = tel.snapshot()
+        ebf = next(m for m in snap["machines"] if m["id"] == ebf_id)
+        assert ebf["age_s"] == 0 and not ebf["stale"]
+        return ebf["readings"]
+
+    assert readings(rig.tel)["active"] == 1.0
+    for later in (10, 600):  # within and past the heartbeat
+        rig.clock.now += later
+        doc = msg(int(rig.clock.now))
+        del doc["machines"][0]["active"], doc["machines"][0]["progress"]
+        rig.send(doc)
+        shown = readings(rig.tel)
+        assert "active" not in shown and "progress" not in shown, later
+        assert shown["progress_max"] == doc["machines"][0]["progress_max"]
+    # After a restart (no memory of what the newest message carried), the heartbeat window
+    # still leaves out what that message didn't carry.
+    restarted = Telemetry(rig.store, clock=rig.clock)
+    shown = readings(restarted)
+    assert "active" not in shown and "progress" not in shown
+    assert shown["progress_max"] == doc["machines"][0]["progress_max"]
+
+
+def test_a_binding_has_at_most_so_many_computers(rig: Rig) -> None:
+    """Review L5: a token can't fill the core with made-up OC computers."""
+    from gregtec.bridge.telemetry import MAX_AGENTS_PER_BINDING
+
+    base = FIRST["computer"]["address"]
+    assert rig.send(msg(1)).ok
+    for i in range(MAX_AGENTS_PER_BINDING - 1):
+        addr = f"{i:08x}" + base[8:]
+        assert rig.send(msg(1, computer=dict(FIRST["computer"], address=addr))).ok
+    extra = msg(1, computer=dict(FIRST["computer"], address="f" * 8 + base[8:]))
+    out = rig.send(extra)
+    assert not out.ok and out.err == "internal"
+    assert rig.send(msg(2, computer=dict(FIRST["computer"], address=base))).ok  # known
+    assert rig.send(extra, binding="play").ok  # another binding has its own count
+
+
 def test_the_locator_picks_the_computer_that_can_run_it(rig: Rig) -> None:
     with pytest.raises(ActionError, match="no fresh telemetry"):
         rig.tel.locate("lab", "say", {"text": "hi"})

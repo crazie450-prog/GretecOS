@@ -15,7 +15,11 @@
   address>`` for the computer's own readings, ``key``, ``value`` or ``text``) for each reading
   that **changed**, and again every :data:`HEARTBEAT_S` while it doesn't, so a gap in the
   samples longer than that is a gap in the data. Readings the agent left out (a failed call)
-  are not written; nothing is ever estimated or carried forward;
+  are not written; nothing is ever estimated or carried forward: a machine's ``readings`` are
+  only those its newest message carried (:meth:`Telemetry.snapshot`);
+- refuses a message from a new OC computer once its binding has
+  :data:`MAX_AGENTS_PER_BINDING` (``internal``), so a token can't fill the core with made-up
+  computers;
 - hands ``results`` and ``crafts`` to the action desk (only actions sent to that binding's
   computer can be finished by it).
 
@@ -49,6 +53,7 @@ MACHINE_KEYS = ("active", "allowed", "work", "progress", "progress_max", "eu", "
 POWER_KEYS = ("eu", "eu_max", "eu_in", "eu_out")
 POWER_TEXT_KEYS = ("eu_str", "eu_max_str")
 COMPUTER_KEYS = ("mem_free", "mem_total", "energy", "energy_max")
+MAX_AGENTS_PER_BINDING = 16  # OC computers one binding may have (until the core restarts)
 
 Results = Callable[[AgentId, Mapping[str, Any]], None]
 
@@ -89,6 +94,8 @@ class Telemetry:
         self.latest = Latest()
         self._lock = threading.Lock()
         self._written: dict[tuple[str, str], tuple[float | None, str | None, int]] = {}
+        # Per machine or power entry: (last_seen, the reading keys its newest message carried).
+        self._carried: dict[str, tuple[int, frozenset[str]]] = {}
         self._pruned = 0.0
 
     # --- the sink
@@ -98,6 +105,16 @@ class Telemetry:
         agent, doc = msg.agent, msg.doc
         machines: list[tuple[Any, ...]] = []
         samples: list[tuple[Any, ...]] = []
+        carried: dict[str, frozenset[str]] = {}
+        known = self.latest.agents()
+        if (
+            agent not in known
+            and sum(1 for a in known if a.binding == agent.binding)
+            >= MAX_AGENTS_PER_BINDING
+        ):  # the Bridge answers "internal"; nothing is recorded
+            raise ValueError(
+                f"the {agent.binding} binding has {MAX_AGENTS_PER_BINDING} OC computers already"
+            )
         with self._lock:  # marks are kept only once the rows are committed
             src = str(agent)
             computer = doc.get("computer") or {}
@@ -121,12 +138,18 @@ class Telemetry:
                         _status(entry, power),
                     )
                 )
+                keys: set[str] = set()
                 for key in POWER_KEYS if power else MACHINE_KEYS:
-                    if key in entry:
-                        self._sample(samples, now, mid, key, _num(entry[key]), None)
+                    if key in entry and self._sample(
+                        samples, now, mid, key, _num(entry[key]), None
+                    ):
+                        keys.add(key)
                 for key in POWER_TEXT_KEYS if power else ():
-                    if key in entry:
-                        self._sample(samples, now, mid, key, None, str(entry[key]))
+                    if key in entry and self._sample(
+                        samples, now, mid, key, None, str(entry[key])
+                    ):
+                        keys.add(key)
+                carried[mid] = frozenset(keys)
             ae2 = doc.get("ae2")
             if isinstance(ae2, dict):
                 asrc = f"{agent.binding}/{ae2['addr']}"
@@ -151,6 +174,8 @@ class Telemetry:
                 )
             for ts, ssrc, key, value, text in samples:
                 self._written[(ssrc, key)] = (value, text, ts)
+            for mid, keys in carried.items():
+                self._carried[mid] = (now, keys)
         self.latest.ingest(msg)
         if self.results is not None:
             self.results(
@@ -166,9 +191,10 @@ class Telemetry:
         key: str,
         value: float | None,
         text: str | None,
-    ) -> None:
+    ) -> bool:
+        """Add the reading to ``out`` if it changed or is due again; False: no reading."""
         if value is None and text is None:
-            return
+            return False
         last = self._written.get((src, key))
         if (
             last is not None
@@ -176,8 +202,9 @@ class Telemetry:
             and last[1] == text
             and now - last[2] < HEARTBEAT_S
         ):
-            return
+            return True
         out.append((now, src, key, value, text))
+        return True
 
     # --- staleness
 
@@ -309,7 +336,7 @@ class Telemetry:
                     "age_s": age,
                     "stale": age > STALE_S,
                     "status": r["status"],
-                    "readings": self._readings(r["id"]),
+                    "readings": self._readings(r["id"], r["last_seen"]),
                 }
             )
         return {
@@ -319,12 +346,23 @@ class Telemetry:
             "machines": machines,
         }
 
-    def _readings(self, src: str) -> dict[str, Any]:
+    def _readings(self, src: str, last_seen: int | None) -> dict[str, Any]:
+        """The readings the machine's newest message carried, as they were then (so its
+        ``age_s`` is theirs). A reading that message left out (a failed call) isn't shown: its
+        last value is old data, never a current one. After a restart, until the machine's next
+        message, they are the keys with a sample within :data:`HEARTBEAT_S` of ``last_seen``
+        (the heartbeat writes a reading still carried at least that often)."""
+        if last_seen is None:
+            return {}
         rows = self.store.rows(
-            "SELECT key, value, text, ts FROM tel_sample s WHERE src = ? AND ts = "
+            "SELECT key, value, text, ts FROM tel_sample s WHERE src = ? AND ts > ? AND ts = "
             "(SELECT MAX(ts) FROM tel_sample WHERE src = s.src AND key = s.key)",
-            (src,),
+            (src, int(last_seen) - HEARTBEAT_S),
         )
+        carried = self._carried.get(src)
+        keys = carried[1] if carried is not None and carried[0] == last_seen else None
         return {
-            r["key"]: r["text"] if r["text"] is not None else r["value"] for r in rows
+            r["key"]: r["text"] if r["text"] is not None else r["value"]
+            for r in rows
+            if keys is None or r["key"] in keys
         }
