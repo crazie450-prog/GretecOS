@@ -38,6 +38,7 @@ from gregtec.api.security import Auth
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
+from gregtec.setup.service import record_plays
 from gregtec.store import DB_NAME, Store
 from gregtec.vault.curator import Curator
 from gregtec.vault.scheduler import Maintenance, game_running
@@ -128,6 +129,10 @@ def run(
         for problem in problems:
             log.error("refusing to start: fix gos.toml", extra={"why": problem})
         return 2
+    # Every Play GOS runs with is on record before anything else (D223); if it can't be
+    # written, the wizard's saves and sync refuse on their own.
+    if (why := record_plays(config_path or config.default_path(), cfg)) is not None:
+        log.error("former Plays not recorded", extra={"why": why})
     supervisor_token = (
         os.environ.pop(SUPERVISOR_TOKEN_ENV, None) if supervised else None
     )

@@ -14,8 +14,8 @@ Safety (CLAUDE.md, plan 4.6 residual risk, D82):
   ``os.replace``'d. The temp file is created with O_EXCL, so a link planted at a temp path
   (gos-dev can write Export and Lab) makes the write fail instead of writing through it.
 - Export or Lab at a folder that has ever been Play (``[setup] former_plays`` in gos.toml plus
-  ``former_plays.txt`` beside it, kept by the setup wizard, D223) is refused, whatever
-  ``[paths]`` says now: a hand edit that moves Play never makes the old Play a sync target.
+  ``former_plays.txt`` beside it, kept by the setup wizard, the core and sync itself, D223) is
+  refused, whatever ``[paths]`` says now: a hand edit that moves Play never makes the old Play a sync target.
 - Everything is planned before anything is written, and any refusal writes nothing at all:
   a symlink, junction or other reparse point anywhere sync would traverse (both trees, the
   instance and game folders included); a hard link in a target, which is what Prism's "Link
@@ -560,6 +560,14 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
         plans, refusals = plan_all(cfg, [args.only] if args.only else TARGETS)
     except OSError as exc:  # e.g. a file went away mid-scan; planning wrote nothing
         plans, refusals = [], [f"can't read: {exc}"]
+    # The Play this sync reads from is on record before anything is written (D223), so a later
+    # hand edit of [paths] play never makes it a target. Not recorded: refuse, never forget it.
+    # A dry run writes nothing at all, this record included.
+    from gregtec.setup.service import record_plays  # lazy: doctor imports this module
+
+    path = args.config or config.default_path()
+    if not args.dry_run and (why := record_plays(path, cfg)) is not None:
+        refusals.append(f"former Plays not recorded: {why}")
     if refusals:
         print("Refused, nothing written:", file=out)
         for refusal in refusals:

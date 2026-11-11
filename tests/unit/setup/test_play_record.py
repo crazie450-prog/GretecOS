@@ -9,10 +9,14 @@ old Play be saved or finished as Lab.
 
 from __future__ import annotations
 
+import argparse
 import io
+import os
 import re
 import sqlite3
+import sys
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,7 +26,7 @@ from gregtec.config import Config
 from gregtec.packupdate import gtpin
 from gregtec.setup import tomledit
 from gregtec.setup.devices import FakeDevices
-from gregtec.setup.service import SetupError, SetupService
+from gregtec.setup.service import SetupError, SetupService, record_plays
 
 from .conftest import path_values
 from .fakes import MemoryKeyring, link_folder, make_instance
@@ -66,7 +70,8 @@ def hand_set(path: Path, key: str, value: str) -> None:
     text = path.read_text("utf-8")
     new, n = re.subn(
         rf"^{key} = .*$",
-        f"{key} = {tomledit.format_value(value)}",
+        # A function, so re never reads a Windows path's backslashes as escapes.
+        lambda _: f"{key} = {tomledit.format_value(value)}",
         text,
         flags=re.MULTILINE,
     )
@@ -102,6 +107,9 @@ def test_a_hand_edited_home_linking_into_play_never_finishes(
     (tmp_path / "app").mkdir()
     svc.save("paths", path_values(prism, home, tmp_path / "app"))
     hand_set(svc.path, "gos_home", str(other))
+    assert (
+        config.load(svc.path).gos_home == other
+    )  # the hand edit reads back on every OS
     before = snapshot(play)
     with pytest.raises(SetupError) as refused:
         svc.finish()
@@ -145,17 +153,22 @@ def test_every_home_folder_is_checked(prism: Path, tmp_path: Path, sub: str) -> 
 
 
 def test_a_link_loop_is_an_error_not_a_crash(prism: Path, tmp_path: Path) -> None:
-    """The gate's low: a link loop makes resolve() raise; it counts as an overlap."""
+    """The gate's low: a link loop is an error row, never a crash, and nothing is made. On
+    POSIX resolve() raises on the loop, which counts as an overlap, so the DB isn't even looked
+    at; Windows' non-strict resolve() doesn't raise, and there's no DB there to open."""
     loop = tmp_path / "loop"
     try:
         loop.symlink_to(tmp_path / "loop2")
         (tmp_path / "loop2").symlink_to(loop)
     except OSError:
         pytest.skip("symlinks need a privilege here")
+    before = sorted(os.listdir(tmp_path))
     cfg = Config(gos_home=loop / "home", prism_instances=prism / "instances")
     rows = {c.id: c for c in doctor.checklist(cfg)}
     assert rows["paths.gos_home"].status == "error"
-    assert rows["db.gt_pin"].detail.startswith("not read")
+    if sys.platform != "win32":
+        assert rows["db.gt_pin"].detail.startswith("not read")
+    assert sorted(os.listdir(tmp_path)) == before
 
 
 def test_the_pin_probe_leaves_no_wal_or_shm(tmp_path: Path) -> None:
@@ -271,8 +284,12 @@ def test_a_case_only_move_of_play_is_refused_everywhere(
     svc: SetupService, prism: Path, home: Path, tmp_path: Path
 ) -> None:
     """Folder names are compared case-folded on every OS: on a case-sensitive file system a
-    folder that differs only in case counts as Play too, which errs on the safe side."""
+    folder that differs only in case counts as Play too, which errs on the safe side. NTFS
+    ignores case, so on Windows it is Play's own folder: the save moves nothing and stands."""
     svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    if sys.platform == "win32":
+        svc.save("paths", {"play": "gtnh-play"})
+        return
     with pytest.raises(SetupError):
         svc.save("paths", {"play": "gtnh-play"})
 
@@ -313,3 +330,161 @@ def test_sync_refuses_a_target_that_was_play(
     plans, refusals = sync.plan_all(cfg, ["lab"])
     assert plans == [] or not any(p.role == "lab" for p in plans)
     assert any("was Play" in r and "former_plays" in r for r in refusals)
+
+
+def test_a_hand_edit_with_a_windows_path_reads_back(svc: SetupService) -> None:
+    """The helper above, on any OS: a backslash path survives the hand edit."""
+    svc.path.parent.mkdir(parents=True)
+    svc.path.write_text('[paths]\ngos_home = "x"\n', "utf-8")
+    hand_set(svc.path, "gos_home", "C:\\Users\\clayton\\GregtecOS")
+    assert str(config.load(svc.path).gos_home).endswith("GregtecOS")
+
+
+# --- (4) every Play GOS starts or syncs with is on record, wizard or not (final checks)
+
+
+def restart(svc: SetupService) -> SetupService:
+    """A core restart: the core records as it starts, and the dashboard asks for the state."""
+    cfg = config.load(svc.path)
+    assert record_plays(svc.path, cfg) is None
+    again = SetupService(svc.path, cfg, provider=FakeDevices())
+    again.describe()
+    return again
+
+
+def hand_play(svc: SetupService, prism: Path, name: str) -> None:
+    """A new instance with a file only it has, made Play by a hand edit of gos.toml."""
+    make_instance(prism / "instances", name)
+    marker = (
+        prism / "instances" / name / ".minecraft" / "config" / "only_in_old_play.cfg"
+    )
+    marker.write_text("mine\n", "utf-8")
+    hand_set(svc.path, "play", name)
+
+
+def test_a_play_set_by_hand_between_restarts_never_becomes_lab(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    hand_play(svc, prism, "Play2")
+    svc = restart(svc)
+    hand_play(svc, prism, "Play3")
+    svc = restart(svc)
+    with pytest.raises(SetupError) as refused:
+        svc.save("paths", {"lab": "Play2"})
+    assert "lab" in refused.value.body["problems"]
+    hand_set(svc.path, "lab", "Play2")
+    with pytest.raises(SetupError):
+        svc.finish()
+    plans, refusals = sync.plan_all(config.load(svc.path), ["lab"])
+    assert not plans and any("was Play" in r for r in refusals)
+    assert (prism / "instances/Play2/.minecraft/config/only_in_old_play.cfg").is_file()
+
+
+def test_an_install_from_before_the_wizard_records_its_play_on_start(
+    prism: Path, home: Path, ring: MemoryKeyring
+) -> None:
+    """The upgrade path: a gos.toml with no record. The first start records its Play."""
+    path = home / "config" / "gos.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "[paths]\n"
+        f"prism_instances = {tomledit.format_value(str(prism / 'instances'))}\n"
+        f"gos_home = {tomledit.format_value(str(home))}\n"
+        'play = "GTNH-Play"\nexport = "GTNH-Export"\nlab = "GTNH-Lab"\n',
+        "utf-8",
+    )
+    svc = restart(SetupService(path, config.load(path), provider=FakeDevices()))
+    hand_play(svc, prism, "Play2")
+    svc = restart(svc)
+    with pytest.raises(SetupError):
+        svc.save("paths", {"lab": "GTNH-Play"})
+    hand_set(path, "lab", "GTNH-Play")
+    plans, refusals = sync.plan_all(config.load(path), ["lab"])
+    assert not plans and any("was Play" in r for r in refusals)
+
+
+def test_describe_alone_records_the_play(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    """The dashboard's first request after a start records, whatever started the core."""
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    hand_play(svc, prism, "Play2")
+    SetupService(svc.path, config.load(svc.path), provider=FakeDevices()).describe()
+    play2 = (prism / "instances" / "Play2").resolve()
+    assert play2 in config.load(svc.path).former_plays
+
+
+def test_a_first_run_records_nothing(home: Path) -> None:
+    assert record_plays(home / "config" / "gos.toml", Config(gos_home=home)) is None
+    assert not home.exists()
+
+
+def sync_args(path: Path, dry_run: bool = False) -> argparse.Namespace:
+    return argparse.Namespace(config=path, only="lab", dry_run=dry_run)
+
+
+def test_sync_records_its_play_before_it_plans(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    hand_play(svc, prism, "Play2")
+    play2 = (prism / "instances" / "Play2").resolve()
+    sync.run(sync_args(svc.path, dry_run=True), io.StringIO())
+    assert play2 not in config.load(svc.path).former_plays  # a dry run writes nothing
+    sync.run(sync_args(svc.path), io.StringIO())
+    assert play2 in config.load(svc.path).former_plays
+    hand_set(svc.path, "play", "GTNH-Play")
+    hand_set(svc.path, "lab", "Play2")
+    out = io.StringIO()
+    assert sync.run(sync_args(svc.path), out) == 1
+    assert "was Play" in out.getvalue()
+    assert (prism / "instances/Play2/.minecraft/config/only_in_old_play.cfg").is_file()
+
+
+def test_sync_refuses_when_the_record_cant_be_written(
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    hand_play(svc, prism, "Play2")  # a Play not on record yet
+    lab = snapshot(prism / "instances" / "GTNH-Lab")
+
+    def disk_full(target: Path, text: str, verify: object = None) -> NoReturn:
+        raise OSError("no space left")
+
+    monkeypatch.setattr(tomledit, "write_atomic", disk_full)
+    out = io.StringIO()
+    assert sync.run(sync_args(svc.path), out) == 1
+    assert "Refused, nothing written" in out.getvalue()
+    assert snapshot(prism / "instances" / "GTNH-Lab") == lab
+
+
+def test_the_core_records_its_play_as_it_starts(
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gregtec.api import server
+
+    (tmp_path / "app").mkdir()
+    svc.save("paths", path_values(prism, home, tmp_path / "app"))
+    hand_play(svc, prism, "Play2")
+
+    def no_port(port: int) -> NoReturn:
+        raise OSError("taken")
+
+    monkeypatch.setattr(server, "bind", no_port)
+    cfg = config.load(svc.path)
+    assert server.run(cfg, config_path=svc.path) == server.EXIT_PORT_IN_USE
+    play2 = (prism / "instances" / "Play2").resolve()
+    assert play2 in config.load(svc.path).former_plays

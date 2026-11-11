@@ -10,8 +10,9 @@
 - :meth:`store_secret`, :meth:`delete_secret`, :meth:`test_secret`: the keyring (plan 4.6). A
   secret never goes into gos.toml, a log line or a reply.
 - :meth:`finish`: the checklist again; with no error row, ``[setup] completed_utc`` is written.
-- Every Play is remembered (D223): each check, save and finish adds gos.toml's Play and the
-  running core's to ``former_plays.txt`` beside gos.toml, and each save and finish writes the
+- Every Play is remembered (D223): core start and ``gos sync`` (:func:`record_plays`) and each
+  describe, check, save and finish add gos.toml's Play and the running core's (or sync's) to
+  ``former_plays.txt`` beside gos.toml, and each save and finish writes the
   same list to ``[setup] former_plays``. The paths step and the checklist count them all as Play,
   and so does ``gregtec.sync``. Nothing GOS writes here goes in or around a Play or an instance
   (``doctor.touch_problem``).
@@ -66,6 +67,18 @@ def _fast_client(key: str) -> Any:  # noqa: ANN401 - anthropic.Anthropic or a fa
     from gregtec.agents import fast_lane
 
     return fast_lane.client_for(key)
+
+
+def record_plays(path: Path, cfg: Config) -> str | None:
+    """Put the Play of the gos.toml at ``path`` and of ``cfg`` (what this process runs or syncs
+    with) on record beside gos.toml (D223). The core calls this as it starts and ``gos sync``
+    before it plans, so a hand edit of ``[paths] play`` between restarts never frees a Play GOS
+    has used. Returns why it couldn't be written, or None (a first run records nothing)."""
+    try:
+        SetupService(path, cfg, provider=devices_mod.FakeDevices(), steps=[]).record()
+    except SetupError as exc:
+        return str(exc.body["error"])
+    return None
 
 
 class SetupService:
@@ -132,6 +145,7 @@ class SetupService:
 
     def describe(self) -> dict[str, Any]:
         ctx, error = self.context()
+        self._record_quietly(ctx)  # the dashboard's first request after a start (D223)
         return {
             "done": self.done(ctx) is not None,
             "completed_utc": self.done(ctx),
@@ -185,13 +199,8 @@ class SetupService:
             if f.kind not in ("secret", "checks")
         }
         values.update(self._values(step, given))
-        # A first run's check makes no file (its first save records); a check still answers
-        # when the record can't be written, and a save then refuses.
-        if self.path.is_file():
-            try:
-                self._remember(ctx)
-            except SetupError as exc:
-                log.warning("former Plays not recorded: %s", exc.body["error"])
+        # A check still answers when the record can't be written, and a save then refuses.
+        self._record_quietly(ctx)
         problems = self._field_problems(step, values)
         if problems:  # the step's own check may count on well-formed values
             return Outcome(problems), ctx
@@ -231,6 +240,19 @@ class SetupService:
         why = doctor.touch_problem(target, doctor.guarded(ctx.cfg, paths.plays(ctx)))
         if why is not None:
             raise SetupError(409, f"not written: {target} {why}")
+
+    def record(self) -> None:
+        """Put every Play GOS knows of now on record (D223). A first run (no gos.toml) makes no
+        file; its first save records. Raises :class:`SetupError` if it can't be written."""
+        if self.path.is_file():
+            self._remember(self.context()[0])
+
+    def _record_quietly(self, ctx: Context) -> None:
+        if self.path.is_file():
+            try:
+                self._remember(ctx)
+            except SetupError as exc:
+                log.warning("former Plays not recorded: %s", exc.body["error"])
 
     def _remember(self, ctx: Context, extra: list[Path] | None = None) -> list[str]:
         """Add every Play ``ctx`` knows of (and ``extra``) to ``former_plays.txt`` beside gos.toml,
