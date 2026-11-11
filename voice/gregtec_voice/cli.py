@@ -306,18 +306,26 @@ def _run(
         transcriber=transcriber,
         speaker=hooks.speaker(voice_settings),
     )
+    if voice_settings.wake_trigger:  # the first run downloads the model
+        print("Loading the wake word...", file=out)
     wake = (
-        hooks.wake_engine(voice_settings, voice)
+        # stage 2 hears through speech-to-text; --transcript has none to hear with (D185)
+        hooks.wake_engine(
+            voice_settings, voice, None if args.transcript else transcriber
+        )
         if voice_settings.wake_trigger
         else None
     )
     if voice_settings.wake_trigger and wake is None:
-        log.warning(
-            "no wake-word engine yet (WO-5.4): the talk key is the trigger"
+        message = (
+            "The wake word can't start (logs/voice.log says why): the talk key is the "
+            "trigger"
             if voice_settings.key_trigger
-            else "no wake-word engine yet (WO-5.4) and the talk key is off: only the "
-            'hotkeys work (set [voice] backup_trigger = "key")'
+            else "The wake word can't start (logs/voice.log says why) and the talk key is "
+            'off: only the hotkeys work (set [voice] backup_trigger = "key")'
         )
+        log.warning(message)
+        print(message + ".", file=out)
     pipe, hook, watchdog = _windows_parts(voice, voice_settings.input_device)
     if wake is not None:
         pipe.sinks.append(wake)
@@ -328,8 +336,13 @@ def _run(
         extra={"keys": _describe(voice_settings), "stt": transcriber.name},
     )
     stt_label = getattr(transcriber, "label", transcriber.name)
+    heard = (
+        f'; wake phrase "{voice_settings.wake_phrase}" ({voice_settings.wake_engine})'
+        if wake is not None
+        else ""
+    )
     print(
-        f"Voice client: {_describe(voice_settings)}; speech-to-text: {stt_label}. "
+        f"Voice client: {_describe(voice_settings)}; speech-to-text: {stt_label}{heard}. "
         "Ctrl+C stops it.",
         file=out,
     )

@@ -76,8 +76,8 @@ REQUIRED = ("scripts/backup_world.ps1",)
 # Editable installs uv makes in the release: the root project and the voice package (D179).
 EDITABLE = ("core", "voice")
 # Dependency groups outside the default ones that GOS_APP needs: the voice client's engines,
-# which CI and dev clones leave out (D179; stt: WO-5.2, D182).
-GROUPS = ("stt",)
+# which CI and dev clones leave out (D179; stt: WO-5.2, D182; wake: WO-5.4, D185).
+GROUPS = ("stt", "wake")
 # Antivirus can hold a file in a freshly written folder for seconds (WinError 5 on the swap).
 RENAME_TRIES, RENAME_DELAY = 10, 1.0
 # Deleting the mod build's output: Gradle's daemon may still hold mod/.gradle as it exits.

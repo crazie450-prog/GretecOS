@@ -8,9 +8,9 @@ bus: ``wake(t)``, ``end_of_speech(t)``, ``cancel()`` and ``speech(active, t)``.
 
 1. **Detection** (stage 1). The detector hears the phrase in the stream: sherpa-onnx keyword
    spotting (the primary, no training: the phrase is spelt in the model's own word pieces) or a
-   custom openWakeWord model (the alternative; always ``inference_framework="onnx"``: the
-   default, tflite, isn't on Windows, and without model paths openWakeWord then raises instead
-   of falling back, the Windows trap [H§1.1]). At once ``wake(t)`` opens the client's segment,
+   custom openWakeWord model (the alternative), always on ONNX: openWakeWord's default, tflite,
+   isn't on Windows, and without model paths it then raises instead of falling back (the
+   Windows trap [H§1.1]); here its pipeline runs on ONNX Runtime, so the trap can't happen. At once ``wake(t)`` opens the client's segment,
    so nothing Clayton says next is lost while stage 2 runs.
 2. **The second stage**. The last :data:`VERIFY_S` seconds of audio (the phrase, and whatever
    came just before it) go to the client's own speech-to-text (faster-whisper on the GPU, the
@@ -34,8 +34,9 @@ speech is ``speech(True, t)``, which stops GOS while it speaks; its end is ``spe
 Logs: each wake is one ``wake`` record (its outcome, stage-2 score and timings; never the
 transcript, D82). Models download once into ``GOS_HOME/models`` (the KWS model and
 openWakeWord's two feature models, at pinned URLs and hashes); a custom openWakeWord model is
-Clayton's own file (``[voice] wake_model``). Nothing here is committed or vendored: sherpa-onnx,
-sentencepiece and openWakeWord are Apache-2.0 libraries installed from PyPI.
+Clayton's own file (``[voice] wake_model``). Nothing here is committed or vendored: sherpa-onnx
+and sentencepiece are Apache-2.0 libraries installed from PyPI; openWakeWord's streaming
+pipeline (Apache-2.0) is re-implemented on ONNX Runtime (:class:`OpenWakeWord`).
 """
 
 from __future__ import annotations
@@ -505,11 +506,23 @@ class SherpaKws:
 
 
 class OpenWakeWord:
-    """A custom openWakeWord model (Apache-2.0 library; the model is Clayton's, trained with
-    openWakeWord's or livekit-wakeword's pipeline [H§1.2]). Always ONNX: openWakeWord's default
-    framework is tflite, which Windows lacks (the Windows trap, [H§1.1])."""
+    """A custom openWakeWord model (the format: Apache-2.0; the model is Clayton's, trained
+    with openWakeWord's or livekit-wakeword's pipeline [H§1.2]), run on ONNX Runtime.
+
+    The openwakeword package isn't used: its default framework is tflite, which Windows lacks
+    (the Windows trap, [H§1.1]), and on Linux it needs tflite-runtime, which has no Python
+    3.12 wheel. Its streaming pipeline is re-implemented here from its Apache-2.0 source
+    (openwakeword 0.6.0, ``utils.AudioFeatures`` and ``Model.predict``), always ONNX: every
+    80 ms the mel spectrogram of the newest 1760 samples (``/10 + 2``) joins a mel buffer, the
+    last 76 mel frames give one 96-value speech embedding, and the model scores the last
+    ``n`` embeddings (its input's second dimension, 16 for openWakeWord's own models). The
+    first five scores are zero, as openWakeWord's are, while the buffers fill."""
 
     name = OPENWAKEWORD
+    MEL_CONTEXT = 480  # 3 x 160 samples of the previous frame
+    MEL_FRAMES = 76
+    MEL_KEEP = 970  # openWakeWord keeps 10 s of mel frames
+    WARM_UP = 5
 
     def __init__(
         self,
@@ -519,33 +532,77 @@ class OpenWakeWord:
         threshold: float = DEFAULT_THRESHOLD[OPENWAKEWORD],
     ) -> None:
         import numpy as np
-        from openwakeword.model import Model
+        import onnxruntime
 
         if not model.is_file():
             raise WakeError(f"[voice] wake_model {model} doesn't exist")
-        self._model = Model(
-            wakeword_models=[str(model)],
-            inference_framework="onnx",  # never the tflite default (Windows trap)
-            melspec_model_path=str(features / "melspectrogram.onnx"),
-            embedding_model_path=str(features / "embedding_model.onnx"),
-        )
+        opts = onnxruntime.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        opts.log_severity_level = 4
+
+        def session(path: Path) -> Any:  # noqa: ANN401 - an InferenceSession
+            return onnxruntime.InferenceSession(
+                str(path), providers=["CPUExecutionProvider"], sess_options=opts
+            )
+
         self._np = np
+        self._mel = session(features / "melspectrogram.onnx")
+        self._embed = session(features / "embedding_model.onnx")
+        self._model = session(model)
+        self._frames = int(self._model.get_inputs()[0].shape[1])
         self.threshold = threshold
-        self._buf = np.zeros(0, dtype=np.int16)
+        self.reset()
+
+    def reset(self) -> None:
+        np = self._np
+        self._raw = np.zeros(0, dtype=np.float32)  # int16-scaled samples, newest last
+        self._pending = np.zeros(0, dtype=np.float32)
+        self._mels = np.ones((self.MEL_FRAMES, 32), dtype=np.float32)
+        # openWakeWord starts its feature buffer from 4 s of random noise (seeded here)
+        noise = np.random.default_rng(0).integers(-1000, 1000, 16000 * 4)
+        spec = self._melspec(noise.astype(np.float32))
+        windows = [
+            spec[i : i + self.MEL_FRAMES]
+            for i in range(0, spec.shape[0] - self.MEL_FRAMES + 1, 8)
+        ]
+        self._features = self._embedding(np.stack(windows))
+        self._scored = 0
+
+    def _melspec(self, x: Any) -> Any:  # noqa: ANN401 - numpy arrays
+        out = self._mel.run(None, {self._mel.get_inputs()[0].name: x[None, :]})
+        return self._np.squeeze(out[0]) / 10 + 2
+
+    def _embedding(self, windows: Any) -> Any:  # noqa: ANN401 - numpy arrays
+        x = windows[:, :, :, None].astype(self._np.float32)
+        out = self._embed.run(None, {self._embed.get_inputs()[0].name: x})
+        return out[0].reshape(x.shape[0], -1)
+
+    def score(self, frame: Any) -> float:  # noqa: ANN401 - OWW_FRAME int16-scaled floats
+        """One 80 ms frame in, the model's score out."""
+        np = self._np
+        self._raw = np.concatenate([self._raw, frame])[-(OWW_FRAME + 16000) :]
+        mel = self._melspec(self._raw[-(OWW_FRAME + self.MEL_CONTEXT) :])
+        self._mels = np.vstack([self._mels, mel])[-self.MEL_KEEP :]
+        embedding = self._embedding(self._mels[-self.MEL_FRAMES :][None, :, :])
+        self._features = np.vstack([self._features, embedding])[-120:]
+        x = self._features[-self._frames :][None, :, :].astype(np.float32)
+        out = self._model.run(None, {self._model.get_inputs()[0].name: x})
+        self._scored += 1
+        return 0.0 if self._scored <= self.WARM_UP else float(np.ravel(out[0])[0])
 
     def accept(self, pcm: bytes) -> bool:
         np = self._np
-        self._buf = np.concatenate([self._buf, np.frombuffer(pcm, dtype="<i2")])
+        samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32)
+        self._pending = np.concatenate([self._pending, samples])
         heard = False
-        while len(self._buf) >= OWW_FRAME:
-            frame, self._buf = self._buf[:OWW_FRAME], self._buf[OWW_FRAME:]
-            scores = self._model.predict(frame)
-            heard = heard or max(scores.values(), default=0.0) >= self.threshold
+        while len(self._pending) >= OWW_FRAME:
+            frame, self._pending = (
+                self._pending[:OWW_FRAME],
+                self._pending[OWW_FRAME:],
+            )
+            heard = self.score(frame) >= self.threshold or heard
         return heard
-
-    def reset(self) -> None:
-        self._model.reset()
-        self._buf = self._np.zeros(0, dtype=self._np.int16)
 
 
 def chime_pcm() -> bytes:
