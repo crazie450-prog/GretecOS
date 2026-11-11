@@ -122,6 +122,14 @@ def test_twenty_normalisation_cases() -> None:
         ("It is an HV line.", "HV"),
         ("tier 4 is enough.", "tier 4"),
         ("The routes need 26 machines in all.", "26"),
+        ("It takes 1500 seconds.", "1500 seconds"),  # eut_peak, not a time (review M1)
+        ("It takes 10 seconds.", "10 seconds"),  # a machine count, not a time
+        ("Route 1 needs x12 machines.", "x12"),  # a count glued to x (review M2)
+        ("Route 1 needs \u00d711 machines.", "\u00d711"),
+        ("It is in MV2 territory.", "MV2"),  # digits glued after letters
+        ("It draws 1e9 EU/t.", "1e9"),  # an exponent form
+        ("It draws 1.2E+3 EU/t.", "1.2E+3"),  # even when the value is right
+        ("It draws 1.3 kEU/t.", "1.3 k"),  # GT's prefix glued to EU, wrong value
     ],
 )
 def test_injected_wrong_numbers_are_caught(text: str, bad: str) -> None:
@@ -138,10 +146,25 @@ def test_a_paragraph_lists_every_wrong_number_once() -> None:
     assert result.offending == ("12 hours", "9/s") and result.checked >= 5
 
 
-def test_zero_is_only_zero_and_digits_glued_to_words_are_not_numbers() -> None:
+def test_zero_is_only_zero() -> None:
     assert ok("Route 2 has scarcity 0.")
     assert not ok("Route 2 has scarcity 0.001.")
-    assert ok("H2O and x4 are words here.")
+
+
+def test_counts_after_x_are_read_and_other_glued_digits_refused() -> None:
+    """Review M2: "x4" is the count 4; letter-glued digits masking didn't remove are refused
+    (the names list masks the ones that belong, like "Circuit 1")."""
+    assert ok("Route 1 uses x4 Mixer and \u00d76 Quantum Tank IV.")
+    assert ok("4 x Mixer.")
+    assert validate.check("H2O is water.", DOC, NAMES).offending == ("H2O",)
+    assert validate.check("H2O is water.", DOC, [*NAMES, "H2O"]).ok
+
+
+def test_gt_prefixes_glued_to_eu() -> None:
+    """Review L3: GT writes 1.2 kEU/t and 1.5 MEU/t."""
+    assert ok("It draws 1.2 kEU/t on average and 1.5kEU/t at peak.")
+    assert ok("Route 2 draws 0.4 kEU/t at peak.")
+    assert not ok("It draws 1.5 MEU/t.")
 
 
 def test_names_are_masked_case_insensitively_longest_first() -> None:

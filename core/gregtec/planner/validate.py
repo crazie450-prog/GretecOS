@@ -7,11 +7,12 @@ reads every number in its text and accepts it only when the JSON holds it (plan 
 - **Masks**: citations and DB keys (``r:``, ``mte:``, ``plan:``... and ``registry@meta``), plan
   ids (``pl-...``), and the resolved names (items, machines, routes: ``names``), so the digits
   and Roman numerals in "Circuit 1" or "Quantum Tank IV" are not read as numbers.
-- **Prefixes and units**: ``k`` and ``M`` (``1.2k`` is 1200); a rate unit (``/s``, ``/min``,
+- **Prefixes and units**: ``k`` and ``M`` (``1.2k`` is 1200, and glued to EU as GT writes
+  it: ``1.2 kEU/t``); ``x64`` or ``×64`` as the count 64; a rate unit (``/s``, ``/min``,
   ``/h``, ``per second|minute|hour``, with one word allowed before the slash: ``2 ingots/min``)
   is compared per second against the JSON's rates (``*rate_s``, ``crafts_s``, ``per_h / 3600``);
-  a duration unit (``s``, ``min``, ``h`` and their words) in seconds against its times (keys
-  ending ``_s`` or ``_h``, and ``h``); ``%`` as a fraction or as is; a bare number against
+  a duration unit (``s``, ``min``, ``h`` and their words) in seconds against its times only (keys
+  ending ``_s`` or ``_h``, and ``h``: "1500 seconds" doesn't pass on a 1500 EU/t peak); ``%`` as a fraction or as is; a bare number against
   every number the JSON holds, in its own unit.
 - **Rounding**: within 1% of a JSON number; within 5% after "about" or "~"; 0 only as 0.
 - **Tiers**: a tier name (LV ... MAX) must be one the JSON names, and "tier N" must be one of
@@ -21,7 +22,8 @@ reads every number in its text and accepts it only when the JSON holds it (plan 
   and the difference of any two routes'. Sums of any two rates or hours are not allowed: in a
   big design they would cover so many values that a wrong number would often pass.
 
-Numbers written as words aren't read (as in WO-2.3's check, D152). The result lists the
+Exponent forms (``1e9``) and digits glued after letters that masking left (``MV2``, ``H2O``)
+are refused outright. Numbers written as words aren't read (as in WO-2.3's check, D152). The result lists the
 offending numbers as written, for the retry prompt.
 """
 
@@ -69,8 +71,9 @@ _TIME_UNIT |= {
     "hours": 3600.0,
 }
 NUMBER = re.compile(
-    r"(?<![A-Za-z0-9_.,])(?P<num>\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)"
-    r"(?:\s?(?P<prefix>[kM])(?![A-Za-z]))?"
+    r"(?:(?<![A-Za-z0-9_])(?P<x>[x\u00d7])|(?<![A-Za-z0-9_.,]))"
+    r"(?P<num>\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)"
+    r"(?:\s?(?P<prefix>[kM])(?:(?=EU)|(?![A-Za-z])))?"
     r"(?P<tail>"
     r"(?:\s*(?:[A-Za-z]+\s*)?/\s*(?P<rate>second|sec|minute|min|hour|hr|s|h)\b)"
     r"|(?:\s*(?:[A-Za-z]+\s+)?per\s+(?P<per>second|sec|minute|min|hour|hr|h)\b)"
@@ -80,6 +83,11 @@ NUMBER = re.compile(
     r")?"
 )
 _PREFIX = {"k": 1e3, "M": 1e6}
+# Read as offending outright: exponent forms ("1e9", "2.5E+3"), whose mantissa would otherwise
+# pass alone, and digits glued after letters ("MV2", "H2O") that masking left: a count like
+# "x64" is read by NUMBER instead, so it is skipped here.
+EXPONENT = re.compile(r"(?<![A-Za-z0-9_])\d+(?:\.\d+)?[eE][+-]?\d+(?![A-Za-z0-9_])")
+GLUED = re.compile(r"(?<![A-Za-z0-9_])(?![x\u00d7]\d)[A-Za-z_]+\d[A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -139,7 +147,7 @@ class Allowed:
         if s.kind == "rate":
             return _near(self.rate, s.value, tol)
         if s.kind == "time":
-            return _near(self.time, s.value, tol) or _near(self.plain, s.value, tol)
+            return _near(self.time, s.value, tol)
         if s.kind == "pct":
             return _near(self.plain, s.value / 100, tol) or _near(
                 self.plain, s.value, tol
@@ -279,6 +287,9 @@ def check_against(text: str, allowed: Allowed, names: Iterable[str] = ()) -> Res
         if m[1] not in allowed.tiers:
             bad.append(m[1])
     masked = TIER_WORD.sub(" ", masked)
+    for pattern in (EXPONENT, GLUED):
+        bad.extend(m[0] for m in pattern.finditer(masked))
+        masked = pattern.sub(" ", masked)
     numbers = stated(masked)
     bad.extend(s.text for s in numbers if not allowed.has(s))
     return Result(not bad, tuple(dict.fromkeys(bad)), len(numbers))
