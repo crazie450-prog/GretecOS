@@ -958,6 +958,37 @@ tr.depleted td {
   gap: var(--space-2);
 }
 
+/* The persona dropdown (WO-5.6): a native select in the control tokens, like .ask-input. */
+.persona-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+}
+
+.persona-select {
+  min-width: 240px;
+  height: var(--hit-min);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.persona-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.persona-problems {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
 .doctor-output pre {
   max-height: 320px;
   overflow: auto;

@@ -10,6 +10,8 @@ import type {
   DeepTask,
   Device,
   Health,
+  PersonaInfo,
+  PersonaState,
   Reply,
   Session,
   Usage,
@@ -74,6 +76,8 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
+  // The persona (WO-5.6): the same switch the Discord /persona command will call.
+  persona: (id: string) => post<PersonaState & { persona: PersonaInfo }>("/api/persona", { id }),
   pairStart: (name: string) => post<{ request_id: string; expires_in: number }>("/api/pair/start", { name }),
   pairComplete: (requestId: string, code: string) =>
     post<{ device_id: string; name: string }>("/api/pair/complete", { request_id: requestId, code }),

@@ -2,7 +2,7 @@
 // VERIFY list, re-running doctor, paired devices, and this screen's own look (D81).
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { CoreState, Device, Session, Verify } from "../api/types";
+import type { CoreState, Device, PersonaState, Session, Verify } from "../api/types";
 import { Card } from "../cards/Card";
 import { Button, Panel, StatusGlyph, TierChip, stageTier } from "../components/core";
 import type { ModePin } from "../state/mode";
@@ -103,6 +103,65 @@ function ThemeSettings(props: {
           </Button>
         ))}
       </div>
+    </Panel>
+  );
+}
+
+/** The persona dropdown (WO-5.6, plan 7.11): tone and voice only, never tools or numbers.
+ * Needs Clayton's board approval (D92): designed to the WO-2.0 system, no approved board yet. */
+export function PersonaSettings(props: { persona: PersonaState | null | undefined; trusted: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const persona = props.persona;
+  if (!persona) {
+    return (
+      <Panel label="Persona" testId="persona-settings">
+        <p className="empty">{GLYPH.progress} Waiting for the persona packs</p>
+      </Panel>
+    );
+  }
+  const pick = (id: string): void => {
+    setBusy(true);
+    setError(null);
+    api
+      .persona(id)
+      .catch((e: unknown) => setError(e instanceof ApiError ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Panel label="Persona" testId="persona-settings">
+      <p className="gos-sub">Tone and voice only: tools, numbers and the confirm and spoiler rules never change.</p>
+      <label className="persona-pick">
+        <span className="gos-label">Active persona</span>
+        <select
+          className="persona-select"
+          data-testid="persona-select"
+          value={persona.active ?? ""}
+          disabled={busy || !props.trusted}
+          onChange={(e) => pick(e.target.value)}
+        >
+          {persona.packs.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.source === "vault" ? " (yours)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!props.trusted && <p className="gos-src">Only paired devices can switch.</p>}
+      <p className="gos-src">
+        Say "persona" and a name to switch by voice.{persona.random_per_session ? " A random persona starts each session." : ""}
+      </p>
+      {error && <p className="gos-status err">{GLYPH.warn} {error}</p>}
+      {persona.problems.length > 0 && (
+        <ul className="persona-problems" data-testid="persona-problems">
+          {persona.problems.map((p) => (
+            <li key={p}>
+              <StatusGlyph status="warn" label={p} />
+            </li>
+          ))}
+        </ul>
+      )}
     </Panel>
   );
 }
@@ -230,6 +289,7 @@ export function Settings(props: {
               </li>
             </ul>
           </Panel>
+          <PersonaSettings persona={core?.persona} trusted={trusted} />
           <ThemeSettings stage={core?.tier?.stage ?? null} slug={props.slug} prefs={props.prefs} setPrefs={props.setPrefs} pin={props.pin} setPin={props.setPin} />
         </div>
         <div className="col">
