@@ -212,8 +212,8 @@ public final class GtMathOracle {
                 double current = Math.min((double) max, (double) available / perCraft);
                 return current <= 0 ? 0 : current;
             }
+            if (available <= 0) return 0; // no stack of it, consumed or not
             if (available >= perCraft * (double) max) return max;
-            if (available <= 0) return 0;
             return Math.min((double) max, (double) available / perCraft);
         }
 

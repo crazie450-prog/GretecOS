@@ -74,23 +74,28 @@ class Check(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Supply:
-    """One recipe input and what the machine holds of it (merge an item that fills several
-    slots into one supply, as GT merges a recipe's item inputs)."""
+    """One recipe input and what the machine holds of it. Merge an item or a fluid that fills
+    several recipe slots into one supply with the summed ``per_craft``, as GT merges a recipe's
+    item inputs and pools the machine's fluids: two supplies of the same fluid would each be
+    counted against the whole tank."""
 
     # What one craft takes; 0 when it isn't consumed (a circuit, a catalyst).
     per_craft: int
-    available: int  # what the machine holds of it
+    # What the machine holds of it. An unconsumed item must still be there (at least 1).
+    available: int
     fluid: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class Output:
-    """One recipe output."""
+    """One recipe output. Each output's ``space`` is applied on its own, so it must be room no
+    other output can use: GT packs all item outputs into the same buses together, and modelling
+    shared buses is the caller's (WO-3.2)."""
 
     amount: int  # items or L per craft
     chance: int = CHANCE_SCALE  # in 1/10000
     fluid: bool = False
-    # With void protection: the room for it in the output buses or hatches, in items or L.
+    # With void protection: the room for it alone in the output buses or hatches, in items or L.
     # None: no limit (an ME output that takes it all, or no void protection).
     space: int | None = None
 
@@ -131,10 +136,9 @@ class ParallelResult:
 
 def parallel_from_inputs(max_parallel: int, inputs: Sequence[Supply] | None) -> float:
     """``GTRecipe.maxParallelCalculatedByInputs``: how many crafts the inputs allow, up to
-    ``max_parallel``; 0 when a consumed input is missing. A fraction means the inputs are
-    there but not enough for one more. Fluids are counted first, then items, as GT does.
-    Whether the machine holds the recipe's unconsumed inputs (a circuit) is the recipe
-    lookup's question, not this one's: GT doesn't ask it again here."""
+    ``max_parallel``; 0 when an item input is missing, consumed or not (GT finds no stack of
+    it), or a consumed fluid is. A fraction means the inputs are there but not enough for one
+    more. Fluids are counted first, then items, as GT does; an unconsumed fluid isn't counted."""
     current = float(max_parallel)
     if inputs is None:
         return current
@@ -147,10 +151,10 @@ def parallel_from_inputs(max_parallel: int, inputs: Sequence[Supply] | None) -> 
         if current <= 0:
             return 0.0
     for s in (s for s in inputs if not s.fluid):
-        if s.available >= s.per_craft * current:
-            continue
         if s.available <= 0:
             return 0.0
+        if s.available >= s.per_craft * current:
+            continue
         current = dmin(current, ddiv(float(s.available), float(s.per_craft)))
     return current
 

@@ -113,6 +113,11 @@ def test_float_rounds_to_single_precision() -> None:
     assert jmath.to_float(0.5) == 0.5
     assert jmath.to_float(1e300) == math.inf
     assert jmath.to_float(-1e300) == -math.inf
+    # Just past FLT_MAX Java rounds back to FLT_MAX; from FLT_MAX + half an ulp it is inf.
+    flt_max, half_ulp_past = 3.4028234663852886e38, 3.4028235677973366e38
+    assert jmath.to_float(math.nextafter(half_ulp_past, 0.0)) == flt_max
+    assert jmath.to_float(-math.nextafter(half_ulp_past, 0.0)) == -flt_max
+    assert jmath.to_float(half_ulp_past) == math.inf
 
 
 def test_ceil_floor_and_round_follow_java() -> None:
@@ -284,8 +289,13 @@ def test_item_inputs_limit_the_parallel() -> None:
 def test_an_unconsumed_input_never_limits() -> None:
     # A circuit or catalyst: per_craft 0. GT counts no amount of it here.
     assert parallel_from_inputs(8, [Supply(0, 1)]) == 8.0
-    assert parallel_from_inputs(8, [Supply(0, 0)]) == 8.0
     assert parallel_from_inputs(8, [Supply(0, 0, fluid=True)]) == 8.0
+
+
+def test_a_missing_unconsumed_item_allows_none() -> None:
+    # GT finds no stack of the circuit, so no craft can run (an unconsumed fluid isn't asked).
+    assert parallel_from_inputs(8, [Supply(0, 0)]) == 0.0
+    assert parallel_from_inputs(8, [Supply(1, 8), Supply(0, 0)]) == 0.0
 
 
 def test_fluids_are_counted_before_items() -> None:
