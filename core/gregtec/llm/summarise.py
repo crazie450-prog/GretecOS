@@ -83,6 +83,11 @@ class SummaryError(RuntimeError):
         self.model = model
 
 
+class SummariserOff(RuntimeError):
+    """The AI is off (no-AI mode, WO-2.8): no model is called, and the logs wait. Raised by a
+    summariser factory, or by a summariser before a call."""
+
+
 @dataclass(frozen=True)
 class Summary:
     lines: list[str]

@@ -21,9 +21,11 @@
 | DELETE /api/devices/{id}       | admin, device           | revoke a device                       |
 | GET/POST/DELETE /api/tokens... | admin                   | client bearer tokens                  |
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
+| GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
-|                                |                         | ``ui`` and ``voice.state`` (D179)     |
+|                                |                         | ``ui``, ``voice.state`` and ``state`` (D179)|
+| GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -36,10 +38,11 @@ error or off) and ``detail``; process items add ``state``, ``pid`` (the process'
 ``uptime_s``, ``restarts``, ``last_exit`` and ``last_restart_ts`` from the supervisor.
 
 **Voice (WO-5.1, D179).** Every answer ``/api/ask`` gives is also pushed to the dashboards as
-``{"type": "ask.reply", "data": {"by", "request", "asked_at", ...the reply}}``, so a spoken
-question's card shows on monitor 2 (D23); ``asked_at`` (epoch seconds, when the question came)
-lets a dashboard keep the newest question's card when an older answer finishes after it. A
-confirm or cancel that found nothing waiting (``pending`` false) changed nothing and isn't pushed.
+``{"type": "ask.reply", "data": {"id", "by", "request", "asked_ts", "ts", ...the reply}}`` (built
+and kept by the dashboard's board, WO-2.6), so a spoken question's card shows on monitor 2 (D23);
+``asked_ts`` (epoch seconds, when the question came) lets a dashboard keep the newest question's
+card when an older answer finishes after it. A confirm or cancel that found nothing waiting
+(``pending`` false) changed nothing and is neither kept nor pushed.
 ``/api/ui`` pushes ``{"type": "ui", "action", "by"}`` (the voice client's next-card hotkey).
 The voice client reports its state (``idle``, ``listening``,
 ``thinking``, ``speaking``, ``off``; ``trigger`` ``key`` or ``wake``) to ``/api/voice/state``; the
@@ -71,6 +74,8 @@ from starlette.websockets import WebSocketDisconnect
 from gregtec import control
 from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
+from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
+from gregtec.api import ai_routes, dashboard
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -160,7 +165,14 @@ class Core:
     stop_asked: float | None = None
     asker: Asker | None = None  # the router and the lanes (WO-2.3)
     deep: DeepLaneService | None = None  # the deep lane (WO-2.4)
+    board: dashboard.Board | None = None  # the dashboard's own state (WO-2.6)
     voice: dict[str, Any] | None = None  # the voice client's latest state (WO-5.1)
+    ai: AiMode | None = None  # no-AI mode (WO-2.8)
+    credits: CreditWatch | None = None  # the D48 credit flow (WO-2.8)
+    probe: Callable[[], Problem | None] | None = (
+        None  # None: the API with the stored key
+    )
+    exit_code: int = 0  # what server.run returns (D48 Stop: supervisor.EXIT_STOPPED)
     # The OC bridge's ingest, shared by M1 (WO-7.3) and /oc/telemetry (WO-7.1).
     oc: Bridge | None = None
 
@@ -237,6 +249,8 @@ class Core:
         except keyring.errors.KeyringError as exc:
             self.key_status = ("warn", f"keyring unavailable ({type(exc).__name__})")
             return
+        if self.ai is not None:
+            self.ai.key_seen(stored)
         self.key_status = (
             ("ok", "stored")
             if stored
@@ -483,9 +497,15 @@ def create_app(core: Core) -> FastAPI:
         text = body.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
             raise HTTPException(400, f"text must be 1 to {TEXT_MAX} characters")
-        asked_at = round(time.time(), 3)
-        # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
-        reply = await asyncio.to_thread(core.asker.ask, text)
+        board = dashboard.board_of(core)
+        entry = board.asked(text)  # the rail shows what is being worked on
+        # Whatever happens next, the question stops showing as asked.
+        try:
+            await dashboard.push_state(core)
+            # Blocking (DB reads, the model call): in a thread, so the event loop keeps serving.
+            reply = await asyncio.to_thread(core.asker.ask, text)
+        finally:
+            board.done(entry)
         log.info(
             "ask answered",
             extra={
@@ -496,15 +516,17 @@ def create_app(core: Core) -> FastAPI:
                 "checked": reply.checked,
             },
         )
-        answer = reply.as_dict()
-        # The dashboards show every answer's card, a spoken question's too (D23, D179); an
-        # answer to an older question that finishes later mustn't replace a newer one's card,
-        # so the push says when its question came (``asked_at``, epoch seconds). A confirm or
-        # cancel that found nothing waiting changed nothing and isn't pushed: the cancel
-        # hotkey, pressed to silence GOS, leaves the dashboards' card alone.
+        answer = dashboard.checked_reply(reply.as_dict())
+        # Every answer's card shows on the dashboards, a spoken question's too (D23, D179); kept
+        # in the DB for Chat, so in a thread. A confirm or cancel that found nothing waiting
+        # changed nothing: it isn't kept or pushed, so the cancel hotkey, pressed to silence GOS,
+        # leaves the dashboards' card alone. The push says when its question came (``asked_ts``)
+        # and the dashboard orders answers by it, so an older question's answer that finishes
+        # later doesn't replace a newer one's card.
         if reply.pending is not False:
-            pushed = {"by": who.name, "request": text, "asked_at": asked_at, **answer}
+            pushed = await asyncio.to_thread(board.answered, entry, answer, who.name)
             core.broadcast({"type": "ask.reply", "data": pushed}, trusted_only=True)
+        await dashboard.push_state(core)
         return answer
 
     @app.post("/api/prewarm")
@@ -686,7 +708,14 @@ def create_app(core: Core) -> FastAPI:
         sock = Socket(who, asyncio.Queue())
         core.sockets.add(sock)
         try:
-            hello = {"type": "hello", "role": who.role, "name": who.name}
+            # "build": the dashboard build served; a page that loaded another reloads (D159).
+            build = await asyncio.to_thread(dashboard.board_of(core).build)
+            hello = {
+                "type": "hello",
+                "role": who.role,
+                "name": who.name,
+                "build": build,
+            }
             await ws.send_text(json.dumps(hello))
             health = await asyncio.to_thread(core.health)
             await ws.send_text(json.dumps({"type": "health", "data": health}))
@@ -696,6 +725,8 @@ def create_app(core: Core) -> FastAPI:
                 if core.voice is not None:
                     voice = {"type": "voice.state", "data": core.voice}
                     await ws.send_text(json.dumps(voice))
+            snapshot = await asyncio.to_thread(dashboard.state, core, sock.trusted)
+            await ws.send_text(json.dumps({"type": "state", "data": snapshot}))
             await _pump(ws, sock)
         except WebSocketDisconnect:
             pass
@@ -704,6 +735,8 @@ def create_app(core: Core) -> FastAPI:
             if _is_voice(who) and not any(_is_voice(s.who) for s in core.sockets):
                 core.set_voice("off", None)  # the voice client went away (D179)
 
+    dashboard.add_routes(app, core, principal, trusted, _json_body)
+    ai_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 
 
@@ -797,12 +830,16 @@ async def _watch(core: Core) -> None:
                 await asyncio.to_thread(core.refresh_key)
                 last_key = now
             await asyncio.to_thread(core.refresh_supervisor)
+            await asyncio.to_thread(
+                ai_routes.refresh, core
+            )  # credits, API probe (WO-2.8)
             health = await asyncio.to_thread(core.health)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:
                 core.broadcast({"type": "health", "data": health})
                 last_signature, last_push = signature, now
             core.push_pending()  # catches requests that expired
+            await dashboard.tick(core)  # the dashboard's state (WO-2.6)
         except Exception:  # the watcher must keep running
             log.exception("health refresh failed")
         await asyncio.sleep(POLL_S)

@@ -1,0 +1,296 @@
+/* The app's theme layer (bundle.css: "Ornaments (rivets, bevels, pins...) live in the app's theme
+   layer"). The theme class sits on <body>: bundle.css maps the Command HUD onto :root, which
+   would outrank a class on <html> for the themes declared before it (D162). Frames, textures and glows per theme, from each theme's own tokens (theme-only extras
+   such as --brass-rivet, --machine-bevel-light, --tung-hazard). Nothing here changes a size, a
+   margin, a padding or a border width that layout depends on: ornaments are box-shadows,
+   background images and absolutely placed pseudo-elements, so switching theme moves nothing
+   (D81). Translucent colours are mixed from tokens, never typed in. */
+
+/* --- 1 · Brass and Steam: brass plates, rivets, an inner gold line, plate seams ------------- */
+body.theme-brass {
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 159px, var(--brass-rule) 159px 160px),
+    repeating-linear-gradient(90deg, transparent 0 319px, var(--brass-rule) 319px 320px);
+}
+
+.theme-brass .gos-panel {
+  box-shadow:
+    inset 0 0 0 3px var(--brass-panel),
+    inset 0 0 0 4px var(--brass-frame-inner);
+  background-image:
+    radial-gradient(circle at 11px 11px, var(--brass-rivet) 0 2.5px, transparent 3.5px),
+    radial-gradient(circle at calc(100% - 11px) 11px, var(--brass-rivet) 0 2.5px, transparent 3.5px),
+    radial-gradient(circle at 11px calc(100% - 11px), var(--brass-rivet) 0 2.5px, transparent 3.5px),
+    radial-gradient(circle at calc(100% - 11px) calc(100% - 11px), var(--brass-rivet) 0 2.5px, transparent 3.5px);
+}
+
+.theme-brass .gos-label {
+  font-family: var(--font-mono); /* typewriter labels */
+}
+
+/* --- 2 · Machine GUI: Minecraft container bevels, inset slots, tooltip chips, a checker -------- */
+body.theme-machine {
+  background-image: conic-gradient(var(--machine-slot-shade) 25%, transparent 0 50%, var(--machine-slot-shade) 0 75%, transparent 0);
+  background-size: 32px 32px;
+}
+
+.theme-machine .gos-panel,
+.theme-machine .gos-approval {
+  box-shadow:
+    inset 2px 2px 0 var(--machine-bevel-light),
+    inset -2px -2px 0 var(--machine-bevel-dark);
+}
+
+.theme-machine .ask-input,
+.theme-machine .palette-input,
+.theme-machine .gos-track {
+  box-shadow:
+    inset 2px 2px 0 var(--machine-slot-shade),
+    inset -2px -2px 0 var(--machine-bevel-light);
+}
+
+.theme-machine .gos-btn {
+  box-shadow:
+    inset 2px 2px 0 var(--machine-bevel-light),
+    inset -2px -2px 0 var(--machine-bevel-dark);
+}
+
+.theme-machine .gos-panel .gos-chip.cite,
+.theme-machine .modal .gos-chip.cite {
+  background: var(--machine-tooltip);
+  border-color: var(--machine-tooltip-border);
+  color: var(--machine-shell-text);
+}
+
+.theme-machine .state-chip.tone-ok > span[aria-hidden] {
+  color: var(--machine-ok-bright);
+}
+
+.theme-machine .state-chip.tone-warn > span[aria-hidden] {
+  color: var(--machine-warn-bright);
+}
+
+.theme-machine .state-chip.tone-err > span[aria-hidden] {
+  color: var(--machine-err-bright);
+}
+
+.theme-machine .gos-nav.on {
+  box-shadow: inset 0 0 0 1px var(--machine-current);
+}
+
+/* --- 3 · Brushed Aluminium: brushed grain, steel screws, engraved labels ---------------------- */
+.theme-alu .gos-panel {
+  background-image:
+    radial-gradient(circle at 12px 12px, var(--alu-screw) 0 3px, var(--alu-border) 3.5px 4.5px, transparent 5px),
+    radial-gradient(circle at calc(100% - 12px) 12px, var(--alu-screw) 0 3px, var(--alu-border) 3.5px 4.5px, transparent 5px),
+    radial-gradient(circle at 12px calc(100% - 12px), var(--alu-screw) 0 3px, var(--alu-border) 3.5px 4.5px, transparent 5px),
+    radial-gradient(circle at calc(100% - 12px) calc(100% - 12px), var(--alu-screw) 0 3px, var(--alu-border) 3.5px 4.5px, transparent 5px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--alu-screw) 22%, transparent) 0 1px, transparent 1px 3px);
+}
+
+.theme-alu .gos-panel .gos-label {
+  text-shadow: 0 1px 0 var(--alu-screw);
+}
+
+/* --- 4 · Command HUD (the default): corner brackets, a perspective grid floor, a soft glow ---- */
+.theme-hud .gos-panel::before,
+.theme-hud .gos-panel::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 0 solid var(--hud-bracket);
+  pointer-events: none;
+}
+
+.theme-hud .gos-panel::before {
+  top: -1px;
+  left: -1px;
+  border-width: 2px 0 0 2px;
+}
+
+.theme-hud .gos-panel::after {
+  right: -1px;
+  bottom: -1px;
+  border-width: 0 2px 2px 0;
+}
+
+body.theme-hud::before {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 42vh;
+  background-image:
+    linear-gradient(var(--hud-rule) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hud-rule) 1px, transparent 1px);
+  background-size: 64px 64px;
+  transform: perspective(700px) rotateX(62deg);
+  transform-origin: bottom;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.theme-hud .gos-panel {
+  box-shadow: 0 0 28px -14px var(--tier-hv);
+}
+
+/* --- 5 · Circuit Board: panels as chips with silver pins, gold traces, SMD-LED status ------- */
+body.theme-circuit {
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--circuit-trace) 14%, transparent) 2px, transparent 2px),
+    linear-gradient(color-mix(in srgb, var(--circuit-trace) 10%, transparent) 2px, transparent 2px);
+  background-size: 180px 120px;
+}
+
+.theme-circuit .gos-panel {
+  background-image:
+    repeating-linear-gradient(90deg, var(--circuit-pin) 0 6px, transparent 6px 22px),
+    repeating-linear-gradient(90deg, var(--circuit-pin) 0 6px, transparent 6px 22px);
+  background-size:
+    calc(100% - 48px) 3px,
+    calc(100% - 48px) 3px;
+  background-position:
+    24px 0,
+    24px 100%;
+  background-repeat: no-repeat;
+}
+
+.theme-circuit .panel-head {
+  box-shadow: 0 2px 0 var(--circuit-trace);
+}
+
+.theme-circuit .gos-status > span[aria-hidden],
+.theme-circuit .state-chip > span[aria-hidden] {
+  text-shadow: 0 0 6px currentColor;
+}
+
+/* --- 6 · Tungstensteel: gunmetal plate, bolt heads, a fine diagonal, hazard stripes on alerts */
+body.theme-tung {
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--tung-bolt) 10%, transparent) 0 1px, transparent 1px 7px);
+}
+
+.theme-tung .gos-panel {
+  background-image:
+    radial-gradient(circle at 12px 12px, var(--tung-bolt) 0 4px, transparent 4.5px),
+    radial-gradient(circle at calc(100% - 12px) 12px, var(--tung-bolt) 0 4px, transparent 4.5px),
+    radial-gradient(circle at 12px calc(100% - 12px), var(--tung-bolt) 0 4px, transparent 4.5px),
+    radial-gradient(circle at calc(100% - 12px) calc(100% - 12px), var(--tung-bolt) 0 4px, transparent 4.5px);
+}
+
+.theme-tung .gos-alert {
+  background-image: repeating-linear-gradient(-45deg, var(--tung-hazard) 0 10px, transparent 10px 20px);
+  background-size: 100% 6px;
+  background-repeat: no-repeat;
+}
+
+/* --- 7 · Hologram Lab: glass, cyan corner ticks and glow, scanlines; approvals doubled --------- */
+body.theme-holo {
+  background-image: repeating-linear-gradient(0deg, color-mix(in srgb, var(--holo-glow) 5%, transparent) 0 1px, transparent 1px 4px);
+}
+
+.theme-holo .gos-panel {
+  box-shadow: 0 0 22px -10px var(--holo-glow);
+}
+
+.theme-holo .gos-panel::before,
+.theme-holo .gos-panel::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 0 solid var(--holo-glow);
+  pointer-events: none;
+}
+
+.theme-holo .gos-panel::before {
+  top: 4px;
+  left: 4px;
+  border-width: 1px 0 0 1px;
+}
+
+.theme-holo .gos-panel::after {
+  right: 4px;
+  bottom: 4px;
+  border-width: 0 1px 1px 0;
+}
+
+/* bundle.css gives Hologram Lab's approval a 4px double border (LuV pink is close to "needs
+   you"); 3px less padding keeps its content where every other theme has it. */
+.theme-holo .gos-approval {
+  padding: 13px 15px;
+}
+
+/* --- 8 · Fusion: containment glass with an aqua top edge, plasma glows ------------------------- */
+body.theme-fusion {
+  background-image:
+    radial-gradient(ellipse at 20% 110%, color-mix(in srgb, var(--fusion-plasma-blue) 22%, transparent), transparent 55%),
+    radial-gradient(ellipse at 90% -10%, color-mix(in srgb, var(--tier-zpm) 14%, transparent), transparent 50%);
+}
+
+.theme-fusion .gos-panel {
+  box-shadow: inset 0 3px 0 var(--tier-zpm);
+}
+
+/* --- 9 · Naquadah: black glass, a green inner glow, a lattice, headings underlined ------------ */
+body.theme-naq {
+  background-image:
+    repeating-linear-gradient(60deg, var(--naq-rule) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(-60deg, var(--naq-rule) 0 1px, transparent 1px 34px);
+}
+
+.theme-naq .gos-panel {
+  box-shadow: inset 0 0 26px -10px var(--naq-accent);
+}
+
+.theme-naq .page-title,
+.theme-naq .gos-title {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
+  text-decoration-color: var(--naq-accent);
+}
+
+/* --- 10 · Deep Space: a star field and a nebula behind translucent panels -------------------- */
+body.theme-deep {
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, var(--deep-text), transparent),
+    radial-gradient(1px 1px at 70% 80%, var(--deep-text), transparent),
+    radial-gradient(1.5px 1.5px at 40% 60%, var(--deep-accent), transparent),
+    radial-gradient(ellipse at 75% 20%, color-mix(in srgb, var(--deep-nebula) 20%, transparent), transparent 60%);
+  background-size:
+    211px 197px,
+    263px 241px,
+    389px 353px,
+    100% 100%;
+}
+
+/* --- Calm Ops: no ornaments, rounded cards, sentence-case labels, bigger type ----------------- */
+.theme-calm {
+  --type-scale: 1.1;
+}
+
+/* --- Field Manual: graph paper, ink rules under headings, binder tabs, deficits striped ------- */
+body.theme-manual {
+  background-image:
+    linear-gradient(var(--manual-rule) 1px, transparent 1px),
+    linear-gradient(90deg, var(--manual-rule) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.theme-manual .panel-head {
+  box-shadow: 0 2px 0 var(--manual-text);
+}
+
+.theme-manual .gos-nav.on {
+  box-shadow: inset 5px 0 0 var(--manual-text);
+}
+
+.theme-manual .gos-alert {
+  background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--manual-err) 12%, transparent) 0 8px, transparent 8px 16px);
+}
+
+.theme-manual .gos-track .neg {
+  background-image: repeating-linear-gradient(-45deg, var(--manual-err) 0 4px, var(--manual-panel) 4px 8px);
+}

@@ -20,8 +20,10 @@
 | [core] dashboard_host    | gos.localhost (pairing and the dashboard)| core (D117)                 |
 | [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
+| [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
 | [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
+| [budget] on_credits_out  | "no_ai", the only value (fixed by D48)   | credits flow (WO-2.8, D165) |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [budget] task_max_usd    | 2.0 (placeholder until WO-3.7, plan 4.4) | deep lane (WO-2.4, D156)    |
 | [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
@@ -166,6 +168,7 @@ class Config:
     dashboard_host: str = DASHBOARD_HOST
     extra_allowed_hosts: tuple[str, ...] = ()
     core_at_login: bool = True
+    dashboard_window: bool = True  # [startup]: open the Chrome app window (D52, D163)
     monthly_included_usd: float = 100.0
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
@@ -459,6 +462,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         lambda: _alerts(budget, defaults.credit_alerts_pct), defaults.credit_alerts_pct
     )
     launch_home = soft(lambda: _launch_home(launch), None)
+    soft(lambda: _on_credits_out(budget), None)  # checked only: D48 fixes the behaviour
     return {
         "core_host": host,
         "core_port": port,
@@ -470,6 +474,12 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 startup, "core_at_login", defaults.core_at_login, "[startup]"
             ),
             defaults.core_at_login,
+        ),
+        "dashboard_window": soft(
+            lambda: _bool(
+                startup, "dashboard_window", defaults.dashboard_window, "[startup]"
+            ),
+            defaults.dashboard_window,
         ),
         "monthly_included_usd": monthly,
         "credit_alerts_pct": alerts,
@@ -603,6 +613,17 @@ def _alerts(budget: Mapping[str, Any], default: tuple[int, ...]) -> tuple[int, .
             "gos.toml: [budget] credit_alerts_pct must be a list of whole percentages, e.g. [80, 100]"
         )
     return tuple(sorted(set(alerts)))
+
+
+def _on_credits_out(budget: Mapping[str, Any]) -> None:
+    """D48 fixes what happens at 100%: no-AI until Clayton answers (WO-2.8, D165). Any other
+    value would silently do nothing, so it is refused."""
+    value = budget.get("on_credits_out", "no_ai")
+    if value != "no_ai":
+        raise ConfigError(
+            'gos.toml: [budget] on_credits_out can only be "no_ai" (D48: no-AI until you '
+            "answer the credit alert)"
+        )
 
 
 def _launch_home(launch: Mapping[str, Any]) -> Path | None:

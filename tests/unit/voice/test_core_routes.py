@@ -239,8 +239,8 @@ def test_every_answer_is_pushed_to_the_dashboards(
         assert pushed["card"] is not None and pushed["card"] == reply.json()["card"]
         assert pushed["pending"] is None  # only confirm and cancel say whether one was
         # when the question came, so a dashboard keeps the newest question's card
-        assert before - 1 <= pushed["asked_at"] <= time.time() + 1
-        assert "asked_at" not in reply.json()
+        assert before - 1 <= pushed["asked_ts"] <= time.time() + 1
+        assert "asked_ts" not in reply.json()
         voice_ws.send_text(json.dumps({"type": "ping"}))
         assert until(voice_ws, "pong") == {
             "type": "pong"
@@ -264,3 +264,6 @@ def test_a_confirm_or_cancel_with_nothing_waiting_isnt_pushed(
         client.post("/api/ask", json={"text": "what's my tier"}, headers=voice)
         pushed = until(dashboard, "ask.reply")["data"]
         assert pushed["request"] == "what's my tier"  # the first answer pushed
+    # nor kept for Chat (WO-2.6's board, D160)
+    answers = client.get("/api/answers", headers=bearer(ADMIN)).json()
+    assert [a["request"] for a in answers] == ["what's my tier"]

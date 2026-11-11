@@ -254,6 +254,26 @@ def test_port_in_use_exit_is_explained(tmp_path: Path) -> None:
     sup.stop_all()
 
 
+def test_a_process_that_exits_stopped_stays_stopped(tmp_path: Path) -> None:
+    """D48's Stop (WO-2.8): the core exits with EXIT_STOPPED and isn't restarted."""
+    cfg, _ = write_config(tmp_path)
+    code = f"import sys; sys.exit({supervisor.EXIT_STOPPED})"
+    sup = Supervisor(cfg, [ProcessSpec("core", "Core", (PY, "-c", code))])
+    sup.start_all()
+    sup.procs["core"].proc.wait(timeout=30)  # type: ignore[union-attr]
+    sup.tick()
+    core = sup.procs["core"]
+    assert core.state == "stopped" and not core.wanted and core.restart_at is None
+    assert "credit alert" in core.detail
+    sup.tick()
+    assert core.proc is None and core.restarts == 0
+    sup.start_all()  # gos serve starts it again
+    assert core.wanted and core.proc is not None
+    core.proc.wait(timeout=30)
+    sup.tick()
+    sup.stop_all()
+
+
 def test_core_exits_3_when_its_port_is_taken(tmp_path: Path) -> None:
     cfg, _ = write_config(tmp_path)
     holder = server.bind(cfg.core_port)

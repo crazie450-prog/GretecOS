@@ -11,7 +11,12 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
   nothing, so it isn't kept as the last reply: "repeat" still says the answer before it (D179).
 - With no fast lane (no key stored, or the API failing) a fast-lane request gets the instant
   answer for its card when pre-retrieval found one, else "AI is offline; I can do lookups"
-  (plan 7.16; WO-2.8 adds the mode switch, banners and the credit flow).
+  (plan 7.16). With an :class:`~gregtec.agents.no_ai.AiMode` (the core's, WO-2.8) the asker asks
+  it first, so in no-AI mode (no key, an API problem, the credit pause, Clayton's switch) no
+  model is called: a fast-lane request gets those lookups, and deep-lane work gets a line saying
+  it needs the AI. A failed call tells the mode what it showed, a good one that the API is back.
+- Saved plans ("my plans", "show plan X", "BOM for X") are instant commands
+  (:mod:`gregtec.agents.saved_plans`), so they work with the AI offline.
 - :meth:`Asker.prewarm` writes the fast lane's prompt cache ahead of a request (the voice client
   calls it as the talk key goes down, D152, D179), unless a fast-lane call started within the
   last 4 minutes: each call refreshes the 5-minute cache, so the cache is still warm then.
@@ -34,7 +39,7 @@ from typing import Any, TextIO
 import anthropic
 
 from gregtec import config
-from gregtec.agents import prefetch, router
+from gregtec.agents import prefetch, router, saved_plans
 from gregtec.agents.deep import (
     DONE,
     NEEDS_APPROVAL,
@@ -51,6 +56,7 @@ from gregtec.agents.fast_lane import (
     LaneError,
     refs,
 )
+from gregtec.agents.no_ai import NEEDS_AI, AiMode
 from gregtec.agents.tools.catalog import default_registry
 from gregtec.agents.tools.registry import Registry
 from gregtec.agents.tools.tsv import Parsed
@@ -205,10 +211,16 @@ class Asker:
         lane: Callable[[], FastLane | None] | FastLane | None,
         *,
         clock: Callable[[], float] = time.perf_counter,
+        ai: AiMode | None = None,
+        home: Path | None = None,
     ) -> None:
         self.registry = registry
+        self.home = home  # GOS_HOME, for saved plans' JSON (None: the DB's own)
         self.deep = deep
         self.clock = clock
+        self.ai = (
+            ai  # no-AI mode (WO-2.8); None: only a missing lane or an error stops it
+        )
         if callable(lane) and not isinstance(lane, FastLane):
             self._factory: Callable[[], FastLane | None] | None = lane
             self._lane: FastLane | None = None
@@ -279,14 +291,28 @@ class Asker:
 
     def _reply(self, route: router.Route, started: float, task: str) -> Reply:
         if route.kind == router.INSTANT:
+            if route.intent == router.PLAN and self._ai_usable():
+                reply = self._plans(route, fall_through=True)
+                if reply is None:  # names no saved plan: the AI answers it, as before
+                    return self._reply(
+                        router.route(route.text, plans=False), started, task
+                    )
+                return reply
             return self._instant(route)
         if route.kind == router.DEEP:
+            reasons = self.ai.reasons() if self.ai is not None else []
+            if reasons:
+                assert self.ai is not None
+                text = NEEDS_AI.format(why=self.ai.why())
+                return Reply(text, "no_ai", route.intent, error=reasons[0])
             item = self.deep.handoff(route.text, route.text, "router")
             text = DEEP_OFFLINE if item.status == OFFLINE else HANDED_OFF
             return Reply(text, router.DEEP, route.intent, handoff=item.as_dict())
         pre = prefetch.prefetch(self.registry, route)
         if pre.clarify is not None:
             return self._ask_back(route, pre)
+        if self.ai is not None and not self.ai.allowed():
+            return self._offline(route, pre, (self.ai.reasons() or ["offline"])[0])
         lane = self.lane()
         if lane is None:
             return self._offline(route, pre, None)
@@ -294,10 +320,20 @@ class Asker:
             answer = lane.answer(route.text, pre, started=started, task=task)
         except LaneError as exc:
             log.warning("fast lane failed", extra={"error": str(exc)[:200]})
+            if self.ai is not None:
+                self.ai.failed(exc)
             return self._offline(route, pre, str(exc))
+        if self.ai is not None:
+            self.ai.succeeded()
         with self._lock:
             self._warm_at = started
         return self._fast(route, pre, answer)
+
+    def _ai_usable(self) -> bool:
+        """Whether a model could answer now: the AI isn't off and a fast lane is set up."""
+        if self.ai is not None and self.ai.reasons():
+            return False
+        return self.lane() is not None
 
     def prewarm(self) -> str:
         """Write the fast lane's prompt cache for the request about to come (D152, D179).
@@ -306,6 +342,8 @@ class Asker:
         already keeps it), :data:`BUSY` (another pre-warm is running), :data:`NO_LANE` (no key
         stored) or :data:`FAILED` (the API failed; the request itself will say so).
         """
+        if self.ai is not None and self.ai.reasons():
+            return NO_LANE
         lane = self.lane()
         if lane is None:
             return NO_LANE
@@ -322,6 +360,8 @@ class Asker:
             log.warning(
                 "fast-lane pre-warm failed", extra={"error": type(exc).__name__}
             )
+            if self.ai is not None:
+                self.ai.failed(exc)
             return FAILED
         finally:
             with self._lock:
@@ -337,7 +377,7 @@ class Asker:
             text,
             lane,
             route.intent,
-            card=pre.main.card() if pre.main else None,
+            card=pre.main.card(self.registry.env.db) if pre.main else None,
             target=(
                 {
                     "key": pre.target.key,
@@ -407,14 +447,15 @@ class Asker:
         if intent == router.TIER:
             out = self.registry.call("quest_frontier", {"n": 1}, lane="fast")
             block = prefetch.Block("quest_frontier", {"n": 1}, out.text, out.is_error)
+            card = block.card()
             if out.is_error:
-                return Reply(
-                    block.card()["error"], router.INSTANT, intent, card=block.card()
-                )
+                return Reply(card["error"], router.INSTANT, intent, card=card)
             tier = block.parsed.head.get("tier", "unknown")
-            return Reply(
-                f"Your tier: {tier}.", router.INSTANT, intent, card=block.card()
-            )
+            return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
+        if intent in (router.PLANS, router.PLAN):
+            reply = self._plans(route)
+            assert reply is not None  # only fall_through gives None
+            return reply
         pre = prefetch.prefetch(self.registry, route, tier=False)
         if pre.clarify is not None:
             return self._ask_back(route, pre)
@@ -423,6 +464,52 @@ class Asker:
         else:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
+
+    def _plans(
+        self, route: router.Route, *, fall_through: bool = False
+    ) -> Reply | None:
+        """Saved plans from the DB and their JSON (WO-2.8): the list, or one plan's BOM card.
+        ``fall_through``: None when no saved plan matches (the AI answers the question)."""
+        found, problems = saved_plans.load(self.registry.env.db, self.home)
+        if route.intent == router.PLANS:
+            card = saved_plans.list_card(found, problems)
+            if not found:
+                text = "No plans are saved yet."
+            else:
+                names = ", ".join(p.name for p in found[:3])
+                more = "" if len(found) <= 3 else ", ..."
+                text = f"{_count(len(found), 'saved plan')}: {names}{more}."
+            return Reply(text, router.INSTANT, route.intent, card=card)
+        words = route.subject or ""
+        hits = saved_plans.find(found, words)
+        if not hits and fall_through:
+            return None
+        if not hits:
+            return Reply(
+                f"No saved plan matches {words!r}.",
+                router.INSTANT,
+                route.intent,
+                card=saved_plans.list_card(found, problems) if found else None,
+            )
+        if len(hits) > 1:
+            text = f"{_count(len(hits), 'plan')} match {words!r}; say which one."
+            card = saved_plans.list_card(hits, [])
+            return Reply(text, router.INSTANT, route.intent, card=card)
+        plan = hits[0]
+        if plan.bom is None:
+            text = f"{plan.name} (plan:{plan.id}): no BOM is saved with it."
+        else:
+            text = (
+                f"{plan.name} (plan:{plan.id}): the BOM has "
+                f"{_count(len(plan.bom), 'row')}."
+            )
+        return Reply(
+            text,
+            router.INSTANT,
+            route.intent,
+            card=saved_plans.bom_card(plan),
+            refs=[f"plan:{plan.id}"],
+        )
 
 
 @dataclass
@@ -436,15 +523,17 @@ class Agents:
     vault: Path | None
     fast: FastLane | None = None
     store: Store | None = None  # closed by close() when setup() opened it
+    home: Path | None = None  # GOS_HOME (saved plans' JSON)
 
     def lane(self) -> FastLane | None:
         """A fast lane with the stored key (None: no key stored)."""
         return FastLane.from_keyring(self.registry, meter=self.meter, vault=self.vault)
 
-    def asker(self) -> Asker:
+    def asker(self, ai: AiMode | None = None) -> Asker:
+        """``ai``: the core's no-AI mode (WO-2.8); None for none."""
         if self.fast is not None:
-            return Asker(self.registry, self.deep, self.fast)
-        return Asker(self.registry, self.deep, self.lane)
+            return Asker(self.registry, self.deep, self.fast, ai=ai, home=self.home)
+        return Asker(self.registry, self.deep, self.lane, ai=ai, home=self.home)
 
     def close(self) -> None:
         if isinstance(self.deep, DeepLaneService):
@@ -487,7 +576,12 @@ def setup(
         registry = default_registry(cfg.gos_home, deep=deep)
         deep.registry = registry
     agents = Agents(
-        registry, deep, meter, vault if vault.is_dir() else None, store=opened
+        registry,
+        deep,
+        meter,
+        vault if vault.is_dir() else None,
+        store=opened,
+        home=cfg.gos_home,
     )
     if fake:
         agents.fast = FastLane(EchoClient(), registry, meter=None, vault=agents.vault)
@@ -570,8 +664,8 @@ def main(config_path: Path | None, text: str, as_json: bool, out: TextIO) -> int
         if card.get("type") == "choices":
             for c in card["candidates"]:
                 print(f"  {c['n']}. {c['name']} [{c['key']}]", file=out)
-        elif card.get("columns"):
-            print(f"  card: {card['tool']}, rows {card.get('span')}", file=out)
+        elif card.get("tool"):
+            print(f"  card: {card['type']} from {card['tool']}", file=out)
         ttft = "-" if reply.ttft_ms is None else f"{reply.ttft_ms} ms"
         checked = "numbers checked" if reply.checked else "NOT checked"
         print(
