@@ -42,7 +42,8 @@ stays listed with its status for D61's swap and "show all". Only primary choices
 expand more than their first: the target and its direct inputs expand their top recipes but
 their side routes (:func:`side_route`), and a chain template on the target's route expands its
 recipes, its branch points primary (D189). A pin (D61) or a chain template (:mod:`.chains`)
-replaces the heuristic's choice for its node. Expansion stops at boundary items: the request's
+replaces the heuristic's choice for its node, but a template's loop (:meth:`_Builder.in_loop`)
+met off the route from outside the chain is left to the heuristic. Expansion stops at boundary items: the request's
 ``boundary``, My base stock and line outputs (D63), items no recipe makes (raw), items whose
 every recipe was rejected (locked), catalysts (inputs a recipe doesn't use up: circuits,
 moulds, lenses) and depth :data:`MAX_DEPTH`.
@@ -562,8 +563,7 @@ class _Reader:
         self.load_items(i for i, _ in found if i is not None)
         self.load_fluids(f for i, f in found if i is None and f is not None)
         out = frozenset(
-            self.items[i].key if i is not None else self.fluids[f].key
-            for i, f in found
+            self.items[i].key if i is not None else self.fluids[f].key for i, f in found
         )
         self.uses[key] = out
         return out
@@ -958,7 +958,11 @@ class _Builder:
         electrolysed back from the calcium chloride its platinum step gives off)."""
         choice = self.templates.choices[key]
         if choice.chain not in self.loops:
-            rows = {k: c for k, c in self.templates.choices.items() if c.chain == choice.chain}
+            rows = {
+                k: c
+                for k, c in self.templates.choices.items()
+                if c.chain == choice.chain
+            }
             refs = sorted({r for c in rows.values() for r in c.recipes})
             ids = [
                 int(r[0])
@@ -977,9 +981,9 @@ class _Builder:
                 for k, c in rows.items()
             }
             looped: set[str] = set()
-            for start in feeds:
+            for start, fed in feeds.items():
                 seen: set[str] = set()
-                stack = list(feeds[start])
+                stack = list(fed)
                 while stack:
                     k = stack.pop()
                     if k == start:

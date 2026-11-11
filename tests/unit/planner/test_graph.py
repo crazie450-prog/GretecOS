@@ -785,6 +785,30 @@ def test_templates_choose_and_mark_branch_points(
     assert pruned == {"chain template test chose others"}
 
 
+def test_template_loops_are_entered_only_from_within(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # Review (final check): a chain's loop met off the route, from outside the chain, is left
+    # to the heuristic (the platline's calcium for an epoxid's calcium acetate).
+    cr3, el1 = ref_of(conn, "chemicalreactor", 3), ref_of(conn, "electrolyzer", 1)
+    write(tmp_path, "loop", [
+        f"{ACID}\t{cr3}\t\tacid from gas",
+        f"{GAS}\t{el1}\t\tgas from acid",
+        f"{SALT}\t{ref_of(conn, 'electrolyzer', 3)}\t\tnot on the loop",
+    ])  # fmt: skip
+    t = chains.load(tmp_path)
+    b = graph._Builder(conn, Request(WIDGET), Base(), t, machine_run(conn))
+    assert b.in_loop(ACID) and b.in_loop(GAS) and not b.in_loop(SALT)
+    # On the route (acid is a direct input of Widget's chemical reactor): the template holds.
+    assert build_graph(conn, templates=t).item(ACID).template == "loop"
+    # Off the route: Dust A from recycled Widget (a pin); Widget's reactor asks for acid two
+    # steps down, from outside the chain.
+    arc = ref_of(conn, "arcfurnace", 0)
+    g = build_graph(conn, Request(DUST_A, pins=(Pin(DUST_A, arc),)), templates=t)
+    acid = g.item(ACID)
+    assert acid.depth == 2 and acid.template is None and "loop" not in g.templates
+
+
 def test_stale_template_rows(conn: sqlite3.Connection, tmp_path: Path) -> None:
     el0, el2 = ref_of(conn, "electrolyzer", 0), ref_of(conn, "electrolyzer", 2)
     write(tmp_path, "stale", [

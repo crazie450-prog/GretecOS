@@ -165,6 +165,28 @@ def test_acids_stay_out_of_the_platline(
     assert not [p for p in g.primary if g.item(p).template == "platline"]
 
 
+def test_epoxid_stays_out_of_other_chains(conn: sqlite3.Connection) -> None:
+    # Final check: salt and water in the mixer is a way to make salt water, not the reverse
+    # of one of its uses (salt has routes of its own), so saltwater no longer distils
+    # naquadah's waste liquid; sodium isn't electrolysed from the sodium oxide only
+    # naquadah's line gives off; and calcium for calcium acetate doesn't enter the
+    # platline's calcium loop from outside (D189).
+    g, _ = timed(conn, "fluid:molten.epoxid", 4)
+    ids = {i.id for i in g.items}
+    other = {
+        k
+        for k, c in chains.load().choices.items()
+        if c.chain in ("naquadah", "platline", "rare-earths")
+    }
+    assert not other & (ids - {CALCIUM}), sorted(other & ids)
+    assert g.item(CALCIUM).template is None
+    assert set(g.templates) <= {"basic-chemicals"}
+    assert g.item("fluid:saltwater").chosen[0] == "r:gt.recipe.mixer/41bbc2fe4611"
+    sodium = g.item("gregtech:gt.metaitem.01@2017")
+    assert sodium.chosen == ("r:gt.recipe.electrolyzer/800e278da1d1",)  # from salt
+    assert len(g.items) < 150, len(g.items)  # 129 on the dev runtime's run (166 before)
+
+
 def test_sulfuric_acid_first_choice_takes_no_cells(conn: sqlite3.Connection) -> None:
     # Review M1: water given off by one of the acid's uses doesn't make every recipe that
     # takes water a "reversal"; the first choice is the LCR's, no IC2 cells.
