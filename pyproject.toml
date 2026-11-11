@@ -41,6 +41,10 @@ dev = [
 # (`uv sync --no-dev`) and CI get it; it stays light: its own extra dependencies are
 # Windows-only (sounddevice, pynput). Heavy engines (STT, TTS, wake word) get groups of their own.
 voice = ["gregtec-voice"]
+# WO-5.2, D182: speech-to-text engines (faster-whisper on CTranslate2, Parakeet through
+# onnx-asr), both MIT; models download at runtime to GOS_HOME/models. Not a default group (CI
+# and dev clones stay light); gos deploy adds it, so GOS_APP has them.
+stt = ["faster-whisper>=1.2.1", "onnx-asr[cpu,hub]>=0.12.0"]
 
 [tool.uv]
 default-groups = ["dev", "voice"]
@@ -65,3 +69,4 @@ testpaths = ["tests"]
 # importlib mode lets tests/unit, tests/security, ... share file names without __init__.py files.
 addopts = ["--import-mode=importlib"]
 strict = true
+markers = ["slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)"]

@@ -1,0 +1,51 @@
+id	kind	key	text
+s01	item	gregtech:gt.metaitem.01@32600	How do I make an LV motor?
+s02	item	gregtech:gt.metaitem.01@32611	How do I make an MV electric pump?
+s03	item	gregtech:gt.metaitem.01@32632	How do I make an HV conveyor module?
+s04	item	gregtech:gt.metaitem.01@32653	What uses an EV robot arm?
+s05	item	gregtech:gt.metaitem.01@32644	How do I craft an IV electric piston?
+s06	item	gregtech:gt.metaitem.01@32606	Recipe for the LuV motor.
+s07	item	gregtech:gt.metaitem.01@32676	How do I make a ZPM field generator?
+s08	item	gregtech:gt.metaitem.01@32687	How do I make a UV emitter?
+s09	item	gregtech:gt.metaitem.01@32698	How do I make a UHV sensor?
+s10	machine	gregtech:gt.blockmachines@1000	What does the EBF do?
+s11	machine	gregtech:gt.blockmachines@1169	What does the LCR do?
+s12	machine	gregtech:gt.blockmachines@1126	What does the distillation tower do?
+s13	machine	gregtech:gt.blockmachines@1002	Tell me about the vacuum freezer.
+s14	machine	gregtech:gt.blockmachines@1001	What does the implosion compressor do?
+s15	machine	gregtech:gt.blockmachines@140	What does the BBF do?
+s16	machine	gregtech:gt.blockmachines@13106	How do I make a lapotronic supercapacitor?
+s17	machine	gregtech:gt.blockmachines@1170	What does the assline do?
+s18	machine	gregtech:gt.blockmachines@1172	What does the cleanroom do?
+s19	machine	gregtech:gt.blockmachines@301	How do I make a basic macerator?
+s20	machine	gregtech:gt.blockmachines@236	Tell me about the coke oven.
+s21	machine	gregtech:gt.blockmachines@12730	What does the mega electric blast furnace do?
+s22	machine	gregtech:gt.blockmachines@16	How do I make a LuV machine hull?
+s23	item	gregtech:gt.metaitem.01@11324	How do I make naquadah?
+s24	item	gregtech:gt.metaitem.01@11317	What uses osmiridium?
+s25	item	gregtech:gt.metaitem.01@11310	How is cupronickel made?
+s26	item	gregtech:gt.metaitem.01@11312	How do I make kanthal?
+s27	item	gregtech:gt.metaitem.01@11311	What makes nichrome?
+s28	item	gregtech:gt.metaitem.01@11316	How do I make tungstensteel?
+s29	item	gregtech:gt.metaitem.01@11028	Uses of titanium.
+s30	item	gregtech:gt.metaitem.01@11372	How do I make HSS-G?
+s31	item	gregtech:gt.metaitem.01@11473	What uses PTFE?
+s32	item	gregtech:gt.metaitem.01@11599	How do I make polybenzimidazole?
+s33	item	gregtech:gt.metaitem.01@11980	What is gallium arsenide used for?
+s34	item	gregtech:gt.metaitem.01@11470	What makes epoxid?
+s35	item	gregtech:gt.metaitem.01@11327	How do I make naquadria?
+s36	item	gregtech:gt.metaitem.01@11576	How do I make TPV alloy?
+s37	fluid	fluid:sulfuricacid	What makes sulfuric acid?
+s38	fluid	fluid:hydrochloricacid_gt5u	How do I make hydrochloric acid?
+s39	fluid	fluid:nitrobenzene	What produces nitrobenzene?
+s40	fluid	fluid:nitrofuel	How do I make cetane-boosted diesel?
+s41	fluid	fluid:benzene	Benzene recipe.
+s42	item	gregtech:gt.metaitem.01@32700	How do I craft a vacuum tube?
+s43	item	gregtech:gt.metaitem.01@32716	What are resistors used for?
+s44	item	gregtech:gt.metaitem.02@31305	Steel gear recipe.
+s45	item	gregtech:gt.metaitem.03@32075	What uses a NAND chip?
+s46	item	gregtech:gt.metaitem.01@32702	How do I make a good electronic circuit?
+s47	item	gregtech:gt.metaitem.03@32085	How do I make a quantum processor?
+s48	item	gregtech:gt.metaitem.03@32030	How do I make a silicon boule?
+s49	item	gregtech:gt.metaitem.02@21306	How do I make a stainless steel rotor?
+s50	item	appliedenergistics2:tile.BlockController@0	How do I make an ME controller?
