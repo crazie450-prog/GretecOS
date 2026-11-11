@@ -1,8 +1,8 @@
 """The setup wizard's logic, behind the core's ``/api/setup`` routes (WO-2.9, D167-D169).
 
 - :meth:`SetupService.describe`: every step (:mod:`gregtec.setup.registry`) with the values
-  gos.toml has now (defaults where it has none), whether each secret is stored (never its value)
-  and whether setup is done (``[setup] completed_utc`` in gos.toml).
+  gos.toml has now (defaults where it has none), whether each secret is stored (never its value),
+  whether setup is done (``[setup] completed_utc`` in gos.toml) and whether gos.toml exists.
 - :meth:`check` and :meth:`save`: a step's values are checked (each field by its kind, then the
   step's own check, ``gos doctor``'s for the paths); a save writes them to gos.toml atomically
   (:mod:`gregtec.setup.tomledit`), and only after the new file has read back through
@@ -119,6 +119,8 @@ class SetupService:
         return {
             "done": self.done(ctx) is not None,
             "completed_utc": self.done(ctx),
+            # A first run has no gos.toml: only then does the dashboard open on the wizard (D167).
+            "config_exists": self.path.is_file(),
             "config_path": str(self.path),
             "config_error": error,
             "steps": [s.describe(ctx) for s in self.steps],

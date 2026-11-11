@@ -87,11 +87,13 @@ def _device_rows(ctx: Context, values: Mapping[str, str]) -> list[Check]:
         if len(hits) == 1:
             rows.append(Check(f"voice.{fid}", label, OK, hits[0]))
         elif hits:
+            # The voice client refuses a microphone name that matches more than one device
+            # (gregtec_voice.audio.find_device), so that one can't be saved.
             rows.append(
                 Check(
                     f"voice.{fid}",
                     label,
-                    WARN,
+                    ERROR if fid == "input_device" else WARN,
                     f"{value!r} matches {len(hits)} devices: {'; '.join(hits)}",
                 )
             )
@@ -115,19 +117,92 @@ def check_headset(ctx: Context, values: Mapping[str, str]) -> Outcome:
     return Outcome(checks=_device_rows(ctx, values))
 
 
+def _key_refusal(why: str) -> Outcome:
+    """The voice parser's refusal, each part on the field it is about: ``talk_mode``, the talk
+    key (its name, or a clash with another key), else a row for keys this step doesn't show."""
+    problems: dict[str, list[str]] = {}
+    other: list[str] = []
+    for part in why.split("; "):
+        if "talk_mode" in part:
+            problems.setdefault("talk_mode", []).append(part)
+        elif "talk_key" in part or re.search(r"\btalk and\b", part):
+            problems.setdefault("talk_key", []).append(part)
+        else:
+            other.append(part)
+    checks = []
+    if other:
+        checks.append(
+            Check(
+                "voice.other",
+                "Other [voice] settings",
+                ERROR,
+                "; ".join(other) + " (not set in this step: edit gos.toml by hand)",
+            )
+        )
+    return Outcome(
+        problems={k: "; ".join(v) for k, v in problems.items()}, checks=checks
+    )
+
+
+def _gtnh_row(ctx: Context, values: Mapping[str, str]) -> Check:
+    """QA:V8: the GTNH bindings on the talk key, from Play's ``options.txt`` (read once through
+    ``safe_open``, as ``gos voice keys play`` does). A warning when it is bound or can't be read."""
+    from gregtec.gamestate.safe_open import read_bytes
+    from gregtec_voice import keys
+
+    label = "Talk key in GTNH"
+    try:
+        key = keys.parse(values.get("talk_key", ""))
+    except keys.KeyNameError:
+        return Check("voice.talk_key_gtnh", label, WARN, "not a key name")
+    if key.lwjgl is None:
+        return Check(
+            "voice.talk_key_gtnh",
+            label,
+            OK,
+            "GTNH's Java 8 build can't bind it; on the Java 17+ build check Controls",
+        )
+    instance = ctx.cfg.instance("play")
+    game = next(
+        (instance / d for d in ("minecraft", ".minecraft") if (instance / d).is_dir()),
+        None,
+    )
+    options = game / "options.txt" if game is not None else None
+    if options is None or not options.is_file():
+        return Check(
+            "voice.talk_key_gtnh",
+            label,
+            WARN,
+            f"no options.txt in {instance} yet: start Play once, then check again",
+        )
+    try:
+        text = read_bytes(options).decode("utf-8", "replace")
+    except OSError as exc:
+        return Check("voice.talk_key_gtnh", label, WARN, f"can't read {options}: {exc}")
+    bound = sorted(keys.bindings(text).get(key.lwjgl, []))
+    if bound:
+        return Check(
+            "voice.talk_key_gtnh",
+            label,
+            WARN,
+            f"{key.label} is bound in Play to {', '.join(bound)}: unbind it there or pick another",
+        )
+    return Check("voice.talk_key_gtnh", label, OK, f"{key.label} is free in Play")
+
+
 def check_keys(ctx: Context, values: Mapping[str, str]) -> Outcome:
     why = voice_problem(voice_table(ctx, values))
     if why is not None:
-        return Outcome(problems={"talk_key": why})
+        return _key_refusal(why)
     return Outcome(
         checks=[
+            _gtnh_row(ctx, values),
             Check(
                 "voice.talk_key",
-                "Talk key",
+                "Talk key in Discord",
                 OK,
-                "a key GTNH and Discord leave free by default; check Discord's keybinds, and "
-                "run gos voice keys play to list GTNH's bindings on it",
-            )
+                "a key Discord leaves free by default; check Settings > Keybinds",
+            ),
         ]
     )
 
@@ -216,6 +291,8 @@ STEPS = [
                 toml=("voice", "output_endpoint"),
                 devices="outputs",
                 help="A part of the device's name is enough, e.g. Chat",
+                # Always a name: gos.toml has no "Windows' default" for it (Appendix C: "Chat").
+                required=True,
                 default="Chat",
             ),
         ),

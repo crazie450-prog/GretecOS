@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from importlib import resources
@@ -26,7 +27,6 @@ from typing import TextIO
 from gregtec.config import PACK_PIN, Config
 from gregtec.gamestate.safe_open import read_text, sha256_file
 from gregtec.packupdate import gtpin
-from gregtec.setup.registry import ERROR, OK, WARN, Check
 
 PLAY = "GTNH-Play"  # gos.toml [paths] play (Appendix C)
 JAVA8 = "java8"
@@ -429,6 +429,28 @@ def verify_status(item: VerifyItem, roots: list[PrismRoot]) -> str:
     return f"open: {item.how} (WO-{item.wo})"
 
 
+OK, WARN, ERROR = "ok", "warn", "error"  # a checklist row's status
+
+
+@dataclass(frozen=True)
+class Check:
+    """One checklist row (``checklist``, the setup wizard's, WO-2.9): what was checked, how it
+    went (ok, warn, error) and why."""
+
+    id: str
+    label: str
+    status: str
+    detail: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "status": self.status,
+            "detail": self.detail,
+        }
+
+
 def _instance_check(cfg: Config, role: str) -> Check:
     """One of Play, Export or Lab: there, GTNH, the pinned pack (read only, mods not hashed)."""
     name = getattr(cfg, role)
@@ -461,10 +483,21 @@ def _instance_check(cfg: Config, role: str) -> Check:
     )
 
 
+def _writable(folder: Path) -> bool:
+    """Whether this account can make a file in ``folder``: a temp file is made there and deleted
+    at once. ``os.access`` isn't enough: on Windows it reads only the read-only attribute, never
+    the folder's ACL (the gos-dev account, WO-0.8)."""
+    try:
+        with tempfile.TemporaryFile(dir=folder):
+            return True
+    except OSError:
+        return False
+
+
 def _home_check(home: Path) -> Check:
     label = f"GOS_HOME ({home})"
     if home.is_dir():
-        if os.access(home, os.W_OK):
+        if _writable(home):
             return Check("paths.gos_home", label, OK, "there and writable")
         return Check("paths.gos_home", label, ERROR, "this account can't write there")
     if home.exists():
@@ -472,7 +505,7 @@ def _home_check(home: Path) -> Check:
     parent = home.parent
     while not parent.exists() and parent != parent.parent:
         parent = parent.parent
-    if parent.is_dir() and os.access(parent, os.W_OK):
+    if parent.is_dir() and _writable(parent):
         return Check("paths.gos_home", label, OK, "not there yet: GOS makes it")
     return Check(
         "paths.gos_home", label, ERROR, f"can't be made: {parent} isn't writable"
@@ -482,7 +515,8 @@ def _home_check(home: Path) -> Check:
 def checklist(cfg: Config) -> list[Check]:
     """``gos doctor``'s checks of one config, as checklist rows (the setup wizard, WO-2.9): the
     Prism folders, Play, Export and Lab, GOS_APP, GOS_HOME and the DB's GT pin. Read only: game
-    files go through ``safe_open``, mods aren't hashed and nothing is written."""
+    files go through ``safe_open`` and mods aren't hashed; the one write is a temp file made and
+    deleted at once in GOS_HOME (or the folder it will be made in), to see that it is writable."""
     rows: list[Check] = []
     for key, label, path in (
         ("paths.prism_root", "Prism folder", cfg.prism_root),
@@ -521,9 +555,10 @@ def checklist(cfg: Config) -> list[Check]:
         )
     )
     rows.append(_home_check(cfg.gos_home))
+    # Plan 0.4: a pin mismatch is a warning (the recipe data is stale), not a stop.
     pin_ok, pin_line = gtpin.check_db(cfg.gos_home)
     rows.append(
-        Check("db.gt_pin", "Recipe DB and GT pin", OK if pin_ok else ERROR, pin_line)
+        Check("db.gt_pin", "Recipe DB and GT pin", OK if pin_ok else WARN, pin_line)
     )
     return rows
 

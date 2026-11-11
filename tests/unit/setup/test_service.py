@@ -25,7 +25,13 @@ from gregtec.setup.steps import voice
 from gregtec.store import Store
 
 from .conftest import path_values
-from .fakes import ANTHROPIC_KEY, DISCORD_TOKEN, MemoryKeyring, make_instance
+from .fakes import (
+    ANTHROPIC_KEY,
+    DISCORD_TOKEN,
+    MemoryKeyring,
+    make_instance,
+    make_prism,
+)
 
 
 def by_id(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
@@ -539,3 +545,228 @@ def test_a_step_check_is_called_with_the_merged_values(svc: SetupService) -> Non
     ]
     svc.check("x", {"b": " three "})
     assert seen == [{"a": "one", "b": "three"}]
+
+
+# --- review fixes: Play is never moved or written by a click (H1), nothing locks the dashboard
+# out (H2), PortAudio one at a time (M1), devices and keys (L1, L2, L5, verdict 5) ----------------
+
+
+def test_swapping_play_with_lab_is_refused_once_play_is_saved(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    values = path_values(prism, home, tmp_path)
+    svc.save("paths", values)
+    before = svc.path.read_text("utf-8")
+    swapped = values | {"play": "GTNH-Lab", "lab": "GTNH-Play"}
+    outcome, _ = svc.check("paths", swapped)
+    assert set(outcome.problems) == {"play", "lab"}
+    assert "never moves Play" in outcome.problems["play"]
+    with pytest.raises(SetupError) as err:
+        svc.save("paths", swapped)
+    assert err.value.status == 400 and svc.path.read_text("utf-8") == before
+    # A new instances folder moves Play too.
+    other = make_prism(tmp_path / "Other")
+    moved = values | {
+        "prism_root": str(other),
+        "prism_instances": str(other / "instances"),
+    }
+    assert "play" in svc.check("paths", moved)[0].problems
+    # The rest can still be changed.
+    svc.save("paths", values | {"gos_app": str(tmp_path / "app2")})
+
+
+def test_export_or_lab_can_never_be_the_play_the_core_runs_with(
+    ring: MemoryKeyring, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    """No gos.toml yet: the core runs with its defaults, so their Play is guarded too."""
+    svc = SetupService(
+        home / "config" / "gos.toml",
+        Config(gos_home=home, prism_instances=prism / "instances"),
+        provider=FakeDevices(),
+    )
+    values = path_values(prism, home, tmp_path) | {
+        "play": "GTNH-Lab",
+        "export": "GTNH-Play",
+        "lab": "GTNH-Export",
+    }
+    outcome, _ = svc.check("paths", values)
+    assert set(outcome.problems) == {"export"}  # Play itself isn't saved yet
+    assert "Play's folder" in outcome.problems["export"]
+
+
+def test_a_gt_pin_mismatch_only_warns(
+    svc: SetupService,
+    prism: Path,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan 0.4: a stale DB is a warning; it never blocks a paths save or Finish (H2)."""
+    from gregtec.packupdate import gtpin
+
+    monkeypatch.setattr(gtpin, "check_db", lambda home: (False, "!!! stale"))
+    configure(svc, prism, home, tmp_path / "app")
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["db.gt_pin"]["status"] == "warn"
+    assert svc.finish()["done"] is True
+
+
+def test_an_unavailable_keyring_only_warns(
+    svc: SetupService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken() -> list[str]:
+        raise RuntimeError("no backend")
+
+    monkeypatch.setattr(keys, "backend_chain", broken)
+    rows = by_id([c.as_dict() for c in svc.checklist()])
+    assert rows["keyring"]["status"] == "warn"
+
+
+def test_describe_says_whether_gos_toml_exists(svc: SetupService) -> None:
+    """Only a first run (no gos.toml) opens the dashboard on the wizard (H2, D167)."""
+    assert svc.describe()["config_exists"] is False
+    svc.save("wake", {"wake_phrase": "hey archivist"})
+    out = svc.describe()
+    assert out["config_exists"] is True and out["done"] is False
+
+
+def test_the_spoken_answers_output_is_always_a_name(svc: SetupService) -> None:
+    """L1: no empty value (it would be dropped and read back as "Chat")."""
+    outcome, _ = svc.check("headset", {"input_device": "", "output_endpoint": ""})
+    assert outcome.problems == {"output_endpoint": "needed"}
+
+
+def test_an_ambiguous_microphone_is_an_error(svc: SetupService) -> None:
+    """L2: the voice client refuses a name that matches two devices."""
+    outcome, _ = svc.check(
+        "headset", {"input_device": "Microphone", "output_endpoint": "Chat"}
+    )
+    assert {c.id: c.status for c in outcome.checks}["voice.input_device"] == "error"
+    assert outcome.blocked
+
+
+def test_a_clash_of_keys_this_step_doesnt_show_is_a_row(svc: SetupService) -> None:
+    """L5: confirm and cancel set by hand to the same key aren't pinned on the talk key."""
+    svc.path.parent.mkdir(parents=True)
+    svc.path.write_text('[voice]\nconfirm_key = "F20"\ncancel_key = "F20"\n', "utf-8")
+    outcome, _ = svc.check("talk_key", {"talk_key": "F13", "talk_mode": "hold"})
+    assert outcome.problems == {}
+    other = {c.id: c for c in outcome.checks}["voice.other"]
+    assert other.status == "error" and "confirm and cancel" in other.detail
+    outcome, _ = svc.check("talk_key", {"talk_key": "F20", "talk_mode": "hold"})
+    assert "talk and" in outcome.problems["talk_key"]
+
+
+def test_the_talk_key_is_checked_against_plays_bindings(
+    ring: MemoryKeyring, prism: Path, home: Path
+) -> None:
+    """Verdict 5 (QA:V8): Play's options.txt, read once, never written."""
+    from gregtec_voice import keys as voice_keys
+
+    svc = SetupService(
+        home / "config" / "gos.toml",
+        Config(gos_home=home, prism_instances=prism / "instances"),
+        provider=FakeDevices(),
+    )
+    outcome, _ = svc.check("talk_key", {"talk_key": "F13", "talk_mode": "hold"})
+    row = {c.id: c for c in outcome.checks}["voice.talk_key_gtnh"]
+    assert row.status == "warn" and "no options.txt" in row.detail
+    options = prism / "instances" / "GTNH-Play" / ".minecraft" / "options.txt"
+    code = voice_keys.parse("F13").lwjgl
+    options.write_text(f"key_key.drop:16\nkey_gui.zoom:{code}\n", "utf-8")
+    before = options.read_bytes()
+    outcome, _ = svc.check("talk_key", {"talk_key": "F13", "talk_mode": "hold"})
+    row = {c.id: c for c in outcome.checks}["voice.talk_key_gtnh"]
+    assert row.status == "warn" and "gui.zoom" in row.detail
+    outcome, _ = svc.check("talk_key", {"talk_key": "F18", "talk_mode": "hold"})
+    row = {c.id: c for c in outcome.checks}["voice.talk_key_gtnh"]
+    assert row.status == "ok"
+    assert options.read_bytes() == before
+
+
+def test_gos_home_writability_is_tried_not_assumed(tmp_path: Path) -> None:
+    """L4: a temp file is made and deleted (os.access ignores Windows ACLs)."""
+    assert doctor._writable(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+    assert not doctor._writable(tmp_path / "missing")
+
+
+def test_portaudio_lists_devices_one_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M1: a fake sounddevice counts the callers inside PortAudio at once."""
+    import sys
+    import threading
+    import time
+    import types
+
+    from gregtec.setup import devices as devices_mod
+
+    state = {"inside": 0, "most": 0, "restarts": 0}
+    lock = threading.Lock()
+
+    def enter() -> None:
+        with lock:
+            state["inside"] += 1
+            state["most"] = max(state["most"], state["inside"])
+        time.sleep(0.002)
+        with lock:
+            state["inside"] -= 1
+
+    def terminate() -> None:
+        enter()
+        with lock:
+            state["restarts"] += 1
+
+    def hostapis() -> list[dict[str, object]]:
+        enter()
+        return [
+            {
+                "name": "Windows WASAPI",
+                "default_input_device": 0,
+                "default_output_device": 1,
+            }
+        ]
+
+    def query() -> list[dict[str, object]]:
+        enter()
+        return [
+            {
+                "name": "Mic",
+                "hostapi": 0,
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+            },
+            {
+                "name": "Chat",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            },
+        ]
+
+    fake = types.ModuleType("sounddevice")
+    fake._terminate = terminate  # type: ignore[attr-defined]
+    fake._initialize = enter  # type: ignore[attr-defined]
+    fake.query_hostapis = hostapis  # type: ignore[attr-defined]
+    fake.query_devices = query  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sounddevice", fake)
+
+    provider = devices_mod.WasapiDevices()
+    results: list[dict[str, object]] = []
+    threads = [
+        threading.Thread(target=lambda: results.append(listing(provider)))
+        for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert state["most"] == 1
+    assert (
+        state["restarts"] == 8
+    )  # one restart per listing, inputs and outputs together
+    assert results[0] == {
+        "provider": "wasapi",
+        "inputs": [{"name": "Mic", "default": True}],
+        "outputs": [{"name": "Chat", "default": True}],
+        "error": None,
+    }

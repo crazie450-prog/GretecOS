@@ -85,6 +85,13 @@ def test_edits_that_would_not_read_back_are_refused(text: str) -> None:
         set_values(text, {("paths", "play"): "GTNH-Play"})
 
 
+def test_a_key_line_inside_a_multi_line_string_is_never_edited() -> None:
+    """The review's L3: the key reads back right, but the string around it would change."""
+    text = '[voice]\nnote = """\ntalk_key = "F14"\n"""\ntalk_key = "F13"\n'
+    with pytest.raises(TomlEditError, match="more than the keys"):
+        set_values(text, {("voice", "talk_key"): "F15"})
+
+
 def test_format_value() -> None:
     assert format_value(True) == "true" and format_value(7) == "7"
     assert format_value(["a", 'b"']) == '["a", "b\\""]'

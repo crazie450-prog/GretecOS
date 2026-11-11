@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 from gregtec import doctor
 from gregtec.llm import keys
-from gregtec.setup.registry import ERROR, OK, WARN, Check, Context, Field, Outcome, Step
+from gregtec.setup.registry import OK, WARN, Check, Context, Field, Outcome, Step
 from gregtec.setup.steps import voice
 
 
@@ -18,8 +18,14 @@ def rows(ctx: Context) -> list[Check]:
         backend = ", ".join(keys.backend_chain())
         out.append(Check("keyring", "Keyring", OK, backend))
     except Exception as exc:  # noqa: BLE001 - any keyring failure, said plainly
+        # A warning, like a missing secret: with no keyring GOS runs in no-AI mode (D164).
         out.append(
-            Check("keyring", "Keyring", ERROR, f"unavailable ({type(exc).__name__})")
+            Check(
+                "keyring",
+                "Keyring",
+                WARN,
+                f"unavailable ({type(exc).__name__}): no key can be stored, so no AI",
+            )
         )
     for name, label, missing in (
         (

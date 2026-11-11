@@ -29,30 +29,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+# A checklist row lives with gos doctor's checks, the lower level; steps import it from here.
+from gregtec.doctor import ERROR, OK, WARN, Check  # noqa: F401 - re-exported for the steps
+
 if TYPE_CHECKING:
     from gregtec.config import Config
 
 KINDS = ("path", "text", "choice", "device", "key", "phrase", "secret", "checks")
-OK, WARN, ERROR = "ok", "warn", "error"
 VALUE_MAX = 400  # characters in one value (paths included)
-
-
-@dataclass(frozen=True)
-class Check:
-    """One checklist row: what was checked, how it went (ok, warn, error) and why."""
-
-    id: str
-    label: str
-    status: str
-    detail: str = ""
-
-    def as_dict(self) -> dict[str, str]:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "status": self.status,
-            "detail": self.detail,
-        }
 
 
 @dataclass

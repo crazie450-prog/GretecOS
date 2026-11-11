@@ -120,7 +120,7 @@ def set_values(text: str, updates: Updates) -> str:
     """``text`` with ``updates`` made. Raises :class:`TomlEditError` when ``text`` isn't TOML,
     or the edited text wouldn't read back as asked."""
     try:
-        tomllib.loads(text)
+        before = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise TomlEditError(
             f"gos.toml isn't valid TOML now ({exc}); fix it by hand"
@@ -174,11 +174,26 @@ def set_values(text: str, updates: Updates) -> str:
             kept[last + 1 : last + 1] = missing
         lines[start:end] = kept
     result = "\n".join(lines) + "\n"
-    _check(result, updates)
+    _check(result, updates, before)
     return result
 
 
-def _check(result: str, updates: Updates) -> None:
+def _expected(before: dict[str, Any], updates: Updates) -> dict[str, Any]:
+    """``before`` with ``updates`` made, as the edited file must read back."""
+    out = {k: dict(v) if isinstance(v, dict) else v for k, v in before.items()}
+    for (table, key), value in updates.items():
+        section = out.get(table)
+        if value is None:
+            if isinstance(section, dict):
+                section.pop(key, None)
+        elif isinstance(section, dict):
+            section[key] = value
+        else:
+            out[table] = {key: value}
+    return out
+
+
+def _check(result: str, updates: Updates, before: dict[str, Any]) -> None:
     try:
         data = tomllib.loads(result)
     except tomllib.TOMLDecodeError as exc:
@@ -193,6 +208,13 @@ def _check(result: str, updates: Updates) -> None:
                 f"[{table}] {key} wouldn't read back as written (is it a dotted key, an "
                 "inline table or a value over several lines?); edit gos.toml by hand"
             )
+    if data != _expected(
+        before, updates
+    ):  # e.g. a key = line inside a multi-line string
+        raise TomlEditError(
+            "the edit would change more than the keys asked for (a value over several "
+            "lines?); edit gos.toml by hand"
+        )
 
 
 def write_atomic(

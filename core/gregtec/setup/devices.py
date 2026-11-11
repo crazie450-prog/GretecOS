@@ -17,6 +17,7 @@ A device is ``{"name", "default"}``; gos.toml keeps the name (``[voice] input_de
 from __future__ import annotations
 
 import sys
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -79,41 +80,62 @@ class FakeDevices:
         return list(self._outputs)
 
 
+# PortAudio isn't thread-safe, and a listing restarts it: two at once (the device step and its
+# check, or two dashboards) could stop it under the other's feet, a native crash of the core. So
+# one listing at a time, in the whole process.
+_PORTAUDIO = threading.Lock()
+
+
 class WasapiDevices:
-    """Windows: WASAPI's capture and playback devices through PortAudio (``sounddevice``)."""
+    """Windows: WASAPI's capture and playback devices through PortAudio (``sounddevice``).
+    :meth:`both` restarts PortAudio once and lists both, holding :data:`_PORTAUDIO`."""
 
     name = "wasapi"
 
-    def _list(self, channels: str, default_key: str) -> list[Device]:
+    def both(self) -> tuple[list[Device], list[Device]]:
         try:
             import sounddevice as sd  # Windows only (voice group, D179); starts PortAudio
         except Exception as exc:  # noqa: BLE001 - OSError (no PortAudio), PortAudioError
             raise DeviceError(f"PortAudio didn't start: {exc}") from None
-        try:
-            sd._terminate()  # a fresh device list (see the module docstring)
-            sd._initialize()
-            apis = list(sd.query_hostapis())
-            index = next(
-                (i for i, a in enumerate(apis) if a["name"] == "Windows WASAPI"), None
-            )
-            if index is None:
-                raise DeviceError("PortAudio has no WASAPI host API on this PC")
-            default = apis[index][default_key]
+        with _PORTAUDIO:
+            try:
+                sd._terminate()  # a fresh device list (see the module docstring)
+                sd._initialize()
+                apis = list(sd.query_hostapis())
+                index = next(
+                    (i for i, a in enumerate(apis) if a["name"] == "Windows WASAPI"),
+                    None,
+                )
+                if index is None:
+                    raise DeviceError("PortAudio has no WASAPI host API on this PC")
+                api = apis[index]
+                devices = [
+                    (i, d)
+                    for i, d in enumerate(sd.query_devices())
+                    if d["hostapi"] == index
+                ]
+            except DeviceError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - PortAudioError and friends
+                raise DeviceError(f"PortAudio can't list devices: {exc}") from None
+
+        def of(channels: str, default_key: str) -> list[Device]:
             return [
-                Device(str(d["name"]), i == default)
-                for i, d in enumerate(sd.query_devices())
-                if d["hostapi"] == index and d[channels] > 0
+                Device(str(d["name"]), i == api[default_key])
+                for i, d in devices
+                if d[channels] > 0
             ]
-        except DeviceError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - PortAudioError and friends
-            raise DeviceError(f"PortAudio can't list devices: {exc}") from None
+
+        return (
+            of("max_input_channels", "default_input_device"),
+            of("max_output_channels", "default_output_device"),
+        )
 
     def inputs(self) -> list[Device]:
-        return self._list("max_input_channels", "default_input_device")
+        return self.both()[0]
 
     def outputs(self) -> list[Device]:
-        return self._list("max_output_channels", "default_output_device")
+        return self.both()[1]
 
 
 def default_provider() -> DeviceProvider:
@@ -123,7 +145,10 @@ def default_provider() -> DeviceProvider:
 def listing(provider: DeviceProvider) -> dict[str, Any]:
     """``{"provider", "inputs", "outputs", "error"}``: what the wizard's device step shows."""
     try:
-        inputs, outputs = provider.inputs(), provider.outputs()
+        if isinstance(provider, WasapiDevices):  # one PortAudio restart for both lists
+            inputs, outputs = provider.both()
+        else:
+            inputs, outputs = provider.inputs(), provider.outputs()
     except DeviceError as exc:
         return {
             "provider": provider.name,

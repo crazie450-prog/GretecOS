@@ -33,6 +33,48 @@ def candidate(ctx: Context, values: Mapping[str, str]) -> Config:
     return dataclasses.replace(ctx.cfg, **changes)  # type: ignore[arg-type]
 
 
+def _folded(path: Path) -> Path:
+    """``path`` resolved and case-folded: Windows' file names ignore case."""
+    return Path(str(path.resolve()).casefold())
+
+
+def _within(path: Path, folder: Path) -> bool:
+    """Whether ``path`` is ``folder`` or inside it (resolved, case ignored)."""
+    p, f = _folded(path), _folded(folder)
+    return p == f or f in p.parents
+
+
+def play_saved(ctx: Context) -> bool:
+    """Whether gos.toml already says where Play is: its ``[paths]`` names Play or the instances
+    folder, or setup was finished with it (Play is then the default the core runs with)."""
+    return (
+        ctx.toml("paths", "play") is not None
+        or ctx.toml("paths", "prism_instances") is not None
+        or ctx.toml("setup", "completed_utc") is not None
+    )
+
+
+def play_guard(ctx: Context, cfg: Config) -> dict[str, str]:
+    """Problems by field that would point GOS's writes at Play (H1 of the WO-2.9 review, D167):
+    Export or Lab in the Play folder gos.toml has now (``gregtec.sync`` mirrors into Export and
+    Lab and deletes what the source lacks), or Play moved once it is saved. Moving Play is a hand
+    edit of gos.toml, never a click."""
+    play_now = ctx.cfg.instance("play")
+    problems: dict[str, str] = {}
+    if play_saved(ctx) and _folded(cfg.instance("play")) != _folded(play_now):
+        problems["play"] = (
+            f"Play is {play_now} in gos.toml; the wizard never moves Play. To change it, edit "
+            "[paths] in gos.toml by hand"
+        )
+    for role in ("export", "lab"):
+        if _within(cfg.instance(role), play_now):
+            problems[role] = (
+                f"that is Play's folder ({play_now}); GOS writes to {role.capitalize()}, so it "
+                "must never be Play"
+            )
+    return problems
+
+
 def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
     problems = {
         role: why
@@ -40,6 +82,8 @@ def check(ctx: Context, values: Mapping[str, str]) -> Outcome:
         if (why := _name_problem(values.get(role, ""))) is not None
     }
     cfg = candidate(ctx, values)
+    if not problems:
+        problems = play_guard(ctx, cfg)
     rows = doctor.checklist(cfg)
     config_home = ctx.path.parent.parent
     if cfg.gos_home.resolve() != config_home.resolve():
