@@ -15,17 +15,20 @@ never stops the others:
    each period), the job is skipped and the logs wait. A period whose summary was refused
    :data:`MAX_REFUSALS` times is held (``kv``) and listed in ``inbox/ib-compact-held.md`` for
    Clayton; ``gos vault maintain`` (``retry_held``) tries again.
-2. ``schema``: check every note against ``_gos/schema.md``; the problems go to one standing note,
+2. ``quests``: rewrite the questline summaries (``quests/qs-<line>.md``) whose content the last
+   quest load changed (:mod:`gregtec.quests.summaries`, WO-6.4); nothing when no quests are
+   loaded.
+3. ``schema``: check every note against ``_gos/schema.md``; the problems go to one standing note,
    ``inbox/ib-schema-check.md``, rewritten when they change and removed when there are none.
-3. ``index``: rebuild ``INDEX.md`` (:mod:`gregtec.vault.index`), after the inbox notes the first
+4. ``index``: rebuild ``INDEX.md`` (:mod:`gregtec.vault.index`), after the inbox notes the first
    two jobs write.
-4. ``fts``: mirror the notes into ``note_fts`` (:mod:`gregtec.vault.fts`).
-5. ``backup``: ``VACUUM INTO data/backups/gos-YYYYMMDD.sqlite`` (through a temporary name, so a
+5. ``fts``: mirror the notes into ``note_fts`` (:mod:`gregtec.vault.fts`).
+6. ``backup``: ``VACUUM INTO data/backups/gos-YYYYMMDD.sqlite`` (through a temporary name, so a
    half-written backup never has a backup's name; a ``.tmp`` left by a killed run is removed),
    keeping the newest ``keep_backups``. The scheduler also runs it at session end once the
    daily run has been missed for 2 days (D142 (g), D143), with a deadline when the core is
    stopping (an interrupted backup leaves no file).
-6. ``git``: commit the agents' and the curator's changes (:func:`commit_agent_writes`).
+7. ``git``: commit the agents' and the curator's changes (:func:`commit_agent_writes`).
 
 Git commits cover every path except ``me/`` (Clayton's) and ``_gos/`` (``gos vault deploy``
 commits it) and the temporary files of a write that was killed; hooks and signing are off, as
@@ -64,7 +67,7 @@ from gregtec.vault.deploy import _cmd
 
 log = logging.getLogger(__name__)
 
-JOBS = ("compact", "schema", "index", "fts", "backup", "git")
+JOBS = ("compact", "quests", "schema", "index", "fts", "backup", "git")
 OK, SKIPPED, FAILED = "ok", "skipped", "failed"
 KEEP_BACKUPS = 7
 BACKUP = re.compile(r"gos-(\d{8})\.sqlite")
@@ -596,7 +599,7 @@ class Curator:
 
     def _job(self, job: str, today: dt.date, stop: Callable[[], bool]) -> JobResult:
         if (
-            job in ("compact", "index", "schema", "fts", "git")
+            job in ("compact", "quests", "index", "schema", "fts", "git")
             and not (self.vault / io.SCHEMA_NOTE).is_file()
         ):
             return JobResult(
@@ -610,6 +613,15 @@ class Curator:
                 self.meter,
                 retry_held=self.retry_held,
                 stop=stop,
+            )
+        if job == "quests":
+            from gregtec.quests import summaries  # the quest guide imports the tool layer
+
+            done = summaries.refresh_paths(self.db, self.vault)
+            if done is None:
+                return JobResult(job, SKIPPED, "no quests loaded")
+            return JobResult(
+                job, OK, f"{len(done.written)} written, {done.unchanged} unchanged"
             )
         if job == "index":
             changed = index.build(self.vault, today)

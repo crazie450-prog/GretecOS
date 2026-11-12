@@ -21,6 +21,10 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
   no such way (``gos ask``, any other client) can't confirm, and is told how to.
 - Saved plans ("my plans", "show plan X", "BOM for X") are instant commands
   (:mod:`gregtec.agents.saved_plans`), so they work with the AI offline.
+- "Spoil it" / "full answer" / "partial answer" (WO-6.4, D26, D72) show the quests past the
+  frontier that the last answer named (its quest card's locked quests, else the ``q:`` ids it
+  cited; at most :data:`SPOIL_MAX`) at that level, with no model call: his words are the
+  request, so the quest tools allow it (D268).
 - "persona <name>" switches the persona with no model call (WO-5.6, D206), "which persona"
   names it; every reply carries the active persona (``persona``: id, name, voice), so the voice
   client speaks it in that persona's voice (D207).
@@ -72,6 +76,7 @@ from gregtec.bridge.actions import VIAS, ActionDesk
 from gregtec.db import access
 from gregtec.llm.fake import EchoClient
 from gregtec.llm.usage import UsageMeter
+from gregtec.quests import spoilers
 from gregtec.store import Store
 
 if TYPE_CHECKING:
@@ -91,6 +96,8 @@ NOTHING_PENDING = "Nothing is waiting for confirmation."
 CONFIRM_ELSEWHERE = "Confirm by voice, on the dashboard, on the phone or in Discord; this way in can't confirm."
 NOTHING_TO_REPEAT = "I haven't said anything yet."
 EMPTY = "Ask me something: a recipe, an item, a machine or a quest."
+NOTHING_TO_SPOIL = "There's nothing to spoil yet: ask about a quest first."
+SPOIL_MAX = 3  # quests one "spoil it" opens
 # NOT_CHECKED for a turn with no card to point at (the model looked things up itself)
 NOT_CHECKED_NO_CARD = (
     "I can't give that answer with checked numbers. Ask for the item's recipe or uses and "
@@ -480,6 +487,8 @@ class Asker:
             return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
         if intent == router.PERSONA:
             return self._persona(route)
+        if intent == router.SPOIL:
+            return self._spoil(route)
         if intent in (router.PLANS, router.PLAN):
             reply = self._plans(route)
             assert reply is not None  # only fall_through gives None
@@ -492,6 +501,46 @@ class Asker:
         else:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
+
+    def _spoil(self, route: router.Route) -> Reply:
+        """The last answer's quests past the frontier, at the level his words ask for."""
+        with self._lock:
+            last = self._last
+        level = spoilers.asked_level(route.text)
+        refs: list[str] = []
+        if last is not None:
+            card = last.card or {}
+            if card.get("type") == "quest":
+                refs = [
+                    q["ref"] for q in card.get("quests", []) if q.get("state") == "locked"
+                ]
+            refs = refs or [r for r in last.refs if r.startswith("q:")]
+        refs = list(dict.fromkeys(refs))[:SPOIL_MAX]
+        if not refs or level == spoilers.NUDGE:
+            return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent)
+        quests: list[dict[str, Any]] = []
+        card: dict[str, Any] | None = None
+        for ref in refs:
+            args = {"id": ref, "spoil": level}
+            out = self.registry.call("quest_get", args, lane="fast", request=route.text)
+            block = prefetch.Block("quest_get", args, out.text, out.is_error)
+            if out.is_error:
+                continue
+            got = block.card(self.registry.env.db)
+            card = card or got
+            quests += got.get("quests", [])
+        if card is None:
+            return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent)
+        card = {**card, "quests": quests, "spoil": level}
+        named = [f"{q['name'] or 'a quest'} ({q['ref']})" for q in quests]
+        how = "Full answer" if level == spoilers.FULL else "What it asks for"
+        return Reply(
+            f"{how}: {', '.join(named)}; the detail is on the dashboard.",
+            router.INSTANT,
+            route.intent,
+            card=card,
+            refs=[q["ref"] for q in quests],
+        )
 
     def _persona(self, route: router.Route) -> Reply:
         """Switch to the persona named, or say which one is on (no model call, D206)."""

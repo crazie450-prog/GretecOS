@@ -31,6 +31,7 @@ from gregtec import (
 )
 from gregtec import deploy as app_deploy
 from gregtec.agents import recipe_eval_cli
+from gregtec.quests import cli as quest_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -478,6 +479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
     recipe_eval_cli.add_parsers(eval_cmds)
+    quest_cli.add_parsers(quest_cmds, eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -696,6 +698,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.player,
                 sys.stdout,
             )
+        if args.quests_command == quest_cli.SUMMARIES:
+            return quest_cli.run_summaries(args, sys.stdout)
         if args.quests_command == "frontier":
             return quest_db.frontier_main(
                 args.config, args.line, args.limit, sys.stdout
@@ -745,6 +749,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--limit must be at least 1")
         if args.eval_command == recipe_eval_cli.COMMAND:
             return recipe_eval_cli.run(args, sys.stdout)
+        if args.eval_command == quest_cli.EVAL:
+            return quest_cli.run_eval(args, sys.stdout)
         if args.eval_command == "deep-lane":
             from gregtec.agents import deep_eval
 

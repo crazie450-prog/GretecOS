@@ -3,8 +3,9 @@
 :func:`route` reads the request text (typed, or the STT transcript) and returns a
 :class:`Route`:
 
-- **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "what's
-  my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
+- **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "spoil
+  it" / "full answer" / "partial answer" (the last answer's quests past the frontier at that
+  spoiler level, WO-6.4, D26), "what's my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
   model call, D206). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
@@ -38,6 +39,7 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
 )
 PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
 PERSONA = "persona"  # switch or name the persona (WO-5.6, plan 7.11)
+SPOIL = "spoil"  # the last answer's locked quests, partial or full (WO-6.4, D26, D72)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -99,6 +101,14 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     ),
     (CONFIRM, _rx(r"(?:yes,? )?confirm(?: it)?")),
     (CANCEL, _rx(r"cancel(?: it| that)?", r"never ?mind")),
+    (
+        SPOIL,
+        _rx(
+            r"(?:ok |okay |fine,? |go on,? |just )?spoil (?:it|that|this|me)(?: then)?",
+            r"(?:give me |i want |tell me )?(?:the )?full (?:answer|spoilers?)",
+            r"(?:give me |i want |tell me )?(?:a |the )?partial (?:answer|spoiler|hint)",
+        ),
+    ),
     (
         TIER,
         _rx(
