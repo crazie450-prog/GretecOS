@@ -4,6 +4,7 @@ gregtec.crops.rules' tests."""
 
 from __future__ import annotations
 
+import dataclasses
 from types import ModuleType
 
 import pytest
@@ -141,10 +142,28 @@ def test_a_crop_manager_step_from_lv_done_once_my_base_has_one(facts) -> None:  
 
 def test_the_stats_plan(facts) -> None:  # noqa: ANN001
     by_hand = P.guide(facts, "cropsnh:reed", tier=0).stats
-    managed = P.guide(facts, "cropsnh:reed", tier=1).stats
-    assert by_hand is not None and managed is not None
-    assert by_hand.variations == (-2, -1, 0, 1, 2)  # 100 fertilizer by hand
+    lv_no_manager = P.guide(facts, "cropsnh:reed", tier=1).stats
+    managed = P.guide(facts, "cropsnh:reed", tier=1, owned={28001}).stats
+    assert by_hand is not None and managed is not None and lv_no_manager is not None
+    # by hand the fertilizer runs out a growth tick at a time: the low list (review M1)
+    assert by_hand.variations == (-1, -1, 0, 1, 1)
+    # LV alone doesn't give 200: only a Crop Manager My base lists does (review M2)
+    assert lv_no_manager.variations == (-1, -1, 0, 1, 1)
     assert managed.variations == (0, 0, 0, 1, 2, 3, 4)  # a Crop Manager's 200
+    lines = nums(by_hand.lines)
+    assert (
+        "Children vary by one of -1, -1, 0, +1, +1 at 0 fertilizer (by hand it runs out)"
+        in lines
+    )
+    # topped up to 100 it stays at 50 or more for 51 growth ticks (100 down to 50)
+    assert (
+        "Topped up to 100 fertilizer at least every 11 min (51 growth ticks) a stick stays at "
+        "50 or more and children draw from -2, -1, 0, +1, +2 instead"
+    ) in lines
+    assert any(
+        x.startswith("Kept topped up, the slowest stat takes about ") for x in lines
+    )
+    assert not any("Topped up" in x for x in nums(managed.lines))
     assert by_hand.target == (31, 31, 31)
     assert nums(managed.lines)[0].startswith("Growth 1 to 31: about ")
     assert any("raise Resistance first" in w.text() for w in managed.warnings)
@@ -212,3 +231,103 @@ def test_the_pm_picks_cover_the_acceptance_shapes(world: ModuleType) -> None:
     )
     for g in guides:
         assert P.check(g, f) == [], g.target
+
+
+def test_nutrients_show_the_dry_stick_and_its_upkeep(world: ModuleType) -> None:
+    """A stick uses 1 water and 1 fertilizer every growth tick (review M1): the requirement
+    shows the dry score too, and a crop that gets sick once they run out is a "check"."""
+
+    def need(g: P.Guide, crop: str) -> P.Requirement:
+        return next(
+            r
+            for s in g.steps
+            for r in s.requirements
+            if r.what == "nutrients" and crop in r.line.text()
+        )
+
+    reed = need(P.guide(world.facts(), "cropsnh:reed"), "Child Reed")
+    assert reed.status == "met"  # tier 2 needs 4: even dry it grows at full speed
+    facts = world.facts()
+    crops = facts.data.crops
+    crops["cropsnh:reed"] = dataclasses.replace(crops["cropsnh:reed"], tier=6)
+    g = P.guide(facts, "cropsnh:reed")
+    hot = need(g, "Child Reed")
+    # tier 6 needs 12; topped up 27 (5 + 10 + 10 + 2 sky); dry 7 (5 + 2): 35 of 60 scaled is
+    # 25 short, 100 - 4 x 25 = 0, so it gets sick
+    assert hot.status == "check"
+    assert hot.line.text() == (
+        "Child Reed: needs 12 points for full speed; topped up with water and fertilizer "
+        "it gets 27 points, and 7 points once they run dry (a stick uses 1 of each every growth "
+        "tick: 21 min from 100): top them up before they run out, or it gets sick"
+    )
+    assert P.check(g, facts) == []
+    assert "best case" in g.notes[0].text()
+    managed = P.guide(facts, "cropsnh:reed", tier=1, owned={28001})
+    hot = need(managed, "Child Reed")
+    assert hot.status == "met"
+    assert "the Crop Manager keeps it at 27 points" in hot.line.text()
+    assert "kept topped up by the Crop Manager" in managed.notes[0].text()
+
+
+def test_the_crop_manager_step_says_its_switches_start_off(facts) -> None:  # noqa: ANN001
+    s = P.guide(facts, "cropsnh:reed", tier=1).steps[0]
+    req = next(r for r in s.requirements if r.what == "machine")
+    assert req.status == "check" and "start switched off" in req.line.text()
+    assert req.line.refs == ("mte:28001", "crop:cropsnh:reed")
+
+
+def test_a_parent_that_never_grows_has_no_time_and_no_total(facts) -> None:  # noqa: ANN001
+    """Review L4: a tier-16 parent is sick at any nutrients the setup gives."""
+    crops = facts.data.crops
+    crops["cropsnh:carrot"] = dataclasses.replace(crops["cropsnh:carrot"], tier=16)
+    g = P.guide(facts, "cropsnh:reed")
+    step = g.steps[-1]
+    assert step.kind == "sticks" and step.expected_s is None
+    assert nums(step.numbers)[1].startswith(
+        "A parent doesn't grow at the assumed setup"
+    )
+    assert not any("after 0 s" in x for x in nums(step.numbers))
+    assert g.total is None
+    assert any("No total time" in n.text() for n in g.notes)
+    carrot = next(
+        r
+        for r in step.requirements
+        if r.what == "nutrients" and "Carrot" in r.line.text()
+    )
+    assert carrot.status == "needed"
+    assert P.check(g, facts) == []
+
+
+def test_a_much_faster_pool_is_noted_never_chosen(facts, world: ModuleType) -> None:  # noqa: ANN001
+    """The advisor's D274 suggestion: the recipe path stays first; a pool path at most half
+    its time is a note."""
+    crops = facts.data.crops
+    crops["cropsnh:wheat"] = dataclasses.replace(
+        crops["cropsnh:wheat"], growth_duration=60000
+    )
+    pool = facts.data.pools[0]
+    facts.data.pools[0] = dataclasses.replace(
+        pool, members=(*pool.members, "cropsnh:reed")
+    )
+    g = P.guide(facts, "cropsnh:reed")
+    assert g.steps[-1].kind == "sticks"  # recipes first
+    note = g.notes[-1].text()
+    assert note.startswith(
+        "Faster but a mutation pool's luck: Carrot + Carrot on sticks gives Reed in about "
+    )
+    assert "for the path below" in note
+    assert P.check(g, facts) == []
+    assert not any(
+        "pool" in n.text() for n in P.guide(world.facts(), "cropsnh:reed").notes
+    )
+
+
+def test_the_validator_checks_digits_against_the_rows_cited(facts) -> None:  # noqa: ANN001
+    """Review L1: a cited line's own digits must be in the rows it cites."""
+    g = P.guide(facts, "cropsnh:reed")
+    s = g.steps[-1]
+    s.warnings.append(P.Line("Wait 5 min", refs=("crop:cropsnh:reed",)))
+    s.warnings.append(P.Line("Growth above 24", refs=("crop:cropsnh:reed",)))
+    s.warnings.append(P.Line("Basic Crop Manager", refs=("mte:28001",)))
+    problems = P.check(g, facts)
+    assert problems == ["digits '5' in a line its citations don't hold: 'Wait 5 min'"]

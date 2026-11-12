@@ -6,8 +6,9 @@ plus any crop an alternate seed plants, such as a wheat seed) and writes each st
 - **Layout**: which parents sit on single sticks around the double stick (north, south, east and
   west only), and what goes under each stick (a sub-soil block).
 - **Requirements**, checked against what is known: soil and sub-soil blocks (his stock in My
-  base), light, and the nutrient score the assumed setup gives against what the crop's tier
-  needs.
+  base), light, and the nutrient score against what the crop's tier needs, both with water and
+  fertilizer kept topped up (the best case the times assume) and once they run dry (a stick
+  uses 1 of each every growth tick).
 - **Odds and times**, computed by :mod:`gregtec.crops.rules` from CropsNH's own rules and the
   crops' exported numbers: the chance per growth tick (every 256 ticks), the expected and 90%
   times, the time for the parents to reach their breeding threshold, the other children and
@@ -28,6 +29,7 @@ validator (WO-6.7 acceptance: every number cited).
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -47,6 +49,7 @@ BREEDER_CONFIDENCE = (
     0.99  # copies to make before a Crop Breeder run (a failure eats them)
 )
 POOL_CANDIDATES = 4  # cheapest members of a pool tried as parents
+POOL_NOTE_FACTOR = 2  # a pool path at most half the chosen path's time is noted
 STAT_PARENTS = 2  # parents around a double stick in the stats plan
 TIER_NAMES = ("ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV")
 
@@ -200,14 +203,18 @@ class Guide:
 
 @dataclass(frozen=True)
 class Setup:
-    """The conditions a guide assumes for every stick (the Crops view shows them)."""
+    """The conditions a guide's times assume for every stick (the Crops view shows them).
 
-    water: int = (
-        rules.MAX_WATER_BONUS_AT
-    )  # kept wet (rain, a watering can, a Crop Manager)
+    The best case for water and fertilizer: kept topped up (water by rain, by hand or a Crop
+    Manager; fertilizer to 100 by hand, or a Crop Manager's 200 once My base lists one). A stick
+    uses 1 of each every growth tick, so the guide also shows the nutrients once they run dry
+    and draws the stats plan at the fertilizer a hand-fed stick mostly has. The biome is the
+    worst case: none liked, dry."""
+
+    water: int = rules.MAX_WATER_BONUS_AT  # kept topped up
     sky: bool = True
     liked_biome_tags: int = 0
-    humidity: float = 0.0  # the worst case: a dry biome gives nothing
+    humidity: float = 0.0  # a dry biome gives nothing
 
 
 # --- the path --------------------------------------------------------------------------------
@@ -243,8 +250,10 @@ class _Planner:
         setup: Setup,
         alternate_seeds: bool,
         stock: frozenset[str],
+        managed: bool = False,
     ) -> None:
         self.f = facts
+        self.managed = managed  # My base lists a Crop Manager
         self.crops = facts.data.crops
         self.have = dict(have)
         self.tier = tier
@@ -277,17 +286,28 @@ class _Planner:
         return self.have.get(cid, (rules.MIN_STAT, rules.MIN_STAT, rules.MIN_STAT))
 
     def fertilizer(self) -> int:
-        """Fertilizer in the sticks the guide assumes: a Crop Manager's 200 from LV, else the
-        100 a hand tops them to."""
-        if self.tier >= rules.LV and self.f.lowest("crop_manager") is not None:
+        """Fertilizer in topped-up sticks: a Crop Manager's 200 once My base lists one (its
+        step says to switch fertilizing on), else the 100 a hand tops them to."""
+        if self.managed:
             return rules.CROP_MANAGER_FERTILIZER_CAP
         return rules.MANUAL_FERTILIZER_MAX
 
+    def breeding_fertilizer(self) -> int:
+        """The fertilizer a child's stat list is drawn at: a Crop Manager keeps 200; by hand it
+        runs out a growth tick at a time, so the guide takes it as gone (the low list)."""
+        return rules.CROP_MANAGER_FERTILIZER_CAP if self.managed else 0
+
     def nutrients(self) -> int:
+        """Nutrient points with water and fertilizer topped up (the best case)."""
         s = self.setup
         return rules.nutrients(
             s.liked_biome_tags, s.humidity, s.sky, s.water, self.fertilizer()
         )
+
+    def dry_nutrients(self) -> int:
+        """Nutrient points once water and fertilizer have run out."""
+        s = self.setup
+        return rules.nutrients(s.liked_biome_tags, s.humidity, s.sky, 0, 0)
 
     def neighbour(self, cid: str) -> rules.Neighbour:
         c = self.crop(cid)
@@ -506,26 +526,50 @@ def _requirements(p: _Planner, cid: str, role: str) -> list[Requirement]:
             )
     need = rules.nutrients_needed(c.tier)
     have_n = p.nutrients()
-    rate = rules.growth_rate(have_n, c.tier, p.stats_of(cid)[0])
-    nums = (
-        _count(need, "points", (ref,)),
-        _count(have_n, "points", (ref,)),
-    )
+    growth = p.stats_of(cid)[0]
+    rate = rules.growth_rate(have_n, c.tier, growth)
+    dry = p.dry_nutrients()
+    if p.managed:
+        given = "the Crop Manager keeps it at {1}"
+        dry_ok = True
+        nums: tuple[Num, ...] = (
+            _count(need, "points", (ref,)),
+            _count(have_n, "points", (ref,)),
+        )
+    else:
+        dry_ok = rules.growth_rate(dry, c.tier, growth) > 0
+        given = (
+            "topped up with water and fertilizer it gets {1}, and {2} once they run dry "
+            "(a stick uses {3} of each every growth tick: {4} from {5})"
+        )
+        nums = (
+            _count(need, "points", (ref,)),
+            _count(have_n, "points", (ref,)),
+            _count(dry, "points", (ref,)),
+            _count(rules.UPKEEP_PER_GROWTH_TICK, "", (ref,)),
+            _secs(
+                rules.upkeep_ticks(rules.MANUAL_FERTILIZER_MAX, 1)
+                * rules.TICK_RATE
+                / rules.TICKS_PER_SECOND,
+                (ref,),
+            ),
+            _count(rules.MANUAL_FERTILIZER_MAX, "", (ref,)),
+        )
     if rate <= 0:
         status, tail = "needed", ": too few, it gets sick; add liked biomes or humidity"
-    elif have_n >= need:
+    elif not dry_ok:
+        status, tail = "check", ": top them up before they run out, or it gets sick"
+    elif have_n >= need and (p.managed or dry >= need):
         status, tail = "met", ""
+    elif have_n >= need:
+        status, tail = "check", ": it slows down once they run out; keep them topped up"
     else:
         status, tail = "check", ": it grows, but slower than its base speed"
     out.append(
         Requirement(
             "nutrients",
             status,
-            Line(
-                f"{role} {c.name}: needs {{0}} for full speed; the assumed setup gives {{1}}"
-                + tail,
-                nums,
-            ),
+            Line(f"{role} {c.name}: needs {{0}} for full speed; {given}" + tail, nums),
         )
     )
     return out
@@ -566,23 +610,40 @@ def _sticks_step(p: _Planner, n: int, o: _Option) -> Step:
         step.requirements += _requirements(p, x, "Parent")
     step.requirements += _requirements(p, o.child, "Child")
     ready = [p.ready_ticks(x) for x in dict.fromkeys(parents)]
-    ready_s = max((t or 0) for t in ready) * rules.TICK_RATE / rules.TICKS_PER_SECOND
     expected_ticks = 1 / float(pt)
     secs = expected_ticks * rules.TICK_RATE / rules.TICKS_PER_SECOND
     t90 = rules.attempts_for(pt, CONFIDENCE) or 0
-    step.expected_s = ready_s + secs
-    step.numbers += [
+    threshold = _pct(max(p.crop(x).breeding_threshold for x in parents), refs)
+    step.numbers.append(
         Line(
             "Chance per growth tick (every {0}): {1}",
             (_count(rules.TICK_RATE, "ticks", refs), _pct(pt, refs)),
-        ),
-        Line(
-            "Parents reach their breeding threshold ({0} grown) after {1}",
-            (
-                _pct(max(p.crop(x).breeding_threshold for x in parents), refs),
-                _secs(ready_s, refs),
-            ),
-        ),
+        )
+    )
+    if any(t is None for t in ready):
+        # a parent that doesn't grow at the assumed setup never breeds: no time, no total
+        step.expected_s = None
+        step.numbers.append(
+            Line(
+                "A parent doesn't grow at the assumed setup, so it never reaches its breeding "
+                "threshold ({0} grown): give it the nutrients it needs first",
+                (threshold,),
+            )
+        )
+    else:
+        ready_s = (
+            max(t for t in ready if t is not None)
+            * rules.TICK_RATE
+            / rules.TICKS_PER_SECOND
+        )
+        step.expected_s = ready_s + secs
+        step.numbers.append(
+            Line(
+                "Parents reach their breeding threshold ({0} grown) after {1}",
+                (threshold, _secs(ready_s, refs)),
+            )
+        )
+    step.numbers += [
         Line(
             "Then {0} expected, {1} for a {2} chance",
             (
@@ -652,9 +713,10 @@ def _sticks_step(p: _Planner, n: int, o: _Option) -> Step:
 
 def _keep(p: _Planner, cid: str) -> list[Line]:
     c = p.crop(cid)
-    variations = rules.stat_variations(False, p.fertilizer())
+    fert = p.breeding_fertilizer()
+    variations = rules.stat_variations(False, fert)
     g = p.stats_of(cid)
-    return [
+    out = [
         Line(
             "Check each child with the Plant Lens; keep the best and replace the weakest parent",
             refs=(c.ref,),
@@ -668,14 +730,37 @@ def _keep(p: _Planner, cid: str) -> list[Line]:
             ),
         ),
         Line(
-            "Child stats: the parents' average plus one of {0} steps at the assumed fertilizer "
-            "({1})",
-            (
-                _count(len(variations), "", (c.ref,)),
-                _count(p.fertilizer(), "", (c.ref,)),
-            ),
+            "Child stats: the parents' average plus one of {0} at {1} fertilizer"
+            + (" (a Crop Manager)" if p.managed else " (by hand it runs out)"),
+            (_steps_num(variations, (c.ref,)), _count(fert, "", (c.ref,))),
         ),
     ]
+    if not p.managed:
+        out.append(_topped_up_line((c.ref,)))
+    return out
+
+
+def _steps_num(variations: Sequence[int], refs: Iterable[str]) -> Num:
+    """A stat variation list as it reads ("-1, -1, 0, +1, +1")."""
+    text = ", ".join(f"{v:+d}" if v else "0" for v in variations)
+    return Num(len(variations), "steps", tuple(dict.fromkeys(refs)), text)
+
+
+def _topped_up_line(refs: tuple[str, ...]) -> Line:
+    """What fertilizer topped up by hand to the medium threshold or more gives instead."""
+    med = rules.stat_variations(False, rules.MED_FERTILIZER)
+    ticks = rules.upkeep_ticks(rules.MANUAL_FERTILIZER_MAX, rules.MED_FERTILIZER)
+    return Line(
+        "Topped up to {0} fertilizer at least every {1} ({2} growth ticks) a stick stays at "
+        "{3} or more and children draw from {4} instead",
+        (
+            _count(rules.MANUAL_FERTILIZER_MAX, "", refs),
+            _secs(ticks * rules.TICK_RATE / rules.TICKS_PER_SECOND, refs),
+            _count(ticks, "", refs),
+            _count(rules.MED_FERTILIZER, "", refs),
+            _steps_num(med, refs),
+        ),
+    )
 
 
 def _breeder_step(p: _Planner, n: int, o: _Option) -> Step:
@@ -842,6 +927,17 @@ def _manager_step(p: _Planner, n: int, target: str) -> Step | None:
         f"{m.name}: water, fertilizer past 100 and Weed-EX for the breeding field"
     )
     step.layout = []
+    step.requirements.append(
+        Requirement(
+            "machine",
+            "check",
+            Line(
+                "Water, fertilizer and Weed-EX start switched off: turn each on in its GUI, "
+                "fill its water, fertilizer and Weed-EX, and keep it powered",
+                refs=refs,
+            ),
+        )
+    )
     step.numbers += [
         Line(
             "It reaches {0} on each side ({1} square) and {2} up and down",
@@ -870,13 +966,13 @@ def _manager_step(p: _Planner, n: int, target: str) -> Step | None:
 
 def _stat_plan(p: _Planner, target: str, aim: Stats) -> StatPlan:
     c = p.crop(target)
-    fert = p.fertilizer()
+    fert = p.breeding_fertilizer()
     variations = rules.stat_variations(False, fert)
     plan = StatPlan(aim, variations)
     start = p.stats_of(target)
     outcome = p.attempt((target,) * STAT_PARENTS, None)
     per_tick = outcome.chance(target)
-    ready = p.ready_ticks(target) or 0
+    ready = p.ready_ticks(target)
     refs = (c.ref,)
     names = ("Growth", "Gain", "Resistance")
     worst = 0.0
@@ -898,7 +994,7 @@ def _stat_plan(p: _Planner, target: str, aim: Stats) -> StatPlan:
                 ),
             )
         )
-    if per_tick > 0:
+    if per_tick > 0 and ready is not None:
         per_child = 1 / float(per_tick) + ready
         secs = worst * per_child * rules.TICK_RATE / rules.TICKS_PER_SECOND
         plan.lines.append(
@@ -914,15 +1010,24 @@ def _stat_plan(p: _Planner, target: str, aim: Stats) -> StatPlan:
         )
     plan.lines.append(
         Line(
-            "Children vary by one of {0} steps at {1} fertilizer"
-            + (
-                " (a Crop Manager)"
-                if fert > rules.MANUAL_FERTILIZER_MAX
-                else " (by hand)"
-            ),
-            (_count(len(variations), "", refs), _count(fert, "", refs)),
+            "Children vary by one of {0} at {1} fertilizer"
+            + (" (a Crop Manager)" if p.managed else " (by hand it runs out)"),
+            (_steps_num(variations, refs), _count(fert, "", refs)),
         )
     )
+    if not p.managed:
+        plan.lines.append(_topped_up_line(refs))
+        med = rules.stat_variations(False, rules.MED_FERTILIZER)
+        kept = [
+            rules.generations_to(start[i], aim[i], STAT_PARENTS, med) for i in range(3)
+        ]
+        if all(k is not None for k in kept):
+            plan.lines.append(
+                Line(
+                    "Kept topped up, the slowest stat takes about {0} children",
+                    (_count(max(k for k in kept if k is not None), "", refs, 1),),
+                )
+            )
     if aim[0] > c.weeds_above:
         plan.warnings.append(
             Line(
@@ -998,8 +1103,16 @@ def guide(
     ``owned``: the GT mte ids of the machines My base lists."""
     if target not in facts.data.crops:
         raise GuideError(f"no crop {target!r} in the crop data (run {facts.run_key})")
+    managers = {m.mte_id for m in facts.machines.get("crop_manager", [])}
+    has_manager = bool(managers & set(owned))
     p = _Planner(
-        facts, have or {}, tier, setup or Setup(), alternate_seeds, frozenset(stock)
+        facts,
+        have or {},
+        tier,
+        setup or Setup(),
+        alternate_seeds,
+        frozenset(stock),
+        has_manager,
     )
     best = p.solve()
     c = p.crop(target)
@@ -1013,37 +1126,38 @@ def guide(
         steps.insert(0, manager)
         for i, s in enumerate(steps, 1):
             s.n = i
-    managers = {m.mte_id for m in facts.machines.get("crop_manager", [])}
-    has_manager = bool(managers & set(owned))
     for s in steps:
         # a crop he has is never a step (the path starts from it); a Crop Manager step is done
         # once My base lists one
         s.done = has_manager if s.kind == "crop_manager" else s.child in p.have
-    total_s = sum(s.expected_s or 0.0 for s in steps)
-    total = (
-        Line(
-            "Expected time for every step, one after another: {0}",
-            (
-                _secs(
-                    total_s,
-                    tuple(
-                        dict.fromkeys(
-                            r for s in steps for r in s.refs if r.startswith("crop:")
-                        )
-                    ),
-                ),
-            ),
-        )
-        if steps
-        else None
+    crop_refs = tuple(
+        dict.fromkeys(r for s in steps for r in s.refs if r.startswith("crop:"))
     )
+    stuck = any(s.kind in ("sticks", "pool") and s.expected_s is None for s in steps)
+    total = None
+    if steps and not stuck:
+        total_s = sum(s.expected_s or 0.0 for s in steps)
+        total = Line(
+            "Expected time for every step, one after another: {0}",
+            (_secs(total_s, crop_refs),),
+        )
     notes = [
         Line(
             "Odds and times are computed from CropsNH's rules and these crops' exported "
-            "numbers, with the setup assumed: watered, sky access, no liked biome",
+            "numbers. They are the best case for water and fertilizer: kept topped up"
+            + (" by the Crop Manager" if has_manager else ", which by hand means often")
+            + "; and the worst case for the biome: dry, none liked; with sky access",
             refs=(c.ref,),
         )
     ]
+    if stuck:
+        notes.append(
+            Line(
+                "No total time: a parent doesn't grow at the assumed setup",
+                refs=(c.ref,),
+            )
+        )
+    notes += _pool_note(p, best, target)
     return Guide(
         target,
         c.name,
@@ -1054,6 +1168,46 @@ def guide(
         total,
         notes,
     )
+
+
+def _pool_note(
+    p: _Planner, best: Mapping[str, tuple[Cost, _Option]], target: str
+) -> list[Line]:
+    """A mutation pool that reaches the target much faster than the path chosen (recipes come
+    first, plan 7.17): said, never chosen instead."""
+    cost, o = best[target]
+    if o.kind in ("have", "obtain", "pool"):
+        return []
+    costs = {cid: v[0] for cid, v in best.items()}
+    faster = [
+        (pc, po)
+        for pc, po in p.pool_options(target, costs)
+        if math.isfinite(pc[3]) and pc[3] * POOL_NOTE_FACTOR <= cost[3]
+    ]
+    if not faster:
+        return []
+    pc, po = min(faster, key=lambda co: (co[0][3], co[1].parents))
+    refs = tuple(
+        dict.fromkeys([p.crop(target).ref, *(p.crop(x).ref for x in po.parents)])
+    )
+    names = " + ".join(p.f.crop_name(x) for x in po.parents)
+    head = (
+        f"Faster but a mutation pool's luck: {names} on sticks gives "
+        f"{p.crop(target).name} in about {{0}} in all"
+    )
+    if not math.isfinite(cost[3]):
+        return [
+            Line(
+                head + ", while the path below doesn't finish at the assumed setup",
+                (_secs(pc[3], refs),),
+            )
+        ]
+    return [
+        Line(
+            head + ", against {1} for the path below",
+            (_secs(pc[3], refs), _secs(cost[3], refs)),
+        )
+    ]
 
 
 # --- the validator ---------------------------------------------------------------------------
@@ -1077,11 +1231,33 @@ def check(g: Guide, facts: Facts) -> list[str]:
 
     Every :class:`Num` has at least one citation; every citation is well formed and names
     something in the DB (a crop of the run, a Crop Breeder recipe, a CropsNH machine); a
-    :class:`Line` holds digits outside its numbers only when it cites the DB text they come
-    from."""
+    :class:`Line` holds digits outside its numbers only when each run of them is in the DB
+    rows it cites (a crop's name, requirement texts, sub-soil blocks and exported numbers; a
+    Crop Breeder recipe's catalysts; a machine's name).
+
+    CropsNH's rule constants (a growth tick every 256 ticks, a weed 1 time in 100 and the
+    like) are no DB row: their numbers cite the crop or machine they apply to, and
+    :mod:`gregtec.crops.rules` names where each comes from (D274)."""
     crops = facts.data.crops
-    machines = {m.ref for ms in facts.machines.values() for m in ms}
+    machine_rows = {m.ref: m for ms in facts.machines.values() for m in ms}
+    machines = set(machine_rows)
+    breeder_rows = {b.ref: b for b in facts.breeder}
     problems: list[str] = []
+    digits_of: dict[str, frozenset[str]] = {}
+
+    def cited_digits(ref: str) -> frozenset[str]:
+        if ref not in digits_of:
+            text = ""
+            if ref.startswith("crop:") and ref.removeprefix("crop:") in crops:
+                c = crops[ref.removeprefix("crop:")]
+                subs = (facts.names.get(f"{r.name}@{r.meta}", "") for r in c.sub_soils)
+                text = repr(c) + " " + " ".join(subs)
+            elif ref in breeder_rows:
+                text = repr(breeder_rows[ref])
+            elif ref in machine_rows:
+                text = repr(machine_rows[ref])
+            digits_of[ref] = frozenset(re.findall(r"[0-9]+", text))
+        return digits_of[ref]
 
     def known(ref: str) -> bool:
         if not CITE.match(ref):
@@ -1107,6 +1283,14 @@ def check(g: Guide, facts: Facts) -> list[str]:
             bare = re.sub(r"\{[0-9]+\}", "", obj.template)
             if DIGIT.search(bare) and not obj.refs:
                 problems.append(f"digits in an uncited line: {obj.template!r}")
+            elif obj.refs:
+                allowed = frozenset().union(*(cited_digits(r) for r in obj.refs))
+                for run in re.findall(r"[0-9]+", bare):
+                    if run not in allowed:
+                        problems.append(
+                            f"digits {run!r} in a line its citations don't hold: "
+                            f"{obj.template!r}"
+                        )
             for r in obj.refs:
                 if not known(r):
                     problems.append(f"line cites {r!r}, which the DB lacks")
