@@ -24,6 +24,7 @@ import datetime as dt
 import importlib.util
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -202,14 +203,25 @@ def write_world(world: Path) -> Path:
     return world
 
 
-def build(home: Path, *, goals: bool = True, plan: bool = True) -> Path:
+def build(
+    home: Path,
+    *,
+    goals: bool = True,
+    plan: bool = True,
+    export: Callable[[Path], None] | None = None,
+) -> Path:
     """GOS_HOME with the export run, this quest book, a deployed vault (with ``me/goals.md``
-    and the questline summaries) and an accepted plan; returns the DB's path."""
+    and the questline summaries) and an accepted plan; returns the DB's path. ``export``
+    makes the recipe DB in ``home`` instead of the tool tests' made-up run (the harness
+    integration test collects a real harness export with it)."""
     t = tools()
-    t.make_run(home)
-    from gregtec.db import build as db_build
+    if export is None:
+        t.make_run(home)
+        from gregtec.db import build as db_build
 
-    db_build.build(home)
+        db_build.build(home)
+    else:
+        export(home)
     db = access.db_path(home)
     loaded = quest_db.read(write_world(home / "world"), None)
     conn = access.connect(db)
