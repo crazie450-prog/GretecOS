@@ -67,22 +67,34 @@ public final class Targets {
         }
     }
 
-    private static ItemStack slotStackMouseOver(Minecraft mc, GuiContainer gui) {
+    /** The container GUI's top-left corner in scaled pixels ({@code guiLeft}, {@code guiTop}), or null. */
+    public static int[] guiOrigin(GuiContainer gui) {
         try {
             if (guiLeft == null) {
                 guiLeft = field("guiLeft", "field_147003_i");
                 guiTop = field("guiTop", "field_147009_r");
             }
+            return new int[] { guiLeft.getInt(gui), guiTop.getInt(gui) };
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            GregtecLink.LOG.debug("client link: GUI origin not read: {}", e.toString());
+            return null;
+        }
+    }
+
+    private static ItemStack slotStackMouseOver(Minecraft mc, GuiContainer gui) {
+        try {
+            int[] origin = guiOrigin(gui);
+            if (origin == null) return null;
             ScaledResolution sr = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight);
             int mx = Mouse.getX() * sr.getScaledWidth() / mc.displayWidth;
             int my = sr.getScaledHeight() - Mouse.getY() * sr.getScaledHeight() / mc.displayHeight - 1;
-            int left = guiLeft.getInt(gui), top = guiTop.getInt(gui);
+            int left = origin[0], top = origin[1];
             for (Object o : gui.inventorySlots.inventorySlots) {
                 Slot s = (Slot) o;
                 int x = left + s.xDisplayPosition, y = top + s.yDisplayPosition;
                 if (mx >= x - 1 && mx < x + 17 && my >= y - 1 && my < y + 17) return s.getStack();
             }
-        } catch (ReflectiveOperationException | RuntimeException e) {
+        } catch (RuntimeException e) {
             GregtecLink.LOG.debug("client link: slot not read: {}", e.toString());
         }
         return null;
