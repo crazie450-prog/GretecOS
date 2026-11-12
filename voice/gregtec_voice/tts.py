@@ -770,6 +770,12 @@ class Speaker:
             self._current = utterance
         utterance.start()
 
+    def heard(self, text: str) -> speech_filter.Said | None:
+        """How long ``text`` is heard (D23): the voice client logs the counts per turn (WO-5.7).
+        None when ``prepare`` can't say (a plain function)."""
+        said = getattr(self.prepare, "said", None)
+        return said(text) if callable(said) else None
+
     def use_voice(self, spec: str) -> None:
         """The persona's voices (WO-5.6, D207), e.g. ``kokoro:am_fenrir, eleven:<id>``: from
         the next chunk on, each engine speaks in its entry's voice, over ``[voice] tts_voice``;
@@ -821,9 +827,23 @@ class Speaker:
                 self._current = None
 
 
-def prepare(lexicon: Lexicon) -> Callable[[str], str]:
+@dataclass(frozen=True)
+class Prepare:
+    """The reply as said: the speech filter with a lexicon (plan 7.15); :meth:`said` also gives
+    its length as heard (D23, D248)."""
+
+    lexicon: Lexicon
+
+    def __call__(self, text: str) -> str:
+        return self.said(text).text
+
+    def said(self, text: str) -> speech_filter.Said:
+        return speech_filter.said(text, self.lexicon.apply)
+
+
+def prepare(lexicon: Lexicon) -> Prepare:
     """The reply as said: the speech filter with ``lexicon`` (plan 7.15)."""
-    return lambda text: speech_filter.spoken(text, lexicon.apply)
+    return Prepare(lexicon)
 
 
 def lexicon(gos_home: Path) -> Lexicon:

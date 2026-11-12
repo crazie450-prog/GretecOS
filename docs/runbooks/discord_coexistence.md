@@ -75,7 +75,7 @@ What GOS already guarantees in code (D247, tested in CI): the microphone and the
     ```
     Expect no output from `Compare-Object`: the same devices, ducking and hook as before.
 14. **Discord and Windows again:** Discord's Voice & Video settings and Keybinds, and Windows' default Output and Input devices and both Default Communication Devices (`mmsys.cpl`), are as in steps 5 and 6. Write them down the same way (`discord_after.txt` or `discord_after.png`).
-15. **The turn timings** (for the record; WO-5.7 is the latency acceptance):
+15. **The turn timings** (for the record; WO-5.7 is the latency acceptance; since WO-5.7 `bench` also writes a report to `data\reports` and ends `Result: INCOMPLETE`, as `voice_client.md` step 15 says):
     ```powershell
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice bench | Tee-Object C:\Temp\gos55\bench.txt
     ```

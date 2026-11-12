@@ -72,4 +72,4 @@ Windows turns other sounds down by 80% while it sees a "communication session" (
 
 ## F. In play
 
-10. `gos voice run` (as in `voice_client.md`): ask a question; the answer plays on the Chat endpoint, the ChatMix dial balances it against the game, and pressing the talk key (or speaking, with the wake word on) stops it at once. `gos voice bench` then shows `speak_ms` (reply to first audio) and `total_ms` per turn against PM14.
+10. `gos voice run` (as in `voice_client.md`): ask a question; the answer plays on the Chat endpoint, the ChatMix dial balances it against the game, and pressing the talk key (or speaking, with the wake word on) stops it at once. `gos voice bench` then shows `speak_ms` (reply to first audio) and `total_ms` per turn against PM14 (since WO-5.7 it is `gos voice benchmark`, which also writes a report each run; `voice_benchmarks.md`).
