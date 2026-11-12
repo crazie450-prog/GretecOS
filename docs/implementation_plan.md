@@ -679,6 +679,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 - **Storage and distribution.**
   - Buffer/LSC sizing for deficit windows: (peak − generation) × duration, with a battery-buffer vs LSC recommendation per tier.
   - Cable segment checks (amps, loss) and transformer placement. Cable stats come from export tooltips or material data (**VERIFY** in WO-4.5); curated table as fallback.
+  - As built (WO-4.5, D240-D242): `gregtec.planner.distribution`, `gos dist buffer|cable|transformer|ledger`; cable stats from the exported tooltips (V10 resolved, no curated table); batteries, buffers, transformers (both modes) and LSC cells exported in `gt_power.json`'s `storage` (schema 5); battery buffers while a window fits in 4 of them, the LSC beyond; transformer chains counted from the lines back with the DB's units; the ledger view buffers each tier's shortfall capped at the base's and chains each tier mismatch from the nearest sourced tier.
 
 ### 7.3 Recipe and item Q&A
 - Runs in the fast lane: 1–2 spoken sentences plus a dashboard **recipe card**: inputs and outputs with chances, EU/t, time, machine, tier, special conditions, `r:` id, and how many alternatives exist.
@@ -1232,7 +1233,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V07 | **Partly resolved** (D127, WO-1.6): from VisualProspecting 1.5.42's source and a cache it wrote in the dev runtime, both caches are in the game folder (`visualprospecting\server\<world id>\`, `visualprospecting\client\<uuid>\<world id>\`), format v3. Still open: the Lab check (`docs/runbooks/ores_check.md`) | Lab | 1.6 |
 | V08 | **Resolved** (D126, WO-1.6): GT's worldgen registry, exported by GregtecLink as `gt_ore_mixes.json`; NEI's vein pages have no mix name, heights, weight, density or size | — | 1.6 |
 | V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
-| V10 | Cable stats source (tooltips/material data vs curated) | Export | 4.5 |
+| V10 | **Resolved** (D240, WO-4.5): tooltips. Every GT and GT++ cable's max voltage, amperage and loss per metre are in its `gt_machines.jsonl` tooltip (`machine.tooltip`); no curated table. Batteries, buffers, transformers and LSC cells were added to `gt_power.json` (`storage`) | — | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
 | V13 | lwjgl3ify `borderless` capture has no black frames | Test | 8.2 |
