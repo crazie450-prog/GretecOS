@@ -6,9 +6,10 @@ Gregtec OS's Forge mod for GTNH 2.9.0 (Minecraft 1.7.10, GT 5.09.54.265). It has
 |---|---|---|
 | `export` | GTNH-Export only | WO-1.1: GT recipe-map dump, machine pass, item/fluid tables, NEI trigger, autoexport (V22), manifest; WO-1.6: ore mixes (`gt_ore_mixes.json`, D126); WO-1.10: CropsNH's crop dumpers (`crops/`, D134); the full ore dictionary (`oredict.jsonl`, D145) |
 | `listener` | Play | WO-6.2; registers nothing yet |
-| `client` | Play (client side) | WO-8.1; registers nothing yet |
+| `client` | Play and Lab (client side) | WO-8.1: the link to the core (below) |
 
-It adds **no items, blocks, mixins, recipes, commands or packets** (`usesMixins=false`).
+It adds **no items, blocks, mixins, recipes, commands or packets** (`usesMixins=false`). The client module adds one
+key binding (What's this?, unbound until chosen in Controls, GregtecLink) and event handlers.
 
 ## Commands
 
@@ -175,6 +176,53 @@ Export runs as Clayton, so its jar comes from GOS_APP, which `gos-dev` can't cha
 
 Never install it into Play with `export=true`.
 
+## Client module (WO-8.1)
+
+The link from Clayton's game to the core (plan 7.8, 7.9, D76, D285; protocol:
+[docs/contracts/gregteclink-client-v1.md](../docs/contracts/gregteclink-client-v1.md)). Client side only, with
+`client=true`:
+
+- **The link.** A WebSocket to `ws://127.0.0.1:<port>/mod/ws` on its own daemon thread, with the instance's token
+  (`gregteclink-play` or `gregteclink-lab`) read from `token_file` at each attempt and never logged. The client is
+  GregtecLink's own (`WsClient`, RFC 6455, Java 8; no dependency). It reconnects after 1, 2, 4, 8, then every 15 s, so
+  a core restart (the supervisor's, D115) costs a few seconds; while it is down nothing is queued.
+- **Position and dimension** at 1 Hz in a world, with the game's paused state.
+- **What's this?** On the key (polled on the client tick, so it works in every GUI; not while typing in chat), or when
+  the core asks because Clayton said "what's this?": in a container GUI the item under the mouse, through NEI's
+  `GuiContainerManager.getStackMouseOver` (its item panel, bookmarks and recipe pages) by reflection, else the slot
+  under the mouse; with no GUI, the block looked at and its pick item (a GT machine's item carries its mte id).
+  Registry name and meta, plus the NBT without numeric IDs; the core hashes it as the export did. The core's answer
+  comes back as a local chat line.
+- **Chat lines** as received, with the sender and text when the line is a player's chat message.
+- **Notices**: GOS's answers, `!gos` replies and failures as `[GOS] ...` lines printed on this client only, never sent
+  to the server (D76).
+
+Its settings are the `client` category of the same file, read only like `modules`:
+
+```
+client {
+    B:position=true
+    B:target=true
+    B:chat=true
+    B:notices=true
+    I:port=8765
+    S:token_file=C:/Users/<you>/GregtecOS/config/gregteclink-play.token
+}
+```
+
+Each feed defaults to on and turns off with `false`: off, `target` answers the core's probe with `kind: off` and
+nothing else, and the key sends nothing. With no `token_file` the module does nothing. A malformed file turns
+everything off.
+
+### Installing into GTNH-Play or GTNH-Lab
+
+`scripts/install_gregteclink.py` (Clayton, from GOS_APP, the game closed and the core running; D287) installs the
+deployed jar with the listener and client modules on and export off: the core issues the instance's token, the
+script writes it to `GOS_HOME\config\gregteclink-<instance>.token`, replaces any other `mods/gregteclink*.jar`,
+and writes the config above (a feed already set to false stays off). Without `--apply` it only shows what it would
+do. `--instance lab` does the same for Lab, which `[sync.lab] exclude` now keeps out of Play's mirror
+(`mods/gregteclink*`, `config/gregteclink*`). Steps: [docs/runbooks/gregteclink_client.md](../docs/runbooks/gregteclink_client.md).
+
 ## Headless harness
 
 `./gradlew runServer -Pharness`:
@@ -243,6 +291,34 @@ Two more modes test D188's NEI step, and CI runs them together as a third client
   before the NEI step, so GT builds its NEI recipe caches first, as in a world opened by hand. The harness then
   expects `nei_gt_caches_rebuilt`: none of the lists GT cached for its recipe categories during that lookup is still
   in GT's cache after the dump.
+
+### Client link harness (WO-8.1, D287)
+
+`-PharnessClientLink` turns the client module on as well (`harness/config-client-link/gregteclink.cfg`: port 18765,
+token file `gregteclink-harness/core.token` in `run/client`) and needs a real core: start
+`uv run python tests/harness/client_link_core.py --game mod/run/client --home <tmp>` first, from the repo root, and
+wait for `<tmp>/ready`. It builds a DB from the newest export in `run/client` (as `gos export collect` and
+`gos db build` do; the run must be there before Gradle's clean step wipes it), issues `gregteclink-lab`, writes the
+token file and runs the core with fake lanes (no key, no cost). After the export has been checked, still in the
+autoexport world, the harness:
+
+1. waits for the link (`client_link_connected`);
+2. places four blocks next to the player on the server thread (GT's EBF through its item, so it gets its tile
+   entity; a GT casing; GoodGenerator's Field Restriction Casing; AE2's Sky Stone Block), looks at each and presses
+   What's this? through the key's own code path;
+3. asks the core to restart (`gregteclink-harness/restart-core`, which the runner watches) and waits for the link to
+   come back (`reconnected_after_core_restart`);
+4. opens a chest GUI with six items (GT steel ingot, bartworks zirconium ingot, GT++ hot arcanite ingot, AE2
+   engineering processor, vanilla iron ingot, an IC2 RE-Battery with its charge NBT), moves the mouse onto each slot
+   and presses What's this?;
+5. checks each of the 10 answers: the item the game reports is the one scripted, the core keys it by registry name
+   and meta (the NBT hash for the battery) and names it as the game shows it (`whats_this_10_items`);
+6. sends `!gos recipes for steel ingot` as the player's chat (answered) and as `Mallory` (ignored), and counts the
+   1 Hz status for 5 s.
+
+lwjgl3ify's `Mouse.setCursorPosition` counts y from the top, LWJGL 2's from the bottom; the harness moves the mouse
+again when the first move reads back mirrored. CI runs this mode with the third client run (after the integration
+tests). A run adds about 30 s.
 
 ## Licences
 
