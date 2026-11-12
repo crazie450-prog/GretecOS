@@ -28,7 +28,7 @@ Evidence tags, as in G0:
 | `pnpm -C dashboard install --frozen-lockfile`, then `build` (`tsc --noEmit` + `vite build`) | clean |
 | `pnpm -C dashboard test` (vitest) | 256 passed |
 | `pnpm -C dashboard e2e` (Playwright, Chromium, own ports 8895 and 8897 and own homes) | **32 passed** (21 dashboard, 11 setup wizard) |
-| Client harness `./gradlew runClient25 -Pharness` and `GOS_REQUIRE_HARNESS_RUN=1 pytest` on the Phase 2 harness tests | see "Harness run" at the end |
+| Client and server harness, then `GOS_REQUIRE_HARNESS_RUN=1 pytest` on the six Phase 2 harness test files | harnesses passed (52 and 31 checks); 18 passed, 1 skipped (see "Harness run" at the end) |
 
 `gos eval fast-lane --fake` and `gos eval recipe-lookup --fake` could not be started from this session: its sandbox refuses any shell command containing the word `eval`. The same code paths ran instead through the tests that call them: `evals.run(..., fake=True)` in `test_fast_lane_harness.py` and `recipe_eval` with the oracles in `test_recipe_lookup_harness.py`, which assert the report's pass lines. Both passed on CI's harness DB (below) and here.
 
@@ -443,4 +443,21 @@ Then:
 
 ## Harness run (this review)
 
-Pending: filled in once the local client-harness run and the Phase 2 harness tests finish.
+Run here on `b7b88a0`, in the build container, with `--max-workers=2` [here]:
+
+| Step | Result |
+|---|---|
+| `xvfb-run ... ./gradlew --no-daemon --max-workers=2 runClient25 -Pharness` | `harness passed: 52 checks, run 20261112T051252Z` (1 min 57 s) |
+| `./gradlew --no-daemon --max-workers=2 runServer -Pharness` | `harness passed: 31 checks, run 20261112T052903Z` |
+| `GOS_REQUIRE_HARNESS_RUN=1 uv run --locked pytest -v` on `test_tools_harness`, `test_fast_lane_harness`, `test_deep_lane_harness`, `test_dashboard_harness` and `test_recipe_lookup_harness` (client run) | 16 passed, 1 skipped (`test_the_quest_tools_on_the_real_book`, which needs `GOS_QUESTS_PACK`) |
+| the same on `test_vault_harness` (server run) | 2 passed |
+
+The Phase 2 tests that ran on the harness DB:
+- `test_fast_lane_harness::test_the_question_set_passes_with_the_fake_model`: `passed: 60 of 60`, `ambiguous rows that asked: 10 of 10`, 40 model calls, each with `ttft_ms`.
+- `test_recipe_lookup_harness::test_the_question_set_passes_with_the_oracles`: 50 of 50, 0 uncited, every lane used, no flagged citation.
+- `test_deep_lane_harness::test_the_deep_lane_reads_the_harness_db`.
+- the four `test_dashboard_harness` card and state checks.
+- six `test_tools_harness` checks: every recipe row cited with the DB's numbers, the `db_sql` guards on the real file, and every named query on the real schema.
+- both `test_vault_harness` checks: the curator, and `measure` sampling the real DB.
+
+The harness output under `mod/run/` is git-ignored and not committed.
