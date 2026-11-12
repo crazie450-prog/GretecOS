@@ -2,11 +2,33 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/crazie450-prog/GretecOS/core/gregtec/planner/plan_schema.json",
   "title": "Gregtec OS canonical plan (plan section 7.1, WO-3.4, D194)",
-  "description": "One route of the production line designer. Numbers come from the DB (r: recipes, mte: machines and their facts) and GT's math; metrics and rank are WO-3.5's, layout WO-3.6's.",
+  "description": "One route of the production line designer. Numbers come from the DB (r: recipes, mte: machines and their facts) and GT's math; metrics and rank are WO-3.5's, layout and metrics.footprint WO-3.6's (D200).",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "name", "v", "gt", "run", "kind", "target", "tier_cap", "machines", "pins", "nodes", "edges", "boundary", "metrics", "rank", "alternatives", "layout", "request", "route", "warnings"],
   "$defs": {
+    "box": {"type": "object", "additionalProperties": false, "required": ["x", "y", "z"], "properties": {"x": {"type": "integer", "minimum": 1}, "y": {"type": "integer", "minimum": 1}, "z": {"type": "integer", "minimum": 1}}},
+    "footprint": {
+      "type": "object",
+      "required": ["mte", "name", "count", "footprint"],
+      "properties": {
+        "mte": {"type": "integer"},
+        "name": {"type": "string"},
+        "count": {"type": "integer", "minimum": 1},
+        "footprint": {"enum": ["box", "unknown"]},
+        "why": {"type": "string"},
+        "source": {"enum": ["structure", "single block"]},
+        "variant": {"type": "string"},
+        "size": {"$ref": "#/$defs/box"},
+        "box": {"$ref": "#/$defs/box"},
+        "area": {"type": "integer", "minimum": 1},
+        "volume": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false,
+      "if": {"properties": {"footprint": {"const": "box"}}},
+      "then": {"required": ["source", "variant", "size", "box", "area", "volume"]},
+      "else": {"required": ["why"]}
+    },
     "planId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
     "recipe": {"type": "string", "pattern": "^r:[^/\\s]+/[0-9a-f]{12}(-[0-9]+)?$"},
     "key": {"type": "string", "minLength": 1},
@@ -182,7 +204,7 @@
         "build_h": {"type": "number", "minimum": 0},
         "unlock_h": {"type": "number", "minimum": 0},
         "scarcity": {"type": "number", "minimum": 0},
-        "footprint": {"type": "null", "description": "WO-3.6"},
+        "footprint": {"type": "object", "description": "WO-3.6 (D200): layout's sums; unknown counts the machine types with no structure data", "additionalProperties": false, "required": ["area", "volume", "h", "unknown"], "properties": {"area": {"type": "integer", "minimum": 0}, "volume": {"type": "integer", "minimum": 0}, "h": {"type": "integer", "minimum": 0}, "unknown": {"type": "integer", "minimum": 0}}},
         "complexity": {"type": "object", "required": ["nodes", "fluids", "loops", "score"]},
         "batch": {"type": "object", "required": ["qty", "window_s", "eta_s", "eta_h", "inputs", "byproducts", "crafts", "eu"]}
       }
@@ -199,7 +221,21 @@
       }
     },
     "alternatives": {"type": "array", "items": {"$ref": "#/$defs/planId"}},
-    "layout": {"type": "object", "description": "WO-3.6"},
+    "layout": {
+      "description": "WO-3.6 (D200): a bounding box per machine type from structure.size_* (one block for a single block) plus clearance, summed into floor area and volume; a multiblock with no structure row is footprint: unknown",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "clearance", "machines", "area", "volume", "h", "unknown"],
+      "properties": {
+        "method": {"const": "bbox"},
+        "clearance": {"type": "object", "additionalProperties": false, "required": ["xz", "y"], "properties": {"xz": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0}}},
+        "machines": {"type": "array", "items": {"$ref": "#/$defs/footprint"}},
+        "area": {"type": "integer", "minimum": 0},
+        "volume": {"type": "integer", "minimum": 0},
+        "h": {"type": "integer", "minimum": 0},
+        "unknown": {"type": "array", "items": {"type": "string", "pattern": "^mte:[0-9]+$"}}
+      }
+    },
     "request": {"type": "object", "description": "the planner request (gregtec.planner.request.Request.as_dict)"},
     "route": {
       "type": "object",
