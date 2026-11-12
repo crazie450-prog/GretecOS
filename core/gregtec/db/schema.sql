@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 4 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1).
+-- Gregtec OS SQLite schema, version 5 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -17,6 +17,8 @@
 -- Version 3 (D134, WO-1.10): the crop tables (CropsNH), one set per export run like recipes.
 -- Version 4 (D230, WO-4.1): the power catalog tables (rotors, generators, fuels), one set per export
 -- run; new tables only, so no migration file.
+-- Version 5 (D240, WO-4.5): the storage tables (batteries, battery buffers, transformers, LSC
+-- cells), one set per export run; new tables only, so no migration file.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -193,6 +195,26 @@ CREATE TABLE IF NOT EXISTS fuel(run_id INT NOT NULL, recipe_id INT NOT NULL, ref
   hidden INT NOT NULL, fuel_value INT NOT NULL, unit TEXT NOT NULL, value REAL NOT NULL,
   PRIMARY KEY(run_id, recipe_id));
 CREATE INDEX IF NOT EXISTS ix_fuel_fluid ON fuel(run_id, fluid);
+-- storage and distribution (WO-4.5, D240). From gt_power.json's storage. battery: every battery*
+-- oredict member that is an IC2 electric item (ores: a JSON list of those names), its tier, max
+-- charge (EU), transfer limit (EU/t) and
+-- whether it takes a charge (a simulated charge; GT's one-use ZPM module doesn't); battery_buffer: every GT battery buffer, its slots, voltage
+-- in/out and own store; transformer: every GT transformer (GT's, its power transformers, GT++'s
+-- hi-amp ones), one row per mode (down: GT's default, in at the tier above; up: soft-mallet'd);
+-- lsc_cell: the LSC's cells, their block, glass tier and capacity (EU, a decimal string: some
+-- are past a 64-bit integer's range). Cables are not here: their stats are their tooltips
+-- (machine.tooltip, gregtec.planner.distribution).
+CREATE TABLE IF NOT EXISTS battery(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
+  nbt_hash TEXT NOT NULL, ores TEXT NOT NULL, tier INT NOT NULL, max_charge REAL NOT NULL,
+  transfer_limit REAL NOT NULL, rechargeable INT NOT NULL, PRIMARY KEY(run_id, registry_name, meta, nbt_hash));
+CREATE TABLE IF NOT EXISTS battery_buffer(run_id INT NOT NULL, mte_id INT NOT NULL, class_name TEXT NOT NULL,
+  tier INT NOT NULL, slots INT NOT NULL, eu_in INT NOT NULL, eu_out INT NOT NULL, eu_store INT NOT NULL,
+  PRIMARY KEY(run_id, mte_id));
+CREATE TABLE IF NOT EXISTS transformer(run_id INT NOT NULL, mte_id INT NOT NULL, class_name TEXT NOT NULL,
+  tier INT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('down','up')), eu_in INT NOT NULL,
+  amps_in INT NOT NULL, eu_out INT NOT NULL, amps_out INT NOT NULL, PRIMARY KEY(run_id, mte_id, mode));
+CREATE TABLE IF NOT EXISTS lsc_cell(run_id INT NOT NULL, name TEXT NOT NULL, registry_name TEXT NOT NULL,
+  meta INT NOT NULL, glass_tier INT NOT NULL, capacity TEXT NOT NULL, PRIMARY KEY(run_id, name));
 -- wiki, notes, usage
 CREATE TABLE IF NOT EXISTS wiki_page(title TEXT PRIMARY KEY, revid INT, fetched INT, url TEXT, text TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(title, text, content='wiki_page');
@@ -206,4 +228,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;

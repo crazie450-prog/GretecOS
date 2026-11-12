@@ -17,6 +17,7 @@ import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.MetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEBasicBatteryBuffer;
 import gregtech.api.metatileentity.implementations.MTETransformer;
+import ic2.api.item.ElectricItem;
 import ic2.api.item.IElectricItem;
 import kekztech.common.tileentities.MTELapotronicSuperCapacitor;
 
@@ -26,7 +27,8 @@ import kekztech.common.tileentities.MTELapotronicSuperCapacitor;
  * are in their tooltips (gt_machines.jsonl).
  * <ul>
  * <li>{@code batteries}: every member of an oredict name starting with {@code battery} whose item is an IC2
- * {@link IElectricItem}: its tier, max charge and transfer limit as the item gives them for that stack (GT's battery
+ * {@link IElectricItem}: its tier, max charge, transfer limit and whether it takes a charge (simulated) as the item
+ * gives them for that stack (GT's battery
  * buffer takes an item whose tier equals its own, {@code GTModHandler.isElectricItem(stack, tier)}).</li>
  * <li>{@code buffers}: every {@link MTEBasicBatteryBuffer}: tier, slots, the voltage in and out, its own EU store.</li>
  * <li>{@code transformers}: every {@link MTETransformer} (GT's, the power transformers, GT++'s hi-amp ones), read
@@ -76,13 +78,19 @@ final class StoragePass {
                 JsonObject row = rows.get(key);
                 if (row == null) {
                     row = new JsonObject();
-                    row.add("item", ref);
+                    row.add("battery", ref);
                     row.add("ore", new JsonArray());
                     try {
                         IElectricItem e = (IElectricItem) one.getItem();
                         row.addProperty("tier", e.getTier(one));
                         row.addProperty("max_charge", e.getMaxCharge(one));
                         row.addProperty("transfer_limit", e.getTransferLimit(one));
+                        // What a buffer can put back in it, simulated on a copy (a one-use item, GT's ZPM module,
+                        // takes nothing).
+                        row.addProperty(
+                            "rechargeable",
+                            ElectricItem.manager.charge(one.copy(), e.getMaxCharge(one), e.getTier(one), true, true)
+                                > 0);
                     } catch (Throwable t) {
                         row.addProperty("error", Json.error(t));
                         errors++;
