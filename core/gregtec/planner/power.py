@@ -1102,13 +1102,15 @@ def hatch_mte(conn: sqlite3.Connection, class_name: str, tier: int) -> int | Non
 
 def parts(
     conn: sqlite3.Connection, p: Mapping[str, Any], run_id: int
-) -> tuple[list[effort.Component], list[str]]:
+) -> tuple[list[effort.Component], list[str], int]:
     """The build components a power line chooses itself (WO-4.3, D236), per generator
     block: its turbine rotor (the request's material and size) and its dynamo hatch (the tier
     the line sized it on, 1 A), each as many as the line builds generators. Each is made by the
-    effort model like any component. What the line doesn't choose is listed, not counted."""
+    effort model like any component. What the line doesn't choose is listed, not counted;
+    the last value is how many parts the DB has no item for (the effort's ``uncounted``)."""
     out: list[effort.Component] = []
     notes: list[str] = []
+    missing = 0
     for node in p["nodes"]:
         if node.get("kind") != "generator" or not node.get("count"):
             continue
@@ -1118,6 +1120,7 @@ def parts(
             material, size = spec["rotor"]
             key = rotor_key(conn, run_id, material, size)
             if key is None:
+                missing += 1
                 notes.append(
                     f"rotor {material} {size}: no such item in the DB, its making is not"
                     " counted"
@@ -1129,6 +1132,7 @@ def parts(
             mte = hatch_mte(conn, DYNAMO_HATCH, tier)
             item = effort.machine_items(conn, [mte]).get(mte) if mte else None
             if item is None:
+                missing += 1
                 notes.append(
                     f"dynamo hatch {VN[tier]}: no such machine item in the DB, its making"
                     " is not counted"
@@ -1142,8 +1146,9 @@ def parts(
                 " GT's hatch minimums aren't in the DB and their tiers and the layout are the"
                 " builder's (D236)"
             )
-    notes.append("distribution cables are not counted: cable runs come with WO-4.5")
-    return out, notes
+    if any(n.get("kind") == "generator" for n in p["nodes"]):
+        notes.append("distribution cables are not counted: cable runs come with WO-4.5")
+    return out, notes, missing
 
 
 def _metrics(
@@ -1158,8 +1163,8 @@ def _metrics(
     chain_plan = {**p, "nodes": chain_nodes, "target": {"id": p["power"]["fuel"]["id"]}}
     eff_plan = {"nodes": [*chain_nodes, *p["machines_used"]]}
     if measure is not None:
-        extra, extra_notes = parts(conn, p, g.run_id)
-        eff = measure.route(eff_plan, extra, extra_notes)
+        extra, extra_notes, extra_missing = parts(conn, p, g.run_id)
+        eff = measure.route(eff_plan, extra, extra_notes, extra_missing)
     else:
         eff = {
             "eff_h": 0.0,
@@ -1169,6 +1174,7 @@ def _metrics(
             "rows": [],
             "components": [],
             "unlocks": [],
+            "uncounted": 0,
             "notes": ["effort not computed"],
         }
     m = metrics.route(

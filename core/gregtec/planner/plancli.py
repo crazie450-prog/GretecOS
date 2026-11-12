@@ -274,7 +274,7 @@ def _run(
         print(f"{p['id']}  {p['name']}  [{r['column']}]", file=out)
         print(
             f"  score {k['score']:g}: {m['machines']} machines, {len(m['new_types'])} new "
-            f"types, {m['eut_avg']:g} EU/t avg, effort {m['eff_h']:g} h, scarcity "
+            f"types, {m['eut_avg']:g} EU/t avg, scarcity "
             f"{m['scarcity']:g}, complexity {m['complexity']['score']}",
             file=out,
         )

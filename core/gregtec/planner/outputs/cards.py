@@ -24,7 +24,7 @@ from gregtec.planner.outputs.book import Book
 from gregtec.planner.outputs.diagram import flow
 
 MAX_NODES, MAX_EDGES, MAX_ROWS = 200, 400, 500
-MAX_EFFORT_ROWS, MAX_NOTES = 50, 20  # the table card's limits
+MAX_EFFORT_ROWS, MAX_NOTES, MAX_HEAD = 50, 20, 30  # the table card's limits
 EFFORT_TOOL = "effort_estimate"  # plan 5's tool name for the effort model (D237)
 TIERS = {
     t.upper(): t
@@ -123,24 +123,33 @@ def bom_card(plan: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def effort_card(plan: Mapping[str, Any]) -> dict[str, Any]:
-    """The plan's effort breakdown (plan 7.2, D17, WO-4.3) as WO-2.6's table card: the effort
-    model's rows (part, recipe map, the machine its steps are sized on as an ``mte:`` chip,
-    crafts, the machines they are spread over, hours), the totals in the head, its notes. Power
-    and production plans carry the same ``metrics`` shape, so both use it (D237)."""
+    """The plan's effort breakdown (plan 7.2, D17, WO-4.3) as WO-2.6's table card: one row per
+    recipe (part, recipe map, the machine its steps are sized on as an ``mte:`` chip, the
+    recipe as an ``r:`` chip, crafts, the machines they are spread over, hours); the totals,
+    how many items are not counted and each unlocked machine (an ``mte:`` chip of its own) in
+    the head; its notes. Power and production plans carry the same ``metrics`` shape, so both
+    use it (D237)."""
     m = plan["metrics"]
     eff = m["effort"]
     rows = effort.table(eff)
     head = [
         ("plan", f"plan:{plan['id']}"),
-        ("effort", f"{float(m['eff_h']):.4g} h"),
-        ("build", f"{float(m['build_h']):.4g} h"),
-        ("unlock", f"{float(m['unlock_h']):.4g} h"),
+        ("effort", effort.duration(float(m["eff_h"]))),
+        ("build", effort.duration(float(m["build_h"]))),
+        ("unlock", effort.duration(float(m["unlock_h"]))),
+        ("not counted", f"{int(eff.get('uncounted', 0))} items (see the notes)"),
         ("crafting-table step", f"{float(eff['craft_s']):g} s"),
         ("components", str(len(eff["components"]))),
     ]
-    if eff["unlocks"]:
-        head.append(("unlocks", " ".join(eff["unlocks"])))
     notes = list(eff["notes"])
+    unlocks = list(eff["unlocks"])
+    room = MAX_HEAD - len(head)
+    if len(unlocks) > room:
+        room -= 1
+        notes.insert(0, "more unlocked machines: " + ", ".join(unlocks[room:]))
+        unlocks = unlocks[:room]
+    # one pair each, so each is a chip; keys stay distinct (the renderer keys on them)
+    head.extend((f"unlocks {i}", u) for i, u in enumerate(unlocks, 1))
     if len(rows) > MAX_EFFORT_ROWS:
         notes.insert(0, f"the first {MAX_EFFORT_ROWS} of {len(rows)} rows")
     if len(notes) > MAX_NOTES:

@@ -290,7 +290,7 @@ def show_design(
             file=out,
         )
         print(
-            f"   score {r['score']:g}, effort {p['metrics']['eff_h']:g} h, upkeep"
+            f"   score {r['score']:g}, upkeep"
             f" {p['metrics']['upkeep']:g}/h, machines {p['metrics']['machines']}",
             file=out,
         )
