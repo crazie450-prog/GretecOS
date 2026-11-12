@@ -24,6 +24,41 @@ rotor and dynamo, throttle circuit, starter fuel as an upper bound) and its sink
 makes more of than it uses, which need a void or storage. The notes say how many generator x fuel
 candidates and farms were pruned before solving.
 
+## The effort breakdown (WO-4.3)
+
+Each line (and each `gos plan` route) prints its effort and the breakdown table under its score
+line (D236, D237):
+
+```
+   effort 4.2 min = build 4.2 min + unlock 0 s (crafting-table step 2 s; 24 items not counted, see the notes)
+   part   map                     machine  recipe                                 crafts  machines  hours
+   build  gt.recipe.alloysmelter  mte:204  r:gt.recipe.alloysmelter/5c89d98542b3  73      1         43.8 s
+```
+
+- `effort_h` = `build` (the processing time to make every build component from boundary items
+  at the tier) + `unlock` (the components of each machine type My base doesn't own that the
+  steps need, recursive to 3 levels, each once). Gathering and hands-on building are left out;
+  scarcity is its own term. Times print as seconds under a minute, minutes under an hour.
+- Build components: the line's machine items, a multiblock's structure blocks (where the DB has
+  a structure row), and the parts the line chooses itself: the turbine rotor (the request's
+  material and size, found by its NBT material) and the dynamo hatch at the line's tier. Other
+  hatches, pipes, throttle circuits and distribution cables are listed in the notes, not
+  counted (D236).
+- **Items not counted**: what the model can't make (no item or structure in the DB, no recipe or
+  route from boundary items at the tier, gated more than 3 levels down) is counted in
+  `uncounted` and shown on the effort line and in the card's head; the notes list them. Such an
+  effort is a lower bound, so `output_per_effort` ranks those lines after the lines whose
+  effort is complete (D236). On the server harness DB every EV large gas turbine line has some:
+  the turbine controller itself has no route at EV yet (a WO-3.5 follow-up).
+- Each row is one recipe (`crafting` map for crafting-table and furnace steps at `craft_s`,
+  2 s by default, `craft_s:` in `me/prefs.md`): its map, the machine the map's steps are sized
+  on, its whole crafts, the machines My base owns on that map (at least 1) and its hours.
+- `--json` carries the breakdown under `metrics.effort`: `rows` per map (`crafts`, `machines`,
+  `h`, and `recipes`, each `{id, crafts, h}`), `components`, `unlocks`, `uncounted`, `notes`;
+  `output_per_effort` ranks by net EU/t / `eff_h` (`rank.eut_per_effort_h`).
+- The dashboard gets the breakdown as a `table` card (`tool: effort_estimate`) from
+  `GET /api/plans/{id}/cards` (`effort`), next to the flow and BOM cards.
+
 After a GT pin bump, regenerate the boiler and tree-farm vectors with
 `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py` (a JDK and the mod's Gradle build).
 

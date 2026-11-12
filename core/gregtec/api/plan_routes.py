@@ -77,7 +77,10 @@ def cards(home: Path, pid: str) -> dict[str, Any]:
         raise HTTPException(409, f"plan {pid}: {exc}") from exc
     finally:
         conn.close()
-    return {"flow": plan_cards.flow_card(plan, b), "bom": plan_cards.bom_card(plan)}
+    out = {"flow": plan_cards.flow_card(plan, b), "bom": plan_cards.bom_card(plan)}
+    if "effort" in plan.get("metrics", {}):
+        out["effort"] = plan_cards.effort_card(plan)  # WO-4.3, D237
+    return out
 
 
 JsonBody = Callable[[Request], Awaitable[dict[str, Any]]]
