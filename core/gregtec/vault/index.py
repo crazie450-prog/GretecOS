@@ -3,7 +3,7 @@
 Built deterministically from the notes' frontmatter and first facts, never by a model:
 
 - one TSV row ``id t path summary upd`` per note, sorted by path; ``log/`` and ``INDEX.md`` itself
-  are left out (plan 6.1), as are ``_gos/skills/`` and ``_gos/agents/``;
+  are left out (plan 6.1), as are ``_gos/skills/``, ``_gos/agents/`` and ``_gos/personas/``;
 - a folder with more than 20 notes gets one row instead (``id`` the folder, ``t`` its notes' type
   or ``mixed``, ``summary`` how many notes, ``upd`` the newest), so a growing ``plans/`` costs one
   line; if the index would still pass 200 lines, the folders with the most notes collapse first;

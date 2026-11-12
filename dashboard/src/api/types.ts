@@ -95,6 +95,23 @@ export interface CreditState {
   billing_url: string;
 }
 
+/** One persona pack (WO-5.6): tone only; its voice entries per engine (D207). */
+export interface PersonaInfo {
+  id: string;
+  name: string;
+  voice: string;
+  verbosity: string;
+  source: "shipped" | "vault";
+}
+
+/** The packs, the active one and any pack problems (`GET /api/persona`, the state's `persona`). */
+export interface PersonaState {
+  active: string | null;
+  random_per_session: boolean;
+  packs: PersonaInfo[];
+  problems: string[];
+}
+
 export interface CoreState {
   ts: number;
   game: GameState;
@@ -108,6 +125,7 @@ export interface CoreState {
   jobs: Job[];
   asking: Asking[];
   health: HealthCard | null;
+  persona?: PersonaState | null;
 }
 
 export interface Reply {
