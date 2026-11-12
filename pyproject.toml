@@ -15,6 +15,9 @@ dependencies = [
     # WO-3.6, D201: the flow diagram's PNG for Discord (wheels for Windows and Linux, its own
     # default font; no system install; MIT-CMU licence).
     "pillow>=11.3",
+    # WO-5.7, D248: gos voice benchmark's RAM of the core and voice processes (BSD-3-Clause).
+    # Core only: the voice package never reads other processes (D247's audit).
+    "psutil>=7.0",
     # WO-3.4, D192: the planner's staged MILP (scipy.optimize.milp on HiGHS; BSD-3-Clause).
     "scipy>=1.16",
     "uvicorn>=0.54.0",
@@ -86,3 +89,7 @@ testpaths = ["tests"]
 addopts = ["--import-mode=importlib"]
 strict = true
 markers = ["slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)"]
+# A full run writes about 7 GB of per-test temp folders (DB copies). Keep only failed tests'
+# folders, and only from the last run, so runs side by side don't fill the disk.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

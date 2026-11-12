@@ -69,10 +69,9 @@ from gregtec_voice.audio import (
     Block,
     Ring,
     Segment,
-    _sounddevice,
-    _wasapi,
 )
 from gregtec_voice.hooks import Transcriber, TriggerBus
+from gregtec_voice.playback import Output, default_output
 from gregtec_voice.settings import OPENWAKEWORD, SHERPA, WAKE, VoiceSettings
 from gregtec_voice.stt import floats
 
@@ -691,11 +690,14 @@ def chime_pcm() -> bytes:
     return samples.tobytes()
 
 
-class WasapiChime:
-    """Windows: the chime on WASAPI's default output device (the headset), on its own short
-    thread, so the audio worker never waits for it."""
+class OutputChime:
+    """The chime on the output device speech plays on (``[voice] output_endpoint``: the Arctis
+    Nova Elite's Chat endpoint, D56; WO-5.5), never Windows' default device, on its own short
+    thread, so the audio worker never waits for it. On Windows that is a shared-mode WASAPI
+    stream (:class:`gregtec_voice.playback.WasapiOutput`)."""
 
-    def __init__(self) -> None:
+    def __init__(self, output: Output) -> None:
+        self.output = output
         self.pcm = chime_pcm()
 
     def play(self) -> None:
@@ -703,16 +705,11 @@ class WasapiChime:
 
     def _play(self) -> None:
         try:
-            sd = _sounddevice()
-            _, api = _wasapi(sd)
-            with sd.RawOutputStream(
-                samplerate=SAMPLE_RATE,
-                device=api["default_output_device"],
-                channels=1,
-                dtype="int16",
-                extra_settings=sd.WasapiSettings(auto_convert=True),
-            ) as stream:
+            stream = self.output.open(SAMPLE_RATE)
+            try:
                 stream.write(self.pcm)
+            finally:
+                stream.close()
         except Exception as exc:  # noqa: BLE001 - PortAudioError, AudioError: log, go on
             log.warning("the wake chime didn't play", extra={"error": str(exc)})
 
@@ -862,5 +859,5 @@ def create(
         bus,
         phrase=settings.wake_phrase,
         verifier=None if transcriber is None else verifier(transcriber),
-        chime=WasapiChime(),
+        chime=OutputChime(default_output(settings.output_endpoint)),
     )

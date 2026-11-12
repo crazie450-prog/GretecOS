@@ -332,7 +332,7 @@ class FakePortAudio:
             found[index] = {"name": name, "hostapi": 1, "max_input_channels": 1}
         return found
 
-    def WasapiSettings(self, auto_convert: bool) -> object:
+    def WasapiSettings(self, exclusive: bool, auto_convert: bool) -> object:
         return object()
 
     def RawInputStream(self, device: int, **kw: object) -> object:

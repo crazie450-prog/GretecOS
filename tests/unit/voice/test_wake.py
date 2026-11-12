@@ -452,7 +452,7 @@ def test_create_builds_the_engine_with_the_transcriber_as_second_stage(
 
     heard, bus = Heard(), Bus()
     engine = wake.create(VoiceSettings(), bus, heard)
-    assert isinstance(engine, WakeWord) and isinstance(engine.chime, wake.WasapiChime)
+    assert isinstance(engine, WakeWord) and isinstance(engine.chime, wake.OutputChime)
     engine.run = lambda job: job()
     engine.chime = Chime()
     Feeder(engine).blocks(SPEECH, 0.22)

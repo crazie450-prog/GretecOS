@@ -154,7 +154,7 @@ def test_bench_without_audio_or_turns(tmp_path: Path) -> None:
     logs.mkdir(parents=True)
     (logs / "voice.log").write_text(turn("key", None) + "\n", encoding="utf-8")
     code, out = run("bench", "--config", str(toml))
-    assert code == 1 and "text-to-speech arrives with WO-5.3" in out
+    assert code == 1 and "no turn reached first audio" in out
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux: no WASAPI or key hook")

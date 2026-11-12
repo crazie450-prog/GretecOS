@@ -49,6 +49,9 @@ POST_ROLL_S = 0.12  # D181: audio in flight when the key comes up
 STALL_S = 0.5  # no block this long past the post-roll: close the segment anyway
 MAX_SEGMENT_S = 30.0
 QUEUE_BLOCKS = 250  # 5 s between the capture callback and the worker
+# WASAPI shared mode for capture and playback alike: never exclusive, so Discord and every
+# other app keep the headset (WO-5.5, D247).
+WASAPI_EXCLUSIVE = False
 
 
 @dataclass(frozen=True)
@@ -436,7 +439,9 @@ class WasapiSource:
                 channels=1,
                 dtype="int16",
                 latency="low",
-                extra_settings=sd.WasapiSettings(auto_convert=True),
+                extra_settings=sd.WasapiSettings(
+                    exclusive=WASAPI_EXCLUSIVE, auto_convert=True
+                ),
                 callback=callback,
             )
             self._stream.start()
