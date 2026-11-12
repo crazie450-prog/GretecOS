@@ -660,9 +660,12 @@ def _move(
     with _conn(home, readonly=False) as rw:
         rw.execute("BEGIN IMMEDIATE")
         try:
+            entries = []
             for p, status in moves:
                 store.set_status(rw, p["id"], status)
-                ledger.record(rw, p)
+                entries.append(ledger.record(rw, p))
+            # Plans accepted before the ledger recorded anything join it now (review M1).
+            synced = ledger.sync(home, rw)
         except ValueError as exc:
             rw.execute("ROLLBACK")
             raise DesignerError(str(exc)) from None
@@ -670,9 +673,8 @@ def _move(
             rw.execute("ROLLBACK")
             raise
         rw.execute("COMMIT")
-        p0, s0 = moves[0]
-        update = ledger.ledger_update(home, rw, p0, s0)
-    problems = list(update.problems)
+        update = ledger.publish(home, rw, entries[0], moves[0][1])
+    problems = [*synced, *update.problems]
     notes = [
         _notes(home, p, b, s, problems) for (p, s), b in zip(moves, books, strict=True)
     ]
@@ -713,7 +715,9 @@ def set_status(home: Path, pid: str, status: str) -> Accepted:
 
 def accept_power(home: Path, plan: Mapping[str, Any]) -> Accepted:
     """Accept a power line (a ``gos power design`` option, WO-4.2): its JSON and ``plan`` row
-    are saved (:func:`store.save_power`), then it is accepted as :func:`accept` does."""
+    are saved (:func:`store.save_power`), then it is accepted as :func:`accept` does. The two
+    are separate steps: if accepting fails, the saved row stays ``proposed`` (harmless: the
+    ledger doesn't count it, and accepting the option again picks it up)."""
     if plan.get("kind") != "power":
         raise DesignerError("not a power plan")
     pid = _pid(str(plan["id"]), power=True)

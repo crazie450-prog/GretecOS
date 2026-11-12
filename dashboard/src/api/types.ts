@@ -279,7 +279,7 @@ export interface MyBase {
   stages: { stage: string; tier: number }[];
   machines: BaseMachine[];
   stock: BaseStock[];
-  lines: { key: string; rate_s: number }[];
+  lines: { key: string; rate_s: number; plans: string[] }[];
   has_db: boolean;
 }
 

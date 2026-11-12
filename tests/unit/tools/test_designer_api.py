@@ -65,6 +65,7 @@ def test_who_may_read_and_write(client: TestClient) -> None:
         (f"/api/plans/{pid}/resolve", {}),
         (f"/api/plans/{pid}/name", {"name": "x"}),
         (f"/api/plans/{pid}/pin", {"node": STEEL, "recipe": None}),
+        (f"/api/plans/{pid}/status", {"status": "retired"}),  # WO-4.4: Trusted only
     ):
         assert client.post(path, json=body, headers=voice).status_code == 403
     # A paired dashboard may.

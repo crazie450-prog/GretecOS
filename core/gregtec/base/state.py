@@ -455,8 +455,12 @@ def snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             for s in stock(conn)
         ],
         "lines": [
-            {"key": k, "rate_s": v}
-            for k, v in sorted(ledger.line_outputs(conn).items())
+            {
+                "key": k,
+                "rate_s": float(f"{v:.9g}"),  # as base/power.md writes a sum
+                "plans": [f"plan:{p}" for p in plans],
+            }
+            for k, (v, plans) in sorted(ledger.running_outputs(conn).items())
         ],
         "has_db": has_table(conn, "machine"),
     }

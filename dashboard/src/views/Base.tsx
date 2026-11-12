@@ -8,6 +8,7 @@ import { ApiError, api } from "../api/client";
 import type { BaseCandidate, BaseMachine, BaseSource, BaseStock, MyBase } from "../api/types";
 import { useCardActions } from "../cards/context";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip, stageTier } from "../components/core";
+import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
 
 const SOURCE_WORD: Record<BaseSource, string> = {
@@ -463,8 +464,11 @@ export function Base() {
                 ) : (
                   <ul className="result-list">
                     {base.lines.map((l) => (
-                      <li key={l.key}>
-                        <code>{l.key}</code> <span className="num">{l.rate_s}/s</span>
+                      <li key={l.key} data-testid="base-line">
+                        <code>{l.key}</code> <span className="num">{plain(l.rate_s)}/s</span>{" "}
+                        {l.plans.map((p) => (
+                          <CitationChip key={p} cite={p} />
+                        ))}
                       </li>
                     ))}
                   </ul>

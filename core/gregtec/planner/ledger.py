@@ -12,6 +12,9 @@ JSON and cited ``plan:<id>``; this module only adds and compares them, it comput
   can't disagree about it: ``accepted``, ``building`` and ``running`` count, ``proposed`` and
   ``retired`` don't. So accepting a plan adds its line, a lifecycle move updates it, retiring one
   (or accepting one that supersedes it, :func:`gregtec.planner.designer.accept`) removes it.
+  :func:`sync` records a counted plan that has no entry yet (one accepted through WO-3.7's stub,
+  before the ledger recorded anything) from its saved JSON; every move and ``gos ledger --write``
+  run it.
 - **Two scopes:** ``all`` (every counted plan: the budget once everything accepted is built) and
   ``running`` (only running lines and sources: what should be live now). Net per tier is shown
   for both; every warning names its scope.
@@ -25,7 +28,10 @@ JSON and cited ``plan:<id>``; this module only adds and compares them, it comput
   ``me/``.
 - **Telemetry (HOOK, WO-7.1's tables):** :func:`reconcile` reads the fresh OC power entries'
   measured average EU/t in and out (``tel_machine`` rows with status ``power``, their newest
-  ``eu_in``/``eu_out`` samples) and the note and card show them beside the running scope's
+  ``eu_in``/``eu_out`` samples, each only while it is itself fresh: WO-7.1 rewrites an unchanged
+  reading every ``HEARTBEAT_S``, so an older one was left out since and is never carried
+  forward), summed (chained entries, an LSC and a buffer, may count the same EU twice), and the
+  note and card show them beside the running scope's
   generation and use. It compares, never corrects: the ledger's numbers stay the plans'. Which
   readings mean what for a given base (an LSC that every line feeds through, or not), and alerts
   on drift, are WO-7.4/7.5's.
@@ -44,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gregtec.bridge.telemetry import HEARTBEAT_S, STALE_S
 from gregtec.planner.gtmath.tiers import VN
 
 TABLE = "ledger_line"
@@ -57,7 +64,6 @@ SCOPES = ("all", "running")
 TIER_ORDER = {name: i for i, name in enumerate(VN)}
 NOTE_MAX = 150  # plan 6.2's cap
 FRONTMATTER_LINES = 5
-TEL_FRESH_S = 30  # WO-7.1's STALE_S: an OC reading older than this is old data
 
 
 def _num(v: object) -> float:
@@ -219,6 +225,36 @@ def _has(conn: sqlite3.Connection, table: str) -> bool:
     )
 
 
+def sync(home: Path, conn: sqlite3.Connection, now: int | None = None) -> list[str]:
+    """Record every counted plan (``plan`` row ``accepted``, ``building`` or ``running``) that
+    has no entry yet, from its saved JSON under ``home`` (a plan accepted before WO-4.4: WO-3.7's
+    stub recorded nothing). Inside the caller's transaction when there is one; returns the
+    problems (a plan whose JSON can't be read stays out, and says so)."""
+    from gregtec.planner.outputs import store
+
+    if not _has(conn, "plan"):
+        return []
+    ensure_table(conn)
+    marks = ",".join("?" * len(COUNTED))
+    missing = [
+        str(r[0])
+        for r in conn.execute(
+            f"SELECT p.id FROM plan p LEFT JOIN {TABLE} l ON l.plan = p.id"
+            f" WHERE p.status IN ({marks}) AND l.plan IS NULL ORDER BY p.id",
+            COUNTED,
+        )
+    ]
+    problems = []
+    for pid in missing:
+        try:
+            plan = store.load(home, pid)
+        except (OSError, ValueError) as exc:
+            problems.append(f"plan:{pid} isn't in the EU ledger: its JSON: {exc}")
+            continue
+        record(conn, plan, now)
+    return problems
+
+
 @dataclass(frozen=True)
 class Line:
     entry: Entry
@@ -240,16 +276,27 @@ def lines(conn: sqlite3.Connection) -> list[Line]:
     return out
 
 
-def line_outputs(conn: sqlite3.Connection) -> dict[str, float]:
-    """Stable key -> rate per second made by **running** production lines (summed), for My
-    base's ``line_outputs`` (D211): the designer takes them as ``line`` boundaries."""
-    out: dict[str, float] = {}
+def running_outputs(
+    conn: sqlite3.Connection,
+) -> dict[str, tuple[float, tuple[str, ...]]]:
+    """Stable key -> (rate per second, the plan ids making it) of **running** production lines,
+    rates summed: My base's panel cites the plans (``plan:``)."""
+    rates: dict[str, list[float]] = {}
+    plans: dict[str, list[str]] = {}
     for line in lines(conn):
         if line.status != "running":
             continue
         for key, rate in line.entry.outputs:
-            out[key] = math.fsum((out.get(key, 0.0), rate))
-    return out
+            rates.setdefault(key, []).append(rate)
+            plans.setdefault(key, []).append(line.entry.plan)
+    return {k: (math.fsum(rates[k]), tuple(plans[k])) for k in rates}
+
+
+def line_outputs(conn: sqlite3.Connection) -> dict[str, float]:
+    """Stable key -> rate per second made by **running** production lines (summed), for My
+    base's ``line_outputs`` (D211): the designer takes them as ``line`` boundaries (never for a
+    request's own target, :mod:`gregtec.planner.graph`)."""
+    return {k: rate for k, (rate, _) in running_outputs(conn).items()}
 
 
 # --- telemetry (the hook) ----------------------------------------------------------------------
@@ -263,20 +310,23 @@ class Telemetry:
     eu_in: float  # their measured average EU/t in, summed
     eu_out: float  # and out
     refs: tuple[str, ...]  # tel:<binding>/<address>
-    age_s: int  # the oldest reading's age
+    age_s: int  # the oldest sample read's age
 
 
 def reconcile(conn: sqlite3.Connection, now: float | None = None) -> Telemetry | None:
     """**HOOK** (plan 7.2 "reconciles with telemetry once OC is live"): the fresh OC power
     entries' newest ``eu_in``/``eu_out`` samples, summed; None without WO-7.1's tables or
-    without a fresh power entry. A stale entry is never read (WO-7.1 never extrapolates)."""
+    without a fresh power entry. A stale entry is never read, nor a sample older than its
+    entry's ``last_seen`` less WO-7.1's ``HEARTBEAT_S`` (an unchanged reading is rewritten that
+    often, so an older one has been left out since: WO-7.1 never carries one forward).
+    ``age_s`` is the oldest sample read's age."""
     if not _has(conn, "tel_machine") or not _has(conn, "tel_sample"):
         return None
     t = time.time() if now is None else now
     rows = conn.execute(
         "SELECT id, last_seen FROM tel_machine WHERE status = 'power' AND last_seen >= ?"
         " ORDER BY id",
-        (int(t) - TEL_FRESH_S,),
+        (int(t) - STALE_S,),
     ).fetchall()
     if not rows:
         return None
@@ -288,16 +338,16 @@ def reconcile(conn: sqlite3.Connection, now: float | None = None) -> Telemetry |
         got = False
         for key, sink in (("eu_in", eu_in), ("eu_out", eu_out)):
             row = conn.execute(
-                "SELECT value FROM tel_sample WHERE src = ? AND key = ? AND value IS NOT NULL"
-                " ORDER BY ts DESC LIMIT 1",
-                (src, key),
+                "SELECT value, ts FROM tel_sample WHERE src = ? AND key = ? AND ts >= ?"
+                " AND value IS NOT NULL ORDER BY ts DESC LIMIT 1",
+                (src, key, int(last_seen) - HEARTBEAT_S),
             ).fetchone()
             if row is not None:
                 sink.append(float(row[0]))
+                oldest = max(oldest, max(0, int(t) - int(row[1])))
                 got = True
         if got:
             refs.append(f"tel:{src}")
-            oldest = max(oldest, max(0, int(t) - int(last_seen)))
     if not refs:
         return None
     return Telemetry(
@@ -324,7 +374,7 @@ class TierNet:
 
 
 @dataclass(frozen=True)
-class Warning:
+class LedgerWarning:
     kind: str  # deficit, tier_mismatch, amp_overload
     scope: str  # all or running
     tier: str  # "" for a base-wide warning
@@ -336,7 +386,7 @@ class Warning:
 class Ledger:
     lines: list[Line]
     tiers: dict[str, list[TierNet]]  # per scope
-    warnings: list[Warning]
+    warnings: list[LedgerWarning]
     telemetry: Telemetry | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -421,14 +471,14 @@ def _per_tier(lines: Sequence[Line]) -> list[TierNet]:
 
 def _warnings(
     scope: str, lines: Sequence[Line], tiers: Sequence[TierNet]
-) -> list[Warning]:
-    out: list[Warning] = []
+) -> list[LedgerWarning]:
+    out: list[LedgerWarning] = []
     gen = math.fsum(t.gen_eut for t in tiers)
     use = math.fsum(t.use_eut_avg for t in tiers)
     users = tuple(ln.entry.plan for ln in lines if ln.entry.draws)
     if use > gen:
         out.append(
-            Warning(
+            LedgerWarning(
                 "deficit",
                 scope,
                 "",
@@ -447,7 +497,7 @@ def _warnings(
         )
         if drawn and t.tier not in sourced:
             out.append(
-                Warning(
+                LedgerWarning(
                     "tier_mismatch",
                     scope,
                     t.tier,
@@ -459,7 +509,7 @@ def _warnings(
             )
         elif drawn and t.amps_out > t.amps_in:
             out.append(
-                Warning(
+                LedgerWarning(
                     "amp_overload",
                     scope,
                     t.tier,
@@ -527,7 +577,8 @@ def render(ledger: Ledger, cap: int | None = NOTE_MAX) -> str:
             ("tel_eu_out", _fmt(tel.eu_out)),
             (
                 "tel",
-                f"{tel.entries} OC power entries, oldest {tel.age_s} s: "
+                f"{tel.entries} OC power entries (summed, may double-count chained"
+                f" entries), oldest {tel.age_s} s: "
                 + ", ".join(tel.refs[:5])
                 + (f" and {len(tel.refs) - 5} more" if len(tel.refs) > 5 else ""),
             ),
@@ -701,6 +752,20 @@ def ledger_update(
     and rewrite ``base/power.md``. A plan the ledger doesn't count at ``status`` (proposed,
     retired) leaves the ledger; its record stays for the history."""
     e = record(conn, plan, None if now is None else int(now))
+    return publish(home, conn, e, status, now=now)
+
+
+def publish(
+    home: Path,
+    conn: sqlite3.Connection,
+    e: Entry,
+    status: str,
+    *,
+    now: float | None = None,
+) -> LedgerUpdate:
+    """:func:`ledger_update` without the record step, for a caller that recorded ``e`` in its
+    own transaction (``gregtec.planner.designer._move``): read the ledger, rewrite
+    ``base/power.md`` and report ``e``'s update."""
     ledger = read(conn, now)
     path, problems = write(home, ledger)
     counted = status in COUNTED

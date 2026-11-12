@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from gregtec import store as core_store
+from gregtec.base import state as base_state
 from gregtec.base.state import MyBase
 from gregtec.cards import validate as card_problems
 from gregtec.db import access
@@ -332,11 +333,24 @@ def test_reconcile_reads_fresh_power_entries_only(tel_db: sqlite3.Connection) ->
     fake_power(tel_db, "bb", now - 2, "power", {"eu_in": [(now - 2, 28.5)]})
     fake_power(tel_db, "cc", now - 100, "stale", {"eu_in": [(now - 100, 999.0)]})
     fake_power(tel_db, "dd", now - 1, "running", {"eu_in": [(now - 1, 777.0)]})
+    # A fresh entry whose reading stopped days ago (its call fails): never carried forward.
+    fake_power(tel_db, "ee", now - 2, "power", {"eu_in": [(now - 6 * 86400, 5000.0)]})
     tel = ledger.reconcile(tel_db, now)
     assert tel is not None
     assert tel.entries == 2 and tel.refs == ("tel:oc-lab/aa", "tel:oc-lab/bb")
     assert tel.eu_in == 128.5 and tel.eu_out == 40.0  # the newest samples only
     assert tel.age_s == 5
+    # Age is the sample's, not the entry's: an unchanged reading rewritten 50 s ago is read.
+    fake_power(tel_db, "ff", now - 1, "power", {"eu_out": [(now - 50, 2.0)]})
+    tel = ledger.reconcile(tel_db, now)
+    assert (
+        tel is not None and tel.entries == 3 and tel.eu_out == 42.0 and tel.age_s == 50
+    )
+    # Older than a heartbeat before the entry was last heard: left out since, not read.
+    assert ledger.HEARTBEAT_S == 60
+    fake_power(tel_db, "gg", now - 1, "power", {"eu_out": [(now - 62, 7.0)]})
+    tel = ledger.reconcile(tel_db, now)
+    assert tel is not None and tel.entries == 3 and tel.eu_out == 42.0
     # An entry swept stale is never read, even if its row still says power within the window.
     assert ledger.reconcile(tel_db, now + 60) is None
 
@@ -354,7 +368,10 @@ def test_reconciled_ledger_shows_both(tel_db: sqlite3.Connection, vault: Path) -
     VaultIO(vault).write(ledger.NOTE, ledger.render(led))
     text = note_ok(vault, ledger.NOTE)
     assert "tel_eu_in: 30\ntel_eu_out: 18\n" in text
-    assert "tel: 1 OC power entries, oldest 3 s: tel:oc-lab/aa\n" in text
+    assert (
+        "tel: 1 OC power entries (summed, may double-count chained entries), oldest 3 s:"
+        " tel:oc-lab/aa\n"
+    ) in text
     assert "run_gen_eut: 32\n" in text  # the ledger's numbers stay the plans'
     c = ledger.card(led, "running")
     assert card_problems(c) == []
@@ -534,8 +551,61 @@ def test_running_line_outputs_reach_the_designer(home: Path) -> None:
     designer.set_status(home, d.ids[0], "running")
     assert my_base(home).line_outputs() == {PLATE: 2.0}
     assert widget_graph().item(PLATE).boundary == "line"  # D211, D252
-    designer.set_status(home, d.ids[0], "retired")
+    # Never a boundary for its own target (review H1): the running line can be redesigned
+    # (scaled up here) and the new design supersedes it end to end.
+    bigger = designer.design(home, Request(PLATE, qty=4, tier_cap="MV"))
+    assert bigger.ids
+    done = designer.accept(home, bigger.ids[0], supersedes=d.ids[0])
+    assert done.status == "accepted" and done.problems == []
+    assert {ln.entry.plan: ln.status for ln in read(home).lines} == {
+        bigger.ids[0]: "accepted"
+    }
+    assert my_base(home).line_outputs() == {}  # the new line isn't running yet
     assert widget_graph().item(PLATE).boundary is None
+
+
+def set_row_status(home: Path, pid: str, status: str) -> None:
+    conn = core_store.connect(access.db_path(home))
+    try:
+        conn.execute("UPDATE plan SET status = ? WHERE id = ?", (status, pid))
+    finally:
+        conn.close()
+
+
+def test_plans_accepted_before_the_ledger_join_it(home: Path) -> None:
+    # WO-3.7's stub accepted plans without recording them (review M1): a later move or
+    # `gos ledger --write` records them from their saved JSON.
+    d = designer.design(home, Request(WIDGET, qty=2, tier_cap="MV"))
+    a, b = d.ids[0], d.ids[1]
+    set_row_status(home, a, "running")
+    assert read(home).lines == []
+    done = designer.accept(home, b)  # any move syncs, in its transaction
+    assert done.problems == []
+    assert {ln.entry.plan: ln.status for ln in read(home).lines} == {
+        a: "running",
+        b: "accepted",
+    }
+    assert my_base(home).line_outputs() == {WIDGET: 2.0}
+    assert f"plan:{a}\t" in note_ok(home / "vault", ledger.NOTE)
+    conn = core_store.connect(access.db_path(home))
+    try:  # My base's panel cites the running plans (review L1)
+        assert base_state.snapshot(conn)["lines"] == [
+            {"key": WIDGET, "rate_s": 2.0, "plans": [f"plan:{a}"]}
+        ]
+    finally:
+        conn.close()
+
+    # gos ledger --write syncs too; a plan whose JSON is gone stays out and says so.
+    c = designer.design(home, Request(WIDGET, qty=3, tier_cap="MV")).ids[0]
+    e = designer.design(home, Request(WIDGET, qty=5, tier_cap="MV")).ids[0]
+    set_row_status(home, c, "accepted")
+    set_row_status(home, e, "building")
+    (home / "data" / "plans" / f"{c}.json").unlink()
+    code, text = cli(home, ledgercli, "ledger", "--write")
+    assert code == 1  # a warning (deficit), not a failure
+    assert f"plan:{c} isn't in the EU ledger: its JSON: " in text
+    assert "wrote base/power.md" in text
+    assert {ln.entry.plan for ln in read(home).lines} == {a, b, e}
 
 
 # --- the CLIs ---------------------------------------------------------------------------------
