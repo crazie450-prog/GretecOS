@@ -29,7 +29,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from gregtec_voice.audio import AudioError, Device, _sounddevice, _wasapi
+from gregtec_voice.audio import (
+    WASAPI_EXCLUSIVE,
+    AudioError,
+    Device,
+    _sounddevice,
+    _wasapi,
+)
 
 log = logging.getLogger(__name__)
 
@@ -140,7 +146,9 @@ class WasapiOutput:
                 channels=1,
                 dtype="int16",
                 latency="low",
-                extra_settings=sd.WasapiSettings(auto_convert=True),
+                extra_settings=sd.WasapiSettings(
+                    exclusive=WASAPI_EXCLUSIVE, auto_convert=True
+                ),
             )
             stream.start()
         except Exception as exc:  # noqa: BLE001 - PortAudioError: say which device
