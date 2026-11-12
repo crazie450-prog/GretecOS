@@ -34,10 +34,16 @@ uv run gos power turbine plasma   --rotor Neutronium    --size normal --dynamo U
 ```
 
 Each prints the rotor's efficiency, optimal flow and overflow tier, the fuel's `FUEL_VALUE` and
-three rows: `half optimal`, `optimal` and `maximum`, each with the L/t the turbine burns, the EU/t
-it makes and the optimal flow its scanner shows, plus the citations (`rotor:<material>/<size>`
+three rows: `half optimal`, `optimal` and `maximum`, each with the flow the turbine burns, the
+EU/t it makes and the optimal flow its scanner shows, plus the citations (`rotor:<material>/<size>`
 and the fuel's `r:` key). Add `--legacy` for a pre-2.9 controller and `--loose` after a
 screwdriver click. Save the output next to your Lab notes.
+
+**Plasma is per second.** The steam, HP steam, supercritical and gas turbines burn their fluid
+every tick, so their flows are **L/t**. Both plasma controllers burn once every 20 ticks (GT sets
+their cycle to 20 ticks) and hold the EU/t for the whole second, so a plasma flow is **L/s**:
+`gos power turbine plasma` prints the column as `L/s`, and GT's scanner shows the plasma optimal
+flow with `/s`. A litre of plasma still makes `FUEL_VALUE` x the rotor's efficiency EU.
 
 For reference, the dev runtime's numbers (server harness run `20261112T065356Z`, the mod's dev
 pack, which may differ from yours wherever a config or addon changes a material or a fuel):
@@ -56,9 +62,9 @@ pack, which may differ from yours wherever a config or addon changes a material 
 | gas | Titanium large | IV | benzene | 2 | 1 L/t: 243 | 2 L/t: 972 | 6 L/t: 1749 | rotor:Titanium/large r:gt.recipe.gasturbinefuel/28b9a71641df |
 | gas | TungstenSteel huge | IV | benzene | 4 | 2 L/t: 612 | 4 L/t: 2448 | 12 L/t: 4406 | rotor:TungstenSteel/huge r:gt.recipe.gasturbinefuel/28b9a71641df |
 | gas | Neutronium normal | IV | benzene | 6 | 3 L/t: 756 | 6 L/t: 3024 | 27 L/t: 7653 | rotor:Neutronium/normal r:gt.recipe.gasturbinefuel/28b9a71641df |
-| plasma | Titanium large | UV | plasma.helium | 11 | 5 L/t: 12567 | 11 L/t: 60825 | 44 L/t: 139029 | rotor:Titanium/large r:gt.recipe.plasmageneratorfuels/bbc21cccddaa |
-| plasma | TungstenSteel huge | UV | plasma.helium | 17 | 8 L/t: 26214 | 17 L/t: 118374 | 68 L/t: 270568 | rotor:TungstenSteel/huge r:gt.recipe.plasmageneratorfuels/bbc21cccddaa |
-| plasma | Neutronium normal | UV | plasma.helium | 25 | 12 L/t: 33028 | 25 L/t: 143360 | 137 L/t: 433657 | rotor:Neutronium/normal r:gt.recipe.plasmageneratorfuels/bbc21cccddaa |
+| plasma | Titanium large | UV | plasma.helium | 11 L/s | 5 L/s: 12567 | 11 L/s: 60825 | 44 L/s: 139029 | rotor:Titanium/large r:gt.recipe.plasmageneratorfuels/bbc21cccddaa |
+| plasma | TungstenSteel huge | UV | plasma.helium | 17 L/s | 8 L/s: 26214 | 17 L/s: 118374 | 68 L/s: 270568 | rotor:TungstenSteel/huge r:gt.recipe.plasmageneratorfuels/bbc21cccddaa |
+| plasma | Neutronium normal | UV | plasma.helium | 25 L/s | 12 L/s: 33028 | 25 L/s: 143360 | 137 L/s: 433657 | rotor:Neutronium/normal r:gt.recipe.plasmageneratorfuels/bbc21cccddaa |
 
 ## 2. Build each turbine in the Lab
 
@@ -87,15 +93,25 @@ For each of the three rows:
 - **maximum**: give it more than it can burn: a creative fluid source (or a Super Tank of the
   fluid behind a pump) on the input hatch with nothing limiting the flow.
 - **optimal** and **half optimal**: put a **Fluid Regulator** cover on the pipe or tank feeding
-  the input hatch, set to exactly the row's L/t, per tick (a high enough tier for the rate).
+  the input hatch, set to exactly the row's flow (a high enough tier for the rate):
+  - steam, HP steam, supercritical steam, gas: the row's **L/t, per tick**;
+  - plasma: the row's **L/s, per second** (per 20 ticks). Never set a plasma row per tick: the
+    hatch would get 20 times the row's flow and the turbine would run at its maximum instead.
 
-Then wait **at least 60 s**: GT ramps the controller's efficiency from 0 to 100 % (10 per
-tick) and moves its output toward the target by at most 1 % of the gap per tick. Read the
-controller with a **Portable Scanner** (or the tricorder): the lines are the turbine's output
-in EU/t, its efficiency (must read 100 %), the optimal flow with "per tick" and the fitting, and
-the fuel stored. Record for each row:
+Then wait until the controller has settled: its efficiency reads **100 %** and its output has
+**stopped changing** between two scanner reads a minute apart. GT ramps the efficiency from 0 to
+100 % in 1000 ticks (10 per tick; plasma 200 per 20-tick cycle) and, each cycle, moves the
+output toward the target by the larger of 10 EU/t and 1 % of the gap:
+- steam, HP steam, supercritical steam, gas (a 1-tick cycle): wait **at least 90 s**;
+- plasma (a 20-tick cycle, so the output ramp is 20 times slower): wait **about 10 to 12
+  minutes** for the table's rows (over 8 minutes even for the smallest), and longer for outputs
+  near a big dynamo's cap.
 
-| setup | flow fed (L/t) | output shown (EU/t) | optimal flow shown | efficiency shown |
+Read the controller with a **Portable Scanner** (or the tricorder): the lines are the turbine's
+output in EU/t, its efficiency (must read 100 %), the optimal flow with its unit ("/t", or "/s"
+for plasma) and the fitting, and the fuel stored. Record for each row:
+
+| setup | flow fed (L/t, or L/s for plasma) | output shown (EU/t) | optimal flow shown | efficiency shown |
 |---|---|---|---|---|
 
 **Pass**: every row's output and optimal flow equal `gos power turbine`'s numbers exactly (they
