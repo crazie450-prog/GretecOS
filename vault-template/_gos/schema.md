@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-06
+upd: 2026-11-11
 ---
 version: 0
 summary: note types and allowed keys
@@ -18,6 +18,7 @@ max_lines: 150 (INDEX.md: 200)
 index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
 log_counts: n_<kind>: N lines are the curator's computed counts, in log/wk/ and log/mo/ only; no other log uses an n_ key
 note: keys * means any key until the WO that owns the type defines them
+note: persona packs (WO-5.6): the shipped ones are in _gos/personas/ (the repo's), Clayton's in personas/pe-<name>.md
 
 ```tsv
 t	id	path	writer	keys
@@ -34,7 +35,7 @@ line	ln-*	base/lines/	agents	st, tgt, tgt_rate_s, plan, eut, tier, deps, note
 plan	pl-*	plans/	agents	*
 quest	qs-*	quests/	agents	*
 theme	th-*	themes/	agents	*
-persona	pe-*	personas/	both	*
+persona	pe-*	personas/	both	name, voice, verbosity, humour, address, style, lexicon, sample, note
 log	log-*	log/	agents	*
 inbox	ib-*	inbox/	agents	*
 ```

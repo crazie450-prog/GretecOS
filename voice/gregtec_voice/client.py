@@ -576,6 +576,7 @@ class VoiceClient:
             self.say("" if quiet else self._failure(ev), turn)
             return
         reply = ev.reply or {}
+        self._persona_voice(reply)
         turn.outcome = "answered"
         turn.lane, turn.intent = reply.get("lane"), reply.get("intent")
         turn.core_ttft_ms, turn.checked = reply.get("ttft_ms"), reply.get("checked")
@@ -587,6 +588,17 @@ class VoiceClient:
             self.say("", turn)
             return
         self.say(str(reply.get("text") or ""), turn)
+
+    def _persona_voice(self, reply: dict[str, Any]) -> None:
+        """The reply's persona speaks in its own voice (WO-5.6, D207): a speaker that can
+        change voice (``use_voice``) gets the persona's voice entries before the reply."""
+        persona = reply.get("persona")
+        use = getattr(self.speaker, "use_voice", None)
+        if use is None or not isinstance(persona, dict):
+            return
+        voice = persona.get("voice")
+        if isinstance(voice, str):
+            use(voice)
 
     def _failure(self, ev: Answered) -> str:
         """What to say when the core didn't answer a request."""

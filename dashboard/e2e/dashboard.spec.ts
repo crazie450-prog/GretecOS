@@ -181,6 +181,23 @@ test("Settings + Health shows the processes, the last export, VERIFY, doctor and
   await page.screenshot({ path: shot("settings") });
 });
 
+test("the persona switches from Settings' dropdown and by the spoken command (WO-5.6)", async () => {
+  await page.keyboard.press("9");
+  const select = page.getByTestId("persona-select");
+  await expect(select).toHaveValue("gt-veteran"); // D60's default
+  await expect(select.locator("option")).toHaveCount(3);
+  await select.selectOption("ship-ai");
+  await expect(select).toHaveValue("ship-ai");
+  // "persona coop buddy" as a transcript would arrive: the router's instant command (no model
+  // call); the core pushes the new state and the dropdown follows.
+  await page.getByTestId("ask-input").fill("persona coop buddy");
+  await page.getByTestId("ask-send").click();
+  await expect(select).toHaveValue("coop-buddy");
+  await page.getByTestId("persona-settings").screenshot({ path: shot("settings-persona") });
+  await select.selectOption("gt-veteran"); // as it was for the tests after this one
+  await expect(select).toHaveValue("gt-veteran");
+});
+
 test("Costs shows the cycle against the included credits", async () => {
   await page.keyboard.press("8");
   await expect(page.getByTestId("spent")).toHaveText("$0.00");
