@@ -325,6 +325,17 @@ def test_doctor_surveys_the_prism_root_gos_toml_names(
     assert [Path(r["path"]) for r in env["prism_roots"]] == [root]
 
 
+def test_doctor_help_names_the_prism_root_gos_toml_gives(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """QA W4 gate: --prism-root's help says what doctor searches first by default."""
+    with pytest.raises(SystemExit):
+        cli.main(["doctor", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert "gos.toml's [paths] prism_root" in text and "$PRISMLAUNCHER_DATA_DIR" in text
+    assert "%%" not in text
+
+
 def test_doctor_runs_with_a_broken_gos_toml(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "config").mkdir(parents=True)

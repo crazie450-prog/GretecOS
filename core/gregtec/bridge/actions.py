@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -685,4 +686,5 @@ def _journal_lines(action: Action) -> list[str]:
     # or links of its own to the journal.
     text = "; ".join(" ".join(str(p).split()) for p in parts)
     readback = " ".join(action.readback.split())
-    return [f"action_{action.id}: {text}; {readback}".replace("[[", "[ [")[:300]]
+    line = re.sub(r"\[(?=\[)", "[ ", f"action_{action.id}: {text}; {readback}")
+    return [line[:300]]

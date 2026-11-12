@@ -63,8 +63,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         type=Path,
         metavar="DIR",
-        help="Prism data folder to search (repeatable). Default: the portable install "
-        "in C:\\Games\\PrismLauncher, then %%APPDATA%%\\PrismLauncher.",
+        help="Prism data folder to search (repeatable). Default: gos.toml's [paths] "
+        "prism_root, then $PRISMLAUNCHER_DATA_DIR, C:\\Games\\PrismLauncher and "
+        "%%APPDATA%%\\PrismLauncher.",
     )
     doc.add_argument(
         "--gos-home",
