@@ -252,7 +252,7 @@ def role_of(cmd: Sequence[str]) -> str | None:
     """``core``, ``voice`` or None for one command line."""
     if "gregtec.api" in cmd:
         return CORE
-    names = [Path(c).name.lower() for c in cmd]
+    names = [re.split(r"[\\/]", c)[-1].lower() for c in cmd]  # Windows paths on any OS
     for i, name in enumerate(names):
         rest = names[i + 1 : i + 3]
         if name in ("gos", "gos.exe") and rest == ["voice", "run"]:
@@ -505,7 +505,7 @@ def game_checks(
             )  # fmt: skip
         else:
             b, d = sum(before) / len(before), sum(during) / len(during)
-            drop = (b - d) / b
+            drop = round((b - d) / b, 4)
             checks.append(
                 Check(
                     "game",
@@ -534,7 +534,7 @@ def game_checks(
                   note="no /forge tps Overall line in what was given")
         )  # fmt: skip
         return checks
-    drop = before_tps[1] - during_tps[1]
+    drop = round(before_tps[1] - during_tps[1], 3)  # as printed
     checks.append(
         Check(
             "game",
