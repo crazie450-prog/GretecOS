@@ -300,7 +300,7 @@ def db_sql(call: Call, args: dict[str, Any], offset: int) -> Result:
     costly = Costly(call.deadline)
     before = {limit: conn.setlimit(limit, value) for limit, value in LIMITS.items()}
     costly.install(conn)  # the registry closes this connection after the call
-    conn.set_authorizer(watching(seen, call.spoil_max < spoilers.FULL))
+    conn.set_authorizer(watching(seen, call.spoil_any < spoilers.FULL))
     rows: list[tuple[object, ...]] = []
     more = False
     try:

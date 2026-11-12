@@ -98,11 +98,23 @@ class Call:
     # global setting, raised only by Clayton's own words).
     spoil_default: int = 0
     spoil_max: int = spoilers.FULL
+    # The quest his spoiler command names (spoilers.quest_keys of it): spoil_max is for that
+    # quest only. None: not tied to one quest.
+    spoil_scope: frozenset[str] | None = None
 
-    def spoil(self, asked: int | None) -> int:
-        """The level a quest tool shows: ``asked`` (its ``spoil`` argument) or the default,
-        never above :attr:`spoil_max`."""
-        return min(self.spoil_default if asked is None else asked, self.spoil_max)
+    def spoil(self, asked: int | None, quest: frozenset[str] = frozenset()) -> int:
+        """The level a quest tool shows for ``quest`` (its :func:`spoilers.quest_keys`):
+        ``asked`` (its ``spoil`` argument) or the default, never above :attr:`spoil_max`, nor
+        above the default for a quest his command didn't name."""
+        top = self.spoil_max
+        if self.spoil_scope is not None and not self.spoil_scope & quest:
+            top = self.spoil_default
+        return min(self.spoil_default if asked is None else asked, top)
+
+    @property
+    def spoil_any(self) -> int:
+        """The most any quest may show: :attr:`spoil_max` unless his command named one quest."""
+        return self.spoil_max if self.spoil_scope is None else self.spoil_default
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -272,16 +284,20 @@ class Registry:
 
     def _spoils(
         self, lane: str | None, request: str | None, spoil_max: int | None
-    ) -> tuple[int, int]:
-        """(default level, highest level) for one call (D268). The default is always the global
-        setting: going higher takes a ``spoil`` argument within the highest level, so a
-        request's words raise what one quest may show, never every quest a list names."""
+    ) -> tuple[int, int, frozenset[str] | None]:
+        """(default level, highest level, the quest it is for) for one call (D268). The default
+        is always the global setting: going higher takes a ``spoil`` argument within the
+        highest level, so a request's words raise what one quest may show, never every quest a
+        list names; a command that names a quest raises that quest only."""
         default = self.env.spoiler_default
         if spoil_max is not None:
-            return default, max(default, spoilers.check_level(spoil_max))
+            return default, max(default, spoilers.check_level(spoil_max)), None
         if lane is None:
-            return default, spoilers.FULL
-        return default, spoilers.allowed(request, default)
+            return default, spoilers.FULL, None
+        asked = spoilers.asked(request)
+        if asked.level <= default:
+            return default, default, None
+        return default, asked.level, asked.quests
 
     def _call(
         self,
@@ -301,7 +317,7 @@ class Registry:
         if tool is MORE_TOOL:
             raise ToolError("a cursor never points at more itself")
         values = validate(tool.input_schema, args)
-        spoil_default, spoil_top = self._spoils(lane, request, spoil_max)
+        spoil_default, spoil_top, spoil_scope = self._spoils(lane, request, spoil_max)
         if not tool.needs_db:
             result = tool.handler(
                 Call(
@@ -311,6 +327,7 @@ class Registry:
                     request=request,
                     spoil_default=spoil_default,
                     spoil_max=spoil_top,
+                    spoil_scope=spoil_scope,
                 ),
                 values,
                 offset,
@@ -331,6 +348,7 @@ class Registry:
                 request,
                 spoil_default=spoil_default,
                 spoil_max=spoil_top,
+                spoil_scope=spoil_scope,
             )
             result = tool.handler(call, values, offset)
             cursor = None

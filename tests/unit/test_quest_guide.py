@@ -143,6 +143,36 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         ("what's my spoiler level", 0),
         ("", 0),
         (None, 0),
+        # the final review's phrasings (D268): a conditional, caveat, retraction or hedge
+        # after the command, a reported command, "everything" about steel
+        ("spoil it, if i get stuck later", 0),
+        ("spoil it, but only after i finish the steam age", 0),
+        ("full answer, unless it ruins the surprise", 0),
+        ("spoil it, just kidding", 0),
+        ("spoil it, jk", 0),
+        ("could you spoil it, or is that bad", 0),
+        ("spoil it. never mind", 0),
+        ("spoil it? no", 0),
+        ("spoil it... nevermind", 0),
+        ("spoil it? nah", 0),
+        ("spoil it. wait no. hold on", 0),
+        ("spoil it, if i get stuck", 0),
+        ("spoil it, once i finish steel", 0),
+        ("spoil it, later", 0),
+        ("would you spoil it, if i asked", 0),
+        ("could you spoil it, or would that ruin the fun", 0),
+        ("spoil everything, except the rewards", 0),
+        ("tell me everything, how do i make steel", 0),
+        ("tell me everything about the steel for my next quest", 0),
+        ("my brother says. spoil it. what does he mean", 0),
+        ("tell me about the secret alloy quest. spoil it? no", 0),
+        ("spoil it... nevermind, i want to work it out", 0),
+        ("spoil the secret alloy quest, if i get stuck", 0),
+        ("would you spoil the secret alloy quest, if i asked", 0),
+        # what still raises: the question it is for after a comma, colon or full stop
+        ("spoil it, what comes after the secret alloy quest", 2),
+        ("spoil it. what comes after the secret alloy quest?", 2),
+        ("what comes after the secret alloy quest? spoil it!", 2),
     ],
 )
 def test_asked_level(said: str | None, level: int) -> None:
@@ -223,11 +253,40 @@ _UNRELATED = [
     "what's my spoiler level",
     "would that spoil the surprise",
     "does it spoil anything",
+    "tell me everything, how do i make steel",
+    "tell me everything about the steel for my next quest",
+]
+# After the command: a conditional, a caveat, a retraction, a hedge, a second thought (the
+# final review, D268).
+_AFTER = [
+    "{cmd}, if i get stuck later",
+    "{cmd}, if i get stuck later. what comes after the secret alloy quest",
+    "{cmd}, but only after i finish the steam age",
+    "{cmd}, unless it ruins the surprise",
+    "{cmd}, unless it ruins the surprise: what comes after the secret alloy quest",
+    "{cmd}, just kidding",
+    "{cmd}, just kidding. what comes after the secret alloy quest",
+    "{cmd}, jk",
+    "{cmd}, or is that bad",
+    "could you {cmd}, or would that ruin the fun",
+    "would you {cmd}, if i asked",
+    "{cmd}. never mind",
+    "{cmd}? no",
+    "{cmd}? nah",
+    "{cmd}... nevermind, i want to work it out",
+    "{cmd}. wait no. hold on",
+    "{cmd}, once i finish steel",
+    "{cmd}, later",
+    "{cmd}, except the rewards",
+    "{cmd}. maybe later",
+    "{cmd}: when i get stuck",
+    "my brother says. {cmd}. what does he mean",
+    "tell me about the secret alloy quest. {cmd}? no",
 ]
 
 
 def _never_raise() -> list[str]:
-    out = [t.format(cmd=c) for t in _NEGATED + _WRAPPED for c in _COMMANDS]
+    out = [t.format(cmd=c) for t in _NEGATED + _WRAPPED + _AFTER for c in _COMMANDS]
     out = [" ".join(x.split()) for x in out]
     out += _UNRELATED
     # STT style: lower case, no punctuation, and capitalised, with a full stop
@@ -239,8 +298,10 @@ def _never_raise() -> list[str]:
 def test_only_an_explicit_command_raises_the_level() -> None:
     """Property style (D268): every sentence that merely contains a command (negated, with or
     without an apostrophe; after if, when, before or unless; reported or quoted; asked about;
-    run on) or that asks for "everything" about something else keeps the level; the commands
-    themselves, alone or with the router's filler, still raise it."""
+    run on; followed by a conditional, caveat, retraction or hedge) or that asks for
+    "everything" about something else keeps the level; the commands themselves, alone, with
+    the router's filler or with the question they are for, still raise it ("tell me
+    everything" takes no question after it)."""
     never = _never_raise()
     assert len(never) > 500
     raised = [x for x in never if spoilers.asked_level(x) != spoilers.NUDGE]
@@ -253,8 +314,15 @@ def test_only_an_explicit_command_raises_the_level() -> None:
             f"hey gos, {cmd}",
             f"can you {cmd}",
             f"{cmd.capitalize()}.",
-            f"{cmd}: what comes after the secret alloy quest",
             f"what comes after the secret alloy quest? {cmd}",
+            *(
+                []
+                if cmd.startswith("tell me everything")
+                else [
+                    f"{cmd}: what comes after the secret alloy quest",
+                    f"{cmd}, what comes after the secret alloy quest",
+                ]
+            ),
         ):
             assert spoilers.asked_level(said) == level, said
             # the router's own normalisation keeps the level
@@ -376,10 +444,55 @@ def test_spoiling_a_quest_never_names_what_it_unlocks(reg: Registry) -> None:
 
 
 def test_quest_for_item_hides_a_locked_quests_amount_at_level_0(reg: Registry) -> None:
-    out = reg.call("quest_for_item", {"item": "electric blast furnace"}, lane="fast")
+    said = "which quest asks for the electric blast furnace"
+    out = reg.call(
+        "quest_for_item", {"item": "electric blast furnace"}, lane="fast", request=said
+    )
     rows = parse(out.text).rows
     assert {r["quest"] for r in rows} == {q(15), q(22)}
     assert all(r["amount"] == "" and r["consume"] == "" for r in rows)
+
+
+def test_l0_list_tools_are_no_oracle_for_what_a_locked_quest_holds(
+    reg: Registry,
+) -> None:
+    """The final review (D268): for the plain L0 request "what comes after stainless dreams",
+    a model that picks item keys and words itself (what q5 asks for and gives, its
+    description's "chromium") learns nothing about q5 from quest_for_item or quest_find."""
+    said = "what comes after stainless dreams"
+    for item in (
+        "gregtech:gt.metaitem.01@11306",
+        "gregtech:gt.metaitem.01@17306",
+        "gregtech:gt.metaitem.01@2306",
+        "stainless steel ingot",
+    ):
+        out = reg.call("quest_for_item", {"item": item}, lane="fast", request=said)
+        assert not out.is_error and q(5) not in out.text, item
+    for words in ("chromium", "secret alloy", "secret", "stainless"):
+        out = reg.call("quest_find", {"text": words}, lane="fast", request=said)
+        assert not out.is_error and q(5) not in out.text, words
+
+
+def test_a_command_naming_one_quest_spoils_that_quest_only(
+    home: Path, reg: Registry
+) -> None:
+    """The final review (D268): "spoil the stainless dreams quest" raises q4, not q5 (nor the
+    deep lane's db_sql); "spoil it" is about whatever he asks, so it isn't tied to one."""
+    said = "spoil the stainless dreams quest"
+    head, text = _get(reg, 5, lane="fast", request=said)
+    assert head["spoil"] == "0" and "chromium" not in text
+    assert "named another one" in text
+    head, _ = _get(reg, 4, lane="fast", request=said)
+    assert head["spoil"] == "2"
+    by_id = f"spoil {q(4)}"
+    assert _get(reg, 4, lane="fast", request=by_id)[0]["spoil"] == "2"
+    assert _get(reg, 5, lane="fast", request=by_id)[0]["spoil"] == "0"
+    assert _get(reg, 5, lane="fast", request="spoil it")[0]["spoil"] == "2"
+    deep = default_registry(home, deep=HandoffRecorder())
+    out = deep.call(
+        "db_sql", {"select": "SELECT descr FROM quest"}, lane="deep", request=said
+    )
+    assert out.is_error and "spoiler level" in out.text
 
 
 # --- 1-3: requirements, the ranked frontier, links -----------------------------------------
@@ -645,6 +758,33 @@ def test_l0_never_spoils_an_answer(
                 ("quest", f'what does "spoil it" do for the {name} quest'),
                 ("quest", f"what does the {name} quest need"),
                 ("quest", f"i cant handle full spoilers yet so whats the {name} quest"),
+                # the final review's rows (D268): a caveat, a condition or a retraction after
+                # the command
+                (
+                    "unlocks",
+                    (
+                        "full answer, unless it ruins the surprise: what comes after the "
+                        f"{name} quest"
+                    ),
+                ),
+                (
+                    "unlocks",
+                    f"spoil it, if i get stuck later. what comes after the {name} quest",
+                ),
+                (
+                    "unlocks",
+                    f"spoil it, just kidding. what comes after the {name} quest",
+                ),
+                ("quest", f"tell me about the {name} quest. spoil it? no"),
+                (
+                    "quest",
+                    (
+                        f"tell me about the {name} quest. spoil it... nevermind, i want to "
+                        "work it out"
+                    ),
+                ),
+                ("quest", f"spoil the {name} quest, if i get stuck"),
+                ("quest", f"would you spoil the {name} quest, if i asked"),
             ]
         ):
             rows.append(
