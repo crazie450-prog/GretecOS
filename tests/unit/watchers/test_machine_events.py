@@ -9,7 +9,7 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,15 +26,21 @@ from gregtec.store import Store
 from gregtec.watchers import machines, runner
 from gregtec.watchers.events import Event
 
+
+class FakeClock(Protocol):
+    def __call__(self) -> float: ...
+    def advance(self, s: float) -> None: ...
+
+
 GT = "gregtech:gt.blockmachines"
 ADMIN = "admin-" + "q" * 40
 BASE = "http://127.0.0.1:8765"
 
 
 def line(
-    kind: str = "machine_built", seq: int = 1, mte: int = 1000, **over: Any
+    kind: str = "machine_built", seq: int = 1, mte: int = 1000, **over: object
 ) -> str:
-    o = {
+    o: dict[str, object] = {
         "v": 1,
         "kind": kind,
         "boot": 1700000000000,
@@ -92,7 +98,7 @@ def test_parse_keeps_valid_v1_lines_only() -> None:
 
 
 def test_watch_tails_the_file_from_its_start_and_rotates(
-    tmp_path: Path, clock: Any
+    tmp_path: Path, clock: FakeClock
 ) -> None:
     game = tmp_path / ".minecraft"
     path = game / machines.EVENTS_FILE
@@ -123,7 +129,7 @@ def test_watch_tails_the_file_from_its_start_and_rotates(
 
 
 def test_watchers_include_the_listener_and_the_census(
-    tmp_path: Path, clock: Any
+    tmp_path: Path, clock: FakeClock
 ) -> None:
     game = tmp_path / ".minecraft"
     world = game / "saves" / "lab"
@@ -155,12 +161,12 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     c.close()
 
 
-def ev(kind: str, **data: Any) -> dict[str, Any]:
+def ev(kind: str, **data: object) -> dict[str, Any]:
     return Event(kind, time.time(), "listener", data).as_dict()
 
 
-def built(x: int, mte: int, **kw: Any) -> dict[str, Any]:
-    return ev("machine_built", dim=0, x=x, y=64, z=0, mte_id=mte, **kw)
+def built(x: int, mte: int) -> dict[str, Any]:
+    return ev("machine_built", dim=0, x=x, y=64, z=0, mte_id=mte)
 
 
 def removed(x: int, mte: int) -> dict[str, Any]:

@@ -6,11 +6,17 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 
 from gregtec.watchers import census, files
+
+
+class FakeClock(Protocol):
+    def __call__(self) -> float: ...
+    def advance(self, s: float) -> None: ...
+
 
 GT = "BaseMetaTileEntity"
 
@@ -128,7 +134,7 @@ def test_machines_in_refuses_broken_chunks(fg: ModuleType, rg: ModuleType) -> No
 
 
 def test_baseline_reads_every_region_then_lists_them(
-    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: Any
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
 ) -> None:
     world = world_with(fg, rg, tmp_path)
     watch = census.CensusWatch(world, clock, settle_s=1.0)
@@ -143,7 +149,7 @@ def test_baseline_reads_every_region_then_lists_them(
     }
     overworld = [d for d in chunk_events(events) if d["dim"] == 0]
     assert overworld[0]["region"] == [0, 0]
-    assert sorted(set(sum((d["chunks"] for d in overworld), []))) == list(range(1024))
+    assert sorted({i for d in overworld for i in d["chunks"]}) == list(range(1024))
     assert all(e.kind == "machine_census" and e.source == "census" for e in events)
     world_event = events[-1].data
     assert world_event == {
@@ -158,7 +164,7 @@ def test_baseline_reads_every_region_then_lists_them(
 
 
 def test_only_changed_chunks_are_read_again(
-    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: Any
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
 ) -> None:
     world = world_with(fg, rg, tmp_path)
     reads: list[tuple[str, int, int]] = []
@@ -193,7 +199,7 @@ def test_only_changed_chunks_are_read_again(
 
 
 def test_budget_spreads_a_baseline_over_polls(
-    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: Any
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
 ) -> None:
     world = world_with(fg, rg, tmp_path)
     watch = census.CensusWatch(world, clock, settle_s=0, budget_s=1.0, timer=Timer(0.4))
@@ -208,7 +214,7 @@ def test_budget_spreads_a_baseline_over_polls(
 
 
 def test_a_torn_chunk_is_read_again_then_reported(
-    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: Any
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
 ) -> None:
     world = tmp_path / "world"
     good = rg.chunk_bytes(fg, 0, 0, [rg.machine_te(fg, 1, 5, 2, 1000)])
