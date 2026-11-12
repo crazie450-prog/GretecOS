@@ -18,7 +18,7 @@ the routes keep the order rank.py gives them.
   through a reload and any re-solve (:func:`resolve`).
 - :func:`accept`: the plan's lifecycle moves ``proposed -> accepted``; its vault note says so,
   ``base/lines/ln-<id>.md`` is written and the EU ledger hook runs (:mod:`.ledger`, a stub
-  until WO-4.4). Accepting is Clayton's: the dashboard's button or ``gos plan accept``, never a
+  until WO-4.4). Accepting is Clayton's: the dashboard's button or ``gos plan --accept``, never a
   model's tool (D251).
 - :func:`rename`: a human plan name ([QA:D13]); the id stays for data. The row, the JSON, the
   exports and the note follow.
@@ -348,6 +348,38 @@ def _metric(p: Mapping[str, Any], key: str) -> float:
     return float(m.get(key) or 0)
 
 
+def _addon(p: Mapping[str, Any]) -> bool:
+    return (p.get("rank") or {}).get("column") == "addon"
+
+
+def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The routes the comparison card holds (at most 3, the catalog's limit): the top base
+    routes in rank order, with the addon column (D12) last whenever the design has one."""
+    base = [p for p in plans if not _addon(p)]
+    addon = [p for p in plans if _addon(p)][:1]
+    return base[: 3 - len(addon)] + addon
+
+
+def _made_by(p: Mapping[str, Any]) -> dict[str, str]:
+    """Item key -> the recipe route ``p`` makes it with (its first node for that item)."""
+    made: dict[str, str] = {}
+    for n in p.get("nodes") or ():
+        item = _made(n)
+        if item is not None:
+            made.setdefault(item, n["recipe"])
+    return made
+
+
+def _differs(
+    item: str | None, recipe: str, by_route: Sequence[Mapping[str, str]], i: int
+) -> bool:
+    """Whether another route makes ``item`` with another recipe or not at all (a node that
+    makes no item, only EU, is never marked)."""
+    if item is None or len(by_route) < 2:
+        return False
+    return any(other.get(item) != recipe for j, other in enumerate(by_route) if j != i)
+
+
 def comparison_card(
     plans: Sequence[Mapping[str, Any]],
     books: Mapping[str, Book],
@@ -355,18 +387,12 @@ def comparison_card(
     prefs_line: str,
 ) -> dict[str, Any]:
     """The catalog's ``route_comparison`` card for up to 3 routes, in the order given (rank
-    order). A metric is marked ``best`` on the routes that have the best value when the routes
-    don't all tie; a choice ``differs`` when another route makes that item with another recipe
-    or not at all."""
-    shown = list(plans[:3])
-    by_route: list[dict[str, str]] = []
-    for p in shown:
-        made: dict[str, str] = {}
-        for n in p.get("nodes") or ():
-            item = _made(n)
-            if item is not None:
-                made.setdefault(item, n["recipe"])
-        by_route.append(made)
+    order): the base routes, and when the design has an addon route, the top 2 base routes and
+    the addon column last (its rank reads ``addon``). A metric is marked ``best`` on the routes
+    that have the best value when the routes don't all tie; a choice ``differs`` when another
+    route makes that item with another recipe or not at all."""
+    shown = _shown(plans)
+    by_route = [_made_by(p) for p in shown]
     routes = []
     for i, p in enumerate(shown):
         metrics = []
@@ -388,11 +414,7 @@ def comparison_card(
         for n in (p.get("nodes") or ())[:100]:
             item = _made(n)
             info = _node(n, b)
-            differs = len(shown) > 1 and any(
-                other.get(item or "") != n["recipe"]
-                for j, other in enumerate(by_route)
-                if j != i
-            )
+            differs = _differs(item, n["recipe"], by_route, i)
             choices.append(
                 {
                     "node": clip(item or n["n"], 100),
@@ -408,7 +430,7 @@ def comparison_card(
             {
                 "id": p["id"],
                 "name": clip(p["name"], 200),
-                "rank": int(r.get("position") or i + 1),
+                "rank": "addon" if _addon(p) else int(r.get("position") or i + 1),
                 "ref": f"plan:{p['id']}",
                 "accepted": statuses.get(p["id"], "proposed") != "proposed",
                 "metrics": metrics,
@@ -419,8 +441,7 @@ def comparison_card(
         prefs_line,
         "ranked by code (planner/rank.py); differences are marked on each route",
     ]
-    addon = [p for p in shown if (p.get("rank") or {}).get("column") == "addon"]
-    if addon:
+    if any(_addon(p) for p in shown):
         notes.append("the addon column is ranked against the base routes, shown last")
     title = shown[0]["name"] if shown else "Routes"
     return checked(
@@ -446,10 +467,18 @@ def view(home: Path, pid: str) -> dict[str, Any]:
             except LookupError as exc:
                 raise DesignerError(f"plan {p['id']}: {exc}") from None
     prefs = rank.read_prefs(home / "vault")
+    by_route = [_made_by(p) for p in plans]
     routes = []
-    for p in plans:
+    for i, p in enumerate(plans):
         b = books[p["id"]]
         r = p.get("rank") or {}
+        differs = []
+        for n in p.get("nodes") or ():
+            item = _made(n)
+            if _differs(item, n["recipe"], by_route, i):
+                differs.append(
+                    f"{b.name(item) if item else n['recipe']} ({n['recipe']})"
+                )
         routes.append(
             {
                 "id": p["id"],
@@ -464,6 +493,10 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "pins": p.get("pins") or [],
                 "nodes": [_node(n, b) for n in p.get("nodes") or ()],
                 "warnings": p.get("warnings") or [],
+                # every route's comparison metrics and differing choices, against all the
+                # design's routes (the card holds at most 3 of them)
+                "metrics": {key: _metric(p, key) for key, *_ in METRICS},
+                "differs": differs,
                 "flow": cards.flow_card(p, b),
                 "bom": cards.bom_card(p),
             }
@@ -554,24 +587,38 @@ class Accepted:
     problems: list[str] = field(default_factory=list)
 
 
+def _book(home: Path, p: Mapping[str, Any]) -> Book:
+    """Plan ``p``'s names book, read before anything is written: a plan solved on an export
+    run that ``gos db build`` has since pruned (``keep_runs``) can't be noted, so accept and
+    rename refuse it whole instead of half-applying."""
+    with _conn(home, readonly=True) as conn:
+        try:
+            return book_mod.read(conn, p)
+        except LookupError:
+            raise DesignerError(
+                f"plan {p['id']} was solved on an export run that's gone: re-solve it"
+            ) from None
+
+
 def _notes(
-    home: Path, p: Mapping[str, Any], status: str, problems: list[str]
+    home: Path, p: Mapping[str, Any], b: Book, status: str, problems: list[str]
 ) -> tuple[str | None, str | None]:
-    """Rewrite the plan note with ``status`` and write its line note when accepted or later."""
+    """Rewrite the plan note with ``status`` and write its line note when accepted or later
+    (both bodies built before either is written)."""
     vault = _vault(home)
     if vault is None:
         problems.append("no vault: the notes weren't written")
         return None, None
-    with _conn(home, readonly=True) as conn:
-        b = book_mod.read(conn, p)
+    plan_text = store.note_body(p, b, status)
+    line_text = line_body(p, status) if status != "proposed" else None
     note = line = None
     try:
-        note = vault.write(f"plans/{p['id']}.md", store.note_body(p, b, status))
+        note = vault.write(f"plans/{p['id']}.md", plan_text)
     except (VaultError, OSError) as exc:
         problems.append(f"the plan note wasn't written: {exc}")
-    if status != "proposed":
+    if line_text is not None:
         try:
-            line = vault.write(f"{LINES}/{line_id(p['id'])}.md", line_body(p, status))
+            line = vault.write(f"{LINES}/{line_id(p['id'])}.md", line_text)
         except (VaultError, OSError) as exc:
             problems.append(f"the line note wasn't written: {exc}")
     return note, line
@@ -581,13 +628,14 @@ def accept(home: Path, pid: str) -> Accepted:
     """Accept saved plan ``pid`` (Clayton's action; see the module docstring)."""
     p = load(home, pid)
     with _LOCK:
+        b = _book(home, p)  # before the row changes
         with _conn(home, readonly=False) as rw:
             try:
                 store.set_status(rw, p["id"], "accepted")
             except ValueError as exc:
                 raise DesignerError(str(exc)) from None
         problems: list[str] = []
-        note, line = _notes(home, p, "accepted", problems)
+        note, line = _notes(home, p, b, "accepted", problems)
         entry = ledger_update(p, "accepted")
     return Accepted(p["id"], "accepted", line, note, entry.as_dict(), problems)
 
@@ -610,6 +658,7 @@ def rename(home: Path, pid: str, name: object) -> dict[str, Any]:
     new = clean_name(name)
     p = load(home, pid)
     with _LOCK:
+        b = _book(home, p)  # before the row changes
         with _conn(home, readonly=False) as rw:
             rw.execute("UPDATE plan SET name = ? WHERE id = ?", (new, p["id"]))
             status = str(
@@ -618,9 +667,7 @@ def rename(home: Path, pid: str, name: object) -> dict[str, Any]:
                 ).fetchone()[0]
                 or "proposed"
             )
-            with _conn(home, readonly=True) as conn:
-                b = book_mod.read(conn, p)
             # The row's name wins in save (WO-3.6): the JSON, the exports and the note follow.
             store.save(home, {**p, "name": new}, rw, b, None)
-        _notes(home, {**p, "name": new}, status, [])
+        _notes(home, {**p, "name": new}, b, status, [])
     return store.load(home, p["id"])

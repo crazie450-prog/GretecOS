@@ -10,10 +10,14 @@
   ``node`` (that node's candidate recipes, D61).
 - ``plan_pin(id, node, recipe?)``: pin one node to a candidate recipe and re-solve (``unpin``
   frees it); the new routes come back as ``design_production``'s do.
+- ``plan_explain(id)``: the design's explanation through :func:`gregtec.planner.explain.explain`
+  (D199): the planner model (``Env.writer``) writes from the metrics JSON only, the numeric
+  validator checks it, one retry, else the template. No writer (no key) or a failed call: the
+  template. The text and its ``source`` come back; the skill says it as it is.
 - ``plan_list(status?)``: the saved plans, newest first.
 - ``plan_rename(id, name)``: a human name ([QA:D13]).
 
-Accepting a plan isn't a tool: it is Clayton's, in the Designer or ``gos plan accept`` (D251).
+Accepting a plan isn't a tool: it is Clayton's, in the Designer or ``gos plan --accept`` (D251).
 Every number in a row is the planner's, cited by the plan (``plan:<id>``) or the recipe (``r:``).
 The writing tools (design, pin, rename) save only through the planner's store (``data/plans``
 and the vault's ``plans/`` through the vault path guard) and are the deep lane's only.
@@ -130,6 +134,12 @@ PLAN_PIN_SCHEMA: dict[str, Any] = {
     "required": ["id", "node"],
     "additionalProperties": False,
 }
+PLAN_EXPLAIN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"id": _ID},
+    "required": ["id"],
+    "additionalProperties": False,
+}
 PLAN_LIST_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -192,18 +202,10 @@ def _guard(fn: Any, *args: object) -> Any:  # noqa: ANN401
 
 def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str, object]],
             notes: list[str]) -> Result:  # fmt: skip
-    d = _designer()
-    view = _guard(d.view, home, pid)
-    card = view["comparison"]
-    differs = {
-        r["id"]: ", ".join(
-            f"{c['label']} ({c['ref']})" for c in r["choices"] if c["differs"]
-        )
-        for r in card["routes"]
-    }
+    view = _guard(_designer().view, home, pid)
     rows = []
     for r in view["routes"]:
-        m = {x["key"]: x["value"] for x in _metrics(card, r["id"])}
+        m = r["metrics"]
         rows.append(
             (
                 r["position"] if r["column"] != "addon" else "addon",
@@ -217,7 +219,7 @@ def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str,
                 m.get("eff_h"),
                 m.get("scarcity"),
                 m.get("complexity"),
-                differs.get(r["id"]) or "-",
+                ", ".join(r["differs"]) or "-",
             )
         )
     page = rows[offset : offset + call.page]
@@ -233,10 +235,6 @@ def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str,
         offset=offset,
         more=offset + call.page < len(rows),
     )
-
-
-def _metrics(card: dict[str, Any], pid: str) -> list[dict[str, Any]]:
-    return next((r["metrics"] for r in card["routes"] if r["id"] == pid), [])
 
 
 def _designed(call: Call, d: Any, offset: int) -> Result:  # noqa: ANN401
@@ -255,6 +253,9 @@ def _designed(call: Call, d: Any, offset: int) -> Result:  # noqa: ANN401
     ]
     notes = [f"saved: {p}" for p in d.problems]
     notes.append("explanation (template from the metrics): " + explain.template(doc))
+    notes.append(
+        "with two or more routes, plan_explain gives the checked explanation to say"
+    )
     notes.append(
         "Clayton compares, pins and accepts in the Designer (dashboard key 4); "
         "accepting is his, not a tool's"
@@ -389,6 +390,48 @@ def plan_pin(call: Call, args: dict[str, Any], offset: int) -> Result:
     home = _home(call)
     return _designed(
         call, _guard(d.pin, home, _pid(args["id"]), args["node"], recipe), offset
+    )
+
+
+def plan_explain(call: Call, args: dict[str, Any], offset: int) -> Result:
+    """The design's explanation, checked by the numeric validator (D199; see the module
+    docstring)."""
+    from gregtec.agents.plan_writer import WriterError
+    from gregtec.planner import explain, rank
+
+    d = _designer()
+    home = _home(call)
+    pid = _pid(args["id"])
+    plans = _guard(d.group, home, pid)  # rank order: rank.py's, never the model's
+    view = _guard(d.view, home, pid)
+    name = view["routes"][0]["target"]["name"] if view["routes"] else pid
+    prefs = rank.read_prefs(home / "vault")
+    notes: list[str] = []
+    writer = call.env.writer() if call.env.writer is not None else None
+    if writer is None:
+        notes.append("no planner model (no key): GOS's template")
+    try:
+        out = explain.explain(plans, name, prefs, writer)
+    except WriterError as exc:
+        out = explain.explain(plans, name, prefs, None)
+        notes.append(f"the planner model couldn't be reached ({exc}): GOS's template")
+    for n, refused in enumerate(out.offending, 1):
+        notes.append(
+            f"attempt {n} was refused by the validator (numbers not in the plans: "
+            f"{', '.join(refused[:10])})"
+        )
+    notes.append(
+        "say this text as it is, routes in this order; cite each route by its plan: id"
+    )
+    return Result(
+        head=[
+            ("plan", f"plan:{pid}"),
+            ("design", ", ".join(f"plan:{p['id']}" for p in plans)),
+            ("source", out.source),
+            ("attempts", out.attempts),
+        ],
+        notes=notes,
+        text=out.text,
     )
 
 

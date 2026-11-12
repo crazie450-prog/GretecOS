@@ -393,6 +393,10 @@ export interface DesignerRoute {
   pins: PlanPin[];
   nodes: DesignerNode[];
   warnings: string[];
+  /** the comparison metrics, by key (machines, eut_avg, ..., score) */
+  metrics: Record<string, number>;
+  /** the choices another route of the design makes differently: "name (r:...)" */
+  differs: string[];
   flow: FlowCard;
   bom: BomCard;
 }

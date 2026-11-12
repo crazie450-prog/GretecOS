@@ -5,6 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesignerRoute, DesignerView } from "../src/api/types";
+import { RouteComparisonView } from "../src/cards/renderers";
 import { Designer, planFromHash, routeLabel } from "../src/views/Designer";
 
 const STEEL = "gregtech:gt.metaitem.01@11305";
@@ -29,6 +30,8 @@ function route(id: string, position: number, over: Partial<DesignerRoute> = {}):
         machine: "Basic Macerator", mte: "mte:30", tier: "LV", count: 5, pinned: false, primary: true },
     ],
     warnings: [],
+    metrics: { machines: 18, score: position === 1 ? 0.76 : 0.5 },
+    differs: [],
     flow: { type: "flow", title: "Steel", ref: `plan:${id}`, nodes: [], edges: [], notes: [] },
     bom: { type: "bom", title: "Steel · BOM", ref: `plan:${id}`, rows: [], notes: [] },
     ...over,
@@ -108,6 +111,14 @@ describe("helpers", () => {
   it("labels a route by the core's rank", () => {
     expect(routeLabel({ column: "base", position: 2, of: 3 })).toBe("Route 2 of 3");
     expect(routeLabel({ column: "addon", position: 1, of: 1 })).toBe("Addon column");
+  });
+
+  it("heads the comparison's addon route as the addon column, never as a rank", () => {
+    const card = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), route("pl-cccccccccc", 1, { column: "addon" })]).comparison;
+    card.routes[1].rank = "addon";
+    render(<RouteComparisonView card={card} />);
+    const heads = [...document.querySelectorAll(".route-head .gos-label")].map((e) => e.textContent);
+    expect(heads).toEqual(["Route 1", "Addon column"]);
   });
 });
 

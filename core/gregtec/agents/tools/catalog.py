@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,7 @@ from gregtec.vault.io import VaultIO
 
 if TYPE_CHECKING:
     from gregtec.bridge.ops import Ops
+    from gregtec.planner.explain import Writer
 
 CITE = "Quote numbers only from the rows, each with the row's id."
 
@@ -207,6 +209,18 @@ TOOLS = (
         deadline_s=60.0,
     ),
     Tool(
+        "plan_explain",
+        "The checked explanation of a saved plan's design (plan 7.1 step 11, D199): the "
+        "planner model writes it from the routes' metrics only, GOS's numeric validator checks "
+        "every number (one retry), else GOS's template is used. Returns the text and its "
+        "source (model, model-retry or template). Say it as it is: it keeps code's rank order.",
+        designer.PLAN_EXPLAIN_SCHEMA,
+        designer.plan_explain,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        deadline_s=300.0,
+    ),
+    Tool(
         "plan_pin",
         "Pin one node of a saved plan to another candidate recipe (plan_get view "
         'alternatives), or unpin it, and solve again ("use the other sulfuric acid recipe", '
@@ -320,11 +334,13 @@ def build_registry(
     vault: VaultIO | None = None,
     deep: DeepLane | None = None,
     ops: Ops | None = None,
+    writer: Callable[[], Writer | None] | None = None,
 ) -> Registry:
     """Every tool over the DB at ``db`` and ``vault``, handing off to ``deep``, with the OC
-    bridge ``ops`` (``key``: the cursor key, default random)."""
+    bridge ``ops`` and the planner model ``writer`` for ``plan_explain`` (``key``: the cursor
+    key, default random)."""
     reg = Registry(
-        Env(db, glossary or Glossary(), vault, deep, ops), key=key, page=page
+        Env(db, glossary or Glossary(), vault, deep, ops, writer), key=key, page=page
     )
     for tool in TOOLS:
         reg.add(tool)
@@ -332,7 +348,10 @@ def build_registry(
 
 
 def default_registry(
-    gos_home: Path, deep: DeepLane | None = None, ops: Ops | None = None
+    gos_home: Path,
+    deep: DeepLane | None = None,
+    ops: Ops | None = None,
+    writer: Callable[[], Writer | None] | None = None,
 ) -> Registry:
     """The tools over ``GOS_HOME/data/gos.sqlite`` and the live vault (its glossary too); a
     note an agent writes is mirrored into ``note_fts`` at once."""
@@ -347,4 +366,5 @@ def default_registry(
         vault=VaultIO(root, on_write=mirror),
         deep=deep,
         ops=ops,
+        writer=writer,
     )

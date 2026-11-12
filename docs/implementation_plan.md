@@ -557,7 +557,7 @@ item_resolve(text, kind?)            recipe_find(item, tier_max?, machine?, show
 machine_info(name|id)                design_production(spec)   design_power(spec)    effort_estimate(bom|plan)
 plan_get(id, view)                   plan_export(id, fmt)      plan_set_status(id,s) plan_list(status?)
 plan_pin(id, node, recipe?)          plan_rename(id, name)     base_get()            # base_set is UI-only
-layout_estimate(plan)                ledger_get()              ledger_update(...)
+layout_estimate(plan)                ledger_get()              ledger_update(...)     plan_explain(id)      # D199, D251
 quest_find(text)                     quest_get(id, spoil=0..2) quest_frontier(n)     quest_for_item(item)
 events_recent(window, kinds?)        session_summary(id)       ore_find(mat, dim?, near?)  player_pos()
 telemetry_get(scope)                 action_propose(kind,args) action_status(id)     # confirm is UI-only

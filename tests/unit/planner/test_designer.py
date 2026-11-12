@@ -350,3 +350,71 @@ def test_cli_accept_and_rename(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert status(home, pid) == "accepted"
     code, text = tp.run_cli(home, monkeypatch, "--accept", pid)
     assert code == 2 and text.startswith("refused: plan ")
+
+
+def _prune_runs(home: Path) -> None:
+    """As ``gos db build`` does past ``keep_runs``: the plans' export run is gone."""
+    conn = sqlite3.connect(access.db_path(home))
+    try:
+        conn.execute("UPDATE export_run SET run_key = 'pruned-' || run_key")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_accept_and_rename_refuse_a_pruned_run_whole(home: Path) -> None:
+    """Review M1: nothing is half-applied when the plan's export run is gone."""
+    d = designer.design(home, Request(WIDGET, qty=2, tier_cap="MV"))
+    pid, name = d.ids[0], d.plans[0]["name"]
+    _prune_runs(home)
+    with pytest.raises(
+        designer.DesignerError, match="export run that's gone: re-solve"
+    ):
+        designer.accept(home, pid)
+    assert status(home, pid) == "proposed"
+    assert not (
+        home / "vault" / designer.LINES / f"{designer.line_id(pid)}.md"
+    ).exists()
+    with pytest.raises(designer.DesignerError, match="export run that's gone"):
+        designer.rename(home, pid, "New name")
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:
+        row = conn.execute("SELECT name FROM plan WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    assert row[0] == name and designer.load(home, pid)["name"] == name
+
+
+def test_comparison_holds_the_addon_column() -> None:
+    """Review M2 and L4: with 3 base routes and an addon route, the card shows the top 2 base
+    routes and the addon column (rank "addon"); a node that makes only EU never differs."""
+    from gregtec.planner.outputs.book import Book
+
+    def p(pid: str, pos: int, column: str, recipe: str) -> dict[str, Any]:
+        return {
+            "id": pid,
+            "name": f"Widget line · 1/s · LV · {pid}",
+            "nodes": [
+                {"n": "n1", "for": ["t:x@0"], "recipe": recipe, "machine": None},
+                {"n": "n2", "for": ["eu"], "recipe": f"r:gen/{pid[3] * 12}"},
+            ],
+            "metrics": {"machines": pos, "new_types": [], "complexity": {"score": 1}},
+            "rank": {"score": 1 / pos, "position": pos, "column": column},
+        }
+
+    plans = [
+        p("pl-a", 1, "base", "r:m/aaaaaaaaaaaa"),
+        p("pl-b", 2, "base", "r:m/bbbbbbbbbbbb"),
+        p("pl-c", 3, "base", "r:m/cccccccccccc"),
+        p("pl-d", 1, "addon", "r:m/dddddddddddd"),
+    ]
+    books = {x["id"]: Book() for x in plans}
+    card = designer.comparison_card(plans, books, {}, "w")
+    check_card(card)
+    assert [r["id"] for r in card["routes"]] == ["pl-a", "pl-b", "pl-d"]
+    assert [r["rank"] for r in card["routes"]] == [1, 2, "addon"]
+    assert any("addon column" in n for n in card["notes"])
+    for r in card["routes"]:
+        assert [c["differs"] for c in r["choices"]] == [True, False]
+    base = designer.comparison_card(plans[:3], books, {}, "w")  # no addon: the top 3
+    assert [r["rank"] for r in base["routes"]] == [1, 2, 3]
