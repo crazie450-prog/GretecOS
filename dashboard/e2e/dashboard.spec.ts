@@ -378,7 +378,20 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
     await page.getByTestId(`nav-${tab}`).click();
     await expect(page.getByTestId("view")).toHaveAttribute("data-view", tab);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), tab).toBeLessThanOrEqual(390);
+    // The view itself never scrolls sideways either: a wide table scrolls in its own wrap.
+    expect(await page.getByTestId("view").evaluate((v) => v.scrollWidth - v.clientWidth), tab).toBeLessThanOrEqual(0);
     expect(await clipped(page), tab).toEqual([]);
+    if (tab === "chat") {
+      // "what uses steel" (above) cites a long NEI ref: each chip wraps inside its card.
+      const overflow = await page.evaluate(() =>
+        [...document.querySelectorAll("button.gos-chip.cite")].map((chip) => {
+          const card = chip.closest(".card");
+          return card ? chip.getBoundingClientRect().right - card.getBoundingClientRect().right : 0;
+        }),
+      );
+      expect(overflow.length).toBeGreaterThan(0);
+      expect(overflow.filter((d) => d > 0.5)).toEqual([]);
+    }
   }
   await page.getByTestId("nav-now").click();
   await page.screenshot({ path: shot("phone-now"), fullPage: true });

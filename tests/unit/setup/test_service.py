@@ -593,6 +593,24 @@ def test_swapping_play_with_lab_is_refused_once_play_is_saved(
     svc.save("paths", values | {"gos_app": str(tmp_path / "app2")})
 
 
+def test_play_never_moves_to_a_name_that_only_casefolds_the_same(
+    svc: SetupService, prism: Path, home: Path, tmp_path: Path
+) -> None:
+    """QA W4: 'GTNH-Straße' and 'GTNH-Strasse' are two folders (NTFS and ext4 alike), though
+    str.casefold() makes them one, so the move from one to the other is refused."""
+    make_instance(prism / "instances", "GTNH-Straße")
+    make_instance(prism / "instances", "GTNH-Strasse")
+    values = path_values(prism, home, tmp_path / "app") | {"play": "GTNH-Straße"}
+    svc.save("paths", values)
+    before = svc.path.read_text("utf-8")
+    moved = values | {"play": "GTNH-Strasse"}
+    assert "never moves Play" in svc.check("paths", moved)[0].problems["play"]
+    with pytest.raises(SetupError) as err:
+        svc.save("paths", moved)
+    assert err.value.status == 400 and svc.path.read_text("utf-8") == before
+    assert config.load(svc.path).play == "GTNH-Straße"
+
+
 def test_export_or_lab_can_never_be_the_play_the_core_runs_with(
     ring: MemoryKeyring, prism: Path, home: Path, tmp_path: Path
 ) -> None:

@@ -194,8 +194,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         help="the STT eval: entity accuracy and word error rate",
         description=(
             "Transcribes each recording of the STT eval set, resolves each transcript to an "
-            "item as the core does, and reports entity accuracy (target >= 95%%) and word "
-            "error rate (target <= 8%%), with a TSV report in GOS_HOME/data/reports. "
+            "item as the core does, and reports entity accuracy (target >= 95%) and word "
+            "error rate (target <= 8%), with a TSV report in GOS_HOME/data/reports. "
             "--check only checks that every line of the set resolves to its key on this DB."
         ),
     )
