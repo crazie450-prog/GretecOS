@@ -4,6 +4,7 @@ checked with ``gos doctor``'s checks before they are saved."""
 from __future__ import annotations
 
 import dataclasses
+import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -48,10 +49,11 @@ def plays(ctx: Context) -> list[Path]:
 
 
 def same_folder(a: Path, b: Path) -> bool:
-    """Whether ``a`` and ``b`` are one folder (resolved, case ignored); one that can't be
+    """Whether ``a`` and ``b`` are one folder (resolved; case ignored on Windows only, by the
+    OS's rules, never casefold's: 'Straße' and 'Strasse' are two folders). One that can't be
     resolved (a link loop) is never the same."""
     try:
-        return doctor.folded(a) == doctor.folded(b)
+        return os.path.normcase(a.resolve()) == os.path.normcase(b.resolve())
     except (OSError, RuntimeError):
         return False
 

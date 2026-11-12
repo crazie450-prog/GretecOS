@@ -288,3 +288,11 @@ def test_record_saves_one_talk_key_segment_per_line(
         str(toml),
     )
     assert code == 0 and "Every line has a recording in" in out
+
+
+def test_eval_help_shows_a_single_percent(capsys: pytest.CaptureFixture[str]) -> None:
+    """QA W4: argparse doesn't %-format a description, so '%%' there is shown as is."""
+    with pytest.raises(SystemExit):
+        cli.main(["eval", "--help"])
+    text = capsys.readouterr().out
+    assert "95%" in text and "8%" in text and "%%" not in text
