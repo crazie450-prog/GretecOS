@@ -188,9 +188,13 @@ class Turn:
     core_ttft_ms: int | None = None
     checked: bool | None = None
     outcome: str = ""
+    said: tuple[int, int, bool] | None = (
+        None  # D23 as heard: sentences, words, cut (WO-5.7)
+    )
 
     def record(self) -> dict[str, Any]:
-        """The turn's timings in ms (no text: gos-dev reads the logs, D82)."""
+        """The turn's timings in ms and the length of its answer as heard, counts only (no
+        text: gos-dev reads the logs, D82)."""
 
         def ms(a: float | None, b: float | None) -> int | None:
             return None if a is None or b is None else round((b - a) * 1000)
@@ -210,6 +214,9 @@ class Turn:
             "core_ttft_ms": self.core_ttft_ms,
             "speak_ms": ms(self.replied, self.first_audio),
             "total_ms": ms(self.stopped, self.first_audio),
+            "spoken_sentences": None if self.said is None else self.said[0],
+            "spoken_words": None if self.said is None else self.said[1],
+            "spoken_cut": None if self.said is None else self.said[2],
         }
 
 
@@ -633,6 +640,13 @@ class VoiceClient:
             on_first_audio=lambda: self.post(Spoken(u.id, "first_audio", self.clock())),
             on_done=lambda: self.post(Spoken(u.id, "done", self.clock())),
         )
+        heard = getattr(
+            self.speaker, "heard", None
+        )  # after speak: first audio waits for none
+        if u.turn is not None and u.turn.said is None and callable(heard):
+            said = heard(u.text)
+            if said is not None:
+                u.turn.said = (said.sentences, said.words, said.cut)
 
     def _spoken(self, ev: Spoken) -> None:
         u = self._speaking
