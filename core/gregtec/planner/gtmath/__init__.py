@@ -6,11 +6,12 @@ The planner sizes machines with these rules, never with estimates (plan §0.1 pr
 - :mod:`.overclock`: ``OverclockCalculator`` (standard, perfect, heat, laser and no overclocks);
 - :mod:`.parallel`: ``ParallelHelper`` (parallels from EU, inputs and output room; batch mode);
 - :mod:`.processing`: the processing-logic power rules (energy hatches, single blocks, a run);
+- :mod:`.turbine`: ``TurbineStatCalculator`` and the large turbines' ``fluidIntoPower``
+  (WO-4.1, D230);
 - :mod:`.jmath`: the Java arithmetic they rely on.
 
 The port is pinned to :data:`GT_VERSION`, which must equal ``config.GT_PIN``: a GT pin bump
 re-ports from the new tag and re-vendors GT's unit tests (``docs/runbooks/pack_update.md``).
-Turbines (``TurbineStatCalculator``) are WO-4.1's.
 """
 
 from __future__ import annotations

@@ -318,6 +318,7 @@ def lines(result: Result, full: bool) -> list[str]:
         out.extend(f"  {h}: {why}" for h, why in sorted(NOT_RECIPES.items()))
     out.extend(fact_lines(result, full))
     out.extend(crop_lines(result, full))
+    out.extend(power_lines(result))
     for key in result.pruned:
         out.append(f"Pruned run {key} from the DB (keeping the newest [db] keep_runs)")
     if result.report_path is not None:
@@ -459,6 +460,27 @@ def fact_lines(result: Result, full: bool) -> list[str]:
     if fs.unmatched:
         out.append("Curated rows for classes not in this run:")
         out.extend(f"  line {c.line}: {c.machine} ({c.name})" for c in fs.unmatched)
+    return out
+
+
+def power_lines(result: Result) -> list[str]:
+    """The power catalog's counts (WO-4.1, D230): fuel rows, rotors and generators."""
+    loaded = result.loaded
+    out = [f"Fuels: {loaded.fuels} fuel recipes decoded from GT's fuel maps"]
+    data = loaded.power
+    if data is None:
+        if loaded.power_error is not None:
+            out.append(f"WARNING: power data not loaded: {loaded.power_error}")
+        else:
+            out.append(
+                f"Turbine rotors and generators: none (parts.power is {loaded.power_status!r})"
+            )
+        return out
+    out.append(
+        f"Turbine rotors: {len(data.sizes)} sizes x {len(data.materials)} materials; "
+        f"single-block generators: {len(data.generators)}; fuel containers: "
+        f"{len(data.containers)}"
+    )
     return out
 
 

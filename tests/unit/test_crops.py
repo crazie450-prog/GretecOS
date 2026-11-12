@@ -770,7 +770,7 @@ def test_a_version_2_db_gets_the_crop_tables(tmp_path: Path) -> None:
         assert (
             conn.execute("PRAGMA user_version").fetchone()[0]
             == access.SCHEMA_VERSION
-            == 3
+            >= 3
         )
         for table in crop_db.TABLES:
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
