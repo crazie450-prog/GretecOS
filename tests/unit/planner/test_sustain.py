@@ -148,6 +148,37 @@ def test_generator_ports_are_derived_not_declared(conn: sqlite3.Connection) -> N
     assert sustain.validate(conn, plan, FREE).ok
 
 
+def test_a_fuel_from_another_map_is_refused(db: Path, tmp_path: Path) -> None:
+    # The final check's probe: a fuel row the generator doesn't burn (another map's, here a
+    # plasma fuel worth far more EU per litre) cited on the diesel-map block. GT wouldn't accept
+    # it, so the validator mustn't size the block on it.
+    copy = tmp_path / "gos.db"
+    copy.write_bytes(db.read_bytes())
+    c = sqlite3.connect(copy)
+    try:
+        c.execute(
+            "INSERT INTO fuel SELECT run_id, recipe_id + 100000, 'r:gt.recipe."
+            "plasmageneratorfuels/0000000000aa', 'gt.recipe.plasmageneratorfuels',"
+            " 'plasmaGeneratorFuels', input, fluid, fluid_input, hidden, 8000, unit, 8000"
+            " FROM fuel WHERE fluid = 'testgas'"
+        )
+        c.commit()
+        plan = loop_plan(c)
+        plan["nodes"][2]["spec"]["fuel_ref"] = (
+            "r:gt.recipe.plasmageneratorfuels/0000000000aa"
+        )
+        del plan["nodes"][2]["ports"]
+        p, why = sustain.gen_ports(c, plan["nodes"][2])
+        assert p is None and why is not None
+        assert "is not a fuel of mte:" in why
+        proof = sustain.validate(c, plan, FREE)
+        assert not proof.ok and "is not a fuel of mte:" in proof.problems[0]
+        # Its own map's row still passes.
+        assert sustain.validate(c, loop_plan(c), FREE).ok
+    finally:
+        c.close()
+
+
 def test_a_recipe_from_nothing_is_never_counted_on(conn: sqlite3.Connection) -> None:
     # The review's probe: a GT recipe the export lists with no input it uses up (here a kept
     # circuit only), "making" the generator's fuel. The sums close; the proof still fails.

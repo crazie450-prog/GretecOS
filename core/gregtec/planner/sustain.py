@@ -170,6 +170,22 @@ def _class(conn: sqlite3.Connection, mte: int) -> str | None:
     return str(row[0]).rsplit(".", 1)[-1] if row else None
 
 
+def _gen_maps(conn: sqlite3.Connection, mte: int, recipe_map: str | None) -> set[str]:
+    """The recipe maps a generator burns: its own and those the DB lists for its mte."""
+    out = {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT rm.unloc_name FROM machine_map AS mm JOIN machine AS m"
+            " ON m.id = mm.machine_id JOIN recipe_map AS rm ON rm.id = mm.recipe_map_id"
+            " WHERE m.mte_id = ?",
+            (mte,),
+        )
+    }
+    if recipe_map:
+        out.add(str(recipe_map))
+    return out
+
+
 def _single_eu(
     conn: sqlite3.Connection,
     run_id: int,
@@ -234,7 +250,7 @@ def gen_ports(
     if not isinstance(spec, Mapping) or "kind" not in spec or "fuel_ref" not in spec:
         return None, f"{ref}: no spec to derive its ports from"
     row = conn.execute(
-        "SELECT run_id, input, fluid, fuel_value, value, unit FROM fuel WHERE ref = ?"
+        "SELECT run_id, input, fluid, fuel_value, value, unit, map FROM fuel WHERE ref = ?"
         " AND (? IS NULL OR run_id = ?) ORDER BY run_id DESC LIMIT 1",
         (str(spec["fuel_ref"]), run_id, run_id),
     ).fetchone()
@@ -248,12 +264,16 @@ def gen_ports(
         if kind == "single_block":
             mte = int(spec["mte"])
             g = conn.execute(
-                "SELECT efficiency, eu_out, amps_out FROM generator WHERE run_id = ?"
-                " AND mte_id = ?",
+                "SELECT efficiency, eu_out, amps_out, recipe_map FROM generator"
+                " WHERE run_id = ? AND mte_id = ?",
                 (run, mte),
             ).fetchone()
             if g is None or not g[0] or not g[1] or not g[2]:
                 return None, f"{ref}: mte:{mte} is not a single-block generator"
+            # GT burns only its own maps' fuels in a block: the fuel row's map must be one of
+            # them (as generators.catalog builds fuel_maps), or any fuel would be "proven".
+            if str(row[6]) not in _gen_maps(conn, mte, g[3]):
+                return None, f"{ref}: {key} ({row[6]}) is not a fuel of mte:{mte}"
             per = _single_eu(conn, run, mte, fuel_value, int(g[0]), fluid, item)
             if per <= 0:
                 return None, f"{ref}: GT gives 0 EU per unit of {key}"
