@@ -136,7 +136,16 @@ jobs:
       # D188: once more with a recipe handler that always fails and an item lookup (as R does) just before the NEI
       # step; the harness expects the failure reported and GT's NEI caches built again. After the integration tests,
       # since it replaces run/client's export.
-      - run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" timeout 1500 ./gradlew --no-daemon runClient25 -Pharness -PharnessNeiHandlerFail -PharnessNeiLookupFirst
+      # WO-8.1: the same run has the client module on, linked to a real core whose DB is built from the export
+      # above (tests/harness/client_link_core.py, ready before Gradle wipes it): 10 items looked at or hovered
+      # over, a core restart and reconnect, !gos in chat (mod/README.md, Client link harness).
+      - run: |
+          uv run --locked python tests/harness/client_link_core.py --game mod/run/client --home "$RUNNER_TEMP/gos-link" > mod/run/client-link-core.log 2>&1 &
+          for i in $(seq 1 300); do [ -f "$RUNNER_TEMP/gos-link/ready" ] && break; sleep 1; done
+          if [ ! -f "$RUNNER_TEMP/gos-link/ready" ]; then cat mod/run/client-link-core.log; exit 1; fi
+          cd mod
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" timeout 1500 ./gradlew --no-daemon runClient25 -Pharness -PharnessNeiHandlerFail -PharnessNeiLookupFirst -PharnessClientLink
+        working-directory: .
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -150,4 +159,5 @@ jobs:
             mod/run/client/crash-reports/
             mod/run/client/gregteclink/harness-result.json
             mod/run/client/gregteclink/exports/*/manifest.json
+            mod/run/client-link-core.log
           if-no-files-found: ignore
