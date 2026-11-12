@@ -70,6 +70,7 @@ from gregtec.agents.tools.registry import Registry
 from gregtec.agents.tools.tsv import Parsed
 from gregtec.bridge.actions import VIAS, ActionDesk
 from gregtec.db import access
+from gregtec.gamelink import whatsthis
 from gregtec.llm.fake import EchoClient
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
@@ -254,6 +255,8 @@ class Asker:
         self._pending: _Pending | None = None
         self._warm_at: float | None = None  # clock when the last fast-lane call started
         self._warming = False
+        # What Clayton points at in game (WO-8.1): the core's game link; None: no game link
+        self.game: whatsthis.Pointer | None = None
 
     def lane(self) -> FastLane | None:
         """The fast lane; a missing one (no key stored yet) is looked for every 30 s."""
@@ -480,6 +483,8 @@ class Asker:
             return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
         if intent == router.PERSONA:
             return self._persona(route)
+        if intent == router.WHATS_THIS:
+            return self._whats_this()
         if intent in (router.PLANS, router.PLAN):
             reply = self._plans(route)
             assert reply is not None  # only fall_through gives None
@@ -492,6 +497,33 @@ class Asker:
         else:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
+
+    def _whats_this(self) -> Reply:
+        """The item Clayton hovers over or the block he looks at, from the DB (D286)."""
+        target, linked = (
+            (None, False) if self.game is None else self.game.current_target()
+        )
+        return self.whats_this(target, linked)
+
+    def whats_this(self, target: dict[str, Any] | None, linked: bool) -> Reply:
+        """What ``target`` (GregtecLink's report) is, from the DB; no model call (D286)."""
+        found = whatsthis.answer(self.registry, target, linked=linked)
+        return Reply(
+            found.text,
+            router.INSTANT,
+            router.WHATS_THIS,
+            card=found.card,
+            target=(
+                {
+                    "key": found.key or "",
+                    "name": found.name or "",
+                    "kind": found.kind or "",
+                }
+                if found.found
+                else None
+            ),
+            refs=found.refs,
+        )
 
     def _persona(self, route: router.Route) -> Reply:
         """Switch to the persona named, or say which one is on (no model call, D206)."""

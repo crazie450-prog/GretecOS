@@ -7,7 +7,9 @@
   my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
-  model call, D206). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
+  model call, D206), and "what's this?" (WO-8.1, D286: the item Clayton hovers over or the
+  block he looks at, as GregtecLink's client module reports it, answered from the DB). These
+  keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice and anything quantitative over a line ("how many
   ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
@@ -38,6 +40,7 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
 )
 PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
 PERSONA = "persona"  # switch or name the persona (WO-5.6, plan 7.11)
+WHATS_THIS = "whats_this"  # the hovered item or looked-at block (WO-8.1, plan 7.8)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -99,6 +102,14 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     ),
     (CONFIRM, _rx(r"(?:yes,? )?confirm(?: it)?")),
     (CANCEL, _rx(r"cancel(?: it| that)?", r"never ?mind")),
+    (
+        WHATS_THIS,  # what GregtecLink's client module says Clayton points at (D286)
+        _rx(
+            r"what(?:'s| is) (?:this|that)(?: (?:item|block|thing|one))?",
+            r"what am i (?:looking at|pointing at|holding|hovering(?: over)?)",
+            r"what(?:'s| is) (?:this|that) (?:i'm|i am) (?:looking at|pointing at|hovering(?: over)?)",
+        ),
+    ),
     (
         TIER,
         _rx(
