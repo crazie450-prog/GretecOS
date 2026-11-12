@@ -37,18 +37,38 @@ abstract class CheckHarness : DefaultTask() {
 
 if (providers.gradleProperty("harness").isPresent) {
     val serverDir = layout.projectDirectory.dir("run/server")
+    // WO-6.2: -PharnessListener runs the listener harness instead (listener on, export off): a fake player places
+    // and breaks 10 GT machine kinds, the harness checks the events file, and the saved region files and the base
+    // after each phase are left in run/server/gregteclink/listener-harness/ for tests/integration. It keeps the
+    // export harness's runs in run/server/gregteclink/exports/, which the integration tests read too.
+    val listener = providers.gradleProperty("harnessListener").isPresent
 
     val cleanHarness = tasks.register<Delete>("cleanHarness") {
         description = "Deletes the harness world and earlier GregtecLink output from run/server."
         // Deleting the world also avoids FML's "/fml confirm" stall after a mod-set change.
-        delete(serverDir.dir("harness"), serverDir.dir("gregteclink"))
+        if (listener) {
+            delete(
+                serverDir.dir("harness"),
+                serverDir.dir("gregteclink/events"),
+                serverDir.dir("gregteclink/listener-harness"),
+                serverDir.file("gregteclink/harness-result.json"),
+            )
+        } else {
+            delete(serverDir.dir("harness"), serverDir.dir("gregteclink"))
+        }
     }
 
     val prepareHarness = tasks.register<Copy>("prepareHarness") {
         description = "Copies harness/ (eula, server.properties, gregteclink.cfg) into run/server."
         dependsOn(cleanHarness)
         from(layout.projectDirectory.dir("harness")) {
-            exclude("client/**", "client-nei-fail/**")
+            exclude("client/**", "client-nei-fail/**", "listener/**")
+            if (listener) exclude("config/**")
+        }
+        if (listener) {
+            from(layout.projectDirectory.file("harness/listener/gregteclink.cfg")) {
+                into("config")
+            }
         }
         into(serverDir)
     }
@@ -59,13 +79,14 @@ if (providers.gradleProperty("harness").isPresent) {
     }
 
     val removeHarnessConfig = tasks.register<Delete>("removeHarnessConfig") {
-        description = "Deletes the harness's export=true config again, so a later plain runServer exports nothing."
+        description = "Deletes the harness's config again, so a later plain runServer exports and listens to nothing."
         delete(serverDir.file("config/gregteclink.cfg"))
     }
 
     tasks.named<JavaExec>("runServer") {
         dependsOn(prepareHarness)
         jvmArgs("-Dgregtec.harness=true", "-Xmx6G")
+        if (listener) jvmArgs("-Dgregtec.harness.listener=true")
         finalizedBy(checkHarness, removeHarnessConfig)
     }
 

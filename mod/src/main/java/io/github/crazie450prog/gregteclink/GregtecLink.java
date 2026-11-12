@@ -20,7 +20,8 @@ import io.github.crazie450prog.gregteclink.listener.ListenerModule;
 
 /**
  * GregtecLink: Gregtec OS's game link. Three modules, switched per instance in {@code config/gregteclink.cfg}: export
- * (GTNH-Export only), listener (WO-6.2) and client (WO-8.1). Adds no items, blocks, mixins, recipes, commands or
+ * (GTNH-Export only), listener (Play and Lab, WO-6.2; never with export) and client (WO-8.1). Adds no items, blocks,
+ * mixins, recipes, commands or
  * packets.
  */
 @Mod(
@@ -53,7 +54,7 @@ public class GregtecLink {
             }
         }
         if (modules.listener) {
-            ListenerModule.preInit();
+            ListenerModule.preInit(gameDir, modules.export);
         }
         if (modules.client && FMLCommonHandler.instance()
             .getSide() == Side.CLIENT) {
@@ -65,7 +66,7 @@ public class GregtecLink {
     @Mod.EventHandler
     public void serverStarted(FMLServerStartedEvent event) {
         if (Harness.requested()) {
-            Harness.onServerStarted(gameDir, modules.export);
+            Harness.onServerStarted(gameDir, modules);
         } else if (modules.export) {
             ExportModule.onServerStarted();
         }
