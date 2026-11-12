@@ -19,6 +19,15 @@ its keys as Minecraft key bindings (``key_nei.options.keys.*``), so they are the
 :func:`bindings` reads them, :func:`conflicts` lists the ones on a configured key. F20-F24 have no
 LWJGL 2 code, so GTNH's Java 8 build can't bind them; on the Java 17+ build check its Controls
 menu by hand.
+
+**Discord** binds none of these keys by default, and GOS never reads Discord's keybinds (they
+are Discord's settings, WO-5.5). :func:`discord_warning` names the ones people often bind by hand:
+Pause and Scroll Lock (the spare keys on a keyboard), to Discord's Push to Talk, Push to Mute
+or Toggle Mute (D246). On such a key a GOS press would also key or mute Discord's microphone, so
+``gos voice keys`` and ``gos voice doctor`` say to check Discord's Settings > Keybinds for it.
+F13-F24 get no per-key warning (D180 picked F13-F16 because Discord binds none of them): the
+one "check Discord's Settings > Keybinds" line under every key list, and the runbook's check by
+hand, cover them.
 """
 
 from __future__ import annotations
@@ -234,3 +243,16 @@ def conflicts(
         role: (None if key.lwjgl is None else sorted(bound.get(key.lwjgl, [])))
         for role, key in keys.items()
     }
+
+
+DISCORD_OFTEN = frozenset({"pause", "scroll_lock"})  # D246
+
+
+def discord_warning(key: Key) -> str | None:
+    """Why to check ``key`` in Discord's keybinds first (D246), or None: GOS can't read them."""
+    if key.name not in DISCORD_OFTEN:
+        return None
+    return (
+        f"people often bind {key.label} to Discord's Push to Talk, Push to Mute or Toggle "
+        "Mute: check Discord's Settings > Keybinds"
+    )
