@@ -1,5 +1,6 @@
-"""The large-boiler and Tree Growth Simulator ports (WO-4.2, D233), checked by hand against
-GT 5.09.54.265's arithmetic (MTELargeBoilerBase, MTETreeFarm)."""
+"""The large-boiler and Tree Growth Simulator ports (WO-4.2, D233), worked examples of
+GT 5.09.54.265's arithmetic (MTELargeBoilerBase, MTETreeFarm). GT's own classes check the ports
+in test_boiler_vectors.py."""
 
 from __future__ import annotations
 

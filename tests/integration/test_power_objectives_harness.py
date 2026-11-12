@@ -136,3 +136,72 @@ def test_every_mode_returns_two_or_three_ranked_options_at_hv(
     if mode == "max_output":
         nets = [p["power"]["net_eut"] for p in d.options]
         assert nets == sorted(nets, reverse=True)
+
+
+def test_single_block_eu_per_fuel_is_gts_own(conn: sqlite3.Connection) -> None:
+    # The review's HIGH-1: every single-block candidate burns GT's own getFuelValue per unit
+    # (generator_gt's eu_long per consumed litre), truncated as GT truncates it, and the
+    # validator derives the same ports on its own.
+    run = int(conn.execute("SELECT MAX(id) FROM export_run").fetchone()[0])
+    gens, _ = power.candidates(
+        conn,
+        run,
+        power.PowerRequest(mode="self_sustaining", kinds=("single_block",)),
+        EV,
+    )
+    checked = 0
+    for g in gens:
+        spec = dict(g.spec)
+        fluid = g.fuel.removeprefix("fluid:")
+        row = conn.execute(
+            "SELECT gt.eu_long, gt.consumed FROM generator_gt AS gt JOIN fuel AS f"
+            " ON f.run_id = gt.run_id AND f.ref = ? AND f.fuel_value = gt.special"
+            " WHERE gt.run_id = ? AND gt.mte_id = ? AND gt.fluid = ?",
+            (g.fuel_ref, run, spec["mte"], fluid),
+        ).fetchone()
+        if not g.fuel.startswith("fluid:") or row is None:
+            continue
+        assert g.eu_per_fuel == pytest.approx(row[0] / row[1], rel=1e-9), g.id
+        p, why = sustain.gen_ports(conn, {"recipe": g.id, "spec": spec}, run)
+        assert why is None and p is not None
+        assert p.used[g.fuel] == pytest.approx(g.fuel_per_s, rel=1e-9), g.id
+        checked += 1
+    assert checked > 100
+
+
+def test_the_validator_refuses_a_recipe_from_nothing(conn: sqlite3.Connection) -> None:
+    # The review's MEDIUM-2 probe on the real DB: an enabled recipe the export lists with no
+    # input it uses up, "making" a gas turbine's fuel, feeding the D65 line's generator.
+    d = power.design(
+        conn,
+        power.PowerRequest(mode="best", tier_cap=HV, kinds=("gas_turbine",)),
+        DefaultBaseInputs(HV),
+        with_effort=False,
+    )
+    gen = next(n for n in d.options[0]["nodes"] if n["kind"] == "generator")
+    fuel = gen["fuel"]["id"].removeprefix("fluid:")
+    row = conn.execute(
+        "SELECT r.ref FROM recipe AS r JOIN recipe_output AS ro ON ro.recipe_id = r.id"
+        " JOIN fluid AS f ON f.id = ro.fluid_id WHERE r.enabled = 1 AND f.name = ?"
+        " AND NOT EXISTS (SELECT 1 FROM recipe_input AS ri WHERE ri.recipe_id = r.id"
+        " AND ri.consumed = 1 AND ri.amount > 0) LIMIT 1",
+        (fuel,),
+    ).fetchone()
+    if row is None:
+        row = conn.execute(
+            "SELECT r.ref FROM recipe AS r JOIN recipe_output AS ro ON ro.recipe_id = r.id"
+            " WHERE r.enabled = 1 AND ro.fluid_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM"
+            " recipe_input AS ri WHERE ri.recipe_id = r.id AND ri.consumed = 1"
+            " AND ri.amount > 0) LIMIT 1"
+        ).fetchone()
+    assert row is not None, (
+        "the export has no recipe from nothing (good: nothing to probe)"
+    )
+    plan = {
+        "run": d.options[0]["run"],
+        "nodes": [{"recipe": row[0], "crafts_s": 1.0}, gen],
+        "boundary": {"in": [], "out": []},
+    }
+    proof = sustain.validate(conn, plan, power.DEFAULT_FREE)
+    assert not proof.ok
+    assert any(f"{row[0]} uses up nothing" in x for x in proof.problems)

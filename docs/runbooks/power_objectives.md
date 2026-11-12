@@ -20,7 +20,12 @@ Options: `--free KEY ...` (the free set; default water, air, cobblestone, stone,
 Each line prints its net EU/t (generator out minus what its own chain draws), the fuel and its
 `r:` row, the validator's verdict (`closed: no import outside the free set`, or the imports it
 found), its nodes and, for `self_sustaining`, the bootstrap kit (saplings, tools, kept circuits,
-rotor and dynamo, throttle circuit, starter fuel).
+rotor and dynamo, throttle circuit, starter fuel as an upper bound) and its sinks: items the line
+makes more of than it uses, which need a void or storage. The notes say how many generator x fuel
+candidates and farms were pruned before solving.
+
+After a GT pin bump, regenerate the boiler and tree-farm vectors with
+`uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py` (a JDK and the mod's Gradle build).
 
 ## Checking the D65 tree-farm boiler line in the Lab (Clayton, optional, G4)
 
@@ -33,4 +38,5 @@ rotor and dynamo, throttle circuit, starter fuel).
 3. Start it with the kit's starter creosote. After the boilers and turbine settle (about a
    minute), read the turbine's output with a scanner: it should equal the line's `gross_eut`;
    the line keeps running with no input but water. A mismatch is a finding for the reviewer
-   (boiler and tree-farm math are hand-checked ports, D233).
+   (the boiler and tree-farm ports are checked against GT's own classes by
+   `tests/unit/gtmath/oracle/GtBoilerOracle.java`, but not yet in a running world, D233).
