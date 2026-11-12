@@ -11,7 +11,8 @@
    registry name starts with a letter, so "3:1" and "12:30" stay numbers.
 3. **D23's length**: at most :data:`MAX_SENTENCES` sentences and :data:`MAX_WORDS` words, counted
    here as they will be heard (:func:`said_words`): a number counts as the words it is said in
-   ("32,768" is five), a word the lexicon or step 6 spells out as one ("LuV", "GTNH"; D248). The
+   ("32,768" is five), a word the lexicon or step 6 spells out as one ("LuV", "GTNH"; D248):
+   each word of the reply as written is one, so "MV EBF" is two and "I" a word of its own. The
    card has the rest.
 4. **The pronunciation lexicon** (``gregtec_voice.lexicon``): LuV is "L U V".
 5. **Numbers and units in words**: "1920 EU/t" is "nineteen-twenty E U per tick" (a four-digit
@@ -27,6 +28,9 @@
 8. **D23 again, on what is said** (:func:`heard_words`): should a pronunciation have added words,
    the end goes, so no answer is heard longer than :data:`MAX_WORDS` words (D248).
 
+:func:`said` also gives the length as heard and whether steps 3 or 8 cut the reply (the voice
+client logs those counts per turn, never the text; ``gos voice benchmark`` reports them).
+
 The reply is data, never instructions (plan 0.1 principle 8): this module only reshapes it.
 """
 
@@ -35,6 +39,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Callable
+from dataclasses import dataclass
 
 MAX_SENTENCES = 2  # D23, plan 8 WO-5.7: <= 2 sentences / 40 words
 MAX_WORDS = 40
@@ -383,9 +388,13 @@ def _abbreviation(token: str) -> bool:
     return all(len(part) <= 1 for part in token.split("."))
 
 
-def tidy(text: str) -> str:
-    """One line: single spaces, no space before punctuation, no doubled punctuation."""
-    text = _SPACES.sub(" ", " ".join(text.split()))
+def tidy(text: str, *, marked: bool = False) -> str:
+    """One line: single spaces, no space before punctuation, no doubled punctuation.
+    ``marked``: a run of spaces with a :data:`BOUNDARY` in it stays one (:func:`heard_words`)."""
+    if marked:
+        text = _BLANKS.sub(lambda m: BOUNDARY if BOUNDARY in m[0] else " ", text)
+    else:
+        text = _SPACES.sub(" ", " ".join(text.split()))
     text = re.sub(r"\s+([.,!?;])", r"\1", text)
     text = re.sub(r"([,;])(?:\s*[,;])+", r"\1", text)
     text = re.sub(r"[,;]\s*([.!?])", r"\1", text)
@@ -399,25 +408,53 @@ def sentences(text: str) -> list[str]:
 
 
 _ENDS_SENTENCE = re.compile(r"[.!?]$")
+# Between two words of the reply as written (D248). The steps after the count put plain spaces
+# between the letters of a word they spell out ("L U V"), so a word's letters run together and
+# two written words ("MV EBF") don't. An en space: the patterns the marked text goes through
+# (steps 4 to 7, the lexicon's too) match it with ``\s`` as any space; it never leaves
+# :func:`said`.
+BOUNDARY = "\u2002"
+_BLANKS = re.compile(r"\s+")
+_TOKEN = re.compile(r"\S+")
+SPELT_MAX = (
+    5  # step 6 spells words of up to 5 capitals: a longer run is more than one word
+)
 
 
 def heard_words(text: str) -> int:
-    """The words in ``text`` as said (D23, D248): each run of single capitals is one word, a word
-    spelt letter by letter ("L U V", "E U" in "E U per tick"); every other token is one."""
-    count, spelt = 0, False
-    for token in text.split():
-        letter = token.strip(".,!?;:'\"()-")
+    """The words in ``text`` as said (D23, D248). Every token is one, but single capitals joined
+    by plain spaces are one spelt word ("L U V", "E U" in "E U per tick", "E B Fs"), up to
+    :data:`SPELT_MAX` letters a word. In a :func:`marked` text, a :data:`BOUNDARY` separates the
+    reply's own words, so "M V" and "E B F" from "MV EBF" are two and "I" and "A" stay words;
+    in plain text every space is a plain one."""
+    count = run = 0
+    spelt, after = False, 0
+    for m in _TOKEN.finditer(text):
+        joined = BOUNDARY not in text[after : m.start()]
+        after = m.end()
+        letter = m[0].strip(".,!?;:'\"()-")
         single = len(letter) == 1 and letter.isupper()
-        if not (single and spelt):
+        plural = (
+            len(letter) == 2 and letter[0].isupper() and letter[1] == "s"
+        )  # "E B Fs"
+        if (single or plural) and spelt and joined and run < SPELT_MAX:
+            run += 1
+        else:
             count += 1
-        spelt = single and not _ENDS_SENTENCE.search(token)
+            run = 1
+        spelt = single and not _ENDS_SENTENCE.search(m[0])
     return count
+
+
+def marked(text: str) -> str:
+    """``text`` with a :data:`BOUNDARY` for each run of spaces: each is between written words."""
+    return _BLANKS.sub(BOUNDARY, text)
 
 
 def said_words(text: str) -> int:
     """The words ``text`` (filtered up to step 2) will be heard as: its numbers and units in words
     (step 5), each spelt word one (:func:`heard_words`)."""
-    return heard_words(numbers(text))
+    return heard_words(numbers(marked(text)))
 
 
 def limit(
@@ -454,16 +491,57 @@ def _cut(sentence: str, max_words: int) -> str:
 
 def _trim_heard(text: str, max_words: int) -> str:
     """Step 8: the first ``max_words`` words as said (:func:`heard_words`), ended with a stop."""
-    tokens = text.split()
-    end = len(tokens)
-    while end > 1 and heard_words(" ".join(tokens[:end])) > max_words:
-        end -= 1
-    return " ".join(tokens[:end]).rstrip(",;:-") + ("" if end == len(tokens) else ".")
+    ends = [m.end() for m in _TOKEN.finditer(text)]
+    n = len(ends)
+    while n > 1 and heard_words(text[: ends[n - 1]]) > max_words:
+        n -= 1
+    kept = text[: ends[n - 1]] if ends else text
+    return kept.rstrip(",;:-") + ("" if n == len(ends) else ".")
 
 
 def spell_caps(text: str) -> str:
     """Words of 2 to 5 capitals letter by letter ("GTNH" is "G T N H"; "EBFs" "E B Fs")."""
     return _CAPS.sub(lambda m: " ".join(m[1]) + m[2], text)
+
+
+@dataclass(frozen=True)
+class Said:
+    """What the speaker says for a reply, and its length as heard (D23, D248): the counts only
+    are logged (gos-dev reads the logs, D82)."""
+
+    text: str
+    sentences: int
+    words: int  # heard_words, with the reply's own word boundaries
+    cut: bool  # D23's length was kept by dropping or cutting some of the reply (steps 3, 8)
+
+
+def said(
+    text: str,
+    pronounce: Callable[[str], str] | None = None,
+    *,
+    max_sentences: int = MAX_SENTENCES,
+    max_words: int = MAX_WORDS,
+) -> Said:
+    """What the speaker says for ``text`` (the module docstring's eight steps) and how long it is
+    heard; ``pronounce`` is the lexicon (:meth:`gregtec_voice.lexicon.Lexicon.apply`). Its
+    text is "" when nothing is left."""
+    text = tidy(strip_ids(strip_markup(text)))
+    short = limit(text, max_sentences, max_words)
+    cut = short != text
+    text = marked(short)
+    if pronounce is not None:
+        text = pronounce(text)
+    text = spell_caps(numbers(text))
+    text = tidy(_NOT_SAID.sub(" ", _COLON.sub(",", text)), marked=True)
+    if heard_words(text) > max_words:
+        text, cut = tidy(_trim_heard(text, max_words), marked=True), True
+    words = heard_words(text)
+    text = tidy(text.replace(BOUNDARY, " "))
+    if text and text[-1] not in ".!?":
+        text += "."
+    if not any(ch.isalpha() for ch in text):
+        return Said("", 0, 0, cut)
+    return Said(text, len(sentences(text)), words, cut)
 
 
 def spoken(
@@ -473,16 +551,5 @@ def spoken(
     max_sentences: int = MAX_SENTENCES,
     max_words: int = MAX_WORDS,
 ) -> str:
-    """What the speaker says for ``text`` (the module docstring's eight steps); ``pronounce`` is
-    the lexicon (:meth:`gregtec_voice.lexicon.Lexicon.apply`). "" when nothing is left."""
-    text = strip_ids(strip_markup(text))
-    text = limit(tidy(text), max_sentences, max_words)
-    if pronounce is not None:
-        text = pronounce(text)
-    text = spell_caps(numbers(text))
-    text = tidy(_NOT_SAID.sub(" ", _COLON.sub(",", text)))
-    if heard_words(text) > max_words:
-        text = tidy(_trim_heard(text, max_words))
-    if text and text[-1] not in ".!?":
-        text += "."
-    return "" if not any(ch.isalpha() for ch in text) else text
+    """What the speaker says for ``text`` (:func:`said`'s text). "" when nothing is left."""
+    return said(text, pronounce, max_sentences=max_sentences, max_words=max_words).text
