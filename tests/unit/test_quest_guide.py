@@ -90,9 +90,30 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         ("partial answer", 1),
         ("a bit more", 1),
         ("what does the secret alloy quest need", 1),
-        ("what are its requirements", 1),
+        ("what are the quest's requirements", 1),
+        ("what does q:AAQ require", 1),
+        ("more of a hint please", 1),
+        ("ok just spoil it", 2),
+        ("what comes after it? spoil it", 2),
+        ("i can't find it, spoil it", 2),
         ("no spoilers, but what does it need", 0),
         ("don't spoil it", 0),
+        # a negation anywhere before "spoil" in the clause stays at the default (D268)
+        ("I don't want you to spoil it, what is the secret alloy quest", 0),
+        ("I don’t want you to spoil it", 0),
+        ("no need to spoil it, just a hint", 0),
+        ("without spoiling anything", 0),
+        ("I don't need the full answer", 0),
+        ("don't tell me everything", 0),
+        # "spoil" that isn't the imperative
+        ("would that spoil the surprise?", 0),
+        ("does it spoil anything", 0),
+        # ordinary recipe and task questions ask for nothing more
+        ("what do i need to make steel", 0),
+        ("what does my EBF need for power", 0),
+        ("what's my next task", 0),
+        ("what are its requirements", 0),
+        ("show me some more recipes", 0),
         ("what's my spoiler level", 0),
         ("", 0),
         (None, 0),
@@ -392,6 +413,26 @@ def test_the_view_payload(home: Path) -> None:
     assert [ln["name"] for ln in p["lines"]] == ["Stone Age", "Steam", "Tier 1 - LV"]  # type: ignore[index]
 
 
+def test_after_rows_carry_the_frontier_quests_own_state(
+    conn: sqlite3.Connection,
+) -> None:
+    from gregtec.db import quests as quest_db
+
+    player = quest_db.tracked_player(conn)
+    states = {r.id: r.state for r in guide.rank_frontier(conn, player)}
+    first = next(iter(states))
+    states[first] = "repeatable"  # a repeatable quest stays on the frontier
+    after = [
+        (r["ref"], r["state"])
+        for x in view.beyond(conn, player, states, 0)
+        for r in x["rows"]
+        if r["part"] == "after"
+    ]
+    assert after
+    assert all(state == states[ref.removeprefix("q:")] for ref, state in after)
+    assert (f"q:{first}", "repeatable") in after
+
+
 def test_the_view_at_levels_1_and_2(home: Path) -> None:
     one = {x["ref"]: x for x in _payload(home, 1)["beyond"]["quests"]}  # type: ignore[index]
     assert [r["part"] for r in one[q(14)]["rows"]] == ["after", "task"]
@@ -437,6 +478,12 @@ def test_l0_never_spoils_an_answer(
                 ("quest", f"tell me about the {name} quest"),
                 ("unlocks", f"what comes after the {name} quest"),
                 ("quest", f"how do i get to the {name} quest"),
+                (
+                    "unlocks",
+                    f"I don't want you to spoil it, but what comes after the {name} quest",
+                ),
+                ("quest", f"no need to spoil it, just a hint: the {name} quest?"),
+                ("quest", f"would the {name} quest spoil the surprise?"),
             ]
         ):
             rows.append(

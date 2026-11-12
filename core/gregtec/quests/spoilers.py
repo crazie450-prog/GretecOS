@@ -23,35 +23,47 @@ NUDGE, PARTIAL, FULL = 0, 1, 2
 LEVELS = (NUDGE, PARTIAL, FULL)
 NAMES = {NUDGE: "nudge", PARTIAL: "partial", FULL: "full"}
 
-# "no spoilers", "don't spoil it", "without spoiling": a request to stay at the default.
+# A negation earlier in the same clause, up to a comma or a full stop ("no spoilers", "I don't
+# want you to spoil it", "no need to spoil it", "without the full answer"): a request to stay
+# at the default (D268).
 _NO = re.compile(
-    r"\b(?:no|without|don'?t|do not|never|not|avoid)\s+(?:any\s+|the\s+)?spoil(?:er|ers|ing|s)?\b"
+    r"(?:\bno\b|\bnot\b|n't|\bnever\b|\bwithout\b|\bavoid\b|\bstop\b)[^.?!;,]{0,40}"
+    r"(?:\bspoil|\bfull\s+(?:answer|spoilers?)\b|\beverything\b)"
 )
-# "spoil it", "spoil me", "full answer"; not "what's my spoiler level" (the setting's name)
+# Only the imperative: "spoil it" opening a sentence (after "ok", "just", "please"...), or
+# "full answer", "full spoilers", "tell me everything". Not "would that spoil the surprise?"
+# and not "what's my spoiler level" (the setting's name).
 _FULL = re.compile(
-    r"\bspoil\b|\bfull\s+(?:answer|spoilers?|details?)\b|\b(?:tell|show)\s+me\s+everything\b"
+    r"(?:^|[.?!;:,]\s*)(?:(?:ok|okay|fine|just|please|go\s+on|go\s+ahead(?:\s+and)?)[,\s]+)*"
+    r"spoil\s+(?:it|that|this|me)\b"
+    r"|\bfull\s+(?:answer|spoilers?)\b|\b(?:tell|show)\s+me\s+everything\b"
 )
+# Explicit asks for more: "partial", "a bit more", "more of a hint".
 _PARTIAL = re.compile(
     r"\bpartial(?:\s+(?:answer|spoilers?|hint))?\b"
-    r"|\b(?:a\s+(?:bit|little)|some(?:thing)?)\s+more\b|\bmore\s+(?:detail|details|of\s+a\s+hint)\b"
-    r"|\bwhat\s+(?:does|do|did|will|would)\s+(?:it|that|this|.+?)\s+"
-    r"(?:need|needs|require|requires|ask\s+for|asks\s+for|want|wants|take|takes)\b"
-    r"|\b(?:requirements?|tasks?)\b"
+    r"|\ba\s+(?:bit|little)\s+more\b|\bmore\s+of\s+a\s+hint\b"
+)
+# ...or what a quest needs, only with a quest named: "what does the next quest need", "the
+# quest's tasks", "what does q:... require". Not "what do i need to make steel".
+_QUEST = re.compile(r"\bquests?\b|\bq:")
+_NEEDS = re.compile(
+    r"\b(?:need|needs|require|requires|requirements?|tasks?|ask\s+for|asks\s+for)\b"
 )
 
 
 def asked_level(request: str | None) -> int:
     """The level Clayton's words ask for: :data:`FULL` on "spoil it" or "full answer",
-    :data:`PARTIAL` on a request for more ("partial", "a bit more", "what does it need", its
-    requirements or tasks), else :data:`NUDGE`. "No spoilers" asks for nothing more."""
+    :data:`PARTIAL` on "partial", "a bit more", "more of a hint" or what a named quest needs
+    (its requirements or tasks), else :data:`NUDGE`. A negation before "spoil" ("no
+    spoilers", "I don't want you to spoil it") asks for nothing more."""
     if not request:
         return NUDGE
-    said = " ".join(request.replace("’", "'").casefold().split())
+    said = " ".join(request.replace("\u2019", "'").casefold().split())
     if _NO.search(said):
         return NUDGE
     if _FULL.search(said):
         return FULL
-    if _PARTIAL.search(said):
+    if _PARTIAL.search(said) or (_QUEST.search(said) and _NEEDS.search(said)):
         return PARTIAL
     return NUDGE
 

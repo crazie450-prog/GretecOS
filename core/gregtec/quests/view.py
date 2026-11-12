@@ -139,9 +139,10 @@ def _lines_of(conn: sqlite3.Connection, ids: list[str]) -> dict[str, list[str]]:
 
 
 def beyond(
-    conn: sqlite3.Connection, player: str, frontier: list[str], level: int
+    conn: sqlite3.Connection, player: str, frontier: dict[str, str], level: int
 ) -> list[dict[str, Any]]:
-    """The locked quests the frontier quests unlock, in frontier rank order, at ``level``."""
+    """The locked quests the frontier quests unlock, in frontier rank order, at ``level``.
+    ``frontier`` maps each frontier quest, best first, to its state."""
     deps = guide.dependents(conn)
     order: dict[str, list[str]] = {}
     for f in frontier:
@@ -168,7 +169,7 @@ def beyond(
     for q in locked:
         _, name, descr, main, state, shown = rows[q]
         after = [
-            _row("after", names.get(f), state="available", ref=f"q:{f}")
+            _row("after", names.get(f), state=frontier[f], ref=f"q:{f}")
             for f in order[q]
         ]
         items = _item_rows(links.get(q, []), rewards=level >= spoilers.FULL)
@@ -259,7 +260,7 @@ def payload(
             "Beyond the frontier",
             tier,
             level,
-            beyond(conn, player, ids, level),
+            beyond(conn, player, {r.id: r.state for r in ranked}, level),
             [
                 (
                     f"spoiler level {level} ({spoilers.NAMES[level]}): quests the frontier "
