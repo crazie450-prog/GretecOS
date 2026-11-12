@@ -1,0 +1,11 @@
+id	kind	request	spec	why
+g01	design	plan a steel ingot line that makes 2 ingots per second at MV	{"target": "steel ingot", "rate": "2/s", "tier": "MV"}	the core designer request (G3 early: steel, EBF)
+g02	design	design a polyethylene line for 1000 L per minute at HV	{"target": "polyethylene", "rate": "1000/min", "tier": "HV"}	a fluid target and a chemistry chain (G3 early)
+g03	design	I need 4 sulfuric acid per second, what's the cheapest way at MV	{"target": "sulfuric acid", "rate": "4/s", "tier": "MV"}	routes that differ in one primary choice (G3 early)
+g04	design	plan a silicon line, 1 per second, with my current tier	{"target": "silicon dust", "rate": "1/s"}	My base's tier, no tier named (D64)
+g05	compare	compare routes for rubber at LV and tell me which one ranks first and why	{"target": "rubber", "rate": "2/s", "tier": "LV"}	the explanation of the ranking, never a reorder ([QA:D2])
+g06	design	design a stainless steel line making 1 ingot per second at HV	{"target": "stainless steel ingot", "rate": "1/s", "tier": "HV"}	a mid-game multiblock line (G3 mid)
+g07	design	plan the platinum line for 5 dust per minute at IV	{"target": "platinum dust", "rate": "5/min", "tier": "IV"}	the platline: the biggest graph, a chain template (G3 mid)
+g08	batch	I need 64 epoxid within 2 hours at EV, what do I build	{"target": "epoxid", "batch": "64", "within": "2h", "tier": "EV"}	batch mode (D14)
+g09	addons	plan nitric acid at 2 per second at HV and show me the addon machines too	{"target": "nitric acid", "rate": "2/s", "tier": "HV", "addons": true}	the addon column with machine_fact confidence (D12)
+g10	saved	which of my saved plans is the steel line, and design it again at 3 per second	{"target": "steel ingot", "rate": "3/s", "tier": "MV"}	plan_list, then a new design

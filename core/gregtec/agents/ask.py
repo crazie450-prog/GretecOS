@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Any, TextIO
 import anthropic
 
 from gregtec import config
-from gregtec.agents import prefetch, router, saved_plans
+from gregtec.agents import plan_writer, prefetch, router, saved_plans
 from gregtec.agents.deep import (
     DONE,
     NEEDS_APPROVAL,
@@ -658,8 +658,10 @@ def setup(
         deep = HandoffRecorder()
         registry = default_registry(cfg.gos_home, deep=deep, ops=ops)
     else:
-        deep = DeepLaneService.for_home(cfg.gos_home, Settings.from_config(cfg), meter)
-        registry = default_registry(cfg.gos_home, deep=deep, ops=ops)
+        settings = Settings.from_config(cfg)
+        deep = DeepLaneService.for_home(cfg.gos_home, settings, meter)
+        writer = plan_writer.factory(settings.planner, meter)  # plan_explain (D199)
+        registry = default_registry(cfg.gos_home, deep=deep, ops=ops, writer=writer)
         deep.registry = registry
     personas = Personas(
         vault if vault.is_dir() else None,

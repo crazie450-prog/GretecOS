@@ -298,7 +298,7 @@ export function RouteComparisonView({ card }: { card: RouteComparisonCard }) {
         {card.routes.map((r) => (
           <section key={r.id} className={`route${r.accepted ? " accepted" : ""}`} data-route={r.id}>
             <div className="route-head">
-              <span className="gos-label">Route {r.rank}</span>
+              <span className="gos-label">{r.rank === "addon" ? "Addon column" : `Route ${r.rank}`}</span>
               <span className="route-name">{r.name}</span>
               {r.accepted && <StatusGlyph status="ok" label="accepted" glyph={GLYPH.done} />}
               <Chip cite={r.ref} />
@@ -319,6 +319,7 @@ export function RouteComparisonView({ card }: { card: RouteComparisonCard }) {
                 <li key={c.node} className={c.differs ? "differs" : undefined}>
                   <span>{c.label}</span> <span className="gos-src">{c.machine}</span> {c.tier && <TierChip tier={c.tier} />}
                   <Chip cite={c.ref} />
+                  {c.differs && <span className="gos-src"> · differs</span>}
                 </li>
               ))}
             </ul>
