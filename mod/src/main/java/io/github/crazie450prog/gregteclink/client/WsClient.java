@@ -49,8 +49,8 @@ public final class WsClient implements Closeable {
      * Opens {@code ws://host:port/path} with these extra request headers. {@code readTimeoutMs} also bounds every
      * later {@link #read}: a core that sends nothing (not even its WebSocket pings) for that long is taken as gone.
      */
-    public static WsClient connect(String host, int port, String path, Map<String, String> headers, int connectTimeoutMs,
-        int readTimeoutMs) throws IOException {
+    public static WsClient connect(String host, int port, String path, Map<String, String> headers,
+        int connectTimeoutMs, int readTimeoutMs) throws IOException {
         Socket s = new Socket();
         try {
             s.setTcpNoDelay(true);

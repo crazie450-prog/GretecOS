@@ -149,7 +149,8 @@ public final class CoreLink {
                     }
                     if (!stopped) GregtecLink.LOG.info("client link: the core closed the connection");
                 } catch (IOException | RuntimeException e) {
-                    if (!reported && !stopped) GregtecLink.LOG.info("client link: core not reachable ({})", e.toString());
+                    if (!reported && !stopped)
+                        GregtecLink.LOG.info("client link: core not reachable ({})", e.toString());
                     reported = true;
                 } finally {
                     conn = null;

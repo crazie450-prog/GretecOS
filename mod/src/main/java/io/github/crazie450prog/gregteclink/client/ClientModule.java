@@ -126,13 +126,8 @@ public final class ClientModule {
     private static String status(Minecraft mc) {
         EntityPlayer p = mc.thePlayer;
         if (p == null || mc.theWorld == null) return null;
-        return LinkMessages.status(
-            p.dimension,
-            mc.theWorld.provider.getDimensionName(),
-            p.posX,
-            p.posY,
-            p.posZ,
-            mc.isGamePaused());
+        return LinkMessages
+            .status(p.dimension, mc.theWorld.provider.getDimensionName(), p.posX, p.posY, p.posZ, mc.isGamePaused());
     }
 
     @SubscribeEvent

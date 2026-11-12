@@ -20,6 +20,10 @@ import io.github.crazie450prog.gregteclink.export.StackJson;
 public final class LinkMessages {
 
     public static final int VERSION = 1;
+    /** Characters of NBT JSON sent with an item; the core reads messages of at most 4096 bytes. */
+    static final int NBT_MAX = 2048;
+    static final int CHAT_MAX = 500; // characters of a chat line and of its body: both fit in 4 KB as UTF-8
+    static final int DISPLAY_MAX = 128;
 
     private LinkMessages() {}
 
@@ -63,16 +67,16 @@ public final class LinkMessages {
         o.addProperty("kind", kind);
         if (item != null) o.add("item", item);
         if (block != null) o.add("block", block);
-        if (display != null) o.addProperty("display", display);
+        if (display != null) o.addProperty("display", cut(display, DISPLAY_MAX));
         return Json.COMPACT.toJson(o);
     }
 
     /** {@code sender} and {@code body} only when the line is a player's chat message (vanilla's chat.type.text). */
     public static String chat(String text, String sender, String body) {
         JsonObject o = typed("chat");
-        o.addProperty("text", text);
-        if (sender != null) o.addProperty("sender", sender);
-        if (body != null) o.addProperty("body", body);
+        o.addProperty("text", cut(text, CHAT_MAX));
+        if (sender != null) o.addProperty("sender", cut(sender, 32));
+        if (body != null) o.addProperty("body", cut(body, CHAT_MAX));
         return Json.COMPACT.toJson(o);
     }
 
@@ -86,7 +90,12 @@ public final class LinkMessages {
         o.addProperty("meta", stack.getItemDamage());
         if (stack.getTagCompound() != null && !stack.getTagCompound()
             .hasNoTags()) {
-            o.add("nbt", withoutIds(StackJson.nbt(stack.getTagCompound())));
+            JsonElement nbt = withoutIds(StackJson.nbt(stack.getTagCompound()));
+            // The core takes messages of at most 4 KB: a bigger NBT (a filled backpack) is left out and the
+            // core answers for the plain item.
+            if (Json.COMPACT.toJson(nbt)
+                .length() <= NBT_MAX) o.add("nbt", nbt);
+            else o.addProperty("nbt_dropped", true);
         }
         return o;
     }
@@ -130,11 +139,16 @@ public final class LinkMessages {
             if (!e.isJsonObject()) return null;
             JsonObject o = e.getAsJsonObject();
             JsonElement t = o.get("type");
-            return t != null && t.isJsonPrimitive() && t.getAsJsonPrimitive()
-                .isString() ? o : null;
+            return t != null && t.isJsonPrimitive()
+                && t.getAsJsonPrimitive()
+                    .isString() ? o : null;
         } catch (RuntimeException ex) {
             return null;
         }
+    }
+
+    static String cut(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max);
     }
 
     private static JsonObject typed(String type) {
