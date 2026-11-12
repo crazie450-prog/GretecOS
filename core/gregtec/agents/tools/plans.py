@@ -1,4 +1,4 @@
-"""``plan_export``: a saved plan's outputs (WO-3.6, plan 7.0, §7.1 step 9).
+"""``plan_export(id, fmt)``: a saved plan's outputs (WO-3.6, plan 7.0, §7.1 step 9).
 
 A plan saved by WO-3.6 (``gos plan --save``; WO-3.7's designer saves the same way) has its
 canonical JSON at ``GOS_HOME/data/plans/<id>.json`` and its exports beside it in
@@ -26,34 +26,28 @@ from gregtec.agents.tools.registry import Call, ToolError
 from gregtec.agents.tools.tsv import Result
 from gregtec.gamestate.safe_open import read_bytes
 from gregtec.packupdate.plans import PLAN_ID
+from gregtec.planner.outputs import FILES  # a plain dict: imports no planner code
 
-FILES = {
-    "bom": "bom.tsv",
-    "mermaid": "flow.mmd",
-    "png": "flow.png",
-    "gtnhplanner": "gtnhplanner.json",
-    "gtnhflow": "gtnh-flow.yaml",
-}  # gregtec.planner.outputs.FILES (not imported: the planner pulls in the solver)
 FORMATS = (*FILES, "footprint")
 MAX_FILE = 4 << 20
 
 PLAN_EXPORT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "plan": {
+        "id": {
             "type": "string",
             "description": "the plan's id (pl-..., plan: optional)",
             "minLength": 1,
             "maxLength": 80,
         },
-        "format": {
+        "fmt": {
             "type": "string",
             "enum": list(FORMATS),
             "description": "bom (TSV rows), footprint (layout rows), mermaid (diagram lines), "
             "or gtnhplanner / gtnhflow / png (the file's path, for Clayton)",
         },
     },
-    "required": ["plan", "format"],
+    "required": ["id", "fmt"],
     "additionalProperties": False,
 }
 
@@ -82,8 +76,8 @@ def _read(path: Path) -> bytes:
 
 
 def plan_export(call: Call, args: dict[str, Any], offset: int) -> Result:
-    pid = _plan_id(args["plan"])
-    fmt = args["format"]
+    pid = _plan_id(args["id"])
+    fmt = args["fmt"]
     if fmt not in FORMATS:
         raise ToolError(f"format must be one of {', '.join(FORMATS)}")
     home = _home(call)
@@ -147,7 +141,7 @@ def plan_export(call: Call, args: dict[str, Any], offset: int) -> Result:
         return _page(
             call, ("line",), [(x,) for x in lines], head, offset, f"cite {cite}"
         )
-    table = list(csv.reader(io.StringIO(text), delimiter="\t"))
+    table = list(csv.reader(io.StringIO(text), delimiter="\t", quoting=csv.QUOTE_NONE))
     header, body = table[0], table[1:]
     rows = [(*r, r[-1] or cite) for r in body]
     return _page(

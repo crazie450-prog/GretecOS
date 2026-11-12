@@ -28,6 +28,7 @@ from typing import Any
 
 from gregtec.planner.graph import EU_KEY, FULL
 from gregtec.planner.outputs.book import Book
+from gregtec.planner.outputs.diagram import target_node
 
 TIERS = (
     "lv",
@@ -88,6 +89,7 @@ def text(plan: Mapping[str, Any], book: Book) -> str:
         ),
     ]
     skipped: list[str] = []
+    anchor = target_node(plan)
     anchored = False
     first: int | None = None
     for n in plan["nodes"]:
@@ -120,7 +122,7 @@ def text(plan: Mapping[str, Any], book: Book) -> str:
         out.append("  do_not_overclock: true")
         out.append(f"  gos_node: {_q(n['n'])}")
         out.append(f"  gos_recipe: {_q(n['recipe'])}")
-        if target["id"] in (n.get("for") or ()):
+        if n["n"] == anchor:
             out.append("  target:")
             out.append(f"    {_q(names[target['id']])}: {_n(target['rate_s'])}")
             anchored = True

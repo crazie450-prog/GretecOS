@@ -62,6 +62,27 @@ def _label(n: Mapping[str, Any], book: Book) -> str:
     return str(n["recipe"])
 
 
+def target_node(plan: Mapping[str, Any]) -> str | None:
+    """The one node the exports anchor the target on: the node running the recipe the route
+    chose for the target (``route.choices``), else the first node that makes it as a primary
+    choice, else the first node that makes it at all (a node whose recipe only has it as a
+    byproduct comes after the one the route sized for it); None when no node makes it."""
+    target = plan["target"]["id"]
+    makers = [n for n in plan["nodes"] if target in (n.get("for") or ())]
+    chosen = {
+        c["node"]: c["recipe"] for c in (plan.get("route") or {}).get("choices") or ()
+    }
+    for pick in (
+        lambda n: chosen.get(target) == n["recipe"],
+        lambda n: bool(n.get("primary")),
+        lambda n: True,
+    ):
+        for n in makers:
+            if pick(n):
+                return str(n["n"])
+    return None
+
+
 def flow(plan: Mapping[str, Any], book: Book) -> Flow:
     """The plan's boxes and links (see the module docstring)."""
     target = plan["target"]["id"]

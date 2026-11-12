@@ -6,19 +6,22 @@ The boxes and links are :mod:`.diagram`'s, in its columns, so the PNG, the vault
 the dashboard's card show the same diagram. Colours are the design system's (``tokens.json``):
 the Machine GUI theme's panel, border and text, and each node's GT tier colour as a band on its
 left, always beside the tier's name (D51). A node shows its product, ``<count>x <machine> · <tier>``
-and its ``r:`` id; a boundary box its item and the plan's rate; a link its item and rate.
+and its ``r:`` id; a boundary box its item and the plan's rate; a link its item and, on a second
+line, its rate. A link's label stands in the gap right of its source box (:func:`layout`), never
+over a box: the links leaving one box stack downwards from its top.
 """
 
 from __future__ import annotations
 
 import io
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
 from gregtec.planner.outputs.book import Book
-from gregtec.planner.outputs.diagram import Box, flow, layers, rate
+from gregtec.planner.outputs.diagram import Box, Flow, Link, flow, layers, rate
 
 # docs/design/system/tokens.json: the Machine GUI theme (2 · LV) and the GT tier colours.
 BG = "#1F1F1F"  # machine-bg
@@ -46,8 +49,13 @@ TIER = {
 TIER_EDGE = "#8A8A8A"  # tier-edge
 
 BOX_W, BOX_H = 300, 84
-GAP_X, GAP_Y = 120, 36
+GAP_X, GAP_Y = 210, 36
+LABEL_W, LABEL_H = (
+    GAP_X - 24,
+    32,
+)  # a link label: two lines of the small font, inside the gap
 PAD = 32
+TOP = 40  # the title's band
 BAND = 12
 MAX_SIDE = 16000  # pixels: a bigger plan is drawn smaller rather than refused
 
@@ -85,14 +93,48 @@ def _lines(b: Box) -> tuple[str, str, str]:
     return b.label, f"{side} · {rate(b.rate_s)}" if b.rate_s is not None else side, ""
 
 
-def render(plan: Mapping[str, Any], book: Book) -> bytes:
-    """The PNG's bytes."""
+Rect = tuple[int, int, int, int]  # x0, y0, x1, y1
+
+
+@dataclass(frozen=True)
+class Layout:
+    flow: Flow
+    width: int
+    height: int
+    boxes: dict[str, Rect]  # box id -> its rectangle
+    labels: list[tuple[Link, Rect]]  # each link and the rectangle its label may fill
+
+
+def layout(plan: Mapping[str, Any], book: Book) -> Layout:
+    """Where every box and link label goes (before any scaling down)."""
     f = flow(plan, book)
     place = layers([b.id for b in f.boxes], [(x.src, x.dst) for x in f.links])
     cols = max((c for c, _ in place.values()), default=0) + 1
     rows = max((r for _, r in place.values()), default=0) + 1
-    width = PAD * 2 + cols * BOX_W + (cols - 1) * GAP_X
-    height = PAD * 2 + 40 + rows * BOX_H + (rows - 1) * GAP_Y
+    boxes: dict[str, Rect] = {}
+    for bid, (c, r) in place.items():
+        x, y = PAD + c * (BOX_W + GAP_X), PAD + TOP + r * (BOX_H + GAP_Y)
+        boxes[bid] = (x, y, x + BOX_W, y + BOX_H)
+    labels: list[tuple[Link, Rect]] = []
+    stacked: dict[str, int] = {}
+    for link in f.links:
+        _, y0, x1, _ = boxes[link.src]
+        i = stacked.get(link.src, 0)
+        stacked[link.src] = i + 1
+        lx, ly = x1 + 8, y0 + 2 + i * LABEL_H
+        labels.append((link, (lx, ly, lx + LABEL_W, ly + LABEL_H)))
+    width = (
+        PAD * 2 + cols * BOX_W + cols * GAP_X
+    )  # the last column's labels need a gap too
+    bottom = max((r[3] for _, r in labels), default=0)
+    height = max(PAD * 2 + TOP + rows * BOX_H + (rows - 1) * GAP_Y, bottom + PAD)
+    return Layout(f, width, height, boxes, labels)
+
+
+def render(plan: Mapping[str, Any], book: Book) -> bytes:
+    """The PNG's bytes."""
+    lay = layout(plan, book)
+    f, width, height = lay.flow, lay.width, lay.height
     img = Image.new("RGB", (width, height), BG)
     draw = ImageDraw.Draw(img)
     title, big, small = _font(20), _font(16), _font(13)
@@ -104,8 +146,7 @@ def render(plan: Mapping[str, Any], book: Book) -> bytes:
     )
 
     def xy(bid: str) -> tuple[int, int]:
-        c, r = place[bid]
-        return PAD + c * (BOX_W + GAP_X), PAD + 40 + r * (BOX_H + GAP_Y)
+        return lay.boxes[bid][0], lay.boxes[bid][1]
 
     for link in f.links:
         x1, y1 = xy(link.src)
@@ -127,13 +168,20 @@ def render(plan: Mapping[str, Any], book: Book) -> bytes:
             pts = [a, (mid, a[1]), (mid, b[1]), b]
         draw.line(pts, fill=RULE, width=2)
         draw.polygon([b, (b[0] - 8, b[1] - 5), (b[0] - 8, b[1] + 5)], fill=RULE)
-        label = link.label + (
-            f" {rate(link.rate_s)}" if link.rate_s is not None else ""
-        )
-        label = _fit(draw, label, small, GAP_X + BOX_W // 2)
+    for link, (lx, ly, _, _) in lay.labels:
         draw.text(
-            (pts[1][0] + 4, (a[1] + b[1]) // 2 - 16), label, fill=SHELL_TEXT, font=small
+            (lx, ly),
+            _fit(draw, link.label, small, LABEL_W),
+            fill=SHELL_TEXT,
+            font=small,
         )
+        if link.rate_s is not None:
+            draw.text(
+                (lx, ly + LABEL_H // 2),
+                _fit(draw, rate(link.rate_s), small, LABEL_W),
+                fill=SHELL_TEXT,
+                font=small,
+            )
     for box in f.boxes:
         x, y = xy(box.id)
         draw.rectangle(

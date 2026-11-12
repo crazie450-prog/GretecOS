@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-11
+upd: 2026-11-12
 ---
 version: 0
 summary: note types and allowed keys
@@ -13,9 +13,9 @@ lists: a, b, c
 links: [[id]]
 pointers: r:{map}/{sig12}, plan:{id}, q:{named_query}, db:{table}/{id}, w:{page}@{revid}
 tables: tsv in a ```tsv fence with a header row
-diagrams: a flow diagram in a ```mermaid fence (plan notes, D201); its lines are not facts
+diagrams: plan notes only: a flow diagram in a ```mermaid fence, only the lines the planner writes (header, boxes, labelled links; no click, href, style or %%), not facts (D201)
 prose: none, except one-line note: entries
-max_lines: 150 (INDEX.md: 200)
+max_lines: 150 (INDEX.md: 200, plan notes: 40)
 index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
 log_counts: n_<kind>: N lines are the curator's computed counts, in log/wk/ and log/mo/ only; no other log uses an n_ key
 note: keys * means any key until the WO that owns the type defines them

@@ -23,17 +23,18 @@ from fastapi.responses import FileResponse
 
 from gregtec.api.security import Principal
 from gregtec.packupdate.plans import PLAN_ID
+from gregtec.planner.outputs import FILES  # a plain dict: imports no planner code
 
 if TYPE_CHECKING:
     from gregtec.api.app import Core
 
-FILES = {
-    "bom": ("bom.tsv", "text/tab-separated-values; charset=utf-8"),
-    "mermaid": ("flow.mmd", "text/plain; charset=utf-8"),
-    "png": ("flow.png", "image/png"),
-    "gtnhplanner": ("gtnhplanner.json", "application/json"),
-    "gtnhflow": ("gtnh-flow.yaml", "application/yaml"),
-}  # gregtec.planner.outputs.FILES with media types
+MEDIA = {
+    "bom": "text/tab-separated-values; charset=utf-8",
+    "mermaid": "text/plain; charset=utf-8",
+    "png": "image/png",
+    "gtnhplanner": "application/json",
+    "gtnhflow": "application/yaml",
+}  # one per FILES format
 
 
 def _pid(text: str) -> str:
@@ -78,7 +79,7 @@ def add_routes(
     def plan_file(plan_id: str, fmt: str, who: Anyone) -> FileResponse:
         if fmt not in FILES:
             raise HTTPException(404, f"format must be one of {', '.join(FILES)}")
-        name, media = FILES[fmt]
+        name, media = FILES[fmt], MEDIA[fmt]
         pid = _pid(plan_id)
         path = core.cfg.gos_home / "data" / "plans" / pid / name
         if not path.is_file():

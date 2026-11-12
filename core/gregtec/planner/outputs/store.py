@@ -11,14 +11,15 @@
    (the same request on the same run gives the same id) refreshes the JSON and metrics and keeps
    the row's name and status, which WO-3.7 lets Clayton edit;
 4. the vault note ``plans/<id>.md``, only through :class:`gregtec.vault.io.VaultIO` (atomic,
-   path-guarded, checked against ``_gos/schema.md``): ``key: value`` facts, the machines as a TSV
-   table and the flow diagram in a ``mermaid`` fence (D201). The facts and table are the
-   summary (plan 6.1's 40 lines: one table row per machine type); the diagram follows when the
-   note stays within the grammar's 150 lines, else ``exports`` points at the files.
+   path-guarded, checked against ``_gos/schema.md``): a summary of at most 40 lines (plan 6.1,
+   D201): ``key: value`` facts, the machines by type as a TSV table (cut short, with a note,
+   when it wouldn't fit) and the flow diagram in a ``mermaid`` fence only when the whole note
+   still fits, else a ``note:`` pointing at ``flow.mmd``.
 
-The default name is the designer's ("Steel Ingot line · 1/s · MV", [QA:D13]). The lifecycle is
-:data:`LIFECYCLE`; a new row is ``proposed`` and :func:`set_status` moves it along
-:data:`NEXT` (WO-3.7 adds the accept button and the base/lines note).
+The default name is the designer's ("Steel Ingot line · 1/s · MV", [QA:D13]); a plan saved again
+keeps its row's name in the JSON, the exports and the note. The lifecycle is :data:`LIFECYCLE`, a
+straight line (plan §7.1 step 10); a new row is ``proposed`` and :func:`set_status` moves it one
+step along :data:`NEXT` (WO-3.7 adds the accept button and the base/lines note).
 """
 
 from __future__ import annotations
@@ -36,17 +37,21 @@ from gregtec.planner import plan as plan_mod
 from gregtec.planner.outputs import FILES, bom, gtnhflow, gtnhplanner, mermaid, png
 from gregtec.planner.outputs.book import Book, run_id
 from gregtec.vault.io import VaultError, VaultIO, atomic_write
+from gregtec.vault.schema import TYPE_MAX_LINES
 
 PLANS = Path("data", "plans")  # in GOS_HOME
 LIFECYCLE = ("proposed", "accepted", "building", "running", "retired")
 NEXT: dict[str, tuple[str, ...]] = {
-    "proposed": ("accepted", "retired"),
-    "accepted": ("building", "proposed", "retired"),
-    "building": ("running", "accepted", "retired"),
+    "proposed": ("accepted",),
+    "accepted": ("building",),
+    "building": ("running",),
     "running": ("retired",),
     "retired": (),
-}
-NOTE_MAX = 150  # the note grammar's cap (gregtec.vault.schema.MAX_LINES)
+}  # plan §7.1 step 10's line, one step at a time
+NOTE_MAX = TYPE_MAX_LINES[
+    "plan"
+]  # plan 6.1: a plan note is a summary of at most 40 lines
+FRONTMATTER_LINES = 5  # ---, id, t, upd, --- (VaultIO writes them)
 
 
 @dataclass
@@ -106,7 +111,9 @@ def note_body(plan: Mapping[str, Any], book: Book, status: str) -> str:
         if key in m:
             facts.append((key, m[key]))
     if lay:
-        facts += [("area", lay["area"]), ("volume", lay["volume"])]
+        # D200: a machine type with no structure counts in neither sum, so they are lower bounds
+        low = "≥" if lay.get("unknown") else ""
+        facts += [("area", f"{low}{lay['area']}"), ("volume", f"{low}{lay['volume']}")]
         if lay.get("unknown"):
             facts.append(("footprint_unknown", ", ".join(lay["unknown"])))
     if r:
@@ -121,14 +128,24 @@ def note_body(plan: Mapping[str, Any], book: Book, status: str) -> str:
     exports_dir = (PLANS / pid).as_posix()
     facts.append(("exports", f"{exports_dir}/ ({', '.join(FILES.values())})"))
     lines = [f"{k}: {_fact(v)}" for k, v in facts if v not in (None, "")]
-    table = ["```tsv", "mte\tmachine\ttier\tcount"]
-    for t in m.get("by_type") or ():
-        table.append(f"mte:{t['mte']}\t{_fact(t['name'])}\t{t['tier']}\t{t['count']}")
-    table.append("```")
-    if len(table) > 3:
-        lines += table
+    rows = [
+        f"mte:{t['mte']}\t{_fact(t['name'])}\t{t['tier']}\t{t['count']}"
+        for t in m.get("by_type") or ()
+    ]
+    # Room for the table: the cap less the frontmatter, the facts and one line for the
+    # diagram's pointer; a fence, header and fence take 3, a cut table's note 1 more.
+    room = NOTE_MAX - FRONTMATTER_LINES - len(lines) - 1
+    if rows and len(rows) + 3 > room:
+        keep = max(0, room - 4)
+        lines.append(
+            f"note: the table shows {keep} of {len(rows)} machine types; "
+            f"{exports_dir}/{FILES['bom']} has every machine"
+        )
+        rows = rows[:keep]
+    if rows:
+        lines += ["```tsv", "mte\tmachine\ttier\tcount", *rows, "```"]
     diagram = ["```mermaid", *mermaid.lines(plan, book), "```"]
-    if len(lines) + len(diagram) + 5 <= NOTE_MAX:  # frontmatter is 5 lines
+    if FRONTMATTER_LINES + len(lines) + len(diagram) <= NOTE_MAX:
         lines += diagram
     else:
         lines.append(
@@ -150,6 +167,15 @@ def save(
     ``GOS_HOME/data/gos.sqlite``. A vault that can't take the note is a problem, not a failure:
     the JSON and the row are the plan."""
     pid = str(plan["id"])
+    if not PLAN_ID.fullmatch(pid):
+        raise ValueError(f"{pid!r} isn't a plan id")
+    run = run_id(conn, str(plan["run"]))  # LookupError before any file is written
+    row = conn.execute("SELECT name FROM plan WHERE id = ?", (pid,)).fetchone()
+    if row is not None and row[0] and row[0] != plan["name"]:
+        plan = {
+            **plan,
+            "name": str(row[0]),
+        }  # the row's name (WO-3.7 lets Clayton edit it)
     path = home / json_rel(pid)
     atomic_write(path, plan_mod.dumps(plan).encode("utf-8"))
     files = exports(home, plan, book)
@@ -172,7 +198,7 @@ def save(
                 plan.get("metrics") or {}, sort_keys=True, separators=(",", ":")
             ),
             plan.get("gt"),
-            run_id(conn, str(plan["run"])),
+            run,
         ),
     )
     status = str(

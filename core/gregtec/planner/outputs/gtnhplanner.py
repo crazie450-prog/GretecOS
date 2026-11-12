@@ -31,7 +31,7 @@ from gregtec.config import GT_PIN
 from gregtec.planner.graph import FULL, Port
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.outputs.book import Book, Recipe
-from gregtec.planner.outputs.diagram import flow, layers
+from gregtec.planner.outputs.diagram import flow, layers, target_node
 
 SCHEMA_VERSION = 1
 COL_W, ROW_H = 420, 260  # board units between columns and rows
@@ -133,6 +133,7 @@ def project(plan: Mapping[str, Any], book: Book) -> dict[str, Any]:
         c, r = place[bid]
         return {"x": c * COL_W, "y": r * ROW_H}
 
+    anchor = target_node(plan)
     recipes: list[dict[str, Any]] = []
     seen: set[str] = set()
     nodes: list[dict[str, Any]] = []
@@ -150,7 +151,7 @@ def project(plan: Mapping[str, Any], book: Book) -> dict[str, Any]:
             "enabled": True,
             "position": position(n["n"]),
         }
-        if target["id"] in (n.get("for") or ()):
+        if n["n"] == anchor:
             node["targetOutput"] = {
                 "kind": _kind(target["id"]),
                 "resourceId": resource_id(target["id"]),

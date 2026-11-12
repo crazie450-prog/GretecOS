@@ -20,9 +20,14 @@ HEAD = "flowchart LR"
 _ESC = {'"': "#quot;", "<": "#lt;", ">": "#gt;", "|": "#124;", "#": "#35;"}
 
 
+MAX_TEXT = 200  # per name or line of a label: the vault grammar takes 600 per label
+
+
 def esc(text: str) -> str:
-    """Text safe inside a quoted Mermaid label (one line)."""
+    """Text safe inside a quoted Mermaid label (one line, at most :data:`MAX_TEXT` characters)."""
     text = " ".join(text.split())
+    if len(text) > MAX_TEXT:
+        text = text[: MAX_TEXT - 1] + "…"
     return "".join(_ESC.get(c, c) for c in text)
 
 
