@@ -175,12 +175,16 @@ def _item(
 ) -> int:
     nbt_json = None if nbt is None else json.dumps(nbt)
     h = "" if nbt_json is None else hashlib.sha256(nbt_json.encode()).hexdigest()[:16]
-    cur = conn.execute(
-        "INSERT INTO item(registry_name, meta, nbt_hash, nbt_json, mod_id, name_en)"
+    conn.execute(  # another fixture's DB may hold the item already (the e2e core's)
+        "INSERT OR IGNORE INTO item(registry_name, meta, nbt_hash, nbt_json, mod_id, name_en)"
         " VALUES (?, ?, ?, ?, ?, ?)",
         (reg, meta, h, nbt_json, reg.split(":")[0], name),
     )
-    return int(cur.lastrowid or 0)
+    row = conn.execute(
+        "SELECT id FROM item WHERE registry_name = ? AND meta = ? AND nbt_hash = ?",
+        (reg, meta, h),
+    ).fetchone()
+    return int(row[0])
 
 
 def write_db(path: Path) -> Path:
@@ -205,16 +209,19 @@ def write_db(path: Path) -> Path:
         for key, name in NAMES.items():
             reg, meta = key.rsplit("@", 1)
             _item(conn, reg, int(meta), name)
-        conn.execute(
-            "INSERT INTO recipe_map(id, unloc_name, name_en, owner_mod) VALUES (6, ?, ?, ?)",
-            (crop_facts.BREEDER_MAP, "Crop Breeder", "cropsnh"),
+        map_id = int(
+            conn.execute(
+                "INSERT INTO recipe_map(unloc_name, name_en, owner_mod) VALUES (?, ?, ?)",
+                (crop_facts.BREEDER_MAP, "Crop Breeder", "cropsnh"),
+            ).lastrowid
+            or 0
         )
         rid = int(
             conn.execute(
                 "INSERT INTO recipe(run_id, source, recipe_map_id, eut, duration_ticks,"
                 " voltage_tier, signature, content_hash, ref)"
-                " VALUES (?, 'gt', 6, 120, 400, 2, 'sig', 'hash', ?)",
-                (run_id, BREEDER_REF),
+                " VALUES (?, 'gt', ?, 120, 400, 2, 'sig', 'hash', ?)",
+                (run_id, map_id, BREEDER_REF),
             ).lastrowid
             or 0
         )

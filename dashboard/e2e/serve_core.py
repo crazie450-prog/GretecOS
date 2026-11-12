@@ -18,6 +18,9 @@ are loaded into the same DB from a fake Lab instance in ``<tmp>/fixtures``, with
 at x 100, z 20 in its ``level.dat`` and JourneyMap's data folder made, so the Ores view lists,
 maps and proposes waypoints, and a confirmed one is written there (never a real instance).
 
+Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtures/crops) as
+one more export run.
+
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
@@ -113,6 +116,22 @@ def load_ores(home: Path) -> tuple[Path, str]:
     return instances, f.WORLD
 
 
+def load_crops(home: Path) -> None:
+    """WO-6.7's made-up crop world (tests/fixtures/crops/cropworld.py: crops, CropsNH's machines
+    and a Crop Breeder recipe) as one more export run in ``home``'s DB."""
+    spec = importlib.util.spec_from_file_location(
+        "crop_fixtures", REPO / "tests" / "fixtures" / "crops" / "cropworld.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the crop test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["crop_fixtures"] = module
+    spec.loader.exec_module(module)
+    from gregtec.db import access
+
+    module.write_db(access.db_path(home))
+
+
 def _load_fakes() -> object:
     """tests/unit/setup/fakes.py: the file keyring and the fake Prism tree (WO-2.9)."""
     spec = importlib.util.spec_from_file_location(
@@ -170,6 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         home = root
         build_db(home)
         ores_lab = load_ores(home)
+        load_crops(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
