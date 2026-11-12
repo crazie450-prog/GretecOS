@@ -361,7 +361,7 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   await expect(page.getByTestId("rail")).toHaveCount(0);
   const nav = await page.getByTestId("nav").boundingBox();
   expect(nav?.y).toBeGreaterThan(844 - 80);
-  expect(await page.getByTestId("nav").locator("button").count()).toBe(5);
+  expect(await page.getByTestId("nav").locator("button").count()).toBe(6);
   const width = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(width).toBeLessThanOrEqual(390);
   // Nothing in a view is cut off: panels grow with what they hold and the view scrolls.
@@ -374,7 +374,7 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   const header = await page.getByTestId("header").boundingBox();
   const chipBox = await chips.boundingBox();
   expect(chipBox && header && chipBox.y + chipBox.height <= header.y + header.height).toBe(true);
-  for (const tab of ["chat", "search", "costs", "settings"]) {
+  for (const tab of ["chat", "search", "base", "costs", "settings"]) {
     await page.getByTestId(`nav-${tab}`).click();
     await expect(page.getByTestId("view")).toHaveAttribute("data-view", tab);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), tab).toBeLessThanOrEqual(390);

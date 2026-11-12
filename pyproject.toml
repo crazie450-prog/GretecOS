@@ -83,3 +83,7 @@ testpaths = ["tests"]
 addopts = ["--import-mode=importlib"]
 strict = true
 markers = ["slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)"]
+# A full run writes about 7 GB of per-test temp folders (DB copies). Keep only failed tests'
+# folders, and only from the last run, so runs side by side don't fill the disk.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

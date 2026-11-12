@@ -10,7 +10,9 @@ side-by-side column (D12), which lists the ``machine_fact`` confidence of each a
 Every route becomes one **plan**, a dict shaped as §7.1's sketch: ``id``, ``name``, ``v``, ``gt``,
 ``run`` (the export run key it was solved on, which WO-1.9's affected-plan check reads), ``kind``,
 ``target``, ``tier_cap``, ``machines``, ``pins``, ``nodes``, ``edges``, ``boundary``, ``metrics``
-and ``rank`` (empty: WO-3.5 fills them), ``alternatives`` (the other routes' ids) and ``layout``
+and ``rank`` (WO-3.5's :mod:`.metrics` and :mod:`.rank`: the base routes come back in rank
+order, each named for its place, the addon route last), ``alternatives`` (the other routes' ids)
+and ``layout``
 (empty: WO-3.6's), plus ``request`` (to re-solve it), ``route`` (the solver's view: choices,
 gates, the replay floor) and ``warnings`` (D194). ``plan_schema.json`` is its JSON Schema. Every
 number in it is the DB's or GT's math on it: a node cites its ``r:`` recipe and ``mte:`` machine
@@ -36,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.config import GT_PIN
-from gregtec.planner import chains, graph, sizing, solve
+from gregtec.planner import chains, effort, graph, metrics, rank, sizing, solve
 from gregtec.planner.graph import EU_KEY, Graph
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.machines import MachineOption
@@ -56,7 +58,7 @@ class Design:
     graph: Graph
     plans: tuple[
         dict[str, Any], ...
-    ]  # the routes in the order found, the addon route last
+    ]  # the base routes in rank order (WO-3.5), the addon route last
 
 
 def rate_and_window(request: Request) -> tuple[float, float | None]:
@@ -130,8 +132,10 @@ def design(
     templates: chains.Templates | None = None,
     run_id: int | None = None,
     exact: bool = False,
+    prefs: rank.Prefs = rank.BALANCED,
 ) -> Design:
-    """The plans for ``request`` (see the module docstring). ``exact``: whole machine counts
+    """The plans for ``request`` (see the module docstring), measured and ranked (WO-3.5:
+    :mod:`.metrics`, :mod:`.rank` with ``prefs``' weights). ``exact``: whole machine counts
     from the integer MILP instead of ceil (step 6)."""
     g = graph.build(conn, request, base, templates=templates, run_id=run_id)
     run_key = _run_key(conn, g.run_id)
@@ -163,7 +167,38 @@ def design(
     ids = [p["id"] for p in built]
     for p in built:
         p["alternatives"] = [i for i in ids if i != p["id"]]
-    return Design(g, tuple(built))
+    measure = effort.Effort(
+        conn,
+        request,
+        base,
+        g.tier_cap,
+        craft_s=prefs.craft_s,
+        templates=templates,
+        run_id=g.run_id,
+    )
+    table = metrics.load_scarcity()
+    for p in built:
+        p["metrics"] = metrics.route(
+            conn, g, p, measure.on_map, table, measure.route(p)
+        )
+    ranked = rank.order(built, prefs)
+    for p in ranked:
+        r = p["rank"]
+        p["name"] = _name(g, request, r["column"], r["position"])
+        p["metrics"] = _rounded(p["metrics"])
+        p["rank"] = _rounded(r)
+    return Design(g, tuple(ranked))
+
+
+def _rounded(value: object) -> object:
+    """Every float in ``value`` to 9 significant digits (stable text, :func:`_num`)."""
+    if isinstance(value, float):
+        return _num(value)
+    if isinstance(value, dict):
+        return {k: _rounded(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_rounded(v) for v in value]
+    return value
 
 
 def _run_key(conn: sqlite3.Connection, run_id: int) -> str:
