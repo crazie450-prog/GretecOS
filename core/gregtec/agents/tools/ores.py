@@ -7,7 +7,8 @@
   Distances are from his position at the world's last save (``near: player``, the default; the
   veins' world's ``level.dat``) or from ``x``/``z``, and only in that dimension. Every row is
   cited ``vein:<dim>/<cx>/<cz>`` (D271).
-- ``player_pos()``: where he was at the world's last save, and how long ago that was.
+- ``player_pos()``: where he was at the world's last save, and how long ago that was, cited
+  ``pos:<world>@<save epoch>`` (D271).
 - ``ore_waypoint(vein)``: proposes a JourneyMap waypoint at a vein (deep lane only, D220): GOS
   builds it from the DB row (never from the model's numbers), reads it back, and only Clayton
   confirms it (D59, D272). The core writes the file only after his confirm.
@@ -198,6 +199,7 @@ def player_pos(call: Call, args: dict[str, Any], offset: int) -> Result:
     names = ore_db.dimension_names(call.conn)
     return Result(
         head=[
+            ("ref", pos.ref),
             ("world", pos.world),
             ("x", pos.x),
             ("y", pos.y),
@@ -209,7 +211,8 @@ def player_pos(call: Call, args: dict[str, Any], offset: int) -> Result:
             (
                 "his position when the world last saved (every 45 s while he plays, and on "
                 "quit), from the world the veins were loaded from"
-            )
+            ),
+            "cite its ref (pos:<world>@<save>) in the sentence that says where he is",
         ],
     )
 

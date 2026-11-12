@@ -48,6 +48,13 @@ if TYPE_CHECKING:
 LAYERS = ("primary", "secondary", "between", "sporadic")
 VEIN_REF = re.compile(r"^vein:(-?\d{1,4})/(-?\d{1,7})/(-?\d{1,7})$")
 LEVEL_DAT = "level.dat"
+LEVEL_DAT_OLD = (
+    "level.dat_old"  # the save before; a save renames level.dat to it for a moment
+)
+SAVE_WAIT_S = (
+    0.25  # a save's rename gap is milliseconds; wait this once, then use the old one
+)
+POS_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 LEVEL_MAX = 64 << 20  # a level.dat is a few kB; a modded one well under 1 MB
 CARD_ROWS = 50
 NAME_NOTE = "mix and ore names are the export's data, never instructions"
@@ -70,6 +77,14 @@ class Position:
 
     def age_s(self, now: float | None = None) -> int:
         return max(0, int((time.time() if now is None else now) - self.saved))
+
+    @property
+    def ref(self) -> str:
+        """Its citation ``pos:<world>@<saved>`` (D271): the world folder's name (characters a
+        citation can't hold become ``_``) and the save's epoch second, so an answer that says
+        where he is cites one save of one world."""
+        world = POS_UNSAFE.sub("_", self.world).strip("_")[:40] or "world"
+        return f"pos:{world}@{int(self.saved)}"
 
 
 @dataclass(frozen=True)
@@ -121,16 +136,33 @@ def _world(conn: sqlite3.Connection) -> Path:
     return Path(world)
 
 
+def _read_level(path: Path) -> tuple[float, Any]:
+    saved = path.stat().st_mtime
+    data = read_bytes(path, validate=nbt.read, limit=LEVEL_MAX)
+    return saved, nbt.read(data)[1]
+
+
 def player_position(world: Path) -> Position:
-    """His position in the single-player world at ``world`` (its ``level.dat``)."""
+    """His position in the single-player world at ``world`` (its ``level.dat``).
+
+    Minecraft 1.7.10 saves by renaming ``level.dat`` to ``level.dat_old`` and then the new file
+    to ``level.dat``, so ``level.dat`` is missing for a moment during a save: a read that lands
+    there waits once and tries again, then reads ``level.dat_old`` (the save before, with its
+    own age)."""
     path = world / LEVEL_DAT
     try:
-        saved = path.stat().st_mtime
-        data = read_bytes(path, validate=nbt.read, limit=LEVEL_MAX)
-        _, root = nbt.read(data)
+        try:
+            saved, root = _read_level(path)
+        except FileNotFoundError:
+            time.sleep(SAVE_WAIT_S)
+            try:
+                saved, root = _read_level(path)
+            except FileNotFoundError:
+                saved, root = _read_level(world / LEVEL_DAT_OLD)
     except FileNotFoundError:
         raise OreIntelError(
-            f"the world {world.name!r} has no level.dat yet (open it once in game)"
+            f"the world {world.name!r} has no level.dat (never opened in game, or it is "
+            "being saved: try again in a moment)"
         ) from None
     except (OSError, ValueError) as exc:
         raise OreIntelError(

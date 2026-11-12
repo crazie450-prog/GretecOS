@@ -197,7 +197,7 @@ def test_check_answer() -> None:
     made_up = check_answer(f"Steel Ingot: 240 EU/t ({EBF_RECIPE}).", [source])
     assert made_up == ["numbers that no tool result holds: 240"]
     assert check_answer("Steel Ingot: 120 EU/t.", [source]) == [
-        "numbers without a citation (r:, q:, mte:, crop:, tel: or vein: id)"
+        "numbers without a citation (r:, q:, mte:, crop:, tel:, vein: or pos: id)"
     ]
     fake_ref = check_answer(
         "It runs at 120 EU/t (r:gt.recipe.x/ffffffffffff).", [source]
@@ -240,7 +240,7 @@ def test_a_number_from_the_request_needs_a_tool_result() -> None:
     ]
     assert check_answer("Yes, the EBF uses 512 EU/t.", [source]) == [
         "numbers that no tool result holds: 512",
-        "numbers without a citation (r:, q:, mte:, crop:, tel: or vein: id)",
+        "numbers without a citation (r:, q:, mte:, crop:, tel:, vein: or pos: id)",
     ]
 
 

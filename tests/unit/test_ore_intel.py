@@ -25,6 +25,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from gregtec import cards, config
+from gregtec.agents import prefetch
+from gregtec.agents.fast_lane import NOT_CHECKED, FastLane
 from gregtec.agents.tools import Registry, build_registry
 from gregtec.api.security import Principal
 from gregtec.bridge import waypoint
@@ -33,6 +35,7 @@ from gregtec.bridge.ops import Ops
 from gregtec.cards import build as card_build
 from gregtec.db import access
 from gregtec.ingest import nbt
+from gregtec.llm.fake import ScriptedClient, Turn
 from gregtec.ores import intel, view
 from gregtec.store import Store
 
@@ -181,7 +184,7 @@ def test_his_position_is_read_from_the_veins_world(
 @pytest.mark.parametrize(
     ("data", "why"),
     [
-        (None, "has no level.dat yet"),
+        (None, "has no level.dat"),
         (b"\x1f\x8bnot gzip", "can't read the world's level.dat"),
         (F.nbt_file({"Data": {"LevelName": "x"}}), "has no player"),
         (
@@ -202,6 +205,35 @@ def test_a_position_that_cant_be_read_says_why(
         intel.position(conn)
     pos, said = intel.from_player(conn)
     assert pos is None and said is not None and why in said
+
+
+def test_a_read_during_a_save_waits_then_reads_the_save_before(
+    lab: Lab, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Minecraft 1.7.10 saves by renaming level.dat to level.dat_old, then level.dat_new to
+    level.dat: a read in that gap waits once, then reads level.dat_old (review L1)."""
+    monkeypatch.setattr(intel, "SAVE_WAIT_S", 0.0)
+    level = lab.world / "level.dat"
+    old = lab.world / "level.dat_old"
+    saves: list[float] = []
+
+    def save_lands(_: float) -> None:  # the save finishes while the read waits
+        saves.append(_)
+        old.rename(level)
+
+    level.rename(old)
+    monkeypatch.setattr(intel.time, "sleep", save_lands)
+    assert intel.position(conn).x == 100 and len(saves) == 1
+    level.rename(old)  # this time the gap outlasts the wait
+    monkeypatch.setattr(intel.time, "sleep", lambda _: None)
+    pos = intel.position(conn)
+    assert (pos.x, pos.z) == (100, 20) and pos.saved == old.stat().st_mtime
+
+
+def test_his_position_is_cited_by_world_and_save() -> None:
+    pos = intel.Position(1, 2, 3, 0, "My World (2)", 1762876800.7)
+    assert pos.ref == "pos:My_World_2@1762876800"
+    assert intel.Position(1, 2, 3, 0, "Üï", 5.0).ref == "pos:world@5"
 
 
 def test_with_no_veins_loaded_there_is_no_world(tmp_path: Path) -> None:
@@ -340,16 +372,36 @@ def test_ore_find_from_a_given_point_another_dimension_or_none(lab: Lab) -> None
     assert "no loaded vein holds 'Unobtainium'" in none.text
     (lab.world / "level.dat").unlink()
     out = reg.call("ore_find", {"material": "Ferrite"})
-    assert "no distances: the world 'lab-ores' has no level.dat yet" in out.text
+    assert "no distances: the world 'lab-ores' has no level.dat" in out.text
 
 
 def test_player_pos(lab: Lab) -> None:
     out = registry(lab).call("player_pos", {})
     assert not out.is_error, out.text
+    lines = out.text.splitlines()
     for line in ("world: lab-ores", "x: 100", "y: 64", "z: 20", "dim: 0 (Overworld)"):
-        assert line in out.text.splitlines()
+        assert line in lines
+    with lab.conn() as c:
+        ref = intel.position(c).ref
+    assert f"ref: {ref}" in lines and ref.startswith("pos:lab-ores@")
     (lab.world / "level.dat").unlink()
     assert registry(lab).call("player_pos", {}).is_error
+
+
+def test_the_fast_lane_says_where_he_is_from_player_pos(lab: Lab) -> None:
+    """The skill's "Where am I?" row in the fast lane: an answer built from player_pos passes
+    the lane's number check only with its pos: citation (review M1)."""
+    with lab.conn() as c:
+        ref = intel.position(c).ref
+    said = "You were at x 100, y 64, z 20 in the Overworld at the last save"
+    call = Turn(tools=[{"name": "player_pos", "input": {}}])
+    client = ScriptedClient(turns=[call, Turn(f"{said} ({ref}).")])
+    out = FastLane(client, registry(lab)).answer("where am I?", prefetch.Prefetch())  # type: ignore[arg-type]
+    assert out.checked and out.tool_calls == ["player_pos"], out.problems
+    assert out.text == f"{said} ({ref})."
+    uncited = ScriptedClient(turns=[call, Turn(f"{said}."), Turn(f"{said}.")])
+    out = FastLane(uncited, registry(lab)).answer("where am I?", prefetch.Prefetch())  # type: ignore[arg-type]
+    assert not out.checked and out.text == NOT_CHECKED
 
 
 def test_ore_waypoint_only_proposes_and_clayton_confirms(lab: Lab, desk: Desk) -> None:

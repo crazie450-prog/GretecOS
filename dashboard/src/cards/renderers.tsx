@@ -21,7 +21,7 @@ import type {
   TableCard,
 } from "./types.gen";
 
-const CITE = /^(r|q|mte|crop|plan|w|vein):\S+$/;
+const CITE = /^(r|q|mte|crop|plan|w|vein|pos):\S+$/;
 
 function Chip({ cite }: { cite: string | null }) {
   const { stale, openCite } = useCardActions();
