@@ -2,7 +2,14 @@
 // with every request; nothing here ever sees it (D117).
 import type { ApprovalCard, Card } from "../cards/types.gen";
 import type {
+  Accepted,
   AiState,
+  Alternatives,
+  DesignAnswer,
+  Designed,
+  DesignerView,
+  DesignSpec,
+  SavedPlanRow,
   Answer,
   BaseFind,
   CoreState,
@@ -94,6 +101,21 @@ export const api = {
   baseMachineClear: (mteId: number) => request<MyBase>("DELETE", `/api/base/machines/${mteId}`),
   baseStock: (key: string, qty: number) => post<MyBase>("/api/base/stock", { key, qty }),
   baseStockRemove: (key: string) => request<MyBase>("DELETE", `/api/base/stock?key=${encodeURIComponent(key)}`),
+  // The Designer (WO-3.7, D250): routes ranked by the core's code; every change re-solves there.
+  designerLatest: () => get<{ ids: string[] }>("/api/designer"),
+  plans: () => get<{ plans: SavedPlanRow[]; problems: string[] }>("/api/plans"),
+  designerView: (id: string) => get<DesignerView>(`/api/plans/${encodeURIComponent(id)}/designer`),
+  design: (spec: DesignSpec) => post<DesignAnswer>("/api/designer/design", spec),
+  alternatives: (id: string, node: string, all: boolean) =>
+    get<Alternatives>(
+      `/api/plans/${encodeURIComponent(id)}/alternatives?node=${encodeURIComponent(node)}${all ? "&all=1" : ""}`,
+    ),
+  pin: (id: string, node: string, recipe: string | null) =>
+    post<Designed>(`/api/plans/${encodeURIComponent(id)}/pin`, { node, recipe }),
+  resolve: (id: string) => post<Designed>(`/api/plans/${encodeURIComponent(id)}/resolve`),
+  accept: (id: string) => post<Accepted>(`/api/plans/${encodeURIComponent(id)}/accept`),
+  rename: (id: string, name: string) =>
+    post<{ view: DesignerView }>(`/api/plans/${encodeURIComponent(id)}/name`, { name }),
   // The persona (WO-5.6): the same switch the Discord /persona command will call.
   persona: (id: string) => post<PersonaState & { persona: PersonaInfo }>("/api/persona", { id }),
   // The setup wizard (WO-2.9): admin and paired devices only. A secret goes in and never comes back.

@@ -25,7 +25,7 @@
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] on_credits_out  | "no_ai", the only value (fixed by D48)   | credits flow (WO-2.8, D165) |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
-| [budget] task_max_usd    | 2.0 (placeholder until WO-3.7, plan 4.4) | deep lane (WO-2.4, D156)    |
+| [budget] task_max_usd    | 2.0 (until `gos eval design-cost`, D253) | deep lane (WO-2.4, D156)    |
 | [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
 | [models] use_heavy       | false (planner and architect on heavy)   | deep lane (D155)            |
 | [launch] home            | gos_home                                 | gos launch (D115)           |

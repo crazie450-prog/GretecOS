@@ -30,7 +30,7 @@ from gregtec import (
     voicecli,
 )
 from gregtec import deploy as app_deploy
-from gregtec.agents import recipe_eval_cli
+from gregtec.agents import design_cost_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -479,6 +479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
         )
     recipe_eval_cli.add_parsers(eval_cmds)
+    design_cost_cli.add_parsers(eval_cmds)
     quest_cli.add_parsers(quest_cmds, eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
@@ -752,6 +753,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--limit must be at least 1")
         if args.eval_command == recipe_eval_cli.COMMAND:
             return recipe_eval_cli.run(args, sys.stdout)
+        if args.eval_command == design_cost_cli.COMMAND:
+            return design_cost_cli.run(args, sys.stdout)
         if args.eval_command == quest_cli.EVAL:
             return quest_cli.run_eval(args, sys.stdout)
         if args.eval_command == "deep-lane":

@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, TextIO
 import anthropic
 
 from gregtec import config
-from gregtec.agents import prefetch, router, saved_plans
+from gregtec.agents import plan_writer, prefetch, router, saved_plans
 from gregtec.agents.deep import (
     DONE,
     NEEDS_APPROVAL,
@@ -711,9 +711,15 @@ def setup(
             cfg.gos_home, deep=deep, ops=ops, spoiler_default=cfg.spoiler_default
         )
     else:
-        deep = DeepLaneService.for_home(cfg.gos_home, Settings.from_config(cfg), meter)
+        settings = Settings.from_config(cfg)
+        deep = DeepLaneService.for_home(cfg.gos_home, settings, meter)
+        writer = plan_writer.factory(settings.planner, meter)  # plan_explain (D199)
         registry = default_registry(
-            cfg.gos_home, deep=deep, ops=ops, spoiler_default=cfg.spoiler_default
+            cfg.gos_home,
+            deep=deep,
+            ops=ops,
+            writer=writer,
+            spoiler_default=cfg.spoiler_default,
         )
         deep.registry = registry
     personas = Personas(

@@ -25,6 +25,7 @@ import { Base } from "./views/Base";
 import { Chat } from "./views/Chat";
 import { Costs } from "./views/Costs";
 import { Glance } from "./views/Glance";
+import { Designer } from "./views/Designer";
 import { Later } from "./views/Later";
 import { PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
 import { Now } from "./views/Now";
@@ -281,6 +282,8 @@ export function App() {
         return <Costs />;
       case "base":
         return <Base />;
+      case "designer":
+        return <Designer />;
       case "quests":
         return (
           <Quests

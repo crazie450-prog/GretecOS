@@ -1,12 +1,13 @@
 """Planner explanations (WO-3.5, plan §7.1 step 11, [QA:D4], D199).
 
-The deep lane's ``planner`` subagent (WO-2.4) writes the summary of a design's routes from the
+The planner model (``[models] planner``) writes the summary of a design's routes from the
 metrics JSON only (:func:`facts`): ranks, scores, weights and metrics, all from code. It
 explains the order, never changes it (the ranking is :mod:`.rank`'s). :func:`explain` checks
 the text with the numeric validator (:mod:`.validate`); on rejection it asks once more, listing
 the offending numbers, and if that fails too it returns :func:`template`, an explanation built
 from the metrics by code. The model is a :data:`Writer`: a function from prompt to text, so
-tests use fakes and WO-3.7's line-designer flow passes the planner subagent's.
+tests use fakes and WO-3.7's ``plan_explain`` tool passes the planner model
+(:mod:`gregtec.agents.plan_writer`).
 """
 
 from __future__ import annotations
