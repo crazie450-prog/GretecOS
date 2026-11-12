@@ -297,14 +297,18 @@ class CensusWatch:
         looked: list[int] = []
         rows: list[list[int]] = []
         failed = False
+        read_any = False
         for i in todo:
-            if self.timer() - start >= self.budget_s and looked:
-                break
             offset, sectors, _ = header.slots[i]
-            if offset == 0:  # no chunk there (never generated, or trimmed)
+            if (
+                offset == 0
+            ):  # no chunk there (never generated, or trimmed): nothing to read
                 looked.append(i)
                 region.known.pop(i, None)
                 continue
+            if read_any and self.timer() - start >= self.budget_s:
+                break
+            read_any = True
             cx, cz = chunk_coords(region.rx, region.rz, i)
             try:
                 data = self.read(region.path, offset * SECTOR, sectors * SECTOR)
