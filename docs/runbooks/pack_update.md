@@ -122,6 +122,9 @@ changes GT, before answering yes:
      GT's classes disagree with a ported unit-test expectation. Then the turbine vectors (WO-4.1,
      D231): `uv run python tests/unit/gtmath/oracle/make_turbine_vectors.py`; if a turbine
      controller's `fluidIntoPower` changed, port the change into `gtmath/turbine.py` first.
+     Then the boiler and tree-farm vectors (WO-4.2, D233):
+     `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py`; if a 2.9 large boiler or
+     `MTETreeFarm` changed, port it into `gtmath/boiler.py` or `gtmath/treefarm.py` first.
      Commit `tests/unit/gtmath/vectors/`.
    - `uv run pytest tests/unit/gtmath` must pass (GT's unit tests, the vectors replayed through
      the port bit for bit, the property tests), then, after the harnesses,

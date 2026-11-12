@@ -1,0 +1,10 @@
+# Farms with no recipe map in the export (WO-4.2, plan 7.2 "Farms", D233): crop, mob and other
+# farms the power designer may use as virtual recipes in a self-sustaining line. Read by
+# gregtec.planner.farms only for products no DB farm map gives (GT's Tree Growth Simulator is read
+# from gt.recipe.treefarm). Every number is a curator's, measured in the Lab or read from the
+# machine, never estimated; cite where it came from in the note.
+# Columns (tab-separated): id, name, machine (mte:<id> or empty), seconds (one operation), eut
+# (EU/t while running), inputs and outputs per operation and catalysts (kept, never used up: the
+# bootstrap kit's seeds, saplings or spawners) as <stable key>*<amount> joined by ';', source
+# (always curated), note. Keys are registry@meta or fluid:<name>, never numeric ids.
+id	name	machine	seconds	eut	inputs	outputs	catalysts	source	note
