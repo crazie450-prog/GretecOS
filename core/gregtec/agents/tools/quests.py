@@ -13,10 +13,11 @@ past the frontier, so ``quest_get`` shows it at the spoiler level (D268):
 - 1, partial: its name and what its tasks ask for;
 - 2, full: everything, description and rewards too.
 
-The level is the call's (:meth:`Call.spoil`): the ``spoil`` argument, never above what the
-global setting and an explicit spoiler command in Clayton's request allow
-(:mod:`gregtec.quests.spoilers`, D268), so a model asking
-for more than he did gets the allowed level and a note saying so. The list tools show a locked
+The level is the call's (:meth:`Call.spoil`): the ``spoil`` argument, never above the global
+setting or what his spoiler command granted that one quest id (:mod:`gregtec.quests.spoilers`,
+D268: only the asker's instant command grants, never a lane's model), so a model asking for more
+gets the allowed level and a note saying so. Raising one quest never raises another: its
+prerequisites and what it unlocks stay at their own level. The list tools show a locked
 quest at the global level, and only by what that level shows of it, or by words Clayton said
 himself (:func:`his_words`): at 0, ``quest_find`` matches one by its name only when the book
 shows it or he said the words, never by its description, and ``quest_for_item`` lists it only
@@ -65,7 +66,7 @@ def his_words(call: Call, text: str | None) -> bool:
     if not found:
         return False
     if call.request is None:
-        return call.spoil_any >= spoilers.FULL
+        return call.spoil_max >= spoilers.FULL
     said = set(items.words(call.request))
     return all(w in said or f"{w}s" in said or f"{w}es" in said for w in found)
 
@@ -167,7 +168,10 @@ def quest_find(call: Call, args: dict[str, Any], offset: int) -> Result:
         "quest_search",
         {
             "q": items.fts_query(found),
-            "qname": f"name : ({items.fts_query(found)})",
+            # whole words, no prefix: a short word he said ("a") is no probe (D268)
+            "qname": "name : ("
+            + " ".join(f'"{w}"' for w in found[: items.MAX_WORDS])
+            + ")",
             "level": call.spoil(None),
             "named": his_words(call, args["text"]),
             "player": who,
@@ -192,8 +196,8 @@ QUEST_GET_SCHEMA: dict[str, Any] = {
         "spoil": {
             "type": "integer",
             "description": "for a quest past the frontier: 0 nudge, 1 what it asks for, 2 "
-            "everything. Leave it out for his global setting; 1 only when he asks for more "
-            "('partial answer', 'a bit more'), 2 only on 'spoil it' or 'full answer'",
+            "everything. Leave it out: his global setting. More is shown only when his own "
+            "spoiler command granted it to this quest",
             "minimum": 0,
             "maximum": 2,
         },
@@ -229,8 +233,7 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
     lines = [
         r["name"] for r in call.query("quest_lines_of", {"ids": json.dumps([qid])})
     ]
-    keys = spoilers.quest_keys(qid, q["name"], lines)
-    level = spoilers.FULL if state in IN_REACH else call.spoil(asked, keys)
+    level = spoilers.FULL if state in IN_REACH else call.spoil(asked, qid)
     head: list[tuple[str, object]] = [
         ("quest", f"q:{qid}"),
         ("name", quest_name(q["name"], state, q["shown"], level)),
@@ -249,7 +252,8 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
     head.append(("spoil", level))
     out: list[tuple[object, ...]] = []
     for p in call.query("quest_prereqs", {"id": qid, "player": who}):
-        name = quest_name(p["name"], p["state"], p["shown"], level)
+        # another quest: its own level, never this quest's grant (D268)
+        name = quest_name(p["name"], p["state"], p["shown"], call.spoil(asked, p["id"]))
         out.append(("prereq", "", "", name, "", "", p["state"] or "", f"q:{p['id']}"))
     if state == bq.LOCKED:
         leads = call.query("quest_leads", {"id": qid, "player": who, "limit": LEADS})
@@ -257,7 +261,7 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
             out.append(("start", "", "", p["name"], "", "", p["state"], f"q:{p['id']}"))
     for u in call.query("quest_unlocks", {"id": qid, "player": who}):
         # what it unlocks lies past it: spoiling this quest never names those (D268)
-        name = quest_name(u["name"], u["state"], u["shown"], call.spoil(None))
+        name = quest_name(u["name"], u["state"], u["shown"], call.spoil(None, u["id"]))
         out.append(
             ("unlocks", "", "", name, "", "", u["state"] or "locked", f"q:{u['id']}")
         )
@@ -289,12 +293,8 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         notes.insert(
             0,
             f"spoil={asked} was not shown: Clayton didn't ask for more than level {level} "
-            + (
-                "for this quest (his spoiler command named another one)"
-                if call.spoil_scope is not None and call.spoil_max > level
-                else "(he can say 'partial answer', 'spoil it' or 'full answer')"
-            )
-            + ". Answer at this level",
+            "for this quest (he can say 'spoil it' or 'a bit more' on its own once a card "
+            "shows it, or 'spoil' and its name). Answer at this level",
         )
     return Result(
         PART_COLUMNS,

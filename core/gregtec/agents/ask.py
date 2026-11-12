@@ -21,10 +21,15 @@ answer was made (lane, citations, whether its numbers were checked, time to firs
   no such way (``gos ask``, any other client) can't confirm, and is told how to.
 - Saved plans ("my plans", "show plan X", "BOM for X") are instant commands
   (:mod:`gregtec.agents.saved_plans`), so they work with the AI offline.
-- "Spoil it" / "full answer" / "partial answer" (WO-6.4, D26, D72) show the quests past the
-  frontier that the last answer named (its quest card's locked quests, else the ``q:`` ids it
-  cited; at most :data:`SPOIL_MAX`) at that level, with no model call: his words are the
-  request, so the quest tools allow it (D268).
+- A spoiler command (WO-6.4, D26, D72, D268), when it is the whole request
+  (:func:`gregtec.quests.spoilers.command`: "spoil it", "a bit more", "spoil <quest>"), shows
+  quests past the frontier at that level with no model call. Its scope is code's, never a
+  model's: "spoil <quest>" the quest it names (asked back when no quest or several have that
+  name); a bare command the locked quests the last reply's code-built card showed him (at most
+  :data:`SPOIL_MAX`, else it asks which), never the ids a model cited. The level is granted to
+  those quest ids only (``grant``), and the reply carries it (``spoil``: level and quest refs)
+  so the Quests view opens just those. A request that mentions a command without being one
+  keeps the level, and its reply ends with :data:`~gregtec.quests.spoilers.HOW_TO_ASK`.
 - "persona <name>" switches the persona with no model call (WO-5.6, D206), "which persona"
   names it; every reply carries the active persona (``persona``: id, name, voice), so the voice
   client speaks it in that persona's voice (D207).
@@ -39,6 +44,7 @@ import io
 import json
 import logging
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -96,8 +102,14 @@ NOTHING_PENDING = "Nothing is waiting for confirmation."
 CONFIRM_ELSEWHERE = "Confirm by voice, on the dashboard, on the phone or in Discord; this way in can't confirm."
 NOTHING_TO_REPEAT = "I haven't said anything yet."
 EMPTY = "Ask me something: a recipe, an item, a machine or a quest."
-NOTHING_TO_SPOIL = "There's nothing to spoil yet: ask about a quest first."
-SPOIL_MAX = 3  # quests one "spoil it" opens
+NOTHING_TO_SPOIL = (
+    "Which quest? Ask about it first, then say 'spoil it', or say 'spoil' and its name."
+)
+SPOIL_WHICH = "Which one? Say 'spoil' and its name or its q: id."
+SPOIL_NONE = (
+    "No quest in your book is called {name!r}; say 'spoil' and its name or q: id."
+)
+SPOIL_MAX = 3  # quests one bare "spoil it" opens; more and it asks which
 # NOT_CHECKED for a turn with no card to point at (the model looked things up itself)
 NOT_CHECKED_NO_CARD = (
     "I can't give that answer with checked numbers. Ask for the item's recipe or uses and "
@@ -139,6 +151,8 @@ class Reply:
     pending: bool | None = None
     # the persona the reply was made in (WO-5.6): id, name, voice, ...; None without packs
     persona: dict[str, Any] | None = None
+    # a spoiler command's grant (WO-6.4, D268 R3): {"level": 1|2, "quests": [q: refs]}
+    spoil: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -161,6 +175,7 @@ class Reply:
             "error": self.error,
             "pending": self.pending,
             "persona": self.persona,
+            "spoil": self.spoil,
         }
 
 
@@ -181,6 +196,21 @@ def _count(n: int, noun: str) -> str:
 def _flagged(row: dict[str, str]) -> bool:
     """A recipe row flagged ``fake?`` (its NEI handler doesn't say) or ``recycling``."""
     return bool({"fake?", "recycling"} & set(row.get("flags", "").split()))
+
+
+def shown_locked(reply: Reply | None) -> list[str]:
+    """The ids of the locked quests a reply's card showed him (D268 R2): the card is code's
+    (pre-retrieval or an instant command), never the model's, and the ids a model cited in its
+    text don't count."""
+    card = (reply.card if reply is not None else None) or {}
+    if card.get("type") != "quest":
+        return []
+    refs = [
+        q["ref"]
+        for q in card.get("quests", [])
+        if q.get("state") == "locked" and str(q.get("ref", "")).startswith("q:")
+    ]
+    return [r.removeprefix("q:") for r in dict.fromkeys(refs)]
 
 
 def card_text(pre: prefetch.Prefetch, intent: str) -> str | None:
@@ -288,6 +318,8 @@ class Asker:
             with self._lock:  # the repeated question can still be answered
                 self._pending = pending
         reply = self._reply(route, started, task, via)
+        if route.intent != router.SPOIL and spoilers.mentions(text):
+            reply.text = f"{reply.text} {spoilers.HOW_TO_ASK}"
         if self.personas is not None and reply.persona is None:
             reply.persona = self.personas.info()
         reply.total_ms = round((self.clock() - started) * 1000)
@@ -503,28 +535,33 @@ class Asker:
         return self._base(route, pre, router.INSTANT, text)
 
     def _spoil(self, route: router.Route) -> Reply:
-        """The last answer's quests past the frontier, at the level his words ask for."""
-        with self._lock:
-            last = self._last
-        level = spoilers.asked_level(router.normalise(route.text))
-        refs: list[str] = []
-        if last is not None:
-            card = last.card or {}
-            if card.get("type") == "quest":
-                refs = [
-                    q["ref"]
-                    for q in card.get("quests", [])
-                    if q.get("state") == "locked"
-                ]
-            refs = refs or [r for r in last.refs if r.startswith("q:")]
-        refs = list(dict.fromkeys(refs))[:SPOIL_MAX]
-        if not refs or level == spoilers.NUDGE:
-            return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent)
+        """A spoiler command (D268): its quests, at its level, granted to those ids only."""
+        command = spoilers.command(route.text)
+        if command is None:  # the router routes only a whole command here
+            return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent, asked=True)
+        if command.quest is not None:
+            ids = self._named(command.quest)
+            if not ids:
+                text = SPOIL_NONE.format(name=command.quest)
+                return Reply(text, router.INSTANT, route.intent, asked=True)
+        else:
+            with self._lock:
+                last = self._last
+            ids = shown_locked(last)
+            if not ids:
+                return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent, asked=True)
+        if len(ids) > (1 if command.quest is not None else SPOIL_MAX):
+            listed = ", ".join(f"q:{i}" for i in ids[:5])
+            return Reply(
+                f"{SPOIL_WHICH} ({listed})", router.INSTANT, route.intent, asked=True
+            )
+        level = command.level
+        grant = dict.fromkeys(ids, level)
         quests: list[dict[str, Any]] = []
         card: dict[str, Any] | None = None
-        for ref in refs:
-            args = {"id": ref, "spoil": level}
-            out = self.registry.call("quest_get", args, lane="fast", request=route.text)
+        for qid in ids:
+            args = {"id": f"q:{qid}", "spoil": level}
+            out = self.registry.call("quest_get", args, lane="fast", grant=grant)
             block = prefetch.Block("quest_get", args, out.text, out.is_error)
             if out.is_error:
                 continue
@@ -532,7 +569,8 @@ class Asker:
             card = card or got
             quests += got.get("quests", [])
         if card is None:
-            return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent)
+            return Reply(NOTHING_TO_SPOIL, router.INSTANT, route.intent, asked=True)
+        refs = [q["ref"] for q in quests]
         card = {**card, "quests": quests, "spoil": level}
         named = [f"{q['name'] or 'a quest'} ({q['ref']})" for q in quests]
         how = "Full answer" if level == spoilers.FULL else "What it asks for"
@@ -541,8 +579,33 @@ class Asker:
             router.INSTANT,
             route.intent,
             card=card,
-            refs=[q["ref"] for q in quests],
+            refs=refs,
+            spoil={"level": level, "quests": refs},
         )
+
+    def _named(self, quest: str) -> list[str]:
+        """The ids of the quests "spoil <quest>" names: its q: id, or every quest whose name
+        is exactly those words (any case, no formatting codes)."""
+        try:
+            conn = access.connect(self.registry.env.db, readonly=True)
+        except (OSError, sqlite3.Error):
+            return []
+        try:
+            if quest.startswith("q:"):
+                qid = quest.removeprefix("q:")
+                row = conn.execute(
+                    "SELECT id FROM quest WHERE id = ?", (qid,)
+                ).fetchone()
+                return [row[0]] if row else []
+            return [
+                qid
+                for qid, name in conn.execute("SELECT id, name FROM quest ORDER BY id")
+                if spoilers.name_key(name) == quest
+            ]
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
 
     def _persona(self, route: router.Route) -> Reply:
         """Switch to the persona named, or say which one is on (no model call, D206)."""

@@ -38,8 +38,8 @@ whose rows hold numbers but no such id says so, because its numbers can't be quo
 facts (:func:`cited`, a heuristic). A db_sql page that read quest-book text says that the text
 is data and that a quest past the frontier is a spoiler.
 
-**Spoilers (WO-6.4, D268).** Below the full level (a lane's call without "spoil it" in his
-words, at a global setting under 2), db_sql also refuses to read what a quest is: the
+**Spoilers (WO-6.4, D268).** Below the full level (any lane's call at a global setting under 2:
+a spoiler command raises single quests through the quest tools, never db_sql), db_sql also refuses to read what a quest is: the
 :data:`SPOILER_COLUMNS` of ``quest`` (name, description, raw JSON) and the
 :data:`SPOILER_TABLES` (tasks, rewards, their items, the quest text index). Those go through
 the quest tools, which show a quest past the frontier only at his level; the quest graph,
@@ -300,7 +300,7 @@ def db_sql(call: Call, args: dict[str, Any], offset: int) -> Result:
     costly = Costly(call.deadline)
     before = {limit: conn.setlimit(limit, value) for limit, value in LIMITS.items()}
     costly.install(conn)  # the registry closes this connection after the call
-    conn.set_authorizer(watching(seen, call.spoil_any < spoilers.FULL))
+    conn.set_authorizer(watching(seen, call.spoil_max < spoilers.FULL))
     rows: list[tuple[object, ...]] = []
     more = False
     try:

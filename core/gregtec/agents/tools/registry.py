@@ -24,7 +24,7 @@ import math
 import re
 import sqlite3
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,27 +94,19 @@ class Call:
     # it on as the deep lane's instruction; the model's own words are only its data).
     request: str | None = None
     # Spoiler levels (WO-6.4, D268): the level a quest tool shows when its arguments name none
-    # (the global setting), and the most it may show whatever they say (spoilers.allowed: the
-    # global setting, raised only by Clayton's own words).
+    # (the global setting), and the most it may show for any quest (the global setting for a
+    # lane; his tap on the dashboard or the shell may go higher).
     spoil_default: int = 0
     spoil_max: int = spoilers.FULL
-    # The quest his spoiler command names (spoilers.quest_keys of it): spoil_max is for that
-    # quest only. None: not tied to one quest.
-    spoil_scope: frozenset[str] | None = None
+    # Quest id (no "q:") -> the level his spoiler command granted that quest (R2): only the
+    # asker's instant command sets it, never a lane's model, so the model can't raise anything.
+    spoil_grant: Mapping[str, int] = field(default_factory=dict)
 
-    def spoil(self, asked: int | None, quest: frozenset[str] = frozenset()) -> int:
-        """The level a quest tool shows for ``quest`` (its :func:`spoilers.quest_keys`):
-        ``asked`` (its ``spoil`` argument) or the default, never above :attr:`spoil_max`, nor
-        above the default for a quest his command didn't name."""
-        top = self.spoil_max
-        if self.spoil_scope is not None and not self.spoil_scope & quest:
-            top = self.spoil_default
+    def spoil(self, asked: int | None, quest: str | None = None) -> int:
+        """The level a quest tool shows for quest id ``quest``: ``asked`` (its ``spoil``
+        argument) or the default, never above :attr:`spoil_max` or that quest's grant."""
+        top = max(self.spoil_max, self.spoil_grant.get(quest or "", spoilers.NUDGE))
         return min(self.spoil_default if asked is None else asked, top)
-
-    @property
-    def spoil_any(self) -> int:
-        """The most any quest may show: :attr:`spoil_max` unless his command named one quest."""
-        return self.spoil_max if self.spoil_scope is None else self.spoil_default
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -254,14 +246,17 @@ class Registry:
         lane: str | None = None,
         request: str | None = None,
         spoil_max: int | None = None,
+        grant: Mapping[str, int] | None = None,
     ) -> Output:
         """Run tool ``name`` (``more`` for a cursor's next page); ``lane`` None is the shell.
         ``request``: Clayton's words the call is made for (see :attr:`Call.request`).
         ``spoil_max``: the most a quest tool may show when Clayton asked for it himself (a tap
-        on the dashboard); otherwise a lane's call gets :func:`spoilers.allowed` of
-        ``request``, and the shell (``gos tool``, his own command) up to full."""
+        on the dashboard); otherwise a lane's call gets the global setting, whatever ``request``
+        says, and the shell (``gos tool``, his own command) up to full.
+        ``grant``: quest id (no ``q:``) -> the level his spoiler command granted it (the
+        asker's instant command only, D268 R2)."""
         try:
-            return Output(self._call(name, args, lane, request, spoil_max))
+            return Output(self._call(name, args, lane, request, spoil_max, grant))
         except (ToolError, ArgumentError, CursorError) as exc:
             return Output(f"error: {exc}\n", is_error=True)
         except Exception:
@@ -282,22 +277,16 @@ class Registry:
             raise ToolError(f"{name} isn't offered in the {lane} lane")
         return tool
 
-    def _spoils(
-        self, lane: str | None, request: str | None, spoil_max: int | None
-    ) -> tuple[int, int, frozenset[str] | None]:
-        """(default level, highest level, the quest it is for) for one call (D268). The default
-        is always the global setting: going higher takes a ``spoil`` argument within the
-        highest level, so a request's words raise what one quest may show, never every quest a
-        list names; a command that names a quest raises that quest only."""
+    def _spoils(self, lane: str | None, spoil_max: int | None) -> tuple[int, int]:
+        """(default level, highest level) for one call (D268). A lane's call gets the global
+        setting, whatever its request says: only the asker's spoiler command raises a level,
+        and only for the quests it grants (``grant``)."""
         default = self.env.spoiler_default
         if spoil_max is not None:
-            return default, max(default, spoilers.check_level(spoil_max)), None
+            return default, max(default, spoilers.check_level(spoil_max))
         if lane is None:
-            return default, spoilers.FULL, None
-        asked = spoilers.asked(request)
-        if asked.level <= default:
-            return default, default, None
-        return default, asked.level, asked.quests
+            return default, spoilers.FULL
+        return default, default
 
     def _call(
         self,
@@ -306,6 +295,7 @@ class Registry:
         lane: str | None,
         request: str | None,
         spoil_max: int | None = None,
+        grant: Mapping[str, int] | None = None,
     ) -> str:
         offset, issued = 0, None
         if name == MORE:
@@ -317,7 +307,8 @@ class Registry:
         if tool is MORE_TOOL:
             raise ToolError("a cursor never points at more itself")
         values = validate(tool.input_schema, args)
-        spoil_default, spoil_top, spoil_scope = self._spoils(lane, request, spoil_max)
+        spoil_default, spoil_top = self._spoils(lane, spoil_max)
+        spoil_grant = {q: spoilers.check_level(v) for q, v in (grant or {}).items()}
         if not tool.needs_db:
             result = tool.handler(
                 Call(
@@ -327,7 +318,7 @@ class Registry:
                     request=request,
                     spoil_default=spoil_default,
                     spoil_max=spoil_top,
-                    spoil_scope=spoil_scope,
+                    spoil_grant=spoil_grant,
                 ),
                 values,
                 offset,
@@ -348,7 +339,7 @@ class Registry:
                 request,
                 spoil_default=spoil_default,
                 spoil_max=spoil_top,
-                spoil_scope=spoil_scope,
+                spoil_grant=spoil_grant,
             )
             result = tool.handler(call, values, offset)
             cursor = None

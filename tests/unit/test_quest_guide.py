@@ -10,6 +10,7 @@ accepted (quest 2 asks for steel ingots).
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -17,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from gregtec import config
-from gregtec.agents import router
-from gregtec.agents.ask import NOTHING_TO_SPOIL, Asker
+from gregtec.agents import ask, router
+from gregtec.agents.ask import NOTHING_TO_SPOIL, Asker, Reply
 from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.fast_lane import FastLane
 from gregtec.agents.tools.catalog import default_registry
@@ -75,269 +76,206 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         c.close()
 
 
-# --- spoiler levels ------------------------------------------------------------------------
+# --- spoiler levels: whole-utterance commands only (D268 R1) ------------------------------
 
 
-@pytest.mark.parametrize(
-    ("said", "level"),
-    [
-        ("tell me about the secret alloy quest", 0),
-        ("what quests can i do", 0),
-        ("spoil it", 2),
-        ("Spoil it: what does pressure cooker give", 2),
-        ("full answer please", 2),
-        ("tell me everything about the EBF Time quest", 2),
-        ("partial answer", 1),
-        ("a bit more", 1),
-        # a question about a quest is no command: it stays at the default (D268)
-        ("what does the secret alloy quest need", 0),
-        ("what are the quest's requirements", 0),
-        ("what does q:AAQ require", 0),
-        ("which quests need steel", 0),
-        ("i need to finish this quest", 0),
-        ("more of a hint please", 1),
-        ("ok just spoil it", 2),
-        # the router's filler routes these to SPOIL: they must ask for it too
-        ("can you spoil it", 2),
-        ("could you spoil it?", 2),
-        ("hey gos spoil it", 2),
-        ("Hey GOS, spoil it", 2),
-        ("gos: spoil it", 2),
-        ("could you not spoil it", 0),
-        ("what comes after it? spoil it", 2),
-        ("i can't find it. spoil it", 2),
-        ("i can't find it, spoil it", 0),  # a negation in the sentence: fail safe
-        ("yes spoil it", 2),
-        ("spoil the secret alloy quest", 2),
-        ("give me the full answer", 2),
-        ("no spoilers, but what does it need", 0),
-        ("don't spoil it", 0),
-        # a negation anywhere before "spoil" in the clause stays at the default (D268)
-        ("I don't want you to spoil it, what is the secret alloy quest", 0),
-        ("I don’t want you to spoil it", 0),
-        ("no need to spoil it, just a hint", 0),
-        ("without spoiling anything", 0),
-        ("I don't need the full answer", 0),
-        ("don't tell me everything", 0),
-        # round 2's phrasings: contractions without the apostrophe, "everything" about
-        # something else (D268)
-        ("i dont need the full answer", 0),
-        ("i dont want full spoilers", 0),
-        ("I didnt ask for the full answer", 0),
-        ("i wont need the full answer", 0),
-        ("i cant handle full spoilers yet", 0),
-        ("dont tell me everything", 0),
-        ("show me everything i can make with steel", 0),
-        ("tell me everything i can make with steel", 0),
-        ("tell me everything about EBF Time", 0),  # no quest named: fail safe
-        ("don't spoil anything, just spoil it", 0),
-        # "spoil" that isn't the imperative
-        ("would that spoil the surprise?", 0),
-        ("does it spoil anything", 0),
-        # ordinary recipe and task questions ask for nothing more
-        ("what do i need to make steel", 0),
-        ("what does my EBF need for power", 0),
-        ("what's my next task", 0),
-        ("what are its requirements", 0),
-        ("show me some more recipes", 0),
-        ("what's my spoiler level", 0),
-        ("", 0),
-        (None, 0),
-        # the final review's phrasings (D268): a conditional, caveat, retraction or hedge
-        # after the command, a reported command, "everything" about steel
-        ("spoil it, if i get stuck later", 0),
-        ("spoil it, but only after i finish the steam age", 0),
-        ("full answer, unless it ruins the surprise", 0),
-        ("spoil it, just kidding", 0),
-        ("spoil it, jk", 0),
-        ("could you spoil it, or is that bad", 0),
-        ("spoil it. never mind", 0),
-        ("spoil it? no", 0),
-        ("spoil it... nevermind", 0),
-        ("spoil it? nah", 0),
-        ("spoil it. wait no. hold on", 0),
-        ("spoil it, if i get stuck", 0),
-        ("spoil it, once i finish steel", 0),
-        ("spoil it, later", 0),
-        ("would you spoil it, if i asked", 0),
-        ("could you spoil it, or would that ruin the fun", 0),
-        ("spoil everything, except the rewards", 0),
-        ("tell me everything, how do i make steel", 0),
-        ("tell me everything about the steel for my next quest", 0),
-        ("my brother says. spoil it. what does he mean", 0),
-        ("tell me about the secret alloy quest. spoil it? no", 0),
-        ("spoil it... nevermind, i want to work it out", 0),
-        ("spoil the secret alloy quest, if i get stuck", 0),
-        ("would you spoil the secret alloy quest, if i asked", 0),
-        # what still raises: the question it is for after a comma, colon or full stop
-        ("spoil it, what comes after the secret alloy quest", 2),
-        ("spoil it. what comes after the secret alloy quest?", 2),
-        ("what comes after the secret alloy quest? spoil it!", 2),
-    ],
-)
-def test_asked_level(said: str | None, level: int) -> None:
-    assert spoilers.asked_level(said) == level
+@pytest.fixture(scope="module")
+def names(home: Path) -> frozenset[str]:
+    """The quest names a "spoil <quest>" can name in the pack (the asker's exact match)."""
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        return frozenset(
+            spoilers.name_key(n) for (n,) in c.execute("SELECT name FROM quest")
+        )
+    finally:
+        c.close()
 
 
-# The commands that must raise, and the phrases they may hide in that must not (D268).
-_COMMANDS = {
-    "spoil it": 2,
-    "spoil that": 2,
-    "spoil me": 2,
-    "spoil the secret alloy quest": 2,
-    "full answer": 2,
-    "the full answer": 2,
-    "give me the full answer": 2,
-    "i want full spoilers": 2,
-    "tell me everything": 2,
-    "tell me everything about the secret alloy quest": 2,
-    "partial answer": 1,
-    "give me a partial hint": 1,
-    "a bit more": 1,
-    "more of a hint": 1,
+def _level(said: str | None, names: frozenset[str]) -> int:
+    """The level ``said`` raises to: a command, and its quest (if it names one) found."""
+    c = spoilers.command(said)
+    if c is None or (c.quest is not None and c.quest not in names):
+        return spoilers.NUDGE
+    return c.level
+
+
+# The closed set (R1): command -> (level, the quest it names). A bare command names none.
+_COMMANDS: dict[str, tuple[int, str | None]] = {
+    **{c: (2, None) for c in spoilers.FULL_COMMANDS},
+    **{c: (1, None) for c in spoilers.PARTIAL_COMMANDS},
+    "spoil the secret alloy quest": (2, "secret alloy"),
+    "spoil secret alloy": (2, "secret alloy"),
+    "spoil the secret alloy quest fully": (2, "secret alloy"),
+    "spoil EBF Time": (2, "ebf time"),
 }
-_NEGATED = [
-    f"{neg} {verb} {{cmd}}"
-    for neg in (
-        "i don't",
-        "i dont",
-        "i didn't",
-        "i didnt",
-        "i won't",
-        "i wont",
-        "i can't",
-        "i cant",
-        "i shouldn't",
-        "i wouldnt",
-        "i havent",
-        "i do not",
-        "i never",
-        "please don't",
-        "dont",
-    )
-    for verb in ("want", "need", "ask for", "say", "")
-] + ["no {cmd}", "not {cmd}", "without {cmd}", "never {cmd}", "stop, {cmd} is too much"]
-_WRAPPED = [
-    "if i get stuck, {cmd}",
-    "if i get stuck {cmd}",
-    "when i ask, {cmd}",
-    "before you {cmd}, check my tier",
-    "unless i say {cmd}",
-    "he said, {cmd}",
-    'what does "{cmd}" mean',
-    "'{cmd}' is what he typed",
-    "what happens if you {cmd}",
-    "should you {cmd}",
-    "would {cmd} be too much",
-    "is {cmd} a setting",
-    "i wonder whether to say {cmd}",
-    "ok so what comes after the secret alloy quest {cmd}",  # an STT run-on: no full stop
-    "{cmd} is not what i want",
-    "{cmd} wont be needed, what comes next",
-    "{cmd} dont",
+_FILLED = [
+    "{cmd}",
+    "{cmd} please",
+    "{cmd}, please",
+    "please {cmd}",
+    "ok, {cmd}",
+    "ok {cmd}",
+    "hey gos, {cmd}",
+    "Hey GOS {cmd}.",
+    "gos: {cmd}",
+    "can you {cmd}",
+    "could you {cmd}?",
+    "um {cmd}",
+    "uh, {cmd}",
+    "so {cmd}",
+    "now {cmd}",
+    "ok so {cmd} then",
+    "{cmd} now",
+    "{cmd} pls",
+    "{cmd} for me",
+    "{cmd}!",
 ]
-_UNRELATED = [
-    "show me everything i can make with steel",
-    "tell me everything i can make with steel",
-    "tell me everything about stainless steel",
-    "show me everything",
-    "list everything in my ae",
-    "what's the full recipe for steel",
-    "give me the full list of my plans",
-    "is that the full answer",
-    "a bit more steel please",
-    "which quests need steel",
-    "i need to finish this quest",
-    "what does the secret alloy quest need",
-    "what does q:AAQ require",
-    "what's my spoiler level",
-    "would that spoil the surprise",
-    "does it spoil anything",
-    "tell me everything, how do i make steel",
+
+
+def test_the_closed_set_raises_exactly_its_scope() -> None:
+    for cmd, (level, quest) in _COMMANDS.items():
+        for t in _FILLED:
+            said = t.format(cmd=cmd)
+            got = spoilers.command(said)
+            assert got == spoilers.Command(level, quest), said
+            # the router routes it as the instant command, and its normalisation keeps it
+            assert router.route(said).intent == router.SPOIL, said
+            assert spoilers.command(router.normalise(said)) == got, said
+    by_id = spoilers.command(f"spoil {q(5)}")
+    assert by_id == spoilers.Command(
+        2, q(5)
+    )  # the id as he wrote it (ids are case-sensitive)
+    lower = spoilers.command(f"spoil {q(5).lower()}")  # another id: no such quest
+    assert lower is not None and lower.quest != q(5)
+
+
+# Every phrasing from the four review rounds: none is a command (R1).
+_EARLIER = [
+    # round 1 and 2: questions, negations, contractions without the apostrophe
+    "tell me about the secret alloy quest", "what quests can i do",
+    "Spoil it: what does pressure cooker give", "tell me everything about the EBF Time quest",
+    "what does the secret alloy quest need", "what are the quest's requirements",
+    "what does q:AAQ require", "which quests need steel", "i need to finish this quest",
+    "more of a hint please, about steel", "ok just spoil it", "could you not spoil it",
+    "what comes after it? spoil it", "i can't find it. spoil it", "i can't find it, spoil it",
+    "yes spoil it", "no spoilers, but what does it need", "don't spoil it",
+    "I don't want you to spoil it, what is the secret alloy quest",
+    "I don’t want you to spoil it", "no need to spoil it, just a hint",
+    "without spoiling anything", "I don't need the full answer", "don't tell me everything",
+    "i dont need the full answer", "i dont want full spoilers",
+    "I didnt ask for the full answer", "i wont need the full answer",
+    "i cant handle full spoilers yet", "dont tell me everything",
+    "show me everything i can make with steel", "tell me everything i can make with steel",
+    "tell me everything about EBF Time", "don't spoil anything, just spoil it",
+    "would that spoil the surprise?", "does it spoil anything", "what do i need to make steel",
+    "what does my EBF need for power", "what's my next task", "what are its requirements",
+    "show me some more recipes", "what's my spoiler level", "tell me everything",
+    "i want full spoilers", "give me a partial hint", "if i get stuck, spoil it",
+    "he said, spoil it", 'what does "spoil it" mean', "'spoil it' is what he typed",
+    "what happens if you spoil it", "should you spoil it", "would spoil it be too much",
+    "is full answer a setting", "i wonder whether to say spoil it",
+    "ok so what comes after the secret alloy quest spoil it", "spoil it is not what i want",
+    "spoil it dont", "is that the full answer", "a bit more steel please",
+    "what's the full recipe for steel", "give me the full list of my plans",
+    # round 3: conditionals, caveats, retractions after the command
+    "spoil it, if i get stuck later", "spoil it, but only after i finish the steam age",
+    "full answer, unless it ruins the surprise", "spoil it, just kidding", "spoil it, jk",
+    "could you spoil it, or is that bad", "spoil it. never mind", "spoil it? no",
+    "spoil it... nevermind", "spoil it? nah", "spoil it. wait no. hold on",
+    "spoil it, if i get stuck", "spoil it, once i finish steel", "spoil it, later",
+    "would you spoil it, if i asked", "could you spoil it, or would that ruin the fun",
+    "spoil everything, except the rewards", "tell me everything, how do i make steel",
     "tell me everything about the steel for my next quest",
-]
-# After the command: a conditional, a caveat, a retraction, a hedge, a second thought (the
-# final review, D268).
-_AFTER = [
-    "{cmd}, if i get stuck later",
-    "{cmd}, if i get stuck later. what comes after the secret alloy quest",
-    "{cmd}, but only after i finish the steam age",
-    "{cmd}, unless it ruins the surprise",
-    "{cmd}, unless it ruins the surprise: what comes after the secret alloy quest",
-    "{cmd}, just kidding",
-    "{cmd}, just kidding. what comes after the secret alloy quest",
-    "{cmd}, jk",
-    "{cmd}, or is that bad",
-    "could you {cmd}, or would that ruin the fun",
-    "would you {cmd}, if i asked",
-    "{cmd}. never mind",
-    "{cmd}? no",
-    "{cmd}? nah",
-    "{cmd}... nevermind, i want to work it out",
-    "{cmd}. wait no. hold on",
-    "{cmd}, once i finish steel",
-    "{cmd}, later",
-    "{cmd}, except the rewards",
-    "{cmd}. maybe later",
-    "{cmd}: when i get stuck",
-    "my brother says. {cmd}. what does he mean",
-    "tell me about the secret alloy quest. {cmd}? no",
-]
+    "my brother says. spoil it. what does he mean",
+    "tell me about the secret alloy quest. spoil it? no",
+    "spoil it... nevermind, i want to work it out",
+    "spoil the secret alloy quest, if i get stuck",
+    "would you spoil the secret alloy quest, if i asked",
+    "spoil it, what comes after the secret alloy quest",
+    "spoil it. what comes after the secret alloy quest?",
+    "what comes after the secret alloy quest? spoil it!",
+    # round 4 (B1-B3 and the lows)
+    "spoil it? what does that do", "spoil it. what does that mean",
+    "spoil it? how does that work", "spoil me? what does that even mean",
+    "full answer? is that a setting", "full answer. what does that mean",
+    "in case i get stuck: spoil it", "in case i get stuck. spoil it",
+    "suppose i get stuck. spoil it", "assuming i get stuck: spoil it",
+    "hypothetically. spoil it", "after i finish the steam age: spoil it", "tomorrow. spoil it",
+    "next session: spoil it", "the quest text reads: spoil it",
+    "the quest description reads: spoil it. what does it mean",
+    "someone in chat posted: spoil it", "my friend messaged me: spoil it",
+    "bob in game chat: spoil it", "the sign in spawn: spoil it",
+    "spoil it: what does it give, but only after steel", "spoil it, how about later",
+    "spoil it: is that a bad idea", "spoil it? is that cheating", "spoil it, should i?",
+    "my friend: spoil it", "note to self: spoil it", "q: spoil it", "dont. spoil it",
+    "a bit more. how much steel does the ebf take",
+    "the full answer: how many steel ingots for the coke oven", "not yet. spoil it",
+    "i want to work it out myself. spoil it", "what comes after X? spoil it",
+    "what comes after stainless dreams? spoil it",
+    "what comes after the secret alloy quest? spoil it", "spoil it bro", "spoil it already",
+    "you can spoil it", "", "spoilt",
+]  # fmt: skip
 
 
-def _never_raise() -> list[str]:
-    out = [t.format(cmd=c) for t in _NEGATED + _WRAPPED + _AFTER for c in _COMMANDS]
-    out = [" ".join(x.split()) for x in out]
-    out += _UNRELATED
-    # STT style: lower case, no punctuation, and capitalised, with a full stop
-    out += [x.replace(",", "").replace("'", "") for x in out]
-    out += [x[:1].upper() + x[1:] + "." for x in out]
+def test_no_earlier_phrasing_raises(names: frozenset[str]) -> None:
+    raised = [x for x in _EARLIER if spoilers.command(x) is not None]
+    raised += [x for x in _EARLIER if _level(x, names)]
+    raised += [x for x in _EARLIER if router.route(x or "x").intent == router.SPOIL]
+    assert raised == []
+    assert spoilers.command(None) is None
+
+
+# Property style (R1): each command wrapped in generated prefixes, suffixes, labels,
+# conditions, quotations and questions never raises.
+_PREFIX = [
+    "if i get stuck, ", "if i get stuck ", "in case i get stuck: ", "suppose i get stuck. ",
+    "hypothetically ", "tomorrow. ", "after steel, ", "when i ask, ", "unless i say ",
+    "he said ", "my friend: ", "the quest text reads: ", "someone in chat posted: ",
+    "note to self: ", "not yet. ", "don't ", "dont ", "no ", "never ", "i don't want ",
+    "should you ", "would you ", "what happens if you ", "what comes after it? ",
+    "tell me about the secret alloy quest. ", "i can't find it. ", "yes ", "you can ",
+    "i wonder whether to say ", "what does ", "is ",
+]  # fmt: skip
+_SUFFIX = [
+    "? what does that do", ". what does that mean", ", if i get stuck", " if i get stuck",
+    ", later", ". never mind", "? no", ", just kidding", " jk", ", but only after steel",
+    ": what does it give", ", what comes after the secret alloy quest", " is too much",
+    " bro", " already", "? is that cheating", ", should i?", " mean", " or not",
+    " what does it give", " about steel", ", unless it ruins it",
+]  # fmt: skip
+_QUOTES = ['"{cmd}"', "'{cmd}'", "“{cmd}”", "say {cmd}", "({cmd})"]
+
+
+def _wrapped() -> list[str]:
+    out = []
+    for cmd in _COMMANDS:
+        out += [p + cmd for p in _PREFIX]
+        out += [cmd + s for s in _SUFFIX]
+        out += [p + cmd + s for p in _PREFIX[::3] for s in _SUFFIX[::3]]
+    # STT style: no punctuation, and shouting
+    out += [x.replace(",", "").replace("'", "").replace("?", "") for x in out]
+    out += [x.upper() for x in out[::7]]
+    out += [t.format(cmd=cmd) for t in _QUOTES for cmd in _COMMANDS]
     return sorted(set(out))
 
 
-def test_only_an_explicit_command_raises_the_level() -> None:
-    """Property style (D268): every sentence that merely contains a command (negated, with or
-    without an apostrophe; after if, when, before or unless; reported or quoted; asked about;
-    run on; followed by a conditional, caveat, retraction or hedge) or that asks for
-    "everything" about something else keeps the level; the commands themselves, alone, with
-    the router's filler or with the question they are for, still raise it ("tell me
-    everything" takes no question after it)."""
-    never = _never_raise()
-    assert len(never) > 500
-    raised = [x for x in never if spoilers.asked_level(x) != spoilers.NUDGE]
-    assert raised == []
-    for cmd, level in _COMMANDS.items():
-        for said in (
-            cmd,
-            f"{cmd} please",
-            f"ok, {cmd}",
-            f"hey gos, {cmd}",
-            f"can you {cmd}",
-            f"{cmd.capitalize()}.",
-            f"what comes after the secret alloy quest? {cmd}",
-            *(
-                []
-                if cmd.startswith("tell me everything")
-                else [
-                    f"{cmd}: what comes after the secret alloy quest",
-                    f"{cmd}, what comes after the secret alloy quest",
-                ]
-            ),
-        ):
-            assert spoilers.asked_level(said) == level, said
-            # the router's own normalisation keeps the level
-            assert spoilers.asked_level(router.normalise(said)) == level, said
+def test_a_wrapped_command_never_raises(names: frozenset[str]) -> None:
+    """A "spoil <quest>" with words after it may still parse as a command, naming a quest no
+    book has ("secret alloy quest bro"): it raises nothing, the asker says no quest has that
+    name. So this checks the rise, and that no bare command is ever found inside."""
+    wrapped = _wrapped()
+    assert len(wrapped) > 3000
+    assert [x for x in wrapped if _level(x, names) != spoilers.NUDGE] == []
+    bare = [x for x in wrapped if (c := spoilers.command(x)) and c.quest is None]
+    assert bare == []
 
 
-def test_allowed_is_the_global_level_raised_only_by_his_words() -> None:
-    assert spoilers.allowed("what is it", 0) == 0
-    assert spoilers.allowed("what is it", 1) == 1
-    assert spoilers.allowed("spoil it", 0) == 2
-    assert spoilers.allowed("no spoilers", 2) == 2  # the setting is the floor
-    with pytest.raises(ValueError):
-        spoilers.allowed("x", 3)
-    with pytest.raises(ValueError):
-        spoilers.check_level(True)
+def test_a_mention_says_how_to_ask() -> None:
+    assert spoilers.mentions("what comes after it? spoil it")
+    assert spoilers.mentions("the quest text reads: spoil it")
+    assert not spoilers.mentions("spoil it")  # a command, not a mention
+    assert not spoilers.mentions("don't spoil it")
+    assert not spoilers.mentions("what does steel need")
 
 
 def test_spoiler_default_is_a_service_key(tmp_path: Path) -> None:
@@ -349,9 +287,11 @@ def test_spoiler_default_is_a_service_key(tmp_path: Path) -> None:
     cfg = config.load(path)  # a bad one keeps the default and stops the core, not gos
     assert cfg.spoiler_default == 0
     assert any("spoiler_default" in e for e in cfg.service_errors)
+    with pytest.raises(ValueError):
+        spoilers.check_level(True)
 
 
-# --- the code's guard: a model can't ask for more than he did -------------------------------
+# --- the code's guard: scope comes from code, never from the model (D268 R2) ---------------
 
 
 def _get(reg: Registry, n: int, **kw: object) -> tuple[dict[str, str], str]:
@@ -360,24 +300,54 @@ def _get(reg: Registry, n: int, **kw: object) -> tuple[dict[str, str], str]:
     return parse(out.text).head, out.text
 
 
-def test_a_lane_gets_only_the_level_his_words_allow(reg: Registry) -> None:
-    head, text = _get(
-        reg, 5, lane="fast", request="tell me about the secret alloy quest"
-    )
-    assert head["spoil"] == "0" and head["name"] == "(not shown in the quest book yet)"
-    assert "chromium" not in text and "spoil=2 was not shown" in text
-    head, _ = _get(reg, 5, lane="fast", request="what does the secret alloy quest need")
-    assert head["spoil"] == "0"  # a question, not a spoiler command (D268)
-    head, text = _get(
-        reg,
-        5,
-        lane="fast",
-        request="partial answer: what does the secret alloy quest need",
-    )
-    assert head["spoil"] == "1" and head["name"] == "Secret Alloy"
-    assert "chromium" not in text and "@17306" not in text  # no reward, no description
-    head, text = _get(reg, 5, lane="fast", request="spoil it")
+def _id(n: int) -> str:
+    return PACK.qid(n)
+
+
+def test_a_lane_never_raises_whatever_the_request(reg: Registry) -> None:
+    """A lane's call is at the global level whatever his request says, commands included:
+    only the asker's instant command grants (R2)."""
+    for said in ("tell me about the secret alloy quest", "spoil it", "full answer",
+                 "spoil the secret alloy quest", "partial answer", None):  # fmt: skip
+        head, text = _get(reg, 5, lane="fast", request=said)
+        assert head["spoil"] == "0", said
+        assert head["name"] == "(not shown in the quest book yet)", said
+        assert "chromium" not in text and "spoil=2 was not shown" in text, said
+
+
+def test_a_grant_raises_that_quest_only(reg: Registry) -> None:
+    grant = {_id(5): 2}
+    head, text = _get(reg, 5, lane="fast", grant=grant)
     assert head["spoil"] == "2" and "chromium-rich" in text and "@17306" in text
+    # what it unlocks, and the next quest along, stay at the global level (B4)
+    rows = parse(text).rows
+    unlocks = [r for r in rows if r["part"] == "unlocks"]
+    assert {r["cite"] for r in unlocks} == {q(6), q(7)}
+    assert {r["what"] for r in unlocks} == {"(not shown in the quest book yet)"}
+    for n in (6, 7, 22):
+        head, text = _get(reg, n, lane="fast", grant=grant)
+        assert head["spoil"] == "0" and "worthy" not in text, n
+        assert "changes everything" not in text, n
+    # a model's spoil above the grant is ignored; below it is kept
+    head, text = _get(reg, 5, lane="fast", grant={_id(5): 1})
+    assert head["spoil"] == "1" and head["name"] == "Secret Alloy"
+    assert "chromium" not in text and "@17306" not in text
+    out = reg.call("quest_get", {"id": q(5), "spoil": 0}, lane="fast", grant=grant)
+    assert parse(out.text).head["spoil"] == "0"
+    # a grant never opens db_sql
+    out = reg.call(
+        "db_sql", {"select": "SELECT descr FROM quest"}, lane="fast", grant=grant
+    )
+    assert out.is_error
+
+
+def test_a_granted_quests_hidden_prerequisite_stays_hidden(reg: Registry) -> None:
+    head, text = _get(reg, 6, lane="fast", grant={_id(6): 2})
+    assert head["spoil"] == "2" and head["name"] == "Hidden Cache"
+    prereqs = [r for r in parse(text).rows if r["part"] == "prereq"]
+    assert [r["cite"] for r in prereqs] == [q(5)]
+    assert prereqs[0]["what"] == "(not shown in the quest book yet)"
+    assert "Secret Alloy" not in text
 
 
 def test_the_deep_lane_gets_the_global_level(home: Path) -> None:
@@ -435,14 +405,6 @@ def test_his_tap_and_his_shell_may_go_to_full(reg: Registry) -> None:
     assert parse(out.text).head["spoil"] == "0"
 
 
-def test_spoiling_a_quest_never_names_what_it_unlocks(reg: Registry) -> None:
-    _, text = _get(reg, 5, lane="fast", request="spoil it")
-    rows = parse(text).rows
-    unlocks = [r for r in rows if r["part"] == "unlocks"]
-    assert {r["cite"] for r in unlocks} == {q(6), q(7)}
-    assert {r["what"] for r in unlocks} == {"(not shown in the quest book yet)"}
-
-
 def test_quest_for_item_hides_a_locked_quests_amount_at_level_0(reg: Registry) -> None:
     said = "which quest asks for the electric blast furnace"
     out = reg.call(
@@ -473,26 +435,21 @@ def test_l0_list_tools_are_no_oracle_for_what_a_locked_quest_holds(
         assert not out.is_error and q(5) not in out.text, words
 
 
-def test_a_command_naming_one_quest_spoils_that_quest_only(
-    home: Path, reg: Registry
-) -> None:
-    """The final review (D268): "spoil the stainless dreams quest" raises q4, not q5 (nor the
-    deep lane's db_sql); "spoil it" is about whatever he asks, so it isn't tied to one."""
-    said = "spoil the stainless dreams quest"
-    head, text = _get(reg, 5, lane="fast", request=said)
-    assert head["spoil"] == "0" and "chromium" not in text
-    assert "named another one" in text
-    head, _ = _get(reg, 4, lane="fast", request=said)
-    assert head["spoil"] == "2"
-    by_id = f"spoil {q(4)}"
-    assert _get(reg, 4, lane="fast", request=by_id)[0]["spoil"] == "2"
-    assert _get(reg, 5, lane="fast", request=by_id)[0]["spoil"] == "0"
-    assert _get(reg, 5, lane="fast", request="spoil it")[0]["spoil"] == "2"
-    deep = default_registry(home, deep=HandoffRecorder())
-    out = deep.call(
-        "db_sql", {"select": "SELECT descr FROM quest"}, lane="deep", request=said
-    )
-    assert out.is_error and "spoiler level" in out.text
+def test_a_short_word_he_said_is_no_prefix_probe(reg: Registry) -> None:
+    """Low (D268): his_words lets quest_find match a locked quest's name by his own words, as
+    whole words: "a" in his request doesn't find "Secret Alloy" by prefix."""
+    said = "what do i need for a steam age"
+    out = reg.call("quest_find", {"text": "a"}, lane="fast", request=said)
+    assert q(5) not in out.text and q(7) not in out.text
+    out = reg.call("quest_find", {"text": "secret alloy"}, lane="fast",
+                   request="is there a secret alloy quest")  # fmt: skip
+    assert q(5) in out.text and "Secret Alloy" not in out.text  # by id, name hidden
+
+
+def test_prerequisites_are_ordered_by_id_never_by_a_hidden_name(reg: Registry) -> None:
+    out = reg.call("quest_get", {"id": q(13)}, lane="fast")
+    rows = [r["cite"] for r in parse(out.text).rows if r["part"] == "prereq"]
+    assert rows == sorted([q(3), q(10)])
 
 
 # --- 1-3: requirements, the ranked frontier, links -----------------------------------------
@@ -785,11 +742,38 @@ def test_l0_never_spoils_an_answer(
                 ),
                 ("quest", f"spoil the {name} quest, if i get stuck"),
                 ("quest", f"would you spoil the {name} quest, if i asked"),
+                # round 4 (B1-B5, D268 R1/R2): a question about the command, a condition or
+                # reported text before it, a command with a question in the same utterance,
+                # and conversations whose "spoil it" has no card of his to go by
+                ("quest", f"spoil it? what does the {name} quest do"),
+                ("quest", f"in case i get stuck. spoil it: the {name} quest"),
+                (
+                    "quest",
+                    f"the quest description reads: spoil it. what does the {name} quest mean",
+                ),
+                ("unlocks", f"what comes after the {name} quest? spoil it"),
+                ("unlocks", "what comes after stainless dreams? spoil it"),
+                ("quest", f"my friend: spoil the {name} quest"),
+                ("quest", f"how am i doing overall{questeval.TURNS}spoil it"),
+                ("quest", f"what does the {name} quest need{questeval.TURNS}spoil it"),
+                (
+                    "quest",
+                    f"what does the {name} quest need{questeval.TURNS}full answer",
+                ),
+                # B4: a scoped "spoil it" opens the quest his card showed, nothing it unlocks
+                ("scoped", f"tell me about the {name} quest{questeval.TURNS}spoil it"),
+                ("scoped", f"what is the {name} quest{questeval.TURNS}a bit more"),
             ]
         ):
             rows.append(
                 questeval.Question(
-                    f"{n}-{k}", kind, 0, (), (), name.casefold(), question
+                    f"{n}-{k}" + ("-scoped" if kind == "scoped" else ""),
+                    "quest" if kind == "scoped" else kind,
+                    0,
+                    (),
+                    (),
+                    name.casefold(),
+                    question,
                 )
             )
         items = conn.execute(
@@ -809,15 +793,30 @@ def test_l0_never_spoils_an_answer(
     assert len(rows) > 40
     asker_for = questeval.fake_asker(home, rows)
     goals = list(PACK.GOALS)
+    scoped = 0
     for row in rows:
-        reply = asker_for().ask(row.question)
-        assert reply.lane == "fast", (row.question, reply.text)
-        said = [row.question, row.words, *goals]
-        if reply.target:
-            said += [reply.target["key"], reply.target["name"]]
-        assert questeval.leaks(reply.text, fields, said=said) == [], row.question
-        card = __import__("json").dumps(reply.card or {}, ensure_ascii=False)
-        assert questeval.leaks(card, fields, said=said) == [], row.question
+        replies = questeval.converse(asker_for(), row)
+        allow: dict[str, int] = {}
+        if row.id.endswith("-scoped"):
+            # the quests the first reply's card showed him, at the level he asked: no others
+            last = replies[-1]
+            shown = [f"q:{i}" for i in ask.shown_locked(replies[0])]
+            assert last.spoil is not None and last.spoil["quests"] == shown, (
+                row.question
+            )
+            allow = dict.fromkeys(shown, last.spoil["level"])
+            scoped += 1
+        else:
+            assert all(r.spoil is None for r in replies), row.question
+            if questeval.TURNS not in row.question:
+                assert replies[-1].lane == "fast", (row.question, replies[-1].text)
+        for reply in replies:
+            said = [row.question, row.words, *goals]
+            if reply.target:
+                said += [reply.target["key"], reply.target["name"]]
+            text = reply.text + " " + json.dumps(reply.card or {}, ensure_ascii=False)
+            assert questeval.leaks(text, fields, allow, said) == [], row.question
+    assert scoped > 0
 
 
 def test_the_leak_check_finds_a_spoiler(fields: dict[str, questeval.Spoiler]) -> None:
@@ -835,25 +834,21 @@ def test_the_leak_check_finds_a_spoiler(fields: dict[str, questeval.Spoiler]) ->
     assert questeval.leaks("the secret alloy", fields, said=["secret alloy"]) == []
 
 
-# --- "spoil it" ----------------------------------------------------------------------------
+# --- "spoil it": the instant command (D268 R2, R3) --------------------------------------------
 
 
 def test_spoil_it_routes_as_an_instant_command() -> None:
-    for said in (
-        "spoil it",
-        "Spoil it.",
-        "ok spoil it",
-        "full answer",
-        "partial answer",
-    ):
+    for said in ("spoil it", "Spoil it.", "ok spoil it", "full answer", "partial answer",
+                 "a bit more", "give me a hint", "spoil the secret alloy quest"):  # fmt: skip
         assert router.route(said).intent == router.SPOIL, said
-    assert router.route("spoil it: what does it need").intent != router.SPOIL
+    for said in ("spoil it: what does it need", "what comes after it? spoil it"):
+        assert router.route(said).intent != router.SPOIL, said
 
 
-def test_spoil_it_opens_the_last_answers_locked_quests(reg: Registry) -> None:
+def test_spoil_it_opens_the_last_cards_locked_quests(reg: Registry) -> None:
     asker = Asker(reg, HandoffRecorder(), None)
     first = asker.ask("spoil it")
-    assert first.text == NOTHING_TO_SPOIL
+    assert first.text == NOTHING_TO_SPOIL and first.spoil is None
     found = asker.ask(
         "tell me about the secret alloy quest"
     )  # no lane: the instant card
@@ -862,20 +857,126 @@ def test_spoil_it_opens_the_last_answers_locked_quests(reg: Registry) -> None:
     assert part.lane == "instant" and part.card is not None
     assert part.card["spoil"] == 1 and part.card["quests"][0]["name"] == "Secret Alloy"
     assert part.card["quests"][0]["description"] is None
+    assert part.spoil == {"level": 1, "quests": [q(5)]}  # R3: the level travels with it
     for said in (
         "spoil it",
         "can you spoil it",
-        "could you spoil it",
         "hey gos spoil it",
+        "um, spoil it pls",
     ):
         full = asker.ask(said)
-        assert full.text != NOTHING_TO_SPOIL, said
         assert full.card is not None and full.card["spoil"] == 2, said
         assert "chromium" in (full.card["quests"][0]["description"] or ""), said
-        assert q(5) in full.refs and "Secret Alloy" in full.text, said
-        asker.ask(
-            "tell me about the secret alloy quest"
-        )  # the next phrasing starts locked
+        assert full.refs == [q(5)] and "Secret Alloy" in full.text, said
+        assert full.spoil == {"level": 2, "quests": [q(5)]}, said
+        # its card's unlocks rows still hide what comes next (B4)
+        rows = full.card["quests"][0]["rows"]
+        assert {r["what"] for r in rows if r["part"] == "unlocks"} == {
+            "(not shown in the quest book yet)"
+        }
+        asker.ask("tell me about the secret alloy quest")  # the next one starts locked
+
+
+def test_spoil_it_never_opens_quests_the_model_cited(reg: Registry) -> None:
+    """B5: on a general question the model looks up q22 and q6 and cites them; "spoil it"
+    after it has no card of his to go by, so it asks which quest."""
+    lane = FastLane(
+        ScriptedClient(
+            turns=[
+                Turn(
+                    "Looking.",
+                    [{"name": "quest_get", "input": {"id": q(22), "spoil": 2}}],
+                ),
+                Turn(
+                    "Looking.",
+                    [{"name": "quest_get", "input": {"id": q(6), "spoil": 2}}],
+                ),
+                Turn(f"Keep going with Bricks; the road ends at {q(22)} and {q(6)}."),
+            ]
+        ),
+        reg,
+        meter=None,
+    )
+    asker = Asker(reg, HandoffRecorder(), lane)
+    first = asker.ask("how am i doing overall")
+    assert first.lane == "fast" and q(22) in first.refs
+    for said in ("spoil it", "full answer", "a bit more"):
+        spoiled = asker.ask(said)
+        text = json.dumps(spoiled.card or {}) + spoiled.text
+        assert spoiled.text == NOTHING_TO_SPOIL and spoiled.spoil is None, said
+        assert "EBF Time" not in text and "Hidden Cache" not in text, said
+
+
+def test_spoil_a_named_quest(reg: Registry) -> None:
+    asker = Asker(reg, HandoffRecorder(), None)
+    reply = asker.ask("spoil the ebf time quest")
+    assert reply.spoil == {"level": 2, "quests": [q(22)]}
+    assert reply.card is not None and "changes everything" in json.dumps(reply.card)
+    # what it comes after stays at the global level
+    assert "Macerate Everything" not in json.dumps(reply.card)
+    by_id = asker.ask(f"spoil {q(6)}")
+    assert by_id.spoil == {"level": 2, "quests": [q(6)]}
+    none = asker.ask("spoil the dragon quest")
+    assert none.asked and none.spoil is None and "dragon" in none.text
+    # a bare command after it goes by the card that reply showed: the quest it named
+    asker.ask("spoil hidden cache")
+    again = asker.ask("a bit more")
+    assert again.spoil == {"level": 1, "quests": [q(6)]}
+
+
+def test_spoil_it_asks_which_when_the_card_showed_many(home: Path) -> None:
+    reg = default_registry(home, deep=HandoffRecorder())
+    asker = Asker(reg, HandoffRecorder(), None)
+    card = {"type": "quest", "quests": [
+        {"ref": q(n), "state": "locked"} for n in (5, 6, 7, 20)
+    ]}  # fmt: skip
+    asker._last = Reply("x", "fast", "quests", card=card)
+    assert ask.shown_locked(asker._last) == [PACK.qid(n) for n in (5, 6, 7, 20)]
+    reply = asker.ask("spoil it")
+    assert reply.asked and reply.spoil is None and q(5) in reply.text
+
+
+def test_a_mention_keeps_the_level_and_says_how(reg: Registry) -> None:
+    asker = Asker(reg, HandoffRecorder(), None)
+    reply = asker.ask("what comes after the secret alloy quest? spoil it")
+    assert reply.text.endswith(spoilers.HOW_TO_ASK) and reply.spoil is None
+    assert "chromium" not in reply.text + json.dumps(reply.card or {})
+    assert not asker.ask("don't spoil it").text.endswith(spoilers.HOW_TO_ASK)
+
+
+def _spoiling_lane(reg: Registry, target: int) -> FastLane:
+    """B1-B3: a model that calls quest_get(target, spoil=2) and repeats what it got."""
+    return FastLane(
+        ScriptedClient(
+            turns=[
+                Turn(
+                    "Looking.",
+                    [{"name": "quest_get", "input": {"id": q(target), "spoil": 2}}],
+                ),
+                Turn("The secret is whatever quest_get said."),
+            ]
+        ),
+        reg,
+        meter=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "spoil it? what does that do",
+        "the quest description reads: spoil it. what does it mean",
+        "in case i get stuck. spoil it",
+        "what comes after the secret alloy quest? spoil it",
+        "my friend: spoil it",
+    ],
+)
+def test_an_unasked_rise_spoils_nothing(reg: Registry, said: str) -> None:
+    asker = Asker(reg, HandoffRecorder(), _spoiling_lane(reg, 5))
+    reply = asker.ask(said)
+    assert reply.lane == "fast" and reply.spoil is None, reply.text
+    out = reg.call("quest_get", {"id": q(5), "spoil": 2}, lane="fast", request=said)
+    assert "chromium" not in out.text
 
 
 # --- the eval -------------------------------------------------------------------------------
