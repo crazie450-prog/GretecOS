@@ -1375,7 +1375,7 @@ use_heavy = false             # true: planner and architect run on heavy (D155)
 monthly_included_usd = 100    # D47
 credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
-task_max_usd = 2.0            # placeholder until WO-3.7 measures; on hit: pause and ask (D16)
+task_max_usd = 2.0            # set from `gos eval design-cost --apply` (WO-3.7, D253); on hit: pause and ask (D16)
 cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
 
 [voice]
