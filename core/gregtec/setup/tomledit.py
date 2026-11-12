@@ -14,6 +14,7 @@ keeping the old one as ``gos.toml.bak``, so a crash never leaves half a file.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -23,7 +24,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-Value = str | int | bool | list[str]
+Value = str | int | float | bool | list[str]
 Updates = Mapping[
     tuple[str, str], Value | None
 ]  # (table, key) -> value; None removes it
@@ -60,11 +61,15 @@ def _string(text: str) -> str:
 
 
 def format_value(value: Value) -> str:
-    """``value`` as TOML: a basic string, an integer, true/false or a list of strings."""
+    """``value`` as TOML: a basic string, an integer, a float, true/false or a list of strings."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):  # [budget] task_max_usd (WO-3.7)
+        if not math.isfinite(value):
+            raise TomlEditError("can't write a value that isn't a finite number")
+        return repr(value)
     if isinstance(value, str):
         return _string(value)
     if isinstance(value, list) and all(isinstance(v, str) for v in value):

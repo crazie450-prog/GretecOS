@@ -6,11 +6,13 @@ the deep lane's only.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from gregtec.agents import deep_config
 from gregtec.agents.tools.catalog import build_registry
 from gregtec.agents.tools.registry import DEEP, FAST
 from gregtec.db import access
@@ -114,3 +116,26 @@ def test_the_fast_lane_gets_only_the_readers(home: Path) -> None:
     assert not {"design_production", "plan_pin", "plan_rename"} & fast
     out = Runner(reg, FAST).out("design_production", target=STEEL)
     assert out.is_error
+
+
+def test_the_line_designer_skill(run: Runner, tmp_path: Path) -> None:
+    """The skill (authored in vault-template/_gos, deployed): plain front matter the CLI parses on
+    Windows too, only tools the deep lane has, no game numbers, and the rules that matter."""
+    path = REPO / "vault-template" / "_gos" / "skills" / "line-designer" / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    head, _, body = text.removeprefix("---\n").partition("\n---\n")
+    meta = dict(line.split(": ", 1) for line in head.splitlines())
+    assert meta["name"] == "line-designer" and set(meta) == {"name", "description"}
+    assert len(meta["description"]) <= 1024
+    for value in meta.values():
+        assert not re.search(r": | #|^[-?:,\[\]{}#&*!|>'\"%@`]", value), value
+    named = set(re.findall(r"`([a-z_]+)\(", body))
+    assert {"design_production", "plan_get", "plan_pin", "plan_list"} <= named
+    assert named <= {t.name for t in run.reg.tools(DEEP)}
+    assert "never change the order" in body and "Accepting a plan is Clayton's" in body
+    assert "!`" not in body  # no shell: the deep lane has none (D154)
+    assert not re.search(r"r:[\w.]+/[0-9a-f]{12}", body)  # no game numbers
+    plugin = deep_config.build_plugin(
+        REPO / "vault-template" / "_gos", tmp_path / "plugin"
+    )
+    assert "gos:line-designer" in deep_config.skill_names(plugin)
