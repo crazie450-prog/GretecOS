@@ -393,7 +393,10 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         "game": {
             "running": board.running,
             "focused": board.focused,
-            "paused": None,  # V29: the pause signal arrives with WO-6.1
+            # V29: the watchers' paused state while heard and their client runs (WO-6.1, D258)
+            "paused": core.game.paused_now(board.running)
+            if core.game is not None
+            else None,
             "export": board.export,
             "error": board.game_error,
         },

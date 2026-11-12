@@ -21,6 +21,7 @@
 | [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
 | [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
+| [startup] voice_with_play | true (voice starts and stops with Play) | supervisor (WO-6.1, D259)   |
 | [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] on_credits_out  | "no_ai", the only value (fixed by D48)   | credits flow (WO-2.8, D165) |
@@ -173,6 +174,9 @@ class Config:
     extra_allowed_hosts: tuple[str, ...] = ()
     core_at_login: bool = True
     dashboard_window: bool = True  # [startup]: open the Chrome app window (D52, D163)
+    voice_with_play: bool = (
+        True  # [startup]: voice starts and stops with Play (D77, D259)
+    )
     monthly_included_usd: float = 100.0
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
@@ -522,6 +526,12 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 startup, "dashboard_window", defaults.dashboard_window, "[startup]"
             ),
             defaults.dashboard_window,
+        ),
+        "voice_with_play": soft(
+            lambda: _bool(
+                startup, "voice_with_play", defaults.voice_with_play, "[startup]"
+            ),
+            defaults.voice_with_play,
         ),
         "monthly_included_usd": monthly,
         "credit_alerts_pct": alerts,

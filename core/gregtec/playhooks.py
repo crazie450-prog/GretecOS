@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from gregtec import config, locks, prism, sync
+from gregtec import config, control, locks, prism, sync
 from gregtec.gamestate.safe_open import read_bytes, read_text
 from gregtec.ingest import fingerprint, rundiff
 
@@ -72,6 +72,11 @@ MMC_PACK = "mmc-pack.json"
 LAUNCHING = Path("data", "locks", "launching.json")  # in GOS_HOME
 LAUNCH_GRACE_S = 300.0
 
+# The instances whose launch starts the game watchers and voice (D259): Lab's for the Lab test.
+WATCHED = ("play", "lab")
+TELL_TIMEOUT_S = 3.0  # never hold the launch for long
+# (cfg, "launch" | "exit", role, out) -> whether the supervisor took it
+Tell = Callable[[config.Config, str, str, TextIO], bool]
 # (title, question, timeout in s) -> yes, no, or None for timed out
 Ask = Callable[[str, str, int], bool | None]
 Clients = Callable[[config.Config], list[str]]
@@ -106,6 +111,7 @@ def pre_launch(
     role: str | None,
     out: TextIO,
     clients: Clients = prism.running_clients,
+    tell: Tell | None = None,
 ) -> int:
     """0: launch; :data:`EXIT_REFUSE`: don't. Never raises for a failed stale check."""
     if role == "export":
@@ -137,6 +143,8 @@ def pre_launch(
         )
         _clear_launch(cfg.gos_home)
         return EXIT_REFUSE
+    if role in WATCHED:
+        (tell or tell_supervisor)(cfg, "launch", role, out)
     if role != "play":
         _say(out, "not Play: no stale check.")
         return 0
@@ -176,6 +184,35 @@ def launching(home: Path) -> tuple[str, float] | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return (role, age) if 0 <= age < LAUNCH_GRACE_S else None
+
+
+def tell_supervisor(cfg: config.Config, event: str, role: str, out: TextIO) -> bool:
+    """Ask the supervisor to start (``launch``) or stop (``exit``) the game watchers and voice
+    for ``role`` (D77, D259). Best effort: a supervisor that isn't running or doesn't answer is
+    a warning, and the game launches all the same (plan 0.1 principle 9)."""
+    sup = control.running(
+        cfg.run_dir / control.SUPERVISOR_FILE, control.SUPERVISOR_SERVICE
+    )
+    if sup is None or "token" not in sup:
+        _say(
+            out, "note: GOS isn't running, so the game watchers and voice don't start."
+        )
+        return False
+    try:
+        control.call(
+            sup["port"],
+            "POST",
+            "/play",
+            token=sup["token"],
+            body={"event": event, "instance": role},
+            timeout=TELL_TIMEOUT_S,
+        )
+    except control.ControlError as exc:
+        _say(out, f"warning: couldn't tell GOS the game {event}ed: {exc}")
+        return False
+    what = "start" if event == "launch" else "stop"
+    _say(out, f"the game watchers and voice {what} ({role}).")
+    return True
 
 
 # --- post-exit -----------------------------------------------------------------------------
@@ -275,6 +312,24 @@ def post_exit(
     ask: Ask = ask_dialog,
     spawn: Callable[[], Started] | None = None,
     wait_s: float = LOCK_WAIT_S,
+    tell: Tell | None = None,
+) -> int:
+    """The export question (Play), then the watchers and voice stop (D259): plan 4.2 stops
+    them once the question is answered or has timed out."""
+    try:
+        return _post_exit(cfg, role, out, ask, spawn, wait_s)
+    finally:
+        if role in WATCHED:
+            (tell or tell_supervisor)(cfg, "exit", role, out)
+
+
+def _post_exit(
+    cfg: config.Config,
+    role: str | None,
+    out: TextIO,
+    ask: Ask,
+    spawn: Callable[[], Started] | None,
+    wait_s: float,
 ) -> int:
     _clear_launch(cfg.gos_home)  # its client has run and quit
     if role != "play":
