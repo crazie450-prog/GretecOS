@@ -3,7 +3,8 @@
 // node shows its label, count, machine and tier (the tier band in the GT tier colour, always
 // beside the tier's name, D51); a flow its item and rate. Until elkjs answers (it loads as its
 // own chunk) and if it ever fails, the boxes stand where layoutFlow puts them, so the diagram
-// always draws. It is read-only: pan and zoom with the controls, nothing is edited here (WO-3.7).
+// always draws. It opens fitted (never smaller than readable; a long line pans) and is read-only:
+// pan and zoom with the controls, nothing is edited here (WO-3.7).
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { useEffect, useMemo, useState } from "react";
@@ -35,6 +36,8 @@ function MachineNode({ data }: NodeProps<Node<FlowNodeData>>) {
 }
 
 const NODE_TYPES = { machine: MachineNode };
+// The smallest zoom the card opens at: a long line opens readable at its start, and pans.
+const MIN_READABLE = 0.55;
 
 /** Positions from elkjs's layered layout (left to right); null when it can't lay the card out. */
 export async function elkLayout(card: FlowCard): Promise<Box[] | null> {
@@ -67,11 +70,16 @@ export function FlowDiagram({ card }: { card: FlowCard }) {
     return [...boxes.values()].map((b) => ({ id: b.id, x: b.x, y: b.y }));
   }, [card]);
   const [placed, setPlaced] = useState<Box[]>(fallback);
+  const [laidOut, setLaidOut] = useState(false);
   useEffect(() => {
     let live = true;
     setPlaced(fallback);
+    setLaidOut(false);
     void elkLayout(card).then((boxes) => {
-      if (live && boxes) setPlaced(boxes);
+      if (live && boxes) {
+        setPlaced(boxes);
+        setLaidOut(true);
+      }
     });
     return () => {
       live = false;
@@ -102,11 +110,12 @@ export function FlowDiagram({ card }: { card: FlowCard }) {
   return (
     <div className="flow-canvas" style={{ height }} role="img" aria-label={card.title}>
       <ReactFlow
+        key={laidOut ? "elk" : "first"}
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
         fitView
-        fitViewOptions={{ padding: 0.1 }}
+        fitViewOptions={{ padding: 0.1, minZoom: MIN_READABLE }}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
