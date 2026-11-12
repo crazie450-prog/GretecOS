@@ -13,10 +13,13 @@ from pathlib import Path
 import pytest
 
 from gregtec.agents import deep_config
+from gregtec.agents.plan_writer import WriterError
 from gregtec.agents.tools.catalog import build_registry
 from gregtec.agents.tools.registry import DEEP, FAST
+from gregtec.agents.tools.tsv import parse
 from gregtec.db import access
 from gregtec.planner import designer
+from gregtec.planner.explain import Writer
 from gregtec.vault import deploy as vault_deploy
 from gregtec.vault.io import VaultIO
 
@@ -109,11 +112,67 @@ def test_plan_list_and_rename(run: Runner) -> None:
     assert "isn't saved" in run.fail("plan_get", id="pl-0000000000", view="summary")
 
 
+def _explain_run(home: Path, writer: Writer | None) -> Runner:
+    reg = build_registry(
+        access.db_path(home), vault=VaultIO(home / "vault"), writer=lambda: writer
+    )
+    return Runner(reg, DEEP)
+
+
+def _ids(run: Runner) -> list[str]:
+    p = run("design_production", target=STEEL, tier="HV")
+    return [x.removeprefix("plan:") for x in p.col("plan")]
+
+
+def test_plan_explain_checks_the_model_with_the_validator(home: Path) -> None:
+    """Review H1, D199: the explanation goes through explain.explain. A model that states a
+    number the plans don't have is refused twice, then GOS's template comes back."""
+    prompts: list[str] = []
+
+    def wrong(prompt: str) -> str:
+        prompts.append(prompt)
+        return "Route two needs 987654 Electric Blast Furnaces."
+
+    run = _explain_run(home, wrong)
+    ids = _ids(run)
+    out = run.out("plan_explain", id=f"plan:{ids[1]}")
+    assert not out.is_error, out.text
+    p = parse(out.text)
+    assert p.head["source"] == "template" and p.head["attempts"] == "2"
+    assert p.head["design"] == ", ".join(f"plan:{i}" for i in ids)  # rank order
+    refused = [n for n in p.notes if "refused by the validator" in n]
+    assert len(refused) == 2 and all("987654" in n for n in refused)
+    assert "Ranked by code" in out.text  # the template's first line
+    assert "Electric Blast Furnaces." not in out.text
+    assert len(prompts) == 2 and "987654" in prompts[1]  # the retry names it
+    assert '"position":1' in prompts[0]  # the metrics JSON, code's order
+
+
+def test_plan_explain_says_the_model_text_when_it_checks_out(home: Path) -> None:
+    run = _explain_run(home, lambda prompt: "The first route ranks first on its score.")
+    out = run.out("plan_explain", id=_ids(run)[0])
+    p = parse(out.text)
+    assert p.head["source"] == "model" and p.head["attempts"] == "1"
+    assert "The first route ranks first on its score." in out.text
+
+
+def test_plan_explain_without_a_model_is_the_template(home: Path) -> None:
+    def down(prompt: str) -> str:
+        raise WriterError("APIConnectionError: no network")
+
+    for writer, why in ((None, "no planner model"), (down, "couldn't be reached")):
+        run = _explain_run(home, writer)
+        p = parse(run.out("plan_explain", id=_ids(run)[0]).text)
+        assert p.head["source"] == "template"
+        assert any(why in n for n in p.notes)
+    assert "isn't saved" in run.fail("plan_explain", id="pl-0000000000")
+
+
 def test_the_fast_lane_gets_only_the_readers(home: Path) -> None:
     reg = build_registry(access.db_path(home), vault=VaultIO(home / "vault"))
     fast = {s["name"] for s in reg.specs(FAST)}
     assert {"plan_get", "plan_list"} <= fast
-    assert not {"design_production", "plan_pin", "plan_rename"} & fast
+    assert not {"design_production", "plan_pin", "plan_rename", "plan_explain"} & fast
     out = Runner(reg, FAST).out("design_production", target=STEEL)
     assert out.is_error
 
@@ -130,7 +189,8 @@ def test_the_line_designer_skill(run: Runner, tmp_path: Path) -> None:
     for value in meta.values():
         assert not re.search(r": | #|^[-?:,\[\]{}#&*!|>'\"%@`]", value), value
     named = set(re.findall(r"`([a-z_]+)\(", body))
-    assert {"design_production", "plan_get", "plan_pin", "plan_list"} <= named
+    assert {"design_production", "plan_get", "plan_pin", "plan_explain"} <= named
+    assert "Don't ask the `planner` subagent" in body  # H1: the checked text only
     assert named <= {t.name for t in run.reg.tools(DEEP)}
     assert "never change the order" in body and "Accepting a plan is Clayton's" in body
     assert "!`" not in body  # no shell: the deep lane has none (D154)

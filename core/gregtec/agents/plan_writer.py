@@ -31,13 +31,10 @@ log = logging.getLogger(__name__)
 
 LANE = "deep"
 TASK = "plan_explain"
-MAX_TOKENS = (
-    4000  # the prompt asks for at most 12 short lines; room for the model's thinking
-)
-TIMEOUT_S, RETRIES = (
-    120.0,
-    1,
-)  # one call, inside a deep-lane task (not the fast lane's 15 s)
+# The prompt asks for at most 12 short lines; the rest is room for the model's thinking.
+MAX_TOKENS = 4000
+# One call inside a deep-lane task, so not the fast lane's 15 s.
+TIMEOUT_S, RETRIES = 120.0, 1
 
 Factory = Callable[[], Writer | None]
 
