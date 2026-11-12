@@ -299,12 +299,22 @@ final class ListenerHarness {
         if (placed.size() > 5) {
             cancelledBreak = placed.get(5);
             cancelBreakAt = new int[] { cancelledBreak.x, cancelledBreak.y, cancelledBreak.z };
-            boolean ok = p.theItemInWorldManager.tryHarvestBlock(cancelledBreak.x, cancelledBreak.y, cancelledBreak.z);
+            // Posted as ForgeHooks.onBlockBreakEvent posts it: its cancelled path sends the player a block-update
+            // packet, which a fake player has no connection for. Cancelled, the block stays, as in tryHarvestBlock.
+            int x = cancelledBreak.x, y = cancelledBreak.y, z = cancelledBreak.z;
+            BlockEvent.BreakEvent ev = new BlockEvent.BreakEvent(
+                x,
+                y,
+                z,
+                w,
+                w.getBlock(x, y, z),
+                w.getBlockMetadata(x, y, z),
+                p);
+            MinecraftForge.EVENT_BUS.post(ev);
             Harness.check(
                 checks,
                 "cancelled_break_kept_machine",
-                !ok && MachineListener.mteAt(w, cancelledBreak.x, cancelledBreak.y, cancelledBreak.z)
-                    == cancelledBreak.mteId,
+                ev.isCanceled() && MachineListener.mteAt(w, x, y, z) == cancelledBreak.mteId,
                 "BreakEvent cancelled at HIGHEST");
         }
         // A machine removed without a player event (an explosion, another mod): only the census sees it.
