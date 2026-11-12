@@ -1,16 +1,21 @@
 // The flow card's diagram (WO-3.6, PM02, D160): React Flow draws the card's machines and flows,
 // elkjs lays them out (layered, left to right). The card is data from the core, never HTML: a
 // node shows its label, count, machine and tier (the tier band in the GT tier colour, always
-// beside the tier's name, D51); a flow its item and rate. Until elkjs answers (it loads as its
-// own chunk) and if it ever fails, the boxes stand where layoutFlow puts them, so the diagram
-// always draws. It opens fitted (never smaller than readable; a long line pans) and is read-only:
-// pan and zoom with the controls, nothing is edited here (WO-3.7).
+// beside the tier's name, D51); a flow its item and rate. One layout, never two (D159): the card
+// shows "Laying out" until elkjs answers (it loads as its own chunk) and "Card not shown: layout
+// failed" if it can't, never a second layout. It opens fitted (never smaller than readable; a long
+// line pans) and is read-only: pan and zoom with the controls, nothing is edited here (WO-3.7).
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { plain } from "../state/format";
-import { GAP_X, GAP_Y, NODE_H, NODE_W, layoutFlow } from "./flowLayout";
+import { GLYPH } from "../state/states";
 import type { FlowCard } from "./types.gen";
+
+export const NODE_W = 220;
+export const NODE_H = 72;
+const GAP_X = 96;
+const GAP_Y = 28;
 
 type Box = { id: string; x: number; y: number };
 type FlowNodeData = { label: string; sub: string; tier: string | null };
@@ -64,27 +69,39 @@ export async function elkLayout(card: FlowCard): Promise<Box[] | null> {
   }
 }
 
-export function FlowDiagram({ card }: { card: FlowCard }) {
-  const fallback = useMemo(() => {
-    const { boxes } = layoutFlow(card.nodes, card.edges);
-    return [...boxes.values()].map((b) => ({ id: b.id, x: b.x, y: b.y }));
-  }, [card]);
-  const [placed, setPlaced] = useState<Box[]>(fallback);
-  const [laidOut, setLaidOut] = useState(false);
+type Layout = (card: FlowCard) => Promise<Box[] | null>;
+
+export function FlowDiagram({ card, layout = elkLayout }: { card: FlowCard; layout?: Layout }) {
+  // undefined: elkjs hasn't answered yet; null: it couldn't lay the card out.
+  const [placed, setPlaced] = useState<Box[] | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    setPlaced(fallback);
-    setLaidOut(false);
-    void elkLayout(card).then((boxes) => {
-      if (live && boxes) {
-        setPlaced(boxes);
-        setLaidOut(true);
-      }
+    setPlaced(undefined);
+    void layout(card).then((boxes) => {
+      if (live) setPlaced(boxes);
     });
     return () => {
       live = false;
     };
-  }, [card, fallback]);
+  }, [card, layout]);
+  if (placed === undefined) {
+    return (
+      <p className="gos-sub flow-wait" aria-busy="true">
+        {GLYPH.progress} Laying out the diagram
+      </p>
+    );
+  }
+  if (placed === null) {
+    return (
+      <p className="gos-sub flow-failed" role="note">
+        {GLYPH.failed} Card not shown: layout failed
+      </p>
+    );
+  }
+  return <Drawn card={card} placed={placed} />;
+}
+
+function Drawn({ card, placed }: { card: FlowCard; placed: Box[] }) {
   const at = new Map(placed.map((b) => [b.id, b]));
   const nodes: Node<FlowNodeData>[] = card.nodes.map((n) => ({
     id: n.id,
@@ -110,7 +127,6 @@ export function FlowDiagram({ card }: { card: FlowCard }) {
   return (
     <div className="flow-canvas" style={{ height }} role="img" aria-label={card.title}>
       <ReactFlow
-        key={laidOut ? "elk" : "first"}
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}

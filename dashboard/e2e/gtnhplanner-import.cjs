@@ -49,6 +49,7 @@ async function check(browser, file) {
     if (!text.includes(s.displayName)) problems.push(`drawer ${s.displayName} not shown`);
   }
   if (!text.includes(project.name)) problems.push(`tab ${project.name} not shown`);
+  for (const e of errors) problems.push(`page error: ${e}`);
   await page.screenshot({ path: file.replace(/\.json$/, "") + ".site.png" });
   await page.close();
   // The site sizes machines with its own overclock math (no machine bonuses), so its MACHINES

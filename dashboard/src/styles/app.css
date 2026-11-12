@@ -757,6 +757,15 @@ td {
   background: var(--bg);
 }
 
+/* Until elkjs answers, and if it fails: the card's one layout is elkjs's (D159). */
+.flow-wait,
+.flow-failed {
+  min-height: 240px;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+}
+
 .flow-canvas .react-flow__background {
   color: var(--rule);
 }
