@@ -300,6 +300,8 @@ def test_property_no_citation_or_id_is_ever_spoken() -> None:
                     continue  # the same word is also in the answer's own words
                 assert token not in said, (text, said, found)
         assert len(sf.limit(sf.tidy(sf.strip_ids(sf.strip_markup(text)))).split()) <= 40
+        heard = sf.said(text, LEXICON.apply)  # SAID: no BOUNDARY is ever said
+        assert heard.text == said and heard.words <= 40 and heard.sentences <= 2, said
 
 
 def test_the_filter_removes_whatever_the_fast_lane_calls_a_ref_or_key() -> None:
@@ -340,9 +342,78 @@ def test_a_long_first_sentence_is_cut_at_a_comma_or_the_limit() -> None:
     assert spoken(plain) == " ".join(["gamma"] * 40) + "."
 
 
-def test_words_are_counted_before_numbers_and_pronunciations_are_spelt_out() -> None:
+def test_a_spelt_out_word_counts_as_one() -> None:
     text = " ".join(["LuV"] * 40) + "."
     assert spoken(text).count("L U V") == 40
+
+
+def test_heard_words() -> None:
+    assert sf.heard_words("thirty E U per tick at L U V.") == 6
+    assert sf.heard_words("A B. C D") == 2  # a sentence end ends a spelt run
+    assert sf.heard_words("I need a coil") == 4
+    assert (
+        sf.said_words("at 32,768 EU/t") == 9
+    )  # at thirty-two thousand ... E U per tick
+
+
+def test_each_written_word_is_heard_once_however_it_is_spelt() -> None:
+    """M3 of the WO-5.7 review: neighbouring spelt words and single letters stay apart."""
+    assert sf.said("MV EBF.") == sf.Said("M V E B F.", 1, 2, False)
+    assert sf.said("I think MV EBF is fine.").words == 6
+    assert sf.said("I A B coil.").words == 4  # the pronoun "I", the article "A"
+    assert sf.said("Run 4 EBFs.").words == 3  # "E B Fs" is one word
+    letters = " ".join("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + "."
+    assert sf.said(letters).words == 26
+    # the lexicon's say is one word, whatever its letters, and two terms are two
+    lex = Lexicon({"LuV": "L U V", "EBF": "E B F"})
+    assert sf.said("LuV EBF.", lex.apply) == sf.Said("L U V E B F.", 1, 2, False)
+    # in plain text spaces join a spelt run, at most SPELT_MAX letters a word
+    assert sf.heard_words("M V E B F") == 1
+    assert sf.heard_words(" ".join("ABCDEFGHIJKL")) == 3
+    assert sf.heard_words(f"M V{sf.BOUNDARY}E B F") == 2
+
+
+def test_abbreviation_heavy_answers_are_cut_as_heard() -> None:
+    said = sf.said(" ".join(["LV MV HV EV IV"] * 10) + ".")
+    assert said.words == 40 and said.cut
+    assert said.text.count(" V") == 40  # forty tiers, each spelt
+
+
+def test_said_reports_whether_the_reply_was_cut() -> None:
+    assert not sf.said("Steel Ingot is made in the EBF. It runs at 120 EU/t.").cut
+    assert sf.said("One. Two. Three.").cut  # a third sentence dropped
+    assert sf.said(" ".join(["word"] * 45) + ".").cut
+    assert sf.said("") == sf.Said("", 0, 0, False)
+
+
+def test_numbers_count_as_they_are_said() -> None:
+    """D248: 30 written words, but 48 heard before WO-5.7, when numbers counted as one word."""
+    text = (
+        "Naquadah Alloy Ingot: the first recipe runs in the Electric Blast Furnace at 30,720 "
+        "EU/t for 1,234 ticks with 32,768 L of nitrogen and 1,152 L of hydrogen per run, "
+        "which takes 61.7 s at 4,500 K and needs 2A of LuV power (r:abc123)."
+    )
+    said = sf.spoken(text)
+    assert sf.heard_words(said) <= 40 and said.endswith(".")
+    assert said.startswith("Naquadah Alloy Ingot, the first recipe runs")
+    assert sf.heard_words(spoken(text)) <= 40  # with the lexicon too
+    # two short sentences, the second number-heavy: whole sentences first
+    short = (
+        "Steel Ingot: the first recipe is the EBF (r:x1). It runs at 120 EU/t (r:x2)."
+    )
+    assert sf.spoken(short) == (
+        "Steel Ingot, the first recipe is the E B F. It runs at one hundred twenty E U per "
+        "tick."
+    )
+    heavy = "Steel Ingot is made in the EBF. " + " ".join(["32,768 L"] * 6) + "."
+    assert sf.spoken(heavy) == "Steel Ingot is made in the E B F."
+
+
+def test_a_pronunciation_that_adds_words_is_cut_when_said() -> None:
+    """Step 8: the lexicon runs after the count; what is heard still stays within 40 words."""
+    text = " ".join(["Naq"] * 30) + "."
+    said = sf.spoken(text, lambda t: t.replace("Naq", "nah kwa dah"))
+    assert sf.heard_words(said) == 40 and said.endswith("dah nah.")
 
 
 def test_decimals_and_abbreviations_do_not_end_sentences() -> None:
