@@ -192,7 +192,9 @@ class Config:
     keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
     persona_default: str = "gt-veteran"  # [persona] default (D60, WO-5.6)
     persona_random: bool = False  # [persona] random_per_session (D206)
-    spoiler_default: int = 0  # [policy] spoiler_default: the one global spoiler level (D72)
+    spoiler_default: int = (
+        0  # [policy] spoiler_default: the one global spoiler level (D72)
+    )
     mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()

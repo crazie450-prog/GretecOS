@@ -42,16 +42,58 @@ from gregtec.ingest import quests as bq
 from gregtec.vault.io import VaultError, VaultIO
 
 GOALS_NOTE = "me/goals.md"
-ACTIVE = ("accepted", "building", "running")  # WO-3.6's lifecycle: a line being worked on
+ACTIVE = (
+    "accepted",
+    "building",
+    "running",
+)  # WO-3.6's lifecycle: a line being worked on
 MAX_GOALS = 20
 _GOAL = re.compile(r"^goal:\s*(.+?)\s*$")
 _QID = re.compile(r"\bq:([A-Za-z0-9_-]{22})\b")
 _WORD = re.compile(r"[a-z0-9]+")
 # Words a goal says that name no quest: verbs and fillers ("get to MV", "make some steel").
 _STOP = frozenset(
-    "the and for with get got make made build craft reach unlock finish start some more first "
-    "my all any into from that this then than want need tier age stage line lines quest quests "
-    "set setup up automate".split()
+    [
+        "the",
+        "and",
+        "for",
+        "with",
+        "get",
+        "got",
+        "make",
+        "made",
+        "build",
+        "craft",
+        "reach",
+        "unlock",
+        "finish",
+        "start",
+        "some",
+        "more",
+        "first",
+        "my",
+        "all",
+        "any",
+        "into",
+        "from",
+        "that",
+        "this",
+        "then",
+        "than",
+        "want",
+        "need",
+        "tier",
+        "age",
+        "stage",
+        "line",
+        "lines",
+        "quest",
+        "quests",
+        "set",
+        "setup",
+        "up",
+        "automate",
+    ]
 )
 _STAGES = {s.casefold(): s for s in bq.STAGES}
 
@@ -84,7 +126,14 @@ class Ranked:
 
     def key(self) -> tuple[int, int, int, int, int, int]:
         goal = self.goal or (MAX_GOALS + 1, 0)
-        return (goal[0], goal[1], self.line is None, not self.main, -self.unlocks, self.order)
+        return (
+            goal[0],
+            goal[1],
+            self.line is None,
+            not self.main,
+            -self.unlocks,
+            self.order,
+        )
 
 
 # --- reading -----------------------------------------------------------------------------------
@@ -164,7 +213,9 @@ def active_lines(conn: sqlite3.Connection, db: Path | None) -> list[ActiveLine]:
         return []
     boms: dict[str, set[str]] = {}
     if db is not None:
-        from gregtec.agents import saved_plans  # its card import would be a cycle at the top
+        from gregtec.agents import (
+            saved_plans,  # its card import would be a cycle at the top
+        )
 
         found, _ = saved_plans.load(db)
         boms = {p.id: {b.key for b in p.bom or []} for p in found}
@@ -204,7 +255,9 @@ def _prereqs(conn: sqlite3.Connection) -> dict[str, list[str]]:
 
 def dependents(conn: sqlite3.Connection) -> dict[str, list[str]]:
     out: dict[str, list[str]] = defaultdict(list)
-    for q, p in conn.execute("SELECT quest_id, prereq_id FROM quest_prereq ORDER BY quest_id"):
+    for q, p in conn.execute(
+        "SELECT quest_id, prereq_id FROM quest_prereq ORDER BY quest_id"
+    ):
         out[p].append(q)
     return out
 

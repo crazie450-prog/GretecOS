@@ -512,7 +512,9 @@ class Asker:
             card = last.card or {}
             if card.get("type") == "quest":
                 refs = [
-                    q["ref"] for q in card.get("quests", []) if q.get("state") == "locked"
+                    q["ref"]
+                    for q in card.get("quests", [])
+                    if q.get("state") == "locked"
                 ]
             refs = refs or [r for r in last.refs if r.startswith("q:")]
         refs = list(dict.fromkeys(refs))[:SPOIL_MAX]

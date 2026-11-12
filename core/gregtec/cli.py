@@ -31,7 +31,6 @@ from gregtec import (
 )
 from gregtec import deploy as app_deploy
 from gregtec.agents import recipe_eval_cli
-from gregtec.quests import cli as quest_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -43,6 +42,7 @@ from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.packupdate import cli as pack_cli
 from gregtec.planner import graphcli, plancli
+from gregtec.quests import cli as quest_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 

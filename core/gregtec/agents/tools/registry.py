@@ -72,7 +72,9 @@ class Env:
     vault: VaultIO | None = None  # GOS_HOME/vault, for the note tools
     deep: DeepLane | None = None  # where handoff sends a task (WO-2.3; WO-2.4 runs it)
     ops: Ops | None = None  # the OC bridge: telemetry and the action desk (WO-7.1)
-    spoiler_default: int = 0  # [policy] spoiler_default, the one global level (D72, WO-6.4)
+    spoiler_default: int = (
+        0  # [policy] spoiler_default, the one global level (D72, WO-6.4)
+    )
 
 
 @dataclass

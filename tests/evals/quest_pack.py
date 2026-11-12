@@ -93,7 +93,10 @@ def _quest(
 
 def quests(t: ModuleType) -> list[dict[str, Any]]:
     r, s = t.retrieval, t.bq_stack
-    oxygen = {**t.OXYGEN, "requiredFluids:9": t.typed_list([{"Amount:3": 1000, "FluidName:8": "oxygen"}])}
+    oxygen = {
+        **t.OXYGEN,
+        "requiredFluids:9": t.typed_list([{"Amount:3": 1000, "FluidName:8": "oxygen"}]),
+    }
     return [
         _quest(t, 1, "First Steps", main=True, desc="Look around."),
         _quest(t, 2, "Steel Age", (1,), tasks=[r(s(GT, 11305, 16), consume=True)],

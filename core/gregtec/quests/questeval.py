@@ -70,7 +70,9 @@ INSTANT = "lane=instant"
 _QN = re.compile(r"q(\d+)")
 _KEY = re.compile(r"(?:fluid:\S+|\S+@\d+)")
 _NOTE_ROW = re.compile(r"^(q:[A-Za-z0-9_-]{22})\t([^\t]*)\t", re.MULTILINE)
-_INDEX_ROW = re.compile(r"^[^\t\n]+\t[^\t\n]+\t(quests/qs-[^\t\n]+\.md)\t([^\t\n]*)", re.MULTILINE)
+_INDEX_ROW = re.compile(
+    r"^[^\t\n]+\t[^\t\n]+\t(quests/qs-[^\t\n]+\.md)\t([^\t\n]*)", re.MULTILINE
+)
 
 
 class EvalError(ValueError):
@@ -101,18 +103,26 @@ def load(path: Path = QUESTIONS) -> list[Question]:
             if len(cells) != len(COLUMNS):
                 raise EvalError(f"{path}:{n}: {len(cells)} cells, want {len(COLUMNS)}")
             qid, kind, level, expect, target, words, question = cells
-            if kind not in KINDS or level not in ("0", "1", "2") or not question.strip():
+            if (
+                kind not in KINDS
+                or level not in ("0", "1", "2")
+                or not question.strip()
+            ):
                 raise EvalError(f"{path}:{n}: bad kind, level or question")
             tokens = tuple(expect.split())
             for t in tokens:
                 if not (_QN.fullmatch(t) or _KEY.fullmatch(t) or t == INSTANT):
-                    raise EvalError(f"{path}:{n}: {t!r} is not q<n>, a key or {INSTANT}")
+                    raise EvalError(
+                        f"{path}:{n}: {t!r} is not q<n>, a key or {INSTANT}"
+                    )
             targets = tuple(target.split())
             if any(not _QN.fullmatch(t) for t in targets):
                 raise EvalError(f"{path}:{n}: target must be q<n> tokens")
             if kind != "tier" and kind != "frontier" and not words.strip():
                 raise EvalError(f"{path}:{n}: {kind} rows name their words")
-            out.append(Question(qid, kind, int(level), tokens, targets, words, question))
+            out.append(
+                Question(qid, kind, int(level), tokens, targets, words, question)
+            )
     if len({q.id for q in out}) != len(out):
         raise EvalError(f"{path}: ids repeat")
     return out
@@ -148,9 +158,13 @@ class Spoiler:
     """What a quest past the frontier must not show above each level."""
 
     quest: str  # q:<id>
-    name: str | None  # its name, when the book doesn't show it (else None: not a spoiler)
+    name: (
+        str | None
+    )  # its name, when the book doesn't show it (else None: not a spoiler)
     description: str | None
-    tasks: list[str] = field(default_factory=list)  # item keys and names its tasks ask for
+    tasks: list[str] = field(
+        default_factory=list
+    )  # item keys and names its tasks ask for
     rewards: list[str] = field(default_factory=list)
 
     def above(self, level: int) -> list[str]:
@@ -169,7 +183,9 @@ class Spoiler:
         return [s for s in every if s not in hidden]
 
 
-def spoiler_fields(conn: sqlite3.Connection, player: str | None = None) -> dict[str, Spoiler]:
+def spoiler_fields(
+    conn: sqlite3.Connection, player: str | None = None
+) -> dict[str, Spoiler]:
     """Every locked quest's spoiler fields. An item that a quest in reach also asks for or
     gives is no spoiler (the frontier shows it), so it isn't listed."""
     if player is None:
@@ -252,7 +268,8 @@ def _name_of(conn: sqlite3.Connection, key: str) -> str | None:
     else:
         reg, _, meta = key.rpartition("@")
         row = conn.execute(
-            "SELECT name_en FROM item WHERE registry_name = ? AND meta = ?", (reg, int(meta))
+            "SELECT name_en FROM item WHERE registry_name = ? AND meta = ?",
+            (reg, int(meta)),
         ).fetchone()
     return row[0] if row else None
 
@@ -311,7 +328,11 @@ def decide(q: Question, seen: Sequence[Any], system: str) -> list[dict[str, Any]
     """The next tool calls the skill names for ``q``, given the results ``seen``; none: answer."""
     tools = {s.tool for s in seen}
     if q.kind == "frontier":
-        return [] if "quest_frontier" in tools else [{"name": "quest_frontier", "input": {}}]
+        return (
+            []
+            if "quest_frontier" in tools
+            else [{"name": "quest_frontier", "input": {}}]
+        )
     if q.kind == "item":
         if "quest_for_item" in tools:
             return []
@@ -340,7 +361,9 @@ def decide(q: Question, seen: Sequence[Any], system: str) -> list[dict[str, Any]
         return []
     pick = next((r for r in rows if r.get("name", "").casefold() == q.words), rows[0])
     # the adversary: always the full spoiler, whatever he asked for
-    return [{"name": "quest_get", "input": {"id": pick["quest"], "spoil": spoilers.FULL}}]
+    return [
+        {"name": "quest_get", "input": {"id": pick["quest"], "spoil": spoilers.FULL}}
+    ]
 
 
 def compose(seen: Sequence[Any]) -> str:
@@ -358,8 +381,12 @@ def compose(seen: Sequence[Any]) -> str:
         )
     p = parse(last.text)
     if last.tool == "quest_get":
-        out = [f"{p.head.get('name', 'The quest')} ({p.head.get('quest', '')}) is "
-               f"{p.head.get('state', 'unknown')}."]
+        out = [
+            (
+                f"{p.head.get('name', 'The quest')} ({p.head.get('quest', '')}) is "
+                f"{p.head.get('state', 'unknown')}."
+            )
+        ]
         for r in p.rows:
             amount = f" x{r['amount']}" if r.get("amount") else ""
             out.append(f"{r['part']}: {r['what']}{amount} ({r['cite']}).")
@@ -370,7 +397,9 @@ def compose(seen: Sequence[Any]) -> str:
     for r in p.rows[:6]:
         bits = [f"{r.get('name', '')} ({r.get('quest', '')}) {r.get('state', '')}"]
         if r.get("part"):
-            bits.append(f"{r['part']}" + (f" x{r['amount']}" if r.get("amount") else ""))
+            bits.append(
+                f"{r['part']}" + (f" x{r['amount']}" if r.get("amount") else "")
+            )
         if r.get("why"):
             bits.append(r["why"])
         out.append(", ".join(b for b in bits if b))
@@ -483,7 +512,9 @@ def main(
         return 2
     if limit is not None:
         questions = questions[:limit]
-    with tempfile.TemporaryDirectory(prefix="gos-quest-eval-", ignore_cleanup_errors=True) as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="gos-quest-eval-", ignore_cleanup_errors=True
+    ) as tmp:
         home = Path(tmp) / "home"
         db = module.build(home)
         print(f"# quest pack built in {home}", file=out)
@@ -495,7 +526,9 @@ def main(
         try:
             deep = HandoffRecorder()
             registry = default_registry(home, deep=deep)
-            fast = FastLane.from_keyring(registry, meter=agents.meter, vault=home / "vault")
+            fast = FastLane.from_keyring(
+                registry, meter=agents.meter, vault=home / "vault"
+            )
             if fast is None:
                 print(
                     "Not run: no Anthropic key is stored in this account (uv run gos key "
@@ -504,7 +537,11 @@ def main(
                 )
                 return 1
             return run(
-                lambda: Asker(registry, deep, fast), questions, db, out, fake_model=False
+                lambda: Asker(registry, deep, fast),
+                questions,
+                db,
+                out,
+                fake_model=False,
             )
         finally:
             agents.close()

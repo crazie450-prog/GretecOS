@@ -95,7 +95,6 @@ from gregtec.api.security import (
     Principal,
 )
 from gregtec.base import routes as base_routes
-from gregtec.quests import view as quest_view
 from gregtec.bridge import http as bridge_http
 from gregtec.bridge.actions import Action
 from gregtec.bridge.ingest import Bridge
@@ -103,6 +102,7 @@ from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
+from gregtec.quests import view as quest_view
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
 from gregtec.vault.scheduler import STOP_DEADLINE_S, TICK_S, Maintenance

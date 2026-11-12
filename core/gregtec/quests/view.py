@@ -110,7 +110,11 @@ def _quest(
 
 
 def _card(
-    title: str, tier: str | None, spoil: int, quests: list[dict[str, Any]], notes: list[str]
+    title: str,
+    tier: str | None,
+    spoil: int,
+    quests: list[dict[str, Any]],
+    notes: list[str],
 ) -> dict[str, Any]:
     return cards.checked(
         {
@@ -129,8 +133,8 @@ def _card(
 
 def _lines_of(conn: sqlite3.Connection, ids: list[str]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    for qid, name in access.query(conn, "quest_lines_of", {"ids": guide.json_ids(ids)}):
-        out.setdefault(qid, []).append(name)
+    for r in access.query(conn, "quest_lines_of", {"ids": guide.json_ids(ids)}):
+        out.setdefault(r[0], []).append(r[1])
     return out
 
 
@@ -164,7 +168,8 @@ def beyond(
     for q in locked:
         _, name, descr, main, state, shown = rows[q]
         after = [
-            _row("after", names.get(f), state="available", ref=f"q:{f}") for f in order[q]
+            _row("after", names.get(f), state="available", ref=f"q:{f}")
+            for f in order[q]
         ]
         items = _item_rows(links.get(q, []), rewards=level >= spoilers.FULL)
         out.append(
@@ -183,7 +188,11 @@ def beyond(
 
 
 def payload(
-    conn: sqlite3.Connection, vault: VaultIO | None, db: Path | None, level: int, default: int
+    conn: sqlite3.Connection,
+    vault: VaultIO | None,
+    db: Path | None,
+    level: int,
+    default: int,
 ) -> dict[str, Any]:
     """Everything the Quests view shows (see the module docstring)."""
     player = quest_db.tracked_player(conn)
@@ -208,7 +217,8 @@ def payload(
             r.main,
             True,
             descr.get(r.id),
-            [_row("why", w) for w in r.why] + _item_rows(links.get(r.id, []), rewards=True),
+            [_row("why", w) for w in r.why]
+            + _item_rows(links.get(r.id, []), rewards=True),
         )
         for r in ranked
     ]
@@ -225,8 +235,10 @@ def payload(
             spoilers.FULL,
             front,
             [
-                "ranked by his goals, then his active lines, then main quests, then how "
-                "many quests each unlocks, then book order",
+                (
+                    "ranked by his goals, then his active lines, then main quests, then how "
+                    "many quests each unlocks, then book order"
+                ),
                 TEXT_NOTE,
             ],
         ),
@@ -249,8 +261,10 @@ def payload(
             level,
             beyond(conn, player, ids, level),
             [
-                f"spoiler level {level} ({spoilers.NAMES[level]}): quests the frontier "
-                "unlocks next",
+                (
+                    f"spoiler level {level} ({spoilers.NAMES[level]}): quests the frontier "
+                    "unlocks next"
+                ),
                 TEXT_NOTE,
             ],
         ),
@@ -279,7 +293,9 @@ def read(home: Path, level: int | None, default: int) -> dict[str, Any]:
     conn = access.connect(db, readonly=True)
     try:
         try:
-            return payload(conn, vault, db, default if level is None else level, default)
+            return payload(
+                conn, vault, db, default if level is None else level, default
+            )
         except quest_db.QuestError as exc:
             raise HTTPException(404, str(exc)) from None
     finally:

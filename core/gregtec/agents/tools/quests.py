@@ -224,7 +224,9 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
     for u in call.query("quest_unlocks", {"id": qid, "player": who}):
         # what it unlocks lies past it: spoiling this quest never names those (D268)
         name = quest_name(u["name"], u["state"], u["shown"], call.spoil(None))
-        out.append(("unlocks", "", "", name, "", "", u["state"] or "locked", f"q:{u['id']}"))
+        out.append(
+            ("unlocks", "", "", name, "", "", u["state"] or "locked", f"q:{u['id']}")
+        )
     for r in call.query("quest_parts", {"id": qid}) if level >= 1 else []:
         if r["part"] == "reward" and level < 2:
             continue
@@ -321,8 +323,10 @@ def quest_frontier(call: Call, args: dict[str, Any], offset: int) -> Result:
         ],
         notes=[
             "the frontier: unlocked, not done (or reset by a repeat timer), shown in the book",
-            "ranked by his goals (me/goals.md), then his active lines (saved plans), then main "
-            "quests, then how many quests each unlocks, then book order: keep this order",
+            (
+                "ranked by his goals (me/goals.md), then his active lines (saved plans), then "
+                "main quests, then how many quests each unlocks, then book order: keep this order"
+            ),
             TEXT_NOTE,
         ],
         total=len(quests),
@@ -419,4 +423,3 @@ def quest_for_item(call: Call, args: dict[str, Any], offset: int) -> Result:
         offset=offset,
         more=len(rows) > call.page,
     )
-

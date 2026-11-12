@@ -615,7 +615,8 @@ class Curator:
                 stop=stop,
             )
         if job == "quests":
-            from gregtec.quests import summaries  # the quest guide imports the tool layer
+            # imported here: the quest guide imports the tool layer
+            from gregtec.quests import summaries
 
             done = summaries.refresh_paths(self.db, self.vault)
             if done is None:

@@ -87,7 +87,6 @@ TOOLS = (
         quests.QUEST_FRONTIER_SCHEMA,
         quests.quest_frontier,
     ),
-
     Tool(
         "quest_for_item",
         "Quests whose tasks ask for an item or fluid (itself, any meta, or an oredict it is in) "
