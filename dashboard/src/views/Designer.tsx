@@ -562,9 +562,11 @@ export function Designer() {
         <SavedPlans plans={plans} current={view?.id ?? null} />
       </div>
       {busy && (
-        <p className="empty" aria-busy="true" data-testid="designer-busy">
-          {GLYPH.progress} {busy}
-        </p>
+        <div className="gos-panel" aria-busy="true" data-testid="designer-busy">
+          <p className="empty">
+            {GLYPH.progress} {busy}
+          </p>
+        </div>
       )}
       {notice && (
         <div className="notice gos-panel" role="alert" data-testid="designer-notice">
@@ -587,11 +589,19 @@ export function Designer() {
           </div>
         </div>
       )}
-      {error && <p className="empty">{GLYPH.warn} {error}</p>}
+      {error && (
+        <div className="gos-panel">
+          <p className="empty">
+            {GLYPH.warn} {error}
+          </p>
+        </div>
+      )}
       {!view && !error && (
-        <p className="empty" data-testid="designer-empty">
-          {GLYPH.todo} No design open. Ask for one above, or say "design a steel line at 2 per second".
-        </p>
+        <div className="gos-panel" data-testid="designer-empty">
+          <p className="empty">
+            {GLYPH.todo} No design open. Ask for one above, or say "design a steel line at 2 per second".
+          </p>
+        </div>
       )}
       {view && (
         <>
