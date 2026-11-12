@@ -14,12 +14,25 @@ from pathlib import Path
 
 FRONTMATTER = ("id", "t", "upd")
 MAX_LINES = 150
-# INDEX.md may be longer: plan 6.1 caps it at 200 lines (it is the one note every prompt loads).
-TYPE_MAX_LINES = {"index": 200}
+# INDEX.md may be longer: plan 6.1 caps it at 200 lines (it is the one note every prompt loads);
+# a plan note is a summary of at most 40 (plan 6.1, D201): its JSON is data/plans/<id>.json.
+TYPE_MAX_LINES = {"index": 200, "plan": 40}
 KEY = re.compile(r"^([a-z][a-z0-9_]*): (.+)$")
 # D143: n_<kind>: N lines are the curator's computed counts, in the weekly and monthly logs only.
 COUNT_PREFIX = "n_"
 SUMMARY_LOG = re.compile(r"log/(wk|mo)/[^/]+\.md")
+# D201: only a plan note may hold a ```mermaid fence, and only the lines
+# gregtec.planner.outputs.mermaid writes: the header, a box (rectangle, stadium or subroutine)
+# and a labelled link. Ids are n<k>/in<k>/out<k>; a label is one quoted string with no quote,
+# < or > in it (the writer's entity codes) but its own <br/>, so no line can be a click, href,
+# style, class or %% directive, and no label can hold HTML.
+DIAGRAM_TYPES = frozenset({"plan"})
+_MID = r"(?:n|in|out)[0-9]{1,5}"
+_LABEL = r'"(?:[^"<>\n]|<br/>){1,600}"'
+DIAGRAM_LINE = re.compile(
+    rf"flowchart LR|  {_MID}(?:\[{_LABEL}\]|\(\[{_LABEL}\]\)|\[\[{_LABEL}\]\])"
+    rf"|  {_MID} -->\|{_LABEL}\| {_MID}"
+)
 
 
 @dataclass(frozen=True)
@@ -63,8 +76,15 @@ def parse(text: str) -> Note:
     facts: list[tuple[str, str]] = []
     tables: list[list[list[str]]] = []
     table: list[list[str]] | None = None
+    diagram = (
+        False  # inside a ```mermaid fence (a plan's flow diagram, D201): not facts
+    )
     for n, line in enumerate(lines[end + 1 :], start=end + 2):
-        if table is not None:
+        if diagram:
+            diagram = line != "```"
+            if diagram and not DIAGRAM_LINE.fullmatch(line):
+                raise ValueError(f"line {n} isn't a flow diagram line: {line!r}")
+        elif table is not None:
             if line == "```":
                 tables.append(table)
                 table = None
@@ -72,6 +92,10 @@ def parse(text: str) -> Note:
                 table.append(line.split("\t"))
         elif line == "```tsv":
             table = []
+        elif line == "```mermaid":
+            if meta["t"] not in DIAGRAM_TYPES:
+                raise ValueError(f"line {n}: only plan notes hold a mermaid diagram")
+            diagram = True
         elif not line.strip():
             continue
         elif m := KEY.match(line):
@@ -80,6 +104,8 @@ def parse(text: str) -> Note:
             raise ValueError(f"line {n} is not key: value or a tsv table: {line!r}")
     if table is not None:
         raise ValueError("tsv fence is not closed")
+    if diagram:
+        raise ValueError("mermaid fence is not closed")
     for rows in tables:
         if not rows or any(len(r) != len(rows[0]) for r in rows):
             raise ValueError(

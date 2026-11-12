@@ -5,7 +5,8 @@
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
   and prints a summary per route, or the plans as canonical JSON lines (``--json``), or writes
-  each plan to ``DIR/<id>.json`` (``--out``; persisting into GOS_HOME is WO-3.7's). Routes come
+  each plan to ``DIR/<id>.json`` (``--out``), or saves every route into GOS_HOME (``--save``,
+  WO-3.6: ``data/plans/<id>.json``, its exports, the plan row, the vault note). Routes come
   ranked (WO-3.5) with the weights from the vault's ``me/prefs.md`` (read only; balanced
   without one, D67), and the summary prints the weights first; ``--explain`` adds the templated
   explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
@@ -29,6 +30,7 @@ from gregtec.agents.tools.glossary import Glossary
 from gregtec.base.state import MyBase
 from gregtec.db import access
 from gregtec.planner import alternatives, explain, graph, plan, rank, solve
+from gregtec.planner.outputs import book, store
 from gregtec.planner.request import (
     Pin,
     Request,
@@ -37,6 +39,7 @@ from gregtec.planner.request import (
     parse_qty,
     tier_index,
 )
+from gregtec.vault.io import VaultIO
 
 COMMANDS = ("plan",)
 
@@ -85,6 +88,12 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument(
         "--out", type=Path, default=None, help="write DIR/<id>.json per plan"
     )
+    p.add_argument(
+        "--save",
+        action="store_true",
+        help="save every route: data/plans/<id>.json, its exports, the plan row and the "
+        "vault note plans/<id>.md (WO-3.6)",
+    )
     p.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
 
@@ -104,7 +113,7 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     try:
         vault = cfg.gos_home / "vault"
         prefs = rank.read_prefs(vault)
-        return _run(conn, db, Glossary.find(vault), args, out, prefs)
+        return _run(conn, db, Glossary.find(vault), args, out, prefs, cfg.gos_home)
     finally:
         conn.close()
 
@@ -156,6 +165,22 @@ def _request(
     return Request(found.key, qty=qty, unit=unit, **common)  # type: ignore[arg-type]
 
 
+def _save(
+    conn: sqlite3.Connection, db: Path, home: Path, design: plan.Design, out: TextIO
+) -> None:
+    """Persist every route of ``design`` (WO-3.6, :mod:`gregtec.planner.outputs.store`)."""
+    rw = access.connect(db)
+    try:
+        vault = VaultIO(home / "vault")
+        for p in design.plans:
+            saved = store.save(home, p, rw, book.read(conn, p), vault)
+            print(f"saved {saved.id}: {saved.json_path}", file=out)
+            for problem in saved.problems:
+                print(f"  {problem}", file=out)
+    finally:
+        rw.close()
+
+
 def _run(
     conn: sqlite3.Connection,
     db: Path,
@@ -163,6 +188,7 @@ def _run(
     args: argparse.Namespace,
     out: TextIO,
     prefs: rank.Prefs = rank.BALANCED,
+    home: Path | None = None,
 ) -> int:
     try:
         request = _request(conn, db, glossary, args, out)
@@ -190,6 +216,11 @@ def _run(
         args.out.mkdir(parents=True, exist_ok=True)
         for p in design.plans:
             (args.out / f"{p['id']}.json").write_text(plan.dumps(p), encoding="utf-8")
+    if getattr(args, "save", False):
+        if home is None:
+            print("refused: --save needs GOS_HOME", file=out)
+            return 2
+        _save(conn, db, home, design, out)
     if args.json:
         for p in design.plans:
             print(plan.dumps(p), file=out)

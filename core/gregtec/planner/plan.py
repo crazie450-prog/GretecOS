@@ -13,7 +13,7 @@ Every route becomes one **plan**, a dict shaped as §7.1's sketch: ``id``, ``nam
 and ``rank`` (WO-3.5's :mod:`.metrics` and :mod:`.rank`: the base routes come back in rank
 order, each named for its place, the addon route last), ``alternatives`` (the other routes' ids)
 and ``layout``
-(empty: WO-3.6's), plus ``request`` (to re-solve it), ``route`` (the solver's view: choices,
+(WO-3.6's bounding-box footprint, :mod:`.outputs.footprint`, D200), plus ``request`` (to re-solve it), ``route`` (the solver's view: choices,
 gates, the replay floor) and ``warnings`` (D194). ``plan_schema.json`` is its JSON Schema. Every
 number in it is the DB's or GT's math on it: a node cites its ``r:`` recipe and ``mte:`` machine
 and lists the machine facts it was sized with. :func:`dumps` is the canonical text (sorted
@@ -42,6 +42,7 @@ from gregtec.planner import chains, effort, graph, metrics, rank, sizing, solve
 from gregtec.planner.graph import EU_KEY, Graph
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.machines import MachineOption
+from gregtec.planner.outputs import footprint
 from gregtec.planner.request import BaseInputs, Request
 
 VERSION = 1
@@ -181,6 +182,8 @@ def design(
         p["metrics"] = metrics.route(
             conn, g, p, measure.on_map, table, measure.route(p)
         )
+        p["layout"] = footprint.layout(conn, p)  # WO-3.6, D200
+        p["metrics"]["footprint"] = footprint.summary(p["layout"])
     ranked = rank.order(built, prefs)
     for p in ranked:
         r = p["rank"]

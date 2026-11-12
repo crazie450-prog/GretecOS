@@ -3,11 +3,13 @@
 Plans arrive with the Designer (WO-3.7). Until then this reads them the way WO-1.9's affected-plan
 flags do (:mod:`gregtec.packupdate.plans`): a row in Appendix D's ``plan`` table whose
 ``json_path`` (``data/plans/<id>.json``, from GOS_HOME when relative) holds a ``gos-plan/0``
-document. The one addition is an optional ``bom`` list, which the planner writes with the plan::
+document. The one addition is an optional ``bom`` list::
 
     "bom": [{"key": "gregtech:gt.metaitem.01@11305", "name": "Steel Ingot", "amount": 64,
              "unit": "items", "ref": "r:gt.recipe.blastfurnace/0123456789ab"}]
 
+A canonical plan (WO-3.4's JSON, saved by WO-3.6) has no ``bom`` list: its BOM is one row per
+node (machine and tier, count, ``r:`` recipe; :func:`machine_bom`), the BOM TSV's rows.
 Every number on a BOM row is the planner's, copied as it is (plan 0.1 principle 1): this module
 computes none, and the card cites the plan (``plan:<id>``) for any row without its own ``ref``.
 WO-3.7's ``plan_get``/``plan_list`` tools take these cards over; the router's instant commands
@@ -97,7 +99,32 @@ def _read(home: Path, path: str, pid: str) -> tuple[plan_format.Plan, Any]:
     plan = plan_format.parse(data, full.name)
     if plan.id != pid:
         raise ValueError(f"{full.name} is plan {plan.id}")
-    return plan, json.loads(data).get("bom")
+    raw = json.loads(data)
+    if raw.get("bom") is None and isinstance(raw.get("nodes"), list):
+        return plan, machine_bom(raw["nodes"])
+    return plan, raw.get("bom")
+
+
+def machine_bom(nodes: list[Any]) -> list[dict[str, Any]]:
+    """A canonical plan's BOM (WO-3.6, the BOM TSV's rows as BOM card rows): per node its
+    machine and tier, count and ``r:`` recipe, copied from the plan."""
+    rows: list[dict[str, Any]] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        m = n.get("machine") if isinstance(n.get("machine"), dict) else None
+        rows.append(
+            {
+                "key": str(n.get("n") or ""),
+                "name": f"{m.get('name')} · {m.get('tier')}"
+                if m
+                else "no machine (crafting)",
+                "amount": n.get("count") or 0,
+                "unit": "machines",
+                "ref": n.get("recipe"),
+            }
+        )
+    return rows
 
 
 def load(db: Path, home: Path | None = None) -> tuple[list[SavedPlan], list[str]]:
