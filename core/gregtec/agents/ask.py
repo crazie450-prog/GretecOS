@@ -506,7 +506,7 @@ class Asker:
         """The last answer's quests past the frontier, at the level his words ask for."""
         with self._lock:
             last = self._last
-        level = spoilers.asked_level(route.text)
+        level = spoilers.asked_level(router.normalise(route.text))
         refs: list[str] = []
         if last is not None:
             card = last.card or {}

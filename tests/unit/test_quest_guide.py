@@ -94,6 +94,13 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         ("what does q:AAQ require", 1),
         ("more of a hint please", 1),
         ("ok just spoil it", 2),
+        # the router's filler routes these to SPOIL: they must ask for it too
+        ("can you spoil it", 2),
+        ("could you spoil it?", 2),
+        ("hey gos spoil it", 2),
+        ("Hey GOS, spoil it", 2),
+        ("gos: spoil it", 2),
+        ("could you not spoil it", 0),
         ("what comes after it? spoil it", 2),
         ("i can't find it, spoil it", 2),
         ("no spoilers, but what does it need", 0),
@@ -561,10 +568,20 @@ def test_spoil_it_opens_the_last_answers_locked_quests(reg: Registry) -> None:
     assert part.lane == "instant" and part.card is not None
     assert part.card["spoil"] == 1 and part.card["quests"][0]["name"] == "Secret Alloy"
     assert part.card["quests"][0]["description"] is None
-    full = asker.ask("spoil it")
-    assert full.card is not None and full.card["spoil"] == 2
-    assert "chromium" in (full.card["quests"][0]["description"] or "")
-    assert q(5) in full.refs and "Secret Alloy" in full.text
+    for said in (
+        "spoil it",
+        "can you spoil it",
+        "could you spoil it",
+        "hey gos spoil it",
+    ):
+        full = asker.ask(said)
+        assert full.text != NOTHING_TO_SPOIL, said
+        assert full.card is not None and full.card["spoil"] == 2, said
+        assert "chromium" in (full.card["quests"][0]["description"] or ""), said
+        assert q(5) in full.refs and "Secret Alloy" in full.text, said
+        asker.ask(
+            "tell me about the secret alloy quest"
+        )  # the next phrasing starts locked
 
 
 # --- the eval -------------------------------------------------------------------------------

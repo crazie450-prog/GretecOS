@@ -30,11 +30,13 @@ _NO = re.compile(
     r"(?:\bno\b|\bnot\b|n't|\bnever\b|\bwithout\b|\bavoid\b|\bstop\b)[^.?!;,]{0,40}"
     r"(?:\bspoil|\bfull\s+(?:answer|spoilers?)\b|\beverything\b)"
 )
-# Only the imperative: "spoil it" opening a sentence (after "ok", "just", "please"...), or
-# "full answer", "full spoilers", "tell me everything". Not "would that spoil the surprise?"
-# and not "what's my spoiler level" (the setting's name).
+# Only the imperative: "spoil it" opening a sentence (after "ok", "just", "please"... and the
+# router's own filler, "gos", "hey gos", "can you", "could you"), or "full answer", "full
+# spoilers", "tell me everything". Not "would that spoil the surprise?" and not "what's my
+# spoiler level" (the setting's name).
 _FULL = re.compile(
-    r"(?:^|[.?!;:,]\s*)(?:(?:ok|okay|fine|just|please|go\s+on|go\s+ahead(?:\s+and)?)[,\s]+)*"
+    r"(?:^|[.?!;:,]\s*)(?:(?:ok|okay|fine|just|please|hey|gos|can\s+you|could\s+you"
+    r"|go\s+on|go\s+ahead(?:\s+and)?)[,:\s]+)*"
     r"spoil\s+(?:it|that|this|me)\b"
     r"|\bfull\s+(?:answer|spoilers?)\b|\b(?:tell|show)\s+me\s+everything\b"
 )
