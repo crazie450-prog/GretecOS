@@ -1,0 +1,21 @@
+id	kind	level	expect	target	words	question
+g01	frontier	0	q11 q3 q2			what quests can i do
+g02	frontier	0	q11 q3 q2			show my next quests
+g03	quest	0	q2		steel age	tell me about the Steel Age quest
+g04	requires	0	q2 gregtech:gt.metaitem.01@11305		steel age	what does the steel age quest ask for
+g05	item	0	q2		steel ingot	which quests need steel ingot
+g06	item	0	q2		steel dust	which quests give steel dust
+g07	unlocks	0	q4		steel age	what does finishing steel age unlock
+g08	quest	0	q5		secret alloy	tell me about the secret alloy quest
+g09	quest	2	q5 gregtech:gt.metaitem.01@17306	q5	secret alloy	full answer: tell me about the secret alloy quest
+g10	requires	1	q5 gregtech:gt.metaitem.01@11306	q5	secret alloy	partial answer: what does the secret alloy quest need
+g11	line	0	q11 q12 q13		steam	summarize the steam quest line
+g12	line	0	q2 q3		stone age	how far am i in the stone age quests
+g13	tier	0	lane=instant			what's my tier
+g14	item	0	q22 q15		electric blast furnace	which quest asks for the electric blast furnace
+g15	item	0	q5		stainless steel plate	what quests reward stainless steel plate
+g16	quest	0	q15		pressure cooker	tell me about the pressure cooker quest
+g17	quest	0	q13		either way	tell me about the either way quest
+g18	item	0	q12		charcoal	which quests need charcoal
+g19	requires	0	q11 gregtech:gt.blockmachines@140		bricks	tell me about the bricks quest
+g20	quest	2	q15 gregtech:gt.blockmachines@1000	q15	pressure cooker	spoil it: what does the pressure cooker quest reward

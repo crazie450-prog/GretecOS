@@ -114,10 +114,8 @@ def test_spoil_1_adds_the_tasks_and_spoil_2_everything(run: Runner) -> None:
         "unlocks",
         "task",
     ]
-    assert {r["what"] for r in one.rows if r["part"] == "unlocks"} == {
-        "Any Steel Will Do",
-        "Any Planks",
-    }
+    # spoiling this quest never names what lies past it (D268)
+    assert {r["what"] for r in one.rows if r["part"] == "unlocks"} == {HIDDEN_NAME}
     assert one.rows[-1]["what"] == f"Stainless Steel Ingot [{GT}@11306]"
     two = run("quest_get", id=q(4), spoil=2)
     assert two.head["description"] == "The secret is stainless steel."

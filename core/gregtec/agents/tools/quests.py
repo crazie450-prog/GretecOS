@@ -222,7 +222,8 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         for p in leads:
             out.append(("start", "", "", p["name"], "", "", p["state"], f"q:{p['id']}"))
     for u in call.query("quest_unlocks", {"id": qid, "player": who}):
-        name = quest_name(u["name"], u["state"], u["shown"], level)
+        # what it unlocks lies past it: spoiling this quest never names those (D268)
+        name = quest_name(u["name"], u["state"], u["shown"], call.spoil(None))
         out.append(("unlocks", "", "", name, "", "", u["state"] or "locked", f"q:{u['id']}"))
     for r in call.query("quest_parts", {"id": qid}) if level >= 1 else []:
         if r["part"] == "reward" and level < 2:

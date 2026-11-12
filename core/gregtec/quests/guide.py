@@ -202,7 +202,7 @@ def _prereqs(conn: sqlite3.Connection) -> dict[str, list[str]]:
     return out
 
 
-def _dependents(conn: sqlite3.Connection) -> dict[str, list[str]]:
+def dependents(conn: sqlite3.Connection) -> dict[str, list[str]]:
     out: dict[str, list[str]] = defaultdict(list)
     for q, p in conn.execute("SELECT quest_id, prereq_id FROM quest_prereq ORDER BY quest_id"):
         out[p].append(q)
@@ -231,7 +231,7 @@ def _part_keys(conn: sqlite3.Connection, ids: Sequence[str]) -> dict[str, set[st
     for qid, reg, meta, fluid in conn.execute(
         "SELECT quest_id, registry_name, meta, fluid FROM quest_item"
         " WHERE quest_id IN (SELECT value FROM json_each(?))",
-        (_json(ids),),
+        (json_ids(ids),),
     ):
         key = _key(reg, meta, fluid)
         if key:
@@ -239,7 +239,7 @@ def _part_keys(conn: sqlite3.Connection, ids: Sequence[str]) -> dict[str, set[st
     return out
 
 
-def _json(values: Sequence[str]) -> str:
+def json_ids(values: Sequence[str]) -> str:
     return json.dumps(list(values))
 
 
@@ -255,7 +255,7 @@ def rank_frontier(
     found = frontier(conn, player)
     if not found:
         return []
-    deps = _dependents(conn)
+    deps = dependents(conn)
     out = [
         Ranked(q, name, state, main, lines, n, len(deps.get(q, ())))
         for n, (q, name, state, main, lines) in enumerate(found)
@@ -322,7 +322,7 @@ def item_links(conn: sqlite3.Connection, ids: Sequence[str]) -> dict[str, list[L
         " LEFT JOIN item AS i ON i.id = qi.item_id LEFT JOIN fluid AS f ON f.id = qi.fluid_id"
         " WHERE qi.quest_id IN (SELECT value FROM json_each(?))"
         " ORDER BY qi.quest_id, qi.part = 'reward', qi.idx, qi.slot",
-        (_json(ids),),
+        (json_ids(ids),),
     ).fetchall()
     for qid, part, reg, meta, ore, fluid, amount, consume, name in rows:
         key = _key(reg, meta, fluid) or (f"ore:{ore}" if ore else None)
@@ -351,7 +351,7 @@ def _clean(name: str | None) -> str:
 
 def unlocks(conn: sqlite3.Connection, qid: str) -> list[str]:
     """The quests that list ``qid`` as a prerequisite."""
-    return _dependents(conn).get(qid, [])
+    return dependents(conn).get(qid, [])
 
 
 # --- questlines -----------------------------------------------------------------------------
