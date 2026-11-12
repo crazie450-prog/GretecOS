@@ -11,6 +11,7 @@ machine types its components need. Nothing is written outside tmp_path.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 import sqlite3
@@ -75,8 +76,8 @@ REQ = power.PowerRequest(
     mode="output_per_effort",
     tier_cap=EV,
     kinds=("gas_turbine",),
-    candidates=1,
-    options=2,
+    candidates=4,
+    options=3,
 )
 
 
@@ -125,7 +126,9 @@ def test_the_rotor_and_dynamo_hatch_are_build_components(
         assert {"id": f"gregtech:gt.blockmachines@{dynamo}", "qty": count,
                 "for": f"mte:{spec['mte']}", "part": "hatch"} in comps  # fmt: skip
         # The rotor is made by the export's own assembler recipe, cited in the breakdown.
-        cited = {r for row in p["metrics"]["effort"]["rows"] for r in row["recipes"]}
+        cited = {
+            x["id"] for row in p["metrics"]["effort"]["rows"] for x in row["recipes"]
+        }
         assert _makers(conn, rotor) & cited
         notes = p["metrics"]["effort"]["notes"]
         assert any("maintenance, input, output, muffler" in n for n in notes)
@@ -134,7 +137,8 @@ def test_the_rotor_and_dynamo_hatch_are_build_components(
 def test_the_breakdown_adds_up_and_ranks_the_mode(
     turbine: power.PowerDesign,
 ) -> None:
-    ratios = []
+    assert len(turbine.options) >= 2, turbine.rejected  # so the order is tested
+    keys = []
     for p in turbine.options:
         m = p["metrics"]
         rows = m["effort"]["rows"]
@@ -144,23 +148,37 @@ def test_the_breakdown_adds_up_and_ranks_the_mode(
         assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], rel=1e-3)
         for r in rows:
             assert r["map"] == effort.HAND or r["mte"] is not None
-            assert all(x.startswith("r:") for x in r["recipes"])
+            assert all(x["id"].startswith("r:") for x in r["recipes"])
+            assert r["crafts"] == sum(x["crafts"] for x in r["recipes"])
+            assert r["h"] == pytest.approx(math.fsum(x["h"] for x in r["recipes"]))
         ratio = p["power"]["net_eut"] / m["eff_h"]
         assert p["rank"]["eut_per_effort_h"] == pytest.approx(ratio, rel=1e-3)
-        ratios.append(ratio)
+        # What the effort leaves out is a count beside the number, not only in the notes
+        # (on this DB the turbine controllers have no route at EV, WO-3.5 follow-up).
+        left = m["effort"]["uncounted"]
+        assert isinstance(left, int) and left >= 0
+        assert (f"{left} items not counted" in effort.summary(m)) == (left > 0)
+        keys.append((left > 0, -ratio))
         card = cards.effort_card(p)
         assert validate(card) == [] and card["tool"] == "effort_estimate"
-    assert ratios == sorted(ratios, reverse=True)
+        head = {h["key"]: h["value"] for h in card["head"]}
+        assert head["not counted"].startswith(f"{left} items")
+        for row in card["rows"]:  # one citation per cell: drawn as chips
+            assert row[3].startswith("r:") and " " not in row[3]
+    assert keys == sorted(keys)
 
 
 def test_owning_only_the_turbine_unlocks_what_its_parts_need(
-    conn: sqlite3.Connection, turbine: power.PowerDesign
+    conn: sqlite3.Connection,
 ) -> None:
-    gen = _generator(turbine.options[0])
-    spec = gen["spec"]
+    # The densest fuel's line (candidates=1): its parts' steps need machine types that have
+    # an item and a route at EV, so their unlock hours are counted.
+    req = dataclasses.replace(REQ, candidates=1, options=2)
+    first = power.design(conn, req, DefaultBaseInputs(EV)).options[0]
+    spec = _generator(first)["spec"]
     assert isinstance(spec, dict)
-    d = power.design(conn, REQ, Owns({int(spec["mte"]): 1}))
-    p = next(x for x in d.options if x["id"] == turbine.options[0]["id"])
+    d = power.design(conn, req, Owns({int(spec["mte"]): 1}))
+    p = next(x for x in d.options if x["id"] == first["id"])
     m = p["metrics"]
     assert m["effort"]["unlocks"] and m["unlock_h"] > 0
     assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], rel=1e-3)
