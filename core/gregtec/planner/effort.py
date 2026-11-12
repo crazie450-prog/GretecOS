@@ -30,7 +30,9 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
   counts as one machine he has, so ``unlock_h`` is 0 and a note says so (D196).
 
 The result's ``rows`` are the breakdown table: per part (``build`` or ``unlock``) and recipe map
-(``crafting`` for hand steps), the crafts, the machines it is spread over and the hours.
+(``crafting`` for hand steps), the crafts, the machines it is spread over, the hours and the
+recipes it runs (their ``r:`` ids, WO-4.3). :func:`table` and :func:`text` print it for the
+table card and the CLIs.
 """
 
 from __future__ import annotations
@@ -56,7 +58,8 @@ HAND = "crafting"  # the breakdown's map name for crafting-table and furnace ste
 @dataclass
 class Walk:
     """The steps to make some components: per recipe map (``crafting`` for hand steps) the
-    crafts and machine-seconds, and the machine each map's steps are sized on."""
+    crafts and machine-seconds, the machine each map's steps are sized on and the recipes
+    (``r:`` ids, NEI's for hand steps) they run, the breakdown's citations (WO-4.3)."""
 
     crafts: dict[str, int] = field(default_factory=dict)
     seconds: dict[str, float] = field(default_factory=dict)
@@ -64,6 +67,7 @@ class Walk:
     missing: list[str] = field(default_factory=list)  # items with no recipe at the tier
     # gated items past GATE_DEPTH or in a loop
     deep: list[str] = field(default_factory=list)
+    recipes: dict[str, list[str]] = field(default_factory=dict)  # map -> recipe ids
 
     def add(self, other: Walk) -> None:
         for k, v in other.crafts.items():
@@ -78,6 +82,9 @@ class Walk:
         for k in other.deep:
             if k not in self.deep:
                 self.deep.append(k)
+        for k, ids in other.recipes.items():
+            mine = self.recipes.setdefault(k, [])
+            mine.extend(i for i in ids if i not in mine)
 
 
 @dataclass
@@ -112,6 +119,7 @@ class Need:
                 out.machine.setdefault(where, mte)
             out.crafts[where] = out.crafts.get(where, 0) + n
             out.seconds[where] = out.seconds.get(where, 0.0) + n * per
+            out.recipes.setdefault(where, []).append(pid)
         return out
 
 
@@ -358,6 +366,7 @@ class Effort:
                     "crafts": w.crafts[name],
                     "machines": machines,
                     "h": w.seconds[name] / machines / 3600.0,
+                    "recipes": sorted(w.recipes.get(name, ())),
                 }
             )
         return rows
@@ -442,12 +451,13 @@ class Effort:
         }
 
 
-COLUMNS = ("part", "map", "machine", "crafts", "machines", "hours")
+COLUMNS = ("part", "map", "machine", "crafts", "machines", "hours", "recipes")
 
 
 def table(eff: Mapping[str, Any]) -> list[list[str]]:
     """The breakdown table's rows as text cells (:data:`COLUMNS`), build rows first, then
-    unlock rows; the machine a map's steps are sized on is cited ``mte:``."""
+    unlock rows; the machine a map's steps are sized on is cited ``mte:``, the recipes they
+    run by their ids."""
     return [
         [
             str(r["part"]),
@@ -456,6 +466,7 @@ def table(eff: Mapping[str, Any]) -> list[list[str]]:
             str(r["crafts"]),
             str(r["machines"]),
             f"{float(r['h']):.4g}",
+            " ".join(r.get("recipes", ())),
         ]
         for r in eff["rows"]
     ]
