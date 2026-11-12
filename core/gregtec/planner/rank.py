@@ -26,7 +26,8 @@ validator) maximise the weighted score of :data:`POWER_METRICS`: net EU/t (highe
 minus effort, upkeep inputs, complexity and scarcity (lower is better), each normalised by the
 largest value among the options, ``score = (w_net x net - sum w x cost) / sum w``; ``max_output``
 takes the highest sustained net EU/t within the scale bound; ``output_per_effort`` the highest net
-EU/t per effort hour (an option whose effort is 0, nothing counted, after those with one). Ties
+EU/t per effort hour (an option whose effort is 0, nothing counted, after those with one,
+by net EU/t among themselves). Ties
 break as above. The power weights are ``w_net_eut`` and ``w_upkeep`` in ``me/prefs.md``, with
 ``w_effort``, ``w_complexity`` and ``w_scarcity`` shared with production routes; balanced (1)
 by default (D67) and printed with every result (:func:`describe_power`).
@@ -317,7 +318,12 @@ def order_power(
             head = (-_r(v["net_eut"]),)
         elif mode == "output_per_effort":
             ratio = _per_effort(v)
-            head = (ratio is None, -_r(ratio) if ratio is not None else 0.0)
+            # Effort 0 (nothing counted: no structure or NEI data) ranks after the rest,
+            # by net EU/t among itself (D235).
+            head = (
+                ratio is None,
+                -_r(ratio) if ratio is not None else -_r(v["net_eut"]),
+            )
         else:
             head = (-score,)
         return (*head, len(p["metrics"]["new_types"]), _tier(p["metrics"]), p["id"])
@@ -337,7 +343,12 @@ def order_power(
             "w": dict(prefs.power),
             "terms": terms,
             "values": v,
-            "notes": list(prefs.notes),
+            "notes": list(prefs.notes)
+            + (
+                ["effort 0 (nothing counted): ranked after the rest, by net EU/t"]
+                if mode == "output_per_effort" and ratio is None
+                else []
+            ),
         }
         out.append(p)
     return out

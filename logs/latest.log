@@ -1,0 +1,17 @@
+[11:59:19] [Server thread/INFO]: getModItem call: object "grafter" with mod id "Forestry" has returned null because the GT5U preloading phase has not yet started
+java.lang.Exception
+	at gregtech.api.util.GTModHandler.getModItem(GTModHandler.java:404) ~[GT5-Unofficial-5.09.54.265-dev.jar:?]
+	at gregtech.api.util.GTModHandler.getModItem(GTModHandler.java:372) ~[GT5-Unofficial-5.09.54.265-dev.jar:?]
+	at gregtech.api.util.GTModHandler.getModItem(GTModHandler.java:414) ~[GT5-Unofficial-5.09.54.265-dev.jar:?]
+	at gregtech.common.tileentities.machines.multi.MTETreeFarm.<clinit>(MTETreeFarm.java:845) ~[GT5-Unofficial-5.09.54.265-dev.jar:?]
+	at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized0(Native Method) ~[?:?]
+	at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized(Unsafe.java:1160) ~[?:?]
+	at java.base/jdk.internal.reflect.MethodHandleAccessorFactory.ensureClassInitialized(MethodHandleAccessorFactory.java:301) ~[?:?]
+	at java.base/jdk.internal.reflect.MethodHandleAccessorFactory.newMethodAccessor(MethodHandleAccessorFactory.java:72) ~[?:?]
+	at java.base/jdk.internal.reflect.ReflectionFactory.newMethodAccessor(ReflectionFactory.java:159) ~[?:?]
+	at java.base/java.lang.reflect.Method.acquireMethodAccessor(Method.java:726) ~[?:?]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:577) ~[?:?]
+	at GtBoilerOracle.treeFarm(GtBoilerOracle.java:215) ~[bo/:?]
+	at GtBoilerOracle.run(GtBoilerOracle.java:114) ~[bo/:?]
+	at GtBoilerOracle.lambda$main$0(GtBoilerOracle.java:62) ~[bo/:?]
+	at java.base/java.lang.Thread.run(Thread.java:1583) [?:?]

@@ -20,6 +20,13 @@ burning, no throttle circuit, maintenance done.
   (:data:`ALLOWED_FUELS`, ``LargeBoilerFuelBackend.ALLOWED_FUELS``). Solid fuels need the item's
   furnace burn value, which the export does not carry (the fake-fuel map keeps it divided by 1600,
   rounded down), so they are not sized here (D233).
+- **Throttle.** A programmed circuit ``c`` (1-25) in the controller lowers ``lEUt`` to
+  ``max(25, EUT_GENERATED - c x 25)`` (``x 75`` for the superheated boilers,
+  ``adjustEUtForConfig``) and stretches the burn time by ``EUT_GENERATED / lEUt``
+  (``adjustBurnTimeForConfig``, the remainder carried), so EU per litre of fuel holds and fuel
+  and water fall with the steam (:func:`throttled_eut`).
+
+Checked against GT's own classes by ``tests/unit/gtmath/oracle/GtBoilerOracle.java`` (D234).
 """
 
 from __future__ import annotations
@@ -30,6 +37,12 @@ from fractions import Fraction
 STEAM_PER_WATER = 160  # GTValues.STEAM_PER_WATER
 MAX_EFFICIENCY = 10000
 SUPER_TO_NORMAL = 3  # MTELargeBoilerBase.superToNormalSteam
+THROTTLE_STEP = {
+    False: 25,
+    True: 75,
+}  # THROTTLE_STEAM_NORMAL / _SUPERHEATED, EU/t a circuit
+MIN_EUT = 25  # MIN_STEAM_OUTPUT: the throttle's floor
+MAX_CIRCUIT = 25  # setupCircuit reads circuits 1-25
 # LargeBoilerFuelBackend.ALLOWED_FUELS: the fluids (and two blocks) the superheated boilers take.
 ALLOWED_FUELS = frozenset(
     {
@@ -89,16 +102,27 @@ class Steady:
     burn_ticks: int  # ticks 1000 L of the fuel lasts
 
 
-def steady(boiler: Boiler, *, fluid: str, duration: int) -> Steady:
-    """``boiler`` burning ``fluid`` whose ``largeBoilerFakeFuels`` duration is ``duration``."""
+def throttled_eut(boiler: Boiler, circuit: int) -> int:
+    """``adjustEUtForConfig``: the boiler's ``lEUt`` with programmed circuit ``circuit`` (0:
+    none)."""
+    if not 0 <= circuit <= MAX_CIRCUIT:
+        raise BoilerError(f"circuit {circuit}: 0 to {MAX_CIRCUIT}")
+    return max(MIN_EUT, boiler.eut - THROTTLE_STEP[boiler.superheated] * circuit)
+
+
+def steady(boiler: Boiler, *, fluid: str, duration: int, circuit: int = 0) -> Steady:
+    """``boiler`` burning ``fluid`` whose ``largeBoilerFakeFuels`` duration is ``duration``,
+    throttled by ``circuit`` (0: none). ``burn_ticks`` is the unthrottled burn time of 1000 L;
+    the throttle stretches it by ``eut / lEUt`` (``fuel`` has it)."""
     if boiler.superheated and fluid not in ALLOWED_FUELS:
         raise BoilerError(f"{boiler.class_name} does not take {fluid}")
     burn = max(1, boiler.runtime_boost(duration))
-    equivalent = Fraction(boiler.eut * 2 * MAX_EFFICIENCY, 10000)
+    eut = throttled_eut(boiler, circuit)
+    equivalent = Fraction(eut * 2 * MAX_EFFICIENCY, 10000)
     if boiler.superheated:
         steam = equivalent / SUPER_TO_NORMAL
         water = equivalent / (STEAM_PER_WATER * SUPER_TO_NORMAL)
     else:
         steam = equivalent
         water = equivalent / STEAM_PER_WATER
-    return Steady(steam, water, Fraction(1000, burn), burn)
+    return Steady(steam, water, Fraction(1000 * eut, burn * boiler.eut), burn)
