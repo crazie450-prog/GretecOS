@@ -802,7 +802,10 @@ def write(
         _names(conn)
         conn.execute("COMMIT")
     except BaseException:
-        conn.execute("ROLLBACK")
+        # SQLite rolls back by itself on SQLITE_FULL/IOERR/NOMEM; a second ROLLBACK would hide
+        # the real error behind "no transaction is active".
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         raise
     return run_id, replaced, pruned
 

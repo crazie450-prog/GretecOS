@@ -1615,6 +1615,8 @@ select.ask-input option {
     height: auto;
   }
 
+  /* stretch, not the desktop grid's start: a column flexbox with start sizes each column to
+     its content, so a wide table pushed the view past the screen (QA W4). */
   .now-grid,
   .search-grid,
   .settings-grid,
@@ -1622,6 +1624,7 @@ select.ask-input option {
   .base-grid {
     display: flex;
     flex-direction: column;
+    align-items: stretch;
   }
 
   /* One column that the view scrolls: every panel as tall as what it holds, never squeezed
@@ -1640,6 +1643,17 @@ select.ask-input option {
 
   .answer-text.big {
     font-size: calc(22px * var(--type-scale));
+  }
+
+  /* A long NEI ref wraps inside its card instead of hiding its /<sig12> (QA W4). */
+  .answer-text {
+    overflow-wrap: anywhere;
+  }
+
+  .gos-chip.cite {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    max-width: 100%;
   }
 
   .voice-strip {
