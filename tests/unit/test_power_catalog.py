@@ -503,7 +503,9 @@ def test_a_version_3_db_gets_the_power_tables(tmp_path: Path) -> None:
         conn.close()
     conn = access.connect(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == access.SCHEMA_VERSION
+        assert (
+            conn.execute("PRAGMA user_version").fetchone()[0] == access.SCHEMA_VERSION
+        )
         for table in power_db.TABLES:
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM item").fetchone()[0] == 1
