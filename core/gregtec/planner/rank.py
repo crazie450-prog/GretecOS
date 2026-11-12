@@ -27,7 +27,8 @@ minus effort, upkeep inputs, complexity and scarcity (lower is better), each nor
 largest value among the options, ``score = (w_net x net - sum w x cost) / sum w``; ``max_output``
 takes the highest sustained net EU/t within the scale bound; ``output_per_effort`` the highest net
 EU/t per effort hour (an option whose effort is 0, nothing counted, after those with one,
-by net EU/t among themselves). Ties
+by net EU/t among themselves; among those with one, an option whose effort leaves items out,
+``effort.uncounted`` > 0, after the complete ones, WO-4.3, D236). Ties
 break as above. The power weights are ``w_net_eut`` and ``w_upkeep`` in ``me/prefs.md``, with
 ``w_effort``, ``w_complexity`` and ``w_scarcity`` shared with production routes; balanced (1)
 by default (D67) and printed with every result (:func:`describe_power`).
@@ -295,6 +296,11 @@ def power_scores(
     return out
 
 
+def _uncounted(p: Mapping[str, Any]) -> int:
+    """How many items the line's effort leaves out (0 for plans without the field)."""
+    return int(p["metrics"].get("effort", {}).get("uncounted", 0))
+
+
 def _per_effort(v: Mapping[str, float]) -> float | None:
     return v["net_eut"] / v["effort"] if v["effort"] > 0 else None
 
@@ -319,9 +325,11 @@ def order_power(
         elif mode == "output_per_effort":
             ratio = _per_effort(v)
             # Effort 0 (nothing counted: no structure or NEI data) ranks after the rest,
-            # by net EU/t among itself (D235).
+            # by net EU/t among itself (D235); an effort that leaves items out is a lower
+            # bound, so it ranks after the complete ones (WO-4.3, D236).
             head = (
                 ratio is None,
+                _uncounted(p) > 0,
                 -_r(ratio) if ratio is not None else -_r(v["net_eut"]),
             )
         else:
@@ -347,6 +355,16 @@ def order_power(
             + (
                 ["effort 0 (nothing counted): ranked after the rest, by net EU/t"]
                 if mode == "output_per_effort" and ratio is None
+                else []
+            )
+            + (
+                [
+                    (
+                        f"effort leaves {_uncounted(p)} items out (a lower bound): ranked"
+                        " after the lines whose effort is complete"
+                    )
+                ]
+                if mode == "output_per_effort" and ratio is not None and _uncounted(p)
                 else []
             ),
         }
