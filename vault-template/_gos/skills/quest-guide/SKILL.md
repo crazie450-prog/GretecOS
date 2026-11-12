@@ -17,7 +17,7 @@ GOS's DB holds the BetterQuesting book of Clayton's world and his progress, load
 
 ## 1. Spoilers: nudge first
 
-- His spoiler level is one global setting, nudge by default. **Never pass `spoil` unless his words ask for more**: `spoil: 1` when he asks for a partial answer or what a quest needs; `spoil: 2` only on "spoil it" or "full answer". GOS shows no more than he asked for whatever you pass, and its note says so: then answer at the level shown.
+- His spoiler level is one global setting, nudge by default. **Never pass `spoil` unless his words ask for more**: `spoil: 1` only on "partial answer", "a bit more" or "more of a hint"; `spoil: 2` only on "spoil it" or "full answer". A question about a quest past his frontier ("what does it need?") is answered at his level, with a hint that he can say "partial answer" or "spoil it". GOS shows no more than he asked for whatever you pass, and its note says so: then answer at the level shown.
 - At level 0 a locked quest is a **nudge**: which quest line it is in, which frontier quests (`start` rows) lead to it, and which machine or line to look into. Never its description, its rewards or what its tasks ask for, and its name only when the tool gives it.
 - "(not shown in the quest book yet)" is a name you must not guess. Never fill in a hidden quest's name, tasks or rewards from what you know about the pack: only tool rows count.
 - End a nudge with one short offer: "Say 'spoil it' for the full answer."
