@@ -26,6 +26,7 @@
 | GET/POST /api/persona          | see ``persona_routes``  | the persona and switching (WO-5.6)    |
 | GET  /api/plans/{id}/...       | see ``plan_routes``     | a saved plan's cards and exports (WO-3.6)|
 | GET  /api/quests?spoil=        | see ``quests.view``     | the Quests view's payload (WO-6.4)    |
+| GET/POST /api/ores...          | see ``ores.view``       | the Ores view, a vein's waypoint (WO-6.6)|
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
@@ -102,6 +103,7 @@ from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
+from gregtec.ores import view as ore_view
 from gregtec.quests import view as quest_view
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
@@ -778,6 +780,7 @@ def create_app(core: Core) -> FastAPI:
     persona_routes.add_routes(app, core, principal, _json_body)
     plan_routes.add_routes(app, core, principal)
     quest_view.add_routes(app, core, principal)
+    ore_view.add_routes(app, core, principal, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 

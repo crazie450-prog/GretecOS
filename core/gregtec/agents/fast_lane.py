@@ -101,7 +101,9 @@ response."""
 
 # Citations (plan 0.1 principle 2; D131's mte:, D219's tel:, D271's vein:) and DB keys; their digits
 # are ids, not numbers.
-REF = re.compile(r"\b(?:r|q|mte|crop|plan|w|tel|vein):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]")
+REF = re.compile(
+    r"\b(?:r|q|mte|crop|plan|w|tel|vein):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]"
+)
 KEY = re.compile(
     r"\bfluid:[A-Za-z0-9_.]+|[A-Za-z0-9_.|-]+:[A-Za-z0-9_.|-]+@\d+(?:#[0-9a-f]{8,64})?"
 )
@@ -176,7 +178,9 @@ def check_answer(answer: str, sources: Sequence[str]) -> list[str]:
     if made_up := sorted(stated - numbers(joined)):
         problems.append(f"numbers that no tool result holds: {', '.join(made_up[:5])}")
     if stated and not cited:
-        problems.append("numbers without a citation (r:, q:, mte:, crop:, tel: or vein: id)")
+        problems.append(
+            "numbers without a citation (r:, q:, mte:, crop:, tel: or vein: id)"
+        )
     return problems
 
 

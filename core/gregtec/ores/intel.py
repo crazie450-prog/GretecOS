@@ -272,7 +272,15 @@ _NAME_UNSAFE = re.compile(r"[^A-Za-z0-9 _.'-]+")
 def waypoint_name(mix: str) -> str:
     """A waypoint name :mod:`gregtec.bridge.waypoint` accepts, from the mix's display name."""
     words = " ".join(_NAME_UNSAFE.sub(" ", mix).split()).lstrip(" _.'-")
-    name = f"{words} vein" if words and len(words) <= 27 else words[:32].rstrip()
+    if len(words) <= 27:
+        name = f"{words} vein" if words else ""
+    elif len(words) <= 32:
+        name = words
+    else:  # at most 32 characters, cut where a word ends
+        cut = words[:32]
+        name = (
+            cut.rsplit(" ", 1)[0] if words[32] != " " and " " in cut else cut
+        ).rstrip()
     return name if name and waypoint.NAME.fullmatch(name) else "GOS vein"
 
 
