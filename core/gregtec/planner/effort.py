@@ -46,9 +46,8 @@ from gregtec.planner.request import BaseInputs, Request, RequestError, is_stable
 
 CRAFT_S = 2.0  # §7.2: a crafting-table step's default time
 UNLOCK_DEPTH = 3  # §7.2: unlock recursion depth
-GATE_DEPTH = (
-    3  # how deep make() follows items a component's flow imports through a gate
-)
+# how deep make() follows items a component's flow imports through a gate
+GATE_DEPTH = 3
 HAND = "crafting"  # the breakdown's map name for crafting-table and furnace steps
 
 
@@ -61,9 +60,8 @@ class Walk:
     seconds: dict[str, float] = field(default_factory=dict)
     machine: dict[str, int] = field(default_factory=dict)  # map -> mte (first met)
     missing: list[str] = field(default_factory=list)  # items with no recipe at the tier
-    deep: list[str] = field(
-        default_factory=list
-    )  # gated items past GATE_DEPTH or in a loop
+    # gated items past GATE_DEPTH or in a loop
+    deep: list[str] = field(default_factory=list)
 
     def add(self, other: Walk) -> None:
         for k, v in other.crafts.items():

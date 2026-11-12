@@ -11,9 +11,10 @@ reads every number in its text and accepts it only when the JSON holds it (plan 
   it: ``1.2 kEU/t``); ``x64`` or ``×64`` as the count 64; a rate unit (``/s``, ``/min``,
   ``/h``, ``per second|minute|hour``, with one word allowed before the slash: ``2 ingots/min``)
   is compared per second against the JSON's rates (``*rate_s``, ``crafts_s``, ``per_h / 3600``);
-  a duration unit (``s``, ``min``, ``h`` and their words) in seconds against its times only (keys
-  ending ``_s`` or ``_h``, and ``h``: "1500 seconds" doesn't pass on a 1500 EU/t peak); ``%`` as a fraction or as is; a bare number against
-  every number the JSON holds, in its own unit.
+  a duration unit (``s``, ``min``, ``h`` and their words) in seconds against its times only
+  (keys ending ``_s`` or ``_h``, and ``h``: "1500 seconds" doesn't pass on a 1500 EU/t peak);
+  ``%`` as a fraction or as is; a bare number against every number the JSON holds, in its own
+  unit.
 - **Rounding**: within 1% of a JSON number; within 5% after "about" or "~"; 0 only as 0.
 - **Tiers**: a tier name (LV ... MAX) must be one the JSON names, and "tier N" must be one of
   their indices.
@@ -23,8 +24,8 @@ reads every number in its text and accepts it only when the JSON holds it (plan 
   big design they would cover so many values that a wrong number would often pass.
 
 Exponent forms (``1e9``) and digits glued after letters that masking left (``MV2``, ``H2O``)
-are refused outright. Numbers written as words aren't read (as in WO-2.3's check, D152). The result lists the
-offending numbers as written, for the retry prompt.
+are refused outright. Numbers written as words aren't read (as in WO-2.3's check, D152). The
+result lists the offending numbers as written, for the retry prompt.
 """
 
 from __future__ import annotations
