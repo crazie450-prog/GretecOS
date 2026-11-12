@@ -880,6 +880,8 @@ def build_plan(
         g, chain_req, run_key, sub_net, sub_flow, opt.chain.sized, "base", n, False
     )
     nodes = p["nodes"]
+    for node in nodes:
+        node["kind"] = "recipe"
     node_of = {node["recipe"]: node["n"] for node in nodes}
     extra: list[dict[str, Any]] = []
     machines_used: list[dict[str, Any]] = []

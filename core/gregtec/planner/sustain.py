@@ -17,7 +17,7 @@ the node's crafts per second and sums each item over the whole line:
 - a generator (``gen:``) uses up and gives what its node lists (the fuel catalog's numbers, WO-4.1
   and :mod:`.gtmath.boiler`).
 
-Any item whose balance is below zero (beyond float noise, :data:`TOL` of the largest flow) and
+Any item whose balance is below zero (beyond float noise, :data:`TOL`) and
 is not in the free set is an import (noise is relative to that item's own flow, so a trickle of
 a dense fuel still counts): the line is not self-sustaining, and the proof names each
 one with its rate. The plan's own ``boundary.in`` is checked against the free set too, so a line
