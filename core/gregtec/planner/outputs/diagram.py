@@ -5,9 +5,9 @@ Boxes are the plan's nodes (machine, count, tier, ``r:`` id), plus one box per b
 plan's ``edges`` (item and rate, as the plan has them) and, for the boundary, a link from each
 input box to the nodes whose recipe takes it and from each node that makes an output to its box;
 a boundary link carries no rate of its own (the box shows the plan's rate), so no rate is
-split here. :func:`layers` places boxes in columns the way the dashboard's ``layoutFlow`` does
-(each box one column after the furthest box feeding it, loops keep their first place), so the
-three drawings agree.
+split here. :func:`layers` places boxes in columns (each box one column after the furthest box
+feeding it, loops cut at their back edges) for the PNG and the gtnhplanner.com board; the
+dashboard lays its card out with elkjs.
 """
 
 from __future__ import annotations
@@ -120,24 +120,49 @@ def flow(plan: Mapping[str, Any], book: Book) -> Flow:
 def layers(
     ids: Sequence[str], edges: Sequence[tuple[str, str]]
 ) -> dict[str, tuple[int, int]]:
-    """id -> (column, row): longest-path layering, relaxed at most once per box (a loop can't
-    push columns forever), rows in input order (dashboard/src/cards/flowLayout.ts)."""
+    """id -> (column, row): loops are cut at their back edges (a depth-first walk from the
+    boxes nothing feeds, in input order), then each box goes one column after the furthest box
+    feeding it; rows in input order. Deterministic: only the input order decides."""
     known = set(ids)
+    out_edges: dict[str, list[str]] = {i: [] for i in ids}
+    fed: set[str] = set()
+    for a, b in edges:
+        if a in known and b in known and a != b and b not in out_edges[a]:
+            out_edges[a].append(b)
+            fed.add(b)
+    state: dict[str, int] = {}  # 1 on the walk's path, 2 done
+    forward: list[tuple[str, str]] = []
+    for root in [i for i in ids if i not in fed] + list(ids):
+        if root in state:
+            continue
+        stack = [(root, iter(out_edges[root]))]
+        state[root] = 1
+        while stack:
+            node, it = stack[-1]
+            nxt = next(it, None)
+            if nxt is None:
+                state[node] = 2
+                stack.pop()
+            elif state.get(nxt) == 1:
+                continue  # a back edge: it closes a loop
+            else:
+                forward.append((node, nxt))
+                if nxt not in state:
+                    state[nxt] = 1
+                    stack.append((nxt, iter(out_edges[nxt])))
     col = dict.fromkeys(ids, 0)
-    usable = [(a, b) for a, b in edges if a in known and b in known and a != b]
     for _ in range(len(ids)):
         moved = False
-        for a, b in usable:
-            want = col[a] + 1
-            if want > col[b] and want < len(ids):
-                col[b] = want
+        for a, b in forward:
+            if col[a] + 1 > col[b]:
+                col[b] = col[a] + 1
                 moved = True
         if not moved:
             break
     rows: dict[int, int] = {}
-    out: dict[str, tuple[int, int]] = {}
+    placed: dict[str, tuple[int, int]] = {}
     for i in ids:
         c = col[i]
-        out[i] = (c, rows.get(c, 0))
+        placed[i] = (c, rows.get(c, 0))
         rows[c] = rows.get(c, 0) + 1
-    return out
+    return placed

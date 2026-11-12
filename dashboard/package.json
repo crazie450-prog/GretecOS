@@ -45,6 +45,8 @@
     "@fontsource/space-mono": "5.3.0",
     "@fontsource/titillium-web": "5.3.0",
     "@fontsource/unbounded": "5.3.0",
+    "@xyflow/react": "12.8.4",
+    "elkjs": "0.10.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
