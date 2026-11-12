@@ -410,6 +410,23 @@ public final class ExportRun {
         counts.put("ore_mix_errors", ores.layerErrors);
         counts.put("dimensions", ores.dimensions);
 
+        // Turbine rotors and single-block generators (WO-4.1, D230). Not part of "complete": the recipe DB doesn't
+        // need it; `gos db build` loads it only from runs with parts.power == "ok".
+        t = System.currentTimeMillis();
+        PowerPass power = new PowerPass(stacks);
+        try (HashedFile out = open(dir, "gt_power.json")) {
+            power.write(out);
+            parts.put("power", "ok");
+        } catch (Throwable e) {
+            GregtecLink.LOG.error("export: power pass failed", e);
+            parts.put("power", "failed");
+            partErrors.put("power", Json.error(e));
+        }
+        durations.put("power", System.currentTimeMillis() - t);
+        counts.put("turbine_materials", power.materials);
+        counts.put("generators", power.generators);
+        counts.put("power_errors", power.errors);
+
         // The full ore dictionary (D145). Not part of "complete" either: without it `gos db build` names NEI slots
         // from items.jsonl's ore lists, as before. Before the item table, so every member is listed there.
         t = System.currentTimeMillis();
