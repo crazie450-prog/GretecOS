@@ -109,6 +109,9 @@ class Network:
     prune: bool = (
         True  # a route runs only what it reaches from the targets (False: all)
     )
+    banned: frozenset[str] = (
+        frozenset()
+    )  # items never imported (a power line's own EU, D233)
 
     def proc(self, pid: str) -> Proc:
         return next(p for p in self.procs if p.id == pid)
@@ -229,7 +232,7 @@ def _build(
             m.target_rows[k] = coefs
             continue
         if k in used:
-            i = m.imp[k] = m.var()
+            i = m.imp[k] = m.var(0.0, 0.0 if k in net.banned else math.inf)
             coefs[i] = 1.0
             if k in made and k not in net.free_in:
                 gated.append(i)
@@ -547,6 +550,7 @@ def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
         free_in=net.free_in,
         free_out=net.free_out,
         prune=False,
+        banned=net.banned,
     )
     first = _run(fixed, procs)
     if first is None:
@@ -611,6 +615,7 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
             (k, (pins[k],)) if k in pins else (k, rs) for k, rs in net.choices
         ),
         pinned=net.pinned,
+        banned=net.banned,
     )
     if not open_choices:
         return [solve_route(narrowed)]
@@ -674,6 +679,7 @@ def exact_counts(
         free_in=net.free_in,
         free_out=net.free_out,
         prune=False,
+        banned=net.banned,
     )
     scale = max((r for _, r in net.targets), default=1.0)
     floor = flow.floor / scale if flow.floor else 0.0
