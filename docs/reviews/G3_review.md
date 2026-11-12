@@ -1,22 +1,26 @@
 # Gregtec OS: G3 gate review (Phase 3, planner engine and production designer)
 
-2026-11-12 · independent gate reviewer (D41, D158 (3)) · reviewed: `origin/main` at `90b6782` (PR #77), which holds the Phase 3 PRs #57 (WO-3.1), #59 (WO-3.2), #63 (WO-3.3), #66 (WO-3.4), #72 (WO-3.5), #78 (WO-3.6) and #68 (WO-3.8). **WO-3.7 (PR #80) is not merged:** it is open at `8bdaaba`, mergeable, with all five CI jobs green on that head. This report marks its rows "not merged" and doesn't review its code.
+2026-11-12 · independent gate reviewer (D41, D158 (3)) · reviewed: `origin/main` at `725a1ce` (PR #80), which holds all eight Phase 3 PRs: #57 (WO-3.1), #59 (WO-3.2), #63 (WO-3.3), #66 (WO-3.4), #72 (WO-3.5), #78 (WO-3.6), #80 (WO-3.7) and #68 (WO-3.8). The first draft of this report was written on `90b6782`, before WO-3.7 merged at 16:32; its WO-3.7 rows were re-checked on `725a1ce` after the gate review (below).
 
 ## Verdict
 
-**G3 is not ready to sign yet, for two reasons, and only one of them is code.**
+**Every Phase 3 WO is merged and nothing in code is "not met". G3 is ready for Clayton's PC steps; what remains before he signs is PC and Lab work, his answers, and one paid measurement.**
 
-1. **WO-3.7 is not merged.** The Designer view, the `line-designer` skill, the text → accepted plan path and `task_max_usd` are all in PR #80. Until it merges, the gate's "Designer" line (§10) can't be checked on `main`. Its CI is green, so this is an ordering problem, not a defect.
+1. **What's left is the PC, the Lab and Clayton:** the steps below, his answers to the questions, and WO-3.7's `task_max_usd` measurement, which is a paid run on his key (`designer.md` C; the default stays 2.0 until then).
 2. **The G3 row's reference checks are partly a PC job by design.** Every check that can run without the full pack, the site and the Lab ran here:
-   - **Per machine (NEI):** all 129 distinct recipes behind the 182 distinct (machine, recipe, tier, OC, parallel) tuples of the 13 benchmark designs the dev runtime has match NEI's own dump exactly: EU/t, ticks, every amount and every chance. The OC and parallel half equals GT's own classes bit for bit (WO-3.1's oracle).
+   - **Per machine (NEI):** all 129 distinct recipes behind the 182 distinct (machine, recipe, tier, OC, parallel) tuples of the 13 benchmark designs the dev runtime has match NEI's own dump exactly: EU/t, ticks, every amount and every chance. That is the base half. The OC and parallel come from `gtmath`, which equals GT's own classes bit for bit for the inputs it gets (WO-3.1's oracle); those inputs (which hatches, amps and coil a machine gets, D177) are WO-3.2's defaults, and only the Lab checks them (D254).
    - **Per line (gtnhplanner.com):** all 13 designs import into the live site with no problems. 10 of 13 machine totals are within ±2% (9 equal). **3 are not:** polyethylene, silicon and the platline. GOS sizes 6–14% more machines than the site. By [QA:D12] the Lab decides those three, and that's a PC step.
    - **Not doable here:** nanocircuits and wetware circuits (the dev runtime lacks GTNH's circuit recipes), the Lab runs, and "at most 2 small lines fully built in the Lab".
 
 Everything else in Phase 3 is met, or met with fakes where a PC or site check remains. Nothing in a merged WO is "not met" in code. No product code was changed by this review. One test was added: `tests/integration/test_g3_lines_harness.py`, which makes the NEI half of the G3 row a repeatable check (D254).
 
+### Addendum after the gate review (2026-11-12)
+
+The gate review (PR #84) found the WO-3.7 rows stale: PR #80 merged into `main` at 16:32 (`725a1ce`) while this report was being written. This branch now merges `origin/main` at `725a1ce` (D254 sits after WO-3.7's D250–D253), the WO-3.7 section below is re-checked on that commit, and the review's other findings are applied: `report` mode fails on a home with no saved plans or no plan for a G3 line, the special-item rule is a helper the test calls, `report` writes UTF-8, the per-machine status is narrowed to what the test shows (base recipe = NEI; OC inputs Lab-only), and PC steps 0 and 3–6 are corrected. The runs below that name `725a1ce` or `review/g3` after the merge were made for this addendum.
+
 Evidence tags, as in G0–G2:
 - **[repo]:** checked in the repo, the git history or GitHub's CI logs.
-- **[here]:** run in this reviewer's build container (Linux) on `review/g3` (= `90b6782` plus the new test).
+- **[here]:** run in this reviewer's build container (Linux) on `review/g3` (first draft: `90b6782` plus the new test; addendum: merged with `725a1ce`).
 - **[PR]:** the implementer's PR description, not re-checked here.
 - **[PC]:** needs Clayton's PC, the full pack, the Lab or his eye. Nothing from the PC is in the evidence yet for Phase 3.
 
@@ -37,6 +41,7 @@ Evidence tags, as in G0–G2:
 | `pnpm -C dashboard e2e --workers=1` (own ports and homes) | **39 passed**, including the 7 My base specs |
 | `node dashboard/e2e/gtnhplanner-import.cjs` on the 13 benchmark designs (live gtnhplanner.com) | 13 of 13 import with no problems and no page errors. Machine totals in "G3 row" below |
 | `uv run python tests/integration/test_g3_lines_harness.py report <client home with the 13 plans>` | 182 tuples, 182 `ok` |
+| After the merge with `725a1ce`: see "Re-runs after the merge" below | |
 
 PR #78 reported two `test_plan_harness` failures (light fuel and epoxid) on a local 2026-11-06 export. They don't reproduce on fresh runs: 17 of 17 passed here and on CI's mod job on `90b6782`. They came from a stale shared harness folder, not from the code.
 
@@ -51,7 +56,8 @@ PR #78 reported two `test_plan_harness` failures (light fuel and epoxid) on a lo
 | `46067e8` | #68 WO-3.8 | 43172842301 (+ dashboard Windows 43172842217) | success |
 | `9c8d5ce` | #72 WO-3.5 | 43193002904 | success |
 | `b5899c6` | #78 WO-3.6 | 43207194916 (+ dashboard Windows 43207194949) | success |
-| `90b6782` | #77 (head) | 43215106534: ubuntu, windows, dashboard, mod; 43215106614: mod (Windows) | all success |
+| `90b6782` | #77 | 43215106534: ubuntu, windows, dashboard, mod; 43215106614: mod (Windows) | all success |
+| `725a1ce` | #80 WO-3.7 (head) | 43259728098: ubuntu, windows, dashboard, mod; 43259728328: dashboard (Windows) | CI_725 |
 
 On `90b6782` the `mod` job ran `pytest tests/integration` on fresh server and client harness runs: **142 passed, 20 skipped**. That includes every Phase 3 harness file: graph 19, gtmath 5, machines 2, my_base 2, outputs 4, plan 17, rank 18 + 1 skip [repo]. The 20 skips are the quest pack, the structures dump, downloaded voice models and the sulfuric-acid route skip; none is a failing Phase 3 check.
 
@@ -130,7 +136,7 @@ PR #72, merge `9c8d5ce`, D196–D199 [repo].
 | ≥ 2 benchmarks with an addon column with `machine_fact` confidence | **met with fakes** | `test_metrics::test_addon_column_shows_machine_fact_confidence` and `test_plan::test_addon_column` on the fixture DB. The dev runtime has no addon multiblocks [here]. PC: step 3's `--addons` runs |
 | Batch totals = rate × time ±0.1% for 3 targets | met | `test_rank_harness::test_batch_totals_equal_rate_times_time` (steel, nitric acid, platinum dust), `test_plan_harness::test_batch_totals` [here] |
 
-Explanations go through `explain.explain()` and the validator. The model never orders routes (D199). WO-3.7 adds the real planner-model call (`plan_explain`, not merged).
+Explanations go through `explain.explain()` and the validator. The model never orders routes (D199). WO-3.7 adds the real planner-model call (`plan_explain`, D251), on fakes here.
 
 ### WO-3.6: Outputs
 
@@ -153,15 +159,16 @@ The flow card (React Flow + elkjs, D159) and the PNG need Clayton's eye on a rea
 
 > **Acceptance:** "End-to-end: text request → accepted plan in the vault (voice after G5); a pin made in the Designer survives reload and re-solve; `task_max_usd` is set from the measurements"
 
-**Verdict: not merged.** PR #80 is open at `8bdaaba`, with D250–D253. GitHub reports it mergeable and clean, and all five check runs are green on that head (ubuntu, windows, dashboard, dashboard-windows, mod) [repo]. Not reviewed here. From its PR text [PR]:
+**Verdict: met with fakes for the first two parts; `task_max_usd` is not met until Clayton's paid run.** The Designer view needs Clayton's board reconciliation (D92, D250).
 
-| Part | Status |
-|---|---|
-| Text request → accepted plan in the vault | not merged (PR: `test_designer_harness.py` on the harness DB; the real-key run is `designer.md` B) |
-| A pin made in the Designer survives reload and re-solve | not merged (PR: e2e `a pin made in the Designer survives a reload and a re-solve`) |
-| `task_max_usd` set from the measurements | not merged, and **PC step (paid)** after merge: `designer.md` C. PR #80 says it stays open until Clayton's real run |
+PR #80, merge `725a1ce`, D250–D253 [repo]. Checked on `725a1ce` (this branch after the merge) with fresh harness runs.
 
-Once #80 merges, a short addendum to this report should re-run its e2e and harness test on `main`.
+| Part | Status | Evidence |
+|---|---|---|
+| Text request → accepted plan in the vault | **met with fakes** | `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_designer_harness.py`: DESIGNER_H. A text request goes through the real CLI and the deep lane with a fake model, `design_production` and `plan_explain`, then an accepted plan and its line note in the vault [here]. The real-key run is `designer.md` B (step 2) |
+| A pin made in the Designer survives reload and re-solve | met | `test_designer_harness.py` "a pin survives reload and re-solve" on the harness DB, and e2e `designer.spec.ts` "a pin made in the Designer survives a reload and a re-solve": DESIGNER_E [here] |
+| Voice | after G5 | the criterion says so |
+| `task_max_usd` set from the measurements | **not met (paid PC step)** | The mechanism (`gos eval design-cost`, `--apply-from`, D253) and a fake run exist (`test_design_cost`, in the full pytest). The `[budget] task_max_usd` default stays 2.0 until Clayton's real run, `designer.md` C (step 2). Spending is his call |
 
 ### WO-3.8: My base panel
 
@@ -190,7 +197,7 @@ How the references are read is D254 (judgement call, below).
 |---|---|---|
 | The 14 lines (PM draft; Clayton edits it) | **partly; question** | 12 of 14 design on the dev runtime. Nanocircuits and wetware circuits don't: GTNH's circuit recipes are in its core mod, which the harness doesn't load (PR #63) → step 3. No record shows Clayton edited the PM draft (Q-G3-1) |
 | Fuel chains of the 4 power lines | partly; G4 | Light fuel is designed and checked here (0 gates). Benzene, the tree-farm steam and naquadah fuel chains belong to WO-4.2 (PR #81, open, not merged) and G4 |
-| Every distinct (machine, recipe, tier, OC, parallel) within ±2% of NEI | **met on the dev runtime; full pack is a PC step** | 13 designs, 182 distinct tuples, 129 distinct recipes: every recipe matches NEI's own line exactly (`test_g3_lines_harness`, [here]). The OC and parallel come from `gtmath`, which equals GT's classes bit for bit (WO-3.1). Step 4 re-runs this on the full pack |
+| Every distinct (machine, recipe, tier, OC, parallel) within ±2% of NEI | **base half met on the dev runtime; OC/parallel met by construction; D177's machine-selection inputs Lab-only** | Base half: 13 designs, 182 distinct tuples, 129 distinct recipes, every recipe equal to NEI's own line (`test_g3_lines_harness`, [here]); step 4 re-runs it on the full pack. OC and parallel: `gtmath` equals GT's classes bit for bit for the inputs it gets (WO-3.1). Those inputs (which hatches, amps and coil a machine gets, so its OC count and parallel) are WO-3.2's D177 defaults; no reference here checks a tuple's overclocked EU/t and duration, so step 6 times at least one overclocked machine per D177 hatch layout |
 | Line totals within ±2% of gtnhplanner.com (or PlanNH) | **10 of 13 met; 3 not met → Lab** | Table below. PlanNH isn't a reference: D66 dropped the PlanNH spike |
 | When references disagree, the Lab decides, and the report names the reference | **PC step** | Polyethylene, silicon and the platline (step 6) |
 | At most 2 small lines fully built in the Lab | **PC step** | Step 7 suggests steel (EBF) and sulfuric acid |
@@ -225,7 +232,7 @@ Where GOS and the site differ, GOS always sizes more machines. That fits GOS's c
 
 ## Findings
 
-1. **WO-3.7 isn't merged** (above). Merge PR #80, then add an addendum to this report.
+1. **WO-3.7's `task_max_usd` is open** until Clayton's paid `designer.md` C run (spending is his call). The default stays 2.0.
 2. **The naquadah benchmark's best route uses the Elemental Duplicator** (`gt.recipe.replicator`) to make sodium and fluorine from UU matter (two nodes, `r:gt.recipe.replicator/17da663e76ff` and `r:gt.recipe.replicator/17f9ad1cdf79`, in `plan:pl-c07af822a0`). It also imports 7 items through gates. PR #63 Q5 already asked whether to rank the replicator last everywhere. This review recommends answering that before the full-pack naquadah design is judged (Q-G3-3). It is a gameplay preference, so it's Clayton's call, not a defect.
 3. **Three lines differ from gtnhplanner.com by more than 2%** (table above). The Lab decides (step 6).
 4. **Footprints are unproven on real data:** no harness run has the structure dump (`plan_outputs.md` check 3, V09).
@@ -298,7 +305,7 @@ None is answered by a later decision (D200–D253 hold no answers to them). The 
 - Q5: boundary rates stay in the flow card's `machine` text; add a `rate` field to `FlowNode` in WO-3.7?
 - Q6: commit trailers differ between rounds (no action).
 
-**PR #80 (WO-3.7, not merged)**, https://github.com/crazie450-prog/GretecOS/pull/80
+**PR #80 (WO-3.7)**, https://github.com/crazie450-prog/GretecOS/pull/80
 - `task_max_usd` stays open until Clayton's paid run (`designer.md` C).
 - D251: `plan_explain`'s planner-model calls are metered but outside the lane's per-task cap (D156). OK?
 - D253 (cap = worst × 1.5, rounded up to $0.25, at least $0.50): pending Clayton.
@@ -307,8 +314,8 @@ None is answered by a later decision (D200–D253 hold no answers to them). The 
 **New from this review**
 - **Q-G3-1:** the 14 lines are the PM draft (D65, plan §8 G3). Keep them as they are, or edit the list? This review used the target keys and tier caps of `test_plan_harness.py`.
 - **Q-G3-2:** the tier caps for nanocircuits and wetware circuits on the full pack (step 3 suggests IV and LuV; change them to the tiers you'd really build at).
-- **Q-G3-3:** rank the replicator last, or exclude it by default, before the naquadah line is judged (finding 2; PR #63 Q5)?
-- **Q-G3-4:** D254, how the G3 references are read (below).
+- **Q-G3-3:** rank the replicator last, or exclude it by default, before the naquadah line is judged (finding 2; PR #63 Q5)? The gate reviewer recommends the conservative default, "rank last" rather than exclude, consistent with D189 ("side routes stay listed and pinnable").
+- **Q-G3-4:** D254, how the G3 references are read (below). The gate reviewer agreed, with the per-machine half narrowed (base recipe = NEI; OC inputs Lab-only) and step 6 widened.
 
 ---
 
@@ -316,7 +323,7 @@ None is answered by a later decision (D200–D253 hold no answers to them). The 
 
 These run after G2's PC steps 0 to 3 (`docs/reviews/G2_review.md`: Node.js and pnpm; `phase1_pc_checks.md` steps 1 to 12, which include the full-pack Export run, the DB build for gos-dev (4a) and for Clayton (4b), and the quests load; the setup wizard). They don't repeat them, and they share G1's Lab sitting (`docs/runbooks/g1_golden_lab.md`): same gos-dev clone, same Lab world. Commands marked **gos-dev** run in `runas /user:gos-dev powershell` in `C:\GregtecOS-dev\GretecOS`, against gos-dev's own GOS_HOME. Commands with `$gos` run in Clayton's own normal PowerShell window (`$gos` is `C:\GregtecOS-app\current\.venv\Scripts\gos.exe`, as in `phase1_pc_checks.md`). Use `$ProgressPreference = 'SilentlyContinue'`. Nothing here writes to Play. The Lab parts (steps 6 and 7) are ordinary play, about 3 to 5 h in all.
 
-**0. Deploy a green `main` that contains WO-3.7** (PR #80), with all CI jobs green on that commit. Today `main` is green at `90b6782` (runs 43215106534 and 43215106614), but that doesn't have WO-3.7. In the profile clone: `git pull`, then `uv run gos deploy`. As gos-dev: `git pull` in `C:\GregtecOS-dev\GretecOS`.
+**0. Deploy `main` at `725a1ce` or later, with CI green on that commit** (`725a1ce` holds WO-3.7; its CI is run 43259728098 plus dashboard Windows 43259728328). In the profile clone: `git pull`, then `uv run gos deploy`. As gos-dev: `git pull` in `C:\GregtecOS-dev\GretecOS`.
 
 **1. My base (WO-3.8), Clayton:** in the dashboard's Base view, set a tier override, tick one machine you own (for example an EBF), and enter some stock of one item (for example 64 steel ingots). Then:
 ```powershell
@@ -329,7 +336,7 @@ These run after G2's PC steps 0 to 3 (`docs/reviews/G2_review.md`: Node.js and p
 
 **2. Designer (WO-3.7):** `docs/runbooks/designer.md` A and B as written (design, pin, reload, re-solve, accept, then the line note in the vault; a text request through the deep lane on the stored key). Approve or mark up the Designer board. Step C (paid, sets `task_max_usd`) is your call on spending.
 
-**3. Design the 14 benchmark lines on the full pack, gos-dev** (about 15–30 min; note any design over 60 s):
+**3. Design the 14 benchmark lines on the full pack, gos-dev** (about 15–30 min; note any design over 60 s). Run them as this review designed them: gos-dev's My base empty (gos-dev has never set one; if it has, clear it in gos-dev's Base view first) and balanced weights (no `me/prefs.md` in gos-dev's vault). Otherwise the best route can differ from this report's table.
 ```powershell
 cd C:\GregtecOS-dev\GretecOS
 $h = if ($env:GOS_HOME) { $env:GOS_HOME } else { "$HOME\GregtecOS" }
@@ -356,6 +363,7 @@ uv run gos plan "steel ingot" --tier MV --addons --json
 uv run gos plan "platinum dust" --tier IV --addons --json
 ```
 - [ ] `--check-chains` exits 0.
+- [ ] Each `gos plan` prints `ranked by weights (balanced)`. The first `saved <id>` line of each target is its best-ranked route; note it.
 - [ ] Every line saves at least one plan. If a name asks a clarifying question, pick the item and re-run with its key. Change the two circuit tiers if you'd build them elsewhere (Q-G3-2).
 - [ ] The two `--addons` runs show an addon column with a `machine_fact` confidence (WO-3.5). If one doesn't, try another line you'd build with an addon machine.
 - [ ] Paste each plan's id, machine total and the time it took.
@@ -363,24 +371,32 @@ uv run gos plan "platinum dust" --tier IV --addons --json
 **4. Every machine against NEI, full pack, gos-dev** (2 min):
 ```powershell
 uv run python tests/integration/test_g3_lines_harness.py report $h > "$HOME\g3_lab_sheet.tsv"
+$LASTEXITCODE
 Select-String -Path "$HOME\g3_lab_sheet.tsv" -Pattern "`tDIFF`t"
 ```
-- [ ] Exit code 0 and no `DIFF` line. Paste any `DIFF` lines as they are.
+- [ ] `$LASTEXITCODE` prints 0 and there is no `DIFF` line. Paste any `DIFF` lines as they are. It also fails (1) with `no saved plans in ...` or `no saved plan for <line>` when `$h` is the wrong home or a step 3 line didn't save: fix that first. The sheet is UTF-8.
 
 **5. Line totals against gtnhplanner.com, gos-dev** (10 min; needs the internet; the first time, run `pnpm exec playwright install chromium` in `dashboard`):
 ```powershell
 cd dashboard
 pnpm install --frozen-lockfile
-node e2e/gtnhplanner-import.cjs (Get-ChildItem "$h\data\plans\*\gtnhplanner.json").FullName > "$HOME\g3_site.jsonl"
+$best = Get-ChildItem "$h\data\plans\*.json" | ForEach-Object {
+  $p = Get-Content $_.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+  if ($p.rank -and $p.rank.position -eq 1 -and $p.rank.column -eq 'base') { "$h\data\plans\$($p.id)\gtnhplanner.json" }
+}
+node e2e/gtnhplanner-import.cjs $best > "$HOME\g3_site.jsonl"
 cd ..
 ```
-- [ ] Every line has `"problems":[]`.
-- [ ] For each best-ranked plan, compare `site_machines` with `file_machines`. List every line outside ±2%. On the dev runtime these were polyethylene, silicon and the platline.
+- [ ] `$best` has one file per line of step 3 (15), and they match the first `saved` ids you noted there.
+- [ ] Every line of `g3_site.jsonl` has `"problems":[]`.
+- [ ] Compare `site_machines` with `file_machines` on each line. List every line outside ±2%. On the dev runtime these were polyethylene, silicon and the platline.
 
 **6. Lab single-machine runs for the lines outside ±2%** (`uv run gos launch lab`, as in `g1_golden_lab.md` step 3):
 - Open the line's `gtnhplanner.json` on the site and find the cards whose machine count differs from GOS's `≤` box. Look each one up in the plan's `bom.tsv`: machine, tier, OC, parallel, EU/t, `r:` id.
 - For each one, build that machine in the Lab at the BOM's tier, with the hatches and coil the plan names. Run the recipe and time 10 crafts (or read the GT scanner's progress). Compare the time per craft and the EU/t with `bom.tsv`.
 - [ ] For each line, write down which reference the Lab agrees with (GOS or the site) and by how much. This is the "report names the reference used" part [QA:D12].
+- Also time **at least one overclocked machine per D177 hatch layout**, even from lines that agree with the site: one with 1 plain energy hatch, one with 2 plain energy hatches, and one with coils (for example the EBF of the steel line). Pick them from any `bom.tsv` of step 3 where OC is at least 1. NEI shows only base recipes, so this is the only check of the overclocked EU/t and time GOS gives a tuple (D254 (1)).
+- [ ] Each one's time per craft and EU/t equal `bom.tsv` within ±2%.
 
 **7. Build two small lines in the Lab** (suggested: steel (EBF) at MV and sulfuric acid at MV, or any two of your choice). Build each from its saved plan's BOM and let it run for 10 minutes.
 - [ ] Output per minute is within ±2% of the plan's rate.
@@ -392,7 +408,7 @@ cd ..
 **9. Licence text:** compare the gtnh-flow MIT block in `NOTICE.txt` with https://github.com/OrderedSet86/gtnh-flow/blob/master/LICENSE (PR #66).
 
 **Required before Clayton signs G3:**
-1. PR #80 (WO-3.7) merged and green, and steps 0 to 8 with their paste-backs.
+1. Steps 0 to 8 with their paste-backs (`main` at `725a1ce` or later, CI green).
 2. His answers, or "keep as built", to Q-G3-1 to Q-G3-4 and to the Phase 3 questions above (D158: the defaults stand and are reversible). Q-G3-3 should come before the naquadah line is judged.
 
 ---
@@ -401,10 +417,10 @@ cd ..
 
 1. **The Lab may side with gtnhplanner.com.** GOS sizes more machines on 3 lines. If the Lab agrees with the site, D177's conservative defaults over-build; the fix would be a defaults change, not a math change, since `gtmath` equals GT's classes. (Likely: the deviations are all in the conservative direction.)
 2. **Full-pack design times** may make the Designer feel slow (finding 5). (Likely, size unknown.)
-3. **Real-model explanations** are untested: `plan_explain` (WO-3.7) runs on fakes only; the validator guards the numbers, with the template as the fallback. (Confirmed)
+3. **Real-model explanations** are untested: `plan_explain` (WO-3.7, merged) runs on fakes only until `designer.md` B; the validator guards the numbers, with the template as the fallback. (Confirmed)
 4. **Addon machines are untested on real data:** the dev runtime has none, so the addon column and its confidence badges are fixture-only until step 3. (Confirmed)
 
 ## After the review
 
-- Added: `tests/integration/test_g3_lines_harness.py`. It designs the 13 dev-runtime lines on the server harness DB and checks every recipe of every distinct tuple against the client run's NEI dump. It reuses G1's check from `test_golden_recipes.py`, plus one rule: an NEI stack equal to the recipe's own `special_items` (the Bacterial Vat's culture, the replicator's data orb) is left out of the pairing, because the DB keeps it in `recipe_meta`. Its `report` mode is step 4. CI's mod job runs it with the other integration tests (about 3 min).
+- Added: `tests/integration/test_g3_lines_harness.py`. It designs the 13 dev-runtime lines on the server harness DB and checks every recipe of every distinct tuple against the client run's NEI dump. It reuses G1's check from `test_golden_recipes.py`, plus one rule: an NEI stack equal to the recipe's own `special_items` (the Bacterial Vat's culture, the replicator's data orb) is left out of the pairing, because the DB keeps it in `recipe_meta`. Its `report` mode is step 4; after the gate review it fails on a home with no saved plans or no plan for a G3 line, and writes UTF-8. CI's mod job runs it with the other integration tests (about 3 min).
 - Decision D254 records how the references are read.
