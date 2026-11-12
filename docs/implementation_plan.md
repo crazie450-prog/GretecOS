@@ -1517,7 +1517,8 @@ CREATE TABLE action(id INTEGER PRIMARY KEY, created INT, kind TEXT, args TEXT,
 CREATE TABLE plan(id TEXT PRIMARY KEY, name TEXT, created INT, kind TEXT CHECK(kind IN ('production','power')),
   target TEXT, objective TEXT, status TEXT, json_path TEXT, metrics TEXT, gt_version TEXT, run_id INT,
   affected_run INT);   -- export run that changed or removed a cited recipe (QA:D9)
--- My base (D63, D64)
+-- My base (D63, D64). Superseded by D210: WO-3.8 keeps it in the core's my_base_machine(mte_id, source)
+-- and my_base_stock(key) (store.py), keyed on stable keys; these two stay unused.
 CREATE TABLE base_machine(machine_id INT PRIMARY KEY, count INT,
   source TEXT CHECK(source IN ('manual','event','census')), upd INT);
 CREATE TABLE base_stock(item_id INT, fluid_id INT, qty INT, upd INT, PRIMARY KEY(item_id, fluid_id));

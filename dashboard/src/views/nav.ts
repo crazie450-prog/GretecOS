@@ -33,13 +33,13 @@ export const VIEWS: readonly View[] = [
   { id: "crops", label: "Crops", key: "7", later: "WO-6.7", board: true },
   { id: "costs", label: "Costs", key: "8", later: null, board: false },
   { id: "settings", label: "Settings", key: "9", later: null, board: true },
-  { id: "base", label: "Base", key: null, later: "WO-3.8 and WO-7.4", board: false },
+  { id: "base", label: "Base", key: null, later: null, board: false }, // My base (WO-3.8); stalled machines WO-7.4
   { id: "activity", label: "Activity", key: null, later: "WO-6.3", board: false },
   { id: "ores", label: "Ores", key: null, later: "WO-6.6", board: false },
   { id: "build", label: "Build", key: null, later: "Phase 10", board: false },
 ];
 
-export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "costs", "settings"];
+export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "base", "costs", "settings"];
 
 export function viewOf(id: string): View {
   return VIEWS.find((v) => v.id === id) ?? VIEWS[0];
