@@ -960,7 +960,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         source = (
             "synthetic: fakes and synthetic audio on this machine, not a PC measurement"
         )
-        processes = {"voice+core": [os.getpid()]}
+        processes: dict[str, list[int]] = {"voice+core": [os.getpid()]}
         sampler = Sampler(processes).start()
         answer = _fast_lane(cfg)
         try:
@@ -986,22 +986,22 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         why_resources = ""
     else:
         source = f"the voice client's log in {cfg.logs_dir}"
-        processes = _processes(args.pid)
+        processes = {}
         why_resources = "give --minutes to sample while GOS runs"
         started = datetime.now(UTC)
         if args.minutes > 0:
-            if isinstance(processes, str):
-                why_resources, processes = processes, {}
+            found = _processes(args.pid)
+            if isinstance(found, str):
+                why_resources = found
             else:
+                processes = found
                 print(
                     f"Sampling for {args.minutes:g} minutes (core: "
-                    f"{_pids(processes[CORE])}, voice: {_pids(processes[VOICE])}); play "
+                    f"{_pids(found[CORE])}, voice: {_pids(found[VOICE])}); play "
                     "and ask GOS now. Ctrl+C ends early.",
                     file=out,
                 )
-                peaks = _sample(processes, args.minutes * 60)
-        elif isinstance(processes, str):
-            processes = {}
+                peaks = _sample(found, args.minutes * 60)
         turns = turn_records(cfg.logs_dir)
         wakes = turn_records(cfg.logs_dir, "wake")
         if args.minutes > 0:
@@ -1012,9 +1012,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     checks += game_checks(
         args.fps_before, args.fps_during, args.tps_before, args.tps_during
     )
-    answers, why = eval_answers(
-        cfg
-    )  # after the sampling: its CPU and RAM aren't GOS's run
+    # after the sampling, so its CPU and RAM aren't counted as GOS's
+    answers, why = eval_answers(cfg)
     checks += spoken_checks(answers, say, why)
     text = summary(checks, source)
     print("\n" + text, end="", file=out)
