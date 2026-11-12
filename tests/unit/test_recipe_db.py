@@ -1257,6 +1257,29 @@ def test_a_failed_write_rolls_back(
     assert rows(good.db, "SELECT run_key FROM export_run") == [(RUN,)]
 
 
+def test_a_full_disk_is_reported_as_such(
+    tmp_path: Path, allow_list: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA W4: SQLite rolls back by itself on SQLITE_FULL; the build reports the full disk, not
+    'cannot rollback - no transaction is active'."""
+    make_run(tmp_path)
+    good = built(tmp_path, allow_list)
+    before = rows(good.db, "SELECT count(*) FROM recipe")
+
+    def fill(conn: sqlite3.Connection) -> None:
+        pages = conn.execute("PRAGMA page_count").fetchone()[0]
+        conn.execute(f"PRAGMA max_page_count = {pages + 1}")
+        conn.execute("CREATE TABLE junk(x BLOB)")
+        conn.execute("INSERT INTO junk VALUES (zeroblob(1000000))")
+
+    monkeypatch.setattr(build, "_names", fill)
+    make_run(tmp_path, "20261107T120000Z", "2026-11-07T12:00:00Z")
+    with pytest.raises(sqlite3.OperationalError, match="full"):
+        built(tmp_path, allow_list)
+    assert rows(good.db, "SELECT count(*) FROM recipe") == before
+    assert rows(good.db, "SELECT run_key FROM export_run") == [(RUN,)]
+
+
 def test_name_search_and_named_queries(tmp_path: Path, allow_list: Path) -> None:
     make_run(tmp_path)
     result = built(tmp_path, allow_list)

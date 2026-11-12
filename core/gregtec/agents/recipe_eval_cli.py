@@ -19,7 +19,7 @@ def add_parsers(evals: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
         description=(
             "Asks every row of tests/evals/recipe_lookup.tsv through the router (instant, "
             "fast or deep lane as routed) and scores it against GOS_HOME's DB: the ids it "
-            "cites and the numbers it states must be the DB rows' (target 95%% correct), and "
+            "cites and the numbers it states must be the DB rows' (target 95% correct), and "
             "no number may be uncited (target 0). Uses the stored Anthropic key unless "
             "--fake."
         ),

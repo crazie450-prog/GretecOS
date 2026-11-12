@@ -1426,3 +1426,11 @@ def test_the_fast_lane_answers_with_the_card(lane_reg: Registry) -> None:
     reply = Asker(lane_reg, deep_lane, fast).ask("How do I make steel?")
     card = reply.as_dict()["card"]
     assert card["type"] == "recipe" and card["total"] == 5 and len(card["recipes"]) == 5
+
+
+def test_help_shows_a_single_percent(capsys: pytest.CaptureFixture[str]) -> None:
+    """QA W4: argparse doesn't %-format a description, so '%%' there is shown as is."""
+    with pytest.raises(SystemExit):
+        cli.main(["eval", "recipe-lookup", "--help"])
+    text = capsys.readouterr().out
+    assert "95%" in text and "%%" not in text

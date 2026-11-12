@@ -143,3 +143,14 @@ def test_no_config_file_means_defaults(
 def test_whisper_model_names_and_hub_ids_are_taken(tmp_path: Path, model: str) -> None:
     _, voice = settings.load(write(tmp_path, f'[voice]\nstt_model = "{model}"\n'))
     assert voice.stt_model == model
+
+
+def test_the_plans_appendix_c_skeleton_loads(tmp_path: Path) -> None:
+    """QA W4: the gos.toml skeleton in the plan, copied as it is, starts the voice client and
+    names D180's keys."""
+    plan = Path(__file__).parents[3] / "docs" / "implementation_plan.md"
+    text = plan.read_text(encoding="utf-8").split("**`gos.toml` skeleton:**", 1)[1]
+    block = text.split("```toml\n", 1)[1].split("```", 1)[0]
+    _, voice = settings.load(write(tmp_path, block))
+    assert [k.label for k in (voice.talk_key, voice.confirm_key)] == ["F13", "F14"]
+    assert [k.label for k in (voice.cancel_key, voice.next_card_key)] == ["F15", "F16"]

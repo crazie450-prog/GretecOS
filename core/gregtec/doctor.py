@@ -24,6 +24,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TextIO
 
+from gregtec import config
 from gregtec.config import PACK_PIN, Config
 from gregtec.db import access
 from gregtec.gamestate.safe_open import read_text, sha256_file
@@ -702,11 +703,26 @@ def write_env(roots: list[PrismRoot], gos_home: Path, verify: dict[str, str]) ->
     return target
 
 
+def configured_prism(home: Path) -> list[Path]:
+    """The Prism folder ``home``'s gos.toml names (``[paths] prism_root``, what the setup wizard
+    saves and its checklist surveys), or none when there is no gos.toml or it can't be read, so
+    a broken gos.toml still lets doctor run on the defaults."""
+    path = home / "config" / "gos.toml"
+    if not path.is_file():
+        return []
+    try:
+        return [config.load(path).prism_root]
+    except (OSError, ValueError):
+        return []
+
+
 def main(
     prism_roots: list[Path] | None, gos_home: Path | None, hash_mods: bool, out: TextIO
 ) -> int:
-    roots = survey(prism_roots or default_prism_roots(), hash_mods)
     home = gos_home or Path(os.environ.get("GOS_HOME") or Path.home() / "GregtecOS")
+    roots = survey(
+        prism_roots or [*configured_prism(home), *default_prism_roots()], hash_mods
+    )
     healthy = bool(roots) and any(r.instances for r in roots)
 
     if not roots:
