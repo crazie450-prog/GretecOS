@@ -8,6 +8,13 @@
   [--loose] [--legacy]``: a large turbine's output at half its optimal flow, its optimal flow and
   its maximum flow, from the DB's rotor and fuel rows and the GT turbine port. These are the
   numbers ``docs/runbooks/turbines_lab.md`` checks in the Lab.
+- ``gos power design MODE [--tier T] [--scale unit|generators|eut_cap|raw_budget --bound N]
+  [--free KEY ...] [--kind KIND ...] [--fuel KEY ...] [--rotor MATERIAL SIZE] [--candidates K]
+  [--options N] [--no-effort] [--json]`` (WO-4.2): 2-3 ranked power lines for one of the four
+  objective modes (``best``, ``max_output``, ``output_per_effort``, ``self_sustaining``), with
+  the weights printed first (``me/prefs.md``, read only; the template's defaults without one),
+  each line's generator, fuel chain, net EU/t, the validator's verdict and, for
+  ``self_sustaining``, its bootstrap kit. ``--json`` prints the plans as canonical JSON lines.
 
 Read-only on ``GOS_HOME/data/gos.sqlite``; every number comes from the DB and ``gtmath``.
 """
@@ -21,11 +28,13 @@ from pathlib import Path
 from typing import TextIO
 
 from gregtec import config
+from gregtec.base.state import MyBase
 from gregtec.db import access
-from gregtec.planner import fuels, generators
+from gregtec.planner import fuels, generators, power
 from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.gtmath.turbine import Kind
+from gregtec.planner.request import RequestError
 
 COMMANDS = ("power",)
 
@@ -65,6 +74,42 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     t.add_argument(
         "--legacy", action="store_true", help="the legacy (pre-2.9) controller"
     )
+    d = sub.add_parser(
+        "design", help="2-3 ranked power lines for an objective mode (WO-4.2)"
+    )
+    d.add_argument("mode", choices=list(power.MODES))
+    d.add_argument(
+        "--tier", type=_tier, default=None, help="tier cap (default: My base's)"
+    )
+    d.add_argument("--scale", choices=list(power.SCALES), default="unit")
+    d.add_argument(
+        "--bound",
+        type=float,
+        default=None,
+        help="generators: a count; eut_cap: net EU/t; raw_budget: inputs per hour",
+    )
+    d.add_argument(
+        "--free",
+        nargs="+",
+        default=None,
+        metavar="KEY",
+        help=f"the free set (default: {' '.join(power.DEFAULT_FREE)})",
+    )
+    d.add_argument("--kind", nargs="+", default=(), choices=list(power.KINDS))
+    d.add_argument(
+        "--fuel", nargs="+", default=(), metavar="KEY", help="fuels to consider"
+    )
+    d.add_argument(
+        "--rotor",
+        nargs=2,
+        default=list(power.DEFAULT_ROTOR),
+        metavar=("MATERIAL", "SIZE"),
+        help="turbine rotor (default Steel large)",
+    )
+    d.add_argument("--candidates", type=int, default=power.TOP_FUELS)
+    d.add_argument("--options", type=int, default=3)
+    d.add_argument("--no-effort", action="store_true", help="skip the effort model")
+    d.add_argument("--json", action="store_true", help="the plans as JSON lines")
 
 
 def _tier(text: str) -> int:
@@ -104,6 +149,8 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
             return show_fuels(conn, args.map, out)
         if args.power_cmd == "generators":
             return show_generators(conn, out)
+        if args.power_cmd == "design":
+            return show_design(conn, args, out, cfg.gos_home / "vault")
         return show_turbine(conn, args, out)
     finally:
         conn.close()
@@ -194,4 +241,79 @@ def show_turbine(
     for run in report.runs:
         print(f"{run.label}\t{run.flow}\t{run.eut}\t{int(run.optimal_flow)}", file=out)
     print("refs: " + " ".join(report.refs), file=out)
+    return 0
+
+
+def show_design(
+    conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO, vault: Path
+) -> int:
+    try:
+        req = power.PowerRequest(
+            mode=args.mode,
+            tier_cap=args.tier,
+            scale=args.scale,
+            bound=args.bound,
+            free=tuple(args.free) if args.free else power.DEFAULT_FREE,
+            kinds=tuple(args.kind),
+            fuels=tuple(args.fuel),
+            rotor=(args.rotor[0], args.rotor[1]),
+            candidates=args.candidates,
+            options=args.options,
+        )
+        prefs = power.read_prefs(vault)
+        d = power.design(
+            conn, req, MyBase.from_db(conn), prefs=prefs, with_effort=not args.no_effort
+        )
+    except (RequestError, power.PowerError, LookupError) as exc:
+        print(str(exc).strip("'\""), file=out)
+        return 2
+    if args.json:
+        for p in d.options:
+            print(power.dumps(p), file=out)
+        return 0 if d.options else 1
+    print(d.weights, file=out)
+    for n in (*d.notes, *(prefs.notes)):
+        print(f"note: {n}", file=out)
+    if not d.options:
+        print(f"no power line at {VN[d.tier_cap]} for mode {req.mode}", file=out)
+        for gid, why in d.rejected:
+            print(f"  {gid}: {why}", file=out)
+        return 1
+    for p in d.options:
+        pw, r = p["power"], p["rank"]
+        print(f"{r['position']}. {p['name']}  [{p['id']}]", file=out)
+        print(
+            f"   net {pw['net_eut']:g} EU/t = {pw['gross_eut']:g} out - {pw['chain_eut']:g}"
+            f" the chain uses; fuel {pw['fuel']['id']} {pw['fuel']['rate_s']:g}/s"
+            f" ({pw['fuel']['ref']})",
+            file=out,
+        )
+        print(
+            f"   score {r['score']:g}, effort {p['metrics']['eff_h']:g} h, upkeep"
+            f" {p['metrics']['upkeep']:g}/h, machines {p['metrics']['machines']}",
+            file=out,
+        )
+        proof = p["closed"]
+        if proof["ok"]:
+            print("   closed: no import outside the free set (validator)", file=out)
+        else:
+            parts = [f"{i['id']} {i['rate_s']:g}/s" for i in proof["imports"]]
+            print("   imports: " + (", ".join(parts) or "-"), file=out)
+        for node in p["nodes"]:
+            count = node.get("count")
+            print(
+                f"     {node['n']} {node['recipe']} x{count if count else '-'}",
+                file=out,
+            )
+        kit = p.get("bootstrap")
+        if kit:
+            items = [
+                *(f"{x['id']} x{x['qty']}" for x in kit["seeds_saplings"]),
+                *(f"{x['id']} x{x['qty']}" for x in kit["kept_inputs"]),
+                *(f"{x['tool']} x{x['qty']}" for x in kit["tools"]),
+                *(f"{x['part']} x{x['qty']}" for x in kit["parts"]),
+                *(f"{x['id']} x{x['qty']} (starter fuel)" for x in kit["starter_fuel"]),
+            ]
+            print("   bootstrap kit: " + "; ".join(items), file=out)
+    print(f"({d.pool} lines ranked; {len(d.rejected)} candidates rejected)", file=out)
     return 0
