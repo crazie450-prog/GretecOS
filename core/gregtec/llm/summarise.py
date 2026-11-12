@@ -145,14 +145,25 @@ def event_counts(sources: Sequence[tuple[str, str]]) -> dict[str, int]:
         ):  # a daily log in its week, or a week in its month: counted there
             continue
         facts = _facts(text)
+        given: dict[
+            str, int
+        ] = {}  # n_<kind> lines: a summary's, or the session scribe's
+        for key, value in facts:
+            if key.startswith(COUNT_PREFIX) and _COUNT_VALUE.fullmatch(value):
+                kind = key.removeprefix(COUNT_PREFIX)
+                given[kind] = given.get(kind, 0) + int(value)
+        for kind, n in given.items():
+            counts[kind] = counts.get(kind, 0) + n
         if _SUMMARY_PATH.fullmatch(path):
-            for key, value in facts:
-                if key.startswith(COUNT_PREFIX) and _COUNT_VALUE.fullmatch(value):
-                    kind = key.removeprefix(COUNT_PREFIX)
-                    counts[kind] = counts.get(kind, 0) + int(value)
             continue
+        # A daily log: a kind the session scribe counted (D263) is its n_ lines' sum, its
+        # itemised lines being a sample of them; any other key is one event per line.
         for key, _ in facts:
-            if key not in NOT_EVENTS and not key.startswith(COUNT_PREFIX):
+            if (
+                key not in NOT_EVENTS
+                and not key.startswith(COUNT_PREFIX)
+                and key not in given
+            ):
                 counts[key] = counts.get(key, 0) + 1
     return {kind: n for kind, n in counts.items() if n}
 
@@ -224,9 +235,15 @@ def checked_lines(
 class HaikuSummariser:
     """The real summariser. ``client`` is an ``anthropic.Anthropic`` (or a test's fake)."""
 
+    system = SYSTEM
+
     def __init__(self, client: anthropic.Anthropic, model: str = HAIKU) -> None:
         self.client = client
         self.model = model
+
+    def check(self, answer: str, source: str, counts: Mapping[str, int]) -> list[str]:
+        """The answer's lines as written, or SummaryError (a subclass narrows it)."""
+        return checked_lines(answer, source, counts)
 
     @classmethod
     def from_keyring(cls) -> HaikuSummariser | None:
@@ -252,7 +269,7 @@ class HaikuSummariser:
             max_tokens=MAX_TOKENS,
             thinking={"type": "disabled"},
             output_config={"effort": "low"},
-            system=SYSTEM,
+            system=self.system,
             messages=[{"role": "user", "content": text}],
         )
         usage = Usage(
@@ -265,7 +282,7 @@ class HaikuSummariser:
             if response.stop_reason != "end_turn":
                 raise SummaryError(f"the model stopped with {response.stop_reason}")
             answer = "".join(b.text for b in response.content if b.type == "text")
-            lines = checked_lines(answer, text, counts)
+            lines = self.check(answer, text, counts)
         except SummaryError as exc:
             raise SummaryError(str(exc), usage, self.model) from None
         return Summary(lines, self.model, usage)

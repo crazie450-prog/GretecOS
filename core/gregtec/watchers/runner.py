@@ -127,8 +127,11 @@ class LogWatch:
             return _paused(self.tracker.pause_line(stamp))
         if found.kind == "server_tick":
             return _paused(self.tracker.server_line(stamp))
-        if found.kind == "quit":
-            return _paused(self.tracker.world_closed())
+        if (
+            found.kind == "quit"
+        ):  # the session's end (WO-6.3, D264), and the paused state's
+            closed = Event("world_closed", now, self.source, {"via": "log"})
+            return [closed, *_paused(self.tracker.world_closed())]
         if found.kind == "login":
             data = dict(found.data)
             self.player = str(data.pop("player"))

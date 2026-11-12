@@ -355,15 +355,23 @@ class VaultIO:
         self._written(name)
         return name
 
-    def append(self, rel: object, lines_text: object) -> str:
+    def append(self, rel: object, lines_text: object, *, computed: bool = False) -> str:
         """Add lines to the end of a note: today's daily log (made if missing, then only ever
         appended to), or an existing note in an agent folder (rewritten atomically, ``upd``
-        set to today)."""
+        set to today). ``computed``: the session scribe's journal (WO-6.3, D263), whose
+        ``n_<kind>`` count lines code computed; an agent's lines never hold an ``n_`` key."""
         self._refuse(rel, APPEND)
         name, target = self.path(rel, write=True)
         lines = _body_lines(lines_text, "lines")
         if not lines:
             raise VaultError("nothing to append")
+        if computed and owner(name) != JOURNAL:
+            raise VaultError(f"{name}: computed counts go in a daily log only")
+        if not computed and any(line.startswith(schema.COUNT_PREFIX) for line in lines):
+            raise VaultError(
+                "n_ keys are computed counts (the curator's counts and the session "
+                "scribe's); agents don't write them"
+            )
         if lines[0] == "---":
             raise VaultError("append body lines only; the note keeps its frontmatter")
         with self._lock:

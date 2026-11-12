@@ -4,7 +4,9 @@ OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, 
 base's ``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable
 item/fluid keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes
 them), and ``my_base_machine_at``, where the placement events and the census put each machine they
-saw (WO-6.2, D261; :mod:`gregtec.base.seen`).
+saw (WO-6.2, D261; :mod:`gregtec.base.seen`), and the event store: Appendix D's ``event`` and
+``session`` with the columns WO-6.3 adds (D263; :mod:`gregtec.events.store`), and ``age_mark``,
+when each voltage age was first seen and its recap (D162, D265; :mod:`gregtec.events.ages`).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -51,6 +53,20 @@ CREATE TABLE IF NOT EXISTS my_base_machine_at(source TEXT NOT NULL CHECK(source 
   dim INT NOT NULL, x INT NOT NULL, y INT NOT NULL, z INT NOT NULL, mte_id INT NOT NULL,
   upd INT NOT NULL, PRIMARY KEY(source, dim, x, y, z));
 CREATE INDEX IF NOT EXISTS ix_my_base_machine_at_mte ON my_base_machine_at(source, mte_id);
+CREATE TABLE IF NOT EXISTS session(id INTEGER PRIMARY KEY, start_ts INT, end_ts INT, world TEXT,
+  journal_path TEXT);
+CREATE TABLE IF NOT EXISTS event(id INTEGER PRIMARY KEY, ts INT NOT NULL, session_id INT,
+  kind TEXT NOT NULL, dim INT, x INT, y INT, z INT, ref TEXT, payload TEXT);
+CREATE INDEX IF NOT EXISTS ix_event_ts ON event(ts);
+CREATE INDEX IF NOT EXISTS ix_event_kind ON event(kind, ts);
+CREATE TABLE IF NOT EXISTS age_mark(age INT PRIMARY KEY, stage TEXT NOT NULL, start_ts INT NOT NULL,
+  end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT);
+"""
+# Indexes on columns ADDED_COLUMNS may have just added (a DB whose table predates them).
+POST_SCHEMA = """
+CREATE UNIQUE INDEX IF NOT EXISTS ux_event_uid ON event(uid);
+CREATE INDEX IF NOT EXISTS ix_event_session ON event(session_id, ts);
+CREATE INDEX IF NOT EXISTS ix_session_open ON session(instance, end_ts);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (
@@ -68,6 +84,20 @@ ADDED_COLUMNS = (
     ("action", "source", "TEXT"),
     ("action", "sent_ts", "INT"),
     ("action", "done_ts", "INT"),
+    # The event store (WO-6.3, D263): the watchers' event id (a retried post is one row), the
+    # reader, and the instance it came from; a session's instance, how it began and ended, its
+    # last activity and the session scribe's progress through it.
+    ("event", "uid", "TEXT"),
+    ("event", "source", "TEXT"),
+    ("event", "instance", "TEXT"),
+    ("session", "instance", "TEXT"),
+    ("session", "start_why", "TEXT"),
+    ("session", "end_why", "TEXT"),
+    ("session", "last_ts", "INT"),
+    ("session", "journal_upto", "INT"),  # the newest event id the journal has counted
+    ("session", "journal_ts", "INT"),  # when the journal was last written
+    ("session", "journal_lines", "INT"),  # lines written for this session (<= 40)
+    ("session", "journal_done", "INT"),  # the end block is written (or not wanted)
 )
 
 
@@ -88,6 +118,7 @@ def connect(path: Path) -> sqlite3.Connection:
         have = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in have:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+    conn.executescript(POST_SCHEMA)
     return conn
 
 
