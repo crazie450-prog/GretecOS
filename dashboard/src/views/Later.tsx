@@ -4,7 +4,6 @@ import type { View } from "./nav";
 import { GLYPH } from "../state/states";
 
 const JOB: Record<string, string> = {
-  designer: "Compare 2-3 routes, then build one.",
   power: "Am I in deficit, at which tier?",
   quests: "What can I do next?",
   crops: "What should I breed next, and how?",

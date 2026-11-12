@@ -170,6 +170,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         home = root
         build_db(home)
         ores_lab = load_ores(home)
+        # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
+        from gregtec.vault import deploy as vault_deploy
+
+        vault_deploy.deploy(home / "vault", REPO / "vault-template")
         # Setup is done here (the wizard's own e2e uses --fresh), so the shell shows.
         (home / "config").mkdir()
         (home / "config" / "gos.toml").write_text(

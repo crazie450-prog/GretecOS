@@ -67,6 +67,9 @@ WRITERS = {
     "inbox_propose",
     "action_propose",  # WO-7.1: records a proposal only, behind the confirm flow
     "ore_waypoint",  # WO-6.6: the same, for a vein's waypoint (D272)
+    "design_production",  # WO-3.7: saves plans through the planner's store
+    "plan_pin",
+    "plan_rename",
 }  # WO-2.5, behind the path guard
 HANDOFF = "handoff"  # WO-2.3: the fast lane's one writing tool, to the deep lane
 
@@ -90,7 +93,8 @@ def test_lanes(reg: Registry) -> None:
     deep = {s["name"] for s in reg.specs(DEEP)}
     assert deep | {HANDOFF} == {t.name for t in TOOLS} | {MORE}
     assert HANDOFF not in deep
-    assert fast == (deep - {"db_sql"} - WRITERS) | {HANDOFF}
+    # db_sql and plan_explain (a planner-model call: spend) are the deep lane's only
+    assert fast == (deep - {"db_sql", "plan_explain"} - WRITERS) | {HANDOFF}
     assert {"note_read", "vault_search"} <= fast  # the fast lane's two vault tools
 
 

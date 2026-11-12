@@ -557,7 +557,7 @@ item_resolve(text, kind?)            recipe_find(item, tier_max?, machine?, show
 machine_info(name|id)                design_production(spec)   design_power(spec)    effort_estimate(bom|plan)
 plan_get(id, view)                   plan_export(id, fmt)      plan_set_status(id,s) plan_list(status?)
 plan_pin(id, node, recipe?)          plan_rename(id, name)     base_get()            # base_set is UI-only
-layout_estimate(plan)                ledger_get()              ledger_update(...)
+layout_estimate(plan)                ledger_get()              ledger_update(...)     plan_explain(id)      # D199, D251
 quest_find(text)                     quest_get(id, spoil=0..2) quest_frontier(n)     quest_for_item(item)
 events_recent(window, kinds?)        session_summary(id)       ore_find(mat, dim?, near?)  player_pos()
 ore_waypoint(vein)                   # proposes a vein's waypoint from the DB row (D272); confirm is UI-only
@@ -716,7 +716,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 - **Sources:** the VisualProspecting server cache (every vein, D27), the client cache, live "You found a … vein" lines, and ore mixes (§5.2 step 6).
 - `ore_find(material, dim?, near=player)` returns the nearest veins with distance, dimension, y-range and mix, plus depleted flags.
 - It can offer a JourneyMap waypoint, written as a **confirmed action** (D25).
-- As built (WO-6.6, D271, D272): `ore_find` and `player_pos` are tools in both lanes (`core/gregtec/agents/tools/ores.py`, `core/gregtec/ores/intel.py`), ranked by code as D142 (c) says; veins are cited `vein:<dim>/<cx>/<cz>`; his position is `level.dat`'s at the world's last save, read from the world the veins were loaded from. `ore_waypoint(vein)` (deep lane) and the Ores view's button propose a vein's waypoint that GOS builds from the DB row (its mix's name, centre block, the middle of its heights) through WO-7.1's action desk; Clayton confirms; only into the configured Lab or Play world the veins came from. The `ore-intel` skill joins the fast lane's cached prompt. The Ores view (`dashboard/src/views/Ores.tsx`) needs Clayton's board approval. V23 is answered from JourneyMap's source: a file written while the game runs shows after the next dimension change or rejoin; the Lab check is `docs/runbooks/ore_intel_check.md`.
+- As built (WO-6.6, D271, D272): `ore_find` and `player_pos` are tools in both lanes (`core/gregtec/agents/tools/ores.py`, `core/gregtec/ores/intel.py`), ranked by code as D142 (c) says; veins are cited `vein:<dim>/<cx>/<cz>` and his position `pos:<world>@<save>`; his position is `level.dat`'s at the world's last save, read from the world the veins were loaded from. `ore_waypoint(vein)` (deep lane) and the Ores view's button propose a vein's waypoint that GOS builds from the DB row (its mix's name, centre block, the middle of its heights) through WO-7.1's action desk; Clayton confirms; only into the configured Lab or Play world the veins came from. The `ore-intel` skill joins the fast lane's cached prompt. The Ores view (`dashboard/src/views/Ores.tsx`) needs Clayton's board approval. V23 is answered from JourneyMap's source: a file written while the game runs shows after the next dimension change or rejoin; the Lab check is `docs/runbooks/ore_intel_check.md`.
 
 ### 7.7 Screen reading
 - A dedicated hotkey captures the game window with `dxcam` 0.3 (DXGI backend; `grab(region=<game window>, new_frame_only=False)`), with `windows-capture` (Windows Graphics Capture) as the alternative [H§3].
@@ -1017,7 +1017,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 4.1 | Fuel and generator catalog; turbine port; legacy/new controllers | Turbine output matches the Lab for 3 rotor setups |
 | 4.2 | Four objective modes; self-sustaining validator and bootstrap kit | The validator proves zero non-free imports |
 | 4.3 | Effort model applied to power (`output_per_effort`), with breakdown UI | Hand-checked on 2 lines |
-| 4.4 | EU ledger (`base/power.md`) | Ledger updates when a plan is accepted |
+| 4.4 | EU ledger (`base/power.md`); makes WO-3.7's `ledger_update` stub real and feeds running lines' outputs into My base's `line_outputs` (D211, D252) | Ledger updates when a plan is accepted |
 | 4.5 | Storage and distribution (buffers/LSC, cable/transformer checks; cable-stat source VERIFY) | 3 test scenarios |
 | 4.6 | Power view, `power-designer` skill, balanced default weights (D67) | All 4 modes at LV/HV/IV reviewed, each returning 2–3 ranked options |
 | **G4** | **4 power benchmark lines (D65)**, end to end: light-fuel loop, benzene gas turbines, steam boilers on a tree farm (self-sustaining), naquadah fuel | Reviewer report; Clayton sign-off |
@@ -1377,7 +1377,7 @@ use_heavy = false             # true: planner and architect run on heavy (D155)
 monthly_included_usd = 100    # D47
 credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
-task_max_usd = 2.0            # placeholder until WO-3.7 measures; on hit: pause and ask (D16)
+task_max_usd = 2.0            # set from `gos eval design-cost --apply-from` (WO-3.7, D253); on hit: pause and ask (D16)
 cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
 
 [voice]

@@ -138,7 +138,7 @@
       "properties": {
         "id": {"type": "string", "maxLength": 100},
         "name": {"type": "string", "maxLength": 200},
-        "rank": {"type": "integer", "minimum": 1},
+        "rank": {"anyOf": [{"type": "integer", "minimum": 1}, {"const": "addon"}]},
         "ref": {"$ref": "#/$defs/Ref"},
         "accepted": {"type": "boolean"},
         "metrics": {"type": "array", "items": {"$ref": "#/$defs/Metric"}, "maxItems": 20},
