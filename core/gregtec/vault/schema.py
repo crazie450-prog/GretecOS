@@ -63,8 +63,13 @@ def parse(text: str) -> Note:
     facts: list[tuple[str, str]] = []
     tables: list[list[list[str]]] = []
     table: list[list[str]] | None = None
+    diagram = (
+        False  # inside a ```mermaid fence (a plan's flow diagram, D201): not facts
+    )
     for n, line in enumerate(lines[end + 1 :], start=end + 2):
-        if table is not None:
+        if diagram:
+            diagram = line != "```"
+        elif table is not None:
             if line == "```":
                 tables.append(table)
                 table = None
@@ -72,6 +77,8 @@ def parse(text: str) -> Note:
                 table.append(line.split("\t"))
         elif line == "```tsv":
             table = []
+        elif line == "```mermaid":
+            diagram = True
         elif not line.strip():
             continue
         elif m := KEY.match(line):
@@ -80,6 +87,8 @@ def parse(text: str) -> Note:
             raise ValueError(f"line {n} is not key: value or a tsv table: {line!r}")
     if table is not None:
         raise ValueError("tsv fence is not closed")
+    if diagram:
+        raise ValueError("mermaid fence is not closed")
     for rows in tables:
         if not rows or any(len(r) != len(rows[0]) for r in rows):
             raise ValueError(

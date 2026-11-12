@@ -29,7 +29,21 @@ from typing import Any
 from gregtec.planner.graph import EU_KEY, FULL
 from gregtec.planner.outputs.book import Book
 
-TIERS = ("lv", "mv", "hv", "ev", "iv", "luv", "zpm", "uv", "uhv", "uev", "uiv", "umv", "uxv")
+TIERS = (
+    "lv",
+    "mv",
+    "hv",
+    "ev",
+    "iv",
+    "luv",
+    "zpm",
+    "uv",
+    "uhv",
+    "uev",
+    "uiv",
+    "umv",
+    "uxv",
+)
 
 
 def _q(s: str) -> str:
@@ -68,8 +82,10 @@ def text(plan: Mapping[str, Any], book: Book) -> str:
     target = plan["target"]
     out = [
         f"# Gregtec OS plan:{plan['id']} · {plan['name']}",
-        f"# export run {plan['run']}, GT {plan['gt']}; machines as GOS sized them "
-        "(do_not_overclock), dur = seconds per craft per machine",
+        (
+            f"# export run {plan['run']}, GT {plan['gt']}; machines as GOS sized them "
+            "(do_not_overclock), dur = seconds per craft per machine"
+        ),
     ]
     skipped: list[str] = []
     anchored = False
@@ -84,7 +100,9 @@ def text(plan: Mapping[str, Any], book: Book) -> str:
         ins: dict[str, float] = {}
         for p in rec.inputs:
             if p.consumed and p.amount > 0 and p.circuit is None:
-                ins[names[p.key]] = ins.get(names[p.key], 0.0) + p.amount * p.chance_bp / FULL
+                ins[names[p.key]] = (
+                    ins.get(names[p.key], 0.0) + p.amount * p.chance_bp / FULL
+                )
         outs: dict[str, float] = {}
         for p in rec.outputs:
             if p.amount > 0:
@@ -112,5 +130,9 @@ def text(plan: Mapping[str, Any], book: Book) -> str:
         node = next(n for n in plan["nodes"] if n.get("machine") and n.get("ticks_eff"))
         out.insert(first + 1, f"  number: {int(node['count'] or 1)}")
     if skipped:
-        out.insert(2, "# not machines, left out (their products show as sources): " + ", ".join(skipped))
+        out.insert(
+            2,
+            "# not machines, left out (their products show as sources): "
+            + ", ".join(skipped),
+        )
     return "\n".join(out) + "\n"

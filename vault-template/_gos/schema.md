@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-11
+upd: 2026-11-12
 ---
 version: 0
 summary: note types and allowed keys
@@ -13,6 +13,7 @@ lists: a, b, c
 links: [[id]]
 pointers: r:{map}/{sig12}, plan:{id}, q:{named_query}, db:{table}/{id}, w:{page}@{revid}
 tables: tsv in a ```tsv fence with a header row
+diagrams: a flow diagram in a ```mermaid fence (plan notes, D201); its lines are not facts
 prose: none, except one-line note: entries
 max_lines: 150 (INDEX.md: 200)
 index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
@@ -32,7 +33,7 @@ machines	base-machines	base/machines.md	generated	*
 storage	base-storage	base/storage.md	generated	*
 places	base-places	base/places.md	agents	*
 line	ln-*	base/lines/	agents	st, tgt, tgt_rate_s, plan, eut, tier, deps, note
-plan	pl-*	plans/	agents	*
+plan	pl-*	plans/	agents	title, st, plan, json, run, tgt, tgt_rate_s, tier, machines, eut_avg, eut_peak, eff_h, scarcity, area, volume, footprint_unknown, rank, alts, exports, note
 quest	qs-*	quests/	agents	*
 theme	th-*	themes/	agents	*
 persona	pe-*	personas/	both	name, voice, verbosity, humour, address, style, lexicon, sample, note

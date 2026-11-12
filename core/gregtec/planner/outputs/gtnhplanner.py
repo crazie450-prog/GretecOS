@@ -214,4 +214,7 @@ def project(plan: Mapping[str, Any], book: Book) -> dict[str, Any]:
 
 def text(plan: Mapping[str, Any], book: Book) -> str:
     """The project as the file's text (stable: sorted keys, two-space indent)."""
-    return json.dumps(project(plan, book), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    return (
+        json.dumps(project(plan, book), indent=2, sort_keys=True, ensure_ascii=False)
+        + "\n"
+    )

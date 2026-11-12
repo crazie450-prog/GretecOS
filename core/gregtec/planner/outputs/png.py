@@ -56,7 +56,12 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size)
 
 
-def _fit(draw: ImageDraw.ImageDraw, text: str, font: Any, width: int) -> str:
+def _fit(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    width: int,
+) -> str:
     if draw.textlength(text, font=font) <= width:
         return text
     while text and draw.textlength(text + "…", font=font) > width:
@@ -91,7 +96,12 @@ def render(plan: Mapping[str, Any], book: Book) -> bytes:
     img = Image.new("RGB", (width, height), BG)
     draw = ImageDraw.Draw(img)
     title, big, small = _font(20), _font(16), _font(13)
-    draw.text((PAD, PAD - 8), _fit(draw, f"{plan['name']} · plan:{plan['id']}", title, width - 2 * PAD), fill=SHELL_TEXT, font=title)
+    draw.text(
+        (PAD, PAD - 8),
+        _fit(draw, f"{plan['name']} · plan:{plan['id']}", title, width - 2 * PAD),
+        fill=SHELL_TEXT,
+        font=title,
+    )
 
     def xy(bid: str) -> tuple[int, int]:
         c, r = place[bid]
@@ -104,27 +114,54 @@ def render(plan: Mapping[str, Any], book: Book) -> bytes:
         b = (x2, y2 + BOX_H // 2)
         if b[0] <= a[0]:  # a loop back: route above the boxes
             top = min(y1, y2) - GAP_Y // 2
-            pts = [a, (a[0] + 16, a[1]), (a[0] + 16, top), (b[0] - 16, top), (b[0] - 16, b[1]), b]
+            pts = [
+                a,
+                (a[0] + 16, a[1]),
+                (a[0] + 16, top),
+                (b[0] - 16, top),
+                (b[0] - 16, b[1]),
+                b,
+            ]
         else:
             mid = a[0] + GAP_X // 2
             pts = [a, (mid, a[1]), (mid, b[1]), b]
         draw.line(pts, fill=RULE, width=2)
         draw.polygon([b, (b[0] - 8, b[1] - 5), (b[0] - 8, b[1] + 5)], fill=RULE)
-        label = link.label + (f" {rate(link.rate_s)}" if link.rate_s is not None else "")
+        label = link.label + (
+            f" {rate(link.rate_s)}" if link.rate_s is not None else ""
+        )
         label = _fit(draw, label, small, GAP_X + BOX_W // 2)
-        draw.text((pts[1][0] + 4, (a[1] + b[1]) // 2 - 16), label, fill=SHELL_TEXT, font=small)
+        draw.text(
+            (pts[1][0] + 4, (a[1] + b[1]) // 2 - 16), label, fill=SHELL_TEXT, font=small
+        )
     for box in f.boxes:
         x, y = xy(box.id)
-        draw.rectangle([x, y, x + BOX_W, y + BOX_H], fill=PANEL, outline=BORDER, width=2)
+        draw.rectangle(
+            [x, y, x + BOX_W, y + BOX_H], fill=PANEL, outline=BORDER, width=2
+        )
         if box.tier:
             colour = TIER.get(box.tier.upper(), TIER_EDGE)
-            draw.rectangle([x + 2, y + 2, x + BAND, y + BOX_H - 2], fill=colour, outline=TIER_EDGE)
+            draw.rectangle(
+                [x + 2, y + 2, x + BAND, y + BOX_H - 2], fill=colour, outline=TIER_EDGE
+            )
         head, sub, ref = _lines(box)
         tx = x + BAND + 10
-        draw.text((tx, y + 8), _fit(draw, head, big, BOX_W - BAND - 18), fill=TEXT, font=big)
-        draw.text((tx, y + 34), _fit(draw, sub, small, BOX_W - BAND - 18), fill=TEXT_2, font=small)
+        draw.text(
+            (tx, y + 8), _fit(draw, head, big, BOX_W - BAND - 18), fill=TEXT, font=big
+        )
+        draw.text(
+            (tx, y + 34),
+            _fit(draw, sub, small, BOX_W - BAND - 18),
+            fill=TEXT_2,
+            font=small,
+        )
         if ref:
-            draw.text((tx, y + 56), _fit(draw, ref, small, BOX_W - BAND - 18), fill=TEXT_2, font=small)
+            draw.text(
+                (tx, y + 56),
+                _fit(draw, ref, small, BOX_W - BAND - 18),
+                fill=TEXT_2,
+                font=small,
+            )
     if max(width, height) > MAX_SIDE:
         scale = MAX_SIDE / max(width, height)
         img = img.resize((max(1, int(width * scale)), max(1, int(height * scale))))
