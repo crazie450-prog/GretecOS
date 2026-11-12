@@ -1015,7 +1015,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 4.1 | Fuel and generator catalog; turbine port; legacy/new controllers | Turbine output matches the Lab for 3 rotor setups |
 | 4.2 | Four objective modes; self-sustaining validator and bootstrap kit | The validator proves zero non-free imports |
 | 4.3 | Effort model applied to power (`output_per_effort`), with breakdown UI | Hand-checked on 2 lines |
-| 4.4 | EU ledger (`base/power.md`) | Ledger updates when a plan is accepted |
+| 4.4 | EU ledger (`base/power.md`); makes WO-3.7's `ledger_update` stub real and feeds running lines' outputs into My base's `line_outputs` (D211, D252) | Ledger updates when a plan is accepted |
 | 4.5 | Storage and distribution (buffers/LSC, cable/transformer checks; cable-stat source VERIFY) | 3 test scenarios |
 | 4.6 | Power view, `power-designer` skill, balanced default weights (D67) | All 4 modes at LV/HV/IV reviewed, each returning 2–3 ranked options |
 | **G4** | **4 power benchmark lines (D65)**, end to end: light-fuel loop, benzene gas turbines, steam boilers on a tree farm (self-sustaining), naquadah fuel | Reviewer report; Clayton sign-off |
@@ -1375,7 +1375,7 @@ use_heavy = false             # true: planner and architect run on heavy (D155)
 monthly_included_usd = 100    # D47
 credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
-task_max_usd = 2.0            # set from `gos eval design-cost --apply` (WO-3.7, D253); on hit: pause and ask (D16)
+task_max_usd = 2.0            # set from `gos eval design-cost --apply-from` (WO-3.7, D253); on hit: pause and ask (D16)
 cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
 
 [voice]
