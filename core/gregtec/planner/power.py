@@ -48,7 +48,7 @@ import json
 import math
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -206,7 +206,7 @@ class Machine:
     mte: int
     name: str | None
     kind: str  # singleblock | multiblock
-    count: float  # per build unit (boilers may be a fraction of one when throttled)
+    count: float  # per build unit
     tier: int | None = None
 
 
@@ -228,6 +228,9 @@ class Gen:
     cites: tuple[str, ...]
     parts: tuple[tuple[str, int], ...] = ()  # kept per unit: rotors, throttle circuits
     notes: tuple[str, ...] = ()
+    # What the validator re-derives the ports from (sustain.gen_ports): the kind, the mte ids,
+    # the fuel row, the rotor, the dynamo tier, the boilers and their throttle circuit.
+    spec: tuple[tuple[str, Any], ...] = ()
 
     @property
     def eu_per_fuel(self) -> float:
@@ -311,9 +314,12 @@ def candidates(
     gens: list[Gen] = []
     notes: list[str] = []
     want = set(req.kinds) or set(KINDS)
-    # Single blocks: per fuel map, the highest tier at the cap.
+    # Single blocks: per fuel map, the highest tier at the cap; for self_sustaining and
+    # output_per_effort also the most efficient one at or below it (a lower tier burns less
+    # fuel per EU, D233).
     if "single_block" in want:
         best: dict[str, generators.Entry] = {}
+        thrifty: dict[str, generators.Entry] = {}
         for e in cat:
             if e.sizing != "single_block" or e.tier is None or e.tier > tier:
                 continue
@@ -325,18 +331,36 @@ def candidates(
             cur = best.get(fmap)
             if cur is None or (e.tier, -e.mte_id) > (cur.tier or 0, -cur.mte_id):
                 best[fmap] = e
-        for fmap in sorted(best):
-            e = best[fmap]
+            cur = thrifty.get(fmap)
+            if cur is None or (e.efficiency, e.tier, -e.mte_id) > (
+                cur.efficiency or 0,
+                cur.tier or 0,
+                -cur.mte_id,
+            ):
+                thrifty[fmap] = e
+        picks = [best[m] for m in sorted(best)]
+        if req.mode in ("self_sustaining", "output_per_effort"):
+            picks += [thrifty[m] for m in sorted(thrifty) if thrifty[m] is not best[m]]
+        for e in picks:
+            fmap = next(m for m in e.fuel_maps if m in fuels.BY_MAP)
             assert e.efficiency and e.eu_out and e.amps_out and e.tier is not None
             eut = e.eu_out * e.amps_out
             for f in by_map.get(fmap, ()):
                 key = _fuel_key(f)
                 if key is None or f.fuel_value <= 0:
                     continue
-                if f.fluid:
-                    per = Fraction(f.fuel_value * e.efficiency, 100)  # EU per litre
-                else:
-                    per = Fraction(f.fuel_value * 10 * e.efficiency)  # EU per item
+                # GT's getFuelValue: EU per operation (1 L of a fluid, or one item), truncated
+                # (HIGH-1 of the WO-4.2 review: never the exact fraction).
+                per = Fraction(
+                    fuels.single_block_eu(
+                        special=f.fuel_value,
+                        efficiency=e.efficiency,
+                        fluid_input=f.fluid is not None,
+                    )
+                )
+                if per <= 0:
+                    notes.append(f"{e.ref} on {f.ref}: GT gives 0 EU per unit")
+                    continue
                 gens.append(
                     Gen(
                         id=f"gen:single/{e.ref}/{f.ref}",
@@ -353,6 +377,11 @@ def candidates(
                             Machine(e.mte_id, e.name, "singleblock", 1.0, e.tier),
                         ),
                         cites=(e.ref, f.ref),
+                        spec=(
+                            ("kind", "single_block"),
+                            ("mte", e.mte_id),
+                            ("fuel_ref", f.ref),
+                        ),
                     )
                 )
     rotor_run = _rotor_run(conn, run_id)
@@ -394,6 +423,13 @@ def candidates(
                         (f"rotor:{r.material}/{r.size}", 1),
                         (f"dynamo hatch {VN[r.dynamo_tier]} 1A", 1),
                     ),
+                    spec=(
+                        ("kind", name),
+                        ("mte", e.mte_id),
+                        ("fuel_ref", f.ref),
+                        ("rotor", (r.material, r.size)),
+                        ("dynamo_tier", r.dynamo_tier),
+                    ),
                 )
             )
     if "boiler_steam" in want and rotor_run is not None and tier >= 1:
@@ -426,19 +462,23 @@ def candidates(
                     st = gt_boiler.steady(spec, fluid=f.fluid, duration=int(f.value))
                 except gt_boiler.BoilerError:
                     continue
-                need = Fraction(run.flow) / st.steam  # boilers per turbine
+                need = Fraction(run.flow) / st.steam  # boilers per turbine, unthrottled
                 count = math.ceil(need)
                 per_boiler = Fraction(run.flow) / count
-                eut_needed = per_boiler * (3 if spec.superheated else 1) / 2
+                # The most throttle that still gives the turbine its flow: the boilers burn
+                # (and boil water) at that throttle, the little steam above the flow included.
                 throttle = max(
-                    0,
-                    min(
-                        25,
-                        int(
-                            (spec.eut - eut_needed) // (75 if spec.superheated else 25)
-                        ),
-                    ),
+                    c
+                    for c in range(gt_boiler.MAX_CIRCUIT + 1)
+                    if gt_boiler.steady(
+                        spec, fluid=f.fluid, duration=int(f.value), circuit=c
+                    ).steam
+                    >= per_boiler
                 )
+                st = gt_boiler.steady(
+                    spec, fluid=f.fluid, duration=int(f.value), circuit=throttle
+                )
+                surplus = st.steam * count - run.flow
                 gens.append(
                     Gen(
                         id=f"gen:boiler_steam/{b.ref}/{f.ref}/{t.ref}/{r.refs[0]}/d{r.dynamo_tier}",
@@ -450,13 +490,13 @@ def candidates(
                         slot=f"{b.ref}+{t.ref}",
                         fuel=f"fluid:{f.fluid}",
                         fuel_ref=f.ref,
-                        fuel_per_s=float(need * st.fuel * 20),
-                        water_per_s=float(need * st.water * 20),
+                        fuel_per_s=float(count * st.fuel * 20),
+                        water_per_s=float(count * st.water * 20),
                         eut=run.eut,
                         tier=r.dynamo_tier,
                         machines=(
                             Machine(t.mte_id, t.name, "multiblock", 1.0),
-                            Machine(b.mte_id, b.name, "multiblock", float(need)),
+                            Machine(b.mte_id, b.name, "multiblock", float(count)),
                         ),
                         cites=(t.ref, b.ref, f.ref, *r.refs),
                         parts=(
@@ -475,9 +515,21 @@ def candidates(
                         ),
                         notes=(
                             (
-                                f"{run.flow} L/t of {spec.steam_fluid} from {float(need):.4g} "
-                                f"boilers ({count} built, throttled with circuit {throttle})"
+                                f"{run.flow} L/t of {spec.steam_fluid} from {count} boilers"
+                                f" ({float(need):.4g} at full burn), throttled with circuit"
+                                f" {throttle}: {float(surplus):.4g} L/t over the turbine's"
+                                " flow (its fuel and water are counted)"
                             ),
+                        ),
+                        spec=(
+                            ("kind", "boiler_steam"),
+                            ("boiler_mte", b.mte_id),
+                            ("turbine_mte", t.mte_id),
+                            ("fuel_ref", f.ref),
+                            ("rotor", (r.material, r.size)),
+                            ("dynamo_tier", r.dynamo_tier),
+                            ("boilers", count),
+                            ("circuit", throttle),
                         ),
                     )
                 )
@@ -852,7 +904,6 @@ class Option:
     units: float
     flow: solve.Flow
     net: solve.Network
-    plan: dict[str, Any] = field(default_factory=dict)
 
 
 def build_plan(
@@ -927,6 +978,9 @@ def build_plan(
                     "ref": gen.fuel_ref,
                 },
                 "parts": {k: v * math.ceil(round(x, 9)) for k, v in gen.parts},
+                "spec": {
+                    k: list(v) if isinstance(v, tuple) else v for k, v in gen.spec
+                },
                 "cites": list(gen.cites),
                 "notes": list(gen.notes),
             }
@@ -1103,10 +1157,7 @@ def _units(
             else (None, f"one unit makes {net_unit:.6g} EU/t, over the cap")
         )
     if upkeep_unit <= 0:
-        return (
-            1.0,
-            "takes nothing from outside the free set: one unit (the budget doesn't bound it)",
-        )
+        return 1.0, ""  # design() sizes it like the best bounded line
     n = math.floor(round(bound / upkeep_unit, 9))
     return (
         (float(n), "")
@@ -1143,6 +1194,21 @@ def design(
         levels = reachable(conn, run, tier, start)
     farm_map = {f.id: f for f in farm_list}
     pool = prune(gens, req.candidates, levels)
+    if len(pool) < len(gens):
+        notes.append(
+            f"{len(gens) - len(pool)} of {len(gens)} generator x fuel candidates pruned"
+            f" before solving (per generator, the {req.candidates} with the most EU per"
+            " unit of fuel"
+            + (", reachable from the free set" if levels is not None else "")
+            + ")"
+        )
+    if farm_list:
+        kept = best_farms(farm_list)
+        if len(kept) < len(farm_list):
+            notes.append(
+                f"{len(farm_list) - len(kept)} of {len(farm_list)} farms set aside"
+                " (one farm per product, the most per EU)"
+            )
     if not pool:
         raise PowerError(
             f"no generator and fuel at {VN[tier]} for mode {req.mode}"
@@ -1190,15 +1256,41 @@ def design(
         else None
     )
     table = metrics.load_scarcity()
+    sized: list[tuple[int, Option, dict[str, Any], float | None, str]] = []
     for n, opt in enumerate(options, 1):
         p = build_plan(conn, run_key, req, opt, farm_map, n)
         net_unit = float(p["power"]["net_eut"])
         units, why = _units(req, net_unit, _upkeep(p["boundary"]["in"], free))
+        sized.append((n, opt, p, units, why))
+    if req.scale == "raw_budget":
+        # A line that takes nothing from outside the free set isn't bounded by the budget: it
+        # gets as many units as the best line the budget does bound, so max_output never
+        # favours a line that imports (D235).
+        open_units = [
+            u
+            for _, _, p, u, _ in sized
+            if u is not None and _upkeep(p["boundary"]["in"], free) > 0
+        ]
+        top_units = max(open_units, default=1.0)
+        sized = [
+            (
+                n,
+                opt,
+                p,
+                top_units,
+                (
+                    f"takes nothing from outside the free set: {top_units:g} units, as many"
+                    " as the best line the budget bounds"
+                ),
+            )
+            if u is not None and _upkeep(p["boundary"]["in"], free) <= 0
+            else (n, opt, p, u, why)
+            for n, opt, p, u, why in sized
+        ]
+    for n, opt, p, units, why in sized:
         if units is None:
             rejected.append((opt.gen.id, why))
             continue
-        if why:
-            p.setdefault("warnings", []).append(why)
         if units != 1.0:
             net = network(conn, opt.chain, opt.gen, units, req, farm_list)
             try:
@@ -1213,6 +1305,8 @@ def design(
                 rejected.append((opt.gen.id, f"at {units:g} units: {exc}"))
                 continue
             p = build_plan(conn, run_key, req, opt, farm_map, n)
+        if why:
+            p.setdefault("warnings", []).append(why)
         proof = sustain.validate(conn, p, free, farm_map)
         p["closed"] = proof.as_dict()
         if req.mode == "self_sustaining":
@@ -1231,6 +1325,7 @@ def design(
                 )
                 continue
             p["bootstrap"] = sustain.bootstrap(conn, p, farm_map)
+            p["bootstrap"]["sinks"] = p["closed"]["surplus"]
         elif p["power"]["net_eut"] <= 0:
             rejected.append(
                 (opt.gen.id, "net EU/t is not above 0 after the chain's own use")

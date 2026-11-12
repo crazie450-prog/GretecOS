@@ -8,7 +8,7 @@ from __future__ import annotations
 import importlib.util
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -49,6 +49,11 @@ def conn(db: Path) -> Iterator[sqlite3.Connection]:
         c.close()
 
 
+def gas_fuel(conn: sqlite3.Connection) -> str:
+    row = conn.execute("SELECT ref FROM fuel WHERE fluid = 'testgas'").fetchone()
+    return str(row[0])
+
+
 def loop_plan(conn: sqlite3.Connection, cr: float = 0.016) -> dict[str, Any]:
     """A line written by hand: the gas loop (chemicalreactor/3: 1000 gas + 1000 water -> 2000
     acid; electrolyzer/1: 1000 acid -> 1000 gas) feeding the generator 16 L/s of gas (640 EU/s).
@@ -63,6 +68,8 @@ def loop_plan(conn: sqlite3.Connection, cr: float = 0.016) -> dict[str, Any]:
              "eut_avg": 2.0, "count": 1, "ticks_eff": 100},
             {"recipe": "gen:single/mte:110/test", "crafts_s": 1.0, "count": 1,
              "ports": {"in": {GAS: 16.0}, "out": {"eu": 640.0}},
+             "spec": {"kind": "single_block", "mte": tp.GENERATOR,
+                      "fuel_ref": gas_fuel(conn)},
              "fuel": {"id": GAS, "rate_s": 16.0}, "parts": {"rotor:Test/large": 1}},
         ],
         "boundary": {"in": [{"id": WATER, "rate_s": 16.0}], "out": []},
@@ -95,16 +102,84 @@ def test_a_line_with_one_hidden_import_fails(conn: sqlite3.Connection) -> None:
     # The free set decides: with water not free, water is an import.
     proof = sustain.validate(conn, loop_plan(conn), ("fluid:air",))
     assert [k for k, _ in proof.imports] == [WATER] and not proof.ok
-    # A trickle of a dense fuel is an import, whatever the EU flow's size.
+    # A trickle is an import, whatever the EU flow's size: Dust B at 1e-9 crafts/s.
     plan = loop_plan(conn)
-    plan["nodes"][2]["ports"]["in"][tg.WIDGET] = 1e-6
+    plan["nodes"].append({"recipe": tp._mixer7(conn), "crafts_s": 1e-9, "eut_avg": 0.0})
     proof = sustain.validate(conn, plan, FREE)
-    assert [k for k, _ in proof.imports] == [tg.WIDGET]
+    assert [k for k, _ in proof.imports] == [tg.DUST_B] and not proof.ok
+
+
+def test_generator_ports_are_derived_not_declared(conn: sqlite3.Connection) -> None:
+    # The validator derives the generator's ports from the DB by its spec (GT's EU per litre
+    # at the block's 32 EU/t: 16 L/s of gas), whatever the node declares.
+    p, why = sustain.gen_ports(conn, loop_plan(conn)["nodes"][2])
+    assert why is None and p is not None
+    assert p.used == {GAS: pytest.approx(16.0)} and p.given == {"eu": 640.0}
+    # A declared fuel rate GT doesn't give (too little fuel for 32 EU/t) is named.
+    plan = loop_plan(conn)
+    plan["nodes"][2]["ports"]["in"][GAS] = 12.0
+    proof = sustain.validate(conn, plan, FREE)
+    assert not proof.ok and "declares other ports than GT" in proof.problems[0]
+    assert f"uses {GAS} 12/unit, GT gives 16" in proof.problems[0]
+    # So is a hidden extra input, or none at all.
+    for ins in ({GAS: 16.0, tg.WIDGET: 1e-6}, {}):
+        plan = loop_plan(conn)
+        plan["nodes"][2]["ports"]["in"] = ins
+        assert not sustain.validate(conn, plan, FREE).ok
+    # Without a spec, or citing a fuel the DB hasn't, nothing is taken on trust.
+    plan = loop_plan(conn)
+    del plan["nodes"][2]["spec"]
+    proof = sustain.validate(conn, plan, FREE)
+    assert not proof.ok and "no spec" in proof.problems[0]
+    plan = loop_plan(conn)
+    plan["nodes"][2]["spec"]["fuel_ref"] = (
+        "r:gt.recipe.dieselgeneratorfuel/000000000000"
+    )
+    assert "not in the DB" in sustain.validate(conn, plan, FREE).problems[0]
+    plan = loop_plan(conn)
+    plan["nodes"][2]["spec"]["mte"] = tp.TREE_FARM
+    assert "not a single-block" in sustain.validate(conn, plan, FREE).problems[0]
+    plan = loop_plan(conn)
+    plan["nodes"][2]["spec"]["kind"] = "warp_core"
+    assert "unknown generator kind" in sustain.validate(conn, plan, FREE).problems[0]
+    # A node may leave its ports out: the derived ones count.
+    plan = loop_plan(conn)
+    del plan["nodes"][2]["ports"]
+    assert sustain.validate(conn, plan, FREE).ok
+
+
+def test_a_recipe_from_nothing_is_never_counted_on(conn: sqlite3.Connection) -> None:
+    # The review's probe: a GT recipe the export lists with no input it uses up (here a kept
+    # circuit only), "making" the generator's fuel. The sums close; the proof still fails.
+    plan = loop_plan(conn)
+    plan["nodes"] = [
+        {"recipe": "r:gt.recipe.multicentrifuge/fromnothing", "crafts_s": 1.0},
+        plan["nodes"][2],
+    ]
+    plan["boundary"]["in"] = []
+
+    def read(n: Mapping[str, Any]) -> tuple[sustain.Ports | None, str | None]:
+        if str(n["recipe"]).startswith("r:"):
+            return sustain.Ports({}, {GAS: 16.0}, {f"{tg.CIRCUIT}@1": 1.0}), None
+        return sustain.node_ports(conn, n, {})
+
+    proof = sustain.validate(conn, plan, FREE, ports=read)
+    assert proof.imports == () and not proof.ok
+    assert proof.problems == (
+        f"r:gt.recipe.multicentrifuge/fromnothing uses up nothing but gives {GAS}",
+    )
+
+
+def test_surplus_needs_a_sink(conn: sqlite3.Connection) -> None:
+    plan = loop_plan(conn, cr=0.017)  # a little more acid than the electrolyzer takes
+    proof = sustain.validate(conn, plan, FREE)
+    assert [k for k, _ in proof.surplus] == [ACID]
+    assert proof.as_dict()["surplus"][0]["note"] == "needs a sink (void or storage)"
 
 
 def test_eu_declared_imports_and_node_sources(conn: sqlite3.Connection) -> None:
     plan = loop_plan(conn)
-    plan["nodes"][2]["ports"]["out"]["eu"] = 50.0  # 2.5 EU/t out, 3 drawn
+    plan["nodes"][0]["eut_avg"] = 31.0  # 32 EU/t out, 33 drawn
     proof = sustain.validate(conn, plan, FREE)
     assert not proof.ok and "not above 0" in proof.problems[0]
     plan = loop_plan(conn)
@@ -152,5 +227,8 @@ def test_db_ports_and_the_bootstrap_kit(conn: sqlite3.Connection) -> None:
     assert kit["kept_inputs"] == [{"id": f"{tg.CIRCUIT}@1", "qty": 3}]
     assert kit["parts"] == [{"part": "rotor:Test/large", "qty": 1}]
     # Starter fuel: 16 L/s over every node's cycle (5.5 + 5 + 5 s).
-    assert kit["starter_fuel"] == [{"id": GAS, "qty": 248, "startup_s": 15.5}]
+    assert kit["starter_fuel"] == [
+        {"id": GAS, "qty": 248, "startup_s": 15.5,
+         "note": "an upper bound: every node's cycle, end to end"}
+    ]  # fmt: skip
     assert kit["seeds_saplings"] == [] and kit["tools"] == []

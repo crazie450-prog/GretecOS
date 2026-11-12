@@ -16,6 +16,7 @@ import argparse
 import importlib.util
 import io
 import json
+import shutil
 import sqlite3
 import sys
 from collections.abc import Iterator
@@ -403,7 +404,7 @@ def test_units_per_scale_bound() -> None:
     assert units("raw_budget", 12, 10, 5) == (2.0, "")
     assert units("raw_budget", 1, 10, 5)[0] is None
     n, why = units("raw_budget", 1, 10, 0)
-    assert n == 1.0 and "free set" in why
+    assert n == 1.0 and why == ""  # design() sizes it like the best bounded line
 
 
 def test_prefs_come_from_the_vault_or_the_template(tmp_path: Path) -> None:
@@ -527,3 +528,95 @@ def test_farms_tsv(tmp_path: Path, conn: sqlite3.Connection) -> None:
         with pytest.raises(farms.FarmError, match=match):
             farms.curated(path)
     assert farms.curated(farms.FARMS) == []  # ships empty until curated (D233)
+
+
+# --- review fixes (WO-4.2 review: HIGH-1, verdict 11, LOW-2) ------------------------------------
+
+
+def _writable_copy(db: Path, tmp_path: Path) -> sqlite3.Connection:
+    path = tmp_path / "copy.db"
+    shutil.copyfile(db, path)
+    return sqlite3.connect(path)
+
+
+def test_single_block_fuel_is_gts_truncated_eu_per_litre(
+    db: Path, tmp_path: Path
+) -> None:
+    # A 95 % generator: GT's getFuelValue truncates per litre (acid: 10 x 95 / 100 = 9 EU/L,
+    # never 9.5), so the line plans 640 / 9 L/s, not 640 / 9.5.
+    c = _writable_copy(db, tmp_path)
+    try:
+        c.execute("UPDATE generator SET efficiency = 95")
+        gens, _ = power.candidates(c, 1, power.PowerRequest(free=FREE), 2)
+        by_fuel = {g.fuel: g for g in gens}
+        assert by_fuel[ACID].fuel_per_s == pytest.approx(640 / 9)
+        assert by_fuel[ACID].eu_per_fuel == pytest.approx(9.0)
+        assert by_fuel[GAS].fuel_per_s == pytest.approx(640 / 38)
+        # The validator derives the same rate on its own.
+        g = by_fuel[ACID]
+        node = {"recipe": g.id, "spec": dict(g.spec)}
+        p, why = sustain.gen_ports(c, node)
+        assert why is None and p is not None
+        assert p.used == {ACID: pytest.approx(640 / 9)}
+        # 10 x 9 / 100 = 0 EU/L: GT burns nothing for it, so no candidate.
+        c.execute("UPDATE generator SET efficiency = 9")
+        gens, notes = power.candidates(c, 1, power.PowerRequest(free=FREE), 2)
+        assert {g.fuel for g in gens} == {GAS}  # 40 x 9 / 100 = 3
+        assert any("0 EU per unit" in n for n in notes)
+    finally:
+        c.close()
+
+
+def test_the_most_efficient_single_block_for_sustain_and_effort(
+    db: Path, tmp_path: Path
+) -> None:
+    # An MV copy of the generator at 85 %: best and max_output take the highest tier;
+    # self_sustaining and output_per_effort also keep the 100 % LV one (verdict 11).
+    c = _writable_copy(db, tmp_path)
+    try:
+        cols = [r[1] for r in c.execute("PRAGMA table_info(machine)")][1:]
+        row = c.execute(
+            f"SELECT {', '.join(cols)} FROM machine WHERE mte_id = ?", (GENERATOR,)
+        ).fetchone()
+        vals = dict(zip(cols, row, strict=True)) | {"mte_id": 112, "tier": 2}
+        marks = ", ".join("?" * len(cols))
+        c.execute(
+            f"INSERT INTO machine ({', '.join(cols)}) VALUES ({marks})",
+            [vals[k] for k in cols],
+        )
+        new_id = c.execute("SELECT id FROM machine WHERE mte_id = 112").fetchone()[0]
+        c.execute(
+            "INSERT INTO machine_map SELECT ?, mm.recipe_map_id, mm.priority FROM"
+            " machine_map AS mm JOIN machine AS m ON m.id = mm.machine_id"
+            " WHERE m.mte_id = ?",
+            (new_id, GENERATOR),
+        )
+        c.execute(
+            "INSERT INTO generator SELECT run_id, 112, class_name, 2, 85, 128, 1,"
+            " recipe_map FROM generator WHERE mte_id = ?",
+            (GENERATOR,),
+        )
+        for mode, want in (
+            ("best", {112}),
+            ("max_output", {112}),
+            ("self_sustaining", {GENERATOR, 112}),
+            ("output_per_effort", {GENERATOR, 112}),
+        ):
+            gens, _ = power.candidates(
+                c, 1, power.PowerRequest(mode=mode, free=FREE), 2
+            )
+            assert {g.machines[0].mte for g in gens} == want, mode
+    finally:
+        c.close()
+
+
+def test_raw_budget_sizes_a_closed_line_like_the_best_open_one(
+    conn: sqlite3.Connection, no_farms: Path
+) -> None:
+    # The two lines that import take 115.2 and 230.4 per hour: a budget of 1000 gives 8 and 4
+    # units. The closed line (water only) gets 8, never 1 (LOW-2).
+    d = design(conn, no_farms, mode="max_output", scale="raw_budget", bound=1000)
+    closed = [p for p in d.options if [b["id"] for b in p["boundary"]["in"]] == [WATER]]
+    assert [p["power"]["units"] for p in closed] == [8]
+    assert any("as many as the best line" in w for w in closed[0]["warnings"])
+    assert d.options[0]["power"]["units"] == 8

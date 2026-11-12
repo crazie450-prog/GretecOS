@@ -14,13 +14,23 @@ the node's crafts per second and sums each item over the whole line:
   :mod:`.farms`);
 - an oredict or wildcard slot (``member:<slot>|<member>``) turns one member into one of the slot,
   and the member must be in the slot (the DB's ``ore_member``, or the wildcard's item);
-- a generator (``gen:``) uses up and gives what its node lists (the fuel catalog's numbers, WO-4.1
-  and :mod:`.gtmath.boiler`).
+- a generator (``gen:``) is derived again from the DB by its node's ``spec`` (:func:`gen_ports`),
+  never taken from the ports the designer wrote: the fuel row it cites (its fluid or item and
+  FUEL_VALUE), and for a single block GT's own EU per unit (``generator_gt``, else
+  ``fuels.single_block_eu``) at the block's voltage x amps; for a turbine GT's math at its rotor and
+  dynamo (``generators.turbine``); for boilers ``gtmath.boiler`` at their throttle circuit feeding
+  the steam turbine. Ports the node declares must match (each item within :data:`TOL` of its
+  flow), or the proof names the difference.
+
+A GT recipe that uses up nothing but gives something outside the free set (an export quirk: an
+input it couldn't key) is never counted on: the proof names it (D234).
 
 Any item whose balance is below zero (beyond float noise, :data:`TOL`) and
 is not in the free set is an import (noise is relative to that item's own flow, so a trickle of
 a dense fuel still counts): the line is not self-sustaining, and the proof names each
-one with its rate. The plan's own ``boundary.in`` is checked against the free set too, so a line
+one with its rate. Any item outside the free set left over (balance above zero) is listed as
+``surplus``: in the game it needs a sink (a void or storage), or the machine making it stalls when
+its output is full. The plan's own ``boundary.in`` is checked against the free set too, so a line
 that declares an import fails even when the sums would hide it.
 
 **The bootstrap kit** (:func:`bootstrap`): what the line needs once to start and never uses up:
@@ -36,11 +46,14 @@ import math
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
-from gregtec.planner import graph
+from gregtec.planner import fuels, generators, graph
 from gregtec.planner.farms import Farm
 from gregtec.planner.graph import EU_KEY
+from gregtec.planner.gtmath import boiler as gt_boiler
+from gregtec.planner.gtmath.turbine import Kind
 
 TOL = 1e-6  # float noise, relative to the item's own flow (made or used, the larger)
 ABS_TOL = 1e-12  # per second
@@ -143,6 +156,174 @@ def _declared(node: Mapping[str, Any]) -> Ports:
     )
 
 
+_TURBINES = {"gas_turbine": Kind.GAS, "plasma_turbine": Kind.PLASMA}
+_TURBINE_CLASS = {
+    "gas_turbine": "MTELargeTurbineGas",
+    "plasma_turbine": "MTELargeTurbinePlasma",
+}
+
+
+def _class(conn: sqlite3.Connection, mte: int) -> str | None:
+    row = conn.execute(
+        "SELECT class_name FROM machine WHERE mte_id = ?", (mte,)
+    ).fetchone()
+    return str(row[0]).rsplit(".", 1)[-1] if row else None
+
+
+def _single_eu(
+    conn: sqlite3.Connection,
+    run_id: int,
+    mte: int,
+    fuel_value: int,
+    efficiency: int,
+    fluid: str | None,
+    item: str,
+) -> Fraction:
+    """EU per unit (litre or item) GT's single block gives: GT's own ``getFuelValue`` from the
+    export (``generator_gt``) when it has the fuel, else WO-4.1's reading of it."""
+    if fluid is not None:
+        row = conn.execute(
+            "SELECT eu_long, consumed FROM generator_gt WHERE run_id = ? AND mte_id = ?"
+            " AND fluid = ? AND special = ? AND eu_long IS NOT NULL LIMIT 1",
+            (run_id, mte, fluid, fuel_value),
+        ).fetchone()
+        if row is not None and row[1]:
+            return Fraction(int(row[0]), int(row[1]))
+    else:
+        reg, _, meta = item.rpartition("@")
+        row = conn.execute(
+            "SELECT item_eu_long FROM generator_gt WHERE run_id = ? AND mte_id = ?"
+            " AND registry_name = ? AND meta = ? AND item_eu_long IS NOT NULL LIMIT 1",
+            (run_id, mte, reg, int(meta) if meta.isdigit() else -1),
+        ).fetchone()
+        if row is not None:
+            return Fraction(int(row[0]))
+    return Fraction(
+        fuels.single_block_eu(
+            special=fuel_value, efficiency=efficiency, fluid_input=fluid is not None
+        )
+    )
+
+
+def _turbine_run(
+    conn: sqlite3.Connection,
+    kind: Kind,
+    spec: Mapping[str, Any],
+    fluid: str | None,
+    run: int,
+) -> generators.TurbineRun:
+    rotor = tuple(spec["rotor"])
+    return generators.turbine(
+        conn,
+        kind=kind,
+        material=str(rotor[0]),
+        size=str(rotor[1]),
+        dynamo_tier=int(spec["dynamo_tier"]),
+        fuel=fluid,
+        run_id=run,
+    ).runs[1]
+
+
+def gen_ports(
+    conn: sqlite3.Connection, node: Mapping[str, Any], run_id: int | None = None
+) -> tuple[Ports | None, str | None]:
+    """A generator node's ports per build unit, derived again from the DB and GT's math by its
+    ``spec`` (see the module docstring), or (None, why not)."""
+    ref = str(node.get("recipe"))
+    spec = node.get("spec")
+    if not isinstance(spec, Mapping) or "kind" not in spec or "fuel_ref" not in spec:
+        return None, f"{ref}: no spec to derive its ports from"
+    row = conn.execute(
+        "SELECT run_id, input, fluid, fuel_value, value, unit FROM fuel WHERE ref = ?"
+        " AND (? IS NULL OR run_id = ?) ORDER BY run_id DESC LIMIT 1",
+        (str(spec["fuel_ref"]), run_id, run_id),
+    ).fetchone()
+    if row is None:
+        return None, f"{ref}: fuel {spec['fuel_ref']} is not in the DB"
+    run = int(row[0])
+    item, fluid, fuel_value = str(row[1]), row[2], int(row[3])
+    key = f"fluid:{fluid}" if fluid else item
+    kind = str(spec["kind"])
+    try:
+        if kind == "single_block":
+            mte = int(spec["mte"])
+            g = conn.execute(
+                "SELECT efficiency, eu_out, amps_out FROM generator WHERE run_id = ?"
+                " AND mte_id = ?",
+                (run, mte),
+            ).fetchone()
+            if g is None or not g[0] or not g[1] or not g[2]:
+                return None, f"{ref}: mte:{mte} is not a single-block generator"
+            per = _single_eu(conn, run, mte, fuel_value, int(g[0]), fluid, item)
+            if per <= 0:
+                return None, f"{ref}: GT gives 0 EU per unit of {key}"
+            eu_s = Fraction(int(g[1]) * int(g[2]) * 20)
+            return Ports({key: float(eu_s / per)}, {EU_KEY: float(eu_s)}), None
+        if kind in _TURBINES:
+            mte = int(spec["mte"])
+            if _class(conn, mte) != _TURBINE_CLASS[kind] or fluid is None:
+                return None, f"{ref}: mte:{mte} on {key} is not a {kind}"
+            tr = _turbine_run(conn, _TURBINES[kind], spec, fluid, run)
+            return Ports(
+                {key: tr.flow * 20 / tr.ticks}, {EU_KEY: float(tr.eut * 20)}
+            ), None
+        if kind == "boiler_steam":
+            b = gt_boiler.BOILERS.get(_class(conn, int(spec["boiler_mte"])) or "")
+            if (
+                b is None
+                or fluid is None
+                or str(row[5]) != fuels.Unit.BOILER_TICKS.value
+            ):
+                return None, f"{ref}: not a 2.9 large boiler on a fluid fuel"
+            steam = (
+                "MTELargeTurbineHPSteam" if b.superheated else "MTELargeTurbineSteam"
+            )
+            if _class(conn, int(spec["turbine_mte"])) != steam:
+                return (
+                    None,
+                    f"{ref}: mte:{spec['turbine_mte']} doesn't take {b.steam_fluid}",
+                )
+            st = gt_boiler.steady(
+                b, fluid=fluid, duration=int(row[4]), circuit=int(spec["circuit"])
+            )
+            tr = _turbine_run(
+                conn, Kind.HP_STEAM if b.superheated else Kind.STEAM, spec, None, run
+            )
+            count = int(spec["boilers"])
+            if st.steam * count < tr.flow:
+                return None, (
+                    f"{ref}: {count} boilers at circuit {spec['circuit']} give"
+                    f" {float(st.steam * count):.6g} L/t, the turbine takes {tr.flow}"
+                )
+            ins = {key: float(count * st.fuel * 20)}
+            ins["fluid:water"] = ins.get("fluid:water", 0.0) + float(
+                count * st.water * 20
+            )
+            return Ports(ins, {EU_KEY: float(tr.eut * 20)}), None
+    except (
+        generators.CatalogError,
+        gt_boiler.BoilerError,
+        ValueError,
+        KeyError,
+    ) as exc:
+        return None, f"{ref}: {exc}"
+    return None, f"{ref}: unknown generator kind {kind!r}"
+
+
+def _mismatch(declared: Ports, derived: Ports) -> list[str]:
+    """Where a node's declared ports differ from the derived ones (relative :data:`TOL`)."""
+    out = []
+    for side, a, b in (
+        ("uses", declared.used, derived.used),
+        ("gives", declared.given, derived.given),
+    ):
+        for k in sorted(set(a) | set(b)):
+            x, y = a.get(k, 0.0), b.get(k, 0.0)
+            if abs(x - y) > max(ABS_TOL, TOL * max(abs(x), abs(y))):
+                out.append(f"{side} {k} {x:.6g}/unit, GT gives {y:.6g}")
+    return out
+
+
 def node_ports(
     conn: sqlite3.Connection,
     node: Mapping[str, Any],
@@ -173,7 +354,14 @@ def node_ports(
             return None, f"{member} is not a member of {slot}"
         return Ports({member: 1.0}, {slot: 1.0}), None
     if ref.startswith("gen:"):
-        return _declared(node), None
+        derived, why = gen_ports(conn, node, run_id)
+        if derived is None:
+            return None, why
+        if node.get("ports"):
+            bad = _mismatch(_declared(node), derived)
+            if bad:
+                return None, f"{ref} declares other ports than GT: " + "; ".join(bad)
+        return derived, None
     return None, f"{ref}: unknown node kind"
 
 
@@ -189,6 +377,7 @@ class Proof:
     ]  # every item's net per second (+ made, - used)
     free_used: tuple[tuple[str, float], ...]  # free-set items taken, per second
     problems: tuple[str, ...]
+    surplus: tuple[tuple[str, float], ...] = ()  # non-free items left over: need a sink
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -198,6 +387,10 @@ class Proof:
             "free_used": [{"id": k, "rate_s": v} for k, v in self.free_used],
             "balance": [{"id": k, "rate_s": v} for k, v in self.balance],
             "problems": list(self.problems),
+            "surplus": [
+                {"id": k, "rate_s": v, "note": "needs a sink (void or storage)"}
+                for k, v in self.surplus
+            ],
         }
 
 
@@ -227,6 +420,13 @@ def validate(
         if p is None:
             problems.append(why or f"{node.get('recipe')}: unreadable")
             continue
+        ref = str(node.get("recipe"))
+        nonfree = [k for k in p.given if k != EU_KEY and k not in free_set]
+        if ref.startswith("r:") and nonfree and not any(k != EU_KEY for k in p.used):
+            # The export lists no input it uses up: never counted on (D234).
+            problems.append(
+                f"{ref} uses up nothing but gives {', '.join(sorted(nonfree))}"
+            )
         for k, a in p.used.items():
             balance[k] = balance.get(k, 0.0) - a * x
             used[k] = used.get(k, 0.0) + a * x
@@ -247,6 +447,11 @@ def validate(
     )
     free_used = tuple(
         (k, -v) for k, v in sorted(balance.items()) if short(k) and k in free_set
+    )
+    surplus = tuple(
+        (k, v)
+        for k, v in sorted(balance.items())
+        if v > max(ABS_TOL, TOL * gross[k]) and k != EU_KEY and k not in free_set
     )
     declared = sorted(
         str(p["id"])
@@ -276,6 +481,7 @@ def validate(
         ),
         free_used,
         tuple(problems),
+        surplus,
     )
 
 
@@ -329,7 +535,12 @@ def bootstrap(
         "tools": [{"tool": k, "qty": v} for k, v in sorted(tools.items())],
         "parts": [{"part": k, "qty": v} for k, v in sorted(parts.items())],
         "starter_fuel": [
-            {"id": k, "qty": math.ceil(v * startup_s), "startup_s": startup_s}
+            {
+                "id": k,
+                "qty": math.ceil(v * startup_s),
+                "startup_s": startup_s,
+                "note": "an upper bound: every node's cycle, end to end",
+            }
             for k, v in sorted(fuel.items())
         ],
     }
