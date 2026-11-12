@@ -1,0 +1,35 @@
+# G1 golden recipes (D222): DB keys only, no game numbers. Picked from the dev-runtime client
+# harness run 20261111T145556Z (GregtecLink 4053b4b) by select() in
+# tests/integration/test_golden_recipes.py, whose docstring states the rule. The check and the
+# Lab checklist (docs/runbooks/g1_golden_lab.md) read the numbers from the run itself.
+id	stratum	ref	handler	output	what
+g01	tier-0	r:gt.recipe.alloysmelter/001723382c2a	gt.recipe.category.alloy_smelter_molding	gregtech:gt.metaitem.01@11317	Osmiridium Ingot (gt.recipe.alloysmelter, gregtech), ULV
+g02	tier-1	r:gt.recipe.arcfurnace/09e03cb11136	gt.recipe.arcfurnace	gregtech:gt.metaitem.01@11035	Copper Ingot (gt.recipe.arcfurnace, gregtech), LV
+g03	tier-2	r:gt.recipe.assembler/00597668bd12	gt.recipe.assembler	gregtech:gt.metatool.01@10	Saw (gt.recipe.assembler, gregtech), MV
+g04	tier-3	r:gt.recipe.autoclave/32b19810798c	gt.recipe.autoclave	minecraft:nether_star@0	Nether Star (gt.recipe.autoclave, gregtech), HV
+g05	tier-4	r:gt.recipe.canner/6f246dbb2f73	gt.recipe.canner	gregtech:gt.metaitem.01@32550	Large Sunnarium Battery (gt.recipe.canner, gregtech), EV
+g06	tier-5	r:gt.recipe.centrifuge/03a2cfb9a437	gt.recipe.centrifuge	miscutils:itemDustRareEarthIII@0	Rare Earth (III) Dust (gt.recipe.centrifuge, gregtech), IV
+g07	tier-6	r:gt.recipe.chemicaldehydrator/a041429fca45	gt.recipe.chemicaldehydrator	miscutils:itemDustHastelloyN@0	Hastelloy-N Dust (gt.recipe.chemicaldehydrator, gregtech), LuV
+g08	tier-7	r:gt.recipe.chemicalbath/42807f7bdc24	gt.recipe.chemicalbath	gregtech:gt.metaitem.01@8347	Firestone (gt.recipe.chemicalbath, gregtech), ZPM
+g09	tier-8	r:gt.recipe.chemicalreactor/5a41c4c1709f	gt.recipe.chemicalreactor	gregtech:gt.metaitem.03@32076	Biocells (gt.recipe.chemicalreactor, gregtech), UV
+g10	multiblock	r:gt.recipe.algae_pond/0abf50bba4c7	gt.recipe.algae_pond	miscutils:item.BasicAgrichemItem@0	Algae Biomass (gt.recipe.algae_pond, gregtech)
+g11	multiblock	r:gt.recipe.alloyblastsmelter/00b16bf2ab70	gt.recipe.category.abs_non_alloy_recipes	fluid:molten.laurenium	Molten Laurenium (gt.recipe.alloyblastsmelter, gregtech)
+g12	multiblock	r:gt.recipe.beamcrafter/0bcc68e2feee	gt.recipe.beamcrafter	gregtech:gt.metaitem.03@32300	Stable Baryon Containment Unit (gt.recipe.beamcrafter, gregtech)
+g13	multiblock	r:gt.recipe.blastfurnace/0059870c0b67	gt.recipe.blastfurnace	minecraft:iron_ingot@0	Iron Ingot (gt.recipe.blastfurnace, gregtech)
+g14	multiblock	r:gt.recipe.cable/000494af2b62	gt.recipe.cable	gregtech:gt.blockmachines@1828	4x Duranium Cable (gt.recipe.cable, gregtech)
+g15	fluids	r:gt.recipe.brewer/078dc59764fe	gt.recipe.brewer	fluid:potion.chillysauce	Chilly Sauce (gt.recipe.brewer, gregtech)
+g16	fluids	r:gt.recipe.coldtrap/a2801bbf1062	gt.recipe.coldtrap	gregtech:gt.metaitem.01@30014	Fluorine Cell (gt.recipe.coldtrap, gregtech)
+g17	fluids	r:gt.recipe.craker/07ce3ed744d9	gt.recipe.craker	fluid:moderatelysteamcracked.propene	Moderately Steam-Cracked Propene (gt.recipe.craker, gregtech)
+g18	chanced	r:gt.recipe.cyclotron/008a8706a93b	gt.recipe.cyclotron	miscutils:dustNeptunium238@0	Neptunium 238 Dust (gt.recipe.cyclotron, gregtech)
+g19	chanced	r:gt.recipe.electrolyzer/0fbde482f28a	gt.recipe.electrolyzer	gregtech:gt.metaitem.01@2036	Zinc Dust (gt.recipe.electrolyzer, gregtech)
+g20	chanced	r:gt.recipe.electromagneticseparator/077902c5612d	gt.recipe.electromagneticseparator	gregtech:gt.metaitem.01@2032	Iron Dust (gt.recipe.electromagneticseparator, gregtech)
+g21	oredict	r:gt.recipe.compressor/aff4143f4197	gt.recipe.compressor	IC2:itemFuelPlantBall@0	Plantball (gt.recipe.compressor, gregtech)
+g22	oredict	r:gt.recipe.extractor/f2bb6a1bc100	gt.recipe.extractor	gregtech:gt.metaitem.01@2896	Raw Rubber Dust (gt.recipe.extractor, gregtech)
+g23	oredict	r:gt.recipe.industrialcokeoven/33a61549c58e	gt.recipe.industrialcokeoven	minecraft:coal@1	Charcoal (gt.recipe.industrialcokeoven, gregtech)
+g24	addon	r:gg.recipe.componentassemblyline/0063bd8eb6f1	gg.recipe.componentassemblyline	gregtech:gt.metaitem.01@32037	Emitter (UIV) (gg.recipe.componentassemblyline, GoodGenerator)
+g25	addon	r:gt.recipe.assemble-condensate/066d055ab717	gt.recipe.assemble-condensate	gregtech:gt.metaitem.03@32312	Perfected Waveguide (gt.recipe.assemble-condensate, tectech)
+g26	addon	r:gt.recipe.electricimplosioncompressor/011f3d80782f	gt.recipe.electricimplosioncompressor	gregtech:gt.metaitem.02@29511	Flawless Jasper (gt.recipe.electricimplosioncompressor, bartworks)
+g27	addon	r:gt.recipe.spaceMining/002985048f7c	gt.recipe.spaceMining	minecraft:clay@0	Clay (gt.recipe.spaceMining, gtnhintergalactic)
+g28	shaped	r:codechicken.nei.recipe.ShapedRecipeHandler/00032c9a4b18	codechicken.nei.recipe.ShapedRecipeHandler	gregtech:gt.metatool.01@206	File (HV) (codechicken.nei.recipe.ShapedRecipeHandler, )
+g29	shapeless	r:codechicken.nei.recipe.ShapelessRecipeHandler/00146f6784cd	codechicken.nei.recipe.ShapelessRecipeHandler	gregtech:gt.blockmachines@30587	4x Hypogen Wire (codechicken.nei.recipe.ShapelessRecipeHandler, )
+g30	furnace	r:codechicken.nei.recipe.FurnaceRecipeHandler/000273e6334e	codechicken.nei.recipe.FurnaceRecipeHandler	gregtech:gt.metaitem.01@9098	Uranium 238 Nugget (codechicken.nei.recipe.FurnaceRecipeHandler, )
