@@ -315,7 +315,7 @@ def test_gos_watch_run_spools_events(
 def test_gos_dev_never_watches_play(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg, path = make_cfg(tmp_path)
+    _, path = make_cfg(tmp_path)
     monkeypatch.setattr(config, "running_as_dev", lambda: True)
     assert cli.main(["watch", "run", "--instance", "play", "--config", str(path)]) == 2
     # and a Lab without a game folder is a setup problem, not a crash loop

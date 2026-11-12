@@ -12,6 +12,11 @@ other failure only warns: Play still launches (plan 0.1 principle 9). It marks t
 (:data:`LAUNCHING`) before checking the lock, so an export started before Prism has started the
 client's Java refuses instead of running beside it; post-exit removes the mark.
 
+**With Play (D77, D259).** For Play and Lab, once its checks pass, pre-launch tells the supervisor
+to start the game watchers and voice (:func:`tell_supervisor`, ``POST /play``); post-exit tells it
+to stop them after the export question below is answered or has timed out (plan 4.2). Both are
+best effort: GOS not running is a note, and the game launches anyway.
+
 **Post-exit** (Play only; Prism runs it only after a clean exit): if Play's fingerprint equals the
 last export's, nothing runs. Otherwise, with ``[policy] export_on_quit = "ask"`` (D69), it asks
 "Mods changed. Export now?" in a dialog that times out after 5 minutes as a no (plan 4.2). The

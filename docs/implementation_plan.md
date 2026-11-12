@@ -1226,8 +1226,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V02 | **Resolved** (`gos doctor`, 2026-11-05): the portable Prism's `GTNH-Play` uses `.minecraft\`; instances in an installed Prism use `minecraft\`. `gos doctor` reads either | — | 0.2 |
 | V03 | NEI 2.8.172 swap works with 2.9.0 in Export | Export run | 1.2 |
 | V04 | Exact `options.txt` key for pause-on-lost-focus on 1.7.10 | Inspect the file after F3+P | 0.6 |
-| V05 | Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log | Lab session | 6.1 |
-| V06 | ServerUtilities world-logging config keys and the single-player `world.log` path. **Keys confirmed** (PR #6); the path moves to WO-6.1 (D97) | Lab session | 6.1 |
+| V05 | Chat-line routing (`[CHAT]`; `latest.log` vs `fml-client-latest.log`) on a real 2.9 log. Either works for the watchers (D257: both logs are read, a line in both counts once); the Lab session records which | Lab session | 6.1 |
+| V06 | ServerUtilities world-logging config keys and the single-player `world.log` path. **Keys confirmed** (PR #6); the path moves to WO-6.1 (D97), which watches `MC\logs\world.log` (D257); the Lab session confirms it and the wording for broken blocks | Lab session | 6.1 |
 | V07 | **Partly resolved** (D127, WO-1.6): from VisualProspecting 1.5.42's source and a cache it wrote in the dev runtime, both caches are in the game folder (`visualprospecting\server\<world id>\`, `visualprospecting\client\<uuid>\<world id>\`), format v3. Still open: the Lab check (`docs/runbooks/ores_check.md`) | Lab | 1.6 |
 | V08 | **Resolved** (D126, WO-1.6): GT's worldgen registry, exported by GregtecLink as `gt_ore_mixes.json`; NEI's vein pages have no mix name, heights, weight, density or size | — | 1.6 |
 | V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
@@ -1248,9 +1248,9 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
 | V25 | **Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC | Lab test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player | Lab test | 6.2 |
-| V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads | Lab save loop | 6.1 |
+| V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads. Soak-tested on a fake game on Linux and Windows CI (D257); the Lab save loop confirms it on the game | Lab save loop | 6.1 |
 | V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
-| V29 | A reliable "game paused" signal (log line or GregtecLink) | Lab test | 6.1 |
+| V29 | A reliable "game paused" signal (log line or GregtecLink). Resolved from what the game writes (D258): the `Saving and pausing game...` line, unpaused by the server's next own line or autosave; the Lab test measures the line's delay | Lab test | 6.1 |
 | V30 | CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2] | Lab test | 6.7 |
 | V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
 | V32 | The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6] | NEI + Lab | 6.7 |
