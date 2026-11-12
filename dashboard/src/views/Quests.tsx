@@ -39,7 +39,7 @@ function ItemLinks(props: { quest: string; name: string; links: QuestLink[]; ope
           <button
             key={`${l.part}-${l.key}-${i}`}
             type="button"
-            className="gos-chip linkish"
+            className="gos-chip"
             onClick={() => props.openItem(l.key, l.name)}
             title={`${l.part === "task" ? "asks for" : "rewards"} ${l.key}: open in Search`}
             data-item={l.key}

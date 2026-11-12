@@ -1,7 +1,7 @@
 // The Quests view (WO-6.4): the ranked frontier as a catalog card with its reasons, items linked
 // to Search, the quests past the frontier blurred until tapped (D26), "Spoil it" asking the core
 // for the full level, a spoken "spoil it" doing the same, and the empty state before a quest load.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Answer, QuestsView } from "../src/api/types";
 import { Quests, spokeSpoil, stageOf } from "../src/views/Quests";
@@ -78,9 +78,9 @@ describe("the Quests view", () => {
     queue.push({ status: 200, body: view(0) });
     const openItem = vi.fn();
     render(<Quests answers={[]} openItem={openItem} />);
-    await screen.findByTestId("quests-frontier");
+    const front = await screen.findByTestId("quests-frontier");
     expect(urls).toEqual(["/api/quests"]);
-    expect(screen.getByText("Bricks")).toBeTruthy();
+    expect(within(front).getByText("Bricks")).toBeTruthy();
     expect(screen.getByText("goal: Electric Blast Furnace (5 steps)")).toBeTruthy();
     fireEvent.click(screen.getByText(/needs Bricked Blast Furnace/));
     expect(openItem).toHaveBeenCalledWith("gregtech:gt.blockmachines@140", "Bricked Blast Furnace");
