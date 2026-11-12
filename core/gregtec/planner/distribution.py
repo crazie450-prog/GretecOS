@@ -24,7 +24,6 @@ tiers (WO-4.4): the ledger's amp and tier warnings get their distribution answer
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import sqlite3
@@ -39,7 +38,8 @@ MAX_BUFFERS = (
     4  # D241: battery buffers while the window fits in this many, the LSC beyond
 )
 _TIER = {name.lower(): i for i, name in enumerate(VN)}
-_COLOUR = re.compile("§.")
+_COLOUR = re.compile("§.")  # Minecraft's colour codes
+_THICKNESS = re.compile(r"^\d+x ")
 _CABLE = (
     re.compile(r"Max Voltage:\s*([\d,]+)"),
     re.compile(r"Max Amperage:\s*([\d,]+)"),
@@ -172,13 +172,7 @@ def catalog(conn: sqlite3.Connection, run_id: int | None = None) -> Catalog:
         "SELECT mte_id, name_en, tooltip FROM machine WHERE tooltip LIKE '%Loss/Meter/Ampere%'"
         " ORDER BY mte_id"
     ):
-        try:
-            lines = json.loads(tooltip)
-        except (TypeError, ValueError):
-            lines = [str(tooltip)]
-        stats = parse_cable_tooltip(
-            [str(x) for x in lines] if isinstance(lines, list) else []
-        )
+        stats = parse_cable_tooltip(str(tooltip).split("\n"))  # lines joined by build
         if stats is not None:
             cables.append(Cable(int(mte_id), str(name), *stats))
     if run_id is None:
@@ -508,11 +502,17 @@ def check_run(segments: Sequence[Segment], voltage: int, amps: float) -> CableCh
     )
 
 
-def suggest_cable(cat: Catalog, voltage: int, amps: float) -> Cable | None:
-    """The lowest-loss cable that takes ``voltage`` and ``amps`` (then fewest amps, lowest
-    voltage, mte id: the smallest that does)."""
-    fits = [c for c in cat.cables if c.voltage >= voltage and c.amps >= amps]
-    return min(fits, key=lambda c: (c.loss, c.amps, c.voltage, c.mte_id), default=None)
+def cables_for(cat: Catalog, voltage: int, amps: float, limit: int = 5) -> list[Cable]:
+    """Cables of the voltage's own tier (rated at least ``voltage``, under four times it) that
+    carry ``amps``, lowest loss first (then fewest amps, mte id), the thinnest of each kind (its
+    name without the ``Nx`` count). Options, not a choice: what a cable costs to make is not here
+    (D242)."""
+    top = voltage * 4
+    fits = [c for c in cat.cables if voltage <= c.voltage < top and c.amps >= amps]
+    out: dict[str, Cable] = {}
+    for c in sorted(fits, key=lambda c: (c.loss, c.amps, c.mte_id)):
+        out.setdefault(_THICKNESS.sub("", c.name).lower(), c)
+    return list(out.values())[:limit]
 
 
 def _n(x: float) -> str:

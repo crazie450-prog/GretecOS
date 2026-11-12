@@ -4,8 +4,8 @@
   ``(peak - gen) x window`` EU at the tier, a battery-buffer option and an LSC option, and which
   one is recommended (``--tier-cap`` lets the LSC use cells up to that tier; ``--max-buffers``).
 - ``gos dist cable --tier HV --amps 4 --segment "1x Copper Cable=20" --segment mte:1246=5``:
-  a cable run's checks (overvoltage, amp overload, loss), and the lowest-loss cable that would
-  carry it; exit 1 when the run fails a check.
+  a cable run's checks (overvoltage, amp overload, loss), and the cables of the voltage's tier
+  that would carry it, lowest loss first; exit 1 when the run fails a check.
 - ``gos dist transformer --from EV --to LV --amps 8``: the transformer chain between the tiers.
 - ``gos dist ledger --window 120 [--scope all|running]``: buffers and transformers for the EU
   ledger's tiers (WO-4.4).
@@ -134,7 +134,7 @@ def _transformer_lines(p: dist.TransformerPlan) -> list[str]:
     return lines
 
 
-def _cable_lines(chk: dist.CableCheck, better: dist.Cable | None) -> list[str]:
+def _cable_lines(chk: dist.CableCheck, fits: list[dist.Cable]) -> list[str]:
     lines = [
         f"run: {chk.voltage} V, {chk.amps:g} A over "
         + " + ".join(
@@ -148,11 +148,14 @@ def _cable_lines(chk: dist.CableCheck, better: dist.Cable | None) -> list[str]:
     ]
     lines.extend(f"  problem: {p}" for p in chk.problems)
     lines.append("  ok" if chk.ok else f"  burns: {', '.join(chk.burns) or 'none'}")
-    if better is not None:
+    if fits:
         lines.append(
-            f"  lowest-loss cable for {chk.voltage} V, {chk.amps:g} A: {better.name}"
-            f" [{better.ref}] ({better.voltage} V, {better.amps} A, loss {better.loss})"
+            f"  cables of this tier that carry {chk.amps:g} A, lowest loss first:"
         )
+    lines.extend(
+        f"    {c.name} [{c.ref}] ({c.voltage} V, {c.amps} A, loss {c.loss})"
+        for c in fits
+    )
     return lines
 
 
@@ -203,9 +206,9 @@ def _run(
     elif cmd == "cable":
         volts = args.voltage if args.voltage is not None else dist.voltage(args.tier)
         chk = dist.check_run(_segments(cat, args.segment), volts, args.amps)
-        better = dist.suggest_cable(cat, volts, args.amps)
-        data = {**chk.as_dict(), "suggest": None if better is None else better.ref}
-        lines = _cable_lines(chk, better)
+        fits = dist.cables_for(cat, volts, args.amps)
+        data = {**chk.as_dict(), "fits": [c.ref for c in fits]}
+        lines = _cable_lines(chk, fits)
         status = 0 if chk.ok else 1
     elif cmd == "transformer":
         p = dist.place_transformers(cat, args.source, args.line, args.amps)
