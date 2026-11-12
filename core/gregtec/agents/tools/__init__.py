@@ -32,14 +32,15 @@ handoff(task)             fast   :mod:`gregtec.agents.deep_lane` (WO-2.3; to the
 telemetry_get(scope)      both   :mod:`.ops` (WO-7.1; OC readings with age and stale flag)
 action_propose(kind,args) deep   :mod:`.ops` (WO-7.1; proposes only: Clayton confirms, D59)
 action_status(id)         both   :mod:`.ops` (WO-7.1)
+ledger_get()              both   :mod:`.ledger` (WO-4.4; the EU ledger, read-only)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
 with WO-5.3; export_diff with WO-1.4; ore_find with WO-1.6; structure_get after WO-1.8; machine_fact_set with
 WO-1.9; crop_* with WO-1.10 and WO-6.7; plan_*, design_production, effort_estimate and
-layout_estimate with Phase 3; design_power with WO-4.2; ledger_* with
-WO-4.4; speak with WO-5.3; persona_set after WO-5.6 (D208); player_pos with WO-6.1; events_recent and
+layout_estimate with Phase 3; design_power with WO-4.2; ledger_update and
+plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208); player_pos with WO-6.1; events_recent and
 session_summary with WO-6.3; screen_snapshot with
 WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
 with Phase 10.

@@ -457,8 +457,18 @@ export function Base() {
                 </p>
               </Panel>
               <TierPanel base={base} run={run} busy={busy} />
-              <Panel label="Accepted lines" testId="base-lines">
-                <p className="empty">{GLYPH.todo} No accepted lines yet. A line's outputs join the designer's inputs when you accept its plan.</p>
+              <Panel label="Running lines" testId="base-lines">
+                {base.lines.length === 0 ? (
+                  <p className="empty">{GLYPH.todo} No running lines yet. A line's output joins the designer's inputs once you mark its plan running.</p>
+                ) : (
+                  <ul className="result-list">
+                    {base.lines.map((l) => (
+                      <li key={l.key}>
+                        <code>{l.key}</code> <span className="num">{l.rate_s}/s</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </Panel>
             </div>
             <MachinesPanel base={base} run={run} busy={busy} />
