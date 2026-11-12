@@ -10,9 +10,10 @@ same way) leaves, in GOS_HOME:
 | `data/plans/<id>/flow.mmd`, `flow.png` | the flow diagram (Mermaid; PNG for Discord, D201) |
 | `data/plans/<id>/gtnhplanner.json` | the gtnhplanner.com project (D66, D202) |
 | `data/plans/<id>/gtnh-flow.yaml` | the gtnh-flow project (D202) |
-| `vault/plans/<id>.md` | the vault note: summary facts, machines by type, the Mermaid diagram |
+| `vault/plans/<id>.md` | the vault note, at most 40 lines (plan 6.1): summary facts, machines by type, and the Mermaid diagram only when it fits (else a pointer to `flow.mmd`) |
 
-plus a `plan` row (status `proposed`). The deep lane reads them with `plan_export`; the dashboard and
+plus a `plan` row (status `proposed`; it moves one step at a time along proposed → accepted →
+building → running → retired). The deep lane reads them with `plan_export(id, fmt)`; the dashboard and
 Discord with `GET /api/plans/<id>/cards` and `GET /api/plans/<id>/export/<format>`.
 
 ## Clayton's PC checks (deployment test)
