@@ -173,7 +173,7 @@ describe("the palette", () => {
     expect(found[2].action).toEqual({ kind: "item", key: "gregtech:gt.metaitem.01@11305", name: "Steel Ingot", tool: "recipe_uses" });
     const quests: Card = {
       type: "quest", tool: "quest_find", error: null, title: "steel", tier: null, spoil: null, total: 1, notes: [],
-      quests: [{ ref: "q:AAAAAAAAAAAAAAAAAAAABg", name: null, state: "locked", lines: null, main: false, shown: false, description: null, rows: [] }],
+      quests: [{ ref: "q:AAAAAAAAAAAAAAAAAAAABg", name: null, state: "locked", lines: null, main: false, shown: false, description: null, rows: [], spoil: 0 }],
     };
     expect(questEntries(quests)[0].label).toBe("A quest past your frontier"); // nudge-first (D26)
     expect(itemEntries({ ...items, error: "no DB" } as Card)).toEqual([]);

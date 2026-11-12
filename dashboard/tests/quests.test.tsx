@@ -26,7 +26,7 @@ function view(spoil: 0 | 1 | 2 = 0): QuestsView {
     default: 0,
     goals: ["Electric Blast Furnace"],
     frontier: card("Frontier", 2, [
-      { ref: Q(11), name: "Bricks", state: "available", lines: "Steam", main: false, shown: true, description: null, rows: [row("why", "goal: Electric Blast Furnace (5 steps)")] },
+      { ref: Q(11), name: "Bricks", state: "available", lines: "Steam", main: false, shown: true, description: null, rows: [row("why", "goal: Electric Blast Furnace (5 steps)")], spoil: null },
     ]),
     beyond: card("Beyond the frontier", spoil, [
       {
@@ -38,6 +38,7 @@ function view(spoil: 0 | 1 | 2 = 0): QuestsView {
         shown: false,
         description: spoil === 2 ? "Pressure makes diamonds, they say." : null,
         rows: [row("after", "Bricks", Q(11))],
+        spoil,
       },
     ]),
     links: { [Q(11)]: [{ part: "task", key: "gregtech:gt.blockmachines@140", name: "Bricked Blast Furnace", amount: 1, consume: false }] },

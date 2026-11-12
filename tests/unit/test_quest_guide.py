@@ -654,6 +654,67 @@ def test_the_view_at_levels_1_and_2(home: Path) -> None:
     assert two[q(14)]["description"] == "Plates for the furnace walls."
 
 
+def _name_taps(
+    reg: Registry, beyond: dict[str, object]
+) -> dict[str, tuple[int, str]]:
+    """What the renderer's name taps open (renderers.tsx: openQuest(q.ref, q.spoil ?? 0)),
+    through the dashboard's own call (dashboard.run_tool: spoil_max=FULL)."""
+    out = {}
+    for x in beyond["quests"]:  # type: ignore[attr-defined]
+        if x["name"] is None:
+            continue  # the blurred button opens at 0
+        level = x["spoil"] if x["spoil"] is not None else 0
+        got = reg.call(
+            "quest_get",
+            {"id": x["ref"].removeprefix("q:"), "spoil": level},
+            lane="fast",
+            spoil_max=spoilers.FULL,
+        )
+        assert not got.is_error, got.text
+        out[x["ref"]] = (level, got.text)
+    return out
+
+
+@pytest.mark.parametrize("level", [spoilers.PARTIAL, spoilers.FULL])
+def test_view_grant_for_one_quest_lets_no_name_tap_open_another(
+    home: Path, reg: Registry, fields: dict[str, questeval.Spoiler], level: int
+) -> None:
+    """B1: "spoil stainless dreams" (or "a bit more") grants q4 only. The Beyond card is at the
+    global level, each quest carries its own, and a tap on Blast Off's name (q14: locked, named
+    by the book) opens it at 0, not at q4's grant."""
+    p = view.read(home, level, spoilers.NUDGE, frozenset({q(4)}))
+    beyond = p["beyond"]
+    assert isinstance(beyond, dict)
+    assert beyond["spoil"] == spoilers.NUDGE
+    own = {x["ref"]: x["spoil"] for x in beyond["quests"]}
+    assert own == {q(14): spoilers.NUDGE, q(4): level}
+    taps = _name_taps(reg, beyond)
+    assert set(taps) == {q(4), q(14)}
+    assert taps[q(14)][0] == spoilers.NUDGE
+    assert parse(taps[q(14)][1]).head["spoil"] == "0"
+    allow = {q(4): level}
+    for ref, (_, text) in taps.items():
+        assert questeval.leaks(text, fields, allow=allow, said=list(PACK.GOALS)) == [], ref
+    assert "Plates for the furnace walls." not in taps[q(14)][1]
+
+
+def test_an_empty_open_keeps_every_beyond_quest_and_the_card_at_the_global_level(
+    home: Path, reg: Registry, fields: dict[str, questeval.Spoiler]
+) -> None:
+    beyond = view.read(home, spoilers.FULL, spoilers.NUDGE, frozenset())["beyond"]
+    assert isinstance(beyond, dict)
+    assert beyond["spoil"] == spoilers.NUDGE
+    assert {x["spoil"] for x in beyond["quests"]} == {spoilers.NUDGE}
+    for ref, (_, text) in _name_taps(reg, beyond).items():
+        assert questeval.leaks(text, fields, said=list(PACK.GOALS)) == [], ref
+    # without ``open`` (his own "Spoil it" in the view) every quest is at the level he chose
+    beyond = view.read(home, spoilers.FULL, spoilers.NUDGE)["beyond"]
+    assert isinstance(beyond, dict)
+    assert beyond["spoil"] == spoilers.FULL
+    assert {x["spoil"] for x in beyond["quests"]} == {spoilers.FULL}
+    assert {x["spoil"] for x in view.read(home, 0, 0)["frontier"]["quests"]} == {None}  # type: ignore[index]
+
+
 # --- acceptance: L0 never spoils ------------------------------------------------------------
 
 

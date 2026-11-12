@@ -239,6 +239,8 @@ def _bit(text: str | None) -> bool | None:
 
 
 def quest_card(tool: str, p: Parsed) -> dict[str, Any]:
+    spoil = _int(p.head.get("spoil"))
+    level = spoil if spoil in (0, 1, 2) else None
     quests: dict[str, dict[str, Any]] = {}
     if tool == "quest_get":
         ref = p.head.get("quest", "")
@@ -265,6 +267,8 @@ def quest_card(tool: str, p: Parsed) -> dict[str, Any]:
                 for r in p.rows[:100]
             ],
         }
+        q = quests[ref]
+        q["spoil"] = level if q["state"] == "locked" else None
     else:
         for r in p.rows:
             ref = r.get("quest", "")
@@ -281,6 +285,7 @@ def quest_card(tool: str, p: Parsed) -> dict[str, Any]:
                     "shown": r.get("name") != quest_tools.HIDDEN_NAME,
                     "description": None,
                     "rows": [],
+                    "spoil": level if _state(r.get("state")) == "locked" else None,
                 },
             )
             if tool == "quest_for_item" and len(entry["rows"]) < 100:
@@ -295,14 +300,13 @@ def quest_card(tool: str, p: Parsed) -> dict[str, Any]:
                         "ref": ref,
                     }
                 )
-    spoil = _int(p.head.get("spoil"))
     return {
         "type": "quest",
         "tool": tool,
         "error": None,
         "title": clip(_title(tool, p) if tool != "quest_frontier" else "Frontier", 300),
         "tier": clip(p.head["tier"], 200) if p.head.get("tier") else None,
-        "spoil": spoil if spoil in (0, 1, 2) else None,
+        "spoil": level,
         "quests": list(quests.values())[:50],
         "total": p.total,
         "notes": [clip(n, 2000) for n in p.notes[:20]],

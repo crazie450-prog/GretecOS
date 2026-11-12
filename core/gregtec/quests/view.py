@@ -10,7 +10,8 @@ answers with:
   links, D31);
 - ``beyond``: a quest card of the quests the frontier unlocks next (locked), at the spoiler
   level: at 0 only what ``quest_get`` shows at 0 (its lines, the frontier quests it comes after,
-  its name only when the book shows it), at 1 its name and tasks, at 2 everything;
+  its name only when the book shows it), at 1 its name and tasks, at 2 everything; each quest
+  carries the level it is shown at (``spoil``), the card the level of every quest not granted;
 - ``lines``: each quest line's progress (counts only past the frontier) and its summary note;
 - ``tier``, ``player``, ``goals`` (his words), ``spoil`` (the level used), ``open`` (the quests
   it is used for, None: all) and ``default`` (the global setting).
@@ -100,6 +101,7 @@ def _quest(
     shown: bool,
     description: str | None,
     rows: list[dict[str, Any]],
+    spoil: int | None = None,
 ) -> dict[str, Any]:
     return {
         "ref": ref,
@@ -110,6 +112,7 @@ def _quest(
         "shown": shown,
         "description": _clip(description, 2000),
         "rows": rows[:100],
+        "spoil": spoil,
     }
 
 
@@ -152,7 +155,9 @@ def beyond(
 ) -> list[dict[str, Any]]:
     """The locked quests the frontier quests unlock, in frontier rank order, at ``level``
     (only those in ``opened``, ``q:`` refs, when it is given; the rest at ``default``).
-    ``frontier`` maps each frontier quest, best first, to its state."""
+    ``frontier`` maps each frontier quest, best first, to its state. Each quest carries the
+    level it is shown at (``spoil``): a tap on its name opens it at that level, never at
+    another quest's grant (B1)."""
     deps = guide.dependents(conn)
     order: dict[str, list[str]] = {}
     for f in frontier:
@@ -196,6 +201,7 @@ def beyond(
                 bool(shown),
                 descr if level >= spoilers.FULL else None,
                 after + items,
+                level,
             )
         )
     return out
@@ -238,6 +244,9 @@ def payload(
         for r in ranked
     ]
     found = guide.lines(conn, player)
+    # The Beyond card's level is that of every quest no spoiler command granted: with ``open``
+    # that is the global setting (a granted quest carries its own, higher level).
+    rest = level if opened is None else min(default, level)
     return {
         "player": player,
         "tier": tier,
@@ -274,14 +283,19 @@ def payload(
         "beyond": _card(
             "Beyond the frontier",
             tier,
-            level,
+            rest,
             beyond(
                 conn, player, {r.id: r.state for r in ranked}, level, opened, default
             ),
             [
                 (
-                    f"spoiler level {level} ({spoilers.NAMES[level]}): quests the frontier "
+                    f"spoiler level {rest} ({spoilers.NAMES[rest]}): quests the frontier "
                     "unlocks next"
+                    + (
+                        f"; the ones a spoiler command opened at level {level}"
+                        if opened and rest != level
+                        else ""
+                    )
                 ),
                 TEXT_NOTE,
             ],
