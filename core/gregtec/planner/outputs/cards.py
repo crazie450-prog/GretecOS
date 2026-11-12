@@ -145,7 +145,6 @@ def effort_card(plan: Mapping[str, Any]) -> dict[str, Any]:
     unlocks = list(eff["unlocks"])
     room = MAX_HEAD - len(head)
     if len(unlocks) > room:
-        room -= 1
         notes.insert(0, "more unlocked machines: " + ", ".join(unlocks[room:]))
         unlocks = unlocks[:room]
     # one pair each, so each is a chip; keys stay distinct (the renderer keys on them)
