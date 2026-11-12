@@ -508,3 +508,48 @@ def test_cli_save(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert saved and all(
         (home / "vault" / "plans" / f"{x.stem}.md").is_file() for x in saved
     )
+
+
+def test_api_serves_cards_and_files(
+    home: Path, plans: tuple[dict[str, Any], ...]
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec import config
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    p = plans[0]
+    rw = access.connect(access.db_path(home))
+    try:
+        store.save(home, p, rw, book.read(rw, p))
+    finally:
+        rw.close()
+    db = Store(home / "data" / "store.sqlite")
+    try:
+        core = Core(
+            cfg=config.Config(gos_home=home),
+            store=db,
+            auth=Auth(db, "a" * 43),
+            meter=UsageMeter(db, 100.0, (80, 100)),
+        )
+        auth = {"Authorization": "Bearer " + "a" * 43}
+        base = f"/api/plans/{p['id']}"
+        with TestClient(create_app(core), base_url="http://127.0.0.1:8765") as client:
+            got = client.get(f"{base}/cards", headers=auth)
+            assert got.status_code == 200
+            assert got.json()["flow"]["type"] == "flow"
+            assert got.json()["bom"]["type"] == "bom"
+            image = client.get(f"{base}/export/png", headers=auth)
+            assert image.status_code == 200 and image.content.startswith(b"\x89PNG")
+            assert client.get(f"{base}/export/bom", headers=auth).text == bom.tsv(p)
+            assert client.get(f"{base}/export/xml", headers=auth).status_code == 404
+            missing = client.get("/api/plans/pl-0000000000/cards", headers=auth)
+            assert missing.status_code == 404
+            bad = client.get("/api/plans/PL..x/cards", headers=auth)
+            assert bad.status_code == 400
+            assert client.get(f"{base}/cards").status_code == 401
+    finally:
+        db.close()

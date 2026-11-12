@@ -132,7 +132,7 @@ def test_three_routes_differ_in_a_primary_choice(conn: sqlite3.Connection) -> No
         assert sorted(p["alternatives"]) == sorted(i for i in ids if i != p["id"])
         assert p["route"]["all_run"] and p["route"]["gates"] == []
         assert p["metrics"]["machines"] >= 1 and p["rank"]["column"] == "base"
-        assert p["layout"] == {}
+        assert p["layout"]["method"] == "bbox"  # WO-3.6, D200
         assert p["request"] == Request(WIDGET, qty=2).as_dict()
     assert d.plans[0]["name"] == "Widget line · 2/s · MV"
     assert d.plans[1]["name"].endswith("· route 2")
