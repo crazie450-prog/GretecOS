@@ -7,7 +7,9 @@
 |                              | key, segment and action (plan 8 WO-5.1's acceptance check)    |
 | ``keys {play,lab}``          | the configured keys and the GTNH bindings on them             |
 | ``devices``                  | the WASAPI capture devices                                    |
-| ``bench``                    | turn timings from ``logs/voice.log`` against PM14             |
+| ``benchmark`` (``bench``)    | latency on both triggers against PM14, peak RAM and VRAM,     |
+|                              | GTNH's FPS and TPS, spoken length (WO-5.7: it is the core's   |
+|                              | ``gregtec.voicebench``, D248)                                 |
 | ``stt [WAV ...]``            | load speech-to-text (downloading its model once), say which   |
 |                              | engine and why, transcribe the WAVs (WO-5.2)                  |
 | ``record``                   | record the STT eval set: one talk-key segment per line        |
@@ -24,7 +26,7 @@
 
 ``run``, ``test``, ``devices``, ``record`` and ``capture`` need Windows (WASAPI and the
 keyboard hook); ``keys``, ``bench``, ``stt``, ``eval``, ``wake-eval``, ``tts-bench``,
-``tts-check``, ``say`` and ``doctor`` run anywhere (``doctor`` checks the devices, ducking and
+``tts-check``, ``say``, ``doctor`` and ``benchmark`` run anywhere (``doctor`` checks the devices, ducking and
 hook on Windows only; ``devices`` lists the capture and the output devices). ``run`` needs the
 core's voice token in this account's keyring (``gos token new voice``, D117).
 """
@@ -32,7 +34,6 @@ core's voice token in this account's keyring (``gos token new voice``, D117).
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import math
 import sys
@@ -75,7 +76,6 @@ from gregtec_voice.settings import VoiceSettings
 
 log = logging.getLogger(__name__)
 
-TARGETS_MS = {"key": 1700, "wake": 2200}  # PM14: to first audio, P50
 GAME_DIRS = ("minecraft", ".minecraft")  # Prism's order (gregtec.tweaks)
 EXIT_PROBLEM, EXIT_SETUP = 1, 2
 EVAL_AUDIO = (
@@ -95,8 +95,18 @@ def _model_name(value: str) -> str:
         raise argparse.ArgumentTypeError(str(exc)) from None
 
 
+BENCHMARK = ("benchmark", "bench")
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     out = out or sys.stdout
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in BENCHMARK:
+        # WO-5.7, D248: in the core, which may read the core's and this client's memory; this
+        # package never reaches another process (D247)
+        from gregtec import voicebench
+
+        return voicebench.main(argv[1:], out)
     parser = argparse.ArgumentParser(
         prog="gos voice", description="The Gregtec OS voice client (WO-5.1)."
     )
@@ -155,17 +165,11 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     )
     keys_cmd.add_argument("instance", choices=("play", "lab"))
     commands.add_parser("devices", help="list the WASAPI capture and output devices")
-    bench = commands.add_parser(
-        "bench",
-        help="turn timings from logs/voice.log against PM14",
-        description=(
-            "P50 and P90 of each stage of the last turns the voice client logged, and PM14's "
-            "targets: talk key <= 1.7 s and wake word <= 2.2 s from the end of speech to the "
-            "first audio (P50)."
-        ),
-    )
-    bench.add_argument(
-        "--last", type=int, default=100, help="turns to use (default 100)"
+    commands.add_parser(  # handled before parsing (main): gos voice benchmark --help
+        "benchmark",
+        aliases=["bench"],
+        add_help=False,
+        help="latency (PM14), RAM, VRAM, FPS/TPS and spoken length, against WO-5.7's targets",
     )
     stt_cmd = commands.add_parser(
         "stt",
@@ -309,7 +313,6 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         test,
         keys_cmd,
         commands.choices["devices"],
-        bench,
         stt_cmd,
         record,
         evaluate,
@@ -330,7 +333,6 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "test": _test,
         "keys": _keys,
         "devices": _devices,
-        "bench": _bench,
         "stt": _stt,
         "record": _record,
         "eval": _eval,
@@ -709,93 +711,6 @@ def _devices(
     if pick.why:
         print(f"  ({pick.why})", file=out)
     return 0
-
-
-# --- gos voice bench --------------------------------------------------------------------------
-
-STAGES = ("held_ms", "close_ms", "stt_ms", "core_ms", "speak_ms", "total_ms")
-
-
-def turn_records(logs: Path, msg: str = "turn") -> list[dict[str, Any]]:
-    """Every ``turn`` record (or ``msg`` record: ``wake``, D185) in ``logs/voice.log`` and its
-    rotated copies, oldest first (applog keeps ``voice.log.1`` to ``.5``, ``.1`` the newest)."""
-    rotated = []
-    for path in logs.glob(f"{VOICE}.log.*"):
-        number = path.name.removeprefix(f"{VOICE}.log.")
-        if number.isdigit():
-            rotated.append((int(number), path))
-    paths = [path for _, path in sorted(rotated, reverse=True)]
-    found = []
-    for path in [*paths, logs / f"{VOICE}.log"]:
-        if not path.is_file():
-            continue
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict) and entry.get("msg") == msg:
-                found.append(entry)
-    return found
-
-
-def _p(values: list[int], q: float) -> int:
-    """Nearest-rank percentile."""
-    ordered = sorted(values)
-    return ordered[max(0, math.ceil(q * len(ordered)) - 1)]
-
-
-def _bench(
-    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
-) -> int:
-    turns = turn_records(cfg.logs_dir)[-max(1, args.last) :]
-    wakes = turn_records(cfg.logs_dir, "wake")
-    if wakes:  # D185: each wake's outcome; Clayton counts the chimes he didn't mean
-        outcomes: dict[str, int] = {}
-        for w in wakes:
-            outcomes[str(w.get("outcome"))] = outcomes.get(str(w.get("outcome")), 0) + 1
-        chimed = sum(n for o, n in outcomes.items() if o in ("asked", "no question"))
-        listed = ", ".join(f"{n} {o}" for o, n in sorted(outcomes.items()))
-        print(
-            f"wake word: {len(wakes)} detections, {chimed} chimed ({listed})", file=out
-        )
-    answered = [t for t in turns if t.get("outcome") in ("answered", "stopped")]
-    if not answered:
-        print(f"No answered turns in {cfg.logs_dir / (VOICE + '.log')} yet.", file=out)
-        return EXIT_PROBLEM
-    met = True
-    for trigger in ("key", "wake"):
-        rows = [t for t in answered if t.get("trigger") == trigger]
-        if not rows:
-            continue
-        print(f"{trigger}: {len(rows)} turns", file=out)
-        for stage in STAGES:
-            values = [int(t[stage]) for t in rows if isinstance(t.get(stage), int)]
-            if values:
-                print(
-                    f"  {stage[:-3]:>6}: P50 {_p(values, 0.5)} ms, P90 {_p(values, 0.9)} ms"
-                    f" ({len(values)})",
-                    file=out,
-                )
-        totals = [
-            int(t["total_ms"]) for t in rows if isinstance(t.get("total_ms"), int)
-        ]
-        if not totals:
-            print(
-                "  no turn reached first audio (text-to-speech arrives with WO-5.3)",
-                file=out,
-            )
-            met = False
-            continue
-        p50 = _p(totals, 0.5)
-        ok = p50 <= TARGETS_MS[trigger]
-        met = met and ok
-        print(
-            f"  PM14: P50 {p50} ms to first audio, target {TARGETS_MS[trigger]} ms: "
-            + ("met" if ok else "MISSED"),
-            file=out,
-        )
-    return 0 if met else EXIT_PROBLEM
 
 
 # --- gos voice stt, record, eval (WO-5.2) -----------------------------------------------------
