@@ -170,8 +170,34 @@
         "out": {"type": "array", "items": {"$ref": "#/$defs/port"}}
       }
     },
-    "metrics": {"type": "object", "description": "WO-3.5"},
-    "rank": {"type": "object", "description": "WO-3.5"},
+    "metrics": {
+      "type": "object",
+      "description": "WO-3.5 (gregtec.planner.metrics.route)",
+      "required": ["machines", "by_type", "new_types", "eu", "eut_avg", "eut_peak", "tier", "raw_in_h", "byproducts_h", "scarcity", "scarce", "footprint", "eff_h", "build_h", "unlock_h", "effort", "complexity"],
+      "properties": {
+        "machines": {"type": "integer", "minimum": 0},
+        "new_types": {"type": "array", "items": {"type": "string", "pattern": "^mte:[0-9]+$"}},
+        "eut_avg": {"type": "number", "minimum": 0},
+        "eff_h": {"type": "number", "minimum": 0},
+        "build_h": {"type": "number", "minimum": 0},
+        "unlock_h": {"type": "number", "minimum": 0},
+        "scarcity": {"type": "number", "minimum": 0},
+        "footprint": {"type": "null", "description": "WO-3.6"},
+        "complexity": {"type": "object", "required": ["nodes", "fluids", "loops", "score"]},
+        "batch": {"type": "object", "required": ["qty", "window_s", "eta_s", "eta_h", "inputs", "byproducts", "crafts", "eu"]}
+      }
+    },
+    "rank": {
+      "type": "object",
+      "description": "WO-3.5 (gregtec.planner.rank.order)",
+      "required": ["score", "position", "of", "column", "weights", "w", "terms", "values", "notes"],
+      "properties": {
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "position": {"type": "integer", "minimum": 1},
+        "column": {"enum": ["base", "addon"]},
+        "weights": {"enum": ["balanced", "custom"]}
+      }
+    },
     "alternatives": {"type": "array", "items": {"$ref": "#/$defs/planId"}},
     "layout": {"type": "object", "description": "WO-3.6"},
     "request": {"type": "object", "description": "the planner request (gregtec.planner.request.Request.as_dict)"},
