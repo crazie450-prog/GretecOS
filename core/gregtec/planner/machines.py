@@ -1043,17 +1043,6 @@ def load_machines(
     return out
 
 
-def owned_machines(conn: sqlite3.Connection) -> frozenset[int]:
-    """The mte ids My base lists with a count above 0 (``base_machine``, D63)."""
-    return frozenset(
-        int(r[0])
-        for r in conn.execute(
-            "SELECT m.mte_id FROM base_machine AS b JOIN machine AS m ON m.id = b.machine_id"
-            " WHERE b.count > 0"
-        )
-    )
-
-
 def select(
     conn: sqlite3.Connection, ref: str, player: Player, run_id: int | None = None
 ) -> Selection:
