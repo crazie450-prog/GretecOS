@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 3 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10).
+-- Gregtec OS SQLite schema, version 4 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -15,6 +15,8 @@
 -- quest_state (each quest's state for the tracked player). migrations/2.sql drops version 1's
 -- quest and quest_line, which nothing had written to, so this file can create them anew.
 -- Version 3 (D134, WO-1.10): the crop tables (CropsNH), one set per export run like recipes.
+-- Version 4 (D230, WO-4.1): the power catalog tables (rotors, generators, fuels), one set per export
+-- run; new tables only, so no migration file.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -156,6 +158,41 @@ CREATE TABLE IF NOT EXISTS crop_mutation(run_id INT NOT NULL, pool TEXT NOT NULL
 CREATE INDEX IF NOT EXISTS ix_crop_mutation ON crop_mutation(run_id, crop_id);
 CREATE TABLE IF NOT EXISTS crop_soil(run_id INT NOT NULL, soil TEXT NOT NULL, slot INT NOT NULL,
   registry_name TEXT, meta INT, PRIMARY KEY(run_id, soil, slot));   -- registry_name NULL: no block
+-- power catalog (WO-4.1, D230). From gt_power.json (runs with parts.power = ok) and the run's fuel
+-- maps. rotor_size: GT's four turbine rotor sizes by the turbine item's meta (170 small, 172
+-- normal, 174 large, 176 huge); rotor_material: every material GT makes turbine blades of, its
+-- tool stats as the instance has them (floats are GT's float values); rotor_gt: what GT's own
+-- TurbineStatCalculator gave for each new rotor in the game (key = the stat), for checks;
+-- generator: every single-block generator's fuel efficiency (%), voltage and amps out;
+-- generator_gt: what GT's own generator gives for each fuel of its map (eu per operation of
+-- `consumed` litres for a fluid, item_eu per item), for checks; fuel_container: the fluid in each
+-- fluid container a fuel map lists. fuel: every fuel recipe of GT's fuel maps, decoded by its map's
+-- rule (gregtec.planner.fuels): `fluid` names the fluid it burns (the container's for a cell),
+-- fuel_value is GT's FUEL_VALUE raw, value is it in `unit`; ref cites the recipe. hidden: GT's fuel
+-- map hid it as a second fuel of the same fluid (its fluid lookup uses the other; an item lookup
+-- still finds it), so a fluid's fuel is its row with hidden = 0.
+CREATE TABLE IF NOT EXISTS rotor_size(run_id INT NOT NULL, size INT NOT NULL, name TEXT NOT NULL,
+  speed_multiplier REAL NOT NULL, base_damage REAL NOT NULL, durability_multiplier REAL NOT NULL,
+  PRIMARY KEY(run_id, size));
+CREATE TABLE IF NOT EXISTS rotor_material(run_id INT NOT NULL, name TEXT NOT NULL, tool_speed REAL NOT NULL,
+  tool_quality INT NOT NULL, durability INT NOT NULL, steam_multiplier REAL NOT NULL,
+  gas_multiplier REAL NOT NULL, plasma_multiplier REAL NOT NULL, PRIMARY KEY(run_id, name));
+CREATE TABLE IF NOT EXISTS rotor_gt(run_id INT NOT NULL, material TEXT NOT NULL, size INT NOT NULL,
+  key TEXT NOT NULL, value REAL NOT NULL, PRIMARY KEY(run_id, material, size, key));
+CREATE TABLE IF NOT EXISTS generator(run_id INT NOT NULL, mte_id INT NOT NULL, class_name TEXT NOT NULL,
+  tier INT, efficiency INT NOT NULL, eu_out INT NOT NULL, amps_out INT NOT NULL, recipe_map TEXT,
+  PRIMARY KEY(run_id, mte_id));
+CREATE TABLE IF NOT EXISTS generator_gt(run_id INT NOT NULL, mte_id INT NOT NULL, special INT NOT NULL,
+  fluid TEXT, eu INT, eu_long INT, consumed INT, registry_name TEXT, meta INT, item_eu INT,
+  item_eu_long INT);
+CREATE INDEX IF NOT EXISTS ix_generator_gt ON generator_gt(run_id, mte_id);
+CREATE TABLE IF NOT EXISTS fuel_container(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
+  nbt_hash TEXT NOT NULL, fluid TEXT NOT NULL, mb INT NOT NULL, PRIMARY KEY(run_id, registry_name, meta, nbt_hash));
+CREATE TABLE IF NOT EXISTS fuel(run_id INT NOT NULL, recipe_id INT NOT NULL, ref TEXT NOT NULL,
+  map TEXT NOT NULL, gt_name TEXT NOT NULL, input TEXT NOT NULL, fluid TEXT, fluid_input INT NOT NULL,
+  hidden INT NOT NULL, fuel_value INT NOT NULL, unit TEXT NOT NULL, value REAL NOT NULL,
+  PRIMARY KEY(run_id, recipe_id));
+CREATE INDEX IF NOT EXISTS ix_fuel_fluid ON fuel(run_id, fluid);
 -- wiki, notes, usage
 CREATE TABLE IF NOT EXISTS wiki_page(title TEXT PRIMARY KEY, revid INT, fetched INT, url TEXT, text TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(title, text, content='wiki_page');
@@ -169,4 +206,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;

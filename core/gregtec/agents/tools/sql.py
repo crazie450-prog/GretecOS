@@ -108,6 +108,8 @@ GAME_TABLES = frozenset(
         "crop", "crop_parent_recipe", "crop_parent", "crop_mutation", "crop_drop", "crop_seed",
         "crop_soil",
         "my_base_machine", "my_base_stock",  # the core's (store.py): My base, WO-3.8 (D210)
+        "rotor_size", "rotor_material", "rotor_gt", "generator", "generator_gt",
+        "fuel_container", "fuel",
     }
 )  # fmt: skip
 PRIVATE = frozenset({"kv", "device"})  # app state and paired devices: not for agents

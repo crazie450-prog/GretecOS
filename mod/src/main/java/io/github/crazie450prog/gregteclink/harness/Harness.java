@@ -811,6 +811,7 @@ public final class Harness {
             check(checks, "machine_ebf_1000", ebf[0], "MTEElectricBlastFurnace at gregtech:gt.blockmachines@1000");
             checkOreMixes(dir, counts, manifest.getAsJsonObject("parts"));
             checkOreDict(dir, counts, manifest.getAsJsonObject("parts"));
+            checkTurbines(dir, counts, manifest.getAsJsonObject("parts"));
 
             Set<String> items = new HashSet<>();
             eachLine(dir.resolve("items.jsonl"), o -> items.add(refKey(o)));
@@ -1175,6 +1176,82 @@ public final class Harness {
                 "plankWood members " + first(planks));
         }
 
+        /**
+         * gt_power.json (WO-4.1, D230): GT's four rotor sizes, titanium among the rotor materials with all four rotors
+         * computed, and the single-block diesel generators with GT's own fuel values for their map's fuels.
+         */
+        private void checkTurbines(Path dir, JsonObject counts, JsonObject parts) throws IOException {
+            JsonElement status = parts.get("power");
+            check(
+                checks,
+                "power_ok",
+                status != null && "ok".equals(status.getAsString())
+                    && counts.get("power_errors")
+                        .getAsInt() == 0,
+                "parts.power=" + status + " power_errors=" + counts.get("power_errors"));
+            JsonObject root = document(dir.resolve("gt_power.json")).getAsJsonObject();
+            int sizes = 0;
+            for (JsonElement e : root.getAsJsonArray("sizes")) {
+                if (e.getAsJsonObject()
+                    .has("speed_multiplier")) sizes++;
+            }
+            int materials = 0;
+            boolean titanium = false;
+            for (JsonElement e : root.getAsJsonArray("materials")) {
+                JsonObject m = e.getAsJsonObject();
+                materials++;
+                if ("Titanium".equals(
+                    m.get("name")
+                        .getAsString())) {
+                    int rotors = 0;
+                    for (JsonElement r : m.getAsJsonArray("rotors")) {
+                        JsonObject ro = r.getAsJsonObject();
+                        if (ro.has("optimal_gas_flow") && ro.get("optimal_gas_flow")
+                            .getAsDouble() > 0) rotors++;
+                    }
+                    titanium = rotors == 4;
+                }
+            }
+            check(
+                checks,
+                "turbine_rotors_listed",
+                sizes == 4 && materials >= 20
+                    && titanium
+                    && materials == counts.get("turbine_materials")
+                        .getAsInt(),
+                sizes + " rotor sizes, " + materials + " rotor materials, titanium's four rotors computed");
+            int diesel = 0;
+            int generators = 0;
+            for (JsonElement e : root.getAsJsonArray("generators")) {
+                JsonObject g = e.getAsJsonObject();
+                generators++;
+                if (g.get("class")
+                    .getAsString()
+                    .endsWith(".MTEDieselGenerator")
+                    && g.get("efficiency")
+                        .getAsInt() > 0
+                    && g.has("fuels")) {
+                    for (JsonElement f : g.getAsJsonArray("fuels")) {
+                        JsonObject fo = f.getAsJsonObject();
+                        if (fo.has("fluid") && fo.has("input")
+                            && fo.get("eu")
+                                .getAsInt() > 0
+                            && fo.get("item_eu")
+                                .getAsInt() > 0) {
+                            diesel++;
+                            break;
+                        }
+                    }
+                }
+            }
+            check(
+                checks,
+                "generator_fuel_values",
+                diesel >= 3 && generators == counts.get("generators")
+                    .getAsInt(),
+                generators + " single-block generators, " + diesel + " diesel generators with GT's fuel values");
+        }
+
         /** gt_ore_mixes.json (D126): GT's ore layers with four keyed ores each, and the vanilla dimensions named. */
         private void checkOreMixes(Path dir, JsonObject counts, JsonObject parts) throws IOException {
             JsonElement status = parts.get("ore_mixes");
@@ -1386,7 +1463,7 @@ public final class Harness {
         private void checkFiles(Path dir, JsonObject files) throws IOException {
             List<String> bad = new ArrayList<>();
             String[] required = { "gt_recipe_maps.json", "gt_recipes.jsonl", "gt_machines.jsonl", "gt_ore_mixes.json",
-                "oredict.jsonl", "items.jsonl", "fluids.jsonl" };
+                "gt_power.json", "oredict.jsonl", "items.jsonl", "fluids.jsonl" };
             for (String name : required) {
                 if (!files.has(name)) bad.add(name + " not listed");
             }
