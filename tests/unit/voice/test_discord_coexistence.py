@@ -392,6 +392,65 @@ def test_the_voice_client_imports_nothing_that_reaches_other_programs() -> None:
     assert found == []
 
 
+# The core's modules the package may import (D247): the audit above doesn't follow imports, so
+# each is named here. gregtec.voicebench reads other processes' memory (psutil, nvidia-smi): it is
+# the one exception, and only ``gos voice benchmark`` (cli.main) may reach it (WO-5.7, D248).
+CORE_IMPORTS_OK = {
+    "gregtec.agents.prefetch",
+    "gregtec.agents.router",
+    "gregtec.agents.tools.build_registry",
+    "gregtec.agents.tools.glossary.Glossary",
+    "gregtec.agents.tools.registry.Registry",
+    "gregtec.applog",
+    "gregtec.config",
+    "gregtec.config.Config",
+    "gregtec.control",
+    "gregtec.db.access",
+    "gregtec.gamestate.safe_open.read_bytes",
+    "gregtec.llm.keys",
+}
+CORE_IMPORT_IN = {"gregtec.voicebench": ("cli.py", "main")}
+
+
+def _core_imports() -> list[tuple[str, str, str]]:
+    """(file, function or "", what) for each import of the core in the package."""
+    found = []
+    for name, tree in _trees():
+        for top in tree.body:
+            named = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            where = top.name if isinstance(top, named) else ""
+            for node in ast.walk(top):
+                if isinstance(node, ast.Import):
+                    whats = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    whats = [f"{node.module}.{a.name}" for a in node.names]
+                else:
+                    continue
+                for what in whats:
+                    if what.split(".")[0] == "gregtec":
+                        found.append((name, where, what))
+    return found
+
+
+def test_the_package_imports_only_the_core_modules_it_names() -> None:
+    """L7 of the WO-5.7 review: a new import of the core is a decision, not an accident."""
+    imports = _core_imports()
+    assert ("cli.py", "main", "gregtec.voicebench") in imports
+
+    def wrong(found: list[tuple[str, str, str]]) -> list[str]:
+        return [
+            f"{name}:{where}: {what}"
+            for name, where, what in found
+            if what not in CORE_IMPORTS_OK and CORE_IMPORT_IN.get(what) != (name, where)
+        ]
+
+    assert wrong(imports) == []
+    # the audit's own check: voicebench anywhere else, or another core module, is caught
+    assert wrong([("client.py", "", "gregtec.voicebench")]) != []
+    assert wrong([("cli.py", "_eval", "gregtec.voicebench")]) != []
+    assert wrong([("cli.py", "main", "gregtec.ingest.collect")]) != []
+
+
 DISCORD_PLACES = re.compile(
     r"discord-ipc|[\\/]discord[\\/]|discord\.exe|appdata", re.IGNORECASE
 )
