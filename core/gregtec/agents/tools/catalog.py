@@ -76,15 +76,17 @@ TOOLS = (
     ),
     Tool(
         "quest_get",
-        "One quest: state, quest lines, prerequisites, tasks and rewards. A quest past the "
-        "frontier is shown nudge-first (spoil 0: where to go, not what it is); spoil 1 adds "
-        "its tasks and 2 everything, only when Clayton asks for more.",
+        "One quest: state, quest lines, prerequisites, what it unlocks, tasks (consumed or "
+        "not) and rewards. A quest past the frontier is shown at his spoiler level (0 nudge: "
+        "where to go, not what it is; 1 adds its tasks, 2 everything); a higher spoil is "
+        "shown only when Clayton asked for it.",
         quests.QUEST_GET_SCHEMA,
         quests.quest_get,
     ),
     Tool(
         "quest_frontier",
-        "The quests Clayton can work on now (the frontier), in quest-book order, with his tier.",
+        "The quests Clayton can work on now (the frontier), ranked by his goals and active "
+        "lines (why says how), with his tier.",
         quests.QUEST_FRONTIER_SCHEMA,
         quests.quest_frontier,
     ),
@@ -335,12 +337,15 @@ def build_registry(
     deep: DeepLane | None = None,
     ops: Ops | None = None,
     writer: Callable[[], Writer | None] | None = None,
+    spoiler_default: int = 0,
 ) -> Registry:
     """Every tool over the DB at ``db`` and ``vault``, handing off to ``deep``, with the OC
-    bridge ``ops`` and the planner model ``writer`` for ``plan_explain`` (``key``: the cursor
-    key, default random)."""
+    bridge ``ops``, the planner model ``writer`` for ``plan_explain`` (``key``: the cursor
+    key, default random) and the global spoiler level (``[policy] spoiler_default``, D72)."""
     reg = Registry(
-        Env(db, glossary or Glossary(), vault, deep, ops, writer), key=key, page=page
+        Env(db, glossary or Glossary(), vault, deep, ops, writer, spoiler_default),
+        key=key,
+        page=page,
     )
     for tool in TOOLS:
         reg.add(tool)
@@ -352,6 +357,7 @@ def default_registry(
     deep: DeepLane | None = None,
     ops: Ops | None = None,
     writer: Callable[[], Writer | None] | None = None,
+    spoiler_default: int = 0,
 ) -> Registry:
     """The tools over ``GOS_HOME/data/gos.sqlite`` and the live vault (its glossary too); a
     note an agent writes is mirrored into ``note_fts`` at once."""
@@ -367,4 +373,5 @@ def default_registry(
         deep=deep,
         ops=ops,
         writer=writer,
+        spoiler_default=spoiler_default,
     )
