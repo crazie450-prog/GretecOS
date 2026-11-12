@@ -149,7 +149,9 @@ def test_gt_power_json_reads() -> None:
 
 def _db(path: Path) -> sqlite3.Connection:
     conn = access.connect(path)
-    conn.execute("INSERT INTO export_run(id, run_key, fingerprint) VALUES (1, 'r1', 'f')")
+    conn.execute(
+        "INSERT INTO export_run(id, run_key, fingerprint) VALUES (1, 'r1', 'f')"
+    )
     conn.execute("INSERT INTO fluid(id, name) VALUES (1, 'testgas'), (2, 'testfuel')")
     conn.execute(
         "INSERT INTO item(id, registry_name, meta, nbt_hash) VALUES"

@@ -70,6 +70,7 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
 | `gt_ore_mixes.json` | GT's worldgen ore layers (`WorldgenGTOreLayer.sList`) and the instance's dimension IDs (WO-1.6, D126) |
+| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230) |
 | `oredict.jsonl` | The full ore dictionary: one line per oredict name, sorted by name, with its members (D145) |
 | `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` and the members of `oredict.jsonl` too), sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
@@ -158,6 +159,41 @@ Plan §5.2 step 6 (D126): the registry GT's worldgen draws ore veins from, so th
 - `ores`: the four layers. `material` is the `IOreMaterial`'s internal name (a GT `Materials.mName`, a bartworks Werkstoff or a GT++ material name), `name` its display name, `class` its class. `ore` is an item ref of the ore block in plain stone (`StoneType.Stone`), or in the material's first valid stone when it has no plain-stone ore (`stone` says which), as `OreManager.getStack` gives it; the ref is recorded in `items.jsonl` like every other. Never a numeric ID.
 - `dimensions`: every registered dimension ID (`DimensionManager.getStaticDimensionIDs()`), with its provider class and the name GT's worldgen would match it by (resolved as VisualProspecting's `DimensionNameResolver` does: the loaded world's provider, else a new provider instance; Galacticraft's celestial body by reflection). Several IDs can share a name. A dimension that fails to resolve carries `error` instead of `name`.
 - A layer whose part fails to serialise keeps the rest and lists `errors` (`counts.ore_mix_errors`).
+
+### `gt_power.json`
+
+WO-4.1 (D230): the power catalog's game data, what no recipe carries.
+
+```json
+{"sizes":[{"size":170,"name":"small","speed_multiplier":1.0,"base_damage":0.0,"durability_multiplier":1.0}, ...],
+ "materials":[{"name":"Titanium","tool_speed":7.0,"tool_quality":3,"durability":1600,"steam_multiplier":1.0,
+   "gas_multiplier":1.0,"plasma_multiplier":1.0,"blade":{"item":"gregtech:gt.metaitem.02","meta":...,"n":1},
+   "rotors":[{"size":170,"rotor":{"item":"gregtech:gt.metatool.01","meta":170,"n":1,"nbt":{...}},
+     "max_durability":160000,"base_efficiency":...,"loose_efficiency":...,"optimal_flow":...,
+     "optimal_steam_flow":...,"optimal_gas_flow":...,"optimal_plasma_flow":...,"optimal_loose_steam_flow":...,
+     "optimal_loose_gas_flow":...,"optimal_loose_plasma_flow":...,"overflow":2}, ...]}, ...],
+ "generators":[{"mte_id":1110,"class":"gregtech.common.tileentities.generators.MTEDieselGenerator","tier":1,
+   "efficiency":95,"eu_out":32,"amps_out":1,"recipe_map":"gt.recipe.dieselgeneratorfuel",
+   "fuels":[{"special":1000,"input":{"item":"gregtech:gt.metaitem.01","meta":30709,"n":1},"item_eu":950000,
+     "item_eu_long":950000,"fluid":"nitrofuel","eu":950,"eu_long":950,"consumed":1}, ...]}, ...],
+ "containers":[{"input":{"item":"gregtech:gt.metaitem.01","meta":30709,"n":1},"fluid":"nitrofuel","mb":1000}, ...]}
+```
+
+- `sizes`: GT's four turbine rotor sizes, the tool stats of `MetaGeneratedTool01`'s ids 170, 172, 174 and 176.
+- `materials`: every `Materials` for which GT has a turbine blade (`OrePrefixes.turbineBlade`), sorted by name, with
+  its tool stats as the instance has them after GT's and the addons' material init. Floats are the double of GT's
+  `float`, so they read back to the bit. `rotors`: for each size, a new rotor made by GT's `getToolWithStats` and
+  what GT's own `TurbineStatCalculator` gives for it (a size that throws carries `error`, `counts.power_errors`).
+- `generators`: every `GregTechAPI.METATILEENTITIES` entry that is an `MTEBasicGenerator`, by `mte_id`: GT's fuel
+  efficiency (`getEfficiency()`, %), `maxEUOutput()` and `maxAmperesOut()`, its recipe map, and for each recipe of the
+  map (sorted by its JSON) what GT's own generator gives: for an item input, `getFuelValue(item)` (`item_eu`, the int
+  GT's generator uses) and the long version (`item_eu_long`); for a fluid input or a fluid container, the fluid,
+  `getFuelValue(1 L)` per operation (`eu`, `eu_long`) and `consumedFluidPerOperation` (`consumed`). Planner checks
+  only: the catalog decodes fuels from the recipes.
+- `containers`: the fluid in each fluid container (`GTUtility.getFluidForFilledItem`) that a fuel map (a
+  `FuelBackend` or `LargeBoilerFuelBackend` map) lists as an input, sorted by the input's JSON: GT indexes those fuels
+  by the fluid, so a cell of benzene is the fuel benzene.
+- Items are item refs and fluids registry names, never numeric IDs; the refs are recorded in `items.jsonl`.
 
 ### `oredict.jsonl` line
 
@@ -287,6 +323,10 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `parts.ore_mixes` (WO-1.6) is not part of `complete` either: a failed ore-mix pass leaves the recipe parts usable.
   **Readers of `gt_ore_mixes.json` check `parts.ore_mixes == "ok"`**. Runs made before WO-1.6 have no such part and
   no file.
+- `parts.power` (WO-4.1, D230) is not part of `complete` either. **Readers of `gt_power.json` check
+  `parts.power == "ok"`**; runs made before WO-4.1 have no such part and no file, and `gos db build` then writes
+  fuel rows from the recipes alone (no rotors, generators or containers: a cell's fluid is unknown).
+  `counts.turbine_materials`, `counts.generators` and `counts.power_errors` count the file's entries.
 - `parts.oredict` (D145) is not part of `complete` either. **Readers of `oredict.jsonl` check
   `parts.oredict == "ok"`**. For a run made before D145 (no such part, no file) `gos db build` names NEI slots from
   `items.jsonl`'s `ore` lists, as before; a run whose `parts.oredict` is `failed` and whose `parts.nei` is `ok` it
@@ -349,6 +389,8 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `core/gregtec/ingest/nei.py`: `nei/*.jsonl`, only from runs with `parts.nei == "ok"`.
 - `core/gregtec/ingest/ore_mixes.py` (WO-1.6): `gt_ore_mixes.json`, only from runs with `parts.ore_mixes == "ok"`;
   `gos ores load` (`core/gregtec/db/ores.py`, D128) loads it into `ore_mix`.
+- `core/gregtec/ingest/power.py` (WO-4.1): `gt_power.json`, only from runs with `parts.power == "ok"`; `gos db
+  build` loads it into the power tables and decodes the fuel maps into `fuel` (`core/gregtec/db/power.py`, D230).
 - `core/gregtec/ingest/crops.py` (WO-1.10): `crops/*`, only from runs with `parts.crops == "ok"`, plus NEI's
   CropsNH tabs when `parts.nei == "ok"`; `gos db build` loads it into the crop tables (`core/gregtec/db/crops.py`,
   D136).

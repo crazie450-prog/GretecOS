@@ -107,6 +107,8 @@ GAME_TABLES = frozenset(
         "ore_mix", "vein", "wiki_page", "wiki_fts", "note_fts", "llm_usage", "alert",
         "crop", "crop_parent_recipe", "crop_parent", "crop_mutation", "crop_drop", "crop_seed",
         "crop_soil",
+        "rotor_size", "rotor_material", "rotor_gt", "generator", "generator_gt",
+        "fuel_container", "fuel",
     }
 )  # fmt: skip
 PRIVATE = frozenset({"kv", "device"})  # app state and paired devices: not for agents
