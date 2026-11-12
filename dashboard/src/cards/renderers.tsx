@@ -319,6 +319,7 @@ export function RouteComparisonView({ card }: { card: RouteComparisonCard }) {
                 <li key={c.node} className={c.differs ? "differs" : undefined}>
                   <span>{c.label}</span> <span className="gos-src">{c.machine}</span> {c.tier && <TierChip tier={c.tier} />}
                   <Chip cite={c.ref} />
+                  {c.differs && <span className="gos-src"> · differs</span>}
                 </li>
               ))}
             </ul>
