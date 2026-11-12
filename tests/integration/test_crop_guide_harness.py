@@ -55,7 +55,8 @@ def _tooltips(conn: sqlite3.Connection, cls: str) -> list[tuple[int, str]]:
     return [
         (int(t), re.sub("§.", "", tip or ""))
         for t, tip in conn.execute(
-            "SELECT tier, tooltip FROM machine WHERE class_name = ? ORDER BY tier", (cls,)
+            "SELECT tier, tooltip FROM machine WHERE class_name = ? ORDER BY tier",
+            (cls,),
         )
     ]
 
@@ -78,7 +79,9 @@ def test_crop_breeder_tooltips_match_the_rules(conn: sqlite3.Connection) -> None
         assert ("Cannot breed high-stat seeds" in tip) == (tier < rules.HV)
 
 
-def test_seed_generator_and_crop_manager_tooltips_match(conn: sqlite3.Connection) -> None:
+def test_seed_generator_and_crop_manager_tooltips_match(
+    conn: sqlite3.Connection,
+) -> None:
     for tier, tip in _tooltips(conn, crop_facts.MACHINE_CLASSES["seed_generator"]):
         tank = re.search(r"Stores ([0-9,]+)L of fluid", tip)
         assert tank and _num(tank[1]) == rules.seed_generator_tank(tier), (tier, tip)
@@ -137,4 +140,6 @@ def test_the_picks_cover_a_sub_soil_block_and_the_crop_breeder(
         for s in g.steps
         for r in s.requirements
     )
-    assert any(s.kind == "breeder" and s.child == g.target for g in guides for s in g.steps)
+    assert any(
+        s.kind == "breeder" and s.child == g.target for g in guides for s in g.steps
+    )
