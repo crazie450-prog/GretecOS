@@ -675,6 +675,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - TSV of lines (tier, average/peak EU/t, amps, status) and sources; net per tier.
   - Warnings: deficit, amp overload, tier mismatch.
   - Reconciles with telemetry once OC is live.
+  - As built (WO-4.4, D238, D239): `gregtec.planner.ledger`; one `ledger_line` entry per plan, its status the `plan` row's (accepted, building and running count), scopes `all` and `running`; power plans are sources at their net EU/t (`gos power design ... --accept N`); later lifecycle moves are Clayton's (`gos plan --status`, `--accept NEW --supersedes OLD`, `POST /api/plans/{id}/status`); `gos ledger`, `GET /api/ledger` (`power_ledger` card), `ledger_get` (read-only); deficit is base-wide, tier mismatch per tier, amp overload per sourced tier; the telemetry reconciliation is a compare-only hook on WO-7.1's tables; running lines' targets feed My base's `line_outputs`.
 - **Storage and distribution.**
   - Buffer/LSC sizing for deficit windows: (peak − generation) × duration, with a battery-buffer vs LSC recommendation per tier.
   - Cable segment checks (amps, loss) and transformer placement. Cable stats come from export tooltips or material data (**VERIFY** in WO-4.5); curated table as fallback.
