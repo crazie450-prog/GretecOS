@@ -584,7 +584,7 @@ def test_quest_tools_are_quest_cards_nudge_first(client: TestClient) -> None:
     )  # D26: the book doesn't show it
     nudge = tool(client, "quest_get", id=hidden[0]["ref"], spoil=0)
     assert nudge["spoil"] == 0 and nudge["quests"][0]["name"] is None
-    assert {r["part"] for r in nudge["quests"][0]["rows"]} <= {"prereq", "start"}
+    assert {r["part"] for r in nudge["quests"][0]["rows"]} <= {"prereq", "start", "unlocks"}
     spoiled = tool(client, "quest_get", id=hidden[0]["ref"], spoil=2)
     assert spoiled["quests"][0]["name"] is not None
 

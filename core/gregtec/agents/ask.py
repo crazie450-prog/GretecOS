@@ -656,10 +656,14 @@ def setup(
     deep: HandoffRecorder | DeepLaneService
     if fake or not deep_lane:
         deep = HandoffRecorder()
-        registry = default_registry(cfg.gos_home, deep=deep, ops=ops)
+        registry = default_registry(
+            cfg.gos_home, deep=deep, ops=ops, spoiler_default=cfg.spoiler_default
+        )
     else:
         deep = DeepLaneService.for_home(cfg.gos_home, Settings.from_config(cfg), meter)
-        registry = default_registry(cfg.gos_home, deep=deep, ops=ops)
+        registry = default_registry(
+            cfg.gos_home, deep=deep, ops=ops, spoiler_default=cfg.spoiler_default
+        )
         deep.registry = registry
     personas = Personas(
         vault if vault.is_dir() else None,

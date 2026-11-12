@@ -78,10 +78,12 @@ def test_an_open_quest_is_shown_in_full(run: Runner) -> None:
     parts = [(r["part"], r["what"], r["amount"], r["consume"]) for r in p.rows]
     assert parts == [
         ("prereq", "First Steps", "", ""),
+        ("unlocks", "Stainless Dreams", "", ""),  # what it unlocks (WO-6.4)
         ("task", f"Steel Ingot [{GT}@11305]", "16", "1"),
         ("reward", f"Steel Dust [{GT}@2305]", "4", ""),
     ]
-    assert p.rows[0]["cite"] == q(1) and p.rows[1]["cite"] == q(2)
+    assert p.rows[0]["cite"] == q(1) and p.rows[1]["cite"] == q(3)
+    assert p.rows[2]["cite"] == q(2)
 
 
 def test_a_locked_quest_is_a_nudge_by_default(run: Runner) -> None:
@@ -94,6 +96,8 @@ def test_a_locked_quest_is_a_nudge_by_default(run: Runner) -> None:
     assert [(r["part"], r["what"], r["cite"]) for r in p.rows] == [
         ("prereq", "Stainless Dreams", q(3)),  # shown in the book, so named
         ("start", "Steel Age", q(2)),  # the frontier quest that leads to it
+        ("unlocks", HIDDEN_NAME, q(6)),  # what it unlocks: not named either (WO-6.4)
+        ("unlocks", HIDDEN_NAME, q(9)),
     ]
     assert "Secret Alloy" not in p.text and "stainless steel" not in p.text.lower()
     assert p.notes[0].startswith("spoiler level 0")
@@ -103,11 +107,28 @@ def test_spoil_1_adds_the_tasks_and_spoil_2_everything(run: Runner) -> None:
     one = run("quest_get", id=q(4), spoil=1)
     assert one.head["name"] == "Secret Alloy"
     assert "description" not in one.head
-    assert [r["part"] for r in one.rows] == ["prereq", "start", "task"]
+    assert [r["part"] for r in one.rows] == [
+        "prereq",
+        "start",
+        "unlocks",
+        "unlocks",
+        "task",
+    ]
+    assert {r["what"] for r in one.rows if r["part"] == "unlocks"} == {
+        "Any Steel Will Do",
+        "Any Planks",
+    }
     assert one.rows[-1]["what"] == f"Stainless Steel Ingot [{GT}@11306]"
     two = run("quest_get", id=q(4), spoil=2)
     assert two.head["description"] == "The secret is stainless steel."
-    assert [r["part"] for r in two.rows] == ["prereq", "start", "task", "reward"]
+    assert [r["part"] for r in two.rows] == [
+        "prereq",
+        "start",
+        "unlocks",
+        "unlocks",
+        "task",
+        "reward",
+    ]
     assert not any(n.startswith("spoiler level") for n in two.notes)
 
 
@@ -115,7 +136,7 @@ def test_a_locked_quest_the_book_shows_is_named(run: Runner) -> None:
     p = run("quest_get", id=q(3))
     assert p.head["name"] == "Stainless Dreams"
     assert p.head["shown"] == "1"
-    assert [r["part"] for r in p.rows] == ["prereq", "start"]
+    assert [r["part"] for r in p.rows] == ["prereq", "start", "unlocks"]
 
 
 def test_a_done_quest_is_shown_in_full(run: Runner) -> None:

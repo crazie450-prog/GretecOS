@@ -33,6 +33,7 @@
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
+| [policy] spoiler_default | 0, nudge (D26, D72); 1 partial, 2 full   | quest tools, view (WO-6.4)  |
 | [persona] default        | gt-veteran (D60)                         | personas (WO-5.6, D206)     |
 | [persona] random_per_session | false                                | personas (WO-5.6, D206)     |
 | [setup] former_plays     | none; plus config/former_plays.txt (D223)| sync, setup wizard (WO-2.9) |
@@ -49,7 +50,7 @@ three names with ``:<port>``). Every other key in the Appendix C skeleton is ign
 reads it.
 
 **Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
-``[mailbox]``, ``[persona]``) are read only by the core,
+``[mailbox]``, ``[persona]``, ``[policy] spoiler_default``) are read only by the core,
 the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -191,6 +192,7 @@ class Config:
     keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
     persona_default: str = "gt-veteran"  # [persona] default (D60, WO-5.6)
     persona_random: bool = False  # [persona] random_per_session (D206)
+    spoiler_default: int = 0  # [policy] spoiler_default: the one global spoiler level (D72)
     mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
@@ -478,6 +480,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
     )
     maintenance = table("maintenance")
     persona = table("persona")
+    policy = table("policy")
     models = table("models")
     host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
     port = soft(
@@ -578,6 +581,12 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 365,
             ),
             defaults.keep_backups,
+        ),
+        "spoiler_default": soft(
+            lambda: _int(
+                policy, "spoiler_default", defaults.spoiler_default, "[policy]", 0, 2
+            ),
+            defaults.spoiler_default,
         ),
         "mailboxes": soft(lambda: _mailboxes(data), ()),
         "service_errors": tuple(problems),

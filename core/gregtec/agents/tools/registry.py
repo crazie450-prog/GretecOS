@@ -36,6 +36,7 @@ from gregtec.agents.tools.schema import ArgumentError, check_schema, validate
 from gregtec.agents.tools.tsv import PAGE, Result, render
 from gregtec.db import access
 from gregtec.db.quests import KV_SOURCE  # its record changes on every quest load
+from gregtec.quests import spoilers
 from gregtec.vault.io import VaultIO
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ class Env:
     vault: VaultIO | None = None  # GOS_HOME/vault, for the note tools
     deep: DeepLane | None = None  # where handoff sends a task (WO-2.3; WO-2.4 runs it)
     ops: Ops | None = None  # the OC bridge: telemetry and the action desk (WO-7.1)
+    spoiler_default: int = 0  # [policy] spoiler_default, the one global level (D72, WO-6.4)
 
 
 @dataclass
@@ -86,6 +88,16 @@ class Call:
     # What Clayton asked, when a lane calls the tool for one of his requests (handoff passes
     # it on as the deep lane's instruction; the model's own words are only its data).
     request: str | None = None
+    # Spoiler levels (WO-6.4, D268): the level a quest tool shows when its arguments name none
+    # (the global setting), and the most it may show whatever they say (spoilers.allowed: the
+    # global setting, raised only by Clayton's own words).
+    spoil_default: int = 0
+    spoil_max: int = spoilers.FULL
+
+    def spoil(self, asked: int | None) -> int:
+        """The level a quest tool shows: ``asked`` (its ``spoil`` argument) or the default,
+        never above :attr:`spoil_max`."""
+        return min(self.spoil_default if asked is None else asked, self.spoil_max)
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -224,11 +236,15 @@ class Registry:
         *,
         lane: str | None = None,
         request: str | None = None,
+        spoil_max: int | None = None,
     ) -> Output:
         """Run tool ``name`` (``more`` for a cursor's next page); ``lane`` None is the shell.
-        ``request``: Clayton's words the call is made for (see :attr:`Call.request`)."""
+        ``request``: Clayton's words the call is made for (see :attr:`Call.request`).
+        ``spoil_max``: the most a quest tool may show when Clayton asked for it himself (a tap
+        on the dashboard); otherwise a lane's call gets :func:`spoilers.allowed` of
+        ``request``, and the shell (``gos tool``, his own command) up to full."""
         try:
-            return Output(self._call(name, args, lane, request))
+            return Output(self._call(name, args, lane, request, spoil_max))
         except (ToolError, ArgumentError, CursorError) as exc:
             return Output(f"error: {exc}\n", is_error=True)
         except Exception:
@@ -249,8 +265,26 @@ class Registry:
             raise ToolError(f"{name} isn't offered in the {lane} lane")
         return tool
 
+    def _spoils(
+        self, lane: str | None, request: str | None, spoil_max: int | None
+    ) -> tuple[int, int]:
+        """(default level, highest level) for one call (D268). The default is always the global
+        setting: going higher takes a ``spoil`` argument within the highest level, so a
+        request's words raise what one quest may show, never every quest a list names."""
+        default = self.env.spoiler_default
+        if spoil_max is not None:
+            return default, max(default, spoilers.check_level(spoil_max))
+        if lane is None:
+            return default, spoilers.FULL
+        return default, spoilers.allowed(request, default)
+
     def _call(
-        self, name: str, args: object, lane: str | None, request: str | None
+        self,
+        name: str,
+        args: object,
+        lane: str | None,
+        request: str | None,
+        spoil_max: int | None = None,
     ) -> str:
         offset, issued = 0, None
         if name == MORE:
@@ -262,9 +296,19 @@ class Registry:
         if tool is MORE_TOOL:
             raise ToolError("a cursor never points at more itself")
         values = validate(tool.input_schema, args)
+        spoil_default, spoil_top = self._spoils(lane, request, spoil_max)
         if not tool.needs_db:
             result = tool.handler(
-                Call(None, self.env, self.page, request=request), values, offset
+                Call(
+                    None,
+                    self.env,
+                    self.page,
+                    request=request,
+                    spoil_default=spoil_default,
+                    spoil_max=spoil_top,
+                ),
+                values,
+                offset,
             )
             if result.more:
                 raise AssertionError(f"{tool.name} has no DB to page from")
@@ -274,7 +318,15 @@ class Registry:
                 raise ToolError(
                     "the DB changed since this cursor was issued; call the tool again"
                 )
-            call = Call(conn, self.env, self.page, deadline, request)
+            call = Call(
+                conn,
+                self.env,
+                self.page,
+                deadline,
+                request,
+                spoil_default=spoil_default,
+                spoil_max=spoil_top,
+            )
             result = tool.handler(call, values, offset)
             cursor = None
             if result.more:
