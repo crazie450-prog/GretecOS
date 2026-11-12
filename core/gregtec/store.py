@@ -3,7 +3,8 @@
 OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), and My
 base's ``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable
 item/fluid keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes
-them).
+them), and ``my_base_machine_at``, where the placement events and the census put each machine they
+saw (WO-6.2, D261; :mod:`gregtec.base.seen`).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -46,6 +47,10 @@ CREATE TABLE IF NOT EXISTS my_base_machine(mte_id INT NOT NULL,
   count INT NOT NULL CHECK(count >= 0), upd INT NOT NULL, PRIMARY KEY(mte_id, source));
 CREATE TABLE IF NOT EXISTS my_base_stock(key TEXT PRIMARY KEY, qty REAL NOT NULL CHECK(qty > 0),
   upd INT NOT NULL);
+CREATE TABLE IF NOT EXISTS my_base_machine_at(source TEXT NOT NULL CHECK(source IN ('event','census')),
+  dim INT NOT NULL, x INT NOT NULL, y INT NOT NULL, z INT NOT NULL, mte_id INT NOT NULL,
+  upd INT NOT NULL, PRIMARY KEY(source, dim, x, y, z));
+CREATE INDEX IF NOT EXISTS ix_my_base_machine_at_mte ON my_base_machine_at(source, mte_id);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (

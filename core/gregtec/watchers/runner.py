@@ -8,7 +8,9 @@ while the instance plays, D259). Each loop (:data:`TICK_S`):
   crashes and errors, :mod:`logparse`), and through them the pause tracker (:mod:`pause`, D258);
 - the save files every :data:`FILES_EVERY_S` (level.dat, quest progress, stats, the VP client
   cache, JourneyMap, crash reports, ServerUtilities' world log, the stale flag), each read only
-  after it changed and held still.
+  after it changed and held still;
+- GregtecLink's machine events file and the tile-entity census of the world's changed chunks
+  (WO-6.2, D260) on the same cadence, the census within a time budget per poll.
 
 Events go to ``GOS_HOME/data/events/<YYYY-MM-DD>.jsonl`` (GOS's own spool, kept for WO-6.3's
 event store) and to the core's ``POST /api/game/events`` from a sender thread, so a slow or
@@ -36,7 +38,7 @@ from typing import Any, Protocol
 
 from gregtec import applog, config, control
 from gregtec.ingest import fingerprint
-from gregtec.watchers import files, logparse, pause, player, sources
+from gregtec.watchers import census, files, logparse, machines, pause, player, sources
 from gregtec.watchers.events import Event
 
 log = logging.getLogger("gregtec.watchers")
@@ -159,11 +161,13 @@ class Watchers:
         self.worldlog = sources.WorldLogWatch(
             [game / p for p in WORLD_LOGS], clock, saved
         )
+        self.machines = machines.MachineEventWatch(game, clock, saved)
         self.player: player.PlayerWatch | None = None
         self.others: list[Poller] = [
             sources.CrashWatch(game, clock, settle_s),
             sources.StaleWatch(home, clock),
             self.worldlog,
+            self.machines,
         ]
         if world is not None:
             self.player = player.PlayerWatch(world, clock, settle_s=settle_s)
@@ -173,6 +177,7 @@ class Watchers:
                 sources.StatsWatch(world, clock, lambda: pw.names, settle_s=settle_s),
                 sources.VeinWatch(world, game, clock, settle_s=settle_s),
                 sources.WaypointWatch(game, world.name, clock, settle_s),
+                census.CensusWatch(world, clock, settle_s=settle_s),
             ]
         self._last_death: tuple[float, str] | None = None
 
@@ -218,7 +223,7 @@ class Watchers:
         for tail, _ in self.logs.tails:
             if (state := tail.state()) is not None:
                 tails[str(tail.path)] = state
-        for tail in self.worldlog.tails:
+        for tail in [*self.worldlog.tails, self.machines.tail]:
             if (state := tail.state()) is not None:
                 tails[str(tail.path)] = state
         try:

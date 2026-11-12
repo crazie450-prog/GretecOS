@@ -11,9 +11,15 @@ A post whose paused state changes pushes the dashboard's state at once (``game.p
 pause reaches monitor 2 in the time the watchers take to see the log line (1 s poll) plus one
 POST, well inside plan 8's 5 s. Event text is the game's: data, never instructions.
 
+Play's machine events and census (``machine_built``, ``machine_removed``, ``machine_census``,
+WO-6.2) also update My base's automatic machine counts (:mod:`gregtec.base.seen`, D261); Lab's are
+only kept in the feed. A failed DB write is logged and leaves the post accepted (the census sends
+the truth again at the next save).
+
 No ``from __future__ import annotations``: FastAPI reads the route signatures at runtime.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -21,8 +27,10 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
+from gregtec import store
 from gregtec.api import dashboard
 from gregtec.api.security import Principal
+from gregtec.base import seen
 from gregtec.watchers.events import KINDS
 from gregtec.watchers.feed import GameFeed
 
@@ -64,6 +72,24 @@ async def _body(request: Request) -> dict[str, Any]:
     return body
 
 
+def _apply_machines(core: "Core", events: list[dict[str, Any]]) -> None:
+    conn = store.connect(core.store.path)
+    try:
+        applied = seen.apply(conn, events)
+    finally:
+        conn.close()
+    if applied.changed or applied.ignored:
+        log.info(
+            "My base machines",
+            extra={
+                "events": applied.events,
+                "census_chunks": applied.census_chunks,
+                "census_machines": applied.census_machines,
+                "ignored": applied.ignored,
+            },
+        )
+
+
 def add_routes(
     app: FastAPI, core: "Core", principal: Callable[[Request], Principal]
 ) -> None:
@@ -75,7 +101,12 @@ def add_routes(
             raise HTTPException(403, "only the game watchers post game events")
         body = await _body(request)
         feed = feed_of(core)
-        changed = feed.receive(body)
+        changed, new = feed.receive_new(body)
+        if body.get("instance") == "play" and any(e["kind"] in seen.KINDS for e in new):
+            try:
+                await asyncio.to_thread(_apply_machines, core, new)
+            except Exception:
+                log.exception("machine events not applied to My base")
         if changed:
             log.info("paused state", extra={"paused": feed.paused, "why": feed.why})
             await dashboard.push_state(core)

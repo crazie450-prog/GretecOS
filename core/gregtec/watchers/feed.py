@@ -22,6 +22,9 @@ from gregtec.watchers.events import KINDS
 HEARD_S = 30.0  # three missed heartbeats: the watchers are gone
 KEEP = 500  # recent events kept in memory
 DATA_MAX = 16 << 10  # one event's data, as JSON
+CENSUS_DATA_MAX = (
+    64 << 10
+)  # a census event: one region's changed chunks and their machines
 
 
 @dataclass
@@ -40,6 +43,11 @@ class GameFeed:
 
     def receive(self, body: dict[str, Any]) -> bool:
         """Take one post. Returns whether the paused state changed."""
+        return self.receive_new(body)[0]
+
+    def receive_new(self, body: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
+        """Take one post: whether the paused state changed, and the events it brought that the
+        feed hadn't seen (a retried post's are left out)."""
         instance = body.get("instance")
         state = body.get("paused")
         events = body.get("events")
@@ -56,7 +64,8 @@ class GameFeed:
                 and isinstance(e.get("source"), str)
                 and len(e["source"]) <= 20
                 and isinstance(e.get("data"), dict)
-                and len(json.dumps(e["data"])) <= DATA_MAX
+                and len(json.dumps(e["data"]))
+                <= (CENSUS_DATA_MAX if e["kind"] == "machine_census" else DATA_MAX)
             ):
                 kept.append({k: e[k] for k in ("id", "kind", "ts", "source", "data")})
             else:
@@ -74,6 +83,7 @@ class GameFeed:
                 self.why = why[:80] if isinstance(why, str) else None
             if isinstance(problems, list):
                 self.problems = [str(p)[:300] for p in problems[:20]]
+            new = []
             for e in kept:
                 if e["id"] in self._ids:
                     continue  # a retried post
@@ -81,8 +91,9 @@ class GameFeed:
                     self._ids.discard(self._events[0]["id"])
                 self._events.append(e)
                 self._ids.add(e["id"])
+                new.append(e)
             self.refused += refused
-            return before != self.paused
+            return before != self.paused, new
 
     def paused_now(self, running: list[str] | None) -> bool | None:
         """``game.paused`` for the dashboard: the watchers' state while they are heard and their

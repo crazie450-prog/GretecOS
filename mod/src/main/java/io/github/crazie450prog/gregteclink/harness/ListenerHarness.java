@@ -66,7 +66,7 @@ final class ListenerHarness {
     private static final int KINDS = 10;
     /** Preferred kinds (GT 5.09.54.265 ids); any that are missing are filled from the registry by type. */
     private static final int EBF = 1000;
-    private static final int INPUT_BUS_LV = 66;
+    private static final int HATCH = 66;
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
         Arrays.asList("id", "item_id", "block_id", "blockId", "itemId", "idExt"));
 
@@ -179,13 +179,13 @@ final class ListenerHarness {
         return DimensionManager.getWorld(0);
     }
 
-    /** The 10 kinds: EBF (a multiblock controller), an LV input bus (a hatch), 8 single-block machine classes. */
+    /** The 10 kinds: EBF (a multiblock controller), a hatch (66, an output hatch), 8 single-block machine classes. */
     private static List<Integer> kinds() {
         IMetaTileEntity[] all = GregTechAPI.METATILEENTITIES;
         List<Integer> out = new ArrayList<>();
         if (all[EBF] instanceof MTEMultiBlockBase) out.add(EBF);
         else out.add(firstOf(all, MTEMultiBlockBase.class, out));
-        if (all[INPUT_BUS_LV] instanceof MTEHatch) out.add(INPUT_BUS_LV);
+        if (all[HATCH] instanceof MTEHatch) out.add(HATCH);
         else out.add(firstOf(all, MTEHatch.class, out));
         Set<Class<?>> classes = new HashSet<>();
         for (int id = 1; id < all.length && out.size() < KINDS; id++) {
