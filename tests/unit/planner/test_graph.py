@@ -263,17 +263,21 @@ def jsonl(lines: list[dict[str, object]]) -> bytes:
     return "".join(json.dumps(x) + "\n" for x in lines).encode()
 
 
-def make_home(home: Path) -> Path:
+def make_home(home: Path, extra: Mapping[str, bytes] | None = None) -> Path:
+    """The fixture run, built; ``extra`` adds files to it (``nei/*.jsonl`` makes
+    ``parts.nei`` ok, WO-3.5's crafting-table steps)."""
     files = {
         "gt_recipe_maps.json": json.dumps(recipe_maps()).encode() + b"\n",
         "gt_recipes.jsonl": jsonl(recipes()),
         "gt_machines.jsonl": jsonl(machines()),
         "items.jsonl": jsonl(items()),
         "fluids.jsonl": jsonl(fluids()),
+        **(extra or {}),
     }
     run = home / collect.DATA_EXPORTS / RUN
     run.mkdir(parents=True)
     for rel, data in files.items():
+        (run / rel).parent.mkdir(parents=True, exist_ok=True)
         (run / rel).write_bytes(data)
     manifest = {
         "format": "gregteclink-export/1",
@@ -301,7 +305,8 @@ def make_home(home: Path) -> Path:
                    "machines": len(machines()), "items": len(items()),
                    "fluids": len(fluids()), "recipe_map_errors": 0, "machine_errors": 0,
                    "item_errors": 0, "unregistered": 0},
-        "parts": {"gt_dump": "ok", "machines": "ok", "refs": "ok", "nei": "skipped",
+        "parts": {"gt_dump": "ok", "machines": "ok", "refs": "ok",
+                  "nei": "ok" if any(k.startswith("nei/") for k in files) else "skipped",
                   "autoexport": "ok"},
     }  # fmt: skip
     (run / collect.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")

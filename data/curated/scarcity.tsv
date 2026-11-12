@@ -1,0 +1,34 @@
+# Scarcity weights for route ranking (WO-3.5, D62, D197): how much one unit per hour of a raw input
+# counts against a route. Read by gregtec.planner.metrics. key is a stable key (registry@meta,
+# fluid:<name>) or material:<GT material name> (every item GT tags with that material, weighted by
+# the DB's gt_material_amount over one unit, 3628800). weight is between 0 and 1 (1 = the
+# scarcest); an unlisted input weighs 0. Fluids: per 1000 L. These are the PM's defaults, a
+# preference rather than a game number: Clayton tunes them (and the scarcity weight in me/prefs.md).
+# The groups follow plan 7.1 step 7's examples (platline, rare earths, naquadah).
+key	weight	source	rationale
+material:Platinum	0.6	pm-default 2026-11-11	platinum group: the platline's product; scarce early, review at G3
+material:Palladium	0.6	pm-default 2026-11-11	platinum group, as Platinum
+material:Iridium	0.8	pm-default 2026-11-11	platinum group, a late-game bottleneck in the PM's G3 draft
+material:Osmium	0.8	pm-default 2026-11-11	platinum group, as Iridium
+material:Rhodium	0.7	pm-default 2026-11-11	platinum group
+material:Ruthenium	0.7	pm-default 2026-11-11	platinum group
+material:Naquadah	0.8	pm-default 2026-11-11	naquadah chain (G3 late benchmark)
+material:NaquadahEnriched	0.9	pm-default 2026-11-11	naquadah chain, enriched
+material:Naquadria	1	pm-default 2026-11-11	naquadah chain, the scarcest variant
+material:Neodymium	0.4	pm-default 2026-11-11	rare earths (G3 mid benchmark)
+material:Europium	0.6	pm-default 2026-11-11	rare earths
+material:Samarium	0.5	pm-default 2026-11-11	rare earths
+material:Gadolinium	0.5	pm-default 2026-11-11	rare earths
+material:Lutetium	0.6	pm-default 2026-11-11	rare earths
+material:Yttrium	0.4	pm-default 2026-11-11	rare earths
+material:Lanthanum	0.3	pm-default 2026-11-11	rare earths
+material:Cerium	0.3	pm-default 2026-11-11	rare earths
+material:Tungsten	0.4	pm-default 2026-11-11	refractory metal used in bulk from EV
+material:Uranium235	0.6	pm-default 2026-11-11	fissile isotope
+material:Plutonium241	0.7	pm-default 2026-11-11	fissile isotope
+material:Indium	0.5	pm-default 2026-11-11	byproduct metal
+material:Gallium	0.3	pm-default 2026-11-11	byproduct metal
+material:Tantalum	0.3	pm-default 2026-11-11	byproduct metal
+material:Niobium	0.3	pm-default 2026-11-11	byproduct metal
+material:Neutronium	1	pm-default 2026-11-11	endgame material
+fluid:helium-3	0.6	pm-default 2026-11-11	isotope gas
