@@ -9,7 +9,8 @@ machine in ``my_base_machine`` from it (WO-3.8's table, D211: ``manual`` > ``cen
   so a replayed events file or a retried post is harmless, and a removal of a machine the core
   never saw placed (it predates the listener) is ignored.
 - ``machine_census`` (``scope: chunks``) replaces the census of the chunks it names with the
-  machines it lists; ``scope: world`` (the end of a baseline) drops the census of every region it
+  machines it lists (with ``append: true``, the rest of a chunk too big for one event: its rows
+  are added and the chunk isn't cleared again); ``scope: world`` (the end of a baseline) drops the census of every region it
   doesn't list (regions trimmed or deleted since).
 - After each batch the touched machines are counted again. An ``event`` count that drops to 0 is
   deleted (events are the last resort anyway); a ``census`` count of 0 is kept, so the census, the
@@ -167,13 +168,16 @@ def _census(
         out.ignored += 1
         return
     rx, rz = region
+    append = data.get("append") is True
     looked: set[tuple[int, int]] = set()
     for i in chunks:
         if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < REGION_CHUNKS:
             cx, cz = rx * 32 + (i & 31), rz * 32 + (i >> 5)
             looked.add((cx, cz))
-            _drop(conn, dim, cx * 16, cx * 16 + 15, cz * 16, cz * 16 + 15, out)
-    out.census_chunks += len(looked)
+            if not append:
+                _drop(conn, dim, cx * 16, cx * 16 + 15, cz * 16, cz * 16 + 15, out)
+    if not append:
+        out.census_chunks += len(looked)
     for r in rows:
         row = _ints(r, 6)
         if row is None or row[3] <= 0 or (row[0] >> 4, row[2] >> 4) not in looked:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -149,6 +150,42 @@ def test_watchers_include_the_listener_and_the_census(
     # a restart goes on from the saved offset
     w2 = runner.Watchers(game, world, tmp_path / "home", clock)
     assert [e.kind for e in w2.poll_files() if e.source == "listener"] == []
+
+
+def test_machine_readers_wait_while_the_sender_is_behind(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """Review M2: with the core away, a full queue must not drop events or census rows the
+    readers have moved past; they wait, and the log readers go on."""
+    game = tmp_path / ".minecraft"
+    world = game / "saves" / "lab"
+    world.mkdir(parents=True)
+    path = game / machines.EVENTS_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(line() + "\n", encoding="utf-8")
+    w = runner.Watchers(game, world, tmp_path / "home", clock)
+    posted: list[dict[str, Any]] = []
+    sender = runner.Sender(lambda body, timeout: posted.append(body), "lab")
+    sender.put([Event("chat", 1.0, "log", {"text": "x"})] * runner.HOLD_AT)
+    stop = threading.Event()
+    spool = runner.Spool(tmp_path / "home" / "data" / "events")
+    ticks = iter(range(3))
+
+    def clock_once() -> float:
+        if next(ticks, None) is None:
+            stop.set()
+        return clock()
+
+    runner.run_loop(w, spool, sender, stop, clock=clock_once)
+    assert w.hold_machines
+    assert not [e for e in sender.q if e.source == "listener"]
+    # the core is back: the queue drains and the line is read
+    while sender.pending():
+        sender.flush_once()
+    w.hold_machines = False
+    assert [e.kind for e in w.poll_files() if e.source == "listener"] == [
+        "machine_built"
+    ]
 
 
 # --- My base: the apply ----------------------------------------------------------------------
@@ -331,5 +368,45 @@ def test_play_events_reach_my_base_and_lab_events_do_not(
                 headers={"Authorization": f"Bearer {ADMIN}"},
             )
             assert len(r.json()["events"]) == 1
+            # the feed keeps a census as its counts (review L5)
+            assert r.json()["events"][0]["data"]["machines"] == 1
         finally:
             db.close()
+
+
+def test_a_failed_db_write_is_refused_and_the_retry_applies(
+    core: Core, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M2: the post answers 503 when My base wasn't written, and the watchers' retry of
+    the same batch (events the feed has already seen) is applied."""
+    real = seen.apply
+    fails = [sqlite3.OperationalError("database is locked")]
+
+    def flaky(
+        conn: sqlite3.Connection,
+        events: list[dict[str, Any]],
+        now: int | None = None,
+    ) -> seen.Applied:
+        if fails:
+            raise fails.pop()
+        return real(conn, events, now)
+
+    monkeypatch.setattr(seen, "apply", flaky)
+    batch = [built(2, 66), census_ev(0, 0, [0], [[3, 64, 0, 1000, 0, 0]])]
+    body = {"instance": "play", "events": batch, "paused": {"paused": True}}
+    auth = {"Authorization": f"Bearer {ADMIN}"}
+    with TestClient(create_app(core), base_url=BASE) as client:
+        r = client.post("/api/game/events", json=body, headers=auth)
+        assert r.status_code == 503
+        assert (
+            core.game is not None and core.game.paused is True
+        )  # the state still went
+        post(client, "play", batch)
+    db = store.connect(core.store.path)
+    try:
+        assert counts(db) == {
+            66: (1, "event", {"event": 1}),
+            1000: (1, "census", {"census": 1}),
+        }
+    finally:
+        db.close()

@@ -25,7 +25,11 @@ bytes is not parsed at all.
 **Events** (``machine_census``, source ``census``): per region, the chunks looked at (their
 indices in the region, 0-1023: ``(cx & 31) + 32 * (cz & 31)``) and every GT machine in them as
 ``[x, y, z, mte_id, active, shutdown]``; the core replaces its census of those chunks with them.
-The first look at a world is the baseline: every chunk of every region, the empty ones included,
+An event is kept under :data:`EVENT_BYTES` of JSON (the core takes 64 KB): it is sent before a
+chunk's rows would push it over, and a chunk with more machines than one event holds goes as one
+event and then ``append: true`` events for the same chunk, whose rows the core adds without
+clearing the chunk again. A region file that is gone (deleted, trimmed) sends its known chunks
+once more with no machines, so the core drops them. The first look at a world is the baseline: every chunk of every region, the empty ones included,
 then one ``scope: world`` event listing the regions that exist, so the core drops what it had
 for regions that are gone. A poll spends at most ``budget_s`` reading (a big world's baseline takes
 several polls), so the log readers it shares a loop with are never held up for long.
@@ -33,6 +37,7 @@ several polls), so the log readers it shares a loop with are never held up for l
 
 from __future__ import annotations
 
+import json
 import re
 import struct
 import time
@@ -56,7 +61,9 @@ CHUNK_MAX = (
     4 << 20
 )  # a chunk's compressed bytes (Minecraft writes at most 255 sectors, ~1 MB)
 CHUNK_UNPACKED_MAX = 64 << 20
-MACHINES_PER_EVENT = 400  # [x, y, z, id, a, s] rows per event: ~16 KB of JSON
+EVENT_BYTES = (
+    48 << 10
+)  # one event's JSON, under the core's 64 KB (feed.CENSUS_DATA_MAX)
 MAX_REGIONS_EVENT = 4000  # regions listed in the baseline's world event
 REGION_NAME = re.compile(r"^r\.(-?\d+)\.(-?\d+)\.mca$")
 DIM_DIR = re.compile(r"^DIM(-?\d+)$")
@@ -243,9 +250,13 @@ class CensusWatch:
                 and path not in self.queue
             ):
                 self.queue.append(path)
-        for gone in set(self.regions) - present:
-            del self.regions[gone]
         events: list[Event] = []
+        for gone in set(self.regions) - present:
+            region = self.regions.pop(gone)
+            if (
+                region.known
+            ):  # deleted or trimmed: the core drops its census of those chunks
+                events.append(self._event(region, sorted(region.known), []))
         start = self.timer()
         for _ in range(len(self.queue)):
             if self.timer() - start >= self.budget_s:
@@ -294,8 +305,7 @@ class CensusWatch:
             )
             return True
         todo = self._todo(region, header)
-        looked: list[int] = []
-        rows: list[list[int]] = []
+        out = _Batch(self, region, events)
         failed = False
         read_any = False
         for i in todo:
@@ -303,7 +313,7 @@ class CensusWatch:
             if (
                 offset == 0
             ):  # no chunk there (never generated, or trimmed): nothing to read
-                looked.append(i)
+                out.add(i, [])
                 region.known.pop(i, None)
                 continue
             if read_any and self.timer() - start >= self.budget_s:
@@ -316,6 +326,7 @@ class CensusWatch:
                     raise ChunkError("chunk too large")
                 found = machines_in(data, cx, cz)
             except FileNotFoundError:
+                out.flush()  # what was read is sent; the next poll drops the region
                 return True
             except (OSError, ChunkError) as exc:
                 tries = region.fails.get(i, 0) + 1
@@ -332,14 +343,9 @@ class CensusWatch:
             region.fails.pop(i, None)
             self._note(f"{region.path}#{i}", None)
             region.known[i] = header.slots[i]
-            looked.append(i)
-            rows.extend(m.row() for m in found)
-            if len(rows) >= MACHINES_PER_EVENT:
-                events.append(self._event(region, looked, rows))
-                looked, rows = [], []
+            out.add(i, [m.row() for m in found])
         self._note(str(region.path), None)
-        if looked or rows:
-            events.append(self._event(region, looked, rows))
+        out.flush()
         left = self._todo(region, header)
         if not failed and not any(header.slots[i][0] for i in left):
             region.seen = True
@@ -358,20 +364,68 @@ class CensusWatch:
         ]
 
     def _event(
-        self, region: _Region, chunks: list[int], rows: list[list[int]]
+        self,
+        region: _Region,
+        chunks: list[int],
+        rows: list[list[int]],
+        append: bool = False,
     ) -> Event:
-        return Event(
-            "machine_census",
-            self.clock(),
-            self.source,
-            {
-                "scope": "chunks",
-                "dim": region.dim,
-                "region": [region.rx, region.rz],
-                "chunks": sorted(chunks),
-                "machines": rows,
-            },
-        )
+        data: dict[str, object] = {
+            "scope": "chunks",
+            "dim": region.dim,
+            "region": [region.rx, region.rz],
+            "chunks": sorted(chunks),
+            "machines": rows,
+        }
+        if append:
+            data["append"] = True
+        return Event("machine_census", self.clock(), self.source, data)
+
+
+_EVENT_HEAD = (
+    200  # the event's JSON without its chunk indices and rows, with room to spare
+)
+
+
+class _Batch:
+    """One region's census events as its chunks are read, each under :data:`EVENT_BYTES`."""
+
+    def __init__(
+        self, watch: CensusWatch, region: _Region, events: list[Event]
+    ) -> None:
+        self.watch, self.region, self.events = watch, region, events
+        self.chunks: list[int] = []
+        self.rows: list[list[int]] = []
+        self.size = _EVENT_HEAD
+
+    def add(self, index: int, rows: list[list[int]]) -> None:
+        sizes = [len(json.dumps(r)) + 2 for r in rows]
+        need = 6 + sum(sizes)  # the index and its rows
+        if self.chunks and self.size + need > EVENT_BYTES:
+            self.flush()
+        if _EVENT_HEAD + need <= EVENT_BYTES:
+            self.chunks.append(index)
+            self.rows.extend(rows)
+            self.size += need
+            return
+        # one chunk over an event: its first part clears the chunk, the rest are appended
+        append = False
+        part: list[list[int]] = []
+        size = _EVENT_HEAD + 6
+        for row, n in zip(rows, sizes, strict=True):
+            if part and size + n > EVENT_BYTES:
+                self.events.append(
+                    self.watch._event(self.region, [index], part, append)
+                )
+                append, part, size = True, [], _EVENT_HEAD + 6
+            part.append(row)
+            size += n
+        self.events.append(self.watch._event(self.region, [index], part, append))
+
+    def flush(self) -> None:
+        if self.chunks:
+            self.events.append(self.watch._event(self.region, self.chunks, self.rows))
+        self.chunks, self.rows, self.size = [], [], _EVENT_HEAD
 
 
 def census(world: Path) -> dict[tuple[int, int, int, int], int]:

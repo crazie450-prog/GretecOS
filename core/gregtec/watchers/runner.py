@@ -49,6 +49,9 @@ FILES_EVERY_S = 2.0
 HEARTBEAT_S = 10.0
 DEATH_MERGE_S = 120.0  # deaths this close are one death seen by several readers
 QUEUE_MAX = 2000
+HOLD_AT = (
+    QUEUE_MAX // 2
+)  # queued events at which the machine readers wait for the sender
 POST_MAX = 100  # events per POST
 POST_BYTES = 128 << 10  # and about this much JSON (the core takes 256 KB)
 POST_TIMEOUT_S = 3.0
@@ -62,6 +65,15 @@ LOGS = (("latest.log", False), ("fml-client-latest.log", True))
 WORLD_LOGS = (
     "logs/world.log",
 )  # ServerUtilities, in the game folder (V06: path VERIFY)
+
+
+def world_name_ok(name: str) -> bool:
+    """A world's folder name in saves/, as gos.toml's ``world`` takes it (no path, no ``..``)."""
+    return (
+        bool(config._WORLD_NAME.match(name))
+        and name.strip(" .") == name
+        and len(name) <= 255
+    )
 
 
 class Poller(Protocol):
@@ -179,6 +191,10 @@ class Watchers:
                 sources.WaypointWatch(game, world.name, clock, settle_s),
                 census.CensusWatch(world, clock, settle_s=settle_s),
             ]
+        # Set while the sender is behind: the machine events file and the census are left unread
+        # (their offset and known chunks stay), so a stopped core can't make the full queue drop
+        # them; the log and save readers go on.
+        self.hold_machines = False
         self._last_death: tuple[float, str] | None = None
 
     def poll_logs(self) -> list[Event]:
@@ -194,6 +210,10 @@ class Watchers:
             if self.player.saved:
                 events += _paused(self.tracker.world_saved())
         for reader in self.others:
+            if self.hold_machines and isinstance(
+                reader, machines.MachineEventWatch | census.CensusWatch
+            ):
+                continue
             try:
                 events += reader.poll()
             except Exception:  # one reader's bug must not stop the others
@@ -405,6 +425,9 @@ def run_loop(
             emit(watchers.poll_logs())
         if now >= next_files:
             next_files = now + FILES_EVERY_S
+            watchers.hold_machines = (
+                sender.send is not None and sender.pending() >= HOLD_AT
+            )
             emit(watchers.poll_files())
             sender.problems = watchers.problems()
         if now >= next_save:
@@ -470,6 +493,12 @@ def run(args: argparse.Namespace) -> int:
         print(f"no game folder: {exc}", file=sys.stderr)
         return EXIT_SETUP
     name = args.world or (cfg.world if args.instance == "play" else cfg.lab_world)
+    if args.world is not None and not world_name_ok(args.world):
+        print(
+            f"--world must be a folder name in saves/, not {args.world!r}",
+            file=sys.stderr,
+        )
+        return EXIT_SETUP
     world = game / "saves" / name if name else None
     if world is not None and not world.is_dir():
         log.warning(

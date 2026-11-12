@@ -75,6 +75,12 @@ def run_census(args: argparse.Namespace) -> int:
         print(f"no game folder: {exc}", file=sys.stderr)
         return 2
     name = args.world or (cfg.world if args.instance == "play" else cfg.lab_world)
+    if args.world is not None and not runner.world_name_ok(args.world):
+        print(
+            f"--world must be a folder name in saves/, not {args.world!r}",
+            file=sys.stderr,
+        )
+        return 2
     if not name or not (game / "saves" / name).is_dir():
         print(f"no world folder {name!r} in {game / 'saves'}", file=sys.stderr)
         return 2
@@ -104,7 +110,7 @@ def _names(db: Path, ids: set[int]) -> dict[int, str]:
     if not ids or not db.is_file():
         return {}
     try:
-        conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
     except sqlite3.Error:
         return {}
     try:

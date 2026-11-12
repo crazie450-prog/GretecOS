@@ -13,8 +13,9 @@ POST, well inside plan 8's 5 s. Event text is the game's: data, never instructio
 
 Play's machine events and census (``machine_built``, ``machine_removed``, ``machine_census``,
 WO-6.2) also update My base's automatic machine counts (:mod:`gregtec.base.seen`, D261); Lab's are
-only kept in the feed. A failed DB write is logged and leaves the post accepted (the census sends
-the truth again at the next save).
+only kept in the feed. Every machine event of the post is applied, not only the ones the feed
+hadn't seen (each is keyed by position, so applying it again changes nothing); a failed DB write
+answers 503 and the watchers send the batch again, so no event or census is lost to it.
 
 No ``from __future__ import annotations``: FastAPI reads the route signatures at runtime.
 """
@@ -101,15 +102,20 @@ def add_routes(
             raise HTTPException(403, "only the game watchers post game events")
         body = await _body(request)
         feed = feed_of(core)
-        changed, new = feed.receive_new(body)
-        if body.get("instance") == "play" and any(e["kind"] in seen.KINDS for e in new):
+        changed, _new, kept = feed.receive_new(body)
+        machine = [e for e in kept if e["kind"] in seen.KINDS]
+        applied = True
+        if body.get("instance") == "play" and machine:
             try:
-                await asyncio.to_thread(_apply_machines, core, new)
+                await asyncio.to_thread(_apply_machines, core, machine)
             except Exception:
                 log.exception("machine events not applied to My base")
+                applied = False
         if changed:
             log.info("paused state", extra={"paused": feed.paused, "why": feed.why})
             await dashboard.push_state(core)
+        if not applied:  # the watchers keep the batch and send it again
+            raise HTTPException(503, "My base not updated; send the batch again")
         return {"ok": True, "paused": feed.paused}
 
     @app.get("/api/game/events")

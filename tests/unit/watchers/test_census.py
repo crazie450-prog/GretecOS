@@ -251,6 +251,86 @@ def test_census_helper_counts_a_whole_world(
     assert census.census(tmp_path / "nothing") == {}
 
 
+def dense_world(
+    fg: ModuleType, rg: ModuleType, root: Path, per_chunk: dict[tuple[int, int], int]
+) -> Path:
+    """Chunks near x, z -20000 (long coordinates: the biggest rows), each full of machines."""
+    world = root / "world"
+    chunks = {}
+    for (cx, cz), n in per_chunk.items():
+        tes = [
+            rg.machine_te(
+                fg, cx * 16 + i % 16, i // 256, cz * 16 + i // 16 % 16, 1000 + i % 7
+            )
+            for i in range(n)
+        ]
+        chunks[(cx, cz)] = (rg.chunk_bytes(fg, cx, cz, tes), 100)
+    rg.region_file(world / "region" / "r.-40.-40.mca", chunks)
+    return world
+
+
+def test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base(
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
+) -> None:
+    """Review M1: one chunk of 2,000 machines (over the core's 64 KB as one event) goes as one
+    event and ``append`` events, each one the core takes, and all 2,000 reach My base."""
+    from gregtec import store
+    from gregtec.base import seen
+    from gregtec.watchers.feed import CENSUS_DATA_MAX, GameFeed
+
+    world = dense_world(fg, rg, tmp_path, {(-1280, -1280): 2000, (-1279, -1280): 3})
+    events = census.CensusWatch(world, clock, settle_s=0).poll()
+    chunks = [e for e in events if e.data["scope"] == "chunks"]
+    sizes = [len(json.dumps(e.data)) for e in chunks]
+    assert max(sizes) <= census.EVENT_BYTES < CENSUS_DATA_MAX
+    dense = census.chunk_index(-1280, -1280)
+    parts = [e.data for e in chunks if e.data["chunks"] == [dense]]
+    assert len(parts) >= 2
+    assert "append" not in parts[0] and all(p["append"] is True for p in parts[1:])
+    feed = GameFeed()
+    _, _, kept = feed.receive_new(
+        {"instance": "play", "events": [e.as_dict() for e in events]}
+    )
+    assert feed.refused == 0 and len(kept) == len(events)
+    conn = store.connect(tmp_path / "gos.sqlite")
+    try:
+        seen.apply(conn, kept)
+        assert len(seen.positions(conn, "census")) == 2003
+        # the same census again (a retried post, or the next baseline) changes nothing
+        seen.apply(conn, kept)
+        assert len(seen.positions(conn, "census")) == 2003
+    finally:
+        conn.close()
+
+
+def test_events_are_packed_under_the_byte_budget(
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
+) -> None:
+    world = dense_world(fg, rg, tmp_path, {(-1280 + i, -1280): 300 for i in range(8)})
+    events = census.CensusWatch(world, clock, settle_s=0).poll()
+    chunks = [e.data for e in events if e.data["scope"] == "chunks"]
+    assert all(len(json.dumps(d)) <= census.EVENT_BYTES for d in chunks)
+    assert not any(d.get("append") for d in chunks)  # no chunk is split
+    assert len(chunks) > 1
+    assert sum(len(d["machines"]) for d in chunks) == 2400
+
+
+def test_a_deleted_region_drops_its_chunks(
+    fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
+) -> None:
+    """Review L4: a region deleted after the baseline sends its known chunks with no machines."""
+    world = world_with(fg, rg, tmp_path)
+    watch = census.CensusWatch(world, clock, settle_s=0)
+    watch.poll()
+    (world / "DIM-1" / "region" / "r.-1.-1.mca").unlink()
+    events = watch.poll()
+    assert [(d["dim"], d["region"], d["machines"]) for d in chunk_events(events)] == [
+        (-1, [-1, -1], [])
+    ]
+    assert chunk_events(events)[0]["chunks"] == [census.chunk_index(-1, -1)]
+    assert watch.poll() == []
+
+
 def test_header_and_coords() -> None:
     assert census.chunk_index(-1, -1) == 1023
     assert census.chunk_coords(-1, -1, 1023) == (-1, -1)
@@ -282,6 +362,26 @@ def test_gos_watch_census_prints_counts(
     rows = json.loads(capsys.readouterr().out)
     assert {r["ref"] for r in rows} == {"mte:66", "mte:1000", "mte:1001"}
     assert cli.main([*base, "--world", "nope"]) == 2
+    for bad in ("..", "../game", "a/b"):  # review L3: a folder name in saves/ only
+        assert cli.main([*base, "--world", bad]) == 2
     monkeypatch.setattr(config, "running_as_dev", lambda: True)
     play = ["watch", "census", "--config", str(toml), "--instance", "play"]
     assert cli.main([*play, "--world", "world"]) == 2
+
+
+def test_census_names_come_from_a_db_whose_path_has_uri_characters(
+    tmp_path: Path,
+) -> None:
+    """Review L2: ``#`` and ``%`` in the DB's path don't blank the names."""
+    import sqlite3
+
+    from gregtec.watchers import cli as watch_cli
+
+    db = tmp_path / "a#b%20d" / "gos.sqlite"  # no "?": Windows refuses it in a name
+    db.parent.mkdir()
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE machine (mte_id INTEGER, name_en TEXT)")
+    conn.execute("INSERT INTO machine VALUES (1000, 'Electric Blast Furnace')")
+    conn.commit()
+    conn.close()
+    assert watch_cli._names(db, {1000}) == {1000: "Electric Blast Furnace"}
