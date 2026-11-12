@@ -176,7 +176,9 @@ def read_line(p: Parsed, fml: bool, player: str | None) -> list[Found]:
                 },
             )
         )
-    if server and not any(f.kind in ("quit",) for f in out):
+    # Only vanilla's own Server-thread lines (latest.log) say the server ticks: mods log on that
+    # thread from their save handlers too, during the pause's own save (FML log).
+    if server and not fml and not any(f.kind == "quit" for f in out):
         out.append(Found("server_tick", {}))
     return out
 

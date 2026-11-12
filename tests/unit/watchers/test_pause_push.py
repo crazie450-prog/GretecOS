@@ -29,7 +29,7 @@ from gregtec.config import Config
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
-from gregtec.watchers import feed, runner
+from gregtec.watchers import feed, pause, runner
 from gregtec.watchers.events import Event
 
 ADMIN = "admin-" + "p" * 40
@@ -173,9 +173,16 @@ def test_a_pause_reaches_the_dashboard_within_5_s_fake_clock(
 
 
 def test_a_pause_reaches_the_dashboard_within_5_s_real_loop(
-    tmp_path: Path, fg: ModuleType, client: TestClient, core: Core
+    tmp_path: Path,
+    fg: ModuleType,
+    client: TestClient,
+    core: Core,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The whole path in real time: the run loop and the sender thread, as the process runs."""
+    monkeypatch.setattr(
+        pause, "LINE_GRACE_S", 0.0
+    )  # the unpause line comes at once here
     tree = fg.Tree(tmp_path / "prism")
     tree.log("")
     token = core.auth.issue_client_token("watchers")

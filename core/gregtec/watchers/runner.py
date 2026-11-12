@@ -175,7 +175,10 @@ class Watchers:
     def poll_files(self) -> list[Event]:
         events: list[Event] = []
         if self.player is not None:
-            events += self.player.poll()
+            try:
+                events += self.player.poll()
+            except Exception:  # one reader's bug must not stop the others
+                log.exception("watcher failed", extra={"reader": "PlayerWatch"})
             if self.player.saved:
                 events += _paused(self.tracker.world_saved())
         for reader in self.others:

@@ -13,7 +13,9 @@ What the game actually writes, from Minecraft 1.7.10's ``IntegratedServer.tick``
   level.dat again (GTNH ships Hodgepodge's ``autoSaveInterval`` = 900) [B§6.1].
 
 So the tracker says **paused** from the pause line on, and **not paused** at the first
-Server-thread line after the pause save, or when level.dat is written again more than
+Server-thread line of latest.log after the pause save (read more than :data:`LINE_GRACE_S` after
+the pause line; mods' lines in the FML log don't count, since they log from their save handlers),
+or when level.dat is written again more than
 :data:`SAVE_GRACE_S` after the pause line (the pause's own save lands within a few seconds, through
 the threaded IO queue), or when the world closes (``Stopping server``: then unknown). Before the
 first pause line it says ``None`` (unknown), as the dashboard's ``game.paused`` did before WO-6.1.
@@ -28,6 +30,11 @@ from dataclasses import dataclass
 
 SAVE_GRACE_S = (
     10.0  # level.dat writes this soon after the pause line are the pause's own save
+)
+
+
+LINE_GRACE_S = (
+    3.0  # Server-thread lines read this soon after the pause line: its own save
 )
 
 
@@ -56,8 +63,10 @@ class PauseTracker:
 
     def server_line(self) -> Change | None:
         """A Server-thread line that isn't part of a save: the server is ticking."""
-        if self.paused is not True:
+        if self.paused is not True or self.since is None:
             return None
+        if self.clock() - self.since < LINE_GRACE_S:
+            return None  # read with the pause line: the pause's own save
         return self._set(False, "the server logged again")
 
     def world_saved(self) -> Change | None:

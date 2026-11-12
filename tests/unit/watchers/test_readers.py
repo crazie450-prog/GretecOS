@@ -213,6 +213,8 @@ def test_pause_tracker(clock: FakeClock) -> None:
     assert t.pause_line() is not None
     clock.advance(1)
     assert t.pause_line() is not None  # again: an unpause was missed, since restarts
+    assert t.server_line() is None  # read with the pause line: its own save
+    clock.advance(pause.LINE_GRACE_S)
     change = t.server_line()
     assert change is not None and change.paused is False
     change = t.world_closed()

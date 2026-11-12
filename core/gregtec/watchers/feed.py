@@ -9,6 +9,7 @@ watcher can never leave the dashboard saying "paused". Event text is the game's,
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections import deque
@@ -39,8 +40,6 @@ class GameFeed:
 
     def receive(self, body: dict[str, Any]) -> bool:
         """Take one post. Returns whether the paused state changed."""
-        import json
-
         instance = body.get("instance")
         state = body.get("paused")
         events = body.get("events")
