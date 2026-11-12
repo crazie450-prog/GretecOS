@@ -55,6 +55,9 @@ NUTRIENTS_NEEDED_PER_TIER = 10
 # fertilizer: by hand up to 100 (bone meal and the like); a Crop Manager tops sticks up to 200
 MANUAL_FERTILIZER_MAX = 100
 CROP_MANAGER_FERTILIZER_CAP = 200
+# every growth tick a stick uses 1 water and 1 fertilizer while it has any (onGrowthTick), crop
+# or not; rain adds water, nothing adds fertilizer but a hand or a Crop Manager
+UPKEEP_PER_GROWTH_TICK = 1
 MED_FERTILIZER = 50  # Medium Fertilizer Breeding/Spreading Threshold (config)
 HIGH_FERTILIZER = 101  # High Fertilizer Breeding/Spreading Threshold (config)
 
@@ -115,6 +118,14 @@ def nutrients(
     )
     wet = _f32(max(0.0, min(1.0, wet)) * LIKED_BIOME_BONUS)
     return out + max(int(wet), liked * LIKED_BIOME_BONUS)
+
+
+def upkeep_ticks(start: int, level: int) -> int:
+    """Growth ticks a stick filled to ``start`` water or fertilizer still holds at least
+    ``level`` when the tick's growth and breeding run (the 1 a tick is taken after them)."""
+    if start < level:
+        return 0
+    return (start - level) // UPKEEP_PER_GROWTH_TICK + 1
 
 
 def growth_rate(nutrient_points: int, tier: int, growth: int) -> int:
