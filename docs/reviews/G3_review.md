@@ -16,7 +16,20 @@ Everything else in Phase 3 is met, or met with fakes where a PC or site check re
 
 ### Addendum after the gate review (2026-11-12)
 
-The gate review (PR #84) found the WO-3.7 rows stale: PR #80 merged into `main` at 16:32 (`725a1ce`) while this report was being written. This branch now merges `origin/main` at `725a1ce` (D254 sits after WO-3.7's D250–D253), the WO-3.7 section below is re-checked on that commit, and the review's other findings are applied: `report` mode fails on a home with no saved plans or no plan for a G3 line, the special-item rule is a helper the test calls, `report` writes UTF-8, the per-machine status is narrowed to what the test shows (base recipe = NEI; OC inputs Lab-only), and PC steps 0 and 3–6 are corrected. The runs below that name `725a1ce` or `review/g3` after the merge were made for this addendum.
+The gate review (PR #84) found the WO-3.7 rows stale: PR #80 merged into `main` at 16:32 (`725a1ce`) while this report was being written. This branch now merges `origin/main` at `725a1ce` (D254 sits after WO-3.7's D250–D253), the WO-3.7 section below is re-checked on that commit, and the review's other findings are applied: `report` mode fails on a home with no saved plans or no plan for a G3 line, the special-item rule is a helper the test calls, `report` writes UTF-8, the per-machine status is narrowed to what the test shows (base recipe = NEI; OC inputs Lab-only), and PC steps 0 and 3–6 are corrected. `main` moved once more during the addendum (WO-4.2, PR #81, `055926b`: Phase 4, with additive changes to `rank.py` and `solve.py` for power lines); it is merged too, D254 sits after D233–D235, and the Phase 3 harness tests were re-run on the result.
+
+#### Re-runs after the merge [here]
+
+| Check | Result |
+|---|---|
+| `./gradlew runServer -Pharness`, `runClient25 -Pharness` (xvfb), fresh, on `725a1ce` + this branch | `harness passed: 34 checks, run 20261112T170002Z`; `harness passed: 55 checks, run 20261112T170115Z` |
+| `GOS_REQUIRE_HARNESS_RUN=1 pytest test_g3_lines_harness.py test_designer_harness.py` (on `725a1ce` + branch) | 6 passed (3 min 13 s) |
+| Same plus `test_rank_harness.py`, after merging `055926b` | **24 passed, 1 skipped** (the sulfuric-acid route skip; 10 min 19 s) |
+| `ruff check .`, `ruff format --check .` (after `055926b`) | clean; 380 files already formatted |
+| `pytest -q` (after `055926b`) | **5312 passed, 245 skipped** (5 min 33 s) |
+| Dashboard install and build; `playwright test e2e/designer.spec.ts` (own ports and homes) | clean; 5 passed |
+| `report` on a client-run home with steel saved (3 routes), `PYTHONIOENCODING=ascii` | exit 1; stderr names the 12 lines with no saved plan; the sheet is written in UTF-8 (no encoding error), 8 tuples, all `ok` |
+| `report` on a home with an empty `data/plans/` | exit 1, `no saved plans in ...` |
 
 Evidence tags, as in G0–G2:
 - **[repo]:** checked in the repo, the git history or GitHub's CI logs.
@@ -57,7 +70,7 @@ PR #78 reported two `test_plan_harness` failures (light fuel and epoxid) on a lo
 | `9c8d5ce` | #72 WO-3.5 | 43193002904 | success |
 | `b5899c6` | #78 WO-3.6 | 43207194916 (+ dashboard Windows 43207194949) | success |
 | `90b6782` | #77 | 43215106534: ubuntu, windows, dashboard, mod; 43215106614: mod (Windows) | all success |
-| `725a1ce` | #80 WO-3.7 (head) | 43259728098: ubuntu, windows, dashboard, mod; 43259728328: dashboard (Windows) | CI_725 |
+| `725a1ce` | #80 WO-3.7 (head) | 43259728098: ubuntu, windows, dashboard, mod; 43259728328: dashboard (Windows) | all success |
 
 On `90b6782` the `mod` job ran `pytest tests/integration` on fresh server and client harness runs: **142 passed, 20 skipped**. That includes every Phase 3 harness file: graph 19, gtmath 5, machines 2, my_base 2, outputs 4, plan 17, rank 18 + 1 skip [repo]. The 20 skips are the quest pack, the structures dump, downloaded voice models and the sulfuric-acid route skip; none is a failing Phase 3 check.
 
@@ -165,8 +178,8 @@ PR #80, merge `725a1ce`, D250–D253 [repo]. Checked on `725a1ce` (this branch a
 
 | Part | Status | Evidence |
 |---|---|---|
-| Text request → accepted plan in the vault | **met with fakes** | `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_designer_harness.py`: DESIGNER_H. A text request goes through the real CLI and the deep lane with a fake model, `design_production` and `plan_explain`, then an accepted plan and its line note in the vault [here]. The real-key run is `designer.md` B (step 2) |
-| A pin made in the Designer survives reload and re-solve | met | `test_designer_harness.py` "a pin survives reload and re-solve" on the harness DB, and e2e `designer.spec.ts` "a pin made in the Designer survives a reload and a re-solve": DESIGNER_E [here] |
+| Text request → accepted plan in the vault | **met with fakes** | `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_designer_harness.py`: 2 passed (on `725a1ce` + this branch, and again after WO-4.2's merge). A text request goes through the real CLI and the deep lane with a fake model, `design_production` and `plan_explain`, then an accepted plan and its line note in the vault [here]. The real-key run is `designer.md` B (step 2) |
+| A pin made in the Designer survives reload and re-solve | met | `test_designer_harness.py` "a pin survives reload and re-solve" on the harness DB, and e2e `designer.spec.ts` "a pin made in the Designer survives a reload and a re-solve": e2e 5 of 5 passed [here] (a first run while the client harness ran beside it had one timing failure in the theme/phone spec; the re-run passed 5 of 5) |
 | Voice | after G5 | the criterion says so |
 | `task_max_usd` set from the measurements | **not met (paid PC step)** | The mechanism (`gos eval design-cost`, `--apply-from`, D253) and a fake run exist (`test_design_cost`, in the full pytest). The `[budget] task_max_usd` default stays 2.0 until Clayton's real run, `designer.md` C (step 2). Spending is his call |
 
@@ -196,7 +209,7 @@ How the references are read is D254 (judgement call, below).
 | Criterion | Verdict | Evidence and gaps |
 |---|---|---|
 | The 14 lines (PM draft; Clayton edits it) | **partly; question** | 12 of 14 design on the dev runtime. Nanocircuits and wetware circuits don't: GTNH's circuit recipes are in its core mod, which the harness doesn't load (PR #63) → step 3. No record shows Clayton edited the PM draft (Q-G3-1) |
-| Fuel chains of the 4 power lines | partly; G4 | Light fuel is designed and checked here (0 gates). Benzene, the tree-farm steam and naquadah fuel chains belong to WO-4.2 (PR #81, open, not merged) and G4 |
+| Fuel chains of the 4 power lines | partly; G4 | Light fuel is designed and checked here (0 gates). Benzene, the tree-farm steam and naquadah fuel chains belong to WO-4.2 (PR #81, merged at `055926b` after this report's first draft) and are judged at G4 |
 | Every distinct (machine, recipe, tier, OC, parallel) within ±2% of NEI | **base half met on the dev runtime; OC/parallel met by construction; D177's machine-selection inputs Lab-only** | Base half: 13 designs, 182 distinct tuples, 129 distinct recipes, every recipe equal to NEI's own line (`test_g3_lines_harness`, [here]); step 4 re-runs it on the full pack. OC and parallel: `gtmath` equals GT's classes bit for bit for the inputs it gets (WO-3.1). Those inputs (which hatches, amps and coil a machine gets, so its OC count and parallel) are WO-3.2's D177 defaults; no reference here checks a tuple's overclocked EU/t and duration, so step 6 times at least one overclocked machine per D177 hatch layout |
 | Line totals within ±2% of gtnhplanner.com (or PlanNH) | **10 of 13 met; 3 not met → Lab** | Table below. PlanNH isn't a reference: D66 dropped the PlanNH spike |
 | When references disagree, the Lab decides, and the report names the reference | **PC step** | Polyethylene, silicon and the platline (step 6) |
@@ -336,7 +349,7 @@ These run after G2's PC steps 0 to 3 (`docs/reviews/G2_review.md`: Node.js and p
 
 **2. Designer (WO-3.7):** `docs/runbooks/designer.md` A and B as written (design, pin, reload, re-solve, accept, then the line note in the vault; a text request through the deep lane on the stored key). Approve or mark up the Designer board. Step C (paid, sets `task_max_usd`) is your call on spending.
 
-**3. Design the 14 benchmark lines on the full pack, gos-dev** (about 15–30 min; note any design over 60 s). Run them as this review designed them: gos-dev's My base empty (gos-dev has never set one; if it has, clear it in gos-dev's Base view first) and balanced weights (no `me/prefs.md` in gos-dev's vault). Otherwise the best route can differ from this report's table.
+**3. Design the 14 benchmark lines on the full pack, gos-dev** (about 15–30 min; note any design over 60 s). Run them as this review designed them: gos-dev's My base empty (gos-dev has never set one; if it has, clear it in gos-dev's Base view first) and balanced weights (gos-dev's `me/prefs.md` as the template deploys it: `weights: balanced`, no `w_` lines). Otherwise the best route can differ from this report's table.
 ```powershell
 cd C:\GregtecOS-dev\GretecOS
 $h = if ($env:GOS_HOME) { $env:GOS_HOME } else { "$HOME\GregtecOS" }
