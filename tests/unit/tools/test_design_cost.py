@@ -47,7 +47,8 @@ def test_the_task_and_recording_files() -> None:
     assert set(recorded) == {t.id for t in tasks}
     for turns in recorded.values():
         calls = [t.call for t in turns]
-        assert "design_production" in calls and "planner" in calls
+        assert "design_production" in calls and "plan_explain" in calls
+        # the planner row is plan_explain's writer call (D199): no tool of its own
         assert [t.call for t in turns if t.role == "planner"] == [""]
 
 
@@ -85,7 +86,23 @@ def test_the_script_replays_turns_by_model() -> None:
     assert policy({"model": s.planner, "messages": []}).output_tokens == next(
         t.output for t in turns if t.role == "planner"
     )
-    assert policy({"model": s.orchestrator}).tools[0][0] == "Agent"
+    # plan_explain gets the plan the task just saved, from design_production's result
+    result = "target: Steel Ingot [x]\ndesign: plan:pl-abc123, plan:pl-d\n"
+    saved = {
+        "model": s.orchestrator,
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "content": result}],
+            }
+        ],
+    }
+    assert policy(saved).tools == [("mcp__gos__plan_explain", {"id": "pl-abc123"})]
+    again = design_cost.script(task, turns, s)
+    again({"model": s.orchestrator, "messages": []})
+    assert again({"model": s.orchestrator}).tools == [
+        ("mcp__gos__plan_explain", {"id": design_cost.NO_PLAN})
+    ]
 
 
 def test_the_cap_rule() -> None:
@@ -126,9 +143,10 @@ def test_apply_cap_keeps_the_rest_of_gos_toml(tmp_path: Path) -> None:
 def test_apply_needs_a_real_run_and_real_needs_a_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    out = io.StringIO()
-    assert design_cost.main(None, fake=True, apply=True, out=out) == 2
-    assert "real run only" in out.getvalue()
+    for bad in ({"fake": True}, {"limit": 1}, {"tasks": tmp_path / "t.tsv"}):
+        out = io.StringIO()
+        assert design_cost.main(None, apply=True, out=out, **bad) == 2  # type: ignore[arg-type]
+        assert "every default task only" in out.getvalue()
     assert design_cost.main(None, measure_cap=0.0, out=io.StringIO()) == 2
 
     def missing(name: str) -> str:
@@ -140,6 +158,50 @@ def test_apply_needs_a_real_run_and_real_needs_a_key(
     out = io.StringIO()
     assert design_cost.main(cfg, limit=1, table_path=tmp_path / "t.tsv", out=out) == 1
     assert "Not run" in out.getvalue()
+
+
+def _table(path: Path, ids: list[str], mode: str, cost: float = 0.3) -> Path:
+    head = "\t".join(design_cost.TABLE)
+    rows = [
+        "\t".join(
+            {
+                "id": i,
+                "status": "done",
+                "cost_usd": f"{cost:.4f}",
+                "est_usd": f"{cost:.4f}",
+                "mode": mode,
+            }.get(c, "")
+            for c in design_cost.TABLE
+        )
+        for i in ids
+    ]
+    path.write_text("\n".join([head, *rows]) + "\n", encoding="utf-8")
+    return path
+
+
+def test_apply_from_a_saved_real_table(tmp_path: Path) -> None:
+    """Review L1: the cap from a real run's table without paying again, only from all 10
+    default tasks of a real run."""
+    ids = [t.id for t in design_cost.load_tasks()]
+    toml = tmp_path / "gos.toml"
+    toml.write_text("[budget]\ntask_max_usd = 2.0\n", "utf-8")
+    out = io.StringIO()
+    real = _table(tmp_path / "real.tsv", ids, "real", 0.9)
+    assert design_cost.main(toml, apply_from=real, out=out) == 0, out.getvalue()
+    assert config.load(toml).task_max_usd == 1.5  # 0.9 x 1.5 = 1.35 -> 1.50
+    for name, table in (
+        ("fake", _table(tmp_path / "fake.tsv", ids, "fake")),
+        ("short", _table(tmp_path / "short.tsv", ids[:1], "real")),
+    ):
+        out = io.StringIO()
+        assert design_cost.main(toml, apply_from=table, out=out) == 1, name
+        assert "Not applied" in out.getvalue()
+    assert config.load(toml).task_max_usd == 1.5
+    out = io.StringIO()
+    assert design_cost.main(toml, apply_from=real, fake=True, out=out) == 2
+    bad = tmp_path / "bad.tsv"
+    bad.write_text("id\tstatus\n", "utf-8")
+    assert design_cost.main(toml, apply_from=bad, out=io.StringIO()) == 2
 
 
 def test_text_requests_through_the_deep_lane_to_an_accepted_plan(
@@ -163,21 +225,33 @@ def test_text_requests_through_the_deep_lane_to_an_accepted_plan(
     rows = table.read_text("utf-8").splitlines()
     assert len(rows) == 11 and all("\tdone\t" in r for r in rows[1:])
     # Every task's cost is its recorded tokens priced: the lane's estimate equals the SDK's.
+    cells = {}
     for r in rows[1:]:
-        cells = dict(zip(design_cost.TABLE, r.split("\t"), strict=True))
-        assert float(cells["cost_usd"]) > 0
-        assert cells["subagents"] == "planner"
+        row = dict(zip(design_cost.TABLE, r.split("\t"), strict=True))
+        cells[row["id"]] = row
+        assert float(row["cost_usd"]) > 0 and row["mode"] == "fake"
+        # the explanation is plan_explain's, not a subagent's
+        assert row["subagents"] == "-"
+    # Review L3: "done" isn't "designed". On this made-up export only the steel targets can be
+    # designed ("stainless steel ingot" resolves to its steel too); only those tasks reach
+    # plan_explain's writer (the planner row, priced). The others' rows are failed designs.
+    explained = {i for i, row in cells.items() if float(row["explain_usd"]) > 0}
+    assert explained == {"g01", "g06", "g10"}, explained
     assert "# task_max_usd = 0.50 (replayed token counts, not a measurement" in text
     assert "Result: PASS" in text
-    # design_production ran for real inside the lane: the requests that this made-up export can
-    # make (steel) saved their routes, and the latest design is the Designer's.
-    ids = designer.latest(home)
+    # Review L2: the tasks ran on a copy of the DB and vault; the live ones are untouched.
+    assert designer.latest(home) == []
+    assert not list((home / "vault" / "plans").glob("pl-*.md"))
+    scratch = home / design_cost.SCRATCH
+    # design_production ran for real inside the lane: the steel requests saved their routes,
+    # and the latest design is the Designer's (in the copy).
+    ids = designer.latest(scratch)
     assert ids, "no design was saved by the deep lane"
-    done = designer.accept(home, ids[0])
+    done = designer.accept(scratch, ids[0])
     assert done.status == "accepted" and done.problems == []
-    line_note = (home / "vault" / str(done.line)).read_text("utf-8")
+    line_note = (scratch / "vault" / str(done.line)).read_text("utf-8")
     assert f"plan: plan:{ids[0]}" in line_note and "st: accepted" in line_note
-    assert "st: accepted" in (home / "vault" / "plans" / f"{ids[0]}.md").read_text(
+    assert "st: accepted" in (scratch / "vault" / "plans" / f"{ids[0]}.md").read_text(
         "utf-8"
     )
     # A fake run never reaches llm_usage.

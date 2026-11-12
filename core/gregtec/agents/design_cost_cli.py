@@ -52,7 +52,15 @@ def add_parsers(evals: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     p.add_argument(
         "--apply",
         action="store_true",
-        help="write the measured task_max_usd into gos.toml's [budget] (a real run only)",
+        help="write the measured task_max_usd into gos.toml's [budget] (a real run of every "
+        "default task only)",
+    )
+    p.add_argument(
+        "--apply-from",
+        type=Path,
+        default=None,
+        metavar="TABLE",
+        help="set task_max_usd from a real run's saved table (--out) without running again",
     )
     p.add_argument(
         "--config",
@@ -75,5 +83,6 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
         measure_cap=args.measure_cap,
         table_path=args.out,
         apply=args.apply,
+        apply_from=args.apply_from,
         out=out,
     )

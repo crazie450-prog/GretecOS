@@ -50,17 +50,18 @@ def messages_writer(
     meter: UsageMeter | None = None,
     on_usd: Callable[[float], None] | None = None,
 ) -> Writer:
-    """A writer that sends each prompt as one user message to ``model``. ``on_usd`` gets each
-    call's cost (the eval's per-task total); a refusal or an empty answer comes back as ``""``,
-    which the validator refuses."""
+    """A writer that sends each prompt as one user message to ``model`` (streamed, read as
+    the final message). ``on_usd`` gets each call's cost (the cost eval's per-task total); a
+    refusal or an empty answer comes back as ``""``, which the validator refuses."""
 
     def write(prompt: str) -> str:
         try:
-            message = client.messages.create(
+            with client.messages.stream(
                 model=model,
                 max_tokens=MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
-            )
+            ) as stream:
+                message = stream.get_final_message()
         except anthropic.APIError as exc:
             raise WriterError(f"{type(exc).__name__}: {exc}") from exc
         usage = fast_lane._usage(message)
@@ -79,22 +80,37 @@ def messages_writer(
     return write
 
 
-def factory(model: str, meter: UsageMeter | None) -> Factory:
-    """The core's writer: the stored key's client on ``model``, or None without a key."""
+def client_for(key: str, base_url: str | None = None) -> anthropic.Anthropic:
+    """The writer's Messages client (``base_url``: the cost eval's fake API)."""
+    return anthropic.Anthropic(
+        api_key=key,
+        base_url=base_url,
+        timeout=anthropic.Timeout(TIMEOUT_S, connect=fast_lane.CONNECT_S),
+        max_retries=RETRIES,
+    )
+
+
+def factory(
+    model: str,
+    meter: UsageMeter | None,
+    *,
+    key: Callable[[], str] | None = None,
+    base_url: str | None = None,
+    on_usd: Callable[[float], None] | None = None,
+) -> Factory:
+    """The core's writer on ``model``: ``key`` (default the stored Anthropic key) read when a
+    tool first asks; no key, no writer (None: the template)."""
 
     def make() -> Writer | None:
         try:
-            key = keys.get_key(keys.ANTHROPIC)
+            secret = key() if key is not None else keys.get_key(keys.ANTHROPIC)
         except keys.MissingKeyError:
             return None
         except keyring.errors.KeyringError as exc:
             log.warning("keyring unavailable", extra={"error": type(exc).__name__})
             return None
-        client = anthropic.Anthropic(
-            api_key=key,
-            timeout=anthropic.Timeout(TIMEOUT_S, connect=fast_lane.CONNECT_S),
-            max_retries=RETRIES,
+        return messages_writer(
+            client_for(secret, base_url), model, meter=meter, on_usd=on_usd
         )
-        return messages_writer(client, model, meter=meter)
 
     return make

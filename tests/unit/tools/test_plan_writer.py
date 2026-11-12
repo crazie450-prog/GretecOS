@@ -5,6 +5,8 @@ template)."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,13 +26,14 @@ class FakeMessages:
         self.requests: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        raise AssertionError("the writer streams")
+
+    @contextmanager
+    def stream(self, **kwargs: Any) -> Iterator[Any]:  # noqa: ANN401
         self.requests.append(kwargs)
         if isinstance(self.reply, BaseException):
             raise self.reply
-        return self.reply
-
-    def stream(self, **kwargs: Any) -> Any:  # noqa: ANN401
-        raise AssertionError("the writer doesn't stream")
+        yield SimpleNamespace(get_final_message=lambda: self.reply)
 
 
 def message(text: str, stop: str = "end_turn") -> SimpleNamespace:

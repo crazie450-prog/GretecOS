@@ -1,42 +1,42 @@
 task	role	turn	input	output	cache_read	cache_write	call
 g01	orchestrator	1	2400	160	0	9500	design_production
-g01	orchestrator	2	3200	220	9500	0	planner
+g01	orchestrator	2	3200	220	9500	0	plan_explain
 g01	planner	1	5200	850	0	3200	
 g01	orchestrator	3	1900	700	15900	0	
 g02	orchestrator	1	2400	160	0	9500	design_production
-g02	orchestrator	2	4160	220	9500	0	planner
+g02	orchestrator	2	4160	220	9500	0	plan_explain
 g02	planner	1	6760	1105	0	3200	
 g02	orchestrator	3	2470	910	16860	0	
 g03	orchestrator	1	2400	160	0	9500	design_production
-g03	orchestrator	2	3520	220	9500	0	planner
+g03	orchestrator	2	3520	220	9500	0	plan_explain
 g03	planner	1	5720	935	0	3200	
 g03	orchestrator	3	2090	770	16220	0	
 g04	orchestrator	1	2400	160	0	9500	design_production
-g04	orchestrator	2	3200	220	9500	0	planner
+g04	orchestrator	2	3200	220	9500	0	plan_explain
 g04	planner	1	5200	850	0	3200	
 g04	orchestrator	3	1900	700	15900	0	
 g05	orchestrator	1	2400	160	0	9500	design_production
-g05	orchestrator	2	3840	220	9500	0	planner
+g05	orchestrator	2	3840	220	9500	0	plan_explain
 g05	planner	1	6240	1020	0	3200	
 g05	orchestrator	3	2280	840	16540	0	
 g06	orchestrator	1	2400	160	0	9500	design_production
-g06	orchestrator	2	4800	220	9500	0	planner
+g06	orchestrator	2	4800	220	9500	0	plan_explain
 g06	planner	1	7800	1275	0	3200	
 g06	orchestrator	3	2850	1050	17500	0	
 g07	orchestrator	1	2400	160	0	9500	design_production
-g07	orchestrator	2	9600	220	9500	0	planner
+g07	orchestrator	2	9600	220	9500	0	plan_explain
 g07	planner	1	15600	2550	0	3200	
 g07	orchestrator	3	5700	2100	22300	0	
 g08	orchestrator	1	2400	160	0	9500	design_production
-g08	orchestrator	2	4480	220	9500	0	planner
+g08	orchestrator	2	4480	220	9500	0	plan_explain
 g08	planner	1	7279	1190	0	3200	
 g08	orchestrator	3	2660	979	17180	0	
 g09	orchestrator	1	2400	160	0	9500	design_production
-g09	orchestrator	2	5760	220	9500	0	planner
+g09	orchestrator	2	5760	220	9500	0	plan_explain
 g09	planner	1	9360	1530	0	3200	
 g09	orchestrator	3	3420	1260	18460	0	
 g10	orchestrator	1	2400	120	0	9500	plan_list
 g10	orchestrator	2	1800	160	9500	0	design_production
-g10	orchestrator	3	3840	220	11300	0	planner
+g10	orchestrator	3	3840	220	11300	0	plan_explain
 g10	planner	1	6240	1020	0	3200	
 g10	orchestrator	4	2280	840	16540	0	
