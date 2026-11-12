@@ -13,7 +13,8 @@ each against its target in code:
 |           | and while it runs, as Clayton pastes or saves them       | no TPS drop (D249)         |
 | spoken    | the fast lane's eval set (tests/evals/fast_lane_         | >= 95% of answers within   |
 |           | questions.tsv) with the fake model, through the speech   | 2 sentences and 40 words   |
-|           | filter and lexicon the speaker uses                      | as heard (D23, D248)       |
+|           | filter and lexicon the speaker uses; and the measured    | as heard, <= 5% cut by the |
+|           | turns' own answers (their ``spoken_*`` counts)           | filter (D23, D248)         |
 
 **Sources.** Without ``--synthetic`` the turns are the voice client's own (``logs/voice.log`` and
 its rotated copies): the last ``--last`` turns, or with ``--minutes M`` the turns logged while
@@ -33,7 +34,8 @@ time. Its numbers time GOS's own code, not a PC: they show the harness works end
 FPS and TPS come from what GTNH already shows. ``--fps-before`` and ``--fps-during`` take F3's
 "N fps" readings, ``--tps-before`` and ``--tps-during`` the output of ``/forge tps`` (the last
 ``Overall`` line counts), each as text or as a file (a copy of Lab's ``logs/latest.log`` works:
-chat goes there), read once with gamestate.safe_open.
+chat goes there), read once with gamestate.safe_open. A "during" reading that is still the
+"before" one (the same timestamped line) is not measured, never a pass.
 
 **Report.** A TSV (``section scope metric value target result note``) and a text summary in
 ``GOS_HOME/data/reports`` (or ``--out``). The result is PASS when every check was measured and

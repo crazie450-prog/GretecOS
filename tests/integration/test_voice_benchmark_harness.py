@@ -62,3 +62,6 @@ def test_the_synthetic_run_asks_the_fast_lane(home: Path) -> None:
     assert all(isinstance(r["total_ms"], int) for r in records)
     assert len(said) == 2 and said[0].lower().startswith("steel")
     assert not any(ch.isdigit() for ch in "".join(said))  # no id or digit is spoken
+    # each turn logged its answer's length as heard (D23, counts only)
+    live = vb.live_spoken_checks(records, "synthetic")
+    assert [c.result for c in live] == [vb.PASS, vb.PASS], live

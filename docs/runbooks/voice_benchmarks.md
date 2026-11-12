@@ -15,7 +15,8 @@ What is checked, by code (plan 8 WO-5.7), with GTNH running:
 | RAM free at peak (QA:A7) | at least 4 GB (4096 MB) free at the lowest point while GOS runs |
 | FPS (F3) | the drop with GOS running is at most 10% |
 | TPS (`/forge tps`) | no drop: at most 0.1 TPS (D249) |
-| spoken length (D23) | at least 95% of the eval set's answers are heard within 2 sentences and 40 words |
+| spoken length (D23), eval set | at least 95% of the eval set's answers (the fake model) are heard within 2 sentences and 40 words, and the speech filter had to cut at most 5% of them |
+| spoken length (D23), live | the same two, on the answers GOS actually spoke in part C (the real model): each turn logs how many sentences and words it was heard as, and whether the filter cut it; counts only, never the words |
 
 It also records each stage's P50 and P90 (key held, segment close, speech-to-text, core, speech), the peak RAM of the core and the voice client, and VRAM used at peak (with nvidia-smi; plan's L7 wants at least 1 GB of VRAM left).
 
@@ -64,16 +65,17 @@ It also records each stage's P50 and P90 (key held, segment close, speech-to-tex
     It prints `Sampling for 20 minutes (core: <pid>, voice: <pid>)`. If a pid says `not running`, the core or the voice client isn't up: Ctrl+C, fix it, start again. (`--pid core=1234` names a process it didn't find.) The two `-during` files don't exist yet; you write them in steps 13 and 14, before the 20 minutes are up.
 12. **Questions:** back at the same spot in Lab, ask **20 questions with the talk key and 20 with the wake word**, spread over the 20 minutes, as you would while playing (any lookups: "how do I make steel", "what uses tin", "what's the recipe for a vacuum tube", quests). Wait for each answer to finish before the next.
 13. **FPS** around minute 10, at the same spot and facing: F3 five times, ten seconds apart, into `C:\Temp\gos57\fps-during.txt`. Take at least one reading while GOS is speaking.
-14. **TPS** around minute 15: `/forge tps` twice, 30 s apart, then `Copy-Item "$lab\logs\latest.log" C:\Temp\gos57\tps-during.log`.
-15. When the 20 minutes are up (or Ctrl+C after step 14 and your 40 questions), it prints each stage per trigger, then the summary, and writes `C:\Temp\gos57\bench.tsv` and `C:\Temp\gos57\bench.txt`.
+14. **TPS** around minute 15: `/forge tps` twice, 30 s apart, then `Copy-Item "$lab\logs\latest.log" C:\Temp\gos57\tps-during.log`. Check that the chat showed the `Overall` reply both times: if the command was mistyped or not logged, the copy still ends with step 8's reading, and the benchmark reports TPS `not measured` ("no new /forge tps reading") rather than passing it.
+15. When the 20 minutes are up (or Ctrl+C after step 14 and your 40 questions), it prints each stage per trigger, then runs the eval set's 60 questions on the fake model (a few seconds, no spending), then the summary, and writes `C:\Temp\gos57\bench.tsv` and `C:\Temp\gos57\bench.txt`. A second Ctrl+C during the eval set still writes the report, with the eval set `not measured (interrupted)`.
 
 ## D. Acceptance (plan 8 WO-5.7)
 
-16. **Pass:** the summary ends `Result: PASS` (exit code 0): both PM14 lines `pass`, `RAM free at peak` at least 4096 MB, `FPS drop` at most 10%, `TPS` within 0.1, and `Spoken length` at least 95%. `INCOMPLETE` means something wasn't measured; its `not measured:` line says what (usually a missing `-during` file or no turns for one trigger: ask more questions and run step 11 again).
+16. **Pass:** the summary ends `Result: PASS` (exit code 0): both PM14 lines `pass`, `RAM free at peak` at least 4096 MB, `FPS drop` at most 10%, `TPS` within 0.1, and both `Spoken length` lines (eval set and live) at least 95% within D23 and at most 5% cut by the filter. `INCOMPLETE` means something wasn't measured; its `not measured:` line says what (usually a missing `-during` file or no turns for one trigger: ask more questions and run step 11 again).
 17. Paste `bench.txt` into the PR, with the `voice-benchmark` TSV attached if a check failed. The files hold timings and counts only, never what you said.
 18. If a check FAILs, paste it and try, one at a time, re-running part C each time:
     - PM14 missed: the stage lines show where the time goes. `stt` large: `stt.md` (GPU, model). `core` large: the fast lane (`gos eval fast-lane` on the real key). `speak` large: `gos voice tts-bench` (`tts.md`) and the engine it picks. `close` on the wake path includes about 0.6 s of end-of-speech detection (PM14 allows for it).
     - RAM free under 4 GB: close what you can (a second GTNH, browser tabs) and note what was open; QA:A7's fixes are Export only when stale and no Play launch while Export runs.
+    - Spoken length (live) cut more than 5%: the real model writes longer answers than D23 allows and the filter shortens them, which can drop the point of an answer. Paste the line; the fix is the fast lane's prompt rules, in a follow-up WO (changing them is not a step for you).
     - FPS or TPS dropped: run part C again with `[voice] stt_engine` on the CPU (`stt.md`) to see whether the GPU bursts are the cause, and paste both.
 19. Afterwards: in Lab, the LAN world closes with the game; delete `C:\Temp\gos57` once the PR has the summary.
 
@@ -81,4 +83,5 @@ It also records each stage's P50 and P90 (key held, segment close, speech-to-tex
 
 - `uv run gos voice benchmark --synthetic` runs the real voice client in-process on the fakes: a fake key hook and microphone, synthetic audio (a tone for speech, silence between), a wake engine that hears the tone and ends the question after 0.6 s of silence (as the real one), a fixed transcript, the fast lane on the fake model over GOS_HOME's DB (a canned answer without one), and a speaker that runs the real speech filter. `--turns N` per trigger (default 5); `--stt-ms`, `--core-ms`, `--tts-ms` add a stage's time (a slow stage fails PM14, by code). Its RAM figure is that one process. Its timings are GOS's own code on that machine, not a PC measurement.
 - Without `--minutes` or `--synthetic` (and as `gos voice bench`), it reports the last `--last` turns of `logs\voice.log`, RAM not measured.
-- The spoken-length check always runs when GOS_HOME has a DB: the 60 questions of `tests/evals/fast_lane_questions.tsv` through the fast lane on the fake model, each answer through the speaker's filter and lexicon, counted as heard (D248). `tests/unit/tools/test_voice_spoken_length.py` runs it on the tools' test DB and `tests/integration/test_voice_benchmark_harness.py` on a harness DB (with `GOS_REQUIRE_HARNESS_RUN=1`).
+- The eval-set spoken-length check always runs when GOS_HOME has a DB: the 60 questions of `tests/evals/fast_lane_questions.tsv` through the fast lane on the fake model, each answer through the speaker's filter and lexicon, counted as heard (D248). `tests/unit/tools/test_voice_spoken_length.py` runs it on the tools' test DB and `tests/integration/test_voice_benchmark_harness.py` on a harness DB (with `GOS_REQUIRE_HARNESS_RUN=1`). It is never run on the real model (that would spend on the key).
+- The live spoken-length check reads the `spoken_sentences`, `spoken_words` and `spoken_cut` fields of the measured `turn` records (the voice client logs them from WO-5.7 on; older turns have none and the check is `not measured`). In a synthetic run they are the synthetic core's answers. This is where the real model's answers are checked, on Clayton's PC.
