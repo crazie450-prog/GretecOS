@@ -419,6 +419,85 @@ export interface WaypointProposal {
   action: { id: number; state: string };
 }
 
+// --- The Crops view (WO-6.7, plan 7.14, 7.17, D275) ---------------------------------------------
+// Every number is the crop planner's (core/gregtec/crops/planner.py), with its citations.
+
+export interface CropNum {
+  value: number;
+  unit: string;
+  text: string;
+  refs: string[];
+}
+
+export interface CropLine {
+  text: string;
+  nums: CropNum[];
+  refs: string[]; // every citation of the line: its own and its numbers'
+}
+
+export interface CropRequirement extends CropLine {
+  what: string; // soil, sub_soil, light, nutrients, catalyst, machine, analyzed, other
+  status: "met" | "needed" | "check";
+}
+
+export interface CropCell {
+  role: "parent" | "double" | "empty";
+  crop: string | null;
+  name: string | null;
+  under: string | null; // the block to put under the soil, by name
+}
+
+export interface CropStep {
+  n: number;
+  kind: "crop_manager" | "obtain" | "sticks" | "pool" | "breeder";
+  child: string;
+  child_name: string;
+  ref: string;
+  parents: { crop: string; ref: string }[];
+  title: string;
+  layout: CropCell[][];
+  requirements: CropRequirement[];
+  numbers: CropLine[];
+  warnings: CropLine[];
+  keep: CropLine[];
+  refs: string[];
+  done: boolean;
+}
+
+export interface CropGuide {
+  target: string;
+  target_name: string;
+  ref: string;
+  tier: number;
+  tier_name: string;
+  run: string;
+  steps: CropStep[];
+  next: number | null;
+  total: CropLine | null;
+  stats: { target: number[]; variations: number[]; lines: CropLine[]; warnings: CropLine[] } | null;
+  notes: CropLine[];
+}
+
+export interface CropRef {
+  crop: string;
+  ref: string;
+  name: string;
+}
+
+export interface CropsView {
+  run: string;
+  tier: number;
+  tier_name: string;
+  have: (CropRef & { stats: number[] })[];
+  target: (CropRef & { aim: number[] }) | null;
+  crops: (CropRef & { tier: number })[];
+  picks: CropRef[];
+  picks_note: string;
+  setup: { water: number; sky: boolean; liked_biome_tags: number };
+  guide: CropGuide | null;
+  error: string | null;
+}
+
 // --- The Designer (WO-3.7, plan 7.1, D250) ------------------------------------------------------
 // Every number is the planner's (core/gregtec/planner/designer.py); the routes come in rank order.
 

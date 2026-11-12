@@ -1096,6 +1096,142 @@ tr.depleted td {
   overflow-wrap: anywhere;
 }
 
+/* Crops (WO-6.7): the path, the chosen step's layout grid and its cited lines. */
+.crops-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.crops-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.crop-path {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.crop-path-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  width: 100%;
+  min-height: var(--hit-min, 44px);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crop-path li.current .crop-path-step {
+  border-color: var(--accent);
+}
+
+.crop-path-title {
+  overflow-wrap: anywhere;
+}
+
+.crop-layout {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  max-width: 560px;
+  margin: var(--space-3) 0;
+}
+
+.crop-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 88px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.crop-cell.empty {
+  border-style: dashed;
+  border-color: var(--rule);
+  align-items: center;
+}
+
+.crop-cell.double {
+  border: 2px solid var(--accent);
+}
+
+.crop-cell-name {
+  font-weight: 600;
+}
+
+.crop-lines {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.crop-lines li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text);
+}
+
+.crop-line-text {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.crop-cites {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.crop-cites .gos-chip,
+.crop-step .gos-chip {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.crop-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.crop-picks button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  cursor: pointer;
+  font: inherit;
+}
+
+.crop-stats-input {
+  max-width: 9em;
+}
+
 /* The map: veins around him, north up. Only placement; the list's order is the core's. */
 .ore-map {
   display: block;
@@ -1985,7 +2121,8 @@ select.ask-input option {
   .costs-grid,
   .base-grid,
   .quests-grid,
-  .ores-grid {
+  .ores-grid,
+  .crops-grid {
     display: flex;
     flex-direction: column;
     align-items: stretch;

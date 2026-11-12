@@ -131,7 +131,7 @@ describe("the nav", () => {
     ]);
     expect(viewForKey("8")?.id).toBe("costs");
     expect(viewForKey("0")).toBeNull();
-    expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "designer", "quests", "costs", "settings", "base", "ores"]);
+    expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "designer", "quests", "crops", "costs", "settings", "base", "ores"]);
     expect(PHONE_TABS).toEqual(["now", "chat", "search", "base", "costs", "settings"]);
   });
   it("marks the views with no approved board (D92)", () => {
