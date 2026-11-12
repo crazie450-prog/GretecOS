@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-12
+upd: 2026-11-11
 ---
 version: 0
 summary: note types and allowed keys
