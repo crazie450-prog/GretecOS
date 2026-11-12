@@ -22,7 +22,7 @@ V19	Does Open to LAN avoid the pause freeze?	Lab: the OC agent's messages throug
 V20	`gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4]	`gos-agent --list` in `lab-ops` (`docs/runbooks/oc_agent.md` step 7)	7.2
 V21	**Resolved** (`gos smoke`, 2026-11-05): Haiku 5.5 with thinking off, median first token 917 ms over 5 runs (525–1592 ms), median total 1162 ms [D§1.11]	—	0.4
 V22	Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5]	Export run	1.1
-V23	JourneyMap picks up waypoint files written while the game runs	Lab test	6.6
+V23	**Partly resolved from source** (D271; JourneyMap 5.2.23): it reads `journeymap\data\sp\<world>\waypoints\*.json` only when mapping starts (joining the world, every dimension change) or its Waypoint/Advanced options are saved; no file watcher, so a file written while the game runs shows after the next dimension change or rejoin. Still open: the Lab check (`docs/runbooks/ore_intel_check.md` B)	Lab test	6.6
 V24	**Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export	`gos launch` test	2.1
 V25	**Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC	Lab test	1.4
 V26	GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player	Lab test	6.2

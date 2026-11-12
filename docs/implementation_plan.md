@@ -716,6 +716,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 - **Sources:** the VisualProspecting server cache (every vein, D27), the client cache, live "You found a … vein" lines, and ore mixes (§5.2 step 6).
 - `ore_find(material, dim?, near=player)` returns the nearest veins with distance, dimension, y-range and mix, plus depleted flags.
 - It can offer a JourneyMap waypoint, written as a **confirmed action** (D25).
+- As built (WO-6.6, D271, D272): `ore_find` and `player_pos` are tools in both lanes (`core/gregtec/agents/tools/ores.py`, `core/gregtec/ores/intel.py`), ranked by code as D142 (c) says; veins are cited `vein:<dim>/<cx>/<cz>`; his position is `level.dat`'s at the world's last save, read from the world the veins were loaded from. `ore_waypoint(vein)` (deep lane) and the Ores view's button propose a vein's waypoint that GOS builds from the DB row (its mix's name, centre block, the middle of its heights) through WO-7.1's action desk; Clayton confirms; only into the configured Lab or Play world the veins came from. The `ore-intel` skill joins the fast lane's cached prompt. The Ores view (`dashboard/src/views/Ores.tsx`) needs Clayton's board approval. V23 is answered from JourneyMap's source: a file written while the game runs shows after the next dimension change or rejoin; the Lab check is `docs/runbooks/ore_intel_check.md`.
 
 ### 7.7 Screen reading
 - A dedicated hotkey captures the game window with `dxcam` 0.3 (DXGI backend; `grab(region=<game window>, new_frame_only=False)`), with `windows-capture` (Windows Graphics Capture) as the alternative [H§3].
@@ -766,7 +767,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - `craft`: AE2 request + status.
   - `machine_pause/resume`: `setWorkAllowed`.
   - `say`: chat-box message.
-  - `waypoint`: the **core** writes a JourneyMap waypoint file. Whether JourneyMap picks up external files is V23.
+  - `waypoint`: the **core** writes a JourneyMap waypoint file. JourneyMap reads it at the next dimension change or rejoin (V23, D271).
   - The status board and HUD are displays, not actions, and need no confirmation.
   - **Confirm flow (D59):** the agent proposes → GOS reads the action back ("Craft 64 stainless steel ingots. Say confirm.") → Clayton confirms by saying "confirm" at any time, or with a button on the dashboard, the phone dashboard or Discord (buttons confirm by action ID) → queued → executed by the OC agent → result reported.
     - Only one action can be pending; a new proposal cancels the old one out loud.
@@ -1245,7 +1246,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V20 | `gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4] | `gos-agent --list` in `lab-ops` (`docs/runbooks/oc_agent.md` step 7) | 7.2 |
 | V21 | **Resolved** (`gos smoke`, 2026-11-05): Haiku 5.5 with thinking off, median first token 917 ms over 5 runs (525–1592 ms), median total 1162 ms [D§1.11] | — | 0.4 |
 | V22 | Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5] | Export run | 1.1 |
-| V23 | JourneyMap picks up waypoint files written while the game runs | Lab test | 6.6 |
+| V23 | **Partly resolved from source** (D271; JourneyMap 5.2.23): it reads `journeymap\data\sp\<world>\waypoints\*.json` only when mapping starts (joining the world, every dimension change) or its Waypoint/Advanced options are saved; no file watcher, so a file written while the game runs shows after the next dimension change or rejoin. Still open: the Lab check (`docs/runbooks/ore_intel_check.md` B) | Lab test | 6.6 |
 | V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
 | V25 | **Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC | Lab test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player | Lab test | 6.2 |
