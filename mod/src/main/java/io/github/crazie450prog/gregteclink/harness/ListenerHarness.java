@@ -1,7 +1,9 @@
 package io.github.crazie450prog.gregteclink.harness;
 
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -67,6 +69,12 @@ final class ListenerHarness {
     /** Preferred kinds (GT 5.09.54.265 ids); any that are missing are filled from the registry by type. */
     private static final int EBF = 1000;
     private static final int HATCH = 66;
+    /**
+     * Wall time between the two saves. Anvil keeps a chunk's save time in whole epoch seconds and the census sees a
+     * chunk as changed by its (offset, sectors, save time) slot, so census-b's save must fall in a later second than
+     * census-a's (review H1); the watchers' 1 s settle gives Play the same gap.
+     */
+    private static final long SAVE_GAP_MS = 1_100;
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
         Arrays.asList("id", "item_id", "block_id", "blockId", "itemId", "idExt"));
 
@@ -85,6 +93,7 @@ final class ListenerHarness {
     private static Machine cancelledBreak;
     private static int[] cancelPlaceAt;
     private static int[] cancelBreakAt;
+    private static long savedAMs;
     private static boolean done;
 
     private ListenerHarness() {}
@@ -157,10 +166,13 @@ final class ListenerHarness {
             tick++;
             try {
                 if (tick == 2) phaseA();
-                else if (tick == 6) saveAndCopy("census-a", baseA);
-                else if (tick == 8) phaseB();
-                else if (tick == 12) {
+                else if (tick == 6) {
+                    saveAndCopy("census-a", baseA);
+                    savedAMs = System.currentTimeMillis();
+                } else if (tick == 8) phaseB();
+                else if (tick >= 12 && System.currentTimeMillis() - savedAMs >= SAVE_GAP_MS) {
                     saveAndCopy("census-b", baseB);
+                    checkSaveTimes();
                     finish();
                 }
             } catch (Throwable t) {
@@ -325,6 +337,36 @@ final class ListenerHarness {
             Harness.check(checks, "silent_remove", gone, "setBlockToAir at " + silentRemoved.key());
             if (gone) baseB.remove(silentRemoved.key());
         }
+    }
+
+    /** The chunks phase B changed have later save times in census-b than in census-a (review H1). */
+    private static void checkSaveTimes() throws IOException {
+        List<Machine> changed = new ArrayList<>(placed.subList(0, Math.min(4, placed.size())));
+        if (silentRemoved != null) changed.add(silentRemoved);
+        List<String> same = new ArrayList<>();
+        for (Machine m : changed) {
+            int a = saveTime("census-a", m.x >> 4, m.z >> 4);
+            int b = saveTime("census-b", m.x >> 4, m.z >> 4);
+            if (b <= a) same.add(m.key() + " " + a + " -> " + b);
+        }
+        Harness.check(
+            checks,
+            "census_b_save_times_later",
+            !changed.isEmpty() && same.isEmpty(),
+            same.isEmpty() ? changed.size() + " changed chunks saved in a later second" : same.toString());
+    }
+
+    /** A chunk's save time (epoch seconds) from a copied region file's header. */
+    private static int saveTime(String name, int cx, int cz) throws IOException {
+        Path f = gameDir.toPath()
+            .resolve(OUT + "/" + name + "/region/r." + (cx >> 5) + "." + (cz >> 5) + ".mca");
+        byte[] header = new byte[8192];
+        try (java.io.DataInputStream in = new DataInputStream(Files.newInputStream(f))) {
+            in.readFully(header);
+        }
+        int at = 4096 + 4 * ((cx & 31) + 32 * (cz & 31));
+        return ByteBuffer.wrap(header, at, 4)
+            .getInt();
     }
 
     private static String line(String kind, Machine m) {

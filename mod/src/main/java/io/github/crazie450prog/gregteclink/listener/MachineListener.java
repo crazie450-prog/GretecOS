@@ -38,7 +38,7 @@ import io.github.crazie450prog.gregteclink.GregtecLink;
  */
 public final class MachineListener implements Pending.World {
 
-    /** GT's tile entity for machines; cables and pipes are {@code BaseMetaPipeEntity} and are not counted. */
+    /** At most one warning a minute when the events file can't be written. */
     private static final long WARN_EVERY_MS = 60_000;
 
     private final EventFile file;
