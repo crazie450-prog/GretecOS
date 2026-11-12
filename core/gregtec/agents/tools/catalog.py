@@ -6,7 +6,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
-from gregtec.agents.tools import items, machines, notes, ops, quests, recipes, sql
+from gregtec.agents.tools import (
+    items,
+    machines,
+    notes,
+    ops,
+    plans,
+    quests,
+    recipes,
+    sql,
+)
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
 from gregtec.agents.tools.tsv import PAGE
@@ -148,6 +157,17 @@ TOOLS = (
         needs_db=False,
         gate=notes.GATE,
     ),
+    Tool(
+        "plan_export",
+        "A saved plan's outputs (WO-3.6): bom (machine, tier, count, OC, parallel, EU/t, "
+        "utilisation, r: id per node, and the totals), footprint (each machine type's box from "
+        "its structure plus clearance, floor area and volume), mermaid (the flow diagram), or "
+        "the path of its gtnhplanner.com project, gtnh-flow YAML or PNG for Clayton. "
+        f"{CITE}",
+        plans.PLAN_EXPORT_SCHEMA,
+        plans.plan_export,
+        needs_db=False,
+    ),
     HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
     Tool(
         "telemetry_get",
@@ -199,7 +219,6 @@ LATER: dict[str, str] = {
         (
             "design_production",
             "plan_get",
-            "plan_export",
             "plan_set_status",
             "plan_list",
             "plan_pin",
