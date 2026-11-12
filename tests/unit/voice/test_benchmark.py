@@ -208,6 +208,9 @@ def test_fps_drop_and_tps_thresholds(tmp_path: Path) -> None:
     log.write_text(LATEST_LOG, encoding="utf-8")
     checks = vb.game_checks(None, None, t.format(30, 20.0), str(log))
     assert checks[1].result == vb.FAIL and checks[1].value == "20.000 -> 19.048"
+    # a file that isn't there yet is no reading (its name's "57" is not 57 fps)
+    gone = str(tmp_path / "gos57" / "fps-during.txt")
+    assert results(fps_before="60 fps", fps_during=gone)["FPS drop"] == vb.MISSING
 
 
 # --- spoken length -----------------------------------------------------------------------------

@@ -452,15 +452,19 @@ def _num(text: str) -> float:
     return float(text.replace(",", "."))
 
 
+_PATHLIKE = re.compile(r"[\\/]|\.(?:txt|log|tsv)$", re.IGNORECASE)
+
+
 def text_of(value: str) -> str:
-    """A file's text (read once, share-delete, as GOS reads game files) or ``value`` itself."""
+    """A file's text (read once, share-delete, as GOS reads game files) or ``value`` itself; ""
+    for a file that isn't there (its name's digits are no reading)."""
     path = Path(value)
     try:
         if path.is_file():
             return read_bytes(path).decode("utf-8", "replace")
     except (OSError, ValueError):
-        pass
-    return value
+        return ""
+    return "" if _PATHLIKE.search(value) else value
 
 
 def parse_fps(text: str) -> list[float]:
@@ -501,7 +505,7 @@ def game_checks(
         if not before or not during or sum(before) <= 0:
             checks.append(
                 Check("game", "gtnh", "FPS drop", target=target, result=MISSING,
-                      note="no FPS reading in what was given")
+                      note="no FPS reading in what was given (or no such file)")
             )  # fmt: skip
         else:
             b, d = sum(before) / len(before), sum(during) / len(during)
@@ -531,7 +535,7 @@ def game_checks(
     if before_tps is None or during_tps is None:
         checks.append(
             Check("game", "gtnh", "TPS", target=target, result=MISSING,
-                  note="no /forge tps Overall line in what was given")
+                  note="no /forge tps Overall line in what was given (or no such file)")
         )  # fmt: skip
         return checks
     drop = round(before_tps[1] - during_tps[1], 3)  # as printed
@@ -950,7 +954,6 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         print(f"Can't read gos.toml: {exc}", file=out)
         return EXIT_SETUP
     say = tts.prepare(tts.lexicon(cfg.gos_home))  # what the speaker says (plan 7.15)
-    answers, why = eval_answers(cfg)
     checks: list[Check] = []
     peaks: Peaks | None = None
     if args.synthetic:
@@ -1009,6 +1012,9 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     checks += game_checks(
         args.fps_before, args.fps_during, args.tps_before, args.tps_during
     )
+    answers, why = eval_answers(
+        cfg
+    )  # after the sampling: its CPU and RAM aren't GOS's run
     checks += spoken_checks(answers, say, why)
     text = summary(checks, source)
     print("\n" + text, end="", file=out)
