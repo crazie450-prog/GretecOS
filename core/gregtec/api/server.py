@@ -32,7 +32,7 @@ from gregtec import applog, config, control, supervisor
 from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
 from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
-from gregtec.api import ai_routes
+from gregtec.api import ai_routes, persona_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.bridge import ops as bridge_ops
@@ -178,6 +178,8 @@ def run(
     ops.desk.on_change = core.action_changed
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
     core.asker = agents.asker(ai=ai, actions=ops.desk)
+    core.personas = agents.personas
+    persona_routes.wire(core)
     if isinstance(agents.deep, DeepLaneService):
         core.deep = agents.deep
         agents.deep.on_change = core.deep_changed
