@@ -282,9 +282,8 @@ def test_accept_writes_the_line_and_runs_the_ledger_stub(home: Path) -> None:
 
 def test_accept_without_a_vault_is_a_problem(home: Path) -> None:
     d = designer.design(home, Request(WIDGET, qty=2, tier_cap="MV"))
-    import shutil
-
-    shutil.rmtree(home / "vault")
+    # moved aside, not deleted: Windows refuses to delete the vault's read-only git objects
+    (home / "vault").rename(home / "vault-gone")
     done = designer.accept(home, d.ids[1])
     assert done.status == "accepted" and done.line is None
     assert done.problems == ["no vault: the notes weren't written"]
