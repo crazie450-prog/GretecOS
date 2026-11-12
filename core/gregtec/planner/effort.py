@@ -7,7 +7,9 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
 
 - **Build components** (:func:`components`): every node's machine item (``machine.item_id``)
   times its count, and for a multiblock the blocks of its smallest ``structure`` variant (WO-1.8)
-  times its count. Hatches, cables and pipes wait for the layout (WO-3.6, WO-10.5).
+  times its count. Hatches, cables and pipes wait for the layout (WO-3.6, WO-10.5), except the
+  parts a power line chooses itself (its rotor and dynamo hatch, WO-4.3, D236), which
+  :meth:`Effort.route` takes as ``extra`` components.
 - **Making a component** (:func:`steps`): the designer's own pipeline for the component as a
   batch at the tier (WO-3.3's graph, its boundary being raw inputs, My base stock, line outputs
   and the request's ``boundary``; WO-3.4's machines and staged MILP), every primary choice its
@@ -156,7 +158,7 @@ class Component:
     key: str  # the item's stable key
     qty: int
     of: int  # the machine (mte id) it is part of
-    part: str  # machine | structure
+    part: str  # machine | structure | rotor | hatch (a power line's parts, WO-4.3)
 
 
 def machine_items(conn: sqlite3.Connection, mtes: Sequence[int]) -> dict[int, str]:
@@ -360,9 +362,18 @@ class Effort:
             )
         return rows
 
-    def route(self, plan: Mapping[str, Any]) -> dict[str, Any]:
-        """``eff_h``, ``build_h``, ``unlock_h`` and the breakdown for one route."""
+    def route(
+        self,
+        plan: Mapping[str, Any],
+        extra: Sequence[Component] = (),
+        extra_notes: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        """``eff_h``, ``build_h``, ``unlock_h`` and the breakdown for one route; ``extra`` are
+        build components the route's machines don't show (a power line's rotors and dynamo
+        hatches, WO-4.3), made the same way."""
         parts, notes = components(self.conn, plan)
+        parts = [*parts, *extra]
+        notes = [*notes, *extra_notes]
         need = Need()
         for c in parts:
             need.add(self.make(c.key, c.qty))
@@ -429,6 +440,50 @@ class Effort:
             "unlocks": [f"mte:{m}" for m in unlocks],
             "notes": list(dict.fromkeys(notes)),
         }
+
+
+COLUMNS = ("part", "map", "machine", "crafts", "machines", "hours")
+
+
+def table(eff: Mapping[str, Any]) -> list[list[str]]:
+    """The breakdown table's rows as text cells (:data:`COLUMNS`), build rows first, then
+    unlock rows; the machine a map's steps are sized on is cited ``mte:``."""
+    return [
+        [
+            str(r["part"]),
+            str(r["map"]),
+            f"mte:{r['mte']}" if r.get("mte") is not None else "-",
+            str(r["crafts"]),
+            str(r["machines"]),
+            f"{float(r['h']):.4g}",
+        ]
+        for r in eff["rows"]
+    ]
+
+
+def text(m: Mapping[str, Any], indent: str = "  ") -> list[str]:
+    """A plan's effort (its ``metrics``: ``eff_h``, ``build_h``, ``unlock_h`` and ``effort``)
+    and the breakdown table as text lines, for ``gos plan`` and ``gos power design``."""
+    eff = m["effort"]
+    head = (
+        f"{indent}effort {float(m['eff_h']):.4g} h = build {float(m['build_h']):.4g} h"
+        f" + unlock {float(m['unlock_h']):.4g} h (crafting-table step"
+        f" {float(eff['craft_s']):g} s)"
+    )
+    lines = [head]
+    rows = table(eff)
+    if rows:
+        widths = [
+            max(len(c), *(len(r[i]) for r in rows)) for i, c in enumerate(COLUMNS)
+        ]
+        for cells in (list(COLUMNS), *rows):
+            lines.append(
+                indent + "  ".join(c.ljust(w) for c, w in zip(cells, widths)).rstrip()
+            )
+    if eff.get("unlocks"):
+        lines.append(f"{indent}unlocks: {', '.join(eff['unlocks'])}")
+    lines.extend(f"{indent}effort note: {n}" for n in eff.get("notes", ()))
+    return lines
 
 
 def _uncovered(w: Walk, covered: set[str]) -> list[tuple[str, int]]:

@@ -4,7 +4,7 @@
   [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
-  and prints a summary per route, or the plans as canonical JSON lines (``--json``), or writes
+  and prints a summary per route (with its effort breakdown table, WO-4.3), or the plans as canonical JSON lines (``--json``), or writes
   each plan to ``DIR/<id>.json`` (``--out``), or saves every route into GOS_HOME (``--save``,
   WO-3.6: ``data/plans/<id>.json``, its exports, the plan row, the vault note). Routes come
   ranked (WO-3.5) with the weights from the vault's ``me/prefs.md`` (read only; balanced
@@ -29,7 +29,7 @@ from gregtec.agents import prefetch
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.base.state import MyBase
 from gregtec.db import access
-from gregtec.planner import alternatives, explain, graph, plan, rank, solve
+from gregtec.planner import alternatives, effort, explain, graph, plan, rank, solve
 from gregtec.planner.outputs import book, store
 from gregtec.planner.request import (
     Pin,
@@ -239,6 +239,8 @@ def _run(
             f"{m['scarcity']:g}, complexity {m['complexity']['score']}",
             file=out,
         )
+        for line in effort.text(m):
+            print(line, file=out)
         print(
             f"  {len(p['nodes'])} nodes, {machines} machines, gates: "
             f"{', '.join(r['gates']) or 'none'}, every machine runs: {r['all_run']}",

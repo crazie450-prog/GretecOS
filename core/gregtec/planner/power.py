@@ -107,6 +107,10 @@ _TURBINE_CLASS = {
     "MTELargeTurbinePlasma": Kind.PLASMA,
 }
 _STEAM_TURBINE = {False: "MTELargeTurbineSteam", True: "MTELargeTurbineHPSteam"}
+# A power line's own parts (WO-4.3, D236): GT's turbine rotor item (MetaGeneratedTool01, the
+# size by meta, the material in NBT) and GT's dynamo hatch class.
+ROTOR_ITEM = "gregtech:gt.metatool.01"
+DYNAMO_HATCH = "gregtech.api.metatileentity.implementations.MTEHatchDynamo"
 
 
 class PowerError(RuntimeError):
@@ -1069,6 +1073,79 @@ def _option_id(req: PowerRequest, run_key: str, gen: Gen, flow: solve.Flow) -> s
     return "pw-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
 
 
+def rotor_key(
+    conn: sqlite3.Connection, run_id: int, material: str, size: str
+) -> str | None:
+    """The stable key of GT's turbine rotor of ``material`` and ``size`` (its meta from the
+    export's ``rotor_size`` row, its material from the item's ``GT.ToolStats`` NBT), or None
+    when the DB lists no such item."""
+    row = conn.execute(
+        f"SELECT {graph._ITEM_KEY_SQL} FROM item AS i JOIN rotor_size AS s"
+        " ON s.size = i.meta AND s.run_id = ?"
+        " WHERE i.registry_name = ? AND s.name = ? AND json_valid(i.nbt_json)"
+        " AND json_extract(i.nbt_json, '$.\"GT.ToolStats\".PrimaryMaterial') = ?"
+        " ORDER BY json_extract(i.nbt_json, '$.\"GT.ToolStats\".SecondaryMaterial') IS NOT ?,"
+        " i.nbt_hash LIMIT 1",
+        (run_id, ROTOR_ITEM, size, material, material),
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def hatch_mte(conn: sqlite3.Connection, class_name: str, tier: int) -> int | None:
+    """GT's hatch of ``class_name`` at ``tier`` (its MTE id; the lowest of several)."""
+    row = conn.execute(
+        "SELECT MIN(mte_id) FROM machine WHERE class_name = ? AND tier = ?",
+        (class_name, tier),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def parts(
+    conn: sqlite3.Connection, p: Mapping[str, Any], run_id: int
+) -> tuple[list[effort.Component], list[str]]:
+    """The build components a power line chooses itself (WO-4.3, D236), per generator
+    block: its turbine rotor (the request's material and size) and its dynamo hatch (the tier
+    the line sized it on, 1 A), each as many as the line builds generators. Each is made by the
+    effort model like any component. What the line doesn't choose is listed, not counted."""
+    out: list[effort.Component] = []
+    notes: list[str] = []
+    for node in p["nodes"]:
+        if node.get("kind") != "generator" or not node.get("count"):
+            continue
+        spec, count = node.get("spec") or {}, int(node["count"])
+        of = int(spec.get("turbine_mte") or spec.get("mte") or node["machine"]["mte"])
+        if spec.get("rotor"):
+            material, size = spec["rotor"]
+            key = rotor_key(conn, run_id, material, size)
+            if key is None:
+                notes.append(
+                    f"rotor {material} {size}: no such item in the DB, its making is not"
+                    " counted"
+                )
+            else:
+                out.append(effort.Component(key, count, of, "rotor"))
+        if spec.get("dynamo_tier") is not None:
+            tier = int(spec["dynamo_tier"])
+            mte = hatch_mte(conn, DYNAMO_HATCH, tier)
+            item = effort.machine_items(conn, [mte]).get(mte) if mte else None
+            if item is None:
+                notes.append(
+                    f"dynamo hatch {VN[tier]}: no such machine item in the DB, its making"
+                    " is not counted"
+                )
+            else:
+                out.append(effort.Component(item, count, of, "hatch"))
+        if spec.get("kind") in ("gas_turbine", "plasma_turbine", "boiler_steam"):
+            notes.append(
+                f"{node['n']}: its other hatches (maintenance, input, output, muffler), the"
+                " pipes between blocks and the boilers' throttle circuits are not counted:"
+                " GT's hatch minimums aren't in the DB and their tiers and the layout are the"
+                " builder's (D236)"
+            )
+    notes.append("distribution cables are not counted: cable runs come with WO-4.5")
+    return out, notes
+
+
 def _metrics(
     conn: sqlite3.Connection,
     p: dict[str, Any],
@@ -1081,7 +1158,8 @@ def _metrics(
     chain_plan = {**p, "nodes": chain_nodes, "target": {"id": p["power"]["fuel"]["id"]}}
     eff_plan = {"nodes": [*chain_nodes, *p["machines_used"]]}
     if measure is not None:
-        eff = measure.route(eff_plan)
+        extra, extra_notes = parts(conn, p, g.run_id)
+        eff = measure.route(eff_plan, extra, extra_notes)
     else:
         eff = {
             "eff_h": 0.0,

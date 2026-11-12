@@ -13,7 +13,8 @@
   [--options N] [--no-effort] [--json]`` (WO-4.2): 2-3 ranked power lines for one of the four
   objective modes (``best``, ``max_output``, ``output_per_effort``, ``self_sustaining``), with
   the weights printed first (``me/prefs.md``, read only; the template's defaults without one),
-  each line's generator, fuel chain, net EU/t, the validator's verdict and, for
+  each line's generator, fuel chain, net EU/t, its effort breakdown table (WO-4.3: per part
+  and recipe map, the crafts, machines and hours), the validator's verdict and, for
   ``self_sustaining``, its bootstrap kit. ``--json`` prints the plans as canonical JSON lines.
 
 Read-only on ``GOS_HOME/data/gos.sqlite``; every number comes from the DB and ``gtmath``.
@@ -30,7 +31,7 @@ from typing import TextIO
 from gregtec import config
 from gregtec.base.state import MyBase
 from gregtec.db import access
-from gregtec.planner import fuels, generators, power
+from gregtec.planner import effort, fuels, generators, power
 from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.gtmath.turbine import Kind
@@ -293,6 +294,8 @@ def show_design(
             f" {p['metrics']['upkeep']:g}/h, machines {p['metrics']['machines']}",
             file=out,
         )
+        for line in effort.text(p["metrics"], indent="   "):
+            print(line, file=out)
         proof = p["closed"]
         if proof["ok"]:
             print("   closed: no import outside the free set (validator)", file=out)

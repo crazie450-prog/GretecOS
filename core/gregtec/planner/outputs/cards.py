@@ -1,4 +1,5 @@
-"""The plan's dashboard cards (WO-3.6, plan §7.14, D160): ``flow`` and ``bom``.
+"""The plan's dashboard cards (WO-3.6, plan §7.14, D160): ``flow`` and ``bom``; and the effort
+breakdown as a ``table`` card (WO-4.3, D237).
 
 Cards are data in WO-2.6's catalog (``core/gregtec/cards/schema.json``), never HTML; the dashboard
 draws the flow card with React Flow and elkjs. The flow card's boxes and links are
@@ -17,11 +18,14 @@ from typing import Any
 
 from gregtec.cards import checked
 from gregtec.cards.build import clip
+from gregtec.planner import effort
 from gregtec.planner.outputs import bom
 from gregtec.planner.outputs.book import Book
 from gregtec.planner.outputs.diagram import flow
 
 MAX_NODES, MAX_EDGES, MAX_ROWS = 200, 400, 500
+MAX_EFFORT_ROWS, MAX_NOTES = 50, 20  # the table card's limits
+EFFORT_TOOL = "effort_estimate"  # plan 5's tool name for the effort model (D237)
 TIERS = {
     t.upper(): t
     for t in ("Steam", "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV")
@@ -114,5 +118,48 @@ def bom_card(plan: Mapping[str, Any]) -> dict[str, Any]:
             "ref": f"plan:{plan['id']}",
             "rows": rows,
             "notes": notes,
+        }
+    )
+
+
+def effort_card(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """The plan's effort breakdown (plan 7.2, D17, WO-4.3) as WO-2.6's table card: the effort
+    model's rows (part, recipe map, the machine its steps are sized on as an ``mte:`` chip,
+    crafts, the machines they are spread over, hours), the totals in the head, its notes. Power
+    and production plans carry the same ``metrics`` shape, so both use it (D237)."""
+    m = plan["metrics"]
+    eff = m["effort"]
+    rows = effort.table(eff)
+    head = [
+        ("plan", f"plan:{plan['id']}"),
+        ("effort", f"{float(m['eff_h']):.4g} h"),
+        ("build", f"{float(m['build_h']):.4g} h"),
+        ("unlock", f"{float(m['unlock_h']):.4g} h"),
+        ("crafting-table step", f"{float(eff['craft_s']):g} s"),
+        ("components", str(len(eff["components"]))),
+    ]
+    if eff["unlocks"]:
+        head.append(("unlocks", " ".join(eff["unlocks"])))
+    notes = list(eff["notes"])
+    if len(rows) > MAX_EFFORT_ROWS:
+        notes.insert(0, f"the first {MAX_EFFORT_ROWS} of {len(rows)} rows")
+    if len(notes) > MAX_NOTES:
+        notes = [*notes[: MAX_NOTES - 1], f"{len(notes) - MAX_NOTES + 1} more notes"]
+    return checked(
+        {
+            "type": "table",
+            "tool": EFFORT_TOOL,
+            "error": None,
+            "title": clip(f"{plan['name']} · effort", 300),
+            "head": [{"key": k, "value": clip(v, 2000)} for k, v in head],
+            "columns": list(effort.COLUMNS),
+            "rows": [[clip(c, 2000) for c in r] for r in rows[:MAX_EFFORT_ROWS]],
+            "span": (
+                f"1-{MAX_EFFORT_ROWS} of {len(rows)}"
+                if len(rows) > MAX_EFFORT_ROWS
+                else None
+            ),
+            "total": len(rows),
+            "notes": [clip(n, 2000) for n in notes],
         }
     )
