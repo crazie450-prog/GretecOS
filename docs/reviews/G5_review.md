@@ -1,6 +1,6 @@
 # Gregtec OS: G5 gate review (Phase 5, voice and personas)
 
-2026-11-12 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/main` at `84048e6` (PR #75 merged), covering the Phase 5 PRs #51 (WO-5.1), #56 (WO-5.2), #65 (WO-5.3), #61 (WO-5.4), #74 (WO-5.5), #67 (WO-5.6) and #75 (WO-5.7), plus #70 (a WO-5.3 test race) and #76 (the CI `checks` timeout that closes G2's risk 1). The first runs below were made on `64c01f1`, before #75 merged during this review; everything that #75 touches was run again on `84048e6`.
+2026-11-12 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/main` at `84048e6` (PR #75 merged), covering the Phase 5 PRs #51 (WO-5.1), #56 (WO-5.2), #65 (WO-5.3), #61 (WO-5.4), #74 (WO-5.5), #67 (WO-5.6) and #75 (WO-5.7), plus #70 (a WO-5.3 test race) and #76 (the CI `checks` timeout that closes G2's risk 1). The first runs below were made on `64c01f1`, before #75 merged during this review; everything that #75 touches was run again on `84048e6`. After the review, `main` moved to `b5899c6` (PR #78, WO-3.6, Phase 3 planner outputs, D200-D202); it changes no Phase 5 file, and this branch was merged with it and re-run (see "After the review").
 
 ## Verdict
 
@@ -48,7 +48,7 @@ The CLI with fakes or real CPU models, in a scratch GOS_HOME whose DB was collec
 | `gos voice benchmark --synthetic --turns 5` (`84048e6`) | talk key P50 991 ms (PM14 1700: pass); wake P50 1452 ms (2200: pass); RAM free at peak 12201 MB (pass); VRAM, FPS and TPS not measured; spoken length live 10/10 and eval set 60/60 within D23, 0% cut; `Result: INCOMPLETE`, exit 0 |
 | the same with typed FPS and `/forge tps` readings | 6.3% drop and 20.000 -> 20.000 TPS: `Result: PASS`, exit 0; 16.7% drop and 20.000 -> 19.221 TPS: both `FAIL`, `Result: FAIL`, exit 1. The gates fail by code |
 
-`gos voice eval` itself could not be started from this session (its sandbox refuses any command containing the word "eval", as at G2); `test_stt_models.py` and `test_stt_harness.py::test_gos_voice_eval_check_on_the_harness_db` run the same code. No audio, model, report or DB from these runs is committed; they stay in the session's scratch folder.
+`gos voice eval` itself could not be started from this reviewer's session (its sandbox refuses any command containing the word "eval", as at G2; the advisor's session ran `gos voice eval --help` and its flags match step 3); `test_stt_models.py` and `test_stt_harness.py::test_gos_voice_eval_check_on_the_harness_db` run the same code. No audio, model, report or DB from these runs is committed; they stay in the session's scratch folder.
 
 ### CI on `main` [repo]
 
@@ -348,7 +348,7 @@ Borderless (F11), then exclusive fullscreen (`window.borderless=false` in Lab's 
 ```powershell
 & $gos voice run
 ```
-Ask "how do I make an LV motor" with the talk key: it is spoken on the Chat endpoint, naming Electric Motor (LV) first. Then `gos stop` / `gos serve` in another window (`GOS: Core offline.` once, then answered again), and unplug the headset for 5 s (`Microphone lost.` once, then answered again). Ctrl+C.
+Ask "how do I make an LV motor" with the talk key: it is spoken on the Chat endpoint, naming Electric Motor (LV) first. Then the hotkeys (`voice_client.md` C12, D179), with the dashboard open: press confirm (F14): `GOS: Nothing is waiting for confirmation.`; cancel (F15): nothing is said and nothing changes (the motor answer's card stays, and "repeat that" by talk key still says it); next card (F16): nothing is said and the dashboard moves to its next card. Then `gos stop` / `gos serve` in another window (`GOS: Core offline.` once, then answered again), and unplug the headset for 5 s (`Microphone lost.` once, then answered again). Ctrl+C.
 
 **7. Wake word** (`wake.md` A2, B3, C5, D6-D8, E9-E10), the WO-5.4 acceptance, about 2.5 h:
 - Set `[voice] wake_phrase` first (PR #61 Q1; default `hey archivist`).
@@ -383,7 +383,7 @@ Expect exit 0 and no `!` line. Note Discord's Voice & Video settings and Windows
 Compare-Object (Get-Content C:\Temp\gos55\doctor_before.txt) (Get-Content C:\Temp\gos55\doctor_after.txt)
 & $gos voice bench | Tee-Object C:\Temp\gos55\bench.txt
 ```
-**Pass:** no `Compare-Object` output, Discord's and Windows' settings unchanged, and every row of `discord_coexistence.md` D's table a pass. `bench.txt` also has the `wake word: N detections, M chimed` line that `wake.md` E11 reads (at most 2 unmeant chimes in 2 h of live use).
+**Pass:** no `Compare-Object` output, Discord's and Windows' settings unchanged, and every row of `discord_coexistence.md` D's table a pass. `bench.txt` also has the `wake word: N detections, M chimed` line that `wake.md` E11 reads: during this hour, count the chimes he didn't mean, **at most 1** (plan §8's ≤ 1 false wake an hour; E11's "2 in 2 h" is for a 2 h session, and the offline 2 h measure is step 7's). The hotkeys pressed during the hour give step 6's results.
 
 **11. Benchmarks with GTNH running** (`voice_benchmarks.md` A2-A4, B5-B9, C10-C15, D16-D18), the WO-5.7 and PM14 acceptance, about 45 min, **Lab only** (Open to LAN with cheats, for `/forge tps`):
 ```powershell
@@ -424,3 +424,4 @@ $lab = 'C:\Games\PrismLauncher\instances\GTNH-Lab\.minecraft'
 4. **GPL runtime dependencies** (phonemizer, espeak-ng) are installed, not vendored (PR #65 Q1). This is consistent with CLAUDE.md's rule (no GPL code vendored into core), but it is his call. (Confirmed)
 5. **Real-model spoken length is unchecked until the PC run.** The eval set runs on the fake model; only the live gate (WO-5.7) sees the real model's answers, and a verbose model would fail it, with the fix in the fast lane's prompt rules (PR #75 Q1). (Likely)
 6. **Voice doesn't start with Play** until WO-6.1 takes D179's pre-launch hook (D249). Until then he starts `gos voice run` by hand each session. (Confirmed)
+7. **Carried from G2, now live with voice.** Two items G2 left open for Phase 5 are still open: (a) G2 risk 6 / PR #54 Q6, plural item names can resolve to the wrong item with no ambiguity flag, and "voice makes plurals common"; (b) G2 question 11 / PR #48 Q1, whether §8's fast-lane gate should be the P50 of `total_ms` rather than TTFT, since D152 speaks only checked text (D204's sentence streaming speaks each checked sentence as it comes, so PM14's `total_ms` in step 11 is the figure Clayton hears). On the PC: a step 3 `MISS` line or a wrong card for a plural question points to (a); a PM14 miss in step 11 whose `core_ms` dominates points to (b). Neither has a decision yet; both stay Clayton's. (Likely)
