@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
     base,
+    crops,
     designer,
     items,
     machines,
@@ -308,6 +309,31 @@ TOOLS = (
         gate=ops.GATE,
     ),
     Tool(
+        "crop_find",
+        "CropsNH crops by name or id (WO-6.7): tier, soil, whether a block must sit under the "
+        "soil, the parents each is bred from (Crop Breeder-only marked), its mutation pools, "
+        "and whether Clayton has it.",
+        crops.CROP_FIND_SCHEMA,
+        crops.crop_find,
+    ),
+    Tool(
+        "crop_plan",
+        "The breeding guide to a crop (WO-6.7, plan 7.17), computed by code from CropsNH's "
+        "rules: each step in order (obtain, crop sticks, mutation pool, Crop Breeder, Crop "
+        "Manager) with its chance per growth tick and expected time, then the stats plan. "
+        f"Keep the order. {CITE}",
+        crops.CROP_PLAN_SCHEMA,
+        crops.crop_plan,
+    ),
+    Tool(
+        "crop_step",
+        "One step of a breeding guide in full (default: the next one): the layout around the "
+        "double stick, requirements (soil, sub-soil block, light, nutrients), odds, times, "
+        f"warnings and the keep rule. {CITE}",
+        crops.CROP_STEP_SCHEMA,
+        crops.crop_step,
+    ),
+    Tool(
         "action_status",
         "One world action by id (state, read-back, how it was confirmed, its result), or the "
         "pending one and the newest ten.",
@@ -326,10 +352,7 @@ LATER: dict[str, str] = {
     "tool is a follow-up)",
     "machine_fact_get": "machine_info covers reading facts (WO-2.2); a fact-by-key tool comes with machine_fact_set",
     "machine_fact_set": "WO-1.9 (pack-update playbook: curation)",
-    **dict.fromkeys(
-        ("crop_find", "crop_plan", "crop_step", "crop_status"),
-        "WO-1.10 (crop data), WO-6.7 (planner); crop_status with WO-7.6",
-    ),
+    "crop_status": "WO-7.6 (breeding station status)",
     # Accepting is Clayton's (the Designer, gos plan accept; D251); the later moves
     # (building, running, retired) come with the base-keeper's line lifecycle.
     "plan_set_status": "WO-4.4 (EU ledger: line lifecycle)",

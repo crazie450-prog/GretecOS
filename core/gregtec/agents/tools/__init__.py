@@ -35,12 +35,15 @@ action_status(id)         both   :mod:`.ops` (WO-7.1)
 ore_find(material, ...)   both   :mod:`.ores` (WO-6.6; veins by layer, then distance)
 player_pos()              both   :mod:`.ores` (WO-6.6; at the world's last save)
 ore_waypoint(vein)        deep   :mod:`.ores` (WO-6.6; proposes only: Clayton confirms)
+crop_find(text)           both   :mod:`.crops` (WO-6.7; crops, how each is bred)
+crop_plan(target)         both   :mod:`.crops` (WO-6.7; the breeding guide, code-ordered)
+crop_step(target, n)      both   :mod:`.crops` (WO-6.7; one step: layout, odds, times)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
 with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_set with
-WO-1.9; crop_* with WO-1.10 and WO-6.7; plan_*, design_production, effort_estimate and
+WO-1.9; crop_status with WO-7.6; plan_*, design_production, effort_estimate and
 layout_estimate with Phase 3; design_power with WO-4.2; ledger_* with
 WO-4.4; speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
 session_summary with WO-6.3; screen_snapshot with

@@ -27,6 +27,7 @@
 | /api/plans..., /api/designer...| see ``plan_routes``     | saved plans and the Designer (WO-3.6/3.7)|
 | GET  /api/quests?spoil=        | see ``quests.view``     | the Quests view's payload (WO-6.4)    |
 | GET/POST /api/ores...          | see ``ores.view``       | the Ores view, a vein's waypoint (WO-6.6)|
+| GET/POST/DELETE /api/crops... | see ``crops.view``      | the Crops view, his crops, the target (WO-6.7)|
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
@@ -101,6 +102,7 @@ from gregtec.bridge.actions import Action
 from gregtec.bridge.ingest import Bridge
 from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
+from gregtec.crops import view as crop_view
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
@@ -781,6 +783,7 @@ def create_app(core: Core) -> FastAPI:
     plan_routes.add_routes(app, core, principal, trusted, _json_body)
     quest_view.add_routes(app, core, principal)
     ore_view.add_routes(app, core, principal, _json_body)
+    crop_view.add_routes(app, core, principal, trusted, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 
