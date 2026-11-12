@@ -259,7 +259,8 @@ def route(
         "build_h": effort["build_h"],
         "unlock_h": effort["unlock_h"],
         "effort": {
-            k: effort[k] for k in ("craft_s", "rows", "components", "unlocks", "notes")
+            k: effort[k]
+            for k in ("craft_s", "rows", "components", "unlocks", "uncounted", "notes")
         },
         "complexity": complexity(g, plan),
     }
