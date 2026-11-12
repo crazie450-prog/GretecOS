@@ -1,7 +1,7 @@
 // Generated from core/gregtec/cards/schema.json by gregtec.cards.typescript. Don't edit:
 // change the schema, then run `uv run python -m gregtec.cards.typescript --write`.
 
-/** A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki. */
+/** A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki, vein: an ore vein, pos: his position at a save (D271). */
 export type Ref = string;
 
 /** A GT voltage tier name; Steam is GOS's own stage before LV. */

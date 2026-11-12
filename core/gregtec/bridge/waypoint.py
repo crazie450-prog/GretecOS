@@ -5,8 +5,20 @@ JourneyMap 5.2.23 (GTNH 2.9.0) keeps one JSON file per waypoint in
 ``<name>_<x>,<y>,<z>.json`` with characters a file name can't hold replaced by ``_``; its fields
 are ``id, name, icon, x, y, z, r, g, b, enable, type, origin, dimensions``, and a Nether
 waypoint stores x and z at overworld scale (x 8) [B§4.2]. The format is re-implemented from
-that description; no JourneyMap code is used. Whether a running JourneyMap picks up a file
-written while the game runs is VERIFY V23 (a Lab test).
+that description and from reading JourneyMap's source (``journeymap-legacy`` 5.2.23, LGPL-2.1:
+read to learn the behaviour, nothing copied; D271).
+
+**V23, from that source** (``WaypointStore``, ``JmReader``, ``JourneymapClient``,
+``MappingMonitorTask``, ``OptionsManager``): JourneyMap reads the waypoints folder only when it
+resets its waypoint store, which happens when mapping starts (joining the world, and after every
+dimension change: mapping stops on the change and starts again on the next tick) and when its
+Waypoint or Advanced options are changed and saved. It has no file watcher, so a file written
+while the game runs shows after his next dimension change or rejoin, not at once. It reads every
+``*.json`` there with Gson (``origin`` is the enum name ``JourneyMap``; an unknown name reads as
+null), keeps a waypoint whose file name matches its ``id``, and only ever rewrites or deletes the
+files of waypoints it changes, so a file GOS writes stays until he deletes the waypoint in game.
+Still a Lab check: that it shows after a dimension change, at the right place (the Nether
+scale included).
 
 The core writes only into that one ``waypoints`` folder of the world the action targets, never
 through a link or junction (gos-dev can change Lab's folders, D75), and only a new file: a
@@ -39,6 +51,8 @@ Y_MAX = 255
 DIM_RANGE = (-1000, 1000)
 NETHER = -1
 REPLACE_TRIES = 3
+# V23: JourneyMap reads its waypoints folder when mapping starts, not when a file appears.
+SHOWS_WHEN = "JourneyMap shows it after you change dimension or rejoin the world"
 # The args the waypoint action takes (the action_propose tool's schema for it, D220).
 ARGS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -123,7 +137,7 @@ def document(args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         "b": 255,
         "enable": True,
         "type": "Normal",
-        "origin": "journeymap",
+        "origin": "JourneyMap",  # Waypoint.Origin's enum name; Gson reads others as null
         "dimensions": [dim],
     }
     return _FILE_UNSAFE.sub("_", wid) + ".json", doc
@@ -142,7 +156,7 @@ def write(where: Place, args: Mapping[str, Any]) -> str:
     real = _real(where, folder)
     target = real / file_name
     if os.path.lexists(target):
-        return f"waypoint {file_name} is already there"
+        return f"waypoint {file_name} is already there; {SHOWS_WHEN}"
     tmp = real / f".gos-{secrets.token_hex(4)}.tmp"
     data = json.dumps(doc, indent=2).encode("utf-8")
     with open(tmp, "xb") as f:
@@ -163,7 +177,7 @@ def write(where: Place, args: Mapping[str, Any]) -> str:
     finally:
         if tmp.exists():
             tmp.unlink()
-    return f"wrote waypoint {file_name}"
+    return f"wrote waypoint {file_name}; {SHOWS_WHEN}"
 
 
 def _real(where: Place, path: Path) -> Path:
