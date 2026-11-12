@@ -27,11 +27,11 @@ from typing import TextIO
 from gregtec import config
 from gregtec.agents import prefetch
 from gregtec.agents.tools.glossary import Glossary
+from gregtec.base.state import MyBase
 from gregtec.db import access
 from gregtec.planner import alternatives, explain, graph, plan, rank, solve
 from gregtec.planner.outputs import book, store
 from gregtec.planner.request import (
-    DefaultBaseInputs,
     Pin,
     Request,
     RequestError,
@@ -194,7 +194,7 @@ def _run(
         request = _request(conn, db, glossary, args, out)
         if isinstance(request, int):
             return request
-        base = DefaultBaseInputs.from_db(conn)
+        base = MyBase.from_db(conn)
         if args.alternatives is not None:
             g = graph.build(conn, request, base)
             for a in alternatives.node_alternatives(g, args.alternatives, args.all):

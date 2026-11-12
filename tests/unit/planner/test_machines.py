@@ -1174,12 +1174,6 @@ def _db(tmp_path: Path) -> sqlite3.Connection:
             " VALUES (?,?,?,?,?, '')",
             (mid, key, value, source, conf),
         )
-    x(
-        "INSERT INTO base_machine(machine_id, count, source, upd) VALUES (1, 2, 'manual', 0)"
-    )
-    x(
-        "INSERT INTO base_machine(machine_id, count, source, upd) VALUES (2, 0, 'manual', 0)"
-    )
     return conn
 
 
@@ -1195,8 +1189,7 @@ def test_select_from_the_db(tmp_path: Path) -> None:
             1,
         )
         assert r.meta == {"coil_heat": 1500.0}  # nei_desc is left out
-        owned = m.owned_machines(conn)
-        assert owned == frozenset({1000})
+        owned = frozenset({1000})  # My base's (gregtec.base.state, through BaseInputs)
         player = m.Player(tier=HV, owned=owned, hatches=(hatches(HV, 2),))
         sel = m.select(conn, ref, player)
         by = {o.mte_id: o for o in sel.options}

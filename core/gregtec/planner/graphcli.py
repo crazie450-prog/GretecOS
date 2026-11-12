@@ -21,10 +21,10 @@ from typing import TextIO
 from gregtec import config
 from gregtec.agents import prefetch
 from gregtec.agents.tools.glossary import Glossary
+from gregtec.base.state import MyBase
 from gregtec.db import access
 from gregtec.planner import chains, graph, machines
 from gregtec.planner.request import (
-    DefaultBaseInputs,
     Request,
     RequestError,
     tier_index,
@@ -130,7 +130,7 @@ def show(
             machines="base+addons" if args.addons else "base",
         )
         started = time.perf_counter()
-        g = graph.build(conn, request, DefaultBaseInputs.from_db(conn))
+        g = graph.build(conn, request, MyBase.from_db(conn))
         took = time.perf_counter() - started
     except (RequestError, graph.GraphError, LookupError, ValueError) as exc:
         print(f"refused: {exc}", file=out)

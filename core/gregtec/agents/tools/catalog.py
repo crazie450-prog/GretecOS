@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
+    base,
     items,
     machines,
     notes,
@@ -90,6 +91,15 @@ TOOLS = (
         "or whose rewards give it, with Clayton's state of each.",
         quests.QUEST_FOR_ITEM_SCHEMA,
         quests.quest_for_item,
+    ),
+    Tool(
+        "base_get",
+        "My base: Clayton's tier (from quests, or his override) with the key quest, the "
+        "machines he has (mte: ids, counts and where each count came from) and the stock he "
+        "entered (item and fluid keys). Read-only: he edits My base in the dashboard. Nothing "
+        "listed means nothing owned or stocked.",
+        base.BASE_GET_SCHEMA,
+        base.base_get,
     ),
     Tool(
         "db_query",
@@ -228,7 +238,6 @@ LATER: dict[str, str] = {
         ),
         "Phase 3 (WO-3.4 to WO-3.7)",
     ),
-    "base_get": "WO-3.8 (My base)",
     "design_power": "WO-4.2 (power objective modes)",
     **dict.fromkeys(("ledger_get", "ledger_update"), "WO-4.4 (EU ledger)"),
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "

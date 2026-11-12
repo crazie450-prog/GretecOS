@@ -4,12 +4,14 @@ import type { ApprovalCard, Card } from "../cards/types.gen";
 import type {
   AiState,
   Answer,
+  BaseFind,
   CoreState,
   CreditChoice,
   CreditState,
   DeepTask,
   Device,
   Health,
+  MyBase,
   PersonaInfo,
   PersonaState,
   Reply,
@@ -80,6 +82,15 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
+  // My base (WO-3.8): every edit answers with the whole of it.
+  base: () => get<MyBase>("/api/base"),
+  baseFind: (q: string, kind: "item" | "machine") =>
+    get<BaseFind>(`/api/base/find?q=${encodeURIComponent(q)}&kind=${kind}`),
+  baseTier: (stage: string | null) => post<MyBase>("/api/base/tier", { stage }),
+  baseMachine: (mteId: number, count: number) => post<MyBase>("/api/base/machines", { mte_id: mteId, count }),
+  baseMachineClear: (mteId: number) => request<MyBase>("DELETE", `/api/base/machines/${mteId}`),
+  baseStock: (key: string, qty: number) => post<MyBase>("/api/base/stock", { key, qty }),
+  baseStockRemove: (key: string) => request<MyBase>("DELETE", `/api/base/stock?key=${encodeURIComponent(key)}`),
   // The persona (WO-5.6): the same switch the Discord /persona command will call.
   persona: (id: string) => post<PersonaState & { persona: PersonaInfo }>("/api/persona", { id }),
   // The setup wizard (WO-2.9): admin and paired devices only. A secret goes in and never comes back.
