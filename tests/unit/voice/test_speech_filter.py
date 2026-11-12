@@ -300,6 +300,7 @@ def test_property_no_citation_or_id_is_ever_spoken() -> None:
                     continue  # the same word is also in the answer's own words
                 assert token not in said, (text, said, found)
         assert len(sf.limit(sf.tidy(sf.strip_ids(sf.strip_markup(text)))).split()) <= 40
+        assert sf.heard_words(said) <= 40 and len(sf.sentences(said)) <= 2, said
 
 
 def test_the_filter_removes_whatever_the_fast_lane_calls_a_ref_or_key() -> None:
@@ -340,9 +341,48 @@ def test_a_long_first_sentence_is_cut_at_a_comma_or_the_limit() -> None:
     assert spoken(plain) == " ".join(["gamma"] * 40) + "."
 
 
-def test_words_are_counted_before_numbers_and_pronunciations_are_spelt_out() -> None:
+def test_a_spelt_out_word_counts_as_one() -> None:
     text = " ".join(["LuV"] * 40) + "."
     assert spoken(text).count("L U V") == 40
+
+
+def test_heard_words() -> None:
+    assert sf.heard_words("thirty E U per tick at L U V.") == 6
+    assert sf.heard_words("A B. C D") == 2  # a sentence end ends a spelt run
+    assert sf.heard_words("I need a coil") == 4
+    assert (
+        sf.said_words("at 32,768 EU/t") == 9
+    )  # at thirty-two thousand ... E U per tick
+
+
+def test_numbers_count_as_they_are_said() -> None:
+    """D248: 30 written words, but 48 heard before WO-5.7, when numbers counted as one word."""
+    text = (
+        "Naquadah Alloy Ingot: the first recipe runs in the Electric Blast Furnace at 30,720 "
+        "EU/t for 1,234 ticks with 32,768 L of nitrogen and 1,152 L of hydrogen per run, "
+        "which takes 61.7 s at 4,500 K and needs 2A of LuV power (r:abc123)."
+    )
+    said = sf.spoken(text)
+    assert sf.heard_words(said) <= 40 and said.endswith(".")
+    assert said.startswith("Naquadah Alloy Ingot, the first recipe runs")
+    assert sf.heard_words(spoken(text)) <= 40  # with the lexicon too
+    # two short sentences, the second number-heavy: whole sentences first
+    short = (
+        "Steel Ingot: the first recipe is the EBF (r:x1). It runs at 120 EU/t (r:x2)."
+    )
+    assert sf.spoken(short) == (
+        "Steel Ingot, the first recipe is the E B F. It runs at one hundred twenty E U per "
+        "tick."
+    )
+    heavy = "Steel Ingot is made in the EBF. " + " ".join(["32,768 L"] * 6) + "."
+    assert sf.spoken(heavy) == "Steel Ingot is made in the E B F."
+
+
+def test_a_pronunciation_that_adds_words_is_cut_when_said() -> None:
+    """Step 8: the lexicon runs after the count; what is heard still stays within 40 words."""
+    text = " ".join(["Naq"] * 30) + "."
+    said = sf.spoken(text, lambda t: t.replace("Naq", "nah kwa dah"))
+    assert sf.heard_words(said) == 40 and said.endswith("dah nah.")
 
 
 def test_decimals_and_abbreviations_do_not_end_sentences() -> None:

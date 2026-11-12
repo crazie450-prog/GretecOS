@@ -10,7 +10,9 @@
    snake_case names, hex hashes and UUIDs, "id 1234", and the brackets they leave empty. A
    registry name starts with a letter, so "3:1" and "12:30" stay numbers.
 3. **D23's length**: at most :data:`MAX_SENTENCES` sentences and :data:`MAX_WORDS` words, counted
-   here, before pronunciations and numbers are spelt out (the card has the rest).
+   here as they will be heard (:func:`said_words`): a number counts as the words it is said in
+   ("32,768" is five), a word the lexicon or step 6 spells out as one ("LuV", "GTNH"; D248). The
+   card has the rest.
 4. **The pronunciation lexicon** (``gregtec_voice.lexicon``): LuV is "L U V".
 5. **Numbers and units in words**: "1920 EU/t" is "nineteen-twenty E U per tick" (a four-digit
    number is read in pairs, as players say voltages), "2A" "two amps", "1.5M" "one point five
@@ -22,6 +24,8 @@
 7. **Only words leave**: anything but letters, spaces and ``. , ! ? ' - ;`` is dropped, so no
    digit, colon, slash or underscore (no id) can reach the speech engine whatever slipped
    through the steps above.
+8. **D23 again, on what is said** (:func:`heard_words`): should a pronunciation have added words,
+   the end goes, so no answer is heard longer than :data:`MAX_WORDS` words (D248).
 
 The reply is data, never instructions (plan 0.1 principle 8): this module only reshapes it.
 """
@@ -394,16 +398,38 @@ def sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENTENCE_END.split(text) if s.strip()]
 
 
+_ENDS_SENTENCE = re.compile(r"[.!?]$")
+
+
+def heard_words(text: str) -> int:
+    """The words in ``text`` as said (D23, D248): each run of single capitals is one word, a word
+    spelt letter by letter ("L U V", "E U" in "E U per tick"); every other token is one."""
+    count, spelt = 0, False
+    for token in text.split():
+        letter = token.strip(".,!?;:'\"()-")
+        single = len(letter) == 1 and letter.isupper()
+        if not (single and spelt):
+            count += 1
+        spelt = single and not _ENDS_SENTENCE.search(token)
+    return count
+
+
+def said_words(text: str) -> int:
+    """The words ``text`` (filtered up to step 2) will be heard as: its numbers and units in words
+    (step 5), each spelt word one (:func:`heard_words`)."""
+    return heard_words(numbers(text))
+
+
 def limit(
     text: str, max_sentences: int = MAX_SENTENCES, max_words: int = MAX_WORDS
 ) -> str:
-    """At most ``max_sentences`` sentences and ``max_words`` words (D23): whole sentences when
-    they fit, else the first one cut at its last comma (keeping at least
-    :data:`MIN_CLAUSE_WORDS` words) or at the word limit."""
+    """At most ``max_sentences`` sentences and ``max_words`` words as said (D23,
+    :func:`said_words`): whole sentences when they fit, else the first one cut at its last comma
+    (keeping at least :data:`MIN_CLAUSE_WORDS` words) or at the word limit."""
     kept: list[str] = []
     words = 0
     for sentence in sentences(text)[:max_sentences]:
-        count = len(sentence.split())
+        count = said_words(sentence)
         if words + count > max_words:
             if kept:
                 break
@@ -414,12 +440,25 @@ def limit(
 
 
 def _cut(sentence: str, max_words: int) -> str:
-    tokens = sentence.split()[:max_words]
+    tokens = sentence.split()[: max_words * 4]
+    end = len(tokens)
+    while end > 1 and said_words(" ".join(tokens[:end])) > max_words:
+        end -= 1
+    tokens = tokens[:end]
     for end in range(len(tokens), MIN_CLAUSE_WORDS - 1, -1):
         if _CLAUSE_END.search(tokens[end - 1]):
             tokens = tokens[:end]
             break
     return " ".join(tokens).rstrip(",;:") + "."
+
+
+def _trim_heard(text: str, max_words: int) -> str:
+    """Step 8: the first ``max_words`` words as said (:func:`heard_words`), ended with a stop."""
+    tokens = text.split()
+    end = len(tokens)
+    while end > 1 and heard_words(" ".join(tokens[:end])) > max_words:
+        end -= 1
+    return " ".join(tokens[:end]).rstrip(",;:-") + ("" if end == len(tokens) else ".")
 
 
 def spell_caps(text: str) -> str:
@@ -434,7 +473,7 @@ def spoken(
     max_sentences: int = MAX_SENTENCES,
     max_words: int = MAX_WORDS,
 ) -> str:
-    """What the speaker says for ``text`` (the module docstring's seven steps); ``pronounce`` is
+    """What the speaker says for ``text`` (the module docstring's eight steps); ``pronounce`` is
     the lexicon (:meth:`gregtec_voice.lexicon.Lexicon.apply`). "" when nothing is left."""
     text = strip_ids(strip_markup(text))
     text = limit(tidy(text), max_sentences, max_words)
@@ -442,6 +481,8 @@ def spoken(
         text = pronounce(text)
     text = spell_caps(numbers(text))
     text = tidy(_NOT_SAID.sub(" ", _COLON.sub(",", text)))
+    if heard_words(text) > max_words:
+        text = tidy(_trim_heard(text, max_words))
     if text and text[-1] not in ".!?":
         text += "."
     return "" if not any(ch.isalpha() for ch in text) else text
