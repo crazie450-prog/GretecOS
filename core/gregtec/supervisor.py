@@ -16,6 +16,11 @@ test) and stop when its post-exit hook says it exited, which it does once the ex
 launch) for :data:`PLAY_GONE_S`, the five minutes the post-exit question may take and a minute
 more, it stops them itself (a crash, a kill). A with-Play process that exits with its setup code
 (2: no token, no game folder, not Windows) stays stopped, with the reason in the status table.
+Play's own launch starts them only with ``[startup] watchers_with_play = "play"``; the default,
+``"lab"``, ignores it until Clayton has run the Lab checks (runbook ``watchers.md`` §2–§4).
+``/restart`` of a with-Play process while nothing plays is refused (409). A supervisor that
+restarts mid-session doesn't know the instance is playing: the watchers start again at its next
+launch.
 
 **Restarts.** A process that exits, or whose ``/health`` stops answering for 20 s, is restarted
 after a back-off of 1, 2, 4, 8, 16, 30, then 60 s between tries. A run that lasted 60 s resets the
@@ -326,6 +331,17 @@ class Supervisor:
             raise ValueError('instance must be "play" or "lab"')
         assert isinstance(instance, str)
         names = [n for n, m in self.procs.items() if m.spec.with_play]
+        if (
+            event == "launch"
+            and instance == "play"
+            and self.cfg.watchers_with_play != "play"
+        ):
+            log.info("play launching; not watched until the Lab checks pass")
+            return {
+                "playing": None,
+                "ignored": True,
+                "why": '[startup] watchers_with_play = "lab": Play is not watched yet',
+            }
         if event == "exit":
             with self._lock:
                 playing = self.play
@@ -1059,6 +1075,9 @@ class _Handler(BaseHTTPRequestHandler):
             name = body.get("name")
             if not isinstance(name, str) or name not in sup.procs:
                 self._reply(404, {"error": f"no managed process {name!r}"})
+                return
+            if sup.procs[name].spec.with_play and sup.play is None:
+                self._reply(409, {"error": f"{name} runs only while the game plays"})
                 return
             log.info("restart requested", extra={"proc": name})
             sup.restart(name)

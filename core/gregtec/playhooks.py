@@ -204,7 +204,7 @@ def tell_supervisor(cfg: config.Config, event: str, role: str, out: TextIO) -> b
         )
         return False
     try:
-        control.call(
+        reply = control.call(
             sup["port"],
             "POST",
             "/play",
@@ -215,6 +215,9 @@ def tell_supervisor(cfg: config.Config, event: str, role: str, out: TextIO) -> b
     except control.ControlError as exc:
         _say(out, f"warning: couldn't tell GOS the game {event}ed: {exc}")
         return False
+    if reply.get("ignored") and reply.get("why"):
+        _say(out, f"note: {reply['why']}.")
+        return True
     what = "start" if event == "launch" else "stop"
     _say(out, f"the game watchers and voice {what} ({role}).")
     return True

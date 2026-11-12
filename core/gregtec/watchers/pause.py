@@ -8,14 +8,17 @@ What the game actually writes, from Minecraft 1.7.10's ``IntegratedServer.tick``
   level.dat, BetterQuesting's progress, the stats), then stops ticking. Nothing else runs on the
   server while it is paused: no autosave, no chat, no OpenComputers [F§3].
 - **Unpausing writes nothing at once.** Vanilla logs no line when the menu closes. The first
-  signs are the server's own: any Server-thread log line that isn't part of that save (a login,
-  a command, a warning) or, at the latest, the next autosave 900 ticks (45 s) later, which writes
-  level.dat again (GTNH ships Hodgepodge's ``autoSaveInterval`` = 900) [B§6.1].
+  signs are the server's own: a Server-thread line only a ticking server writes (a player's chat,
+  an admin command's feedback, a login or logout: ``logparse.TICKING``) or, at the latest, the
+  next autosave 900 ticks (45 s) later, which writes level.dat again (GTNH ships Hodgepodge's
+  ``autoSaveInterval`` = 900) [B§6.1]. Other Server-thread lines are no sign: the pause's save is
+  one long tick, and vanilla logs ``Can't keep up! ... Running Nms behind`` after it (on a big
+  GTNH world) while the game is still paused; mods warn from their save handlers too.
 
-So the tracker says **paused** from the pause line on, and **not paused** at the first
-Server-thread line of latest.log after the pause save (read more than :data:`LINE_GRACE_S` after
-the pause line; mods' lines in the FML log don't count, since they log from their save handlers),
-or when level.dat is written again more than
+So the tracker says **paused** from the pause line on, and **not paused** at the first such
+ticking line of latest.log whose own ``[HH:mm:ss]`` stamp is at least :data:`LINE_GRACE_S` after
+the pause line's (the read time only when a stamp is missing), or when level.dat is written again
+more than
 :data:`SAVE_GRACE_S` after the pause line (the pause's own save lands within a few seconds, through
 the threaded IO queue), or when the world closes (``Stopping server``: then unknown). Before the
 first pause line it says ``None`` (unknown), as the dashboard's ``game.paused`` did before WO-6.1.
@@ -33,9 +36,19 @@ SAVE_GRACE_S = (
 )
 
 
-LINE_GRACE_S = (
-    3.0  # Server-thread lines read this soon after the pause line: its own save
-)
+LINE_GRACE_S = 3.0  # ticking lines stamped this soon after the pause line: its own tick
+DAY_S = 86_400
+
+
+def log_seconds(stamp: str | None) -> int | None:
+    """``HH:mm:ss`` (a log line's stamp) as seconds into the day, or None."""
+    if not stamp:
+        return None
+    try:
+        h, m, s = (int(part) for part in stamp.split(":"))
+    except ValueError:
+        return None
+    return h * 3600 + m * 60 + s
 
 
 @dataclass(frozen=True)
@@ -50,6 +63,7 @@ class PauseTracker:
         self.clock = clock
         self.paused: bool | None = None
         self.since: float | None = None
+        self._pause_stamp: int | None = None  # the pause line's log stamp, in s
 
     def _set(self, paused: bool | None, why: str) -> Change | None:
         now = self.clock()
@@ -58,15 +72,22 @@ class PauseTracker:
         self.paused, self.since = paused, now
         return Change(paused, now, why)
 
-    def pause_line(self) -> Change | None:
+    def pause_line(self, stamp: str | None = None) -> Change | None:
+        """``stamp``: the line's ``HH:mm:ss``."""
+        self._pause_stamp = log_seconds(stamp)
         return self._set(True, "pause line")
 
-    def server_line(self) -> Change | None:
-        """A Server-thread line that isn't part of a save: the server is ticking."""
+    def server_line(self, stamp: str | None = None) -> Change | None:
+        """A line only a ticking server writes (``logparse.TICKING``), stamped ``stamp``."""
         if self.paused is not True or self.since is None:
             return None
-        if self.clock() - self.since < LINE_GRACE_S:
-            return None  # read with the pause line: the pause's own save
+        at = log_seconds(stamp)
+        if at is not None and self._pause_stamp is not None:
+            elapsed = float((at - self._pause_stamp) % DAY_S)  # past midnight too
+        else:
+            elapsed = self.clock() - self.since
+        if elapsed < LINE_GRACE_S:
+            return None  # written with the pause line
         return self._set(False, "the server logged again")
 
     def world_saved(self) -> Change | None:

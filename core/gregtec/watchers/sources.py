@@ -28,7 +28,6 @@ from gregtec.ingest import fingerprint, vp
 from gregtec.ingest import quests as bq
 from gregtec.watchers import files
 from gregtec.watchers.events import Event, clean
-from gregtec.watchers.logparse import Dedupe
 
 JSON_LIMIT = 16 << 20
 
@@ -237,7 +236,6 @@ class WorldLogWatch:
             )
             for p in paths
         ]  # type: ignore[arg-type]
-        self.dedupe = Dedupe()
 
     def poll(self) -> list[Event]:
         now = self.clock()

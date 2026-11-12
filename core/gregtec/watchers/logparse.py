@@ -14,6 +14,7 @@ rules and a line seen in both counts once (:class:`Dedupe`).
 | ``[CHAT] <anything else>``                                | ``chat``                      |
 | ``Saving and pausing game...`` (Server thread)            | the pause signal (V29, D258)  |
 | ``<name>[local:...] logged in with entity id N at (x, y, z)`` | ``location`` (login), the player's name |
+| a Server-thread line of :data:`TICKING` (latest.log only) | the server ticks (D258)       |
 | ``Stopping server`` / ``Stopping!``                       | the world closed              |
 | ``... Crash report saved to: <path>`` / BetterCrashes'    | ``crash``                     |
 | ``Report saved to: <path>``                               |                               |
@@ -39,12 +40,20 @@ LINE = re.compile(
 )
 CHAT = "[CHAT] "
 PAUSE = "Saving and pausing game..."
-SAVE_CHUNKS = re.compile(r"^Saving chunks for level '.*'/.*$")
 LOGIN = re.compile(
     r"^(?P<name>[A-Za-z0-9_]{1,32})\[[^\]]*\] logged in with entity id -?\d+ at "
     r"\((?P<x>-?[\d.]+), (?P<y>-?[\d.]+), (?P<z>-?[\d.]+)\)$"
 )
 STOPPING = ("Stopping server", "Stopping!")
+# Vanilla 1.7.10's Server-thread lines that only a ticking server writes (D258): a player's chat
+# (``<name> text``, ``* name action``), an admin command's feedback (``[name: text]``,
+# logAdminCommands), a player joining or leaving. Not "any Server-thread line": the pause's own
+# save is one long tick, so ``Can't keep up! ...`` (and mods' warnings) come after the pause line
+# while the game is still paused.
+TICKING = re.compile(
+    r"^(?:<[^>]{1,32}> |\* [A-Za-z0-9_]{1,32} |\[[A-Za-z0-9_]{1,32}: .*\]$|"
+    r"[A-Za-z0-9_]{1,32} (?:joined the game|left the game|lost connection: ))"
+)
 CRASH = re.compile(
     r"(?:Crash report saved to:|Report saved to:)\s*(?:#@!@#\s*)?(?P<path>\S.*?)\s*$"
 )
@@ -141,8 +150,6 @@ def read_line(p: Parsed, fml: bool, player: str | None) -> list[Found]:
         return out
     if msg == PAUSE:
         return [Found("pause", {})]
-    if server and SAVE_CHUNKS.match(msg):
-        return []  # part of a save (the pause's, or a quit's): not a sign of ticking
     if m := LOGIN.match(msg):
         out.append(
             Found(
@@ -176,28 +183,37 @@ def read_line(p: Parsed, fml: bool, player: str | None) -> list[Found]:
                 },
             )
         )
-    # Only vanilla's own Server-thread lines (latest.log) say the server ticks: mods log on that
-    # thread from their save handlers too, during the pause's own save (FML log).
-    if server and not fml and not any(f.kind == "quit" for f in out):
+    # Only vanilla's own Server-thread lines (latest.log) say the server ticks, and only those a
+    # ticking server writes (:data:`TICKING`, a login): the pause's own save logs chunk saves,
+    # "Can't keep up!" and mods' lines on that thread while the game stays paused.
+    if (
+        server
+        and not fml
+        and (TICKING.match(msg) or any(f.kind == "login" for f in out))
+    ):
         out.append(Found("server_tick", {}))
     return out
 
 
 class Dedupe:
-    """Drops a line already seen in the other log (same time, kind and data) and error floods."""
+    """Drops a line the *other* log already had (same time, kind and data; a line repeated in one
+    log is kept each time) and error floods."""
 
     def __init__(self) -> None:
-        self._recent: deque[tuple[str, str, str]] = deque(maxlen=256)
+        self._recent: deque[tuple[tuple[str, str, str], str]] = deque(maxlen=256)
         self._errors: dict[str, float] = {}
         self._error_times: deque[float] = deque()
 
-    def keep(self, time_text: str, found: Found, now: float) -> bool:
+    def keep(self, time_text: str, found: Found, now: float, source: str = "") -> bool:
+        """``source``: which log the line is from."""
         if found.kind == "server_tick":
             return True
         key = (time_text, found.kind, repr(sorted(found.data.items())))
-        if key in self._recent:
-            return False
-        self._recent.append(key)
+        for seen in self._recent:
+            if seen[0] == key and seen[1] != source:
+                self._recent.remove(seen)  # matched once: a third copy is new again
+                return False
+        self._recent.append((key, source))
         if found.kind != "error":
             return True
         message = str(found.data.get("message"))

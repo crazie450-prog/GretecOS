@@ -149,7 +149,7 @@ def test_a_pause_reaches_the_dashboard_within_5_s_fake_clock(
     watchers.poll_logs()
     token = core.auth.issue_client_token("watchers")
     sender = runner.Sender(
-        lambda body: client.post(
+        lambda body, timeout: client.post(
             "/api/game/events", json=body, headers=bearer(token)
         ).raise_for_status(),
         "lab",
@@ -188,7 +188,7 @@ def test_a_pause_reaches_the_dashboard_within_5_s_real_loop(
     token = core.auth.issue_client_token("watchers")
     watchers = runner.Watchers(tree.game, tree.world, tmp_path)
     sender = runner.Sender(
-        lambda body: client.post(
+        lambda body, timeout: client.post(
             "/api/game/events", json=body, headers=bearer(token)
         ).raise_for_status(),
         "lab",
@@ -208,10 +208,8 @@ def test_a_pause_reaches_the_dashboard_within_5_s_real_loop(
             tree.log(fg.stamp_line("Saving and pausing game...", "Server thread"))
             paused_push(ws, True)
             took = time.perf_counter() - start
-            # unpausing: the server logs again
-            tree.log(
-                fg.stamp_line("Clayton issued server command: /time", "Server thread")
-            )
+            # unpausing: the server logs a line only a ticking server writes
+            tree.log(fg.stamp_line("<Clayton> back", "Server thread"))
             paused_push(ws, False)
     finally:
         stop.set()
@@ -226,3 +224,36 @@ def test_a_pause_reaches_the_dashboard_within_5_s_real_loop(
         True,
         False,
     ]
+
+
+def test_a_slow_save_file_poll_never_holds_back_the_pause(
+    tmp_path: Path, fg: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: the pause is queued for the sender before the save files are read, so a slow parse
+    of a big level.dat (every pause is a save) doesn't add to the 5 s."""
+    tree = fg.Tree(tmp_path / "prism")
+    tree.log("")
+    watchers = runner.Watchers(tree.game, tree.world, tmp_path)
+    watchers.poll_logs()
+    tree.log(fg.stamp_line("Saving and pausing game...", "Server thread"))
+    queued: list[float] = []
+    sender = runner.Sender(None, "lab")
+    put = sender.put
+
+    def record(events: list[Event]) -> None:
+        if any(e.kind == "game_paused" for e in events):
+            queued.append(time.perf_counter())
+        put(events)
+
+    monkeypatch.setattr(sender, "put", record)
+    stop = threading.Event()
+
+    def slow_files() -> list[Event]:
+        time.sleep(3.0)
+        stop.set()
+        return []
+
+    monkeypatch.setattr(watchers, "poll_files", slow_files)
+    start = time.perf_counter()
+    runner.run_loop(watchers, runner.Spool(tmp_path / "events"), sender, stop)
+    assert queued and queued[0] - start < 1.0

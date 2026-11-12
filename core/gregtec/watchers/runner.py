@@ -49,6 +49,11 @@ DEATH_MERGE_S = 120.0  # deaths this close are one death seen by several readers
 QUEUE_MAX = 2000
 POST_MAX = 100  # events per POST
 POST_BYTES = 128 << 10  # and about this much JSON (the core takes 256 KB)
+POST_TIMEOUT_S = 3.0
+# On stop: the sender thread gets 1 s and the last post 1.5 s, inside the supervisor's 5 s
+# (supervisor.STOP_TIMEOUT_S) before it kills the process; what doesn't go is in the spool.
+CLOSE_JOIN_S = 1.0
+FINAL_POST_S = 1.5
 TOKEN = "watchers"  # the client token's name (gos token new watchers)
 EXIT_SETUP = 2  # the supervisor leaves the watchers stopped on this (D259)
 LOGS = (("latest.log", False), ("fml-client-latest.log", True))
@@ -95,17 +100,19 @@ class LogWatch:
                 if p is None:
                     continue  # a stack trace's continuation, or a line from before log4j
                 for found in logparse.read_line(p, fml, self.player):
-                    if not self.dedupe.keep(p.time, found, self.clock()):
+                    if not self.dedupe.keep(
+                        p.time, found, self.clock(), tail.path.name
+                    ):
                         continue
-                    events.extend(self._event(found))
+                    events.extend(self._event(found, p.time))
         return events
 
-    def _event(self, found: logparse.Found) -> list[Event]:
+    def _event(self, found: logparse.Found, stamp: str) -> list[Event]:
         now = self.clock()
         if found.kind == "pause":
-            return _paused(self.tracker.pause_line())
+            return _paused(self.tracker.pause_line(stamp))
         if found.kind == "server_tick":
-            return _paused(self.tracker.server_line())
+            return _paused(self.tracker.server_line(stamp))
         if found.kind == "quit":
             return _paused(self.tracker.world_closed())
         if found.kind == "login":
@@ -246,7 +253,7 @@ class Spool:
             )
 
 
-Send = Callable[[dict[str, Any]], None]
+Send = Callable[[dict[str, Any], float], None]  # (body, timeout in s)
 
 
 class Sender:
@@ -290,7 +297,7 @@ class Sender:
         )
         self._thread.start()
 
-    def flush_once(self) -> bool:
+    def flush_once(self, timeout: float = POST_TIMEOUT_S) -> bool:
         """One POST of up to :data:`POST_MAX` queued events (or a heartbeat). False if it failed:
         the events go back to the front of the queue."""
         assert self.send is not None
@@ -313,7 +320,7 @@ class Sender:
                 "problems": self.problems[:20],
             }
         try:
-            self.send(body)
+            self.send(body, timeout)
         except Exception as exc:  # noqa: BLE001 - any failure: keep the events, retry
             log.info(
                 "core not reached; keeping events", extra={"error": str(exc)[:200]}
@@ -341,25 +348,26 @@ class Sender:
             self.wake.wait(1.0)
             self.wake.clear()
 
-    def close(self, timeout: float = 3.0) -> None:
-        """Stop the thread, then send what is left once (best effort)."""
+    def close(self) -> None:
+        """Stop the thread, then send what is left once (best effort, within the supervisor's
+        stop deadline)."""
         self.stop.set()
         self.wake.set()
         if self._thread is not None:
-            self._thread.join(timeout)
+            self._thread.join(CLOSE_JOIN_S)
             if self.send is not None and self.pending():
-                self.flush_once()
+                self.flush_once(FINAL_POST_S)
 
 
 def core_sender(cfg: config.Config, token: str) -> Send:
-    def send(body: dict[str, Any]) -> None:
+    def send(body: dict[str, Any], timeout: float) -> None:
         control.call(
             cfg.core_port,
             "POST",
             "/api/game/events",
             token=token,
             body=body,
-            timeout=3.0,
+            timeout=timeout,
         )
 
     return send
@@ -374,22 +382,26 @@ def run_loop(
 ) -> None:
     next_logs = next_files = 0.0
     next_save = clock() + 30.0
+
+    def emit(events: list[Event]) -> None:
+        if not events:
+            return
+        try:
+            spool.write(events)
+        except OSError as exc:
+            log.warning("event spool not written", extra={"error": str(exc)})
+        sender.put(events)
+
     while not stop.is_set():
         now = clock()
-        events: list[Event] = []
         if now >= next_logs:
             next_logs = now + LOG_EVERY_S
-            events += watchers.poll_logs()
+            # queued before the save files are read: a slow parse never holds back a pause
+            emit(watchers.poll_logs())
         if now >= next_files:
             next_files = now + FILES_EVERY_S
-            events += watchers.poll_files()
+            emit(watchers.poll_files())
             sender.problems = watchers.problems()
-        if events:
-            try:
-                spool.write(events)
-            except OSError as exc:
-                log.warning("event spool not written", extra={"error": str(exc)})
-            sender.put(events)
         if now >= next_save:
             next_save = now + 30.0
             watchers.save_tails()
@@ -411,8 +423,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--instance",
         choices=("play", "lab"),
-        # the supervisor says which instance launched (D259)
-        default=os.environ.get("GOS_PLAY_INSTANCE") or "play",
+        # the supervisor says which instance launched (D259); by hand: play
+        default=os.environ.get("GOS_PLAY_INSTANCE") or None,
     )
     parser.add_argument(
         "--world",
@@ -437,6 +449,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"can't read gos.toml: {exc}", file=sys.stderr)
         return EXIT_SETUP
     applog.setup("watchers", cfg.logs_dir)
+    if args.instance is None:
+        if args.supervised:  # started without a launch (D259): nothing is playing
+            print("no instance is playing (GOS_PLAY_INSTANCE unset)", file=sys.stderr)
+            return EXIT_SETUP
+        args.instance = "play"
     if args.instance == "play" and config.running_as_dev():
         # CLAUDE.md: gos-dev reads Play only when a WO says so; the watchers are Clayton's.
         print("gos-dev doesn't watch Play: use --instance lab", file=sys.stderr)

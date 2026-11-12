@@ -4,6 +4,7 @@ run`` itself. Fake instances and fake processes only; Play is never touched."""
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import logging
@@ -122,6 +123,7 @@ def test_with_play_processes_start_and_stop_with_the_hooks(tmp_path: Path) -> No
 
 def test_a_with_play_process_that_cannot_run_stays_stopped(tmp_path: Path) -> None:
     cfg, _ = make_cfg(tmp_path)
+    cfg = dataclasses.replace(cfg, watchers_with_play="play")
     spec = ProcessSpec(
         "voice",
         "Voice",
@@ -141,6 +143,7 @@ def test_a_with_play_process_that_cannot_run_stays_stopped(tmp_path: Path) -> No
 
 def test_a_client_that_goes_away_without_post_exit_stops_them(tmp_path: Path) -> None:
     cfg, _ = make_cfg(tmp_path)
+    cfg = dataclasses.replace(cfg, watchers_with_play="play")
     clock = Clock()
     running: list[str] = []
     spec = ProcessSpec(
@@ -195,6 +198,35 @@ def test_the_real_specs(tmp_path: Path) -> None:
     assert config.load(tmp_path / "off.toml").voice_with_play is False
 
 
+def test_play_is_watched_only_once_clayton_turns_it_on(tmp_path: Path) -> None:
+    """M1 (D259): Play's hooks are installed already; until the Lab checks pass and Clayton sets
+    ``[startup] watchers_with_play = "play"``, Play's launch starts nothing."""
+    cfg, _ = make_cfg(tmp_path)
+    assert cfg.watchers_with_play == "lab"
+    spec = ProcessSpec(
+        "watchers", "W", (PY, "-c", "import sys; sys.stdin.read()"), with_play=True
+    )
+    sup = Supervisor(cfg, [spec])
+    try:
+        got = sup.play_event("launch", "play")
+        assert got["ignored"] is True and "watchers_with_play" in got["why"]
+        assert sup.play is None and sup.procs["watchers"].proc is None
+        assert sup.play_event("exit", "play") == {"playing": None}
+        sup.cfg = dataclasses.replace(cfg, watchers_with_play="play")
+        assert sup.play_event("launch", "play") == {"playing": "play"}
+        assert sup.procs["watchers"].proc is not None
+    finally:
+        sup.stop_all()
+    on = tmp_path / "on.toml"
+    on.write_text('[startup]\nwatchers_with_play = "play"\n', encoding="utf-8")
+    assert config.load(on).watchers_with_play == "play"
+    bad = tmp_path / "bad.toml"
+    bad.write_text('[startup]\nwatchers_with_play = "yes"\n', encoding="utf-8")
+    loaded = config.load(bad)
+    assert loaded.watchers_with_play == "lab"  # a bad value keeps the safe default
+    assert any("watchers_with_play" in p for p in config.service_problems(loaded))
+
+
 def test_the_control_port_and_the_hook_notice(tmp_path: Path) -> None:
     cfg, _ = make_cfg(tmp_path)
     seen = tmp_path / "instance.txt"
@@ -225,6 +257,20 @@ def test_the_control_port_and_the_hook_notice(tmp_path: Path) -> None:
         assert sup.play is not None and sup.play["instance"] == "lab"
         assert playhooks.tell_supervisor(cfg, "exit", "lab", out) is True
         assert sup.play is None and sup.procs["watchers"].proc is None
+        # L1: a with-Play process isn't restarted while nothing plays (it would watch Play)
+        with pytest.raises(control.ControlError) as caught:
+            control.call(
+                port,
+                "POST",
+                "/restart",
+                token=sup.admin_token,
+                body={"name": "watchers"},
+            )
+        assert caught.value.status == 409 and sup.procs["watchers"].proc is None
+        # Play's launch before the Lab checks: the hook says why nothing started
+        out = io.StringIO()
+        assert playhooks.tell_supervisor(cfg, "launch", "play", out) is True
+        assert "watchers_with_play" in out.getvalue() and sup.play is None
     finally:
         sup.request_shutdown()
         thread.join(timeout=15)
@@ -321,4 +367,15 @@ def test_gos_dev_never_watches_play(
     # and a Lab without a game folder is a setup problem, not a crash loop
     monkeypatch.setattr(config, "running_as_dev", lambda: False)
     args = ["watch", "run", "--instance", "lab", "--config", str(path)]
+    assert cli.main(args) == runner.EXIT_SETUP
+
+
+def test_supervised_without_an_instance_watches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L1: run by the supervisor with no GOS_PLAY_INSTANCE, it never defaults to Play."""
+    _, path = make_cfg(tmp_path)
+    monkeypatch.delenv("GOS_PLAY_INSTANCE", raising=False)
+    monkeypatch.setattr(config, "running_as_dev", lambda: False)
+    args = ["watch", "run", "--supervised", "--config", str(path)]
     assert cli.main(args) == runner.EXIT_SETUP

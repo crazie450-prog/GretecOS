@@ -180,9 +180,12 @@ def test_log_lines() -> None:
 def test_dedupe_across_logs_and_error_floods() -> None:
     d = logparse.Dedupe()
     chat = logparse.Found("chat", {"text": "hi"})
-    assert d.keep("12:00:00", chat, 0.0)
-    assert not d.keep("12:00:00", chat, 0.0)  # the same line in the other log
-    assert d.keep("12:00:01", chat, 1.0)
+    assert d.keep("12:00:00", chat, 0.0, "latest.log")
+    # said twice in one second: both kept (L4); the other log's copies are dropped
+    assert d.keep("12:00:00", chat, 0.0, "latest.log")
+    assert not d.keep("12:00:00", chat, 0.0, "fml-client-latest.log")
+    assert not d.keep("12:00:00", chat, 0.0, "fml-client-latest.log")
+    assert d.keep("12:00:01", chat, 1.0, "fml-client-latest.log")
     err = logparse.Found("error", {"message": "boom"})
     assert d.keep("12:00:00", err, 0.0)
     assert not d.keep("12:00:05", err, 5.0)  # once a minute
@@ -219,6 +222,76 @@ def test_pause_tracker(clock: FakeClock) -> None:
     assert change is not None and change.paused is False
     change = t.world_closed()
     assert change is not None and change.paused is None
+
+
+def test_pause_grace_is_measured_by_the_logs_own_stamps(clock: FakeClock) -> None:
+    t = pause.PauseTracker(clock)
+    t.pause_line("12:00:00")
+    clock.advance(30)  # read late (a slow poll): the stamps still say "with the pause"
+    assert t.server_line("12:00:01") is None
+    change = t.server_line("12:00:03")
+    assert change is not None and change.paused is False
+    t.pause_line("23:59:59")
+    assert t.server_line("00:00:01") is None  # past midnight: 2 s later
+    assert t.server_line("00:00:05") is not None
+
+
+def test_a_pause_stays_paused_through_its_slow_save(
+    tmp_path: Path, fg: ModuleType, clock: FakeClock
+) -> None:
+    """H1: the pause save is one long tick on a GTNH world, so vanilla logs "Can't keep up!"
+    after it; that and every other line of the save leave the game paused, for a minute and
+    more, until the server really ticks again."""
+    tree = fg.Tree(tmp_path)
+    tree.log("")
+    w = Watchers(tree.game, None, tmp_path / "home", clock, settle_s=0)
+    w.poll_logs()
+    tree.log("[12:00:00] [Server thread/INFO]: Saving and pausing game...\n")
+    events = w.poll_logs()
+    assert [e.data["paused"] for e in events] == [True]
+    replay = [
+        (1, "[12:00:01] [Server thread/INFO]: Saving chunks for level 'lab'/Overworld"),
+        (2, "[12:00:03] [Server thread/INFO]: Saving chunks for level 'lab'/Nether"),
+        (
+            4,
+            (
+                "[12:00:06] [Server thread/WARN]: Can't keep up! Did the system time "
+                "change, or is the server overloaded? Running 5843ms behind, skipping "
+                "116 tick(s)"
+            ),
+        ),
+        (
+            1,
+            "[12:00:07] [Server thread/INFO] [SomeMod]: saved 40 machines",
+        ),
+        (2, "[12:00:09] [Server thread/WARN]: Skipping BlockEntity with id gt.tile"),
+    ]
+    for wait, line in replay:
+        clock.advance(wait)
+        tree.log(line + "\n")
+        assert [e for e in w.poll_logs() if e.kind == "game_paused"] == []
+    clock.advance(60)  # paused for a minute: still paused
+    assert w.poll_logs() == [] and w.tracker.paused is True
+    tree.log("[12:01:20] [Server thread/INFO]: <Clayton> back\n")
+    events = [e for e in w.poll_logs() if e.kind == "game_paused"]
+    assert [e.data for e in events] == [
+        {"paused": False, "why": "the server logged again"}
+    ]
+
+
+def test_only_ticking_lines_unpause() -> None:
+    def ticks(msg: str) -> bool:
+        p = logparse.parse(f"[12:00:00] [Server thread/INFO]: {msg}")
+        assert p is not None
+        return any(f.kind == "server_tick" for f in logparse.read_line(p, False, None))
+
+    assert ticks("<Clayton> hi")
+    assert ticks("* Clayton waves")
+    assert ticks("[Clayton: Set the time to 1000]")
+    assert ticks("Clayton left the game")
+    assert not ticks("Can't keep up! Running 2000ms behind, skipping 40 tick(s)")
+    assert not ticks("Saving chunks for level 'lab'/Overworld")
+    assert not ticks("Stopping server")
 
 
 # --- typed NBT ------------------------------------------------------------------------------------
