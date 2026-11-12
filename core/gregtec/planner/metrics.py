@@ -17,7 +17,8 @@ curated scarcity table's weight times one, or the effort model's (:mod:`.effort`
   target left out);
 - ``scarcity`` (D62): sum over the inputs of per hour x GT material units x the material's weight
   in ``data/curated/scarcity.tsv`` (``scarce`` lists the weighted inputs);
-- ``footprint``: None until WO-3.6;
+- ``footprint``: None here; :func:`gregtec.planner.plan.design` fills it from WO-3.6's layout
+  (:mod:`.outputs.footprint`, D200);
 - ``eff_h``, ``build_h``, ``unlock_h`` and ``effort`` (the breakdown table, :mod:`.effort`);
 - ``complexity``: ``nodes``, ``fluids`` (distinct fluids the route moves), ``loops`` (strongly
   connected sets in the route's own item-recipe graph) and ``score`` (their sum);
