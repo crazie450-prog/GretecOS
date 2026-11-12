@@ -14,6 +14,7 @@ import type {
   MyBase,
   PersonaInfo,
   PersonaState,
+  QuestsView,
   Reply,
   Session,
   SetupCheck,
@@ -82,6 +83,8 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
+  // The Quests view (WO-6.4): a spoil level only when he asks for more ("Spoil it", a tap).
+  quests: (spoil: number | null = null) => get<QuestsView>(spoil === null ? "/api/quests" : `/api/quests?spoil=${spoil}`),
   // My base (WO-3.8): every edit answers with the whole of it.
   base: () => get<MyBase>("/api/base"),
   baseFind: (q: string, kind: "item" | "machine") =>

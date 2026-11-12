@@ -346,3 +346,36 @@ export interface SetupDevices {
   outputs: SetupDevice[];
   error: string | null;
 }
+
+// The Quests view (WO-6.4, GET /api/quests): two catalog quest cards, the frontier's item links,
+// the quest lines' progress. Past the frontier only what the spoiler level shows is sent at all.
+export interface QuestLink {
+  part: "task" | "reward";
+  key: string;
+  name: string;
+  amount: number | null;
+  consume: boolean | null;
+}
+
+export interface QuestLine {
+  name: string;
+  done: number;
+  available: number;
+  locked: number;
+  total: number;
+  main_left: number;
+  frontier: string[];
+  note: string;
+}
+
+export interface QuestsView {
+  player: string;
+  tier: string;
+  spoil: 0 | 1 | 2;
+  default: 0 | 1 | 2;
+  goals: string[];
+  frontier: unknown; // a quest card, checked against the catalog before it is drawn
+  beyond: unknown;
+  links: Record<string, QuestLink[]>;
+  lines: QuestLine[];
+}

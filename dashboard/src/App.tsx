@@ -29,6 +29,7 @@ import { Later } from "./views/Later";
 import { PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
 import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
+import { Quests } from "./views/Quests";
 import { Search, type SearchTarget } from "./views/Search";
 import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
 import { Setup, SetupBanner } from "./views/Setup";
@@ -280,6 +281,16 @@ export function App() {
         return <Costs />;
       case "base":
         return <Base />;
+      case "quests":
+        return (
+          <Quests
+            answers={answers}
+            openItem={(key, name) => {
+              setSearchTarget({ kind: "item", key, name, tool: "quest_for_item" });
+              setView("search");
+            }}
+          />
+        );
       case "settings":
         return (
           <Settings
