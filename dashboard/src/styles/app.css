@@ -749,50 +749,105 @@ td {
   padding-left: var(--space-2);
 }
 
-.flow-wrap {
-  max-width: 100%;
-  overflow: auto;
+/* The flow card's canvas (WO-3.6): React Flow's base styles, coloured from the theme tokens. */
+.flow-canvas {
+  width: 100%;
+  min-height: 240px;
+  border: 1px solid var(--border);
+  background: var(--bg);
 }
 
-.flow .edge path {
-  fill: none;
+/* Until elkjs answers, and if it fails: the card's one layout is elkjs's (D159). */
+.flow-wait,
+.flow-failed {
+  min-height: 240px;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+}
+
+.flow-canvas .react-flow__background {
+  color: var(--rule);
+}
+
+.flow-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  box-sizing: border-box;
+  padding: 0 var(--space-3) 0 calc(10px + var(--space-3));
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.flow-node-label {
+  color: var(--text);
+  font: 600 16px var(--font-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-node-sub {
+  color: var(--text-2);
+  font: 13px var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-node .tier-band {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 10px;
+  background: var(--text-3);
+}
+
+.flow-node.tier-ulv .tier-band { background: var(--tier-ulv); }
+.flow-node.tier-lv .tier-band { background: var(--tier-lv); }
+.flow-node.tier-mv .tier-band { background: var(--tier-mv); }
+.flow-node.tier-hv .tier-band { background: var(--tier-hv); }
+.flow-node.tier-ev .tier-band { background: var(--tier-ev); box-shadow: inset -1px 0 var(--tier-edge); }
+.flow-node.tier-iv .tier-band { background: var(--tier-iv); }
+.flow-node.tier-luv .tier-band { background: var(--tier-luv); }
+.flow-node.tier-zpm .tier-band { background: var(--tier-zpm); }
+.flow-node.tier-uv .tier-band { background: var(--tier-uv); }
+.flow-node.tier-uhv .tier-band { background: var(--tier-uhv); box-shadow: inset -1px 0 var(--tier-edge); }
+.flow-node.tier-uev .tier-band { background: var(--tier-uev); box-shadow: inset -1px 0 var(--tier-edge); }
+.flow-node.tier-uiv .tier-band { background: var(--tier-uiv); box-shadow: inset -1px 0 var(--tier-edge); }
+.flow-node.tier-steam .tier-band { background: var(--tier-steam); }
+
+.flow-canvas .react-flow__handle {
+  opacity: 0;
+}
+
+.flow-canvas .react-flow__edge-path {
   stroke: var(--text-2);
   stroke-width: 2;
 }
 
-.flow .edge text {
+.flow-canvas .react-flow__edge-text {
   fill: var(--text-2);
   font: 13px var(--font-mono);
 }
 
-.flow .node rect {
-  fill: var(--panel);
-  stroke: var(--border);
+.flow-canvas .react-flow__edge-textbg {
+  fill: var(--bg);
 }
 
-.flow .node text {
-  fill: var(--text);
-  font: 600 16px var(--font-body);
+.flow-canvas .react-flow__controls-button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
-.flow .node text.sub {
-  fill: var(--text-2);
-  font: 13px var(--font-mono);
+.flow-canvas .react-flow__controls-button svg {
+  fill: currentColor;
 }
-
-.flow .tier-band {
-  fill: var(--text-3);
-}
-
-.flow .tier-lv .tier-band { fill: var(--tier-lv); }
-.flow .tier-mv .tier-band { fill: var(--tier-mv); }
-.flow .tier-hv .tier-band { fill: var(--tier-hv); }
-.flow .tier-ev .tier-band { fill: var(--tier-ev); }
-.flow .tier-iv .tier-band { fill: var(--tier-iv); }
-.flow .tier-luv .tier-band { fill: var(--tier-luv); }
-.flow .tier-zpm .tier-band { fill: var(--tier-zpm); }
-.flow .tier-uv .tier-band { fill: var(--tier-uv); }
-.flow .tier-steam .tier-band { fill: var(--tier-steam); }
 
 .flow-cites {
   display: flex;

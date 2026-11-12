@@ -12,6 +12,9 @@ dependencies = [
     # (gregtec.bridge.ingest); tests/oc uses it too. Already installed through mcp.
     "jsonschema>=4.26",
     "keyring>=25.7.0",
+    # WO-3.6, D201: the flow diagram's PNG for Discord (wheels for Windows and Linux, its own
+    # default font; no system install; MIT-CMU licence).
+    "pillow>=11.3",
     # WO-5.7, D248: gos voice benchmark's RAM of the core and voice processes (BSD-3-Clause).
     # Core only: the voice package never reads other processes (D247's audit).
     "psutil>=7.0",
