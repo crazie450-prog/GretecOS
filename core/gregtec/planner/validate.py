@@ -247,7 +247,8 @@ def mask(text: str, names: Iterable[str] = ()) -> str:
     text = KEY.sub(" ", text)
     text = PLAN_ID.sub(" ", text)
     for name in sorted({n for n in names if n.strip()}, key=len, reverse=True):
-        text = re.sub(re.escape(name), " ", text, flags=re.IGNORECASE)
+        # A plural goes with its name: left behind, the "s" of "4 Mixers" would read as seconds.
+        text = re.sub(re.escape(name) + r"(?:e?s\b)?", " ", text, flags=re.IGNORECASE)
     return text
 
 

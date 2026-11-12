@@ -172,6 +172,17 @@ def test_names_are_masked_case_insensitively_longest_first() -> None:
     assert not validate.check("Quantum Tank IV", DOC, []).ok  # IV read as a tier
 
 
+def test_plural_names_are_counts_not_seconds() -> None:
+    """Review: masking "Mixer" in "4 Mixers" left an "s" that read as 4 seconds."""
+    assert ok("Route 1 uses 4 Mixers.")
+    assert ok("Route 1 uses 4 mixers and 6 Quantum Tank IVs.")
+    assert ok("Route 1 uses 4 Widgetes.")
+    assert validate.check("Route 1 needs 7 Mixers.", DOC, NAMES).offending == ("7",)
+    for text in ("Route 1 needs 1800 Mixers.", "Route 1 needs 3600 mixers."):
+        *_, number = validate.stated(validate.mask(text, NAMES))
+        assert number.kind == "plain"  # a count, never a time
+
+
 def test_ordinals_and_positions() -> None:
     assert ok("The 1st route beats the 2nd.")
     assert not ok("The 7th route.")
