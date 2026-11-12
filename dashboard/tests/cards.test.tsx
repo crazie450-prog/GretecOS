@@ -6,11 +6,20 @@ import invalid from "../../tests/fixtures/cards/invalid.json";
 import valid from "../../tests/fixtures/cards/valid.json";
 import { Card } from "../src/cards/Card";
 import { CardContext, type CardActions } from "../src/cards/context";
+import { elkLayout, nodeSub } from "../src/cards/FlowDiagram";
 import { layoutFlow } from "../src/cards/flowLayout";
 import { CARD_TYPES } from "../src/cards/types.gen";
 import { schemaCardTypes, validate } from "../src/cards/validate";
 
 afterEach(cleanup);
+
+// jsdom has no ResizeObserver; React Flow (the flow card, WO-3.6) measures with one.
+class NoResize {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+globalThis.ResizeObserver ??= NoResize as unknown as typeof ResizeObserver;
 
 const VALID = Object.fromEntries(Object.entries(valid).filter(([k]) => !k.startsWith("_"))) as Record<string, Record<string, unknown>>;
 const CITE = /^(r|q|mte|crop|plan|w):\S+$/;
@@ -160,5 +169,32 @@ describe("the flow diagram's layout", () => {
 
   it("is empty for no nodes", () => {
     expect(layoutFlow([], [])).toEqual({ boxes: new Map(), width: 0, height: 0 });
+  });
+});
+
+describe("the flow diagram (React Flow + elkjs, WO-3.6)", () => {
+  const card = VALID.flow as unknown as import("../src/cards/types.gen").FlowCard;
+
+  it("draws every machine with its count, machine and tier", () => {
+    const { container } = draw(card);
+    const nodes = [...container.querySelectorAll(".flow-node")];
+    expect(nodes.length).toBe(card.nodes.length);
+    for (const n of card.nodes) {
+      const box = nodes.find((x) => x.querySelector(".flow-node-label")?.textContent === n.label);
+      expect(box, n.id).toBeTruthy();
+      expect(box?.querySelector(".flow-node-sub")?.textContent).toBe(nodeSub(n));
+      if (n.tier) expect(box?.className).toContain(`tier-${n.tier.toLowerCase()}`);
+    }
+  });
+
+  it("lays the card out left to right with elkjs", async () => {
+    const boxes = await elkLayout(card);
+    expect(boxes).not.toBeNull();
+    const at = new Map((boxes ?? []).map((b) => [b.id, b]));
+    expect(at.size).toBe(card.nodes.length);
+    for (const e of card.edges) {
+      if (e.from === e.to || !at.has(e.from) || !at.has(e.to)) continue;
+      expect(at.get(e.to)!.x, `${e.from}->${e.to}`).toBeGreaterThan(at.get(e.from)!.x);
+    }
   });
 });

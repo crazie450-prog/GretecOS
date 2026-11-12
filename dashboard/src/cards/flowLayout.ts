@@ -1,7 +1,7 @@
-// A layered layout for the flow diagram card (D160): each machine in the column after the
-// furthest machine that feeds it, rows in input order. Loops (a closed fuel loop feeding itself)
-// keep their first placement, so the layout always ends. No layout library: React Flow and elkjs
-// (PM02) come with the Designer (WO-3.6, WO-3.7), where plans are edited.
+// The flow card's first layout (D160): each machine in the column after the furthest machine that
+// feeds it, rows in input order. Loops (a closed fuel loop feeding itself) keep their first
+// placement, so the layout always ends. WO-3.6's FlowDiagram draws with it until elkjs's layered
+// layout arrives, and keeps it if elkjs fails.
 export interface FlowBox {
   id: string;
   col: number;
