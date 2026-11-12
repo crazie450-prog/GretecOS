@@ -3,7 +3,8 @@
 - **Tool results** (:func:`from_tool`): ``recipe_find``/``recipe_uses`` become a recipe card,
   read again from the DB by the rows' r: ids (``recipes_by_refs``, ``recipe_slots``,
   ``recipe_conditions``), so every slot is structured with the DB's own numbers; the quest tools
-  a quest card, nudge-first (a name the book doesn't show yet is null); anything else a table
+  a quest card, nudge-first (a name the book doesn't show yet is null); ``ore_find`` an ore list
+  in the tool's order (WO-6.6); anything else a table
   card. An error result is a table card whose ``error`` is the tool's message.
 - **Alerts** come from the health strip (an item in error or warning; the Anthropic key is the
   "AI offline" state, not an alert), the stale flag (WO-1.4) and the credit cycle (D48).
@@ -33,6 +34,7 @@ from gregtec.db import access
 RECIPE_TOOLS = ("recipe_find", "recipe_uses")
 QUEST_TOOLS = ("quest_find", "quest_frontier", "quest_for_item", "quest_get")
 QUEST_STATES = ("done", "available", "repeatable", "locked")
+ORE_LAYERS = ("primary", "secondary", "between", "sporadic")
 STALE_ID = "data-stale"
 CREDITS_ID = "credits"
 NO_ALERT = ("anthropic_key",)  # shown as the "AI offline" state instead
@@ -331,7 +333,45 @@ def from_tool(tool: str, text: str, is_error: bool, db: Path | None) -> dict[str
                 pass  # the table still shows what the tool said
     if tool in QUEST_TOOLS:
         return quest_card(tool, parse(text))
+    if tool == "ore_find":
+        return ore_card(parse(text))
     return table_card(tool, text, False)
+
+
+def ore_card(p: Parsed) -> dict[str, Any]:
+    """``ore_find``'s rows as the catalog's ore list, in the tool's order (WO-6.6)."""
+    rows = []
+    for r in p.rows[:50]:
+        dim, x, z = _int(r.get("dim")), _int(r.get("x")), _int(r.get("z"))
+        if dim is None or x is None or z is None:
+            continue
+        layers = (r.get("layer") or "").split(",")
+        layer = next((name for name in ORE_LAYERS if name in layers), None)
+        ref = r.get("ref") or ""
+        rows.append(
+            {
+                "mix": clip(r.get("mix"), 200),
+                "name": clip(r.get("mix"), 300),
+                "ores": [
+                    clip(o.strip(), 200) for o in (r.get("ores") or "").split(",")
+                ][:8],
+                "dim": dim,
+                "x": x,
+                "z": z,
+                "distance": _int(r.get("distance")),
+                "layer": layer,
+                "depleted": r.get("depleted") == "1",
+                "ref": ref if ref.startswith("vein:") else None,
+            }
+        )
+    material = p.head.get("material")
+    return {
+        "type": "ore_list",
+        "title": clip(f"Nearest {material} veins" if material else "Veins", 300),
+        "material": clip(material, 200) if material else None,
+        "rows": rows,
+        "notes": [clip(n, 2000) for n in p.notes[:20]],
+    }
 
 
 # --- health, alerts, approvals ----------------------------------------------------------------

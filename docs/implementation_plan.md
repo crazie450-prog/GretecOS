@@ -534,7 +534,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | base-keeper | Base-state notes, line lifecycle, goals | note_read/write, ledger_*, plan_set_status, base_get |
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
 | advisor | Next steps (§7.5) | quest_frontier, events_recent, ledger_get, plan_list, base_get |
-| ore-intel | Veins (§7.6) | ore_find, player_pos |
+| ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
 | crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
 | wiki-research | Wiki cache and fetch, attribution (§7.8) | wiki_search, wiki_fetch |
@@ -560,6 +560,7 @@ plan_pin(id, node, recipe?)          plan_rename(id, name)     base_get()       
 layout_estimate(plan)                ledger_get()              ledger_update(...)
 quest_find(text)                     quest_get(id, spoil=0..2) quest_frontier(n)     quest_for_item(item)
 events_recent(window, kinds?)        session_summary(id)       ore_find(mat, dim?, near?)  player_pos()
+ore_waypoint(vein)                   # proposes a vein's waypoint from the DB row (D272); confirm is UI-only
 telemetry_get(scope)                 action_propose(kind,args) action_status(id)     # confirm is UI-only
 wiki_search(q)                       wiki_fetch(title)         structure_get(machine, variant)
 theme_get/list/save                  build_request(spec)       schematic_export(build, part)
