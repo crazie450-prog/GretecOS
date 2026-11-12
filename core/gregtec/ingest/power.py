@@ -10,8 +10,10 @@ GregtecLink's power pass writes what no recipe carries (docs/contracts/gregtecli
   voltage and amps out, and for each fuel of its map what GT's own ``getFuelValue`` gives;
 - ``containers``: the fluid in each fluid container a fuel map lists as its input (a cell of a
   fuel is that fuel: GT's fuel maps index fuels by fluid);
-- ``storage`` (WO-4.5, D240; absent from runs made before it): ``batteries`` (every ``battery*``
-  oredict member that is an IC2 electric item: tier, max charge, transfer limit, rechargeable), ``buffers``
+- ``storage`` (WO-4.5, D240; absent from runs made before it): ``cables`` (every GT and GT++
+  cable's ``mVoltage``, ``mAmperage`` and ``mCableLossPerMeter``; absent from the first WO-4.5
+  runs), ``batteries`` (every ``battery*`` oredict member that is an IC2 electric item: tier, max
+  charge, transfer limit, rechargeable; a wildcard member at meta 0), ``buffers``
   (every GT battery buffer: tier, slots, voltage in and out, own EU store), ``transformers``
   (every GT transformer, GT's power and GT++'s hi-amp ones too: voltage and amps in and out in
   both modes, ``down`` and ``up``) and ``lsc`` (the Lapotronic Supercapacitor's cells: block,
@@ -123,6 +125,16 @@ class Generator:
 
 
 @dataclass(frozen=True)
+class CableStats:
+    """A GT cable's own fields (``MTECable``), so no tooltip's language or number locale."""
+
+    mte_id: int
+    voltage: int  # mVoltage
+    amperage: int  # mAmperage
+    loss: int  # mCableLossPerMeter: EU per metre per amp
+
+
+@dataclass(frozen=True)
 class Battery:
     """An item a battery buffer of its tier takes (GT: the item's tier equals the buffer's)."""
 
@@ -179,6 +191,7 @@ class Storage:
     buffers: tuple[Buffer, ...]
     transformers: tuple[Transformer, ...]
     lsc: tuple[LscCell, ...]
+    cables: tuple[CableStats, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -301,7 +314,13 @@ def _storage(d: Mapping[str, Any]) -> Storage:
                 str(c["name"]), ref.name, ref.meta, _int(c, "glass_tier"), int(capacity)
             )
         )
-    return Storage(tuple(batteries), buffers, transformers, tuple(cells))
+    cables = tuple(
+        CableStats(
+            _int(c, "mte_id"), _int(c, "voltage"), _int(c, "amperage"), _int(c, "loss")
+        )
+        for c in d.get("cables", ())
+    )
+    return Storage(tuple(batteries), buffers, transformers, tuple(cells), cables)
 
 
 def parse(root: Mapping[str, Any]) -> Power:

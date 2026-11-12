@@ -1254,11 +1254,22 @@ public final class Harness {
         }
 
         /**
-         * gt_power.json's storage (WO-4.5, D240): GT batteries with a charge, LV battery buffers with their slots, the
-         * LV transformer in both modes (down: in at MV, out at LV, more amps out than in), and the LSC's cells with
-         * capacities.
+         * gt_power.json's storage (WO-4.5, D240): GT's cables with their voltage, amperage and loss, GT batteries with
+         * a
+         * charge, LV battery buffers with their slots, the LV transformer in both modes (down: in at MV, out at LV,
+         * more
+         * amps out than in), and the LSC's cells with capacities.
          */
         private void checkStorage(JsonObject storage) {
+            int cables = 0;
+            for (JsonElement e : storage.getAsJsonArray("cables")) {
+                JsonObject c = e.getAsJsonObject();
+                if (c.get("voltage")
+                    .getAsLong() > 0
+                    && c.get("amperage")
+                        .getAsLong() > 0)
+                    cables++;
+            }
             int batteries = 0;
             for (JsonElement e : storage.getAsJsonArray("batteries")) {
                 JsonObject b = e.getAsJsonObject();
@@ -1313,8 +1324,10 @@ public final class Harness {
             check(
                 checks,
                 "storage_listed",
-                batteries >= 10 && buffers >= 3 && lvTransformer && cells >= 5,
-                batteries + " batteries with a charge, "
+                cables >= 500 && batteries >= 10 && buffers >= 3 && lvTransformer && cells >= 5,
+                cables + " cables, "
+                    + batteries
+                    + " batteries with a charge, "
                     + buffers
                     + " LV battery buffers, LV transformer modes "
                     + lvTransformer

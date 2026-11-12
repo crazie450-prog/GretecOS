@@ -118,7 +118,7 @@ GAME_TABLES = frozenset(
         "my_base_machine", "my_base_stock",  # the core's (store.py): My base, WO-3.8 (D210)
         "rotor_size", "rotor_material", "rotor_gt", "generator", "generator_gt",
         "fuel_container", "fuel",
-        "battery", "battery_buffer", "transformer", "lsc_cell",  # WO-4.5 (D240)
+        "cable", "battery", "battery_buffer", "transformer", "lsc_cell",  # WO-4.5 (D240)
     }
 )  # fmt: skip
 PRIVATE = frozenset({"kv", "device"})  # app state and paired devices: not for agents

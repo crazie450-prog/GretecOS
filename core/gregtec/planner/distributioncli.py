@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, TextIO
@@ -28,6 +29,27 @@ from gregtec.planner import distribution as dist
 from gregtec.planner import ledger
 
 COMMANDS = ("dist",)
+
+
+def _positive_int(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} isn't a whole number") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{text} must be at least 1")
+    return n
+
+
+def _amount(text: str) -> float:
+    """A finite number, not negative (EU/t, amps, seconds)."""
+    try:
+        x = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} isn't a number") from None
+    if not math.isfinite(x) or x < 0:
+        raise argparse.ArgumentTypeError(f"{text} must be finite and not negative")
+    return x
 
 
 def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -44,22 +66,24 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     b = sub.add_parser("buffer", help="size storage for a deficit window")
     b.add_argument("--tier", required=True, help="the tier the lines draw at")
-    b.add_argument("--peak", type=float, required=True, help="the lines' peak EU/t")
+    b.add_argument("--peak", type=_amount, required=True, help="the lines' peak EU/t")
     b.add_argument(
-        "--gen", type=float, required=True, help="generation at the tier, EU/t"
+        "--gen", type=_amount, required=True, help="generation at the tier, EU/t"
     )
-    b.add_argument("--window", type=float, required=True, help="the window, seconds")
+    b.add_argument("--window", type=_amount, required=True, help="the window, seconds")
     b.add_argument(
         "--tier-cap", default=None, help="highest tier for LSC cells (the tier)"
     )
-    b.add_argument("--max-buffers", type=int, default=dist.MAX_BUFFERS)
+    b.add_argument("--max-buffers", type=_positive_int, default=dist.MAX_BUFFERS)
     common(b)
 
     c = sub.add_parser("cable", help="check a cable run")
     v = c.add_mutually_exclusive_group(required=True)
     v.add_argument("--tier", help="the voltage: one amp of this tier")
-    v.add_argument("--voltage", type=int, help="the voltage, EU")
-    c.add_argument("--amps", type=float, required=True, help="the amps the run carries")
+    v.add_argument("--voltage", type=_positive_int, help="the voltage, EU")
+    c.add_argument(
+        "--amps", type=_amount, required=True, help="the amps the run carries"
+    )
     c.add_argument(
         "--segment",
         action="append",
@@ -72,17 +96,19 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     t = sub.add_parser("transformer", help="place transformers between two tiers")
     t.add_argument("--from", dest="source", required=True, help="the source's tier")
     t.add_argument("--to", dest="line", required=True, help="the lines' tier")
-    t.add_argument("--amps", type=float, required=True, help="the amps the lines draw")
+    t.add_argument(
+        "--amps", type=_amount, required=True, help="the amps the lines draw"
+    )
     common(t)
 
     g = sub.add_parser(
         "ledger", help="buffers and transformers for the EU ledger's tiers"
     )
     g.add_argument(
-        "--window", type=float, required=True, help="the peak window, seconds"
+        "--window", type=_amount, required=True, help="the peak window, seconds"
     )
     g.add_argument("--scope", choices=ledger.SCOPES, default="all")
-    g.add_argument("--max-buffers", type=int, default=dist.MAX_BUFFERS)
+    g.add_argument("--max-buffers", type=_positive_int, default=dist.MAX_BUFFERS)
     common(g)
 
 
@@ -188,7 +214,8 @@ def _run(
     cmd = args.dist_command
     if cmd != "cable" and cat.run_id is None:
         raise dist.DistributionError(
-            "the DB has no storage data: build it from an export made with WO-4.5's GregtecLink"
+            "the DB has no storage data in its current export run: build it from an export"
+            " made with WO-4.5's GregtecLink"
         )
     data: Any
     status = 0
@@ -207,8 +234,13 @@ def _run(
         volts = args.voltage if args.voltage is not None else dist.voltage(args.tier)
         chk = dist.check_run(_segments(cat, args.segment), volts, args.amps)
         fits = dist.cables_for(cat, volts, args.amps)
-        data = {**chk.as_dict(), "fits": [c.ref for c in fits]}
-        lines = _cable_lines(chk, fits)
+        data = {
+            **chk.as_dict(),
+            "fits": [c.ref for c in fits],
+            "cable_source": cat.cable_source,
+            "notes": list(cat.notes),
+        }
+        lines = _cable_lines(chk, fits) + [f"  note: {n}" for n in cat.notes]
         status = 0 if chk.ok else 1
     elif cmd == "transformer":
         p = dist.place_transformers(cat, args.source, args.line, args.amps)

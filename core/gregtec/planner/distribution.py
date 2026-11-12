@@ -10,9 +10,10 @@ to them:
   own tier) is sized for both the energy and the EU/t (a buffer gives one amp per battery at its
   voltage); an LSC option uses the biggest cell at or below the tier cap. Battery buffers are
   recommended while the window fits in ``max_buffers`` of them, the LSC beyond that.
-- **Cable runs** (:func:`check_run`, D242): stats from each cable's tooltip in the export
-  (``machine.tooltip``: max voltage, max amperage, loss per metre per amp; V10 resolved by
-  D240). GT's power path: a packet's voltage drops by every cable's loss on the way, cables rated
+- **Cable runs** (:func:`check_run`, D242): each cable's max voltage, max amperage and loss per
+  metre per amp from the export's ``cable`` table (GT's own fields; V10 resolved by D240), or,
+  for a run made before it, parsed from the cable's tooltip (``machine.tooltip``), checked
+  against GT's voltages, with the unreadable ones counted in the catalog's notes. GT's power path: a packet's voltage drops by every cable's loss on the way, cables rated
   below the voltage burn, and the run carries at most its weakest cable's amps.
 - **Transformer placement** (:func:`place_transformers`, D242): the chain of transformers between
   a source tier and a line tier, each step's units from the DB's transformers in the mode the
@@ -31,6 +32,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from gregtec.db import access
 from gregtec.planner.gtmath.tiers import VN, V
 
 TICKS_PER_S = 20
@@ -40,10 +42,17 @@ MAX_BUFFERS = (
 _TIER = {name.lower(): i for i, name in enumerate(VN)}
 _COLOUR = re.compile("§.")  # Minecraft's colour codes
 _THICKNESS = re.compile(r"^\d+x ")
+# A number in any locale's digit grouping (2,048 / 2.048 / 2 048 with a (narrow) no-break space /
+# 2'048): GT formats a cable's tooltip numbers in the JVM's locale.
+_NUM = r"(\d(?:[\d.,' \t\u00a0\u202f]*\d)?)"
 _CABLE = (
-    re.compile(r"Max Voltage:\s*([\d,]+)"),
-    re.compile(r"Max Amperage:\s*([\d,]+)"),
-    re.compile(r"Loss/Meter/Ampere:\s*([\d,]+)"),
+    re.compile(r"Max Voltage:[ \t]*" + _NUM + r"(?:[ \t]*\(([A-Za-z]+)\))?"),
+    re.compile(r"Max Amperage:[ \t]*" + _NUM),
+    re.compile(r"Loss/Meter/Ampere:[ \t]*" + _NUM),
+)
+CABLE_CLASSES = (
+    "gregtech.api.metatileentity.implementations.MTECable",
+    "gtPlusPlus.xmod.gregtech.api.metatileentity.implementations.GTPPMTECable",
 )
 
 
@@ -147,36 +156,105 @@ class Catalog:
     buffers: tuple[Buffer, ...]
     transformers: tuple[Transformer, ...]
     cells: tuple[Cell, ...]
+    cable_source: str = (
+        "none"  # export (the cable table), tooltip (an older run) or none
+    )
+    notes: tuple[str, ...] = ()
 
 
 def parse_cable_tooltip(lines: Sequence[str]) -> tuple[int, int, int] | None:
-    """(max voltage, max amperage, loss per metre per amp) from a GT cable's tooltip lines (raw,
-    with colour codes, as the export has them); None for any other tooltip."""
+    """(max voltage, max amperage, loss per metre per amp) from a GT cable's en_US tooltip lines
+    (raw, with colour codes, as the export has them), in any number locale's digit grouping; None
+    for any other tooltip, or when the voltage isn't one of GT's or doesn't match the tier named
+    beside it (a misread number)."""
     text = _COLOUR.sub("", "\n".join(lines))
     found = [p.search(text) for p in _CABLE]
     if not all(found):
         return None
-    v, a, loss = (int(m.group(1).replace(",", "")) for m in found if m)
+    v, a, loss = (int(re.sub(r"\D", "", m.group(1))) for m in found if m)
+    named = found[0].group(2) if found[0] else None
+    if v not in V or (named is not None and _TIER.get(named.lower()) != V.index(v)):
+        return None
     return v, a, loss
 
 
-def _storage_run(conn: sqlite3.Connection) -> int | None:
-    row = conn.execute("SELECT MAX(run_id) FROM battery_buffer").fetchone()
-    return int(row[0]) if row and row[0] is not None else None
+def _tables(conn: sqlite3.Connection) -> set[str]:
+    return {
+        str(r[0])
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+
+
+def _current_run(conn: sqlite3.Connection, tables: set[str]) -> int | None:
+    """The run the recipe tools answer from (``current_run``), if the DB has one."""
+    if "export_run" not in tables:
+        return None
+    rows = access.query(conn, "current_run")
+    return int(rows[0]["id"]) if rows else None
+
+
+def _has_rows(
+    conn: sqlite3.Connection, tables: set[str], table: str, run_id: int
+) -> bool:
+    if table not in tables:  # a DB from before schema 5 (read-only: never upgraded)
+        return False
+    sql = f"SELECT 1 FROM {table} WHERE run_id = ? LIMIT 1"
+    return conn.execute(sql, (run_id,)).fetchone() is not None
+
+
+def _cables(
+    conn: sqlite3.Connection, tables: set[str], run_id: int | None
+) -> tuple[list[Cable], str, list[str]]:
+    if "machine" not in tables:
+        return [], "none", []
+    mte_names = {
+        int(r[0]): str(r[1])
+        for r in conn.execute(
+            "SELECT mte_id, name_en FROM machine WHERE mte_id IS NOT NULL"
+        )
+    }
+    if run_id is not None and _has_rows(conn, tables, "cable", run_id):
+        rows = conn.execute(
+            "SELECT mte_id, voltage, amperage, loss FROM cable WHERE run_id = ?"
+            " ORDER BY mte_id",
+            (run_id,),
+        )
+        cables = [
+            Cable(int(r[0]), mte_names.get(int(r[0]), f"mte {r[0]}"), *map(int, r[1:]))
+            for r in rows
+        ]
+        return cables, "export", []
+    cables, unreadable = [], 0
+    for mte_id, name, tooltip in conn.execute(
+        "SELECT mte_id, name_en, tooltip FROM machine WHERE class_name IN"
+        f" ({','.join('?' * len(CABLE_CLASSES))}) ORDER BY mte_id",
+        CABLE_CLASSES,
+    ):
+        lines = str(tooltip or "").split("\n")  # lines joined by build
+        stats = parse_cable_tooltip(lines)
+        if stats is None:
+            unreadable += 1
+        else:
+            cables.append(Cable(int(mte_id), str(name), *stats))
+    notes = []
+    if unreadable:
+        notes.append(
+            f"{unreadable} cable tooltips unreadable (not en_US?), their cables left out:"
+            " an export from WO-4.5's GregtecLink has every cable's own fields"
+        )
+    return cables, "tooltip" if cables else "none", notes
 
 
 def catalog(conn: sqlite3.Connection, run_id: int | None = None) -> Catalog:
-    """The cables (from ``machine``) and the newest run's storage tables (or ``run_id``'s)."""
-    cables = []
-    for mte_id, name, tooltip in conn.execute(
-        "SELECT mte_id, name_en, tooltip FROM machine WHERE tooltip LIKE '%Loss/Meter/Ampere%'"
-        " ORDER BY mte_id"
-    ):
-        stats = parse_cable_tooltip(str(tooltip).split("\n"))  # lines joined by build
-        if stats is not None:
-            cables.append(Cable(int(mte_id), str(name), *stats))
+    """The cables and storage tables of the current export run (``current_run``, or
+    ``run_id``'s). With no storage rows in that run, or a DB from before schema 5, ``run_id`` is
+    None and the storage tuples are empty; cables then come from their tooltips."""
+    tables = _tables(conn)
     if run_id is None:
-        run_id = _storage_run(conn)
+        run_id = _current_run(conn, tables)
+    cables, source, notes = _cables(conn, tables, run_id)
+    if run_id is None or not _has_rows(conn, tables, "battery_buffer", run_id):
+        return Catalog(None, tuple(cables), (), (), (), (), source, tuple(notes))
     names = {
         (r[0], int(r[1])): str(r[2])
         for r in conn.execute(
@@ -232,7 +310,16 @@ def catalog(conn: sqlite3.Connection, run_id: int | None = None) -> Catalog:
             (run_id,),
         )
     )
-    return Catalog(run_id, tuple(cables), batteries, buffers, transformers, cells)
+    return Catalog(
+        run_id,
+        tuple(cables),
+        batteries,
+        buffers,
+        transformers,
+        cells,
+        source,
+        tuple(notes),
+    )
 
 
 def find_cable(cat: Catalog, key: str) -> Cable:
@@ -290,19 +377,30 @@ class BufferSizing:
 
 
 def _battery_option(
-    cat: Catalog, tier: int, energy: int, deficit: float
+    cat: Catalog, tier: int, energy: int, deficit: float, max_buffers: int
 ) -> BufferOption | None:
+    """The tier's buffer with the most slots, filled with the tier's smallest battery that keeps
+    the count at or under ``max_buffers`` (else the one with the most charge): a bigger battery
+    costs more to make, and the endgame ones hold ~2^63 EU (D241)."""
     bufs = [b for b in cat.buffers if b.tier == tier]
     bats = [b for b in cat.batteries if b.tier == tier and b.max_charge > 0]
     if not bufs or not bats:
         return None
     buf = min(bufs, key=lambda b: (-b.slots, b.mte_id))
-    bat = min(bats, key=lambda b: (-b.max_charge, b.registry_name, b.meta))
-    unit_eu = buf.slots * int(bat.max_charge) + buf.eu_store
     unit_eut = buf.slots * buf.eu_out  # one amp per battery at the buffer's voltage
-    by_energy = math.ceil(energy / unit_eu)
     by_power = math.ceil(deficit / unit_eut)
-    count = max(by_energy, by_power, 1)
+    smallest_first = sorted(bats, key=lambda b: (b.max_charge, b.registry_name, b.meta))
+    for bat in smallest_first:
+        unit_eu = buf.slots * int(bat.max_charge) + buf.eu_store
+        by_energy = math.ceil(energy / unit_eu)
+        count = max(by_energy, by_power, 1)
+        if count <= max_buffers:
+            break
+    else:
+        bat = min(bats, key=lambda b: (-b.max_charge, b.registry_name, b.meta))
+        unit_eu = buf.slots * int(bat.max_charge) + buf.eu_store
+        by_energy = math.ceil(energy / unit_eu)
+        count = max(by_energy, by_power, 1)
     return BufferOption(
         "battery_buffer",
         count,
@@ -358,8 +456,12 @@ def size_buffer(
     """Storage for a deficit window at ``tier``: ``(peak - generation) x window`` EU."""
     t = tier_index(tier)
     cap = t if tier_cap is None else tier_index(tier_cap)
-    if window_s < 0 or peak_eut < 0 or gen_eut < 0:
-        raise DistributionError("peak, generation and window can't be negative")
+    if not all(math.isfinite(x) and x >= 0 for x in (window_s, peak_eut, gen_eut)):
+        raise DistributionError(
+            "peak, generation and window must be finite, not negative"
+        )
+    if max_buffers < 1:
+        raise DistributionError("max buffers must be at least 1")
     deficit = max(0.0, peak_eut - gen_eut)
     energy = math.ceil(deficit * window_s * TICKS_PER_S)
     name = VN[t]
@@ -377,7 +479,7 @@ def size_buffer(
             "generation covers the peak: no buffer needed",
         )
     notes: list[str] = []
-    bb = _battery_option(cat, t, energy, deficit)
+    bb = _battery_option(cat, t, energy, deficit, max_buffers)
     lsc = _lsc_option(cat, cap, energy)
     if bb is None:
         notes.append(f"no {name} battery buffer with a {name} battery in the DB")
@@ -462,9 +564,9 @@ def check_run(segments: Sequence[Segment], voltage: int, amps: float) -> CableCh
     at most its weakest cable's amps)."""
     if not segments:
         raise DistributionError("a run needs at least one segment")
-    if voltage <= 0 or amps < 0 or any(s.length <= 0 for s in segments):
+    if voltage <= 0 or not 0 <= amps < math.inf or any(s.length <= 0 for s in segments):
         raise DistributionError(
-            "voltage and lengths must be positive, amps not negative"
+            "voltage and lengths must be positive, amps finite and not negative"
         )
     problems: list[str] = []
     burns: list[str] = []
@@ -576,8 +678,8 @@ def place_transformers(
     out)`` units, and draws ``ceil(amps out x V out / V in)`` amps upstream (transformers keep
     the EU). At each step the unit needing the fewest is used (then the fewest amps, mte id)."""
     s, ln = tier_index(source_tier), tier_index(line_tier)
-    if amps < 0:
-        raise DistributionError("amps can't be negative")
+    if not 0 <= amps < math.inf:  # also NaN
+        raise DistributionError("amps must be finite, not negative")
     if s == ln:
         return TransformerPlan(
             VN[s], VN[ln], amps, (), math.ceil(amps), ("same tier: none",)
@@ -657,9 +759,10 @@ def from_ledger(
     max_buffers: int = MAX_BUFFERS,
 ) -> LedgerDistribution:
     """Buffers and transformers for the ledger's per-tier nets (``ledger.TierNet``s of one
-    scope). A tier's deficit is its lines' peak over its own sources' generation, but never more
-    than the base's (its whole peak over its whole generation: transformers bring the rest from
-    other tiers). Lines at a tier with no source get the transformer chain from the nearest
+    scope). A tier's deficit is its lines' peak over its own sources' generation; when those add
+    up to more than the base's shortfall (its whole peak over its whole generation: transformers
+    bring the rest from other tiers), the base's shortfall is shared out between the short tiers
+    in proportion to their deficits, so the buffers together store no more than it. Lines at a tier with no source get the transformer chain from the nearest
     sourced tier above (else below), sized for the lines' amps."""
     nets = [t for t in tiers]
     out = LedgerDistribution(scope, window_s)
@@ -672,10 +775,14 @@ def from_ledger(
     )
     cap = max(tier_index(t.tier) for t in nets)
     sourced = sorted(tier_index(t.tier) for t in nets if t.gen_eut > 0 or t.amps_in > 0)
+    tier_short = math.fsum(
+        max(0.0, t.use_eut_peak - t.gen_eut) for t in nets if t.use_eut_peak > 0
+    )
+    share = min(1.0, base_short / tier_short) if tier_short > 0 else 0.0
     for t in nets:
         if t.use_eut_peak <= 0:
             continue
-        short = min(max(0.0, t.use_eut_peak - t.gen_eut), base_short)
+        short = max(0.0, t.use_eut_peak - t.gen_eut) * share
         if short > 0:
             # size_buffer takes peak and generation: give it the share this tier must store
             out.buffers.append(

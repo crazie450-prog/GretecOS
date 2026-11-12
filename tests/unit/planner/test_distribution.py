@@ -26,7 +26,7 @@ from gregtec.db import power as power_db
 from gregtec.ingest import power as power_ingest
 from gregtec.planner import distribution as dist
 from gregtec.planner import distributioncli, ledger
-from gregtec.planner.gtmath.tiers import V
+from gregtec.planner.gtmath.tiers import VN, V
 
 GT = "gregtech:gt.metaitem.01"
 LSC = "kekztech:kekztech_lapotronicenergyunit_block"
@@ -97,20 +97,29 @@ CABLES = {
     1428: ("4x Gold Cable", 512, 12, 2),
     2341: ("2x Superconductor HV Wire", 512, 12, 0),
 }
+# GT's own fields, as the power pass writes them (review M1)
+STORAGE["cables"] = [
+    {"mte_id": mte, "voltage": v, "amperage": a, "loss": loss}
+    for mte, (_n, v, a, loss) in CABLES.items()
+]
 
 
-def _tooltip(v: int, a: int, loss: int) -> str:
-    # as GT writes it (with colour codes) and `gos db build` stores it (lines joined)
+def _tooltip(v: int, a: int, loss: int, sep: str = ",") -> str:
+    # as GT writes it (with colour codes, numbers grouped in the JVM's locale) and `gos db build`
+    # stores it (lines joined)
+    def n(x: int) -> str:
+        return f"{x:,}".replace(",", sep)
+
     return "\n".join(
         [
-            f"Max Voltage: §e{v:,}§7 (§2LV§7)",
-            f"Max Amperage: §b{a:,}§7",
-            f"Loss/Meter/Ampere: §c{loss:,}§7 EU-Volt",
+            f"Max Voltage: §e{n(v)}§7 (§2{VN[V.index(v)]}§7)",
+            f"Max Amperage: §b{n(a)}§7",
+            f"Loss/Meter/Ampere: §c{n(loss)}§7 EU-Volt",
         ]
     )
 
 
-def _db(path: Path) -> sqlite3.Connection:
+def _db(path: Path, storage: dict[str, Any] = STORAGE) -> sqlite3.Connection:
     conn = access.connect(path)
     conn.execute(
         "INSERT INTO export_run(id, run_key, fingerprint) VALUES (1, 'r1', 'f')"
@@ -140,13 +149,13 @@ def _db(path: Path) -> sqlite3.Connection:
         "INSERT INTO item(registry_name, meta, nbt_hash, name_en) VALUES (?,?,'',?)",
         [(GT, 32518, "Small Lithium Battery"), (GT, 32538, "Large Lithium Battery")],
     )
-    power_db.write(conn, 1, _power())
+    power_db.write(conn, 1, _power(storage))
     return conn
 
 
-def _power() -> power_ingest.Power:
+def _power(storage: dict[str, Any] = STORAGE) -> power_ingest.Power:
     return power_ingest.parse(
-        {"sizes": [], "materials": [], "generators": [], "storage": STORAGE}
+        {"sizes": [], "materials": [], "generators": [], "storage": storage}
     )
 
 
@@ -197,13 +206,14 @@ def test_storage_reads_from_gt_power_json() -> None:
 
 def test_the_storage_tables_hold_the_run(conn: sqlite3.Connection) -> None:
     assert row(conn, "SELECT count(*) FROM battery WHERE run_id = 1")[0] == 4
+    assert row(conn, "SELECT count(*) FROM cable WHERE run_id = 1")[0] == len(CABLES)
     assert (
         row(conn, "SELECT count(*) FROM transformer WHERE run_id = 1")[0] == 10
     )  # 2 modes
     big = row(conn, "SELECT capacity FROM lsc_cell WHERE name = 'UMV'")[0]
     assert int(big) == int(STORAGE["lsc"][-1]["capacity"])
     power_db.delete(conn, [1])
-    for table in ("battery", "battery_buffer", "transformer", "lsc_cell"):
+    for table in ("cable", "battery", "battery_buffer", "transformer", "lsc_cell"):
         assert row(conn, f"SELECT count(*) FROM {table}")[0] == 0
 
 
@@ -233,14 +243,20 @@ def test_a_version_4_db_gets_the_storage_tables(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_cable_tooltips_parse() -> None:
-    assert dist.parse_cable_tooltip(_tooltip(2097152, 1024, 0).split("\n")) == (
-        2097152,
-        1024,
-        0,
-    )
+def test_cable_tooltips_parse_in_any_number_locale() -> None:
+    # en, de/it (.), fr (narrow no-break space), sv (no-break space), de-CH (')
+    for sep in (",", ".", "\u202f", "\u00a0", "'"):
+        tip = _tooltip(2097152, 1024, 0, sep).split("\n")
+        assert dist.parse_cable_tooltip(tip) == (2097152, 1024, 0), sep
     assert dist.parse_cable_tooltip(["Max Voltage: 32", "Max Amperage: 2"]) is None
     assert dist.parse_cable_tooltip(["Machine Type: Blast Furnace"]) is None
+    # a number read wrong is refused, never used: not one of GT's voltages, or not the tier
+    # named beside it
+    for bad in ("Max Voltage: 2 (EV)", "Max Voltage: 2048 (HV)", "Max Voltage: 2049"):
+        assert (
+            dist.parse_cable_tooltip([bad, "Max Amperage: 1", "Loss/Meter/Ampere: 1"])
+            is None
+        )
 
 
 def test_the_catalog_reads_cables_and_the_newest_run(cat: dist.Catalog) -> None:
@@ -255,7 +271,65 @@ def test_the_catalog_reads_cables_and_the_newest_run(cat: dist.Catalog) -> None:
             dist.find_cable(cat, bad)
     # one-use batteries (no charge goes back in) are not storage
     assert 32530 not in {b.meta for b in cat.batteries}
-    assert cat.run_id == 1
+    assert cat.run_id == 1 and cat.cable_source == "export" and cat.notes == ()
+
+
+def _no_cable_rows(tmp_path: Path) -> sqlite3.Connection:
+    old = {k: v for k, v in STORAGE.items() if k != "cables"}  # a first WO-4.5 run
+    return _db(tmp_path / "old.sqlite", old)
+
+
+def test_cables_fall_back_to_their_tooltips(tmp_path: Path, cat: dist.Catalog) -> None:
+    conn = _no_cable_rows(tmp_path)
+    try:
+        conn.execute(  # a cable whose tooltip isn't en_US: counted, never guessed
+            "INSERT INTO machine(mte_id, class_name, name_en, tooltip) VALUES (?,?,?,?)",
+            (1300, dist.CABLE_CLASSES[1], "1x Kupferkabel", "Max. Spannung: 32"),
+        )
+        old = dist.catalog(conn)
+    finally:
+        conn.close()
+    assert old.cable_source == "tooltip" and old.run_id == 1
+    assert old.cables == cat.cables  # the same numbers as GT's own fields
+    assert len(old.notes) == 1 and old.notes[0].startswith(
+        "1 cable tooltips unreadable"
+    )
+
+
+def test_a_version_4_db_reads_without_storage(tmp_path: Path) -> None:
+    # review M2: `gos dist` opens the DB read-only, so a v4 DB is never upgraded
+    path = tmp_path / "gos.sqlite"
+    c = sqlite3.connect(path)
+    try:
+        c.executescript(SCHEMA_V4.read_text(encoding="utf-8"))
+        c.execute(
+            "INSERT INTO export_run(id, run_key, fingerprint) VALUES (1, 'r1', 'f')"
+        )
+        c.execute(
+            "INSERT INTO machine(mte_id, class_name, name_en, tooltip) VALUES (?,?,?,?)",
+            (1240, dist.CABLE_CLASSES[0], "1x Tin Wire", _tooltip(32, 1, 2)),
+        )
+        c.commit()
+    finally:
+        c.close()
+    conn = access.connect(path, readonly=True)
+    try:
+        cat = dist.catalog(conn)
+    finally:
+        conn.close()
+    assert cat.run_id is None and cat.buffers == () and cat.cable_source == "tooltip"
+    assert [c.ref for c in cat.cables] == ["mte:1240"]
+
+
+def test_storage_comes_from_the_current_run_only(conn: sqlite3.Connection) -> None:
+    # review L4: a newer run without storage never mixes with an older run's storage
+    conn.execute(
+        "INSERT INTO export_run(id, run_key, created_at, fingerprint)"
+        " VALUES (2, 'r2', '2099-01-01', 'f')"
+    )
+    cat = dist.catalog(conn)
+    assert cat.run_id is None and cat.batteries == () and cat.cable_source == "tooltip"
+    assert dist.catalog(conn, run_id=1).run_id == 1
 
 
 # --- §8 scenario 1: a deficit window sized to a buffer -----------------------------------------
@@ -266,17 +340,20 @@ def test_scenario_a_deficit_window_is_sized_to_a_battery_buffer(
 ) -> None:
     peak, gen, window = 2400.0, 1800.0, 120.0
     s = dist.size_buffer(cat, "HV", peak, gen, window)
-    # expected from the DB rows: the HV buffer with the most slots, the HV battery with most charge
+    # expected from the DB rows: the HV buffer with the most slots, the smallest rechargeable HV
+    # battery that keeps the count at or under MAX_BUFFERS
     buf = row(conn, "SELECT mte_id, slots, eu_out, eu_store FROM battery_buffer WHERE tier = 3"
                     " ORDER BY slots DESC LIMIT 1")  # fmt: skip
-    bat = row(conn, "SELECT meta, max_charge FROM battery WHERE tier = 3 AND rechargeable"
-                    " ORDER BY max_charge DESC LIMIT 1")  # fmt: skip
     energy = math.ceil((peak - gen) * window * 20)
-    unit = buf["slots"] * int(bat["max_charge"]) + buf["eu_store"]
-    count = max(
-        math.ceil(energy / unit),
-        math.ceil((peak - gen) / (buf["slots"] * buf["eu_out"])),
-    )
+    for bat in conn.execute("SELECT meta, max_charge FROM battery WHERE tier = 3"
+                            " AND rechargeable ORDER BY max_charge"):  # fmt: skip
+        unit = buf["slots"] * int(bat["max_charge"]) + buf["eu_store"]
+        count = max(
+            math.ceil(energy / unit),
+            math.ceil((peak - gen) / (buf["slots"] * buf["eu_out"])),
+        )
+        if count <= dist.MAX_BUFFERS:
+            break
     assert s.energy_eu == energy and s.deficit_eut == peak - gen
     bb = s.battery_buffer
     assert bb is not None and s.recommend == "battery_buffer"
@@ -306,12 +383,34 @@ def test_a_long_window_goes_to_the_lsc(
     assert s2.recommend == "battery_buffer" and "no LSC cell" in s2.reason
 
 
+def test_the_smallest_battery_that_fits_is_picked(tmp_path: Path) -> None:
+    # review L1: not the battery with the most charge (an endgame one holds ~2^63 EU)
+    conn = _db(tmp_path / "gos.sqlite")
+    try:
+        cat = dist.catalog(conn)
+    finally:
+        conn.close()
+    lv = sorted((b for b in cat.batteries if b.tier == 1), key=lambda b: b.max_charge)
+    small, big = lv[0], lv[-1]
+    unit = 16 * int(small.max_charge) + 32768  # the Huge LV buffer, mte:191
+    fits = dist.size_buffer(cat, "LV", 1, 0, unit / 40)  # half a buffer of small ones
+    assert fits.battery_buffer is not None and fits.battery_buffer.refs[1] == small.ref
+    assert fits.battery_buffer.count == 1
+    over = dist.size_buffer(cat, "LV", 1, 0, 3 * unit / 20, max_buffers=2)
+    assert over.battery_buffer is not None and over.battery_buffer.refs[1] == big.ref
+    none_fit = dist.size_buffer(cat, "LV", 1, 0, 1e6, max_buffers=1)
+    assert none_fit.battery_buffer is not None
+    assert none_fit.battery_buffer.refs[1] == big.ref  # the most charge when none fits
+    with pytest.raises(dist.DistributionError):
+        dist.size_buffer(cat, "LV", 32, 0, 1, max_buffers=0)
+
+
 def test_no_deficit_needs_no_buffer(cat: dist.Catalog) -> None:
     s = dist.size_buffer(cat, "LV", 30, 32, 600)
     assert (s.recommend, s.energy_eu, s.battery_buffer) == ("none", 0, None)
     s = dist.size_buffer(cat, "MV", 300, 0, 10)
     assert s.recommend == "none" and s.notes  # nothing stored at MV in the DB
-    for bad in ((-1, 0, 1), (1, 0, -5)):
+    for bad in ((-1, 0, 1), (1, 0, -5), (1, 0, math.nan), (math.inf, 0, 1)):
         with pytest.raises(dist.DistributionError):
             dist.size_buffer(cat, "LV", *bad)
     with pytest.raises(dist.DistributionError):
@@ -328,17 +427,15 @@ def test_scenario_an_amp_overload_is_caught_on_a_cable_run(
     amps, volts = 2, V[1]
     chk = dist.check_run([dist.Segment(gold, 5), dist.Segment(tin, 10)], volts, amps)
     rated = {
-        r["mte_id"]: dist.parse_cable_tooltip(r["tooltip"].split("\n"))
+        r["mte_id"]: (r["voltage"], r["amperage"], r["loss"])
         for r in conn.execute(
-            "SELECT mte_id, tooltip FROM machine WHERE mte_id IN (1240, 1241)"
+            "SELECT mte_id, voltage, amperage, loss FROM cable WHERE mte_id IN (1240, 1241)"
         )
     }
     assert not chk.ok and chk.burns == ("mte:1240",)  # 1x tin's amps < 2 < 2x tin's
-    assert (
-        rated[1240] is not None and rated[1240][1] < amps <= (rated[1241] or (0, 0))[1]
-    )
+    assert rated[1240][1] < amps <= rated[1241][1]
     assert chk.max_amps == rated[1240][1]
-    loss = 5 * rated[1241][2] + 10 * rated[1240][2]  # type: ignore[index]
+    loss = 5 * rated[1241][2] + 10 * rated[1240][2]
     assert chk.loss_per_amp == loss and chk.voltage_out == volts - loss
     assert (chk.loss_eut, chk.delivered_eut) == (loss * amps, (volts - loss) * amps)
     assert any(p.startswith("amp overload: 1x Tin Wire") for p in chk.problems)
@@ -359,6 +456,7 @@ def test_overvoltage_and_a_run_that_loses_everything(cat: dist.Catalog) -> None:
         ([], 32, 1),
         ([dist.Segment(tin, 0)], 32, 1),
         ([dist.Segment(tin, 1)], 0, 1),
+        ([dist.Segment(tin, 1)], 32, math.nan),
     ):
         with pytest.raises(dist.DistributionError):
             dist.check_run(segs, v, a)
@@ -427,8 +525,9 @@ def test_step_up_and_same_tier(cat: dist.Catalog) -> None:
     assert same.steps == () and same.source_amps == 3
     with pytest.raises(dist.DistributionError):
         dist.place_transformers(cat, "IV", "LV", 1)  # no EV transformer in the DB
-    with pytest.raises(dist.DistributionError):
-        dist.place_transformers(cat, "HV", "LV", -1)
+    for bad in (-1, math.nan, math.inf):
+        with pytest.raises(dist.DistributionError):
+            dist.place_transformers(cat, "HV", "LV", bad)
 
 
 def _line(
@@ -461,7 +560,7 @@ def test_the_ledger_buffers_only_the_base_shortfall(cat: dist.Catalog) -> None:
     )
     rep = dist.from_ledger(cat, led.tiers["all"], 30)
     # the base is short 2630 - 2000 = 630 at peak: HV 600 over what is made there, LV its
-    # whole 30 (nothing made at LV), each capped at the base's 630
+    # whole 30 (nothing made at LV), together exactly the base's 630
     assert [(b.tier, b.deficit_eut) for b in rep.buffers] == [
         ("LV", 30.0),
         ("HV", 600.0),
@@ -478,10 +577,11 @@ def test_the_ledger_buffers_only_the_base_shortfall(cat: dist.Catalog) -> None:
         ).tiers["all"],
         30,
     )
-    assert [(b.tier, b.deficit_eut) for b in capped.buffers] == [
-        ("LV", 20.0),
-        ("HV", 20.0),
-    ]
+    # review L2: the base is short 2630 - 2610 = 20, shared out by the tiers' own deficits
+    # (LV 30, HV 600), so together they store no more than the base's 20
+    got = {b.tier: b.deficit_eut for b in capped.buffers}
+    assert got == pytest.approx({"LV": 20 * 30 / 630, "HV": 20 * 600 / 630})
+    assert math.fsum(got.values()) == pytest.approx(20)
     assert [p.line for p in rep.transformers] == ["LV"]
     empty = dist.from_ledger(cat, [], 30)
     assert empty.buffers == [] and empty.notes
@@ -532,6 +632,54 @@ def test_gos_dist_prints_and_exits_by_the_checks(tmp_path: Path) -> None:
         _run(cfg, "cable", "--tier", "LV", "--amps", "1", "--segment", "nope")[0] == 2
     )
     assert _run(cfg, "transformer", "--from", "IV", "--to", "LV", "--amps", "1")[0] == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("buffer", "--tier", "HV", "--peak", "1", "--gen", "0", "--window", "nan"),
+        ("buffer", "--tier", "HV", "--peak", "1", "--gen", "0", "--window", "inf"),
+        ("buffer", "--tier", "HV", "--peak", "-1", "--gen", "0", "--window", "1"),
+        ("buffer", "--tier", "HV", "--peak", "1", "--gen", "0", "--window", "1",
+         "--max-buffers", "0"),
+        ("ledger", "--window", "1", "--max-buffers", "-2"),
+        ("cable", "--voltage", "0", "--amps", "1", "--segment", "mte:1240=1"),
+        ("cable", "--tier", "LV", "--amps", "inf", "--segment", "mte:1240=1"),
+        ("transformer", "--from", "HV", "--to", "LV", "--amps", "nan"),
+    ],
+)  # fmt: skip
+def test_gos_dist_refuses_bad_numbers(tmp_path: Path, argv: tuple[str, ...]) -> None:
+    # review L3: argparse refuses them (exit 2) before anything is read
+    with pytest.raises(SystemExit) as exc:
+        _run(tmp_path / "gos.toml", *argv)
+    assert exc.value.code == 2
+
+
+def test_gos_dist_on_a_version_4_db(tmp_path: Path) -> None:
+    # review M2: no traceback; `cable` works from the tooltips, the others say what to do
+    home = tmp_path / "home"
+    (home / "data").mkdir(parents=True)
+    c = sqlite3.connect(home / "data" / "gos.sqlite")
+    try:
+        c.executescript(SCHEMA_V4.read_text(encoding="utf-8"))
+        c.execute(
+            "INSERT INTO machine(mte_id, class_name, name_en, tooltip) VALUES (?,?,?,?)",
+            (1240, dist.CABLE_CLASSES[0], "1x Tin Wire", _tooltip(32, 1, 2)),
+        )
+        c.commit()
+    finally:
+        c.close()
+    cfg = tmp_path / "gos.toml"
+    cfg.write_text(f"[paths]\ngos_home = {json.dumps(str(home))}\n", encoding="utf-8")
+    code, text = _run(
+        cfg, "buffer", "--tier", "HV", "--peak", "1", "--gen", "0", "--window", "1"
+    )
+    assert code == 2 and "no storage data" in text
+    code, text = _run(cfg, "cable", "--tier", "LV", "--amps", "1", "--segment",
+                      "1x Tin Wire=4", "--json")  # fmt: skip
+    data = json.loads(text)
+    assert code == 0 and data["ok"] and data["cable_source"] == "tooltip"
+    assert data["voltage_out"] == 32 - 4 * 2
 
 
 def test_gos_dist_without_storage_data(tmp_path: Path) -> None:

@@ -17,8 +17,8 @@
 -- Version 3 (D134, WO-1.10): the crop tables (CropsNH), one set per export run like recipes.
 -- Version 4 (D230, WO-4.1): the power catalog tables (rotors, generators, fuels), one set per export
 -- run; new tables only, so no migration file.
--- Version 5 (D240, WO-4.5): the storage tables (batteries, battery buffers, transformers, LSC
--- cells), one set per export run; new tables only, so no migration file.
+-- Version 5 (D240, WO-4.5): the storage tables (cables, batteries, battery buffers, transformers,
+-- LSC cells), one set per export run; new tables only, so no migration file.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -195,15 +195,18 @@ CREATE TABLE IF NOT EXISTS fuel(run_id INT NOT NULL, recipe_id INT NOT NULL, ref
   hidden INT NOT NULL, fuel_value INT NOT NULL, unit TEXT NOT NULL, value REAL NOT NULL,
   PRIMARY KEY(run_id, recipe_id));
 CREATE INDEX IF NOT EXISTS ix_fuel_fluid ON fuel(run_id, fluid);
--- storage and distribution (WO-4.5, D240). From gt_power.json's storage. battery: every battery*
--- oredict member that is an IC2 electric item (ores: a JSON list of those names), its tier, max
--- charge (EU), transfer limit (EU/t) and
--- whether it takes a charge (a simulated charge; GT's one-use ZPM module doesn't); battery_buffer: every GT battery buffer, its slots, voltage
--- in/out and own store; transformer: every GT transformer (GT's, its power transformers, GT++'s
--- hi-amp ones), one row per mode (down: GT's default, in at the tier above; up: soft-mallet'd);
--- lsc_cell: the LSC's cells, their block, glass tier and capacity (EU, a decimal string: some
--- are past a 64-bit integer's range). Cables are not here: their stats are their tooltips
--- (machine.tooltip, gregtec.planner.distribution).
+-- storage and distribution (WO-4.5, D240). From gt_power.json's storage. cable: every GT and GT++
+-- cable's own fields (mVoltage, mAmperage, mCableLossPerMeter: EU per metre per amp; runs before
+-- it have none, and gregtec.planner.distribution falls back to machine.tooltip); battery: every
+-- battery* oredict member that is an IC2 electric item (ores: a JSON list of those names; a
+-- wildcard member at meta 0), its tier, max charge (EU), transfer limit (EU/t) and whether it
+-- takes a charge (a simulated charge; GT's one-use ZPM module doesn't); battery_buffer: every GT
+-- battery buffer, its slots, voltage in/out and own store; transformer: every GT transformer
+-- (GT's, its power and wet transformers, GT++'s hi-amp ones), one row per mode (down: GT's
+-- default, in at the tier above; up: soft-mallet'd); lsc_cell: the LSC's cells, their block,
+-- glass tier and capacity (EU, a decimal string: some are past a 64-bit integer's range).
+CREATE TABLE IF NOT EXISTS cable(run_id INT NOT NULL, mte_id INT NOT NULL, voltage INT NOT NULL,
+  amperage INT NOT NULL, loss INT NOT NULL, PRIMARY KEY(run_id, mte_id));
 CREATE TABLE IF NOT EXISTS battery(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
   nbt_hash TEXT NOT NULL, ores TEXT NOT NULL, tier INT NOT NULL, max_charge REAL NOT NULL,
   transfer_limit REAL NOT NULL, rechargeable INT NOT NULL, PRIMARY KEY(run_id, registry_name, meta, nbt_hash));

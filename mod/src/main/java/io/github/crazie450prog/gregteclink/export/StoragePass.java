@@ -16,6 +16,7 @@ import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.MetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEBasicBatteryBuffer;
+import gregtech.api.metatileentity.implementations.MTECable;
 import gregtech.api.metatileentity.implementations.MTETransformer;
 import ic2.api.item.ElectricItem;
 import ic2.api.item.IElectricItem;
@@ -23,13 +24,16 @@ import kekztech.common.tileentities.MTELapotronicSuperCapacitor;
 
 /**
  * Energy storage and distribution data (WO-4.5, D240), the {@code storage} object of gt_power.json: what the
- * distribution checks size buffers and transformers with. Cables need nothing here: their voltage, amperage and loss
- * are in their tooltips (gt_machines.jsonl).
+ * distribution checks size buffers, check cable runs and place transformers with.
  * <ul>
+ * <li>{@code cables}: every {@link MTECable} (GT++'s {@code GTPPMTECable} is one): its {@code mVoltage},
+ * {@code mAmperage} and {@code mCableLossPerMeter} fields, so the numbers don't depend on the game language or the
+ * number locale its tooltip is formatted in (review M1).</li>
  * <li>{@code batteries}: every member of an oredict name starting with {@code battery} whose item is an IC2
  * {@link IElectricItem}: its tier, max charge, transfer limit and whether it takes a charge (simulated) as the item
- * gives them for that stack (GT's battery
- * buffer takes an item whose tier equals its own, {@code GTModHandler.isElectricItem(stack, tier)}).</li>
+ * gives them for that stack (GT's battery buffer takes an item whose tier equals its own,
+ * {@code GTModHandler.isElectricItem(stack, tier)}). A wildcard member (IC2's batteries are listed at
+ * {@code WILDCARD_VALUE}) is read and keyed at meta 0: its tier and capacity don't depend on the damage.</li>
  * <li>{@code buffers}: every {@link MTEBasicBatteryBuffer}: tier, slots, the voltage in and out, its own EU store.</li>
  * <li>{@code transformers}: every {@link MTETransformer} (GT's, the power transformers, GT++'s hi-amp ones), read
  * from a {@link BaseMetaTileEntity} holding a new instance, in both modes: {@code down} (allowed to work, GT's default:
@@ -51,6 +55,7 @@ final class StoragePass {
 
     JsonObject json() {
         JsonObject o = new JsonObject();
+        o.add("cables", cables());
         o.add("batteries", batteries());
         o.add("buffers", buffers());
         o.add("transformers", transformers());
@@ -71,6 +76,7 @@ final class StoragePass {
                 if (s == null || !(s.getItem() instanceof IElectricItem)) continue;
                 ItemStack one = s.copy();
                 one.stackSize = 1;
+                if (one.getItemDamage() == OreDictionary.WILDCARD_VALUE) one.setItemDamage(0);
                 JsonObject ref = stacks.item(one)
                     .getAsJsonObject();
                 ref.remove("n");
@@ -103,6 +109,22 @@ final class StoragePass {
         }
         JsonArray a = new JsonArray();
         for (JsonObject row : rows.values()) a.add(row);
+        return a;
+    }
+
+    private JsonArray cables() {
+        JsonArray a = new JsonArray();
+        IMetaTileEntity[] all = GregTechAPI.METATILEENTITIES;
+        for (int id = 0; id < all.length; id++) {
+            if (!(all[id] instanceof MTECable)) continue;
+            MTECable c = (MTECable) all[id];
+            JsonObject o = new JsonObject();
+            o.addProperty("mte_id", id);
+            o.addProperty("voltage", c.mVoltage);
+            o.addProperty("amperage", c.mAmperage);
+            o.addProperty("loss", c.mCableLossPerMeter);
+            a.add(o);
+        }
         return a;
     }
 
