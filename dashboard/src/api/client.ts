@@ -12,6 +12,7 @@ import type {
   Device,
   Health,
   MyBase,
+  OresView,
   PersonaInfo,
   PersonaState,
   QuestsView,
@@ -22,6 +23,7 @@ import type {
   SetupState,
   Usage,
   Verify,
+  WaypointProposal,
 } from "./types";
 
 export class ApiError extends Error {
@@ -85,6 +87,15 @@ export const api = {
     ),
   // The Quests view (WO-6.4): a spoil level only when he asks for more ("Spoil it", a tap).
   quests: (spoil: number | null = null) => get<QuestsView>(spoil === null ? "/api/quests" : `/api/quests?spoil=${spoil}`),
+  // The Ores view (WO-6.6): a material's veins, and a vein's waypoint proposed by its vein: id.
+  ores: (material: string | null = null, dim: number | null = null) => {
+    const q = new URLSearchParams();
+    if (material) q.set("material", material);
+    if (dim !== null) q.set("dim", String(dim));
+    const s = q.toString();
+    return get<OresView>(s ? `/api/ores?${s}` : "/api/ores");
+  },
+  oreWaypoint: (vein: string) => post<WaypointProposal>("/api/ores/waypoint", { vein }),
   // My base (WO-3.8): every edit answers with the whole of it.
   base: () => get<MyBase>("/api/base"),
   baseFind: (q: string, kind: "item" | "machine") =>

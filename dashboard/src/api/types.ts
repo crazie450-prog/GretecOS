@@ -379,3 +379,33 @@ export interface QuestsView {
   links: Record<string, QuestLink[]>;
   lines: QuestLine[];
 }
+
+// The Ores view (WO-6.6, GET /api/ores): where he was at the last save, the veins' world, and
+// with a material the catalog's ore list card, ranked by the core (D142 (c)); never re-ranked.
+export interface OrePosition {
+  x: number;
+  y: number;
+  z: number;
+  dim: number;
+  dim_name: string | null;
+  world: string;
+  age_s: number;
+}
+
+export interface OresView {
+  source: { world: string | null; instance: "lab" | "play" | null; loaded_utc: string | null; veins: number };
+  position: OrePosition | null;
+  position_note: string | null;
+  dims: { dim: number; name: string | null; veins: number }[];
+  materials: string[];
+  material: string | null;
+  dim: number | null;
+  card: unknown; // an ore list card, checked against the catalog before it is drawn
+  can_mark: boolean;
+  mark_note: string | null;
+}
+
+export interface WaypointProposal {
+  text: string; // GOS's read-back: "Add waypoint ... Say confirm."
+  action: { id: number; state: string };
+}

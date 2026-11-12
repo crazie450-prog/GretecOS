@@ -1052,6 +1052,94 @@ tr.depleted td {
   text-align: right;
 }
 
+/* --- Ores (WO-6.6) ------------------------------------------------------------------------- */
+
+.ores-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.ores-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.ore-card .table-wrap,
+.ore-card table.ores {
+  max-width: 100%;
+}
+
+.ore-marks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ore-marks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ore-mark-name {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The map: veins around him, north up. Only placement; the list's order is the core's. */
+.ore-map {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+}
+
+.ore-map-axis {
+  stroke: var(--rule);
+  stroke-width: 0.6;
+}
+
+.ore-map-north {
+  fill: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ore-map-you {
+  fill: var(--accent);
+}
+
+.ore-map-vein circle {
+  fill: var(--panel);
+  stroke: var(--text);
+  stroke-width: 1.2;
+}
+
+.ore-map-vein text {
+  fill: var(--text);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ore-map-vein.depleted circle {
+  stroke: var(--text-2);
+  stroke-dasharray: 2 2;
+}
+
+.ore-map-vein.depleted text {
+  fill: var(--text-2);
+}
+
 /* --- Quests (WO-6.4) ----------------------------------------------------------------------- */
 
 .quests-grid {
@@ -1761,7 +1849,8 @@ select.ask-input option {
   .settings-grid,
   .costs-grid,
   .base-grid,
-  .quests-grid {
+  .quests-grid,
+  .ores-grid {
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -1798,6 +1887,11 @@ select.ask-input option {
 
   /* A quest card's item keys ([gregtech:gt.metaitem.01@11305]) wrap too (WO-6.4). */
   table.rows td {
+    overflow-wrap: anywhere;
+  }
+
+  /* An ore list's rows wrap on the phone, its ores and citations included (WO-6.6). */
+  table.ores td {
     overflow-wrap: anywhere;
   }
 

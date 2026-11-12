@@ -29,6 +29,7 @@ import { Later } from "./views/Later";
 import { PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
 import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
+import { Ores } from "./views/Ores";
 import { Quests } from "./views/Quests";
 import { Search, type SearchTarget } from "./views/Search";
 import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
@@ -291,6 +292,8 @@ export function App() {
             }}
           />
         );
+      case "ores":
+        return <Ores />;
       case "settings":
         return (
           <Settings
