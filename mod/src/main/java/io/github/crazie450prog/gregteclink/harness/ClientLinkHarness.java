@@ -86,6 +86,7 @@ public final class ClientLinkHarness {
     private int gosNotices;
     private GuiChest chest;
     private int[] cursor;
+    private boolean flipped;
     private boolean finished;
 
     /** One step: {@code start} once, then {@code until} each tick until true or {@code timeoutMs}. */
@@ -396,11 +397,23 @@ public final class ClientLinkHarness {
         int x = (origin[0] + s.xDisplayPosition + 8) * scale;
         int y = (origin[1] + s.yDisplayPosition + 8) * scale;
         cursor = new int[] { x, mc.displayHeight - y - 1 };
+        flipped = false;
         Mouse.setCursorPosition(cursor[0], cursor[1]);
     }
 
+    /**
+     * Whether the mouse reads where {@link #hover} put it. LWJGL 2 takes {@code setCursorPosition}'s y from the bottom,
+     * as {@code Mouse.getY()} gives it; lwjgl3ify (the Java 25 client) takes it from the top. So when the first move
+     * reads back mirrored, the mouse is moved once more with y counted from the top.
+     */
     private boolean mouseThere() {
-        return cursor != null && Mouse.getX() == cursor[0] && Mouse.getY() == cursor[1];
+        if (cursor == null) return false;
+        if (Mouse.getX() == cursor[0] && Mouse.getY() == cursor[1]) return true;
+        if (!flipped && Mouse.getX() == cursor[0]) {
+            flipped = true;
+            Mouse.setCursorPosition(cursor[0], Minecraft.getMinecraft().displayHeight - cursor[1]);
+        }
+        return false;
     }
 
     private String mouse() {
