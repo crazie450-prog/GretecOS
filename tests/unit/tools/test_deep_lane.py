@@ -104,7 +104,11 @@ def test_only_gos_tools_skill_and_agent(lane_reg: Registry, tmp_path: Path) -> N
     assert {"Agent(general-purpose)", "Agent(Explore)", "Agent(fork)"} <= set(
         o.disallowed_tools
     )
-    assert o.skills == ["gos:quest-guide", "gos:recipe-lookup"]  # quest-guide: WO-6.4
+    assert o.skills == [
+        "gos:ore-intel",
+        "gos:quest-guide",
+        "gos:recipe-lookup",
+    ]  # quest-guide: WO-6.4; ore-intel: WO-6.6
     assert o.plugins == [{"type": "local", "path": str(tmp_path / "agent" / "plugin")}]
     assert o.verbatim_prompts and o.forward_subagent_text and o.include_partial_messages
     assert o.max_budget_usd == pytest.approx(2.0 * deep_config.HARD_CEILING)
@@ -246,7 +250,11 @@ def test_the_plugin_copy_has_only_the_manifest_and_skills(
     )
     written = json.loads((dest / ".claude-plugin" / "plugin.json").read_text("utf-8"))
     assert written == {"name": "gos", "version": "1.2.3"}
-    assert deep_config.skill_names(dest) == ["gos:quest-guide", "gos:recipe-lookup"]
+    assert deep_config.skill_names(dest) == [
+        "gos:ore-intel",
+        "gos:quest-guide",
+        "gos:recipe-lookup",
+    ]
     # a skill reached through a link isn't copied
     outside = tmp_path / "outside"
     outside.mkdir()

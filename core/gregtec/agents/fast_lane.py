@@ -7,7 +7,7 @@
   so a turn always ends in an answer.
 - **Cache.** The system prompt is rules, then the skill catalog (one line per skill) and the
   body of the skills the fast lane follows itself (:data:`FAST_SKILLS`: recipe-lookup, D170;
-  quest-guide, WO-6.4),
+  quest-guide, WO-6.4; ore-intel, WO-6.6),
   then the vault's INDEX.md, then the persona (WO-5.6: :attr:`FastLane.persona`, the active
   pack with the never-rules after it), each a block with a ``cache_control`` breakpoint, and
   tools render before system, so the tools and rules are one cached prefix that a new INDEX.md
@@ -66,6 +66,7 @@ NO_TEXT = "I have no answer for that."
 FAST_SKILLS = {
     "recipe-lookup": "recipe and item questions",
     "quest-guide": "quest questions",  # plan 7.4: quest Q&A runs here too (WO-6.4)
+    "ore-intel": "ore and vein questions",  # plan 7.6: "where's the nearest X" (WO-6.6)
 }
 
 RULES = """\
