@@ -131,7 +131,7 @@ describe("the nav", () => {
     ]);
     expect(viewForKey("8")?.id).toBe("costs");
     expect(viewForKey("0")).toBeNull();
-    expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "designer", "costs", "settings", "base"]);
+    expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "designer", "quests", "costs", "settings", "base"]);
     expect(PHONE_TABS).toEqual(["now", "chat", "search", "base", "costs", "settings"]);
   });
   it("marks the views with no approved board (D92)", () => {
@@ -173,7 +173,7 @@ describe("the palette", () => {
     expect(found[2].action).toEqual({ kind: "item", key: "gregtech:gt.metaitem.01@11305", name: "Steel Ingot", tool: "recipe_uses" });
     const quests: Card = {
       type: "quest", tool: "quest_find", error: null, title: "steel", tier: null, spoil: null, total: 1, notes: [],
-      quests: [{ ref: "q:AAAAAAAAAAAAAAAAAAAABg", name: null, state: "locked", lines: null, main: false, shown: false, description: null, rows: [] }],
+      quests: [{ ref: "q:AAAAAAAAAAAAAAAAAAAABg", name: null, state: "locked", lines: null, main: false, shown: false, description: null, rows: [], spoil: 0 }],
     };
     expect(questEntries(quests)[0].label).toBe("A quest past your frontier"); // nudge-first (D26)
     expect(itemEntries({ ...items, error: "no DB" } as Card)).toEqual([]);

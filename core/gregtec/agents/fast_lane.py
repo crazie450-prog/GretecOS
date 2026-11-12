@@ -6,7 +6,8 @@
   :data:`MAX_ROUNDS` calls a turn; the last one may not call tools (``tool_choice: none``),
   so a turn always ends in an answer.
 - **Cache.** The system prompt is rules, then the skill catalog (one line per skill) and the
-  body of the skills the fast lane follows itself (:data:`FAST_SKILLS`: recipe-lookup, D170),
+  body of the skills the fast lane follows itself (:data:`FAST_SKILLS`: recipe-lookup, D170;
+  quest-guide, WO-6.4),
   then the vault's INDEX.md, then the persona (WO-5.6: :attr:`FastLane.persona`, the active
   pack with the never-rules after it), each a block with a ``cache_control`` breakpoint, and
   tools render before system, so the tools and rules are one cached prefix that a new INDEX.md
@@ -62,7 +63,10 @@ REFUSED = "I can't answer that one."
 NO_TEXT = "I have no answer for that."
 # Skills whose procedure the fast lane follows itself (plan 7.3 runs recipe Q&A here): their
 # body joins the cached rules, not only their catalog line (D170, pending Clayton).
-FAST_SKILLS = ("recipe-lookup",)
+FAST_SKILLS = {
+    "recipe-lookup": "recipe and item questions",
+    "quest-guide": "quest questions",  # plan 7.4: quest Q&A runs here too (WO-6.4)
+}
 
 RULES = """\
 You are the fast lane of Gregtec OS, the assistant of Clayton, who plays GregTech: New Horizons \
@@ -240,10 +244,10 @@ def system_prompt(
             index = (vault / "INDEX.md").read_text(encoding="utf-8", errors="replace")
         except OSError:
             index = None
-    for name in FAST_SKILLS:
+    for name, used_for in FAST_SKILLS.items():
         if body := _skill_body(vault, name):
             first += (
-                f"\n\nThe {name} skill, which you follow for recipe and item questions "
+                f"\n\nThe {name} skill, which you follow for {used_for} "
                 f'(its tools are yours):\n<skill name="{name}">\n{body}\n</skill>'
             )
     blocks = [first]

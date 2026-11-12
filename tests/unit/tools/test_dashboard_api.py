@@ -584,7 +584,11 @@ def test_quest_tools_are_quest_cards_nudge_first(client: TestClient) -> None:
     )  # D26: the book doesn't show it
     nudge = tool(client, "quest_get", id=hidden[0]["ref"], spoil=0)
     assert nudge["spoil"] == 0 and nudge["quests"][0]["name"] is None
-    assert {r["part"] for r in nudge["quests"][0]["rows"]} <= {"prereq", "start"}
+    assert {r["part"] for r in nudge["quests"][0]["rows"]} <= {
+        "prereq",
+        "start",
+        "unlocks",
+    }
     spoiled = tool(client, "quest_get", id=hidden[0]["ref"], spoil=2)
     assert spoiled["quests"][0]["name"] is not None
 
@@ -752,3 +756,40 @@ def test_a_failed_state_push_is_logged_never_raised(
     with caplog.at_level(logging.ERROR, logger="gregtec.api"):
         asyncio.run(dashboard.push_state(core))
     assert "state push failed" in caplog.text
+
+
+# --- the Quests view (WO-6.4) ----------------------------------------------------------------
+
+
+def test_the_quests_view_payload_is_nudge_first(client: TestClient) -> None:
+    r = client.get("/api/quests", headers=admin())
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["spoil"] == 0 and p["default"] == 0
+    assert cards.validate(p["frontier"]) == [] and cards.validate(p["beyond"]) == []
+    names = [x["name"] for x in p["frontier"]["quests"]]
+    assert (
+        names[:2] == ["Steel Age", "Oxygen Run"] and len(names) == 3
+    )  # main quest first
+    beyond = p["beyond"]["quests"]
+    assert [x["name"] for x in beyond] == ["Stainless Dreams"]  # the book shows it
+    assert [row["part"] for row in beyond[0]["rows"]] == ["after"]
+    assert "The secret is stainless steel." not in r.text
+    full = client.get("/api/quests?spoil=2", headers=admin()).json()
+    assert full["spoil"] == 2
+    assert [row["part"] for row in full["beyond"]["quests"][0]["rows"]] == [
+        "after",
+        "task",
+    ]
+    assert full["open"] is None
+    # ?open= (a grant from chat, D268 R3): only those quests at that level
+    ref = beyond[0]["ref"]
+    other = "q:" + "B" * 22
+    one = client.get(f"/api/quests?spoil=2&open={ref},{other},junk", headers=admin())
+    assert one.status_code == 200 and one.json()["open"] == sorted([ref, other])
+    assert len(one.json()["beyond"]["quests"][0]["rows"]) == 2
+    none = client.get(f"/api/quests?spoil=2&open={other}", headers=admin()).json()
+    assert [row["part"] for row in none["beyond"]["quests"][0]["rows"]] == ["after"]
+    assert "The secret is stainless steel." not in str(none)
+    assert client.get("/api/quests?spoil=3", headers=admin()).status_code == 422
+    assert client.get("/api/quests").status_code in (401, 403)
