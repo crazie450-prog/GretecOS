@@ -14,9 +14,13 @@ steam, supercritical steam, gas, plasma), the 2.9 controllers and their legacy c
 - :func:`dynamo_cap` is ``getMaximumOutput``: the dynamo hatch's voltage x amps. GT keeps the
   *last* dynamo's value, not the sum, so a turbine's output never rises with a second dynamo.
 
-``fluidIntoPower``'s result is the controller's target output. Running, the controller moves its
-output toward it by at least 10 EU/t and at most 1 % of the gap per tick and its efficiency
-climbs to 100 % (``mEfficiencyIncrease`` 10 per tick, so about 50 s): the steady output a scanner
+``fluidIntoPower``'s result is the controller's target output. It runs once per processing cycle
+(:func:`cycle_ticks`): every tick for steam, HP steam, supercritical steam and gas, every 20 ticks
+for plasma (both plasma controllers set ``mMaxProgresstime = 20``). The litres it takes are per
+cycle (L/t, or L/s for plasma) and the EU/t it returns holds for the whole cycle, so ``FUEL_VALUE``
+is EU per litre for plasma too. Each cycle the controller moves its output toward the target by
+the larger of 10 EU/t and 1 % of the gap, and its efficiency climbs to 100 % (``mEfficiencyIncrease``
+10 per tick, plasma 200 per 20-tick cycle: 1000 ticks either way). The steady output a scanner
 shows in the Lab is this number (docs/runbooks/turbines_lab.md).
 
 Java's arithmetic is kept to the bit: ``float`` steps round to single precision, ``(int)`` and
@@ -62,6 +66,18 @@ class Kind(Enum):
 
 # The kinds whose fuel value comes from a fuel map (the others burn steam).
 FUELLED = frozenset({Kind.GAS, Kind.PLASMA})
+
+
+def cycle_ticks(kind: Kind) -> int:
+    """The controller's processing cycle once generating (``mMaxProgresstime``): 20 ticks for
+    plasma, else 1. :func:`fluid_into_power`'s flow is litres per cycle."""
+    return 20 if kind is Kind.PLASMA else 1
+
+
+def flow_unit(kind: Kind) -> str:
+    """The unit of :func:`fluid_into_power`'s flow, as GT's scanner shows it: L/t, or L/s for
+    the plasma turbine's 20-tick cycle."""
+    return "L/t" if cycle_ticks(kind) == 1 else "L/s"
 
 
 @dataclass(frozen=True)
@@ -248,9 +264,10 @@ def dynamo_cap(tier: int, amps: int = 1) -> int:
 
 @dataclass(frozen=True)
 class Power:
-    """What one ``fluidIntoPower`` call gives: the EU/t, the litres it takes and the optimal
-    flow the controller reports (``realOptFlow``: int for gas and plasma, the float flow for
-    steam)."""
+    """What one ``fluidIntoPower`` call gives: the EU/t, the litres it takes per cycle
+    (:func:`cycle_ticks`: per tick, or per 20 ticks for plasma) and the optimal flow the
+    controller reports in the same unit (``realOptFlow``: int for gas and plasma, the float
+    flow for steam)."""
 
     eut: int
     flow: int
@@ -287,8 +304,9 @@ def fluid_into_power(
     loose: bool = False,
     legacy: bool = False,
 ) -> Power:
-    """One tick of a large turbine: ``fluidIntoPower`` of the 2.9 controller (``legacy``: the
-    ``*Legacy`` one) given ``available`` litres of its fluid in its input hatches.
+    """One processing cycle of a large turbine (one tick, or 20 for plasma: :func:`cycle_ticks`):
+    ``fluidIntoPower`` of the 2.9 controller (``legacy``: the ``*Legacy`` one) given
+    ``available`` litres of its fluid in its input hatches.
 
     ``fuel_value`` is the fuel map's ``FUEL_VALUE`` (gas and plasma, ``fuel`` rows in the DB);
     ``cap`` is :func:`dynamo_cap` (``maxPower`` for the supercritical turbines, the same number

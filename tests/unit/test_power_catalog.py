@@ -19,6 +19,7 @@ from gregtec.db import access
 from gregtec.db import power as power_db
 from gregtec.ingest import power as power_ingest
 from gregtec.planner import fuels, generators, powercli
+from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.turbine import Kind
 
 
@@ -47,11 +48,21 @@ def test_each_map_decodes_by_its_rule(fuel_map: fuels.FuelMap) -> None:
     if fuel_map.rule == "eu":
         assert fluid == fuels.Decoded(fuels.Unit.EU_PER_L, 7.0)
         assert item == fuels.Decoded(fuels.Unit.EU_PER_ITEM, 7000.0)
-    elif fuel_map.rule == "days":
-        assert item == fuels.Decoded(fuels.Unit.DAYS, 7 * 365.0)
+    elif fuel_map.rule == "rtg":
+        # MTERTGenerator: 7 x 1 728 000 ticks at the recipe's EU/t (0 here).
+        assert item == fuels.Decoded(fuels.Unit.EU_PER_ITEM, 0.0)
+        rtg = fuels.decode(fuel_map, special=2, duration=0, fluid=False, eut=7)
+        assert rtg == fuels.Decoded(fuels.Unit.EU_PER_ITEM, 24192000.0)
     else:
         assert fluid == fuels.Decoded(fuels.Unit.BOILER_TICKS, 40.0)
         assert item == fuels.Decoded(fuels.Unit.BURN_RATIO, 7.0)
+
+
+def test_an_rtg_pellet_is_capped_like_gt() -> None:
+    assert fuels.rtg_pellet_eu(special=1, eut=480) == 829440000
+    # 87 x 1 728 000 x 60 is above Integer.MAX_VALUE: GT caps the pellet's EU there.
+    assert fuels.rtg_pellet_eu(special=87, eut=60) == 2**31 - 1
+    assert fuels.rtg_pellet_eu(special=10**9, eut=1) == 2**31 - 1
 
 
 def test_single_block_eu_is_gts_long_arithmetic() -> None:
@@ -118,7 +129,26 @@ POWER_JSON = {
                     "consumed": 1,
                 }
             ],
-        }
+        },
+        {
+            "mte_id": 869,
+            "class": "gtPlusPlus.xmod.gregtech.common.tileentities.generators.MTERTGenerator",
+            "tier": 1,
+            "efficiency": 100,
+            "eu_out": 32,
+            "amps_out": 1,
+            "recipe_map": "gt.recipe.RTGgenerators",
+            "fuels": [],
+        },
+        {
+            "mte_id": 1120,
+            "class": "gregtech.common.tileentities.generators.MTESteamTurbine",
+            "tier": 1,
+            "efficiency": 7,
+            "eu_out": 32,
+            "amps_out": 1,
+            "fuels": [],
+        },
     ],
     "containers": [
         {"input": {"item": "test:cell", "meta": 1}, "fluid": "testfuel", "mb": 1000}
@@ -152,7 +182,9 @@ def _db(path: Path) -> sqlite3.Connection:
     conn.execute(
         "INSERT INTO export_run(id, run_key, fingerprint) VALUES (1, 'r1', 'f')"
     )
-    conn.execute("INSERT INTO fluid(id, name) VALUES (1, 'testgas'), (2, 'testfuel')")
+    conn.execute(
+        "INSERT INTO fluid(id, name) VALUES (1, 'testgas'), (2, 'testfuel'), (3, 'testplasma')"
+    )
     conn.execute(
         "INSERT INTO item(id, registry_name, meta, nbt_hash) VALUES"
         " (1, 'test:cell', 1, ''), (2, 'test:rod', 0, ''), (3, 'gregtech:gt.blockmachines', 1, '')"
@@ -179,6 +211,7 @@ def _db(path: Path) -> sqlite3.Connection:
             None,
         ),  # GT's fake text row
         (6, "gt.recipe.gasturbinefuel", 999, 0, 1, 0, 1, None),  # a hidden duplicate
+        (7, "gt.recipe.plasmageneratorfuels", 81920, 0, 0, 0, 3, None),
     ]
     for rid, name, special, duration, hidden, fake, fluid_id, item_id in recipes:
         conn.execute(
@@ -210,7 +243,10 @@ def _db(path: Path) -> sqlite3.Connection:
         " (3, 1151, 'gregtech.common.tileentities.machines.multi.MTELargeTurbineGasLegacy',"
         " 'Large Gas Turbine', NULL),"
         " (4, 1000, 'gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace',"
-        " 'EBF', NULL)"
+        " 'EBF', NULL),"
+        " (5, 869, 'gtPlusPlus.xmod.gregtech.common.tileentities.generators.MTERTGenerator',"
+        " 'RTG', 1),"
+        " (6, 1120, 'gregtech.common.tileentities.generators.MTESteamTurbine', 'Steam', 1)"
     )
     return conn
 
@@ -257,7 +293,13 @@ def test_pruning_a_run_deletes_its_power_rows(conn: sqlite3.Connection) -> None:
 
 def test_the_catalog_lists_generators_new_and_legacy(conn: sqlite3.Connection) -> None:
     entries = {e.mte_id: e for e in generators.catalog(conn)}
-    assert set(entries) == {1110, 15527, 1151}  # the EBF is no generator
+    assert set(entries) == {1110, 15527, 1151, 869, 1120}  # the EBF is no generator
+    # Only a basic generator on a map read as EU is sized (D232): not the RTG (EU per pellet),
+    # not the steam turbine (no fuel map).
+    assert [(entries[i].kind, entries[i].sizing) for i in (869, 1120)] == [
+        ("single_block", "not_modelled"),
+        ("single_block", "not_modelled"),
+    ]
     diesel = entries[1110]
     assert (diesel.sizing, diesel.efficiency, diesel.fuel_maps) == (
         "single_block",
@@ -305,6 +347,46 @@ def test_a_turbine_sizes_from_the_db(conn: sqlite3.Connection) -> None:
         )
 
 
+def test_the_plasma_turbine_burns_per_second(conn: sqlite3.Connection) -> None:
+    """Both plasma controllers run fluidIntoPower once every 20 ticks: the flow is L/s, the
+    EU/t holds for the 20 ticks, and a litre makes FUEL_VALUE x efficiency EU (D230)."""
+    assert (gt_turbine.cycle_ticks(Kind.PLASMA), gt_turbine.flow_unit(Kind.PLASMA)) == (
+        20,
+        "L/s",
+    )
+    for kind in Kind:
+        if kind is not Kind.PLASMA:
+            assert (gt_turbine.cycle_ticks(kind), gt_turbine.flow_unit(kind)) == (
+                1,
+                "L/t",
+            )
+    for legacy in (False, True):
+        report = generators.turbine(
+            conn,
+            kind=Kind.PLASMA,
+            material="Testium",
+            size="large",
+            dynamo_tier=14,
+            fuel="testplasma",
+            legacy=legacy,
+        )
+        optimal = report.runs[1]
+        assert (optimal.ticks, optimal.unit) == (20, "L/s")
+        per_litre = optimal.eut * optimal.ticks / optimal.flow
+        want = 81920 * report.rotor.base_efficiency
+        assert abs(per_litre - want) / want < 1e-3
+    gas = generators.turbine(
+        conn,
+        kind=Kind.GAS,
+        material="Testium",
+        size="large",
+        dynamo_tier=5,
+        fuel="testgas",
+    ).runs[1]
+    assert (gas.ticks, gas.unit) == (1, "L/t")
+    assert gas.eut / gas.flow == 486  # 360 EU/L x 1.35, per tick
+
+
 def test_gos_power_prints_from_the_db(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "data").mkdir(parents=True)
@@ -348,6 +430,30 @@ def test_gos_power_prints_from_the_db(tmp_path: Path) -> None:
         and "mte:1151\tLarge Gas Turbine\tlarge_turbine_gas\tlegacy\tturbine" in text
     )
     assert run("fuels", "--map", "nope")[0] == 2
+    code, text = run(
+        "turbine",
+        "plasma",
+        "--rotor",
+        "Testium",
+        "--size",
+        "large",
+        "--dynamo",
+        "UHV",
+        "--fuel",
+        "testplasma",
+    )
+    assert code == 0 and "flow\tL/s\tEU/t\toptimal flow shown (L/s)" in text
+    assert "regulate the input per second" in text
+    # Bad dynamo arguments are argparse errors, not tracebacks or negative EU/t.
+    for bad in (
+        ("--dynamo", "99"),
+        ("--dynamo", "XYZ"),
+        ("--amps", "-4"),
+        ("--amps", "0"),
+    ):
+        args = ["--dynamo", "IV", *bad] if bad[0] == "--amps" else list(bad)
+        with pytest.raises(SystemExit):
+            run("turbine", "steam", "--rotor", "Testium", "--size", "large", *args)
     assert (
         run(
             "turbine",
@@ -372,3 +478,34 @@ def test_gos_power_is_wired_into_the_cli(
     )
     assert cli.main(["power", "--config", str(cfg), "generators"]) == 2
     assert "gos db build" in capsys.readouterr().out
+
+
+SCHEMA_V3 = Path(__file__).resolve().parents[1] / "fixtures" / "gos-schema-v3.sql"
+
+
+def test_a_version_3_db_gets_the_power_tables(tmp_path: Path) -> None:
+    # A real version-3 DB: WO-1.10's schema.sql as it was, with data in it.
+    path = tmp_path / "gos.sqlite"
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(SCHEMA_V3.read_text(encoding="utf-8"))
+        conn.execute(
+            "INSERT INTO item(registry_name, meta) VALUES ('minecraft:stone', 0)"
+        )
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone() == (3,)
+        tables = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert not tables & set(power_db.TABLES)
+    finally:
+        conn.close()
+    conn = access.connect(path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        for table in power_db.TABLES:
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM item").fetchone()[0] == 1
+    finally:
+        conn.close()

@@ -11,9 +11,13 @@ sized:
 - ``turbine``: the five large turbines, new and legacy, sized by ``gtmath.turbine`` (GT's
   ``TurbineStatCalculator`` and ``fluidIntoPower``, oracle-tested) from the DB's rotor stats and
   fuel values (:func:`turbine`);
-- ``single_block``: every ``MTEBasicGenerator``, sized by its exported efficiency and the fuel
-  map's value (:func:`gregtec.planner.fuels.single_block_eu`, checked against GT's own
-  ``getFuelValue`` for every fuel of the dev runtime);
+- ``single_block``: an ``MTEBasicGenerator`` whose fuel map is one of :data:`fuels.MAPS` read as
+  EU (rule ``"eu"``), sized by its exported efficiency and the fuel map's value
+  (:func:`gregtec.planner.fuels.single_block_eu`, checked against GT's own ``getFuelValue`` for
+  every fuel of the dev runtime). Other basic generators (no recipe map, such as the steam
+  turbine and the magical energy absorber; a map the catalog does not decode, such as
+  bartworks' acid generator; or GT++'s RTG, whose map reads as EU per pellet) are catalogued
+  ``not_modelled``;
 - ``not_modelled``: catalogued with kind, legacy flag and fuel maps, not sized yet: large
   combustion engines, large boilers, XL turbines, the large naquadah reactor and the rest
   (WO-4.2 sizes the ones its objective modes need; D232).
@@ -27,6 +31,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from gregtec.planner import fuels
 from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import V
 from gregtec.planner.gtmath.turbine import Kind
@@ -129,14 +134,20 @@ CLASSES: dict[str, ClassInfo] = {
     "MTEUniversalChemicalFuelEngineLegacy": ClassInfo(
         "chemical_fuel_engine", True, "not_modelled"
     ),
-    "MTESupercriticalFluidTurbine": ClassInfo(
-        "large_turbine_sc_steam", False, "not_modelled"
-    ),
     "MTESOFuelCellMK1": ClassInfo("fuel_cell", False, "not_modelled"),
     "MTESOFuelCellMK2": ClassInfo("fuel_cell", False, "not_modelled"),
     "MTESolarTower": ClassInfo("solar_tower", False, "not_modelled"),
 }
 SINGLE_BLOCK = ClassInfo("single_block", False, "single_block")
+SINGLE_BLOCK_NOT_MODELLED = ClassInfo("single_block", False, "not_modelled")
+
+
+def _single_block(recipe_map: str | None) -> ClassInfo:
+    """A basic generator is sized only when its map's FUEL_VALUE reads as EU (D232)."""
+    fuel_map = fuels.BY_MAP.get(recipe_map or "")
+    if fuel_map is not None and fuel_map.rule == "eu":
+        return SINGLE_BLOCK
+    return SINGLE_BLOCK_NOT_MODELLED
 
 
 @dataclass(frozen=True)
@@ -192,7 +203,7 @@ def catalog(conn: sqlite3.Connection, run_id: int | None = None) -> list[Entry]:
         info = CLASSES.get(_simple(class_name))
         gen = gens.get(int(mte_id))
         if info is None and gen is not None:
-            info = SINGLE_BLOCK
+            info = _single_block(gen[3])
         if info is None:
             continue
         fuel_maps = tuple(maps.get(int(mte_id), ()))
@@ -293,12 +304,19 @@ def turbine_fuel(
 
 @dataclass(frozen=True)
 class TurbineRun:
-    """A turbine's steady state at one flow: GT's fluidIntoPower once the controller settled."""
+    """A turbine's steady state at one flow: GT's fluidIntoPower once the controller settled.
+    ``flow`` and ``optimal_flow`` are litres per cycle of ``ticks`` ticks (L/t, or L/s for the
+    plasma turbine's 20-tick cycle: ``unit``); ``eut`` holds for every tick of the cycle."""
 
     label: str
-    flow: int  # L/t burned
+    flow: int  # litres burned per cycle
     eut: int  # EU/t out
-    optimal_flow: float  # what the scanner calls the optimal flow
+    optimal_flow: float  # what the scanner calls the optimal flow (per cycle)
+    ticks: int = 1  # the cycle: gt_turbine.cycle_ticks(kind)
+
+    @property
+    def unit(self) -> str:
+        return "L/t" if self.ticks == 1 else "L/s"  # GT's scanner: 't' or 's'
 
 
 @dataclass(frozen=True)
@@ -370,7 +388,11 @@ def turbine(
         ("maximum", max(1, full.max_flow)),
     ):
         p = at(flow)
-        runs.append(TurbineRun(label, p.flow, p.eut, p.optimal_flow))
+        runs.append(
+            TurbineRun(
+                label, p.flow, p.eut, p.optimal_flow, gt_turbine.cycle_ticks(kind)
+            )
+        )
     refs = [f"rotor:{stats.material.name}/{size}"]
     if pick is not None:
         refs.append(pick.ref)

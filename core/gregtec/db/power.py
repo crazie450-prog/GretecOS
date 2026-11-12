@@ -136,7 +136,7 @@ def _write_fuels(conn: sqlite3.Connection, run_id: int) -> int:
     names = tuple(m.map for m in fuel_maps.MAPS)
     marks = ",".join("?" * len(names))
     rows = conn.execute(
-        "SELECT r.id, r.ref, m.unloc_name, r.duration_ticks,"
+        "SELECT r.id, r.ref, m.unloc_name, r.duration_ticks, r.eut,"
         " COALESCE((SELECT CAST(value_num AS INT) FROM recipe_meta"
         "           WHERE recipe_id = r.id AND key = 'fuel_value'), r.special_value),"
         " fl.name, it.registry_name, it.meta, it.nbt_hash, r.hidden"
@@ -157,7 +157,7 @@ def _write_fuels(conn: sqlite3.Connection, run_id: int) -> int:
         )
     }
     out = []
-    for rid, ref, map_name, duration, value, fluid, reg, meta, nbt, hidden in rows:
+    for rid, ref, map_name, duration, eut, value, fluid, reg, meta, nbt, hidden in rows:
         if value is None:
             continue
         fm = fuel_maps.BY_MAP[map_name]
@@ -170,7 +170,11 @@ def _write_fuels(conn: sqlite3.Connection, run_id: int) -> int:
         else:
             continue
         decoded = fuel_maps.decode(
-            fm, special=int(value), duration=int(duration or 0), fluid=burns is not None
+            fm,
+            special=int(value),
+            duration=int(duration or 0),
+            fluid=burns is not None,
+            eut=int(eut or 0),
         )
         out.append(
             (

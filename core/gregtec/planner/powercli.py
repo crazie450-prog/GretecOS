@@ -23,6 +23,7 @@ from typing import TextIO
 from gregtec import config
 from gregtec.db import access
 from gregtec.planner import fuels, generators
+from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.gtmath.turbine import Kind
 
@@ -50,9 +51,14 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--rotor", required=True, help="rotor material, GT's name (Titanium, ...)"
     )
     t.add_argument("--size", required=True, choices=list(generators.SIZES))
-    t.add_argument("--dynamo", required=True, help="dynamo hatch tier (LV..UV or 0-14)")
     t.add_argument(
-        "--amps", type=int, default=1, help="the dynamo hatch's amps (default 1)"
+        "--dynamo",
+        required=True,
+        type=_tier,
+        help=f"dynamo hatch tier ({VN[0]}..{VN[-1]} or 0-{len(VN) - 1})",
+    )
+    t.add_argument(
+        "--amps", type=_amps, default=1, help="the dynamo hatch's amps (default 1)"
     )
     t.add_argument("--fuel", default=None, help="gas and plasma: the fuel's fluid name")
     t.add_argument("--loose", action="store_true", help="loose fitting (screwdriver)")
@@ -63,11 +69,23 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
 def _tier(text: str) -> int:
     if text.isdigit():
+        if int(text) >= len(VN):
+            raise argparse.ArgumentTypeError(f"tier {text} is above {len(VN) - 1}")
         return int(text)
     names = [n.casefold() for n in VN]
     if text.casefold() not in names:
-        raise ValueError(f"unknown tier {text!r}")
+        raise argparse.ArgumentTypeError(f"unknown tier {text!r}")
     return names.index(text.casefold())
+
+
+def _amps(text: str) -> int:
+    try:
+        amps = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"amps {text!r} is not a number") from None
+    if amps < 1:
+        raise argparse.ArgumentTypeError("amps must be 1 or more")
+    return amps
 
 
 def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
@@ -140,7 +158,7 @@ def show_turbine(
             kind=Kind(args.kind),
             material=args.rotor,
             size=args.size,
-            dynamo_tier=_tier(args.dynamo),
+            dynamo_tier=args.dynamo,
             dynamo_amps=args.amps,
             fuel=args.fuel,
             loose=args.loose,
@@ -165,7 +183,14 @@ def show_turbine(
         print(
             f"fuel: {report.fuel.fluid}, FUEL_VALUE {report.fuel.fuel_value}", file=out
         )
-    print("flow\tL/t\tEU/t\toptimal flow shown", file=out)
+    unit = gt_turbine.flow_unit(report.kind)
+    if unit != "L/t":
+        print(
+            f"flow per {gt_turbine.cycle_ticks(report.kind)}-tick cycle ({unit}):"
+            " regulate the input per second; EU/t holds every tick",
+            file=out,
+        )
+    print(f"flow\t{unit}\tEU/t\toptimal flow shown ({unit})", file=out)
     for run in report.runs:
         print(f"{run.label}\t{run.flow}\t{run.eut}\t{int(run.optimal_flow)}", file=out)
     print("refs: " + " ".join(report.refs), file=out)

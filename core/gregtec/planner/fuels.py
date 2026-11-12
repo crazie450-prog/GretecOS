@@ -10,12 +10,18 @@ from GT's maps, frontends and the generators that burn them, read at the pin):
   are registered as cells: the fuel is the fluid in it, ``fuel_container``). Liquid engines and
   turbines read ``FUEL_VALUE`` as EU per litre [E§4.1]: the Large Combustion Engine burns output /
   value L/t, the gas turbine makes value EU per litre at its efficiency, a single block value x
-  efficiency / 100; the plasma turbine is the exception (value / 20 per litre, ``gtmath.turbine``).
+  efficiency / 100. The plasma turbine too makes value EU per litre at its efficiency, but on a
+  20-tick cycle: it burns its litres once per second and its EU/t holds for the 20 ticks, so its
+  flows are L/s (``gtmath.turbine.cycle_ticks``).
   NEI's page shows rocket fuels at 3x (``FuelFrontend``'s multiplier); GT's rocket fuel
   generators burn them at 1x, so the catalog keeps GT's value (D231).
 - **EU per item**: an item that holds no fluid (naquadah fuel rods, magic items), special x
   1000 EU per item at 100 % (a single block: special x 10 x efficiency).
-- **Days** (RTG pellets): special x 365 (``gt.nei.rtg.days``), how long a pellet lasts.
+- **EU per pellet** (``rtgFuels``): what GT++'s radioisotope generator (``MTERTGenerator``)
+  makes from one pellet: special x 1 728 000 ticks (``convertDaysToTicks``: one day of 20 TPS
+  time per unit of special) x the recipe's EU/t, capped at ``Integer.MAX_VALUE`` as GT caps it
+  (:func:`rtg_pellet_eu`). NEI's page shows special x 365 as "days" (``gt.nei.rtg.days``), which
+  is not how long the generator burns a pellet, so the catalog keeps GT's machine reading (D231).
 - **Large boiler burn time** (``largeBoilerFakeFuels``, NEI-only recipes GT builds from the other
   maps and furnace fuels): for a fluid, the steel boiler's ticks per 1000 L (the recipe's
   duration, GT's ``getBurntimeRatio`` already applied); for a solid fuel, its furnace burn value
@@ -33,11 +39,12 @@ import sqlite3
 from dataclasses import dataclass
 from enum import Enum
 
+from gregtec.planner.gtmath.jmath import INT_MAX, to_float
+
 
 class Unit(Enum):
     EU_PER_L = "EU/L"
     EU_PER_ITEM = "EU/item"
-    DAYS = "days"
     BOILER_TICKS = "steel boiler ticks per 1000 L"
     BURN_RATIO = "furnace burn value / 1600"
 
@@ -51,7 +58,7 @@ class FuelMap:
     nei_multiplier: (
         int  # what FuelFrontend multiplies the value by on NEI's page (display only)
     )
-    rule: str  # "eu" (EU per litre or item), "days" (RTG) or "boiler" (large boilers)
+    rule: str  # "eu" (EU per litre or item), "rtg" (EU per pellet) or "boiler" (large boilers)
     burned_by: str  # what burns it
 
 
@@ -144,7 +151,7 @@ MAPS: tuple[FuelMap, ...] = (
         "eu",
         "rocket fuel generators, Large Rocket Engine",
     ),
-    FuelMap("gt.recipe.RTGgenerators", "rtgFuels", 1, "days", "radioisotope generator"),
+    FuelMap("gt.recipe.RTGgenerators", "rtgFuels", 1, "rtg", "radioisotope generator"),
     FuelMap(
         "gt.recipe.largeboilerfakefuels",
         "largeBoilerFakeFuels",
@@ -163,11 +170,25 @@ class Decoded:
     value: float
 
 
-def decode(fuel_map: FuelMap, *, special: int, duration: int, fluid: bool) -> Decoded:
+RTG_TICKS_PER_UNIT = 1728000.0  # MTERTGenerator.convertDaysToTicks: a float constant
+
+
+def rtg_pellet_eu(*, special: int, eut: int) -> int:
+    """``MTERTGenerator.getFuelValue`` at 100 %: ``convertDaysToTicks((float) special)`` (a
+    float product, rounded to an int that saturates) x the recipe's EU/t in long, capped at
+    ``Integer.MAX_VALUE``."""
+    ticks = min(int(to_float(RTG_TICKS_PER_UNIT * to_float(float(special)))), INT_MAX)
+    return min(ticks * eut, INT_MAX)
+
+
+def decode(
+    fuel_map: FuelMap, *, special: int, duration: int, fluid: bool, eut: int = 0
+) -> Decoded:
     """One fuel recipe's ``FUEL_VALUE`` in its map's unit (see the module doc). ``fluid``: the
-    fuel is a fluid (a fluid input, or a fluid container GT indexes by its fluid)."""
-    if fuel_map.rule == "days":
-        return Decoded(Unit.DAYS, float(special * 365))
+    fuel is a fluid (a fluid input, or a fluid container GT indexes by its fluid); ``eut``: the
+    recipe's EU/t (the RTG reads it)."""
+    if fuel_map.rule == "rtg":
+        return Decoded(Unit.EU_PER_ITEM, float(rtg_pellet_eu(special=special, eut=eut)))
     if fuel_map.rule == "boiler":
         if fluid:
             return Decoded(Unit.BOILER_TICKS, float(duration))

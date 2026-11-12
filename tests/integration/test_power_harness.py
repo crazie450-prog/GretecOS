@@ -165,7 +165,7 @@ def test_every_fuel_map_is_decoded(conn: sqlite3.Connection) -> None:
         (r[0], r[1])
         for r in conn.execute("SELECT gt_name, unit FROM fuel WHERE run_id = ?", (run,))
     }
-    assert ("rtgFuels", fuels.Unit.DAYS.value) in units
+    assert ("rtgFuels", fuels.Unit.EU_PER_ITEM.value) in units
     assert ("largeBoilerFakeFuels", fuels.Unit.BOILER_TICKS.value) in units
     assert ("smallNaquadahReactorFuels", fuels.Unit.EU_PER_ITEM.value) in units
 
@@ -173,7 +173,9 @@ def test_every_fuel_map_is_decoded(conn: sqlite3.Connection) -> None:
 def test_single_blocks_match_gts_fuel_values_in_the_game(
     conn: sqlite3.Connection,
 ) -> None:
-    """Every map a single block burns, decoded by the catalog, against GT's getFuelValue."""
+    """Every map a single block burns, decoded by the catalog, against GT's getFuelValue: the
+    ``fuel`` row's ``value`` in its ``unit`` (EU/L, EU/item with GT's x 1000, EU per RTG pellet)
+    at the generator's exported efficiency gives what GT's own generator gave in the game."""
     run = _run(conn)
     gens = {
         int(r[0]): (int(r[1]), str(r[2]), r[3])
@@ -182,15 +184,17 @@ def test_single_blocks_match_gts_fuel_values_in_the_game(
             (run,),
         )
     }
-    by_fluid: dict[tuple[str, str], int] = {}
-    by_item: dict[tuple[str, str], int] = {}
-    for map_name, fluid, label, value, hidden in conn.execute(
-        "SELECT map, fluid, input, fuel_value, hidden FROM fuel WHERE run_id = ?",
+    Row = tuple[int, str, float]  # FUEL_VALUE, unit, decoded value
+    by_fluid: dict[tuple[str, str], Row] = {}
+    by_item: dict[tuple[str, str], Row] = {}
+    for map_name, fluid, label, special, unit, value, hidden in conn.execute(
+        "SELECT map, fluid, input, fuel_value, unit, value, hidden FROM fuel WHERE run_id = ?",
         (run,),
     ):
         if fluid is not None and not hidden:
-            by_fluid[(map_name, fluid)] = value
-        by_item[(map_name, label)] = value
+            by_fluid[(map_name, fluid)] = (special, unit, value)
+        by_item[(map_name, label)] = (special, unit, value)
+    eu_per_l, eu_per_item = fuels.Unit.EU_PER_L.value, fuels.Unit.EU_PER_ITEM.value
     checked: dict[str, int] = {}
     bad = []
     refused = 0
@@ -202,40 +206,71 @@ def test_single_blocks_match_gts_fuel_values_in_the_game(
         consumed,
         reg,
         meta,
+        item_eu,
         item_eu_long,
     ) in conn.execute(
-        "SELECT mte_id, special, fluid, eu_long, consumed, registry_name, meta, item_eu_long"
-        " FROM generator_gt WHERE run_id = ?",
+        "SELECT mte_id, special, fluid, eu_long, consumed, registry_name, meta, item_eu,"
+        " item_eu_long FROM generator_gt WHERE run_id = ?",
         (run,),
     ):
         efficiency, class_name, map_name = gens[mte_id]
-        if map_name not in fuels.BY_MAP or fuels.BY_MAP[map_name].rule != "eu":
+        rule = fuels.BY_MAP[map_name].rule if map_name in fuels.BY_MAP else None
+        if rule == "rtg" and reg is not None and item_eu is not None:
+            # GT++'s RTG: its getFuelValue (an int) is the pellet's EU at its efficiency.
+            row = by_item.get((map_name, f"{reg}@{meta}"))
+            if (
+                row is None
+                or row[1] != eu_per_item
+                or int(row[2]) * efficiency // 100 != item_eu
+            ):
+                bad.append((mte_id, class_name, f"{reg}@{meta}", special, row, item_eu))
+            checked[map_name] = checked.get(map_name, 0) + 1
+            continue
+        if rule != "eu":
             continue
         if fluid is not None and eu_long is not None:
-            value = by_fluid.get((map_name, fluid))
-            ours = fuels.single_block_eu(
-                special=value if value is not None else -1,
-                efficiency=efficiency,
-                fluid_input=True,
-                consumed=consumed,
-            )
-            if value is None or ours != eu_long:
-                bad.append((mte_id, class_name, fluid, special, ours, eu_long))
+            row = by_fluid.get((map_name, fluid))
+            ours = None
+            if row is not None and row[1] == eu_per_l:
+                ours = int(row[2]) * efficiency * consumed // 100
+                assert ours == fuels.single_block_eu(
+                    special=row[0],
+                    efficiency=efficiency,
+                    fluid_input=True,
+                    consumed=consumed,
+                )
+            if ours != eu_long:
+                bad.append((mte_id, class_name, fluid, special, row, ours, eu_long))
         if reg is not None and item_eu_long is not None:
-            value = by_item.get((map_name, f"{reg}@{meta}"))
-            ours = fuels.single_block_eu(
-                special=value if value is not None else -1,
-                efficiency=efficiency,
-                fluid_input=False,
-            )
-            if item_eu_long == 0 and value is not None and fluid is not None:
+            row = by_item.get((map_name, f"{reg}@{meta}"))
+            ours = None
+            if row is not None and row[1] == eu_per_item:
+                ours = int(row[2]) * efficiency // 100  # EU/item is FUEL_VALUE x 1000
+            elif row is not None and row[1] == eu_per_l:
+                # A container GT indexes by its fluid: one item at GT's cell reading.
+                ours = int(row[2]) * 10 * efficiency
+            if ours is not None:
+                assert ours == fuels.single_block_eu(
+                    special=row[0] if row else -1,
+                    efficiency=efficiency,
+                    fluid_input=False,
+                )
+            if item_eu_long == 0 and row is not None and fluid is not None:
                 # GT's item lookup took no recipe for this container (the dev runtime's IC2
                 # lava cell in the geothermal generators); the generator burns its fluid,
                 # checked above. Counted, not a catalog error.
                 refused += 1
-            elif value is None or ours != item_eu_long:
+            elif ours != item_eu_long:
                 bad.append(
-                    (mte_id, class_name, f"{reg}@{meta}", special, ours, item_eu_long)
+                    (
+                        mte_id,
+                        class_name,
+                        f"{reg}@{meta}",
+                        special,
+                        row,
+                        ours,
+                        item_eu_long,
+                    )
                 )
         checked[map_name] = checked.get(map_name, 0) + 1
     assert not bad, f"{len(bad)}: {bad[:10]}"
@@ -253,6 +288,7 @@ def test_single_blocks_match_gts_fuel_values_in_the_game(
         "extremeNaquadahReactorFuels",
         "ultraHugeNaquadahReactorFuels",
         "rocketFuels",
+        "rtgFuels",
     }
     assert {fuels.BY_MAP[m].gt_name for m in checked} == burned
 
@@ -279,7 +315,21 @@ def test_the_catalog_tracks_new_and_legacy_controllers(
     ):
         assert kinds.get(kind) == {False, True}, kind
     singles = [e for e in entries if e.sizing == "single_block"]
-    assert len(singles) >= 40 and all(e.efficiency is not None for e in singles)
+    assert len(singles) >= 30 and all(e.efficiency is not None for e in singles)
+    # A basic generator is sized only on a map whose FUEL_VALUE reads as EU (D232): the steam
+    # turbine, the magical energy absorber, the acid generator and the RTG are not.
+    unsized = {
+        e.class_name.rsplit(".", 1)[-1]
+        for e in entries
+        if e.kind == "single_block" and e.sizing == "not_modelled"
+    }
+    assert {"MTESteamTurbine", "MTERTGenerator"} <= unsized
+    for e in entries:
+        if e.kind == "single_block":
+            eu_map = any(
+                m in fuels.BY_MAP and fuels.BY_MAP[m].rule == "eu" for m in e.fuel_maps
+            )
+            assert (e.sizing == "single_block") == eu_map, e.class_name
     turbines = [e for e in entries if e.sizing == "turbine"]
     assert len(turbines) == 10
 
