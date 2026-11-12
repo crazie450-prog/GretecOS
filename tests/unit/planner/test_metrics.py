@@ -264,7 +264,10 @@ def test_machines_new_types_and_eu(conn: sqlite3.Connection) -> None:
         for e in m["eu"]:
             at = [n for n in nodes if n["machine"]["tier"] == e["tier"]]
             assert e["amps"] == sum(n["count"] * n["amps"] for n in at)
-        assert m["footprint"] is None
+        assert m["footprint"] == {  # WO-3.6: single blocks, one box each
+            "area": p["layout"]["area"], "volume": p["layout"]["volume"],
+            "h": p["layout"]["h"], "unknown": 0,
+        }  # fmt: skip
         assert m["tier"] in {"LV", "MV"}
 
 

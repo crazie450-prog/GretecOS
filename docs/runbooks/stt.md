@@ -83,7 +83,7 @@ What is measured here: with your own voice and headset, GOS must resolve the rig
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice run
     ```
     It prints `Loading speech-to-text...`, then `Voice client: ...; speech-to-text: whisper large-v3-turbo on cuda (int8_float16). Ctrl+C stops it.` Hold the talk key, ask "how do I make an LV motor", release: the window prints `GOS: ...` with the answer for Electric Motor (LV). (`--transcript "..."` still replaces speech-to-text with a fixed text, as in `voice_client.md` step 12.)
-12. After about 20 questions, `gos voice bench` now has an `stt` stage (the segment closed to its text ready). Paste it into the PR; PM14's full latency check is WO-5.7's.
+12. After about 20 questions, `gos voice bench` now has an `stt` stage (the segment closed to its text ready). Paste it into the PR; PM14's full latency check is WO-5.7's (`voice_benchmarks.md`; `bench` is its alias and also writes a report each run).
 
 ## For developers: the slow test and the smoke test (no PC needed)
 

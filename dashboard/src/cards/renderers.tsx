@@ -5,7 +5,7 @@ import { AlertView, ApprovalView, CitationChip, PowerRow, StatusGlyph, TierChip 
 import { plain, signed } from "../state/format";
 import { GLYPH } from "../state/states";
 import { useCardActions } from "./context";
-import { GAP_X, NODE_H, NODE_W, layoutFlow } from "./flowLayout";
+import { FlowDiagram, edgeLabel } from "./FlowDiagram";
 import type {
   BomCard,
   ChoicesCard,
@@ -355,58 +355,11 @@ export function BomView({ card }: { card: BomCard }) {
 }
 
 export function FlowView({ card }: { card: FlowCard }) {
-  const { boxes, width, height } = layoutFlow(card.nodes, card.edges);
-  const pad = 16;
   return (
     <div className="card flow-card" data-card="flow">
       <CardHead label="Flow diagram" title={card.title} cite={card.ref} />
-      <div className="flow-wrap">
-        <svg
-          className="flow"
-          viewBox={`${-pad} ${-pad} ${width + 2 * pad} ${height + 2 * pad}`}
-          width={width + 2 * pad}
-          height={height + 2 * pad}
-          role="img"
-          aria-label={card.title}
-        >
-          {card.edges.map((e, i) => {
-            const a = boxes.get(e.from);
-            const b = boxes.get(e.to);
-            if (!a || !b) return null;
-            const x1 = a.x + NODE_W;
-            const y1 = a.y + NODE_H / 2;
-            const x2 = b.x;
-            const y2 = b.y + NODE_H / 2;
-            const mid = x1 + GAP_X / 2;
-            return (
-              <g key={i} className="edge">
-                <path d={`M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`} />
-                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 6}>
-                  {e.label}
-                  {e.rate !== null ? ` ${plain(e.rate)}${e.unit ? ` ${e.unit}` : ""}` : ""}
-                </text>
-              </g>
-            );
-          })}
-          {card.nodes.map((n) => {
-            const b = boxes.get(n.id);
-            if (!b) return null;
-            return (
-              <g key={n.id} className={`node tier-${(n.tier ?? "none").toLowerCase()}`} transform={`translate(${b.x},${b.y})`}>
-                <rect width={NODE_W} height={NODE_H} rx="4" />
-                <rect className="tier-band" width="10" height={NODE_H} />
-                <text x="20" y="28">
-                  {n.label}
-                </text>
-                <text x="20" y="52" className="sub">
-                  {[n.count !== null ? `${n.count}x` : null, n.machine, n.tier].filter(Boolean).join(" · ")}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      {/* The diagram is SVG: each node and flow that has its own source is listed with its chip
+      <FlowDiagram card={card} />
+      {/* The diagram is a canvas: each node and flow that has its own source is listed with its chip
           (plan 7.14 rule 2); the rest come from the plan cited in the head. */}
       <div className="flow-cites">
         {card.nodes
@@ -420,8 +373,7 @@ export function FlowView({ card }: { card: FlowCard }) {
           .filter((e) => e.ref)
           .map((e, i) => (
             <span key={`edge-${i}`} className="gos-src" data-edge={`${e.from}-${e.to}`}>
-              {e.label}
-              {e.rate !== null ? ` ${plain(e.rate)}${e.unit ? ` ${e.unit}` : ""}` : ""} <Chip cite={e.ref} />
+              {edgeLabel(e)} <Chip cite={e.ref} />
             </span>
           ))}
       </div>

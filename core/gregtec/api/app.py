@@ -24,6 +24,7 @@
 | POST /api/admin/shutdown       | admin                   | stop this core (``gos stop``)         |
 | GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
 | GET/POST /api/persona          | see ``persona_routes``  | the persona and switching (WO-5.6)    |
+| GET  /api/plans/{id}/...       | see ``plan_routes``     | a saved plan's cards and exports (WO-3.6)|
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
@@ -81,7 +82,7 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.agents.personas import Personas
-from gregtec.api import ai_routes, dashboard, persona_routes, setup_routes
+from gregtec.api import ai_routes, dashboard, persona_routes, plan_routes, setup_routes
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -773,6 +774,7 @@ def create_app(core: Core) -> FastAPI:
     ai_routes.add_routes(app, core, principal, trusted, _json_body)
     base_routes.add_routes(app, core, principal, trusted, _json_body)
     persona_routes.add_routes(app, core, principal, _json_body)
+    plan_routes.add_routes(app, core, principal)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
     return app
 
