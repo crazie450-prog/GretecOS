@@ -2,7 +2,9 @@
 
 What WO-6.1 adds (D257–D259) and the checks Clayton runs on the PC. Claude Code built and tested
 it on fake Prism trees only; everything below that touches a game is a step Clayton runs himself,
-**on GTNH-Lab first**. Play is only ever read, by the watchers that Play's own hook starts.
+**on GTNH-Lab first**. Play is only ever read, by the watchers that Play's own hook starts,
+and only once you set `[startup] watchers_with_play = "play"` after §2–§4 pass on Lab
+(until then Play's launch starts nothing; D259).
 
 Short names (GOS_APP `C:\GregtecOS-app`, GOS_HOME `%USERPROFILE%\GregtecOS`):
 
@@ -24,17 +26,23 @@ $ProgressPreference = 'SilentlyContinue'
   instructions.
 - **Events** go to `GOS_HOME\data\events\<date>.jsonl` and to the core (`POST /api/game/events`,
   with the `watchers` token). The Activity view and the event store are WO-6.3's.
-- **Paused** (D258): `Saving and pausing game...` in the log = paused; the server's next own log
-  line, or the next autosave (at most 45 s after you close the menu), = not paused. The dashboard
+- **Paused** (D258): `Saving and pausing game...` in the log = paused; a line only a ticking
+  server writes (chat, a command's `[Clayton: ...]` feedback, a login or logout) or the next
+  autosave (at most 45 s after you close the menu) = not paused. The pause's own save, its
+  `Can't keep up!` warning and mods' lines never unpause it. The dashboard
   shows the "Game paused" chip and switches to the workbench. The away DM is WO-9.2's.
 - **With Play** (D259): Play's pre-launch hook tells the supervisor to start the watchers and the
   voice client (`[startup] voice_with_play`, default true); post-exit stops them once the export
-  question is answered or has timed out. After a crash (no post-exit) the supervisor stops them
+  question is answered or has timed out. Lab's launch does this from the start; Play's only
+  with `[startup] watchers_with_play = "play"` (§6). After a crash (no post-exit) the supervisor stops them
   itself about 6 minutes after the game's Java is gone. If GOS isn't running, the hook says so and
   the game starts anyway.
 
 ## 1. Deploy and the token
 
+0. **Don't set `watchers_with_play = "play"` until §2–§4 pass on Lab.** Leave it unset (the
+   default is `"lab"`): Play then launches as before and Prism's console prints
+   `GOS: note: [startup] watchers_with_play = "lab": Play is not watched yet.`
 1. After the PR is merged, from your clone: `git pull`, then `uv run gos deploy`.
 2. As yourself, with GOS running: `& $gos token new watchers` (stored in your Credential Manager
    as `gregtec-os/token-watchers`). Without it the watchers only write the spool file and the
@@ -55,9 +63,12 @@ $ProgressPreference = 'SilentlyContinue'
    `Get-Content "$lab\logs\latest.log" -Tail 3 -Wait` in a second window shows
    `[Server thread/INFO]: Saving and pausing game...`. If it appears more than 3 s after Esc, say
    so in the PR: the fallback is a GregtecLink client signal (D258).
-3. Close the menu. **Pass:** the chip goes away within about 45 s (the next autosave), sooner if
-   you run a command such as `/time query daytime`.
-4. Quit Lab normally. **Pass:** `& $gos status` shows both stopped: `stopped: lab exited`.
+3. Press **Esc** again and stay in the menu for 60 s. **Pass:** the chip stays on the whole
+   minute (the pause's save may log `Can't keep up!`; that must not clear it).
+4. Close the menu. **Pass:** the chip goes away within about 45 s (the next autosave).
+   Optional, to record in the PR: type a chat line (`hi`) right after closing the menu and
+   note whether the chip clears sooner (`<Clayton> hi` on the Server thread in latest.log).
+5. Quit Lab normally. **Pass:** `& $gos status` shows both stopped: `stopped: lab exited`.
 
 ## 3. Events (V05, V06)
 
@@ -84,8 +95,8 @@ $ProgressPreference = 'SilentlyContinue'
    ```
    **Pass:** no lines. Also `Get-Content "$home_\logs\watchers.log" | Select-String '"level": "ERROR"'`
    is empty.
-3. Play's first real session repeats this check (the watchers start with Play's own hook; nothing
-   else changes).
+3. Play's first real session repeats this check, after §6 (the watchers start with Play's own
+   hook; nothing else changes).
 
 ## 5. Crash fallback (D259)
 
@@ -93,3 +104,17 @@ $ProgressPreference = 'SilentlyContinue'
    post-exit).
 2. **Pass:** within about 7 minutes `& $gos status` shows the watchers and voice stopped with
    `client went away (no post-exit)`.
+
+## 6. Turn it on for Play (D259)
+
+Only after §2–§4 passed on Lab: add to gos.toml
+
+```toml
+[startup]
+watchers_with_play = "play"
+```
+
+then restart the supervisor so it reads it: `& $gos stop --all`, then sign out and in (or
+`install_login_start.ps1 -StartNow`, core_service.md step 2). The next Play launch prints
+`GOS: the game watchers and voice start (play).` A supervisor restart in the middle of a
+session leaves the watchers stopped until the next launch (D259's known gap).

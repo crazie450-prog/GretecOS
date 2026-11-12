@@ -1358,6 +1358,7 @@ allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]   
 [startup]
 core_at_login = true          # D77
 voice_with_play = true
+watchers_with_play = "lab"    # "play" once runbook watchers.md §2–§4 pass on Lab (D259)
 dashboard_window = true       # the Chrome app window on monitor 2 (D52, D163)
 
 [models]
