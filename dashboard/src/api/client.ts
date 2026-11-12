@@ -90,8 +90,14 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
-  // The Quests view (WO-6.4): a spoil level only when he asks for more ("Spoil it", a tap).
-  quests: (spoil: number | null = null) => get<QuestsView>(spoil === null ? "/api/quests" : `/api/quests?spoil=${spoil}`),
+  // The Quests view (WO-6.4): a spoil level only when he asks for more ("Spoil it", a tap), and
+  // `open`: only the quests a spoiler command in chat granted (D268 R3).
+  quests: (spoil: number | null = null, open: string[] | null = null) =>
+    get<QuestsView>(
+      spoil === null
+        ? "/api/quests"
+        : `/api/quests?spoil=${spoil}` + (open ? `&open=${encodeURIComponent(open.join(","))}` : ""),
+    ),
   // My base (WO-3.8): every edit answers with the whole of it.
   base: () => get<MyBase>("/api/base"),
   baseFind: (q: string, kind: "item" | "machine") =>

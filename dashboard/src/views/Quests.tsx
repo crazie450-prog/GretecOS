@@ -23,10 +23,15 @@ export function stageOf(tier: string): string {
   return tier.split(" ")[0] ?? tier;
 }
 
-/** True when the newest answer is a "spoil it" asked after ``since`` (seconds). */
-export function spokeSpoil(answers: Answer[], since: number): boolean {
+/** The grant of the newest answer when it is a spoiler command asked after ``since`` (seconds):
+ * its level and the quests it is for, as the core granted them (D268 R3), else null. A partial
+ * answer stays partial, and only its quests open. */
+export function spokeSpoil(answers: Answer[], since: number): { level: 1 | 2; quests: string[] } | null {
   const last = answers.length ? answers[answers.length - 1] : null;
-  return !!last && last.intent === "spoil" && last.asked_ts >= since;
+  const grant = last?.spoil;
+  if (!last || last.asked_ts < since || !grant) return null;
+  if ((grant.level !== 1 && grant.level !== 2) || grant.quests.length === 0) return null;
+  return grant;
 }
 
 function ItemLinks(props: { quest: string; name: string; links: QuestLink[]; openItem: (key: string, name: string) => void }) {
@@ -79,31 +84,35 @@ export function Quests(props: {
 }) {
   const [data, setData] = useState<QuestsView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [level, setLevel] = useState<number | null>(null); // null: his global setting
+  // null: his global setting. `open`: the quests a spoiler command in chat granted (null: all).
+  const [want, setWant] = useState<{ level: number | null; open: string[] | null }>({ level: null, open: null });
   const [revealed, setRevealed] = useState(false);
   const opened = useRef(Date.now() / 1000);
+  const setLevel = (level: number | null) => setWant({ level, open: null });
 
   useEffect(() => {
     let live = true;
-    api.quests(level).then(
+    api.quests(want.level, want.open).then(
       (v) => {
         if (!live) return;
         setData(v);
         setError(null);
-        if (v.spoil === 2) setRevealed(true);
+        if (v.spoil === 2 || (v.open && v.open.length > 0)) setRevealed(true);
       },
       (e: unknown) => live && setError(message(e)),
     );
     return () => {
       live = false;
     };
-  }, [level]);
+  }, [want]);
 
-  // "Spoil it" said or typed while the view is open: everything past the frontier, in full.
-  const spoiled = spokeSpoil(props.answers, opened.current);
+  // A spoiler command said or typed while the view is open: only the quests it granted, at the
+  // level it granted (D268 R3).
+  const grant = spokeSpoil(props.answers, opened.current);
+  const grantKey = grant ? `${grant.level}:${grant.quests.join(",")}` : null;
   useEffect(() => {
-    if (spoiled) setLevel(2);
-  }, [spoiled]);
+    if (grant) setWant({ level: grant.level, open: grant.quests });
+  }, [grantKey]); // the grant itself is a new object on every render
 
   const frontier = (data?.frontier ?? null) as { quests?: { ref: string; name: string | null }[] } | null;
   const beyond = (data?.beyond ?? null) as { quests?: unknown[] } | null;
@@ -183,7 +192,7 @@ export function Quests(props: {
                 </>
               )}
               <div className="quests-spoil">
-                {data.spoil < 2 && (
+                {(data.spoil < 2 || data.open !== null) && (
                   <Button variant="primary" onClick={() => setLevel(2)} testId="quests-spoil">
                     Spoil it
                   </Button>
@@ -193,7 +202,7 @@ export function Quests(props: {
                     What do they ask for?
                   </Button>
                 )}
-                {data.spoil !== data.default && (
+                {(data.spoil !== data.default || data.open !== null) && (
                   <Button
                     onClick={() => {
                       setLevel(null);

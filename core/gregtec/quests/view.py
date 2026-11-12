@@ -184,7 +184,8 @@ def beyond(
             _row("after", names.get(f), state=frontier[f], ref=f"q:{f}")
             for f in order[q]
         ]
-        items = _item_rows(links.get(q, []), rewards=level >= spoilers.FULL)
+        found = links.get(q, []) if level >= spoilers.PARTIAL else []
+        items = _item_rows(found, rewards=level >= spoilers.FULL)
         out.append(
             _quest(
                 f"q:{q}",
