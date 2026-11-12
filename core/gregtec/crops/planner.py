@@ -681,7 +681,9 @@ def _keep(p: _Planner, cid: str) -> list[Line]:
 def _breeder_step(p: _Planner, n: int, o: _Option) -> Step:
     child = p.crop(o.child)
     b = o.recipe
-    tier = max(p.tier, rules.LV)
+    run_tier = b.voltage_tier if b else rules.LV
+    # the machine he has (his tier), else the lowest that runs the recipe
+    tier = max(p.tier, run_tier, rules.LV)
     machine = p.f.machine("crop_breeder", tier) or p.f.lowest("crop_breeder")
     mref = (machine.ref,) if machine else ()
     refs = tuple(
@@ -698,9 +700,8 @@ def _breeder_step(p: _Planner, n: int, o: _Option) -> Step:
     step = Step(n, "breeder", o.child, child.name, o.parents, refs=refs)
     step.title = f"Crop Breeder: {child.name} from {names}"
     step.layout = []
-    run_tier = b.voltage_tier if b else rules.LV
     stats = rules.breeder_child_stats([p.stats_of(x) for x in o.parents])
-    chance = rules.breeder_chance(max(tier, run_tier))
+    chance = rules.breeder_chance(tier)
     fert = rules.breeder_fertilizer(child.tier, *stats)
     runs = rules.runs_for(chance, BREEDER_CONFIDENCE)
     max_sum = rules.breeder_max_stat_sum(tier, child.tier)
@@ -990,9 +991,11 @@ def guide(
     aim: Stats = DEFAULT_TARGET,
     alternate_seeds: bool = True,
     stock: Iterable[str] = (),
+    owned: Iterable[int] = (),
 ) -> Guide:
     """The guide to ``target`` (a crop id) from ``have`` (crop id -> best stats) at GT voltage
-    tier ``tier`` (0 before LV). ``stock``: My base's item keys (``registry@meta``)."""
+    tier ``tier`` (0 before LV). ``stock``: My base's item keys (``registry@meta``);
+    ``owned``: the GT mte ids of the machines My base lists."""
     if target not in facts.data.crops:
         raise GuideError(f"no crop {target!r} in the crop data (run {facts.run_key})")
     p = _Planner(
@@ -1010,8 +1013,12 @@ def guide(
         steps.insert(0, manager)
         for i, s in enumerate(steps, 1):
             s.n = i
+    managers = {m.mte_id for m in facts.machines.get("crop_manager", [])}
+    has_manager = bool(managers & set(owned))
     for s in steps:
-        s.done = s.kind != "crop_manager" and s.child in p.have
+        # a crop he has is never a step (the path starts from it); a Crop Manager step is done
+        # once My base lists one
+        s.done = has_manager if s.kind == "crop_manager" else s.child in p.have
     total_s = sum(s.expected_s or 0.0 for s in steps)
     total = (
         Line(

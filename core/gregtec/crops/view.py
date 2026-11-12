@@ -68,6 +68,7 @@ class Current:
     target: state.Target | None
     tier: int
     stock: frozenset[str]
+    owned: frozenset[int] = frozenset()
 
     def guide(self, crop: str | None = None) -> planner.Guide | None:
         """The guide to ``crop``, else to his target; None with neither."""
@@ -80,7 +81,13 @@ class Current:
             else planner.DEFAULT_TARGET
         )
         return planner.guide(
-            self.facts, cid, self.have, self.tier, aim=aim, stock=self.stock
+            self.facts,
+            cid,
+            self.have,
+            self.tier,
+            aim=aim,
+            stock=self.stock,
+            owned=self.owned,
         )
 
 
@@ -92,7 +99,17 @@ def current(conn: sqlite3.Connection) -> Current:
         state.target(conn),
         tier_of(conn),
         state.stock_keys(conn),
+        _owned(conn),
     )
+
+
+def _owned(conn: sqlite3.Connection) -> frozenset[int]:
+    from gregtec.base import state as base_state
+
+    try:
+        return frozenset(base_state.owned_machines(conn))
+    except sqlite3.Error:
+        return frozenset()
 
 
 def find(facts: crop_facts.Facts, words: str) -> list[str]:
