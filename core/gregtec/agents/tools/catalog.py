@@ -311,12 +311,14 @@ LATER: dict[str, str] = {
     ),
     # Accepting and every later move are Clayton's (the Designer, gos plan --accept/--status,
     # POST /api/plans/{id}/status; D251, D238): no model moves a plan or writes the ledger.
-    "plan_set_status": "not an agent tool: lifecycle moves are Clayton's (D238)",
+    "plan_set_status": "WO-4.4 made lifecycle moves Clayton's (gos plan --status, the "
+    "dashboard): not an agent tool (D238)",
     "effort_estimate": "WO-4.2 (power designer; plan_get's summary has a plan's effort)",
     "layout_estimate": "WO-10.5 (corridor-aware layout; plan_export footprint has the "
     "bounding-box one)",
     "design_power": "WO-4.2 (power objective modes)",
-    "ledger_update": "not an agent tool: the ledger follows Clayton's lifecycle moves (D238)",
+    "ledger_update": "WO-4.4: the ledger follows Clayton's accepts and lifecycle moves; "
+    "not an agent tool (D238)",
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
     "agent tool needs a core-to-voice push, D205)",
     "persona_set": "WO-5.6 follow-up, not yet a plan 8 row (switching is the router's "

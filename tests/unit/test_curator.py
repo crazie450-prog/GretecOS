@@ -119,14 +119,14 @@ def test_index_rows(vault: Path) -> None:
         "pl-1",
         "st: draft\nsummary: steel line\tfor HV\n",
     )
-    note(vault, "base/power.md", "power", "base-power", "eut_net: 3120\n")
+    note(vault, "base/power.md", "power", "base-power", "net_eut: 3120\n")
     note(vault, "quests/qs-a.md", "quest", "qs-a", "```tsv\na\tb\n```\n")
     daily(vault, "2026-11-05", "ev: x\n")
     (vault / "themes" / "broken.md").write_text("no frontmatter", encoding="utf-8")
     rows = {r.path: r for r in index.rows(vault)}
     assert "log/2026-11-05.md" not in rows and "INDEX.md" not in rows
     assert rows["plans/pl-1.md"].summary == "steel line for HV"
-    assert rows["base/power.md"].summary == "eut_net: 3120"
+    assert rows["base/power.md"].summary == "net_eut: 3120"
     assert rows["quests/qs-a.md"].summary == ""
     assert (rows["themes/broken.md"].id, rows["themes/broken.md"].t) == ("broken", "?")
 

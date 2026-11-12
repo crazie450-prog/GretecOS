@@ -584,3 +584,22 @@ def test_cli_ledger_status_and_power_accept(home: Path) -> None:
                      "--accept", "1")  # fmt: skip
     assert code == 0 and ": accepted; line note base/lines/ln-pw-" in text
     assert any(ln.entry.kind == "power" for ln in read(home).lines)
+
+
+def test_ledger_get_tool_reads_the_ledger(home: Path) -> None:
+    from gregtec.agents.tools import build_registry
+    from gregtec.agents.tools.registry import FAST
+
+    reg = build_registry(access.db_path(home))
+    empty = reg.call("ledger_get", {}, lane=FAST)
+    assert not empty.is_error and "no accepted plans: the ledger is empty" in empty.text
+    d = designer.design(home, Request(WIDGET, qty=2, tier_cap="MV"))
+    designer.accept(home, d.ids[0])
+    out = reg.call("ledger_get", {}, lane=FAST)  # read-only: the fast lane has it
+    assert not out.is_error
+    assert f"plan:{d.ids[0]} (accepted)" in out.text
+    assert "warning deficit (all): " in out.text
+    assert "no fresh OC power telemetry" in out.text
+    from gregtec.agents.tools import TOOLS
+
+    assert next(t for t in TOOLS if t.name == "ledger_get").read_only
