@@ -584,7 +584,7 @@ def _db(**kw: object) -> Side:
         "eut": 120,
         "duration": 100,
         "inputs": [
-            Stack("a:dust@5", 2, accepts=frozenset({"b:dust@0"})),
+            Stack("a:dust@5", 2),
             Stack("gregtech:gt.integrated_circuit@11", 0),
             Stack("fluid:acid", 500),
         ],
@@ -597,7 +597,13 @@ def _db(**kw: object) -> Side:
 NEI_INS: list[dict[str, object]] = [
     {"strId": "gregtech:gt.integrated_circuit", "Damage": 11, "Count": 0},
     {"neiFluidName": "acid", "Count": "500L"},
-    {"strId": "b:dust", "Damage": 0, "Count": 2},  # an alternative of the DB's slot
+    # NEI shows another item and lists the DB's one in anyOf (an oredict slot)
+    {
+        "strId": "b:dust",
+        "Damage": 0,
+        "Count": 2,
+        "anyOf": [{"strId": "a:dust", "Damage": 5}],
+    },
 ]
 NEI_OUTS: list[dict[str, object]] = [
     {"neiFluidName": "sol", "Count": "1000L", "chance": 2500},
@@ -649,6 +655,17 @@ def test_wildcard_meta_and_any_of_count_as_the_same_item() -> None:
     assert _compatible(Stack("z:w@0", 4), s)
 
 
+def test_a_wrong_shown_item_fails_even_when_an_alternative_overlaps() -> None:
+    # The DB's alternatives come from NEI's own anyOf (WO-1.3's merge), so they don't count:
+    # a slot whose shown item is wrong fails though one of its alternatives is in NEI's line.
+    wrong = Stack("minecraft:dirt@0", 2, accepts=frozenset({"a:dust@5"}))
+    db = _db(inputs=[wrong, *_db().inputs[1:]])
+    nei = _line("gt.recipe.blastfurnace", NEI_INS, NEI_OUTS, eut=120, ticks=100)
+    assert not _compatible(wrong, _nei_stack(NEI_INS[2]))
+    v = check("g01", "r:x", db, [nei])
+    assert not v.ok and v.why.startswith("no line of NEI's gt.recipe.blastfurnace")
+
+
 def test_the_committed_golden_set_is_30_db_keys_without_numbers() -> None:
     rows = read_fixture()
     assert [r["id"] for r in rows] == [f"g{i:02d}" for i in range(1, 31)]
@@ -669,10 +686,16 @@ def test_the_committed_golden_set_is_30_db_keys_without_numbers() -> None:
 # --- the harness check -------------------------------------------------------------------
 
 
-def _golden_home(tmp: Path) -> Path:
+@pytest.fixture(scope="module")
+def golden_home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A GOS_HOME with a DB built from a real harness run (one build for the module)."""
     where = os.environ.get("GOS_GOLDEN_HOME")
     if where:
         return Path(where)
+    return _golden_home(tmp_path_factory.mktemp("golden"))
+
+
+def _golden_home(tmp: Path) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip(
             "set GOS_REQUIRE_HARNESS_RUN=1 after the client harness, or GOS_GOLDEN_HOME"
@@ -696,8 +719,8 @@ def _open(home: Path) -> tuple[sqlite3.Connection, Path, int]:
     return conn, home / "data" / "exports" / run_key, run_id
 
 
-def test_golden_recipes_match_nei_in_a_real_run(tmp_path: Path) -> None:
-    conn, run_dir, run_id = _open(_golden_home(tmp_path))
+def test_golden_recipes_match_nei_in_a_real_run(golden_home: Path) -> None:
+    conn, run_dir, run_id = _open(golden_home)
     try:
         verdicts = run_check(conn, run_dir, run_id, read_fixture())
         shown = [lab_lines(conn, run_id, g) for g in read_fixture()]
@@ -706,6 +729,23 @@ def test_golden_recipes_match_nei_in_a_real_run(tmp_path: Path) -> None:
     assert all(len(lines) >= 4 and "not in" not in lines[0] for lines in shown), shown
     bad = [v for v in verdicts if not v.ok]
     assert not bad, report(verdicts)
+
+
+def test_the_rule_picks_30_recipes_by_stratum_from_distinct_maps(
+    golden_home: Path,
+) -> None:
+    # Not compared with the fixture row for row: a dev-runtime bump may change which recipes
+    # the rule picks. The shape the rule promises is checked instead.
+    conn, _run_dir, run_id = _open(golden_home)
+    try:
+        rows = select(conn, run_id)
+    finally:
+        conn.close()
+    assert [r["id"] for r in rows] == [f"g{i:02d}" for i in range(1, 31)]
+    assert [r["stratum"] for r in rows] == [s for s, n, _ in STRATA for _ in range(n)]
+    assert len({r["ref"] for r in rows}) == 30
+    assert len({r["handler"] for r in rows}) == 30, [r["handler"] for r in rows]
+    assert all(set(r) == set(COLUMNS) and all(r.values()) for r in rows), rows
 
 
 # --- command line ------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 G1's first criterion (plan §8) is "30 golden recipes checked against NEI in the Lab (100%)". It has two halves:
 
-- **The cloud half** is automatic. `tests/integration/test_golden_recipes.py` checks each golden recipe in a DB built from a client harness run against NEI's own handler dump from the same run: EU/t, duration, every item and fluid amount, and every chance. CI's mod job runs it after every client harness run. The G1 review (`docs/reviews/G1_review.md`) has the result: 30 of 30.
+- **The cloud half** is automatic. `tests/integration/test_golden_recipes.py` checks each golden recipe in a DB built from a client harness run against NEI's own handler dump from the same run: EU/t, duration, every item and fluid amount, and every chance. CI's mod job runs it after every client harness run. For g28–g30 (NEI's own crafting and furnace handlers) the DB's recipe is NEI's line, so the cloud half shows only that ingest kept NEI's values; GT-vs-NEI agreement is shown by g01–g27, and this page's in-game check covers all 30. The G1 review (`docs/reviews/G1_review.md`) has the result: 30 of 30.
 - **The Lab half** is this page. You compare what GOS stored with what NEI shows in the game, on the full pack, including the values NEI's JSON dump doesn't carry: amperage, coil heat, cleanroom, special items and additives.
 
 The golden set is `tests/fixtures/golden/g1_recipes.tsv`. It holds DB keys only. The selection rule is in the test's docstring and D222. Every number you compare comes from your DB through the `show` command below, never from this page.
@@ -18,6 +18,7 @@ uv run python tests/integration/test_golden_recipes.py report $h
 ```
 
 - [ ] Expect `golden recipes: 30 of 30 match NEI (100%)`.
+- [ ] Use this command line, not `pytest`, on the full pack. The committed fixture is the dev runtime's, so pytest fails with `not in` for every key the full pack lacks, and it can't reselect.
 - [ ] If any line says `not in the DB's run`, the full pack doesn't have that dev-runtime recipe (another mod changed or removed it). Run the rule on your DB instead and use **that** set for the rest of this page:
   ```powershell
   uv run python tests/integration/test_golden_recipes.py report $h --reselect
