@@ -435,6 +435,7 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     )
     assert text.startswith("ranked by weights (balanced): machines 1,")
     assert "  score " in text and "Ranked by code" not in text
+    assert "  effort " in text and " = build " in text  # WO-4.3's breakdown (D237)
     prefs = home / "vault" / "me" / "prefs.md"
     prefs.parent.mkdir(parents=True, exist_ok=True)
     prefs.write_text("weights: balanced\nw_eut: 3\n", encoding="utf-8")

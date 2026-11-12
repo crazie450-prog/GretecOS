@@ -7,7 +7,9 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
 
 - **Build components** (:func:`components`): every node's machine item (``machine.item_id``)
   times its count, and for a multiblock the blocks of its smallest ``structure`` variant (WO-1.8)
-  times its count. Hatches, cables and pipes wait for the layout (WO-3.6, WO-10.5).
+  times its count. Hatches, cables and pipes wait for the layout (WO-3.6, WO-10.5), except the
+  parts a power line chooses itself (its rotor and dynamo hatch, WO-4.3, D236), which
+  :meth:`Effort.route` takes as ``extra`` components.
 - **Making a component** (:func:`steps`): the designer's own pipeline for the component as a
   batch at the tier (WO-3.3's graph, its boundary being raw inputs, My base stock, line outputs
   and the request's ``boundary``; WO-3.4's machines and staged MILP), every primary choice its
@@ -28,7 +30,9 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
   counts as one machine he has, so ``unlock_h`` is 0 and a note says so (D196).
 
 The result's ``rows`` are the breakdown table: per part (``build`` or ``unlock``) and recipe map
-(``crafting`` for hand steps), the crafts, the machines it is spread over and the hours.
+(``crafting`` for hand steps), the crafts, the machines it is spread over, the hours and the
+recipes it runs (their ``r:`` ids, WO-4.3). :func:`table` and :func:`text` print it for the
+table card and the CLIs.
 """
 
 from __future__ import annotations
@@ -54,7 +58,8 @@ HAND = "crafting"  # the breakdown's map name for crafting-table and furnace ste
 @dataclass
 class Walk:
     """The steps to make some components: per recipe map (``crafting`` for hand steps) the
-    crafts and machine-seconds, and the machine each map's steps are sized on."""
+    crafts and machine-seconds, the machine each map's steps are sized on and the recipes
+    (``r:`` ids, NEI's for hand steps) they run, the breakdown's citations (WO-4.3)."""
 
     crafts: dict[str, int] = field(default_factory=dict)
     seconds: dict[str, float] = field(default_factory=dict)
@@ -62,6 +67,10 @@ class Walk:
     missing: list[str] = field(default_factory=list)  # items with no recipe at the tier
     # gated items past GATE_DEPTH or in a loop
     deep: list[str] = field(default_factory=list)
+    recipes: dict[str, list[str]] = field(default_factory=dict)  # map -> recipe ids
+    by_recipe: dict[str, tuple[int, float]] = field(
+        default_factory=dict
+    )  # id -> (n, s)
 
     def add(self, other: Walk) -> None:
         for k, v in other.crafts.items():
@@ -76,6 +85,12 @@ class Walk:
         for k in other.deep:
             if k not in self.deep:
                 self.deep.append(k)
+        for k, ids in other.recipes.items():
+            mine = self.recipes.setdefault(k, [])
+            mine.extend(i for i in ids if i not in mine)
+        for k, (n, s) in other.by_recipe.items():
+            n0, s0 = self.by_recipe.get(k, (0, 0.0))
+            self.by_recipe[k] = (n0 + n, s0 + s)
 
 
 @dataclass
@@ -110,6 +125,8 @@ class Need:
                 out.machine.setdefault(where, mte)
             out.crafts[where] = out.crafts.get(where, 0) + n
             out.seconds[where] = out.seconds.get(where, 0.0) + n * per
+            out.recipes.setdefault(where, []).append(pid)
+            out.by_recipe[pid] = (n, n * per)
         return out
 
 
@@ -156,7 +173,7 @@ class Component:
     key: str  # the item's stable key
     qty: int
     of: int  # the machine (mte id) it is part of
-    part: str  # machine | structure
+    part: str  # machine | structure | rotor | hatch (a power line's parts, WO-4.3)
 
 
 def machine_items(conn: sqlite3.Connection, mtes: Sequence[int]) -> dict[int, str]:
@@ -210,8 +227,9 @@ def maps_of(
 
 def components(
     conn: sqlite3.Connection, plan: Mapping[str, Any]
-) -> tuple[list[Component], list[str]]:
-    """A route's build components and notes (multiblocks with no structure data)."""
+) -> tuple[list[Component], list[str], int]:
+    """A route's build components, notes (multiblocks with no structure data) and how many
+    of its machines' items or structures it can't count (WO-4.3's ``uncounted``)."""
     counts: dict[int, int] = {}
     kinds: dict[int, str] = {}
     for n in plan["nodes"]:
@@ -222,14 +240,17 @@ def components(
     item_of = machine_items(conn, list(counts))
     out: list[Component] = []
     notes: list[str] = []
+    skipped = 0
     for mte in sorted(counts):
         if mte in item_of:
             out.append(Component(item_of[mte], counts[mte], mte, "machine"))
         else:
+            skipped += 1
             notes.append(f"mte:{mte} has no item in the DB: its making is not counted")
         if kinds[mte] == "multiblock":
             blocks = structure_blocks(conn, mte)
             if blocks is None:
+                skipped += 1
                 notes.append(
                     f"mte:{mte}: no structure data, its casings and coils are not counted"
                 )
@@ -237,7 +258,7 @@ def components(
             for k in sorted(blocks):
                 if is_stable_key(k):
                     out.append(Component(k, blocks[k] * counts[mte], mte, "structure"))
-    return out, notes
+    return out, notes, skipped
 
 
 @dataclass(frozen=True)
@@ -356,13 +377,35 @@ class Effort:
                     "crafts": w.crafts[name],
                     "machines": machines,
                     "h": w.seconds[name] / machines / 3600.0,
+                    # per recipe: its crafts and hours on the same machines (WO-4.3)
+                    "recipes": [
+                        {
+                            "id": pid,
+                            "crafts": w.by_recipe[pid][0],
+                            "h": w.by_recipe[pid][1] / machines / 3600.0,
+                        }
+                        for pid in sorted(w.recipes.get(name, ()))
+                    ],
                 }
             )
         return rows
 
-    def route(self, plan: Mapping[str, Any]) -> dict[str, Any]:
-        """``eff_h``, ``build_h``, ``unlock_h`` and the breakdown for one route."""
-        parts, notes = components(self.conn, plan)
+    def route(
+        self,
+        plan: Mapping[str, Any],
+        extra: Sequence[Component] = (),
+        extra_notes: Sequence[str] = (),
+        extra_uncounted: int = 0,
+    ) -> dict[str, Any]:
+        """``eff_h``, ``build_h``, ``unlock_h`` and the breakdown for one route; ``extra`` are
+        build components the route's machines don't show (a power line's rotors and dynamo
+        hatches, WO-4.3), made the same way, ``extra_uncounted`` the parts it couldn't find.
+        ``uncounted`` is how many items the effort leaves out (no item or structure in the
+        DB, no recipe or route at the tier, gated too deep): 0 means the number is complete
+        as far as the model goes (WO-4.3)."""
+        parts, notes, skipped = components(self.conn, plan)
+        parts = [*parts, *extra]
+        notes = [*notes, *extra_notes]
         need = Need()
         for c in parts:
             need.add(self.make(c.key, c.qty))
@@ -414,6 +457,7 @@ class Effort:
                 f"or in a loop ({len(deep)}): " + ", ".join(deep)
             )
         rows = self._rows("build", build) + self._rows("unlock", unlock)
+        uncounted = skipped + extra_uncounted + len(missing) + len(deep)
         build_h = math.fsum(r["h"] for r in rows if r["part"] == "build")
         unlock_h = math.fsum(r["h"] for r in rows if r["part"] == "unlock")
         return {
@@ -427,8 +471,77 @@ class Effort:
                 for c in parts
             ],
             "unlocks": [f"mte:{m}" for m in unlocks],
+            "uncounted": uncounted,
             "notes": list(dict.fromkeys(notes)),
         }
+
+
+COLUMNS = ("part", "map", "machine", "recipe", "crafts", "machines", "hours")
+
+
+def duration(h: float) -> str:
+    """Hours as text: seconds under a minute, minutes under an hour, else hours."""
+    if h >= 1:
+        return f"{h:,.2f} h"
+    if h * 60 >= 1:
+        return f"{h * 60:.1f} min"
+    return f"{h * 3600:.3g} s"
+
+
+def table(eff: Mapping[str, Any]) -> list[list[str]]:
+    """The breakdown table's rows as text cells (:data:`COLUMNS`), one per recipe, build rows
+    first, then unlock rows: the machine its map's steps are sized on cited ``mte:`` and the
+    recipe by its id, each cell one id so the card draws it as a chip (WO-4.3, D237). A row
+    with no per-recipe entries (a plan saved before WO-4.3) is its map's totals."""
+    out = []
+    for r in eff["rows"]:
+        mte = f"mte:{r['mte']}" if r.get("mte") is not None else "-"
+        for x in r.get("recipes") or [{"id": "-", "crafts": r["crafts"], "h": r["h"]}]:
+            out.append(
+                [
+                    str(r["part"]),
+                    str(r["map"]),
+                    mte,
+                    str(x["id"]),
+                    str(x["crafts"]),
+                    str(r["machines"]),
+                    duration(float(x["h"])),
+                ]
+            )
+    return out
+
+
+def summary(m: Mapping[str, Any]) -> str:
+    """``effort X = build Y + unlock Z (crafting-table step N s[; U items not counted])``."""
+    eff = m["effort"]
+    left = int(eff.get("uncounted", 0))
+    return (
+        f"effort {duration(float(m['eff_h']))} = build {duration(float(m['build_h']))}"
+        f" + unlock {duration(float(m['unlock_h']))} (crafting-table step"
+        f" {float(eff['craft_s']):g} s"
+        + (f"; {left} items not counted, see the notes" if left else "")
+        + ")"
+    )
+
+
+def text(m: Mapping[str, Any], indent: str = "  ") -> list[str]:
+    """A plan's effort (its ``metrics``: ``eff_h``, ``build_h``, ``unlock_h`` and ``effort``)
+    and the breakdown table as text lines, for ``gos plan`` and ``gos power design``."""
+    eff = m["effort"]
+    lines = [indent + summary(m)]
+    rows = table(eff)
+    if rows:
+        widths = [
+            max(len(c), *(len(r[i]) for r in rows)) for i, c in enumerate(COLUMNS)
+        ]
+        for cells in (list(COLUMNS), *rows):
+            lines.append(
+                indent + "  ".join(c.ljust(w) for c, w in zip(cells, widths)).rstrip()
+            )
+    if eff.get("unlocks"):
+        lines.append(f"{indent}unlocks: {', '.join(eff['unlocks'])}")
+    lines.extend(f"{indent}effort note: {n}" for n in eff.get("notes", ()))
+    return lines
 
 
 def _uncovered(w: Walk, covered: set[str]) -> list[tuple[str, int]]:
