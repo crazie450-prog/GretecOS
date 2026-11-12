@@ -131,6 +131,10 @@ changes GT, before answering yes:
      `GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration/test_gtmath_harness.py
      tests/integration/test_power_harness.py` (the vectors re-made from GT's jar, every recipe of
      the harness DB, and every rotor and single-block fuel value against GT's in-game values).
+   - If the pack moves CropsNH (WO-6.7, D273): bump it in `mod/dependencies.gradle`, compare
+     its source at the new tag with `core/gregtec/crops/rules.py` (CropsNH is LGPL-3.0: read
+     it, never copy it), regenerate `uv run python tests/unit/crops/oracle/make_vectors.py`,
+     commit `tests/unit/crops/vectors/`, and `uv run pytest tests/unit/crops` must pass.
 3. Merge, `gos deploy`, then `gos pack adopt yes`. `gos pack pin` exits 0 again once Play's new
    export is in the DB. Between the deploy and Play's new export, `gos pack pin`, `gos db build`
    and `gos doctor` report Play's current run as a mismatch: expected, and the reason to update

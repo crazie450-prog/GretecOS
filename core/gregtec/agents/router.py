@@ -8,7 +8,7 @@
   :func:`gregtec.quests.spoilers.command`, WO-6.4, D26, D268), "what's my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
-  model call, D206). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
+  model call, D206), and "next crop step" (WO-6.7, plan 7.17: the crop guide's next step). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice and anything quantitative over a line ("how many
   ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
@@ -41,6 +41,9 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
 PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
 PERSONA = "persona"  # switch or name the persona (WO-5.6, plan 7.11)
 SPOIL = "spoil"  # the last answer's locked quests, partial or full (WO-6.4, D26, D72)
+CROP_STEP = (
+    "crop_step"  # the next step of the crop guide he follows (WO-6.7, plan 7.17)
+)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -102,6 +105,14 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     ),
     (CONFIRM, _rx(r"(?:yes,? )?confirm(?: it)?")),
     (CANCEL, _rx(r"cancel(?: it| that)?", r"never ?mind")),
+    (
+        CROP_STEP,
+        _rx(
+            r"(?:what(?:'s| is) (?:the |my )?)?next (?:crop|breeding|crop breeding) step",
+            r"(?:show |give |tell )?(?:me )?(?:the |my )?(?:next )?(?:crop|breeding) step",
+            r"what (?:crop )?should i breed (?:next|now)",
+        ),
+    ),
     (
         TIER,
         _rx(

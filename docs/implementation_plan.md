@@ -534,7 +534,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | base-keeper | Base-state notes, line lifecycle, goals | note_read/write, ledger_*, plan_set_status, base_get |
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
 | advisor | Next steps (§7.5) | quest_frontier, events_recent, ledger_get, plan_list, base_get |
-| ore-intel | Veins (§7.6) | ore_find, player_pos |
+| ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
 | crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
 | wiki-research | Wiki cache and fetch, attribution (§7.8) | wiki_search, wiki_fetch |
@@ -560,6 +560,7 @@ plan_pin(id, node, recipe?)          plan_rename(id, name)     base_get()       
 layout_estimate(plan)                ledger_get()              ledger_update(...)     plan_explain(id)      # D199, D251
 quest_find(text)                     quest_get(id, spoil=0..2) quest_frontier(n)     quest_for_item(item)
 events_recent(window, kinds?)        session_summary(id)       ore_find(mat, dim?, near?)  player_pos()
+ore_waypoint(vein)                   # proposes a vein's waypoint from the DB row (D272); confirm is UI-only
 telemetry_get(scope)                 action_propose(kind,args) action_status(id)     # confirm is UI-only
 wiki_search(q)                       wiki_fetch(title)         structure_get(machine, variant)
 theme_get/list/save                  build_request(spec)       schematic_export(build, part)
@@ -715,6 +716,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 - **Sources:** the VisualProspecting server cache (every vein, D27), the client cache, live "You found a … vein" lines, and ore mixes (§5.2 step 6).
 - `ore_find(material, dim?, near=player)` returns the nearest veins with distance, dimension, y-range and mix, plus depleted flags.
 - It can offer a JourneyMap waypoint, written as a **confirmed action** (D25).
+- As built (WO-6.6, D271, D272): `ore_find` and `player_pos` are tools in both lanes (`core/gregtec/agents/tools/ores.py`, `core/gregtec/ores/intel.py`), ranked by code as D142 (c) says; veins are cited `vein:<dim>/<cx>/<cz>` and his position `pos:<world>@<save>`; his position is `level.dat`'s at the world's last save, read from the world the veins were loaded from. `ore_waypoint(vein)` (deep lane) and the Ores view's button propose a vein's waypoint that GOS builds from the DB row (its mix's name, centre block, the middle of its heights) through WO-7.1's action desk; Clayton confirms; only into the configured Lab or Play world the veins came from. The `ore-intel` skill joins the fast lane's cached prompt. The Ores view (`dashboard/src/views/Ores.tsx`) needs Clayton's board approval. V23 is answered from JourneyMap's source: a file written while the game runs shows after the next dimension change or rejoin; the Lab check is `docs/runbooks/ore_intel_check.md`.
 
 ### 7.7 Screen reading
 - A dedicated hotkey captures the game window with `dxcam` 0.3 (DXGI backend; `grab(region=<game window>, new_frame_only=False)`), with `windows-capture` (Windows Graphics Capture) as the alternative [H§3].
@@ -765,7 +767,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - `craft`: AE2 request + status.
   - `machine_pause/resume`: `setWorkAllowed`.
   - `say`: chat-box message.
-  - `waypoint`: the **core** writes a JourneyMap waypoint file. Whether JourneyMap picks up external files is V23.
+  - `waypoint`: the **core** writes a JourneyMap waypoint file. JourneyMap reads it at the next dimension change or rejoin (V23, D271).
   - The status board and HUD are displays, not actions, and need no confirmation.
   - **Confirm flow (D59):** the agent proposes → GOS reads the action back ("Craft 64 stainless steel ingots. Say confirm.") → Clayton confirms by saying "confirm" at any time, or with a button on the dashboard, the phone dashboard or Discord (buttons confirm by action ID) → queued → executed by the OC agent → result reported.
     - Only one action can be pending; a new proposal cancels the old one out loud.
@@ -1244,16 +1246,16 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V20 | `gt_machine` component present on 2.9.0 stable (dailies regression #25071, reportedly fixed by Computronics PR #40) [C§2.4] | `gos-agent --list` in `lab-ops` (`docs/runbooks/oc_agent.md` step 7) | 7.2 |
 | V21 | **Resolved** (`gos smoke`, 2026-11-05): Haiku 5.5 with thinking off, median first token 917 ms over 5 runs (525–1592 ms), median total 1162 ms [D§1.11] | — | 0.4 |
 | V22 | Unattended export: autoexport flag loads the world and dumps NEI on the client thread; Prism CLI launch [A§5.5] | Export run | 1.1 |
-| V23 | JourneyMap picks up waypoint files written while the game runs | Lab test | 6.6 |
+| V23 | **Partly resolved from source** (D271; JourneyMap 5.2.23): it reads `journeymap\data\sp\<world>\waypoints\*.json` only when mapping starts (joining the world, every dimension change) or its Waypoint/Advanced options are saved; no file watcher, so a file written while the game runs shows after the next dimension change or rejoin. Still open: the Lab check (`docs/runbooks/ore_intel_check.md` B) | Lab test | 6.6 |
 | V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
 | V25 | **Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC | Lab test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player | Lab test | 6.2 |
 | V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads | Lab save loop | 6.1 |
 | V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
 | V29 | A reliable "game paused" signal (log line or GregtecLink) | Lab test | 6.1 |
-| V30 | CropsNH behaves as its code says: the Growth weed threshold (23 or 24), whether extra neighbours block a recipe, whether two identical seeds can mutate, and that a Crop Manager gets parents past 100 fertilizer [I§2] | Lab test | 6.7 |
+| V30 | **Partly resolved from source** (D273, WO-6.7; CropsNH 2.0.140): weeds spread above each crop's own `weeds_above` (24 for most crops, 8 for Necrobloom; the quest's 23 is wrong) and only while Resistance is below Growth; an extra neighbour can block a parent-combination recipe (recipes match the first distinct breedable neighbours in registration order), so guides keep the other sides clear; two identical seeds can pool-mutate (pool matching counts duplicates) but never make a recipe (it needs two distinct parents); a Crop Manager tops sticks to 200 fertilizer once fertilizing is switched on in its GUI (it starts off); a stick uses 1 water and 1 fertilizer every growth tick, so the guide's times are the topped-up best case and it shows the dry nutrients. Still open: the Lab check of each (`docs/runbooks/crop_guide.md`) [I§2] | Lab test | 6.7 |
 | V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
-| V32 | The Crop Breeder in game: odds per tier, the LV/MV stat cap, catalysts, and material crops only through the Breeder from MV [I§2, I§6] | NEI + Lab | 6.7 |
+| V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 
 ---

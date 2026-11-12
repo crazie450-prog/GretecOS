@@ -73,3 +73,31 @@ def test_a_link_to_a_marked_home_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         sc.fresh_home(link)
     assert (target / sc.MARKER).is_file()
+
+
+def test_the_crop_world_keeps_the_recipe_tools_on_the_e2e_run(tmp_path: Path) -> None:
+    """WO-6.7 review: the crop world went in as a newer export run of its own, so the recipe
+    tools (newest run only) answered 'what uses steel' with no recipes and the Chat and
+    Designer e2e specs failed. It must join the tool fixtures' run, and crop facts find it."""
+    from gregtec.agents.ask import HandoffRecorder, default_registry
+    from gregtec.crops import facts as crop_facts
+    from gregtec.db import access
+
+    sc = serve_core()
+    home = tmp_path / "e2e-home"
+    sc.fresh_home(home)
+    sc.build_db(home)
+    sc.load_crops(home)
+    conn = access.connect(access.db_path(home))
+    try:
+        runs = conn.execute("SELECT COUNT(*) FROM export_run").fetchone()[0]
+        facts = crop_facts.load(conn)
+    finally:
+        conn.close()
+    reg = default_registry(home, deep=HandoffRecorder())
+    steel = "gregtech:gt.metaitem.01@11305"
+    uses = reg.call("recipe_uses", {"item": steel}, lane="fast")
+    assert not uses.is_error and facts.run_key in uses.text
+    assert "\nr:" in uses.text and "rows: 0" not in uses.text, uses.text
+    assert runs == 1
+    assert "cropsnh:ironFern" in facts.data.crops and facts.breeder
