@@ -1796,6 +1796,11 @@ select.ask-input option {
     max-width: 100%;
   }
 
+  /* A quest card's item keys ([gregtech:gt.metaitem.01@11305]) wrap too (WO-6.4). */
+  table.rows td {
+    overflow-wrap: anywhere;
+  }
+
   .voice-strip {
     gap: var(--space-3);
     padding: 0 var(--space-4);
