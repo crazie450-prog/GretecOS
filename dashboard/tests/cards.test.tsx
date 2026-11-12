@@ -124,6 +124,26 @@ describe("drawing cards", () => {
     expect(openQuest).toHaveBeenCalledWith("q:AAAAAAAAAAAAAAAAAAAABg", 0);
   });
 
+  it("a name tap on a non-granted quest asks for that quest's own level, never the card's (B1)", () => {
+    // "spoil stainless dreams" granted q4 at 2; q14 is locked, named by the book, at the global 0.
+    const quest = (n: string, name: string, spoil: number) => ({
+      ref: `q:${"A".repeat(20)}${n}`, name, state: "locked", lines: null, main: false, shown: true, description: null, rows: [], spoil,
+    });
+    const card = { ...VALID.quest, title: "Beyond the frontier", spoil: 2, quests: [quest("04", "Stainless Dreams", 2), quest("14", "Blast Off", 0)], total: 2 };
+    const openQuest = vi.fn();
+    const { container } = draw(card, { openQuest });
+    fireEvent.click(screen.getByText("Blast Off"));
+    expect(openQuest).toHaveBeenLastCalledWith(`q:${"A".repeat(20)}14`, 0);
+    fireEvent.click(screen.getByText("Stainless Dreams"));
+    expect(openQuest).toHaveBeenLastCalledWith(`q:${"A".repeat(20)}04`, 2);
+    // the step-up button is per quest: q14 asks for its tasks (1), the granted q4 has none
+    const q14 = container.querySelector(`[data-quest="q:${"A".repeat(20)}14"]`) as HTMLElement;
+    fireEvent.click(within(q14).getByText("What does it ask for?"));
+    expect(openQuest).toHaveBeenLastCalledWith(`q:${"A".repeat(20)}14`, 1);
+    const q4 = container.querySelector(`[data-quest="q:${"A".repeat(20)}04"]`) as HTMLElement;
+    expect(within(q4).queryByText(/Spoil it|What does it ask for/)).toBeNull();
+  });
+
   it("runs an approval's actions and picks a candidate", () => {
     const act = vi.fn();
     draw(VALID.approval, { act });

@@ -3,8 +3,9 @@
 :func:`route` reads the request text (typed, or the STT transcript) and returns a
 :class:`Route`:
 
-- **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "what's
-  my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
+- **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, a
+  spoiler command, when it is the whole request ("spoil it", "a bit more", "spoil <quest>":
+  :func:`gregtec.quests.spoilers.command`, WO-6.4, D26, D268), "what's my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
   model call, D206). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
@@ -25,6 +26,7 @@ import re
 from dataclasses import dataclass
 
 from gregtec.agents.tools.recipes import TIERS
+from gregtec.quests import spoilers
 
 INSTANT, FAST, DEEP = "instant", "fast", "deep"
 # instant commands
@@ -38,6 +40,7 @@ REPEAT, CONFIRM, CANCEL, TIER, RECIPES, USES = (
 )
 PLANS, PLAN = "plans", "plan"  # saved plans (WO-2.8, plan 7.16)
 PERSONA = "persona"  # switch or name the persona (WO-5.6, plan 7.11)
+SPOIL = "spoil"  # the last answer's locked quests, partial or full (WO-6.4, D26, D72)
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -253,6 +256,8 @@ def route(text: str, *, plans: bool = True) -> Route:
     tier = None
     if m := _AT_TIER.search(said):  # "... at LV": the recipe tool's tier_max
         tier, said = _TIER_NAMES[m["tier"]], said[: m.start()]
+    if spoilers.command(text) is not None:  # the whole request is the command (D268)
+        return Route(INSTANT, SPOIL, text)
     deep = any(d.search(said) for d in DEEP_RULES)
     for command, patterns in INSTANT_RULES:
         for p in patterns:

@@ -1053,6 +1053,90 @@ tr.depleted td {
   text-align: right;
 }
 
+/* --- Quests (WO-6.4) ----------------------------------------------------------------------- */
+
+.quests-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 6fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.quests-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* Past the frontier: blurred until he taps it or says "spoil it" (plan 7.14 rule 5). Only the
+   look: the core sends nothing above his spoiler level. */
+.spoiler-zone:not(.revealed) {
+  filter: blur(6px);
+  user-select: none;
+  cursor: pointer;
+}
+
+.quests-spoil {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.quest-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.quest-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+
+.quest-links-name {
+  color: var(--text);
+  min-width: 12ch;
+}
+
+.quest-links-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.quest-links .gos-chip {
+  min-height: var(--hit-min);
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.quest-bar {
+  height: 6px;
+  margin-top: var(--space-1);
+  background: var(--track);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.quest-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.quest-goals {
+  margin: 0;
+  padding-left: var(--space-6);
+  color: var(--text);
+}
+
 /* --- Designer (WO-3.7) ------------------------------------------------------------------------ */
 
 .designer-top {
@@ -1811,7 +1895,8 @@ select.ask-input option {
   .search-grid,
   .settings-grid,
   .costs-grid,
-  .base-grid {
+  .base-grid,
+  .quests-grid {
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -1844,6 +1929,11 @@ select.ask-input option {
     white-space: normal;
     overflow-wrap: anywhere;
     max-width: 100%;
+  }
+
+  /* A quest card's item keys ([gregtech:gt.metaitem.01@11305]) wrap too (WO-6.4). */
+  table.rows td {
+    overflow-wrap: anywhere;
   }
 
   .voice-strip {
