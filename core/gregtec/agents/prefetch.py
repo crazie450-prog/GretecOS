@@ -90,6 +90,9 @@ class Prefetch:
     clarify: Clarify | None = None
     tier: str | None = None  # Clayton's tier line, when quests are loaded
     unresolved: str | None = None  # an item subject nothing matched
+    # his request: the tools are called for it, so a list tool can tell the words he said
+    # (quest_for_item and quest_find past the frontier, D268)
+    request: str | None = None
 
     @property
     def sources(self) -> list[str]:
@@ -153,7 +156,7 @@ def question_for(subject: str, found: list[Candidate]) -> str:
 
 
 def _call(reg: Registry, pre: Prefetch, tool: str, args: dict[str, Any]) -> Block:
-    out = reg.call(tool, args, lane=FAST)
+    out = reg.call(tool, args, lane=FAST, request=pre.request)
     block = Block(tool, args, out.text, out.is_error)
     pre.blocks.append(block)
     return block
@@ -205,7 +208,7 @@ def resolve(reg: Registry, pre: Prefetch, subject: str) -> Candidate | None:
 
 def prefetch(reg: Registry, route: router.Route, *, tier: bool = True) -> Prefetch:
     """The tool results for ``route`` (see the module docstring)."""
-    pre = Prefetch()
+    pre = Prefetch(request=route.text)
     intent, subject = route.intent, route.subject
     if intent == router.FRONTIER:
         pre.main = _call(reg, pre, "quest_frontier", {"n": FRONTIER_N})

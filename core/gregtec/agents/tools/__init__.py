@@ -17,8 +17,8 @@ recipe_find(item, ...)    both   :mod:`.recipes`
 recipe_uses(item)         both   :mod:`.recipes`
 machine_info(machine)     both   :mod:`.machines`
 quest_find(text)          both   :mod:`.quests`
-quest_get(id, spoil)      both   :mod:`.quests` (nudge-first spoilers, D26)
-quest_frontier(n)         both   :mod:`.quests`
+quest_get(id, spoil)      both   :mod:`.quests` (nudge-first spoilers, D26, D268)
+quest_frontier(n)         both   :mod:`.quests` (ranked by goals and lines, WO-6.4)
 quest_for_item(item)      both   :mod:`.quests`
 base_get()                both   :mod:`.base` (WO-3.8; My base, read-only)
 db_query(name, params)    both   :mod:`.sql` (the game-data ``db/queries/*.sql``)

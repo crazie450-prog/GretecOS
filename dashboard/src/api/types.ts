@@ -153,6 +153,8 @@ export interface Reply {
   // Work handed to the deep lane (D152): the router's hand-off names its task; the fast lane's
   // `handoff` tool only says it happened (the task is found by its time, see state/deep.ts).
   handoff?: { id?: string; source: string; status?: string } | null;
+  // A spoiler command's grant (WO-6.4, D268 R3): the level and the quests it is for, only.
+  spoil?: { level: 1 | 2; quests: string[] } | null;
 }
 
 export type DeepStatus = "queued" | "running" | "needs_approval" | "done" | "failed" | "stopped" | "offline";
@@ -354,6 +356,40 @@ export interface SetupDevices {
   inputs: SetupDevice[];
   outputs: SetupDevice[];
   error: string | null;
+}
+
+// The Quests view (WO-6.4, GET /api/quests): two catalog quest cards, the frontier's item links,
+// the quest lines' progress. Past the frontier only what the spoiler level shows is sent at all.
+export interface QuestLink {
+  part: "task" | "reward";
+  key: string;
+  name: string;
+  amount: number | null;
+  consume: boolean | null;
+}
+
+export interface QuestLine {
+  name: string;
+  done: number;
+  available: number;
+  locked: number;
+  total: number;
+  main_left: number;
+  frontier: string[];
+  note: string;
+}
+
+export interface QuestsView {
+  player: string;
+  tier: string;
+  spoil: 0 | 1 | 2;
+  open: string[] | null; // the quests `spoil` is for (a grant from chat); null: all of them
+  default: 0 | 1 | 2;
+  goals: string[];
+  frontier: unknown; // a quest card, checked against the catalog before it is drawn
+  beyond: unknown;
+  links: Record<string, QuestLink[]>;
+  lines: QuestLine[];
 }
 
 // --- The Designer (WO-3.7, plan 7.1, D250) ------------------------------------------------------

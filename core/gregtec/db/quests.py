@@ -535,6 +535,15 @@ def load_main(
         print(f"Not loaded: {exc}", file=out)
         return 1
     report(summary, out)
+    # The questline summaries in the vault follow the load (WO-6.4); a failure there is
+    # reported and leaves the load as it is (idle maintenance tries again).
+    from gregtec.quests import summaries
+    from gregtec.vault.io import VaultError
+
+    try:
+        summaries.report(summaries.refresh_home(cfg.gos_home), out)
+    except (OSError, sqlite3.Error, VaultError, access.SchemaError) as exc:
+        print(f"Questline summaries not written: {exc}", file=out)
     return 0
 
 

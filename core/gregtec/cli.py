@@ -42,6 +42,7 @@ from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.packupdate import cli as pack_cli
 from gregtec.planner import graphcli, ledgercli, plancli, powercli
+from gregtec.quests import cli as quest_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 
@@ -479,6 +480,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     recipe_eval_cli.add_parsers(eval_cmds)
     design_cost_cli.add_parsers(eval_cmds)
+    quest_cli.add_parsers(quest_cmds, eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -703,6 +705,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.player,
                 sys.stdout,
             )
+        if args.quests_command == quest_cli.SUMMARIES:
+            return quest_cli.run_summaries(args, sys.stdout)
         if args.quests_command == "frontier":
             return quest_db.frontier_main(
                 args.config, args.line, args.limit, sys.stdout
@@ -754,6 +758,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return recipe_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:
             return design_cost_cli.run(args, sys.stdout)
+        if args.eval_command == quest_cli.EVAL:
+            return quest_cli.run_eval(args, sys.stdout)
         if args.eval_command == "deep-lane":
             from gregtec.agents import deep_eval
 

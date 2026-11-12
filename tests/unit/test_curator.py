@@ -104,8 +104,8 @@ def test_index_from_the_template_follows_the_schema(vault: Path) -> None:
     assert rows[2][3] == "Clayton's goals, one per line as goal: {text}; agents rea..."
     assert len(rows[1][3]) <= index.SUMMARY_MAX
     assert (
-        "upd: 2026-11-11" in text
-    )  # the newest row's date (the schema note's, WO-5.6)
+        "upd: 2026-11-12" in text
+    )  # the newest row's date (the schema note's, WO-6.4)
     assert not index.build(
         vault, TODAY + dt.timedelta(days=3)
     )  # unchanged: not rewritten
@@ -462,6 +462,7 @@ def test_the_run_does_every_job_in_order(vault: Path, tmp_path: Path) -> None:
     ).run(TODAY)
     assert [(r.job, r.status) for r in results] == [
         ("compact", "ok"),
+        ("quests", "skipped"),  # no quests loaded (WO-6.4)
         ("schema", "ok"),
         ("index", "ok"),
         ("fts", "ok"),
@@ -469,7 +470,7 @@ def test_the_run_does_every_job_in_order(vault: Path, tmp_path: Path) -> None:
         ("git", "ok"),
     ]
     assert (
-        results[3].detail == "6 notes"
+        results[4].detail == "6 notes"
     )  # INDEX, schema, goals, prefs, pl-1, W44 less log
     assert "plans/pl-1.md" in (vault / "INDEX.md").read_text(encoding="utf-8")
     assert (tmp_path / "data" / "backups" / "gos-20261106.sqlite").is_file()
@@ -507,6 +508,7 @@ def test_no_vault_skips_the_vault_jobs(tmp_path: Path) -> None:
     ).run(TODAY)
     assert {r.job: r.status for r in results} == {
         "compact": "skipped",
+        "quests": "skipped",
         "index": "skipped",
         "schema": "skipped",
         "fts": "skipped",
@@ -608,7 +610,7 @@ def test_a_stop_skips_the_rest(vault: Path, tmp_path: Path) -> None:
         results[0].job == "compact" and "stopped before the rest" in results[0].detail
     )
     assert "compacted 2026-W43" in results[0].detail
-    assert [(r.status, r.detail) for r in results[1:]] == [("skipped", "stopped")] * 5
+    assert [(r.status, r.detail) for r in results[1:]] == [("skipped", "stopped")] * 6
     assert (vault / "log" / "2026-10-26.md").exists()
 
 
