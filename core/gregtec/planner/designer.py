@@ -50,7 +50,15 @@ from gregtec.planner.ledger import ledger_update
 from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
 from gregtec.planner.outputs.book import Book
-from gregtec.planner.request import RECIPE_KEY, Request, is_stable_key
+from gregtec.planner.request import (
+    RECIPE_KEY,
+    Pin,
+    Request,
+    is_stable_key,
+    parse_duration,
+    parse_qty,
+    tier_index,
+)
 from gregtec.vault.io import VaultError, VaultIO, atomic_write
 
 LATEST = Path("data", "plans", "designer.json")  # in GOS_HOME
@@ -131,6 +139,56 @@ def resolve_target(home: Path, text: str) -> graph.Resolved | prefetch.Clarify:
             return graph.resolve_target(conn, text, Glossary.find(home / "vault"), db)
         except graph.GraphError as exc:
             raise DesignerError(str(exc)) from None
+
+
+SPEC_KEYS = frozenset(
+    {"target", "rate", "batch", "within", "tier", "routes", "addons", "pins"}
+)
+
+
+def request_from_spec(
+    home: Path, spec: Mapping[str, Any]
+) -> Request | prefetch.Clarify:
+    """A request from the Designer's form or ``design_production``'s spec: ``target`` (words
+    or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"),
+    ``tier`` (LV..MAX, else My base's), ``routes`` (1-3), ``addons`` (bool), ``pins``
+    ([{node, recipe}]). An unclear target gives the clarifying question instead."""
+    unknown = set(spec) - SPEC_KEYS
+    if unknown:
+        raise DesignerError(f"unknown fields: {', '.join(sorted(unknown))}")
+    target = spec.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise DesignerError("name a target item or fluid")
+    found = resolve_target(home, target.strip())
+    if isinstance(found, prefetch.Clarify):
+        return found
+    try:
+        common: dict[str, Any] = {
+            "tier_cap": tier_index(str(spec["tier"])) if spec.get("tier") else None,
+            "machines": "base+addons" if spec.get("addons") is True else "base",
+            "pins": tuple(
+                Pin(str(p["node"]), str(p["recipe"])) for p in spec.get("pins") or ()
+            ),
+            "routes": int(spec.get("routes") or 3),
+        }
+        if spec.get("batch") not in (None, ""):
+            if spec.get("rate") not in (None, ""):
+                raise DesignerError("give a rate or a batch, not both")
+            qty, unit = parse_qty(str(spec["batch"]))
+            if unit is not None:
+                raise DesignerError("a batch is a quantity, without /s, /min or /h")
+            within = parse_duration(str(spec["within"])) if spec.get("within") else None
+            return Request(found.key, mode="batch", qty=qty, within_s=within, **common)
+        if spec.get("within"):
+            raise DesignerError("within is for a batch only")
+        qty, unit = parse_qty(str(spec.get("rate") or "1/s"))
+        if unit is None:
+            raise DesignerError("a rate needs /s, /min or /h")
+        return Request(found.key, qty=qty, unit=unit, **common)
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, DesignerError):
+            raise
+        raise DesignerError(str(exc)) from None
 
 
 # --- design, save, re-solve --------------------------------------------------------------------
