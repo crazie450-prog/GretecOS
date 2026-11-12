@@ -119,11 +119,15 @@ changes GT, before answering yes:
    - Regenerate the oracle vectors from the new GT's own classes (a JDK on PATH; the first run
      builds the mod's classpath, a few minutes):
      `uv run python tests/unit/gtmath/oracle/make_vectors.py`. It refuses to write them while
-     GT's classes disagree with a ported unit-test expectation. Commit `tests/unit/gtmath/vectors/`.
+     GT's classes disagree with a ported unit-test expectation. Then the turbine vectors (WO-4.1,
+     D231): `uv run python tests/unit/gtmath/oracle/make_turbine_vectors.py`; if a turbine
+     controller's `fluidIntoPower` changed, port the change into `gtmath/turbine.py` first.
+     Commit `tests/unit/gtmath/vectors/`.
    - `uv run pytest tests/unit/gtmath` must pass (GT's unit tests, the vectors replayed through
      the port bit for bit, the property tests), then, after the harnesses,
-     `GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration/test_gtmath_harness.py` (the
-     vectors re-made from GT's jar, and every recipe of the harness DB).
+     `GOS_REQUIRE_HARNESS_RUN=1 uv run pytest tests/integration/test_gtmath_harness.py
+     tests/integration/test_power_harness.py` (the vectors re-made from GT's jar, every recipe of
+     the harness DB, and every rotor and single-block fuel value against GT's in-game values).
 3. Merge, `gos deploy`, then `gos pack adopt yes`. `gos pack pin` exits 0 again once Play's new
    export is in the DB. Between the deploy and Play's new export, `gos pack pin`, `gos db build`
    and `gos doctor` report Play's current run as a mismatch: expected, and the reason to update

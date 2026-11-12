@@ -41,7 +41,7 @@ from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.packupdate import cli as pack_cli
-from gregtec.planner import graphcli, plancli
+from gregtec.planner import graphcli, plancli, powercli
 from gregtec.quests import cli as quest_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
@@ -593,6 +593,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     pack_cli.add_parsers(commands)
     graphcli.add_parsers(commands)
     plancli.add_parsers(commands)
+    powercli.add_parsers(commands)
     appwindow.add_parsers(commands)
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
@@ -660,6 +661,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return graphcli.run(args, sys.stdout)
     if args.command in plancli.COMMANDS:
         return plancli.run(args, sys.stdout)
+    if args.command in powercli.COMMANDS:
+        return powercli.run(args, sys.stdout)
     if args.command in appwindow.COMMANDS:
         return appwindow.run(args)
     if args.command in voicecli.COMMANDS:

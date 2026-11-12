@@ -47,7 +47,9 @@ from typing import TextIO
 from gregtec import config
 from gregtec.db import access, report
 from gregtec.db import crops as crop_db
+from gregtec.db import power as power_db
 from gregtec.ingest import collect, crops, gtdump, machine_facts, machines, merge, nei
+from gregtec.ingest import power as power_ingest
 from gregtec.ingest.normalize import FLUID, ITEM, Json, OreIndex, Recipe, Ref, canonical
 from gregtec.packupdate import gtpin
 
@@ -95,6 +97,12 @@ class Loaded:
     # ore lists of items.jsonl, as runs made before it do (a failed part with NEI is refused).
     oredict_status: str = "absent"
     oredict: list[gtdump.OreName] | None = None
+    # The power catalog's game data (WO-4.1, D230): parts.power, the data when it is "ok" and
+    # reads, else why not. Fuel rows are decoded from the recipes either way.
+    power_status: str = "absent"
+    power: power_ingest.Power | None = None
+    power_error: str | None = None
+    fuels: int = 0  # fuel rows written
 
 
 @dataclass
@@ -219,6 +227,12 @@ def load(
     loaded.facts = machine_facts.assemble(found, curated)
     # Crop data isn't part of "complete" (as NEI's): a run whose crop step failed, or whose crop
     # files don't read, still builds its recipes, and the report says why it has no crops.
+    loaded.power_status = power_ingest.status(run.manifest)
+    if loaded.power_status == "ok":
+        try:
+            loaded.power = power_ingest.read(path)
+        except (power_ingest.FormatError, OSError) as exc:
+            loaded.power_error = str(exc)
     loaded.crops_status = crops.status(run.manifest)
     if loaded.crops_status == "ok":
         nei_ok = loaded.nei_status == "ok"
@@ -296,6 +310,7 @@ def _delete_runs(conn: sqlite3.Connection, run_ids: Sequence[int]) -> None:
         conn.execute("DELETE FROM recipe WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM mod WHERE run_id = ?", (run_id,))
     crop_db.delete(conn, run_ids)
+    power_db.delete(conn, run_ids)
 
 
 def _export_run(
@@ -798,6 +813,7 @@ def write(
         if loaded.crops is not None:
             crop_db.write(conn, run_id, loaded.crops, items)
         _machines(conn, loaded, items, maps)
+        loaded.fuels = power_db.write(conn, run_id, loaded.power)
         pruned = prune(conn, keep, run_id)
         _names(conn)
         conn.execute("COMMIT")
