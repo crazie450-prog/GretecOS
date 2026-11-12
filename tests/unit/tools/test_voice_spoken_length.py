@@ -18,5 +18,7 @@ def test_the_eval_set_is_spoken_within_d23(tool_db: Path) -> None:
     assert answers is not None, why
     assert [item for item, _ in answers] == [q.id for q in evals.load()]
     assert all(text for _, text in answers)
-    checks = vb.spoken_checks(answers, tts.prepare(tts.lexicon(home)))
-    assert checks[0].result == vb.PASS, [c for c in checks if c.result == vb.FAIL]
+    checks = vb.spoken_checks(answers, tts.prepare(tts.lexicon(home)).said)
+    assert [c.result for c in checks[:2]] == [vb.PASS, vb.PASS], checks[:2] + [
+        c for c in checks if c.result == vb.FAIL or c.note
+    ]

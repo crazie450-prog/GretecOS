@@ -60,10 +60,13 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from gregtec.config import Config
 from gregtec.gamestate.safe_open import read_bytes
+
+if TYPE_CHECKING:
+    from gregtec_voice.speech_filter import Said
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +79,7 @@ TPS_TOLERANCE = (
 )
 RAM_FREE_MIN_MB = 4096  # plan 8 WO-5.7, QA:A7
 SPOKEN_SHARE_MIN = 0.95  # plan 8 WO-5.7, D23
+CUT_SHARE_MAX = 0.05  # D248: the rest of the 95% (L1 of the WO-5.7 review)
 SAMPLE_S = 1.0  # RAM is read this often
 VRAM_EVERY = 5  # nvidia-smi once every this many samples (it costs CPU next to GTNH)
 SPEECH_S = 0.6  # a synthetic question's tone
@@ -249,7 +253,10 @@ def find_processes(own: int | None = None) -> dict[str, list[int]]:
 
 
 def role_of(cmd: Sequence[str]) -> str | None:
-    """``core``, ``voice`` or None for one command line."""
+    """``core``, ``voice`` or None for one command line: ``gos voice run`` (``gos``, the
+    ``gos.exe`` launcher uv installs, or Python running that launcher) or ``python -m
+    gregtec_voice[.cli] run``. A shell shim (``gos.cmd``, ``gos.ps1``) starts one of those, which
+    is found instead."""
     if "gregtec.api" in cmd:
         return CORE
     names = [re.split(r"[\\/]", c)[-1].lower() for c in cmd]  # Windows paths on any OS
@@ -257,8 +264,8 @@ def role_of(cmd: Sequence[str]) -> str | None:
         rest = names[i + 1 : i + 3]
         if name in ("gos", "gos.exe") and rest == ["voice", "run"]:
             return VOICE
-        if name == "gregtec_voice" and rest[:1] == ["run"]:
-            return VOICE
+        if name in ("gregtec_voice", "gregtec_voice.cli") and rest[:1] == ["run"]:
+            return VOICE  # python -m gregtec_voice[.cli] run
     return None
 
 
@@ -367,8 +374,8 @@ class Sampler:
         rows = self.smi("--query-gpu=memory.used,memory.total")
         if not rows:
             return
-        try:
-            used, total = int(rows[0][0]), int(rows[0][1])
+        try:  # the busiest GPU, should there be more than one
+            used, total = max((int(r[0]), int(r[1])) for r in rows)
         except (ValueError, IndexError):
             return
         p.vram_used = used if p.vram_used is None else max(p.vram_used, used)
@@ -441,6 +448,7 @@ def resource_checks(
 
 _FPS = re.compile(r"(\d+(?:[.,]\d+)?)\s*fps\b", re.IGNORECASE)
 _BARE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*$", re.MULTILINE)
+_LIST = re.compile(r"\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)+")
 # Forge 1.7.10's /forge tps (its DecimalFormat follows the locale: 2,345 or 2.345)
 _TPS = re.compile(
     r"Overall\s*:\s*Mean tick time:\s*([\d.,]+)\s*ms\.?\s*Mean TPS:\s*([\d.,]+)",
@@ -468,14 +476,17 @@ def text_of(value: str) -> str:
 
 
 def parse_fps(text: str) -> list[float]:
-    """F3's "N fps" readings in ``text``, else numbers alone on a line (or the comma list)."""
+    """F3's "N fps" readings in ``text``, else numbers alone on a line, else one line that is
+    only numbers and commas ("60, 62, 61"). Nothing else: a log's timestamps are no FPS."""
     found = [_num(m) for m in _FPS.findall(text)]
     if found:
         return found
     found = [_num(m) for m in _BARE.findall(text)]
     if found:
         return found
-    return [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)]
+    if _LIST.fullmatch(text.strip()):
+        return [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)]
+    return []
 
 
 def parse_tps(text: str) -> tuple[float, float] | None:
@@ -485,6 +496,32 @@ def parse_tps(text: str) -> tuple[float, float] | None:
         return None
     tick, tps = found[-1]
     return _num(tick), _num(tps)
+
+
+_TIMESTAMP = re.compile(r"\[\d{1,2}:\d{2}:\d{2}\]")
+
+
+def last_tps_line(text: str) -> str | None:
+    """The whole line of the last ``Overall`` reading in ``text`` (its timestamp too)."""
+    last = None
+    for last in _TPS.finditer(text):
+        pass
+    if last is None:
+        return None
+    start = text.rfind("\n", 0, last.start()) + 1
+    end = text.find("\n", last.end())
+    return text[start : None if end < 0 else end].strip()
+
+
+def stale_tps(before: str, during: str) -> bool:
+    """The reading "while GOS runs" is the one from before (M1 of the WO-5.7 review): the same
+    log copied twice with no new ``/forge tps`` in between (a mistyped command, or Lab didn't
+    log the reply) ends with the same timestamped ``Overall`` line. Pasted readings without a
+    timestamp are stale only when the second text holds the whole first one."""
+    line = last_tps_line(during)
+    if line is None or line != last_tps_line(before):
+        return False
+    return bool(_TIMESTAMP.search(line)) or (bool(before.strip()) and before in during)
 
 
 def game_checks(
@@ -528,14 +565,18 @@ def game_checks(
                   note="give --tps-before and --tps-during")
         )  # fmt: skip
         return checks
-    before_tps, during_tps = (
-        parse_tps(text_of(tps_before)),
-        parse_tps(text_of(tps_during)),
-    )
+    before_text, during_text = text_of(tps_before), text_of(tps_during)
+    before_tps, during_tps = parse_tps(before_text), parse_tps(during_text)
     if before_tps is None or during_tps is None:
         checks.append(
             Check("game", "gtnh", "TPS", target=target, result=MISSING,
                   note="no /forge tps Overall line in what was given (or no such file)")
+        )  # fmt: skip
+        return checks
+    if stale_tps(before_text, during_text):
+        checks.append(
+            Check("game", "gtnh", "TPS", target=target, result=MISSING,
+                  note="no new /forge tps reading: the last one is from before GOS ran")
         )  # fmt: skip
         return checks
     drop = round(before_tps[1] - during_tps[1], 3)  # as printed
@@ -556,44 +597,99 @@ def game_checks(
 # --- spoken length -----------------------------------------------------------------------------
 
 
-def spoken_checks(
-    answers: Sequence[tuple[str, str]] | None, say: Callable[[str], str], why: str = ""
+SPOKEN_SCOPES = ("eval set", "live")
+
+
+def _spoken_gates(
+    scope: str, counts: Sequence[tuple[int, int, bool]], why: str
 ) -> list[Check]:
-    """D23 over the eval set's answers ((id, reply text)), each as the speaker says it."""
+    """D23 on (sentences, words, cut) as heard: the share within it, and the share the filter
+    had to cut to get there (L1 of the WO-5.7 review: an answer cut mid-thought may have lost
+    its point, which the prompt rules are there to prevent)."""
     from gregtec_voice import speech_filter as sf
 
-    target = f">= {SPOKEN_SHARE_MIN:.0%} within {sf.MAX_SENTENCES} sentences, {sf.MAX_WORDS} words"
-    if not answers:
-        return [Check("spoken", "eval set", "within D23", target=target, result=MISSING,
-                      note=why)]  # fmt: skip
+    within_target = f">= {SPOKEN_SHARE_MIN:.0%} within {sf.MAX_SENTENCES} sentences, {sf.MAX_WORDS} words"
+    cut_target = f"<= {CUT_SHARE_MAX:.0%}"
+    if not counts:
+        return [
+            Check("spoken", scope, "within D23", target=within_target, result=MISSING,
+                  note=why),
+            Check("spoken", scope, "cut by the filter", target=cut_target, result=MISSING,
+                  note=why),
+        ]  # fmt: skip
+    n = len(counts)
+    within = sum(s <= sf.MAX_SENTENCES and w <= sf.MAX_WORDS for s, w, _ in counts)
+    cut = sum(c for _, _, c in counts)
+    return [
+        Check(
+            "spoken",
+            scope,
+            "within D23",
+            f"{within / n:.1%}",
+            within_target,
+            PASS if within / n >= SPOKEN_SHARE_MIN else FAIL,
+            f"{within} of {n} answers",
+        ),
+        Check(
+            "spoken",
+            scope,
+            "cut by the filter",
+            f"{cut / n:.1%}",
+            cut_target,
+            PASS if cut / n <= CUT_SHARE_MAX else FAIL,
+            f"{cut} of {n} answers",
+        ),
+    ]
+
+
+def spoken_checks(
+    answers: Sequence[tuple[str, str]] | None,
+    said: Callable[[str], Said],
+    why: str = "",
+) -> list[Check]:
+    """D23 over the eval set's answers ((id, reply text)), each as the speaker says it
+    (``said``: :meth:`gregtec_voice.tts.Prepare.said`)."""
+    from gregtec_voice import speech_filter as sf
+
     rows = []
-    within = 0
-    for item, text in answers:
-        said = say(text)
-        n_sentences, words = len(sf.sentences(said)), sf.heard_words(said)
-        ok = n_sentences <= sf.MAX_SENTENCES and words <= sf.MAX_WORDS
-        within += ok
+    counts = []
+    for item, text in answers or ():
+        heard = said(text)
+        ok = heard.sentences <= sf.MAX_SENTENCES and heard.words <= sf.MAX_WORDS
+        counts.append((heard.sentences, heard.words, heard.cut))
+        note = (
+            "nothing said"
+            if not heard.text
+            else "cut by the filter"
+            if heard.cut
+            else ""
+        )
         rows.append(
             Check(
                 "spoken",
                 item,
                 "sentences, words",
-                f"{n_sentences}, {words}",
+                f"{heard.sentences}, {heard.words}",
                 result=PASS if ok else FAIL,
-                note="" if said else "nothing said",
+                note=note,
             )
         )
-    share = within / len(answers)
-    summary = Check(
-        "spoken",
-        "eval set",
-        "within D23",
-        f"{share:.1%}",
-        target,
-        PASS if share >= SPOKEN_SHARE_MIN else FAIL,
-        f"{within} of {len(answers)} answers",
-    )
-    return [summary, *rows]
+    return [*_spoken_gates("eval set", counts, why), *rows]
+
+
+def live_spoken_checks(turns: Sequence[dict[str, Any]], source: str) -> list[Check]:
+    """D23 on what the voice client said in the measured turns (M2 of the WO-5.7 review): the
+    real model's answers on the PC, or the synthetic core's here. Each ``turn`` record has its
+    answer's length as heard (counts only, D82) since WO-5.7."""
+    counts = [
+        (t["spoken_sentences"], t["spoken_words"], bool(t.get("spoken_cut")))
+        for t in turns
+        if t.get("outcome") in ("answered", "stopped")
+        and isinstance(t.get("spoken_sentences"), int)
+        and isinstance(t.get("spoken_words"), int)
+    ]
+    why = f"no answered turn in {source} logged its spoken length (a client before WO-5.7?)"
+    return _spoken_gates("live", counts, why)
 
 
 def eval_answers(cfg: Config) -> tuple[list[tuple[str, str]] | None, str]:
@@ -655,6 +751,11 @@ class SyntheticSpeaker:
         self.say = say
         self.delay_s = delay_s
         self.said: list[str] = []
+
+    def heard(self, text: str) -> Said | None:
+        """As :meth:`gregtec_voice.tts.Speaker.heard`: ``say``'s counts, if it gives them."""
+        said = getattr(self.say, "said", None)
+        return said(text) if callable(said) else None
 
     def speak(
         self, text: str, on_first_audio: Callable[[], None], on_done: Callable[[], None]
@@ -842,13 +943,13 @@ def verdict(checks: Sequence[Check]) -> tuple[str, list[str]]:
 def summary(checks: Sequence[Check], source: str) -> str:
     lines = [f"Voice benchmark ({source})"]
     for c in checks:
-        if c.section == "spoken" and c.scope != "eval set":
+        if c.section == "spoken" and c.scope not in SPOKEN_SCOPES:
             continue
         if c.section == "latency" and c.metric != "to first audio":
             continue
         name = {
             "latency": f"PM14 {TRIGGER_NAMES.get(c.scope, c.scope)}",
-            "spoken": "Spoken length",
+            "spoken": f"Spoken length ({c.scope})",
         }.get(c.section, f"{c.scope}")
         value = c.value or "-"
         target = f" (target {c.target})" if c.target else ""
@@ -1012,9 +1113,15 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     checks += game_checks(
         args.fps_before, args.fps_during, args.tps_before, args.tps_during
     )
+    checks += live_spoken_checks(turns, source)
     # after the sampling, so its CPU and RAM aren't counted as GOS's
-    answers, why = eval_answers(cfg)
-    checks += spoken_checks(answers, say, why)
+    try:
+        answers, why = eval_answers(cfg)
+    except (
+        KeyboardInterrupt
+    ):  # L4 of the WO-5.7 review: what was measured is still reported
+        answers, why = None, "interrupted"
+    checks += spoken_checks(answers, say.said, why)
     text = summary(checks, source)
     print("\n" + text, end="", file=out)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -1049,7 +1156,11 @@ def _sample(processes: dict[str, list[int]], seconds: float) -> Peaks:
             pass  # short waits: on Windows, Ctrl+C can't interrupt one long wait
     except KeyboardInterrupt:
         pass
-    return sampler.stop()
+    while True:  # a second Ctrl+C while the sampler stops still keeps what it saw
+        try:
+            return sampler.stop()
+        except KeyboardInterrupt:
+            continue
 
 
 @dataclass

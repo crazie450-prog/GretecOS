@@ -16,6 +16,7 @@ import pytest
 
 from gregtec import voicebench as vb
 from gregtec_voice import cli
+from gregtec_voice import speech_filter as sf
 from gregtec_voice.settings import VoiceSettings
 
 
@@ -91,6 +92,11 @@ def test_since_keeps_the_records_logged_in_the_window() -> None:
         (["C:\\GOS\\.venv\\Scripts\\gos.exe", "voice", "run"], "voice"),
         (["/usr/bin/python3", "/home/x/.venv/bin/gos", "voice", "run", "--supervised"], "voice"),
         (["python", "-m", "gregtec_voice", "run"], "voice"),
+        (["python", "-m", "gregtec_voice.cli", "run"], "voice"),
+        # uv's trampoline: Python running the gos.exe launcher
+        (["C:\\GOS\\.venv\\Scripts\\python.exe", "C:\\GOS\\.venv\\Scripts\\gos.exe", "voice",
+          "run"], "voice"),
+        (["python", "-m", "gregtec_voice.cli", "keys"], None),
         (["gos", "voice", "benchmark", "--minutes", "5"], None),
         (["gos", "serve"], None),
         (["javaw.exe", "-Xmx6G", "net.minecraft.launchwrapper.Launch"], None),
@@ -124,7 +130,7 @@ class Smi:
     def __call__(self, *query: str) -> list[list[str]] | None:
         self.calls += 1
         if query[0].startswith("--query-gpu"):
-            return [["6200", "16376"]]
+            return [["1200", "8192"], ["6200", "16376"]]  # the busiest GPU counts
         return self.apps
 
 
@@ -185,6 +191,39 @@ def test_parse_fps() -> None:
     ]
     assert vb.parse_fps("60\n58.5\n") == [60, 58.5]
     assert vb.parse_fps("60, 62, 61") == [60, 62, 61]
+    # L2 of the review: a log's timestamps and other digits are no FPS reading
+    assert vb.parse_fps(LATEST_LOG) == []
+    assert vb.parse_fps("[18:01:02] [Client thread/INFO]: Loaded 12 chunks") == []
+
+
+def test_a_stale_tps_reading_is_not_measured(tmp_path: Path) -> None:
+    """M1 of the review: the same latest.log copied twice with no new /forge tps between."""
+    before, during = tmp_path / "tps-before.log", tmp_path / "tps-during.log"
+    before.write_text(LATEST_LOG, encoding="utf-8")
+    during.write_text(
+        LATEST_LOG + "[18:12:00] [Client thread/INFO]: [CHAT] Unknown command\n",
+        encoding="utf-8",
+    )
+    (check,) = [c for c in vb.game_checks(None, None, str(before), str(during)) if
+                c.metric == "TPS"]  # fmt: skip
+    assert check.result == vb.MISSING and "no new /forge tps reading" in check.note
+    # a new reading later in the same log counts
+    during.write_text(
+        LATEST_LOG
+        + "[18:20:00] [Client thread/INFO]: [CHAT] Overall : Mean tick time: "
+        "50.000 ms. Mean TPS: 20.000\n",
+        encoding="utf-8",
+    )
+    (check,) = [c for c in vb.game_checks(None, None, str(before), str(during)) if
+                c.metric == "TPS"]  # fmt: skip
+    assert check.result == vb.PASS and check.value == "19.048 -> 20.000"
+    # pasted lines without a timestamp: the same paste twice is no new reading, a second
+    # paste of its own is one (if only its tick time differs)
+    t = "Overall : Mean tick time: {} ms. Mean TPS: 20.000"
+    assert vb.stale_tps(t.format("31.250"), t.format("31.250"))
+    assert vb.stale_tps(t.format("31.250"), "/forge tps\n" + t.format("31.250") + "\n")
+    assert not vb.stale_tps(t.format("31.250"), t.format("31.251"))
+    assert not vb.stale_tps("Dim 0 : x\n" + t.format("31.250"), t.format("31.250"))
 
 
 def test_fps_drop_and_tps_thresholds(tmp_path: Path) -> None:
@@ -216,26 +255,82 @@ def test_fps_drop_and_tps_thresholds(tmp_path: Path) -> None:
 # --- spoken length -----------------------------------------------------------------------------
 
 
+def unfiltered(text: str) -> sf.Said:
+    """The reply as written, counted as heard: no filter, nothing cut."""
+    return sf.Said(text, len(sf.sentences(text)), sf.said_words(text), False)
+
+
+def gates(checks: list[vb.Check], scope: str = "eval set") -> dict[str, str]:
+    return {c.metric: c.result for c in checks if c.scope == scope and c.target}
+
+
 def test_spoken_share_must_reach_95_percent() -> None:
     long = " ".join(["word"] * 41) + "."
     answers = [(f"q{i}", "Short answer." if i else long) for i in range(20)]
-    checks = vb.spoken_checks(answers, lambda text: text)
+    checks = vb.spoken_checks(answers, unfiltered)
     assert checks[0].result == vb.PASS and checks[0].value == "95.0%"  # 19 of 20
     assert [c.scope for c in checks if c.result == vb.FAIL] == ["q0"]
     answers[1] = ("q1", "One. Two. Three.")
-    assert vb.spoken_checks(answers, lambda text: text)[0].result == vb.FAIL
-    assert vb.spoken_checks(None, str, "no DB")[0].result == vb.MISSING
+    assert vb.spoken_checks(answers, unfiltered)[0].result == vb.FAIL
+    missing = vb.spoken_checks(None, unfiltered, "no DB")
+    assert gates(missing) == {"within D23": vb.MISSING, "cut by the filter": vb.MISSING}
 
 
 def test_the_speech_filter_brings_long_answers_within_d23() -> None:
-    from gregtec_voice import speech_filter
-
     long = (
         "Naquadah Alloy Ingot: the first recipe runs in the Electric Blast Furnace at 30,720 "
         "EU/t for 1,234 ticks with 32,768 L of nitrogen (r:abc). Then 1,152 L more. And more."
     )
-    assert vb.spoken_checks([("x", long)], speech_filter.spoken)[0].result == vb.PASS
-    assert vb.spoken_checks([("x", long)], lambda text: text)[0].result == vb.FAIL
+    assert vb.spoken_checks([("x", long)], sf.said)[0].result == vb.PASS
+    assert vb.spoken_checks([("x", long)], unfiltered)[0].result == vb.FAIL
+
+
+def test_answers_the_filter_cuts_are_counted_and_gated() -> None:
+    """L1 of the review: within D23 by construction, so the share cut is reported too."""
+    long = " ".join(["word"] * 45) + "."
+    answers = [(f"q{i}", long if i == 0 else "Short answer.") for i in range(20)]
+    checks = vb.spoken_checks(answers, sf.said)
+    assert gates(checks) == {"within D23": vb.PASS, "cut by the filter": vb.PASS}
+    cut = next(c for c in checks if c.metric == "cut by the filter")
+    assert (cut.value, cut.note) == ("5.0%", "1 of 20 answers")
+    assert next(c for c in checks if c.scope == "q0").note == "cut by the filter"
+    answers[1] = ("q1", "One. Two. Three.")
+    assert gates(vb.spoken_checks(answers, sf.said)) == {
+        "within D23": vb.PASS,
+        "cut by the filter": vb.FAIL,  # 2 of 20
+    }
+
+
+def test_the_live_turns_spoken_length() -> None:
+    """M2 of the review: the voice client's turn records carry their answer's counts."""
+    turns = [
+        turn("key", 900, spoken_sentences=2, spoken_words=30, spoken_cut=False)
+    ] * 19
+    turns.append(
+        turn("wake", 900, spoken_sentences=2, spoken_words=40, spoken_cut=True)
+    )
+    turns.append(turn("key", 900, outcome="nothing said"))  # not answered: not counted
+    turns.append(turn("key", 900))  # a client before WO-5.7: no counts
+    checks = vb.live_spoken_checks(turns, "the log")
+    assert gates(checks, "live") == {
+        "within D23": vb.PASS,
+        "cut by the filter": vb.PASS,
+    }
+    assert [c.note for c in checks] == ["20 of 20 answers", "1 of 20 answers"]
+    over = [
+        *turns,
+        turn("key", 900, spoken_sentences=3, spoken_words=12, spoken_cut=True),
+    ]
+    assert gates(vb.live_spoken_checks(over, "the log"), "live") == {
+        "within D23": vb.PASS,  # 20 of 21
+        "cut by the filter": vb.FAIL,  # 2 of 21: 9.5%
+    }
+    none = vb.live_spoken_checks([turn("key", 900)], "the log")
+    assert gates(none, "live") == {
+        "within D23": vb.MISSING,
+        "cut by the filter": vb.MISSING,
+    }
+    assert "no answered turn in the log logged its spoken length" in none[0].note
 
 
 def test_eval_answers_needs_a_db(tmp_path: Path) -> None:
@@ -318,6 +413,26 @@ def test_the_synthetic_run_goes_through_both_triggers() -> None:
     # the wake path includes end-of-speech detection (PM14: up to ~0.6 s)
     assert all(r["close_ms"] >= 500 for r in wake)
     assert said == [vb.CANNED] * 4  # say() here is the identity
+    assert all(r["spoken_words"] is None for r in records)  # and it can't count
+
+
+def test_the_synthetic_turns_log_their_spoken_length() -> None:
+    from gregtec_voice import tts
+    from gregtec_voice.lexicon import Lexicon
+
+    say = tts.prepare(Lexicon())
+    core = vb.SyntheticCore(None, 0.0)
+    records, said = vb.synthetic_turns(VoiceSettings(), core, turns=1, say=say)
+    heard = say.said(vb.CANNED)
+    assert said == [heard.text] * 2
+    assert [
+        (r["spoken_sentences"], r["spoken_words"], r["spoken_cut"]) for r in records
+    ] == [(heard.sentences, heard.words, False)] * 2
+    checks = vb.live_spoken_checks(records, "synthetic")
+    assert gates(checks, "live") == {
+        "within D23": vb.PASS,
+        "cut by the filter": vb.PASS,
+    }
 
 
 def test_a_slow_synthetic_turn_fails_pm14_by_code(tmp_path: Path) -> None:

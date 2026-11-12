@@ -37,8 +37,10 @@ def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_the_eval_set_is_spoken_within_d23(home: Path) -> None:
     answers, why = vb.eval_answers(Config(gos_home=home))
     assert answers is not None and len(answers) == 60, why
-    checks = vb.spoken_checks(answers, tts.prepare(tts.lexicon(home)))
-    assert checks[0].result == vb.PASS, [c for c in checks if c.result == vb.FAIL]
+    checks = vb.spoken_checks(answers, tts.prepare(tts.lexicon(home)).said)
+    assert [c.result for c in checks[:2]] == [vb.PASS, vb.PASS], checks[:2] + [
+        c for c in checks if c.result == vb.FAIL or c.note
+    ]
     # the item is named first (plan 4.4): q01 resolves to steel on the harness DB
     assert dict(answers)["q01"].lower().startswith("steel")
 
