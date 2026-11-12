@@ -4,7 +4,9 @@
 CropsNH is LGPL-3.0: its source (tag ``2.0.140``, commit ``db0a9936bdcc``, the version GTNH
 2.9.0's manifest pins) was read to learn these rules and nothing is copied from it. Each function
 names the behaviour it reproduces; the unit tests' vectors are worked by hand from that
-behaviour (tests/unit/crops/test_rules.py). The pack's config (GT-New-Horizons-Modpack tag
+behaviour (tests/unit/crops/test_rules.py), and ``nutrients``, ``growth_rate`` and
+``child_stat`` are also checked against CropsNH's own ``TileEntityCropSticks`` run from its jar
+(tests/unit/crops/oracle, test_rules_oracle.py). The pack's config (GT-New-Horizons-Modpack tag
 ``2.9.0``, commit ``79f9a03``, ``config/cropsnh/Configuration.cfg``) keeps every default used
 here: breeding chance 3, growth multiplier 1.0, the stat variation lists, thresholds 50 and 101,
 weed spawn 100 and weed spread 50.

@@ -57,7 +57,7 @@ function view(withGuide = true, following = false): CropsView {
     ],
     picks: [{ crop: "cropsnh:lily", ref: "crop:cropsnh:lily", name: "Lily" }],
     picks_note: "the PM's default picks, pending Clayton's",
-    setup: { water: 100, sky: true, liked_biome_tags: 0 },
+    setup: { water: 100, sky: true, liked_biome_tags: 0, crop_manager: false },
     guide: withGuide
       ? {
           target: "cropsnh:lily",
@@ -143,6 +143,10 @@ describe("Crops view", () => {
     expect(numbers.querySelectorAll("[data-cite]")).toHaveLength(2);
     expect(screen.getByTestId("crops-stats").textContent).toContain("about 33 children");
     expect(screen.getByTestId("crops-picks").textContent).toContain("pending Clayton");
+    // the times are the best case, and the panel says so (review M1)
+    const setup = screen.getByTestId("crops-setup-text").textContent ?? "";
+    expect(setup).toContain("best case for water and fertilizer");
+    expect(setup).toContain("by hand, though a stick uses some of each every growth tick");
     expect(urls).toEqual(["/api/crops"]);
   });
 

@@ -493,7 +493,8 @@ export interface CropsView {
   crops: (CropRef & { tier: number })[];
   picks: CropRef[];
   picks_note: string;
-  setup: { water: number; sky: boolean; liked_biome_tags: number };
+  // the times' best case: water and fertilizer topped up (by a Crop Manager he has, else by hand)
+  setup: { water: number; sky: boolean; liked_biome_tags: number; crop_manager: boolean };
   guide: CropGuide | null;
   error: string | null;
 }

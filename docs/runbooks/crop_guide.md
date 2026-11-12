@@ -23,7 +23,9 @@ Fertilia. To change them, tell the PM; to check any crop: `uv run gos crops chec
 2. List what you have: `uv run gos crops have wheat 1 1 1` (stats are Growth Gain Resistance).
 3. Say "next crop step" (or `uv run gos crops guide --next`) and do the step as laid out: parents
    north/south(/east/west) of the double stick, the named block under any stick that needs one.
-4. When a step's crop appears, check it with the Plant Lens, add it with `gos crops have <crop> G Ga R`,
+4. Keep water and fertilizer topped up (a stick uses 1 of each every growth tick, about 21 minutes
+   from 100; the guide's times assume they are kept up) or let a Crop Manager do it.
+   When a step's crop appears, check it with the Plant Lens, add it with `gos crops have <crop> G Ga R`,
    and ask for the next step. Note the times you see against the guide's expected and 90% times.
 5. Done when the target is in `gos crops have`. Put the notes (steps, times seen, anything that
    differed) in the PR or the G6 report.
@@ -37,8 +39,13 @@ Fertilia. To change them, tell the PM; to check any crop: `uv run gos crops chec
   Expected: the recipe can stop appearing (it depends on CropsNH's registration order).
 - **Identical seeds**: two seeds of one crop that is in a mutation pool around a double stick.
   Expected: other members of the pool appear sometimes.
-- **Crop Manager past 100**: an LV Crop Manager with fertilizer; the Plant Lens shows a stick above
-  100 (up to 200), and children's stats then never drop.
+- **Crop Manager past 100**: an LV Crop Manager; its water, fertilizer and Weed-EX switches start
+  off, so turn fertilizing on in its GUI and fill it (and power it). The Plant Lens shows a stick
+  above 100 (up to 200), and children's stats then never drop. With fertilizing off, the stick
+  stays at what a hand gave it.
+- **Upkeep**: fertilize a stick to 100 by hand and read it with the Plant Lens about 11 minutes
+  later (expected: about 50) and about 21 minutes later (expected: 0), unwatched by any Crop
+  Manager. The guide's times assume it is kept topped up; its nutrients lines show the dry score.
 
 ## 3. V32 Lab checks (the Crop Breeder)
 

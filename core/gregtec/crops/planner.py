@@ -1135,8 +1135,8 @@ def guide(
     )
     stuck = any(s.kind in ("sticks", "pool") and s.expected_s is None for s in steps)
     total = None
-    if steps and not stuck:
-        total_s = sum(s.expected_s or 0.0 for s in steps)
+    total_s = None if stuck else sum(s.expected_s or 0.0 for s in steps)
+    if steps and total_s is not None:
         total = Line(
             "Expected time for every step, one after another: {0}",
             (_secs(total_s, crop_refs),),
@@ -1157,7 +1157,7 @@ def guide(
                 refs=(c.ref,),
             )
         )
-    notes += _pool_note(p, best, target)
+    notes += _pool_note(p, best, target, total_s)
     return Guide(
         target,
         c.name,
@@ -1171,18 +1171,24 @@ def guide(
 
 
 def _pool_note(
-    p: _Planner, best: Mapping[str, tuple[Cost, _Option]], target: str
+    p: _Planner,
+    best: Mapping[str, tuple[Cost, _Option]],
+    target: str,
+    path_s: float | None,
 ) -> list[Line]:
-    """A mutation pool that reaches the target much faster than the path chosen (recipes come
-    first, plan 7.17): said, never chosen instead."""
-    cost, o = best[target]
+    """A mutation pool that reaches the target much faster than the path chosen (``path_s``,
+    the guide's total; None when it doesn't finish): said, never chosen instead (recipes come
+    first, plan 7.17). The pool's time counts a crop both its parents need twice, so it errs
+    long."""
+    _, o = best[target]
     if o.kind in ("have", "obtain", "pool"):
         return []
     costs = {cid: v[0] for cid, v in best.items()}
+    limit = math.inf if path_s is None else path_s
     faster = [
         (pc, po)
         for pc, po in p.pool_options(target, costs)
-        if math.isfinite(pc[3]) and pc[3] * POOL_NOTE_FACTOR <= cost[3]
+        if math.isfinite(pc[3]) and pc[3] * POOL_NOTE_FACTOR <= limit
     ]
     if not faster:
         return []
@@ -1195,7 +1201,7 @@ def _pool_note(
         f"Faster but a mutation pool's luck: {names} on sticks gives "
         f"{p.crop(target).name} in about {{0}} in all"
     )
-    if not math.isfinite(cost[3]):
+    if path_s is None:
         return [
             Line(
                 head + ", while the path below doesn't finish at the assumed setup",
@@ -1205,7 +1211,7 @@ def _pool_note(
     return [
         Line(
             head + ", against {1} for the path below",
-            (_secs(pc[3], refs), _secs(cost[3], refs)),
+            (_secs(pc[3], refs), _secs(path_s, refs)),
         )
     ]
 

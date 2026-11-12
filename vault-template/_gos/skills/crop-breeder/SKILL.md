@@ -28,6 +28,7 @@ GTNH 2.9 uses CropsNH crops. GOS's DB holds the crops of Clayton's export (`crop
 
 - **Keep the order the tool gives**, and the parents it names: CropsNH recipes count only the four sticks north, south, east and west of the double stick, and an extra species next to it can block a recipe.
 - Say a mutation-pool step is a gamble: its chance per growth tick is small and other children come first.
+- The times are the best case: water and fertilizer kept topped up. Without a Crop Manager, say to keep them topped up when a nutrients requirement says `check`.
 - A Crop Breeder step destroys its inputs on a failure: always mention the copies to make first.
 - If the target isn't set and he names none, ask which crop; the Crops view sets the target.
 - Children: check each with the Plant Lens; keep the best and replace the weakest parent. Growth above the crop's weed threshold spreads weeds unless Resistance is at least as high: raise Resistance first.

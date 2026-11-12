@@ -172,6 +172,10 @@ def payload(conn: sqlite3.Connection, crop: str | None) -> dict[str, Any]:
             "water": planner.Setup().water,
             "sky": planner.Setup().sky,
             "liked_biome_tags": planner.Setup().liked_biome_tags,
+            # the times' best case: topped up by a Crop Manager My base lists, else by hand
+            "crop_manager": bool(
+                {m.mte_id for m in f.machines.get("crop_manager", [])} & cur.owned
+            ),
         },
         "guide": None if g is None else planner.guide_dict(g),
         "error": error,

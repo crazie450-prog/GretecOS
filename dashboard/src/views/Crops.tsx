@@ -367,8 +367,13 @@ export function Crops() {
               )}
             </Panel>
             <Panel label="Setup the odds assume" testId="crops-setup">
-              <p className="gos-sub">
-                Watered sticks, sky access, {data.setup.liked_biome_tags} liked biome tags. Run {data.run}.
+              <p className="gos-sub" data-testid="crops-setup-text">
+                Times are the best case for water and fertilizer: kept topped up{" "}
+                {data.setup.crop_manager
+                  ? "by your Crop Manager."
+                  : "by hand, though a stick uses some of each every growth tick."}{" "}
+                The biome is the worst case: dry, {data.setup.liked_biome_tags} liked biome tags. Sky access. Run{" "}
+                {data.run}.
               </p>
               <p className="gos-sub">{GLYPH.waiting} Breeding station status arrives with WO-7.6.</p>
             </Panel>
