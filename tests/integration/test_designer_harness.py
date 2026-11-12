@@ -68,8 +68,17 @@ def test_a_text_request_to_an_accepted_plan_in_the_vault(home: Path) -> None:
     text = out.getvalue()
     assert code == 0, text
     assert "g01\tdesign\tdone\t" in text and "# task_max_usd = " in text
+    # The eval runs on a copy of the DB and vault (review L2): the plans are there.
+    assert designer.latest(home) == []
+    home = home / design_cost.SCRATCH
     ids = designer.latest(home)
     assert len(ids) >= 2, "the deep lane's design_production saved no routes"
+    # plan_explain's writer call ran on the plan it saved (review H1)
+    row = (home.parents[2] / "costs.tsv").read_text("utf-8").splitlines()[1]
+    explain_usd = dict(zip(design_cost.TABLE, row.split("\t"), strict=True))[
+        "explain_usd"
+    ]
+    assert float(explain_usd) > 0
     plans = [designer.load(home, i) for i in ids]
     assert {p["target"]["id"] for p in plans} == {STEEL}
     assert [
