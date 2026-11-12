@@ -371,6 +371,8 @@ def test_db_sql_reads_what_a_quest_is_only_at_the_full_level(home: Path) -> None
         "SELECT id, descr FROM quest WHERE id = 'x'",
         "SELECT * FROM quest",
         "SELECT id FROM quest WHERE raw_json LIKE '%a%'",
+        "SELECT id, task_logic FROM quest",  # quest_get shows it from level 1
+        "SELECT id FROM quest WHERE repeat_time >= 0",
         "SELECT quest_id, amount FROM quest_item",
         "SELECT count(*) FROM quest_task",
         "SELECT * FROM quest_reward",
@@ -713,6 +715,108 @@ def test_an_empty_open_keeps_every_beyond_quest_and_the_card_at_the_global_level
     assert beyond["spoil"] == spoilers.FULL
     assert {x["spoil"] for x in beyond["quests"]} == {spoilers.FULL}
     assert {x["spoil"] for x in view.read(home, 0, 0)["frontier"]["quests"]} == {None}  # type: ignore[index]
+
+
+def _tap(reg: Registry, tool: str, args: dict[str, object]) -> tuple[str, str]:
+    """The dashboard's /api/tools call (dashboard.run_tool: spoil_max=FULL): the tool's text,
+    and that text with the card it returns."""
+    import json
+
+    from gregtec.cards import build as cards_build
+
+    out = reg.call(tool, args, lane="fast", spoil_max=spoilers.FULL)
+    card = cards_build.from_tool(tool, out.text, out.is_error, reg.env.db)
+    return out.text, out.text + "\n" + json.dumps(card, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("level", [spoilers.PARTIAL, spoilers.FULL])
+def test_a_step_up_tap_never_names_a_hidden_prerequisite(
+    reg: Registry, fields: dict[str, questeval.Spoiler], level: int
+) -> None:
+    """The final review: the modal's "What does it ask for?" on Hidden Cache (q6) is
+    quest_get {q6, spoil 1} with spoil_max FULL; its prerequisite Secret Alloy (q5, locked,
+    unshown) stays at its own level, as through the chat path."""
+    head, _ = _get(reg, 6, lane="fast", spoil_max=spoilers.FULL)
+    assert head["spoil"] == "2" and head["name"] == "Hidden Cache"
+    _, text = _tap(reg, "quest_get", {"id": q(6), "spoil": level})
+    assert "Secret Alloy" not in text
+    assert questeval.leaks(text, fields, allow={q(6): level}) == []
+
+
+def test_no_dashboard_tool_call_shows_another_locked_quest_above_its_level(
+    reg: Registry, conn: sqlite3.Connection, fields: dict[str, questeval.Spoiler]
+) -> None:
+    """The class (D268): every quest tool the dashboard reaches through /api/tools, at every
+    level asked for every locked quest, shows no OTHER locked quest above its own level."""
+    from gregtec.api.dashboard import TOOLS
+
+    quest_tools = sorted(t for t in TOOLS if t.startswith("quest_"))
+    assert quest_tools == [
+        "quest_find",
+        "quest_for_item",
+        "quest_frontier",
+        "quest_get",
+    ]
+    GOALS = list(PACK.GOALS)  # his own words (the frontier's "why")
+    for ref in fields:
+        qid = ref.removeprefix("q:")
+        name = conn.execute("SELECT name FROM quest WHERE id = ?", (qid,)).fetchone()[0]
+        keys = sorted(
+            f"{r}@{m}"
+            for r, m in conn.execute(
+                "SELECT registry_name, meta FROM quest_item WHERE quest_id = ? "
+                "AND registry_name IS NOT NULL",
+                (qid,),
+            )
+        )
+        for level in (spoilers.NUDGE, spoilers.PARTIAL, spoilers.FULL):
+            calls: list[tuple[str, dict[str, object]]] = [
+                ("quest_get", {"id": ref, "spoil": level}),
+                ("quest_find", {"text": name}),
+                ("quest_frontier", {}),
+                *(("quest_for_item", {"item": k}) for k in keys),
+            ]
+            for tool, args in calls:
+                raw, text = _tap(reg, tool, args)
+                # what he typed or tapped, echoed back (the item as it resolved), is his own
+                said = GOALS + [str(v) for v in args.values()]
+                said.append(parse(raw).head.get("item", "").rsplit(" [", 1)[0])
+                leaks = questeval.leaks(text, fields, allow={ref: level}, said=said)
+                assert leaks == [], (ref, level, tool, args)
+
+
+def test_quest_for_item_orders_a_locked_unshown_quest_by_id(
+    home: Path, tmp_path: Path
+) -> None:
+    """Low (D268): a hidden name must not show through the order of quest_for_item's rows.
+    With Welcome to LV (q20) also asking for the EBF, it comes before EBF Time (q22) by id,
+    not after it by name."""
+    from gregtec.db import quests as quest_db
+
+    c = sqlite3.connect(tmp_path / "gregtec.sqlite")
+    try:
+        src = access.connect(access.db_path(home), readonly=True)
+        src.backup(c)
+        src.close()
+        c.execute(
+            "INSERT INTO quest_item (quest_id, part, idx, slot, registry_name, meta, "
+            "nbt_hash, amount) VALUES (?, 'task', 9, 0, 'gregtech:gt.blockmachines', "
+            "1000, '', 1)",
+            (_id(20),),
+        )
+        c.row_factory = sqlite3.Row
+        params = {"registry": "gregtech:gt.blockmachines", "meta": 1000, "ores": "[]",
+                  "fluid": None, "named": 1, "player": quest_db.tracked_player(c),
+                  "limit": 10, "offset": 0}  # fmt: skip
+
+        def order(level: int) -> list[str]:
+            found = access.query(c, "quests_for_item", {**params, "level": level})
+            return [f"q:{r['quest_id']}" for r in found if r["part"] == "task"]
+
+        assert order(spoilers.NUDGE) == [q(20), q(22)]
+        assert order(spoilers.PARTIAL) == [q(22), q(20)]  # names shown: by name
+    finally:
+        c.close()
 
 
 # --- acceptance: L0 never spoils ------------------------------------------------------------
