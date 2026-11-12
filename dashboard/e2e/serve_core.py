@@ -18,8 +18,9 @@ are loaded into the same DB from a fake Lab instance in ``<tmp>/fixtures``, with
 at x 100, z 20 in its ``level.dat`` and JourneyMap's data folder made, so the Ores view lists,
 maps and proposes waypoints, and a confirmed one is written there (never a real instance).
 
-Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtures/crops) as
-one more export run.
+Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtures/crops) added
+to the tool fixtures' export run, never as a newer run of its own: the recipe tools read only the
+newest run, so a crop-only run would hide the e2e world's recipes.
 
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
@@ -118,7 +119,8 @@ def load_ores(home: Path) -> tuple[Path, str]:
 
 def load_crops(home: Path) -> None:
     """WO-6.7's made-up crop world (tests/fixtures/crops/cropworld.py: crops, CropsNH's machines
-    and a Crop Breeder recipe) as one more export run in ``home``'s DB."""
+    and a Crop Breeder recipe) added to the newest export run in ``home``'s DB (the tool
+    fixtures'), so the recipe tools still answer from that run."""
     spec = importlib.util.spec_from_file_location(
         "crop_fixtures", REPO / "tests" / "fixtures" / "crops" / "cropworld.py"
     )
@@ -129,7 +131,7 @@ def load_crops(home: Path) -> None:
     spec.loader.exec_module(module)
     from gregtec.db import access
 
-    module.write_db(access.db_path(home))
+    module.write_db(access.db_path(home), into_latest=True)
 
 
 def _load_fakes() -> object:

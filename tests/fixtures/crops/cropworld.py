@@ -187,17 +187,28 @@ def _item(
     return int(row[0])
 
 
-def write_db(path: Path) -> Path:
+def write_db(path: Path, *, into_latest: bool = False) -> Path:
     """The made-up world as a game DB at ``path``: an export run, its crops, CropsNH's machines
-    and the Crop Breeder recipe, the way ``gos db build`` stores them."""
+    and the Crop Breeder recipe, the way ``gos db build`` stores them.
+
+    ``into_latest`` (the e2e core's DB): add them to the DB's newest export run instead of a new
+    one, so the other tools (which read only the newest run) still see that run's recipes."""
     conn = access.connect(path)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        cur = conn.execute(
-            "INSERT INTO export_run(created_at, fingerprint, run_key) VALUES (?, ?, ?)",
-            ("2026-11-11T00:00:00Z", "test", RUN_KEY),
-        )
-        run_id = int(cur.lastrowid or 0)
+        if into_latest:
+            row = conn.execute(
+                "SELECT id FROM export_run ORDER BY created_at DESC, run_key DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"{path} has no export run to add the crop world to")
+            run_id = int(row[0])
+        else:
+            cur = conn.execute(
+                "INSERT INTO export_run(created_at, fingerprint, run_key) VALUES (?, ?, ?)",
+                ("2026-11-11T00:00:00Z", "test", RUN_KEY),
+            )
+            run_id = int(cur.lastrowid or 0)
         crop_db.write(conn, run_id, data(), {})
         for job, ms in MACHINES.items():
             for m in ms:
