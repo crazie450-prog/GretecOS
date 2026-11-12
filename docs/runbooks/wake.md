@@ -60,7 +60,7 @@ What is measured here (plan 8, WO-5.4): with Discord's open mic and GTNH running
     ```
     It prints `Loading speech-to-text...`, `Loading the wake word...`, then `Voice client: ...; speech-to-text: ...; wake phrase "hey archivist" (sherpa-onnx). Ctrl+C stops it.` Say "Hey archivist" and a question: a short two-tone chime in the headset means GOS heard the phrase (after the second stage). Start the question within 1.5 s of the chime; you can also run straight on from the phrase without waiting for it. A pause of about 0.6 s ends the question; the answer is printed (spoken once WO-5.3 lands). If you say nothing after the chime, the wake is dropped silently; the cancel hotkey drops it too. The talk key keeps working as the backup. If you say the phrase while holding the talk key, the chime may still play: the talk key's segment wins and the wake is ignored (D185).
 10. Barge-in by voice (D180, D185): while GOS is speaking (WO-5.3), talk for a third of a second: it stops.
-11. After a session, `gos voice bench` starts with `wake word: N detections, M chimed (... asked, ... no question, ... rejected)`. Count the chimes you didn't mean: over 2 hours, at most 2 (plan 8). The log holds no words, only each wake's outcome and timings.
+11. After a session, `gos voice bench` starts with `wake word: N detections, M chimed (... asked, ... no question, ... rejected)`. Count the chimes you didn't mean: over 2 hours, at most 2 (plan 8). The log holds no words, only each wake's outcome and timings. (`bench` is WO-5.7's `gos voice benchmark`: it also writes a report each run; `voice_benchmarks.md`.)
 
 ## F. The openWakeWord alternative (only if sherpa-onnx can't meet the targets)
 

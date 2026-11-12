@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from gregtec_voice import tts
 from gregtec_voice.audio import Block
 from gregtec_voice.client import (
     CORE_ERROR,
@@ -34,6 +35,7 @@ from gregtec_voice.client import (
     VoiceClient,
     first_sentence,
 )
+from gregtec_voice.lexicon import Lexicon
 from gregtec_voice.ptt import KeyEvent
 from gregtec_voice.settings import VoiceSettings
 
@@ -119,6 +121,40 @@ def test_a_talk_key_turn(
     assert turn["held_ms"] == 1000 and turn["audio_s"] == pytest.approx(1.44, abs=0.03)
     assert turn["total_ms"] is not None and turn["total_ms"] >= turn["close_ms"]
     assert not any("steel" in r.getMessage() for r in caplog.records)  # no text in logs
+    # a speaker that can't count (this fake) leaves the spoken length out
+    assert (turn["spoken_sentences"], turn["spoken_words"], turn["spoken_cut"]) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_a_turn_logs_how_long_its_answer_is_heard(
+    make: Callable[..., VoiceClient],
+    clock: Any,  # noqa: ANN401
+    core: Any,  # noqa: ANN401
+    speaker: Any,  # noqa: ANN401
+    run_events: Pump,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """WO-5.7 review M2: D23 on the live model's answers, as counts (never the text)."""
+    caplog.set_level(logging.INFO)
+    speaker.heard = tts.prepare(Lexicon()).said
+    voice = make()
+    voice._set_state(IDLE)
+    audio_for(voice, clock, 0.5)
+    key(voice, clock, F13, True)
+    audio_for(voice, clock, 1.0)
+    key(voice, clock, F13, False)
+    audio_for(voice, clock, 0.2)
+    run_events(voice, lambda: voice.state == (IDLE, None))
+    (turn,) = turns(caplog)
+    # "You said how do I make steel." (the fake core's reply)
+    assert (turn["spoken_sentences"], turn["spoken_words"], turn["spoken_cut"]) == (
+        1,
+        7,
+        False,
+    )
 
 
 def test_a_short_tap_only_stops_speech(
