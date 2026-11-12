@@ -89,3 +89,59 @@ def test_the_eval_passes_with_the_adversarial_fake(home: Path) -> None:
     )
     assert code == 0, out.getvalue()
     assert "passed: 20 of 20" in out.getvalue() and "spoiled: 0" in out.getvalue()
+
+
+def test_l0_never_spoils_the_real_book(tmp_path: Path) -> None:
+    """With GOS_QUESTS_PACK set (an extracted GTNH 2.9.0 pack's ``.minecraft``, as in
+    test_quests_pack.py; no harness run needed): GTNH's real book over the made-up export, at
+    the first key quest of each stage with everything it needs done. At L0 the view's payload
+    holds none of any locked quest's spoiler fields, and at L2 it lists the quests past the
+    frontier."""
+    game = os.environ.get("GOS_QUESTS_PACK")
+    if not game:
+        pytest.skip(
+            "set GOS_QUESTS_PACK to an extracted GTNH 2.9.0 pack's .minecraft folder"
+        )
+    from gregtec.db import quests as quest_db
+    from gregtec.ingest import quests as bq
+
+    book = bq.read_default_book(Path(game) / bq.DEFAULTS)
+    keys = bq.read_tier_keys(quest_db.TIER_KEYS)
+    player = PACK.CLAYTON
+    stages: dict[str, str] = {}
+    for k in keys:
+        if k.quest in book.quests:
+            stages.setdefault(k.stage, k.quest)
+    assert stages
+    for n, quest in enumerate(stages.values()):
+        need: set[str] = set()
+        todo = [quest]
+        while todo:
+            for p in book.quests[todo.pop()].prereqs:
+                if p in book.quests and p not in need:
+                    need.add(p)
+                    todo.append(p)
+        done = {player: {q: bq.Completion(1_700_000_000_000, True) for q in need}}
+        home = tmp_path / f"home{n}"
+        PACK.tools().make_run(home)
+        build.build(home)
+        conn = access.connect(access.db_path(home))
+        try:
+            quest_db.write(
+                conn,
+                quest_db.Loaded(
+                    book=book,
+                    progress=bq.Progress(done, {player: "Clayton"}),
+                    player=player,
+                    states=bq.states(book, done, player),
+                    tier=bq.detect_tier(keys, need),
+                    keys=keys,
+                    world=tmp_path,
+                ),
+            )
+            fields = questeval.spoiler_fields(conn)
+        finally:
+            conn.close()
+        nudge = json.dumps(view.read(home, None, 0), ensure_ascii=False)
+        assert questeval.leaks(nudge, fields) == [], quest
+        assert view.read(home, 2, 0)["beyond"]["quests"], quest
