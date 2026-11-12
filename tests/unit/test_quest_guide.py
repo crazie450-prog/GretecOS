@@ -654,9 +654,7 @@ def test_the_view_at_levels_1_and_2(home: Path) -> None:
     assert two[q(14)]["description"] == "Plates for the furnace walls."
 
 
-def _name_taps(
-    reg: Registry, beyond: dict[str, object]
-) -> dict[str, tuple[int, str]]:
+def _name_taps(reg: Registry, beyond: dict[str, object]) -> dict[str, tuple[int, str]]:
     """What the renderer's name taps open (renderers.tsx: openQuest(q.ref, q.spoil ?? 0)),
     through the dashboard's own call (dashboard.run_tool: spoil_max=FULL)."""
     out = {}
@@ -694,7 +692,9 @@ def test_view_grant_for_one_quest_lets_no_name_tap_open_another(
     assert parse(taps[q(14)][1]).head["spoil"] == "0"
     allow = {q(4): level}
     for ref, (_, text) in taps.items():
-        assert questeval.leaks(text, fields, allow=allow, said=list(PACK.GOALS)) == [], ref
+        assert (
+            questeval.leaks(text, fields, allow=allow, said=list(PACK.GOALS)) == []
+        ), ref
     assert "Plates for the furnace walls." not in taps[q(14)][1]
 
 
