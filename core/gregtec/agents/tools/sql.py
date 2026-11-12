@@ -40,7 +40,7 @@ is data and that a quest past the frontier is a spoiler.
 
 **Spoilers (WO-6.4, D268).** Below the full level (any lane's call at a global setting under 2:
 a spoiler command raises single quests through the quest tools, never db_sql), db_sql also refuses to read what a quest is: the
-:data:`SPOILER_COLUMNS` of ``quest`` (name, description, raw JSON) and the
+:data:`SPOILER_COLUMNS` of ``quest`` (name, description, raw JSON, task logic, repeat time) and the
 :data:`SPOILER_TABLES` (tasks, rewards, their items, the quest text index). Those go through
 the quest tools, which show a quest past the frontier only at his level; the quest graph,
 states, lines and progress stay readable.
@@ -138,7 +138,10 @@ SPOILER_TABLES = frozenset(
         *(f"quest_fts_{s}" for s in SHADOW),
     }
 )
-SPOILER_COLUMNS = {"quest": frozenset({"name", "descr", "raw_json"})}
+SPOILER_COLUMNS = {
+    # task_logic and repeat_time: what quest_get shows only from level 1
+    "quest": frozenset({"name", "descr", "raw_json", "task_logic", "repeat_time"})
+}
 SPOILER_REFUSED = (
     "refused: below the full spoiler level, quest names, descriptions, tasks and rewards are "
     "read with quest_find, quest_get, quest_frontier and quest_for_item, which show a quest "

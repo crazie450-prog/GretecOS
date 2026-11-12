@@ -25,5 +25,9 @@ WHERE ((qi.registry_name = :registry AND (qi.meta = :meta OR qi.meta = 32767 OR 
     OR :named)
 ORDER BY qi.part = 'reward',
   CASE s.state WHEN 'available' THEN 0 WHEN 'repeatable' THEN 1 WHEN 'locked' THEN 2 ELSE 3 END,
-  q.name, q.id, qi.idx, qi.slot
+  -- a quest's name orders it only where quest_for_item shows that name; a locked, unshown
+  -- quest goes by id (a hidden name must not show through the order, D268, as quest_prereqs)
+  CASE WHEN coalesce(s.state, 'locked') IN ('done', 'repeatable', 'available') OR s.shown
+    OR :level >= 1 THEN q.name END,
+  q.id, qi.idx, qi.slot
 LIMIT :limit OFFSET :offset;

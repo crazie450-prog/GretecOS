@@ -252,8 +252,9 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
     head.append(("spoil", level))
     out: list[tuple[object, ...]] = []
     for p in call.query("quest_prereqs", {"id": qid, "player": who}):
-        # another quest: its own level, never this quest's grant (D268)
-        name = quest_name(p["name"], p["state"], p["shown"], call.spoil(asked, p["id"]))
+        # another quest: the global level and its own grant, never the level asked for this
+        # one (the dashboard's tap may go to full for this quest only, D268), as unlocks
+        name = quest_name(p["name"], p["state"], p["shown"], call.spoil(None, p["id"]))
         out.append(("prereq", "", "", name, "", "", p["state"] or "", f"q:{p['id']}"))
     if state == bq.LOCKED:
         leads = call.query("quest_leads", {"id": qid, "player": who, "limit": LEADS})
