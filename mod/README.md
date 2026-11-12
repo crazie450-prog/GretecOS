@@ -211,7 +211,9 @@ the integration tests. On server start a Forge fake player, on the superflat bed
 3. breaks four of them (the controller, the hatch, two machines) through `ItemInWorldManager.tryHarvestBlock`
    (`BreakEvent`), posts one more `BreakEvent` that another handler cancels (the machine stays, no event), and
    removes one machine with `setBlockToAir` (no event: only the census can see it);
-4. saves and copies again (`census-b/`), checks the events file and writes `listener-harness/expected.json` (the
+4. at least 1.1 s of wall time after the first save (Anvil's chunk save times are whole seconds, and the census
+   sees a chunk as changed by its slot, save time included), saves and copies again (`census-b/`), checks that each
+   chunk phase 3 changed has a later save time there than in `census-a/`, checks the events file and writes `listener-harness/expected.json` (the
    base after each phase) and `harness-result.json`.
 
 Its checks: the module on with export off; 10 kinds with a controller and a hatch; the events file exactly

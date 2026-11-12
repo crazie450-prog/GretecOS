@@ -11,6 +11,9 @@ Lab, never Export); read by GOS's game watchers (`core/gregtec/watchers/machines
   `PathGuard` rooted at `gregteclink/events`; a link or junction there turns the module off.
 - When the file is over 1 MiB at game start it is renamed to `machines.1.jsonl` (replacing the
   older one). Readers treat that as a log rotation.
+  Lines the watchers had not read before the rotation (they were stopped before the game) are not
+  read from `machines.1.jsonl`; the machines they named are still counted from the census of the
+  saved chunks, so only the event-sourced counts can miss them.
 - Nothing else is written. The listener never changes the world.
 
 ## Line
