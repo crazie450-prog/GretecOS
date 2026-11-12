@@ -26,7 +26,7 @@ from gregtec.agents.tools.registry import Call, Env, ToolError
 from gregtec.cards import validate
 from gregtec.db import access
 from gregtec.db import structures as structure_db
-from gregtec.planner import plan, plancli
+from gregtec.planner import effort, plan, plancli
 from gregtec.planner.graph import Port
 from gregtec.planner.outputs import (
     FILES,
@@ -665,6 +665,12 @@ def test_api_serves_cards_and_files(
             assert got.status_code == 200
             assert got.json()["flow"]["type"] == "flow"
             assert got.json()["bom"]["type"] == "bom"
+            # WO-4.3 (D237): the effort breakdown as a table card.
+            eff = got.json()["effort"]
+            assert eff["type"] == "table" and eff["tool"] == "effort_estimate"
+            assert eff["rows"] == [
+                list(r) for r in effort.table(p["metrics"]["effort"])
+            ]
             image = client.get(f"{base}/export/png", headers=auth)
             assert image.status_code == 200 and image.content.startswith(b"\x89PNG")
             assert client.get(f"{base}/export/bom", headers=auth).text == bom.tsv(p)

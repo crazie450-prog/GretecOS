@@ -24,6 +24,34 @@ rotor and dynamo, throttle circuit, starter fuel as an upper bound) and its sink
 makes more of than it uses, which need a void or storage. The notes say how many generator x fuel
 candidates and farms were pruned before solving.
 
+## The effort breakdown (WO-4.3)
+
+Each line (and each `gos plan` route) prints its effort and the breakdown table under its score
+line (D236, D237):
+
+```
+   effort 0.5131 h = build 0.5131 h + unlock 0 h (crafting-table step 2 s)
+   part   map                   machine  crafts  machines  hours     recipes
+   build  gt.recipe.assembler   mte:214  13      1         0.02656   r:gt.recipe.assembler/...
+```
+
+- `effort_h` = `build` (the processing time to make every build component from boundary items
+  at the tier) + `unlock` (the components of each machine type My base doesn't own that the
+  steps need, recursive to 3 levels, each once). Gathering and hands-on building are left out;
+  scarcity is its own term.
+- Build components: the line's machine items, a multiblock's structure blocks (where the DB has
+  a structure row), and the parts the line chooses itself: the turbine rotor (the request's
+  material and size, found by its NBT material) and the dynamo hatch at the line's tier. Other
+  hatches, pipes, throttle circuits and distribution cables are listed in the notes, not
+  counted (D236).
+- Each row is one recipe map (`crafting` for crafting-table and furnace steps at `craft_s`,
+  2 s by default, `craft_s:` in `me/prefs.md`), with the machine its steps are sized on, whole
+  crafts, the machines My base owns on that map (at least 1) and the recipes it runs.
+- `--json` carries the same rows under `metrics.effort` (`rows`, `components`, `unlocks`,
+  `notes`), and `output_per_effort` ranks by net EU/t / `eff_h` (`rank.eut_per_effort_h`).
+- The dashboard gets the breakdown as a `table` card (`tool: effort_estimate`) from
+  `GET /api/plans/{id}/cards` (`effort`), next to the flow and BOM cards.
+
 After a GT pin bump, regenerate the boiler and tree-farm vectors with
 `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py` (a JDK and the mod's Gradle build).
 
