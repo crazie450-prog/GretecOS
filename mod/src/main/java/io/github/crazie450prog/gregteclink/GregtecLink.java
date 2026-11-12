@@ -57,7 +57,7 @@ public class GregtecLink {
         }
         if (modules.client && FMLCommonHandler.instance()
             .getSide() == Side.CLIENT) {
-            ClientModule.preInit();
+            ClientModule.preInit(gameDir, configDir);
         }
     }
 
