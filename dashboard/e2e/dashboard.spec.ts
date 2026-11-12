@@ -214,7 +214,7 @@ test("every view reads at WCAG contrast in every theme, on monitor 2 and on the 
     ["search", "search-detail"],
     ["costs", "by-lane"],
     ["settings", "verify"],
-    ["designer", "view-designer"], // a view a later WO builds: its designed empty state
+    ["designer", "view-designer"], // WO-3.7: its empty state or the latest design (e2e/designer.spec.ts)
   ];
   const misses: Record<string, unknown> = {};
   for (const size of [MONITOR_2, PHONE]) {
