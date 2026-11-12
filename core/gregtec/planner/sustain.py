@@ -18,7 +18,8 @@ the node's crafts per second and sums each item over the whole line:
   and :mod:`.gtmath.boiler`).
 
 Any item whose balance is below zero (beyond float noise, :data:`TOL` of the largest flow) and
-is not in the free set is an import: the line is not self-sustaining, and the proof names each
+is not in the free set is an import (noise is relative to that item's own flow, so a trickle of
+a dense fuel still counts): the line is not self-sustaining, and the proof names each
 one with its rate. The plan's own ``boundary.in`` is checked against the free set too, so a line
 that declares an import fails even when the sums would hide it.
 
@@ -41,7 +42,8 @@ from gregtec.planner import graph
 from gregtec.planner.farms import Farm
 from gregtec.planner.graph import EU_KEY
 
-TOL = 1e-6  # relative to the line's largest flow per second
+TOL = 1e-6  # float noise, relative to the item's own flow (made or used, the larger)
+ABS_TOL = 1e-12  # per second
 FREE_KEYS = ("sunlight",)  # free set entries with no item: what a solar generator takes
 
 
@@ -214,7 +216,9 @@ def validate(
     read = ports or (lambda n: node_ports(conn, n, farm_map, run_id))
     balance: dict[str, float] = {}
     problems: list[str] = []
-    flows: list[float] = []
+    gross: dict[str, float] = {}  # per item, the larger of what is made and used
+    made: dict[str, float] = {}
+    used: dict[str, float] = {}
     for node in plan.get("nodes") or ():
         x = float(node.get("crafts_s") or 0.0)
         if x <= 0:
@@ -225,18 +229,24 @@ def validate(
             continue
         for k, a in p.used.items():
             balance[k] = balance.get(k, 0.0) - a * x
-            flows.append(a * x)
+            used[k] = used.get(k, 0.0) + a * x
         for k, a in p.given.items():
             balance[k] = balance.get(k, 0.0) + a * x
-            flows.append(a * x)
-    tol = TOL * max([1.0, *flows])
+            made[k] = made.get(k, 0.0) + a * x
+    for k in balance:
+        gross[k] = max(made.get(k, 0.0), used.get(k, 0.0))
+
+    def short(k: str) -> bool:
+        # Float noise is relative to the item's own flow, never to another item's.
+        return balance[k] < -max(ABS_TOL, TOL * gross[k])
+
     imports = tuple(
         (k, -v)
         for k, v in sorted(balance.items())
-        if v < -tol and k != EU_KEY and k not in free_set
+        if short(k) and k != EU_KEY and k not in free_set
     )
     free_used = tuple(
-        (k, -v) for k, v in sorted(balance.items()) if v < -tol and k in free_set
+        (k, -v) for k, v in sorted(balance.items()) if short(k) and k in free_set
     )
     declared = sorted(
         str(p["id"])
@@ -249,7 +259,7 @@ def validate(
             problems.append(f"the plan declares {k} as an import")
 
     net_eut = balance.get(EU_KEY, 0.0) / 20
-    if net_eut <= tol / 20:
+    if balance.get(EU_KEY, 0.0) <= max(ABS_TOL, TOL * gross.get(EU_KEY, 0.0)):
         problems.append(
             f"net EU/t {net_eut:.6g} is not above 0 after the line's own use"
         )
@@ -258,7 +268,12 @@ def validate(
         ok,
         imports,
         net_eut,
-        tuple(sorted((k, 0.0 if abs(v) <= tol else v) for k, v in balance.items())),
+        tuple(
+            sorted(
+                (k, 0.0 if abs(v) <= max(ABS_TOL, TOL * gross[k]) else v)
+                for k, v in balance.items()
+            )
+        ),
         free_used,
         tuple(problems),
     )
