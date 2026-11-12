@@ -92,6 +92,7 @@ from gregtec.api.security import (
     PairingError,
     Principal,
 )
+from gregtec.base import routes as base_routes
 from gregtec.bridge import http as bridge_http
 from gregtec.bridge.actions import Action
 from gregtec.bridge.ingest import Bridge
@@ -770,6 +771,7 @@ def create_app(core: Core) -> FastAPI:
     dashboard.add_routes(app, core, principal, trusted, _json_body)
     bridge_http.add_routes(app, core, principal)
     ai_routes.add_routes(app, core, principal, trusted, _json_body)
+    base_routes.add_routes(app, core, principal, trusted, _json_body)
     persona_routes.add_routes(app, core, principal, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
     return app

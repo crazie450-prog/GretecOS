@@ -230,6 +230,65 @@ export interface PairPending {
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "off";
 
+// My base (WO-3.8, /api/base): the tier with the quests' stage beside any override (D64), the
+// machines he has by GT mte id and the stock he entered by item or fluid key (D63, D210).
+export interface BaseTier {
+  stage: string;
+  tier: number;
+  how: "override" | "quests";
+  detected: string | null;
+  detected_tier: number | null;
+  quest: string | null; // q:<id>, the key quest that shows the detected stage
+  quest_name: string | null;
+}
+
+export type BaseSource = "manual" | "event" | "census";
+
+export interface BaseMachine {
+  mte_id: number;
+  ref: string; // mte:<id>
+  name: string | null; // null: not in the current DB
+  tier: number | null;
+  multiblock: boolean | null;
+  count: number;
+  source: BaseSource; // whose count is used (D211)
+  sources: Partial<Record<BaseSource, number>>;
+  upd: number;
+}
+
+export interface BaseStock {
+  key: string;
+  name: string | null; // null: not in the current DB
+  kind: "item" | "fluid";
+  qty: number;
+  unit: "items" | "L";
+  upd: number;
+}
+
+export interface MyBase {
+  tier: BaseTier;
+  stages: { stage: string; tier: number }[];
+  machines: BaseMachine[];
+  stock: BaseStock[];
+  lines: { key: string; rate_s: number }[];
+  has_db: boolean;
+}
+
+export interface BaseCandidate {
+  kind: "item" | "fluid" | "machine";
+  key: string;
+  name: string;
+  mod: string | null;
+  mte_id?: number;
+}
+
+export interface BaseFind {
+  q: string;
+  kind: "item" | "machine";
+  ambiguous: boolean;
+  candidates: BaseCandidate[];
+}
+
 // The setup wizard (WO-2.9, gregtec.api.setup_routes). Steps come from the core's registry, so a
 // later phase's step needs no dashboard code: each field says how it is drawn.
 export type SetupKind = "path" | "text" | "choice" | "device" | "key" | "phrase" | "secret" | "checks";

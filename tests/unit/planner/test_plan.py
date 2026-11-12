@@ -131,7 +131,8 @@ def test_three_routes_differ_in_a_primary_choice(conn: sqlite3.Connection) -> No
         assert p["kind"] == "production" and p["tier_cap"] == "MV"
         assert sorted(p["alternatives"]) == sorted(i for i in ids if i != p["id"])
         assert p["route"]["all_run"] and p["route"]["gates"] == []
-        assert p["metrics"] == {} and p["rank"] == {} and p["layout"] == {}
+        assert p["metrics"]["machines"] >= 1 and p["rank"]["column"] == "base"
+        assert p["layout"] == {}
         assert p["request"] == Request(WIDGET, qty=2).as_dict()
     assert d.plans[0]["name"] == "Widget line · 2/s · MV"
     assert d.plans[1]["name"].endswith("· route 2")
@@ -432,6 +433,17 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         and "Widget line · 2/s · MV" in text
         and "every machine runs: True" in text
     )
+    assert text.startswith("ranked by weights (balanced): machines 1,")
+    assert "  score " in text and "Ranked by code" not in text
+    prefs = home / "vault" / "me" / "prefs.md"
+    prefs.parent.mkdir(parents=True, exist_ok=True)
+    prefs.write_text("weights: balanced\nw_eut: 3\n", encoding="utf-8")
+    try:
+        code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--explain")
+    finally:
+        prefs.unlink()
+    assert code == 0 and text.startswith("ranked by weights (custom):")
+    assert "EU/t 3" in text and "Ranked by code, weights (custom)" in text
     code, text = run_cli(
         home, monkeypatch, WIDGET, "--tier", "MV", "--json", "--routes", "1"
     )
