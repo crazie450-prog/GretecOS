@@ -28,8 +28,23 @@ Evidence tags, as in G0:
 | Phase 2 suites with `-rA` (`test_fast_lane_eval`, `test_recipe_eval`, `test_deep_lane_cli`, `test_no_ai`, `tests/security/test_core_api.py`, `test_supervisor`, `tests/unit/setup`) | 471 passed, 0 skipped |
 | `pnpm -C dashboard install --frozen-lockfile`, then `build` (`tsc --noEmit` + `vite build`) | clean |
 | `pnpm -C dashboard test` (vitest) | 256 passed |
-| `pnpm -C dashboard e2e` (Playwright, Chromium, own ports 8895 and 8897 and own homes) | **32 passed** (21 dashboard, 11 setup wizard) |
+| `pnpm -C dashboard e2e` (Playwright, Chromium, own homes; `GOS_E2E_PORT=8895`, while the fresh server ran on its default 8797, because that run set `FRESH_PORT`, which nothing reads; the variables are `GOS_E2E_PORT`, `GOS_E2E_FRESH_PORT`, `GOS_E2E_HOME` and `GOS_E2E_FRESH_HOME`, `dashboard/e2e/harness.ts` and `fresh.ts`) | **32 passed** (21 dashboard, 11 setup wizard) |
 | Client and server harness, then `GOS_REQUIRE_HARNESS_RUN=1 pytest` on the six Phase 2 harness test files | harnesses passed (52 and 31 checks); 18 passed, 1 skipped (see "Harness run" at the end) |
+
+### Re-run after merging `a0700f9` [here]
+
+On `review/g2` at `73db3a8` (the merge of `a0700f9`; the code is `a0700f9`'s):
+
+| Check | Result |
+|---|---|
+| `uv run --locked ruff check .` | All checks passed |
+| `uv run --locked ruff format --check .` | 307 files already formatted |
+| `uv run --locked pytest -q` | **4783 passed, 195 skipped** (4 min 16 s) |
+| `pnpm -C dashboard install --frozen-lockfile`, then `build` | clean |
+| `pnpm -C dashboard test` (vitest) | 256 passed |
+| `pnpm -C dashboard e2e` with `GOS_E2E_PORT=8935`, `GOS_E2E_FRESH_PORT=8937` and new `GOS_E2E_HOME` / `GOS_E2E_FRESH_HOME` | **32 passed**, including the strengthened `the phone layout fits 390x844 with tabs at the bottom` and `the wizard fits the phone` |
+| `xvfb-run ... ./gradlew --no-daemon --max-workers=2 runClient25 -Pharness` | `harness passed: 52 checks, run 20261112T055903Z` (1 min 44 s) |
+| `GOS_REQUIRE_HARNESS_RUN=1 pytest` on `test_tools_harness`, `test_fast_lane_harness`, `test_deep_lane_harness`, `test_dashboard_harness`, `test_recipe_lookup_harness` and G1's `test_golden_recipes` (that client run) | 25 passed, 1 skipped (`test_the_quest_tools_on_the_real_book`, which needs `GOS_QUESTS_PACK`). `test_vault_harness` needs a server run; CI's `mod` job ran it on `a0700f9` |
 
 `gos eval fast-lane --fake` and `gos eval recipe-lookup --fake` could not be started from this reviewer's session: its sandbox refuses any shell command containing the word `eval`. The same code paths ran instead through the tests that call them: `evals.run(..., fake=True)` in `test_fast_lane_harness.py` and `recipe_eval` with the oracles in `test_recipe_lookup_harness.py`, which assert the report's pass lines. Both passed on CI's harness DB (below) and here.
 
