@@ -3,14 +3,15 @@
 - **L0, nudge** (``[policy] spoiler_default = 0``, the default): for a quest past his frontier,
   direction only: its quest lines, state, prerequisites and the frontier quests that lead to it;
   its name only when the quest book already shows it.
-- **L1, partial**, on request: its name and what its tasks ask for.
+- **L1, partial**, on "partial answer", "a bit more" or "more of a hint": its name and what its
+  tasks ask for.
 - **L2, full**, on "full answer" or "spoil it": everything, description and rewards too.
 
 A quest he has done or can do now is never a spoiler and is always shown in full. Ore locations
 are exempt (D27): no ore tool reads this.
 
 The level is decided in code, never by a model (:func:`allowed`): the global default, raised
-by what Clayton's own request says (:func:`asked_level`). A tool argument can ask for less, never
+only by an explicit spoiler command in Clayton's own request (:func:`asked_level`). A tool argument can ask for less, never
 for more, so a model can't spoil what he didn't ask for, and the text of quests, wiki pages or
 chat (data, never instructions) can't raise it either: only the request is read.
 """
@@ -23,51 +24,96 @@ NUDGE, PARTIAL, FULL = 0, 1, 2
 LEVELS = (NUDGE, PARTIAL, FULL)
 NAMES = {NUDGE: "nudge", PARTIAL: "partial", FULL: "full"}
 
-# A negation earlier in the same clause, up to a comma or a full stop ("no spoilers", "I don't
-# want you to spoil it", "no need to spoil it", "without the full answer"): a request to stay
-# at the default (D268).
-_NO = re.compile(
-    r"(?:\bno\b|\bnot\b|n't|\bnever\b|\bwithout\b|\bavoid\b|\bstop\b)[^.?!;,]{0,40}"
-    r"(?:\bspoil|\bfull\s+(?:answer|spoilers?)\b|\beverything\b)"
+# How the level is read (D268): only an explicit spoiler command raises it. The request is
+# normalised like the router's (case, curly apostrophes, spaces) and cut into sentences at
+# . ? ! and ;. A sentence raises only when it IS a command: one of the closed set below at its
+# head (after the router's filler and "ok", "just", "please"...), with no negation anywhere in
+# it, followed by nothing but a short trailer, "about <it or a named quest>", or a colon or
+# comma and the question it is for. Any other sentence that merely contains the words ("i
+# dont need the full answer", "show me everything i can make", "if i get stuck, spoil it", "he
+# said, spoil it", a quotation) keeps the current level: fail safe, when in doubt nothing is
+# raised.
+_CUT = re.compile(r"[.?!;]")
+# Whole-word negations, the apostrophe-less forms listed one by one (a generic "n'?t" would
+# match "want" and "went"). A sentence holding one never raises.
+_NEGATION = re.compile(
+    r"n't\b|\b(?:no|not|never|nor|nothing|none|without|avoid|stop|cannot|dont|doesnt|didnt"
+    r"|wont|cant|isnt|arent|wasnt|werent|shouldnt|wouldnt|couldnt|havent|hasnt|hadnt|aint"
+    r"|mustnt|neednt)\b"
 )
-# Only the imperative: "spoil it" opening a sentence (after "ok", "just", "please"... and the
-# router's own filler, "gos", "hey gos", "can you", "could you"), or "full answer", "full
-# spoilers", "tell me everything". Not "would that spoil the surprise?" and not "what's my
-# spoiler level" (the setting's name).
+# A sentence that says not to spoil ("don't spoil anything", "no full answer") vetoes the whole
+# request, so "don't spoil anything, just spoil it" stays at the default.
+_REFUSED = re.compile(
+    "(?:"
+    + _NEGATION.pattern
+    + r")[^.?!;,]*(?:\bspoil|\bfull\b|\beverything\b|\bpartial\b)"
+)
+# Quoted words are someone else's: a request holding a quotation never raises.
+_QUOTE = re.compile(r"[\"\u201c\u201d\u2018]")
+# The router's filler and the words that may open a command.
+_LEAD = (
+    r"(?:(?:ok|okay|fine|yes|yeah|sure|alright|just|please|hey|gos|then|now|go\s+on"
+    r"|go\s+ahead(?:\s+and)?|(?:can|could|would)\s+you)[,:]?\s+)*"
+)
+# What a command is about: it, that, a named quest ("the secret alloy quest", "q:AAQ").
+_QUEST_REF = r"(?:(?:the\s+)?(?:[\w'-]+\s+){1,6}quest(?:\s+line)?|q:\S+)"
+_ABOUT = r"(?:it|that|this|them|" + _QUEST_REF + r")"
+# What may follow a command in its clause: "please", "then", "now", "for me", "about the
+# secret alloy quest" (a quest, not "about steel"), or a colon or comma and the question.
+_TAIL = (
+    r"(?:\s+(?:please|then|now|for\s+me|again))*"
+    r"(?:\s+(?:about|on|for|of)\s+" + _ABOUT + r")?"
+    r"(?:\s+(?:please|then|now|for\s+me|again))*(?:\s*[:,].*)?$"
+)
+_WANT = r"(?:(?:give|tell|show)\s+me\s+|i\s+want\s+|i'd\s+like\s+)?"
 _FULL = re.compile(
-    r"(?:^|[.?!;:,]\s*)(?:(?:ok|okay|fine|just|please|hey|gos|can\s+you|could\s+you"
-    r"|go\s+on|go\s+ahead(?:\s+and)?)[,:\s]+)*"
-    r"spoil\s+(?:it|that|this|me)\b"
-    r"|\bfull\s+(?:answer|spoilers?)\b|\b(?:tell|show)\s+me\s+everything\b"
+    "^"
+    + _LEAD
+    + r"(?:spoil\s+(?:me|everything|all|"
+    + _ABOUT
+    + r")"
+    + r"|"
+    + _WANT
+    + r"(?:the\s+)?full\s+(?:answer|spoilers?)"
+    + r"|tell\s+me\s+everything)"
+    + _TAIL
 )
-# Explicit asks for more: "partial", "a bit more", "more of a hint".
 _PARTIAL = re.compile(
-    r"\bpartial(?:\s+(?:answer|spoilers?|hint))?\b"
-    r"|\ba\s+(?:bit|little)\s+more\b|\bmore\s+of\s+a\s+hint\b"
+    "^"
+    + _LEAD
+    + r"(?:"
+    + _WANT
+    + r"(?:a\s+|the\s+)?partial(?:\s+(?:answer|spoilers?|spoiler|hint))?"
+    + r"|(?:give\s+me\s+)?(?:a\s+(?:bit|little)\s+more|more\s+of\s+a\s+hint))"
+    + _TAIL
 )
-# ...or what a quest needs, only with a quest named: "what does the next quest need", "the
-# quest's tasks", "what does q:... require". Not "what do i need to make steel".
-_QUEST = re.compile(r"\bquests?\b|\bq:")
-_NEEDS = re.compile(
-    r"\b(?:need|needs|require|requires|requirements?|tasks?|ask\s+for|asks\s+for)\b"
-)
+
+
+def _sentences(request: str) -> list[str]:
+    said = " ".join(request.replace("\u2019", "'").casefold().split())
+    return [c.strip() for c in _CUT.split(said) if c.strip()]
 
 
 def asked_level(request: str | None) -> int:
-    """The level Clayton's words ask for: :data:`FULL` on "spoil it" or "full answer",
-    :data:`PARTIAL` on "partial", "a bit more", "more of a hint" or what a named quest needs
-    (its requirements or tasks), else :data:`NUDGE`. A negation before "spoil" ("no
-    spoilers", "I don't want you to spoil it") asks for nothing more."""
-    if not request:
+    """The level Clayton's words ask for: :data:`FULL` when a clause is "spoil it/that/me/the
+    <quest>", "(give me) the full answer", "full spoilers" or "tell me everything (about X)";
+    :data:`PARTIAL` when one is "(give me a) partial answer", "a bit more" or "more of a
+    hint"; else :data:`NUDGE`. A command must head its sentence with no negation in it, no
+    sentence may refuse a spoiler and nothing may be quoted (D268)."""
+    if not request or _QUOTE.search(request):
         return NUDGE
-    said = " ".join(request.replace("\u2019", "'").casefold().split())
-    if _NO.search(said):
+    sentences = _sentences(request)
+    if any(_REFUSED.search(c) for c in sentences):
         return NUDGE
-    if _FULL.search(said):
-        return FULL
-    if _PARTIAL.search(said) or (_QUEST.search(said) and _NEEDS.search(said)):
-        return PARTIAL
-    return NUDGE
+    level = NUDGE
+    for c in sentences:
+        if _NEGATION.search(c):
+            continue
+        if _FULL.match(c):
+            return FULL
+        if _PARTIAL.match(c):
+            level = PARTIAL
+    return level
 
 
 def check_level(value: object) -> int:

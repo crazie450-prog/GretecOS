@@ -86,12 +86,15 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         ("spoil it", 2),
         ("Spoil it: what does pressure cooker give", 2),
         ("full answer please", 2),
-        ("tell me everything about EBF Time", 2),
+        ("tell me everything about the EBF Time quest", 2),
         ("partial answer", 1),
         ("a bit more", 1),
-        ("what does the secret alloy quest need", 1),
-        ("what are the quest's requirements", 1),
-        ("what does q:AAQ require", 1),
+        # a question about a quest is no command: it stays at the default (D268)
+        ("what does the secret alloy quest need", 0),
+        ("what are the quest's requirements", 0),
+        ("what does q:AAQ require", 0),
+        ("which quests need steel", 0),
+        ("i need to finish this quest", 0),
         ("more of a hint please", 1),
         ("ok just spoil it", 2),
         # the router's filler routes these to SPOIL: they must ask for it too
@@ -102,7 +105,11 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         ("gos: spoil it", 2),
         ("could you not spoil it", 0),
         ("what comes after it? spoil it", 2),
-        ("i can't find it, spoil it", 2),
+        ("i can't find it. spoil it", 2),
+        ("i can't find it, spoil it", 0),  # a negation in the sentence: fail safe
+        ("yes spoil it", 2),
+        ("spoil the secret alloy quest", 2),
+        ("give me the full answer", 2),
         ("no spoilers, but what does it need", 0),
         ("don't spoil it", 0),
         # a negation anywhere before "spoil" in the clause stays at the default (D268)
@@ -112,6 +119,18 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
         ("without spoiling anything", 0),
         ("I don't need the full answer", 0),
         ("don't tell me everything", 0),
+        # round 2's phrasings: contractions without the apostrophe, "everything" about
+        # something else (D268)
+        ("i dont need the full answer", 0),
+        ("i dont want full spoilers", 0),
+        ("I didnt ask for the full answer", 0),
+        ("i wont need the full answer", 0),
+        ("i cant handle full spoilers yet", 0),
+        ("dont tell me everything", 0),
+        ("show me everything i can make with steel", 0),
+        ("tell me everything i can make with steel", 0),
+        ("tell me everything about EBF Time", 0),  # no quest named: fail safe
+        ("don't spoil anything, just spoil it", 0),
         # "spoil" that isn't the imperative
         ("would that spoil the surprise?", 0),
         ("does it spoil anything", 0),
@@ -128,6 +147,118 @@ def fields(home: Path) -> dict[str, questeval.Spoiler]:
 )
 def test_asked_level(said: str | None, level: int) -> None:
     assert spoilers.asked_level(said) == level
+
+
+# The commands that must raise, and the phrases they may hide in that must not (D268).
+_COMMANDS = {
+    "spoil it": 2,
+    "spoil that": 2,
+    "spoil me": 2,
+    "spoil the secret alloy quest": 2,
+    "full answer": 2,
+    "the full answer": 2,
+    "give me the full answer": 2,
+    "i want full spoilers": 2,
+    "tell me everything": 2,
+    "tell me everything about the secret alloy quest": 2,
+    "partial answer": 1,
+    "give me a partial hint": 1,
+    "a bit more": 1,
+    "more of a hint": 1,
+}
+_NEGATED = [
+    f"{neg} {verb} {{cmd}}"
+    for neg in (
+        "i don't",
+        "i dont",
+        "i didn't",
+        "i didnt",
+        "i won't",
+        "i wont",
+        "i can't",
+        "i cant",
+        "i shouldn't",
+        "i wouldnt",
+        "i havent",
+        "i do not",
+        "i never",
+        "please don't",
+        "dont",
+    )
+    for verb in ("want", "need", "ask for", "say", "")
+] + ["no {cmd}", "not {cmd}", "without {cmd}", "never {cmd}", "stop, {cmd} is too much"]
+_WRAPPED = [
+    "if i get stuck, {cmd}",
+    "if i get stuck {cmd}",
+    "when i ask, {cmd}",
+    "before you {cmd}, check my tier",
+    "unless i say {cmd}",
+    "he said, {cmd}",
+    'what does "{cmd}" mean',
+    "'{cmd}' is what he typed",
+    "what happens if you {cmd}",
+    "should you {cmd}",
+    "would {cmd} be too much",
+    "is {cmd} a setting",
+    "i wonder whether to say {cmd}",
+    "ok so what comes after the secret alloy quest {cmd}",  # an STT run-on: no full stop
+    "{cmd} is not what i want",
+    "{cmd} wont be needed, what comes next",
+    "{cmd} dont",
+]
+_UNRELATED = [
+    "show me everything i can make with steel",
+    "tell me everything i can make with steel",
+    "tell me everything about stainless steel",
+    "show me everything",
+    "list everything in my ae",
+    "what's the full recipe for steel",
+    "give me the full list of my plans",
+    "is that the full answer",
+    "a bit more steel please",
+    "which quests need steel",
+    "i need to finish this quest",
+    "what does the secret alloy quest need",
+    "what does q:AAQ require",
+    "what's my spoiler level",
+    "would that spoil the surprise",
+    "does it spoil anything",
+]
+
+
+def _never_raise() -> list[str]:
+    out = [t.format(cmd=c) for t in _NEGATED + _WRAPPED for c in _COMMANDS]
+    out = [" ".join(x.split()) for x in out]
+    out += _UNRELATED
+    # STT style: lower case, no punctuation, and capitalised, with a full stop
+    out += [x.replace(",", "").replace("'", "") for x in out]
+    out += [x[:1].upper() + x[1:] + "." for x in out]
+    return sorted(set(out))
+
+
+def test_only_an_explicit_command_raises_the_level() -> None:
+    """Property style (D268): every sentence that merely contains a command (negated, with or
+    without an apostrophe; after if, when, before or unless; reported or quoted; asked about;
+    run on) or that asks for "everything" about something else keeps the level; the commands
+    themselves, alone or with the router's filler, still raise it."""
+    never = _never_raise()
+    assert len(never) > 500
+    raised = [x for x in never if spoilers.asked_level(x) != spoilers.NUDGE]
+    assert raised == []
+    for cmd, level in _COMMANDS.items():
+        for said in (
+            cmd,
+            f"{cmd} please",
+            f"ok, {cmd}",
+            f"hey gos, {cmd}",
+            f"can you {cmd}",
+            f"{cmd.capitalize()}.",
+            f"{cmd}: what comes after the secret alloy quest",
+            f"what comes after the secret alloy quest? {cmd}",
+        ):
+            assert spoilers.asked_level(said) == level, said
+            # the router's own normalisation keeps the level
+            assert spoilers.asked_level(router.normalise(said)) == level, said
 
 
 def test_allowed_is_the_global_level_raised_only_by_his_words() -> None:
@@ -167,8 +298,13 @@ def test_a_lane_gets_only_the_level_his_words_allow(reg: Registry) -> None:
     )
     assert head["spoil"] == "0" and head["name"] == "(not shown in the quest book yet)"
     assert "chromium" not in text and "spoil=2 was not shown" in text
+    head, _ = _get(reg, 5, lane="fast", request="what does the secret alloy quest need")
+    assert head["spoil"] == "0"  # a question, not a spoiler command (D268)
     head, text = _get(
-        reg, 5, lane="fast", request="what does the secret alloy quest need"
+        reg,
+        5,
+        lane="fast",
+        request="partial answer: what does the secret alloy quest need",
     )
     assert head["spoil"] == "1" and head["name"] == "Secret Alloy"
     assert "chromium" not in text and "@17306" not in text  # no reward, no description
@@ -491,6 +627,24 @@ def test_l0_never_spoils_an_answer(
                 ),
                 ("quest", f"no need to spoil it, just a hint: the {name} quest?"),
                 ("quest", f"would the {name} quest spoil the surprise?"),
+                # round 2's adversarial rows (D268): no apostrophe, "everything" about
+                # something else, a conditional, a quotation, an STT run-on
+                (
+                    "unlocks",
+                    f"I dont want the full answer, what comes after the {name} quest",
+                ),
+                (
+                    "unlocks",
+                    f"dont tell me everything, but what comes after the {name} quest",
+                ),
+                (
+                    "unlocks",
+                    f"show me everything i can make, and what comes after the {name} quest",
+                ),
+                ("quest", f"if i get stuck, spoil it: the {name} quest"),
+                ("quest", f'what does "spoil it" do for the {name} quest'),
+                ("quest", f"what does the {name} quest need"),
+                ("quest", f"i cant handle full spoilers yet so whats the {name} quest"),
             ]
         ):
             rows.append(
