@@ -35,10 +35,10 @@ import kekztech.common.tileentities.MTELapotronicSuperCapacitor;
  * {@code GTModHandler.isElectricItem(stack, tier)}). A wildcard member (IC2's batteries are listed at
  * {@code WILDCARD_VALUE}) is read and keyed at meta 0: its tier and capacity don't depend on the damage.</li>
  * <li>{@code buffers}: every {@link MTEBasicBatteryBuffer}: tier, slots, the voltage in and out, its own EU store.</li>
- * <li>{@code transformers}: every {@link MTETransformer} (GT's, the power transformers, GT++'s hi-amp ones), read
- * from a {@link BaseMetaTileEntity} holding a new instance, in both modes: {@code down} (allowed to work, GT's default:
- * in at the tier above, out at its own) and {@code up} (after {@code disableWorking}). Half mode (a screwdriver) is
- * not read.</li>
+ * <li>{@code transformers}: every {@link MTETransformer} (GT's, its power and wet transformers, GT++'s hi-amp ones),
+ * read from a {@link BaseMetaTileEntity} holding a new instance, in both modes: {@code down} (allowed to work, GT's
+ * default: in at the tier above, out at its own) and {@code up} (after {@code disableWorking}). Half mode (a
+ * screwdriver) is not read.</li>
  * <li>{@code lsc}: kekztech's Lapotronic Supercapacitor cells ({@code MTELapotronicSuperCapacitor.Capacitor}), each
  * with its block (the LSC part block at meta = the cell's index in {@code Capacitor.VALUES} + 1, as the LSC reads a
  * cell from a stack), the glass tier it needs and its capacity (a decimal string: a BigInteger).</li>

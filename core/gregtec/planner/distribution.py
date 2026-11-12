@@ -6,8 +6,8 @@ to them:
 
 - **Buffer sizing** (:func:`size_buffer`, D241): a deficit window is ``(peak - generation) x
   duration`` EU at a tier. A battery-buffer option (the tier's buffer with the most slots, each
-  slot holding the tier's battery with the most charge: GT's buffer takes only batteries of its
-  own tier) is sized for both the energy and the EU/t (a buffer gives one amp per battery at its
+  slot holding the tier's smallest battery that keeps the count within ``max_buffers``, else the
+  one with the most charge: GT's buffer takes only batteries of its own tier) is sized for both the energy and the EU/t (a buffer gives one amp per battery at its
   voltage); an LSC option uses the biggest cell at or below the tier cap. Battery buffers are
   recommended while the window fits in ``max_buffers`` of them, the LSC beyond that.
 - **Cable runs** (:func:`check_run`, D242): each cable's max voltage, max amperage and loss per
