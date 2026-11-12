@@ -159,6 +159,41 @@ def test_the_deep_lane_gets_the_global_level(home: Path) -> None:
     assert parse(out.text).head["spoil"] == "1"
 
 
+def test_db_sql_reads_what_a_quest_is_only_at_the_full_level(home: Path) -> None:
+    """The deep lane's db_sql can't go round the quest tools: below the full level it refuses
+    quest names, descriptions, tasks, rewards and the quest text index (D268), and still reads
+    the quest graph and states."""
+    reg = default_registry(home, deep=HandoffRecorder())
+    refused = [
+        "SELECT name FROM quest",
+        "SELECT id, descr FROM quest WHERE id = 'x'",
+        "SELECT * FROM quest",
+        "SELECT id FROM quest WHERE raw_json LIKE '%a%'",
+        "SELECT quest_id, amount FROM quest_item",
+        "SELECT count(*) FROM quest_task",
+        "SELECT * FROM quest_reward",
+        "SELECT quest_id FROM quest_fts WHERE quest_fts MATCH 'chromium'",
+    ]
+    for select in refused:
+        out = reg.call("db_sql", {"select": select}, lane="deep")
+        assert out.is_error and "spoiler level" in out.text, select
+    for select in (
+        "SELECT id, main, line_id FROM quest",
+        "SELECT quest_id, prereq_id FROM quest_prereq",
+        "SELECT quest_id, state FROM quest_state",
+        "SELECT name FROM quest_line",
+    ):
+        out = reg.call("db_sql", {"select": select}, lane="deep")
+        assert not out.is_error, (select, out.text)
+    for full in (
+        default_registry(home, deep=HandoffRecorder(), spoiler_default=2),
+        reg,  # the shell (gos tool): his own command
+    ):
+        lane = "deep" if full is not reg else None
+        out = full.call("db_sql", {"select": "SELECT descr FROM quest"}, lane=lane)
+        assert not out.is_error and "chromium" in out.text
+
+
 def test_his_tap_and_his_shell_may_go_to_full(reg: Registry) -> None:
     head, _ = _get(reg, 5, lane="fast", spoil_max=2)  # the dashboard's tap
     assert head["spoil"] == "2"

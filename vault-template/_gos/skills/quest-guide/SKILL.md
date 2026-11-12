@@ -22,6 +22,7 @@ GOS's DB holds the BetterQuesting book of Clayton's world and his progress, load
 - "(not shown in the quest book yet)" is a name you must not guess. Never fill in a hidden quest's name, tasks or rewards from what you know about the pack: only tool rows count.
 - End a nudge with one short offer: "Say 'spoil it' for the full answer."
 - Ore locations are never spoilers.
+- Read quests with these tools only. `db_sql` refuses quest names, descriptions, tasks and rewards below the full level.
 
 ## 2. Pick the lookup
 
