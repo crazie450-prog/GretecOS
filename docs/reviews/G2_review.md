@@ -1,6 +1,6 @@
 # Gregtec OS: G2 gate review (Phase 2, text Q&A)
 
-2026-11-12 · independent gate reviewer (D41, D158 (3)) · reviewed: `origin/main` at `b7b88a0` (PR #67), covering the Phase 2 PRs #17, #30, #34, #36, #38, #39, #41, #48, #49, #53, #54, #58 and #60, plus open PR #71 where it fixes a Phase 2 defect
+2026-11-12 · independent gate reviewer (D41, D158 (3)) · reviewed: `origin/main` at `a0700f9` (PR #69), covering the Phase 2 PRs #17, #30, #34, #36, #38, #39, #41, #48, #49, #53, #54, #58 and #60, and PR #71 (merged at `1e856cb`) where it fixes Phase 2 defects. Related PRs with no Phase 2 code: #40 (D142, the answers to the Phase 1/2 questions), #45 (the Phase 1/2 PC checklist) and #50 (D158). The first draft reviewed `b7b88a0`; this revision is re-based on `a0700f9`.
 
 ## Verdict
 
@@ -8,12 +8,13 @@
 
 1. **Real-model numbers, all paid PC runs:** WO-2.3's P50 time to first token (target ≤ 1.2 s), WO-2.4's 10-task cost table, WO-2.7's ≥ 95% correct with 0 uncited numbers, and WO-2.5's D141 token count (free, but needs the key). Each passes with fakes here; none has a real-model run yet.
 2. **Real-screen and board checks:** WO-2.6 "matches the approved mockups" can't be checked in the cloud. D158 (5) had the dashboard built from `docs/design/system/` without the canvas handoff, so Clayton compares it with the boards. Chat, the Ctrl+K palette, Costs, the no-AI and credit banners and the wizard's look all need his board approval (D92).
-3. **Fix before sign-off:** the phone Settings + Health view is 711 px wide on a 390 px screen, a WO-2.6 defect found by the post-W4 QA sweep. Open PR #71 fixes it with an e2e check. Merge #71 first.
-4. **Main's CI is not green on `b7b88a0`:** `checks (windows-latest)` was cancelled after 6 h (run 43084303461). pytest had finished with 1 failure in a WO-5.2 timing test (`test_stt_cli.py::test_record_saves_one_talk_key_segment_per_line`), then the process never exited. This is Phase 5 code, not Phase 2. The commit before it (`efaef2f`, run 43084265062) is green on all four jobs. Still, G0's lesson holds: don't merge over a red Windows job.
+
+Two items from the first draft are closed on `main`: PR #71 (merged at `1e856cb`) fixed the phone layout's sideways overflow with a stricter e2e check, and `main`'s CI is green on all four jobs on `1e856cb` (run 43159485865) and `a0700f9` (run 43160889435). The Windows hang on `b7b88a0` was an intermittent WO-5.2 test failure; it stays a risk (risk 1), not a blocker.
 
 Evidence tags, as in G0:
 - **[repo]:** this reviewer checked it in the repo, the git history or GitHub's CI logs.
-- **[here]:** this reviewer ran it in the build container on `b7b88a0` (Linux).
+- **[here]:** this reviewer ran it in the build container (Linux): on `b7b88a0` for the first draft, and again after merging `a0700f9` (the table below says which).
+- **[review]:** the gate review of this report (PR #73) ran it on `b7b88a0`'s code in its own container; not re-run here.
 - **[PR]:** the implementer's PR description, not re-checked here.
 - **[PC]:** needs Clayton's PC. Nothing from the PC is in the evidence yet for Phase 2.
 
@@ -30,7 +31,15 @@ Evidence tags, as in G0:
 | `pnpm -C dashboard e2e` (Playwright, Chromium, own ports 8895 and 8897 and own homes) | **32 passed** (21 dashboard, 11 setup wizard) |
 | Client and server harness, then `GOS_REQUIRE_HARNESS_RUN=1 pytest` on the six Phase 2 harness test files | harnesses passed (52 and 31 checks); 18 passed, 1 skipped (see "Harness run" at the end) |
 
-`gos eval fast-lane --fake` and `gos eval recipe-lookup --fake` could not be started from this session: its sandbox refuses any shell command containing the word `eval`. The same code paths ran instead through the tests that call them: `evals.run(..., fake=True)` in `test_fast_lane_harness.py` and `recipe_eval` with the oracles in `test_recipe_lookup_harness.py`, which assert the report's pass lines. Both passed on CI's harness DB (below) and here.
+`gos eval fast-lane --fake` and `gos eval recipe-lookup --fake` could not be started from this reviewer's session: its sandbox refuses any shell command containing the word `eval`. The same code paths ran instead through the tests that call them: `evals.run(..., fake=True)` in `test_fast_lane_harness.py` and `recipe_eval` with the oracles in `test_recipe_lookup_harness.py`, which assert the report's pass lines. Both passed on CI's harness DB (below) and here.
+
+The gate review of this report ran the real CLI evals with fakes [review], on `b7b88a0`'s code, over a DB collected and built from its own client harness run (`harness passed: 52 checks, run 20261112T053848Z`) in a scratch GOS_HOME:
+
+| Command | Result |
+|---|---|
+| `gos eval fast-lane --fake` | `passed: 60 of 60`, `ambiguous rows that asked: 10 of 10`, cache reads 39 of 40, `Result: PASS` |
+| `gos eval recipe-lookup --fake --out ...` | `correct: 50 of 50` (100%), `uncited numbers: 0`, lanes deep 4 / fast 38 / instant 8, `Result: PASS` |
+| `gos eval deep-lane --fake` | 10 tasks done, 0 reached the cap, `Result: PASS` |
 
 ### CI on `main` [repo]
 
@@ -40,6 +49,11 @@ Evidence tags, as in G0:
 | `efaef2f` (#70) | 43084265062 | success | success | success | success |
 | `b7b88a0` (#67, head) | 43084303461 | success | **cancelled** (pytest: 1 failed, 4792 passed, 164 skipped, then hung to the 6 h limit) | success | success |
 | `b7b88a0` dashboard (Windows) | 43084303147 | | success | | |
+| `1e856cb` (#71, the QA W4 fixes) | 43159485865 | success | success (7 min 46 s) | success | success |
+| `1e856cb` dashboard (Windows) | 43159485723 | | success | | |
+| `a0700f9` (#69, head) | 43160889435 | success | success | success | success |
+
+The Windows failure on `b7b88a0` was intermittent: the same test passed on `1e856cb` and `a0700f9`. Why the job then hung for 6 h is in risk 1.
 
 The `mod` job on `b7b88a0` (job 130744570026) ran the server harness (31 checks, run `20261111T191015Z`), two client harness runs (52 checks each, `20261111T191119Z` and `20261111T191222Z`) and `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration`: **96 passed, 19 skipped**. These include every Phase 2 harness test: `test_tools_harness` (6 passed, 1 skipped), `test_vault_harness` (2), `test_fast_lane_harness` (1), `test_deep_lane_harness` (1), `test_dashboard_harness` (4) and `test_recipe_lookup_harness` (4). The skips are the GTNH quest pack, the structures dump and downloaded voice models, none of them Phase 2.
 
@@ -141,7 +155,7 @@ Open: PR #41 Q1 to Q4. PR #38's questions are answered by D142 (d), (e), (f) and
 
 > **Acceptance:** "Matches the approved mockups; usable on monitor 2; glance mode clickable (D49)"
 
-**Verdict: met with fakes, with one open defect (fixed in open PR #71). "Matches the approved mockups" is Clayton's check.**
+**Verdict: met with fakes. "Matches the approved mockups" is Clayton's check.** The phone-layout defect the QA sweep found is fixed on `main` by PR #71.
 
 PR #53 (merge `2dcabfb`), D159 to D163 [repo].
 
@@ -150,7 +164,7 @@ PR #53 (merge `2dcabfb`), D159 to D163 [repo].
 | Matches the approved mockups | **PC step (Clayton's eye)** | Built from `docs/design/system/` and the D92 list without the canvas handoff (D158 (5)), so no pixel comparison exists. Every colour comes from `tokens.json` through `bundle.css`. Chat, Ctrl+K and Costs **need his board approval** |
 | Usable on monitor 2 (2560×1440) | met with fakes | e2e `the workbench fills monitor 2 at 2560x1440` (exact regions, no scroll bars), `every view reads at WCAG contrast in every theme, on monitor 2 and on the phone`, number keys and Ctrl+K [here]. On the real monitor: display scaling and the window's position (D163) |
 | Glance mode clickable | met with fakes | e2e `glance comes with the game's focus, is clickable, and the mouse brings the workbench back` and `a held glance always has a way back` [here]. The real focus signal (`GetForegroundWindow`) is Windows only and has a Linux fake |
-| Phone layout (D53) | **not met on `main`; fixed in open PR #71** | The QA sweep found the phone Settings + Health view 711 px wide on a 390 px screen (484 px of sideways overflow) and long NEI citation chips overflowing their cards [PR #71]. `main`'s e2e `the phone layout fits 390x844` passes because it doesn't check sideways scroll on every tab. #71 adds that check and the CSS fix |
+| Phone layout (D53) | met with fakes | The QA sweep found the phone Settings + Health view 711 px wide on a 390 px screen (484 px of sideways overflow) and long NEI citation chips overflowing their cards. PR #71 (merged at `1e856cb`) fixed the CSS and strengthened e2e `the phone layout fits 390x844 with tabs at the bottom`: it now checks `scrollWidth <= 390` and that no view scrolls sideways on the chat, search, costs and settings tabs. It passed here on the merge of `a0700f9` [here] and in the gate review on `a0700f9` [review]. The real phone needs WO-9.3's Tailscale |
 
 Also on CI's harness DB: recipe cards of every recipe map and NEI handler fit the catalog (`test_dashboard_harness.py`) [repo].
 
@@ -194,7 +208,7 @@ Open: PR #58 Q1 to Q8.
 - PR #60 (merge `d60edbf`), D167 to D169 and D223 [repo].
 - e2e `setup.spec.ts` (11 tests) runs against `serve_core.py --fresh`: an empty GOS_HOME, a fake Prism tree and a file keyring. It walks paths, the key with its Test call, the Discord token, the headset, the talk key and the wake phrase, then the checklist and Finish. `gos.toml reads back, the keyring holds the secrets, doctor passes` checks that `gos doctor --no-hash` exits 0 on the result [here].
 - `tests/unit/setup` covers the TOML edits, steps, secrets, routes and the Play record [here].
-- **Play safety** (D223): the wizard never moves Play once it is fixed, Export or Lab at a current or former Play is an error, and sync refuses a former Play (`test_play_record.py`). That keeps CLAUDE.md's Play rule. Open PR #71 closes one more spelling hole ('GTNH-Straße' vs 'GTNH-Strasse').
+- **Play safety** (D223): the wizard never moves Play once it is fixed, Export or Lab at a current or former Play is an error, and sync refuses a former Play (`test_play_record.py`). That keeps CLAUDE.md's Play rule. PR #71 (merged) closed one more spelling hole ('GTNH-Straße' vs 'GTNH-Strasse').
 
 PC: `setup_wizard.md` and PR #60's ten steps: the real WASAPI device list, the Arctis Chat endpoint, the key Test call, the `former_plays` record and the board comparison.
 
@@ -209,16 +223,16 @@ Open: PR #60 Q1 to Q14. Q1 (the threat model) and Q10 (Play never moves by a cli
 | Criterion | Verdict | Evidence and gaps |
 |---|---|---|
 | Text Q&A works end to end | **met with fakes** | A typed question goes through the router to an instant card, the fast lane or the deep lane, with numbers cited and checked, from `gos ask`, `/api/ask` and the dashboard's voice-strip box (e2e `Chat keeps every answer as a card, and a citation opens its recipe card`). Both evals pass on a real harness DB with fakes |
-| The Phase 2 acceptances | **met with fakes** except WO-2.6's phone layout | See above. #71 fixes the phone layout |
+| The Phase 2 acceptances | **met with fakes** | See above. WO-2.6's phone layout is met since #71 |
 | Real-model quality and latency | **PC step** | WO-2.3 P50, WO-2.4 cost table, WO-2.7 ≥ 95% / 0 uncited, D141 counts |
 | Plan §9 security tests that Phase 2 owns | met | `tests/security/test_core_api.py`: foreign Host or Origin, missing cookie, unpaired device. Discord, `!gos` and injected-text tests belong to later phases |
 | L9 (revoke the key mid-session, then restore it) | met with fakes; **PC step** | e2e "with the key revoked" and `dashboard.md` no-AI step 1 |
 
 **Required before Clayton signs G2:**
-1. Merge open PR #71 (the phone layout and citation-chip overflow; the Straße/Strasse Play guard).
-2. Get `main`'s Windows CI green again: the hung run on `b7b88a0` and the WO-5.2 timing failure. It is outside Phase 2, but a red or hanging Windows job hides Windows regressions in the core.
-3. The PC steps below, with their paste-backs.
-4. His answers, or "keep as built", to the Phase 2 questions below. The defaults are reversible and pending him (D158).
+1. The PC steps below, with their paste-backs.
+2. His answers, or "keep as built", to the Phase 2 questions below. The defaults are reversible and pending him (D158).
+
+Keep `main` green on all four jobs up to the commit he deploys. It is green on `a0700f9` (run 43160889435); the Windows hang on `b7b88a0` is intermittent (risk 1).
 
 Should do (not blocking):
 - Mark V24 "9/9" instead of "8/8" in §13.2 and `verify.tsv` (left over from G0).
@@ -320,7 +334,7 @@ Questions that D142 already answers are left out. Everything else is open. The d
 52. Q13: keep the GTNH binding row, which reads Play's `options.txt`?
 53. Q14: the key test is one metered call, only on Test, and refused while the AI is off. OK?
 
-PRs #34, #39, #40 and #50 had no questions.
+PRs #34, #39, #40 and #50 had no questions, and PR #71's Questions section says "None".
 
 ---
 
@@ -328,7 +342,9 @@ PRs #34, #39, #40 and #50 had no questions.
 
 These go in order and don't repeat `docs/runbooks/phase1_pc_checks.md`. Where a Phase 1 step already covers a Phase 2 check, it is named, not copied. `$gos` is `C:\GregtecOS-app\current\.venv\Scripts\gos.exe`, as in that runbook's variable block. Use a normal PowerShell window (not "Run as administrator"), with `$ProgressPreference = 'SilentlyContinue'`.
 
-**0. Merge #71 and get `main` green on Windows first** (see "Required before Clayton signs G2"). Deploy that commit, not `b7b88a0`.
+**0. Deploy a green `main`:** `a0700f9` or later, with all four CI jobs green on that commit (`a0700f9`: run 43160889435). Not `b7b88a0`.
+
+G1's Lab page, `docs/runbooks/g1_golden_lab.md`, belongs to the same sitting. It runs as gos-dev in the Lab and needs only Phase 1 steps 1 to 4a, so run it after G2 step 2 below and before G2 step 3. It touches nothing these steps use.
 
 **1. Install Node.js and pnpm. This must come before Phase 1's step 1.** Since WO-2.6, `gos deploy` builds the dashboard and stops before the swap without them (PR #53 Q3, `dashboard.md` A):
 ```powershell
@@ -338,16 +354,16 @@ npm install -g pnpm@10.28.0
 Open a new window afterwards, so `pnpm` is on PATH.
 
 **2. Run `phase1_pc_checks.md` steps 1 to 12 as written,** with these Phase 2 notes:
-- **Step 1 (deploy):** expect `Building the dashboard with pnpm ...`, then `Built the dashboard: C:\GregtecOS-app\current\dashboard\dist`. The Chrome app window then opens on monitor 2 (D163).
-- **Step 4 (DB build) and step 5 (quests load)** must be done before steps 5 to 7 below: every eval needs the DB, and the quest rows need the quest load.
-- **Step 9 (core service, pairing, `gos launch`):** pair the dashboard window here (`dashboard.md` B4: click **Ask to pair**, run `& $gos pair`, type the code). This closes WO-2.1 and V24.
+- **Step 1 (deploy):** expect `Building the dashboard with pnpm ...`, then `Built the dashboard: C:\GregtecOS-app\current\dashboard\dist`. GOS isn't running yet, so no window opens here.
+- **Phase 1 steps 4 (DB build) and 5 (quests load)** must be done before G2 steps 5 to 7 below: every eval needs the DB, and the quest rows need the quest load.
+- **Step 9 (core service, pairing, `gos launch`):** `install_login_start.ps1 -StartNow` starts the supervisor, and the Chrome app window opens on monitor 2 when the core first answers `/health` (D163). Pair that window here (`dashboard.md` B4: click **Ask to pair**, run `& $gos pair`, type the code). This closes WO-2.1 and V24.
 - **Step 11 (vault):** `& $gos vault measure` closes WO-2.5's D141 format decision. #41 is merged, so the [#41] lines apply.
 - Leave step 13 (login start) for the very end, as that runbook says.
 
 **3. Setup wizard (WO-2.9; `setup_wizard.md`, PR #60 steps 2 to 10).**
 - Run `& $gos stop`, then `& $gos serve` once on the new version, **before any hand edit of `[paths] play`**.
 - In the dashboard: **Open setup** (or Settings → Setup). Paths must be all green, with no `paths.config` error.
-- Store the Anthropic key and press **Test**. Expect "the API answered on claude-haiku-5-5": one metered call, a fraction of a cent.
+- Store the Anthropic key and press **Test**. Expect "the API answered on <fast-lane model> (the fast lane's model)": one metered call, a fraction of a cent.
 - Headset: pick the Arctis Nova Elite **Chat** endpoint and check that the mic row is green on the real WASAPI list.
 - Talk key: the "Talk key in GTNH" row should say it is free. Check Discord's Keybinds by hand.
 - **Finish**, then `& $gos stop` and `& $gos serve`.
@@ -371,7 +387,7 @@ Open a new window afterwards, so `pnpm` is on PATH.
   & $gos quests tier --clear
   ```
   Also try **Calm Ops** and **Field Manual**.
-- Open the dashboard on the phone's width only if WO-9.3's Tailscale is set up. Otherwise #71's e2e stands in.
+- Open the dashboard on the phone's width only if WO-9.3's Tailscale is set up. Otherwise `main`'s phone e2e (strengthened by #71) stands in.
 - Note display scaling, window position and glance timing in the deployment checklist.
 
 **5. Fast lane (WO-2.3; `fast_lane.md` B3 to B5 and C7), about 1 US cent:**
@@ -390,7 +406,7 @@ Test-Path "$env:USERPROFILE\GregtecOS\vault\_gos\skills\recipe-lookup\SKILL.md"
 (& $gos ask "how do I make steel" --json | Out-String | ConvertFrom-Json).card.type
 & $gos eval recipe-lookup --out "$env:USERPROFILE\GregtecOS\data\reports\recipe-lookup.tsv" | Tee-Object -FilePath "$env:USERPROFILE\GregtecOS\data\reports\recipe-lookup-eval.txt"
 ```
-Expect `True`, then `recipe`. (This is #71's corrected A2 check; on `main` the runbook still greps for `"recipe"`.) Pass: `correct: >= 48 of 50`, `uncited numbers: 0`.
+Expect `True`, then `recipe` (the runbook's A2 check, as corrected by #71). Pass: `correct: >= 48 of 50`, `uncited numbers: 0`.
 
 **7. Deep lane (WO-2.4; `deep_lane.md` A2, B3 and B4, then C5), up to $20 in the worst case (10 × $2 cap).** It writes into the live vault (PR #49 Q3), so answer that question first.
 ```powershell
@@ -434,7 +450,7 @@ Then:
 
 ## Risks
 
-1. **`main`'s Windows job hangs.** On `b7b88a0` pytest finished (1 failed) but the job ran to the 6 h limit and was cancelled. A hang costs CI minutes and leaves no result, and it can be mistaken for a flake, as red Windows runs were at G0. The failing test is WO-5.2's, and the hang is likely a thread or child process that doesn't end (not diagnosed here). (Confirmed: run 43084303461)
+1. **`main`'s Windows job can hang.** On `b7b88a0` pytest finished at 0:10:46 with 1 failure (`test_stt_cli.py::test_record_saves_one_talk_key_segment_per_line`, `assert 794.609 < 794.609` at its 10 s deadline loop), then the job ran to the 6 h limit and was cancelled (job 130744570395). The same test passed on `1e856cb` and `a0700f9`, so it is intermittent. A hang costs CI minutes and leaves no result, and it can be mistaken for a flake, as red Windows runs were at G0. Two fixes, both outside this report and outside Phase 2: add `timeout-minutes: 30` to the `checks` job in `.github/workflows/ci.yml` (the `dashboard` and `mod` jobs already have one; `checks` took 7 to 12 min on the green runs), and fix the WO-5.2 test's race as its own task. (Confirmed: run 43084303461)
 2. **No real model has answered a Phase 2 eval yet.** All quality numbers come from oracle fakes, which resolve from the question's words and follow the skill's rules. They check plumbing and scoring, not model behaviour. PR #54 Q5 names two wrong-answer kinds the scorer still lets through. (Confirmed)
 3. **The deep lane's numbers aren't checked** (PR #53 Q6). The fast lane refuses uncited numbers (D152); deep-lane answers reach Chat marked "numbers not checked". That is consistent with the plan as written, but it is the main way an uncited number can reach Clayton in Phase 2. (Confirmed)
 4. **The dashboard was built without the canvas handoff** (D158 (5)). If the handoff arrives later, the views are reconciled to it, so some rework is expected. (Likely)
