@@ -87,7 +87,8 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
         "mods/gregteclink*",
         "config/gregteclink*",
     ),
-    "lab": (),
+    # GregtecLink in Lab is its own (install_gregteclink.py --instance lab, WO-8.1): never Play's
+    "lab": ("mods/gregteclink*", "config/gregteclink*"),
 }
 
 # Recipe-affecting configs in Play's fingerprint besides dreamcraft.cfg, which is always in it

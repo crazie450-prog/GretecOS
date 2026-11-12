@@ -80,12 +80,12 @@ public final class ClientLinkHarness {
     private int index;
     private long stepStart;
     private long statusT0;
-    private int statusAtStart;
     private int connectsBefore;
     private int answered;
     private int[][] placed;
     private int gosNotices;
     private GuiChest chest;
+    private int[] cursor;
     private boolean finished;
 
     /** One step: {@code start} once, then {@code until} each tick until true or {@code timeoutMs}. */
@@ -137,11 +137,7 @@ public final class ClientLinkHarness {
                 "client_link_connected",
                 m != null && m.link.connected(),
                 m == null ? "the client module is off" : "connections: " + m.link.connects());
-            if (m != null) {
-                statusAtStart = m.link.sent("status");
-                statusT0 = System.currentTimeMillis();
-                connectsBefore = m.link.connects();
-            }
+            if (m != null) connectsBefore = m.link.connects();
         }, () -> true, 1000, () -> {}));
         if (m == null) return;
         steps.add(new Step("place", this::place, this::placedSeen, 20_000, () -> check("blocks_placed", false, "")));
@@ -165,8 +161,19 @@ public final class ClientLinkHarness {
         steps.add(new Step("chest", this::openChest, () -> chest != null && guiReady(), 10_000, () -> {}));
         for (int i = 0; i < ITEMS.length; i++) {
             final int n = i;
-            steps.add(new Step("hover " + n, () -> hover(n), () -> true, 1000, () -> {}));
-            ask(m, "hover_" + ITEMS[n][0] + "@" + ITEMS[n][1], ITEMS[n][0], Integer.parseInt(ITEMS[n][1]), true);
+            steps.add(
+                new Step(
+                    "hover " + n,
+                    () -> hover(n),
+                    this::mouseThere,
+                    3000,
+                    () -> check("hover_" + n + "_mouse_moved", false, mouse())));
+            ask(
+                m,
+                "hover_" + ITEMS[n][0] + "@" + ITEMS[n][1],
+                ITEMS[n][0],
+                Integer.parseInt(ITEMS[n][1]),
+                ITEMS[n][2] != null);
         }
         steps.add(
             new Step(
@@ -197,15 +204,18 @@ public final class ClientLinkHarness {
             gosNotices = gos.size();
             chatAs("Mallory", "!gos recipes for steel ingot");
         }, () -> false, IGNORED_MS, () -> check("gos_from_others_ignored", gosCount(m) == gosNotices, "")));
+        final int[] status = new int[1];
         steps.add(new Step("status", () -> {
-            double secs = (System.currentTimeMillis() - statusT0) / 1000.0;
-            int sent = m.link.sent("status") - statusAtStart;
-            // 1 Hz while connected; the restart takes a few seconds out
+            status[0] = m.link.sent("status");
+            statusT0 = System.currentTimeMillis();
+        }, () -> false, 5000, () -> {
+            int sent = m.link.sent("status") - status[0];
+            long ms = System.currentTimeMillis() - statusT0;
             check(
-                "status_about_1_hz",
-                sent >= secs * 0.6 - 2 && sent <= secs + 2,
-                sent + " status messages in " + Math.round(secs) + " s");
-        }, () -> true, 1000, () -> {}));
+                "status_at_1_hz",
+                m.link.connected() && sent >= ms / 1000 - 1 && sent <= ms / 1000 + 1,
+                sent + " status messages in " + ms + " ms");
+        }));
     }
 
     /** Presses What's this? (the key's code path) and waits for the core's answer to that report. */
@@ -240,7 +250,8 @@ public final class ClientLinkHarness {
                     + " named "
                     + got
                     + ": "
-                    + str(a, "text"));
+                    + str(a, "text")
+                    + (t == null || t == Feeds.Target.NONE ? " (" + mouse() + ")" : ""));
         }, () -> true, 1000, () -> {}));
     }
 
@@ -384,7 +395,24 @@ public final class ClientLinkHarness {
         int scale = sr.getScaleFactor();
         int x = (origin[0] + s.xDisplayPosition + 8) * scale;
         int y = (origin[1] + s.yDisplayPosition + 8) * scale;
-        Mouse.setCursorPosition(x, mc.displayHeight - y - 1);
+        cursor = new int[] { x, mc.displayHeight - y - 1 };
+        Mouse.setCursorPosition(cursor[0], cursor[1]);
+    }
+
+    private boolean mouseThere() {
+        return cursor != null && Mouse.getX() == cursor[0] && Mouse.getY() == cursor[1];
+    }
+
+    private String mouse() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return "mouse at " + Mouse.getX()
+            + ","
+            + Mouse.getY()
+            + (cursor == null ? "" : ", want " + cursor[0] + "," + cursor[1])
+            + ", screen "
+            + (mc.currentScreen == null ? "none"
+                : mc.currentScreen.getClass()
+                    .getSimpleName());
     }
 
     @SubscribeEvent

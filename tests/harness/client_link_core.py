@@ -35,7 +35,9 @@ MARKER = ".gos-client-link-home"
 def fresh_home(home: Path) -> None:
     """An empty home; only one this script made (its marker) or an empty folder is wiped."""
     if home.exists():
-        if not home.is_dir() or not ((home / MARKER).is_file() or not any(home.iterdir())):
+        if not home.is_dir() or not (
+            (home / MARKER).is_file() or not any(home.iterdir())
+        ):
             raise SystemExit(f"refusing to delete {home}: not a home this script made")
         shutil.rmtree(home)
     home.mkdir(parents=True)
@@ -89,7 +91,7 @@ def up(port: int) -> bool:
 
 
 def start(home: Path, port: int) -> subprocess.Popen[bytes]:
-    child = subprocess.Popen(  # noqa: S603 - this script, this interpreter
+    child = subprocess.Popen(
         [sys.executable, str(HERE), "--serve", "--home", str(home), "--port", str(port)]
     )
     end = time.monotonic() + 60
@@ -145,7 +147,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 time.sleep(2)  # the game sees the link drop before the core is back
                 child = start(home, args.port)
             elif child.poll() is not None:
-                print("client-link core: the core exited; starting it again", flush=True)
+                print(
+                    "client-link core: the core exited; starting it again", flush=True
+                )
                 child = start(home, args.port)
             time.sleep(0.25)
     finally:
