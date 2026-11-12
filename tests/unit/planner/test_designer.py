@@ -338,3 +338,15 @@ def test_latest_ignores_bad_files(home: Path) -> None:
     for text in ("{", "[]", json.dumps({"ids": "x"}), json.dumps({"ids": ["../x", 3]})):
         path.write_text(text, encoding="utf-8")
         assert designer.latest(home) == []
+
+
+def test_cli_accept_and_rename(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pid = designer.design(home, Request(WIDGET, qty=2, tier_cap="MV")).ids[0]
+    code, text = tp.run_cli(home, monkeypatch, "--rename", pid, "Widget works")
+    assert code == 0 and text == f"{pid}: Widget works\n"
+    code, text = tp.run_cli(home, monkeypatch, "--accept", f"plan:{pid}")
+    assert code == 0 and f"{pid}: accepted; line note base/lines/" in text
+    assert ledger.PENDING in text
+    assert status(home, pid) == "accepted"
+    code, text = tp.run_cli(home, monkeypatch, "--accept", pid)
+    assert code == 2 and text.startswith("refused: plan ")

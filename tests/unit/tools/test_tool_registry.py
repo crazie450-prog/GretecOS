@@ -66,6 +66,9 @@ WRITERS = {
     "note_append",
     "inbox_propose",
     "action_propose",  # WO-7.1: records a proposal only, behind the confirm flow
+    "design_production",  # WO-3.7: saves plans through the planner's store
+    "plan_pin",
+    "plan_rename",
 }  # WO-2.5, behind the path guard
 HANDOFF = "handoff"  # WO-2.3: the fast lane's one writing tool, to the deep lane
 

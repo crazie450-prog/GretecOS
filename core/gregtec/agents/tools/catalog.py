@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
     base,
+    designer,
     items,
     machines,
     notes,
@@ -178,6 +179,65 @@ TOOLS = (
         plans.plan_export,
         needs_db=False,
     ),
+    Tool(
+        "design_production",
+        "Design a production line (WO-3.7): the target (his words or its key), a rate "
+        '("2/s") or a batch, the tier cap, up to 3 routes, addons. GOS builds the recipe graph, '
+        "solves the routes, sizes the machines and ranks them by code, then saves each as a "
+        "plan (plan:<id>). Returns one row per route in rank order with its metrics, the "
+        "differing choices and an explanation built from the metrics. Keep the order; "
+        f"explain, never reorder. An unclear target returns the candidates to ask about. {CITE}",
+        designer.DESIGN_PRODUCTION_SCHEMA,
+        designer.design_production,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        deadline_s=120.0,
+        gate=designer.GATE,
+    ),
+    Tool(
+        "plan_get",
+        "A saved plan: view summary (facts and metrics), nodes (each machine node: item, "
+        "recipe r: id, machine, tier, count, pinned, primary), routes (its design's routes in "
+        "rank order with the differing choices) or alternatives with node (that node's "
+        f"candidate recipes for plan_pin). {CITE}",
+        designer.PLAN_GET_SCHEMA,
+        designer.plan_get,
+        needs_db=False,
+        deadline_s=60.0,
+    ),
+    Tool(
+        "plan_pin",
+        "Pin one node of a saved plan to another candidate recipe (plan_get view "
+        'alternatives), or unpin it, and solve again ("use the other sulfuric acid recipe", '
+        "D61). The pin is kept in the plan. Returns the new routes in rank order, as "
+        "design_production does.",
+        designer.PLAN_PIN_SCHEMA,
+        designer.plan_pin,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        deadline_s=120.0,
+        gate=designer.GATE,
+    ),
+    Tool(
+        "plan_list",
+        "The saved plans, newest first: name, plan: id, kind and status (proposed, accepted, "
+        "building, running, retired); status filters them.",
+        designer.PLAN_LIST_SCHEMA,
+        designer.plan_list,
+        needs_db=False,
+    ),
+    Tool(
+        "plan_rename",
+        'Give a saved plan a short human name ("Steel line · 2/s · MV"); its id stays.',
+        designer.PLAN_RENAME_SCHEMA,
+        designer.plan_rename,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        needs_db=False,
+        gate=designer.GATE,
+    ),
     HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
     Tool(
         "telemetry_get",
@@ -225,19 +285,12 @@ LATER: dict[str, str] = {
         ("crop_find", "crop_plan", "crop_step", "crop_status"),
         "WO-1.10 (crop data), WO-6.7 (planner); crop_status with WO-7.6",
     ),
-    **dict.fromkeys(
-        (
-            "design_production",
-            "plan_get",
-            "plan_set_status",
-            "plan_list",
-            "plan_pin",
-            "plan_rename",
-            "effort_estimate",
-            "layout_estimate",
-        ),
-        "Phase 3 (WO-3.4 to WO-3.7)",
-    ),
+    # Accepting is Clayton's (the Designer, gos plan accept; D251); the later moves
+    # (building, running, retired) come with the base-keeper's line lifecycle.
+    "plan_set_status": "WO-4.4 (EU ledger: line lifecycle)",
+    "effort_estimate": "WO-4.2 (power designer; plan_get's summary has a plan's effort)",
+    "layout_estimate": "WO-10.5 (corridor-aware layout; plan_export footprint has the "
+    "bounding-box one)",
     "design_power": "WO-4.2 (power objective modes)",
     **dict.fromkeys(("ledger_get", "ledger_update"), "WO-4.4 (EU ledger)"),
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
