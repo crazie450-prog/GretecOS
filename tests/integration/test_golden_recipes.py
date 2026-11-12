@@ -7,8 +7,14 @@ stored it (``recipe``, ``recipe_input``, ``recipe_output``) and the line NEI 2.8
 in the run's ``nei/`` files. The check reads NEI's JSON on its own (it doesn't reuse WO-1.3's
 merge), finds the NEI line whose stacks pair up with the recipe's slots, and compares EU/t,
 duration, every amount (items and mB) and every chance. A slot pairs with an NEI stack when the
-stack shows, or lists in ``anyOf``, an item the slot accepts (its key, its ``recipe_input_alt``
-stacks, or a member of its oredict name; meta 32767 is any meta). NBT is not compared: NEI's
+stack shows, or lists in ``anyOf``, the item the DB shows for that slot (meta 32767 is any meta).
+The slot's ``recipe_input_alt`` stacks and oredict members don't count: WO-1.3's merge fills the
+alternatives from NEI's own ``anyOf``, so pairing on them would compare NEI with itself.
+How independent the check is depends on the recipe's ``source``: for ``gt+nei`` recipes the
+merge already matched slot amounts, so the cross-source checks are EU/t, duration and chances;
+a ``gt``-only recipe (g25) is checked on everything; the NEI-only handlers' recipes (``crafting``,
+``furnace``: g28 to g30) are NEI's own lines, so for them the check shows ingest fidelity only,
+and GT-vs-NEI agreement is shown by g01 to g27. NBT is not compared: NEI's
 ``tag`` holds numeric IDs, and the keys' NBT hashes are WO-1.3's own tested code. What NEI's dump
 doesn't carry (coil heat, cleanroom, amperage) is the Lab half, ``docs/runbooks/g1_golden_lab.md``.
 
@@ -21,8 +27,8 @@ taken in citation-key order, each pick from a map or handler not picked yet whil
 - 3 with both a fluid input and a fluid output;
 - 3 with a chanced output;
 - 3 with an oredict input slot;
-- 4 from maps owned by a mod other than GT (addon machines in the dev runtime: bartworks,
-  GoodGenerator, gtnhlanth, kubatech, tectech, cropsnh), one per mod;
+- 4 from maps owned by a mod other than GT, one per mod (in the dev runtime's run the rule
+  picks GoodGenerator, tectech, bartworks and gtnhintergalactic);
 - 3 from NEI's own handlers: shaped crafting, shapeless crafting, furnace.
 
 Running the check:
@@ -33,7 +39,9 @@ Running the check:
   ``GOS_GOLDEN_HOME=<GOS_HOME> uv run pytest tests/integration/test_golden_recipes.py``, or
   ``uv run python tests/integration/test_golden_recipes.py report <GOS_HOME>`` for the full
   report (``--reselect`` applies the rule to that DB instead of the fixture, for a full-pack DB
-  whose keys differ from the dev runtime's);
+  whose keys differ from the dev runtime's). The committed fixture is the dev runtime's, so on a
+  full-pack DB pytest fails with "not in" for every key that differs: there, use the command
+  line with ``--reselect``, not pytest;
 - ``uv run python tests/integration/test_golden_recipes.py select <GOS_HOME>`` prints the
   fixture the rule picks from that DB (how the committed one was made);
 - ``... show <GOS_HOME> [--reselect]`` prints each golden recipe as the DB has it, with the
@@ -117,9 +125,9 @@ def _same_item(a: str, b: str) -> bool:
 
 
 def _compatible(db: Stack, nei: Stack) -> bool:
-    return any(
-        _same_item(a, b) for a in db.accepts | {db.key} for b in nei.accepts | {nei.key}
-    )
+    # Only the DB's own shown key counts: its recipe_input_alt rows come from NEI's anyOf
+    # (WO-1.3's merge), so pairing on them would partly compare NEI with itself.
+    return any(_same_item(db.key, b) for b in nei.accepts | {nei.key})
 
 
 def db_side(conn: sqlite3.Connection, run_id: int, ref: str) -> Side | None:
@@ -137,32 +145,15 @@ def db_side(conn: sqlite3.Connection, run_id: int, ref: str) -> Side | None:
         "CASE WHEN s.fluid_id IS NOT NULL THEN 'fluid:' || f.name"
         " ELSE i.registry_name || '@' || i.meta END"
     )
-    inputs: list[Stack] = []
-    for slot, key, amount, chance, ore_id in conn.execute(
-        f"SELECT s.slot, {key_sql}, s.amount, s.chance_bp, s.ore_id FROM recipe_input AS s"
-        " LEFT JOIN item AS i ON i.id = s.item_id LEFT JOIN fluid AS f ON f.id = s.fluid_id"
-        " WHERE s.recipe_id = ? ORDER BY s.slot",
-        (rid,),
-    ).fetchall():
-        accepts = {
-            k
-            for (k,) in conn.execute(
-                f"SELECT {key_sql} FROM recipe_input_alt AS s"
-                " LEFT JOIN item AS i ON i.id = s.item_id LEFT JOIN fluid AS f ON f.id = s.fluid_id"
-                " WHERE s.recipe_id = ? AND s.slot = ?",
-                (rid, slot),
-            )
-        }
-        if ore_id is not None:
-            accepts |= {
-                f"{reg}@{meta}"
-                for reg, meta in conn.execute(
-                    "SELECT i.registry_name, i.meta FROM ore_member AS m"
-                    " JOIN item AS i ON i.id = m.item_id WHERE m.ore_id = ?",
-                    (ore_id,),
-                )
-            }
-        inputs.append(Stack(key, amount, chance, frozenset(accepts)))
+    inputs = [
+        Stack(key, amount, chance)
+        for key, amount, chance in conn.execute(
+            f"SELECT {key_sql}, s.amount, s.chance_bp FROM recipe_input AS s"
+            " LEFT JOIN item AS i ON i.id = s.item_id LEFT JOIN fluid AS f ON f.id = s.fluid_id"
+            " WHERE s.recipe_id = ? ORDER BY s.slot",
+            (rid,),
+        )
+    ]
     outputs = [
         Stack(key, amount, chance)
         for key, amount, chance in conn.execute(
