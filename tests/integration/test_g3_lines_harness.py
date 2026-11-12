@@ -18,13 +18,15 @@ they are a PC step, as is the Lab run that decides when references disagree [QA:
 Runs only with GOS_REQUIRE_HARNESS_RUN=1 after both harnesses (CI's mod job; locally
 mod/README.md). On a real GOS_HOME, ``uv run python tests/integration/test_g3_lines_harness.py
 report <GOS_HOME>`` checks the saved plans in ``data/plans/`` against that home's own NEI dump
-and prints one TSV row per distinct tuple (the Lab sheet).
+and prints one TSV row per distinct tuple (the Lab sheet). It fails when the home has no saved
+plans, or no saved plan for one of the lines below (a wrong GOS_HOME, or a line step 3 didn't save).
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import os
 import sqlite3
@@ -113,6 +115,19 @@ def _json_list(text: str | None) -> list[Any]:
     return v if isinstance(v, list) else [v]
 
 
+def drop_special(lines: Iterable[Any], special: set[str]) -> list[Any]:
+    """NEI's lines with every input stack equal to one of the recipe's special items left out."""
+    return [
+        replace(n, inputs=[s for s in n.inputs if s.key not in special]) for n in lines
+    ]
+
+
+def missing_lines(saved: Iterable[dict[str, Any]]) -> list[str]:
+    """The G3 lines (``LINES``) that no saved plan has as its target."""
+    targets = {(p.get("target") or {}).get("id") for p in saved}
+    return [name for name, (key, _) in LINES.items() if key not in targets]
+
+
 def check_recipes(
     conn: sqlite3.Connection, run_dir: Path, run_id: int, refs: Iterable[str]
 ) -> dict[str, golden.Verdict]:
@@ -127,10 +142,7 @@ def check_recipes(
         shown = lines.get(side.handler, []) if side else []
         special = special_items(conn, run_id, r)
         if special:
-            shown = [
-                replace(n, inputs=[s for s in n.inputs if s.key not in special])
-                for n in shown
-            ]
+            shown = drop_special(shown, special)
         out[r] = golden.check(r, r, side, shown)
     return out
 
@@ -212,10 +224,26 @@ def test_an_nei_slot_is_left_out_only_when_it_is_the_special_item() -> None:
         db.outputs,
     )
     assert not golden.check("x", "x", db, [nei]).ok
-    kept = replace(nei, inputs=[s for s in nei.inputs if s.key not in {"orb@7"}])
-    assert golden.check("x", "x", db, [kept]).ok
-    other = replace(nei, inputs=[s for s in nei.inputs if s.key not in {"cell@1"}])
-    assert not golden.check("x", "x", db, [other]).ok
+    assert golden.check("x", "x", db, drop_special([nei], {"orb@7"})).ok
+    assert not golden.check("x", "x", db, drop_special([nei], {"cell@1"})).ok
+    # a special item the recipe also consumes is still paired, so it still shows as a DIFF
+    consumed = replace(db, inputs=[golden.Stack("orb@7", 1), *db.inputs])
+    assert not golden.check("x", "x", consumed, drop_special([nei], {"orb@7"})).ok
+
+
+def test_report_fails_on_a_home_with_no_saved_plans(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "data" / "plans").mkdir(parents=True)
+    assert main(["report", str(tmp_path)]) == 1
+    assert "no saved plans" in capsys.readouterr().err
+
+
+def test_report_names_the_lines_with_no_saved_plan() -> None:
+    keys = [key for key, _ in LINES.values()]
+    saved = [{"target": {"id": k}} for k in keys[1:]] + [{"nodes": []}]
+    assert missing_lines(saved) == [next(iter(LINES))]
+    assert missing_lines([{"target": {"id": k}} for k in keys]) == []
 
 
 # --- on a real GOS_HOME ----------------------------------------------------------------------
@@ -226,11 +254,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("action", choices=("report",))
     p.add_argument("home", type=Path, help="a GOS_HOME with saved plans and its run")
     a = p.parse_args(argv)
-    saved = [
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(
+            encoding="utf-8"
+        )  # plan names hold "·"; Windows redirects in ANSI
+    plans_dir = a.home / "data" / "plans"
+    loaded = [
         json.loads(f.read_text(encoding="utf-8"))
-        for f in sorted((a.home / "data" / "plans").glob("*.json"))
+        for f in sorted(plans_dir.glob("*.json"))
     ]
-    found = tuples(x for x in saved if isinstance(x, dict) and "nodes" in x)
+    saved = [x for x in loaded if isinstance(x, dict) and "nodes" in x]
+    if not saved:
+        print(f"no saved plans in {plans_dir}", file=sys.stderr)
+        return 1
+    missing = missing_lines(saved)
+    for name in missing:
+        print(f"no saved plan for {name} ({LINES[name][0]})", file=sys.stderr)
+    found = tuples(saved)
     conn, run_dir, run_id = golden._open(a.home)
     try:
         verdicts = check_recipes(conn, run_dir, run_id, (k[1] for k in found))
@@ -239,7 +279,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("\t".join(COLUMNS))
     for row in rows(found, verdicts):
         print("\t".join(row))
-    return 0 if all(v.ok for v in verdicts.values()) else 1
+    return 0 if not missing and all(v.ok for v in verdicts.values()) else 1
 
 
 if __name__ == "__main__":
