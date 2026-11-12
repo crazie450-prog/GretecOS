@@ -14,7 +14,8 @@ past the frontier, so ``quest_get`` shows it at the spoiler level (D268):
 - 2, full: everything, description and rewards too.
 
 The level is the call's (:meth:`Call.spoil`): the ``spoil`` argument, never above what the
-global setting and Clayton's own words allow (:mod:`gregtec.quests.spoilers`), so a model asking
+global setting and an explicit spoiler command in Clayton's request allow
+(:mod:`gregtec.quests.spoilers`, D268), so a model asking
 for more than he did gets the allowed level and a note saying so. The list tools show a locked
 quest at the global level: at 0, one the book doesn't show yet is listed without its name (and
 ``quest_for_item`` without the amount it asks for or gives). ``quest_frontier`` ranks the
@@ -163,7 +164,7 @@ QUEST_GET_SCHEMA: dict[str, Any] = {
             "type": "integer",
             "description": "for a quest past the frontier: 0 nudge, 1 what it asks for, 2 "
             "everything. Leave it out for his global setting; 1 only when he asks for more "
-            "(a partial answer, what it needs), 2 only on 'spoil it' or 'full answer'",
+            "('partial answer', 'a bit more'), 2 only on 'spoil it' or 'full answer'",
             "minimum": 0,
             "maximum": 2,
         },
@@ -255,7 +256,7 @@ def quest_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         notes.insert(
             0,
             f"spoil={asked} was not shown: Clayton didn't ask for more than level {level} "
-            "(he can say 'spoil it' or 'full answer'). Answer at this level",
+            "(he can say 'partial answer', 'spoil it' or 'full answer'). Answer at this level",
         )
     return Result(
         PART_COLUMNS,
