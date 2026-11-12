@@ -19,11 +19,14 @@
 |                              | the target (WO-5.3, D204)                                     |
 | ``tts-check``                | the 40 check phrases through TTS and back through STT         |
 | ``say [TEXT]``               | say a text (or ``--phrases``) on the output device            |
+| ``doctor``                   | capture mode, devices, ducking, hook and keys, changing       |
+|                              | nothing (WO-5.5's Discord runbook, D247)                      |
 
 ``run``, ``test``, ``devices``, ``record`` and ``capture`` need Windows (WASAPI and the
-keyboard hook); ``keys``, ``bench``, ``stt``, ``eval``, ``wake-eval``, ``tts-bench``, ``tts-check`` and ``say`` run
-anywhere (``devices`` lists the capture and the output devices). ``run`` needs the core's voice token in
-this account's keyring (``gos token new voice``, D117).
+keyboard hook); ``keys``, ``bench``, ``stt``, ``eval``, ``wake-eval``, ``tts-bench``,
+``tts-check``, ``say`` and ``doctor`` run anywhere (``doctor`` checks the devices, ducking and
+hook on Windows only; ``devices`` lists the capture and the output devices). ``run`` needs the
+core's voice token in this account's keyring (``gos token new voice``, D117).
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from gregtec.gamestate.safe_open import read_bytes
 from gregtec.llm import keys as stored
 from gregtec_voice import (
     audio,
+    doctor,
     hooks,
     keys,
     playback,
@@ -281,6 +285,16 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     capture.add_argument(
         "--minutes", type=float, default=0, help="stop after this long"
     )
+    doctor_cmd = commands.add_parser(  # WO-5.5, D247
+        "doctor",
+        help="capture mode, devices, ducking, hook and keys, for the Discord runbook",
+        description=(
+            "Prints how the voice client uses the PC's audio and keys: WASAPI shared capture, "
+            "the microphone and output device it uses, Windows' default devices (never "
+            "changed), Windows communications ducking, the key hook and the four keys. "
+            "Changes nothing. docs/runbooks/discord_coexistence.md uses it."
+        ),
+    )
     for each in (stt_cmd, evaluate, wake_eval_cmd):
         each.add_argument(
             "--engine",
@@ -301,6 +315,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         evaluate,
         wake_eval_cmd,
         capture,
+        doctor_cmd,
     ):
         each.add_argument("--config", type=Path, help="gos.toml (default: GOS_HOME's)")
     tts_handlers = tts_cli.add_parsers(commands)  # WO-5.3: tts-bench, tts-check, say
@@ -321,6 +336,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "eval": _eval,
         "wake-eval": _wake_eval,
         "capture": _capture,
+        "doctor": _doctor,
         **tts_handlers,
     }[args.voice_command]
     return handler(cfg, voice_settings, args, out)
@@ -629,11 +645,25 @@ def _keys(
         else:
             verdict = "free in GTNH"
         print(f"  {role.replace('_', ' ')}: {key.label}: {verdict}", file=out)
+        if warning := keys.discord_warning(key):  # WO-5.5, D246
+            print(f"    Discord WARNING: {warning}", file=out)
     print(
         "Discord: open Settings > Keybinds and check that none of these keys is bound.",
         file=out,
     )
     return EXIT_PROBLEM if clashes else 0
+
+
+# --- gos voice doctor (WO-5.5) ---------------------------------------------------------------
+
+
+def _doctor(
+    cfg: Config, voice_settings: VoiceSettings, args: argparse.Namespace, out: TextIO
+) -> int:
+    problems = doctor.report(voice_settings, doctor.windows_probe(), out)
+    if problems:
+        print(f"\n{problems} line(s) marked ! need attention.", file=out)
+    return EXIT_PROBLEM if problems else 0
 
 
 # --- gos voice devices ------------------------------------------------------------------------

@@ -36,8 +36,8 @@
 |                  |         | Arctis Nova Elite's Chat endpoint, D56), "" = Windows' default; |
 |                  |         | no single match falls back to the default (D205)                |
 
-The four keys must differ. Appendix C's ``discord_auto_mute`` belongs to WO-5.5 and is
-ignored here. The core's own keys
+The four keys must differ. Appendix C's ``discord_auto_mute`` stays ``false`` and is
+ignored: GOS never mutes Discord (D58; WO-5.5, D247). The core's own keys
 (``[core] port``, ``[paths] gos_home``) come from :func:`gregtec.config.load`; ``gos_home``
 rides along here because the engines keep their models in ``GOS_HOME/models`` and read the
 vault's glossary.
