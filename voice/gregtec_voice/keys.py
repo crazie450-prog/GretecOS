@@ -22,10 +22,12 @@ menu by hand.
 
 **Discord** binds none of these keys by default, and GOS never reads Discord's keybinds (they
 are Discord's settings, WO-5.5). :func:`discord_warning` names the ones people often bind by hand:
-Pause and Scroll Lock (the spare keys on a keyboard) and F13-F15 (where mouse and macro-key
-software usually maps a side button first), to Discord's Push to Talk, Push to Mute or Toggle
-Mute (D246). On such a key a GOS press would also key or mute Discord's microphone, so ``gos voice
-keys`` and ``gos voice doctor`` say to check Discord's Settings > Keybinds for it.
+Pause and Scroll Lock (the spare keys on a keyboard), to Discord's Push to Talk, Push to Mute
+or Toggle Mute (D246). On such a key a GOS press would also key or mute Discord's microphone, so
+``gos voice keys`` and ``gos voice doctor`` say to check Discord's Settings > Keybinds for it.
+F13-F24 get no per-key warning (D180 picked F13-F16 because Discord binds none of them): the
+one "check Discord's Settings > Keybinds" line under every key list, and the runbook's check by
+hand, cover them.
 """
 
 from __future__ import annotations
@@ -243,7 +245,7 @@ def conflicts(
     }
 
 
-DISCORD_OFTEN = frozenset({"pause", "scroll_lock", "f13", "f14", "f15"})  # D246
+DISCORD_OFTEN = frozenset({"pause", "scroll_lock"})  # D246
 
 
 def discord_warning(key: Key) -> str | None:

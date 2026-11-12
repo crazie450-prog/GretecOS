@@ -24,9 +24,11 @@ What GOS already guarantees in code (D247, tested in CI): the microphone and the
    - `Output` > `speech and the wake chime:` is the Arctis **Chat** device, not Game and not speakers;
    - `Ducking` > `Windows communications ducking: 3 (do nothing)`. Anything else is marked `!`: run `tts.md` part E (`set_comm_ducking.ps1`), restart Discord and GTNH, and run the doctor again;
    - `Key hook` > `hook: installs and comes out again`;
-   - `Keys`: the four keys. A `Discord WARNING` line under a key (D246: Pause, Scroll Lock and F13-F15) is a reminder for step 5, not a failure.
+   - `Keys`: the four keys. A `Discord WARNING` line under a key (D246: Pause or Scroll Lock) is a reminder for step 5, not a failure; the default keys F13-F16 get none, but step 5 checks them all the same.
 
    A line marked `!` you can't clear: stop here and send the file (part D).
+
+   The doctor is safe to run while `gos voice run` is up (step 13 does): its hook check adds a second listen-only hook for a tenth of a second, low-level hooks chain, and nothing is suppressed.
 4. **The keys in GTNH**, with GTNH closed (it rewrites `options.txt` when it quits):
    ```powershell
    & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice keys lab
@@ -36,7 +38,7 @@ What GOS already guarantees in code (D247, tested in CI): the microphone and the
    - **Keybinds:** none of the four keys from step 3 is bound (Push to Talk, Push to Mute, Toggle Mute, Toggle Deafen, Toggle Voice Activity, Overlay and the rest). Check each `Discord WARNING` key twice. If one is bound, unbind it in Discord or give GOS another key (`voice_client.md` step 3).
    - **Voice & Video:** write down, in `C:\Temp\gos55\discord_before.txt` (or take a screenshot, `discord_before.png`): Input Device, Output Device, Input Mode (Voice Activity, as D58's open mic), the input sensitivity setting, Echo Cancellation, Noise Suppression (Krisp or Standard), Automatic Gain Control, and **Attenuation** (its percentage and the two "When I speak / When others speak" switches).
    - Input Device should be the Arctis microphone (or "Default"); Output Device the Arctis **Chat** device (or "Default"). Whatever they are, they must be the same after the session.
-6. **Windows' devices.** Settings > System > Sound: write down the default Output and Input device (the doctor's `Windows' default output` and `Windows' default microphone` lines show them too).
+6. **Windows' devices.** Settings > System > Sound: write down the default Output and Input device (the doctor's `Windows' default output` and `Windows' default microphone` lines show them too). Then the **Default Communication Device**, which Windows keeps separately and the doctor can't show: press Win+R, run `mmsys.cpl`, and on the Playback and Recording tabs note which device is marked "Default Communication Device" (green phone icon). Communications ducking and Discord's "Default" device can follow it.
 
 ## B. The session (1 hour)
 
@@ -72,7 +74,7 @@ What GOS already guarantees in code (D247, tested in CI): the microphone and the
     Compare-Object (Get-Content C:\Temp\gos55\doctor_before.txt) (Get-Content C:\Temp\gos55\doctor_after.txt)
     ```
     Expect no output from `Compare-Object`: the same devices, ducking and hook as before.
-14. **Discord and Windows again:** Discord's Voice & Video settings and Keybinds, and Windows' default Output and Input devices, are as in steps 5 and 6. Write them down the same way (`discord_after.txt` or `discord_after.png`).
+14. **Discord and Windows again:** Discord's Voice & Video settings and Keybinds, and Windows' default Output and Input devices and both Default Communication Devices (`mmsys.cpl`), are as in steps 5 and 6. Write them down the same way (`discord_after.txt` or `discord_after.png`).
 15. **The turn timings** (for the record; WO-5.7 is the latency acceptance):
     ```powershell
     & C:\GregtecOS-app\current\.venv\Scripts\gos.exe voice bench | Tee-Object C:\Temp\gos55\bench.txt
@@ -82,7 +84,7 @@ What GOS already guarantees in code (D247, tested in CI): the microphone and the
 
 - `doctor_before.txt`, `doctor_after.txt` and the `Compare-Object` output (empty is the pass).
 - Discord before and after (steps 5 and 14): the values or the screenshots, and whether anything changed.
-- Windows' default devices before and after (steps 6 and 14).
+- Windows' default devices and Default Communication Devices before and after (steps 6 and 14).
 - This table, filled in:
 
   | Check | Pass / fail | Notes (time, what happened) |
@@ -95,7 +97,7 @@ What GOS already guarantees in code (D247, tested in CI): the microphone and the
   | GTNH's sound never dipped | | |
   | GOS speech and chime on the Chat endpoint only | | |
   | Discord's devices and settings unchanged after | | |
-  | Windows' default devices unchanged after | | |
+  | Windows' default and communication devices unchanged after | | |
   | GOS answered: turns asked / turns answered | | |
 
 - `bench.txt`, and anything odd with its time. `voice.log` holds no audio; send the lines around an odd time if asked.

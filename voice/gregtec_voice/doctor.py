@@ -14,6 +14,11 @@ It prints, and changes nothing:
 - **the four keys**, with :func:`gregtec_voice.keys.discord_warning` for the ones people often
   bind in Discord (D246).
 
+"Windows' default devices" here are WASAPI's defaults, which follow the console role. Windows
+keeps a separate Default Communication Device (what communications ducking and many voice
+apps' "Default" follow); reading it needs Core Audio COM (``IMMDeviceEnumerator``), which the
+voice client doesn't use, so the runbook has Clayton note it by hand (mmsys.cpl).
+
 GOS can't see Discord's own settings (input and output device, keybinds, attenuation) and
 never reads them: the runbook has Clayton check those by hand. Exit code 0 when nothing needs
 attention, 1 when something does (each such line starts with ``!``).
@@ -154,7 +159,7 @@ def report(voice: VoiceSettings, probe: Probe, out: TextIO) -> int:
         value = probe.ducking()
     except Unavailable as exc:
         say(f"Windows communications ducking: {exc}")
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:  # ValueError: not a number (REG_SZ)
         say(f"Windows communications ducking: can't read it ({exc})", problem=True)
     else:
         label = (

@@ -343,8 +343,8 @@ SUBPROCESS_OK = {"tts_bench.py"}
 
 def _trees() -> list[tuple[str, ast.Module]]:
     return [
-        (p.name, ast.parse(p.read_text(encoding="utf-8")))
-        for p in sorted(PACKAGE.glob("*.py"))
+        (p.relative_to(PACKAGE).as_posix(), ast.parse(p.read_text(encoding="utf-8")))
+        for p in sorted(PACKAGE.rglob("*.py"))
     ]
 
 
@@ -423,16 +423,184 @@ def test_every_wasapi_stream_is_opened_shared() -> None:
     assert calls and all("exclusive" in kws for _, kws in calls), calls
 
 
+# The denylist above can't see a name built at run time (``getattr(dll, "Send" + "Input")``),
+# so the Windows functions and the modules the package loads are also allowlisted.
+DLL_LOADERS = {"WinDLL", "CDLL", "OleDLL", "PyDLL", "LoadLibrary"}
+DLL_SHORTCUTS = {"windll", "oledll", "cdll", "pydll"}
+# ptt.py: the hook thread's priority, the watchdog's key state and the hook's clock.
+DLL_FUNCTIONS_OK = {
+    "OpenThread",
+    "SetThreadPriority",
+    "CloseHandle",
+    "GetAsyncKeyState",
+    "GetTickCount",
+}
+
+
+def _parents(tree: ast.Module) -> dict[ast.AST, ast.AST]:
+    return {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+
+
+def _scope(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.AST:
+    while not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+        node = parents[node]
+    return node
+
+
+def _called(node: ast.AST, names: set[str]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    ident = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+    return ident in names
+
+
+def test_only_known_windows_functions_are_called() -> None:
+    """A DLL the package loads is either only loaded (stt.py's CUDA probe) or bound to a name
+    whose every use is an allowlisted function: never chained, never passed to ``getattr``."""
+    found = []
+    for name, tree in _trees():
+        parents = _parents(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in DLL_SHORTCUTS:
+                found.append(f"{name}:{node.lineno}: ctypes.{node.attr}")
+            if (
+                isinstance(node, ast.Name)
+                and node.id == "ctypes"
+                and not isinstance(parents[node], ast.Attribute)
+                and not isinstance(node.ctx, ast.Store)
+            ):
+                found.append(f"{name}:{node.lineno}: ctypes used other than ctypes.X")
+            if not _called(node, DLL_LOADERS):
+                continue
+            up = parents[node]
+            if isinstance(up, ast.Expr):
+                continue  # loaded only, nothing called
+            if not (
+                isinstance(up, ast.Assign)
+                and len(up.targets) == 1
+                and isinstance(up.targets[0], ast.Name)
+            ):
+                found.append(f"{name}:{node.lineno}: a DLL used without a name")
+                continue
+            dll = up.targets[0].id
+            for use in ast.walk(_scope(up, parents)):
+                if (
+                    isinstance(use, ast.Name)
+                    and use.id == dll
+                    and isinstance(use.ctx, ast.Load)
+                ):
+                    attr = parents[use]
+                    if not (
+                        isinstance(attr, ast.Attribute)
+                        and attr.attr in DLL_FUNCTIONS_OK
+                    ):
+                        found.append(
+                            f"{name}:{use.lineno}: {dll} used for something else"
+                        )
+    assert found == []
+
+
+def _package_module_name(arg: ast.expr, scope: ast.AST) -> bool:
+    """``arg`` is "gregtec_voice.<x>", as a literal or a local f-string assigned only that."""
+
+    def ours(value: ast.AST) -> bool:
+        if isinstance(value, ast.Constant):
+            return isinstance(value.value, str) and value.value.startswith(
+                "gregtec_voice."
+            )
+        if isinstance(value, ast.JoinedStr) and value.values:
+            return ours(value.values[0])
+        return False
+
+    if not isinstance(arg, ast.Name):
+        return ours(arg)
+    assigned = [
+        node.value
+        for node in ast.walk(scope)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        and any(
+            isinstance(t, ast.Name) and t.id == arg.id
+            for t in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        )
+    ]
+    params = (
+        {a.arg for a in ast.walk(scope.args) if isinstance(a, ast.arg)}
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        else set()
+    )
+    return (
+        arg.id not in params
+        and bool(assigned)
+        and all(v is not None and ours(v) for v in assigned)
+    )
+
+
+def test_the_package_imports_only_its_own_modules_by_name() -> None:
+    """``importlib.import_module`` (hooks.py's engine loader) can't be pointed at psutil."""
+    found = []
+    for name, tree in _trees():
+        parents = _parents(tree)
+        for node in ast.walk(tree):
+            if not _called(node, {"import_module", "__import__"}):
+                continue
+            assert isinstance(node, ast.Call)
+            args = node.args or [k.value for k in node.keywords if k.arg == "name"]
+            if not args or not _package_module_name(args[0], _scope(node, parents)):
+                found.append(f"{name}:{node.lineno}: {ast.unparse(node)}")
+    assert found == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'import ctypes\nf = getattr(ctypes.WinDLL("user32"), "Send" + "Input")\n',
+        'import ctypes\nu = ctypes.WinDLL("user32")\nf = getattr(u, "SendInput")\n',
+        'import ctypes\nctypes.WinDLL("user32").SendInput(1, None, 0)\n',
+        "import ctypes\nu = ctypes.windll.user32\n",
+        'import ctypes\nw = getattr(ctypes, "Win" + "DLL")\n',
+    ],
+)
+def test_the_dll_allowlist_catches_computed_names(
+    source: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sys.modules[__name__], "_trees", lambda: [("x.py", ast.parse(source))]
+    )
+    with pytest.raises(AssertionError):
+        test_only_known_windows_functions_are_called()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'import importlib\nimportlib.import_module("psu" + "til")\n',
+        "import importlib\ndef f(name):\n    return importlib.import_module(name)\n",
+        'import importlib\ndef f():\n    n = "psutil"\n    return importlib.import_module(n)\n',
+    ],
+)
+def test_the_import_allowlist_catches_other_modules(
+    source: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sys.modules[__name__], "_trees", lambda: [("x.py", ast.parse(source))]
+    )
+    with pytest.raises(AssertionError):
+        test_the_package_imports_only_its_own_modules_by_name()
+
+
 # --- 5. keys Discord users often bind --------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["pause", "scroll_lock", "f13", "f14", "f15"])
+@pytest.mark.parametrize("name", ["pause", "scroll_lock"])
 def test_keys_people_often_bind_in_discord_are_warned(name: str) -> None:
     warning = keys.discord_warning(keys.KEYS[name])
     assert warning is not None and "Settings > Keybinds" in warning
 
 
-@pytest.mark.parametrize("name", ["f16", "f17", "f20", "f24"])
+@pytest.mark.parametrize("name", ["f13", "f14", "f15", "f16", "f17", "f20", "f24"])
 def test_other_keys_get_no_warning(name: str) -> None:
     assert keys.discord_warning(keys.KEYS[name]) is None
 
@@ -474,6 +642,7 @@ def probe(
     outputs: Sequence[Device] = OUTPUTS,
     ducking: int | None = 3,
     hook_error: Exception | None = None,
+    ducking_error: Exception | None = None,
 ) -> doctor.Probe:
     hooked: list[Sequence[int]] = []
 
@@ -482,8 +651,13 @@ def probe(
         if hook_error is not None:
             raise hook_error
 
+    def read_ducking() -> int | None:
+        if ducking_error is not None:  # e.g. int() of a REG_SZ that isn't a number
+            raise ducking_error
+        return ducking
+
     return doctor.Probe(
-        lambda: list(inputs), lambda: list(outputs), lambda: ducking, hook_check
+        lambda: list(inputs), lambda: list(outputs), read_ducking, hook_check
     )
 
 
@@ -505,7 +679,7 @@ def test_doctor_reports_everything_the_runbook_needs() -> None:
     for line in ("talk: F13", "confirm: F14", "cancel: F15", "next card: F16"):
         assert line in text
     assert "triggers: wake first, key as backup; talk mode hold" in text
-    assert text.count("Discord WARNING") == 3  # F13-F15
+    assert text.count("Discord WARNING") == 0  # D180's keys: Discord binds none (D246)
     assert "never mutes it (D58)" in text
     assert "\n! " not in text
 
@@ -520,6 +694,10 @@ def test_doctor_reports_everything_the_runbook_needs() -> None:
         ),
         ({"outputs": [Device(2, GAME, True)]}, "using Windows' default output device"),
         ({"inputs": []}, "lists no capture device"),
+        (
+            {"ducking_error": ValueError("invalid literal for int(): 'x'")},
+            "Windows communications ducking: can't read it",
+        ),
         (
             {"hook_error": RuntimeError("no desktop")},
             "hook: didn't install (no desktop)",

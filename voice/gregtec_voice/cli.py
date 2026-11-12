@@ -282,6 +282,9 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         ),
     )
     capture.add_argument("wav", type=Path, metavar="OUT.wav")
+    capture.add_argument(
+        "--minutes", type=float, default=0, help="stop after this long"
+    )
     doctor_cmd = commands.add_parser(  # WO-5.5, D247
         "doctor",
         help="capture mode, devices, ducking, hook and keys, for the Discord runbook",
@@ -291,9 +294,6 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
             "changed), Windows communications ducking, the key hook and the four keys. "
             "Changes nothing. docs/runbooks/discord_coexistence.md uses it."
         ),
-    )
-    capture.add_argument(
-        "--minutes", type=float, default=0, help="stop after this long"
     )
     for each in (stt_cmd, evaluate, wake_eval_cmd):
         each.add_argument(
