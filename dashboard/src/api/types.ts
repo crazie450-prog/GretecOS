@@ -1,6 +1,15 @@
 // The core's API shapes the dashboard reads (gregtec.api.app, gregtec.api.dashboard). Cards are
 // the catalog's own types (../cards/types.gen.ts, generated from the shared schema).
-import type { AlertCard, ApprovalCard, Card, HealthCard } from "../cards/types.gen";
+import type {
+  AlertCard,
+  ApprovalCard,
+  BomCard,
+  Card,
+  ChoicesCard,
+  FlowCard,
+  HealthCard,
+  RouteComparisonCard,
+} from "../cards/types.gen";
 
 export type Role = "admin" | "client" | "device";
 export type Status = "ok" | "warn" | "error" | "off";
@@ -345,4 +354,110 @@ export interface SetupDevices {
   inputs: SetupDevice[];
   outputs: SetupDevice[];
   error: string | null;
+}
+
+// --- The Designer (WO-3.7, plan 7.1, D250) ------------------------------------------------------
+// Every number is the planner's (core/gregtec/planner/designer.py); the routes come in rank order.
+
+export interface PlanPin {
+  node: string; // the item or fluid key
+  recipe: string; // r:<map>/<sig12>
+}
+
+export interface DesignerNode {
+  n: string; // the plan's node id (the flow card's box id)
+  item: string | null; // the item or fluid key it makes
+  name: string;
+  recipe: string;
+  map: string | null;
+  machine: string | null;
+  mte: string | null;
+  tier: string | null;
+  count: number | null;
+  pinned: boolean;
+  primary: boolean;
+}
+
+export type PlanStatus = "proposed" | "accepted" | "building" | "running" | "retired";
+
+export interface DesignerRoute {
+  id: string;
+  name: string;
+  status: PlanStatus;
+  column: "base" | "addon";
+  position: number;
+  of: number;
+  score: number;
+  target: { id: string; name: string; rate_s: number };
+  tier_cap: string;
+  pins: PlanPin[];
+  nodes: DesignerNode[];
+  warnings: string[];
+  /** the comparison metrics, by key (machines, eut_avg, ..., score) */
+  metrics: Record<string, number>;
+  /** the choices another route of the design makes differently: "name (r:...)" */
+  differs: string[];
+  flow: FlowCard;
+  bom: BomCard;
+}
+
+export interface DesignerView {
+  id: string;
+  weights: string;
+  routes: DesignerRoute[];
+  comparison: RouteComparisonCard;
+}
+
+export interface Designed {
+  ids: string[];
+  problems: string[];
+  view: DesignerView;
+}
+
+/** POST /api/designer/design: the new design, or the one question when the target is unclear. */
+export type DesignAnswer = Designed | { clarify: ChoicesCard };
+
+export interface DesignSpec {
+  target: string;
+  rate?: string;
+  tier?: string;
+  routes?: number;
+  addons?: boolean;
+}
+
+export interface Alternative {
+  recipe: string;
+  status: string; // chosen, alternative, pruned; with "show all" also unchecked, rejected
+  reason: string;
+  map: string | null;
+  tier: string | null;
+  eut: number | null;
+  duration_t: number | null;
+  used: boolean;
+}
+
+export interface Alternatives {
+  plan: string;
+  node: string;
+  name: string;
+  pinned: string | null;
+  all: boolean;
+  alternatives: Alternative[];
+}
+
+export interface Accepted {
+  id: string;
+  status: PlanStatus;
+  line: string | null;
+  note: string | null;
+  ledger: { recorded: boolean; note: string };
+  problems: string[];
+  view: DesignerView;
+}
+
+export interface SavedPlanRow {
+  id: string;
+  name: string;
+  status: string;
+  kind: string | null;
 }

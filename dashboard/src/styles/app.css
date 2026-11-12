@@ -466,6 +466,7 @@ button.gos-chip.cite {
 .view-settings,
 .view-costs,
 .view-base,
+.view-designer,
 .view-later {
   display: flex;
   flex-direction: column;
@@ -1051,6 +1052,140 @@ tr.depleted td {
   padding: 0 var(--space-2);
   text-align: right;
 }
+
+/* --- Designer (WO-3.7) ------------------------------------------------------------------------ */
+
+.designer-top {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.designer-top .gos-panel,
+.designer-route {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.designer-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3) var(--space-4);
+}
+
+.designer-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.designer-form .field.small {
+  flex: 0 1 140px;
+}
+
+.field.check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--hit-min);
+  color: var(--text);
+}
+
+.designer-saved .result.current {
+  border-color: var(--accent);
+}
+
+.designer-bar,
+.designer-name,
+.designer-cites,
+.designer-exports,
+.designer-choices,
+.designer-accept {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+}
+
+.designer-bar {
+  justify-content: space-between;
+}
+
+.designer-name .gos-title {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.designer-routes {
+  display: grid;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.designer-route.accepted {
+  border-color: var(--accent);
+}
+
+.designer-pins,
+.designer-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.designer-node {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.designer-node .result {
+  flex: 1 1 260px;
+  min-width: 0;
+  text-align: left;
+}
+
+.designer-node.picked .result,
+.flow-node.picked {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.designer-node-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.designer-accept.needs {
+  padding: var(--space-3);
+  border: 1px solid var(--needs-border);
+  border-radius: var(--radius-control);
+  background: linear-gradient(var(--needs-tint), var(--needs-tint)), var(--panel);
+}
+
+.designer-alts tr.used td {
+  font-weight: 600;
+}
+
+.designer-exports a {
+  color: var(--text-2);
+}
+
 
 .settings-grid .col {
   display: flex;
@@ -1734,5 +1869,29 @@ select.ask-input option {
 
   .gos-big {
     font-size: 44px;
+  }
+}
+
+/* The Designer on the phone (D53): one column, each route under the last. */
+@media (max-width: 760px) {
+  .designer-top {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .designer-routes {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .designer-form .field,
+  .designer-form .field.small {
+    flex: 1 1 100%;
+  }
+
+  .route-card .routes {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }

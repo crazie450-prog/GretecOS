@@ -4,7 +4,9 @@
 // beside the tier's name, D51); a flow its item and rate. One layout, never two (D159): the card
 // shows "Laying out" until elkjs answers (it loads as its own chunk) and "Card not shown: layout
 // failed" if it can't, never a second layout. It opens fitted (never smaller than readable; a long
-// line pans) and is read-only: pan and zoom with the controls, nothing is edited here (WO-3.7).
+// line pans). As a card it is read-only: pan and zoom with the controls. The Designer (WO-3.7)
+// passes onSelect: a click on a machine box picks that node to swap or pin, and the picked box
+// is outlined (the Designer lists the same nodes as buttons too, for the keyboard).
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { useEffect, useState } from "react";
@@ -18,7 +20,7 @@ const GAP_X = 96;
 const GAP_Y = 28;
 
 type Box = { id: string; x: number; y: number };
-type FlowNodeData = { label: string; sub: string; tier: string | null };
+type FlowNodeData = { label: string; sub: string; tier: string | null; picked: boolean };
 
 export function edgeLabel(e: FlowCard["edges"][number]): string {
   return `${e.label}${e.rate !== null ? ` ${plain(e.rate)}${e.unit ? ` ${e.unit}` : ""}` : ""}`;
@@ -30,7 +32,10 @@ export function nodeSub(n: FlowCard["nodes"][number]): string {
 
 function MachineNode({ data }: NodeProps<Node<FlowNodeData>>) {
   return (
-    <div className={`flow-node tier-${(data.tier ?? "none").toLowerCase()}`} style={{ width: NODE_W, height: NODE_H }}>
+    <div
+      className={`flow-node tier-${(data.tier ?? "none").toLowerCase()}${data.picked ? " picked" : ""}`}
+      style={{ width: NODE_W, height: NODE_H }}
+    >
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <span className="tier-band" aria-hidden="true" />
       <span className="flow-node-label">{data.label}</span>
@@ -71,7 +76,17 @@ export async function elkLayout(card: FlowCard): Promise<Box[] | null> {
 
 type Layout = (card: FlowCard) => Promise<Box[] | null>;
 
-export function FlowDiagram({ card, layout = elkLayout }: { card: FlowCard; layout?: Layout }) {
+export function FlowDiagram({
+  card,
+  layout = elkLayout,
+  onSelect,
+  selected = null,
+}: {
+  card: FlowCard;
+  layout?: Layout;
+  onSelect?: (id: string) => void;
+  selected?: string | null;
+}) {
   // undefined: elkjs hasn't answered yet; null: it couldn't lay the card out.
   const [placed, setPlaced] = useState<Box[] | null | undefined>(undefined);
   useEffect(() => {
@@ -98,16 +113,26 @@ export function FlowDiagram({ card, layout = elkLayout }: { card: FlowCard; layo
       </p>
     );
   }
-  return <Drawn card={card} placed={placed} />;
+  return <Drawn card={card} placed={placed} onSelect={onSelect} selected={selected} />;
 }
 
-function Drawn({ card, placed }: { card: FlowCard; placed: Box[] }) {
+function Drawn({
+  card,
+  placed,
+  onSelect,
+  selected,
+}: {
+  card: FlowCard;
+  placed: Box[];
+  onSelect?: (id: string) => void;
+  selected: string | null;
+}) {
   const at = new Map(placed.map((b) => [b.id, b]));
   const nodes: Node<FlowNodeData>[] = card.nodes.map((n) => ({
     id: n.id,
     type: "machine",
     position: { x: at.get(n.id)?.x ?? 0, y: at.get(n.id)?.y ?? 0 },
-    data: { label: n.label, sub: nodeSub(n), tier: n.tier },
+    data: { label: n.label, sub: nodeSub(n), tier: n.tier, picked: n.id === selected },
     draggable: false,
     connectable: false,
   }));
@@ -138,6 +163,7 @@ function Drawn({ card, placed }: { card: FlowCard; placed: Box[] }) {
         zoomOnScroll={false}
         preventScrolling={false}
         proOptions={{ hideAttribution: true }}
+        onNodeClick={onSelect ? (_, node) => onSelect(node.id) : undefined}
         minZoom={0.1}
       >
         <Background gap={24} size={1} />

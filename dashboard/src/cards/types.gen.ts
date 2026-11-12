@@ -82,7 +82,7 @@ export interface RouteChoice {
 export interface Route {
   id: string;
   name: string;
-  rank: number;
+  rank: number | "addon";
   ref: Ref;
   accepted: boolean;
   metrics: Metric[];

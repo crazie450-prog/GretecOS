@@ -96,8 +96,12 @@ def test_format_value() -> None:
     assert format_value(True) == "true" and format_value(7) == "7"
     assert format_value(["a", 'b"']) == '["a", "b\\""]'
     assert format_value("tab\there\x01") == '"tab\\there\\u0001"'
+    assert format_value(1.5) == "1.5" and format_value(0.75) == "0.75"  # WO-3.7, D253
+    for bad in (float("inf"), float("nan")):
+        with pytest.raises(TomlEditError):
+            format_value(bad)
     with pytest.raises(TomlEditError):
-        format_value(1.5)  # type: ignore[arg-type]
+        format_value({"a": 1})  # type: ignore[arg-type]
 
 
 def test_write_atomic_keeps_a_backup_and_verifies_first(tmp_path: Path) -> None:

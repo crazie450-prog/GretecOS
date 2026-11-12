@@ -13,6 +13,9 @@
 - ``--request FILE``: a request as JSON (``Request.from_json``) instead of TARGET and the flags.
 - ``gos plan TARGET --alternatives ITEM [--all]``: the candidate recipes for one node of the
   graph (D61), with ``--all`` the unchecked and rejected ones too.
+- ``gos plan --accept PLAN`` (WO-3.7): Clayton accepts a saved plan, as the Designer's Accept
+  button does (:func:`gregtec.planner.designer.accept`: the plan note, ``base/lines/ln-<id>.md``,
+  the EU ledger hook); ``gos plan --rename PLAN NAME`` gives it a human name ([QA:D13]).
 """
 
 from __future__ import annotations
@@ -94,6 +97,19 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="save every route: data/plans/<id>.json, its exports, the plan row and the "
         "vault note plans/<id>.md (WO-3.6)",
     )
+    p.add_argument(
+        "--accept",
+        default=None,
+        metavar="PLAN",
+        help="accept a saved plan (WO-3.7): its notes and the EU ledger hook",
+    )
+    p.add_argument(
+        "--rename",
+        nargs=2,
+        default=None,
+        metavar=("PLAN", "NAME"),
+        help="give a saved plan a human name (WO-3.7)",
+    )
     p.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
 
@@ -109,6 +125,8 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     if not db.is_file():
         print(f"{db} doesn't exist: run `gos db build` first", file=out)
         return 2
+    if getattr(args, "accept", None) or getattr(args, "rename", None):
+        return _lifecycle(cfg.gos_home, args, out)
     conn = access.connect(db, readonly=True)
     try:
         vault = cfg.gos_home / "vault"
@@ -116,6 +134,27 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         return _run(conn, db, Glossary.find(vault), args, out, prefs, cfg.gos_home)
     finally:
         conn.close()
+
+
+def _lifecycle(home: Path, args: argparse.Namespace, out: TextIO) -> int:
+    """``--accept`` and ``--rename`` (WO-3.7)."""
+    from gregtec.planner import designer
+
+    try:
+        if args.rename:
+            pid, name = args.rename
+            saved = designer.rename(home, pid, name)
+            print(f"{saved['id']}: {saved['name']}", file=out)
+        if args.accept:
+            done = designer.accept(home, args.accept)
+            print(f"{done.id}: accepted; line note {done.line or '-'}", file=out)
+            print(f"  EU ledger: {done.ledger['note']}", file=out)
+            for problem in done.problems:
+                print(f"  {problem}", file=out)
+    except designer.DesignerError as exc:
+        print(f"refused: {exc}", file=out)
+        return 2
+    return 0
 
 
 def _request(
