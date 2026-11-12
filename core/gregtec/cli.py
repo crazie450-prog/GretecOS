@@ -686,6 +686,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
     if args.command == "crops" and args.crops_command in cropcli.COMMANDS:
+        # Pack names and requirement texts: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
         return cropcli.run(args, sys.stdout)
     if args.command == "crops" and args.crops_command == "show":
         # Pack names, as for quests: escape what a cp1252 pipe can't, never crash.

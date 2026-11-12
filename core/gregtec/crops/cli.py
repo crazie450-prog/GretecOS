@@ -114,13 +114,24 @@ def _open(cfg: config.Config, write: bool) -> sqlite3.Connection:
     return store.connect(path) if write else access.connect(path, readonly=True)
 
 
-def _pick(cur: view.Current, words: str, out: TextIO) -> str | None:
+def _pick(
+    cur: view.Current, words: str, out: TextIO, write: bool = False
+) -> str | None:
+    """The crop ``words`` names. Reading, several matches show the first; writing, they are
+    refused (his list and target are never saved to a guessed crop)."""
     found = view.find(cur.facts, words)
     if not found:
         print(f"No crop matches {words!r}", file=out)
         return None
     if len(found) > 1:
-        names = ", ".join(cur.facts.crop_name(f) for f in found[:8])
+        names = ", ".join(f"{cur.facts.crop_name(f)} (crop:{f})" for f in found[:8])
+        if write:
+            print(
+                f"{words!r} matches several crops ({names}): name one exactly, or give "
+                "its crop: id; nothing saved",
+                file=out,
+            )
+            return None
         print(f"{words!r} matches several crops ({names}); using {found[0]}", file=out)
     return found[0]
 
@@ -170,7 +181,7 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
                 if not cur.have:
                     print("No crops listed (alternate seeds still count)", file=out)
                 return 0
-            crop = _pick(cur, args.crop, out)
+            crop = _pick(cur, args.crop, out, write=True)
             if crop is None:
                 return 1
             if args.remove:
@@ -194,7 +205,7 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
                     file=out,
                 )
                 return 0
-            crop = _pick(cur, args.crop, out)
+            crop = _pick(cur, args.crop, out, write=True)
             if crop is None:
                 return 1
             state.set_target(conn, crop, None, cur.facts.data.crops)

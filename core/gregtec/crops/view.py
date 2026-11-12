@@ -215,15 +215,23 @@ def add_routes(
 
     def edit(
         fn: Callable[[sqlite3.Connection, dict[str, Any]], object],
+        checks_crop: bool = True,
     ) -> dict[str, Any]:
+        """Run a write; ``checks_crop`` False for one that names no crop to check (removing
+        from his list, clearing the target), which works without crop data too."""
         try:
             with opened() as conn:
-                try:
-                    known = crop_facts.load(conn).data.crops
-                except crop_facts.NoCropData as exc:
-                    raise HTTPException(404, str(exc)) from None
+                known: dict[str, Any] = {}
+                if checks_crop:
+                    try:
+                        known = crop_facts.load(conn).data.crops
+                    except crop_facts.NoCropData as exc:
+                        raise HTTPException(404, str(exc)) from None
                 fn(conn, known)
-                return payload(conn, None)
+                try:
+                    return payload(conn, None)
+                except crop_facts.NoCropData as exc:
+                    raise HTTPException(404, f"saved; {exc}") from None
         except state.CropStateError as exc:
             raise HTTPException(400, str(exc)) from None
         except sqlite3.Error as exc:
@@ -235,8 +243,9 @@ def add_routes(
         who: Principal,
         what: str,
         fn: Callable[[sqlite3.Connection, dict[str, Any]], object],
+        checks_crop: bool = True,
     ) -> dict[str, Any]:
-        out = await asyncio.to_thread(edit, fn)
+        out = await asyncio.to_thread(edit, fn, checks_crop)
         log.info("crops edited", extra={"what": what, "by": who.name})
         return out
 
@@ -264,7 +273,9 @@ def add_routes(
     async def remove_have(
         who: Trusted, crop: Annotated[str, Query(min_length=1, max_length=120)]
     ) -> dict[str, Any]:
-        return await edited(who, "have", lambda c, k: state.remove_have(c, crop))
+        return await edited(
+            who, "have", lambda c, k: state.remove_have(c, crop), checks_crop=False
+        )
 
     @app.post("/api/crops/target")
     async def set_target(request: Request, who: Trusted) -> dict[str, Any]:
@@ -275,4 +286,5 @@ def add_routes(
             who,
             "target",
             lambda c, k: state.set_target(c, body.get("crop"), body.get("aim"), k),
+            checks_crop=body.get("crop") is not None,
         )

@@ -294,3 +294,95 @@ def test_every_number_on_the_tool_rows_has_a_ref(db: Path) -> None:
         if any(ch.isdigit() for ch in row["numbers"]):
             assert row["refs"], row
     assert planner.CITE.match("crop:cropsnh:reed")
+
+
+def test_a_write_never_saves_a_guessed_crop(
+    db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review L2: "o" names Carrot, Iron Fern, Lonely and Stone Lily."""
+    for kw in (
+        {"crops_command": "have", "crop": "o", "stats": [5, 5, 5], "remove": False},
+        {"crops_command": "have", "crop": "o", "stats": [], "remove": True},
+        {"crops_command": "target", "crop": "o", "clear": False},
+    ):
+        code, out = run(db, monkeypatch, **kw)
+        assert code == 1 and "matches several crops" in out and "nothing saved" in out
+    code, out = run(
+        db, monkeypatch, crops_command="have", crop=None, stats=[], remove=False
+    )
+    assert out.startswith("No crops listed")
+    code, out = run(db, monkeypatch, crops_command="guide", next=True, crop="o")
+    assert code == 0 and "; using cropsnh:carrot" in out  # reading shows the first
+
+
+def test_clearing_works_without_crop_data(tmp_path: Path) -> None:
+    """Review L6: removing from his list and clearing the target name no crop to check."""
+    db = tmp_path / "home" / "data" / "gos.sqlite"
+    db.parent.mkdir(parents=True)
+    store.connect(db).close()
+    client = app_for(db)
+    r = client.delete("/api/crops/have", params={"crop": "cropsnh:carrot"})
+    assert r.status_code == 404 and r.json()["detail"].startswith("saved; ")
+    r = client.post("/api/crops/target", json={"crop": None})
+    assert r.status_code == 404 and r.json()["detail"].startswith("saved; ")
+    r = client.post("/api/crops/target", json={"crop": "cropsnh:reed"})
+    assert r.status_code == 404 and not r.json()["detail"].startswith("saved")
+    c = store.connect(db)
+    try:
+        assert state.target(c) is None
+    finally:
+        c.close()
+
+
+def test_a_client_token_cant_edit_through_the_real_app(
+    db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review L5: the real wiring (create_app) refuses the three writes to a client token
+    and lets the admin through; anyone with a credential reads."""
+    import logging
+
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.config import Config
+    from gregtec.llm import keys
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    monkeypatch.setattr(keys, "has_key", lambda name: False)
+    secret = "admin-" + "a" * 40
+    admin = {"Authorization": f"Bearer {secret}"}
+    home = db.parent.parent
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    st = Store(access.db_path(home))
+    core = Core(
+        cfg=Config(gos_home=home),
+        store=st,
+        auth=Auth(st, secret),
+        meter=UsageMeter(st, 100.0, (80, 100)),
+    )
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            issued = c.post("/api/tokens/voice", headers=admin).json()["token"]
+            voice = {"Authorization": f"Bearer {issued}"}
+            assert c.get("/api/crops").status_code == 401
+            assert c.get("/api/crops", headers=voice).status_code == 200
+            for method, path, body, params in (
+                ("POST", "/api/crops/have", {"crop": "cropsnh:reed"}, None),
+                ("POST", "/api/crops/target", {"crop": "cropsnh:reed"}, None),
+                ("DELETE", "/api/crops/have", None, {"crop": "cropsnh:reed"}),
+            ):
+                r = c.request(method, path, json=body, params=params, headers=voice)
+                assert r.status_code == 403, (method, path)
+            r = c.post(
+                "/api/crops/target", json={"crop": "cropsnh:reed"}, headers=admin
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["target"]["crop"] == "cropsnh:reed"
+    finally:
+        st.close()
+        for handler in list(root.handlers):
+            if handler not in handlers:
+                root.removeHandler(handler)
+                handler.close()
+        root.setLevel(level)
