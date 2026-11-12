@@ -144,7 +144,9 @@ def mark(cfg: config.Config, desk: "ActionDesk", ref: str) -> dict[str, Any]:
     conn = _open(cfg.gos_home)
     try:
         try:
-            out = intel.propose_waypoint(cfg, desk, conn, ref, source="dashboard")
+            out = intel.propose_waypoint(
+                cfg, desk, conn, ref, source="dashboard", replace_any=False
+            )
         except intel.OreIntelError as exc:
             raise HTTPException(409, str(exc)) from None
     finally:

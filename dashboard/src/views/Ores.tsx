@@ -37,10 +37,12 @@ export interface MapPoint {
   ref: string | null;
 }
 
-/** The rows in the view's dimension around ``centre`` (his position, else the first vein),
- * scaled so the farthest fits. Only placement: the order and distances are the core's. */
+/** The rows in the view's dimension (with none chosen, the first row's: one plot never mixes
+ * dimensions) around ``centre`` (his position, else the first vein), scaled so the farthest
+ * fits. Only placement: the order and distances are the core's. */
 export function mapPoints(rows: OreRow[], dim: number | null, centre: { x: number; z: number } | null): MapPoint[] {
-  const here = rows.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => dim === null || r.dim === dim);
+  const shown = dim ?? (rows.length > 0 ? rows[0].dim : null);
+  const here = rows.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => r.dim === shown);
   if (here.length === 0) return [];
   const c = centre ?? { x: here[0].r.x, z: here[0].r.z };
   const reach = Math.max(32, ...here.map(({ r }) => Math.max(Math.abs(r.x - c.x), Math.abs(r.z - c.z))));
@@ -194,7 +196,7 @@ export function Ores() {
                         <li key={r.ref} data-mark={r.ref}>
                           <span className="ore-mark-name">
                             {i + 1}. {r.name}
-                            {r.distance !== null && <span className="num"> · {r.distance} m</span>}
+                            {r.distance !== null && <span className="num"> · {r.distance} blocks</span>}
                           </span>
                           <Button onClick={() => mark(r.ref as string)} testId={`ores-mark-${i + 1}`}>
                             Propose waypoint

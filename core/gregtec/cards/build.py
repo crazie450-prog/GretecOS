@@ -30,11 +30,11 @@ from gregtec.agents.tools import recipes as recipe_tools
 from gregtec.agents.tools.registry import DEADLINE_S, guard
 from gregtec.agents.tools.tsv import Parsed, number, parse
 from gregtec.db import access
+from gregtec.ingest.ore_mixes import LAYERS as ORE_LAYERS
 
 RECIPE_TOOLS = ("recipe_find", "recipe_uses")
 QUEST_TOOLS = ("quest_find", "quest_frontier", "quest_for_item", "quest_get")
 QUEST_STATES = ("done", "available", "repeatable", "locked")
-ORE_LAYERS = ("primary", "secondary", "between", "sporadic")
 STALE_ID = "data-stale"
 CREDITS_ID = "credits"
 NO_ALERT = ("anthropic_key",)  # shown as the "AI offline" state instead
@@ -348,13 +348,19 @@ def ore_card(p: Parsed) -> dict[str, Any]:
         layers = (r.get("layer") or "").split(",")
         layer = next((name for name in ORE_LAYERS if name in layers), None)
         ref = r.get("ref") or ""
+        try:
+            ores = json.loads(
+                r.get("ores") or "[]"
+            )  # a JSON list: a name may hold a comma
+        except ValueError:
+            ores = []
         rows.append(
             {
-                "mix": clip(r.get("mix"), 200),
+                "mix": clip(r.get("mix_id"), 200),  # the mix's id, as intel.card's rows
                 "name": clip(r.get("mix"), 300),
-                "ores": [
-                    clip(o.strip(), 200) for o in (r.get("ores") or "").split(",")
-                ][:8],
+                "ores": [clip(o, 200) for o in ores if isinstance(o, str)][:8]
+                if isinstance(ores, list)
+                else [],
                 "dim": dim,
                 "x": x,
                 "z": z,

@@ -16,6 +16,7 @@ import json
 import sqlite3
 import struct
 from collections.abc import Iterator, Mapping
+from contextlib import closing
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -28,6 +29,8 @@ from gregtec import cards, config
 from gregtec.agents import prefetch
 from gregtec.agents.fast_lane import NOT_CHECKED, FastLane
 from gregtec.agents.tools import Registry, build_registry
+from gregtec.agents.tools import ores as ore_tools
+from gregtec.agents.tools.tsv import Result, render
 from gregtec.api.security import Principal
 from gregtec.bridge import waypoint
 from gregtec.bridge.actions import SETTLE_S, ActionDesk, Outcome
@@ -342,7 +345,7 @@ def test_ore_find_measures_from_his_position_and_cites_every_vein(lab: Lab) -> N
     )
     assert "dim: 0 (Overworld)" in lines
     header = lines.index(
-        "ref\tmix\tores\tdim\tx\tz\ty_min\ty_max\tdistance\tlayer\tknown\tdepleted"
+        "ref\tmix\tores\tdim\tx\tz\ty_min\ty_max\tdistance\tlayer\tknown\tdepleted\tmix_id"
     )
     rows = [line.split("\t") for line in lines[header + 1 : header + 5]]
     assert [(r[0], r[4], r[5], r[8]) for r in rows] == [
@@ -354,6 +357,23 @@ def test_ore_find_measures_from_his_position_and_cites_every_vein(lab: Lab) -> N
     assert cards.validate(card) == []
     assert [r["ref"] for r in card["rows"]] == [e[0] for e in EXPECTED]
     assert [r["distance"] for r in card["rows"]] == [e[3] for e in EXPECTED]
+    # The same rows as the view's card: mix is the mix's id, name its display name (L4).
+    with closing(lab.conn()) as c:
+        veins = intel.find(c, "Ferrite", 0, (100, 20))
+    view_card = intel.card("Ferrite", veins, [])
+    for key in ("mix", "name", "ores", "ref"):
+        assert [r[key] for r in card["rows"]] == [r[key] for r in view_card["rows"]]
+
+
+def test_an_ore_name_with_a_comma_stays_one_ore_on_the_card() -> None:
+    """The tool's ores cell is a JSON list, so a name holding a comma isn't split (L5)."""
+    row = ("vein:0/1/1", "Odd", '["Iron, Cast", "Nickel"]', 0, 24, 24, 10, 40, "")
+    row += ("primary", 0, 0, "ore.mix.odd")
+    text = render(Result(ore_tools.COLUMNS, [row], head=[("material", "Ferrite")]))
+    card = card_build.from_tool("ore_find", text, False, None)
+    assert cards.validate(card) == []
+    assert card["rows"][0]["ores"] == ["Iron, Cast", "Nickel"]
+    assert card["rows"][0]["mix"] == "ore.mix.odd" and card["rows"][0]["name"] == "Odd"
 
 
 def test_ore_find_from_a_given_point_another_dimension_or_none(lab: Lab) -> None:
@@ -381,7 +401,7 @@ def test_player_pos(lab: Lab) -> None:
     lines = out.text.splitlines()
     for line in ("world: lab-ores", "x: 100", "y: 64", "z: 20", "dim: 0 (Overworld)"):
         assert line in lines
-    with lab.conn() as c:
+    with closing(lab.conn()) as c:
         ref = intel.position(c).ref
     assert f"ref: {ref}" in lines and ref.startswith("pos:lab-ores@")
     (lab.world / "level.dat").unlink()
@@ -391,7 +411,7 @@ def test_player_pos(lab: Lab) -> None:
 def test_the_fast_lane_says_where_he_is_from_player_pos(lab: Lab) -> None:
     """The skill's "Where am I?" row in the fast lane: an answer built from player_pos passes
     the lane's number check only with its pos: citation (review M1)."""
-    with lab.conn() as c:
+    with closing(lab.conn()) as c:
         ref = intel.position(c).ref
     said = "You were at x 100, y 64, z 20 in the Overworld at the last save"
     call = Turn(tools=[{"name": "player_pos", "input": {}}])
@@ -612,6 +632,36 @@ def test_the_view_proposes_a_waypoint_the_core_builds(lab: Lab, desk: Desk) -> N
         no_desk.post("/api/ores/waypoint", json={"vein": "vein:0/-2/4"}).status_code
         == 503
     )
+
+
+def test_the_view_never_cancels_a_pending_action_of_another_kind(
+    lab: Lab, desk: Desk
+) -> None:
+    """A paired browser proposing a waypoint replaces only a pending waypoint, never an
+    agent's pending craft or other world action (review L7, D272); an agent's proposal still
+    replaces any pending one, as WO-7.1's desk does."""
+    with desk.store.transaction() as c:
+        c.execute(
+            "INSERT INTO action(created, kind, args, state, target, computer, readback, "
+            "source) VALUES (?, 'craft', '{}', 'proposed', 'lab', NULL, 'Craft 4 Gears', "
+            "'agent')",
+            (int(desk.clock()),),
+        )
+    craft = desk.desk.pending()
+    assert craft is not None and craft.kind == "craft"
+    client = app_for(lab, desk)
+    r = client.post("/api/ores/waypoint", json={"vein": "vein:0/-2/4"})
+    assert r.status_code == 409 and "Craft 4 Gears" in r.json()["detail"]
+    pending = desk.desk.pending()
+    assert pending is not None and pending.id == craft.id
+    with closing(lab.conn()) as c:
+        out = intel.propose_waypoint(
+            lab.cfg, desk.desk, c, "vein:0/10/-5", source="agent"
+        )
+    assert out.cancelled is not None and out.cancelled.id == craft.id
+    # A pending waypoint is the browser's to replace.
+    r = client.post("/api/ores/waypoint", json={"vein": "vein:0/-2/4"})
+    assert r.status_code == 200 and r.json()["text"].startswith("Cancelled: ")
 
 
 def test_without_a_db_the_view_says_so(tmp_path: Path) -> None:

@@ -70,6 +70,11 @@ describe("helpers", () => {
     expect(points[3].depleted).toBe(true);
     expect(mapPoints(ROWS, -1, null)).toEqual([]); // none in that dimension
     expect(mapPoints(ROWS, 0, null)[0]).toMatchObject({ x: 0, y: 0 }); // no position: the first vein
+    // No dimension chosen: only the first row's dimension, never two dimensions in one plot.
+    const mixed = [ROWS[0], { ...ROWS[1], dim: -1 }, ...ROWS.slice(2)];
+    const plotted = mapPoints(mixed, null, null);
+    expect(plotted.map((p) => p.n)).not.toContain(2);
+    expect(plotted.length).toBe(mixed.filter((r) => r.dim === mixed[0].dim).length);
   });
 });
 
@@ -86,7 +91,7 @@ describe("the Ores view", () => {
     expect(urls).toEqual(["/api/ores", "/api/ores?material=Ferrite"]);
     const cites = [...list.querySelectorAll("[data-cite]")].map((e) => e.getAttribute("data-cite"));
     expect(cites).toEqual(ROWS.map((r) => r.ref));
-    expect(within(list).getByText("114 m")).toBeTruthy();
+    expect(within(list).getByText("114 blocks")).toBeTruthy();
     expect(screen.getByTestId("ores-map").querySelectorAll(".ore-map-vein")).toHaveLength(4);
     expect(screen.getByTestId("ores-map-you")).toBeTruthy();
   });

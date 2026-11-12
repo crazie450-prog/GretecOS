@@ -9,7 +9,7 @@ GOS's DB holds GT's ore mixes from Clayton's export and every vein VisualProspec
 
 | Tool | What it returns |
 |---|---|
-| `ore_find(material, dim?, near?, x?, z?)` | The veins whose mix holds the material, **already ranked**: live veins first, then the material's best layer (primary, secondary, between, sporadic), then nearest. Each row: `ref`, mix, its four ores, dimension, centre `x`/`z`, `y_min`/`y_max`, `distance` (blocks, horizontal), `layer`, `known` (in his own prospecting), `depleted`. The head says where distances are measured from. |
+| `ore_find(material, dim?, near?, x?, z?)` | The veins whose mix holds the material, **already ranked**: live veins first, then the material's best layer (primary, secondary, between, sporadic), then nearest. Each row: `ref`, mix, its ores (a JSON list, layer order), dimension, centre `x`/`z`, `y_min`/`y_max`, `distance` (blocks, horizontal), `layer`, `known` (in his own prospecting), `depleted`, `mix_id`. The head says where distances are measured from. |
 | `player_pos()` | Where he was when the world last saved (x, y, z, dimension) and how many seconds ago, with its `ref` (`pos:<world>@<save>`). |
 | `ore_waypoint(vein)` | Deep lane only. Proposes a JourneyMap waypoint at that vein; GOS builds it from the vein and reads it back. |
 

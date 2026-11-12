@@ -41,11 +41,11 @@ from gregtec.db import ores as ore_db
 from gregtec.db import quests as quest_db
 from gregtec.gamestate.safe_open import read_bytes
 from gregtec.ingest import nbt
+from gregtec.ingest.ore_mixes import LAYERS
 
 if TYPE_CHECKING:
     from gregtec.bridge.actions import ActionDesk, Outcome
 
-LAYERS = ("primary", "secondary", "between", "sporadic")
 VEIN_REF = re.compile(r"^vein:(-?\d{1,4})/(-?\d{1,7})/(-?\d{1,7})$")
 LEVEL_DAT = "level.dat"
 LEVEL_DAT_OLD = (
@@ -356,8 +356,13 @@ def propose_waypoint(
     ref: str,
     *,
     source: str,
+    replace_any: bool = True,
 ) -> Outcome:
-    """Propose the waypoint of the vein ``ref`` names (D59: read back, then Clayton confirms)."""
+    """Propose the waypoint of the vein ``ref`` names (D59: read back, then Clayton confirms).
+
+    A new proposal cancels the pending one (WO-7.1). With ``replace_any`` false (the
+    dashboard's path, D272) it only replaces a pending waypoint: a paired browser can't cancel
+    an agent's pending craft or other world action by proposing a waypoint."""
     from gregtec.bridge.actions import ActionError
 
     try:
@@ -368,6 +373,12 @@ def propose_waypoint(
     if row is None:
         raise OreIntelError(f"no loaded vein is {ref} (run gos ores load again?)")
     target = target_of(cfg, _world(conn))
+    pending = desk.pending()
+    if not replace_any and pending is not None and pending.kind != "waypoint":
+        raise OreIntelError(
+            f"another action is waiting for your confirm ({pending.readback}): confirm or "
+            "cancel it first"
+        )
     try:
         return desk.propose("waypoint", waypoint_for(row), target=target, source=source)
     except ActionError as exc:

@@ -36,6 +36,8 @@ pnpm -C dashboard build
 
 ## B. The Ores view and a confirmed waypoint (V23)
 
+Before you start: in JourneyMap's options (**J**, then Options), **Waypoints > Enable Waypoint Manager** must be on (the default). JourneyMap loads waypoint files only while it is on (`WaypointProperties.managerEnabled`, D271).
+
 1. As gos-dev: `uv run gos serve` and open the dashboard on gos-dev's own dashboard name and port; pair it. Open **Ores** (nav), type `Iron`, **Find**.
 2. **Expect.** The list in the same order as `ore_find` in A, the map with you at the centre, "Where you are" with your position, "Veins from lab-ores (Lab)".
 3. In the game, stay in the Overworld of `lab-ores` (the game running). In the view press **Propose waypoint** on row 1. The rail shows **Confirm a world action** with `Add waypoint "<mix> vein" at x, y, z in dimension 0 in Lab`. Press **Confirm**.
@@ -48,4 +50,5 @@ pnpm -C dashboard build
 
 - The output of A step 2.
 - For each vein you flew to: its row and the F3 distance on arrival.
+- Whether JourneyMap's Waypoint Manager was on (B, before you start).
 - V23: whether the waypoint appeared before the dimension change (it shouldn't), after it (it should), and at the right place (B step 5 and 6). If it never appears, the `journeymap.log` lines about waypoints (`GTNH-Lab\.minecraft\journeymap\journeymap.log`, `Loaded N waypoints from ...`).

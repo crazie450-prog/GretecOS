@@ -52,7 +52,7 @@ test("Ferrite's veins come in the core's order, from where he stands, on the map
   await findFerrite();
   const cites = await page.getByTestId("ores-list").locator("[data-cite]").evaluateAll((els) => els.map((e) => e.getAttribute("data-cite")));
   expect(cites).toEqual(ORDER);
-  await expect(page.getByTestId("ores-list")).toContainText("114 m");
+  await expect(page.getByTestId("ores-list")).toContainText("114 blocks");
   await expect(page.getByTestId("ores-map").locator(".ore-map-vein")).toHaveCount(4);
   await expect(page.getByTestId("ores-map-you")).toBeVisible();
   const payload = await asAdmin<{ card: { rows: { ref: string; distance: number }[] } }>("/api/ores?material=Ferrite");
