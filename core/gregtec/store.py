@@ -1,6 +1,9 @@
 """The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D),
-``client_token`` (D117), ``answer`` (the dashboard's Chat: the newest 50 answers, D159), and the
-OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220).
+``client_token`` (D117), ``answer`` (the dashboard's Chat: the newest 50 answers, D159), the
+OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), and My
+base's ``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable
+item/fluid keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes
+them).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -38,6 +41,11 @@ CREATE INDEX IF NOT EXISTS ix_tel ON tel_sample(src, key, ts);
 CREATE TABLE IF NOT EXISTS action(id INTEGER PRIMARY KEY, created INT, kind TEXT, args TEXT,
   state TEXT CHECK(state IN ('proposed','confirmed','sent','done','failed','cancelled','expired')),
   confirmed_via TEXT, confirmed_ts INT, result TEXT);
+CREATE TABLE IF NOT EXISTS my_base_machine(mte_id INT NOT NULL,
+  source TEXT NOT NULL CHECK(source IN ('manual','event','census')),
+  count INT NOT NULL CHECK(count >= 0), upd INT NOT NULL, PRIMARY KEY(mte_id, source));
+CREATE TABLE IF NOT EXISTS my_base_stock(key TEXT PRIMARY KEY, qty REAL NOT NULL CHECK(qty > 0),
+  upd INT NOT NULL);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (
