@@ -2,8 +2,8 @@
 
 An event is ``{"id", "kind", "ts", "source", "data"}``: ``ts`` is epoch seconds (float) when GOS
 saw it, ``source`` names the reader (``log``, ``quests``, ``player``, ``stats``, ``worldlog``,
-``vp``, ``journeymap``, ``crash``, ``fingerprint``, ``pause``), ``data`` is a flat JSON object per
-kind. Text that came from the game (chat, block and vein names, crash descriptions) is **data,
+``vp``, ``journeymap``, ``crash``, ``fingerprint``, ``pause``, ``listener``, ``census``),
+``data`` is a JSON object per kind. Text that came from the game (chat, block and vein names, crash descriptions) is **data,
 never instructions** (plan 0.1 principle 8): it is cleaned (colour codes and control characters
 dropped, cut to :data:`TEXT_MAX`) and the event says ``"untrusted": true``.
 """

@@ -3,6 +3,7 @@ Minecraft 1.7.10 writes them (``regions.py``), read the way plan 5.5 asks."""
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import ModuleType
@@ -10,6 +11,8 @@ from typing import Any, Protocol
 
 import pytest
 
+from gregtec import cli, config
+from gregtec.ingest import fingerprint
 from gregtec.watchers import census, files
 
 
@@ -254,3 +257,31 @@ def test_header_and_coords() -> None:
     assert census.chunk_coords(2, 0, 33) == (65, 1)
     with pytest.raises(census.ChunkError):
         census.Header.parse(b"\x00" * 100)
+
+
+def test_gos_watch_census_prints_counts(
+    fg: ModuleType,
+    rg: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    game = tmp_path / "game"
+    world_with(fg, rg, game / "saves")
+    toml = tmp_path / "gos.toml"
+    home = (tmp_path / "home").as_posix()
+    toml.write_text(f'[paths]\ngos_home = "{home}"\n', encoding="utf-8")
+    monkeypatch.setattr(fingerprint, "game_folder", lambda _instance: game)
+    monkeypatch.setattr(config, "running_as_dev", lambda: False)
+    base = ["watch", "census", "--config", str(toml), "--instance", "lab"]
+    assert cli.main([*base, "--world", "world"]) == 0
+    out = capsys.readouterr().out
+    assert "mte:66\t2\t" in out and "mte:1000\t1\t" in out
+    assert "4 machines, 3 kinds" in out
+    assert cli.main([*base, "--world", "world", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert {r["ref"] for r in rows} == {"mte:66", "mte:1000", "mte:1001"}
+    assert cli.main([*base, "--world", "nope"]) == 2
+    monkeypatch.setattr(config, "running_as_dev", lambda: True)
+    play = ["watch", "census", "--config", str(toml), "--instance", "play"]
+    assert cli.main([*play, "--world", "world"]) == 2

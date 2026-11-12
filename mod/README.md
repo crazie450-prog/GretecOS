@@ -5,7 +5,7 @@ Gregtec OS's Forge mod for GTNH 2.9.0 (Minecraft 1.7.10, GT 5.09.54.265). It has
 | Module | Instance | Status |
 |---|---|---|
 | `export` | GTNH-Export only | WO-1.1: GT recipe-map dump, machine pass, item/fluid tables, NEI trigger, autoexport (V22), manifest; WO-1.6: ore mixes (`gt_ore_mixes.json`, D126); WO-1.10: CropsNH's crop dumpers (`crops/`, D134); the full ore dictionary (`oredict.jsonl`, D145) |
-| `listener` | Play | WO-6.2; registers nothing yet |
+| `listener` | Play, Lab | WO-6.2: GT machine place/break events (`gregteclink/events/machines.jsonl`); refused with `export` on |
 | `client` | Play (client side) | WO-8.1; registers nothing yet |
 
 It adds **no items, blocks, mixins, recipes, commands or packets** (`usesMixins=false`).
@@ -194,6 +194,56 @@ instance. Its dev runtime is GT's own transitive mod set (GT5-Unofficial with GT
 TecTech and others, IC2, AE2, ...) plus NEI 2.8.172, not the pack, so its thresholds are loose. CI runs it in the
 `mod` job.
 
+### Listener harness (WO-6.2)
+
+`./gradlew runServer -Pharness -PharnessListener` runs the server harness with
+`harness/listener/gregteclink.cfg` instead (listener on, export off). It deletes only the world, `gregteclink/events/`,
+`gregteclink/listener-harness/` and the old result, so the export harness's runs in `gregteclink/exports/` stay for
+the integration tests. On server start a Forge fake player, on the superflat bedrock next to spawn:
+
+1. places 10 GT machine kinds through the item's real path (`ItemStack.tryPlaceItemIntoWorld`, which fires Forge's
+   `PlaceEvent`): the Electric Blast Furnace (mte 1000, a multiblock controller), hatch 66 and the first 8
+   single-block machine classes in GT's registry; one more placement is cancelled by another handler at `HIGHEST`
+   (nothing may be left and no event written), and one machine is placed with no `PlaceEvent` (`Item.onItemUse`
+   directly, as some mods' placers do);
+2. saves the world (`saveAllChunks`, then waits for the chunk writer) and copies its region files to
+   `gregteclink/listener-harness/census-a/region/`;
+3. breaks four of them (the controller, the hatch, two machines) through `ItemInWorldManager.tryHarvestBlock`
+   (`BreakEvent`), posts one more `BreakEvent` that another handler cancels (the machine stays, no event), and
+   removes one machine with `setBlockToAir` (no event: only the census can see it);
+4. saves and copies again (`census-b/`), checks the events file and writes `listener-harness/expected.json` (the
+   base after each phase) and `harness-result.json`.
+
+Its checks: the module on with export off; 10 kinds with a controller and a hatch; the events file exactly
+`machine_built` x10 then `machine_removed` x4 in order, each with the right `mte_id`, `meta` equal to it,
+`registry` `gregtech:gt.blockmachines`, one `boot` and `seq` 1..14, and no numeric id key; nothing from the cancelled
+place and break; `mteAt` on an unloaded chunk leaves it unloaded (the listener never loads chunks); nothing written
+outside `gregteclink/`. `tests/integration/test_machine_events_harness.py` then checks the census of each phase's
+region files against `expected.json` and runs the events and the census through the watchers into My base on a DB
+built from the export harness's run. CI runs it in the `mod` job, after the export harness.
+
+## Listener module (WO-6.2)
+
+With `B:listener=true` (and `export` off: the module refuses to start beside the export module, so Export never
+listens), GregtecLink registers one server-side handler object (D260):
+
+- `BlockEvent.PlaceEvent` and `BlockEvent.BreakEvent` at `LOWEST` priority, not receiving cancelled events, for GT's
+  machine block (`GregTechAPI.sBlockMachines`) only. A break notes the `mID` of the `BaseMetaTileEntity` there.
+- At the end of the server tick each note is checked against the world: a placement is a `machine_built` if a GT
+  machine (`BaseMetaTileEntity`, `mID > 0`) stands there now; a break is a `machine_removed` if that machine is no
+  longer there. So a placement or break another mod cancels later is never reported. Cables and pipes
+  (`BaseMetaPipeEntity`) are not machines.
+- Each event is one JSON line in `<gameDir>/gregteclink/events/machines.jsonl` (open, append, close, through
+  `PathGuard`; renamed to `machines.1.jsonl` at start when over 1 MiB): `mte_id`, the block's registry name, `meta`
+  (= `mte_id`, the machine item's damage), dimension and position, `boot` and `seq`. Contract:
+  [docs/contracts/gregteclink-events-v1.md](../docs/contracts/gregteclink-events-v1.md). GOS's game watchers tail it.
+- **Read only.** It reads a loaded chunk's tile-entity map directly (not `World.getTileEntity`, which creates a
+  missing tile entity) and never loads a chunk. Placements and removals without a player event (explosions, other
+  mods) are not seen here; GOS's tile-entity census of the saved chunks catches them.
+
+V26 (the listener sees GT placements with `mID`) passes in the harness; the Lab check is
+[docs/runbooks/machine_events.md](../docs/runbooks/machine_events.md).
+
 ## Client harness
 
 `./gradlew runClient25 -Pharness` (Java 25 with lwjgl3ify, as GTNH's Java 17+ build; `runClient` is Java 8) runs the
@@ -255,7 +305,9 @@ Two more modes test D188's NEI step, and CI runs them together as a third client
 - The Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/`) is Gradle's own and is Apache-2.0 (see the SPDX
   header in `gradlew`).
 - GT5-Unofficial, NEI and CropsNH (LGPL-3.0) are linked at runtime only; nothing of theirs is vendored. CropsNH's
-  dump formats were read from its source to write the Python reader, which re-implements them.
+  dump formats were read from its source to write the Python reader, which re-implements them. The listener and the
+  census use GT's public API (`BaseMetaTileEntity.getMetaTileID`) and the tile-entity NBT names its `writeToNBT`
+  writes (`mID`, `mActive`, `mWasShutdown`), read from GT's classes at the pin; no GT code is copied.
 - Gregtorio's GPL-3 dumper (`tools/gtnh_dump`) is not copied. The recipe fields follow the "format 1" list in its
   README, as summarised in research A§1.7. The value encoding in `MetaJson` was first written in the same shape as
   Gregtorio's `writeValue` (the same type-check order, a depth-4 cutoff, a GT material as its name, public simple
