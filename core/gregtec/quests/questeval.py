@@ -5,7 +5,9 @@ questions. **Truth is references into the quest DB**, never text: ``expect`` lis
 answer must name: ``q<n>`` (the pack's quest n, cited ``q:<id>``), an item or fluid key (its
 key or its DB name in the answer) and ``lane=instant`` (answered with no model call);
 ``level`` is the spoiler level the question asks for and ``target`` the quests it may show at
-that level; ``words`` is how the question names its quest, item or line (only the fake model
+that level; ``question`` may be a conversation, its turns split by :data:`TURNS` (a spoiler
+command is its own utterance, D268: "tell me about X | spoil it"), scored on the last reply,
+every earlier reply checked for leaks at level 0; ``words`` is how the question names its quest, item or line (only the fake model
 reads it). The pack (``tests/evals/quest_pack.py``: self-authored, never pack data) is built
 into a temporary GOS_HOME for each run, so the eval never touches a real DB or vault.
 
@@ -21,8 +23,9 @@ lane and its tools, as ``POST /api/ask`` asks it) with a fresh conversation, and
   everything. Words the question itself says (a name he typed) don't count.
 
 ``--fake`` runs :class:`QuestOracle`, a fake model that follows the skill's lookups and then
-**asks for full spoilers every time** (``quest_get`` with ``spoil: 2``) and repeats everything
-the tools return. So a fake pass shows the code's guard, not a model's manners: whatever a
+**asks for full spoilers every time** (``quest_get`` with ``spoil: 2``), **walks every quest id
+it has seen** (what a quest unlocks, its prerequisites, the frontier) at ``spoil: 2`` too, and
+repeats everything the tools return. So a fake pass shows the code's guard, not a model's manners: whatever a
 model asks for, the tools show only what Clayton asked for. The real run uses the stored key
 (the fast lane's Haiku), records its calls in ``llm_usage`` with task ``eval:quest-guide``, and
 prints the cost; the fake run prints the same estimate from its simulated token counts.
@@ -67,7 +70,10 @@ KINDS = ("frontier", "quest", "requires", "unlocks", "item", "line", "tier")
 QUEST_KINDS = ("quest", "requires", "unlocks")
 TASK = "eval:quest-guide"
 INSTANT = "lane=instant"
+TURNS = " | "  # between a conversation's turns in the question column
+WALK_MAX = 8  # quests the adversary walks to in one round
 _QN = re.compile(r"q(\d+)")
+_QREF = re.compile(r"q:[A-Za-z0-9_-]{22}\b")
 _KEY = re.compile(r"(?:fluid:\S+|\S+@\d+)")
 _NOTE_ROW = re.compile(r"^(q:[A-Za-z0-9_-]{22})\t([^\t]*)\t", re.MULTILINE)
 _INDEX_ROW = re.compile(
@@ -288,6 +294,8 @@ def score(
     if not reply.checked:
         return False, "numbers refused: " + "; ".join(reply.problems)
     text = reply.text
+    if want_instant:  # an instant reply's detail is on its card, which code built
+        text += " " + json.dumps(reply.card or {}, ensure_ascii=False)
     cited = set(refs(text))
     missing = []
     for t in q.expect:
@@ -308,7 +316,7 @@ def score(
     said = [q.question, q.words, *goals]
     if reply.target:
         said += [reply.target.get("key", ""), reply.target.get("name", "")]
-    leaked = leaks(text, fields, allow, said)
+    leaked = leaks(reply.text, fields, allow, said)
     card_text = json.dumps(reply.card or {}, ensure_ascii=False)
     leaked += [f"card {x}" for x in leaks(card_text, fields, allow, said)]
     if leaked:
@@ -352,7 +360,7 @@ def decide(q: Question, seen: Sequence[Any], system: str) -> list[dict[str, Any]
             return []
         return [{"name": "vault_search", "input": {"q": q.words}}]
     if "quest_get" in tools:
-        return []
+        return walk(seen)
     found = [s for s in seen if s.tool == "quest_find"]
     if not found:
         return [{"name": "quest_find", "input": {"text": q.words}}]
@@ -366,10 +374,25 @@ def decide(q: Question, seen: Sequence[Any], system: str) -> list[dict[str, Any]
     ]
 
 
+def walk(seen: Sequence[Any]) -> list[dict[str, Any]]:
+    """The adversary's next round: ``quest_get`` at ``spoil: 2`` of every quest id it has seen
+    and not fetched yet (what a quest unlocks, its prerequisites, the frontier, any list)."""
+    done = {str(s.args.get("id", "")) for s in seen if s.tool == "quest_get"}
+    ids = dict.fromkeys(m for s in seen for m in _QREF.findall(s.text) if m not in done)
+    return [
+        {"name": "quest_get", "input": {"id": q, "spoil": spoilers.FULL}}
+        for q in list(ids)[:WALK_MAX]
+    ]
+
+
 def compose(seen: Sequence[Any]) -> str:
-    """Everything the last result says, as sentences (a model that repeats it all)."""
+    """Everything the results say, as sentences (a model that repeats it all): every quest it
+    fetched, else the last result."""
     if not seen:
         return "I couldn't look that up."
+    got = [s for s in seen if s.tool == "quest_get"]
+    if len(got) > 1:
+        return " ".join(compose([s]) for s in got)
     last = seen[-1]
     if last.tool == "note_read":
         rows = _NOTE_ROW.findall(last.text)
@@ -437,6 +460,25 @@ class Row:
     reply: Reply
     passed: bool
     why: str
+    calls: int = 0  # every turn's
+    usd: float = 0.0
+
+
+def converse(asker: Asker, q: Question) -> list[Reply]:
+    """Each turn of ``q`` asked in one conversation."""
+    return [asker.ask(turn, task=TASK) for turn in q.question.split(TURNS)]
+
+
+def earlier_leaks(
+    q: Question, replies: Sequence[Reply], fields: Mapping[str, Spoiler]
+) -> list[str]:
+    """What the turns before the last one leaked (they ask for nothing: level 0)."""
+    out = []
+    for turn, reply in zip(q.question.split(TURNS), replies[:-1], strict=False):
+        said = [turn, q.words]
+        card = json.dumps(reply.card or {}, ensure_ascii=False)
+        out += leaks(reply.text + " " + card, fields, None, said)
+    return out
 
 
 def run(
@@ -454,21 +496,26 @@ def run(
         rows: list[Row] = []
         print("id\tkind\tlevel\tlane\tpass\tcalls\tusd\twhy\ttext", file=out)
         for q in questions:
-            reply = asker_for().ask(q.question, task=TASK)
+            replies = converse(asker_for(), q)
+            reply = replies[-1]
             passed, why = score(q, reply, conn, fields, goals)
-            rows.append(Row(q, reply, passed, why))
+            if passed and (early := earlier_leaks(q, replies, fields)):
+                passed, why = False, "spoiled " + "; ".join(early[:3])
+            calls = sum(r.calls for r in replies)
+            usd = sum(r.usd for r in replies)
+            rows.append(Row(q, reply, passed, why, calls, usd))
             text = reply.text.replace("\t", " ").replace("\n", " ")[:200]
             print(
-                f"{q.id}\t{q.kind}\t{q.level}\t{reply.lane}\t{int(passed)}\t{reply.calls}\t"
-                f"{reply.usd:.6f}\t{why}\t{text}",
+                f"{q.id}\t{q.kind}\t{q.level}\t{reply.lane}\t{int(passed)}\t{calls}\t"
+                f"{usd:.6f}\t{why}\t{text}",
                 file=out,
             )
     finally:
         conn.close()
     passed = sum(r.passed for r in rows)
     spoiled = sum(1 for r in rows if r.why.startswith("spoiled"))
-    usd = sum(r.reply.usd for r in rows)
-    calls = sum(r.reply.calls for r in rows)
+    usd = sum(r.usd for r in rows)
+    calls = sum(r.calls for r in rows)
     print(file=out)
     print(f"passed: {passed} of {len(rows)}", file=out)
     print(f"spoiled: {spoiled}", file=out)
@@ -484,7 +531,13 @@ def fake_asker(home: Path, questions: Sequence[Question]) -> Callable[[], Asker]
     deep = HandoffRecorder()
     registry = default_registry(home, deep=deep)
     fast = FastLane(
-        QuestOracle(plans={" ".join(q.question.split()): q for q in questions}),
+        QuestOracle(
+            plans={
+                " ".join(turn.split()): q
+                for q in questions
+                for turn in q.question.split(TURNS)
+            }
+        ),
         registry,
         meter=None,
         vault=home / "vault",

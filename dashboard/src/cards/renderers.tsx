@@ -172,7 +172,7 @@ export function QuestCardView({ card, compact }: { card: QuestCard; compact?: bo
                 {QUEST_GLYPH[q.state]} {q.state}
               </span>
               {q.name !== null ? (
-                <button type="button" className="quest-name linkish" onClick={() => openQuest?.(q.ref, card.spoil ?? 0)}>
+                <button type="button" className="quest-name linkish" onClick={() => openQuest?.(q.ref, q.spoil ?? 0)}>
                   {q.name}
                 </button>
               ) : (
@@ -208,9 +208,9 @@ export function QuestCardView({ card, compact }: { card: QuestCard; compact?: bo
                 </tbody>
               </table>
             )}
-            {!compact && q.state === "locked" && card.spoil !== null && card.spoil < 2 && (
-              <button type="button" className="gos-btn spoil" onClick={() => openQuest?.(q.ref, (card.spoil ?? 0) + 1)}>
-                {card.spoil === 0 ? "What does it ask for?" : "Spoil it"}
+            {!compact && q.state === "locked" && q.spoil !== null && q.spoil < 2 && (
+              <button type="button" className="gos-btn spoil" onClick={() => openQuest?.(q.ref, (q.spoil ?? 0) + 1)}>
+                {q.spoil === 0 ? "What does it ask for?" : "Spoil it"}
               </button>
             )}
           </li>

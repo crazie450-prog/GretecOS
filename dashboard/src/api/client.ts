@@ -93,8 +93,14 @@ export const api = {
       "/api/credits/decision",
       { choice },
     ),
-  // The Quests view (WO-6.4): a spoil level only when he asks for more ("Spoil it", a tap).
-  quests: (spoil: number | null = null) => get<QuestsView>(spoil === null ? "/api/quests" : `/api/quests?spoil=${spoil}`),
+  // The Quests view (WO-6.4): a spoil level only when he asks for more ("Spoil it", a tap), and
+  // `open`: only the quests a spoiler command in chat granted (D268 R3).
+  quests: (spoil: number | null = null, open: string[] | null = null) =>
+    get<QuestsView>(
+      spoil === null
+        ? "/api/quests"
+        : `/api/quests?spoil=${spoil}` + (open ? `&open=${encodeURIComponent(open.join(","))}` : ""),
+    ),
   // The Ores view (WO-6.6): a material's veins, and a vein's waypoint proposed by its vein: id.
   ores: (material: string | null = null, dim: number | null = null) => {
     const q = new URLSearchParams();

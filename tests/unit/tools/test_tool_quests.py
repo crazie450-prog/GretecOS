@@ -17,6 +17,7 @@ import pytest
 
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.quests import HIDDEN_NAME, TEXT_NOTE
+from gregtec.agents.tools.tsv import parse
 from gregtec.ingest import quests as bq
 
 if TYPE_CHECKING:
@@ -55,14 +56,38 @@ def test_quest_text_stays_one_cell_and_is_marked_as_data(run: Runner) -> None:
 
 
 def test_quest_find_shows_what_the_book_shows_first(run: Runner) -> None:
-    p = run("quest_find", text="steel")
+    p = run("quest_find", text="steel")  # the shell: his own words
     names = dict(zip(p.col("quest"), p.col("name"), strict=True))
     assert names[q(2)] == "Steel Age"
-    assert names[q(4)] == HIDDEN_NAME  # matched by its description; not shown yet
-    assert names[q(6)] == HIDDEN_NAME
+    assert names[q(6)] == HIDDEN_NAME  # matched by its name; not shown yet
+    # past the frontier, a description is only searched at the full level (D268)
+    assert q(4) not in names
     shown = [n != HIDDEN_NAME for n in p.col("name")]
     assert shown == sorted(shown, reverse=True)
     assert p.span == f"1-{len(p.rows)} of {len(p.rows)}"
+
+
+def test_quest_find_searches_what_the_level_shows(tool_db: Path) -> None:
+    """D268: past the frontier, a model's own words find nothing at level 0 (no description,
+    no name the book doesn't show); level 1 matches names; level 2 descriptions too."""
+    words = {"text": "secret alloy stainless"}
+    for level, want in ((0, set()), (1, set()), (2, {q(4)})):
+        reg = build_registry(tool_db, key=b"k" * 32, spoiler_default=level)
+        out = reg.call("quest_find", words, lane="fast", request="what comes next")
+        assert {r["quest"] for r in parse(out.text).rows} == want, level
+    reg = build_registry(tool_db, key=b"k" * 32, spoiler_default=1)
+    out = reg.call("quest_find", {"text": "secret"}, lane="fast", request="what next")
+    assert [r["quest"] for r in parse(out.text).rows] == [q(4)]
+    reg = build_registry(tool_db, key=b"k" * 32)
+    out = reg.call("quest_find", {"text": "secret"}, lane="fast", request="what next")
+    assert parse(out.text).rows == []
+    # his own words: the name matches, still without showing it
+    out = reg.call(
+        "quest_find", {"text": "secret"}, lane="fast", request="the secret alloy quest?"
+    )
+    assert [(r["quest"], r["name"]) for r in parse(out.text).rows] == [
+        (q(4), HIDDEN_NAME)
+    ]
 
 
 def test_quest_find_with_no_words(run: Runner) -> None:
@@ -163,6 +188,32 @@ def test_quests_for_an_item(run: Runner) -> None:
         (q(4), "reward", "", "item"),
     ]
     assert p.rows[1]["name"] == HIDDEN_NAME and p.rows[0]["name"] == "Steel Age"
+
+
+def test_quest_for_item_lists_a_locked_quest_only_for_his_own_item(
+    tool_db: Path,
+) -> None:
+    """D268: an item the model chose (a key, or words he didn't say) lists no quest past the
+    frontier below the level that shows it: tasks at 1, rewards at 2."""
+    reg = build_registry(tool_db, key=b"k" * 32)
+    for item in (f"{GT}@11305", "steel ingot"):
+        out = reg.call(
+            "quest_for_item", {"item": item}, lane="fast", request="what comes next"
+        )
+        assert [r["quest"] for r in parse(out.text).rows] == [q(2)], item
+    out = reg.call(
+        "quest_for_item",
+        {"item": f"{GT}@11305"},
+        lane="fast",
+        request="which quests need steel ingots",
+    )
+    assert [r["quest"] for r in parse(out.text).rows] == [q(2), q(6), q(4)]
+    for level, want in ((1, [q(2), q(6)]), (2, [q(2), q(6), q(4)])):
+        reg = build_registry(tool_db, key=b"k" * 32, spoiler_default=level)
+        out = reg.call(
+            "quest_for_item", {"item": f"{GT}@11305"}, lane="fast", request="what next"
+        )
+        assert [r["quest"] for r in parse(out.text).rows] == want, level
 
 
 def test_a_wildcard_quest_stack_matches_any_meta(run: Runner) -> None:

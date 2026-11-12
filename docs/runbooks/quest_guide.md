@@ -49,7 +49,9 @@ Four things are left that only the PC can do: the real model on the eval, GTNH's
    - **Next quests** lists the quests lit in the in-game book, ranked. If `me/goals.md` has `goal:` lines, the quests that lead to the first goal come first, and each one says why.
    - **Beyond the frontier** is blurred and says `spoilers: nudge`. Tap it: the names you see are only the ones the book already shows (dark icons). There are no descriptions, rewards or "needs" rows.
    - Press **Spoil it**: the label changes to `spoilers: full` and descriptions and rewards appear. Press **Back to nudge**: they disappear again.
-   - Say or type "spoil it" in Chat while the view is open. The view goes to full in the same way.
+   - In Chat, ask "tell me about the secret alloy quest" (or any locked quest), then say or type "a bit more" on its own while the view is open. Only that quest opens in **Beyond the frontier**, at the partial level (its name and what it asks for, no description). Then say "spoil it" on its own: the same quest goes to full; the other blurred quests stay at nudge.
+   - Say "what comes after it? spoil it" in one breath: nothing opens, and the reply ends "Say 'spoil it' on its own to see more."
+   - The commands (D268, whole utterance only): full: "spoil it/that/this/me", "spoil it fully", "(the) full answer", "give me / I want / I'd like the full answer", "full spoilers", "spoil <quest name or q: id> (fully)"; partial: "(a) partial answer", "give me / I want / I'd like a partial answer", "a bit more", "a little more", "(give me) a hint", "more of a hint", "more detail(s)". Fillers allowed around them: hey gos, please, ok, um, uh, so, now, then, pls, can you, could you.
    - Press an item chip under **Items for these quests**: Search opens on that item's quests.
 
 ## D. GTNH's real book (optional, as gos-dev)

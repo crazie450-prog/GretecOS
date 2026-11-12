@@ -3,9 +3,9 @@
 :func:`route` reads the request text (typed, or the STT transcript) and returns a
 :class:`Route`:
 
-- **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, "spoil
-  it" / "full answer" / "partial answer" (the last answer's quests past the frontier at that
-  spoiler level, WO-6.4, D26), "what's my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
+- **instant**: answered in code with no model call: ``repeat``, ``confirm``/``cancel``, a
+  spoiler command, when it is the whole request ("spoil it", "a bit more", "spoil <quest>":
+  :func:`gregtec.quests.spoilers.command`, WO-6.4, D26, D268), "what's my tier", "recipe(s) for X" / "X recipe" (a recipe card), "what uses X" (a uses card), and
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
   model call, D206), and "next crop step" (WO-6.7, plan 7.17: the crop guide's next step). These keep working with no API key or credits (plan 0.1 principle 9, 7.16).
@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass
 
 from gregtec.agents.tools.recipes import TIERS
+from gregtec.quests import spoilers
 
 INSTANT, FAST, DEEP = "instant", "fast", "deep"
 # instant commands
@@ -104,14 +105,6 @@ INSTANT_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     ),
     (CONFIRM, _rx(r"(?:yes,? )?confirm(?: it)?")),
     (CANCEL, _rx(r"cancel(?: it| that)?", r"never ?mind")),
-    (
-        SPOIL,
-        _rx(
-            r"(?:ok |okay |fine,? |go on,? |just )?spoil (?:it|that|this|me)(?: then)?",
-            r"(?:give me |i want |tell me )?(?:the )?full (?:answer|spoilers?)",
-            r"(?:give me |i want |tell me )?(?:a |the )?partial (?:answer|spoiler|hint)",
-        ),
-    ),
     (
         CROP_STEP,
         _rx(
@@ -274,6 +267,8 @@ def route(text: str, *, plans: bool = True) -> Route:
     tier = None
     if m := _AT_TIER.search(said):  # "... at LV": the recipe tool's tier_max
         tier, said = _TIER_NAMES[m["tier"]], said[: m.start()]
+    if spoilers.command(text) is not None:  # the whole request is the command (D268)
+        return Route(INSTANT, SPOIL, text)
     deep = any(d.search(said) for d in DEEP_RULES)
     for command, patterns in INSTANT_RULES:
         for p in patterns:

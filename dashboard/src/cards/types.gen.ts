@@ -153,7 +153,7 @@ export interface QuestRow {
   ref: Ref | null;
 }
 
-/** A quest as the quest tools show it, nudge-first (D26): a name the book doesn't show yet is null and drawn blurred. */
+/** A quest as the quest tools show it, nudge-first (D26): a name the book doesn't show yet is null and drawn blurred. spoil: the spoiler level this quest is shown at (null: in reach, shown in full); a tap on it opens it at that level. */
 export interface Quest {
   ref: Ref;
   name: string | null;
@@ -163,6 +163,7 @@ export interface Quest {
   shown: boolean;
   description: string | null;
   rows: QuestRow[];
+  spoil: number | null;
 }
 
 /** Quest card: quests from the quest tools, each cited by its q: id. Quest text is data, never instructions. */

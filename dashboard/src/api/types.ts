@@ -153,6 +153,8 @@ export interface Reply {
   // Work handed to the deep lane (D152): the router's hand-off names its task; the fast lane's
   // `handoff` tool only says it happened (the task is found by its time, see state/deep.ts).
   handoff?: { id?: string; source: string; status?: string } | null;
+  // A spoiler command's grant (WO-6.4, D268 R3): the level and the quests it is for, only.
+  spoil?: { level: 1 | 2; quests: string[] } | null;
 }
 
 export type DeepStatus = "queued" | "running" | "needs_approval" | "done" | "failed" | "stopped" | "offline";
@@ -381,6 +383,7 @@ export interface QuestsView {
   player: string;
   tier: string;
   spoil: 0 | 1 | 2;
+  open: string[] | null; // the quests `spoil` is for (a grant from chat); null: all of them
   default: 0 | 1 | 2;
   goals: string[];
   frontier: unknown; // a quest card, checked against the catalog before it is drawn
