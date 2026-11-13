@@ -87,6 +87,9 @@ for (const mode of ["best", "max_output", "output_per_effort", "self_sustaining"
         await expect(card.getByTestId(`kit-${o.id}`)).toBeVisible();
       }
       if (o.effort) await expect(card.getByTestId(`effort-${o.id}`)).toBeVisible();
+      // After option 1, each card says how it differs from option 1.
+      if (o.position > 1) await expect(card.getByTestId(`differs-${o.id}`)).toContainText("Differs from option 1");
+      else expect(o.differs).toEqual([]);
     }
     await page.screenshot({ path: shot(`power-${mode}`) });
   });
