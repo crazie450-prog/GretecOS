@@ -267,8 +267,8 @@ class Bot:
             try:
                 await it.send(msg)
                 return
-            except Exception:
-                log.info("follow-up failed; sending by DM")
+            except Exception:  # an expired or deleted interaction: DM instead
+                log.info("follow-up failed; sending by DM", exc_info=True)
         await self.dm(msg)
 
     async def offer_pending(
