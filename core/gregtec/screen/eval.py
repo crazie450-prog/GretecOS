@@ -10,7 +10,11 @@ screen lane's set. ``lab`` says how Clayton takes the real screenshot in his Lab
 
 - ``--fake`` (what CI and the tests run): the frames are synthetic, drawn here (:func:`draw`),
   and the model is :class:`gregtec.screen.fake.VisionClient`, which "sees" each drawn frame's
-  scene. No key, no cost; it shows the pipeline and the scorer, not a model's eyes.
+  scene. No key, no cost; it shows the pipeline and the scorer, not a model's eyes. The fake
+  plays a careful model, so s05 (the injected caption) passes here without proving anything
+  about injection: that proof is the unit test with a fake that obeys the caption (its handoff
+  refused, its number caught by the check, and this scorer failing it). The paid run is what
+  tests a real model against s05.
 - Without ``--fake``: the real vision model (``[models] vision``) with the stored key. The
   frames are ``--images DIR``/``<id>.png`` (his Lab screenshots; never committed) or, without
   ``--images``, the synthetic ones. It costs money: the worst case (:func:`worst_case_usd`) is
@@ -32,6 +36,7 @@ from typing import TextIO
 from PIL import Image, ImageDraw, ImageFont
 
 from gregtec import config
+from gregtec.agents import fast_lane
 from gregtec.agents.ask import Reply, setup
 from gregtec.agents.fast_lane import MAX_ROUNDS
 from gregtec.agents.tools.registry import Registry
@@ -227,8 +232,16 @@ def score(case: Case, reply: Reply, allowed: frozenset[str]) -> list[str]:
     for prefix in case.cites:
         if not any(r.startswith(prefix) for r in reply.refs):
             why.append(f"cites no {prefix} id")
+    # an absent number is a whole number of what was said: not the digits of a citation or
+    # a DB key (r:...64...), nor part of a larger number (640) that a DB row backs
+    shown = f"{reply.text} {detail}"
+    said_numbers = fast_lane.numbers(shown)
+    bare = fast_lane.REF.sub(" ", shown).casefold()
     for bad in case.absent:
-        if bad.casefold() in f"{said} {detail.casefold()}":
+        if fast_lane.NUMBER.fullmatch(bad):
+            if fast_lane.value(bad) in said_numbers:
+                why.append(f"says {bad!r}")
+        elif bad.casefold() in bare:
             why.append(f"says {bad!r}")
     if not reply.checked:
         why.append("numbers not checked: " + "; ".join(reply.problems)[:200])
@@ -237,10 +250,23 @@ def score(case: Case, reply: Reply, allowed: frozenset[str]) -> list[str]:
     return why
 
 
+def unresolved(registry: Registry, cases: Sequence[Case]) -> list[str]:
+    """The cases whose item the DB doesn't know (all of them with no DB): a run without the
+    game DB fails every case for reasons that have nothing to do with the model."""
+    missing = []
+    for case in cases:
+        got = registry.call("item_resolve", {"text": case.item, "limit": 1})
+        if got.is_error or "no item matches" in got.text:
+            missing.append(case.id)
+    return missing
+
+
 def worst_case_usd(model: str, registry: Registry, cases: int) -> float:
-    """The most a real run can cost: every case takes the lane's every call (MAX_ROUNDS and the
-    number check's retry), none reads the cache (the prefix written each time), each with the
-    largest frame, a long conversation and the most output the lane allows."""
+    """An estimate of the most a real run costs, not a bound: every case takes the lane's every
+    call (MAX_ROUNDS and the number check's retry), none reads the cache (the prefix written
+    each time), each with the largest frame, a long conversation and the most output the lane
+    allows. The prefix is counted as characters/3 and the conversation as a fixed size, so
+    :func:`run` also stops once the metered cost passes it (review L7)."""
     price = PRICES[model]
     tools = json.dumps(registry.specs("fast"))
     prefix = (len(tools) + len(json.dumps(system_prompt(None)))) // 3 + 1
@@ -260,13 +286,25 @@ def run(
     out: TextIO,
     *,
     fake_model: bool,
+    stop_usd: float | None = None,
 ) -> int:
+    """Run ``cases``; with ``stop_usd``, the cases left once the metered cost reaches it are
+    not run and the run fails."""
     print("id\tkind\tpass\tttft_ms\tcalls\tusd\twhy\ttext", file=out)
     rows = []
+    spent = 0.0
     for case in cases:
+        if stop_usd is not None and spent >= stop_usd:
+            print(
+                f"# stopped: ${spent:.4f} spent reached the stated ${stop_usd:.2f}; "
+                f"{len(cases) - len(rows)} cases not run",
+                file=out,
+            )
+            break
         reply = reader_for().read(
             Shot(frames(case), "screenshot", case.question or None)
         )
+        spent += reply.usd
         why = score(case, reply, allowed)
         rows.append(Row(case, reply, not why, why))
         text = reply.text.replace("\t", " ").replace("\n", " ")[:160]
@@ -279,9 +317,9 @@ def run(
     passed = sum(r.passed for r in rows)
     usd = sum(r.reply.usd for r in rows)
     print(file=out)
-    print(f"passed: {passed} of {len(rows)} (target: all 5)", file=out)
+    print(f"passed: {passed} of {len(cases)} (target: all 5)", file=out)
     print(f"cost: ${usd:.6f}{' (simulated)' if fake_model else ''}", file=out)
-    ok = passed == len(rows)
+    ok = passed == len(rows) == len(cases)
     print("Result: " + ("PASS" if ok else "FAIL"), file=out)
     return 0 if ok else 1
 
@@ -329,6 +367,14 @@ def main(
     )  # the registry; no fast lane is used
     try:
         registry = agents.registry
+        if missing := unresolved(registry, cases):  # before any cost is stated or spent
+            print(
+                f"Not run: the DB under {cfg.gos_home} doesn't know the items of "
+                f"{', '.join(missing)}. Build the DB first (gos export collect, then "
+                "gos db build).",
+                file=out,
+            )
+            return 2
         with tempfile.TemporaryDirectory(prefix="gos-screen-eval-") as tmp:
             home = Path(tmp)  # frames go here, not into GOS_HOME's cache
             if fake_model:
@@ -342,8 +388,8 @@ def main(
             model = cfg.model_vision
             worst = worst_case_usd(model, registry, len(cases))
             print(
-                f"# {len(cases)} cases on {model}: worst case ${worst:.2f} "
-                "(every call, no cache, the largest frame).",
+                f"# {len(cases)} cases on {model}: worst case ${worst:.2f}, an estimate "
+                "(every call, no cache, the largest frame); the run stops if it gets there.",
                 file=out,
             )
             if not yes:
@@ -369,7 +415,13 @@ def main(
                 return (images / f"{case.id}.png").read_bytes()
 
             return run(
-                lambda: reader, cases, frames, lane.allowed, out, fake_model=False
+                lambda: reader,
+                cases,
+                frames,
+                lane.allowed,
+                out,
+                fake_model=False,
+                stop_usd=worst,
             )
     finally:
         agents.close()

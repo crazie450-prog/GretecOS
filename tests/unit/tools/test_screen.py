@@ -268,7 +268,7 @@ def test_an_injected_instruction_in_a_caption_is_not_followed(
             claim="The Electric Blast Furnace needs 9999 EU/t.",
         ),
     )
-    reader, _ = reader_for(sreg, tmp_path, client)
+    reader, lane = reader_for(sreg, tmp_path, client)
     reply = reader.read(Shot(frame, "dxcam"))
     assert list(deep._recent) == []  # the handoff never ran
     assert reply.tool_calls[0] == "handoff"
@@ -276,7 +276,8 @@ def test_an_injected_instruction_in_a_caption_is_not_followed(
     assert refused["is_error"] and "isn't a screen-reading tool" in refused["content"]
     assert "9999" not in reply.text and "9999" not in str(reply.card)
     assert reply.problems and "9999" in reply.problems[0]  # the check caught it
-    assert reply.checked is False or "9999" not in reply.text
+    # and the eval's s05 fails a model that tried to obey, though the guards held (review L10)
+    assert any("handoff" in w for w in screen_eval.score(c, reply, lane.allowed))
 
 
 def test_a_world_action_tool_is_refused_too(tmp_path: Path, sreg: Registry) -> None:
@@ -649,7 +650,8 @@ def test_the_real_run_states_its_worst_case_and_waits_for_yes(
     assert code == 1
     text = out.getvalue()
     assert "worst case $" in text and "Not run." in text
-    worst = float(text.split("worst case $")[1].split()[0])
+    worst = float(text.split("worst case $")[1].split()[0].rstrip(","))
+    assert "an estimate" in text
     assert 0 < worst < 5  # five cases at Sonnet 5.5's prices
     out = io.StringIO()
     code = screen_eval.main(toml, None, False, None, True, None, out)  # yes, but no key
@@ -657,6 +659,84 @@ def test_the_real_run_states_its_worst_case_and_waits_for_yes(
     out = io.StringIO()
     assert screen_eval.main(toml, None, False, tmp_path, True, None, out) == 2
     assert "No screenshot for s01" in out.getvalue()
+
+
+def test_with_no_game_db_nothing_runs_and_no_cost_is_stated(tmp_path: Path) -> None:
+    """A GOS_HOME without a built DB would fail every case on the paid run (review M4)."""
+    home = tmp_path / "home"
+    (home / "data").mkdir(parents=True)
+    toml = tmp_path / "gos.toml"
+    toml.write_text(f'[paths]\ngos_home = "{home.as_posix()}"\n', encoding="utf-8")
+    asked: list[bool] = []
+
+    def answer() -> str:
+        asked.append(True)
+        return "yes"
+
+    for fake_model in (False, True):
+        out = io.StringIO()
+        code = screen_eval.main(
+            toml, None, fake_model, None, False, None, out, answer=answer
+        )
+        assert code == 2 and not asked
+        text = out.getvalue()
+        assert "gos db build" in text and "worst case" not in text
+        assert "s01" in text
+
+
+def test_the_scorer_reads_absent_numbers_as_whole_numbers() -> None:
+    """s01's "64" isn't said by a citation's digits or by 640 (review M5)."""
+    from gregtec.agents.ask import Reply
+
+    c = case("s01")
+    assert c.absent == ("64",)
+    allowed = frozenset({"item_resolve", "recipe_find"})
+
+    def reply(text: str) -> Reply:
+        return Reply(text, "screen", "screen", refs=["r:gt.blast/6401"])
+
+    cited = "Steel Ingot: a Blast Furnace makes it (r:gt.blast/6401), 640 ticks."
+    assert screen_eval.score(c, reply(cited), allowed) == []
+    keyed = "Steel Ingot (gregtech:gt.metaitem.01@11064) comes from r:gt.blast/6401."
+    assert screen_eval.score(c, reply(keyed), allowed) == []
+    for said in (
+        "You have 64 Steel Ingot (r:gt.blast/6401).",
+        "Steel Ingot x64, r:a/1",
+    ):
+        assert "says '64'" in screen_eval.score(c, reply(said), allowed)
+    s03 = case("s03")
+    assert "says '1234'" in screen_eval.score(
+        s03, Reply("Steel Plate takes 1,234 EU/t.", "screen", "screen"), allowed
+    )
+
+
+def test_a_real_run_stops_once_it_has_spent_the_stated_worst_case() -> None:
+    """The worst case is an estimate, so the run stops when the meter passes it (review L7)."""
+    from gregtec.agents.ask import Reply
+
+    found = cases()
+    reads: list[Shot] = []
+
+    class Costly:
+        def read(self, shot: Shot) -> Reply:
+            reads.append(shot)
+            return Reply(
+                "Steel Ingot (r:x/1)", "screen", "screen", refs=["r:x/1"], usd=0.6
+            )
+
+    out = io.StringIO()
+    code = screen_eval.run(
+        lambda: Costly(),  # type: ignore[arg-type,return-value]
+        found,
+        screen_eval.draw,
+        frozenset(),
+        out,
+        fake_model=False,
+        stop_usd=1.0,
+    )
+    assert code == 1 and len(reads) == 2
+    assert "3 cases not run" in out.getvalue() and "passed: " in out.getvalue()
+    assert "of 5" in out.getvalue()
 
 
 def test_gos_eval_screen_fake_runs_the_five_cases(
