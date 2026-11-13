@@ -274,6 +274,32 @@ class Scribe:
                 continue
             if path:
                 written.append(path)
+        written += self._recaps(conn)
+        return written
+
+    def _recaps(self, conn: sqlite3.Connection) -> list[str]:
+        """The finished ages' recaps not yet in the journal (D162, D265): a few computed lines
+        in today's log, after the session blocks."""
+        written = []
+        for r in conn.execute(
+            "SELECT age, recap FROM age_mark WHERE recap IS NOT NULL AND journaled IS NULL "
+            "ORDER BY end_ts, age"
+        ).fetchall():
+            try:
+                path: str | None = self._append(recap_lines(json.loads(r["recap"])))
+            except (
+                ValueError,
+                KeyError,
+                TypeError,
+            ) as exc:  # a recap that can't be read
+                self.problems.append(f"age {r['age']} recap: {exc}")
+                path = None
+            except (VaultError, OSError) as exc:  # tried again on the next tick
+                self.problems.append(f"age {r['age']} recap: {exc}")
+                continue
+            conn.execute("UPDATE age_mark SET journaled = 1 WHERE age = ?", (r["age"],))
+            if path:
+                written.append(path)
         return written
 
     def _write(
@@ -361,6 +387,25 @@ class Scribe:
                 raise VaultError("a journal block is longer than a note")
             return self.vault.append(rel, "\n".join(lines), computed=True)
         raise VaultError(f"every log of {day} is full")
+
+
+def recap_lines(recap: Mapping[str, Any]) -> list[str]:
+    """A finished age's recap as journal lines, every number the one :mod:`.ages` computed
+    (keys in :data:`RECAP_KEYS`, never ``n_``: they are not events)."""
+    days = (
+        f"{dt.date.fromtimestamp(int(recap['start_ts'])).isoformat()} to "
+        f"{dt.date.fromtimestamp(int(recap['end_ts'])).isoformat()}"
+    )
+    best = recap.get("best_net_eut")
+    return [
+        f"age_done: age {int(recap['age'])} ({_text(recap['stage'], 10)}), {days}",
+        f"age_played_h: {float(recap['hours_played'])}",
+        f"age_sessions: {int(recap['sessions'])}",
+        f"age_machines_built: {int(recap['machines_built'])}",
+        f"age_best_net_eut: {int(best)} {recap['best_ref']}"
+        if best is not None
+        else "age_best_net_eut: none (no OC power readings in this age)",
+    ]
 
 
 _SESSION_LINE = re.compile(r"^session: s(\d+) ")

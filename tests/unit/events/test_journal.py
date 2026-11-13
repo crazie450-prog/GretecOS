@@ -300,3 +300,40 @@ def test_a_sessions_lines_are_found_again(
         "n_quest: 2",
         "session_end: s1 to 01:00",
     ]
+
+
+def test_a_finished_ages_recap_goes_in_the_journal_once(
+    conn: sqlite3.Connection, vault: io.VaultIO
+) -> None:
+    """D162, D265: the recap's computed numbers, as lines the compaction doesn't count."""
+    from gregtec.events import ages
+
+    ages.observe(conn, "steam", T0)
+    events.record(
+        conn,
+        "play",
+        [login(T0 + 60), built(T0 + 70, 101), ev("world_closed", T0 + 600, via="log")],
+    )
+    assert ages.observe(conn, "LV", T0 + 3600) == 1
+    scribe = journal.Scribe(vault)
+    assert scribe.run(conn, T0 + 3600) == [
+        LOG,
+        LOG,
+    ]  # the session block, then the recap
+    got = [line for line in body(vault) if line.startswith("age_")]
+    assert got == [
+        "age_done: age 1 (steam), 2026-11-11 to 2026-11-11",
+        "age_played_h: 0.1",
+        "age_sessions: 1",
+        "age_machines_built: 1",
+        "age_best_net_eut: none (no OC power readings in this age)",
+    ]
+    assert scribe.run(conn, T0 + 3700) == []  # once
+    counts = event_counts([(LOG, text(vault))])
+    assert not any(k.startswith("age_") for k in counts)
+    assert (
+        schema.check_text(
+            LOG, text(vault), schema.load_types(vault.root / "_gos" / "schema.md")
+        )
+        == []
+    )

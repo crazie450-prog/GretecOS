@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS event(id INTEGER PRIMARY KEY, ts INT NOT NULL, sessio
 CREATE INDEX IF NOT EXISTS ix_event_ts ON event(ts);
 CREATE INDEX IF NOT EXISTS ix_event_kind ON event(kind, ts);
 CREATE TABLE IF NOT EXISTS age_mark(age INT PRIMARY KEY, stage TEXT NOT NULL, start_ts INT NOT NULL,
-  end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT);
+  end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT, journaled INT);
 """
 # Indexes on columns ADDED_COLUMNS may have just added (a DB whose table predates them).
 POST_SCHEMA = """

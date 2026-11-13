@@ -49,7 +49,19 @@ MAX_TOKENS = 4096
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 # n_death: 3, written by the curator from event_counts
 COUNT_PREFIX = schema.COUNT_PREFIX
-NOT_EVENTS = frozenset({"note", "period", "from"})
+# Not events: notes, a summary's period, and the session scribe's age recap lines (D265)
+NOT_EVENTS = frozenset(
+    {
+        "note",
+        "period",
+        "from",
+        "age_done",
+        "age_played_h",
+        "age_sessions",
+        "age_machines_built",
+        "age_best_net_eut",
+    }
+)
 _SUMMARY_PATH = schema.SUMMARY_LOG
 # Not str.isdigit: it takes "²", which int() refuses.
 _COUNT_VALUE = re.compile(r"[0-9]+")

@@ -17,7 +17,7 @@ diagrams: plan notes only: a flow diagram in a ```mermaid fence, only the lines 
 prose: none, except one-line note: entries
 max_lines: 150 (INDEX.md: 200, plan notes: 40)
 index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
-log_counts: n_<kind>: N lines are the curator's computed counts, in log/wk/ and log/mo/ only; no other log uses an n_ key
+log_counts: n_<kind>: N lines are computed counts: the curator's in log/wk/ and log/mo/, and in daily logs only the session scribe's n_quest, n_built, n_removed, n_death, n_vein, n_crash and n_dim (D263); agents never write an n_ key
 note: keys * means any key until the WO that owns the type defines them
 note: quest notes (WO-6.4): quests/qs-<line>.md are questline summaries made by code (gos quests summaries), at most 60 lines; agents add quest decisions as decision: lines in other qs-* notes
 note: persona packs (WO-5.6): the shipped ones are in _gos/personas/ (the repo's), Clayton's in personas/pe-<name>.md
