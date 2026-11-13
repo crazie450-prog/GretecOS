@@ -14,7 +14,9 @@ installing the station on Play later is Clayton's own copy of the same files to 
 **One thing GT decides** (D282): automation can take items only from a GT machine's output slot. A seed the station
 gives a Seed Generator stays in it for good as that generator's copier, and anything put into the Crop Breeder stays
 until a run uses it. So use spare generators for the station, and take a parked seed out by hand when you want the
-generator back.
+generator back. The station parks a seed only once that generator's tank holds a copy's fertilizer and the chest holds
+the copy's catalyst, and never a starter's last seed (`keep`, 1 by default, always stays in the chest). A generator
+also keeps up to one copy's worth of catalyst after a stop (the stop note and `cat_left` say how many).
 
 ## A. The plan, before the game
 
@@ -29,7 +31,8 @@ generator back.
    Pick a target whose plan says `in 3 step(s)` (try a few; `--json` shows the command it becomes). Write down the
    starters the plan's `Starter:` lines name, each step's catalyst, and the `Seed Generators copy, best first:` line.
 3. The parts (V31): `gos crops station --parts`. On your full-pack DB each part shows its recipes with their `r:` ids
-   and `craftable at MV` or `NOT craftable at MV`; note any `NOT` and any `not in this DB`.
+   and `craftable at MV`, `NOT craftable at MV` or `MV unknown` (only an NEI or GT recipe without a tier); note
+   any `NOT`, any `unknown` and any `not in this DB`.
 
 ## B. The station in `lab-ops` (creative)
 
@@ -41,6 +44,11 @@ generator back.
    the transposer faces each (0 down, 1 up, 2 north, 3 south, 4 west, 5 east; F3 shows your facing).
 5. Put in the chest: **5 analysed seeds of each starter** (scan them in a GT Scanner first: their name must read
    `<crop> Seeds`, not `Unknown Seeds`; a renamed seed keeps its custom name and the station ignores it), and 16 of each step's catalyst. Note the counts.
+   A starter with no copier (not on the plan's `Seed Generators copy` line) is used one per run and never down to
+   its last: stock at least `keep` + 1 times the runs the plan's step lines give for it (5 is enough for one step at
+   MV; more when it is a parent in several steps). Fill each tank with **enriched fertilizer** only: the breeder
+   accepts no other fluid and the station reads only the tank's level, not the fluid's name, so a wrong fluid shows
+   as `the Crop Breeder hasn't started in 30 s` (step 15).
 
 ## C. Install and check (V31)
 
@@ -91,8 +99,21 @@ generator back.
     goes to the chest, the generators' last copies come out, and the status says `stopped; nothing of the station's
     is left in transit`. Check: the breeder empty, no generator output, the breeder's work switch on again (its GUI),
     the generators paused.
-14. **Restart.** Start once more and confirm; during a run, stop the agent with Ctrl+Alt+C and run `gos-agent`
-    again: the status says `interrupted` and nothing moves (a minute). Confirm a stop: it winds down as in step 13.
+14. **Restart.** Start once more and confirm; while a generator is copying (its GUI's progress bar), stop the agent
+    with Ctrl+Alt+C and run `gos-agent` again: the status says `interrupted`, every generator's GUI shows it paused
+    within a second, and nothing moves (a minute). Confirm a stop: it winds down as in step 13, and the generators'
+    outputs stay empty for another minute after `stopped`.
+
+## F. When it is stuck (recovery)
+
+15. **`the Crop Breeder hasn't started in 30 s`.** The breeder took its load but no run started: no power, the wrong
+    fluid (L5: enriched fertilizer only), or a move into it failed part-way (the note said `a move into the Crop
+    Breeder failed`), so it lacks a parent or a catalyst. GT lets no automation take its inputs back. Confirm a stop:
+    after 30 s the station gives up on that load, says `the Crop Breeder never started: left paused with its inputs`,
+    and leaves the breeder **paused** so it can't run later by itself. Take the items out of its inputs by hand into
+    the chest, fix the cause, switch the breeder back on in its GUI, and start the plan again.
+16. **`Seed Generator N holds a seed that isn't an analysed one`.** An unscanned or renamed seed sits in that
+    generator; the station never uses that generator. Take the seed out by hand (and scan it) to give it back.
 
 ## What to send back
 

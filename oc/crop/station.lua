@@ -15,9 +15,12 @@ until the machine uses it or a player takes it. So:
            seed put into one stays as that generator's master for good: each generator is the
            copier of one crop. The plan's `copy` list ranks the crops worth a copier (the target
            first, then the parents used most); an empty generator takes the first of them that
-           has no copier yet, when a seed of it is in the chest. That parked seed is never bred:
-           it keeps making copies. A copier runs (setWorkAllowed true) only while its crop is
-           short and is paused otherwise.
+           has no copier yet, when a seed of it is in the chest, the generator's tank holds a
+           copy's fertilizer (the plan's copy_fert) and the chest the copy's catalyst; a starter
+           (no step breeds it) only while keep + 1 of it are in the chest. That parked seed is
+           never bred: it keeps making copies. A copier runs (setWorkAllowed true) only while its
+           crop is short and is paused otherwise; it gets one copy's catalyst at a time. A seed
+           the station can't name (Unknown Seeds, a renamed one) blocks its generator.
   breeder  a run takes ONE of each parent (and the recipe's catalysts) when it starts and, at
            its end, puts the child in the output slot on a success and nothing on a failure
            (MTECropBreeder.checkRecipe). The station loads it only when it is idle and empty,
@@ -43,9 +46,12 @@ the data card's zlib inflate can't open (V31), so GOS tracks them from the breed
 A stop starts no new work: the copiers are paused, a run under way is waited for and its output
 collected, the copiers' last copies are collected, and the machines' work switches are put back
 as they were. Then no item the station moved is anywhere but the chest, except the copiers'
-parked seeds (which stay by design and are listed). Start and stop are commands Clayton
-confirmed (D59); this module never starts itself: after a restart a saved run is `interrupted`
-until a confirmed start resumes it or a confirmed stop winds it down.
+parked seeds and at most one copy's catalyst each (which stay by design and are listed). Every
+configured copier is paused, whoever switched it on; a breeder load that never started is left
+paused. Start and stop are commands Clayton confirmed (D59); this module never starts itself:
+after a restart a saved run is `interrupted` (every copier paused at once, the switches the
+station found restored from the saved state) until a confirmed start resumes it or a confirmed
+stop winds it down.
 
   local s, err = station.new(cfg, deps)  cfg from station.check_config(gos-agent.cfg's crops)
        deps: call(addr, method, ...) -> ok, ..., now(), log(level, msg), json,
