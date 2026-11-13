@@ -764,6 +764,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - OC screen status board: power, alerts, current goal, next step.
   - **OCGlasses** HUD (HV Assembler recipes; 12 widget types: text, shapes, item icons, 3D). There's no fixed rate and every change is sent at once, so batch updates. Power use scales with widget count [F].
   - **Chat box** `say` (LV recipe; 1 tick per call; 40-block radius, same dimension) for confirmations [F].
+  - As built (WO-7.5, D280, D281): telemetry alert rules (`gregtec.alerts`): power low (a store's fill, with a band), maintenance (the Problems count or an LSC's bad maintenance), machine stalled (or stopped by GT) and crafting done (a craft GOS started), each with a hold, a clear delay and a 10-minute cooldown from gos.toml `[alerts]` (defaults pending Clayton); nothing fires or clears while the game is paused (D258) or OC is silent: firing alerts are held and marked stale. They show as AlertCards on the dashboard (crafting done on the Base view), on the status board (power low, crafting done), as a voice line, and in the `alert` table; WO-9.2 routes them from `AlertEngine.sinks`.
   - As built (WO-7.4, D277-D279): the core composes the board, HUD and chat notices (`gregtec.bridge.display`) and sends them in the reply's optional `display` over M1 and M2 alike; `oc/display.lua` lays them out (50 x 16 at most, `NO REPLY` and grey after 30 s without a reply; HUD M2 only, 4 widgets; notices only fixed templates about confirmed actions). The dashboard's Base view shows the same live base (`GET /api/base/live`).
 - **Pause caveat** [F][C§4]. In single-player, the Esc menu pauses the integrated server and therefore OC, unless the world is opened to LAN (untested, V19). Alt-tab also pauses unless `pauseOnLostFocus` is off (F3+P; Hodgepodge confirms the toggle; **VERIFY** the exact `options.txt` key). Telemetry gaps are marked stale, never extrapolated. AFK alerts only work while the game is unpaused (D46, §5.6).
 - **Safe actions (D25):**
@@ -1439,6 +1440,19 @@ configs = []                  # recipe-affecting configs added to GT's defaults,
 [maintenance]
 idle_minutes = 30             # QA:A9
 keep_backups = 7              # daily DB backups kept (D139)
+
+# Telemetry alerts (WO-7.5, D280): every key optional; the defaults, pending Clayton, are below.
+# [alerts]
+# rules = ["power_low", "maintenance", "machine_stalled", "crafting_done"]
+# power_low_pct = 20          # fires below; clears at power_clear_pct
+# power_clear_pct = 30
+# power_low_s = 30            # how long each condition holds first
+# maintenance_s = 0
+# stalled_s = 60
+# stalled_stopped = true      # a machine GT stopped counts as stalled
+# clear_s = 30
+# cooldown_s = 600            # plan 7.5's 10 minutes
+# done_show_s = 300
 
 # M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
 # drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.
