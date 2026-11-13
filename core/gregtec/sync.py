@@ -301,46 +301,65 @@ def _same(path: Path, data: bytes) -> bool:
     return path.is_file() and not _is_link(os.lstat(path)) and read_bytes(path) == data
 
 
-def plan_install(
-    plan: Plan, gos_app: Path, patterns: Sequence[str], refusals: list[str]
-) -> None:
-    """Set ``plan.install`` (Export's plan), or add a note or a refusal. Reads only."""
+def deployed_jar(
+    gos_app: Path, label: str, refusals: list[str]
+) -> tuple[Path, str, bytes] | None:
+    """(the jar in ``current/mod-dist``, its commit, its bytes checked against the SHA256 in
+    ``current/release.json``) of the release ``gos deploy`` built, or None: with a refusal
+    added, or with none when no GregtecLink jar is deployed. Reads only (also the Play and Lab
+    install, WO-8.1)."""
     release = gos_app / deploy.CURRENT
     record_path = release / deploy.RECORD
     try:
         record = json.loads(read_bytes(record_path))
     except FileNotFoundError:
-        record = None
+        return None
     except (OSError, ValueError) as exc:
-        refusals.append(f"export: can't read {record_path}: {exc}")
-        return
+        refusals.append(f"{label}: can't read {record_path}: {exc}")
+        return None
     entry = record.get("gregteclink") if isinstance(record, dict) else None
     if entry is None:
-        plan.notes.append(
-            f"no GregtecLink jar is deployed in {gos_app} (gos deploy builds it), so "
-            "Export's GregtecLink is left as it is"
-        )
-        return
+        return None
     name = entry.get("jar") if isinstance(entry, dict) else None
     want = entry.get("sha256") if isinstance(entry, dict) else None
     if not (isinstance(name, str) and LINK_JAR_NAME.fullmatch(name)):
-        refusals.append(f"export: {record_path} names no GregtecLink jar: {entry!r}")
-        return
-    for rel in (f"mods/{name}", LINK_CONFIG):
-        if not excluded(rel, patterns):  # the mirror would delete it again
-            refusals.append(f"export: {rel} isn't in [sync.export] exclude")
-            return
+        refusals.append(f"{label}: {record_path} names no GregtecLink jar: {entry!r}")
+        return None
     source = release / deploy.MOD_DIST / name
     try:
         data = read_bytes(source)
     except OSError as exc:
-        refusals.append(f"export: can't read the deployed jar {source}: {exc}")
-        return
+        refusals.append(f"{label}: can't read the deployed jar {source}: {exc}")
+        return None
     if hashlib.sha256(data).hexdigest() != want:
         refusals.append(
-            f"export: {source} doesn't match the SHA256 in {record_path}; deploy again"
+            f"{label}: {source} doesn't match the SHA256 in {record_path}; deploy again"
         )
+        return None
+    assert isinstance(record, dict)
+    return source, str(record.get("commit", "?")), data
+
+
+def plan_install(
+    plan: Plan, gos_app: Path, patterns: Sequence[str], refusals: list[str]
+) -> None:
+    """Set ``plan.install`` (Export's plan), or add a note or a refusal. Reads only."""
+    refused: list[str] = []
+    found = deployed_jar(gos_app, "export", refused)
+    refusals.extend(refused)
+    if found is None:
+        if not refused:
+            plan.notes.append(
+                f"no GregtecLink jar is deployed in {gos_app} (gos deploy builds it), so "
+                "Export's GregtecLink is left as it is"
+            )
         return
+    source, commit, data = found
+    name = source.name
+    for rel in (f"mods/{name}", LINK_CONFIG):
+        if not excluded(rel, patterns):  # the mirror would delete it again
+            refusals.append(f"export: {rel} isn't in [sync.export] exclude")
+            return
     mods = plan.game / "mods"
     jars = sorted(
         (
@@ -354,7 +373,7 @@ def plan_install(
     config_path = plan.game / LINK_CONFIG
     plan.install = Install(
         source=source,
-        commit=str(record.get("commit", "?")),
+        commit=commit,
         data=data,
         jar=None if _same(target, data) else target,
         delete=tuple(p for p in jars if p != target),

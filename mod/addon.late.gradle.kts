@@ -99,10 +99,15 @@ if (providers.gradleProperty("harness").isPresent) {
     // harness then expects "nei": "ok" with part_warnings.nei for it (D188). Add -PharnessNeiLookupFirst to look up an
     // item's recipes, as R does, just before the NEI step: the harness then expects the dump to have built GT's NEI
     // recipe caches again (D188). CI runs these two together, after the integration tests.
+    // Add -PharnessClientLink to turn the client module on as well (WO-8.1): after the export, still in the world, the
+    // harness looks at 4 placed blocks and hovers over 6 items, presses What's this? for each and checks the answers
+    // of the real core that tests/harness/client_link_core.py runs on 127.0.0.1:18765 (start it first; it restarts
+    // the core once when the harness asks, so the reconnect is checked too).
     val clientDir = layout.projectDirectory.dir("run/client")
     val neiFail = providers.gradleProperty("harnessNeiFail").isPresent
     val neiHandlerFail = providers.gradleProperty("harnessNeiHandlerFail").isPresent
     val neiLookupFirst = providers.gradleProperty("harnessNeiLookupFirst").isPresent
+    val clientLink = providers.gradleProperty("harnessClientLink").isPresent
 
     val cleanClientHarness = tasks.register<Delete>("cleanClientHarness") {
         description = "Deletes the client harness's worlds, NEI dump and earlier GregtecLink output from run/client."
@@ -117,7 +122,7 @@ if (providers.gradleProperty("harness").isPresent) {
     val prepareClientHarness = tasks.register<Copy>("prepareClientHarness") {
         description = "Copies harness/config/gregteclink.cfg and the seeded worlds in harness/client/ into run/client."
         dependsOn(cleanClientHarness)
-        from(layout.projectDirectory.dir("harness/config")) {
+        from(layout.projectDirectory.dir(if (clientLink) "harness/config-client-link" else "harness/config")) {
             into("config")
         }
         from(layout.projectDirectory.dir("harness/client"))
@@ -147,6 +152,7 @@ if (providers.gradleProperty("harness").isPresent) {
             if (neiFail) jvmArgs("-Dgregtec.harness.neiFail=true")
             if (neiHandlerFail) jvmArgs("-Dgregtec.harness.neiHandlerFail=true")
             if (neiLookupFirst) jvmArgs("-Dgregtec.harness.neiLookupFirst=true")
+            if (clientLink) jvmArgs("-Dgregtec.harness.clientLink=true")
             // lwjgl3ify writes a .desktop entry under $XDG_DATA_HOME (else ~/.local/share) and refuses to
             // start when neither exists, as on CI runners. Point it inside run/client instead.
             val xdgData = clientDir.dir("xdg-data").asFile

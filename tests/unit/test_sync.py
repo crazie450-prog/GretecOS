@@ -94,6 +94,13 @@ class Env:
         assert snapshot(self.play.parent) == self.play_before
 
 
+def no_link(
+    files: dict[str, tuple[bytes, int] | None],
+) -> dict[str, tuple[bytes, int] | None]:
+    """Without GregtecLink's files, which Lab excludes by default (WO-8.1)."""
+    return {k: v for k, v in files.items() if "gregteclink" not in k}
+
+
 def mirrored(game: Path) -> dict[str, tuple[bytes, int] | None]:
     return {k: v for k, v in snapshot(game).items() if k.split("/")[0] in sync.MIRRORED}
 
@@ -106,8 +113,9 @@ def test_first_sync_copies_and_a_second_changes_nothing(
     out = capsys.readouterr().out
     assert "copy    mods/1.7.10/inner-2.0.jar" in out
 
-    # Lab has no excludes: an exact mirror, mtimes included, and nothing else copied.
-    assert mirrored(env.lab) == mirrored(env.play)
+    # Lab: an exact mirror, mtimes included, and nothing else copied, but for Play's GregtecLink
+    # (Lab gets its own from install_gregteclink.py, WO-8.1).
+    assert mirrored(env.lab) == no_link(mirrored(env.play))
     assert not (env.lab / "options.txt").exists()
     assert not (env.lab / "saves").exists()
     # Export: the same, except its own NEI and GregtecLink files.
@@ -151,9 +159,9 @@ def test_changes_and_deletions_are_mirrored(
 
     assert env.sync("--only", "lab") == 0
     out = capsys.readouterr().out
-    assert "copied 1, updated 2, retimed 1, deleted 2, folders +1 -2, excluded 0" in out
+    assert "copied 1, updated 2, retimed 1, deleted 2, folders +1 -2, excluded 2" in out
     assert "export" not in out
-    assert mirrored(env.lab) == mirrored(env.play)
+    assert mirrored(env.lab) == no_link(mirrored(env.play))
     assert retimed.stat().st_ino == inode  # same bytes: only the mtime was set
     assert env.sync("--only", "lab") == 0
     assert "nothing to do" in capsys.readouterr().out
@@ -187,7 +195,7 @@ def test_excludes_are_never_copied_over_or_deleted(tmp_path: Path) -> None:
     assert lab["config/lab-only/inner.cfg"] == (b"lab only folder", OLD)
     assert lab["config/labdir/keep.cfg"] == (b"kept", OLD)
     assert "config/labdir/other.cfg" not in lab
-    assert lab["config/gregteclink.cfg"] == (b"client config v2", OLD + 10**9)
+    assert "config/gregteclink.cfg" not in lab  # Lab's GregtecLink is its own (WO-8.1)
     env.assert_play_untouched()
 
 
@@ -362,7 +370,7 @@ def test_config_defaults_and_overrides(
     # A custom list adds to the defaults, so Export's NEI exclude can't be dropped by accident.
     assert cfg.sync_exclude == {
         "export": (*config.DEFAULT_SYNC_EXCLUDE["export"], "config/export-only.cfg"),
-        "lab": ("config/test-only*",),
+        "lab": (*config.DEFAULT_SYNC_EXCLUDE["lab"], "config/test-only*"),
     }
 
 
@@ -408,7 +416,7 @@ def test_only_and_the_script(
     with pytest.raises(SystemExit) as done:
         runpy.run_path(str(REPO / "scripts" / "sync_instances.py"), run_name="__main__")
     assert done.value.code == 0
-    assert mirrored(env.lab) == mirrored(env.play)
+    assert mirrored(env.lab) == no_link(mirrored(env.play))
     env.assert_play_untouched()
 
 
@@ -452,8 +460,8 @@ def test_installs_the_deployed_jar_into_export_only(
     assert (env.export / "mods" / LINK).read_bytes() == LINK_DATA
     assert (env.export / "config/gregteclink.cfg").read_bytes() == sync.EXPORT_CONFIG
     assert not list(env.export.rglob(f"*{sync.TMP_SUFFIX}"))
-    # Lab mirrors Play's GregtecLink files and gets nothing from GOS_APP.
-    assert gregteclink_files(env.lab) == gregteclink_files(env.play)
+    # Lab gets neither Play's GregtecLink files nor GOS_APP's (install_gregteclink.py, WO-8.1).
+    assert gregteclink_files(env.lab) == {}
     env.assert_play_untouched()
     assert snapshot(env.app) == app_before  # GOS_APP is only read
 
