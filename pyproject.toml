@@ -19,7 +19,9 @@ dependencies = [
     # Core only: the voice package never reads other processes (D247's audit).
     "psutil>=7.0",
     # WO-3.4, D192: the planner's staged MILP (scipy.optimize.milp on HiGHS; BSD-3-Clause).
-    "scipy>=1.16",
+    # Below 1.17 (D245): 1.17 and 1.18's HiGHS presolve crashes the process (SIGSEGV) on
+    # some of the power designer's LV networks; 1.16's solves them.
+    "scipy>=1.16,<1.17",
     "uvicorn>=0.54.0",
     "websockets>=17.4",
 ]
