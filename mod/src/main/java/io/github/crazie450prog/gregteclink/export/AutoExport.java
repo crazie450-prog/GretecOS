@@ -112,15 +112,25 @@ public final class AutoExport {
         }
     }
 
-    /** Everything in {@code dir} but the marker, then the folder with the marker. */
+    /**
+     * Everything in {@code dir} but the marker, then the folder with the marker. A child that can't be deleted doesn't
+     * stop the others (listing order is the file system's); the first failure is thrown after them.
+     */
     private static void deleteMarkerLast(Path dir, Delete delete) throws IOException {
+        IOException first = null;
         try (DirectoryStream<Path> children = Files.newDirectoryStream(dir)) {
             for (Path c : children) {
-                if (!c.getFileName()
+                if (c.getFileName()
                     .toString()
-                    .equals(MARKER)) delete.apply(c);
+                    .equals(MARKER)) continue;
+                try {
+                    delete.apply(c);
+                } catch (IOException e) {
+                    if (first == null) first = e;
+                }
             }
         }
+        if (first != null) throw first;
         delete.apply(dir);
     }
 }
