@@ -228,7 +228,7 @@ def test_write_makes_the_frontmatter_from_the_path(vault: io.VaultIO) -> None:
     assert text(vault, "base/lines/ln-steel-01.md") == (
         "---\nid: ln-steel-01\nt: line\nupd: 2026-11-06\n---\n" + LINE
     )
-    vault.write("base/power.md", "eut_net: 3120\n")
+    vault.write("base/power.md", "net_eut: 3120\n")
     assert text(vault, "base/power.md").startswith("---\nid: base-power\nt: power\n")
     assert leftovers(vault.root) == []
 

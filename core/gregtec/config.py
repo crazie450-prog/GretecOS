@@ -21,6 +21,8 @@
 | [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
 | [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
+| [startup] voice_with_play | true (voice starts and stops with Play) | supervisor (WO-6.1, D259)   |
+| [startup] watchers_with_play | "lab"; "play" once the Lab checks pass | supervisor (WO-6.1, D259)   |
 | [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] on_credits_out  | "no_ai", the only value (fixed by D48)   | credits flow (WO-2.8, D165) |
@@ -104,6 +106,7 @@ DEFAULT_FINGERPRINT_CONFIGS = (
     "config/GregTech/WorldGeneration.cfg",
 )
 EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+WATCHERS_WITH_PLAY = ("lab", "play")  # [startup] watchers_with_play (D259)
 # The pack and GT versions GOS is pinned to (plan 0.1 principle 4, CLAUDE.md). Repo constants, not
 # gos.toml keys: a GT bump needs the GT pin-bump procedure (docs/runbooks/pack_update.md, D148),
 # which changes code, so it can't be done by editing a config file (WO-1.9).
@@ -176,6 +179,11 @@ class Config:
     extra_allowed_hosts: tuple[str, ...] = ()
     core_at_login: bool = True
     dashboard_window: bool = True  # [startup]: open the Chrome app window (D52, D163)
+    voice_with_play: bool = (
+        True  # [startup]: voice starts and stops with Play (D77, D259)
+    )
+    # [startup]: whose launch starts the watchers and voice: "lab", or "play" too (D259)
+    watchers_with_play: str = "lab"
     monthly_included_usd: float = 100.0
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
@@ -333,6 +341,16 @@ def _bool(table: Mapping[str, Any], key: str, default: bool, where: str) -> bool
     if not isinstance(value, bool):
         raise ConfigError(f"gos.toml: {where} {key} must be true or false")
     return value
+
+
+def _watchers_with_play(startup: Mapping[str, Any], default: str) -> str:
+    value = startup.get("watchers_with_play", default)
+    if value not in WATCHERS_WITH_PLAY:
+        raise ConfigError(
+            "gos.toml: [startup] watchers_with_play must be one of "
+            + ", ".join(WATCHERS_WITH_PLAY)
+        )
+    return str(value)
 
 
 def _table(parent: Mapping[str, Any], key: str, where: str) -> Mapping[str, Any]:
@@ -530,6 +548,16 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 startup, "dashboard_window", defaults.dashboard_window, "[startup]"
             ),
             defaults.dashboard_window,
+        ),
+        "voice_with_play": soft(
+            lambda: _bool(
+                startup, "voice_with_play", defaults.voice_with_play, "[startup]"
+            ),
+            defaults.voice_with_play,
+        ),
+        "watchers_with_play": soft(
+            lambda: _watchers_with_play(startup, defaults.watchers_with_play),
+            defaults.watchers_with_play,
         ),
         "monthly_included_usd": monthly,
         "credit_alerts_pct": alerts,

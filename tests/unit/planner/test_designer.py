@@ -245,7 +245,7 @@ def test_pin_refusals(home: Path) -> None:
 # --- accept, the ledger hook, rename -----------------------------------------------------------
 
 
-def test_accept_writes_the_line_and_runs_the_ledger_stub(home: Path) -> None:
+def test_accept_writes_the_line_and_adds_it_to_the_ledger(home: Path) -> None:
     d = designer.design(home, Request(WIDGET, qty=2, tier_cap="MV"))
     pid = d.ids[0]
     done = designer.accept(home, pid)
@@ -259,8 +259,10 @@ def test_accept_writes_the_line_and_runs_the_ledger_stub(home: Path) -> None:
     assert f"id: {lid}\n" in line
     plan_note = note_ok(home, f"plans/{pid}.md")
     assert "st: accepted\n" in plan_note
-    assert done.ledger["recorded"] is False
-    assert done.ledger["note"] == ledger.PENDING
+    assert done.ledger["recorded"] is True
+    assert done.ledger["note"] == "added to the EU ledger (base/power.md)"
+    power = note_ok(home, "base/power.md")
+    assert f"plan:{pid}\t" in power and "lines: 1\n" in power
     assert done.ledger["draws"] == [
         {
             "tier": e["tier"],
@@ -286,7 +288,11 @@ def test_accept_without_a_vault_is_a_problem(home: Path) -> None:
     (home / "vault").rename(home / "vault-gone")
     done = designer.accept(home, d.ids[1])
     assert done.status == "accepted" and done.line is None
-    assert done.problems == ["no vault: the notes weren't written"]
+    assert done.problems == [
+        "no vault: base/power.md wasn't written",
+        "no vault: the notes weren't written",
+    ]
+    assert done.ledger["recorded"] is True  # the DB record is the ledger
 
 
 def test_rename(home: Path) -> None:
@@ -312,22 +318,20 @@ def test_rename(home: Path) -> None:
             designer.rename(home, pid, bad)
 
 
-def test_ledger_stub_reads_only_the_plan() -> None:
+def test_ledger_entry_reads_only_the_plan() -> None:
     p = {
         "id": "pl-1",
+        "name": "One",
         "metrics": {
             "eu": [{"tier": "MV", "eut_avg": 64.5, "eut_peak": 120, "amps": 2}, {}]
         },
+        "target": {"id": "minecraft:stone@0", "rate_s": 2},
     }
-    u = ledger.ledger_update(p, "accepted")
-    assert u.as_dict() == {
-        "plan": "plan:pl-1",
-        "status": "accepted",
-        "draws": [{"tier": "MV", "eut_avg": 64.5, "eut_peak": 120.0, "amps": 2}],
-        "recorded": False,
-        "note": ledger.PENDING,
-    }
-    assert ledger.ledger_update({"id": "pl-2"}, "accepted").draws == ()
+    e = ledger.entry(p)
+    assert e.draws == (ledger.TierDraw("MV", 64.5, 120.0, 2),)
+    assert e.outputs == (("minecraft:stone@0", 2.0),)
+    assert e.source is None
+    assert ledger.entry({"id": "pl-2"}).draws == ()
 
 
 def test_latest_ignores_bad_files(home: Path) -> None:
@@ -345,7 +349,7 @@ def test_cli_accept_and_rename(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert code == 0 and text == f"{pid}: Widget works\n"
     code, text = tp.run_cli(home, monkeypatch, "--accept", f"plan:{pid}")
     assert code == 0 and f"{pid}: accepted; line note base/lines/" in text
-    assert ledger.PENDING in text
+    assert "EU ledger: added to the EU ledger (base/power.md)" in text
     assert status(home, pid) == "accepted"
     code, text = tp.run_cli(home, monkeypatch, "--accept", pid)
     assert code == 2 and text.startswith("refused: plan ")
