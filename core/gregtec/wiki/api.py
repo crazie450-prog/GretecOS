@@ -150,8 +150,8 @@ class WikiApi:
         """One ``action=query`` GET (format=json, formatversion=2, maxlag added), retried per
         the etiquette. Raises :class:`GateBlocked` or :class:`WikiError`."""
         full = {
-            "action": "query",
             **params,
+            "action": "query",  # read-only: nothing else is ever sent
             "format": "json",
             "formatversion": "2",
             "maxlag": str(self.maxlag),
