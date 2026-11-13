@@ -69,6 +69,7 @@ from claude_agent_sdk import (
 
 from gregtec.agents import deep_config, hooks
 from gregtec.agents.deep_lane import KEEP, TASK_MAX, Handoff
+from gregtec.agents.tools import mcp
 from gregtec.agents.tools.registry import Registry
 from gregtec.llm import keys
 from gregtec.llm.prices import PRICES, Price, Usage, estimate_cost
@@ -906,7 +907,24 @@ class DeepLaneService:
         if result.is_error:
             why = result.result or "; ".join(result.errors or []) or result.subtype
             raise _Fail(f"{result.subtype}: {why}"[:500])
-        self._finish(task, DONE, text=(result.result or "").strip())
+        self._finish(
+            task, DONE, text=self._attributed(task, (result.result or "").strip())
+        )
+
+    def _attributed(self, task: DeepTask, text: str) -> str:
+        """``text`` with the wiki's attribution line when a wiki tool ran in the task (WO-8.3,
+        D291): added by code, so it never depends on the model remembering it."""
+        wiki = {mcp.qualified(n) for n in deep_config.WIKI_TOOLS}
+        if not wiki & set(task.tools):
+            return text
+        cache = self.registry.env.wiki
+        try:
+            lic = cache.licence() if cache is not None else None
+        except Exception:  # an answer never fails on its attribution
+            log.exception("wiki attribution not read")
+            lic = None
+        line = lic.attribution() if lic is not None else "Wiki text: GTNH wiki."
+        return text if line in text else f"{text}\n\n{line}".strip()
 
     def _record(
         self,
