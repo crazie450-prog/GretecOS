@@ -564,8 +564,8 @@ def test_the_eval_runs_and_reports(
         assert r.error is None, r.error
         assert r.ok, {k: v for k, v in r.checks.items() if not v[0]}
         assert set(r.checks) == {
-            "options", "order", "tool order", "weights", "numbers", "effort", "closed",
-            "explain", "plan_explain", "view",
+            "options", "distinct", "order", "tool order", "weights", "numbers", "effort",
+            "closed", "explain", "plan_explain", "view",
         }  # fmt: skip
     text = powereval.report(results, "the fixture")
     assert text.startswith("# WO-4.6 power modes")
@@ -577,6 +577,38 @@ def test_the_eval_runs_and_reports(
         assert conn.execute("SELECT COUNT(*) FROM plan").fetchone()[0] == 0
     finally:
         conn.close()  # fmt: skip
+
+
+def test_the_eval_flags_the_same_line_twice_and_effort_not_counted() -> None:
+    """Review M2 and L1: two options that read the same fail ``distinct``; options with
+    effort 0 h and parts not counted are listed for the report."""
+
+    def opt(pos: int, label: str, net: float, eff: float, uncounted: int) -> Any:  # noqa: ANN401
+        return {
+            "id": f"pw-{pos}",
+            "rank": {"position": pos},
+            "power": {
+                "generator": {"label": label},
+                "fuel": {"id": "fluid:x"},
+                "net_eut": net,
+                "chain_eut": 1.0,
+            },
+            "metrics": {
+                "upkeep": 2.0,
+                "eff_h": eff,
+                "effort": {"uncounted": uncounted},
+            },
+            "nodes": [{"recipe": "r:a"}],
+        }
+
+    a, b, c = opt(1, "G", 10.0, 0, 3), opt(2, "G", 10.0, 0, 3), opt(3, "H", 9.0, 2.5, 1)
+    ok, why = powereval._distinct([a, b, c])
+    assert not ok and "options 1 and 2" in why
+    assert powereval._distinct([a, c])[0]
+    assert powereval.uncounted_effort([a, b, c]) == [
+        "option 1 (3 not counted)",
+        "option 2 (3 not counted)",
+    ]
 
 
 def test_the_eval_command(

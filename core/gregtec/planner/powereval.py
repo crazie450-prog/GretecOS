@@ -9,6 +9,8 @@ weights are the balanced defaults, D67), through the path the deep lane takes: t
 checked by code:
 
 - ``options``: 2-3 options (D11);
+- ``distinct``: no two options are the same line as Clayton reads it (generator, fuel, net and
+  chain EU/t, upkeep and the chain's recipes all equal; review M2);
 - ``order``: rank positions 1..n, in the order the mode's own metric gives (``best`` and
   ``self_sustaining`` by score, ``max_output`` by net EU/t, ``output_per_effort`` by net EU/t per
   effort hour after D235/D236's grouping), and the tool's rows in that order;
@@ -23,8 +25,9 @@ checked by code:
   explains code's order and never changes it;
 - ``view``: the Power view's payload lists the same options in the same order.
 
-The report (Markdown, ``--report``) lists every case with its options, weights and checks, for
-Clayton's review (his review is a PC step). Exit 0 when every case passes, 1 otherwise.
+The report (Markdown, ``--report``) lists every case with its options, weights and checks, and
+flags options whose effort is 0 h with parts not counted (the effort term can't separate them;
+the numbers are WO-4.3's), for Clayton's review (his review is a PC step). Exit 0 when every case passes, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -190,6 +193,40 @@ def _numbers_ok(plans: Sequence[dict[str, Any]]) -> tuple[bool, str]:
     return (not bad, "; ".join(bad[:4]) or "net > 0 = gross - chain; cited")
 
 
+def _distinct(plans: Sequence[dict[str, Any]]) -> tuple[bool, str]:
+    def sig(p: dict[str, Any]) -> tuple[Any, ...]:
+        pw = p["power"]
+        return (
+            pw["generator"]["label"],
+            pw["fuel"]["id"],
+            round(float(pw["net_eut"]), 6),
+            round(float(pw["chain_eut"]), 6),
+            p["metrics"].get("upkeep"),
+            tuple(sorted(str(n.get("recipe")) for n in p["nodes"])),
+        )
+
+    seen: dict[tuple[Any, ...], int] = {}
+    same: list[str] = []
+    for i, p in enumerate(plans, 1):
+        j = seen.setdefault(sig(p), i)
+        if j != i:
+            same.append(f"options {j} and {i}")
+    if same:
+        return False, "the same line twice: " + ", ".join(same)
+    return True, "no two options the same line"
+
+
+def uncounted_effort(plans: Sequence[dict[str, Any]]) -> list[str]:
+    """Options whose effort is 0 h with parts not counted (review L1)."""
+    out = []
+    for p in plans:
+        m = p["metrics"]
+        n = int((m.get("effort") or {}).get("uncounted") or 0)
+        if m.get("eff_h") is not None and float(m["eff_h"]) == 0 and n > 0:
+            out.append(f"option {p['rank']['position']} ({n} not counted)")
+    return out
+
+
 def run_case(case: Case, home: Path) -> CaseResult:
     from gregtec.agents.tools.catalog import build_registry
     from gregtec.agents.tools.registry import DEEP
@@ -217,6 +254,7 @@ def run_case(case: Case, home: Path) -> CaseResult:
         res.rejected = len(saved.get("rejected") or ())
         n = len(plans)
         res.checks["options"] = (2 <= n <= 3, f"{n} options")
+        res.checks["distinct"] = _distinct(plans)
         res.checks["order"] = _order_ok(plans, case.mode)
         listed = _in_text_order(tool_text, [f"plan:{p['id']}" for p in plans])
         res.checks["tool order"] = (listed, "design_power's rows in rank order")
@@ -378,6 +416,15 @@ def report(results: Sequence[CaseResult], source: str) -> str:
             f"- {name}: {'pass' if ok else 'FAIL'} ({detail})"
             for name, (ok, detail) in r.checks.items()
         ]
+        zero = uncounted_effort(r.plans)
+        if zero:
+            lines += [
+                "",
+                "Effort 0 h with parts not counted: "
+                + "; ".join(zero)
+                + ". The effort "
+                "term can't tell these options apart (WO-4.3's effort numbers).",
+            ]
         warn = [w for p in r.plans for w in p.get("warnings") or ()]
         if warn:
             lines += ["", "Warnings: " + "; ".join(dict.fromkeys(warn))[:600]]

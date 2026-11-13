@@ -1324,6 +1324,7 @@ def design(
             for flow in flows:
                 options.append(Option(gen, chain, 1.0, flow, net))
     built: list[dict[str, Any]] = []
+    sigs: dict[str, tuple[Any, ...]] = {}
     # The effort model reads the request's tier, boundary and constraints, not its target.
     boundary = tuple(k for k in free if is_stable_key(k))
     measure = (
@@ -1417,8 +1418,16 @@ def design(
             continue
         p["metrics"] = _metrics(conn, p, opt.chain.graph, measure, table, free)
         built.append(p)
-    # The same line can come from two candidates (one chain, one generator): keep it once.
-    unique = list({p["id"]: p for p in built}.values())
+        sigs[p["id"]] = signature(opt)
+    # The same line can come from two candidates (one chain, one generator), and two routes
+    # can differ only in a choice that runs at zero flow (a different plan id, the same
+    # machines and numbers): keep each line once (review M2).
+    unique = distinct(built, sigs)
+    if len(unique) < len({p["id"] for p in built}):
+        notes.append(
+            f"{len({p['id'] for p in built}) - len(unique)} duplicate line(s) left out: the "
+            "same generator, fuel and recipes at the same rates as a line kept"
+        )
     ranked = rank.order_power(unique, req.mode, prefs)
     top = ranked[: req.options]
     ids = [p["id"] for p in top]
@@ -1441,6 +1450,32 @@ def design(
         rank.describe_power(prefs, req.mode),
         tuple(dict.fromkeys(notes)),
     )
+
+
+def signature(opt: Option) -> tuple[Any, ...]:
+    """What makes two options the same line to Clayton: the generator, its fuel, the build
+    units, and every recipe that runs with its rate (rounded; zero-flow choices left out)."""
+    return (
+        opt.gen.id,
+        opt.gen.fuel,
+        round(opt.units, 9),
+        tuple(sorted((pid, round(x, 9)) for pid, x in opt.flow.crafts if x > 1e-12)),
+    )
+
+
+def distinct(
+    plans: Sequence[dict[str, Any]], sigs: Mapping[str, tuple[Any, ...]]
+) -> list[dict[str, Any]]:
+    """``plans`` with each line once: by plan id (the last one solved under an id, as WO-4.2
+    kept it), then by :func:`signature` (the first kept)."""
+    seen: set[tuple[Any, ...]] = set()
+    out: list[dict[str, Any]] = []
+    for p in {p["id"]: p for p in plans}.values():
+        sig = sigs.get(p["id"], (p["id"],))
+        if sig not in seen:
+            seen.add(sig)
+            out.append(p)
+    return out
 
 
 def _why(
