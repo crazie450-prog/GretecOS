@@ -871,9 +871,21 @@ function St:load_breeder(o, j)
     self:say(("step %d: the Crop Breeder has %d mB of enriched fertilizer; a run takes %d"):format(j, level, s.fert), "warn")
     return
   end
-  local wok, werr = self:work(self.breeder, false) -- no recipe check on a half-loaded set
-  if not wok then
-    self:say("Crop Breeder: " .. werr, "warn")
+  -- Paused before anything goes in, so no recipe check sees a half-loaded set (a smaller recipe
+  -- of the same parents would start). The switch takes a tick: pause now, load on the next step
+  -- once the breeder reads back paused.
+  local aok, allowed = self.call(self.breeder, "isWorkAllowed")
+  if not aok then
+    self:say("Crop Breeder: isWorkAllowed: " .. tostring(allowed), "warn")
+    return
+  end
+  if allowed ~= false then
+    local wok, werr = self:work(self.breeder, false)
+    if not wok then
+      self:say("Crop Breeder: " .. werr, "warn")
+    end
+    self.doing = ("step %d: pausing the Crop Breeder to load it"):format(j)
+    self.next_at = self.now() + 0.5
     return
   end
   local slot, short = bin.first, nil
@@ -976,15 +988,19 @@ function St:wind_down(o, busy)
     self.doing = "waiting for the Crop Breeder's run to end"
     return
   end
-  local idle = self:busy(self.breeder)
+  -- Work first, then the look: a machine idle before the look (and paused) can't put anything
+  -- in its output after it, so an empty output seen after an idle reading stays empty.
+  local idle = { self:busy(self.breeder) }
+  for i, c in ipairs(self.copiers) do
+    idle[i + 1] = self.allowed[c.addr] ~= nil and self:busy(c.addr) or false
+  end
   local again = self:observe()
-  if not again or again.br[again.br.at.out] or idle ~= false then
+  if not again or again.br[again.br.at.out] or idle[1] ~= false then
     self.doing = "collecting the station's items"
     return
   end
   for i, g in ipairs(again.gens) do
-    local c = self.copiers[i]
-    if g[g.at.out] or (self.allowed[c.addr] ~= nil and self:busy(c.addr) ~= false) then
+    if g[g.at.out] or idle[i + 1] ~= false then
       self.doing = "collecting the Seed Generators' last copies"
       return
     end
@@ -1093,7 +1109,7 @@ function St:doc()
       n = n + 1
     end
   end
-  d.stock = stock
+  d.stock = self.json.object(stock)
   if self.parked then
     d.copiers = self.parked
   end
