@@ -219,6 +219,46 @@ def _distinct(plans: Sequence[dict[str, Any]]) -> tuple[bool, str]:
     return True, "no two options the same line"
 
 
+def _recipes(p: dict[str, Any]) -> set[str]:
+    return {
+        str(n["recipe"])
+        for n in p["nodes"]
+        if n.get("kind") == "recipe" and str(n.get("recipe") or "").startswith("r:")
+    }
+
+
+def differences(plans: Sequence[dict[str, Any]], fuels: dict[str, str]) -> list[str]:
+    """How each option after the first differs from option 1, as the Power view says it
+    (:func:`.powerview.differs`), with the recipes it adds and drops by id."""
+    from gregtec.planner import powerview
+
+    def shaped(p: dict[str, Any]) -> dict[str, Any]:
+        pw = p["power"]
+        key = str(pw["fuel"]["id"])
+        return {
+            "id": p["id"],
+            "generator": {"label": pw["generator"]["label"]},
+            "fuel": {"id": key, "name": fuels.get(key, key)},
+            "nodes": p["nodes"],
+        }
+
+    if not plans:
+        return []
+    first = shaped(plans[0])
+    out = []
+    for p in plans[1:]:
+        line = "; ".join(powerview.differs(first, shaped(p)))
+        added = sorted(_recipes(p) - _recipes(plans[0]))
+        dropped = sorted(_recipes(plans[0]) - _recipes(p))
+        if added:
+            line += f" (uses {', '.join(added[:4])}{' ...' if len(added) > 4 else ''}"
+            line += (
+                f"; not {', '.join(dropped[:4])}{' ...' if len(dropped) > 4 else ''})"
+            )
+        out.append(f"option {p['rank']['position']}: {line}")
+    return out
+
+
 def uncounted_effort(plans: Sequence[dict[str, Any]]) -> list[str]:
     """Options whose effort is 0 h with parts not counted (review L1)."""
     out = []
@@ -425,6 +465,12 @@ def report(results: Sequence[CaseResult], source: str) -> str:
             f"- {name}: {'pass' if ok else 'FAIL'} ({detail})"
             for name, (ok, detail) in r.checks.items()
         ]
+        diff = differences(r.plans, r.fuels)
+        if diff:
+            lines += [
+                "",
+                "How each option differs from option 1: " + "; ".join(diff) + ".",
+            ]
         zero = uncounted_effort(r.plans)
         if zero:
             lines += [

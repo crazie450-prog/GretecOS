@@ -589,6 +589,7 @@ def test_the_eval_runs_and_reports(
     text = powereval.report(results, "the fixture")
     assert text.startswith("# WO-4.6 power modes")
     assert "| mv-best | best | MV |" in text and "Checks:" in text
+    assert "How each option differs from option 1: option 2: " in text
     assert "PASS\tmv-best" in out.getvalue()
     # The source DB was copied, never written.
     conn = access.connect(db, readonly=True)
