@@ -32,6 +32,7 @@ from gregtec import (
 from gregtec import deploy as app_deploy
 from gregtec.agents import design_cost_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
+from gregtec.crops import cli as cropcli
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
 from gregtec.db import ores as ore_db
@@ -241,6 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
+    cropcli.add_parsers(crop_cmds)
 
     quests = commands.add_parser(
         "quests", help="the quest book, progress, frontier and tier (BetterQuesting)"
@@ -687,6 +689,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return export_collect.main(args.config, sys.stdout)
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
+    if args.command == "crops" and args.crops_command in cropcli.COMMANDS:
+        # Pack names and requirement texts: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        return cropcli.run(args, sys.stdout)
     if args.command == "crops" and args.crops_command == "show":
         # Pack names, as for quests: escape what a cp1252 pipe can't, never crash.
         if isinstance(sys.stdout, io.TextIOWrapper):
