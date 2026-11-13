@@ -8,7 +8,9 @@ saw (WO-6.2, D261; :mod:`gregtec.base.seen`), the EU ledger's ``ledger_line`` (W
 one entry per accepted plan, its status the ``plan`` row's; :mod:`gregtec.planner.ledger` writes
 it, also creating it on a DB this module hasn't opened), and the event store: Appendix D's ``event``
 and ``session`` with the columns WO-6.3 adds (D263; :mod:`gregtec.events.store`), and ``age_mark``,
-when each voltage age was first seen and its recap (D162, D265; :mod:`gregtec.events.ages`).
+when each voltage age was first seen and its recap (D162, D265; :mod:`gregtec.events.ages`), and
+``remote_job``, the durable queue of design jobs asked from off the PC (WO-9.1, D295;
+:mod:`gregtec.remote.jobs`).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -64,6 +66,11 @@ CREATE INDEX IF NOT EXISTS ix_event_ts ON event(ts);
 CREATE INDEX IF NOT EXISTS ix_event_kind ON event(kind, ts);
 CREATE TABLE IF NOT EXISTS age_mark(age INT PRIMARY KEY, stage TEXT NOT NULL, start_ts INT NOT NULL,
   end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT, journaled INT, provisional INT);
+CREATE TABLE IF NOT EXISTS remote_job(id TEXT PRIMARY KEY, client TEXT NOT NULL, key TEXT NOT NULL,
+  kind TEXT NOT NULL, spec TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('queued','running','done','failed')), created INT NOT NULL,
+  started INT, finished INT, attempts INT NOT NULL DEFAULT 0, result TEXT, error TEXT, delivered INT,
+  UNIQUE(client, key));
 """
 # Indexes on columns ADDED_COLUMNS may have just added (a DB whose table predates them).
 POST_SCHEMA = """

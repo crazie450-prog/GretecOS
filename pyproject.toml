@@ -51,6 +51,10 @@ dev = [
 # (`uv sync --no-dev`) and CI get it; it stays light: its own extra dependencies are
 # Windows-only (sounddevice, pynput). Heavy engines (STT, TTS, wake word) get groups of their own.
 voice = ["gregtec-voice"]
+# WO-9.1, D296: the Discord bot (gregtec.discordbot, run by the supervisor from GOS_APP, D77).
+# discord.py is MIT; it brings aiohttp (Apache-2.0). A default group, so GOS_APP and CI get it;
+# only the bot's adapter imports it, so the core never loads it.
+discord = ["discord.py>=2.6.4"]
 # WO-5.2, D182: speech-to-text engines (faster-whisper on CTranslate2, Parakeet through
 # onnx-asr), both MIT; models download at runtime to GOS_HOME/models. Not a default group (CI
 # and dev clones stay light); gos deploy adds it, so GOS_APP has them.
@@ -66,7 +70,7 @@ wake = ["sherpa-onnx>=2.0.1", "sentencepiece>=0.2.1"]
 tts = ["kokoro-onnx>=0.6.1"]
 
 [tool.uv]
-default-groups = ["dev", "voice"]
+default-groups = ["dev", "voice", "discord"]
 
 [tool.uv.workspace]
 members = ["voice"]
