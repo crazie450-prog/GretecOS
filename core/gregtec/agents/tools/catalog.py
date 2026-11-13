@@ -19,6 +19,7 @@ from gregtec.agents.tools import (
     ops,
     ores,
     plans,
+    power,
     quests,
     recipes,
     sql,
@@ -232,10 +233,12 @@ TOOLS = (
     ),
     Tool(
         "plan_explain",
-        "The checked explanation of a saved plan's design (plan 7.1 step 11, D199): the "
-        "planner model writes it from the routes' metrics only, GOS's numeric validator checks "
-        "every number (one retry), else GOS's template is used. Returns the text and its "
-        "source (model, model-retry or template). Say it as it is: it keeps code's rank order.",
+        "The checked explanation of a saved plan's design (plan 7.1 step 11, D199), a "
+        "production design (pl-...) or a power design (pw-..., design_power): the planner "
+        "model writes it from the metrics only, GOS's numeric validator checks every number "
+        "(and, for power, that the options keep code's order; one retry), else GOS's template "
+        "is used. Returns the text and its source (model, model-retry or template). Say it as "
+        "it is: it keeps code's rank order.",
         designer.PLAN_EXPLAIN_SCHEMA,
         designer.plan_explain,
         lanes=frozenset({DEEP}),
@@ -282,6 +285,34 @@ TOOLS = (
         f"fresh. Every number is an accepted plan's; cite it by its plan: ids. {CITE}",
         ledger.LEDGER_GET_SCHEMA,
         ledger.ledger_get,
+    ),
+    Tool(
+        "design_power",
+        "Design power lines (WO-4.6, plan 7.2): one of four objective modes (best, "
+        "max_output, output_per_effort, self_sustaining), the tier cap, max_output's scale "
+        "bound, generator kinds or fuels to consider. GOS sizes every generator and fuel "
+        "chain, proves self-sustaining lines closed, and ranks 2-3 options by code with the "
+        "weights printed, then saves each as a plan (plan:<id>). Returns one row per option in "
+        "rank order: net EU/t (gross minus its chain's use), score, effort, upkeep, closed. "
+        f"Keep the order; explain, never reorder. {CITE}",
+        power.DESIGN_POWER_SCHEMA,
+        power.design_power,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        # No deadline_s: with needs_db=False the registry's interrupt guard isn't attached,
+        # and HiGHS isn't interruptible by it; the solver's TIME_LIMIT_S per MILP is the bound.
+        needs_db=False,
+        gate=power.GATE,
+    ),
+    Tool(
+        "effort_estimate",
+        "A saved plan's effort breakdown (plan 7.2 effort model, D17): one row per recipe "
+        "(part, recipe map, the machine it runs on, the recipe, crafts, machines, hours) with "
+        "build, unlock and not-counted totals in the head. Effort is crafting and processing "
+        f"time plus unlocking machines he doesn't own. {CITE}",
+        power.EFFORT_ESTIMATE_SCHEMA,
+        power.effort_estimate,
+        needs_db=False,
     ),
     HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
     Tool(
@@ -384,10 +415,8 @@ LATER: dict[str, str] = {
     # POST /api/plans/{id}/status; D251, D238): no model moves a plan or writes the ledger.
     "plan_set_status": "WO-4.4 made lifecycle moves Clayton's (gos plan --status, the "
     "dashboard): not an agent tool (D238)",
-    "effort_estimate": "WO-4.2 (power designer; plan_get's summary has a plan's effort)",
     "layout_estimate": "WO-10.5 (corridor-aware layout; plan_export footprint has the "
     "bounding-box one)",
-    "design_power": "WO-4.2 (power objective modes)",
     "ledger_update": "WO-4.4: the ledger follows Clayton's accepts and lifecycle moves; "
     "not an agent tool (D238)",
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
@@ -395,7 +424,9 @@ LATER: dict[str, str] = {
     "persona_set": "WO-5.6 follow-up, not yet a plan 8 row (switching is the router's "
     "instant command and POST /api/persona; the model tool waits for the persona subagent, "
     "D208)",
-    "screen_snapshot": "WO-8.2 (screen reading)",
+    # never a model tool (D288): a frame comes only from Clayton's screen key, POST /api/screen
+    "screen_snapshot": "WO-8.2 keeps it out: a model-callable capture would capture without "
+    "the screen key (D288)",
     **dict.fromkeys(("wiki_search", "wiki_fetch"), "WO-8.3 (wiki cache)"),
     "notify": "WO-9.2 (alert routing)",
     "schematic_export": "WO-10.4 (schematic I/O)",

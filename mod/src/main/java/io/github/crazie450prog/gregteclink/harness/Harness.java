@@ -218,6 +218,11 @@ public final class Harness {
         }
     }
 
+    /** The client harness's checks, which {@link ClientLinkHarness} adds to before the result is written. */
+    static List<JsonObject> clientChecks() {
+        return clientChecks;
+    }
+
     /** True from the client harness's server start until {@link #onClientShutdown}. */
     public static boolean clientRunActive() {
         return clientActive;

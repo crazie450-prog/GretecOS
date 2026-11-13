@@ -18,6 +18,10 @@ clients, same-origin GETs) pass this check and still need a credential.
   the agent's config inside a world save gos-dev can read (D214), so it opens
   ``POST /oc/telemetry`` and nothing else (:meth:`Auth.oc_binding`; :meth:`Auth.bearer` never
   accepts it). Its instance is the binding the bridge vouches for (D217).
+- GregtecLink's client module (WO-8.1, D285) has ``gregteclink-play`` or ``gregteclink-lab``,
+  written by ``install_gregteclink.py`` to a file in Clayton's GOS_HOME that gos-dev can't read.
+  It is not a client either: it opens the ``/mod/ws`` WebSocket only
+  (:meth:`Auth.link_binding`), and its instance is that link's binding.
 - ``device``: a paired browser's ``gos_device`` cookie (HttpOnly, SameSite=Strict, ``Secure`` on
   the tailnet name). The value is ``<device id>.<secret>``; the DB keeps the secret's SHA-256.
 
@@ -61,6 +65,8 @@ LAST_SEEN_EVERY_S = 60
 CLIENT_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # An OC computer's token name: its instance, then an optional label (WO-7.1, D221).
 OC_TOKEN = re.compile(r"^oc-(play|lab)(-[a-z0-9]+)*$")
+# GregtecLink's client module in Play or Lab (WO-8.1, D285).
+LINK_TOKEN = re.compile(r"^gregteclink-(play|lab)$")
 _DEVICE_ID = re.compile(r"^[0-9a-f]{16}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -204,7 +210,8 @@ class Auth:
         if not rows:
             return None
         name, last_used = rows[0]["name"], rows[0]["last_used"]
-        if is_oc_name(name):  # an OC token opens /oc/telemetry only (D214, D221)
+        # An OC token opens /oc/telemetry only (D214, D221), GregtecLink's /mod/ws only (D285).
+        if is_oc_name(name) or is_link_name(name):
             return None
         now = int(time.time())
         if last_used is None or now - last_used >= LAST_SEEN_EVERY_S:
@@ -247,15 +254,26 @@ class Auth:
 
         Every live OC token's hash is compared, in constant time and without stopping at a
         match, so neither the answer nor the time it takes says which one nearly matched."""
+        return self._bound(token, "oc-%", OC_TOKEN)
+
+    def link_binding(self, token: str) -> tuple[str, str] | None:
+        """(instance, token name) of the GregtecLink client ``token`` belongs to, or None;
+        checked as :meth:`oc_binding` checks an OC token (D285)."""
+        return self._bound(token, "gregteclink-%", LINK_TOKEN)
+
+    def _bound(
+        self, token: str, like: str, pattern: re.Pattern[str]
+    ) -> tuple[str, str] | None:
         given = sha256(token).encode()
         rows = self.store.rows(
             "SELECT name, token_sha256, last_used FROM client_token WHERE revoked = 0 "
-            "AND name LIKE 'oc-%'"
+            "AND name LIKE ?",
+            (like,),
         )
         found = None
         for row in rows:
             same = hmac.compare_digest(given, str(row["token_sha256"]).encode())
-            if same and found is None and OC_TOKEN.match(row["name"]):
+            if same and found is None and pattern.match(row["name"]):
                 found = row
         if found is None:
             return None
@@ -265,7 +283,7 @@ class Auth:
                 "UPDATE client_token SET last_used = ? WHERE name = ?",
                 (now, found["name"]),
             )
-        m = OC_TOKEN.match(found["name"])
+        m = pattern.match(found["name"])
         assert m is not None
         return m[1], found["name"]
 
@@ -281,6 +299,10 @@ class Auth:
             raise ValueError(
                 "an OC computer's token is named oc-play or oc-lab, optionally with a label "
                 "(oc-lab-crops)"
+            )
+        if is_link_name(name) and not LINK_TOKEN.match(name):
+            raise ValueError(
+                "GregtecLink's token is named gregteclink-play or gregteclink-lab"
             )
         token = secrets.token_urlsafe(32)
         with self.store.transaction() as conn:
@@ -358,6 +380,11 @@ class Auth:
 def is_oc_name(name: str) -> bool:
     """Whether ``name`` is (or looks like) an OC computer's token name."""
     return name == "oc" or name.startswith("oc-")
+
+
+def is_link_name(name: str) -> bool:
+    """Whether ``name`` is (or looks like) GregtecLink's token name (D285)."""
+    return name == "gregteclink" or name.startswith("gregteclink-")
 
 
 # --- pairing ------------------------------------------------------------------------------------
