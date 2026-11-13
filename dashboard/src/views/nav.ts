@@ -28,13 +28,13 @@ export const VIEWS: readonly View[] = [
   { id: "chat", label: "Chat", key: "2", later: null, board: false },
   { id: "search", label: "Search", key: "3", later: null, board: false },
   { id: "designer", label: "Designer", key: "4", later: null, board: true }, // built to the system (D158 (5))
-  { id: "power", label: "Power", key: "5", later: "WO-4.6", board: true },
+  { id: "power", label: "Power", key: "5", later: null, board: true }, // WO-4.6: built without the handoff (D158)
   { id: "quests", label: "Quests", key: "6", later: null, board: true }, // WO-6.4: built without the handoff (D158)
   { id: "crops", label: "Crops", key: "7", later: null, board: true }, // WO-6.7: built without the handoff (D158)
   { id: "costs", label: "Costs", key: "8", later: null, board: false },
   { id: "settings", label: "Settings", key: "9", later: null, board: true },
   { id: "base", label: "Base", key: null, later: null, board: false }, // My base (WO-3.8); stalled machines WO-7.4
-  { id: "activity", label: "Activity", key: null, later: "WO-6.3", board: false },
+  { id: "activity", label: "Activity", key: null, later: null, board: false }, // WO-6.3: needs Clayton's board approval
   { id: "ores", label: "Ores", key: null, later: null, board: false }, // WO-6.6: needs Clayton's board approval
   { id: "build", label: "Build", key: null, later: "Phase 10", board: false },
 ];

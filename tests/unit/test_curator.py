@@ -876,8 +876,17 @@ def test_n_keys_are_the_curators_counts_only(vault: Path) -> None:
     types = schema.load_types(vault / "_gos" / "schema.md")
     daily = "---\nid: log-2026-10-26\nt: log\nupd: 2026-10-26\n---\nn_items: 5\n"
     assert schema.check_text("log/2026-10-26.md", daily, types) == [
-        "key n_items: n_ keys are the curator's counts, in log/wk/ and log/mo/ only"
+        (
+            "key n_items: n_ keys are the curator's counts, in log/wk/ and log/mo/ only "
+            "(and the session scribe's n_<kind> counts in daily logs)"
+        )
     ]
+    # D263: the session scribe's count of a kind it journals is a daily log's only n_ key
+    scribe = daily.replace("n_items: 5", "n_quest: 5")
+    assert schema.check_text("log/2026-10-26.md", scribe, types) == []
+    assert schema.check_text(
+        "log/2026-10-26.md", scribe.replace(": 5", ": five"), types
+    )
     for rel, id_ in (("log/wk/2026-W44.md", "W44"), ("log/mo/2026-10.md", "10")):
         note = f"---\nid: log-2026-{id_}\nt: log\nupd: 2026-11-06\n---\nn_death: 2\n"
         assert schema.check_text(rel, note, types) == []

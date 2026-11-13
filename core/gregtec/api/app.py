@@ -25,9 +25,11 @@
 | GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
 | GET/POST /api/persona          | see ``persona_routes``  | the persona and switching (WO-5.6)    |
 | /api/plans..., /api/designer...| see ``plan_routes``     | saved plans and the Designer (WO-3.6/3.7)|
+| GET/POST /api/power...         | see ``power_routes``    | the Power view, accepting a line (WO-4.6)|
 | GET  /api/quests?spoil=        | see ``quests.view``     | the Quests view's payload (WO-6.4)    |
 | GET/POST /api/ores...          | see ``ores.view``       | the Ores view, a vein's waypoint (WO-6.6)|
 | GET/POST/DELETE /api/crops... | see ``crops.view``      | the Crops view, his crops, the target (WO-6.7)|
+| POST /api/screen               | admin, the voice client | one frame, read (``screen.routes``, WO-8.2)|
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
@@ -35,6 +37,7 @@
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 | /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
+| GET  /api/activity[/recap]     | see ``gregtec.events.routes`` | sessions, timeline, recap (WO-6.3)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -86,7 +89,14 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.agents.personas import Personas
-from gregtec.api import ai_routes, dashboard, persona_routes, plan_routes, setup_routes
+from gregtec.api import (
+    ai_routes,
+    dashboard,
+    persona_routes,
+    plan_routes,
+    power_routes,
+    setup_routes,
+)
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -104,10 +114,17 @@ from gregtec.bridge.ingest import Bridge
 from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
 from gregtec.crops import view as crop_view
+from gregtec.events import routes as event_routes
+from gregtec.events.service import TICK_S as EVENTS_TICK_S
+from gregtec.events.service import EventService
+from gregtec.gamelink import link as gamelink
+from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
 from gregtec.quests import view as quest_view
+from gregtec.screen import routes as screen_routes
+from gregtec.screen.reader import ScreenReader
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
 from gregtec.vault.scheduler import STOP_DEADLINE_S, TICK_S, Maintenance
@@ -202,7 +219,10 @@ class Core:
     # The OC bridge's ingest, shared by M1 (WO-7.3) and /oc/telemetry (WO-7.1).
     oc: Bridge | None = None
     ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
+    gamelink: GameLink | None = None  # GregtecLink's client link (WO-8.1)
+    screen: ScreenReader | None = None  # screen reading (WO-8.2)
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
+    events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
 
     # --- pushing to WebSocket clients
 
@@ -442,6 +462,8 @@ def create_app(core: Core) -> FastAPI:
         tasks = [asyncio.create_task(_watch(core))]
         if core.maintenance is not None:
             tasks.append(asyncio.create_task(_maintain(core.maintenance)))
+        if core.events is not None:
+            tasks.append(asyncio.create_task(_events(core)))
         try:
             yield
         finally:
@@ -785,11 +807,15 @@ def create_app(core: Core) -> FastAPI:
     base_routes.add_routes(app, core, principal, trusted, _json_body)
     persona_routes.add_routes(app, core, principal, _json_body)
     plan_routes.add_routes(app, core, principal, trusted, _json_body)
+    power_routes.add_routes(app, core, principal, trusted, _json_body)
     quest_view.add_routes(app, core, principal)
     ore_view.add_routes(app, core, principal, _json_body)
     crop_view.add_routes(app, core, principal, trusted, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
+    gamelink.add_routes(app, core, principal)
+    screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
+    event_routes.add_routes(app, core, principal)
     return app
 
 
@@ -891,6 +917,10 @@ async def _watch(core: Core) -> None:
             ):  # action expiry and timeouts, stale telemetry (WO-7.1)
                 await asyncio.to_thread(core.ops.tick)
             health = await asyncio.to_thread(core.health)
+            if core.gamelink is not None:  # failures as in-game notices (D76, WO-8.1)
+                core.gamelink.health_changed(health)
+            if core.screen is not None:  # frames older than 24 h go (plan 7.7, WO-8.2)
+                await asyncio.to_thread(core.screen.cache.tick)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:
                 core.broadcast({"type": "health", "data": health})
@@ -900,6 +930,20 @@ async def _watch(core: Core) -> None:
         except Exception:  # the watcher must keep running
             log.exception("health refresh failed")
         await asyncio.sleep(POLL_S)
+
+
+async def _events(core: Core) -> None:
+    """Every 10 s: idle sessions closed, the tier's age noted, the session scribe's journal
+    (WO-6.3, :mod:`gregtec.events.service`), in a thread."""
+    while True:
+        service = core.events
+        if service is None:
+            return
+        try:
+            await asyncio.to_thread(service.tick, *event_routes.stage_of(core))
+        except Exception:  # the loop must keep running
+            log.exception("events tick failed")
+        await asyncio.sleep(EVENTS_TICK_S)
 
 
 async def _maintain(maintenance: Maintenance) -> None:

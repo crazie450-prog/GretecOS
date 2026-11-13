@@ -1157,6 +1157,112 @@ tr.depleted td {
   overflow-wrap: anywhere;
 }
 
+/* Activity (WO-6.3): a session, its timeline, the sessions, the journal and the finished ages. */
+.activity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.activity-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.activity-timeline,
+.activity-sessions,
+.activity-journal {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.activity-timeline li {
+  display: grid;
+  grid-template-columns: 6ch 16ch minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  color: var(--text);
+}
+
+.activity-time {
+  color: var(--text-2);
+}
+
+.activity-kind {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.activity-what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-sessions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.activity-sessions li.active .gos-btn {
+  border-color: var(--accent);
+}
+
+.activity-journal li {
+  font-family: var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.activity-recap + .activity-recap {
+  margin-top: var(--space-4);
+}
+
+.recap-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14ch, 1fr));
+  gap: var(--space-3) var(--space-6);
+  margin: var(--space-3) 0 0;
+}
+
+.recap-figures dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.recap-figures dd.num {
+  font-size: 1.4em;
+}
+
+.recap-banner {
+  margin-bottom: var(--space-4);
+}
+
+@media (max-width: 760px) {
+  /* The phone: the time, then the kind over what happened. */
+  .activity-timeline li {
+    grid-template-columns: 6ch minmax(0, 1fr);
+  }
+
+  .activity-timeline .activity-what {
+    grid-column: 2;
+  }
+}
+
 /* Crops (WO-6.7): the path, the chosen step's layout grid and its cited lines. */
 .crops-grid {
   display: grid;
@@ -1553,6 +1659,195 @@ tr.depleted td {
 
 .designer-exports a {
   color: var(--text-2);
+}
+
+/* --- Power (WO-4.6) --------------------------------------------------------------------------- */
+
+.view-power {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.power-top {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.power-top .gos-panel,
+.power-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.power-option.accepted {
+  border-color: var(--accent);
+}
+
+.power-scope,
+.power-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.power-tiers,
+.power-draws,
+.power-warnings,
+.power-buffers,
+.power-chain,
+.power-kit ul,
+.power-cables ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.power-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.power-tier:hover,
+.power-tier[aria-expanded="true"] {
+  border-color: var(--border);
+}
+
+.power-tier:focus-visible,
+.power-mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.power-draws {
+  padding-left: var(--space-5);
+}
+
+.power-draws li,
+.power-warnings li,
+.power-buffers li,
+.power-chain li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.power-modes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.power-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: var(--hit-min);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.power-mode.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.power-net {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.power-net .gos-big {
+  font-size: 56px;
+  overflow-wrap: anywhere;
+}
+
+.power-net .unit {
+  font-size: 20px;
+}
+
+.power-nums {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.power-num dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.power-preview,
+.power-kit,
+.power-cables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.view-power .designer-form {
+  flex-direction: row;
+  align-items: flex-end;
+  margin-top: var(--space-4);
+}
+
+.view-power .designer-form .field.small {
+  flex: 0 0 auto;
+  width: 160px;
+  height: auto;
+}
+
+/* .base-select's flex basis is a width in a row; in a field (a column) it would be a height. */
+.view-power .field .ask-input {
+  flex: 0 0 auto;
+}
+
+.power-effort summary,
+.power-notes summary {
+  cursor: pointer;
+  min-height: var(--hit-min);
+}
+
+.power-effort .table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 
@@ -2184,7 +2479,8 @@ select.ask-input option {
   .live-grid,
   .quests-grid,
   .ores-grid,
-  .crops-grid {
+  .crops-grid,
+  .activity-grid {
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -2276,5 +2572,20 @@ select.ask-input option {
 
   .route-card .routes {
     grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Power on the phone: the ledger, then storage, then one option under the last. */
+  .power-top {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .power-modes {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .power-net .gos-big {
+    font-size: 40px;
   }
 }

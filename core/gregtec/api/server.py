@@ -38,11 +38,15 @@ from gregtec.api.security import Auth
 from gregtec.bridge import ops as bridge_ops
 from gregtec.bridge.mailbox import MailboxService
 from gregtec.config import LOOPBACK, Config
+from gregtec.events.journal import HaikuScribe, Scribe
+from gregtec.events.service import EventService
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
 from gregtec.setup.service import record_plays
 from gregtec.store import DB_NAME, Store
+from gregtec.vault import fts
 from gregtec.vault.curator import Curator
+from gregtec.vault.io import VaultIO
 from gregtec.vault.scheduler import Maintenance, game_running
 
 log = logging.getLogger("gregtec.api")
@@ -105,6 +109,28 @@ def maintenance(
     )
     return Maintenance(
         curator, store, game=lambda: game_running(cfg), idle_minutes=cfg.idle_minutes
+    )
+
+
+def event_service(
+    cfg: Config, store: Store, meter: UsageMeter, ai: AiMode | None = None
+) -> EventService:
+    """The event store, sessions, the session scribe's journal in ``GOS_HOME/vault`` and the
+    age recaps (WO-6.3). The scribe's notes ask no-AI mode before each model call."""
+    root, db = cfg.gos_home / "vault", store.path
+
+    def mirror(rel: str) -> None:
+        fts.mirror_one(db, root, rel)
+
+    prose = (
+        HaikuScribe.from_keyring
+        if ai is None
+        else guard_summariser(ai, HaikuScribe.from_keyring)
+    )
+    return EventService(
+        db,
+        Scribe(VaultIO(root, on_write=mirror), prose, meter),
+        worlds={"play": cfg.world, "lab": cfg.lab_world},
     )
 
 
@@ -174,6 +200,7 @@ def run(
         config_path=config_path,
         oc=ops.bridge,
         ops=ops,
+        events=event_service(cfg, store, meter, ai),
     )
     ops.desk.on_change = ops.changed(core.action_changed)  # chat notices first (WO-7.4)
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
@@ -227,6 +254,8 @@ def run(
         mailboxes.stop()
         control.remove_run_file(run_file, os.getpid())
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
+        if core.events is not None:
+            core.events.close()
         store.close()
         sock.close()
     log.info("core stopped", extra={"exit_code": core.exit_code})

@@ -14,6 +14,7 @@ import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 import io.github.crazie450prog.gregteclink.GregtecLink;
+import io.github.crazie450prog.gregteclink.harness.ClientLinkHarness;
 import io.github.crazie450prog.gregteclink.harness.Harness;
 
 /**
@@ -40,6 +41,8 @@ public final class ExportClient {
     /** The game has left the world to quit; it shuts down on the next tick. */
     private boolean quitting;
     private boolean shutDown;
+    /** The client harness's export checks already ran (before the client link's part). */
+    private boolean finishedReported;
     private NeiWait wait;
     private long inWorldMs;
 
@@ -187,6 +190,13 @@ public final class ExportClient {
                 + ", crops "
                 + run.parts.get("crops")
                 + (auto ? "; quitting." : "."));
+        if (Harness.clientRunActive() && ClientLinkHarness.requested()) {
+            // The export is checked first, then the client link's part runs in this world (WO-8.1).
+            Harness.onClientFinished(gameDir, r);
+            finishedReported = true;
+            ClientLinkHarness.start(gameDir, () -> quit(mc, r));
+            return;
+        }
         if (auto || Harness.clientRunActive()) quit(mc, r);
     }
 
@@ -199,7 +209,7 @@ public final class ExportClient {
      */
     private void quit(Minecraft mc, ExportRun.Result r) {
         quitting = true;
-        if (Harness.clientRunActive()) Harness.onClientFinished(gameDir, r);
+        if (Harness.clientRunActive() && !finishedReported) Harness.onClientFinished(gameDir, r);
         if (mc.theWorld == null) return;
         try {
             mc.theWorld.sendQuittingDisconnectingPacket();
