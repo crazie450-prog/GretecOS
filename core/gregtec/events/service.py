@@ -160,7 +160,9 @@ class EventService:
             return None
         vault: VaultIO = self.scribe.vault
         first = dt.date.fromtimestamp(session["start_ts"])
-        last = dt.date.fromtimestamp(session["end_ts"] or self.clock())
+        last = dt.date.fromtimestamp(
+            self.clock()
+        )  # a block is written later than its events
         paths, lines = [], []
         try:
             _, folder = vault.path("log/index.md")

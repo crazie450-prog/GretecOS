@@ -294,12 +294,51 @@ def test_a_sessions_lines_are_found_again(
     mine = journal.journal_lines(text(vault), 1)
     assert mine[0].startswith("session: s1 ") and mine[-1].startswith("session_end: s1")
     assert not any("s7" in line for line in mine)
-    # a block continued on a later day's log, before another session's
-    later = "---\nid: x\nt: log\nupd: x\n---\nn_quest: 2\nsession_end: s1 to 01:00\nsession: s2 play w, from 02:00\n"
-    assert journal.journal_lines(later, 1)[-2:] == [
+    # a block continued on a later day's log opens with its own session: line, and another
+    # day's log without one holds none of its lines
+    later = (
+        "---\nid: x\nt: log\nupd: x\n---\nsession: s1 play w, continued\nn_quest: 2\n"
+        "session_end: s1 to 01:00\nage_done: age 1 (steam)\nsession: s2 play w, from 02:00\n"
+    )
+    assert journal.journal_lines(later, 1) == [
+        "session: s1 play w, continued",
         "n_quest: 2",
         "session_end: s1 to 01:00",
     ]
+    other = "---\nid: x\nt: log\nupd: x\n---\nnote: an agent's note\n"
+    assert journal.journal_lines(other, 1) == []
+
+
+def test_a_session_over_midnight_goes_on_in_the_next_days_log(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """Its block in the next day's log opens with a continued session: line, which the
+    Activity view finds again; the session's 40 lines include it."""
+    days = iter([TODAY, dt.date(2026, 11, 12)])
+    today = {"d": next(days)}
+    root = tmp_path / "vault2"
+    shutil.copytree(TEMPLATE, root)
+    vault = io.VaultIO(root, today=lambda: today["d"])
+    moves = [ev("location", T0 + k * 600, x=k, y=64, z=0) for k in range(1, 7)]
+    events.record(conn, "play", [login(T0), quest(T0 + 10, 1), *moves])
+    scribe = journal.Scribe(vault)
+    assert scribe.run(conn, T0 + 3700) == [LOG]  # the hourly block, on the 11th
+    today["d"] = next(days)
+    events.record(
+        conn, "play", [quest(T0 + 3800, 2), ev("world_closed", T0 + 3900, via="log")]
+    )
+    nxt = "log/2026-11-12.md"
+    assert scribe.run(conn, T0 + 4000) == [nxt]
+    second = (root / nxt).read_text(encoding="utf-8")
+    assert "session: s1 play -, continued" in second
+    mine = journal.journal_lines(second, 1)
+    assert mine[0] == "session: s1 play -, continued" and "n_quest: 1" in mine
+    assert mine[-1].startswith("session_end: s1 ")
+    row = conn.execute("SELECT journal_lines FROM session WHERE id = 1").fetchone()
+    total = len(
+        journal.journal_lines((root / LOG).read_text(encoding="utf-8"), 1)
+    ) + len(mine)
+    assert row["journal_lines"] == total <= journal.SESSION_MAX
 
 
 def test_a_finished_ages_recap_goes_in_the_journal_once(

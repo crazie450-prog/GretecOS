@@ -66,9 +66,8 @@ assert set(KINDS.values()) == schema.JOURNAL_COUNTS
 PRIORITY = ("crash", "death", "removed", "built", "quest", "vein", "dim")
 SESSION_MAX = 40  # plan 7.5: at most 40 lines per session
 NOTES_MAX = 2
-END_RESERVE = (
-    len(KINDS) + NOTES_MAX + 1
-)  # the end block's counts, notes and session_end
+# the end block's counts, notes, session_end, and its session: line when it goes in a new file
+END_RESERVE = len(KINDS) + NOTES_MAX + 2
 HOURLY_ITEMS = 6
 HOUR_S = 3600
 ITEM_MAX = 110
@@ -189,9 +188,11 @@ def block(
     room: int,
     final: bool,
     upto_ts: int | None = None,
+    header: str | None = None,
 ) -> Block | None:
     """The next block of ``session`` in at most ``room`` lines (notes and the end line are
-    added by the caller), or None when its counts alone don't fit."""
+    added by the caller), opening with ``header`` (its ``session:`` line) when given, or None
+    when its counts alone don't fit."""
     rows = conn.execute(
         "SELECT id, kind, payload, ts FROM event WHERE session_id = ? AND id > ? "
         + ("AND ts <= ? " if upto_ts is not None else "")
@@ -215,13 +216,7 @@ def block(
     counts: dict[str, int] = {}
     for key, _ in events:
         counts[key] = counts.get(key, 0) + 1
-    lines: list[str] = []
-    if not session["journal_lines"]:
-        world = _text(session["world"] or "-", 40).replace(" ", "_")
-        lines.append(
-            f"session: s{session['id']} {session['instance']} {world}, "
-            f"from {_hhmm(session['start_ts'])}"
-        )
+    lines: list[str] = [header] if header else []
     lines += [f"{schema.COUNT_PREFIX}{k}: {n}" for k, n in sorted(counts.items())]
     if len(lines) > room:
         return None
@@ -306,12 +301,15 @@ class Scribe:
         self, conn: sqlite3.Connection, s: dict[str, Any], final: bool, now: int
     ) -> str | None:
         used = s["journal_lines"] or 0
+        rel = self._target(SESSION_MAX - used)
+        header = session_line(s, used > 0) if not self._opened(rel, s["id"]) else None
         if final:
             room = SESSION_MAX - used - 1 - NOTES_MAX
-            b = block(conn, s, room, True)
+            b = block(conn, s, room, True, header=header)
             assert b is not None  # END_RESERVE kept room for every count line
         else:
-            b = block(conn, s, SESSION_MAX - used - END_RESERVE, False, upto_ts=now)
+            room = SESSION_MAX - used - END_RESERVE
+            b = block(conn, s, room, False, upto_ts=now, header=header)
             if b is None or (not b.counts and used):  # no room, or nothing new: wait
                 conn.execute(
                     "UPDATE session SET journal_ts = ? WHERE id = ?", (now, s["id"])
@@ -325,7 +323,7 @@ class Scribe:
                 f"session_end: s{s['id']} to {_hhmm(s['end_ts'])}, played_min {played}, "
                 f"{s['end_why'] or 'ended'}"
             )
-        path = self._append(lines)
+        path = self._append(lines, rel)
         conn.execute(
             "UPDATE session SET journal_upto = ?, journal_ts = ?, journal_lines = ?, "
             "journal_path = ?, journal_done = ? WHERE id = ?",
@@ -372,21 +370,43 @@ class Scribe:
             )
         return summary.lines[:NOTES_MAX]
 
-    def _append(self, lines: list[str]) -> str:
+    def _target(self, need: int) -> str:
+        """Today's daily log with room for ``need`` more lines: ``log/YYYY-MM-DD.md``, else
+        ``-2``, ``-3``... (a note is at most 150 lines)."""
         day = self.vault.today().isoformat()
         for n in range(1, 100):
             rel = f"log/{day}.md" if n == 1 else f"log/{day}-{n}.md"
             _, target = self.vault.path(rel, write=True)
-            if target.is_file():
-                have = len(target.read_text(encoding="utf-8").splitlines())
-                if have + len(lines) > schema.MAX_LINES:
-                    continue
-            elif (
-                len(lines) + 5 > schema.MAX_LINES
-            ):  # pragma: no cover - 40 lines always fit
-                raise VaultError("a journal block is longer than a note")
-            return self.vault.append(rel, "\n".join(lines), computed=True)
+            if not target.is_file():
+                return rel
+            have = len(target.read_text(encoding="utf-8").splitlines())
+            if have + need <= schema.MAX_LINES:
+                return rel
         raise VaultError(f"every log of {day} is full")
+
+    def _opened(self, rel: str, session_id: int) -> bool:
+        """Whether ``rel`` already holds the session's ``session:`` line."""
+        _, target = self.vault.path(rel, write=True)
+        if not target.is_file():
+            return False
+        tag = f"session: s{session_id} "
+        return any(
+            line.startswith(tag)
+            for line in target.read_text(encoding="utf-8").splitlines()
+        )
+
+    def _append(self, lines: list[str], rel: str | None = None) -> str:
+        return self.vault.append(
+            rel or self._target(len(lines)), "\n".join(lines), computed=True
+        )
+
+
+def session_line(session: Mapping[str, Any], continued: bool) -> str:
+    """A block's ``session:`` line: the session's first, or ``continued`` in another day's
+    (or a full day's next) log, so each log says whose lines it holds."""
+    world = _text(session["world"] or "-", 40).replace(" ", "_")
+    tail = "continued" if continued else f"from {_hhmm(session['start_ts'])}"
+    return f"session: s{session['id']} {session['instance']} {world}, {tail}"
 
 
 def recap_lines(recap: Mapping[str, Any]) -> list[str]:
@@ -412,17 +432,19 @@ _SESSION_LINE = re.compile(r"^session: s(\d+) ")
 
 
 def journal_lines(text: str, session_id: int) -> list[str]:
-    """The lines of ``session_id`` in a daily log's text: from its ``session:`` line (or the
-    start, for a block continued from yesterday) to its ``session_end:`` line, skipping other
-    sessions' blocks between (blocks of sessions that overlap in time never happen: one Play)."""
+    """The lines of ``session_id`` in a daily log's text: from each of its ``session:``
+    lines (its first, or ``continued``) to the next session's line or its ``session_end:``
+    line. Age recaps and agents' note: lines between are left out once its block ends."""
     out: list[str] = []
     tag = f"s{session_id}"
-    mine = f"session: {tag} " not in text  # a later day's file: the block continues it
+    mine = False
     for line in text.replace("\r\n", "\n").split("\n"):
         m = _SESSION_LINE.match(line)
         if m:
             mine = int(m[1]) == session_id
-        if mine:
+        if (
+            mine and line and not line.startswith("age_")
+        ):  # an age recap is no session's line
             out.append(line)
         if line.startswith("session_end: "):
             if mine and line.split()[1].rstrip(",") == tag:
