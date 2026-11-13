@@ -9,7 +9,15 @@ GregtecLink's power pass writes what no recipe carries (docs/contracts/gregtecli
 - ``generators``: every single-block generator (``MTEBasicGenerator``): GT's fuel efficiency,
   voltage and amps out, and for each fuel of its map what GT's own ``getFuelValue`` gives;
 - ``containers``: the fluid in each fluid container a fuel map lists as its input (a cell of a
-  fuel is that fuel: GT's fuel maps index fuels by fluid).
+  fuel is that fuel: GT's fuel maps index fuels by fluid);
+- ``storage`` (WO-4.5, D240; absent from runs made before it): ``cables`` (every GT and GT++
+  cable's ``mVoltage``, ``mAmperage`` and ``mCableLossPerMeter``; absent from the first WO-4.5
+  runs), ``batteries`` (every ``battery*`` oredict member that is an IC2 electric item: tier, max
+  charge, transfer limit, rechargeable; a wildcard member at meta 0), ``buffers``
+  (every GT battery buffer: tier, slots, voltage in and out, own EU store), ``transformers``
+  (every GT transformer, GT's power and GT++'s hi-amp ones too: voltage and amps in and out in
+  both modes, ``down`` and ``up``) and ``lsc`` (the Lapotronic Supercapacitor's cells: block,
+  glass tier, capacity as a decimal string).
 
 Floats were written as the double of GT's ``float``, so they read back to the bit. Read only from
 runs whose ``parts.power`` is ``ok``.
@@ -117,11 +125,82 @@ class Generator:
 
 
 @dataclass(frozen=True)
+class CableStats:
+    """A GT cable's own fields (``MTECable``), so no tooltip's language or number locale."""
+
+    mte_id: int
+    voltage: int  # mVoltage
+    amperage: int  # mAmperage
+    loss: int  # mCableLossPerMeter: EU per metre per amp
+
+
+@dataclass(frozen=True)
+class Battery:
+    """An item a battery buffer of its tier takes (GT: the item's tier equals the buffer's)."""
+
+    registry_name: str
+    meta: int
+    nbt_hash: str
+    ores: tuple[str, ...]  # the battery* oredict names it is in
+    tier: int
+    max_charge: float  # EU (IC2's double)
+    transfer_limit: float  # EU/t
+    rechargeable: bool  # takes a charge (GT's one-use ZPM module doesn't)
+
+
+@dataclass(frozen=True)
+class Buffer:
+    mte_id: int
+    class_name: str
+    tier: int
+    slots: int
+    eu_in: int  # voltage in and out
+    eu_out: int
+    eu_store: int  # the buffer's own store, besides its batteries
+
+
+@dataclass(frozen=True)
+class TransformerMode:
+    eu_in: int
+    amps_in: int
+    eu_out: int
+    amps_out: int
+
+
+@dataclass(frozen=True)
+class Transformer:
+    mte_id: int
+    class_name: str
+    tier: int
+    down: TransformerMode  # allowed to work (GT's default): in at the tier above, out at its own
+    up: TransformerMode  # disabled (soft mallet): in at its own tier, out at the one above
+
+
+@dataclass(frozen=True)
+class LscCell:
+    name: str  # kekztech's Capacitor name (IV, LuV, ..., None, EV, ...)
+    registry_name: str
+    meta: int
+    glass_tier: int
+    capacity: int  # EU
+
+
+@dataclass(frozen=True)
+class Storage:
+    batteries: tuple[Battery, ...]
+    buffers: tuple[Buffer, ...]
+    transformers: tuple[Transformer, ...]
+    lsc: tuple[LscCell, ...]
+    cables: tuple[CableStats, ...] = ()
+
+
+@dataclass(frozen=True)
 class Power:
     sizes: tuple[RotorSize, ...]
     materials: tuple[RotorMaterial, ...]
     generators: tuple[Generator, ...]
     containers: tuple[Container, ...] = ()
+    storage: Storage | None = None
 
 
 def status(manifest: Mapping[str, Any]) -> str:
@@ -174,6 +253,76 @@ def _container(d: Mapping[str, Any]) -> Container:
     return Container(ref.name, ref.meta, ref.nbt_hash, str(d["fluid"]), _int(d, "mb"))
 
 
+def _mode(d: Mapping[str, Any]) -> TransformerMode:
+    return TransformerMode(
+        _int(d, "eu_in"), _int(d, "amps_in"), _int(d, "eu_out"), _int(d, "amps_out")
+    )
+
+
+def _storage(d: Mapping[str, Any]) -> Storage:
+    batteries = []
+    for b in d["batteries"]:
+        if "error" in b:
+            continue
+        ref, _nbt = item_ref(b["battery"])
+        batteries.append(
+            Battery(
+                ref.name,
+                ref.meta,
+                ref.nbt_hash,
+                tuple(str(o) for o in b["ore"]),
+                _int(b, "tier"),
+                _num(b, "max_charge"),
+                _num(b, "transfer_limit"),
+                b.get("rechargeable") is True,
+            )
+        )
+    buffers = tuple(
+        Buffer(
+            _int(b, "mte_id"),
+            str(b["class"]),
+            _int(b, "tier"),
+            _int(b, "slots"),
+            _int(b, "eu_in"),
+            _int(b, "eu_out"),
+            _int(b, "eu_store"),
+        )
+        for b in d["buffers"]
+        if "error" not in b
+    )
+    transformers = tuple(
+        Transformer(
+            _int(t, "mte_id"),
+            str(t["class"]),
+            _int(t, "tier"),
+            _mode(t["down"]),
+            _mode(t["up"]),
+        )
+        for t in d["transformers"]
+        if "error" not in t
+    )
+    cells = []
+    for c in d["lsc"]:
+        if "error" in c:
+            continue
+        ref, _nbt = item_ref(c["block"])
+        capacity = c.get("capacity")
+        if not isinstance(capacity, str) or not capacity.isdigit():
+            raise FormatError("an LSC cell's capacity is not a decimal string")
+        cells.append(
+            LscCell(
+                str(c["name"]), ref.name, ref.meta, _int(c, "glass_tier"), int(capacity)
+            )
+        )
+    cables = tuple(
+        CableStats(
+            _int(c, "mte_id"), _int(c, "voltage"), _int(c, "amperage"), _int(c, "loss")
+        )
+        for c in d.get("cables", ())
+    )
+    return Storage(tuple(batteries), buffers, transformers, tuple(cells), cables)
+
+
 def parse(root: Mapping[str, Any]) -> Power:
     try:
         sizes = tuple(
@@ -220,9 +369,10 @@ def parse(root: Mapping[str, Any]) -> Power:
             if "error" not in g
         )
         containers = tuple(_container(c) for c in root.get("containers", ()))
+        storage = _storage(root["storage"]) if "storage" in root else None
     except (KeyError, TypeError, ValueError) as exc:
         raise FormatError(f"{FILE}: {type(exc).__name__}: {exc}") from None
-    return Power(sizes, materials, generators, containers)
+    return Power(sizes, materials, generators, containers, storage)
 
 
 def read(run: Path) -> Power:

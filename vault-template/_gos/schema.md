@@ -29,7 +29,7 @@ index	index	INDEX.md	generated	*
 goals	me-goals	me/goals.md	clayton	goal, note
 prefs	me-prefs	me/prefs.md	clayton	*
 tier	base-tier	base/tier.md	generated	*
-power	base-power	base/power.md	agents	*
+power	base-power	base/power.md	agents	title, lines, sources, gen_eut, use_eut_avg, use_eut_peak, net_eut, run_gen_eut, run_use_eut_avg, run_use_eut_peak, run_net_eut, warnings, tel, tel_eu_in, tel_eu_out, note
 machines	base-machines	base/machines.md	generated	*
 storage	base-storage	base/storage.md	generated	*
 places	base-places	base/places.md	agents	*

@@ -44,7 +44,8 @@ their side routes (:func:`side_route`), and a chain template on the target's rou
 recipes, its branch points primary (D189). A pin (D61) or a chain template (:mod:`.chains`)
 replaces the heuristic's choice for its node, but a template's loop (:meth:`_Builder.in_loop`)
 met off the route from outside the chain is left to the heuristic. Expansion stops at boundary items: the request's
-``boundary``, My base stock and line outputs (D63), items no recipe makes (raw), items whose
+``boundary``, My base stock and line outputs (D63; never the request's own target as a line
+output, D238), items no recipe makes (raw), items whose
 every recipe was rejected (locked), catalysts (inputs a recipe doesn't use up: circuits,
 moulds, lenses) and depth :data:`MAX_DEPTH`.
 Oredict and wildcard slots expand to at most :data:`TOP_N` members (GregTech's own first).
@@ -712,7 +713,9 @@ class _Builder:
         self.excluded_mtes = cons.excluded_mtes()
         self.boundary: dict[str, str] = dict.fromkeys(raw_inputs(), "raw")
         for k, v in sorted(base.line_outputs().items()):
-            if v > 0:
+            # A running line's output is a boundary for other designs, never for its own
+            # target: redesigning (scaling, superseding) a running line must still route (D238).
+            if v > 0 and k != request.target:
                 self.boundary[k] = "line"
         for k, v in sorted(base.stock().items()):
             if v > 0:

@@ -13,6 +13,7 @@ from gregtec.agents.tools import (
     designer,
     events,
     items,
+    ledger,
     machines,
     notes,
     ops,
@@ -273,6 +274,15 @@ TOOLS = (
         needs_db=False,
         gate=designer.GATE,
     ),
+    Tool(
+        "ledger_get",
+        "The EU ledger (WO-4.4, base/power.md): per scope (all accepted, building and running "
+        "plans; running only) and tier, generation, average and peak use, net EU/t and amps, "
+        "the warnings (deficit, tier_mismatch, amp_overload) and OC's measured power when "
+        f"fresh. Every number is an accepted plan's; cite it by its plan: ids. {CITE}",
+        ledger.LEDGER_GET_SCHEMA,
+        ledger.ledger_get,
+    ),
     HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
     Tool(
         "telemetry_get",
@@ -370,14 +380,16 @@ LATER: dict[str, str] = {
     "machine_fact_get": "machine_info covers reading facts (WO-2.2); a fact-by-key tool comes with machine_fact_set",
     "machine_fact_set": "WO-1.9 (pack-update playbook: curation)",
     "crop_status": "WO-7.6 (breeding station status)",
-    # Accepting is Clayton's (the Designer, gos plan accept; D251); the later moves
-    # (building, running, retired) come with the base-keeper's line lifecycle.
-    "plan_set_status": "WO-4.4 (EU ledger: line lifecycle)",
+    # Accepting and every later move are Clayton's (the Designer, gos plan --accept/--status,
+    # POST /api/plans/{id}/status; D251, D238): no model moves a plan or writes the ledger.
+    "plan_set_status": "WO-4.4 made lifecycle moves Clayton's (gos plan --status, the "
+    "dashboard): not an agent tool (D238)",
     "effort_estimate": "WO-4.2 (power designer; plan_get's summary has a plan's effort)",
     "layout_estimate": "WO-10.5 (corridor-aware layout; plan_export footprint has the "
     "bounding-box one)",
     "design_power": "WO-4.2 (power objective modes)",
-    **dict.fromkeys(("ledger_get", "ledger_update"), "WO-4.4 (EU ledger)"),
+    "ledger_update": "WO-4.4: the ledger follows Clayton's accepts and lifecycle moves; "
+    "not an agent tool (D238)",
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
     "agent tool needs a core-to-voice push, D205)",
     "persona_set": "WO-5.6 follow-up, not yet a plan 8 row (switching is the router's "

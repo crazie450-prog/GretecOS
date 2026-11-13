@@ -676,9 +676,11 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - TSV of lines (tier, average/peak EU/t, amps, status) and sources; net per tier.
   - Warnings: deficit, amp overload, tier mismatch.
   - Reconciles with telemetry once OC is live.
+  - As built (WO-4.4, D238, D239): `gregtec.planner.ledger`; one `ledger_line` entry per plan, its status the `plan` row's (accepted, building and running count), scopes `all` and `running`; power plans are sources at their net EU/t (`gos power design ... --accept N`); later lifecycle moves are Clayton's (`gos plan --status`, `--accept NEW --supersedes OLD`, `POST /api/plans/{id}/status`); `gos ledger`, `GET /api/ledger` (`power_ledger` card), `ledger_get` (read-only); deficit is base-wide, tier mismatch per tier, amp overload per sourced tier; the telemetry reconciliation is a compare-only hook on WO-7.1's tables; running lines' targets feed My base's `line_outputs`.
 - **Storage and distribution.**
   - Buffer/LSC sizing for deficit windows: (peak − generation) × duration, with a battery-buffer vs LSC recommendation per tier.
   - Cable segment checks (amps, loss) and transformer placement. Cable stats come from export tooltips or material data (**VERIFY** in WO-4.5); curated table as fallback.
+  - As built (WO-4.5, D240-D242): `gregtec.planner.distribution`, `gos dist buffer|cable|transformer|ledger`; cable stats from GT's own cable fields, exported (V10 resolved, the en_US tooltip only as a checked fallback for older runs, no curated table); cables, batteries, buffers, transformers (both modes) and LSC cells exported in `gt_power.json`'s `storage` (schema 5); battery buffers (with the smallest battery that fits) while a window fits in 4 of them, the LSC beyond; transformer chains counted from the lines back with the DB's units; the ledger view shares the base's shortfall out across the short tiers and chains each tier mismatch from the nearest sourced tier.
 
 ### 7.3 Recipe and item Q&A
 - Runs in the fast lane: 1–2 spoken sentences plus a dashboard **recipe card**: inputs and outputs with chances, EU/t, time, machine, tier, special conditions, `r:` id, and how many alternatives exist.
@@ -1234,7 +1236,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V07 | **Partly resolved** (D127, WO-1.6): from VisualProspecting 1.5.42's source and a cache it wrote in the dev runtime, both caches are in the game folder (`visualprospecting\server\<world id>\`, `visualprospecting\client\<uuid>\<world id>\`), format v3. Still open: the Lab check (`docs/runbooks/ores_check.md`) | Lab | 1.6 |
 | V08 | **Resolved** (D126, WO-1.6): GT's worldgen registry, exported by GregtecLink as `gt_ore_mixes.json`; NEI's vein pages have no mix name, heights, weight, density or size | — | 1.6 |
 | V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
-| V10 | Cable stats source (tooltips/material data vs curated) | Export | 4.5 |
+| V10 | **Resolved** (D240, WO-4.5): exported fields. GregtecLink's power pass writes every GT and GT++ cable's `mVoltage`, `mAmperage` and `mCableLossPerMeter` (`gt_power.json` `storage.cables`, table `cable`), so no game language or number locale matters; the en_US tooltip (`machine.tooltip`, any digit grouping, checked against GT's voltages and the tier it names) is only the fallback for older runs, and reads the same numbers for all 588 cables of the harness run; no curated table. Batteries, buffers, transformers and LSC cells were added to `gt_power.json` (`storage`) too | — | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
 | V13 | lwjgl3ify `borderless` capture has no black frames | Test | 8.2 |
