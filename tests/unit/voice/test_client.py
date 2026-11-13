@@ -895,3 +895,22 @@ def test_barge_in_logs_the_answers_it_drops(
     key(voice, clock, F13, True)  # barge-in
     assert sorted(t["turn"] for t in turns(caplog)) == [1, 2]
     assert {t["outcome"] for t in turns(caplog)} == {"stopped"}
+
+
+def alert(event: str, say: str | None) -> Pushed:
+    return Pushed({"type": "alert", "data": {"event": event, "say": say}})
+
+
+def test_a_telemetry_alert_that_fired_is_said_once(
+    make: Callable[..., VoiceClient],
+    speaker: Any,  # noqa: ANN401
+) -> None:
+    # WO-7.5: the core pushes every alert event; only a fired one has a line to say.
+    voice = make()
+    line = "Lab: power low. Lapotronic Supercapacitor at 12.3 percent."
+    handle(voice, alert("fired", line))
+    handle(voice, alert("cleared", None))
+    handle(voice, alert("stale", None))
+    handle(voice, Pushed({"type": "alert", "data": "not an event"}))
+    handle(voice, alert("fired", "x" * 1000))
+    assert speaker.said == [line, "x" * 300]
