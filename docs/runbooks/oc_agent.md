@@ -208,6 +208,45 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
 28. Set `transport` back to `"auto"` in `gos-agent.cfg` if section E should use HTTP again. Leave `[mailbox.lab]` in
     gos.toml or remove it; with it, the core keeps watching the folder.
 
+## I. In-game displays: the board, the HUD, chat (WO-7.4, about 30 minutes)
+
+Plan 8 WO-7.4's acceptance in game: "readable in game; updates within 10 s". The code side is tested on the fake
+OC (tests/oc/test_display.lua, tests/oc/test_display_pipeline.py); this checks what only the real game can show.
+Displays need no confirmation (plan 7.9); nothing here acts on the world except step 33's confirmed pause.
+
+29. Copy `display.lua` next to the agent (it is optional: without it the agent runs with no displays and says why):
+    ```powershell
+    $ProgressPreference = 'SilentlyContinue'
+    Copy-Item C:\GregtecOS-app\current\oc\display.lua $gos
+    ```
+    Leave `display` out of `gos-agent.cfg` (all displays on), or set e.g. `display = { hud = false }`.
+30. **The board.** The computer's screen (any tier, one block or a multiblock of 2x2 or more) must show
+    `GREGTEC OS ... M2 3s` (M1 over the mailbox) in the top row, then power (`PWR`), problems (`!`, stalled
+    first) or `OK   no problems reported`, `GOAL` and `NEXT` if `me/goals.md` and the quest book are loaded, `AE2`,
+    and the agent's newest note in the bottom row. The GPU is set to 50 x 16 at most, so text is large. Stand
+    3 blocks back: **is every line readable?** Write down the screen's size in blocks and its tier.
+31. **Updates within 10 s.** Break the EBF's power (remove its energy hatch's cable) with a stopwatch running. Note
+    the seconds until the board shows `stalled`; put it back and note the seconds until `OK` (or its other
+    problems) return. Repeat over the mailbox (section H's `transport = "mailbox"`). Each must be at most 10 s
+    with `cycle_s = 5`.
+32. **Stale.** Press Esc for 45 s and come back: the header must read `NO REPLY ..s` in red and every line grey,
+    then return to normal within 10 s of unpausing. (The dashboard's Base view says the same: "No OC report for
+    .. s".)
+33. **Chat notices.** With a chat box on the computer, ask GOS to pause the EBF and confirm on the dashboard. Within
+    10 s the chat (within 40 blocks, same dimension) must show `[ChatBox] GOS: Confirmed: Pause machine ...` and
+    then `GOS: Done: ...`, once each. Resume it the same way.
+34. **HUD (M2 only, HV).** Place an OCGlasses terminal on the computer (an adapter is not needed: it is a block
+    component), bind the glasses to it (right-click the terminal with them), wear them. Up to 4 text lines show top
+    left: power, the worst problem, `NEXT` or `Say confirm`. Check they read at your GUI scale and change within
+    10 s with step 31. **VERIFY** (the fake models OCGlasses 1.6.9-GTNH from its sources, not tested in game):
+    `addTextLabel`, the widget's `setText`/`setPosition`/`setColor(r, g, b)` with 0..1 floats and `setScale`,
+    and `removeObject` at stop; the agent's `--list` shows the `glasses` component. If a widget call fails the agent
+    logs `display: no HUD ...` and carries on.
+35. **Problems count VERIFY.** Break a maintenance part on the EBF (or let it lose maintenance): within `sensor_s`
+    (60 s) plus a cycle, the board must show `!    <EBF>: 1 maintenance problem` (red) and the Base view the same
+    row. It is parsed from the sensor lines' `Problems: N` (localised) or a `...problems` key (encoded); send back the
+    EBF's raw sensor lines from the dashboard's network log or `gos-agent.log` if it does not.
+
 ## What to send back
 
 - Step 7's `--list` output (V20) and step 8's line.
@@ -216,3 +255,5 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
 - Steps 12, 13 (the ingot counts), 16 and 17's outcomes, and any step whose output differed from what is written here.
 - Section G's two sets of mean tick times and step 21's checks.
 - Section H: step 25's line, both `df` lines (steps 25 and 27), and step 27's output.
+- Section I: the screen size and tier and whether it read well (step 30), the four timings of step 31, steps 32-34's
+  outcomes, and step 35's line or the raw sensor lines.

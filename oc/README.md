@@ -33,7 +33,7 @@ The wire format is [docs/contracts/oc_bridge.md](../docs/contracts/oc_bridge.md)
 
 ## Install
 
-Put `gos-agent.lua`, `json.lua` and `gos-agent.cfg` (from `gos-agent.cfg.example`) in one folder on the drive, e.g.
+Put `gos-agent.lua`, `json.lua`, `display.lua` and `gos-agent.cfg` (from `gos-agent.cfg.example`) in one folder on the drive, e.g.
 `/home/gos/`. A managed drive is the folder `<world>/opencomputers/<drive address>/` in the save, so the files can be
 copied there from Windows while the game runs (GTNH sets `bufferChanges=false`; OC sees them at once).
 docs/runbooks/oc_agent.md has the exact steps for the Lab.
@@ -56,6 +56,21 @@ When it starts, the agent logs the line gos.toml needs, e.g.
 own core, `[mailbox.play]`) with the world's folder name, and restart the core. The core writes nothing in the world
 but `inbox.tmp`, `inbox.json` and the rename of `outbox.json` back to `outbox.tmp`, in that one folder. Files and
 steps: docs/contracts/oc_bridge.md, "M1".
+
+## In-game displays (WO-7.4)
+
+Copy `display.lua` next to `gos-agent.lua` for the displays (plan 7.9, D277-D279); without it the agent runs without
+them. The core composes every line and sends it in the reply (contract "The display"); the agent only lays it out:
+
+- **status board** on the screen the GPU is bound to (or the config's `display.screen` prefix): the GPU is set to at
+  most 50 x 16, a header with how fresh the core's reply is, up to 12 lines (power, problems with stalled machines
+  first, the action waiting for "confirm", goal, next step, AE2), and the agent's newest note at the bottom (while the
+  board has the screen, notes go there instead of the terminal). No reply for 30 s: the header says `NO REPLY` and
+  the lines turn grey.
+- **OCGlasses HUD**, M2 only: 4 text widgets made once, only changed lines set (0.4 OC energy a tick).
+- **chat box** notices the core sends (confirmed world actions), each said once.
+
+Config: `display = true` (default), `false`, or a table of `board`, `screen`, `hud`, `chat`.
 
 ## Run
 

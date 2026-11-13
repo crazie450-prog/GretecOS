@@ -288,6 +288,37 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
   `registry_name` and `meta` with no NBT (`nbt_hash` empty); the same harness test checks the examples' items resolve
   that way.
 
+## The display (WO-7.4)
+
+The in-game displays (plan 7.9: the OC screen status board, the OCGlasses HUD, chat-box notices; D277-D279) travel in
+the same two documents over both transports. They are displays, not actions: no confirmation, no command id, and the
+agent never runs anything from them. **v stays 1**: both fields are optional, an agent that sends no `display` gets
+none, and core and agent ship together (D277).
+
+**Telemetry `display`** (`#/$defs/shows`), sent by an agent that loaded `oc/display.lua` with at least one display:
+`rev` (the display rev it shows; 0 before the first), `said` (the highest chat notice id it has said in this `boot`;
+0 none), `board` (present when it draws the board: `w` and `h`, its text area, at most 50 x 16), `hud` (it draws
+OCGlasses text: a glasses terminal is in and the transport is http, M2 only per plan 7.9's mode table), `chat` (it
+says notices: a chat box is in and the config allows it).
+
+**Reply `display`** (`#/$defs/display`): sent when its `rev` differs from the one the agent reports, or a notice is
+waiting; placed after the commands and only while the reply stays within 2048 bytes (first without its `chat`, else
+not at all, with `poll_s` 1). Fields: `rev` (1 to 2^31-1, a checksum of what the board and HUD show), `lines` (only to
+an agent with a `board`: at most 12, each `t` at most 48 printable ASCII characters and `c` one of `ok`, `warn`,
+`bad`, `info`, `dim`), `hud` (only to an agent with `hud`: at most 4, `t` at most 40), `chat` (only to an agent with
+`chat`: at most 2 notices, `id` rising, `t` 1 to 160 printable ASCII characters). The agent says each notice whose
+`id` is above its `said` once, in order, with control and non-ASCII bytes replaced, and reports the new `said`; the
+core sends no notice older than 60 s or from before the agent's current run.
+
+What the core puts there (`core/gregtec/bridge/display.py`, from `gregtec.bridge.live`): power (`PWR`, the store's
+fill and its reported in minus out EU/t), problems (`!`, stalled machines first, then Problems counts from sensor
+lines), the action waiting for "confirm" (`ACT`), Clayton's first goal (`GOAL`) and the quest guide's next step
+(`NEXT`), AE2 crafting (`AE2`, `CRFT`); on the HUD power, the worst problem and the next step. Notices are fixed
+templates about confirmed world actions (`GOS: Confirmed: <read-back>`, `Done`, `Failed`); free text in chat stays
+the `say` command. Everything is formatted from telemetry and the guide; nothing is estimated. Golden pair:
+`telemetry-display.json` and `reply-display.json` (built by `tests/unit/test_oc_display.py`, drawn by
+`tests/oc/test_display.lua`).
+
 ## Security
 
 - Payload text is data (plan §0.1 principle 8): sensor lines, machine names, CPU names, error messages and item

@@ -201,7 +201,14 @@ def test_the_agent_compiles_on_lua_5_2() -> None:
     to say it needs 5.3."""
     luac = _need(_which("luac5.2", "luac52"), "luac5.2")
     run = subprocess.run(
-        [luac, "-p", "oc/gos-agent.lua", "oc/json.lua", "oc/mailbox.lua"],
+        [
+            luac,
+            "-p",
+            "oc/gos-agent.lua",
+            "oc/json.lua",
+            "oc/mailbox.lua",
+            "oc/display.lua",
+        ],
         check=False,
         cwd=REPO,
         capture_output=True,
