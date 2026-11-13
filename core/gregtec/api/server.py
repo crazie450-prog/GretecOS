@@ -29,6 +29,7 @@ from pathlib import Path
 import uvicorn
 
 from gregtec import applog, config, control, supervisor
+from gregtec.advisor.notices import Notices
 from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
 from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
@@ -201,6 +202,7 @@ def run(
         oc=ops.bridge,
         ops=ops,
         events=event_service(cfg, store, meter, ai),
+        notices=Notices(store.path, cfg.notices),
     )
     ops.desk.on_change = core.action_changed
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
@@ -256,6 +258,8 @@ def run(
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
         if core.events is not None:
             core.events.close()
+        if core.notices is not None:
+            core.notices.close()
         store.close()
         sock.close()
     log.info("core stopped", extra={"exit_code": core.exit_code})

@@ -19,6 +19,7 @@ export interface AppState {
   deep: DeepTask[]; // deep-lane tasks (WO-2.4), for Chat
   voice: { state: VoiceState; trigger: string | null; ts: number } | null;
   nextCard: number; // bumped by the "next card" hotkey (WO-5.1's ui push)
+  notices: number; // bumped by each proactive notice (WO-6.5's notice push): Now asks the advisor again
   error: string | null;
 }
 
@@ -35,6 +36,7 @@ export const initialState: AppState = {
   deep: [],
   voice: null,
   nextCard: 0,
+  notices: 0,
   error: null,
 };
 
@@ -91,6 +93,8 @@ export function applyMessage(s: AppState, message: unknown): Partial<AppState> {
       return { deep: addTasks(s.deep, [m.data as DeepTask]) };
     case "voice.state":
       return { voice: m.data as AppState["voice"] };
+    case "notice":
+      return { notices: s.notices + 1 };
     case "ui":
       return m.action === "next_card" ? { nextCard: s.nextCard + 1 } : {};
     default:

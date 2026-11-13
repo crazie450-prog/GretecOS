@@ -856,6 +856,20 @@ def test_toggle_after_the_cap_the_next_press_only_ends_the_turn(
     assert voice.recorder.recording == "key"
 
 
+def test_a_proactive_notice_is_spoken(
+    make: Callable[..., VoiceClient],
+    speaker: Any,  # noqa: ANN401
+) -> None:
+    voice = make()
+    say = "Heads up: power deficit. Your running lines use more than they make."
+    handle(
+        voice, Pushed({"type": "notice", "data": {"kind": "power_deficit", "say": say}})
+    )
+    handle(voice, Pushed({"type": "notice", "data": {"say": "  "}}))  # nothing to say
+    handle(voice, Pushed({"type": "notice", "data": "not an object"}))
+    assert speaker.said == [say]
+
+
 def test_a_deep_task_is_matched_by_text_only_within_the_ask_and_once(
     make: Callable[..., VoiceClient],
     clock: Any,  # noqa: ANN401

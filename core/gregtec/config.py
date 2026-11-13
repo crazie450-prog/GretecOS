@@ -36,6 +36,7 @@
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 | [policy] spoiler_default | 0, nudge (D26, D72); 1 partial, 2 full   | quest tools, view (WO-6.4)  |
+| [policy] notices         | power_deficit, machine_stalled, plan_buildable (D71); + quest_opened | notices (WO-6.5) |
 | [persona] default        | gt-veteran (D60)                         | personas (WO-5.6, D206)     |
 | [persona] random_per_session | false                                | personas (WO-5.6, D206)     |
 | [setup] former_plays     | none; plus config/former_plays.txt (D223)| sync, setup wizard (WO-2.9) |
@@ -52,7 +53,7 @@ three names with ``:<port>``). Every other key in the Appendix C skeleton is ign
 reads it.
 
 **Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
-``[mailbox]``, ``[persona]``, ``[policy] spoiler_default``) are read only by the core,
+``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``) are read only by the core,
 the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -104,6 +105,9 @@ DEFAULT_FINGERPRINT_CONFIGS = (
     "config/GregTech/WorldGeneration.cfg",
 )
 EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+# [policy] notices (D71, WO-6.5): every kind, and the ones on by default
+NOTICES = ("power_deficit", "machine_stalled", "plan_buildable", "quest_opened")
+NOTICES_DEFAULT = NOTICES[:3]
 WATCHERS_WITH_PLAY = ("lab", "play")  # [startup] watchers_with_play (D259)
 # The pack and GT versions GOS is pinned to (plan 0.1 principle 4, CLAUDE.md). Repo constants, not
 # gos.toml keys: a GT bump needs the GT pin-bump procedure (docs/runbooks/pack_update.md, D148),
@@ -203,6 +207,8 @@ class Config:
     spoiler_default: int = (
         0  # [policy] spoiler_default: the one global spoiler level (D72)
     )
+    # [policy] notices: the proactive notices that are on (D71's three by default; WO-6.5)
+    notices: tuple[str, ...] = NOTICES_DEFAULT
     mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
@@ -618,6 +624,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
             ),
             defaults.spoiler_default,
         ),
+        "notices": soft(lambda: _notices(policy, defaults.notices), defaults.notices),
         "mailboxes": soft(lambda: _mailboxes(data), ()),
         "service_errors": tuple(problems),
     }
@@ -704,6 +711,17 @@ def _alerts(budget: Mapping[str, Any], default: tuple[int, ...]) -> tuple[int, .
             "gos.toml: [budget] credit_alerts_pct must be a list of whole percentages, e.g. [80, 100]"
         )
     return tuple(sorted(set(alerts)))
+
+
+def _notices(policy: Mapping[str, Any], default: tuple[str, ...]) -> tuple[str, ...]:
+    notices = policy.get("notices", list(default))
+    if not isinstance(notices, list) or not all(n in NOTICES for n in notices):
+        raise ConfigError(
+            "gos.toml: [policy] notices must be a list of some of "
+            + ", ".join(f'"{n}"' for n in NOTICES)
+            + " ([] turns them all off)"
+        )
+    return tuple(dict.fromkeys(notices))
 
 
 def _on_credits_out(budget: Mapping[str, Any]) -> None:

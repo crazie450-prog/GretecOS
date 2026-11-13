@@ -84,6 +84,7 @@ TOOLS = (
     "quest_get",
     "quest_frontier",
     "quest_for_item",
+    "advisor_next",  # Now's next steps (WO-6.5)
 )
 FILE_ROOTS = ("assets", "fonts")  # the folders of dist/ served as they are
 # Fixed here, never from mimetypes, which reads the Windows registry: with nosniff, a wrong type
@@ -346,6 +347,10 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
             for p in pending
         }
     alerts += [{**a, "ts": since[a["id"]]} for a in health_alerts]
+    if (
+        core.notices is not None
+    ):  # problems the notices announced, while they hold (WO-6.5)
+        alerts += core.notices.alerts()
     alerts.sort(key=lambda a: a["level"] != "err")
     approvals = _valid(
         [cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"]

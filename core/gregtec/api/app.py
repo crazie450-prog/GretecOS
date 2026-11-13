@@ -32,6 +32,7 @@
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
 |                                |                         | and ``action`` (WO-7.1)               |
+|                                |                         | and ``notice`` (WO-6.5, D267)         |
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 | /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
@@ -83,6 +84,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect
 
 from gregtec import control
+from gregtec.advisor.notices import TICK_S as NOTICES_TICK_S
+from gregtec.advisor.notices import Notice, Notices
 from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
@@ -208,6 +211,7 @@ class Core:
     ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
     events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
+    notices: Notices | None = None  # the proactive notices (WO-6.5, D71)
 
     # --- pushing to WebSocket clients
 
@@ -236,6 +240,18 @@ class Core:
 
         def push() -> None:
             self.broadcast({"type": "action", "data": data})
+            if self.loop is not None:
+                self.loop.create_task(dashboard.push_state(self))
+
+        self._threadsafe(push)
+
+    def notice_given(self, notice: Notice) -> None:
+        """The notices' ``deliver`` (their thread): push the notice to every socket (the voice
+        client says its ``say`` line, D76) and refresh the state, whose alerts now hold it."""
+        data = notice.as_dict()
+
+        def push() -> None:
+            self.broadcast({"type": "notice", "data": data})
             if self.loop is not None:
                 self.loop.create_task(dashboard.push_state(self))
 
@@ -449,6 +465,10 @@ def create_app(core: Core) -> FastAPI:
             tasks.append(asyncio.create_task(_maintain(core.maintenance)))
         if core.events is not None:
             tasks.append(asyncio.create_task(_events(core)))
+        if core.notices is not None:
+            if core.notices.deliver is None:
+                core.notices.deliver = core.notice_given
+            tasks.append(asyncio.create_task(_notices(core.notices)))
         try:
             yield
         finally:
@@ -922,6 +942,16 @@ async def _events(core: Core) -> None:
         except Exception:  # the loop must keep running
             log.exception("events tick failed")
         await asyncio.sleep(EVENTS_TICK_S)
+
+
+async def _notices(notices: Notices) -> None:
+    """Every 10 s: the proactive notices (WO-6.5, :mod:`gregtec.advisor.notices`), in a thread."""
+    while True:
+        try:
+            await asyncio.to_thread(notices.tick)
+        except Exception:  # the loop must keep running
+            log.exception("notices tick failed")
+        await asyncio.sleep(NOTICES_TICK_S)
 
 
 async def _maintain(maintenance: Maintenance) -> None:
