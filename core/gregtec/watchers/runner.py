@@ -8,7 +8,9 @@ while the instance plays, D259). Each loop (:data:`TICK_S`):
   crashes and errors, :mod:`logparse`), and through them the pause tracker (:mod:`pause`, D258);
 - the save files every :data:`FILES_EVERY_S` (level.dat, quest progress, stats, the VP client
   cache, JourneyMap, crash reports, ServerUtilities' world log, the stale flag), each read only
-  after it changed and held still.
+  after it changed and held still;
+- GregtecLink's machine events file and the tile-entity census of the world's changed chunks
+  (WO-6.2, D260) on the same cadence, the census within a time budget per poll.
 
 Events go to ``GOS_HOME/data/events/<YYYY-MM-DD>.jsonl`` (GOS's own spool, kept for WO-6.3's
 event store) and to the core's ``POST /api/game/events`` from a sender thread, so a slow or
@@ -36,7 +38,7 @@ from typing import Any, Protocol
 
 from gregtec import applog, config, control
 from gregtec.ingest import fingerprint
-from gregtec.watchers import files, logparse, pause, player, sources
+from gregtec.watchers import census, files, logparse, machines, pause, player, sources
 from gregtec.watchers.events import Event
 
 log = logging.getLogger("gregtec.watchers")
@@ -47,6 +49,9 @@ FILES_EVERY_S = 2.0
 HEARTBEAT_S = 10.0
 DEATH_MERGE_S = 120.0  # deaths this close are one death seen by several readers
 QUEUE_MAX = 2000
+HOLD_AT = (
+    QUEUE_MAX // 2
+)  # queued events at which the machine readers wait for the sender
 POST_MAX = 100  # events per POST
 POST_BYTES = 128 << 10  # and about this much JSON (the core takes 256 KB)
 POST_TIMEOUT_S = 3.0
@@ -60,6 +65,15 @@ LOGS = (("latest.log", False), ("fml-client-latest.log", True))
 WORLD_LOGS = (
     "logs/world.log",
 )  # ServerUtilities, in the game folder (V06: path VERIFY)
+
+
+def world_name_ok(name: str) -> bool:
+    """A world's folder name in saves/, as gos.toml's ``world`` takes it (no path, no ``..``)."""
+    return (
+        bool(config._WORLD_NAME.match(name))
+        and name.strip(" .") == name
+        and len(name) <= 255
+    )
 
 
 class Poller(Protocol):
@@ -159,11 +173,13 @@ class Watchers:
         self.worldlog = sources.WorldLogWatch(
             [game / p for p in WORLD_LOGS], clock, saved
         )
+        self.machines = machines.MachineEventWatch(game, clock, saved)
         self.player: player.PlayerWatch | None = None
         self.others: list[Poller] = [
             sources.CrashWatch(game, clock, settle_s),
             sources.StaleWatch(home, clock),
             self.worldlog,
+            self.machines,
         ]
         if world is not None:
             self.player = player.PlayerWatch(world, clock, settle_s=settle_s)
@@ -173,7 +189,12 @@ class Watchers:
                 sources.StatsWatch(world, clock, lambda: pw.names, settle_s=settle_s),
                 sources.VeinWatch(world, game, clock, settle_s=settle_s),
                 sources.WaypointWatch(game, world.name, clock, settle_s),
+                census.CensusWatch(world, clock, settle_s=settle_s),
             ]
+        # Set while the sender is behind: the machine events file and the census are left unread
+        # (their offset and known chunks stay), so a stopped core can't make the full queue drop
+        # them; the log and save readers go on.
+        self.hold_machines = False
         self._last_death: tuple[float, str] | None = None
 
     def poll_logs(self) -> list[Event]:
@@ -189,6 +210,10 @@ class Watchers:
             if self.player.saved:
                 events += _paused(self.tracker.world_saved())
         for reader in self.others:
+            if self.hold_machines and isinstance(
+                reader, machines.MachineEventWatch | census.CensusWatch
+            ):
+                continue
             try:
                 events += reader.poll()
             except Exception:  # one reader's bug must not stop the others
@@ -218,7 +243,7 @@ class Watchers:
         for tail, _ in self.logs.tails:
             if (state := tail.state()) is not None:
                 tails[str(tail.path)] = state
-        for tail in self.worldlog.tails:
+        for tail in [*self.worldlog.tails, self.machines.tail]:
             if (state := tail.state()) is not None:
                 tails[str(tail.path)] = state
         try:
@@ -400,6 +425,9 @@ def run_loop(
             emit(watchers.poll_logs())
         if now >= next_files:
             next_files = now + FILES_EVERY_S
+            watchers.hold_machines = (
+                sender.send is not None and sender.pending() >= HOLD_AT
+            )
             emit(watchers.poll_files())
             sender.problems = watchers.problems()
         if now >= next_save:
@@ -465,6 +493,12 @@ def run(args: argparse.Namespace) -> int:
         print(f"no game folder: {exc}", file=sys.stderr)
         return EXIT_SETUP
     name = args.world or (cfg.world if args.instance == "play" else cfg.lab_world)
+    if args.world is not None and not world_name_ok(args.world):
+        print(
+            f"--world must be a folder name in saves/, not {args.world!r}",
+            file=sys.stderr,
+        )
+        return EXIT_SETUP
     world = game / "saves" / name if name else None
     if world is not None and not world.is_dir():
         log.warning(

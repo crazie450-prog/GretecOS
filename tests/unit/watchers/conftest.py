@@ -12,8 +12,8 @@ import pytest
 FAKEGAME = Path(__file__).with_name("fakegame.py")
 
 
-def _load() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("gos_watch_fakegame", FAKEGAME)
+def _load(path: Path = FAKEGAME, name: str = "gos_watch_fakegame") -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -25,6 +25,12 @@ def _load() -> ModuleType:
 def fg() -> ModuleType:
     """The fakegame module (its NBT writer, file contents and :class:`Tree`)."""
     return _load()
+
+
+@pytest.fixture(scope="session")
+def rg() -> ModuleType:
+    """The region-file writer for the census tests (WO-6.2)."""
+    return _load(FAKEGAME.with_name("regions.py"), "gos_watch_regions")
 
 
 class Clock:

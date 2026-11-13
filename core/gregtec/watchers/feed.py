@@ -5,6 +5,7 @@ The watchers post batches with their latest paused state and a heartbeat every 1
 trusts that state only while the watchers are heard (:data:`HEARD_S`) and the instance they watch
 has a running client: otherwise ``paused`` is None (unknown), as before WO-6.1, so a stopped
 watcher can never leave the dashboard saying "paused". Event text is the game's, data only.
+A census event (up to 64 KB) is kept in the feed as a summary: its chunk and machine counts.
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ from gregtec.watchers.events import KINDS
 HEARD_S = 30.0  # three missed heartbeats: the watchers are gone
 KEEP = 500  # recent events kept in memory
 DATA_MAX = 16 << 10  # one event's data, as JSON
+CENSUS_DATA_MAX = (
+    64 << 10
+)  # a census event: one region's changed chunks and their machines
 
 
 @dataclass
@@ -40,6 +44,13 @@ class GameFeed:
 
     def receive(self, body: dict[str, Any]) -> bool:
         """Take one post. Returns whether the paused state changed."""
+        return self.receive_new(body)[0]
+
+    def receive_new(
+        self, body: dict[str, Any]
+    ) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
+        """Take one post: whether the paused state changed, the events it brought that the feed
+        hadn't seen (a retried post's are left out), and all its well-formed events, whole."""
         instance = body.get("instance")
         state = body.get("paused")
         events = body.get("events")
@@ -56,7 +67,8 @@ class GameFeed:
                 and isinstance(e.get("source"), str)
                 and len(e["source"]) <= 20
                 and isinstance(e.get("data"), dict)
-                and len(json.dumps(e["data"])) <= DATA_MAX
+                and len(json.dumps(e["data"]))
+                <= (CENSUS_DATA_MAX if e["kind"] == "machine_census" else DATA_MAX)
             ):
                 kept.append({k: e[k] for k in ("id", "kind", "ts", "source", "data")})
             else:
@@ -74,15 +86,17 @@ class GameFeed:
                 self.why = why[:80] if isinstance(why, str) else None
             if isinstance(problems, list):
                 self.problems = [str(p)[:300] for p in problems[:20]]
+            new = []
             for e in kept:
                 if e["id"] in self._ids:
                     continue  # a retried post
                 if len(self._events) == self._events.maxlen:
                     self._ids.discard(self._events[0]["id"])
-                self._events.append(e)
+                self._events.append(_summary(e))
                 self._ids.add(e["id"])
+                new.append(e)
             self.refused += refused
-            return before != self.paused
+            return before != self.paused, new, kept
 
     def paused_now(self, running: list[str] | None) -> bool | None:
         """``game.paused`` for the dashboard: the watchers' state while they are heard and their
@@ -112,3 +126,16 @@ class GameFeed:
                 "problems": list(self.problems),
                 "refused": self.refused,
             }
+
+
+def _summary(e: dict[str, Any]) -> dict[str, Any]:
+    """What the feed keeps of an event: a census event's lists as their lengths."""
+    if e["kind"] != "machine_census":
+        return e
+    data = {
+        k: len(v)
+        if k in ("chunks", "machines", "regions") and isinstance(v, list)
+        else v
+        for k, v in e["data"].items()
+    }
+    return {**e, "data": data}
