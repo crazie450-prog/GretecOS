@@ -61,7 +61,8 @@ class FakeNames:
 
 
 class Rig:
-    def __init__(self, folder: Path, ctx: Context = Context()) -> None:
+    def __init__(self, folder: Path, ctx: Context | None = None) -> None:
+        ctx = ctx or Context()
         self.clock = Clock()
         self.store = Store(folder / "gos.sqlite")
         self.tel = Telemetry(self.store, clock=self.clock)
