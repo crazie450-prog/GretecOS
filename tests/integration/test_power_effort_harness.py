@@ -168,11 +168,15 @@ def test_the_breakdown_adds_up_and_ranks_the_mode(
     assert keys == sorted(keys)
 
 
-def test_owning_only_the_turbine_unlocks_what_its_parts_need(
+def test_owning_only_the_turbine_lists_what_its_parts_need(
     conn: sqlite3.Connection,
 ) -> None:
-    # The densest fuel's line (candidates=1): its parts' steps need machine types that have
-    # an item and a route at EV, so their unlock hours are counted.
+    # The densest fuel's line (candidates=1). Owning only its turbine, the machine types its
+    # parts' steps need are unlocks. On the harness DB none of them has a route at EV, so they
+    # are listed and not counted (WO-4.7: until then the every-machine-runs replay ran chain
+    # recipes at a floor on maps whose machines have routes, which gave this line unlock hours;
+    # the line now imports its fuel and runs no chain, D323). Unlock hours themselves are
+    # hand-checked in tests/unit/planner/test_power_effort.py (worked example 2).
     req = dataclasses.replace(REQ, candidates=1, options=2)
     first = power.design(conn, req, DefaultBaseInputs(EV)).options[0]
     spec = _generator(first)["spec"]
@@ -180,7 +184,9 @@ def test_owning_only_the_turbine_unlocks_what_its_parts_need(
     d = power.design(conn, req, Owns({int(spec["mte"]): 1}))
     p = next(x for x in d.options if x["id"] == first["id"])
     m = p["metrics"]
-    assert m["effort"]["unlocks"] and m["unlock_h"] > 0
+    assert m["effort"]["unlocks"]
     assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], rel=1e-3)
-    unlocked = {r["map"] for r in m["effort"]["rows"] if r["part"] == "unlock"}
-    assert unlocked
+    rows = [r for r in m["effort"]["rows"] if r["part"] == "unlock"]
+    assert m["unlock_h"] == pytest.approx(sum(r["h"] for r in rows), rel=1e-3, abs=1e-9)
+    if not rows:
+        assert any("no recipe or route" in n for n in m["effort"]["notes"])

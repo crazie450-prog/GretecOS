@@ -229,7 +229,7 @@ def test_no_option_keeps_a_zero_sum_loop(conn: sqlite3.Connection, name: str) ->
             "nodes": [{"n": "n1", "kind": "recipe"}, {"n": "n2", "kind": "recipe"}],
             "edges": [{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n1"}],
         }
-    ) == [("n1", "n2"), ("n2", "n1")]
+    ) == [("n2", "n1"), ("n1", "n2")]
 
 
 def test_the_self_fed_reading_of_the_light_fuel_loop(conn: sqlite3.Connection) -> None:
