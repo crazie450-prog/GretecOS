@@ -42,6 +42,7 @@ import com.google.gson.JsonParser;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import io.github.crazie450prog.gregteclink.GregtecLink;
+import io.github.crazie450prog.gregteclink.ModulesConfig;
 import io.github.crazie450prog.gregteclink.export.AutoExport;
 import io.github.crazie450prog.gregteclink.export.ExportClient;
 import io.github.crazie450prog.gregteclink.export.ExportModule;
@@ -140,7 +141,8 @@ public final class Harness {
         return Boolean.TRUE.equals(Launch.blackboard.get("fml.deobfuscatedEnvironment"));
     }
 
-    public static void onServerStarted(File gameDir, boolean exportEnabled) {
+    public static void onServerStarted(File gameDir, ModulesConfig modules) {
+        boolean exportEnabled = modules.export;
         if (!deobfEnvironment()) {
             GregtecLink.LOG.warn("-D{}=true ignored: the harness runs only in the dev environment", PROPERTY);
             if (exportEnabled) ExportModule.onServerStarted();
@@ -153,6 +155,10 @@ public final class Harness {
             return;
         }
         ran = true;
+        if (ListenerHarness.requested()) {
+            ListenerHarness.start(gameDir, modules);
+            return;
+        }
         List<JsonObject> checks = new ArrayList<>();
         String runId = null;
         JsonObject durations = new JsonObject();
@@ -493,7 +499,7 @@ public final class Harness {
     }
 
     /** Writes harness-result.json and logs each check; true if every check passed and the file was written. */
-    private static boolean writeResult(File gameDir, List<JsonObject> checks, String runId, JsonObject durations,
+    static boolean writeResult(File gameDir, List<JsonObject> checks, String runId, JsonObject durations,
         JsonElement counts) {
         boolean pass = !checks.isEmpty();
         for (JsonObject c : checks) {
@@ -526,6 +532,11 @@ public final class Harness {
                     .getAsString());
         }
         return pass;
+    }
+
+    /** Sets the exit code the JVM ends with once the server has stopped (the listener harness's result). */
+    static void finished(boolean pass) {
+        exitCode = pass ? 0 : 1;
     }
 
     /** The exit code is a second signal; harness-result.json is the contract. */
@@ -596,7 +607,7 @@ public final class Harness {
     }
 
     /** relpath -> size:mtime for the game dir (config included), without the world, logs and crash reports. */
-    private static Map<String, String> snapshot(File gameDir, String world) throws IOException {
+    static Map<String, String> snapshot(File gameDir, String world) throws IOException {
         final Path root = gameDir.toPath()
             .toAbsolutePath()
             .normalize();
@@ -632,8 +643,8 @@ public final class Harness {
         return out;
     }
 
-    private static void checkWrites(List<JsonObject> checks, String name, Map<String, String> before,
-        Map<String, String> after, List<String> allowed) {
+    static void checkWrites(List<JsonObject> checks, String name, Map<String, String> before, Map<String, String> after,
+        List<String> allowed) {
         TreeSet<String> outside = new TreeSet<>();
         for (Map.Entry<String, String> e : after.entrySet()) {
             if (e.getValue()
