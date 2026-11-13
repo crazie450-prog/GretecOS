@@ -27,14 +27,17 @@ DB's recipes reaches from the free set and the farms first, :func:`reachable`).
 costs it: after the gate count the solver minimises the EU the chain draws plus the EU an import
 of the fuel stands for (``Network.eu_value``), and the chain makes or converts its fuel only
 where that takes less EU than the fuel gives. Recipes idle at that optimum are not part of the
-line, and net EU/t = gross - the chain's nodes.
+line, and net EU/t = gross - the chain's nodes. Only the fuel is priced: an import one recipe
+short of it costs no EU, so a chain imports a near-fuel and converts it rather than the fuel
+itself, and the gate count still comes first (a gate-free chain may spend most of the output).
+So the direct-import line, the generator fed its fuel as imported, is an option of its own for
+every candidate outside ``self_sustaining`` (review H1), and ``rank.py`` weighs the two.
 
 **Options** (D11): every candidate's line is solved on its own network, one per chain of its
 fuel (the graph's own and each pinned to another recipe for the fuel); within it the chain's
 primary choices give up to two routes through the same no-good cuts (``solve.routes``), so any
-two options differ in the generator, the fuel, the chain's pin or a primary choice of the chain.
-The pool is
-ranked by ``planner/rank.py`` (:func:`rank.order_power`) for the mode and the best
+two options differ in the generator, the fuel, the chain's pin or a primary choice of the chain,
+or one is the direct-import line (``power.direct``). The pool is ranked by ``planner/rank.py`` (:func:`rank.order_power`) for the mode and the best
 ``options`` (2-3) are returned with the weights printed.
 
 **Modes** (plan §7.2's table, D13): ``best`` (the weighted score, ``me/prefs.md``'s weights, read
@@ -851,10 +854,12 @@ def network(
     units: float,
     req: PowerRequest,
     farm_list: Sequence[farms.Farm] = (),
+    direct: bool = False,
 ) -> solve.Network:
     """One candidate's network: the chain, the generator fixed at ``units`` build units (the
-    target), and for ``self_sustaining`` the farms, slot members and the import ban."""
-    procs = [*chain.net.procs, gen.proc()]
+    target), and for ``self_sustaining`` the farms, slot members and the import ban. With
+    ``direct`` the generator alone, its fuel imported (the direct-import line, D323)."""
+    procs = [gen.proc()] if direct else [*chain.net.procs, gen.proc()]
     free_in = set(chain.net.free_in) - {EU_KEY}
     banned = {EU_KEY}
     if req.mode == "self_sustaining":
@@ -868,7 +873,7 @@ def network(
         targets=((UNIT, float(units)),),
         free_in=frozenset(free_in),
         free_out=frozenset(set(chain.net.free_out) | {EU_KEY, UNIT}),
-        choices=chain.net.choices,
+        choices=() if direct else chain.net.choices,
         banned=frozenset(banned),
         eu_value=((gen.fuel, gen.eu_per_fuel),),
     )
@@ -917,6 +922,8 @@ class Option:
     units: float
     flow: solve.Flow
     net: solve.Network
+    # The direct-import line: the generator fed its fuel as imported, no chain (D323)
+    direct: bool = False
 
 
 def build_plan(
@@ -935,6 +942,8 @@ def build_plan(
     sub_flow = replace(
         flow,
         crafts=tuple((pid, x) for pid, x in flow.crafts if pid in ids),
+        # A power line leaves idle recipes out (D323): so are the choices that were theirs
+        choice=tuple((k, r) for k, r in flow.choice if flow.rate(r) > 0),
         imports=tuple((k, v) for k, v in flow.imports if k not in (EU_KEY, UNIT)),
         exports=tuple((k, v) for k, v in flow.exports if k not in (EU_KEY, UNIT)),
     )
@@ -1042,13 +1051,15 @@ def build_plan(
     net_eut = gross - chain_eut
     tier = gen.tier
     p.update(
-        id=_option_id(req, run_key, gen, flow, opt.chain.request.pins),
+        id=_option_id(req, run_key, gen, flow, opt.chain.request.pins, opt.direct),
         kind=KIND,
         target={"id": EU_KEY, "eut": plan._num(net_eut)},
         tier_cap=p["tier_cap"],
         request=req.as_dict(),
         power={
             "mode": req.mode,
+            # The fuel imported as it is, no chain (D323)
+            "direct": opt.direct,
             "units": plan._num(opt.units),
             "scale": {"kind": req.scale, "bound": req.bound},
             "generator": {
@@ -1088,13 +1099,17 @@ def _option_id(
     gen: Gen,
     flow: solve.Flow,
     pins: Sequence[Pin] = (),
+    direct: bool = False,
 ) -> str:
     """``pw-`` + 10 hex of the request, run, generator, the route's choices and, for a chain
     pinned to another recipe for the fuel, its pin (WO-4.7: two pinned chains with no choice
-    of their own got one id, and only the last solved was kept)."""
+    of their own got one id, and only the last solved was kept); the direct-import line has
+    its own (D323)."""
     parts: list[Any] = [req.digest(), run_key, gen.id, list(flow.choice)]
     if pins:
         parts.append([[pn.node, pn.recipe] for pn in pins])
+    if direct:
+        parts.append("direct")
     text = json.dumps(parts)
     return "pw-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
 
@@ -1352,6 +1367,18 @@ def design(
                 continue
             for flow in flows:
                 options.append(Option(gen, chain, 1.0, flow, net))
+        if found and req.mode != "self_sustaining":
+            # The direct-import line (D323, review H1): the EU stage prices only the fuel, so
+            # a chain imports a near-fuel and converts it rather than the fuel itself; the
+            # plain "import the fuel" line is offered too, and rank.py chooses between them.
+            # (A self-sustaining line imports nothing: a free fuel is its chain's own line.)
+            net = network(conn, found[0], gen, 1.0, req, direct=True)
+            try:
+                flow = solve.solve_route(net)
+            except solve.SolveError as exc:
+                rejected.append((f"{gen.id} [direct]", str(exc)))
+            else:
+                options.append(Option(gen, found[0], 1.0, flow, net, direct=True))
     built: list[dict[str, Any]] = []
     sigs: dict[str, tuple[Any, ...]] = {}
     # The effort model reads the request's tier, boundary and constraints, not its target.
@@ -1406,7 +1433,9 @@ def design(
             rejected.append((opt.gen.id, why))
             continue
         if units != 1.0:
-            net = network(conn, opt.chain, opt.gen, units, req, farm_list)
+            net = network(
+                conn, opt.chain, opt.gen, units, req, farm_list, direct=opt.direct
+            )
             try:
                 opt = Option(
                     opt.gen,
@@ -1414,6 +1443,7 @@ def design(
                     units,
                     solve.solve_route(net, dict(opt.flow.choice)),
                     net,
+                    opt.direct,
                 )
             except solve.SolveError as exc:
                 rejected.append((opt.gen.id, f"at {units:g} units: {exc}"))

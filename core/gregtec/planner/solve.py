@@ -801,8 +801,6 @@ def exact_counts(
         for k, g in m.gate.items():
             m.lb[g] = m.ub[g] = 1.0 if k in flow.gates else 0.0
         extra = [_keep(quantity, flow.objectives[1] / m.scale)]
-        if flow.eu is not None and m.net.costs_eu:
-            extra.append(_keep(_eu_objective(m), flow.eu / m.scale, EU_REL_TOL))
         counts: dict[str, int] = {}
         for p in procs:
             cps = crafts_per_s.get(p.id, 0.0)

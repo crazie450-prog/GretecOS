@@ -278,14 +278,16 @@ def rows_of(p: Mapping[str, Any], part: str) -> dict[str, dict[str, Any]]:
 def line(
     d: power.PowerDesign, fuel: str, kind: str = "single_block", via: str = ""
 ) -> dict[str, Any]:
-    """The option on ``fuel`` and ``kind``; with ``via``, the one whose chain runs a recipe of
-    that map (each chain pinned to another recipe for the fuel is an option of its own since
-    WO-4.7: the test gas from logs by mixers, or from its acid/gas loop by the electrolyzer)."""
+    """The option on ``fuel`` and ``kind`` that runs a chain (not the direct-import line,
+    D323); with ``via``, the one whose chain runs a recipe of that map (each chain pinned to
+    another recipe for the fuel is an option of its own since WO-4.7: the test gas from logs
+    by mixers, or from its acid/gas loop by the electrolyzer)."""
     return next(
         p
         for p in d.options
         if p["power"]["fuel"]["id"] == fuel
         and p["power"]["generator"]["kind"] == kind
+        and not p["power"]["direct"]
         and (
             not via
             or any(n["recipe"].startswith(f"r:gt.recipe.{via}/") for n in p["nodes"])
@@ -325,7 +327,10 @@ def test_worked_example_1_gas_line_build_only(
     """§8 row 4.3, line 1: the generator on test gas, its chain the acid/gas loop. My base owns
     a machine on every map the components need (3 mixers, 2 reactors), so unlock_h is 0 and the
     build hours are spread over them."""
-    p = line(design(conn, no_farms, OWNED_ALL), tg.GAS, via="electrolyzer")
+    # Asked for the gas single block alone: its direct-import line and two chains fill the
+    # 3 options (with every candidate, the direct-import lines rank first, D323).
+    d = design(conn, no_farms, OWNED_ALL, fuels=(tg.GAS,), kinds=("single_block",))
+    p = line(d, tg.GAS, via="electrolyzer")
     n = counts(p)
     # The line: 1 electrolyzer (acid -> gas), 1 chemical reactor (gas + water -> acid), and
     # the generator; no mixer and no assembler is built.
@@ -563,7 +568,8 @@ def test_acid_line_with_an_unlock(conn: sqlite3.Connection, no_farms: Path) -> N
     chemical reactor and the generator only: the generator's item needs an assembler, a machine
     type he doesn't own and the line doesn't build, so its components are unlock_h (depth 1;
     its own steps run on maps he owns or the line builds)."""
-    p = line(design(conn, no_farms, OWNED_FEW), tg.ACID)
+    d = design(conn, no_farms, OWNED_FEW, fuels=(tg.ACID,), kinds=("single_block",))
+    p = line(d, tg.ACID)
     n = counts(p)
     # The line: 2 mixers (logs -> Dust B, Dust B -> gas), 1 reactor (gas + water -> acid),
     # the generator.
@@ -645,12 +651,19 @@ def test_output_per_effort_ranks_by_net_eut_per_effort_hour(
         assert p["rank"]["eut_per_effort_h"] == pytest.approx(ratio, rel=1e-3)
         keys.append((p["metrics"]["effort"]["uncounted"] > 0, -ratio))
     assert keys == sorted(keys)
-    # The turbine line leaves its casings out, so it ranks after both single blocks, with a
-    # note.
-    last = d.options[-1]
-    assert last["power"]["generator"]["kind"] == "gas_turbine"
-    assert any("ranked after the lines whose effort is complete" in x
-               for x in last["rank"]["notes"])  # fmt: skip
+    # The turbine lines leave their casings out, so they rank after the three single-block
+    # lines (the direct-import line, D323, and the two chains), with a note.
+    assert d.pool > len(d.options)
+    assert {p["power"]["generator"]["kind"] for p in d.options} == {"single_block"}
+    assert sorted(p["power"]["direct"] for p in d.options) == [False, False, True]
+    turbines = design(
+        conn, no_farms, OWNED_FEW, fuels=(tg.GAS,), kinds=("gas_turbine",)
+    )
+    assert turbines.options
+    for p in turbines.options:
+        assert p["metrics"]["effort"]["uncounted"] > 0
+        assert any("ranked after the lines whose effort is complete" in x
+                   for x in p["rank"]["notes"])  # fmt: skip
     # With a crafting-table step of 60 s instead of 2 s (me/prefs.md's craft_s), the hand
     # steps weigh more and the effort changes accordingly.
     slow = design(
