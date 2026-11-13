@@ -107,8 +107,14 @@ def _say(kind: str, found: Sequence[checks.Finding]) -> tuple[str, str]:
         return f"Machines stalled: {n}", f"Heads up: {n} machines have stalled."
     if kind == "plan_buildable":
         name = found[0].title.removeprefix("You can build ").removesuffix(" from stock")
-        if n == 1:
+        if n == 1 and not any(c.isdigit() for c in name):
             return found[0].title, f"You have everything to build {name} in stock."
+        if (
+            n == 1
+        ):  # his plan's name has a number in it: the spoken line has none (D267)
+            return found[0].title, (
+                "You have everything in stock for one of your accepted lines."
+            )
         return f"{n} plans buildable from stock", (
             f"You have everything in stock for {n} of your accepted lines."
         )

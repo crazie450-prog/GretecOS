@@ -9,7 +9,7 @@ GOS works out his next steps in code: `advisor_next` returns them **already rank
 
 | Tool | What it returns |
 |---|---|
-| `advisor_next(n?)` | The next steps (default 3), ranked: problems first (a power deficit, stalled machines), then a plan buildable from stock, his goals' quests, power for accepted lines, lines to build, other frontier quests. Each row: `rank`, `kind`, `step`, `why`, `refs`, `link`. The head has his tier, the spoiler level and what was read (goals, frontier, events in 48 h, active plans, alerts). |
+| `advisor_next(n?)` | The next steps (default 3), ranked: problems first (a power deficit, stalled machines), then a plan buildable from stock, his goals' quests, power for accepted lines, lines to build, other frontier quests. Each row: `rank`, `kind`, `step`, `why`, `refs`, `link`. The head has his tier, the spoiler level and what was read (goals, frontier, events in 48 h, active plans, the problems it found). |
 | `quest_get(id)` | One frontier quest's tasks, when he asks how to do a quest step. |
 | `plan_get(id, "summary")`, `ledger_get()`, `telemetry_get("machines")` | The detail behind a build, power or stall step, when he asks. |
 | `events_recent("48h")` | What happened lately, when he asks why. |

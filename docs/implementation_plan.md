@@ -533,7 +533,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | quest-guide | Quest Q&A, frontier, spoiler levels (§7.4) | quest_find, quest_get, quest_frontier, quest_for_item |
 | base-keeper | Base-state notes, line lifecycle, goals | note_read/write, ledger_*, plan_set_status, base_get |
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
-| advisor | Next steps (§7.5) | advisor_next (D266), quest_frontier, events_recent, ledger_get, plan_list, base_get |
+| advisor | Next steps (§7.5) | advisor_next (D266; it reads the frontier, My base, the plans and events itself), quest_get, plan_get, ledger_get, telemetry_get, events_recent |
 | ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
 | crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
@@ -1265,6 +1265,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
 | V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
+| V34 | When a GT multiblock shuts down on its own (power loss, a maintenance problem), OC's `isWorkAllowed` reads false; if so, WO-6.5's stall notice (which skips machines with work not allowed, as Clayton's own pause) misses it until WO-7.4's `stopped` state (D279) joins `machine_stalled` (D267) | Lab test | 6.5 |
 
 ---
 

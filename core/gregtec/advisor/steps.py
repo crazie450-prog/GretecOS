@@ -2,8 +2,8 @@
 
 :func:`advise` reads the plan's inputs: ``me/goals.md`` (Clayton's, read only, never written), My
 base (tier, machines, stock), the top :data:`FRONTIER_N` frontier quests (WO-6.4's ranking), the
-last :data:`EVENTS_H` hours of events (WO-6.3's store), the EU ledger (WO-4.4), the alerts (a
-power deficit, stalled machines: :mod:`.checks`) and the active plans; and returns the steps
+last :data:`EVENTS_H` hours of events (WO-6.3's store), the EU ledger (WO-4.4), the problems
+the advisor checks (a power deficit, stalled machines: :mod:`.checks`; the head's ``problems``) and the active plans; and returns the steps
 **ranked by code** ([QA:D2]: models explain, never reorder), each with its reasons, citations and
 a dashboard link. The order is fixed by :data:`BUCKETS`, then each source's own order:
 
@@ -19,8 +19,9 @@ a dashboard link. The order is fixed by :data:`BUCKETS`, then each source's own 
 8. ``quest``: the rest of the frontier, WO-6.4's order (main quests, then what unlocks most).
 
 **Spoilers** (D26, D72): a step names only quests on the frontier (in reach, so the book shows
-them) and his own goal words; a locked quest is never named, counted or described here, at any
-level. Steps are **nudges**: what to look at and why, with a link; the detail (a quest's tasks, a
+them) and his own goal words; a locked quest is never named or described here, at any level. A
+frontier quest's reasons are WO-6.4's (D269): they may count what it unlocks ("unlocks 3") or how
+many steps a goal is away ("goal: X (5 steps)"), never which quests those are. Steps are **nudges**: what to look at and why, with a link; the detail (a quest's tasks, a
 plan's BOM) is one tap or tool call away and shows at the global level. Every number in a step is
 the DB's or a plan's, next to its citation.
 """
@@ -274,7 +275,7 @@ def advise(
         "frontier": len(frontier),
         f"events_{EVENTS_H}h": sum(counts.values()),
         "active_plans": len(active),
-        "alerts": len(deficits) + len(stalled),
+        "problems": len(deficits) + len(stalled),  # the advisor's own checks only
     }
     if not out:
         notes.append(

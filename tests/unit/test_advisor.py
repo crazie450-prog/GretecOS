@@ -669,3 +669,13 @@ def test_the_core_shows_the_problems_and_pushes_each_notice(
     finally:
         n.close()
         st.close()
+
+
+def test_a_plan_name_with_a_number_is_not_spoken() -> None:
+    """Review L4: the spoken line holds no numbers, even from his own plan's name."""
+    f = checks.Finding(
+        "plan_buildable", "plan:pl-x", "You can build EBF 2 from stock", "", (), "#/"
+    )
+    title, say = notices._say("plan_buildable", [f])
+    assert title == f.title
+    assert say == "You have everything in stock for one of your accepted lines."
