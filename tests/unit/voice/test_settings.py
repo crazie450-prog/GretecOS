@@ -28,7 +28,14 @@ def test_defaults_follow_appendix_c(tmp_path: Path) -> None:
         "key",
         "hold",
     )
-    assert [k.label for k in voice.all_keys().values()] == ["F13", "F14", "F15", "F16"]
+    assert [k.label for k in voice.all_keys().values()] == [
+        "F13",
+        "F14",
+        "F15",
+        "F16",
+        "F17",  # the screen key (WO-8.2, D288)
+    ]
+    assert voice.screen_capture == "auto"
     assert voice.key_trigger and voice.wake_trigger
     assert voice.input_device == ""
 
@@ -58,7 +65,7 @@ stt_model = " distil-large-v3 "
     )
     assert (voice.stt_engine, voice.stt_model) == ("parakeet", "distil-large-v3")
     assert voice.talk_key.name == "scroll_lock" and voice.talk_mode == "toggle"
-    assert [k.name for k in voice.hotkeys().values()] == ["f20", "f21", "pause"]
+    assert [k.name for k in voice.hotkeys().values()] == ["f20", "f21", "pause", "f17"]
     assert voice.key_trigger and not voice.wake_trigger
     assert voice.input_device == "Arctis Nova Elite"
     assert (voice.wake_phrase, voice.wake_engine, voice.wake_threshold) == (

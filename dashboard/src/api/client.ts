@@ -22,6 +22,9 @@ import type {
   OresView,
   ActivityView,
   RecapReply,
+  PowerLatest,
+  PowerSpec,
+  PowerView,
   CropsView,
   PersonaInfo,
   PersonaState,
@@ -147,6 +150,14 @@ export const api = {
   accept: (id: string) => post<Accepted>(`/api/plans/${encodeURIComponent(id)}/accept`),
   rename: (id: string, name: string) =>
     post<{ view: DesignerView }>(`/api/plans/${encodeURIComponent(id)}/name`, { name }),
+  // The Power view (WO-4.6): options ranked by the core's code; accepting is Clayton's.
+  powerLatest: (windowS = 0) => get<PowerLatest>(`/api/power?window=${windowS}`),
+  powerView: (id: string, windowS = 0) => get<PowerView>(`/api/power/${encodeURIComponent(id)}?window=${windowS}`),
+  powerDesign: (spec: PowerSpec) => post<{ ids: string[]; view: PowerView }>("/api/power/design", spec),
+  powerAccept: (id: string) =>
+    post<{ id: string; status: string; problems: string[]; view: PowerView }>(
+      `/api/power/${encodeURIComponent(id)}/accept`,
+    ),
   // The persona (WO-5.6): the same switch the Discord /persona command will call.
   persona: (id: string) => post<PersonaState & { persona: PersonaInfo }>("/api/persona", { id }),
   // The setup wizard (WO-2.9): admin and paired devices only. A secret goes in and never comes back.

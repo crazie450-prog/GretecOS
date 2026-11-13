@@ -1640,6 +1640,195 @@ tr.depleted td {
   color: var(--text-2);
 }
 
+/* --- Power (WO-4.6) --------------------------------------------------------------------------- */
+
+.view-power {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.power-top {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.power-top .gos-panel,
+.power-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.power-option.accepted {
+  border-color: var(--accent);
+}
+
+.power-scope,
+.power-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.power-tiers,
+.power-draws,
+.power-warnings,
+.power-buffers,
+.power-chain,
+.power-kit ul,
+.power-cables ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.power-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.power-tier:hover,
+.power-tier[aria-expanded="true"] {
+  border-color: var(--border);
+}
+
+.power-tier:focus-visible,
+.power-mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.power-draws {
+  padding-left: var(--space-5);
+}
+
+.power-draws li,
+.power-warnings li,
+.power-buffers li,
+.power-chain li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.power-modes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.power-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: var(--hit-min);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.power-mode.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.power-net {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.power-net .gos-big {
+  font-size: 56px;
+  overflow-wrap: anywhere;
+}
+
+.power-net .unit {
+  font-size: 20px;
+}
+
+.power-nums {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.power-num dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.power-preview,
+.power-kit,
+.power-cables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.view-power .designer-form {
+  flex-direction: row;
+  align-items: flex-end;
+  margin-top: var(--space-4);
+}
+
+.view-power .designer-form .field.small {
+  flex: 0 0 auto;
+  width: 160px;
+  height: auto;
+}
+
+/* .base-select's flex basis is a width in a row; in a field (a column) it would be a height. */
+.view-power .field .ask-input {
+  flex: 0 0 auto;
+}
+
+.power-effort summary,
+.power-notes summary {
+  cursor: pointer;
+  min-height: var(--hit-min);
+}
+
+.power-effort .table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 
 .settings-grid .col {
   display: flex;
@@ -2361,5 +2550,20 @@ select.ask-input option {
 
   .route-card .routes {
     grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Power on the phone: the ledger, then storage, then one option under the last. */
+  .power-top {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .power-modes {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .power-net .gos-big {
+    font-size: 40px;
   }
 }

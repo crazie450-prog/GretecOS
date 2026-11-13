@@ -620,3 +620,28 @@ def test_raw_budget_sizes_a_closed_line_like_the_best_open_one(
     assert [p["power"]["units"] for p in closed] == [8]
     assert any("as many as the best line" in w for w in closed[0]["warnings"])
     assert d.options[0]["power"]["units"] == 8
+
+
+def test_two_routes_that_differ_only_at_zero_flow_are_one_line() -> None:
+    """Review M2: a route forced off a choice that runs at zero flow has another plan id but
+    the same generator, fuel, recipes and rates; it is kept once, the first one."""
+    from types import SimpleNamespace
+
+    def opt(crafts: tuple[tuple[str, float], ...]) -> Any:  # noqa: ANN401
+        return SimpleNamespace(
+            gen=SimpleNamespace(id="g1", fuel="fluid:x"),
+            units=1.0,
+            flow=SimpleNamespace(crafts=crafts),
+        )
+
+    a = opt((("r:a", 0.5), ("r:b", 0.0)))
+    b = opt((("r:a", 0.5), ("r:c", 0.0)))  # the other choice, unused
+    c = opt((("r:a", 0.25), ("r:c", 0.25)))  # really another route
+    assert power.signature(a) == power.signature(b) != power.signature(c)
+    plans = [{"id": "pw-1"}, {"id": "pw-2"}, {"id": "pw-3"}, {"id": "pw-1"}]
+    sigs = {
+        "pw-1": power.signature(a),
+        "pw-2": power.signature(b),
+        "pw-3": power.signature(c),
+    }
+    assert [p["id"] for p in power.distinct(plans, sigs)] == ["pw-1", "pw-3"]

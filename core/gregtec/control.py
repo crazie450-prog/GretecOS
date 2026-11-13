@@ -75,14 +75,20 @@ def call(
     token: str | None = None,
     body: dict[str, Any] | None = None,
     timeout: float = 5.0,
+    raw: tuple[str, bytes] | None = None,
 ) -> dict[str, Any]:
-    """One JSON request to ``http://127.0.0.1:<port><path>``. Raises :class:`ControlError`."""
+    """One request to ``http://127.0.0.1:<port><path>`` with a JSON ``body`` or a ``raw``
+    (content type, bytes) one (the voice client's screen frame, WO-8.2); the answer is JSON.
+    Raises :class:`ControlError`."""
     data = None if body is None else json.dumps(body).encode()
+    kind = "application/json"
+    if raw is not None:
+        kind, data = raw
     request = urllib.request.Request(
         f"http://{LOOPBACK}:{port}{path}", data=data, method=method
     )
     if data is not None:
-        request.add_header("Content-Type", "application/json")
+        request.add_header("Content-Type", kind)
     if token is not None:
         request.add_header("Authorization", f"Bearer {token}")
     # Never through a proxy: HTTP(S)_PROXY would otherwise get the token.

@@ -23,6 +23,12 @@ own reply is said only when an action was waiting for it (the core's ``pending``
 silence GOS, it never makes GOS talk. *Next card* is ``POST /api/ui {"action": "next_card"}``,
 which the core pushes to the dashboards.
 
+**The screen key** (WO-8.2, D288) is a question about the screen: it drops a segment being
+recorded, stops speech and supersedes the question in flight, as a new question does; a worker
+grabs **one** frame (:mod:`gregtec_voice.screen`) and sends it (``POST /api/screen``), and the
+reply's text is said. Nothing else ever captures: no other key, no wake, no push, no timer.
+With no capture set up the key says so. A frame that can't be had says why.
+
 **The core**: the client's state (idle, listening, thinking, speaking) goes to the core
 (``POST /api/voice/state``) for the dashboard's voice strip and orb, again after a reconnect.
 The WebSocket brings ``deep.task`` pushes: a task this client handed off (by its id, or by its
@@ -61,6 +67,7 @@ from gregtec_voice.ptt import (
     TalkKey,
     Watchdog,
 )
+from gregtec_voice.screen import Capture, CaptureError, Frame
 from gregtec_voice.settings import KEY, WAKE, VoiceSettings
 from gregtec_voice.wake import strip_phrase
 
@@ -74,7 +81,7 @@ IDLE, LISTENING, THINKING, SPEAKING, OFF = (
     "speaking",
     "off",
 )
-CANCEL_HOTKEY, NEXT_CARD = "cancel", "next_card"
+CANCEL_HOTKEY, NEXT_CARD, SCREEN = "cancel", "next_card", "screen"
 CORE_OFFLINE = "Core offline."
 CORE_ERROR = "The core couldn't answer that."
 CORE_REFUSED = "The core refused the voice client's token."
@@ -84,6 +91,8 @@ DEEP_CAP = (
     "The deep-lane task stopped at its spending cap. Approve it on the dashboard."
 )
 DEEP_FAILED = "The deep-lane task failed. The dashboard has the error."
+SCREEN_OFF = "Screen reading isn't set up in the voice client."
+NO_FRAME = "I couldn't see the game: {why}."
 OFFLINE_SAY_S = 15.0  # the core unreachable this long: say so, once per outage
 ASK_TIMEOUT_S = 60.0  # the fast lane gives up well within this (D152: 15 s, 1 retry)
 PREWARM_TIMEOUT_S = 30.0
@@ -108,6 +117,8 @@ class CoreApi(Protocol):
     """What the controller needs from the core (:class:`CoreClient`; tests use a fake)."""
 
     def ask(self, text: str) -> dict[str, Any]: ...
+
+    def screen(self, frame: Frame) -> dict[str, Any]: ...
 
     def prewarm(self) -> None: ...
 
@@ -138,6 +149,9 @@ class Answered:
     error: str | None = None
     offline: bool = False
     refused: bool = False
+    said: str | None = (
+        None  # an error's own words (a screen frame that couldn't be had)
+    )
 
 
 @dataclass(frozen=True)
@@ -174,7 +188,7 @@ class Spoken:
 @dataclass
 class Turn:
     id: int
-    trigger: str  # key, wake, confirm or cancel
+    trigger: str  # key, wake, confirm, cancel or screen
     started: float  # key down, wake, or the hotkey press
     stopped: float | None = None  # key up or end of speech (PM14's start point)
     closed: float | None = None
@@ -251,8 +265,10 @@ class VoiceClient:
         speaker: Speaker,
         observer: Callable[[object], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        screen: Capture | None = None,
     ) -> None:
         self.settings = settings
+        self.screen = screen  # the screen key's one frame per press (WO-8.2); None: off
         # sees each event first, on this thread (gos voice test)
         self.observer = observer
         self.core = core
@@ -445,6 +461,9 @@ class VoiceClient:
         if name == NEXT_CARD:
             self.core.ui(NEXT_CARD)
             return
+        if name == SCREEN:
+            self._screen_key(t)
+            return
         if self._drop_segment():  # confirm and cancel drop what was being recorded
             self.talk.dropped()
         self._barge_in()
@@ -522,24 +541,75 @@ class VoiceClient:
             return
         self._settle()  # what waited for the transcript can be said now
 
+    def _screen_key(self, t: float) -> None:
+        """One press, one frame: a question about the screen (D288)."""
+        if self._drop_segment():
+            self.talk.dropped()
+        self._barge_in()
+        if self.screen is None:
+            self.say(SCREEN_OFF)
+            return
+        self.turns += 1
+        turn = Turn(self.turns, SCREEN, t, stopped=t, closed=t)
+        self._supersede(turn)
+        turn.text_at = self.clock()
+        self._settle()
+        threading.Thread(
+            target=self._screen_core,
+            args=(turn, self.screen),
+            name="gos-voice-screen",
+            daemon=True,
+        ).start()
+
+    def _screen_core(self, turn: Turn, capture: Capture) -> None:
+        """A worker thread: grab the one frame, send it. Posts :class:`Answered`."""
+        try:
+            frame = capture.grab()
+        except CaptureError as exc:
+            self.post(Answered(turn, None, "no frame", said=NO_FRAME.format(why=exc)))
+            return
+        except Exception as exc:  # the controller's turns must go on
+            log.exception("screen capture failed")
+            self.post(Answered(turn, None, type(exc).__name__))
+            return
+        log.info(
+            "screen frame",
+            extra={"source": frame.source, "w": frame.width, "h": frame.height},
+        )
+        try:
+            reply = self.core.screen(frame)
+        except CoreError as exc:
+            self.post(
+                Answered(turn, None, str(exc), offline=exc.offline, refused=exc.refused)
+            )
+        except Exception as exc:
+            log.exception("sending the frame failed")
+            self.post(Answered(turn, None, type(exc).__name__))
+        else:
+            self.post(Answered(turn, reply))
+
     def _ask(self, turn: Turn, text: str) -> None:
         """Send a question: it supersedes the one in flight, and an answer still waiting to be
         said is dropped (notices and hotkey replies stay)."""
+        self._supersede(turn)
+        self._asked.append((_normalise(text), time.time()))
+        self._request(turn, text)
+
+    def _supersede(self, turn: Turn) -> None:
+        """``turn`` is now the question whose answer is wanted."""
         self._floor = turn.id
         old = self._turn
         if old is not None and old.replied is None:
             old.outcome = "superseded"  # logged when its answer comes
         kept: deque[_Utterance] = deque(maxlen=SPEECH_QUEUE)
         for u in self._queued:
-            if u.turn is not None and u.turn.trigger in (KEY, WAKE):
+            if u.turn is not None and u.turn.trigger in (KEY, WAKE, SCREEN):
                 u.turn.outcome = "superseded"
                 self._log_turn(u.turn)
             else:
                 kept.append(u)
         self._queued = kept
         self._turn = turn
-        self._asked.append((_normalise(text), time.time()))
-        self._request(turn, text)
 
     def _request(self, turn: Turn, text: str) -> None:
         """Ask the core on a worker thread, which posts :class:`Answered`."""
@@ -580,7 +650,7 @@ class VoiceClient:
                 "refused" if ev.refused else "offline" if ev.offline else "error"
             )
             log.warning("the core didn't answer", extra={"error": ev.error[:200]})
-            self.say("" if quiet else self._failure(ev), turn)
+            self.say("" if quiet else ev.said or self._failure(ev), turn)
             return
         reply = ev.reply or {}
         self._persona_voice(reply)
@@ -835,6 +905,22 @@ class CoreClient:
     def ask(self, text: str) -> dict[str, Any]:
         try:
             return self._post("/api/ask", {"text": text}, ASK_TIMEOUT_S)
+        except control.ControlError as exc:
+            raise CoreError(
+                str(exc), offline=exc.status is None, refused=exc.status in (401, 403)
+            ) from None
+
+    def screen(self, frame: Frame) -> dict[str, Any]:
+        """``POST /api/screen`` with the frame (WO-8.2)."""
+        try:
+            return self.call(
+                self.port,
+                "POST",
+                f"/api/screen?source={frame.source}",
+                token=self.token,
+                raw=("image/png", frame.png),
+                timeout=ASK_TIMEOUT_S,
+            )
         except control.ControlError as exc:
             raise CoreError(
                 str(exc), offline=exc.status is None, refused=exc.status in (401, 403)

@@ -11,6 +11,12 @@ dependencies = [
     # The low-level keyboard hook. LGPL-3.0: installed from PyPI as a library, never vendored
     # or modified (D180).
     "pynput>=1.8.2; sys_platform == 'win32'",
+    # The screen key's one frame (WO-8.2, D288): DXGI Desktop Duplication, MIT; the Windows
+    # wheels bundle its compiled NumPy kernels, so no OpenCV is needed.
+    "dxcam>=0.3.0; sys_platform == 'win32'",
+    # dxcam's COM layer (MIT), held to the 1.4 line dxcam 0.3.0 was released against until a
+    # Lab check passes on 1.5 (published 2026-11-09).
+    "comtypes>=1.4.9,<1.5; sys_platform == 'win32'",
 ]
 
 [build-system]
