@@ -9,7 +9,8 @@ docs/contracts/gregteclink-client-v1.md. What the core does with each message:
 - ``status`` (1 Hz): kept as the game's position and dimension; a dimension change is a
   ``dim_change`` event and the position a ``location`` event once a minute (plan 7.5).
   With the core's event store (WO-6.3) the link's events go through it as its instance's
-  (``source`` ``link``), so they join that instance's sessions like the watchers' events.
+  (``source`` ``link``), so they join that instance's sessions like the watchers' events;
+  the timed ``location`` is never session activity (D264, :data:`.events.store.PERIODIC`).
 - ``target`` with ``why: key`` (the What's this? key): answered at once from the DB
   (:mod:`.whatsthis`), as a local chat notice in the game and a card on the dashboards.
   ``why: probe``: the answer to the core's own ``probe``, sent when Clayton says "what's this?"

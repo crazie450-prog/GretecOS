@@ -21,7 +21,9 @@ in time order within a post:
   :data:`IDLE_S` (15 minutes) with no activity (``idle``; it ends at its last activity, and the
   core's tick closes it when no event comes at all, :func:`close_idle`);
 - **activity** is what the player does: every kind but the census, ``error``, ``export_stale``
-  and ``world_closed``; a pause or unpause counts (he was there).
+  and ``world_closed``; a pause or unpause counts (he was there). An event sent on a timer
+  (:data:`PERIODIC`: GregtecLink's ``location`` once a minute) is not activity either: it
+  joins an open session but never opens one, keeps one going or ends one.
 
 Events that belong to no session (a stray error with the game closed) keep ``session_id`` NULL.
 """
@@ -39,6 +41,10 @@ IDLE_S = 15 * 60  # plan 7.5: a session ends after 15 minutes idle
 AFTER_END_S = 120  # save files read this soon after a quit or crash still belong to it
 NOT_STORED = frozenset({"machine_census"})
 NOT_ACTIVITY = frozenset({"machine_census", "error", "export_stale", "world_closed"})
+# (source, kind) sent on a timer, not because the player did something: GregtecLink's
+# position once a minute (WO-8.1). Stored, and joins an open session, but never opens,
+# extends or ends one (D264 (1): played time never counts the idle wait).
+PERIODIC = frozenset({("link", "location")})
 INSTANCES = ("play", "lab")
 PAYLOAD_MAX = 16 << 10
 TS_MAX = 1e10  # epoch seconds: the year 2286
@@ -141,12 +147,16 @@ def _session_for(
     data: Mapping[str, Any],
     ts: int,
     out: Recorded,
+    periodic: bool = False,
 ) -> int | None:
-    """The session an event at ``ts`` belongs to, opening and closing sessions on the way."""
+    """The session an event at ``ts`` belongs to, opening and closing sessions on the way.
+    A ``periodic`` event (:data:`PERIODIC`) only joins the open session, if any."""
     cur = _open(conn, instance)
     if cur is not None and cur["last_ts"] is not None and ts - cur["last_ts"] > IDLE_S:
         _close(conn, cur["id"], cur["last_ts"], "idle", out)
         cur = None
+    if periodic:
+        return None if cur is None else int(cur["id"])
     if is_login(kind, data):
         if cur is not None:
             _close(conn, cur["id"], max(cur["last_ts"] or ts, ts), "relogin", out)
@@ -235,7 +245,9 @@ def record(
                 continue
             ts = int(t)
             sid = (
-                _session_for(conn, inst, world, kind, data, ts, out)
+                _session_for(
+                    conn, inst, world, kind, data, ts, out, (source, kind) in PERIODIC
+                )
                 if inst is not None
                 else None
             )

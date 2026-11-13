@@ -630,7 +630,7 @@ def test_an_event_without_the_table_is_skipped(tmp_path: Path) -> None:
 
 def test_the_links_events_go_through_the_event_store(tmp_path: Path) -> None:
     """WO-6.3 with WO-8.1: a link's events are its instance's, with a session, like the
-    watchers' (``source`` ``link``)."""
+    watchers' (``source`` ``link``); its timed ``location`` joins the open session."""
     db = tmp_path / "data" / "gos.sqlite"
     store = Store(db)
     service = EventService(db=db)
@@ -644,21 +644,137 @@ def test_the_links_events_go_through_the_event_store(tmp_path: Path) -> None:
         )
         link = gamelink.GameLink(core, clock=lambda: 1_700_000_000.0)
         at = {"dim": -1, "x": 10.4, "y": 64.0, "z": -3.6}
-        link._event(link_of("lab"), "location", at, None)
         link._event(link_of("lab"), "chat", at, {"sender": "Bob", "text": "hi"})
+        link._event(link_of("lab"), "location", at, None)
         rows = store.rows(
             "SELECT kind, instance, source, session_id, dim, x, z, payload, uid FROM event "
             "ORDER BY id"
         )
-        assert [r["kind"] for r in rows] == ["location", "chat"]
+        assert [r["kind"] for r in rows] == ["chat", "location"]
         assert {(r["instance"], r["source"]) for r in rows} == {("lab", "link")}
         assert rows[0]["session_id"] is not None
         assert rows[0]["session_id"] == rows[1]["session_id"]
-        assert (rows[0]["dim"], rows[0]["x"], rows[0]["z"]) == (-1, 10, -4)
-        assert json.loads(rows[1]["payload"])["sender"] == "Bob"
+        assert (rows[1]["dim"], rows[1]["x"], rows[1]["z"]) == (-1, 10, -4)
+        assert json.loads(rows[0]["payload"])["sender"] == "Bob"
         assert rows[0]["uid"] != rows[1]["uid"]
         session = store.rows("SELECT instance, start_why FROM session")
         assert [(r["instance"], r["start_why"]) for r in session] == [("lab", "resume")]
     finally:
         service.close()
         store.close()
+
+
+class Clock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+T0 = 1_700_000_000
+AT = {"dim": 0, "x": 1.0, "y": 64.0, "z": 2.0}
+Linked = tuple[Store, EventService, gamelink.GameLink, Clock]
+
+
+def make_linked(home: Path) -> Linked:
+    db = home / "data" / "gos.sqlite"
+    store = Store(db)
+    clock = Clock(float(T0))
+    service = EventService(db=db, clock=clock)
+    core = Core(
+        cfg=Config(gos_home=home),
+        store=store,
+        auth=Auth(store, ADMIN),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+        events=service,
+    )
+    return store, service, gamelink.GameLink(core, clock=clock), clock
+
+
+@pytest.fixture
+def linked(tmp_path: Path) -> Iterator[Linked]:
+    made = make_linked(tmp_path)
+    yield made
+    made[1].close()
+    made[0].close()
+
+
+def watcher_event(uid: str, kind: str, ts: int, data: dict[str, Any]) -> dict[str, Any]:
+    return {"id": uid, "kind": kind, "ts": ts, "source": "log", "data": data}
+
+
+def test_an_afk_hour_with_the_link_connected_ends_idle_at_the_last_activity(
+    linked: Linked,
+) -> None:
+    """D264 (1) with WO-8.1: the link's once-a-minute ``location`` is sent on a timer, not
+    because Clayton did something, so it never keeps a session going: an AFK hour with the
+    link connected ends idle at the last real activity, and played time leaves the wait out."""
+    store, service, link, clock = linked
+    service.record(
+        "play", [watcher_event("login", "location", T0, {"via": "login", **AT})]
+    )
+    clock.now = T0 + 120
+    link._event(link_of("play"), "dim_change", AT, {"from": -1, "to": 0})  # he did that
+    for minute in range(3, 63):  # then an hour AFK: only the link's timer
+        clock.now = T0 + 60 * minute
+        link._event(link_of("play"), "location", AT, None)
+    service.tick(None)
+    [session] = store.rows("SELECT * FROM session")
+    assert session["end_why"] == "idle"
+    assert (session["start_ts"], session["last_ts"]) == (T0, T0 + 120)
+    assert session["end_ts"] == T0 + 120  # played: 2 minutes, not 62
+    rows = store.rows("SELECT session_id FROM event WHERE source = 'link' ORDER BY ts")
+    assert len(rows) == 61
+    # The dim change and the timer's events up to the idle end join the session; after it,
+    # the timer starts none.
+    assert {r["session_id"] for r in rows[:16]} == {session["id"]}
+    assert {r["session_id"] for r in rows[16:]} == {None}
+
+
+def test_a_link_timer_event_alone_never_opens_a_session(linked: Linked) -> None:
+    store, _, link, clock = linked
+    for _minute in range(30):
+        clock.now += 60
+        link._event(link_of("play"), "location", AT, None)
+    assert store.rows("SELECT * FROM session") == []
+    rows = store.rows("SELECT instance, source, session_id FROM event")
+    assert len(rows) == 30
+    assert {(r["instance"], r["source"], r["session_id"]) for r in rows} == {
+        ("play", "link", None)
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [("chat", {"sender": "Bob", "text": "hi"}), ("dim_change", {"from": 0, "to": -1})],
+)
+def test_a_real_link_event_counts_like_the_watchers(
+    tmp_path: Path, kind: str, payload: dict[str, Any]
+) -> None:
+    """A link event the player caused follows the rule the same kind from the watchers
+    follows: with no session it opens one (``resume``), and it keeps one going."""
+    outcomes = []
+    for source in ("log", "link"):
+        store, service, link, clock = make_linked(tmp_path / source)
+        try:
+            for step in range(4):  # one every 10 minutes: never 15 idle
+                clock.now = T0 + 600 * step
+                if source == "link":
+                    link._event(link_of("play"), kind, AT, payload)
+                else:
+                    item = watcher_event(f"w{step}", kind, int(clock.now), payload)
+                    service.record("play", [item])
+            clock.now = T0 + 1800 + 60
+            service.tick(None)
+            rows = store.rows(
+                "SELECT start_ts, last_ts, end_ts, start_why FROM session"
+            )
+            outcomes.append([dict(r) for r in rows])
+        finally:
+            service.close()
+            store.close()
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[1] == [
+        {"start_ts": T0, "last_ts": T0 + 1800, "end_ts": None, "start_why": "resume"}
+    ]

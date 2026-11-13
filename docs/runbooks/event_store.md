@@ -19,7 +19,9 @@ $ProgressPreference = 'SilentlyContinue'
   adds nothing. `machine_census` is My base's state, not an event, and is not kept. A failed store
   answers 503 and the watchers send the batch again (D263). GregtecLink's `chat`, `dim_change`
   and `location` events (WO-8.1, D286) go in the same way, as their link's instance's, with
-  `source` `link`.
+  `source` `link`. Its `location` comes on a timer (once a minute while a world is open), not
+  from something Clayton did, so it is stored but is never activity: it never starts a session,
+  keeps one going or ends one (D264). Its `chat` and `dim_change` count like the watchers'.
 - **Sessions** per instance: one starts at the **login line**, and ends at the **quit line**
   (`Stopping server`, a new `world_closed` event), a **crash** report, or after **15 minutes**
   with no activity (it then ends at its last activity). Activity after an idle end starts a new
