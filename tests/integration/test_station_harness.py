@@ -117,7 +117,9 @@ def test_seed_labels_are_crop_name_seeds(
 
 def test_three_step_plans_at_mv(facts: crop_facts.Facts) -> None:
     schema = json.loads(
-        (REPO / "docs" / "contracts" / "oc_bridge.schema.json").read_text(encoding="utf-8")
+        (REPO / "docs" / "contracts" / "oc_bridge.schema.json").read_text(
+            encoding="utf-8"
+        )
     )
     args_ok = Draft202012Validator(
         {"$ref": "#/$defs/crop_start_args", "$defs": schema["$defs"]}
