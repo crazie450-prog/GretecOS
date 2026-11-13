@@ -296,13 +296,24 @@ def session_dict(row: sqlite3.Row, now: float) -> dict[str, Any]:
     }
 
 
+def is_echo(kind: str, payload: str | None) -> bool:
+    """A death another reader saw first (the watchers mark it ``same_as``): not counted."""
+    if kind != "death" or not payload:
+        return False
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and "same_as" in data
+
+
 def counts(conn: sqlite3.Connection, session_id: int) -> dict[str, int]:
     """A session's events by kind, counted here (deaths seen by several readers once)."""
     out: dict[str, int] = {}
     for row in conn.execute(
         "SELECT kind, payload FROM event WHERE session_id = ?", (session_id,)
     ):
-        if row["kind"] == "death" and '"same_as"' in (row["payload"] or ""):
+        if is_echo(row["kind"], row["payload"]):
             continue
         out[row["kind"]] = out.get(row["kind"], 0) + 1
     return out

@@ -164,10 +164,10 @@ def events_recent(call: Call, args: dict[str, Any], offset: int) -> Result:
         [*params, call.page, offset],
     ).fetchall()
     by_kind: dict[str, int] = {}
-    for r in conn.execute(
-        f"SELECT kind, COUNT(*) AS n FROM event WHERE {cond} GROUP BY kind", params
-    ):
-        by_kind[r["kind"]] = r["n"]
+    for r in conn.execute(f"SELECT kind, payload FROM event WHERE {cond}", params):
+        if event_store.is_echo(r["kind"], r["payload"]):
+            continue  # a death another reader saw first: counted once, as session_summary
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
     head.append(("events", total))
     head += [(f"n_{k}", n) for k, n in sorted(by_kind.items())]
     out = []
@@ -191,7 +191,11 @@ def events_recent(call: Call, args: dict[str, Any], offset: int) -> Result:
         EVENT_COLUMNS,
         out,
         head=head,
-        notes=[TEXT_NOTE, "newest first; counts (n_<kind>) are computed by GOS"],
+        notes=[
+            TEXT_NOTE,
+            "newest first; counts (n_<kind>) are computed by GOS (a death row with same_as "
+            "is a death another reader saw first, counted once)",
+        ],
         total=total,
         offset=offset,
         more=offset + len(out) < total,
