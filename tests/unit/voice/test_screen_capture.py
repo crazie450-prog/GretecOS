@@ -97,7 +97,7 @@ def test_the_newest_screenshot_from_the_last_minute_is_the_frame(
         read.append(path)
         return path.read_bytes()
 
-    got = Screenshots(tmp_path, clock=lambda: 1050.0, read=reader).grab()
+    got = Screenshots([tmp_path], clock=lambda: 1050.0, read=reader).grab()
     assert got.source == SCREENSHOT
     with Image.open(io.BytesIO(got.png)) as image:
         assert image.getpixel((5, 5)) == (0, 255, 0)
@@ -108,12 +108,29 @@ def test_the_newest_screenshot_from_the_last_minute_is_the_frame(
 
 def test_an_old_or_missing_screenshot_says_to_press_f2(tmp_path: Path) -> None:
     with pytest.raises(CaptureError, match="press F2"):
-        Screenshots(tmp_path, clock=lambda: 0.0).grab()  # no folder yet
+        Screenshots([tmp_path], clock=lambda: 0.0).grab()  # no folder yet
     shot(tmp_path / "screenshots", "old.png", 1000.0, (1, 2, 3))
     with pytest.raises(CaptureError, match="press F2"):
-        Screenshots(tmp_path, clock=lambda: 1000.0 + screen.FRESH_S + 1).grab()
+        Screenshots([tmp_path], clock=lambda: 1000.0 + screen.FRESH_S + 1).grab()
     with pytest.raises(CaptureError, match="game folder"):
-        Screenshots(None).grab()
+        Screenshots([None, None]).grab()
+
+
+def test_the_newest_screenshot_of_play_or_lab_is_the_frame(tmp_path: Path) -> None:
+    """Runbook B's V13 check runs in Lab: its F2 screenshot counts as Play's does (review M3)."""
+    play, lab = tmp_path / "play", tmp_path / "lab"
+    shot(play / "screenshots", "play.png", 1010.0, (255, 0, 0))
+    shot(lab / "screenshots", "lab.png", 1030.0, (0, 0, 255))
+    got = Screenshots([play, lab], clock=lambda: 1050.0).grab()
+    with Image.open(io.BytesIO(got.png)) as image:
+        assert image.getpixel((5, 5)) == (0, 0, 255)
+    shot(play / "screenshots", "later.png", 1040.0, (0, 255, 0))
+    got = Screenshots([play, lab], clock=lambda: 1050.0).grab()
+    with Image.open(io.BytesIO(got.png)) as image:
+        assert image.getpixel((5, 5)) == (0, 255, 0)
+    # a game folder that isn't set up, or has no screenshots yet, is passed over
+    missing = Screenshots([None, tmp_path / "none", lab], clock=lambda: 1050.0).grab()
+    assert missing.source == SCREENSHOT
 
 
 def test_a_screenshot_that_doesnt_read_says_so(tmp_path: Path) -> None:
@@ -121,7 +138,9 @@ def test_a_screenshot_that_doesnt_read_says_so(tmp_path: Path) -> None:
     folder.mkdir()
     (folder / "bad.png").write_bytes(b"not a png")
     with pytest.raises(CaptureError, match="doesn't read"):
-        Screenshots(tmp_path, clock=lambda: (folder / "bad.png").stat().st_mtime).grab()
+        Screenshots(
+            [tmp_path], clock=lambda: (folder / "bad.png").stat().st_mtime
+        ).grab()
 
 
 # --- the window on its monitor ---------------------------------------------------------------
@@ -149,6 +168,47 @@ def test_only_gtnh_titles_match() -> None:
     assert screen.matches("Minecraft 1.7.10")
     assert not screen.matches("Discord")
     assert not screen.matches("New Horizons fan wiki - Chrome")
+
+
+def test_only_the_games_own_window_is_the_game() -> None:
+    """Both the title and the window class have to be the game's (review M2)."""
+    title = "GT New Horizons 2.9.0"
+    assert screen.is_game(title, "LWJGL")
+    assert screen.is_game("GT: New Horizons 2.9.0", "GLFW30")  # lwjgl3ify
+    # Explorer on the instance folder, browser tabs, another Java program's window
+    assert not screen.is_game(title, "CabinetWClass")
+    assert not screen.is_game("GT New Horizons - wiki", "Chrome_WidgetWin_1")
+    assert not screen.is_game("GT New Horizons - wiki", "MozillaWindowClass")
+    assert not screen.is_game(title, "SunAwtFrame")
+    assert not screen.is_game("Discord", "LWJGL")
+
+
+def fake_foreground(**kw: Any) -> Callable[[], screen.Foreground | None]:  # noqa: ANN401
+    facts = {
+        "title": "GT: New Horizons 2.9.0",
+        "window_class": "LWJGL",
+        "client": Rect(100, 50, 1380, 770),
+    } | kw
+    return lambda: screen.Foreground(**facts)
+
+
+def test_win32_gives_the_client_area_only_of_the_game_window() -> None:
+    """Fake Win32 reads: the client rectangle comes back only for the game's own window."""
+    assert screen.Win32(read=fake_foreground()).game_window() == Rect(
+        100, 50, 1380, 770
+    )
+    explorer = fake_foreground(window_class="CabinetWClass")
+    assert screen.Win32(read=explorer).game_window() is None
+    browser = fake_foreground(
+        title="GT New Horizons", window_class="Chrome_WidgetWin_1"
+    )
+    assert screen.Win32(read=browser).game_window() is None
+    assert screen.Win32(read=fake_foreground(client=None)).game_window() is None
+    assert (
+        screen.Win32(read=fake_foreground(client=Rect(5, 5, 6, 6))).game_window()
+        is None
+    )
+    assert screen.Win32(read=lambda: None).game_window() is None
 
 
 # --- dxcam, faked ----------------------------------------------------------------------------
@@ -195,8 +255,12 @@ class FakeDxcam:
         output = SimpleNamespace(
             desc=SimpleNamespace(DesktopCoordinates=coords), update_desc=lambda: None
         )
-        factory = SimpleNamespace(outputs=[[output]])
-        self.DXFactory = lambda: factory
+        self.factory = SimpleNamespace(outputs=[[output]])
+        self.factories = 0
+
+    def DXFactory(self) -> Any:  # noqa: ANN401 - dxcam's name
+        self.factories += 1
+        return self.factory
 
     def create(self, **kw: Any) -> FakeCamera:  # noqa: ANN401
         self.created.append(kw)
@@ -228,6 +292,32 @@ def test_dxcam_grabs_the_game_window_once_on_dxgi() -> None:
     assert windows.asked == 1
 
 
+def test_dxcams_factory_is_taken_once() -> None:
+    """Each DXFactory() call after dxcam's own logs a warning: the module's is used, else one
+    call for the client's life (review M6)."""
+    fake = FakeDxcam([FakeCamera([array((90, 120, 60)), array((90, 120, 61))])])
+    capture = DxcamCapture(FakeWindows(), dxcam=fake)
+    capture.grab()
+    capture.grab()
+    assert fake.factories == 1 and len(fake.created) == 1
+    module = FakeDxcam([FakeCamera([array((90, 120, 60))])])
+    setattr(module, "__factory", module.factory)  # what dxcam builds on import
+    DxcamCapture(FakeWindows(), dxcam=module).grab()
+    assert module.factories == 0
+
+
+def test_no_frame_yet_waits_and_grabs_again_on_the_same_camera() -> None:
+    """A static screen (a GUI open, the game paused): no new frame is not a lost duplication."""
+    camera = FakeCamera([None, None, array((10, 200, 10))])
+    fake = FakeDxcam([camera])
+    capture = DxcamCapture(FakeWindows(), dxcam=fake)
+    waits: list[float] = []
+    capture.sleep = waits.append
+    frame = capture.grab()
+    assert frame.width == 1280 and len(camera.grabs) == 3 and not camera.released
+    assert len(fake.created) == 1 and waits == [screen.GRAB_WAIT_S] * 2
+
+
 def test_a_lost_duplication_is_recreated_once() -> None:
     first = FakeCamera([RuntimeError("DXGI_ERROR_ACCESS_LOST")])
     second = FakeCamera([array((10, 200, 10))])
@@ -243,9 +333,18 @@ def test_dxcam_failures_are_capture_errors() -> None:
         ).grab()
     with pytest.raises(CaptureError, match="in front"):
         DxcamCapture(FakeWindows(None), dxcam=FakeDxcam([])).grab()
-    none_twice = FakeDxcam([FakeCamera([None]), FakeCamera([None])])
+    never = FakeDxcam([FakeCamera([None] * screen.GRAB_TRIES)])
+    capture = DxcamCapture(FakeWindows(), dxcam=never)
+    capture.sleep = lambda _s: None
     with pytest.raises(CaptureError, match="no frame"):
-        DxcamCapture(FakeWindows(), dxcam=none_twice).grab()
+        capture.grab()
+    assert len(never.created) == 1  # the camera wasn't dropped for it
+    lost = FakeDxcam(
+        [FakeCamera([RuntimeError("lost")]), FakeCamera([RuntimeError("lost")])]
+    )
+    with pytest.raises(CaptureError, match="no frame"):
+        DxcamCapture(FakeWindows(), dxcam=lost).grab()
+    assert len(lost.created) == 2  # recreated once, not again
     off_screen = FakeWindows(Rect(9000, 0, 9500, 300))
     with pytest.raises(CaptureError, match="display"):
         DxcamCapture(off_screen, dxcam=FakeDxcam([])).grab()
@@ -280,9 +379,9 @@ def test_auto_falls_back_to_the_screenshot_and_says_both_reasons() -> None:
 
 
 def test_off_windows_or_screenshot_mode_is_the_fallback_only(tmp_path: Path) -> None:
-    assert isinstance(screen.for_settings(SCREENSHOT, tmp_path), Screenshots)
+    assert isinstance(screen.for_settings(SCREENSHOT, [tmp_path]), Screenshots)
     if os.name != "nt":
-        assert isinstance(screen.for_settings("auto", tmp_path), Screenshots)
+        assert isinstance(screen.for_settings("auto", [tmp_path]), Screenshots)
 
 
 def test_win32_needs_windows() -> None:

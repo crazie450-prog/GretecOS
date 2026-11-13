@@ -419,10 +419,12 @@ def _run(
         core,
         transcriber=transcriber,
         speaker=hooks.speaker(voice_settings),
-        # one frame per screen-key press (WO-8.2, D288): Play's window, else its F2 screenshot
+        # one frame per screen-key press (WO-8.2, D288): the game window, else the newest F2
+        # screenshot of Play or Lab (read only)
         screen=(
             screen.for_settings(
-                voice_settings.screen_capture, _game_folder(cfg.instance("play"))
+                voice_settings.screen_capture,
+                [_game_folder(cfg.instance(role)) for role in ("play", "lab")],
             )
             if voice_settings.screen_key is not None
             else None

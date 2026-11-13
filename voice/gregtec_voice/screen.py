@@ -4,15 +4,19 @@
 screen key goes down (the hook's auto-repeat and the release do nothing, :class:`ptt.Hotkeys`);
 nothing here runs on a timer, keeps a capture session going or captures on any other event.
 
-- :class:`DxcamCapture` (Windows): the client area of the foreground window when its title is
-  GTNH's (:data:`TITLES`), grabbed once with dxcam's DXGI backend (``grab(region=<the window on its
-  monitor>, new_frame_only=False)``) [H§3]. Only the game window is captured, never the
-  desktop, so Discord DMs and other windows on any monitor never leave the PC. A failed grab
-  (``DXGI_ERROR_ACCESS_LOST`` after a mode switch) recreates the camera and tries once more. A
-  frame that is all black (exclusive fullscreen, V13) is refused, so the fallback runs.
-- :class:`Screenshots` (any OS): the fallback, the newest ``.png`` in the game folder's
-  ``screenshots/`` written in the last :data:`FRESH_S` seconds: Clayton presses F2 (the game's
-  own screenshot key) and then the screen key. GOS never presses F2 itself: that would make the
+- :class:`DxcamCapture` (Windows): the client area of the foreground window when it is the
+  game's: its title is GTNH's (:data:`TITLES`) and its window class is LWJGL's or GLFW's
+  (:data:`CLASSES`), so an Explorer window or a browser tab titled like the pack is never
+  captured. It is grabbed once with dxcam's DXGI backend (``grab(region=<the
+  window on its monitor>, new_frame_only=False)``) [H§3]. Only the game window is captured,
+  never the desktop, so Discord DMs and other windows on any monitor never leave the PC. A grab
+  that gives no frame (DXGI had no new frame yet and dxcam no cached one) is tried again after a
+  short wait with the same camera; a grab that raises (``DXGI_ERROR_ACCESS_LOST`` after a mode
+  switch) recreates the camera once. A frame that is all black (exclusive fullscreen, V13) is
+  refused, so the fallback runs.
+- :class:`Screenshots` (any OS): the fallback, the newest ``.png`` in Play's or Lab's
+  ``screenshots/`` (read only) written in the last :data:`FRESH_S` seconds: Clayton presses F2
+  (the game's own screenshot key) and then the screen key. GOS never presses F2 itself: that would make the
   game write into Play (D288). The file is read once, share-delete, and let go
   (:func:`gregtec.gamestate.safe_open.read_bytes`).
 - :class:`AutoCapture`: dxcam first, then the fallback; ``[voice] screen_capture =
@@ -45,6 +49,11 @@ LONG_EDGE = 1568  # as the core's cache: Claude's vision reads no more
 BLACK_MAX = 8  # a frame whose brightest pixel is this dark is black (V13)
 # GTNH's window titles: "GT: New Horizons ..." (the pack's own title), else Minecraft's.
 TITLES = ("GT: New Horizons", "GT New Horizons", "Minecraft 1.7.10")
+# The game window's class: LWJGL 2's on the Java 8 build, GLFW's on lwjgl3ify (Java 17+).
+# No other program on the PC makes a window of these (GTNH is its only Java program, D161).
+CLASSES = ("LWJGL", "GLFW30")
+GRAB_TRIES = 3  # grabs that give no frame before dxcam is given up
+GRAB_WAIT_S = 0.05  # between them: DXGI has a frame when the screen next updates
 
 
 class CaptureError(Exception):
@@ -86,27 +95,30 @@ def is_black(image: Image.Image) -> bool:
 
 
 class Screenshots:
-    """The newest ``screenshots/*.png`` of the game folder written in the last
-    :data:`FRESH_S` seconds."""
+    """The newest ``screenshots/*.png`` of the game folders (Play's and Lab's, read only)
+    written in the last :data:`FRESH_S` seconds."""
 
     def __init__(
         self,
-        game: Path | None,
+        games: Sequence[Path | None],
         *,
         clock: Callable[[], float] = time.time,
         read: Callable[[Path], bytes] = read_bytes,
     ) -> None:
-        self.game = game
+        self.games = [game for game in games if game is not None]
         self.clock = clock
         self.read = read
 
     def grab(self) -> Frame:
-        if self.game is None:
+        if not self.games:
             raise CaptureError("the game folder isn't set up")
-        folder = self.game / "screenshots"
         newest: tuple[float, Path] | None = None
-        try:
-            for path in folder.iterdir():
+        for game in self.games:
+            try:
+                paths = list((game / "screenshots").iterdir())
+            except OSError:
+                continue  # no screenshots yet
+            for path in paths:
                 if path.suffix.lower() != ".png":
                     continue
                 try:
@@ -115,8 +127,6 @@ class Screenshots:
                     continue
                 if newest is None or mtime > newest[0]:
                     newest = (mtime, path)
-        except OSError:
-            newest = None
         if newest is None or self.clock() - newest[0] > FRESH_S:
             raise CaptureError(
                 "there's no screenshot from the last minute: press F2, then the screen key"
@@ -184,6 +194,12 @@ def matches(title: str, titles: Sequence[str] = TITLES) -> bool:
     return any(title.startswith(t) for t in titles)
 
 
+def is_game(title: str, window_class: str, titles: Sequence[str] = TITLES) -> bool:
+    """The game's window: a GTNH title and LWJGL's (or GLFW's) window class. The title alone
+    isn't enough: Explorer on the instance folder or a browser tab can carry it."""
+    return matches(title, titles) and window_class in CLASSES
+
+
 class Windows(Protocol):
     """The Win32 calls :class:`DxcamCapture` needs (a fake in the tests)."""
 
@@ -192,42 +208,66 @@ class Windows(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Foreground:
+    """What Windows says about the foreground window: its title, its window class and its
+    client area in desktop coordinates (None when it doesn't read)."""
+
+    title: str
+    window_class: str
+    client: Rect | None
+
+
 class Win32:
     """The game window's client rectangle, through user32 (Windows only, read only): the window
-    in the foreground, when its title is GTNH's. Clayton presses the key while playing, so the
-    game is in front; GOS never looks for or at any other window (the D247 audit)."""
+    in the foreground, when it is the game's (:func:`is_game`). Clayton presses the key while
+    playing, so the game is in front; GOS never looks for or at any other window, and never
+    opens another process (the D247 audit)."""
 
-    def __init__(self, titles: Sequence[str] = TITLES) -> None:
-        if sys.platform != "win32":
+    def __init__(
+        self,
+        titles: Sequence[str] = TITLES,
+        *,
+        read: Callable[[], Foreground | None] | None = None,  # a fake in the tests
+    ) -> None:
+        if read is None and sys.platform != "win32":
             raise CaptureError("screen capture needs Windows")
         self.titles = tuple(titles)
+        self.read = read or read_foreground
 
     def game_window(self) -> Rect | None:
-        return foreground_game_window(self.titles)
+        window = self.read()
+        if window is None or window.client is None:
+            return None
+        if not is_game(window.title, window.window_class, self.titles):
+            return None
+        rect = window.client
+        return rect if rect.width > 1 and rect.height > 1 else None
 
 
-def foreground_game_window(titles: Sequence[str]) -> Rect | None:
-    """The foreground window's client area in desktop coordinates if its title is one of
-    ``titles``, else None (Windows only)."""
+def read_foreground() -> Foreground | None:
+    """The foreground window as :class:`Foreground`, or None when there is none (Windows
+    only). Every call is a read: its title, its class and its client rectangle."""
     from ctypes import wintypes
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
+    user32.GetForegroundWindow.restype = wintypes.HWND
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return None
     n = user32.GetWindowTextLengthW(hwnd)
-    buf = ctypes.create_unicode_buffer(n + 1)
-    user32.GetWindowTextW(hwnd, buf, n + 1)
-    if not matches(buf.value, titles):
-        return None
+    title = ctypes.create_unicode_buffer(n + 1)
+    user32.GetWindowTextW(hwnd, title, n + 1)
+    window_class = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, window_class, 256)
+    client = None
     rect = wintypes.RECT()
-    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
-        return None
     origin = wintypes.POINT(0, 0)
-    if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
-        return None
-    found = Rect(origin.x, origin.y, origin.x + rect.right, origin.y + rect.bottom)
-    return found if found.width > 1 and found.height > 1 else None
+    if user32.GetClientRect(hwnd, ctypes.byref(rect)) and user32.ClientToScreen(
+        hwnd, ctypes.byref(origin)
+    ):
+        client = Rect(origin.x, origin.y, origin.x + rect.right, origin.y + rect.bottom)
+    return Foreground(title.value, window_class.value, client)
 
 
 class DxcamCapture:
@@ -242,6 +282,8 @@ class DxcamCapture:
         self._windows = windows
         self._dxcam = dxcam
         self._cameras: dict[tuple[int, int], Any] = {}
+        self._factory: Any = None
+        self.sleep: Callable[[float], None] = time.sleep
 
     def _module(self) -> Any:  # noqa: ANN401
         if self._dxcam is None:
@@ -253,9 +295,12 @@ class DxcamCapture:
         return self._dxcam
 
     def _outputs(self, dxcam: Any) -> list[tuple[int, int, Rect]]:  # noqa: ANN401
-        factory = dxcam.DXFactory()  # a singleton: the outputs dxcam found
+        if self._factory is None:
+            # dxcam builds its one factory on import, and each later DXFactory() call logs a
+            # warning: take the module's, else call it once
+            self._factory = getattr(dxcam, "__factory", None) or dxcam.DXFactory()
         out = []
-        for d, outputs in enumerate(factory.outputs):
+        for d, outputs in enumerate(self._factory.outputs):
             for o, output in enumerate(outputs):
                 output.update_desc()
                 c = output.desc.DesktopCoordinates
@@ -306,10 +351,8 @@ class DxcamCapture:
             raise CaptureError("the game window isn't on a display dxcam sees")
         device, output, region = picked
         array = None
-        for attempt in (
-            1,
-            2,
-        ):  # after a mode switch the duplication is lost: recreate once
+        recreated = False
+        for attempt in range(1, GRAB_TRIES + 1):
             try:
                 array = self._camera(dxcam, device, output).grab(
                     region=region, new_frame_only=False
@@ -320,10 +363,16 @@ class DxcamCapture:
                     extra={"error": type(exc).__name__, "try": attempt},
                     exc_info=True,
                 )
-                array = None
+                # after a mode switch the duplication is lost: recreate the camera, once
+                self._drop((device, output))
+                if recreated:
+                    break
+                recreated = True
+                continue
             if array is not None:
                 break
-            self._drop((device, output))
+            # no new frame and no cached one (a static screen): wait for the next update
+            self.sleep(GRAB_WAIT_S)
         if array is None:
             raise CaptureError("dxcam gave no frame")
         image = Image.fromarray(array[:, :, :3])
@@ -355,10 +404,11 @@ class AutoCapture:
             raise CaptureError(f"{why}, and {exc}" if why else str(exc)) from None
 
 
-def for_settings(mode: str, game: Path | None) -> Capture:
+def for_settings(mode: str, games: Sequence[Path | None]) -> Capture:
     """The capture ``[voice] screen_capture`` names: ``auto`` (dxcam on Windows, then the
-    screenshot) or ``screenshot``."""
-    shots = Screenshots(game)
+    screenshot) or ``screenshot``. ``games``: the game folders whose ``screenshots/`` the
+    fallback reads (Play's and Lab's)."""
+    shots = Screenshots(games)
     if mode == SCREENSHOT or sys.platform != "win32":
         return shots
     return AutoCapture(DxcamCapture(), shots)
