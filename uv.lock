@@ -154,6 +154,15 @@ wheels = [
 ]
 
 [[package]]
+name = "comtypes"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/cf/cd2f9e605c258d216ae48d86918ecff5bc652de338e090df3df4cd5d0d27/comtypes-1.5.0.tar.gz", hash = "sha256:831ddb867bc17bc89cac525b4f32132ebd4bef1ffe6432406ec9f5d858c1a122", size = 289180, upload-time = "2026-11-09T22:42:37.287Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/dc/818b43a6766800973e1611aeaff55e20cb38e36f3c499db1795838675f44/comtypes-1.5.0-py3-none-any.whl", hash = "sha256:c648ed3b243b1eb3b7cb893a873d1b35104ca1c8922061f4b1efafeb255bacb5", size = 325563, upload-time = "2026-11-09T22:42:35.97Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "50.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -235,6 +244,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
+]
+
+[[package]]
+name = "dxcam"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "comtypes" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/b7/b3d3e3fa42f347ac4b37fd639634935b4eefff1d5d61bdf72a6d8b906919/dxcam-0.3.0.tar.gz", hash = "sha256:d524da45adf70e044865e7d4e9098e655d6734951781155dda50c1292e20d8bd", size = 48742, upload-time = "2026-03-12T02:52:17.298Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/3c/6aca1d8a906ccb5d7b5993b99822dbd60ac18470e88eee845afd927d678f/dxcam-0.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:ab75b16529b8bd7337dfcb663525c338233a24b4c5b76193ced82a70e16edf49", size = 339445, upload-time = "2026-03-12T02:52:13.037Z" },
 ]
 
 [[package]]
@@ -389,6 +411,7 @@ name = "gregtec-voice"
 version = "0.0.0"
 source = { editable = "voice" }
 dependencies = [
+    { name = "dxcam", marker = "sys_platform == 'win32'" },
     { name = "gregtec-os" },
     { name = "pynput", marker = "sys_platform == 'win32'" },
     { name = "sounddevice", marker = "sys_platform == 'win32'" },
@@ -396,6 +419,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dxcam", marker = "sys_platform == 'win32'", specifier = ">=0.3.0" },
     { name = "gregtec-os", editable = "." },
     { name = "pynput", marker = "sys_platform == 'win32'", specifier = ">=1.8.2" },
     { name = "sounddevice", marker = "sys_platform == 'win32'", specifier = ">=0.5.6" },
