@@ -336,6 +336,8 @@ def test_power_explanation_checks_numbers_and_order(home: Path) -> None:
         ),
         ("The best line is plan:pw-c", "calls option 3"),
         ("Option 1 leads. Pick option 3 instead.", "calls option 3"),
+        ("Option 1 leads. Go with option 3.", "calls option 3"),
+        ("Opt for plan:pw-b if fuel is short.", "calls option 2"),
         ("Option 1 and option 2 are close; I'd recommend option 2.", "calls option 2"),
         ("Option 1 (plan:pw-a) is the best, option 2 is second best.", None),
         ("Option 1 costs more to build, option 2 is cheaper to build.", None),

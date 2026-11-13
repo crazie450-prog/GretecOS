@@ -52,6 +52,7 @@ _CUE = re.compile(
     r"|\bwinners?\b|\brecommend\w*|\bprefer\w*|\binstead\b"
     r"|\b(?:is|ranks?|comes?)\s+first\b|\bfirst\s+(?:choice|pick)\b|\bfirst\s*$"
     r"|\bthe\s+one\s+to\s+(?:build|pick|choose|take)\b"
+    r"|\b(?:go\s+(?:with|for)|opt\s+for|stick\s+with|settle\s+on)\b"
     r"|\b(?:pick|choose|go\s+with|build|take|start\s+with)\b.*\b(?:first|instead)\b",
     re.IGNORECASE,
 )
