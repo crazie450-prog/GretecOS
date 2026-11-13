@@ -44,6 +44,7 @@ from gregtec.setup.service import record_plays
 from gregtec.store import DB_NAME, Store
 from gregtec.vault.curator import Curator
 from gregtec.vault.scheduler import Maintenance, game_running
+from gregtec.wiki.cache import WikiCache
 
 log = logging.getLogger("gregtec.api")
 
@@ -102,6 +103,7 @@ def maintenance(
         summariser=summariser,
         meter=meter,
         keep_backups=cfg.keep_backups,
+        wiki=WikiCache(cfg.data_dir / DB_NAME).maintenance,
     )
     return Maintenance(
         curator, store, game=lambda: game_running(cfg), idle_minutes=cfg.idle_minutes

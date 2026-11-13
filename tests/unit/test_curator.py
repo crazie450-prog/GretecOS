@@ -466,6 +466,7 @@ def test_the_run_does_every_job_in_order(vault: Path, tmp_path: Path) -> None:
         ("schema", "ok"),
         ("index", "ok"),
         ("fts", "ok"),
+        ("wiki", "skipped"),  # no wiki cache given (WO-8.3)
         ("backup", "ok"),
         ("git", "ok"),
     ]
@@ -512,6 +513,7 @@ def test_no_vault_skips_the_vault_jobs(tmp_path: Path) -> None:
         "index": "skipped",
         "schema": "skipped",
         "fts": "skipped",
+        "wiki": "skipped",
         "backup": "skipped",
         "git": "skipped",
     }
@@ -610,7 +612,7 @@ def test_a_stop_skips_the_rest(vault: Path, tmp_path: Path) -> None:
         results[0].job == "compact" and "stopped before the rest" in results[0].detail
     )
     assert "compacted 2026-W43" in results[0].detail
-    assert [(r.status, r.detail) for r in results[1:]] == [("skipped", "stopped")] * 6
+    assert [(r.status, r.detail) for r in results[1:]] == [("skipped", "stopped")] * 7
     assert (vault / "log" / "2026-10-26.md").exists()
 
 

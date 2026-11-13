@@ -23,12 +23,16 @@ never stops the others:
 4. ``index``: rebuild ``INDEX.md`` (:mod:`gregtec.vault.index`), after the inbox notes the first
    two jobs write.
 5. ``fts``: mirror the notes into ``note_fts`` (:mod:`gregtec.vault.fts`).
-6. ``backup``: ``VACUUM INTO data/backups/gos-YYYYMMDD.sqlite`` (through a temporary name, so a
+6. ``wiki``: refresh the wiki cache from the wiki's ``recentchanges`` (WO-8.3, plan 7.8,
+   :meth:`gregtec.wiki.cache.WikiCache.maintenance`): skipped with no licence recorded, before
+   the one-time crawl, or once an anti-bot gate was met; one request at a time, so it can take
+   minutes after a busy week on the wiki. It stops between batches when the core stops.
+7. ``backup``: ``VACUUM INTO data/backups/gos-YYYYMMDD.sqlite`` (through a temporary name, so a
    half-written backup never has a backup's name; a ``.tmp`` left by a killed run is removed),
    keeping the newest ``keep_backups``. The scheduler also runs it at session end once the
    daily run has been missed for 2 days (D142 (g), D143), with a deadline when the core is
    stopping (an interrupted backup leaves no file).
-7. ``git``: commit the agents' and the curator's changes (:func:`commit_agent_writes`).
+8. ``git``: commit the agents' and the curator's changes (:func:`commit_agent_writes`).
 
 Git commits cover every path except ``me/`` (Clayton's) and ``_gos/`` (``gos vault deploy``
 commits it) and the temporary files of a write that was killed; hooks and signing are off, as
@@ -67,7 +71,7 @@ from gregtec.vault.deploy import _cmd
 
 log = logging.getLogger(__name__)
 
-JOBS = ("compact", "quests", "schema", "index", "fts", "backup", "git")
+JOBS = ("compact", "quests", "schema", "index", "fts", "wiki", "backup", "git")
 OK, SKIPPED, FAILED = "ok", "skipped", "failed"
 KEEP_BACKUPS = 7
 BACKUP = re.compile(r"gos-(\d{8})\.sqlite")
@@ -566,6 +570,8 @@ class Curator:
     keep_backups: int = KEEP_BACKUPS
     # gos vault maintain sets it: Clayton's own run tries held periods again.
     retry_held: bool = False
+    # the wiki refresh (WO-8.3): stop -> (status, detail); None: no wiki cache here
+    wiki: Callable[[Callable[[], bool]], tuple[str, str]] | None = None
 
     def run(
         self,
@@ -632,6 +638,11 @@ class Curator:
         if job == "fts":
             self.db.parent.mkdir(parents=True, exist_ok=True)
             return JobResult(job, OK, f"{fts.mirror_all(self.db, self.vault)} notes")
+        if job == "wiki":
+            if self.wiki is None:
+                return JobResult(job, SKIPPED, "no wiki cache set up")
+            status, detail = self.wiki(stop)
+            return JobResult(job, status, detail)
         if job == "backup":
             return backup(self.db, self.backups, today, self.keep_backups)
         commit = commit_agent_writes(self.vault, f"GOS idle maintenance {today}")
