@@ -92,6 +92,17 @@ describe("the tier-up moment on the page (D162)", () => {
     rerender({ stage: "MV" });
     expect(result.current.slug).toBe("alu");
     expect(result.current.fading).toBe(false);
+    expect(result.current.risen).toBe(3); // the recap still shows (WO-6.3)
+  });
+  it("reports a rise for the finished age's recap, never a first load or a drop (WO-6.3)", () => {
+    const { result, rerender } = renderHook(({ stage }: { stage: string }) => useTheme(stage), {
+      initialProps: { stage: "MV" },
+    });
+    expect(result.current.risen).toBeNull();
+    rerender({ stage: "LV" }); // his override set lower
+    expect(result.current.risen).toBeNull();
+    rerender({ stage: "HV" });
+    expect(result.current.risen).toBe(4);
   });
 });
 

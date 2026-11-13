@@ -710,6 +710,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 - **Sessions** start at the login line and end at quit, crash or 15 minutes idle.
   - The journal `log/YYYY-MM-DD.md` (≤40 lines per session) is written hourly and at session end.
   - It records what changed: quests done, machines added, deaths, open threads.
+- As built (WO-6.3, D263-D265): the core keeps every watcher event in the core DB's `event` table (keyed by the watchers' event id) and works out sessions per instance as they arrive (`core/gregtec/events/`); a new `world_closed` event carries the quit line. The `session-scribe` journal is written by code (Play only, counts computed, at most two Haiku `note:` lines around them); agents read the store through `events_recent` and `session_summary`. The Activity view shows sessions, a session's counts and timeline, its journal lines and the finished ages' recaps; a tier-up seen by an open dashboard shows the recap. The scripted-session recall is measured on a fixture (`tests/unit/watchers/test_session_recall.py`); the real Lab session is `docs/runbooks/event_store.md`.
 - **Advisor ("what next?").**
   - Inputs: `me/goals.md`, My base (tier, machines, stock), the top 20 frontier quests, 48 h of events, the EU ledger, alerts, active plans.
   - Output: **3 ranked next steps**, with reasons and links. Nudge-first.

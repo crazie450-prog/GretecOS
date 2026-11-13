@@ -1,6 +1,8 @@
 // The theme on the page: the age of his detected tier (D64), or a pinned age, or a comfort mode,
 // per device (localStorage, D162). The class goes on <body>, so switching moves nothing. A
-// tier-up fades the new theme in once over 1.5 s, unless motion is paused.
+// tier-up fades the new theme in once over 1.5 s, unless motion is paused; any rise seen while the
+// page is open (pinned, comfort or motion paused included) is reported as `risen`, for the
+// finished age's recap (WO-6.3, D265).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Slug, type ThemePrefs, FADE_MS, activeTheme, ageOf, isTierUp, loadPrefs, savePrefs } from "./themes";
 
@@ -17,6 +19,7 @@ export interface ThemeControl {
   prefs: ThemePrefs;
   setPrefs: (patch: Partial<ThemePrefs>) => void;
   fading: boolean;
+  risen: number | null; // the age a rise seen while this page is open reached, else null
 }
 
 export function applyThemeClass(root: HTMLElement, slug: Slug, prefs: ThemePrefs, fading: boolean): void {
@@ -27,6 +30,7 @@ export function applyThemeClass(root: HTMLElement, slug: Slug, prefs: ThemePrefs
 export function useTheme(stage: string | null | undefined): ThemeControl {
   const [prefs, setPrefsState] = useState<ThemePrefs>(() => loadPrefs(storage()));
   const [fading, setFading] = useState(false);
+  const [risen, setRisen] = useState<number | null>(null);
   // The age this page last showed: only a rise while it is open is a tier-up, never one that
   // happened while it was closed (so the first load sets it, and nothing about it is stored).
   const shownAge = useRef<number | null>(null);
@@ -44,8 +48,10 @@ export function useTheme(stage: string | null | undefined): ThemeControl {
   useEffect(() => {
     if (stage === null || stage === undefined) return;
     const age = ageOf(stage);
-    const up = isTierUp(shownAge.current, age) && !prefs.pauseMotion && !prefs.comfort && prefs.pinnedAge === null;
+    const rose = isTierUp(shownAge.current, age);
+    const up = rose && !prefs.pauseMotion && !prefs.comfort && prefs.pinnedAge === null;
     shownAge.current = age;
+    if (rose) setRisen(age);
     if (up) setFading(true);
   }, [stage, prefs.pauseMotion, prefs.comfort, prefs.pinnedAge]);
 
@@ -59,5 +65,5 @@ export function useTheme(stage: string | null | undefined): ThemeControl {
     applyThemeClass(document.body, slug, prefs, fading);
   }, [slug, prefs, fading]);
 
-  return { slug, prefs, setPrefs, fading };
+  return { slug, prefs, setPrefs, fading, risen };
 }

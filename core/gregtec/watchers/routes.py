@@ -16,6 +16,8 @@ WO-6.2) also update My base's automatic machine counts (:mod:`gregtec.base.seen`
 only kept in the feed. Every machine event of the post is applied, not only the ones the feed
 hadn't seen (each is keyed by position, so applying it again changes nothing); a failed DB write
 answers 503 and the watchers send the batch again, so no event or census is lost to it.
+Every well-formed event of a post also goes into the event store (WO-6.3,
+:mod:`gregtec.events.store`), keyed by its id, so a batch sent again adds nothing.
 
 No ``from __future__ import annotations``: FastAPI reads the route signatures at runtime.
 """
@@ -105,6 +107,17 @@ def add_routes(
         changed, _new, kept = feed.receive_new(body)
         machine = [e for e in kept if e["kind"] in seen.KINDS]
         applied = True
+        if core.events is not None and kept:  # the event store and sessions (WO-6.3)
+            instance = body.get("instance")
+            try:
+                await asyncio.to_thread(
+                    core.events.record,
+                    instance if isinstance(instance, str) else None,
+                    kept,
+                )
+            except Exception:
+                log.exception("game events not stored")
+                applied = False
         if body.get("instance") == "play" and machine:
             try:
                 await asyncio.to_thread(_apply_machines, core, machine)
@@ -115,7 +128,9 @@ def add_routes(
             log.info("paused state", extra={"paused": feed.paused, "why": feed.why})
             await dashboard.push_state(core)
         if not applied:  # the watchers keep the batch and send it again
-            raise HTTPException(503, "My base not updated; send the batch again")
+            raise HTTPException(
+                503, "events not stored or My base not updated; send the batch again"
+            )
         return {"ok": True, "paused": feed.paused}
 
     @app.get("/api/game/events")

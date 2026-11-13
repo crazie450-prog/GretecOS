@@ -610,6 +610,65 @@ export interface SavedPlanRow {
   kind: string | null;
 }
 
+// --- The Activity view (WO-6.3, GET /api/activity, plan 7.5, 7.14) ------------------------------
+// Sessions, one session's events and counts (computed by the core, D142 (f)), its journal lines
+// and the finished ages' recaps (D162, D265). Event text is the game's: data, shown as plain text.
+
+export interface ActivityEvent {
+  id: number;
+  ts: number; // epoch seconds
+  kind: string;
+  session: number | null;
+  instance: "play" | "lab" | null;
+  source: string | null;
+  ref: string | null; // q:<id>, mte:<id>
+  where: { dim: number | null; x: number; y: number | null; z: number | null } | null;
+  data: Record<string, unknown>;
+}
+
+export interface ActivitySession {
+  id: number;
+  instance: "play" | "lab" | null;
+  world: string | null;
+  start_ts: number;
+  end_ts: number | null;
+  open: boolean;
+  start_why: string | null; // login, resume
+  end_why: string | null; // quit, crash, idle, relogin
+  last_ts: number | null;
+  played_s: number;
+  journal: string | null;
+  counts: Record<string, number>;
+}
+
+export interface AgeRecap {
+  age: number;
+  stage: string;
+  start_ts: number;
+  end_ts: number;
+  hours_played: number;
+  sessions: number;
+  machines_built: number;
+  best_net_eut: number | null; // null: no OC power readings in the age
+  best_ref: string | null; // db:tel_sample/<src>@<ts>
+}
+
+export interface ActivityView {
+  ts: number;
+  sessions: ActivitySession[];
+  session: ActivitySession | null;
+  events: ActivityEvent[]; // newest first
+  outside_sessions: number;
+  journal: { paths: string[]; lines: string[]; written: string | null } | null;
+  recaps: AgeRecap[]; // newest first
+  problems: string[];
+}
+
+export interface RecapReply {
+  recap: AgeRecap | null;
+  age: { age: number; stage: string; start_ts: number } | null;
+}
+
 // --- The Power view (WO-4.6, plan 7.2, 7.14 "Power") -------------------------------------------
 // Every number is the power designer's (core/gregtec/planner/powerview.py), the EU ledger's or
 // the distribution checks'; the options come in rank order (planner/rank.py), never re-sorted.
