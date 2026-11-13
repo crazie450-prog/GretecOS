@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
+    advisor,
     base,
     crops,
     designer,
@@ -282,6 +283,16 @@ TOOLS = (
         f"fresh. Every number is an accepted plan's; cite it by its plan: ids. {CITE}",
         ledger.LEDGER_GET_SCHEMA,
         ledger.ledger_get,
+    ),
+    Tool(
+        "advisor_next",
+        "What Clayton could do next (WO-6.5): three steps ranked by GOS (problems first: a "
+        "power deficit, stalled machines; then a plan buildable from stock, his goals' "
+        "quests, power for accepted lines, lines to build, other frontier quests), each with "
+        "its reasons, citations and dashboard link. Keep the order; nudge, don't spoil. "
+        f"{CITE}",
+        advisor.ADVISOR_NEXT_SCHEMA,
+        advisor.advisor_next,
     ),
     HANDOFF_TOOL,  # WO-2.3: the fast lane's one writing tool, to the deep lane (D152)
     Tool(
