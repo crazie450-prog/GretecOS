@@ -213,6 +213,43 @@ def test_a_multiblock_with_no_structure_is_never_buildable(
     assert checks.needs(conn, plan) == ({f"{S.MACHINES}@1000": 1}, 1)
 
 
+def test_a_multiblock_is_buildable_when_its_whole_structure_is_stocked(
+    tmp_path: Path,
+    conn_of: Any,  # noqa: ANN401
+) -> None:
+    sc = S.build(tmp_path, "early")
+    casing, coil = "gregtech:gt.blockcasings@11", "gregtech:gt.blockcasings5@0"
+    blocks = [{"block": "gregtech:gt.blockcasings", "meta": 11}] * 4 + [
+        {"block": "gregtech:gt.blockcasings5", "meta": 0}
+    ] * 2
+    small = [{"block": "gregtech:gt.blockcasings", "meta": 11}] * 3
+    conn = conn_of(sc.db)
+    mid = conn.execute("SELECT id FROM machine WHERE mte_id = 1000").fetchone()[0]
+    conn.executemany(
+        "INSERT INTO structure(machine_id, variant, blocks_json, source)"
+        " VALUES (?, ?, ?, 'gtnh-extractor')",
+        [
+            (mid, "big", json.dumps(blocks)),
+            (mid, "small", json.dumps(small + blocks[4:])),
+        ],
+    )
+    plan = S.plan_json(
+        "pl-ebf",
+        "EBF",
+        nodes=[{"n": "n1", "machine": {"mte": 1000, "kind": "multiblock"}, "count": 2}],
+    )
+    S.save_plan(tmp_path, plan, "accepted")
+    # the smallest variant (5 blocks), times two furnaces, plus the two controllers
+    want = {f"{S.MACHINES}@1000": 2, casing: 6, coil: 4}
+    assert checks.needs(conn, plan) == (want, 0)
+    # the fixture's export has no casing items, so the stock rows go in as the base would keep them
+    put = "INSERT OR REPLACE INTO my_base_stock(key, qty, upd) VALUES (?, ?, 0)"
+    conn.executemany(put, list(want.items()))
+    assert [f.key for f in checks.buildable_plans(conn, tmp_path)] == ["plan:pl-ebf"]
+    conn.execute(put, (coil, 3))
+    assert checks.buildable_plans(conn, tmp_path) == []
+
+
 def test_a_quest_done_opens_the_quests_it_unlocks(
     tmp_path: Path,
     conn_of: Any,  # noqa: ANN401

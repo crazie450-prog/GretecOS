@@ -56,7 +56,9 @@ _REQUEST = re.compile(r"<request>\n(?P<text>.*?)\n</request>", re.DOTALL)
 _CITE = re.compile(r"\b(?:plan|q|tel|mte):[^\s,;()\"'|\]]+")
 _QID = re.compile(r"q:[A-Za-z0-9_-]{22}")
 _NUMBER = re.compile(r"(?<![\w:.@/-])-?\d+(?:\.\d+)?")
-_STEP = re.compile(r"^step(\d+): (.*?)(?: \| why: |$)", re.MULTILINE)
+_STEP = re.compile(
+    r"^step(\d+): (.*?)(?: \| |$)", re.MULTILINE
+)  # the title ends at " | "
 TABLE = ("scenario", "lane", "structure", "citations", "spoilers", "useful", "answer")
 
 
