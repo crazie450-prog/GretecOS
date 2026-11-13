@@ -289,16 +289,19 @@ class DxcamCapture:
     def grab(self) -> Frame:
         if self._windows is None:
             self._windows = Win32()
-        window = self._windows.game_window()
-        if window is None:
-            raise CaptureError("the game window isn't in front")
         dxcam = self._module()
         try:
-            picked = pick_output(window, self._outputs(dxcam))
+            # first: dxcam's outputs make the process per-monitor DPI aware, so the window's
+            # rectangle below is in the same physical pixels as the outputs' coordinates
+            outputs = self._outputs(dxcam)
         except Exception as exc:
             raise CaptureError(
                 f"dxcam found no display ({type(exc).__name__})"
             ) from exc
+        window = self._windows.game_window()
+        if window is None:
+            raise CaptureError("the game window isn't in front")
+        picked = pick_output(window, outputs)
         if picked is None:
             raise CaptureError("the game window isn't on a display dxcam sees")
         device, output, region = picked

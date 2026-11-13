@@ -657,3 +657,36 @@ def test_the_real_run_states_its_worst_case_and_waits_for_yes(
     out = io.StringIO()
     assert screen_eval.main(toml, None, False, tmp_path, True, None, out) == 2
     assert "No screenshot for s01" in out.getvalue()
+
+
+def test_gos_eval_screen_fake_runs_the_five_cases(
+    tmp_path: Path, tool_db: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gregtec import cli
+
+    home = tmp_path / "home"
+    (home / "data").mkdir(parents=True)
+    shutil.copy(tool_db, home / "data" / tool_db.name)
+    toml = tmp_path / "gos.toml"
+    toml.write_text(f'[paths]\ngos_home = "{home.as_posix()}"\n', encoding="utf-8")
+    code = cli.main(["eval", "screen", "--fake", "--config", str(toml)])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "passed: 5 of 5" in out and "(simulated)" in out
+    assert not (
+        home / "data" / "cache"
+    ).exists()  # the eval's frames stay in a temp dir
+    assert (
+        cli.main(
+            [
+                "eval",
+                "screen",
+                "--fake",
+                "--images",
+                str(tmp_path),
+                "--config",
+                str(toml),
+            ]
+        )
+        == 2
+    )
