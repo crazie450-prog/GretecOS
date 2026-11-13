@@ -315,7 +315,10 @@ def run(
     S = scenarios()
     results: list[Checked] = []
     for name in names or S.NAMES:
-        with tempfile.TemporaryDirectory(prefix=f"gos-advisor-{name}-") as d:
+        with tempfile.TemporaryDirectory(
+            prefix=f"gos-advisor-{name}-",
+            ignore_cleanup_errors=True,  # Windows: the CLI lets go late
+        ) as d:
             home = Path(d)
             sc = S.build(home, name, time.time())
             lane, answer, want = _ask(home, sc, lane_for)
