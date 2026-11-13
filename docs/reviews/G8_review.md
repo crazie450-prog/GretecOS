@@ -38,7 +38,7 @@ All runs are on `c5d97c4`.
 
 | Commit | Run | ubuntu | windows | mod | dashboard | mod (Windows) |
 |---|---|---|---|---|---|---|
-| PR #90 head `30d9f60` | 43360219141, 43360219250 | success | success | success | success | success |
+| PR #90 merged head `bf0f365` | 43441669359, 43441669294 | success | success | success | success | success |
 | `dae0541` (#90, WO-8.1) | 43449630278, 43449630174 | success | success | success | success | success |
 | PR #94 head `2e2c5bb` | 43443287322, 43443287474 | success | success | success | success | success |
 | `a428fff` (#94, WO-8.2) | 43476445460 | success | **failure** (risk 1) | success | success | (path filter: no mod file) |
@@ -133,7 +133,7 @@ Open: PR #97 Q1-Q6.
 | The Phase 8 acceptances | **met with fakes** | all three WOs above. Nothing is not met in code |
 | Phase 8 end to end | met with fakes | the client-link harness (73 checks: a real game client, a real core on a harness-built DB, 10 items, reconnect, `!gos`) and `test_screen_harness.py` [here] |
 | Clayton's sign-off | **PC step** | the steps below, then his sign-off |
-| §10's G11 Q&A line (wiki, screen and hover evals pass) | partly; G11 re-checks it | The 10-item hover check is the harness and runbook B.5. The 5-case screen eval exists (`tests/evals/screen_cases.tsv`). **Plan §9's 15-question wiki eval has no case file yet.** PR #97 and D292 defer it to the WO-2.7 eval backlog, so G11 can't run it until someone writes it (should-do 1) |
+| §10's G11 Q&A line (wiki, screen and hover evals pass) | partly; G11 re-checks it | The 5-case screen eval exists (`tests/evals/screen_cases.tsv`). **Plan §9's 10-case hover-item eval and 15-question wiki eval have no case file in `tests/evals/`.** The hover side has only the client-link harness's `whats_this_10_items` check (a Java harness assertion, not a scored eval case file) and runbook B.5 (step 2 below). PR #97 and D292 defer the wiki eval to the WO-2.7 eval backlog. So G11 can run neither until someone writes them, or G11 explicitly accepts `whats_this_10_items` plus B.5 in place of the hover eval (should-do 1) |
 
 **Required before Clayton signs G8:**
 1. The PC steps below, with their paste-backs.
@@ -141,8 +141,8 @@ Open: PR #97 Q1-Q6.
 3. `main` green on every CI job at the commit he deploys. `a428fff` is not: its Windows job failed (risk 1). `c5d97c4` is green on all four jobs (run 43487042611).
 
 Should do (not blocking):
-1. **Slot plan §9's 15-question wiki eval.** PR #97 defers it to the WO-2.7 eval backlog, but no WO row writes the case file. G11's Q&A line needs it.
-2. **Fix a runbook clash.** `machine_events.md` §1 (WO-6.2) installs GregtecLink in Lab by hand, with a `Set-Content` that writes `B:client=false` and no token line. If Clayton runs it after `install_gregteclink.py --instance lab`, it turns WO-8.1's client module off. `install_gregteclink.py` already turns the listener on. §1 should point to the script, or at least say not to run it after the script. In the meantime step 1 below says so. This doc is Phase 6's, so this review leaves it unchanged; it is for the PM or the G6 report.
+1. **Slot plan §9's 10-case hover-item eval and 15-question wiki eval.** Neither has a case file in `tests/evals/`. PR #97 defers the wiki one to the WO-2.7 eval backlog, but no WO row writes either case file. G11's Q&A line needs both, unless G11 explicitly accepts the harness's `whats_this_10_items` check plus runbook B.5 in place of the hover eval.
+2. **Fix a runbook clash.** `machine_events.md` §1 (WO-6.2) installs GregtecLink in Lab by hand, with a `Set-Content` that writes `B:client=false` and no token line. If Clayton runs it after `install_gregteclink.py --instance lab`, it turns WO-8.1's client module off. `install_gregteclink.py` already turns the listener on. §1 should point to the script, or at least say not to run it after the script. In the meantime step 1 below says so. This doc is Phase 6's (WO-6.2), so this review leaves it unchanged. Owner: the PM, or the G6 report if it is re-opened.
 3. **Clean up the runbook commands.** `screen_reading.md` A and C use `uv run gos ...` from `C:\GregtecOS-app`. The other runbooks and the G5 steps use `& $gos ...` (`current\.venv\Scripts\gos.exe`). The steps below use `$gos`. Harmless, for the PM.
 4. **Give WO-7.3's stress test a Windows floor** (risk 1).
 
@@ -156,7 +156,7 @@ Should do (not blocking):
 | **V14** (wiki API and licence) | 8.3 | Open. The code is ready | Step 8 below (`gos wiki licence`). He pastes the licence text, or the gate message |
 | **V29** (a reliable "game paused" signal) | 8.1 (evidence), 6.1 (owner) | Resolved from the log line by D258. WO-8.1 adds `paused` to the 1 Hz status, as a second source | Step 4 below (runbook B.10: `status.paused` turns `true` within a second of Esc). This is extra evidence; the row's owner stays WO-6.1 |
 | **V05** (chat-line routing in logs) | 8.1 (touches), 6.1 (owner) | Open for WO-6.1's Lab session. Chat now also reaches the core through the mod | Nothing in Phase 8. The G6 report covers it |
-| **[QA:V6]** (`!gos` only from Clayton; future servers) | 8.1 | Single player and LAN host only. The server case stays open (D286) | Step 4 below (`!gos` from his own name answered). Nothing closes the server case until he plays on one |
+| **[QA:V6]** (`!gos` only from Clayton; future servers) | 8.1 | Single player and LAN host only. The server case stays open (D286). Known LAN limitation: a friend with cheats or op on his LAN world (or a command block) can spoof his name with `/tellraw @a {"translate":"chat.type.text","with":["<his name>","!gos ..."]}` (risk 8) | Step 4 below (`!gos` from his own name answered). Nothing closes the server case until he plays on one |
 
 No Phase 8 PR added a `verify.tsv` row. #94 changed V13's text, and V14 is unchanged. `tests/unit/test_verify_list.py` keeps `verify.tsv` and plan §13.2 in step (it ran in the full run).
 
@@ -239,7 +239,7 @@ At least three of the hovers must be in NEI's item panel, plus one on an NEI rec
 **4. `!gos`, reconnect, toggles, paused** (B.7-B.10):
 - Type `!gos recipes for steel ingot` in chat: a `[GOS]` reply comes back.
 - `& $gos stop`, wait 5 s, then `& $gos serve`. Within about 15 s, step 1's `/api/game` shows the link again and the key works.
-- Toggles: close Lab and set `B:chat=false` in Lab's `config\gregteclink.cfg`; chat no longer appears in `/api/game`. Do the same for `position`, `target` and `notices`, one at a time, setting each back after.
+- Toggles: close Lab, set `B:chat=false` in Lab's `config\gregteclink.cfg`, and start Lab again; chat no longer appears in `/api/game`. (`& $gos serve` holds its console, so run the `/api/game` check in a second PowerShell window.) Do the same for `position`, `target` and `notices`, one at a time, setting each back after.
 - Press Esc: `status.paused` turns `true` within a second (V29 evidence).
 
 **5. Screen key** (`screen_reading.md` A). With GTNH closed:
@@ -314,6 +314,7 @@ Bind the key in Play's Controls, as in step 1. Then start Play: step 1's `/api/g
 5. **Black frames in exclusive fullscreen** (V13): the screen key then needs F2 first. Borderless avoids it, and it is GTNH's recommended Java 17+ mode (D68). (Likely, only in exclusive fullscreen)
 6. **With Play and Lab both connected, the pointer is dropped** (PR #94 Q11). The screen answer then goes by the frame alone. This only matters while both games run, which happens in the Lab-to-Play steps of the update playbook. (Confirmed, by design)
 7. **The runbook clash** in should-do 2 could silently turn the client module off in Lab. (Possible, only if steps are run out of order)
+8. **`!gos` can be spoofed on a LAN world with cheats on.** The sender is read from vanilla's `chat.type.text` translation component, and `isSingleplayer()` is trusted for single player and the LAN host (`ClientModule.onChat`). In 1.7.10, `/tellraw @a {"translate":"chat.type.text","with":["<his name>","!gos ..."]}` builds exactly that component, so a friend with cheats or op (or a command block) can make GOS answer a `!gos` query as if Clayton typed it. Impact is low: the spoofed question is answered read-only and can spend credits like any `!gos` question (D285 Q1), but actions stay blocked (`!gos confirm` is refused, D59). No code change for G8; [QA:V6] records it. (Possible, only on a LAN world with cheats or op)
 
 ## After the review
 
