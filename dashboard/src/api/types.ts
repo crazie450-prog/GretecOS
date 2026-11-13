@@ -636,6 +636,7 @@ export interface CropStationStatus {
   doing?: string;
   note?: string;
   copiers?: (string | false)[];
+  cat_left?: number[]; // catalyst items left in each Seed Generator's inputs
 }
 
 export interface CropStationPlan {

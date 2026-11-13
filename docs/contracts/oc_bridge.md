@@ -344,14 +344,16 @@ other crop as a `seed_label` (an analysed seed's label, `<crop name> Seeds`: Cro
 `steps` (1-8 Crop Breeder recipes in order, the last one breeding the target: `child`, `parents` (2-4 labels), `cat`
 (catalysts: `crop_item` = `name` registry name, `damage`, `n`), `copies` (2-64 of each parent before the step's
 first run when a copier makes them), `fert` (mB of enriched fertilizer a run takes), `ref` (the recipe's `r:` id,
-logged only)), `copy` (the crops worth a copier, best first) and `copy_cat` (a crop's duplication catalyst for the
-Seed Generator). The agent checks the plan again (labels, bounds, the target bred last) and refuses a bad one.
+logged only)), `copy` (the crops worth a copier, best first), `copy_cat` (a crop's duplication catalyst for the
+Seed Generator) and `copy_fert` (mB of fertilizer one copy of a crop takes, from its stats). The agent checks the plan again (labels, bounds, the target bred last) and refuses a bad one.
 
 **What GT allows.** GT 5.09.54.265's basic machines let automation take items only from their **output** slot
 (`MTEBasicMachine.allowPullStack`; OC's transposer honours `ISidedInventory.canExtractItem`). A seed put in an input
 slot stays there until the machine uses it or a player takes it. So a Seed Generator, which never uses up the seed it
 copies (`MTESeedGenerator.checkRecipe`), becomes the **copier** of the first crop put in it, for good: the station
-parks one seed of a crop on the plan's `copy` list in an empty generator (the first ranks get the generators) and
+parks one seed of a crop on the plan's `copy` list in an empty generator (the first ranks get the generators), only
+once the generator's tank holds a copy's `copy_fert` and the chest holds the copy's catalyst, and never a starter's
+last `keep` seeds (a crop the plan breeds may be parked as its only seed: the plan breeds it again), and
 then switches it on (`setWorkAllowed`) only while that crop is short. The Crop Breeder is loaded only when it is idle
 and empty, its tank holds the run's `fert` (`getTankLevel`), and the chest holds `keep` + 1 of every parent, so a
 load never takes the last seed: paused, catalysts and exactly one of each parent into its input slots (slot 6 on,
@@ -365,13 +367,19 @@ inflate: V31); GOS computes them from the breeding maths.
 `interrupted`: the agent restarted during a run, which only a confirmed start (resume) or stop moves on), `plan`,
 `action` (the `crop_start` id), `target`, `count`, `steps`, `step` (the run under way), `runs`, `ok`, `fail`, `doing`
 and `note` (the station's own words, at most 200 bytes, data), `stock` (the plan's seeds in the chest, by label) and
-`copiers` (each generator's parked crop, or false).
+`copiers` (each generator's parked crop, or false: also when it holds a seed the station can't name, such as
+`Unknown Seeds` or a renamed one, which it never uses) and `cat_left` (the catalyst items left in each generator's
+inputs: it gets one copy's worth at a time, and GT never gives it back).
 
 **Stop.** A confirmed `crop_stop` starts no new work: the copiers are paused, a run under way is waited for and its
 child collected, the copiers' last copies are collected, and the breeder's work switch is put back. `stopped` then
 means no item the station moved is anywhere but the chest, except each copier's one parked seed (listed in
-`copiers`). The copiers stay paused (a running one would fill its output with copies). The station never starts
-itself: a run interrupted by a restart waits for Clayton.
+`copiers`) and at most one copy's catalyst (`cat_left`, also in the stop note). Every configured copier is paused,
+whoever switched it on (a running one would fill its output with copies), and every copier's `hasWork` is read
+before `stopped` (a failed read counts as busy). A breeder load that never started is left paused with its inputs,
+and the note says so. The station never starts itself: a run interrupted by a restart waits for Clayton, and loading
+the saved run pauses every copier at once (the work switches the station found are saved with the run, so a stop
+after a restart puts the breeder's back).
 
 ## Security
 

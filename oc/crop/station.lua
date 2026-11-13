@@ -285,6 +285,18 @@ function S.check_plan(a)
       plan.copy_cat[k] = cat
     end
   end
+  plan.copy_fert = {}
+  if a.copy_fert ~= nil then
+    if type(a.copy_fert) ~= "table" then
+      return nil, "copy_fert must map seed labels to mB a copy"
+    end
+    for k, v in pairs(a.copy_fert) do
+      if not label_ok(k) or not int(v) or v < 1 or v > 256000 then
+        return nil, "copy_fert must map seed labels to a copy's fertilizer in mB"
+      end
+      plan.copy_fert[k] = v
+    end
+  end
   return plan
 end
 
@@ -367,7 +379,8 @@ function S.new(cfg, deps)
     doing = nil,
     stock = {},
     next_at = 0,
-    allowed = {}, -- addr -> work allowed when the station first switched it
+    allowed = {}, -- addr -> work allowed when the station first switched it (saved)
+    blocked = {}, -- [generator] = true while it holds a seed the station can't name
   }, St)
   s:load()
   return s
@@ -402,6 +415,8 @@ function St:save()
     ok = self.ok,
     fail = self.fail,
     run = self.run and { state = self.run.state, step = self.run.step } or nil,
+    -- the work switches as the station found them, so a stop after a restart puts them back
+    allowed = next(self.allowed) and self.allowed or nil,
   }
   local ok, err = self.write_file(path, self.json.encode(doc))
   if not ok then
@@ -416,7 +431,7 @@ function St:load()
   end
   local text = self.read_file(path)
   local doc = text and self.json.decode(text)
-  if type(doc) ~= "table" or not LIVE[doc.phase] or type(doc.plan) ~= "table" then
+  if type(doc) ~= "table" or not (LIVE[doc.phase] or doc.phase == "interrupted") or type(doc.plan) ~= "table" then
     return
   end
   local plan = S.check_plan(doc.plan)
@@ -439,8 +454,37 @@ function St:load()
     and plan.steps[doc.run.step] then
     self.run = { state = doc.run.state, step = doc.run.step, t = self.now() }
   end
+  if type(doc.allowed) == "table" then
+    for addr, was in pairs(doc.allowed) do
+      if type(addr) == "string" and type(was) == "boolean" then
+        self.allowed[addr] = was
+      end
+    end
+  end
   self.phase = "interrupted"
   self:say("the agent restarted during a run: a confirmed start resumes it, a confirmed stop winds it down", "warn")
+  -- A copier left running would copy unsupervised until its output holds 64: pause them all now.
+  self:hold_copiers()
+end
+
+-- Pause every configured Seed Generator (not only those this boot switched); retried each step
+-- while it fails (no transposer or adapter found yet).
+function St:hold_copiers()
+  if not self.tp then
+    local found, ferr = self:find()
+    if not found then
+      self.unheld = true
+      self.log("warn", "crops: can't pause the Seed Generators yet: " .. tostring(ferr))
+      return
+    end
+  end
+  local held = true
+  for _, c in ipairs(self.copiers) do
+    if not self:work(c.addr, false) then
+      held = false
+    end
+  end
+  self.unheld = not held
 end
 
 -- The transposer and the machines' adapters (gt_machine, by GT's meta name). Direct calls only.
@@ -561,12 +605,20 @@ function St:observe()
     if g.at.nin ~= 2 then
       return nil, ("the generator side (%d) has %d slots, not a Seed Generator's 9"):format(c.side, g.n)
     end
-    g.holds = nil
+    g.holds, g.blocked = nil, nil
     for j = g.at.first, g.at.last do
       if g[j] and g[j].name == SEED then
-        g.holds = g[j].label -- the parked seed: this copier's crop
+        if label_ok(g[j].label) then
+          g.holds = g[j].label -- the parked seed: this copier's crop
+        else
+          g.blocked = true -- an unanalysed or renamed seed: no copier, never reported by label
+        end
       end
     end
+    if g.blocked and not g.holds and not self.blocked[i] then
+      self:say(("Seed Generator %d holds a seed that isn't an analysed one; the station won't use it"):format(i), "warn")
+    end
+    self.blocked[i] = g.blocked and not g.holds or nil
     gens[i] = g
   end
   return { chest = chest, br = br, gens = gens }
@@ -576,6 +628,7 @@ function St:work(addr, allowed)
   if self.allowed[addr] == nil then
     local ok, was = self.call(addr, "isWorkAllowed")
     self.allowed[addr] = not ok or was ~= false
+    self:save()
   end
   local ok, err = self.call(addr, "setWorkAllowed", allowed)
   if not ok then
@@ -766,10 +819,12 @@ function St:resolve(o, label, amount, depth)
   if g and g.holds == label then
     return { kind = "copy", gen = gi, label = label, have = have, want = amount }
   end
-  if g and have >= 1 then
+  local j = self.plan.by_child[label]
+  -- Parking is for good, so a starter (no step breeds it) is parked only when `keep` of it stay
+  -- in the chest; a crop the plan breeds may be parked as its only seed: the plan breeds it again.
+  if g and have >= (j and 1 or self.cfg.keep + 1) then
     return { kind = "park", gen = gi, label = label }
   end
-  local j = self.plan.by_child[label]
   if j then
     local s = self.plan.steps[j]
     for _, p in ipairs(s.parents) do
@@ -788,28 +843,66 @@ function St:resolve(o, label, amount, depth)
   return { kind = "wait", msg = ("needs %d more %s in the chest (analysed)"):format(amount - have, label) }
 end
 
--- A copier's duplication catalyst: kept in its second input slot.
+-- A copier's duplication catalyst: kept in its second input slot, one copy's worth at a time (GT
+-- never gives it back, so more would stay locked in the generator after the plan).
 function St:feed(o, gi, label)
   local g = o.gens[gi]
   for _, c in ipairs(self.plan.copy_cat[label] or {}) do
     local inside = count_item(g, c.name, c.damage)
     if inside < c.n then
       local slot = find_slot(o.chest, function(st) return st.name == c.name and st.damage == c.damage end)
-      if not slot then
+      if not slot or count_item(o.chest, c.name, c.damage) < c.n - inside then
         return nil, ("copying %s needs %d %s:%d (its duplication catalyst) in the chest"):format(label, c.n, c.name, c.damage)
       end
-      self:move(self.cfg.storage, self.copiers[gi].side, math.min(64, o.chest[slot].size), slot, g.at.last)
+      self:move(self.cfg.storage, self.copiers[gi].side, math.min(c.n - inside, o.chest[slot].size), slot, g.at.last)
     end
   end
   return true
 end
 
+-- Before a seed is parked for good: the generator's tank covers a copy and the chest holds the
+-- copy's catalyst, so the parked seed can copy (verified before the irreversible move).
+function St:can_copy(o, gi, label)
+  local need = self.plan.copy_fert[label] or 1
+  local ok, level = self.call(self.tp, "getTankLevel", self.copiers[gi].side)
+  if not ok or type(level) ~= "number" then
+    return nil, ("can't read Seed Generator %d's fertilizer: %s"):format(gi, tostring(level))
+  end
+  if level < need then
+    return nil, ("Seed Generator %d has %d mB of fertilizer; a copy of %s takes %d"):format(gi, level, label, need)
+  end
+  for _, c in ipairs(self.plan.copy_cat[label] or {}) do
+    if count_item(o.chest, c.name, c.damage) < c.n then
+      return nil, ("copying %s needs %d %s:%d (its duplication catalyst) in the chest"):format(label, c.n, c.name, c.damage)
+    end
+  end
+  return true
+end
+
+-- Every configured copier, not only those this boot switched: one left running (say, from before
+-- a restart) would copy its parked seed until its output slot holds 64.
 function St:pause_copiers(except)
   for i, c in ipairs(self.copiers) do
-    if i ~= except and self.allowed[c.addr] ~= nil then
+    if i ~= except then
       self:work(c.addr, false)
     end
   end
+end
+
+-- What stays in the copiers' inputs besides their parked seeds (catalysts), per generator.
+local function cat_left(o)
+  local out, total = {}, 0
+  for i, g in ipairs(o.gens) do
+    local n = 0
+    for j = g.at.first, g.at.last do
+      if g[j] and g[j].name ~= SEED then
+        n = n + g[j].size
+      end
+    end
+    out[i] = n
+    total = total + n
+  end
+  return out, total
 end
 
 function St:act(o, a)
@@ -825,7 +918,13 @@ function St:act(o, a)
   elseif a.kind == "park" then
     local g = o.gens[a.gen]
     local slot = find_slot(o.chest, function(st) return is_seed(st, a.label) end)
-    self:work(self.copiers[a.gen].addr, false)
+    self:pause_copiers()
+    local ok, why = self:can_copy(o, a.gen, a.label)
+    if not ok then
+      self.doing = "waiting"
+      self:say(why, "warn")
+      return
+    end
     local n, err = self:move(self.cfg.storage, self.copiers[a.gen].side, 1, slot, g.at.first)
     if n < 1 then
       self:say("couldn't give the Seed Generator a " .. a.label .. ": " .. tostring(err), "warn")
@@ -990,9 +1089,10 @@ function St:wind_down(o, busy)
   end
   -- Work first, then the look: a machine idle before the look (and paused) can't put anything
   -- in its output after it, so an empty output seen after an idle reading stays empty.
+  -- Every copier's hasWork is read (a failed read counts as busy), whoever switched it on.
   local idle = { self:busy(self.breeder) }
   for i, c in ipairs(self.copiers) do
-    idle[i + 1] = self.allowed[c.addr] ~= nil and self:busy(c.addr) or false
+    idle[i + 1] = self:busy(c.addr)
   end
   local again = self:observe()
   if not again or again.br[again.br.at.out] or idle[1] ~= false then
@@ -1005,8 +1105,19 @@ function St:wind_down(o, busy)
       return
     end
   end
-  local left = inputs_empty(again.br) and "" or "; items wait in the Crop Breeder's inputs (it never started): take them out by hand"
-  self:restore()
+  local left = ""
+  if inputs_empty(again.br) then
+    self:restore()
+  else
+    -- A load that never started: left paused, so it can't run after "stopped" if power or
+    -- fertilizer comes back; Clayton empties it and switches it back on.
+    self:work(self.breeder, false)
+    left = "; the Crop Breeder never started: left paused with its inputs (take them out by hand)"
+  end
+  local _, ncat = cat_left(again)
+  if ncat > 0 then
+    left = ("; %d catalyst item(s) stay in the Seed Generators"):format(ncat) .. left
+  end
   if self.finishing then
     self.finishing = nil
     self:set("done")
@@ -1030,10 +1141,14 @@ function St:count_stock(o)
     parked[i] = g.holds or false
   end
   self.parked = parked
+  self.cat_left = cat_left(o)
 end
 
 function St:step()
   self.next_at = self.now() + self.cfg.step_s
+  if self.phase == "interrupted" and self.unheld then
+    self:hold_copiers()
+  end
   if not LIVE[self.phase] then
     return
   end
@@ -1112,6 +1227,7 @@ function St:doc()
   d.stock = self.json.object(stock)
   if self.parked then
     d.copiers = self.parked
+    d.cat_left = self.cat_left
   end
   return d
 end

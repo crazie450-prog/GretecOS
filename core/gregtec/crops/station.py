@@ -92,6 +92,8 @@ class Plan:
     lines: list[str] = field(
         default_factory=list
     )  # the plan in words, each number cited
+    # mB one Seed Generator copy of each copied crop takes (its stats, the breeding maths)
+    copy_fert: dict[str, int] = field(default_factory=dict)
 
     def args(self) -> dict[str, Any]:
         """The ``crop_start`` command's args (the OC contract's ``crop_start_args``)."""
@@ -299,6 +301,7 @@ def build(
         copy_cat=copy_cat,
         labels=labels,
         refs=refs,
+        copy_fert={c: rules.seed_generator_fertilizer(*stats[c]) for c in copy},
     )
     pid = hashlib.sha256(
         json.dumps(_args(plan, "00000000"), sort_keys=True).encode("utf-8")
@@ -372,6 +375,10 @@ def _args(plan: Plan, pid: str) -> dict[str, Any]:
         out["copy_cat"] = {
             lab[c]: [{"name": reg, "damage": meta, "n": n} for reg, meta, n, _ in cats]
             for c, cats in plan.copy_cat.items()
+        }
+    if plan.copy_fert:
+        out["copy_fert"] = {
+            lab.get(c, SEEDS_FORMAT.format(c)): mb for c, mb in plan.copy_fert.items()
         }
     return out
 

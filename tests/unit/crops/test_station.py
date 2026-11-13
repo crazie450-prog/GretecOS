@@ -124,6 +124,11 @@ def test_the_command_fits_the_contract_and_one_reply() -> None:
     assert args["copy_cat"] == {
         "Tomato Seeds": [{"name": "minecraft:dye", "damage": 15, "n": 1}]
     }
+    # a copy's fertilizer, from the copied crop's stats (checked before a seed is parked)
+    assert set(args["copy_fert"]) == set(args["copy"])
+    assert args["copy_fert"]["Tomato Seeds"] == rules.seed_generator_fertilizer(
+        *plan.steps[-1].stats
+    )
     size = len(json.dumps(args, separators=(",", ":")))
     assert size <= S.ARGS_MAX
     # a numeric id never appears: items go by registry name and damage

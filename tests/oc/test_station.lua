@@ -532,6 +532,190 @@ test("a stop while interrupted winds the run down", function()
   nothing_in_transit(st)
 end)
 
+-- Review H2: after a restart the station knows no work switch it set, yet a copier may still be
+-- copying. Loading the saved run pauses every configured copier, and a stop after it leaves none
+-- running: the clock moves on (with the machines synced) and no copy is made.
+test("a restart while copying, then a stop: no copier keeps running", function()
+  local w = T.base({ bare = true })
+  local st = F.station(w, { gens = 1, stock = starters(2), breeder = { recipes = RECIPES, outcomes = { true } },
+    generator = { duration = 6 } })
+  local g = st.gens[1]
+  local _, s = load_station(w, 1)
+  s:start(5, plan({ copy = { "Wheat Seeds" } }))
+  local t = 0
+  while not g.run and t < 200 do
+    s:step()
+    w:advance_to(math.max(s.next_at, w.clock + 0.05))
+    t = w.clock
+  end
+  T.ok(g.run, "the generator is copying Wheat")
+  T.eq(g.slots[g.first].label, "Wheat Seeds")
+  T.eq(g.allowed, true)
+  -- the computer restarts mid-copy
+  local _, s2 = load_station(w, 1)
+  T.eq(s2.phase, "interrupted")
+  w:advance_to(w.clock + 0.2)
+  g.sync()
+  T.eq(g.allowed, false, "the copier is paused as soon as the saved run loads")
+  T.eq(s2:stop(8).state, "done")
+  drive(w, s2, w.clock + 400)
+  T.eq(s2.phase, "stopped", s2.note)
+  local copies = g.copies
+  for _ = 1, 100 do
+    w:advance_to(w.clock + 2)
+    g.sync()
+  end
+  T.eq(g.copies, copies, "no copy after the stop")
+  T.eq(g.allowed, false, "the copier stays paused")
+  nothing_in_transit(st)
+  -- the saved switches came back: the breeder was put back as the station found it
+  T.eq(st.breeder.allowed, true)
+end)
+
+test("a restart while copying with no stop: the copier stays paused while interrupted", function()
+  local w = T.base({ bare = true })
+  local st = F.station(w, { gens = 1, stock = starters(2), breeder = { recipes = RECIPES }, generator = { duration = 6 } })
+  local g = st.gens[1]
+  local _, s = load_station(w, 1)
+  s:start(5, plan({ copy = { "Wheat Seeds" } }))
+  while not g.run and w.clock < 200 do
+    s:step()
+    w:advance_to(math.max(s.next_at, w.clock + 0.05))
+  end
+  T.ok(g.run, "copying")
+  local _, s2 = load_station(w, 1)
+  T.eq(s2.phase, "interrupted")
+  local before = g.copies
+  for _ = 1, 100 do
+    s2:step()
+    w:advance_to(w.clock + 2)
+    g.sync()
+  end
+  T.ok(g.copies <= before + 1, "at most the copy under way finishes: " .. (g.copies - before))
+  T.eq(g.allowed, false)
+  -- a second restart still knows the run (the interrupted state is saved too)
+  local _, s3 = load_station(w, 1)
+  T.eq(s3.phase, "interrupted")
+end)
+
+-- Review H1: a seed the station can't name (unanalysed, or renamed) in a Seed Generator is never
+-- reported by its label (the schema would refuse the agent's whole message) and never used.
+test("a seed the station can't name in a generator: reported as false, telemetry stays valid", function()
+  local w = T.base({ extra = crops_cfg(3) })
+  local st = F.station(w, { gens = 3, stock = starters(6), breeder = { recipes = RECIPES, outcomes = { true, true, true } } })
+  st.gens[1].slots[st.gens[1].first] = F.seed("Unknown Seeds", 1)
+  st.gens[2].slots[st.gens[2].first] = F.seed("Scanned Seed", 1)
+  local M, ast = T.agent(w)
+  w.cmds_queue = { T.cmd(1, "crop_start", plan()) }
+  T.run_until(M, ast, w, 120)
+  local last
+  for _, b in ipairs(T.bodies(w)) do
+    if b.crops and b.crops.copiers then
+      last = b.crops
+      T.eq(b.crops.copiers[1], false, "generator 1 isn't reported by its seed's label")
+      T.eq(b.crops.copiers[2], false, "generator 2 isn't reported by its seed's label")
+    end
+  end
+  T.ok(last, "the station's status rode along")
+  for _, mv in ipairs(w.crop_moves) do
+    T.ok(mv.dst ~= 2 and mv.dst ~= 3, "nothing goes into a generator holding a foreign seed")
+  end
+  T.eq(st.gens[1].slots[st.gens[1].first].label, "Unknown Seeds")
+  T.eq(st.gens[2].slots[st.gens[2].first].label, "Scanned Seed")
+end)
+
+-- Review M1: a seed is parked for good only once the generator can copy it (fertilizer for a
+-- copy, the catalyst in the chest), and a starter's last `keep` seeds are never parked.
+test("parking is checked first: fertilizer, catalyst, and never a starter's last seed", function()
+  local function run(stock, gen, extra)
+    local w = T.base({ bare = true })
+    local st = F.station(w, { gens = 1, stock = stock, breeder = { recipes = RECIPES }, generator = gen })
+    local _, s = load_station(w, 1)
+    s:start(5, plan(extra))
+    drive(w, s, 200)
+    local parked = 0
+    for _, mv in ipairs(w.crop_moves) do
+      if mv.dst == 2 and mv.name == SEED then
+        parked = parked + mv.n
+      end
+    end
+    return st, s, parked
+  end
+  local copy_wheat = { copy = { "Wheat Seeds" }, copy_fert = { ["Wheat Seeds"] = 108 } }
+  local st, s, parked = run(starters(2), { fluid = 100 }, copy_wheat)
+  T.eq(parked, 0, "no fertilizer for a copy: not parked")
+  T.eq(F.count(st.chest, "Wheat Seeds", SEED), 2)
+  T.has(s.note, "fertilizer")
+  st, s, parked = run(starters(2), {}, { copy = { "Wheat Seeds" }, copy_cat = { ["Wheat Seeds"] = { { name = "minecraft:stick", damage = 0, n = 1 } } } })
+  T.eq(parked, 0, "no catalyst in the chest: not parked")
+  T.has(s.note, "catalyst")
+  st, s, parked = run({ F.seed("Wheat Seeds", 1), F.seed("Reed Seeds", 5) }, {}, copy_wheat)
+  T.eq(parked, 0, "a starter's last seed is never parked")
+  T.eq(F.count(st.chest, "Wheat Seeds", SEED), 1)
+  st, s, parked = run(starters(2), {}, copy_wheat)
+  T.eq(parked, 1, "with fertilizer and a spare seed it is parked")
+  T.ok(F.count(st.chest, "Wheat Seeds", SEED) >= KEEP)
+end)
+
+-- Review M3: a copier gets one copy's catalyst at a time, so a stop leaves at most that much in it,
+-- and the stop note and the status say so.
+test("copy catalysts go in one copy's worth at a time and are reported after a stop", function()
+  local w = T.base({ bare = true })
+  local stock = starters(2)
+  local st = F.station(w, { gens = 1, stock = stock, breeder = { recipes = RECIPES, outcomes = { true, true, true } },
+    generator = { duration = 6, cats = { ["Wheat Seeds"] = BONE } } })
+  local _, s = load_station(w, 1)
+  s:start(5, plan({ copy = { "Wheat Seeds" }, copy_cat = { ["Wheat Seeds"] = { BONE } } }))
+  local g = st.gens[1]
+  local most = 0
+  local t_end = 120
+  while w.clock < t_end do
+    s:step()
+    for j = g.first, g.last do
+      local it = g.slots[j]
+      if it and it.name == BONE.name then
+        most = math.max(most, it.size)
+      end
+    end
+    if g.copies >= 1 and not s.stop_id then
+      s:stop(9)
+    end
+    if s.phase == "stopped" then
+      break
+    end
+    w:advance_to(math.max(s.next_at, w.clock + 0.05))
+  end
+  T.eq(s.phase, "stopped", s.note)
+  T.ok(most <= BONE.n, "never more than one copy's catalyst in the generator: " .. most)
+  local left = 0
+  for j = g.first, g.last do
+    if g.slots[j] and g.slots[j].name == BONE.name then
+      left = left + g.slots[j].size
+    end
+  end
+  T.eq(s:doc().cat_left[1], left)
+  if left > 0 then
+    T.has(s.note, "catalyst")
+  end
+end)
+
+-- Review L3: a load that never starts is left paused after the stop, so it can't run later.
+test("a breeder load that never starts is left paused after a stop", function()
+  local w = T.base({ bare = true })
+  -- the breeder knows no recipe for the plan's parents: it is loaded and never starts
+  local st = F.station(w, { gens = 1, stock = starters(6), breeder = { recipes = {} } })
+  local _, s = load_station(w, 1, { start_s = 5 })
+  s:start(5, plan({ copy = json.array() }))
+  drive(w, s, 60)
+  T.ok(not machine_empty(st.breeder), "the parents wait in its inputs")
+  s:stop(9)
+  drive(w, s, 200)
+  T.eq(s.phase, "stopped", s.note)
+  w:advance_to(w.clock + 0.5) -- a work switch takes a tick
+  T.eq(st.breeder.allowed, false, "left paused")
+  T.has(s.note, "never started")
+end)
+
 -- Property tests: random starters, copiers, failure patterns and stop times. In every run the
 -- breeder is never given the last seed of a parent, seeds are conserved, and a stop (or the end)
 -- leaves nothing in transit; runs that aren't stopped and have enough seeds finish with 4 stocked.

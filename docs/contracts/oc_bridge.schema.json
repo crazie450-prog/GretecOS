@@ -393,6 +393,13 @@
           "maxProperties": 8,
           "propertyNames": { "$ref": "#/$defs/seed_label" },
           "additionalProperties": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/crop_item" } }
+        },
+        "copy_fert": {
+          "description": "mB of fertilizer one Seed Generator copy of a crop takes (GOS computes it), by its label; checked before a seed is parked.",
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": { "$ref": "#/$defs/seed_label" },
+          "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 256000 }
         }
       }
     },
@@ -427,6 +434,12 @@
           "type": "array",
           "maxItems": 3,
           "items": { "oneOf": [{ "$ref": "#/$defs/seed_label" }, { "const": false }] }
+        },
+        "cat_left": {
+          "description": "Items other than seeds (duplication catalysts) in each Seed Generator's inputs, which GT never gives back.",
+          "type": "array",
+          "maxItems": 3,
+          "items": { "type": "integer", "minimum": 0 }
         }
       }
     }
