@@ -148,8 +148,12 @@ def answer(
             # an NBT variant (a charged battery) is rarely made as such: say what makes the
             # plain item instead of "no recipe" (review LOW-6)
             parts.append("No recipe in the DB makes it with this NBT.")
-            plain = _call(reg, "recipe_find", {"item": key.split("#", 1)[0]})
-            base = None if plain.is_error else _plain_first(plain.parsed)
+            base = None
+            for other in keys[1:]:  # the plain item, then its wildcard row
+                plain = _call(reg, "recipe_find", {"item": other})
+                base = None if plain.is_error else _plain_first(plain.parsed)
+                if base is not None:
+                    break
             if base is not None:
                 n = plain.parsed.total
                 n = n if n is not None else len(plain.parsed.rows)
