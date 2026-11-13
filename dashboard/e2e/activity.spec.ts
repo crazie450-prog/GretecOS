@@ -110,6 +110,7 @@ test("a tier-up re-themes the page and shows the finished age's recap", async ()
   await page.screenshot({ path: shot("activity-tier-up") });
   await page.getByTestId("tier-up-recap-close").click();
   await expect(recap).toHaveCount(0);
+  await page.getByTestId("nav-now").click(); // the view loads again when opened
   await openActivity();
   await expect(page.getByTestId("activity-ages")).toContainText("Stone and Steam");
 });
