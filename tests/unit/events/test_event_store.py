@@ -67,7 +67,13 @@ def test_an_existing_db_gets_the_new_columns_and_keeps_its_rows(tmp_path: Path) 
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(event)")}
             assert {"uid", "source", "instance"} <= cols
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(session)")}
-            assert {"instance", "start_why", "end_why", "last_ts", "journal_upto"} <= cols
+            assert {
+                "instance",
+                "start_why",
+                "end_why",
+                "last_ts",
+                "journal_upto",
+            } <= cols
             events.record(conn, "play", [login(T0 + 1)])
             assert conn.execute("SELECT COUNT(*) FROM event").fetchone()[0] == 2
         finally:
@@ -92,8 +98,15 @@ def test_events_are_kept_once_with_their_place_and_reference(
     conn: sqlite3.Connection,
 ) -> None:
     built = ev(
-        "machine_built", T0 + 5, dim=0, x=10, y=64, z=-3, mte_id=1000,
-        ref="mte:1000", key="gregtech:gt.blockmachines@1000",
+        "machine_built",
+        T0 + 5,
+        dim=0,
+        x=10,
+        y=64,
+        z=-3,
+        mte_id=1000,
+        ref="mte:1000",
+        key="gregtech:gt.blockmachines@1000",
     )
     quest = ev("quest_done", T0 + 6, quest="q:AAAAAAAAAAAAAAAAAAAABQ")
     census = ev("machine_census", T0 + 7, scope="chunks", chunks=[], machines=[])
@@ -129,7 +142,10 @@ def test_a_session_runs_from_the_login_to_the_quit(conn: sqlite3.Connection) -> 
     )
     (s,) = sessions(conn)
     assert (s["start_ts"], s["end_ts"], s["start_why"], s["end_why"]) == (
-        T0, T0 + 600, "login", "quit"
+        T0,
+        T0 + 600,
+        "login",
+        "quit",
     )
     assert s["world"] == "survival" and s["instance"] == "play"
     assert {r[0] for r in conn.execute("SELECT session_id FROM event")} == {s["id"]}

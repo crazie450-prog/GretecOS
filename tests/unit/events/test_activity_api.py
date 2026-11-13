@@ -75,6 +75,8 @@ def core(tmp_path: Path, clock: Clock) -> Iterator[Core]:
         ),
     )
     c.board = dashboard.Board(cfg, store=store, clients=lambda _: ["play"])
+    # the board's own 5 s refresh sets the tier from the recipe DB (none here): the tests set it
+    c.board.refresh_data = lambda: None  # type: ignore[method-assign]
     yield c
     assert c.events is not None
     c.events.close()
@@ -91,7 +93,9 @@ def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def post(client: TestClient, core: Core, instance: str, events: list[dict[str, Any]]) -> Any:  # noqa: ANN401
+def post(
+    client: TestClient, core: Core, instance: str, events: list[dict[str, Any]]
+) -> Any:  # noqa: ANN401
     watchers = bearer(core.auth.issue_client_token("watchers"))
     body = {"instance": instance, "events": events, "paused": {"paused": False}}
     return client.post("/api/game/events", json=body, headers=watchers)
@@ -118,7 +122,9 @@ def test_posted_events_make_a_session_the_view_shows(
     }
     assert got["events"][0]["ref"] == "q:AAAAAAAAAAAAAAAAAAAABQ"
     assert got["journal"] == {"paths": [], "lines": [], "written": None}
-    assert client.get("/api/activity?session=99", headers=bearer(ADMIN)).status_code == 404
+    assert (
+        client.get("/api/activity?session=99", headers=bearer(ADMIN)).status_code == 404
+    )
     assert client.get("/api/activity").status_code == 401
 
 
@@ -130,22 +136,34 @@ def test_the_tick_ends_an_idle_session_and_writes_its_journal(
         client,
         core,
         "play",
-        [ev("location", t, via="login", x=0, y=0, z=0), ev("quest_done", t + 5, quest="q:Q1")],
+        [
+            ev("location", t, via="login", x=0, y=0, z=0),
+            ev("quest_done", t + 5, quest="q:Q1"),
+        ],
     )
     assert core.events is not None
     core.events.tick("LV")
     s = client.get("/api/activity", headers=bearer(ADMIN)).json()["session"]
     assert s["end_why"] == "idle" and s["end_ts"] == int(t + 5)
     today = dt.date.today().isoformat()
-    j = client.get(f"/api/activity?session={s['id']}", headers=bearer(ADMIN)).json()["journal"]
+    j = client.get(f"/api/activity?session={s['id']}", headers=bearer(ADMIN)).json()[
+        "journal"
+    ]
     assert j["paths"] == [f"log/{today}.md"]
     assert j["lines"][0].startswith(f"session: s{s['id']} play survival")
     assert "n_quest: 1" in j["lines"] and j["lines"][-1].endswith(", idle")
 
 
-def test_the_recap_shows_after_a_tier_up(client: TestClient, core: Core, clock: Clock) -> None:
+def test_the_recap_shows_after_a_tier_up(
+    client: TestClient, core: Core, clock: Clock
+) -> None:
     assert core.board is not None
-    core.board.tier = {"stage": "steam", "tier": 0, "how": "quests", "detected": "steam"}
+    core.board.tier = {
+        "stage": "steam",
+        "tier": 0,
+        "how": "quests",
+        "detected": "steam",
+    }
     got = client.get("/api/activity/recap", headers=bearer(ADMIN)).json()
     assert got["recap"] is None and got["age"]["age"] == 1
     t = clock.now
@@ -155,7 +173,18 @@ def test_the_recap_shows_after_a_tier_up(client: TestClient, core: Core, clock: 
         "play",
         [
             ev("location", t + 10, via="login", x=0, y=0, z=0),
-            ev("machine_built", t + 20, mte_id=1000, ref="mte:1000", dim=0, x=1, y=2, z=3),
+            ev(
+                "machine_built",
+                t + 20,
+                mte_id=1000,
+                ref="mte:1000",
+                dim=0,
+                x=1,
+                y=2,
+                z=3,
+            ),
+            # the periodic location keeps him active (15 minutes without activity is idle)
+            *(ev("location", t + 10 + 600 * k, x=0, y=0, z=0) for k in range(1, 7)),
             ev("world_closed", t + 3610, via="log"),
         ],
     )
@@ -165,7 +194,10 @@ def test_the_recap_shows_after_a_tier_up(client: TestClient, core: Core, clock: 
     assert got["age"]["age"] == 2
     r = got["recap"]
     assert (r["age"], r["hours_played"], r["machines_built"], r["best_net_eut"]) == (
-        1, 1.0, 1, None,
+        1,
+        1.0,
+        1,
+        None,
     )
     view = client.get("/api/activity", headers=bearer(ADMIN)).json()
     assert view["recaps"] == [r]

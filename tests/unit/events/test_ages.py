@@ -32,10 +32,27 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     c.close()
 
 
-def session(conn: sqlite3.Connection, instance: str, start: int, end: int, built: int = 0) -> None:
+def session(
+    conn: sqlite3.Connection, instance: str, start: int, end: int, built: int = 0
+) -> None:
     items = [ev("location", start, via="login", x=0, y=0, z=0)]
-    items += [ev("location", t, x=t % 97, y=64, z=0, dim=0) for t in range(start + 600, end, 600)]
-    items += [ev("machine_built", start + 5 + i, mte_id=1000, ref="mte:1000", dim=0, x=i, y=1, z=1) for i in range(built)]
+    items += [
+        ev("location", t, x=t % 97, y=64, z=0, dim=0)
+        for t in range(start + 600, end, 600)
+    ]
+    items += [
+        ev(
+            "machine_built",
+            start + 5 + i,
+            mte_id=1000,
+            ref="mte:1000",
+            dim=0,
+            x=i,
+            y=1,
+            z=1,
+        )
+        for i in range(built)
+    ]
     items.append(ev("world_closed", end, via="log"))
     events.record(conn, instance, items)
 
@@ -48,8 +65,16 @@ def tel(conn: sqlite3.Connection, src: str, ts: int, key: str, value: float) -> 
 
 
 def test_ages_follow_d162() -> None:
-    assert [ages.age_of(s) for s in ("stone", "steam", "LV", "MV", "UV", "UHV", "UXV")] == [
-        1, 1, 2, 3, 9, 10, 10,
+    assert [
+        ages.age_of(s) for s in ("stone", "steam", "LV", "MV", "UV", "UHV", "UXV")
+    ] == [
+        1,
+        1,
+        2,
+        3,
+        9,
+        10,
+        10,
     ]
     assert ages.age_of(None) == 1 and ages.age_of("nonsense") == 1
 

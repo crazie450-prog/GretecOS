@@ -166,7 +166,11 @@ def test_a_long_busy_session_stays_within_40_lines(
         for i in range(30):
             n += 1
             ts = T0 + hour * 3600 + 60 + i * 110
-            batch += [quest(ts, n), built(ts + 1, 1000 + i), ev("dim_change", ts + 2, **{"from": 0, "to": -1})]
+            batch += [
+                quest(ts, n),
+                built(ts + 1, 1000 + i),
+                ev("dim_change", ts + 2, **{"from": 0, "to": -1}),
+            ]
         events.record(conn, "play", batch)
         scribe.run(conn, T0 + (hour + 1) * 3600 + 1)
     events.record(conn, "play", [ev("world_closed", T0 + 8 * 3600 + 30, via="log")])
@@ -280,7 +284,11 @@ def test_agents_never_write_count_lines(vault: io.VaultIO) -> None:
 def test_a_sessions_lines_are_found_again(
     conn: sqlite3.Connection, vault: io.VaultIO
 ) -> None:
-    vault.append(LOG, "session: s7 play w, from 09:00\nn_quest: 1\nsession_end: s7 to 10:00", computed=True)
+    vault.append(
+        LOG,
+        "session: s7 play w, from 09:00\nn_quest: 1\nsession_end: s7 to 10:00",
+        computed=True,
+    )
     end_session(conn)
     journal.Scribe(vault).run(conn, T0 + 700)
     mine = journal.journal_lines(text(vault), 1)
@@ -288,4 +296,7 @@ def test_a_sessions_lines_are_found_again(
     assert not any("s7" in line for line in mine)
     # a block continued on a later day's log, before another session's
     later = "---\nid: x\nt: log\nupd: x\n---\nn_quest: 2\nsession_end: s1 to 01:00\nsession: s2 play w, from 02:00\n"
-    assert journal.journal_lines(later, 1)[-2:] == ["n_quest: 2", "session_end: s1 to 01:00"]
+    assert journal.journal_lines(later, 1)[-2:] == [
+        "n_quest: 2",
+        "session_end: s1 to 01:00",
+    ]
