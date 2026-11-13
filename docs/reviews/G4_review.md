@@ -25,7 +25,7 @@ Evidence tags, as in G0-G3:
 |---|---|
 | `uv run --locked ruff check .` | All checks passed |
 | `uv run --locked ruff format --check .` | 456 files already formatted (457 with the new test) |
-| `uv run --locked pytest -q` | **8949 passed, 276 skipped** before the new test (10 min 28 s); FULL_PYTEST with it |
+| `uv run --locked pytest -q` | **8949 passed, 276 skipped** before the new test (10 min 28 s); **8949 passed, 285 skipped** with it after the review fixes (the 9 G4 tests skip without `GOS_REQUIRE_HARNESS_RUN=1`; 7 min 22 s) |
 | `./gradlew --no-daemon --max-workers=2 runServer -Pharness` | `harness passed: 35 checks, run 20261113T141208Z` (3 min 39 s) |
 | `GOS_REQUIRE_HARNESS_RUN=1 pytest -v` on `test_power_harness`, `test_power_objectives_harness`, `test_power_effort_harness`, `test_ledger_harness`, `test_distribution_harness`, `test_power_view_harness` (CI's LV+HV subset of `gos eval power-modes`) | **29 passed** (14 min 23 s) |
 | `GOS_REQUIRE_HARNESS_RUN=1 pytest -v tests/integration/test_g4_lines_harness.py` (new) | **5 passed, 2 xfailed** (strict, finding 1; 1 min 21 s) |
