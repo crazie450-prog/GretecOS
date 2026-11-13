@@ -135,8 +135,16 @@ function T.base(opts)
   F.plain(w, "computer", { prefix = "0c" })
   F.plain(w, "eeprom", { prefix = "0e" })
   w.boot_fs = F.plain(w, "filesystem", { prefix = "0f" }).addr -- the managed drive OpenOS boots from
-  F.plain(w, "screen", { prefix = "05" })
-  F.plain(w, "gpu", { prefix = "06" })
+  if opts.screen then -- a working screen and GPU (WO-7.4's board): { w = , h = } the screen's tier
+    w.screen = F.screen(w, { prefix = "05", w = opts.screen.w, h = opts.screen.h })
+    w.gpu = F.gpu(w, { prefix = "06", w = opts.screen.gpu_w, h = opts.screen.gpu_h })
+  else
+    F.plain(w, "screen", { prefix = "05" })
+    F.plain(w, "gpu", { prefix = "06" })
+  end
+  if opts.glasses then
+    w.glasses = F.glasses(w, { prefix = "08" })
+  end
   F.plain(w, "keyboard", { prefix = "07" })
   if not opts.no_internet then
     w.card = F.internet_card(w, { prefix = "1a" })

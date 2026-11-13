@@ -729,6 +729,169 @@ function F.tps_card(w, opts)
   return w:add(d, opts.quiet ~= false)
 end
 
+-- A screen and a GPU (WO-7.4), as OC 1.12.68 behaves for what the board uses: every call is
+-- direct; the GPU draws into the screen it is bound to; its resolution is at most the smaller of
+-- its own and the screen's maximum (tier 1 50x16, tier 2 80x25, tier 3 160x50). The screen keeps
+-- its rows as text (s.rows[y]) and the foreground each set used (s.fg[y]); g.sets counts set calls.
+function F.screen(w, opts)
+  opts = opts or {}
+  local d = device(w, "screen", opts)
+  d.max_w, d.max_h = opts.w or 80, opts.h or 25
+  d.res_w, d.res_h = d.max_w, d.max_h
+  d.rows, d.fg = {}, {}
+  d.methods.getAspectRatio = direct(function() return 1, 1 end)
+  return w:add(d, opts.quiet ~= false)
+end
+
+function F.gpu(w, opts)
+  opts = opts or {}
+  local d = device(w, "gpu", opts)
+  d.max_w, d.max_h = opts.w or 160, opts.h or 50
+  d.fg_color, d.bg_color = 0xFFFFFF, 0x000000
+  d.sets, d.fills = 0, 0
+  local function scr(s)
+    return s.bound and w.devices[s.bound] or nil
+  end
+  d.methods.bind = direct(function(s, addr)
+    local sd = w.devices[addr]
+    if not sd or sd.type ~= "screen" then
+      return nil, "invalid address"
+    end
+    s.bound = addr
+    return true
+  end)
+  d.methods.getScreen = direct(function(s) return s.bound end)
+  d.methods.maxResolution = direct(function(s)
+    local sd = scr(s)
+    if not sd then
+      return nil, "no screen"
+    end
+    return math.min(s.max_w, sd.max_w), math.min(s.max_h, sd.max_h)
+  end)
+  d.methods.getResolution = direct(function(s)
+    local sd = scr(s)
+    return sd and sd.res_w, sd and sd.res_h
+  end)
+  d.methods.setResolution = direct(function(s, rw, rh)
+    local sd = scr(s)
+    if not sd then
+      return nil, "no screen"
+    end
+    if rw < 1 or rh < 1 or rw > math.min(s.max_w, sd.max_w) or rh > math.min(s.max_h, sd.max_h) then
+      error("unsupported resolution", 0)
+    end
+    sd.res_w, sd.res_h = rw, rh
+    return true
+  end)
+  d.methods.setForeground = direct(function(s, c)
+    local old = s.fg_color
+    s.fg_color = c
+    return old
+  end)
+  d.methods.setBackground = direct(function(s, c)
+    local old = s.bg_color
+    s.bg_color = c
+    return old
+  end)
+  d.methods.fill = direct(function(s, x, y, fw, fh, ch)
+    local sd = scr(s)
+    if not sd then
+      return nil, "no screen"
+    end
+    s.fills = s.fills + 1
+    for row = y, y + fh - 1 do
+      if row >= 1 and row <= sd.res_h then
+        sd.rows[row] = (ch):rep(sd.res_w)
+        sd.fg[row] = s.fg_color
+      end
+    end
+    return true
+  end)
+  d.methods.set = direct(function(s, x, y, text)
+    local sd = scr(s)
+    if not sd then
+      return nil, "no screen"
+    end
+    s.sets = s.sets + 1
+    if y < 1 or y > sd.res_h then
+      return true
+    end
+    local row = sd.rows[y] or (" "):rep(sd.res_w)
+    local line = (row:sub(1, x - 1) .. text .. row:sub(x + #text)):sub(1, sd.res_w)
+    sd.rows[y] = line .. (" "):rep(sd.res_w - #line)
+    sd.fg[y] = s.fg_color
+    sd.overflow = (sd.overflow or 0) + math.max(0, x - 1 + #text - sd.res_w)
+    return true
+  end)
+  return w:add(d, opts.quiet ~= false)
+end
+
+-- An OCGlasses 1.6.9-GTNH terminal (WO-7.4): addTextLabel returns a widget whose setters are
+-- called with a dot; every add, remove and setter is one packet to the bound players (g.packets),
+-- and the terminal draws widgets/10 OC energy a tick [F 4.1] (g:energy_per_tick()).
+function F.glasses(w, opts)
+  opts = opts or {}
+  local d = device(w, "glasses", opts)
+  d.widgets, d.packets, d.next_id = {}, 0, 0
+  function d.energy_per_tick(s)
+    local n = 0
+    for _ in pairs(s.widgets) do
+      n = n + 1
+    end
+    return n / 10
+  end
+  d.methods.addTextLabel = direct(function(s)
+    s.next_id = s.next_id + 1
+    local id = s.next_id
+    local wd = { id = id, text = "", x = 0, y = 0, color = { 1, 1, 1 }, scale = 1 }
+    s.widgets[id] = wd
+    s.packets = s.packets + 1
+    local function setter(field)
+      return function(...)
+        if s.widgets[id] == nil then
+          error("widget removed", 0)
+        end
+        local v = table.pack(...)
+        if field == "text" then
+          wd.text = v[1]
+        elseif field == "pos" then
+          wd.x, wd.y = v[1], v[2]
+        elseif field == "color" then
+          wd.color = { v[1], v[2], v[3] }
+        else
+          wd.scale = v[1]
+        end
+        s.packets = s.packets + 1
+      end
+    end
+    return {
+      setText = setter("text"),
+      setPosition = setter("pos"),
+      setColor = setter("color"),
+      setScale = setter("scale"),
+      getID = function() return id end,
+    }
+  end)
+  d.methods.removeObject = direct(function(s, id)
+    s.widgets[id] = nil
+    s.packets = s.packets + 1
+    return true
+  end)
+  d.methods.removeAll = direct(function(s)
+    s.widgets = {}
+    s.packets = s.packets + 1
+    return true
+  end)
+  d.methods.getObjectCount = direct(function(s)
+    local n = 0
+    for _ in pairs(s.widgets) do
+      n = n + 1
+    end
+    return n
+  end)
+  return w:add(d, opts.quiet ~= false)
+end
+
 function F.plain(w, dtype, opts)
   opts = opts or {}
   local d = device(w, dtype, opts)
