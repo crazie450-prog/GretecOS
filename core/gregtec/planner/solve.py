@@ -32,7 +32,14 @@ gates; (2) minimise the gated quantity, with a ``1e-6`` tiebreak on the raw inpu
 imports, EU left out); (3) minimise total machines ``sum_r x_r t_r``; (4) the every-machine-runs
 replay: every recipe of the route gets a floor of ``1e-3`` x the smallest running rate of
 stage 3 (at least :data:`FLOOR_MIN` row units) and stages 1-3 run again (a gate shortcut that leaves machines idle is refused,
-[E§3.3]). Integerising (step 6) is ``ceil`` and utilisation in :mod:`.sizing`, or, on request,
+[E§3.3]).
+
+**Power networks** (``Network.costs_eu``: EU banned, a power line's own output, D233, D323):
+stage 2 is the **EU stage**, the EU the recipes draw plus each priced import at its EU per unit
+(the fuel at its generator's, ``Network.eu_value``), with the gated quantity as a tiebreak; then
+machines. A recipe idle at that optimum is left out of the line instead of the stage-4 replay
+(it would spend EU for nothing, or loop). Production networks never ban EU and solve as above.
+Integerising (step 6) is ``ceil`` and utilisation in :mod:`.sizing`, or, on request,
 :func:`exact_counts`: an integer machine count per recipe, minimising their sum under the
 same optima.
 
@@ -436,21 +443,13 @@ def _lexicographic(
 ) -> tuple[np.ndarray, Objectives] | None:
     """Stages 1-3; None when a stage finds no solution (``strict`` False: the last stage that
     found one). Stage 2 keeps stage 1's gate count; stage 3 keeps stage 2's gates (fixed, so
-    nothing leaks) and its gated quantity. A network that costs EU (a power line, D323) runs
-    the EU stage first in stage 2's place: the gates are fixed from its optimum, and the
-    gated quantity and the machines keep it."""
+    nothing leaks) and its gated quantity. A network that costs EU runs :func:`_eu_stages`."""
+    if m.net.costs_eu:
+        return _eu_stages(m, strict)
     gates, quantity, machines = _objectives(m)
-    eu = _eu_objective(m) if m.net.costs_eu else None
-    eu_n = _normalised(eu)[0] if eu is not None else None
-    first = quantity if eu_n is None else eu_n
 
     def result(x: np.ndarray) -> tuple[np.ndarray, Objectives]:
-        return x, (
-            _value(gates, x),
-            _value(quantity, x),
-            _value(machines, x),
-            None if eu is None else _value(eu, x),
-        )
+        return x, (_value(gates, x), _value(quantity, x), _value(machines, x), None)
 
     x = _solve(m, gates, [])
     if x is None:
@@ -460,43 +459,72 @@ def _lexicographic(
     n1 = sum(_open_gates(m, x).values())
     x2 = None
     for n in range(int(n1), len(m.gate) + 1):
-        x2 = _solve(m, first, [(gates, -math.inf, n + 0.5)])
+        x2 = _solve(m, quantity, [(gates, -math.inf, n + 0.5)])
         if x2 is not None:
             break
     if x2 is None:
         return None if strict else result(x)
-    kept: list[tuple[dict[int, float], float, float]] = []
-    if eu_n is not None:
-        # Nothing in the EU stage penalises a leak through a closed gate, so its gates are
-        # closed by bounds (the crossing at 0), as the binaries say; if that has no solution,
-        # as the other stages fix them (a crossing at all is an open gate).
-        old = _close_gates(m, x2)
-        x2e = _solve(m, eu_n, [])
-        if x2e is None:
-            for v, lo, hi in old:
-                m.lb[v], m.ub[v] = lo, hi
-            for k, value in _open_gates(m, x2).items():
-                m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
-            x2e = _solve(m, eu_n, [])
-        if x2e is None:
-            return None if strict else result(x2)
-        kept.append(_keep(eu_n, _value(eu_n, x2e), EU_REL_TOL))
-        x2 = x2e
-    else:
-        for k, value in _open_gates(m, x2).items():
-            m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
-    x2b = _solve(m, quantity, kept)
+    for k, value in _open_gates(m, x2).items():
+        m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
+    x2b = _solve(m, quantity, [])
     if x2b is None:
         return None if strict else result(x2)
     q = _value(quantity, x2b)
-    x3 = _solve(m, machines, [*kept, _keep(quantity, q)])
-    if x3 is None and kept:
-        # HiGHS can call the two kept optima together infeasible within its tolerances
-        # (a gated quantity of about 1e-6, the raw-input tiebreak): the EU optimum is kept,
-        # the gated quantity (a tiebreak after it) is not.
-        x3 = _solve(m, machines, kept)
+    x3 = _solve(m, machines, [_keep(quantity, q)])
     if x3 is None:
         return None if strict else result(x2b)
+    return result(x3)
+
+
+def _eu_stages(m: _Model, strict: bool) -> tuple[np.ndarray, Objectives] | None:
+    """A power network's stages (D323): (1) minimise gates; (2) the **EU stage** under that
+    gate count: minimise the EU the recipes draw plus the EU value of the priced imports (the
+    fuel), with the gated quantity as a ``1e-6`` tiebreak (one objective, so no later stage can
+    trade EU for gated quantity within a kept optimum's tolerance); its gates are then fixed and
+    it is solved again; (3) minimise machines, the EU stage's optimum kept. Gated items are
+    weighed in EU here, one scale for all of them (the row-scaled gated quantity is only the
+    tiebreak)."""
+    gates, quantity, machines = _objectives(m)
+    eu = _eu_objective(m)
+    second, _ = _normalised(eu)
+    for k, v in quantity.items():
+        second[k] = second.get(k, 0.0) + TIEBREAK * v
+
+    def result(x: np.ndarray) -> tuple[np.ndarray, Objectives]:
+        return x, (
+            _value(gates, x),
+            _value(quantity, x),
+            _value(machines, x),
+            _value(eu, x),
+        )
+
+    x = _solve(m, gates, [])
+    if x is None:
+        return None
+    n1 = sum(_open_gates(m, x).values())
+    x2 = None
+    for n in range(int(n1), len(m.gate) + 1):
+        x2 = _solve(m, second, [(gates, -math.inf, n + 0.5)])
+        if x2 is not None:
+            break
+    if x2 is None:
+        return None if strict else result(x)
+    # Gates are closed by bounds (a closed gate's crossing at 0), as the binaries say: the
+    # tiebreak alone hardly penalises a leak through ``M g``. If that has no solution, they are
+    # fixed as in the other stages (a crossing at all is an open gate).
+    old = _close_gates(m, x2)
+    x2e = _solve(m, second, [])
+    if x2e is None:
+        for v, lo, hi in old:
+            m.lb[v], m.ub[v] = lo, hi
+        for k, value in _open_gates(m, x2).items():
+            m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
+        x2e = _solve(m, second, [])
+    if x2e is None:
+        return None if strict else result(x2)
+    x3 = _solve(m, machines, [_keep(second, _value(second, x2e), EU_REL_TOL)])
+    if x3 is None:
+        return None if strict else result(x2e)
     return result(x3)
 
 

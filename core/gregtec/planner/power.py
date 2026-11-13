@@ -23,9 +23,17 @@ For each generator the fuels are pruned to the top :data:`TOP_FUELS` by EU per u
 (the request's ``candidates``; ``self_sustaining`` keeps only fuels a forward closure over the
 DB's recipes reaches from the free set and the farms first, :func:`reachable`).
 
-**Options** (D11): every candidate's line is solved on its own network; within it the chain's
+**EU** (WO-4.7, D323): the chain pays for its EU out of the generator's output, so the network
+costs it: after the gate count the solver minimises the EU the chain draws plus the EU an import
+of the fuel stands for (``Network.eu_value``), and the chain makes or converts its fuel only
+where that takes less EU than the fuel gives. Recipes idle at that optimum are not part of the
+line, and net EU/t = gross - the chain's nodes.
+
+**Options** (D11): every candidate's line is solved on its own network, one per chain of its
+fuel (the graph's own and each pinned to another recipe for the fuel); within it the chain's
 primary choices give up to two routes through the same no-good cuts (``solve.routes``), so any
-two options differ in the generator, the fuel or a primary choice of the chain. The pool is
+two options differ in the generator, the fuel, the chain's pin or a primary choice of the chain.
+The pool is
 ranked by ``planner/rank.py`` (:func:`rank.order_power`) for the mode and the best
 ``options`` (2-3) are returned with the weights printed.
 
@@ -1063,7 +1071,10 @@ def build_plan(
                 "tier": VN[tier],
                 "voltage": V[tier],
                 "amps": math.ceil(round(net_eut / V[tier], 9)) if net_eut > 0 else 0,
-                "note": "cables and transformers: WO-4.5",
+                "note": (
+                    "cables: the output tier's that carry these amps (distribution.cables_for,"
+                    " D242); transformers: the EU ledger's (distribution.from_ledger)"
+                ),
             },
         },
         machines_used=machines_used,
@@ -1162,7 +1173,10 @@ def parts(
                 " builder's (D236)"
             )
     if any(n.get("kind") == "generator" for n in p["nodes"]):
-        notes.append("distribution cables are not counted: cable runs come with WO-4.5")
+        notes.append(
+            "distribution cables are not counted: a run's length is the layout's, and which"
+            " cable is Clayton's pick of the options for the output tier and amps (D242)"
+        )
     return out, notes, missing
 
 

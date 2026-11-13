@@ -724,7 +724,9 @@ def test_parts_count_the_dynamo_hatch_and_list_what_isnt_counted(
     assert missing == 1
     assert any(n.startswith("rotor Steel large: no such item") for n in notes)
     assert any("maintenance, input, output, muffler" in n for n in notes)
-    assert any("cables" in n and "WO-4.5" in n for n in notes)
+    # Cable runs (WO-4.5) are options for the output tier; a run's length is the layout's.
+    assert any("cables are not counted" in n and "D242" in n for n in notes)
+    assert not any("come with WO-4.5" in n for n in notes)
     # The Testium rotor is there (its material from the item's NBT).
     node["spec"]["rotor"] = ["Testium", "large"]
     out, _, missing = power.parts(conn, {"nodes": [node]}, 1)
