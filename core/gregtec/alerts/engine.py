@@ -6,7 +6,10 @@
 
 - **Firing** takes the condition holding on fresh readings for the rule's ``hold_s``
   (:class:`~gregtec.alerts.rules.AlertRules`), and not within ``cooldown_s`` of the same alert
-  clearing. **Clearing** takes the condition gone, on fresh readings, for ``clear_s``. A store's
+  clearing. **Clearing** takes the condition gone, on fresh readings, for ``clear_s``. Both
+  holds run on message time: from when the core received the first message showing the state
+  to when it received the newest one, so a silent OC adds nothing to them (plan 7.9: a gap is
+  never extrapolated) and a single reading followed by silence never fires or clears. A store's
   fill has a band besides: it fires below ``power_low_pct`` and clears only at
   ``power_clear_pct``. So a value flapping around a threshold fires once, and a flapping
   condition at most once per ``cooldown_s``.
@@ -23,9 +26,14 @@
 :func:`AlertCard <gregtec.cards.build.alert>` in ``/api/state`` (Now, Glance), and each binding's
 alerts and held state with ``GET /api/base/live`` (the Base view, crafting done included). The
 OC status board: power low and crafting done lines (maintenance and stalled machines are on it
-already as WO-7.4's problems). A voice line: each ``fired`` event's ``say``, pushed on ``/ws``
-as ``{"type": "alert", "data": event}`` and spoken by the voice client. The ``alert`` table
-(Appendix D): one row per fired alert, ``state`` ``firing`` then ``cleared``.
+already as WO-7.4's problems). A voice line: each event is pushed on ``/ws`` as
+``{"type": "alert", "data": event}`` and the voice client speaks a ``fired`` event's ``say``.
+Fires of one tick are said as one line per binding (the first fired event carries it, the
+others ``say`` None): a power loss that stops every multiblock is "Lab: power low and 6
+machines stopped.", not seven lines. The ``alert`` table
+(Appendix D): one row per fired alert, ``state`` ``firing`` then ``cleared``; a row still
+``firing`` when the engine starts (the core stopped while it fired) becomes ``lost``, since
+the new engine fires afresh in a row of its own if the condition is still there.
 
 **WO-9.2's interface.** :attr:`AlertEngine.sinks`: each is called with every
 :class:`AlertEvent` (``fired``, ``cleared``, ``stale``, ``fresh``), after the engine's own
@@ -49,7 +57,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from gregtec.alerts.rules import LEVEL, AlertRules, Seen, observe
+from gregtec.alerts.rules import LEVEL, RULES, AlertRules, Seen, observe
 from gregtec.bridge.live import Live
 from gregtec.cards import build as cards_build
 from gregtec.store import Store
@@ -135,6 +143,7 @@ class AlertEvent:
     ts: float
     alert: Alert | None = None  # fired, cleared: a copy as it was then
     why: str | None = None  # stale: paused or silent
+    say: str | None = None  # fired: the line to say for this tick's fires (see tick)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -142,9 +151,7 @@ class AlertEvent:
             "binding": self.binding,
             "ts": int(self.ts),
             "why": self.why,
-            "say": self.alert.say
-            if self.alert is not None and self.kind == "fired"
-            else None,
+            "say": self.say if self.kind == "fired" else None,
             "alert": self.alert.as_dict() if self.alert is not None else None,
         }
 
@@ -197,6 +204,61 @@ def _texts(rule: str, where: str, s: Seen, cfg: AlertRules) -> tuple[str, str, s
     )
 
 
+def _named(a: Alert) -> str:
+    return a.title.split(": ", 1)[-1]
+
+
+def summary(where: str, fired: list[Alert]) -> str:
+    """One voice line for several alerts that fired in one tick on one binding: fixed
+    templates, a count where a rule fired more than once."""
+    parts = []
+    for rule in RULES:
+        mine = [a for a in fired if a.rule == rule]
+        n = len(mine)
+        if not n:
+            continue
+        if rule == "power_low":
+            parts.append("power low" if n == 1 else f"power low on {n} stores")
+        elif rule == "maintenance":
+            parts.append(
+                f"{_named(mine[0])} needs maintenance"
+                if n == 1
+                else f"{n} machines need maintenance"
+            )
+        elif rule == "machine_stalled":
+            words = sorted({a.title.split(":", 1)[0].split()[-1] for a in mine})
+            word = " or ".join(words)
+            parts.append(
+                f"{_named(mine[0])} has {word}" if n == 1 else f"{n} machines {word}"
+            )
+        else:
+            parts.append(f"{_named(mine[0])} crafted" if n == 1 else f"{n} crafts done")
+    said = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+    return f"{where}: {said}."
+
+
+def _lines(events: list[AlertEvent]) -> list[AlertEvent]:
+    """Each binding's fires of one tick get one voice line, on the first of them."""
+    out = []
+    done: set[str] = set()
+    for e in events:
+        if e.kind != "fired" or e.alert is None:
+            out.append(e)
+            continue
+        if e.binding in done:
+            out.append(dataclasses.replace(e, say=None))
+            continue
+        done.add(e.binding)
+        mine = [
+            x.alert
+            for x in events
+            if x.kind == "fired" and x.binding == e.binding and x.alert is not None
+        ]
+        say = mine[0].say if len(mine) == 1 else summary(place(e.binding), mine)
+        out.append(dataclasses.replace(e, say=say))
+    return out
+
+
 class AlertEngine:
     """The alerts for every binding (see the module docstring). Thread-safe."""
 
@@ -220,6 +282,8 @@ class AlertEngine:
         self._held: dict[str, str | None] = {}  # binding -> why it is held, or None
         self._done: dict[str, Alert] = {}  # crafting-done alerts still shown
         self._done_seen: OrderedDict[str, None] = OrderedDict()
+        if store is not None:
+            self._lose_old_rows(store)
 
     # --- reading
 
@@ -276,6 +340,7 @@ class AlertEngine:
                     events.append(
                         AlertEvent("cleared", a.binding, now, dataclasses.replace(a))
                     )
+        events = _lines(events)
         self._record(events)
         for e in events:
             for sink in list(self.sinks):
@@ -309,6 +374,8 @@ class AlertEngine:
                 AlertEvent("stale" if why else "fresh", binding, now, why=why)
             )
         mine = {k: t for (b, k), t in self._tracks.items() if b == binding}
+        heard = [a["at"] for a in base.get("agents") or [] if a.get("at") is not None]
+        newest = max(heard) if heard else now
         if why is not None:
             for t in mine.values():
                 t.cond_since = t.ok_since = None
@@ -335,7 +402,9 @@ class AlertEngine:
         # A full snapshot left it out (the machine is gone): its condition is gone too.
         for key, t in mine.items():
             if key not in keys and t.firing is not None:
-                gone = Seen(t.firing.rule, t.firing.subject, False, "", t.firing.cite)
+                gone = Seen(
+                    t.firing.rule, t.firing.subject, False, "", t.firing.cite, at=newest
+                )
                 event = self._step(t, binding, key, gone, where, now)
                 if event is not None:
                     events.append(event)
@@ -362,6 +431,9 @@ class AlertEngine:
             return None
         if t.firing is not None:
             t.firing.stale = None
+        at = (
+            s.at if s.at is not None else now
+        )  # message time: when the core received it
         if s.on:
             t.ok_since = None
             if t.firing is not None:
@@ -369,9 +441,9 @@ class AlertEngine:
                 t.firing.title, t.firing.body, t.firing.value = title, body, s.value
                 return None
             if t.cond_since is None:
-                t.cond_since = now
+                t.cond_since = at
             cooled = t.cleared_at is None or now - t.cleared_at >= cfg.cooldown_s
-            if now - t.cond_since >= cfg.hold_s(s.rule) and cooled:
+            if at - t.cond_since >= cfg.hold_s(s.rule) and cooled:
                 title, body, say = _texts(s.rule, where, s, cfg)
                 t.firing = Alert(
                     key,
@@ -387,14 +459,16 @@ class AlertEngine:
                     s.value,
                     s.unit,
                 )
-                return AlertEvent("fired", binding, now, dataclasses.replace(t.firing))
+                return AlertEvent(
+                    "fired", binding, now, dataclasses.replace(t.firing), say=say
+                )
             return None
         t.cond_since = None
         if t.firing is None:
             return None
         if t.ok_since is None:
-            t.ok_since = now
-        if now - t.ok_since < cfg.clear_s:
+            t.ok_since = at
+        if at - t.ok_since < cfg.clear_s:
             return None
         gone, t.firing, t.ok_since, t.cleared_at = t.firing, None, None, now
         return AlertEvent("cleared", binding, now, gone)
@@ -430,10 +504,28 @@ class AlertEngine:
                 None,
             )
             self._done[key] = alert
-            events.append(AlertEvent("fired", binding, now, dataclasses.replace(alert)))
+            events.append(
+                AlertEvent(
+                    "fired", binding, now, dataclasses.replace(alert), say=alert.say
+                )
+            )
         return events
 
     # --- the alert table (Appendix D)
+
+    @staticmethod
+    def _lose_old_rows(store: Store) -> None:
+        """Rows a previous engine left ``firing`` (the core stopped while they fired) become
+        ``lost``: no engine will clear them, and WO-9.2 reads ``firing`` as firing now."""
+        marks = ", ".join("?" for _ in RULES)
+        try:
+            store.try_write(
+                "UPDATE alert SET state = 'lost' "
+                f"WHERE state = 'firing' AND kind IN ({marks})",
+                RULES,
+            )
+        except sqlite3.Error as exc:
+            log.warning("old alert rows not closed", extra={"why": str(exc)[:200]})
 
     def _record(self, events: list[AlertEvent]) -> None:
         if self.store is None:

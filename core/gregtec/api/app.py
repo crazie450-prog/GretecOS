@@ -214,6 +214,7 @@ class Core:
     oc: Bridge | None = None
     ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
+    _alert_state_due: bool = False  # a state push for alert events is queued (WO-7.5)
 
     # --- pushing to WebSocket clients
 
@@ -253,10 +254,16 @@ class Core:
         alert cards come and go (WO-7.5, D281)."""
         data = event.as_dict()
 
+        async def state() -> None:
+            self._alert_state_due = False
+            await dashboard.push_state(self)
+
         def push() -> None:
             self.broadcast({"type": "alert", "data": data})
-            if self.loop is not None:
-                self.loop.create_task(dashboard.push_state(self))
+            # One state push for the events of one tick, not one per event.
+            if self.loop is not None and not self._alert_state_due:
+                self._alert_state_due = True
+                self.loop.create_task(state())
 
         self._threadsafe(push)
 
@@ -927,6 +934,13 @@ async def _watch(core: Core) -> None:
     last_key = -KEY_CHECK_S
     while True:
         now = time.monotonic()
+        # Action expiry and timeouts, stale telemetry (WO-7.1) and the alert rules (WO-7.5):
+        # first and on their own, so a slow network step or a failing one never holds them up.
+        if core.ops is not None:
+            try:
+                await asyncio.to_thread(core.ops.tick)
+            except Exception:  # the watcher must keep running
+                log.exception("ops tick failed")
         try:
             if now - last_key >= KEY_CHECK_S:
                 await asyncio.to_thread(core.refresh_key)
@@ -935,10 +949,6 @@ async def _watch(core: Core) -> None:
             await asyncio.to_thread(
                 ai_routes.refresh, core
             )  # credits, API probe (WO-2.8)
-            if (
-                core.ops is not None
-            ):  # action expiry and timeouts, stale telemetry (WO-7.1)
-                await asyncio.to_thread(core.ops.tick)
             health = await asyncio.to_thread(core.health)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:

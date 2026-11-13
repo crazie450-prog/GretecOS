@@ -10,6 +10,7 @@ and goes stale (not alerted on, not cleared) while the game is paused or OC is s
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import math
 import sqlite3
@@ -20,7 +21,7 @@ from typing import Any
 import pytest
 
 from gregtec.alerts import rules as alert_rules
-from gregtec.alerts.engine import AlertEngine, AlertEvent, place
+from gregtec.alerts.engine import AlertEngine, AlertEvent, place, summary
 from gregtec.alerts.rules import AlertRules
 from gregtec.bridge.actions import ActionDesk
 from gregtec.bridge.display import Context, Displays
@@ -544,3 +545,110 @@ def test_parse_raises_config_error_type() -> None:
     with pytest.raises(ValueError, match=r"\[alerts\] rules"):
         alert_rules.parse({"rules": "power_low"})
     assert issubclass(ConfigError, ValueError)
+
+
+# --- review fixes: message time (M1), lost rows (M3), one voice line (L1), the LSC (L2)
+
+
+def test_one_reading_then_silence_never_fires(rig: Rig) -> None:
+    # Two low readings 5 s apart, then OC goes silent: the hold runs on message time, so the
+    # silence before STALE_S counts for nothing and it goes stale instead of firing.
+    rig.run(10)
+    rig.run(CYCLE * 2, eu=100)
+    rig.silent = True
+    rig.run(200)
+    assert rig.kinds("power_low") == []
+    assert rig.engine.held("lab") == "silent"
+
+
+def test_one_good_reading_then_silence_never_clears(rig: Rig) -> None:
+    rig.run(20, problems=1)
+    assert rig.kinds("maintenance") == ["fired"]
+    rig.run(CYCLE, problems=0)  # one good message
+    rig.silent = True
+    rig.run(200)
+    assert rig.kinds("maintenance") == ["fired"]
+    assert rig.engine.active("lab")[0].stale == "silent"
+
+
+def test_a_restart_marks_the_old_firing_rows_lost(rig: Rig) -> None:
+    rig.run(20, problems=1)
+    assert rig.kinds("maintenance") == ["fired"]
+    # The core restarts: a new engine on the same store fires afresh in a row of its own.
+    engine = AlertEngine(rig.live, AlertRules(), store=rig.store, clock=rig.clock)
+    rig.engine.sinks.clear()
+    rig.engine = engine
+    engine.sinks.append(rig.events.append)
+    rig.run(20)
+    rig.run(60, problems=0)
+    rows = rig.store.rows("SELECT id, state FROM alert ORDER BY id")
+    assert [tuple(r) for r in rows] == [(1, "lost"), (2, "cleared")]
+
+
+def test_fires_of_one_tick_are_one_voice_line(tmp_path: Path) -> None:
+    # The LSC empties and GT stops the EBF: one line, not one per alert (the AFK power loss).
+    r = make(tmp_path, power_low_s=0, stalled_s=0)
+    try:
+        r.run(10)
+        r.run(CYCLE, eu=100, active=False, problems=1)
+        fired = [e for e in r.events if e.kind == "fired"]
+        assert len(fired) == 3
+        said = [e.as_dict()["say"] for e in fired]
+        assert said[0] == (
+            "Lab: power low, Electric Blast Furnace needs maintenance and "
+            "Electric Blast Furnace has stalled."
+        )
+        assert said[1:] == [None, None]
+        assert all(
+            e.alert is not None and e.alert.say for e in fired
+        )  # WO-9.2 keeps each
+    finally:
+        r.store.close()
+
+
+def test_the_summary_counts_a_rule_that_fired_more_than_once(rig: Rig) -> None:
+
+    rig.run(100, eu=100, active=False)
+    power, stalled = (
+        next(a for a in rig.engine.active() if a.rule == rule)
+        for rule in ("power_low", "machine_stalled")
+    )
+    stopped = dataclasses.replace(stalled, title="Machine stopped: Assembler")
+    many = [power, *([stopped] * 5), stalled]
+    assert summary("Lab", many) == "Lab: power low and 6 machines stalled or stopped."
+    assert summary("Lab", [stopped] * 6) == "Lab: 6 machines stopped."
+    assert summary("Lab", [power, power]) == "Lab: power low on 2 stores."
+
+
+def test_lsc_maintenance_reads_its_own_lines_not_the_cut_problems(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live cuts the problems list (MAX_PROBLEMS); the LSC's alert must not clear with it.
+    import gregtec.bridge.live as live_mod
+
+    monkeypatch.setattr(live_mod, "MAX_PROBLEMS", 0)
+    original = rig.message
+
+    def lsc_bad() -> dict[str, Any]:
+        doc = original()
+        lsc = next(p for p in doc["power"] if p["addr"] == LSC)
+        lsc["sensor"] = ["kekztech.infodata.multi.maintenance_status.bad"]
+        lsc["sensor_at"] = 1.0
+        return doc
+
+    rig.message = lsc_bad  # type: ignore[method-assign]
+    rig.run(100)
+    assert rig.kinds("maintenance") == ["fired"]
+    assert rig.engine.active("lab")[0].subject == f"lab/{LSC}"
+
+
+@pytest.mark.parametrize(("low", "clear"), [(90, 100.0), (25, 35.0), (100, 100.0)])
+def test_only_the_low_end_set_moves_the_clear_end_with_it(
+    tmp_path: Path, low: int, clear: float
+) -> None:
+    # The runbook's lab-ops shortcut sets power_low_pct alone above the current fill.
+    toml = tmp_path / "gos.toml"
+    toml.write_text(f"[alerts]\npower_low_pct = {low}\n", encoding="utf-8")
+    cfg = load(toml)
+    assert cfg.service_errors == ()
+    assert (cfg.alerts.power_low_pct, cfg.alerts.power_clear_pct) == (float(low), clear)

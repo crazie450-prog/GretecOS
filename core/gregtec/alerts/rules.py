@@ -9,7 +9,8 @@ every reading itself is OC's, cited ``tel:<binding>/<address>`` (D219):
 |-------------------|---------|-------------------------------------------------------------------|
 | rules             | all four| the rules that run: power_low, maintenance, machine_stalled, crafting_done |
 | power_low_pct     | 20      | a store's fill (its own reading) below this fires ``power_low``    |
-| power_clear_pct   | 30      | ... and it clears only at or above this (the hysteresis band)       |
+| power_clear_pct   | 30      | ... and it clears only at or above this (the hysteresis band); when |
+|                   |         | only power_low_pct is set, power_low_pct + 10 (at most 100)         |
 | power_low_s       | 30      | the fill has stayed low this long before it fires                  |
 | maintenance_s     | 0       | a Problems count above 0 (or an LSC's bad maintenance) this long  |
 | stalled_s         | 60      | a machine stalled (or stopped, below) this long                   |
@@ -29,6 +30,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+BAND_PCT = 10.0  # power_clear_pct above power_low_pct when only the low end is set
 RULES = ("power_low", "maintenance", "machine_stalled", "crafting_done")
 LEVEL = {
     "power_low": "err",
@@ -86,6 +88,8 @@ def parse(table: Mapping[str, Any]) -> AlertRules:
     out: dict[str, Any] = {"rules": tuple(dict.fromkeys(rules))}
     for key in ("power_low_pct", "power_clear_pct"):
         v = table.get(key, getattr(d, key))
+        if key == "power_clear_pct" and key not in table and "power_low_pct" in table:
+            v = min(100.0, out["power_low_pct"] + BAND_PCT)  # only the low end was set
         if isinstance(v, bool) or not isinstance(v, int | float) or not 0 <= v <= 100:
             raise ValueError(f"{where} {key} must be a percentage from 0 to 100")
         out[key] = float(v)
@@ -115,6 +119,7 @@ class Seen:
     value: float | None = None
     unit: str | None = None
     word: str = ""  # stalled or stopped; for a store, its kind
+    at: float | None = None  # when the core received the reading's message (epoch s)
 
 
 def observe(
@@ -146,22 +151,30 @@ def observe(
                     pct,
                     "%",
                     p.get("kind") or "",
+                    p.get("at"),
                 )
             )
     if "maintenance" in cfg.rules:
-        bad = {
-            pr["cite"]
-            for pr in base.get("problems") or []
-            if pr.get("kind") == "maintenance"
-        }
+        # A store's own sensor lines (never the problems list: Live cuts that to 32).
         for p in power:
-            on = None if p.get("stale") else p["cite"] in bad
-            out.append(Seen("maintenance", p["id"], on, p["name"], p["cite"]))
+            on = None if p.get("stale") else p.get("maintenance_ok") is False
+            out.append(
+                Seen("maintenance", p["id"], on, p["name"], p["cite"], at=p.get("at"))
+            )
         for m in base.get("machines") or []:
             n = m.get("problems")
             on = None if m.get("stale") or not isinstance(n, int) else n > 0
             out.append(
-                Seen("maintenance", m["id"], on, m["name"], m["cite"], n, "problems")
+                Seen(
+                    "maintenance",
+                    m["id"],
+                    on,
+                    m["name"],
+                    m["cite"],
+                    n,
+                    "problems",
+                    at=m.get("at"),
+                )
             )
     if "machine_stalled" in cfg.rules:
         for m in base.get("machines") or []:
@@ -180,6 +193,7 @@ def observe(
                     m["name"],
                     m["cite"],
                     word=status if on else "",
+                    at=m.get("at"),
                 )
             )
     return out
