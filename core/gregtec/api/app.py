@@ -25,6 +25,7 @@
 | GET/POST /api/ai, POST /api/credits/decision | see ``ai_routes`` | no-AI mode, D48 (WO-2.8)  |
 | GET/POST /api/persona          | see ``persona_routes``  | the persona and switching (WO-5.6)    |
 | /api/plans..., /api/designer...| see ``plan_routes``     | saved plans and the Designer (WO-3.6/3.7)|
+| GET/POST /api/power...         | see ``power_routes``    | the Power view, accepting a line (WO-4.6)|
 | GET  /api/quests?spoil=        | see ``quests.view``     | the Quests view's payload (WO-6.4)    |
 | GET/POST /api/ores...          | see ``ores.view``       | the Ores view, a vein's waypoint (WO-6.6)|
 | GET/POST/DELETE /api/crops... | see ``crops.view``      | the Crops view, his crops, the target (WO-6.7)|
@@ -85,7 +86,14 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.agents.personas import Personas
-from gregtec.api import ai_routes, dashboard, persona_routes, plan_routes, setup_routes
+from gregtec.api import (
+    ai_routes,
+    dashboard,
+    persona_routes,
+    plan_routes,
+    power_routes,
+    setup_routes,
+)
 from gregtec.api.security import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -781,6 +789,7 @@ def create_app(core: Core) -> FastAPI:
     base_routes.add_routes(app, core, principal, trusted, _json_body)
     persona_routes.add_routes(app, core, principal, _json_body)
     plan_routes.add_routes(app, core, principal, trusted, _json_body)
+    power_routes.add_routes(app, core, principal, trusted, _json_body)
     quest_view.add_routes(app, core, principal)
     ore_view.add_routes(app, core, principal, _json_body)
     crop_view.add_routes(app, core, principal, trusted, _json_body)

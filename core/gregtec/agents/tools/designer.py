@@ -136,7 +136,12 @@ PLAN_PIN_SCHEMA: dict[str, Any] = {
 }
 PLAN_EXPLAIN_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"id": _ID},
+    "properties": {
+        "id": {
+            **_ID,
+            "description": "a design's plan id: pl-... or a power line's pw-...",
+        }
+    },
     "required": ["id"],
     "additionalProperties": False,
 }
@@ -402,23 +407,37 @@ def plan_explain(call: Call, args: dict[str, Any], offset: int) -> Result:
     d = _designer()
     home = _home(call)
     pid = _pid(args["id"])
-    plans = _guard(d.group, home, pid)  # rank order: rank.py's, never the model's
-    view = _guard(d.view, home, pid)
-    name = view["routes"][0]["target"]["name"] if view["routes"] else pid
-    prefs = rank.read_prefs(home / "vault")
     notes: list[str] = []
     writer = call.env.writer() if call.env.writer is not None else None
     if writer is None:
         notes.append("no planner model (no key): GOS's template")
-    try:
-        out = explain.explain(plans, name, prefs, writer)
-    except WriterError as exc:
-        out = explain.explain(plans, name, prefs, None)
-        notes.append(f"the planner model couldn't be reached ({exc}): GOS's template")
+    if pid.startswith("pw-"):  # a power design (WO-4.6, D244): the order is checked too
+        from gregtec.planner import power_explain, powerview
+
+        plans = _guard(powerview.group, home, pid)  # rank order: rank.py's
+        try:
+            out = power_explain.explain(plans, writer)
+        except WriterError as exc:
+            out = power_explain.explain(plans, None)
+            notes.append(
+                f"the planner model couldn't be reached ({exc}): GOS's template"
+            )
+    else:
+        plans = _guard(d.group, home, pid)  # rank order: rank.py's, never the model's
+        view = _guard(d.view, home, pid)
+        name = view["routes"][0]["target"]["name"] if view["routes"] else pid
+        prefs = rank.read_prefs(home / "vault")
+        try:
+            out = explain.explain(plans, name, prefs, writer)
+        except WriterError as exc:
+            out = explain.explain(plans, name, prefs, None)
+            notes.append(
+                f"the planner model couldn't be reached ({exc}): GOS's template"
+            )
     for n, refused in enumerate(out.offending, 1):
         notes.append(
-            f"attempt {n} was refused by the validator (numbers not in the plans: "
-            f"{', '.join(refused[:10])})"
+            f"attempt {n} was refused by the validator (not in the plans or out of "
+            f"rank order: {', '.join(refused[:10])})"
         )
     notes.append(
         "say this text as it is, routes in this order; cite each route by its plan: id"
