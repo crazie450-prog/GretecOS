@@ -69,6 +69,9 @@ class CaseResult:
     notes: list[str] = field(default_factory=list)
     rejected: int = 0
     explanation: str = ""
+    fuels: dict[str, str] = field(
+        default_factory=dict
+    )  # fuel key -> name, from the book
     seconds: float = 0.0
     error: str | None = None
 
@@ -102,7 +105,7 @@ def faithful(prompt: str) -> str:
     lines = []
     for o in doc["options"]:
         lines.append(
-            f"Option {o['position']} (plan:{o['id']}) burns {o['fuel']['id']} in its "
+            f"Option {o['position']} (plan:{o['id']}) burns {o['fuel']['name']} in its "
             f"{o['generator']['label']}: {fmt(o['net_eut'])} EU/t net, score "
             f"{fmt(o['score'])}, effort {fmt(o['eff_h'])} h."
         )
@@ -283,8 +286,9 @@ def run_case(case: Case, home: Path) -> CaseResult:
         else:
             have = all("ok" in (p.get("closed") or {}) for p in plans)
             res.checks["closed"] = (have, "the validator's verdict on every option")
-        good = power_explain.explain(plans, faithful)
-        bad = power_explain.explain(plans, reordering)
+        res.fuels = powerview.fuel_names(home, plans)
+        good = power_explain.explain(plans, faithful, res.fuels)
+        bad = power_explain.explain(plans, reordering, res.fuels)
         res.explanation = good.text
         exp_ok = good.source == "model" and (n < 2 or bad.source == "template")
         res.checks["explain"] = (
@@ -350,6 +354,11 @@ def _cell(v: object) -> str:
     return str(v).replace("|", "/")
 
 
+def _fuel(names: dict[str, str], key: str) -> str:
+    name = names.get(key, key)
+    return key if name == key else f"{name} ({key})"
+
+
 def report(results: Sequence[CaseResult], source: str) -> str:
     passed = sum(r.ok for r in results)
     lines = [
@@ -395,7 +404,7 @@ def report(results: Sequence[CaseResult], source: str) -> str:
                             rk["position"],
                             f"plan:{p['id']}",
                             pw["generator"]["label"],
-                            pw["fuel"]["id"],
+                            _fuel(r.fuels, str(pw["fuel"]["id"])),
                             pw["net_eut"],
                             pw["gross_eut"],
                             pw["chain_eut"],

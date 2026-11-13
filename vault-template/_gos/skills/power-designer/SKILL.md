@@ -44,7 +44,7 @@ GOS's power designer (plan 7.2) sizes each generator and the chain that makes it
 
 ## 4. Accepting
 
-- **Accepting a power line is Clayton's.** No tool accepts. Tell him to press Accept on the option in the Power view (key 5) or run `gos power design <mode> --accept <n>`. Accepting writes its line note and adds its net EU/t to the EU ledger as a source.
+- **Accepting a power line is Clayton's.** No tool accepts. Tell him to press Accept on the option in the Power view (key 5) or run `gos plan --accept <id>` with the option's own id (the `pw-` id you gave him), which accepts exactly the saved option he saw. Never point him to `gos power design ... --accept <n>`: that solves again and accepts option n of the new solve. Accepting writes its line note and adds its net EU/t to the EU ledger as a source.
 
 ## 5. The answer
 

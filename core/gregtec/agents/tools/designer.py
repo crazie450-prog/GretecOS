@@ -415,10 +415,11 @@ def plan_explain(call: Call, args: dict[str, Any], offset: int) -> Result:
         from gregtec.planner import power_explain, powerview
 
         plans = _guard(powerview.group, home, pid)  # rank order: rank.py's
+        fuels = _guard(powerview.fuel_names, home, plans)
         try:
-            out = power_explain.explain(plans, writer)
+            out = power_explain.explain(plans, writer, fuels)
         except WriterError as exc:
-            out = power_explain.explain(plans, None)
+            out = power_explain.explain(plans, None, fuels)
             notes.append(
                 f"the planner model couldn't be reached ({exc}): GOS's template"
             )

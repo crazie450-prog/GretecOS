@@ -6,6 +6,11 @@ job, after the harnesses; locally: mod/README.md). Every case goes through the d
 ``design_power`` tool, ``plan_explain`` with fake planner models and the Power view's payload
 (gregtec.planner.powereval); the report lands in the test's tmp_path (``power_modes.md``) for the
 PR's evidence. Nothing is written outside tmp_path: the eval copies the DB.
+
+CI's mod job runs the LV and HV cases (8 of 12, about 5 minutes on 4 CPUs; the IV cases take
+1.5-2.5 minutes each), so the job stays inside its timeout (review M3). The storage and
+distribution checks run on every case it runs. ``GOS_POWER_EVAL_FULL=1`` runs all 12, as
+``gos eval power-modes`` always does.
 """
 
 from __future__ import annotations
@@ -45,6 +50,8 @@ def test_all_four_modes_at_lv_hv_iv_return_two_or_three_ranked_options(
 ) -> None:
     cases = powereval.load_cases()
     assert len(cases) == 12
+    if os.environ.get("GOS_POWER_EVAL_FULL") != "1":
+        cases = [c for c in cases if c.tier in ("LV", "HV")]
     results = powereval.run(db, cases, tmp_path / "scratch")
     report = tmp_path / "power_modes.md"
     report.write_text(powereval.report(results, "the server harness DB"), "utf-8")

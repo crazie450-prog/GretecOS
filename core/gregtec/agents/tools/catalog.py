@@ -282,8 +282,9 @@ TOOLS = (
         power.design_power,
         read_only=False,
         lanes=frozenset({DEEP}),
+        # No deadline_s: with needs_db=False the registry's interrupt guard isn't attached,
+        # and HiGHS isn't interruptible by it; the solver's TIME_LIMIT_S per MILP is the bound.
         needs_db=False,
-        deadline_s=300.0,
         gate=power.GATE,
     ),
     Tool(

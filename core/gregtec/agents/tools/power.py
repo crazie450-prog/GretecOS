@@ -1,6 +1,6 @@
 """The power-designer skill's tools (WO-4.6, plan 7.0, §7.2, D13, D67, D244).
 
-- ``design_power(mode, tier?, scale?, bound?, kinds?, fuels?, rotor?, options?)``: the power
+- ``design_power(mode, tier?, scale?, bound?, kind?, fuel?, options?)``: the power
   designer (:func:`gregtec.planner.powerview.design`): 2-3 power lines for one of the four
   objective modes, **in rank order** (planner/rank.py's ``order_power``, never a model's), each
   saved as a proposed power plan (``plan:<id>``), one row each with its net EU/t (= what its
@@ -13,14 +13,15 @@
   (:func:`gregtec.planner.power_explain.in_order`) refuse a text that adds a number or reorders
   the options.
 
-Accepting a line isn't a tool: it is Clayton's, in the Power view or ``gos power design ...
---accept N`` (D251, D238). Every number in a row is the planner's, cited by its plan (``plan:``),
+Accepting a line isn't a tool: it is Clayton's, in the Power view or ``gos plan --accept <id>``
+on the saved option (D251, D238). Every number in a row is the planner's, cited by its plan (``plan:``),
 recipe (``r:``) or machine (``mte:``). ``design_power`` saves only through the planner's store
 (``data/plans`` and the ``plan`` row) and is the deep lane's only.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,7 @@ OPTION_COLS = (
     "plan",
     "generator",
     "fuel",
+    "fuel_name",
     "net_eut",
     "gross_eut",
     "chain_eut",
@@ -124,8 +126,10 @@ def _guard(fn: Any, *args: object, **kw: object) -> Any:  # noqa: ANN401
         raise ToolError(str(exc)) from None
 
 
-def option_rows(plans: list[dict[str, Any]]) -> list[tuple[object, ...]]:
-    """One row per option, in the plans' (rank) order."""
+def option_rows(
+    plans: list[dict[str, Any]], fuel_names: Mapping[str, str] | None = None
+) -> list[tuple[object, ...]]:
+    """One row per option, in the plans' (rank) order; the fuel by its key and its name."""
     rows = []
     for p in plans:
         pw, r, m = p["power"], p["rank"], p.get("metrics") or {}
@@ -136,6 +140,7 @@ def option_rows(plans: list[dict[str, Any]]) -> list[tuple[object, ...]]:
                 f"plan:{p['id']}",
                 pw["generator"]["label"],
                 pw["fuel"]["id"],
+                (fuel_names or {}).get(pw["fuel"]["id"], pw["fuel"]["id"]),
                 pw["net_eut"],
                 pw["gross_eut"],
                 pw["chain_eut"],
@@ -169,8 +174,9 @@ def design_power(call: Call, args: dict[str, Any], offset: int) -> Result:
             raise ToolError(f"bound {args['bound']!r} is not a number") from None
     req = _guard(powerview.request_from_spec, spec)
     d = _guard(powerview.design, home, req)
-    rows = option_rows(d.plans)
-    doc = power_explain.facts(d.plans)
+    fuels = _guard(powerview.fuel_names, home, d.plans)
+    rows = option_rows(d.plans, fuels)
+    doc = power_explain.facts(d.plans, fuels)
     notes = [
         "options are in rank order from code (planner/rank.py): explain it, never reorder",
         "net_eut = gross_eut (the generator) - chain_eut (its own fuel chain's machines)",

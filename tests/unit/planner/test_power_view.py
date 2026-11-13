@@ -385,6 +385,13 @@ def test_design_power_tool_rows_in_rank_order(reg: Any, home: Path) -> None:  # 
     assert all(a >= 0 for a in at) and at == sorted(at)
     assert rank.describe_power(rank.BALANCED, "best") in out.text
     assert "never reorder" in out.text and "accepting is his" in out.text
+    # Review L5: each fuel by its key (the cite) and its name from the book.
+    assert "\tfuel\tfuel_name\t" in out.text
+    names = powerview.fuel_names(home, powerview.group(home, ids[0]))
+    assert names and any(n != k for k, n in names.items()), names
+    for key, name in names.items():
+        assert f"{key}\t{name}\t" in out.text
+        assert f"burning {name} ({key})" in out.text or name == key
     # The fast lane can't design.
     assert reg.call("design_power", {"mode": "best"}, lane=FAST).is_error
     # A bad request is the tool's error, not a crash.

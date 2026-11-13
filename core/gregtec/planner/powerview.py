@@ -243,6 +243,20 @@ def _name(b: book_mod.Book | None, key: str) -> str:
     return b.name(key) if b is not None else key
 
 
+def fuel_names(home: Path, plans: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """Each option's fuel key and its name from the plan's book (the key itself when the run
+    it was solved on is gone), so an explanation names the fuel and cites the key (review L5)."""
+    out: dict[str, str] = {}
+    with designer._conn(home, readonly=True) as conn:
+        for p in plans:
+            key = str(p["power"]["fuel"]["id"])
+            try:
+                out[key] = book_mod.read(conn, p).name(key)
+            except LookupError:
+                out[key] = key
+    return out
+
+
 def _nodes(p: Mapping[str, Any], b: book_mod.Book | None) -> list[dict[str, Any]]:
     out = []
     for n in p.get("nodes") or ():
