@@ -469,6 +469,8 @@ def _ledger_section(
         "warnings": _warnings(now),
         "running_warnings": _warnings(now, "running"),
         "lines": len(now.lines),
+        # each counted plan's draws per tier and its source, for "click a tier to see its draw"
+        "entries": now.as_dict()["lines"],
         "window_s": window_s,
         "distribution": _dist(cat, now, window_s, why),
     }
