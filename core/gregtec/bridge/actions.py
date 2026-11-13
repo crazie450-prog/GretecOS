@@ -78,6 +78,7 @@ STATES = ("proposed", "confirmed", "sent", "done", "failed", "cancelled", "expir
 FINAL = ("done", "failed", "cancelled", "expired")
 CRAFT_FINAL = ("done", "canceled", "failed")
 MAY_STILL_RUN = "may still run"
+RESULT_TIMED_OUT = "timed out; may have run"  # a sent action with no result (RESULT_S)
 
 
 class ActionError(ValueError):
@@ -373,7 +374,7 @@ class ActionDesk:
                     )
                     say = f"Failed: {action.readback}. The OC computer never took it."
                 else:
-                    state, why = "failed", "timed out; may have run"
+                    state, why = "failed", RESULT_TIMED_OUT
                     say = f"No result for: {action.readback}. It may have run; check in game."
                 with self.store.transaction() as conn:
                     conn.execute(

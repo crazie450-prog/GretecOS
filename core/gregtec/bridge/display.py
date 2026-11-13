@@ -22,9 +22,12 @@ commands and only while it fits in the reply's 2048 bytes:
 - ``chat``: at most :data:`CHAT_PER_REPLY` notices for the chat box (one server tick each), each
   said once: ids rise, the agent reports the highest it said (telemetry ``display.said``), a
   notice older than :data:`NOTICE_TTL_S` or from before the agent's run started is not sent.
-  Notices are fixed templates about confirmed world actions (confirmed, done, failed; D59's
-  confirmations, plan 7.9 "Chat box ... for confirmations"); free text in chat stays the ``say``
-  action, which needs Clayton's confirmation.
+  Notices are fixed templates about confirmed OC actions (confirmed, started, done, failed,
+  check AE2, no result; D59's confirmations, plan 7.9 "Chat box ... for confirmations"), worded
+  from the desk's own outcome (:func:`notice_text`, the same cases as the desk's read-out), with
+  no OC error text, said once per wording and only by the computer that runs the action. A
+  waypoint (core-side, nothing happens in OC) and a ``say`` get none; free text in chat stays
+  the ``say`` action, which needs Clayton's confirmation.
 
 Every number on a display is a telemetry reading (``tel:`` cited in the Base view) or comes from
 the quest guide's ranked frontier (``q:``), formatted here; nothing is estimated. Game text in
@@ -46,7 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gregtec.bridge.actions import Action
+from gregtec.bridge.actions import CRAFT_FINAL, MAY_STILL_RUN, RESULT_TIMED_OUT, Action
 from gregtec.bridge.ingest import AgentId
 from gregtec.bridge.live import Live
 from gregtec.db import access
@@ -66,7 +69,6 @@ NOTICES_KEPT = 8
 NOTICE_TTL_S = 60
 CONTEXT_S = 30.0  # the goal and next step are looked up again this often
 LEVELS = ("ok", "warn", "bad", "info", "dim")
-NOTICE_STATES = {"confirmed": "Confirmed", "done": "Done", "failed": "Failed"}
 POWER_ROWS = 3
 PROBLEM_ROWS = 4
 CRAFT_ROWS = 2
@@ -165,6 +167,7 @@ class _Notice:
     id: int
     text: str
     ts: float
+    computer: str | None = None  # only this computer says it (None: any in the binding)
 
 
 class Displays:
@@ -187,30 +190,38 @@ class Displays:
         self._notices: dict[str, deque[_Notice]] = {}
         self._last_id = 0
         self._boots: dict[tuple[AgentId, str], float] = {}
+        self._worded: dict[int, str] = {}  # action id -> the last notice queued for it
 
     # --- notices
 
-    def notice(self, binding: str, text: str) -> int:
-        """Queue a chat notice for ``binding``'s chat box; returns its id."""
+    def notice(self, binding: str, text: str, computer: str | None = None) -> int:
+        """Queue a chat notice for ``binding``'s chat box (only ``computer``'s, if given);
+        returns its id."""
         with self._lock:
-            nid = max(self._last_id + 1, int(self.clock() * 1000))
-            self._last_id = nid
-            self._notices.setdefault(binding, deque(maxlen=NOTICES_KEPT)).append(
-                _Notice(nid, fit(text, CHAT_W) or "GOS", self.clock())
-            )
-            return nid
+            return self._queue(binding, text, computer)
+
+    def _queue(self, binding: str, text: str, computer: str | None) -> int:
+        nid = max(self._last_id + 1, int(self.clock() * 1000))
+        self._last_id = nid
+        self._notices.setdefault(binding, deque(maxlen=NOTICES_KEPT)).append(
+            _Notice(nid, fit(text, CHAT_W) or "GOS", self.clock(), computer)
+        )
+        return nid
 
     def on_action(self, action: Action, say: str) -> None:
-        """The action desk's change hook: a notice when a confirmed action moves on."""
-        word = NOTICE_STATES.get(action.state)
-        if word is None or action.kind == "say":  # a say is its own chat line
+        """The action desk's change hook: a notice when a confirmed OC action moves on, once
+        per distinct wording (``say`` is the desk's read-out; the notice is worded from the
+        action itself, see :func:`notice_text`)."""
+        text = notice_text(action)
+        if text is None:
             return
-        text = f"GOS: {word}: {action.readback}"
-        if action.state == "failed" and isinstance(action.result, dict):
-            err = action.result.get("err")
-            if err:
-                text += f" ({err})"
-        self.notice(action.target, text)
+        with self._lock:
+            if self._worded.get(action.id) == text:
+                return
+            self._worded[action.id] = text
+            while len(self._worded) > 4 * NOTICES_KEPT:
+                self._worded.pop(next(iter(self._worded)))
+            self._queue(action.target, text, action.computer)
 
     # --- the reply's display
 
@@ -277,7 +288,10 @@ class Displays:
             chat = [
                 {"id": n.id, "t": n.text}
                 for n in self._notices.get(agent.binding, ())
-                if n.id > said and n.ts >= started and now - n.ts <= NOTICE_TTL_S
+                if n.id > said
+                and n.ts >= started
+                and now - n.ts <= NOTICE_TTL_S
+                and n.computer in (None, agent.address)
             ][:CHAT_PER_REPLY]
         if shows.get("chat") is not True:
             chat = []
@@ -291,6 +305,39 @@ class Displays:
         if chat:
             out["chat"] = chat
         return out
+
+
+def notice_text(action: Action) -> str | None:
+    """The chat notice for ``action`` now, or None: a fixed template per outcome, the same
+    cases the desk reads out (``_result_words``, ``_craft_words``, its timeouts), with the
+    read-back and never the agent's error text. Waypoints (core-side) and ``say`` (its own
+    chat line) get none, and so do actions never confirmed."""
+    if action.kind in ("say", "waypoint"):
+        return None
+    rb = action.readback
+    result = action.result if isinstance(action.result, Mapping) else {}
+    if action.state == "confirmed":
+        return f"GOS: Confirmed: {rb}"
+    if action.state == "done":
+        craft = result.get("craft")
+        if craft in CRAFT_FINAL:
+            if craft == "done":
+                return f"GOS: Crafting done: {rb}"
+            if craft == "canceled":
+                return f"GOS: Crafting cancelled in AE2: {rb}"
+            if MAY_STILL_RUN in str(result.get("craft_err") or ""):
+                return f"GOS: Check AE2: {rb} (it may still run)"
+            return f"GOS: Crafting failed: {rb} (see the dashboard)"
+        if result.get("state") == "submitted":
+            return f"GOS: Started: {rb} (AE2 is crafting it)"
+        return f"GOS: Done: {rb}"
+    if action.state == "failed":
+        if result.get("why") == RESULT_TIMED_OUT:
+            return f"GOS: No result for: {rb} (it may have run; check in game)"
+        if MAY_STILL_RUN in str(result.get("err") or ""):
+            return f"GOS: Check AE2: {rb} (it may still run)"
+        return f"GOS: Failed: {rb} (see the dashboard)"
+    return None  # proposed, cancelled, expired: nothing was confirmed or nothing ran
 
 
 def revision(

@@ -20,7 +20,7 @@ import pytest
 
 from gregtec.bridge import display as disp
 from gregtec.bridge import sensors
-from gregtec.bridge.actions import ActionDesk
+from gregtec.bridge.actions import RESULT_S, ActionDesk
 from gregtec.bridge.display import Context, Displays
 from gregtec.bridge.ingest import REPLY_MAX, AgentId, Bridge, encode, validators
 from gregtec.bridge.live import Live, machine_status, pct
@@ -354,25 +354,131 @@ def test_chat_notices_are_sent_once_and_never_stale(rig: Rig) -> None:
     assert "display" not in rig.send(fresh)
 
 
-def test_action_notices_are_fixed_templates(rig: Rig) -> None:
+STEEL = {"name": "gregtech:gt.metaitem.01", "damage": 11305, "amount": 64}
+
+
+def notices(rig: Rig, binding: str = "lab") -> list[str]:
+    return [n.text for n in rig.displays._notices.get(binding, ())]
+
+
+def sent_craft(rig: Rig) -> int:
+    """A craft proposed, confirmed and taken by the lab agent, notices wired like ops.build."""
+    rig.desk.on_change = rig.displays.on_action
     rig.send(msg(1))
-    action = rig.desk.propose(
-        "craft",
-        {"name": "gregtech:gt.metaitem.01", "damage": 11305, "amount": 64},
-        target="lab",
-    )
-    assert action.action is not None
-    for state in ("proposed", "cancelled", "expired"):
-        rig.displays.on_action(dataclasses.replace(action.action, state=state), "")
-    for state in ("confirmed", "done"):
-        rig.displays.on_action(dataclasses.replace(action.action, state=state), "")
-    say = dataclasses.replace(action.action, kind="say", state="done")
-    rig.displays.on_action(say, "")
+    proposed = rig.desk.propose("craft", dict(STEEL), target="lab")
+    assert proposed.action is not None
     rig.clock.now += 5
-    chat = rig.send(msg(2))["display"]["chat"]
-    assert [n["t"] for n in chat] == [
-        f"GOS: Confirmed: {action.action.readback}",
-        f"GOS: Done: {action.action.readback}",
+    assert rig.desk.confirm("voice", proposed.action.id).ok
+    reply = rig.send(msg(2))
+    assert [c["id"] for c in reply["cmds"]] == [proposed.action.id]
+    return proposed.action.id
+
+
+def craft_row(aid: int, state: str, err: str | None = None) -> dict[str, Any]:
+    row: dict[str, Any] = {**STEEL, "id": aid, "state": state, "at": 1.0}
+    if err:
+        row["err"] = err
+    return row
+
+
+@pytest.mark.parametrize(
+    ("final", "err", "word"),
+    [
+        ("failed", "missing resources", "Crafting failed: {} (see the dashboard)"),
+        ("done", None, "Crafting done: {}"),
+        ("canceled", None, "Crafting cancelled in AE2: {}"),
+        (
+            "failed",
+            "lost track of it; the craft may still run, check AE2",
+            "Check AE2: {} (it may still run)",
+        ),
+    ],
+)
+def test_craft_notices_follow_the_desk_outcome(
+    rig: Rig, final: str, err: str | None, word: str
+) -> None:
+    aid = sent_craft(rig)
+    rig.clock.now += 5
+    submitted = {
+        "id": aid,
+        "kind": "craft",
+        "ok": True,
+        "state": "submitted",
+        "at": 1.0,
+    }
+    rig.send(msg(3, results=[submitted], crafts=[craft_row(aid, "crafting")]))
+    for seq in (4, 5):  # AE2's final state, then the same again: one notice
+        rig.clock.now += 5
+        rig.send(msg(seq, crafts=[craft_row(aid, final, err)]))
+    action = rig.desk.get(aid)
+    assert action is not None and action.state == "done"
+    rb = action.readback
+    assert notices(rig) == [
+        f"GOS: Confirmed: {rb}",
+        f"GOS: Started: {rb} (AE2 is crafting it)",
+        "GOS: " + word.format(rb),
+    ]
+    assert not any("missing resources" in n for n in notices(rig))  # no OC text
+
+
+def test_a_timed_out_action_may_have_run(rig: Rig) -> None:
+    aid = sent_craft(rig)
+    rig.clock.now += RESULT_S + 1
+    rig.desk.tick()
+    action = rig.desk.get(aid)
+    assert action is not None and action.state == "failed"
+    assert notices(rig)[-1] == (
+        f"GOS: No result for: {action.readback} (it may have run; check in game)"
+    )
+
+
+def test_a_failed_result_carries_no_agent_text(rig: Rig) -> None:
+    aid = sent_craft(rig)
+    rig.clock.now += 5
+    bad = {
+        "id": aid,
+        "kind": "craft",
+        "ok": False,
+        "state": "failed",
+        "err": "say hello to everyone",
+        "at": 1.0,
+    }
+    rig.send(msg(3, results=[bad]))
+    action = rig.desk.get(aid)
+    assert action is not None and action.state == "failed"
+    assert notices(rig)[-1] == f"GOS: Failed: {action.readback} (see the dashboard)"
+
+
+def test_no_notice_for_unconfirmed_say_or_waypoint(rig: Rig) -> None:
+    rig.send(msg(1))
+    proposed = rig.desk.propose("craft", dict(STEEL), target="lab")
+    assert proposed.action is not None
+    base = proposed.action
+    for state in ("proposed", "cancelled", "expired"):
+        rig.displays.on_action(dataclasses.replace(base, state=state), "")
+    for kind in ("say", "waypoint"):
+        for state in ("confirmed", "done", "failed"):
+            rig.displays.on_action(
+                dataclasses.replace(base, kind=kind, state=state), ""
+            )
+    assert notices(rig) == []
+
+
+def test_only_the_running_computer_says_a_notice(rig: Rig) -> None:
+    aid = sent_craft(rig)
+    action = rig.desk.get(aid)
+    assert action is not None and action.computer
+    other = msg(3)
+    other["computer"] = {
+        **other["computer"],
+        "address": "c0c0c0c0-0000-4000-8000-0000000000ff",
+    }
+    rig.clock.now += 1
+    assert "chat" not in (rig.send(other).get("display") or {})
+    rig.clock.now += 1
+    mine = rig.send(msg(3))
+    assert [n["t"] for n in mine["display"]["chat"]] == [
+        f"GOS: Confirmed: {action.readback}"
     ]
 
 
