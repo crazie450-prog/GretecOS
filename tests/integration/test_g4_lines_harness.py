@@ -112,7 +112,10 @@ def design(conn: sqlite3.Connection, name: str) -> power.PowerDesign:
 def check_option(p: dict[str, Any], ln: Line) -> None:
     """What every option of every line must hold, whatever its numbers."""
     pw = p["power"]
-    assert pw["net_eut"] == pytest.approx(pw["gross_eut"] - pw["chain_eut"], abs=1e-6)
+    # The plan keeps each figure to 9 significant digits.
+    assert pw["net_eut"] == pytest.approx(
+        pw["gross_eut"] - pw["chain_eut"], abs=1e-8 * pw["gross_eut"]
+    )
     gen = next(n for n in p["nodes"] if n["kind"] == "generator")
     assert gen["fuel"]["id"] in ln.fuels
     assert gen["fuel"]["ref"].startswith("r:")
@@ -151,9 +154,10 @@ def test_the_naquadah_line_burns_gts_naquadah_reactors(
     conn: sqlite3.Connection,
 ) -> None:
     names = {
-        r["id"]: r["name_en"]
+        r["mte_id"]: r["name_en"]
         for r in conn.execute(
-            "SELECT id, name_en FROM machine WHERE name_en LIKE 'Naquadah Reactor Mk-%'"
+            "SELECT mte_id, name_en FROM machine"
+            " WHERE name_en LIKE 'Naquadah Reactor Mk-%'"
         )
     }
     assert names
@@ -162,7 +166,7 @@ def test_the_naquadah_line_burns_gts_naquadah_reactors(
         assert int(mte.removeprefix("mte:")) in names
 
 
-@pytest.mark.xfail(strict=True, reason=FINDING_1)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=FINDING_1)
 @pytest.mark.parametrize("name", ["light_fuel", "benzene"])
 def test_the_chain_leaves_the_generator_some_output(
     conn: sqlite3.Connection, name: str
