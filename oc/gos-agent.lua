@@ -132,6 +132,7 @@ M.DEFAULTS = {
   log_max = 32768, -- bytes before the log is rotated to .1
   state = true, -- true: gos-agent.state next to the config; false: none; or a path
   mailbox = false, -- options for the M1 mailbox transport (WO-7.3 checks them)
+  display = true, -- the in-game displays (WO-7.4, display.lua checks them): true, false or a table
 }
 
 local RANGES = {
@@ -280,6 +281,9 @@ function M.check_config(t)
   if cfg.mailbox ~= false and type(cfg.mailbox) ~= "table" then
     return nil, "mailbox must be false or a table of mailbox options"
   end
+  if cfg.display ~= true and cfg.display ~= false and type(cfg.display) ~= "table" then
+    return nil, "display must be true, false or a table of display options"
+  end
   cfg.power_set = {}
   for _, n in ipairs(cfg.power_names) do
     cfg.power_set[n] = true
@@ -398,7 +402,11 @@ end
 function M.log(st, level, msg)
   msg = tostring(msg)
   if level ~= "debug" then
-    st.out(("[gos-agent] %s"):format(msg))
+    if st.display and st.display:board_on() then
+      st.display:note(msg) -- the board owns the screen: the newest note goes in its footer
+    else
+      st.out(("[gos-agent] %s"):format(msg))
+    end
   end
   local path = st.cfg.log_path
   if not path then
@@ -564,13 +572,32 @@ function M.discover(st)
         inv.chat = inv.chat or addr
       elseif ctype == "tps_card" then
         inv.tps = inv.tps or addr
+      elseif ctype == "gpu" then
+        inv.gpu = inv.gpu or addr
+      elseif ctype == "screen" then
+        inv.screens = inv.screens or {}
+        inv.screens[#inv.screens + 1] = addr
+      elseif ctype == "glasses" then
+        inv.glasses = inv.glasses or addr
       end
     end
   end
   if st.inv and st.inv.me and inv.me and st.inv.me.addr == inv.me.addr then
     inv.me = st.inv.me
   end
+  if inv.gpu and inv.screens and #inv.screens > 1 then
+    -- The screen the GPU is bound to (OpenOS's terminal) first: the board takes that one.
+    local okb, bound = call(inv.gpu, "getScreen")
+    if okb and type(bound) == "string" then
+      table.sort(inv.screens, function(a, b)
+        return (a == bound and 0 or 1) < (b == bound and 0 or 1)
+      end)
+    end
+  end
   st.inv = inv
+  if st.display then
+    st.display:attach(inv, st.transport and st.transport.name or "none")
+  end
   st.rediscover = false
   st.next_discover = now() + cfg.discover_s
   if inv.skipped > 0 then
@@ -1246,6 +1273,7 @@ function M.build_payload(st, opts)
     crafts = json.array(),
     results = json.array(),
     errors = json.array(),
+    display = st.display and st.display:state() or nil,
   }
   for _, e in ipairs(st.inv.power) do
     p.power[#p.power + 1] = entry_doc(e, seq, budget)
@@ -1477,6 +1505,39 @@ function M.open_transport(st)
   })
 end
 
+-- The in-game displays (WO-7.4): display.lua, when it is installed and the config wants any.
+function M.open_display(st)
+  if st.display or st.cfg.display == false then
+    return
+  end
+  local mod, err = load_module("display")
+  if not mod then
+    M.log(st, "warn", "no in-game displays: display.lua is not installed next to gos-agent.lua (" .. tostring(err) .. ")")
+    return
+  end
+  local d, derr = mod.new(st.cfg.display, {
+    call = call,
+    now = now,
+    log = function(level, msg)
+      M.log(st, level, msg)
+    end,
+  })
+  if not d then
+    error({ fatal = "config: " .. tostring(derr) }, 0)
+  end
+  st.display = d
+  if st.rediscover then
+    -- Discovery (direct calls only) now, so the board has the screen before the first note.
+    local okd, derr = try(M.discover, st)
+    if not okd then
+      M.record_error(st, "discover", derr)
+    end
+  else
+    d:attach(st.inv, st.transport and st.transport.name or "none")
+  end
+  d:note(("gos-agent %s, every %s s; Ctrl+C stops it"):format(VERSION, st.cfg.cycle_s))
+end
+
 ---------------------------------------------------------------------------------------------
 -- The cycle
 
@@ -1540,6 +1601,12 @@ function M.handle_reply(st, reply, seq)
     M.ack(st, ack)
   end
   local n = M.handle_commands(st, reply.cmds)
+  if st.display and reply.display ~= nil then
+    local okd, derr = try(st.display.apply, st.display, reply.display)
+    if not okd then
+      M.record_error(st, "display", derr)
+    end
+  end
   local poll = reply.poll_s
   if mtype(poll) == "integer" and poll >= 1 and poll < st.cfg.cycle_s then
     return true, nil, false, poll
@@ -1587,6 +1654,7 @@ function M.cycle(st)
       M.log(st, "info", "the core answers again after " .. st.failures .. " failed tries")
     end
     st.failures = 0
+    st.ok_at = now()
     st.sent = st.sent + 1
     st.next_cycle = t0 + (poll or st.cfg.cycle_s)
   else
@@ -1596,6 +1664,12 @@ function M.cycle(st)
     st.next_cycle = t0 + backoff(st, long)
   end
   st.cycles = st.cycles + 1
+  if st.display then
+    local okd, derr = try(st.display.tick, st.display, st.ok_at)
+    if not okd then
+      M.record_error(st, "display", derr)
+    end
+  end
   if t0 >= st.next_heartbeat then
     st.next_heartbeat = t0 + 300
     local line = ("alive: %d cycles, %d sent, %d failed, %d bytes last, %d bytes free, %.2f s sampling")
@@ -1708,6 +1782,7 @@ function M.run(st, opts)
       end
       st.transport = t
     end
+    M.open_display(st)
     M.log(st, "info", ("gos-agent %s started (boot %s, %s, every %s s)"):format(VERSION, st.boot, st.transport.name, st.cfg.cycle_s))
     local once_until = now() + ONCE_MAX_S
     while not st.stop do
@@ -1730,6 +1805,11 @@ function M.run(st, opts)
   event.ignore("interrupted", on_interrupt)
   event.ignore("component_added", on_component)
   event.ignore("component_removed", on_component)
+  if st.display then
+    -- The screen goes back to OpenOS before the last lines are printed on it.
+    pcall(st.display.close, st.display)
+    st.display = nil
+  end
   -- The final counts, the transport's too, go on the stop line: the M1 Lab soak compares them
   -- with the core's last stats line, written at its stop (the alive: lines come on another clock).
   local counts = ("; %d cycles, %d sent, %d failed"):format(st.cycles or 0, st.sent or 0, st.failed or 0)

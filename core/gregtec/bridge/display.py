@@ -266,7 +266,10 @@ class Displays:
         now = self.clock()
         with self._lock:
             key = (agent, msg.boot)
-            started = self._boots.setdefault(key, msg.received_at)
+            # Its run started at most one cycle before its first message reached the core.
+            started = self._boots.setdefault(
+                key, msg.received_at - float(msg.doc.get("cycle_s") or 5)
+            )
             while len(self._boots) > 128:
                 self._boots.pop(next(iter(self._boots)))
             said = shows.get("said")
@@ -274,7 +277,7 @@ class Displays:
             chat = [
                 {"id": n.id, "t": n.text}
                 for n in self._notices.get(agent.binding, ())
-                if n.id > said and n.ts >= started - 1 and now - n.ts <= NOTICE_TTL_S
+                if n.id > said and n.ts >= started and now - n.ts <= NOTICE_TTL_S
             ][:CHAT_PER_REPLY]
         if shows.get("chat") is not True:
             chat = []
