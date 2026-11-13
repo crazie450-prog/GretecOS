@@ -160,7 +160,7 @@ def test_read_backs_of_every_kind(d: Desk) -> None:
         "say": 'Say "hello" in chat in Lab',
         "waypoint": 'Add waypoint "Base" at 100, 64, -200 in dimension 0 in Lab',
         "crop_start": "Start the breeding station: breed Tomato Seeds in 2 Crop Breeder "
-        "steps and stock 4 in Lab",
+        "steps and stock 4 in Lab; Seed Generators keep one seed of each crop they copy, for good",
         "crop_stop": "Stop the breeding station in Lab",
     }
     unknown = dict(CRAFT, damage=1)

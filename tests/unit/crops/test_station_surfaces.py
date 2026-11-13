@@ -208,6 +208,48 @@ def test_parts_cites_the_recipes_that_make_them(mv: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("recipes", "want"),
+    [
+        ([("nei", 3)], False),  # an NEI recipe above MV is not "craftable at MV"
+        ([("nei", None)], None),  # no tier: unknown, never tier 0
+        ([("gt", None), ("gt", 4)], None),
+        ([("nei", None), ("crafting", None)], True),
+        ([("gt", 4), ("gt", 2)], True),
+    ],
+)
+def test_parts_counts_only_known_tiers_at_mv(
+    mv: Path, recipes: list[tuple[str, int | None]], want: bool | None
+) -> None:
+    from gregtec.crops import station
+
+    conn = store.connect(mv)
+    try:
+        run_id = conn.execute("SELECT id FROM export_run").fetchone()[0]
+        conn.execute(
+            "INSERT INTO item(registry_name, meta, nbt_hash, mod_id, name_en)"
+            " VALUES ('opencomputers:adapter', 0, '', 'opencomputers', 'Adapter')"
+        )
+        item = conn.execute(
+            "SELECT id FROM item WHERE registry_name = 'opencomputers:adapter'"
+        ).fetchone()[0]
+        for i, (source, tier) in enumerate(recipes):
+            rid = conn.execute(
+                "INSERT INTO recipe(run_id, source, eut, duration_ticks, voltage_tier,"
+                " signature, content_hash, ref) VALUES (?, ?, 30, 100, ?, ?, 'h', ?)",
+                (run_id, source, tier, f"s{i}", f"r:x/{i:012x}"),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO recipe_output(recipe_id, slot, item_id, amount)"
+                " VALUES (?, 0, ?, 1)",
+                (rid, item),
+            )
+        rows = {r["part"]: r for r in station.parts(conn)}
+    finally:
+        conn.close()
+    assert rows["Adapter"]["craftable_at_mv"] is want
+
+
 # --- /api/crops/station ----------------------------------------------------------------------
 
 

@@ -282,7 +282,11 @@ def _station(
             if not r["in_db"]:
                 print(f"{r['part']}: not in this DB (no export of it here)", file=out)
                 continue
-            mv = "craftable at MV" if r["craftable_at_mv"] else "NOT craftable at MV"
+            mv = {
+                True: "craftable at MV",
+                False: "NOT craftable at MV",
+                None: "MV unknown (a recipe without a tier)",
+            }[r["craftable_at_mv"]]
             refs = ", ".join(
                 f"{x['ref']} ({x['source']}, tier {x['voltage_tier']})"
                 for x in r["recipes"]

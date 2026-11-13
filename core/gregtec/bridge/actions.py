@@ -523,7 +523,7 @@ class ActionDesk:
         if kind in ("crop_start", "crop_stop"):
             from gregtec.crops.station import readback
 
-            return f"{readback(kind, args)}{where}"
+            return readback(kind, args, where)
         return (
             f'Add waypoint "{args["name"]}" at {args["x"]}, {args["y"]}, {args["z"]} '
             f"in dimension {args['dim']}{where}"

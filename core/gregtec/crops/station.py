@@ -444,15 +444,21 @@ def as_dict(plan: Plan) -> dict[str, Any]:
 # --- the read-back and the action desk -----------------------------------------------------
 
 
-def readback(kind: str, args: Mapping[str, Any]) -> str:
-    """The desk's read-back for ``crop_start`` / ``crop_stop`` (without "Say confirm.")."""
+def readback(kind: str, args: Mapping[str, Any], where: str = "") -> str:
+    """The desk's read-back for ``crop_start`` / ``crop_stop`` (without "Say confirm.");
+    ``where`` is the desk's " in Lab"."""
     if kind == "crop_stop":
-        return "Stop the breeding station"
+        return f"Stop the breeding station{where}"
     steps = args.get("steps") or []
     n = len(steps)
+    kept = (
+        "; Seed Generators keep one seed of each crop they copy, for good"
+        if args.get("copy")
+        else ""
+    )
     return (
         f"Start the breeding station: breed {args.get('target')} in {n} Crop Breeder "
-        f"step{'s' if n != 1 else ''} and stock {args.get('count')}"
+        f"step{'s' if n != 1 else ''} and stock {args.get('count')}{where}{kept}"
     )
 
 
@@ -563,7 +569,8 @@ MV = 2
 
 def parts(conn: sqlite3.Connection, facts: Facts | None = None) -> list[dict[str, Any]]:
     """Each part the station needs, the newest export run's recipes that make it (``r:``) and
-    whether one is a crafting-table recipe or a GT recipe at MV or below. A part the DB doesn't
+    whether one is a crafting-table recipe or a recipe whose tier is known and at MV or below
+    (True), none is (False) or a recipe with no tier leaves it open (None). A part the DB doesn't
     have is reported as such (the dev harness has no OpenComputers; a full-pack export does),
     never guessed."""
     row = conn.execute(
@@ -607,10 +614,19 @@ def parts(conn: sqlite3.Connection, facts: Facts | None = None) -> list[dict[str
                 recipes.append(
                     {"ref": ref, "source": source, "voltage_tier": vt, "eut": eut}
                 )
-        at_mv = any(
-            r["source"] in ("crafting", "nei") or (r["voltage_tier"] or 0) <= MV
+        # Only a crafting-table recipe or a recipe with a known tier at MV or below counts; an
+        # NEI recipe or a missing tier says nothing about MV, so it leaves the answer unknown.
+        at_mv: bool | None = False
+        if any(
+            r["source"] == "crafting"
+            or (r["voltage_tier"] is not None and r["voltage_tier"] <= MV)
             for r in recipes
-        )
+        ):
+            at_mv = True
+        elif any(
+            r["voltage_tier"] is None and r["source"] != "crafting" for r in recipes
+        ):
+            at_mv = None
         out.append(
             {
                 "part": label,

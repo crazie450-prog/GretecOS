@@ -198,6 +198,10 @@ def test_readbacks() -> None:
     plan = S.build(W.facts(), W.HAVE, "cropsnh:tomato", tier=rules.MV)
     assert S.readback("crop_start", plan.args()) == (
         "Start the breeding station: breed Tomato Seeds in 3 Crop Breeder steps and stock 4"
+        "; Seed Generators keep one seed of each crop they copy, for good"
+    )
+    assert S.readback("crop_start", {**plan.args(), "copy": []}) == (
+        "Start the breeding station: breed Tomato Seeds in 3 Crop Breeder steps and stock 4"
     )
     assert S.readback("crop_stop", {}) == "Stop the breeding station"
 
@@ -280,7 +284,7 @@ def test_start_is_read_back_and_runs_only_once_confirmed(
     out = S.propose_start(d, plan, target="lab", source="test")
     assert out.text == (
         "Start the breeding station: breed Tomato Seeds in 3 Crop Breeder steps and stock 4"
-        " in Lab. Say confirm."
+        " in Lab; Seed Generators keep one seed of each crop they copy, for good. Say confirm."
     )
     agent = AgentId("lab", ADDR)
     assert d.take(agent, 8) == [], "nothing goes to OC before Clayton confirms"
