@@ -108,6 +108,7 @@ def test_only_gos_tools_skill_and_agent(lane_reg: Registry, tmp_path: Path) -> N
         "gos:crop-breeder",  # WO-6.7
         "gos:line-designer",
         "gos:ore-intel",
+        "gos:power-designer",  # WO-4.6
         "gos:quest-guide",  # WO-6.4; ore-intel: WO-6.6
         "gos:recipe-lookup",
         "gos:screen-reader",  # WO-8.2 (the screen lane follows it)
@@ -257,6 +258,7 @@ def test_the_plugin_copy_has_only_the_manifest_and_skills(
         "gos:crop-breeder",
         "gos:line-designer",
         "gos:ore-intel",
+        "gos:power-designer",
         "gos:quest-guide",
         "gos:recipe-lookup",
         "gos:screen-reader",
