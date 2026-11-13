@@ -1,7 +1,8 @@
 // Base (plan 7.14: "What's broken? What do I have?"). WO-3.8 builds My base: the tier the quests
 // show beside his override (D64), the machines he has (manual ticks now; placement events and the
 // census once WO-6.2 lands) and the stock he entered (none by default, D63). What it holds is the
-// designer's boundary (plan 7.1 Request). Stalled machines and pending actions come with WO-7.4.
+// designer's boundary (plan 7.1 Request). The live half above it (WO-7.4, BaseLive.tsx): power,
+// machines, problems (stalled first), AE2 crafting and pending actions from OpenComputers.
 // No approved board (D92): designed to the system, needs Clayton's board approval (D158).
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
@@ -9,6 +10,7 @@ import type { BaseCandidate, BaseMachine, BaseSource, BaseStock, MyBase } from "
 import { useCardActions } from "../cards/context";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip, stageTier } from "../components/core";
 import { GLYPH } from "../state/states";
+import { BaseLivePanel } from "./BaseLive";
 
 const SOURCE_WORD: Record<BaseSource, string> = {
   manual: "ticked",
@@ -449,13 +451,9 @@ export function Base() {
               {GLYPH.warn} No recipe data yet: run <code>gos db build</code> to add machines and stock.
             </p>
           )}
+          <BaseLivePanel />
           <div className="base-grid">
             <div className="col">
-              <Panel label="Base · stalled first" testId="base-stalled">
-                <p className="empty">
-                  {GLYPH.waiting} Stalled machines and pending actions show here once the OpenComputers bridge reports them (WO-7.4).
-                </p>
-              </Panel>
               <TierPanel base={base} run={run} busy={busy} />
               <Panel label="Accepted lines" testId="base-lines">
                 <p className="empty">{GLYPH.todo} No accepted lines yet. A line's outputs join the designer's inputs when you accept its plan.</p>

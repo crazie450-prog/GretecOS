@@ -3,6 +3,7 @@
 import type { ApprovalCard, Card } from "../cards/types.gen";
 import type {
   Accepted,
+  ActionRow,
   AiState,
   Alternatives,
   DesignAnswer,
@@ -18,6 +19,7 @@ import type {
   DeepTask,
   Device,
   Health,
+  LiveBase,
   MyBase,
   OresView,
   CropsView,
@@ -125,6 +127,9 @@ export const api = {
   baseMachineClear: (mteId: number) => request<MyBase>("DELETE", `/api/base/machines/${mteId}`),
   baseStock: (key: string, qty: number) => post<MyBase>("/api/base/stock", { key, qty }),
   baseStockRemove: (key: string) => request<MyBase>("DELETE", `/api/base/stock?key=${encodeURIComponent(key)}`),
+  // The live base (WO-7.4): OC telemetry as the core reads it; and the world actions.
+  baseLive: () => get<LiveBase>("/api/base/live"),
+  actions: () => get<{ pending: ActionRow | null; recent: ActionRow[] }>("/api/actions"),
   // The Designer (WO-3.7, D250): routes ranked by the core's code; every change re-solves there.
   designerLatest: () => get<{ ids: string[] }>("/api/designer"),
   plans: () => get<{ plans: SavedPlanRow[]; problems: string[] }>("/api/plans"),

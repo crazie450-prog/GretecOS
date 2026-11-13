@@ -28,6 +28,9 @@ beforeEach(() => {
   calls = [];
   answers = [];
   vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
+    // The live half (WO-7.4) polls on its own: answered here, outside My base's queue.
+    if (url.includes("/api/base/live")) return new Response(JSON.stringify({ ts: 0, stale_s: 30, bindings: [] }), { status: 200 });
+    if (url.includes("/api/actions")) return new Response(JSON.stringify({ pending: null, recent: [] }), { status: 200 });
     calls.push({ method: init.method ?? "GET", url, body: init.body ? JSON.parse(String(init.body)) : undefined });
     const next = answers.shift() ?? { status: 500, body: { error: "no answer queued" } };
     return new Response(JSON.stringify(next.body), { status: next.status });
@@ -63,7 +66,7 @@ describe("the Base view", () => {
     expect(screen.getByTestId("machines-empty").textContent).toContain("No machines yet");
     expect(screen.getByTestId("stock-empty").textContent).toContain("Nothing stocked");
     expect(screen.getByTestId("base-tier-how").textContent).toContain("From quest progress");
-    expect(screen.getByTestId("base-stalled").textContent).toContain("WO-7.4");
+    expect((await screen.findByTestId("live-not-set-up")).textContent).toContain("No OC computer has reported yet");
     expect(screen.queryByTestId("base-tier-clear")).toBeNull();
     expect(calls).toEqual([{ method: "GET", url: "/api/base", body: undefined }]);
   });
