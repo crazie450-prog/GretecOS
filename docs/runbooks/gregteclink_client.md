@@ -47,7 +47,7 @@ protocol: [docs/contracts/gregteclink-client-v1.md](../contracts/gregteclink-cli
    book, the Thaumonomicon) are not read: there the key answers that nothing is pointed at.
 6. **By voice** (with `gos voice run`): hover over an item and say "what's this?". The answer is spoken and the card
    shows. Do it once with no GUI open, looking at a block.
-7. **`!gos`**: type `!gos recipes for steel ingot` in chat. A `[GOS]` reply comes back. Only your own name works.
+7. **`!gos`**: type `!gos recipes for steel ingot` in chat. A `[GOS]` reply comes back. Only your own name works, and only in your own world (single player or a LAN world you host): on a server it is ignored.
 8. **Reconnect**: `gos stop`, wait 5 s, `gos serve`. Within about 15 s, step 4 shows the link again and the key works.
 9. **Toggles**: close Lab, set `B:chat=false` in Lab's `config\gregteclink.cfg`, start Lab: chat lines no longer
    appear in step 4's `chat`. Set it back (or run the install again: a feed you turned off stays off, so edit it).

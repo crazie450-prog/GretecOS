@@ -25,16 +25,17 @@ one WebSocket. This is the whole protocol.
 | `hello` | first, on every connection | `player` (the logged-in name), `mod_version`, `feeds` (`position`, `target`, `chat`, `notices`: booleans) |
 | `status` | 1 Hz in a world (`position` feed) | `dim` (int), `dim_name`, `x`, `y`, `z` (blocks, one decimal), `paused` (the game is paused) |
 | `target` | the What's this? key (`why: key`), or the core's `probe` (`why: probe`, `probe`: its id) | `id` (this client's report number), `kind`, `item`, `block`, `display` |
-| `chat` | each chat line received (`chat` feed) | `text` (formatting codes stripped, at most 500 characters); `sender` and `body` only for a player's chat message (vanilla's `chat.type.text`, whose arguments are the name and the text) |
+| `chat` | each chat line received (`chat` feed) | `text` (formatting codes stripped, at most 500 characters); `sender` and `body` only for a player's chat message (vanilla's `chat.type.text`, whose arguments are the name and the text); `singleplayer` (bool: the world is this client's own, single player or the LAN host) |
 
-`target.kind` is `item` (hovered in any container GUI, NEI's panels and recipe pages included), `block` (looked at;
+`target.kind` is `item` (hovered in a container GUI, NEI's overlay on it included: its item panel, bookmarks and recipe pages; other screens, such as a quest book, report `none`), `block` (looked at;
 `item` is its pick item, what middle-click gives, so a GT machine's item carries its meta tile entity id), `none`
 (nothing pointed at) or `off` (the `target` feed is off: sent only to answer a probe, and says nothing else).
 
 `item` is `{"item": <registry name>, "meta": <int>, "nbt": <object>?}`. `nbt` is the stack's NBT in the export's typing
 (`StackJson.nbt`: sorted keys, typed scalars such as `"10000.0D"`), minus the numeric `id` of every compound that also
 has `__item` (its registry name), so nothing in a message is a numeric ID. NBT over 2048 characters is left out and
-`nbt_dropped: true` sent instead. `block` is `{"block": <registry name>, "meta", "x", "y", "z", "dim"}`. `display` is
+`nbt_dropped: true` sent instead; so is NBT that would make the message over 3800 UTF-8 bytes (then `display` goes too
+if it still doesn't fit). `block` is `{"block": <registry name>, "meta", "x", "y", "z", "dim"}`. `display` is
 the game's own name for the item, formatting codes stripped (data only: the core never states it as fact).
 
 ## Core to mod
@@ -55,10 +56,10 @@ when the `notices` feed is on.
   (a GT machine), `recipe_find` and `recipe_uses`: its name and mod, how many recipes make it and the first one's
   `r:` id (the machine's `mte:` for a machine), how many it goes into. No model is asked. A key press is answered at
   once as an `answer` notice and as an `ask.reply` card on the dashboards (`by: game`); "what's this?" said aloud (or
-  typed anywhere) probes the game and answers the request itself; if the game doesn't answer in 1.5 s, a key report
-  from the last minute stands in.
+  typed anywhere) probes the game and answers the request itself; if the game doesn't answer in 1.5 s, that game's own key report
+  from the last minute stands in. A `target` answers a `probe` only from the link it was sent to.
 - **`!gos <text>`** in chat is a question like a typed one, only when `sender` equals the `hello` player (Clayton's own
-  client). Its answer is a `gos` notice and a dashboard card. It can't confirm an action (D59). One at a time per link.
+  client) and `singleplayer` is true (on a server a chat bridge or team prefix could fake the name: open, [QA:V6]). Its answer is a `gos` notice and a dashboard card. It can't confirm an action (D59). One at a time per link.
   Every other chat line is data (plan 0.1 principle 8): kept (the newest 50, `GET /api/game`) and recorded as a
   `chat` event.
 - **Status** is kept for `GET /api/game`; a dimension change is a `dim_change` event, the position a `location` event
