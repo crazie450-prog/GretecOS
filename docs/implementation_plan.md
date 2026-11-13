@@ -769,6 +769,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - OC screen status board: power, alerts, current goal, next step.
   - **OCGlasses** HUD (HV Assembler recipes; 12 widget types: text, shapes, item icons, 3D). There's no fixed rate and every change is sent at once, so batch updates. Power use scales with widget count [F].
   - **Chat box** `say` (LV recipe; 1 tick per call; 40-block radius, same dimension) for confirmations [F].
+  - As built (WO-7.4, D277-D279): the core composes the board, HUD and chat notices (`gregtec.bridge.display`) and sends them in the reply's optional `display` over M1 and M2 alike; `oc/display.lua` lays them out (50 x 16 at most, `NO REPLY` and grey after 30 s without a reply; HUD M2 only, 4 widgets; notices only fixed templates about confirmed actions). The dashboard's Base view shows the same live base (`GET /api/base/live`).
 - **Pause caveat** [F][C§4]. In single-player, the Esc menu pauses the integrated server and therefore OC, unless the world is opened to LAN (untested, V19). Alt-tab also pauses unless `pauseOnLostFocus` is off (F3+P; Hodgepodge confirms the toggle; **VERIFY** the exact `options.txt` key). Telemetry gaps are marked stale, never extrapolated. AFK alerts only work while the game is unpaused (D46, §5.6).
 - **Safe actions (D25):**
   - `craft`: AE2 request + status.

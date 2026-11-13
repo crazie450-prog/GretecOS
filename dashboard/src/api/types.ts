@@ -287,6 +287,96 @@ export interface MyBase {
   has_db: boolean;
 }
 
+// The live base (WO-7.4, GET /api/base/live): OC telemetry as the core reads it. Every row
+// carries its tel: citation and its age; stale rows are old readings, never current ones.
+export type LiveStatus = "running" | "stopped" | "stalled" | "paused" | "idle" | "unknown" | "stale";
+export type LiveLevel = "bad" | "warn" | "info";
+
+export interface LivePower {
+  id: string;
+  cite: string;
+  name: string;
+  meta: string | null;
+  mte_id: number | null;
+  kind: "battery_buffer" | "storage" | string;
+  age_s: number;
+  stale: boolean;
+  eu_in: number | null;
+  eu_out: number | null;
+  eu?: number | null;
+  eu_max?: number | null;
+  eu_str?: string | null;
+  eu_max_str?: string | null;
+  pct: number | null;
+}
+
+export interface LiveMachine {
+  id: string;
+  cite: string;
+  name: string;
+  meta: string | null;
+  mte_id: number | null;
+  xyz: number[] | null;
+  status: LiveStatus;
+  progress: number | null;
+  progress_max: number | null;
+  problems: number | null;
+  problems_age_s: number | null;
+  age_s: number;
+  stale: boolean;
+}
+
+export interface LiveProblem {
+  level: LiveLevel;
+  kind: string;
+  cite: string;
+  text: string;
+  age_s?: number;
+}
+
+export interface LiveCraft {
+  id: number;
+  name: string;
+  amount: number;
+  state: string;
+  err: string | null;
+  cite: string;
+  stale: boolean;
+}
+
+export interface LiveBinding {
+  binding: string;
+  status: "connected" | "stale" | "not_set_up";
+  age_s: number | null;
+  agents: { address: string; cite: string; transport: "http" | "mailbox"; age_s: number; stale: boolean; tick_ms: number | null }[];
+  power: LivePower[];
+  net_eu_t: number | null;
+  machines: LiveMachine[];
+  problems: LiveProblem[];
+  ae2: {
+    cpus: number;
+    busy: number;
+    crafts: LiveCraft[];
+    items: { key: string; name: string; size: number | null; craftable: boolean | null; cite: string }[];
+  } | null;
+}
+
+export interface LiveBase {
+  ts: number;
+  stale_s: number;
+  bindings: LiveBinding[];
+}
+
+export interface ActionRow {
+  id: number;
+  kind: string;
+  state: string;
+  target: string;
+  readback: string;
+  created: number;
+  done_ts: number | null;
+}
+
 export interface BaseCandidate {
   kind: "item" | "fluid" | "machine";
   key: string;

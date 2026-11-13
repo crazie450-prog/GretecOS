@@ -1053,6 +1053,67 @@ tr.depleted td {
   text-align: right;
 }
 
+/* --- Base · live (WO-7.4) ------------------------------------------------------------------- */
+
+.view-base > .gos-panel {
+  margin-bottom: var(--space-6);
+}
+
+.live-binding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.live-binding + .live-binding,
+.live-actions {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+}
+
+.live-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.live-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 6fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.live-grid .col,
+.live-ae2,
+.live-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.live-problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.live-problems li {
+  overflow-wrap: anywhere;
+}
+
+/* Stale rows are old readings: kept and marked, never shown as current (plan 7.9). */
+.live-table tr.stale td,
+.live-binding[data-status="stale"] .live-problems {
+  color: var(--text-2);
+}
+
 /* --- Ores (WO-6.6) ------------------------------------------------------------------------- */
 
 .ores-grid {
@@ -2415,6 +2476,7 @@ select.ask-input option {
   .settings-grid,
   .costs-grid,
   .base-grid,
+  .live-grid,
   .quests-grid,
   .ores-grid,
   .crops-grid,

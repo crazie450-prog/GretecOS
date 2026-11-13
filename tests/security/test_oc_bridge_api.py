@@ -265,6 +265,7 @@ def test_the_token_is_never_logged(
         ("GET", "/api/session"),
         ("GET", "/api/usage"),
         ("GET", "/api/actions"),
+        ("GET", "/api/base/live"),
         ("POST", "/api/ask"),
         ("POST", "/api/actions/1/confirm"),
         ("GET", "/api/state"),
@@ -275,6 +276,12 @@ def test_an_oc_token_opens_only_its_route(
 ) -> None:
     r = client.request(method, path, headers=bearer(token), json={"text": "confirm"})
     assert r.status_code == 401
+
+
+def test_the_live_base_needs_a_session(client: TestClient) -> None:
+    assert client.get("/api/base/live").status_code == 401
+    ok = client.get("/api/base/live", headers=bearer(ADMIN))
+    assert ok.status_code == 200 and "bindings" in ok.json()
 
 
 def test_oc_token_names(core: Core) -> None:
