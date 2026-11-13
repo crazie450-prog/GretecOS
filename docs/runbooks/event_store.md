@@ -17,7 +17,9 @@ $ProgressPreference = 'SilentlyContinue'
 - **The event store.** Every well-formed event the watchers post (`POST /api/game/events`) goes
   into the core DB's `event` table, keyed by the watchers' own event id, so a batch sent again
   adds nothing. `machine_census` is My base's state, not an event, and is not kept. A failed store
-  answers 503 and the watchers send the batch again (D263).
+  answers 503 and the watchers send the batch again (D263). GregtecLink's `chat`, `dim_change`
+  and `location` events (WO-8.1, D286) go in the same way, as their link's instance's, with
+  `source` `link`.
 - **Sessions** per instance: one starts at the **login line**, and ends at the **quit line**
   (`Stopping server`, a new `world_closed` event), a **crash** report, or after **15 minutes**
   with no activity (it then ends at its last activity). Activity after an idle end starts a new

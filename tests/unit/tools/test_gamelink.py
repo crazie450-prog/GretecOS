@@ -5,6 +5,7 @@ failure notices. Starlette's TestClient on the tool tests' self-authored DB, no 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -29,6 +30,7 @@ from gregtec.api.app import Core, create_app
 from gregtec.api.security import Auth
 from gregtec.bridge import ops as bridge_ops
 from gregtec.config import Config
+from gregtec.events.service import EventService
 from gregtec.gamelink import link as gamelink
 from gregtec.gamelink import whatsthis
 from gregtec.ingest.normalize import nbt_hash
@@ -601,6 +603,12 @@ def test_failures_become_notices_in_the_game(client: TestClient, core: Core) -> 
         assert until(mod, "notice")["text"] == "Voice is back."
 
 
+def link_of(binding: str) -> gamelink.Link:
+    return gamelink.Link(
+        binding=binding, name=f"gregteclink-{binding}", queue=asyncio.Queue()
+    )
+
+
 def test_an_event_without_the_table_is_skipped(tmp_path: Path) -> None:
     store = Store(tmp_path / "gos.sqlite")
     try:
@@ -610,8 +618,47 @@ def test_an_event_without_the_table_is_skipped(tmp_path: Path) -> None:
             auth=Auth(store, ADMIN),
             meter=UsageMeter(store, 100.0, (80, 100)),
         )
-        gamelink.GameLink(core)._event("chat", None, {"text": "x"})  # no error
+        # The core's store makes the table since WO-6.3; a DB without it is still no error.
+        with store.transaction() as conn:
+            conn.execute("DROP TABLE event")
+        gamelink.GameLink(core)._event(link_of("play"), "chat", None, {"text": "x"})
         with pytest.raises(sqlite3.OperationalError):
             store.rows("SELECT * FROM event")
     finally:
+        store.close()
+
+
+def test_the_links_events_go_through_the_event_store(tmp_path: Path) -> None:
+    """WO-6.3 with WO-8.1: a link's events are its instance's, with a session, like the
+    watchers' (``source`` ``link``)."""
+    db = tmp_path / "data" / "gos.sqlite"
+    store = Store(db)
+    service = EventService(db=db)
+    try:
+        core = Core(
+            cfg=Config(gos_home=tmp_path),
+            store=store,
+            auth=Auth(store, ADMIN),
+            meter=UsageMeter(store, 100.0, (80, 100)),
+            events=service,
+        )
+        link = gamelink.GameLink(core, clock=lambda: 1_700_000_000.0)
+        at = {"dim": -1, "x": 10.4, "y": 64.0, "z": -3.6}
+        link._event(link_of("lab"), "location", at, None)
+        link._event(link_of("lab"), "chat", at, {"sender": "Bob", "text": "hi"})
+        rows = store.rows(
+            "SELECT kind, instance, source, session_id, dim, x, z, payload, uid FROM event "
+            "ORDER BY id"
+        )
+        assert [r["kind"] for r in rows] == ["location", "chat"]
+        assert {(r["instance"], r["source"]) for r in rows} == {("lab", "link")}
+        assert rows[0]["session_id"] is not None
+        assert rows[0]["session_id"] == rows[1]["session_id"]
+        assert (rows[0]["dim"], rows[0]["x"], rows[0]["z"]) == (-1, 10, -4)
+        assert json.loads(rows[1]["payload"])["sender"] == "Bob"
+        assert rows[0]["uid"] != rows[1]["uid"]
+        session = store.rows("SELECT instance, start_why FROM session")
+        assert [(r["instance"], r["start_why"]) for r in session] == [("lab", "resume")]
+    finally:
+        service.close()
         store.close()

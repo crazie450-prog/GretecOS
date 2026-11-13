@@ -8,6 +8,8 @@ docs/contracts/gregteclink-client-v1.md. What the core does with each message:
 - ``hello``: the player's name, the mod's version, which feeds are on.
 - ``status`` (1 Hz): kept as the game's position and dimension; a dimension change is a
   ``dim_change`` event and the position a ``location`` event once a minute (plan 7.5).
+  With the core's event store (WO-6.3) the link's events go through it as its instance's
+  (``source`` ``link``), so they join that instance's sessions like the watchers' events.
 - ``target`` with ``why: key`` (the What's this? key): answered at once from the DB
   (:mod:`.whatsthis`), as a local chat notice in the game and a card on the dashboards.
   ``why: probe``: the answer to the core's own ``probe``, sent when Clayton says "what's this?"
@@ -33,6 +35,7 @@ import math
 import sqlite3
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -230,7 +233,7 @@ class GameLink:
             link.location_at = now
             events.append(("location", status, None))
         for name, at, payload in events:
-            await asyncio.to_thread(self._event, name, at, payload)
+            await asyncio.to_thread(self._event, link, name, at, payload)
 
     async def _target(self, link: Link, msg: dict[str, Any]) -> None:
         if msg.get("why") not in WHATS_THIS_WHY or msg.get("kind") not in KINDS:
@@ -277,7 +280,7 @@ class GameLink:
         line = {"ts": int(self.clock()), "text": text, "sender": sender}
         self.chat.append(line)
         await asyncio.to_thread(
-            self._event, "chat", link.status, {"sender": sender, "text": text}
+            self._event, link, "chat", link.status, {"sender": sender, "text": text}
         )
         question = self._gos(link, sender, body, msg.get("singleplayer") is True)
         if question is None:
@@ -332,15 +335,34 @@ class GameLink:
         await dashboard.push_state(core)
 
     def _event(
-        self, kind: str, at: dict[str, Any] | None, payload: dict[str, Any] | None
+        self,
+        link: Link,
+        kind: str,
+        at: dict[str, Any] | None,
+        payload: dict[str, Any] | None,
     ) -> None:
-        """One row of Appendix D's ``event`` table (thread). Skipped when the DB has no such
-        table yet (no ``gos db build``) or another writer holds it."""
+        """One row of Appendix D's ``event`` table (thread): through the core's event store
+        when it has one (WO-6.3: the link's instance, its sessions), else directly. Skipped
+        when the DB has no such table or another writer holds it."""
         pos = (
             (at["dim"], round(at["x"]), round(at["y"]), round(at["z"]))
             if at
             else (None,) * 4
         )
+        if self.core.events is not None:
+            where = dict(zip(("dim", "x", "y", "z"), pos, strict=True)) if at else {}
+            item = {
+                "id": f"link-{uuid.uuid4().hex}",
+                "kind": kind,
+                "ts": int(self.clock()),
+                "source": "link",
+                "data": {**(payload or {}), **where},
+            }
+            try:
+                self.core.events.record(link.binding, [item])
+            except sqlite3.Error as exc:
+                log.debug("event not recorded", extra={"kind": kind, "why": str(exc)})
+            return
         try:
             self.core.store.try_write(
                 "INSERT INTO event(ts, kind, dim, x, y, z, payload) "
