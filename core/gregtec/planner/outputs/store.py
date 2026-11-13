@@ -43,11 +43,11 @@ PLANS = Path("data", "plans")  # in GOS_HOME
 LIFECYCLE = ("proposed", "accepted", "building", "running", "retired")
 NEXT: dict[str, tuple[str, ...]] = {
     "proposed": ("accepted",),
-    "accepted": ("building",),
-    "building": ("running",),
+    "accepted": ("building", "retired"),
+    "building": ("running", "retired"),
     "running": ("retired",),
     "retired": (),
-}  # plan §7.1 step 10's line, one step at a time
+}  # plan §7.1 step 10's line, one step at a time; a line dropped before it runs retires (D238)
 NOTE_MAX = TYPE_MAX_LINES[
     "plan"
 ]  # plan 6.1: a plan note is a summary of at most 40 lines
@@ -154,6 +154,56 @@ def note_body(plan: Mapping[str, Any], book: Book, status: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _row(
+    conn: sqlite3.Connection, plan: Mapping[str, Any], run: int, now: float | None
+) -> None:
+    """Insert or refresh ``plan``'s row, keeping its name and status."""
+    conn.execute(
+        "INSERT INTO plan(id, name, created, kind, target, objective, status, json_path, metrics,"
+        " gt_version, run_id) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?)"
+        " ON CONFLICT(id) DO UPDATE SET json_path = excluded.json_path,"
+        " metrics = excluded.metrics, gt_version = excluded.gt_version,"
+        " run_id = excluded.run_id, target = excluded.target, objective = excluded.objective",
+        (
+            str(plan["id"]),
+            plan["name"],
+            int(now if now is not None else time.time()),
+            plan.get("kind", "production"),
+            plan["target"]["id"],
+            (plan.get("request") or {}).get("mode"),
+            json_rel(str(plan["id"])),
+            json.dumps(
+                plan.get("metrics") or {}, sort_keys=True, separators=(",", ":")
+            ),
+            plan.get("gt"),
+            run,
+        ),
+    )
+
+
+def save_power(
+    home: Path,
+    plan: Mapping[str, Any],
+    conn: sqlite3.Connection,
+    *,
+    now: float | None = None,
+) -> Path:
+    """Persist a power plan (WO-4.2's JSON, ``kind: power``) so it can be accepted and moved
+    along its lifecycle (WO-4.4, D238): its canonical JSON and its ``plan`` row only. Its
+    exports and its ``plans/`` note are production-shaped and wait for the Power view (WO-4.6)."""
+    pid = str(plan["id"])
+    if not PLAN_ID.fullmatch(pid) or plan.get("kind") != "power":
+        raise ValueError(f"{pid!r} isn't a power plan")
+    run = run_id(conn, str(plan["run"]))  # LookupError before any file is written
+    row = conn.execute("SELECT name FROM plan WHERE id = ?", (pid,)).fetchone()
+    if row is not None and row[0] and row[0] != plan["name"]:
+        plan = {**plan, "name": str(row[0])}
+    path = home / json_rel(pid)
+    atomic_write(path, plan_mod.dumps(plan).encode("utf-8"))
+    _row(conn, plan, run, now)
+    return path
+
+
 def save(
     home: Path,
     plan: Mapping[str, Any],
@@ -179,28 +229,7 @@ def save(
     path = home / json_rel(pid)
     atomic_write(path, plan_mod.dumps(plan).encode("utf-8"))
     files = exports(home, plan, book)
-    created = int(now if now is not None else time.time())
-    conn.execute(
-        "INSERT INTO plan(id, name, created, kind, target, objective, status, json_path, metrics,"
-        " gt_version, run_id) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?)"
-        " ON CONFLICT(id) DO UPDATE SET json_path = excluded.json_path,"
-        " metrics = excluded.metrics, gt_version = excluded.gt_version,"
-        " run_id = excluded.run_id, target = excluded.target, objective = excluded.objective",
-        (
-            pid,
-            plan["name"],
-            created,
-            plan.get("kind", "production"),
-            plan["target"]["id"],
-            (plan.get("request") or {}).get("mode"),
-            json_rel(pid),
-            json.dumps(
-                plan.get("metrics") or {}, sort_keys=True, separators=(",", ":")
-            ),
-            plan.get("gt"),
-            run,
-        ),
-    )
+    _row(conn, plan, run, now)
     status = str(
         conn.execute("SELECT status FROM plan WHERE id = ?", (pid,)).fetchone()[0]
         or "proposed"

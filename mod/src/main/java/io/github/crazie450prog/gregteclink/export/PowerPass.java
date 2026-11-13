@@ -39,6 +39,8 @@ import gregtech.common.items.MetaGeneratedTool01;
  * fuel of its recipe map what GT's own generator gives for it ({@code getFuelValue} for one litre of the fluid or one
  * item, and the litres it burns per operation), so the planner's reading of each fuel map can be checked against the
  * game. Fuels are keyed by fluid registry name or item ref, never by numeric IDs.
+ * <p>
+ * {@code storage} (WO-4.5, D240): batteries, battery buffers, transformers and LSC cells, see {@link StoragePass}.
  */
 final class PowerPass {
 
@@ -126,6 +128,9 @@ final class PowerPass {
         root.add("materials", mats);
         root.add("generators", generators());
         root.add("containers", containers());
+        StoragePass storage = new StoragePass(stacks);
+        root.add("storage", storage.json());
+        errors += storage.errors;
         out.document(root);
     }
 

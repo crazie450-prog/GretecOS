@@ -65,6 +65,7 @@ def test_who_may_read_and_write(client: TestClient) -> None:
         (f"/api/plans/{pid}/resolve", {}),
         (f"/api/plans/{pid}/name", {"name": "x"}),
         (f"/api/plans/{pid}/pin", {"node": STEEL, "recipe": None}),
+        (f"/api/plans/{pid}/status", {"status": "retired"}),  # WO-4.4: Trusted only
     ):
         assert client.post(path, json=body, headers=voice).status_code == 403
     # A paired dashboard may.
@@ -124,10 +125,28 @@ def test_design_view_pin_reload_resolve_accept(client: TestClient, home: Path) -
     assert done["status"] == "accepted" and done["problems"] == []
     assert done["line"].startswith("base/lines/ln-")
     assert (home / "vault" / done["line"]).is_file()
-    assert done["ledger"]["recorded"] is False
+    assert done["ledger"]["recorded"] is True
     assert done["view"]["routes"][0]["status"] == "accepted"
     again = client.post(f"/api/plans/{pid}/accept", json={}, headers=admin())
     assert again.status_code == 400 and "accepted" in again.json()["error"]
+
+    # WO-4.4: the ledger over HTTP, and a lifecycle move that updates it.
+    led = ok(client.get("/api/ledger", headers=admin()))
+    assert [ln["plan"] for ln in led["ledger"]["lines"]] == [pid]
+    assert led["card"]["type"] == "power_ledger" and led["card"]["tiers"]
+    assert led["running"]["tiers"] == []
+    bad = client.post(
+        f"/api/plans/{pid}/status", json={"status": "proposed"}, headers=admin()
+    )
+    assert bad.status_code == 400
+    moved = ok(
+        client.post(
+            f"/api/plans/{pid}/status", json={"status": "retired"}, headers=admin()
+        )
+    )
+    assert moved["status"] == "retired"
+    assert moved["ledger"]["note"].startswith("taken out of the EU ledger")
+    assert ok(client.get("/api/ledger", headers=admin()))["ledger"]["lines"] == []
 
     named = ok(
         client.post(

@@ -120,6 +120,20 @@ describe("the Base view", () => {
     expect(document.querySelector(`[data-stock="${steel.key}"]`)).not.toBeNull();
   });
 
+  it("lists running lines with their rate and the plans that cite it (WO-4.4)", async () => {
+    await shown(base());
+    expect(screen.getByTestId("base-lines").textContent).toContain("No running lines yet");
+    cleanup();
+    await shown(base({ lines: [{ key: "gregtech:gt.metaitem.01@11305", rate_s: 0.333333333, plans: ["plan:pl-aaaaaaaa", "plan:pl-bbbbbbbb"] }] }));
+    const [row] = screen.getAllByTestId("base-line");
+    expect(row.textContent).toContain("gregtech:gt.metaitem.01@11305");
+    expect(row.textContent).toContain("0.333333333/s");
+    expect([...row.querySelectorAll("[data-cite]")].map((c) => c.getAttribute("data-cite"))).toEqual([
+      "plan:pl-aaaaaaaa",
+      "plan:pl-bbbbbbbb",
+    ]);
+  });
+
   it("asks for a DB build before anything can be added", async () => {
     await shown(base({ has_db: false }));
     expect(screen.getByTestId("base-no-db").textContent).toContain("gos db build");

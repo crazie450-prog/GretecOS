@@ -34,6 +34,7 @@
 |                                |                         | and ``action`` (WO-7.1)               |
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
+| /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -112,6 +113,8 @@ from gregtec.quests import view as quest_view
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
 from gregtec.vault.scheduler import STOP_DEADLINE_S, TICK_S, Maintenance
+from gregtec.watchers import routes as watch_routes
+from gregtec.watchers.feed import GameFeed
 
 log = logging.getLogger("gregtec.api")
 
@@ -202,6 +205,7 @@ class Core:
     oc: Bridge | None = None
     ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
     gamelink: GameLink | None = None  # GregtecLink's client link (WO-8.1)
+    game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
 
     # --- pushing to WebSocket clients
 
@@ -789,6 +793,7 @@ def create_app(core: Core) -> FastAPI:
     crop_view.add_routes(app, core, principal, trusted, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
     gamelink.add_routes(app, core, principal)
+    watch_routes.add_routes(app, core, principal)
     return app
 
 

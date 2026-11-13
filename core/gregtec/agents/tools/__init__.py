@@ -28,10 +28,18 @@ vault_search(q, t)        both   :mod:`.notes` (``note_fts``)
 note_write(path, body)    deep   :mod:`.notes` (writes, behind the vault path guard)
 note_append(path, lines)  deep   :mod:`.notes` (writes; logs append-only)
 inbox_propose(title, ...) deep   :mod:`.notes` (writes a new ``inbox/`` note)
+plan_export(id, ...)      both   :mod:`.plans` (WO-3.6; bom, footprint, mermaid, files)
+design_production(...)    deep   :mod:`.designer` (WO-3.7; routes ranked by code, saved)
+plan_get(plan, view)      both   :mod:`.designer` (WO-3.7)
+plan_explain(plan)        deep   :mod:`.designer` (WO-3.7; checked explanation, D199)
+plan_pin(plan, node, r)   deep   :mod:`.designer` (WO-3.7; re-solves, D61)
+plan_list(status)         both   :mod:`.designer` (WO-3.7)
+plan_rename(plan, name)   deep   :mod:`.designer` (WO-3.7)
 handoff(task)             fast   :mod:`gregtec.agents.deep_lane` (WO-2.3; to the deep lane)
 telemetry_get(scope)      both   :mod:`.ops` (WO-7.1; OC readings with age and stale flag)
 action_propose(kind,args) deep   :mod:`.ops` (WO-7.1; proposes only: Clayton confirms, D59)
 action_status(id)         both   :mod:`.ops` (WO-7.1)
+ledger_get()              both   :mod:`.ledger` (WO-4.4; the EU ledger, read-only)
 ore_find(material, ...)   both   :mod:`.ores` (WO-6.6; veins by layer, then distance)
 player_pos()              both   :mod:`.ores` (WO-6.6; at the world's last save)
 ore_waypoint(vein)        deep   :mod:`.ores` (WO-6.6; proposes only: Clayton confirms)
@@ -43,9 +51,9 @@ more(cursor)              both   :mod:`.registry` (the next page of any result)
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
 with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_set with
-WO-1.9; crop_status with WO-7.6; plan_*, design_production, effort_estimate and
-layout_estimate with Phase 3; design_power with WO-4.2; ledger_* with
-WO-4.4; speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
+WO-1.9; crop_status with WO-7.6; effort_estimate and layout_estimate with
+Phase 3; design_power with WO-4.2; ledger_update and
+plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
 session_summary with WO-6.3; screen_snapshot with
 WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
 with Phase 10.

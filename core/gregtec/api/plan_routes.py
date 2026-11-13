@@ -11,8 +11,10 @@
 | POST /api/designer/design           | admin, device               | a spec (``designer.request_from_spec``): solve, save, view; ``{"clarify": card}`` when the target is unclear |
 | POST /api/plans/{id}/pin            | admin, device               | ``{"node", "recipe"}`` (``null`` frees it): re-solve with the pin |
 | POST /api/plans/{id}/resolve        | admin, device               | solve the plan's request again |
-| POST /api/plans/{id}/accept         | admin, device               | proposed -> accepted: notes, the ledger hook |
+| POST /api/plans/{id}/accept         | admin, device               | proposed -> accepted: notes, its EU ledger line |
 | POST /api/plans/{id}/name           | admin, device               | ``{"name"}``: a human name ([QA:D13]) |
+| POST /api/plans/{id}/status         | admin, device               | ``{"status"}``: building, running or retired; the EU ledger follows (WO-4.4) |
+| GET /api/ledger                     | admin, client, device       | the EU ledger (WO-4.4): data, its ``power_ledger`` card and the running scope's |
 
 The dashboard draws the flow card (React Flow + elkjs) and the BOM card; Discord (WO-9.x, the
 client token ``discord``) attaches the PNG and the BOM (D53). A plan is one ``gos plan --save``
@@ -130,7 +132,46 @@ def accepted(home: Path, pid: str) -> dict[str, Any]:
         "note": done.note,
         "ledger": done.ledger,
         "problems": done.problems,
-        "view": designer.view(home, pid),
+        "view": designer.view(home, pid) if pid.startswith("pl-") else None,
+    }
+
+
+def moved(home: Path, pid: str, status: str) -> dict[str, Any]:
+    """POST /api/plans/{id}/status's answer (WO-4.4): the move and the ledger after it."""
+    from gregtec.planner import designer
+
+    done = designer.set_status(home, pid, status)
+    return {
+        "id": done.id,
+        "status": done.status,
+        "line": done.line,
+        "note": done.note,
+        "ledger": done.ledger,
+        "problems": done.problems,
+    }
+
+
+def ledger_view(home: Path) -> dict[str, Any]:
+    """GET /api/ledger: the EU ledger (WO-4.4) as data and its two catalog cards."""
+    from gregtec.db import access
+    from gregtec.planner import ledger
+
+    db = access.db_path(home)
+    if not db.is_file():
+        raise HTTPException(503, "no DB: run gos db build")
+    conn = access.connect(db, readonly=True)
+    try:
+        led = ledger.read(conn)
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            503, f"the DB can't be used now ({type(exc).__name__})"
+        ) from None
+    finally:
+        conn.close()
+    return {
+        "ledger": led.as_dict(),
+        "card": ledger.card(led),
+        "running": ledger.card(led, "running"),
     }
 
 
@@ -214,6 +255,21 @@ def add_routes(
     async def plan_accept(plan_id: str, who: Trusted) -> dict[str, Any]:
         pid = _pid(plan_id)
         return await call(lambda: accepted(home(), pid))
+
+    @app.post("/api/plans/{plan_id}/status")
+    async def plan_status(
+        plan_id: str, request: Request, who: Trusted
+    ) -> dict[str, Any]:
+        pid = _pid(plan_id)
+        body = await json_body(request)
+        status = body.get("status")
+        if not isinstance(status, str):
+            raise HTTPException(400, "send status: building, running or retired")
+        return await call(lambda: moved(home(), pid, status))
+
+    @app.get("/api/ledger")
+    async def ledger_get(who: Anyone) -> dict[str, Any]:
+        return await asyncio.to_thread(ledger_view, home())
 
     @app.post("/api/plans/{plan_id}/name")
     async def plan_name(plan_id: str, request: Request, who: Trusted) -> dict[str, Any]:

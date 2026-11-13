@@ -42,6 +42,7 @@ import com.google.gson.JsonParser;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import io.github.crazie450prog.gregteclink.GregtecLink;
+import io.github.crazie450prog.gregteclink.ModulesConfig;
 import io.github.crazie450prog.gregteclink.export.AutoExport;
 import io.github.crazie450prog.gregteclink.export.ExportClient;
 import io.github.crazie450prog.gregteclink.export.ExportModule;
@@ -140,7 +141,8 @@ public final class Harness {
         return Boolean.TRUE.equals(Launch.blackboard.get("fml.deobfuscatedEnvironment"));
     }
 
-    public static void onServerStarted(File gameDir, boolean exportEnabled) {
+    public static void onServerStarted(File gameDir, ModulesConfig modules) {
+        boolean exportEnabled = modules.export;
         if (!deobfEnvironment()) {
             GregtecLink.LOG.warn("-D{}=true ignored: the harness runs only in the dev environment", PROPERTY);
             if (exportEnabled) ExportModule.onServerStarted();
@@ -153,6 +155,10 @@ public final class Harness {
             return;
         }
         ran = true;
+        if (ListenerHarness.requested()) {
+            ListenerHarness.start(gameDir, modules);
+            return;
+        }
         List<JsonObject> checks = new ArrayList<>();
         String runId = null;
         JsonObject durations = new JsonObject();
@@ -498,7 +504,7 @@ public final class Harness {
     }
 
     /** Writes harness-result.json and logs each check; true if every check passed and the file was written. */
-    private static boolean writeResult(File gameDir, List<JsonObject> checks, String runId, JsonObject durations,
+    static boolean writeResult(File gameDir, List<JsonObject> checks, String runId, JsonObject durations,
         JsonElement counts) {
         boolean pass = !checks.isEmpty();
         for (JsonObject c : checks) {
@@ -531,6 +537,11 @@ public final class Harness {
                     .getAsString());
         }
         return pass;
+    }
+
+    /** Sets the exit code the JVM ends with once the server has stopped (the listener harness's result). */
+    static void finished(boolean pass) {
+        exitCode = pass ? 0 : 1;
     }
 
     /** The exit code is a second signal; harness-result.json is the contract. */
@@ -601,7 +612,7 @@ public final class Harness {
     }
 
     /** relpath -> size:mtime for the game dir (config included), without the world, logs and crash reports. */
-    private static Map<String, String> snapshot(File gameDir, String world) throws IOException {
+    static Map<String, String> snapshot(File gameDir, String world) throws IOException {
         final Path root = gameDir.toPath()
             .toAbsolutePath()
             .normalize();
@@ -637,8 +648,8 @@ public final class Harness {
         return out;
     }
 
-    private static void checkWrites(List<JsonObject> checks, String name, Map<String, String> before,
-        Map<String, String> after, List<String> allowed) {
+    static void checkWrites(List<JsonObject> checks, String name, Map<String, String> before, Map<String, String> after,
+        List<String> allowed) {
         TreeSet<String> outside = new TreeSet<>();
         for (Map.Entry<String, String> e : after.entrySet()) {
             if (e.getValue()
@@ -1255,6 +1266,90 @@ public final class Harness {
                 diesel >= 3 && generators == counts.get("generators")
                     .getAsInt(),
                 generators + " single-block generators, " + diesel + " diesel generators with GT's fuel values");
+            checkStorage(root.getAsJsonObject("storage"));
+        }
+
+        /**
+         * gt_power.json's storage (WO-4.5, D240): GT's cables with their voltage, amperage and loss, GT batteries with
+         * a
+         * charge, LV battery buffers with their slots, the LV transformer in both modes (down: in at MV, out at LV,
+         * more
+         * amps out than in), and the LSC's cells with capacities.
+         */
+        private void checkStorage(JsonObject storage) {
+            int cables = 0;
+            for (JsonElement e : storage.getAsJsonArray("cables")) {
+                JsonObject c = e.getAsJsonObject();
+                if (c.get("voltage")
+                    .getAsLong() > 0
+                    && c.get("amperage")
+                        .getAsLong() > 0)
+                    cables++;
+            }
+            int batteries = 0;
+            for (JsonElement e : storage.getAsJsonArray("batteries")) {
+                JsonObject b = e.getAsJsonObject();
+                if (b.has("max_charge") && b.get("max_charge")
+                    .getAsDouble() > 0
+                    && b.get("tier")
+                        .getAsInt() > 0)
+                    batteries++;
+            }
+            int buffers = 0;
+            for (JsonElement e : storage.getAsJsonArray("buffers")) {
+                JsonObject b = e.getAsJsonObject();
+                if (b.has("slots") && b.get("tier")
+                    .getAsInt() == 1
+                    && b.get("eu_out")
+                        .getAsLong() == 32
+                    && b.get("slots")
+                        .getAsInt() > 0)
+                    buffers++;
+            }
+            boolean lvTransformer = false;
+            for (JsonElement e : storage.getAsJsonArray("transformers")) {
+                JsonObject t = e.getAsJsonObject();
+                if (t.has("down") && t.get("tier")
+                    .getAsInt() == 1
+                    && t.get("class")
+                        .getAsString()
+                        .endsWith(".MTETransformer")) {
+                    JsonObject down = t.getAsJsonObject("down");
+                    JsonObject up = t.getAsJsonObject("up");
+                    lvTransformer = down.get("eu_in")
+                        .getAsLong() == 128
+                        && down.get("eu_out")
+                            .getAsLong() == 32
+                        && down.get("amps_out")
+                            .getAsLong()
+                            > down.get("amps_in")
+                                .getAsLong()
+                        && up.get("eu_out")
+                            .getAsLong() == 128;
+                }
+            }
+            int cells = 0;
+            for (JsonElement e : storage.getAsJsonArray("lsc")) {
+                JsonObject c = e.getAsJsonObject();
+                if (c.has("capacity") && c.has("block")
+                    && !"0".equals(
+                        c.get("capacity")
+                            .getAsString()))
+                    cells++;
+            }
+            check(
+                checks,
+                "storage_listed",
+                cables >= 500 && batteries >= 10 && buffers >= 3 && lvTransformer && cells >= 5,
+                cables + " cables, "
+                    + batteries
+                    + " batteries with a charge, "
+                    + buffers
+                    + " LV battery buffers, LV transformer modes "
+                    + lvTransformer
+                    + ", "
+                    + cells
+                    + " LSC cells");
         }
 
         /** gt_ore_mixes.json (D126): GT's ore layers with four keyed ores each, and the vanilla dimensions named. */
