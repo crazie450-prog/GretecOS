@@ -159,6 +159,56 @@ def test_stalled_needs_a_job_a_minute_and_fresh_readings(
     assert checks.stalled_machines(conn, sc.now + 200) == []
 
 
+def test_a_stall_counts_from_when_it_stopped_not_the_last_heartbeat(
+    tmp_path: Path,
+    conn_of: Any,  # noqa: ANN401
+) -> None:
+    """Review H1: one long-lived ingest dedupes the steady ``active=1`` reading to one sample a
+    HEARTBEAT_S, so the stall is timed from the first inactive reading, not the last active
+    sample (which can be up to a minute older)."""
+    from gregtec.bridge.ingest import Bridge
+    from gregtec.bridge.telemetry import Telemetry
+
+    sc = S.build(tmp_path, "early")
+    conn = conn_of(sc.db)
+    t0 = sc.now + 1000
+    clock = Clock(t0)
+    st = core_store.Store(sc.db)
+    try:
+        bridge = Bridge(Telemetry(st, clock=clock), None)
+
+        def send(at: float, seq: int, active: bool) -> None:
+            clock.now = at
+            doc = S.oc_message(seq, active=active, eu_in=300, eu_out=300)
+            out = bridge.receive(
+                json.dumps(doc).encode(),
+                transport="http",
+                source="fixture",
+                binding="lab",
+                now=at,
+            )
+            assert out.ok, out
+
+        seq = 100
+        for dt in range(0, 300, 5):  # running steadily for five minutes
+            send(t0 + dt, seq, True)
+            seq += 1
+        send(t0 + 299, seq, False)  # one inactive reading
+        assert checks.stalled_machines(conn, t0 + 300) == []
+        for dt in range(304, 360, 5):  # still not running, under a minute
+            seq += 1
+            send(t0 + dt, seq, False)
+        assert checks.stalled_machines(conn, t0 + 358) == []
+        seq += 1
+        send(t0 + 360, seq, False)
+        found = checks.stalled_machines(conn, t0 + 360)
+        assert [f.key for f in found] == [f"tel:lab/{S.EBF_ADDR}"]
+        assert "for 1 min" in found[0].detail
+        assert "not seen running" not in found[0].detail
+    finally:
+        st.close()
+
+
 def test_a_balanced_power_entry_is_no_deficit(
     tmp_path: Path,
     conn_of: Any,  # noqa: ANN401

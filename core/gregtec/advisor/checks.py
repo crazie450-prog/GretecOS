@@ -12,7 +12,8 @@ reads them).
   (the EU ledger's ``deficit`` warning in the ``running`` scope, D239), or a fresh OC power entry
   (an LSC, a battery buffer) whose average EU/t out is above its EU/t in (draining);
 - :func:`stalled_machines` (D71, on by default): a GT machine OC sees with a job (``hasWork``),
-  allowed to work, not running (``isMachineActive`` false) for :data:`STALL_S` or more;
+  allowed to work, not running (``isMachineActive`` false) for :data:`STALL_S` or more, counted
+  from its first inactive reading after its last active one;
 - :func:`buildable_plans` (D71, on by default): an accepted plan whose every build component (its
   machines' items and, for a multiblock, the blocks of its smallest structure variant, WO-4.3's
   :func:`gregtec.planner.effort.components`) is in My base's stock in the amount it needs;
@@ -192,10 +193,14 @@ def stalled_machines(conn: sqlite3.Connection, now: float) -> list[Finding]:
             "SELECT max(ts) FROM tel_sample WHERE src = ? AND key = 'active' AND value = 1",
             (r.id,),
         ).fetchone()[0]
-        first = conn.execute(
-            "SELECT min(ts) FROM tel_sample WHERE src = ? AND key = 'active'", (r.id,)
+        # From the moment it stopped: the first inactive reading after the last active one.
+        # (WO-7.1 writes an unchanged reading again only every HEARTBEAT_S, so the last
+        # active=1 sample can be up to a minute before the machine stopped; review H1.)
+        start = conn.execute(
+            "SELECT min(ts) FROM tel_sample WHERE src = ? AND key = 'active' AND value = 0"
+            " AND ts > ?",
+            (r.id, -1 if ran is None else int(ran)),
         ).fetchone()[0]
-        start = ran if ran is not None else first
         if start is None or now - float(start) < STALL_S:
             continue
         minutes = int((now - float(start)) // 60)

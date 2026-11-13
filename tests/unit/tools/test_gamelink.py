@@ -610,7 +610,9 @@ def test_an_event_without_the_table_is_skipped(tmp_path: Path) -> None:
             auth=Auth(store, ADMIN),
             meter=UsageMeter(store, 100.0, (80, 100)),
         )
-        with store.transaction() as conn:  # the store makes it since WO-6.3: a DB without it
+        with (
+            store.transaction() as conn
+        ):  # the store makes it since WO-6.3: a DB without it
             conn.execute("DROP TABLE event")
         gamelink.GameLink(core)._event("chat", None, {"text": "x"})  # no error
         with pytest.raises(sqlite3.OperationalError):
