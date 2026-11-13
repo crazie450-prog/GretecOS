@@ -32,6 +32,7 @@ from gregtec import (
 from gregtec import deploy as app_deploy
 from gregtec.agents import design_cost_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
+from gregtec.crops import cli as cropcli
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
 from gregtec.db import ores as ore_db
@@ -45,6 +46,7 @@ from gregtec.planner import distributioncli, graphcli, ledgercli, plancli, power
 from gregtec.quests import cli as quest_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
+from gregtec.watchers import cli as watch_cli
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -240,6 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="gos.toml to read. Default: $GOS_HOME/config/gos.toml, else "
         "~/GregtecOS/config/gos.toml; without one, the Appendix C defaults.",
     )
+    cropcli.add_parsers(crop_cmds)
 
     quests = commands.add_parser(
         "quests", help="the quest book, progress, frontier and tier (BetterQuesting)"
@@ -600,6 +603,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     appwindow.add_parsers(commands)
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
+    watch_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -676,6 +680,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return voicecli.run(args)
     if args.command in personacli.COMMANDS:
         return personacli.run(args)
+    if args.command in watch_cli.COMMANDS:
+        return watch_cli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
@@ -689,6 +695,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return export_collect.main(args.config, sys.stdout)
     if args.command == "db" and args.db_command == "build":
         return recipe_db.main(args.config, args.run, sys.stdout)
+    if args.command == "crops" and args.crops_command in cropcli.COMMANDS:
+        # Pack names and requirement texts: escape what a cp1252 pipe can't, never crash.
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(errors="backslashreplace")
+        return cropcli.run(args, sys.stdout)
     if args.command == "crops" and args.crops_command == "show":
         # Pack names, as for quests: escape what a cp1252 pipe can't, never crash.
         if isinstance(sys.stdout, io.TextIOWrapper):

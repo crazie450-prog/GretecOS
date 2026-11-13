@@ -62,7 +62,7 @@ class AutoWorldTest {
         Path game = Files.createDirectories(tmp.resolve("game"));
         Path old = Files.createDirectories(game.resolve("saves/" + AutoExport.WORLD_FOLDER));
         Files.write(old.resolve(AutoExport.MARKER), new byte[] { 1 });
-        // Before and after the marker in name order (NTFS lists a folder that way).
+        // Before and after the marker in name order (NTFS lists a folder that way; ext4 lists them in hash order).
         Files.createDirectories(old.resolve("data"));
         Files.write(old.resolve("level.dat"), new byte[] { 2 });
         Files.write(

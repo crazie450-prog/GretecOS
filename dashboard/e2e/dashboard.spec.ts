@@ -121,14 +121,18 @@ test("number keys switch views and Ctrl+K opens the palette", async () => {
   await page.getByTestId("chat-input").fill("");
 });
 
+// The chat log is the core's, shared by every spec (crops.spec asks "next crop step" before this
+// file runs), so these tests count from what is there and open their own answer's card.
 test("Chat keeps every answer as a card, and a citation opens its recipe card", async () => {
   await page.keyboard.press("2");
+  const log = page.getByTestId("chat-log");
+  const before = await log.locator("[data-answer]").count();
   await page.getByTestId("chat-input").fill("what uses steel");
   await page.getByTestId("chat-send").click();
-  const log = page.getByTestId("chat-log");
-  await expect(log.locator("[data-answer]")).toHaveCount(2);
-  await expect(log.locator('[data-card="recipe"]').first()).toBeVisible();
-  await log.getByTestId("open-card").first().click();
+  await expect(log.locator("[data-answer]")).toHaveCount(before + 1);
+  const mine = log.locator("[data-answer]").last();
+  await expect(mine.locator('[data-card="recipe"]')).toBeVisible();
+  await mine.getByTestId("open-card").click();
   const modal = page.getByTestId("card-modal");
   await expect(modal.locator('[data-card="recipe"]')).toBeVisible();
   await page.keyboard.press("Escape");
@@ -139,12 +143,13 @@ test("Chat keeps every answer as a card, and a citation opens its recipe card", 
 });
 
 test("an unsure match asks, and a candidate is picked by clicking it", async () => {
+  const before = await page.getByTestId("chat-log").locator("[data-answer]").count();
   await page.getByTestId("chat-input").fill("recipe for dust");
   await page.getByTestId("chat-send").click();
   const choices = page.getByTestId("chat-log").locator('[data-card="choices"]').last();
   await expect(choices).toBeVisible();
   await choices.getByRole("button").first().click();
-  await expect(page.getByTestId("chat-log").locator("[data-answer]")).toHaveCount(4);
+  await expect(page.getByTestId("chat-log").locator("[data-answer]")).toHaveCount(before + 2);
 });
 
 test("Search finds an item and shows its recipes, uses and quests", async () => {
@@ -240,7 +245,8 @@ test("every view reads at WCAG contrast in every theme, on monitor 2 and on the 
   await page.evaluate(() => {
     window.location.hash = "/chat";
   });
-  await page.getByTestId("chat-log").getByTestId("open-card").first().click();
+  const recipeAnswers = page.getByTestId("chat-log").locator("[data-answer]");
+  await recipeAnswers.filter({ has: page.locator('[data-card="recipe"]') }).first().getByTestId("open-card").click();
   await expect(page.getByTestId("card-modal").locator('[data-card="recipe"]')).toBeVisible();
   for (const [slug, found] of Object.entries(await themeMisses(page))) misses[`2560/card-modal/${slug}`] = found;
   await page.getByTestId("modal-close").click();

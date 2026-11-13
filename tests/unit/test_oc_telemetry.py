@@ -290,7 +290,9 @@ WP = {"name": "Base", "x": 100, "y": 64, "z": -200, "dim": 0}
 def test_a_waypoint_file(tmp_path: Path) -> None:
     cfg, sp = world(tmp_path)
     where = waypoint.place(cfg, "lab", as_dev=False)
-    assert waypoint.write(where, WP) == "wrote waypoint Base_100,64,-200.json"
+    assert waypoint.write(where, WP) == (
+        f"wrote waypoint Base_100,64,-200.json; {waypoint.SHOWS_WHEN}"
+    )
     data = json.loads(
         (sp / "waypoints" / "Base_100,64,-200.json").read_text(encoding="utf-8")
     )
@@ -306,11 +308,12 @@ def test_a_waypoint_file(tmp_path: Path) -> None:
         "b": 255,
         "enable": True,
         "type": "Normal",
-        "origin": "journeymap",
+        "origin": "JourneyMap",  # Waypoint.Origin's name (V23, D271)
         "dimensions": [0],
     }
     assert (
-        waypoint.write(where, WP) == "waypoint Base_100,64,-200.json is already there"
+        waypoint.write(where, WP)
+        == f"waypoint Base_100,64,-200.json is already there; {waypoint.SHOWS_WHEN}"
     )
     assert [p.name for p in (sp / "waypoints").iterdir()] == ["Base_100,64,-200.json"]
 

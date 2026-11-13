@@ -21,7 +21,7 @@ import type {
   TableCard,
 } from "./types.gen";
 
-const CITE = /^(r|q|mte|crop|plan|w):\S+$/;
+const CITE = /^(r|q|mte|crop|plan|w|vein|pos):\S+$/;
 
 function Chip({ cite }: { cite: string | null }) {
   const { stale, openCite } = useCardActions();
@@ -396,7 +396,7 @@ export function OreListView({ card }: { card: OreListCard }) {
               <td className="num">
                 {r.x}, {r.z} <span className="gos-src">dim {r.dim}</span>
               </td>
-              <td className="num">{r.distance !== null ? `${r.distance} m` : ""}</td>
+              <td className="num">{r.distance !== null ? `${r.distance} blocks` : ""}</td>
               <td className="gos-src">{r.layer ?? ""}</td>
               <td>{r.depleted ? <StatusGlyph status="off" label="depleted" /> : null}</td>
               <td>
