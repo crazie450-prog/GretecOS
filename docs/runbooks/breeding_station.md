@@ -40,7 +40,7 @@ generator back.
    (no machine's front, its main facing, against the transposer: GT refuses items there). Write down which side of
    the transposer faces each (0 down, 1 up, 2 north, 3 south, 4 west, 5 east; F3 shows your facing).
 5. Put in the chest: **5 analysed seeds of each starter** (scan them in a GT Scanner first: their name must read
-   `<crop> Seeds`, not `Unknown Seeds`), and 16 of each step's catalyst. Note the counts.
+   `<crop> Seeds`, not `Unknown Seeds`; a renamed seed keeps its custom name and the station ignores it), and 16 of each step's catalyst. Note the counts.
 
 ## C. Install and check (V31)
 

@@ -92,8 +92,13 @@ def test_seed_labels_are_crop_name_seeds(
         (crop_facts.SEED_ITEM,),
     ):
         try:
-            crop = json.loads(nbt).get("crop")
+            tag = json.loads(nbt)
+            crop = tag.get("crop")
         except (ValueError, AttributeError):
+            continue
+        if isinstance(tag.get("display"), dict) and "Name" in tag["display"]:
+            # a renamed stack (the export has one: "Scanned Seed"): its label is its custom
+            # name, so the station never takes it for a crop's seed
             continue
         if crop not in facts.data.crops or name_en in (
             None,
