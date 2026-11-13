@@ -17,7 +17,12 @@ and its **recap** is computed here, never by a model, and kept:
   entry read in the age) it is None: shown as "no readings", never estimated.
 
 A drop (his override set lower) changes nothing here: only a rise closes an age, and an age is
-recapped once. The dashboard shows the newest recap when a tier-up re-themes it.
+recapped once. The one exception is a **provisional** age: one his override opened above the
+tier detected from his quests. Clearing or lowering that override takes it back: the age is
+removed, the age it closed is open again with its recap dropped, and that recap never reached
+the journal (the scribe holds a recap while the age after it is provisional, D265). The age
+becomes real once detection reaches it. The dashboard shows the newest recap when a tier-up
+re-themes it.
 """
 
 from __future__ import annotations
@@ -58,14 +63,26 @@ def _current(conn: sqlite3.Connection) -> sqlite3.Row | None:
     return row
 
 
-def observe(conn: sqlite3.Connection, stage: str | None, now: float) -> int | None:
-    """Note the age ``stage`` is in; returns the age a rise just closed (its recap is kept),
-    else None. One ``BEGIN IMMEDIATE`` transaction."""
+def observe(
+    conn: sqlite3.Connection, stage: str | None, now: float, provisional: bool = False
+) -> int | None:
+    """Note the age ``stage`` is in (``provisional``: his override set it above the detected
+    tier); returns the age a rise just closed (its recap is kept), else None. One
+    ``BEGIN IMMEDIATE`` transaction."""
     age, ts = age_of(stage), int(now)
     closed = None
     conn.execute("BEGIN IMMEDIATE")
     try:
         cur = _current(conn)
+        while cur is not None and age < cur["age"] and cur["provisional"]:
+            # his override taken back: the age it opened was never reached
+            conn.execute("DELETE FROM age_mark WHERE age = ?", (cur["age"],))
+            conn.execute(
+                "UPDATE age_mark SET end_ts = NULL, recap = NULL, journaled = NULL "
+                "WHERE end_ts = ?",
+                (cur["start_ts"],),
+            )
+            cur = _current(conn)
         if cur is not None and age > cur["age"]:
             best = scan_best(conn, cur["start_ts"], ts)
             kept = (cur["best_net_eut"], cur["best_ref"])
@@ -80,19 +97,19 @@ def observe(conn: sqlite3.Connection, stage: str | None, now: float) -> int | No
             closed = int(cur["age"])
             cur = None
         if cur is None:
-            have = conn.execute(
-                "SELECT age FROM age_mark WHERE age = ?", (age,)
-            ).fetchone()
-            if have is None:
+            conn.execute(
+                "INSERT INTO age_mark(age, stage, start_ts, provisional) VALUES (?, ?, ?, ?)",
+                (age, stage or "stone", ts, int(provisional)),
+            )
+        elif age == cur["age"]:
+            if stage and stage != cur["stage"]:
                 conn.execute(
-                    "INSERT INTO age_mark(age, stage, start_ts) VALUES (?, ?, ?)",
-                    (age, stage or "stone", ts),
+                    "UPDATE age_mark SET stage = ? WHERE age = ?", (stage, age)
                 )
-            elif closed is not None or _current(conn) is None:
-                # back to an age reached before (after an override drop and rise)
-                conn.execute("UPDATE age_mark SET end_ts = NULL WHERE age = ?", (age,))
-        elif age == cur["age"] and stage and stage != cur["stage"]:
-            conn.execute("UPDATE age_mark SET stage = ? WHERE age = ?", (stage, age))
+            if cur["provisional"] and not provisional:  # detection reached it
+                conn.execute(
+                    "UPDATE age_mark SET provisional = 0 WHERE age = ?", (age,)
+                )
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")

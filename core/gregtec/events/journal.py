@@ -4,7 +4,8 @@ For each of Play's sessions (Lab is a test copy, so its sessions stay in the DB 
 Activity view, never in Clayton's journal) the scribe appends a block to **today's** daily log,
 through :meth:`gregtec.vault.io.VaultIO.append` only (atomic, path-guarded, plan 6.2 grammar,
 never ``me/``): once an hour while the session runs, and once when it ends. A block covers the
-session's events since the last block:
+session's events since the last block (a quit's or a crash's end block waits
+:data:`FINAL_WAIT_S`, for the save files read after it):
 
 - the first block opens with ``session: s<id> <instance> <world>, from HH:MM``;
 - ``n_<kind>: N`` for each journalled kind that happened (``quest``, ``built``, ``removed``,
@@ -36,6 +37,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from gregtec.events.store import AFTER_END_S
 from gregtec.llm.summarise import (
     HaikuSummariser,
     Summariser,
@@ -68,6 +70,10 @@ SESSION_MAX = 40  # plan 7.5: at most 40 lines per session
 NOTES_MAX = 2
 # the end block's counts, notes, session_end, and its session: line when it goes in a new file
 END_RESERVE = len(KINDS) + NOTES_MAX + 2
+# A quit or crash keeps the save files read up to AFTER_END_S later (D264): its end block
+# waits for them, and for the watchers' post that carries them.
+TAIL_ENDS = ("quit", "crash")
+FINAL_WAIT_S = AFTER_END_S + 60
 HOURLY_ITEMS = 6
 HOUR_S = 3600
 ITEM_MAX = 110
@@ -256,6 +262,8 @@ class Scribe:
         ).fetchall()
         for s in rows:
             final = s["end_ts"] is not None
+            if final and s["end_why"] in TAIL_ENDS and now < s["end_ts"] + FINAL_WAIT_S:
+                continue  # the quit's own save files are still to come
             last = s["journal_ts"] if s["journal_ts"] is not None else s["start_ts"]
             if not final and now - last < HOUR_S:
                 continue
@@ -274,11 +282,13 @@ class Scribe:
 
     def _recaps(self, conn: sqlite3.Connection) -> list[str]:
         """The finished ages' recaps not yet in the journal (D162, D265): a few computed lines
-        in today's log, after the session blocks."""
+        in today's log, after the session blocks. A recap whose next age is provisional (his
+        override, above the detected tier) waits: taking the override back drops it."""
         written = []
         for r in conn.execute(
-            "SELECT age, recap FROM age_mark WHERE recap IS NOT NULL AND journaled IS NULL "
-            "ORDER BY end_ts, age"
+            "SELECT age, recap FROM age_mark a WHERE recap IS NOT NULL AND journaled IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM age_mark n WHERE n.start_ts = a.end_ts "
+            "AND n.provisional = 1) ORDER BY end_ts, age"
         ).fetchall():
             try:
                 path: str | None = self._append(recap_lines(json.loads(r["recap"])))

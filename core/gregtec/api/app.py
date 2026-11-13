@@ -918,7 +918,7 @@ async def _events(core: Core) -> None:
         if service is None:
             return
         try:
-            await asyncio.to_thread(service.tick, event_routes.stage_of(core))
+            await asyncio.to_thread(service.tick, *event_routes.stage_of(core))
         except Exception:  # the loop must keep running
             log.exception("events tick failed")
         await asyncio.sleep(EVENTS_TICK_S)

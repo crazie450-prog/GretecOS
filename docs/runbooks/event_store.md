@@ -34,6 +34,9 @@ $ProgressPreference = 'SilentlyContinue'
   sessions inside the age), machines built (the listener's `machine_built` events) and the best
   net power OC measured (`db:tel_sample/...`, or "no readings" before OC). An open dashboard shows
   it with the new theme; the Activity view keeps every recap; the journal gets `age_*` lines.
+  An override above the tier your quests show opens a provisional age: clearing it takes the
+  age back with its recap, and the journal waits until your quests reach that age. Until
+  `gos quests load` has run, no age is noted at all.
 - **Agents** read it with `events_recent(window, kinds)` and `session_summary(id)` (counts by
   GOS), through the `session-scribe` skill.
 
@@ -78,9 +81,13 @@ Record the result (recall, misses) in the PR.
 
 ## 3. The tier-up recap
 
-In the dashboard's **Base** view set the tier override one stage up (e.g. Steam to LV) while the
+In the dashboard's **Base** view set the tier override one stage up (e.g. LV to MV) while the
 dashboard is open on monitor 2: the theme fades over, and a panel shows the finished age's hours
-played, machines built and best net power (no readings until OC reports power). Set the override
-back (Clear): nothing changes (only a rise closes an age). The Activity view lists the recap under
-**Finished ages**; today's log in the vault has the `age_*` lines. This changes only GOS's DB and
+played, machines built and best net power (no readings until OC reports power). The Activity view
+lists that recap under **Finished ages**. An age your override opens above the tier detected from
+your quests is provisional (D265): set the override back (Clear) and it is taken back. The recap
+leaves the Activity view, the age you were in goes on from its real start, and nothing reaches
+the journal: a recap goes in today's log (the `age_*` lines) only once detection reaches the next
+age, so the real tier-up later shows the real recap. Check that after Clear, Activity lists no
+new finished age and today's log has no `age_done:` line. This changes only GOS's DB and
 vault, never a game file.

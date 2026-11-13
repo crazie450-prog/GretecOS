@@ -49,12 +49,15 @@ MAX_TOKENS = 4096
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 # n_death: 3, written by the curator from event_counts
 COUNT_PREFIX = schema.COUNT_PREFIX
-# Not events: notes, a summary's period, and the session scribe's age recap lines (D265)
+# Not events: notes, a summary's period, and the session scribe's session and age recap lines
+# (D263, D265)
 NOT_EVENTS = frozenset(
     {
         "note",
         "period",
         "from",
+        "session",
+        "session_end",
         "age_done",
         "age_played_h",
         "age_sessions",

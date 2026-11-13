@@ -25,6 +25,10 @@ COUNT_PREFIX = "n_"
 JOURNAL_COUNTS = frozenset(
     {"quest", "built", "removed", "death", "vein", "crash", "dim"}
 )
+# D263, D265: the keys only the session scribe writes (a session's opening and closing lines,
+# a finished age's recap): the Activity view reads a session's lines by them.
+SCRIBE_KEYS = frozenset({"session", "session_end"})
+SCRIBE_PREFIX = "age_"
 SUMMARY_LOG = re.compile(r"log/(wk|mo)/[^/]+\.md")
 # D201: only a plan note may hold a ```mermaid fence, and only the lines
 # gregtec.planner.outputs.mermaid writes: the header, a box (rectangle, stadium or subroutine)

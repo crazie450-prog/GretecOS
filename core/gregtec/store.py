@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS event(id INTEGER PRIMARY KEY, ts INT NOT NULL, sessio
 CREATE INDEX IF NOT EXISTS ix_event_ts ON event(ts);
 CREATE INDEX IF NOT EXISTS ix_event_kind ON event(kind, ts);
 CREATE TABLE IF NOT EXISTS age_mark(age INT PRIMARY KEY, stage TEXT NOT NULL, start_ts INT NOT NULL,
-  end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT, journaled INT);
+  end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT, journaled INT, provisional INT);
 """
 # Indexes on columns ADDED_COLUMNS may have just added (a DB whose table predates them).
 POST_SCHEMA = """
@@ -98,6 +98,11 @@ ADDED_COLUMNS = (
     ("session", "journal_ts", "INT"),  # when the journal was last written
     ("session", "journal_lines", "INT"),  # lines written for this session (<= 40)
     ("session", "journal_done", "INT"),  # the end block is written (or not wanted)
+    (
+        "age_mark",
+        "provisional",
+        "INT",
+    ),  # opened by his override above the detected tier
 )
 
 

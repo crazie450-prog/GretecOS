@@ -133,7 +133,8 @@ def test_hourly_then_end_blocks_with_counts_computed_in_code(
         "play",
         [quest(T0 + 3800, 4), ev("world_closed", T0 + 4000, via="log")],
     )
-    assert scribe.run(conn, T0 + 4010) == [LOG]
+    assert scribe.run(conn, T0 + 4010) == []  # the quit's save files may still come
+    assert scribe.run(conn, T0 + 4000 + journal.FINAL_WAIT_S) == [LOG]
     lines = body(vault)
     end = lines[len(hour) :]
     assert end[0] == "n_quest: 1" and "quest: q:QUEST0004" in end
@@ -142,8 +143,6 @@ def test_hourly_then_end_blocks_with_counts_computed_in_code(
     )
     # the compaction's counts are exactly the session's (D142 (f))
     assert event_counts([(LOG, text(vault))]) == {
-        "session": 1,
-        "session_end": 1,
         "quest": 4,
         "built": 2,
         "removed": 1,
@@ -174,7 +173,7 @@ def test_a_long_busy_session_stays_within_40_lines(
         events.record(conn, "play", batch)
         scribe.run(conn, T0 + (hour + 1) * 3600 + 1)
     events.record(conn, "play", [ev("world_closed", T0 + 8 * 3600 + 30, via="log")])
-    scribe.run(conn, T0 + 8 * 3600 + 40)
+    scribe.run(conn, T0 + 8 * 3600 + 30 + journal.FINAL_WAIT_S)
     lines = body(vault)
     assert len(lines) <= journal.SESSION_MAX
     assert lines[-1].startswith("session_end: s1")
@@ -212,7 +211,7 @@ def test_the_model_writes_notes_around_the_given_numbers(
     scribe, messages = scribe_with(
         "note: finished 2 quests and built mte:1000; next, power it", vault
     )
-    scribe.run(conn, T0 + 700)
+    scribe.run(conn, T0 + 800)
     lines = body(vault)
     assert lines[-2] == "note: finished 2 quests and built mte:1000; next, power it"
     assert messages.kwargs["model"] == "claude-haiku-5-5"
@@ -233,7 +232,7 @@ def test_notes_that_break_the_rules_are_left_out(
 ) -> None:
     end_session(conn)
     scribe, _ = scribe_with(answer, vault)
-    scribe.run(conn, T0 + 700)
+    scribe.run(conn, T0 + 800)
     lines = body(vault)
     assert not any(line.startswith("note:") for line in lines)
     assert lines[-1].startswith("session_end: s1")
@@ -247,7 +246,7 @@ def test_no_ai_writes_the_journal_without_notes(
     def off() -> None:
         raise SummariserOff("the AI is off (no key)")
 
-    journal.Scribe(vault, off).run(conn, T0 + 700)
+    journal.Scribe(vault, off).run(conn, T0 + 800)
     assert body(vault)[-1].startswith("session_end: s1")
 
 
@@ -256,7 +255,7 @@ def test_a_full_daily_log_goes_on_in_the_next_one(
 ) -> None:
     vault.append(LOG, "\n".join(f"decision: {i}" for i in range(140)))
     end_session(conn)
-    assert journal.Scribe(vault).run(conn, T0 + 700) == ["log/2026-11-11-2.md"]
+    assert journal.Scribe(vault).run(conn, T0 + 800) == ["log/2026-11-11-2.md"]
     assert body(vault, "log/2026-11-11-2.md")[0].startswith("session: s1")
 
 
@@ -265,7 +264,7 @@ def test_no_vault_is_a_problem_and_the_block_waits(
 ) -> None:
     end_session(conn)
     scribe = journal.Scribe(io.VaultIO(tmp_path / "nowhere", today=lambda: TODAY))
-    assert scribe.run(conn, T0 + 700) == []
+    assert scribe.run(conn, T0 + 800) == []
     assert scribe.problems and "no vault" in scribe.problems[0]
     assert conn.execute("SELECT journal_done FROM session").fetchone()[0] == 0
 
@@ -290,7 +289,7 @@ def test_a_sessions_lines_are_found_again(
         computed=True,
     )
     end_session(conn)
-    journal.Scribe(vault).run(conn, T0 + 700)
+    journal.Scribe(vault).run(conn, T0 + 800)
     mine = journal.journal_lines(text(vault), 1)
     assert mine[0].startswith("session: s1 ") and mine[-1].startswith("session_end: s1")
     assert not any("s7" in line for line in mine)
@@ -328,7 +327,7 @@ def test_a_session_over_midnight_goes_on_in_the_next_days_log(
         conn, "play", [quest(T0 + 3800, 2), ev("world_closed", T0 + 3900, via="log")]
     )
     nxt = "log/2026-11-12.md"
-    assert scribe.run(conn, T0 + 4000) == [nxt]
+    assert scribe.run(conn, T0 + 3900 + journal.FINAL_WAIT_S) == [nxt]
     second = (root / nxt).read_text(encoding="utf-8")
     assert "session: s1 play -, continued" in second
     mine = journal.journal_lines(second, 1)
@@ -376,3 +375,68 @@ def test_a_finished_ages_recap_goes_in_the_journal_once(
         )
         == []
     )
+
+
+def test_the_end_block_waits_for_the_quits_own_save_files(
+    conn: sqlite3.Connection, vault: io.VaultIO
+) -> None:
+    """D264 keeps save files read up to AFTER_END_S after a quit in its session: the journal's
+    end block waits for them, so its counts and the store's agree (the review's M1)."""
+    scribe = journal.Scribe(vault)
+    events.record(
+        conn,
+        "play",
+        [login(T0), quest(T0 + 10, 1), ev("world_closed", T0 + 600, via="log")],
+    )
+    for t in range(605, 600 + journal.FINAL_WAIT_S, 10):  # the core's 10 s tick
+        assert scribe.run(conn, T0 + t) == []
+        if t == 645:  # BetterQuesting's file, read 45 s after the quit line
+            events.record(conn, "play", [quest(T0 + t, 2)])
+    assert scribe.run(conn, T0 + 600 + journal.FINAL_WAIT_S) == [LOG]
+    (sid,) = conn.execute("SELECT id FROM session").fetchone()
+    assert events.counts(conn, sid)["quest_done"] == 2
+    lines = body(vault)
+    assert "n_quest: 2" in lines and lines[-1].endswith(", quit")
+    assert event_counts([(LOG, text(vault))])["quest"] == 2
+
+
+def test_an_idle_end_is_written_at_once(
+    conn: sqlite3.Connection, vault: io.VaultIO
+) -> None:
+    events.record(conn, "play", [login(T0), quest(T0 + 10, 1)])
+    events.close_idle(conn, T0 + 10 + events.IDLE_S + 1)
+    assert journal.Scribe(vault).run(conn, T0 + 10 + events.IDLE_S + 1) == [LOG]
+    assert body(vault)[-1].endswith(", idle")
+
+
+def test_agents_never_write_the_scribes_keys(vault: io.VaultIO) -> None:
+    """A session:, session_end: or age_ line from an agent would show in the Activity view
+    under a session (the review's L3)."""
+    for line in (
+        "session: s1 play survival, from 10:00",
+        "session_end: s1 to 11:00, played_min 60, quit",
+        "age_done: age 1 (steam), 2026-11-01 to 2026-11-11",
+    ):
+        with pytest.raises(io.VaultError, match="session scribe's"):
+            vault.append(LOG, line)
+    vault.append(LOG, "note: a sessions list would help")  # other keys are fine
+    assert body(vault)[-1] == "note: a sessions list would help"
+
+
+def test_a_recap_waits_while_the_next_age_is_his_override(
+    conn: sqlite3.Connection, vault: io.VaultIO
+) -> None:
+    """A rise his override made (above the detected tier) is provisional: its recap stays out
+    of the journal until detection reaches that age, and is gone if he takes it back (H2)."""
+    from gregtec.events import ages
+
+    scribe = journal.Scribe(vault)
+    ages.observe(conn, "LV", T0)
+    assert ages.observe(conn, "MV", T0 + 600, provisional=True) == 2
+    assert scribe.run(conn, T0 + 700) == []
+    ages.observe(conn, "LV", T0 + 800)  # cleared
+    assert scribe.run(conn, T0 + 900) == [] and not (vault.root / LOG).exists()
+    assert ages.observe(conn, "MV", T0 + 3600, provisional=True) == 2
+    ages.observe(conn, "MV", T0 + 7200)  # detection reached MV
+    assert scribe.run(conn, T0 + 7300) == [LOG]
+    assert body(vault)[0] == "age_done: age 2 (LV), 2026-11-11 to 2026-11-11"

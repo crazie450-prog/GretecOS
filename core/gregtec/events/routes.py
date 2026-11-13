@@ -20,17 +20,30 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from gregtec.api.security import Principal
+from gregtec.events import ages
 
 if TYPE_CHECKING:
     from gregtec.api.app import Core
     from gregtec.events.service import EventService
 
 
-def stage_of(core: "Core") -> str | None:
-    """The stage the dashboard is themed by (the board's ``effective_tier``), if known."""
+def stage_of(core: "Core") -> tuple[str | None, bool]:
+    """The stage the dashboard is themed by (the board's ``effective_tier``), and whether it is
+    provisional (his override, above the tier detected from his quests, D265). None until it is
+    known: his override, or a tier detected from quests; before ``gos quests load`` the board's
+    first stage is a default, not an age GOS has seen."""
     tier = core.board.tier if core.board is not None else None
-    stage = tier.get("stage") if isinstance(tier, dict) else None
-    return stage if isinstance(stage, str) else None
+    if not isinstance(tier, dict):
+        return None, False
+    stage, how, detected = tier.get("stage"), tier.get("how"), tier.get("detected")
+    if not isinstance(stage, str):
+        return None, False
+    if how == "override":
+        found = detected if isinstance(detected, str) else None
+        return stage, found is None or ages.age_of(found) < ages.age_of(stage)
+    if not isinstance(detected, str):
+        return None, False
+    return stage, False
 
 
 def add_routes(
@@ -61,5 +74,5 @@ def add_routes(
     @app.get("/api/activity/recap")
     async def recap(_: Anyone) -> dict[str, Any]:
         svc = service()
-        found: dict[str, Any] = await asyncio.to_thread(svc.recap, stage_of(core))
+        found: dict[str, Any] = await asyncio.to_thread(svc.recap, *stage_of(core))
         return found

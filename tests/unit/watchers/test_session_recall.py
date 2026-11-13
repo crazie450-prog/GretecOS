@@ -15,6 +15,7 @@ the truth's. The real Lab session is a PC step (docs/runbooks/event_store.md).
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -33,12 +34,14 @@ from gregtec.events.service import EventService
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
+from gregtec.vault.io import VaultIO
 from gregtec.watchers import machines, runner
 
 ADMIN = "admin-" + "r" * 40
 BASE = "http://127.0.0.1:8765"
 GT = "gregtech:gt.blockmachines"
 RECALL_MIN = 0.95
+TEMPLATE = Path(__file__).resolve().parents[3] / "vault-template"
 
 Truth = tuple[str, Callable[[dict[str, Any]], bool], str]  # kind, matcher, label
 
@@ -60,7 +63,15 @@ class Script:
     """The two sessions, step by step: each step writes the game's files, records what happened
     in :attr:`truth`, and lets the watchers read and post."""
 
-    def __init__(self, fg: ModuleType, tmp_path: Path, clock: Clock, post: Any) -> None:  # noqa: ANN401
+    def __init__(
+        self,
+        fg: ModuleType,
+        tmp_path: Path,
+        clock: Clock,
+        post: Any,  # noqa: ANN401
+        instance: str = "lab",
+        tick: Callable[[], object] | None = None,
+    ) -> None:
         self.fg, self.clock = fg, clock
         self.tree = fg.Tree(tmp_path / "prism")
         self.truth: list[tuple[int, Truth]] = []  # (session number, what)
@@ -86,7 +97,9 @@ class Script:
         self.watchers = runner.Watchers(
             tree.game, tree.world, tmp_path / "home", clock, settle_s=0
         )
-        self.sender = runner.Sender(post, "lab")
+        self.sender = runner.Sender(post, instance)
+        self.instance = instance
+        self.tick = tick  # the core's events tick, between polls (Play's journal)
         self.poll()  # the baseline: nothing happened yet
 
     # --- plumbing
@@ -97,6 +110,8 @@ class Script:
         self.sender.put(self.watchers.poll_files())
         while self.sender.pending():
             assert self.sender.flush_once()
+        if self.tick is not None:
+            self.tick()
 
     def at(self, minutes: float) -> None:
         self.clock.now = self.t0 + minutes * 60
@@ -272,16 +287,28 @@ class Script:
 
 
 @pytest.fixture
-def setup(tmp_path: Path, fg: ModuleType) -> Iterator[tuple[Script, Core, TestClient]]:
+def setup(
+    tmp_path: Path, fg: ModuleType, request: pytest.FixtureRequest
+) -> Iterator[tuple[Script, Core, TestClient]]:
+    """The core and the script, for Lab (the acceptance) or, with ``indirect`` "play", for
+    Play with the session scribe writing a temp vault's journal as the core's tick does."""
+    instance = getattr(request, "param", "lab")
     start = float(int(time.time()) - 6 * 3600)
     clock = Clock(start)
     store = Store(tmp_path / "home" / "data" / "gos.sqlite")
+    scribe = None
+    if instance == "play":
+        shutil.copytree(TEMPLATE, tmp_path / "vault")
+        scribe = journal.Scribe(VaultIO(tmp_path / "vault"))
+    service = EventService(
+        store.path, scribe, worlds={instance: f"{instance}-world"}, clock=clock
+    )
     core = Core(
         cfg=Config(gos_home=tmp_path / "home"),
         store=store,
         auth=Auth(store, ADMIN),
         meter=UsageMeter(store, 100.0, (80, 100)),
-        events=EventService(store.path, worlds={"lab": "lab-world"}, clock=clock),
+        events=service,
     )
     with TestClient(create_app(core), base_url=BASE) as client:
         token = core.auth.issue_client_token("watchers")
@@ -294,7 +321,8 @@ def setup(tmp_path: Path, fg: ModuleType) -> Iterator[tuple[Script, Core, TestCl
             )
             got.raise_for_status()
 
-        script = Script(fg, tmp_path, clock, post)
+        tick = (lambda: service.tick(None)) if scribe is not None else None
+        script = Script(fg, tmp_path, clock, post, instance, tick)
         script.t0 = start
         yield script, core, client
     assert core.events is not None
@@ -367,7 +395,7 @@ def measure(s: Script, conn: Any) -> tuple[float, list[str]]:  # noqa: ANN401
     """The share of the script's truth found in the store, in its session, each stored event
     matched once; and the misses."""
     sessions = conn.execute(
-        "SELECT * FROM session WHERE instance = 'lab' ORDER BY id"
+        "SELECT * FROM session WHERE instance = ? ORDER BY id", (s.instance,)
     ).fetchall()
     stored: dict[int, list[dict[str, Any]]] = {}
     for n, row in enumerate(sessions, start=1):
@@ -409,9 +437,9 @@ def test_a_scripted_lab_session_gives_95_percent_event_recall(
         ("login", "quit"),
         ("login", "crash"),
     ]
-    assert (
-        sessions[0]["start_ts"] == int(s.t0 + 61)
-    )  # each step polls a second after it writes and sessions[0]["world"] == "lab-world"
+    # each step polls a second after it writes
+    assert sessions[0]["start_ts"] == int(s.t0 + 61)
+    assert sessions[0]["world"] == "lab-world"
     recall, misses = measure(s, conn)
     print(
         f"scripted Lab session: {len(s.truth)} events, recall {recall:.1%}, misses {misses}"
@@ -452,3 +480,45 @@ def test_the_measure_sees_a_reader_that_misses(
     recall, misses = measure(s, core.events._db())
     assert len(misses) == 6 and all("machine_" in m for m in misses)
     assert recall < RECALL_MIN
+
+
+@pytest.mark.parametrize("setup", ["play"], indirect=True)
+def test_the_same_session_on_play_is_journaled_with_every_count(
+    setup: tuple[Script, Core, TestClient],
+) -> None:
+    """The journal through the real scribe, on the core's tick between every poll (the
+    review's M1, verdict 11): each session's counts in the daily logs equal the truth's, the
+    save files read after the quit included."""
+    s, core, _ = setup
+    play(s)
+    assert core.events is not None and core.events.scribe is not None
+    for _ in range(
+        int(journal.FINAL_WAIT_S // 10) + 1
+    ):  # the 10 s tick, after the crash
+        s.clock.now += 10
+        core.events.tick(None)
+    conn = core.events._db()
+    recall, misses = measure(s, conn)
+    assert recall >= RECALL_MIN, misses
+    rows = conn.execute("SELECT * FROM session ORDER BY id").fetchall()
+    assert [(r["instance"], r["end_why"], r["journal_done"]) for r in rows] == [
+        ("play", "quit", 1),
+        ("play", "crash", 1),
+    ]
+    vault = core.events.scribe.vault
+    for n, row in enumerate(rows, 1):
+        want: dict[str, int] = {}
+        for k, (kind, _, _) in s.truth:
+            if k == n and kind in journal.KINDS:
+                key = f"n_{journal.KINDS[kind]}"
+                want[key] = want.get(key, 0) + 1
+        lines: list[str] = []
+        for rel in sorted({r["journal_path"] for r in rows}):
+            lines += journal.journal_lines(vault.read(rel)[1], int(row["id"]))
+        got: dict[str, int] = {}
+        for line in lines:
+            key, _, value = line.partition(": ")
+            if key.startswith("n_"):
+                got[key] = got.get(key, 0) + int(value)
+        assert got == want, (n, lines)
+        assert lines[-1].startswith(f"session_end: s{row['id']} ")

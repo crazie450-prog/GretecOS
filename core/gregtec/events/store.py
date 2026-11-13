@@ -41,14 +41,17 @@ NOT_STORED = frozenset({"machine_census"})
 NOT_ACTIVITY = frozenset({"machine_census", "error", "export_stale", "world_closed"})
 INSTANCES = ("play", "lab")
 PAYLOAD_MAX = 16 << 10
+TS_MAX = 1e10  # epoch seconds: the year 2286
 
 
 @dataclass
 class Recorded:
-    """What one post changed: events stored (and already there), sessions opened and closed."""
+    """What one post changed: events stored (already there, skipped as unstorable), sessions
+    opened and closed."""
 
     stored: int = 0
     duplicate: int = 0
+    skipped: int = 0
     opened: list[int] = field(default_factory=list)
     closed: list[int] = field(default_factory=list)
 
@@ -67,7 +70,7 @@ def _ref(kind: str, data: Mapping[str, Any]) -> str | None:
     for key in ("quest", "ref"):
         v = data.get(key)
         if isinstance(v, str) and v[:2] in ("q:", "mt") and len(v) <= 100:
-            return v
+            return _utf8(v)
     return None
 
 
@@ -173,6 +176,19 @@ def _session_for(
     return _start(conn, instance, world, ts, "resume", out)
 
 
+def _utf8(text: str) -> str:
+    """``text`` as SQLite can store it: a lone surrogate (a ``\\ud83d`` escape in the post's
+    JSON) becomes ``?``."""
+    return text.encode("utf-8", "replace").decode("utf-8")
+
+
+def _ts(value: object) -> float | None:
+    """An event's time: epoch seconds, finite and in range, else None (the event is skipped)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if math.isfinite(value) and 0 <= value < TS_MAX else None
+
+
 def record(
     conn: sqlite3.Connection,
     instance: str | None,
@@ -180,31 +196,49 @@ def record(
     world: str | None = None,
 ) -> Recorded:
     """Store ``events`` (the watchers' well-formed event dicts) for ``instance`` in one
-    ``BEGIN IMMEDIATE`` transaction; sessions follow (see the module docstring)."""
+    ``BEGIN IMMEDIATE`` transaction; sessions follow (see the module docstring). An event that
+    can't be stored (a bad time, an id that isn't text) is skipped and counted, never the
+    whole post: only a DB error (locked, full) fails it, and the watchers send it again."""
     out = Recorded()
-    rows = sorted(
-        (e for e in events if e.get("kind") not in NOT_STORED),
-        key=lambda e: float(e["ts"]),
-    )
+    rows = []
+    for e in events:
+        if e.get("kind") in NOT_STORED:
+            continue
+        ts = _ts(e.get("ts"))
+        if ts is None:
+            out.skipped += 1
+            continue
+        rows.append((ts, e))
+    rows.sort(key=lambda r: r[0])
     if not rows:
         return out
     inst = instance if instance in INSTANCES else None
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for e in rows:
-            uid = str(e["id"])
+        for t, e in rows:
+            try:
+                uid = str(e["id"])
+                uid.encode("utf-8")
+                kind = str(e["kind"])
+                data: Mapping[str, Any] = e["data"]
+                payload = _utf8(json.dumps(data, ensure_ascii=False, sort_keys=True))
+                source = _utf8(str(e.get("source", ""))[:20])
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+            ):  # ValueError: UnicodeEncodeError too
+                out.skipped += 1
+                continue
             if conn.execute("SELECT 1 FROM event WHERE uid = ?", (uid,)).fetchone():
                 out.duplicate += 1
                 continue
-            kind = str(e["kind"])
-            data: Mapping[str, Any] = e["data"]
-            ts = int(float(e["ts"]))
+            ts = int(t)
             sid = (
                 _session_for(conn, inst, world, kind, data, ts, out)
                 if inst is not None
                 else None
             )
-            payload = json.dumps(data, ensure_ascii=False, sort_keys=True)
             if len(payload) > PAYLOAD_MAX:
                 payload = json.dumps({"cut": True, "kind": kind})
             dim = _int(data.get("dim"))
@@ -224,7 +258,7 @@ def record(
                     _ref(kind, data),
                     payload,
                     uid,
-                    str(e.get("source", ""))[:20],
+                    source,
                     inst,
                 ),
             )

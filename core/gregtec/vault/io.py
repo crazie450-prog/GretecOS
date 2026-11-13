@@ -372,6 +372,14 @@ class VaultIO:
                 "n_ keys are computed counts (the curator's counts and the session "
                 "scribe's); agents don't write them"
             )
+        if not computed and any(
+            key in schema.SCRIBE_KEYS or key.startswith(schema.SCRIBE_PREFIX)
+            for key in (line.split(":", 1)[0] for line in lines)
+        ):
+            raise VaultError(
+                "session, session_end and age_ keys are the session scribe's; agents don't "
+                "write them"
+            )
         if lines[0] == "---":
             raise VaultError("append body lines only; the note keeps its frontmatter")
         with self._lock:

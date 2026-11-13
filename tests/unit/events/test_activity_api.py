@@ -237,7 +237,7 @@ def test_the_events_loop_keeps_running_after_a_failure(
     calls: list[str | None] = []
     assert core.events is not None
 
-    def tick(stage: str | None) -> list[str]:
+    def tick(stage: str | None, provisional: bool = False) -> list[str]:
         calls.append(stage)
         if len(calls) == 1:
             raise RuntimeError("boom")
@@ -250,3 +250,90 @@ def test_the_events_loop_keeps_running_after_a_failure(
     asyncio.run(app_module._events(core))
     core.events = service
     assert calls == [None, None]
+
+
+def test_no_age_is_noted_before_a_tier_is_known(core: Core) -> None:
+    """Before ``gos quests load`` the board's stage is a default, not an age GOS saw (the
+    review's M2, D265 (1)); his override counts, provisional while above detection."""
+    from types import SimpleNamespace
+
+    from gregtec.events.routes import stage_of
+
+    def of(tier: object) -> tuple[str | None, bool]:
+        return stage_of(SimpleNamespace(board=SimpleNamespace(tier=tier)))  # type: ignore[arg-type]
+
+    assert of(None) == (None, False)
+    assert of({"stage": "stone", "how": "quests", "detected": None}) == (None, False)
+    assert of({"stage": "EV", "how": "quests", "detected": "EV"}) == ("EV", False)
+    assert of({"stage": "MV", "how": "override", "detected": "LV"}) == ("MV", True)
+    assert of({"stage": "MV", "how": "override", "detected": None}) == ("MV", True)
+    assert of({"stage": "LV", "how": "override", "detected": "MV"}) == ("LV", False)
+    assert of({"stage": "MV", "how": "override", "detected": "MV"}) == ("MV", False)
+    # a fresh install: no age until detection reports, then no recap of a "stone" age
+    assert core.events is not None and core.board is not None
+    core.board.tier = {"stage": "stone", "tier": 0, "how": "quests", "detected": None}
+    core.events.tick(*stage_of(core))
+    core.board.tier = {"stage": "EV", "tier": 4, "how": "quests", "detected": "EV"}
+    core.events.tick(*stage_of(core))
+    conn = core.events._db()
+    assert [tuple(r) for r in conn.execute("SELECT age, recap FROM age_mark")] == [
+        (5, None)
+    ]
+
+
+def test_one_bad_event_never_blocks_the_batch(
+    client: TestClient, core: Core, clock: Clock
+) -> None:
+    """A lone surrogate or a time that isn't finite is skipped or cleaned; the rest are stored
+    and the post answers 200, so the watchers don't send the batch again forever (the
+    review's M3)."""
+    t = clock.now
+    body = (
+        '{"instance": "lab", "events": ['
+        f'{{"id": "x1", "kind": "chat", "ts": {t}, "source": "log", '
+        '"data": {"text": "\\ud83d half an emoji"}},'
+        '{"id": "x2", "kind": "chat", "ts": NaN, "source": "log", "data": {"text": "a"}},'
+        '{"id": "x3", "kind": "chat", "ts": Infinity, "source": "log", "data": {}},'
+        '{"id": "x4", "kind": "chat", "ts": 1e300, "source": "log", "data": {}},'
+        f'{{"id": "\\udc00", "kind": "chat", "ts": {t}, "source": "log", "data": {{}}}},'
+        f'{{"id": "x6", "kind": "chat", "ts": {t}, "source": "log", '
+        '"data": {"text": "fine"}}'
+        "]}"
+    )
+    got = client.post(
+        "/api/game/events",
+        content=body,
+        headers={**bearer(ADMIN), "Content-Type": "application/json"},
+    )
+    assert got.status_code == 200, got.text
+    assert core.events is not None
+    conn = core.events._db()
+    rows = {
+        r["uid"]: r["payload"] for r in conn.execute("SELECT uid, payload FROM event")
+    }
+    assert set(rows) == {"x1", "x6"}
+    assert "? half an emoji" in rows["x1"]
+    assert client.get("/api/activity", headers=bearer(ADMIN)).status_code == 200
+
+
+def test_a_core_restart_mid_game_keeps_the_session_whole(
+    client: TestClient, core: Core, clock: Clock
+) -> None:
+    """The first tick after a restart waits for the watchers' backlog before closing the open
+    session as idle (the review's L4)."""
+    t = clock.now
+    post(client, core, "play", [ev("location", t, via="login", x=0, y=0, z=0)])
+    assert core.events is not None
+    core.events.close()  # the core stops; he plays on
+    core.events.heard, core.events.started = False, None
+    clock.now = t + 40 * 60
+    core.events.tick("LV")  # the restarted core's first tick
+    post(
+        client,
+        core,
+        "play",
+        [ev("location", t + 60 * k, x=k, y=64, z=0) for k in range(5, 41, 5)],
+    )
+    core.events.tick("LV")
+    (s,) = client.get("/api/activity", headers=bearer(ADMIN)).json()["sessions"]
+    assert s["open"] and s["start_why"] == "login"

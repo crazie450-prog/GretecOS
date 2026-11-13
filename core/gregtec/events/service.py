@@ -44,6 +44,8 @@ class EventService:
     worlds: Mapping[str, str | None] = field(default_factory=dict)  # instance -> world
     clock: Callable[[], float] = time.time
     next_best: float = 0.0
+    started: float | None = None  # the first tick
+    heard: bool = False  # the watchers have posted since then
     problems: list[str] = field(default_factory=list)
     _conn: sqlite3.Connection | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -66,16 +68,26 @@ class EventService:
     ) -> events.Recorded:
         with self._lock:
             world = self.worlds.get(instance or "")
-            return events.record(self._db(), instance, items, world)
+            found = events.record(self._db(), instance, items, world)
+            self.heard = True
+        if found.skipped:
+            log.warning("game events skipped", extra={"skipped": found.skipped})
+        return found
 
-    def tick(self, stage: str | None) -> list[str]:
-        """One round of upkeep; returns the journal logs written."""
+    def tick(self, stage: str | None, provisional: bool = False) -> list[str]:
+        """One round of upkeep (``stage``, ``provisional``: :func:`.routes.stage_of`); returns
+        the journal logs written."""
         now = self.clock()
         with self._lock:
             conn = self._db()
-            events.close_idle(conn, now)
+            if self.started is None:
+                self.started = now
+            # After a core restart mid-game the watchers' backlog comes first: closing the open
+            # session as idle before it would split it (D264).
+            if self.heard or now >= self.started + events.IDLE_S:
+                events.close_idle(conn, now)
             if stage is not None:
-                ages.observe(conn, stage, now)
+                ages.observe(conn, stage, now, provisional)
             if now >= self.next_best:
                 ages.update_best(conn, now)
                 self.next_best = now + BEST_EVERY_S
@@ -87,12 +99,12 @@ class EventService:
 
     # --- reading
 
-    def recap(self, stage: str | None) -> dict[str, Any]:
+    def recap(self, stage: str | None, provisional: bool = False) -> dict[str, Any]:
         """The newest finished age's recap (a rise the dashboard just saw is noted first)."""
         with self._lock:
             conn = self._db()
             if stage is not None:
-                ages.observe(conn, stage, self.clock())
+                ages.observe(conn, stage, self.clock(), provisional)
             found = ages.recaps(conn)
             cur = conn.execute(
                 "SELECT age, stage, start_ts FROM age_mark WHERE end_ts IS NULL "

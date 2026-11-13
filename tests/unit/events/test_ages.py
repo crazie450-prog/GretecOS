@@ -133,3 +133,61 @@ def test_a_session_that_spans_the_tier_up_is_split(conn: sqlite3.Connection) -> 
     session(conn, "play", T0 + 100, T0 + 100 + 2 * H)
     assert ages.observe(conn, "MV", T0 + 100 + H) == 2  # an hour into the session
     assert ages.recaps(conn)[0]["hours_played"] == 1.0
+
+
+def test_his_override_taken_back_leaves_no_recap(conn: sqlite3.Connection) -> None:
+    """The review's H2 probe: override one stage up, cleared, and the real tier-up a day later
+    gets the recap; the test leaves nothing behind."""
+    ages.observe(conn, "LV", T0)
+    session(conn, "play", T0 + 100, T0 + 2 * H)
+    assert ages.observe(conn, "MV", T0 + 2 * H + 10, provisional=True) == 2
+    assert [r["age"] for r in ages.recaps(conn)] == [2]  # the dashboard shows it
+    assert ages.observe(conn, "LV", T0 + 2 * H + 110) is None  # cleared
+    assert ages.recaps(conn) == []
+    assert [tuple(r) for r in conn.execute("SELECT age, end_ts FROM age_mark")] == [
+        (2, None)
+    ]
+    session(conn, "play", T0 + 20 * H, T0 + 21 * H)
+    assert ages.observe(conn, "MV", T0 + 24 * H) == 2  # the real tier-up
+    (recap,) = ages.recaps(conn)
+    assert recap["end_ts"] == T0 + 24 * H and recap["hours_played"] == 3.0
+    open_age = conn.execute(
+        "SELECT age, start_ts, provisional FROM age_mark WHERE end_ts IS NULL"
+    ).fetchone()
+    assert tuple(open_age) == (3, T0 + 24 * H, 0)
+
+
+def test_a_far_override_taken_back_after_detection_rose(
+    conn: sqlite3.Connection,
+) -> None:
+    """Detected LV, his override UV, detection reaches EV, the override cleared: LV's recap
+    runs to the EV rise, and UV is gone."""
+    ages.observe(conn, "LV", T0)
+    assert ages.observe(conn, "UV", T0 + H, provisional=True) == 2
+    assert ages.observe(conn, "UV", T0 + 5 * H, provisional=True) is None  # EV detected
+    assert ages.observe(conn, "EV", T0 + 6 * H) == 2
+    (recap,) = ages.recaps(conn)
+    assert recap["age"] == 2 and recap["end_ts"] == T0 + 6 * H
+    assert [
+        tuple(r) for r in conn.execute("SELECT age, provisional FROM age_mark")
+    ] == [
+        (2, 0),
+        (5, 0),
+    ]
+
+
+def test_a_drop_below_a_detected_age_changes_nothing(conn: sqlite3.Connection) -> None:
+    ages.observe(conn, "LV", T0)
+    assert ages.observe(conn, "MV", T0 + H) == 2  # detected
+    assert ages.observe(conn, "LV", T0 + 2 * H) is None  # his override, set lower
+    assert [r["age"] for r in ages.recaps(conn)] == [2]
+
+
+def test_a_provisional_age_becomes_real_when_detection_reaches_it(
+    conn: sqlite3.Connection,
+) -> None:
+    ages.observe(conn, "LV", T0)
+    ages.observe(conn, "MV", T0 + H, provisional=True)
+    ages.observe(conn, "MV", T0 + 2 * H)  # detected MV, override still MV
+    assert ages.observe(conn, "LV", T0 + 3 * H) is None  # now a drop changes nothing
+    assert [r["age"] for r in ages.recaps(conn)] == [2]
