@@ -169,7 +169,9 @@ class JobQueue:
                 (job_id, client, key, kind, text, QUEUED, now),
             )
             made = Job.from_row(
-                conn.execute("SELECT * FROM remote_job WHERE id = ?", (job_id,)).fetchone()
+                conn.execute(
+                    "SELECT * FROM remote_job WHERE id = ?", (job_id,)
+                ).fetchone()
             )
         log.info("job queued", extra={"job": job_id, "kind": kind, "client": client})
         self._changed(made)

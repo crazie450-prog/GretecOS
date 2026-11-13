@@ -285,9 +285,7 @@ def add_routes(
         body = await json_body(request)
         kind, text = body.get("kind"), body.get("text")
         if kind not in JOURNAL_KINDS or not isinstance(text, str) or not text.strip():
-            raise HTTPException(
-                400, f"send kind ({', '.join(JOURNAL_KINDS)}) and text"
-            )
+            raise HTTPException(400, f"send kind ({', '.join(JOURNAL_KINDS)}) and text")
         if core.journal is None:
             return {"journalled": False}
         line = journal_line(kind, text)
