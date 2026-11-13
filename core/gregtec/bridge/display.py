@@ -12,7 +12,7 @@ commands and only while it fits in the reply's 2048 bytes:
   reaches the screen with the reply to the first message after it (one ``cycle_s``, 5 s).
 - ``lines`` (board, at most :data:`BOARD_LINES` of :data:`BOARD_W` printable ASCII characters:
   everything fits OC's smallest screen and GPU, 50 x 16, with the agent's own header and footer):
-  power, problems (stalled first), the action waiting for "confirm", the current goal, the next
+  power, problems (stopped and stalled first), the action waiting for "confirm", the current goal, the next
   step, AE2 crafting. Each a level: ``ok warn bad info dim``.
 - ``hud`` (OCGlasses, at most :data:`HUD_LINES` of :data:`HUD_W`): power, the worst problem, the
   waiting action or the next step. Only to an agent that says it draws one (an M2 agent with a

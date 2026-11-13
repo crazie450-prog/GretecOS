@@ -136,6 +136,7 @@ def build(
         mark=mark,
         journal=journal_to(cfg.gos_home / "vault"),
     )
+    live.paused_by = desk.paused  # GOS's pauses vs GT's own shutdowns (D279)
     telemetry.results = desk.results
     displays = Displays(live, context=quest_context(cfg.gos_home), pending=desk.pending)
     ops = Ops(Bridge(telemetry, desk, displays), telemetry, desk, cfg, live, displays)

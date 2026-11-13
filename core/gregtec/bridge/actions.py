@@ -239,6 +239,25 @@ class ActionDesk:
         )
         return [_action(r) for r in rows]
 
+    def paused(self, binding: str) -> set[str]:
+        """The machine addresses in ``binding`` whose latest finished pause or resume is a
+        confirmed pause: GOS paused them (the live base's ``paused``; WO-7.4, D279)."""
+        rows = self.store.rows(
+            "SELECT kind, args FROM action WHERE target = ? AND state = 'done' "
+            "AND kind IN ('machine_pause', 'machine_resume') ORDER BY id",
+            (binding,),
+        )
+        found: set[str] = set()
+        for row in rows:
+            addr = json.loads(row["args"] or "{}").get("addr")
+            if not isinstance(addr, str):
+                continue
+            if row["kind"] == "machine_pause":
+                found.add(addr)
+            else:
+                found.discard(addr)
+        return found
+
     def pending(self) -> Action | None:
         """The one proposed action, if it hasn't expired."""
         with self._lock:

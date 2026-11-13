@@ -15,6 +15,7 @@ import { GLYPH } from "../state/states";
 export const LIVE_POLL_MS = 5000;
 
 const MACHINE_STATUS: Record<LiveStatus, { status: Status; label: string; glyph: string }> = {
+  stopped: { status: "warn", label: "stopped", glyph: GLYPH.warn },
   stalled: { status: "warn", label: "stalled", glyph: GLYPH.warn },
   paused: { status: "off", label: "paused", glyph: GLYPH.paused },
   unknown: { status: "info", label: "no reading", glyph: GLYPH.waiting },
@@ -229,7 +230,7 @@ function BindingView(props: { b: LiveBinding }) {
       )}
       <div className="live-grid">
         <div className="col">
-          <span className="gos-label">Problems · stalled first</span>
+          <span className="gos-label">Problems · stopped and stalled first</span>
           <Problems problems={b.problems} status={b.status} />
           {b.ae2 && (
             <>

@@ -9,14 +9,18 @@ averages GT reported added up, and a reading the agent left out stays out. Every
 :data:`~gregtec.bridge.telemetry.STALE_S` its readings are **stale** (shown as such, never
 extrapolated: a paused game pauses OC, plan 7.9).
 
-- **Machine status** (from the readings of its newest message): ``paused`` (work not allowed:
-  Clayton or a confirmed action paused it), ``running`` (``isMachineActive``), ``stalled`` (it has
-  a job, work is allowed, and it isn't running: no power, no input, a full output, maintenance),
-  ``idle``, ``unknown`` (the agent left the readings out), or ``stale``.
-- **Problems** (the ``problems`` list, worst first, stalled machines before others): a Problems
-  count above 0 or an LSC's bad maintenance from its sensor lines (:mod:`gregtec.bridge.sensors`;
-  lines come every ``sensor_s``, so the last parsed count is kept with its own age), a stalled
-  machine, an agent gone stale, and the agent's own errors. WO-7.5's alert rules (thresholds,
+- **Machine status** (from the readings of its newest message): ``paused`` (work not allowed,
+  and the desk's latest finished pause or resume for that address is a confirmed pause: GOS
+  paused it), ``stopped`` (work not allowed and GOS didn't pause it: GT disables work when a
+  multiblock shuts itself down, on power loss or maintenance, and a soft mallet does too),
+  ``running`` (``isMachineActive``), ``stalled`` (it has a job, work is allowed, and it isn't
+  running: no power, no input, a full output), ``idle``, ``unknown`` (the agent left the
+  readings out), or ``stale``.
+- **Problems** (the ``problems`` list, worst first, stopped and stalled machines before others):
+  a Problems count above 0 or an LSC's bad maintenance from its sensor lines
+  (:mod:`gregtec.bridge.sensors`; lines come every ``sensor_s``, so the last parsed count is kept
+  with its own age), a stopped or stalled machine, an agent gone stale (its age is in
+  ``age_s``, not in the text, so the displays' ``rev`` holds still), and the agent's own errors. WO-7.5's alert rules (thresholds,
   notifications) build on this; nothing here alerts anyone.
 - Names: GT's meta name through the export (:class:`gregtec.bridge.names.MetaNames`); items by
   registry name and damage with no NBT from the game DB. All of it is game data: shown, never
@@ -40,6 +44,10 @@ MAX_PROBLEMS = 32
 MAY_STILL_RUN = "may still run"
 
 ItemNamer = Callable[[str, int], str | None]
+PausedBy = Callable[
+    [str], set[str]
+]  # binding -> addresses GOS paused (ActionDesk.paused)
+MACHINE_FIRST = ("stopped", "stalled")  # these lead the problems among their level
 
 
 @dataclass(frozen=True)
@@ -75,9 +83,9 @@ def pct(stored: object, capacity: object) -> float | None:
     return round(min(100.0, 100.0 * s / c), 1)
 
 
-def machine_status(entry: Mapping[str, Any]) -> str:
+def machine_status(entry: Mapping[str, Any], gos_paused: bool = False) -> str:
     if entry.get("allowed") is False:
-        return "paused"
+        return "paused" if gos_paused else "stopped"
     if entry.get("active") is True:
         return "running"
     if entry.get("work") is True and entry.get("allowed") is True:
@@ -104,8 +112,10 @@ class Live:
         names: MetaNames | None = None,
         item_name: ItemNamer | None = None,
         clock: Callable[[], float] | None = None,
+        paused_by: PausedBy | None = None,
     ) -> None:
         self.telemetry = telemetry
+        self.paused_by = paused_by
         self.names = names
         self.item_name = item_name
         self.clock = clock or telemetry.clock
@@ -153,6 +163,7 @@ class Live:
         items: list[dict[str, Any]] = []
         with self._lock:
             seen = dict(self._sensors)
+        gos_paused = self.paused_by(binding) if self.paused_by is not None else set()
         for agent in self.telemetry.latest.agents():
             if agent.binding != binding:
                 continue
@@ -179,8 +190,9 @@ class Live:
                         "level": "warn",
                         "kind": "stale",
                         "cite": acite,
-                        "text": f"OC computer {agent.address[:8]} silent for {age} s "
+                        "text": f"OC computer {agent.address[:8]} is silent "
                         "(the game may be paused); its readings are stale",
+                        "age_s": age,
                     }
                 )
             for err in doc.get("errors") or []:
@@ -233,7 +245,9 @@ class Live:
             for e in doc.get("machines") or []:
                 mid = f"{binding}/{e['addr']}"
                 name, mte = self._name(e.get("name"))
-                status = "stale" if stale else machine_status(e)
+                status = (
+                    "stale" if stale else machine_status(e, e["addr"] in gos_paused)
+                )
                 s = seen.get(mid)
                 row = {
                     "id": mid,
@@ -253,6 +267,16 @@ class Live:
                     "stale": stale,
                 }
                 machines.append(row)
+                if status == "stopped":
+                    problems.append(
+                        {
+                            "level": "warn",
+                            "kind": "stopped",
+                            "cite": f"tel:{mid}",
+                            "text": f"{name}: stopped (work disabled: power loss, "
+                            "maintenance or by hand)",
+                        }
+                    )
                 if status == "stalled":
                     problems.append(
                         {
@@ -307,15 +331,18 @@ class Live:
                         "stale": stale,
                     }
                 )
-        # Stalled machines first among their level, then the worst level first (plan 7.14).
-        problems.sort(key=lambda p: (LEVELS.index(p["level"]), p["kind"] != "stalled"))
+        # Stopped and stalled machines first among their level, the worst level first (7.14).
+        problems.sort(
+            key=lambda p: (LEVELS.index(p["level"]), p["kind"] not in MACHINE_FIRST)
+        )
         order = {
-            "stalled": 0,
-            "paused": 1,
-            "unknown": 2,
-            "stale": 3,
-            "idle": 4,
-            "running": 5,
+            "stopped": 0,
+            "stalled": 1,
+            "paused": 2,
+            "unknown": 3,
+            "stale": 4,
+            "idle": 5,
+            "running": 6,
         }
         machines.sort(
             key=lambda m: (-(m["problems"] or 0), order.get(m["status"], 9), m["name"])

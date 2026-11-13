@@ -287,7 +287,7 @@ export interface MyBase {
 
 // The live base (WO-7.4, GET /api/base/live): OC telemetry as the core reads it. Every row
 // carries its tel: citation and its age; stale rows are old readings, never current ones.
-export type LiveStatus = "running" | "stalled" | "paused" | "idle" | "unknown" | "stale";
+export type LiveStatus = "running" | "stopped" | "stalled" | "paused" | "idle" | "unknown" | "stale";
 export type LiveLevel = "bad" | "warn" | "info";
 
 export interface LivePower {

@@ -82,6 +82,7 @@ class Rig:
         self.tel.observers.append(self.live.observe)
         self.desk = ActionDesk(self.store, locate=self.tel.locate, clock=self.clock)
         self.tel.results = self.desk.results
+        self.live.paused_by = self.desk.paused
         self.displays = Displays(
             self.live,
             context=lambda: ctx,
@@ -155,13 +156,85 @@ def test_sensor_text_is_parsed_never_followed() -> None:
     [
         ({"active": True, "allowed": True, "work": True}, "running"),
         ({"active": False, "allowed": True, "work": True}, "stalled"),
-        ({"active": False, "allowed": False, "work": True}, "paused"),
+        ({"active": False, "allowed": False, "work": True}, "stopped"),
+        ({"active": False, "allowed": False, "work": False}, "stopped"),
         ({"active": False, "allowed": True, "work": False}, "idle"),
         ({}, "unknown"),
     ],
 )
 def test_machine_status(entry: dict[str, Any], status: str) -> None:
     assert machine_status(entry) == status
+
+
+def test_paused_only_when_gos_paused_it() -> None:
+    off = {"active": False, "allowed": False, "work": True}
+    assert machine_status(off, gos_paused=True) == "paused"
+    assert machine_status({**off, "allowed": True}, gos_paused=True) == "stalled"
+
+
+def test_a_shut_down_multiblock_is_a_problem_until_gos_pauses_it(rig: Rig) -> None:
+    # GT disables work when a multiblock shuts itself down (power loss): not GOS's pause.
+    doc = msg(1)
+    machine(doc)["allowed"] = False
+    rig.send(doc)
+    base = rig.live.binding("lab")
+    ebf = next(m for m in base["machines"] if m["id"] == f"lab/{EBF}")
+    assert ebf["status"] == "stopped"
+    first = base["problems"][0]
+    assert first["kind"] == "stopped" and first["cite"] == f"tel:lab/{EBF}"
+    assert "power loss" in first["text"]
+    # A confirmed pause that ran: now it is GOS's pause, and no problem.
+    proposed = rig.desk.propose("machine_pause", {"addr": EBF}, target="lab")
+    assert proposed.action is not None, proposed.text
+    rig.clock.now += 5
+    assert rig.desk.confirm("dashboard", proposed.action.id).ok
+    rig.clock.now += 1
+    taken = rig.send(msg(2, machines=doc["machines"]))
+    assert [c["id"] for c in taken["cmds"]] == [proposed.action.id]
+    ran = {
+        "id": proposed.action.id,
+        "kind": "machine_pause",
+        "ok": True,
+        "state": "done",
+        "at": 1.0,
+    }
+    rig.clock.now += 1
+    rig.send(msg(3, results=[ran], machines=doc["machines"]))
+    base = rig.live.binding("lab")
+    ebf = next(m for m in base["machines"] if m["id"] == f"lab/{EBF}")
+    assert ebf["status"] == "paused"
+    assert not any(p["kind"] == "stopped" for p in base["problems"])
+    # A confirmed resume that ran: a later shutdown is GT's again.
+    resumed = rig.desk.propose("machine_resume", {"addr": EBF}, target="lab")
+    assert resumed.action is not None, resumed.text
+    rig.clock.now += 5
+    assert rig.desk.confirm("dashboard", resumed.action.id).ok
+    rig.clock.now += 1
+    rig.send(msg(4, machines=doc["machines"]))
+    back = {
+        "id": resumed.action.id,
+        "kind": "machine_resume",
+        "ok": True,
+        "state": "done",
+        "at": 1.0,
+    }
+    rig.clock.now += 1
+    rig.send(msg(5, results=[back], machines=doc["machines"]))
+    assert rig.desk.paused("lab") == set()
+    ebf = next(
+        m for m in rig.live.binding("lab")["machines"] if m["id"] == f"lab/{EBF}"
+    )
+    assert ebf["status"] == "stopped"
+
+
+def test_a_silent_computer_keeps_the_board_still(rig: Rig) -> None:
+    rig.send(msg(1))
+    rig.clock.now += STALE_S + 5
+    one = rig.displays.content("lab")
+    rig.clock.now += 7
+    assert rig.displays.content("lab") == one  # its age is in age_s, not the text
+    stale = next(p for p in rig.live.binding("lab")["problems"] if p["kind"] == "stale")
+    assert stale["age_s"] >= STALE_S + 12
 
 
 def test_pct_is_exact_for_the_lscs_strings() -> None:
