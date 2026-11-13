@@ -4,8 +4,8 @@
 screen key goes down (the hook's auto-repeat and the release do nothing, :class:`ptt.Hotkeys`);
 nothing here runs on a timer, keeps a capture session going or captures on any other event.
 
-- :class:`DxcamCapture` (Windows): the game window's client area, the foreground window when its title is GTNH's
-  (:data:`TITLES`), grabbed once with dxcam's DXGI backend (``grab(region=<the window on its
+- :class:`DxcamCapture` (Windows): the client area of the foreground window when its title is
+  GTNH's (:data:`TITLES`), grabbed once with dxcam's DXGI backend (``grab(region=<the window on its
   monitor>, new_frame_only=False)``) [H§3]. Only the game window is captured, never the
   desktop, so Discord DMs and other windows on any monitor never leave the PC. A failed grab
   (``DXGI_ERROR_ACCESS_LOST`` after a mode switch) recreates the camera and tries once more. A
