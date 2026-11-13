@@ -112,6 +112,8 @@ from gregtec.bridge.ingest import Bridge
 from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
 from gregtec.crops import view as crop_view
+from gregtec.gamelink import link as gamelink
+from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
@@ -210,6 +212,7 @@ class Core:
     # The OC bridge's ingest, shared by M1 (WO-7.3) and /oc/telemetry (WO-7.1).
     oc: Bridge | None = None
     ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
+    gamelink: GameLink | None = None  # GregtecLink's client link (WO-8.1)
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
 
     # --- pushing to WebSocket clients
@@ -798,6 +801,7 @@ def create_app(core: Core) -> FastAPI:
     ore_view.add_routes(app, core, principal, _json_body)
     crop_view.add_routes(app, core, principal, trusted, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
+    gamelink.add_routes(app, core, principal)
     watch_routes.add_routes(app, core, principal)
     return app
 
@@ -900,6 +904,8 @@ async def _watch(core: Core) -> None:
             ):  # action expiry and timeouts, stale telemetry (WO-7.1)
                 await asyncio.to_thread(core.ops.tick)
             health = await asyncio.to_thread(core.health)
+            if core.gamelink is not None:  # failures as in-game notices (D76, WO-8.1)
+                core.gamelink.health_changed(health)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:
                 core.broadcast({"type": "health", "data": health})

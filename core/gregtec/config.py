@@ -8,7 +8,7 @@
 | [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
 | [paths] lab_world        | none (a Lab world: a folder in saves/)   | ores load (WO-1.6)          |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
-| [sync.lab] exclude       | nothing                                  | sync                        |
+| [sync.lab] exclude       | GregtecLink (WO-8.1, D287)               | sync                        |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
 | [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
 | [policy] ore_server_cache| true (D27: every generated vein)         | ores load (WO-1.6)          |
@@ -90,7 +90,8 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
         "mods/gregteclink*",
         "config/gregteclink*",
     ),
-    "lab": (),
+    # GregtecLink in Lab is its own (install_gregteclink.py --instance lab, WO-8.1): never Play's
+    "lab": ("mods/gregteclink*", "config/gregteclink*"),
 }
 
 # Recipe-affecting configs in Play's fingerprint besides dreamcraft.cfg, which is always in it
