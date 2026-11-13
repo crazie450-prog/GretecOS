@@ -205,12 +205,23 @@ def test_the_chain_leaves_the_generator_some_output(
 
 
 def chain_recipes(p: dict[str, Any]) -> set[str]:
-    """The option's chain recipes: its recipe nodes and its farm's own GT recipe."""
-    out = {n["recipe"] for n in p["nodes"] if n["kind"] == "recipe"}
-    out |= {
-        n["recipe"].removeprefix("farm:") for n in p["nodes"] if n["kind"] == "farm"
+    """The option's chain recipes. The tree farm's own recipe is left out: NEI shows it with
+    its tools as inputs, and it is checked against GT's own class by WO-4.2's oracle vectors
+    (``test_boiler_vectors``)."""
+    return {n["recipe"] for n in p["nodes"] if n["kind"] == "recipe"}
+
+
+def nei_hidden(conn: sqlite3.Connection, refs: set[str]) -> set[str]:
+    """The refs whose recipe map GT doesn't register with NEI (``recipe_map.nei_visible``
+    is 0, e.g. the cutting saw's): NEI has no line to check them against."""
+    maps = {r: r.removeprefix("r:").split("/", 1)[0] for r in refs}
+    hidden = {
+        name
+        for (name,) in conn.execute(
+            "SELECT unloc_name FROM recipe_map WHERE nei_visible = 0"
+        )
     }
-    return out
+    return {r for r, m in maps.items() if m in hidden}
 
 
 @pytest.fixture(scope="module")
@@ -224,9 +235,11 @@ def test_the_g3_hand_off_chain_recipes_match_nei(
 ) -> None:
     refs = set().union(*(chain_recipes(p) for p in design(conn, name).options))
     assert refs and all(r.startswith("r:") for r in refs)
+    shown = refs - nei_hidden(conn, refs)
+    assert shown, refs  # each line has recipes NEI can check
     c, run_dir, run_id = g3.golden._open(client)
     try:
-        verdicts = g3.check_recipes(c, run_dir, run_id, refs)
+        verdicts = g3.check_recipes(c, run_dir, run_id, shown)
     finally:
         c.close()
     bad = [v for v in verdicts.values() if not v.ok]

@@ -25,10 +25,11 @@ Evidence tags, as in G0-G3:
 |---|---|
 | `uv run --locked ruff check .` | All checks passed |
 | `uv run --locked ruff format --check .` | 456 files already formatted (457 with the new test) |
-| `uv run --locked pytest -q` | **8949 passed, 276 skipped** (10 min 28 s) |
+| `uv run --locked pytest -q` | **8949 passed, 276 skipped** before the new test (10 min 28 s); FULL_PYTEST with it |
 | `./gradlew --no-daemon --max-workers=2 runServer -Pharness` | `harness passed: 35 checks, run 20261113T141208Z` (3 min 39 s) |
 | `GOS_REQUIRE_HARNESS_RUN=1 pytest -v` on `test_power_harness`, `test_power_objectives_harness`, `test_power_effort_harness`, `test_ledger_harness`, `test_distribution_harness`, `test_power_view_harness` (CI's LV+HV subset of `gos eval power-modes`) | **29 passed** (14 min 23 s) |
 | `GOS_REQUIRE_HARNESS_RUN=1 pytest -v tests/integration/test_g4_lines_harness.py` (new) | **5 passed, 2 xfailed** (strict, finding 1; 1 min 21 s) |
+| After the review's fixes, on fresh harness runs (server `20261113T145552Z`, 35 checks; client `20261113T145833Z`, 56 checks): the same test with the G3 hand-off check and the full D255 (3) rule in the xfails | **7 passed, 2 xfailed** (1 min 55 s); the four designs give the same numbers as below |
 | `gos power design` on the four D65 lines (scratch home built from that run with `collect` + `db build`) | below, "The four D65 lines" |
 | `gos power design ... --accept 1` (tree farm, naquadah), then `gos ledger`, `gos dist ledger --window 600` | 2 sources (EV 35.8549306, IV 8191.8824 EU/t), 0 warnings; "generation covers the base's peak: no buffer needed" |
 | `gos power turbine gas --rotor Titanium --size large --dynamo IV --fuel benzene` | optimal 2 L/t → 972 EU/t, maximum 6 L/t → 1749 EU/t (`rotor:Titanium/large`, `r:gt.recipe.gasturbinefuel/28b9a71641df`) |
@@ -48,7 +49,7 @@ The client harness wasn't re-run: no Phase 4 check needs it (WO-4.3's `test_rank
 | `7df7a45` | #85 WO-4.3 | 43309351692 (ubuntu, windows, dashboard, mod) | all success |
 | `d0460a4` | #88 WO-4.4 | 43368388009 (ubuntu, windows, dashboard, mod) + 43368388079 dashboard (Windows) | all success |
 | `2da27de` | #91 WO-4.5 | 43426982336 (ubuntu, windows, dashboard, mod) + 43426982413 mod (Windows) | all success |
-| `b169669` | #96 WO-4.6 (head) | 43439764174 (ubuntu, windows, dashboard: success; mod: running when this was written) + 43439764405 dashboard (Windows): success | see the PR's checks |
+| `b169669` | #96 WO-4.6 (head) | 43439764174 (ubuntu, windows, dashboard, mod) + 43439764405 dashboard (Windows) | all success |
 
 ---
 
@@ -164,7 +165,7 @@ How the lines are asked for and judged is D255 (judgement call, below).
 | Benzene gas turbines | **not met** | One option, net 0.000595903 EU/t of 972 (finding 1). Strict xfail `[benzene]` [here] |
 | Steam boilers on a tree farm (self-sustaining) | **met on the dev runtime; Lab PC step** | 2 options, both proven closed, net 35.85 and 29.58 EU/t, with their kits; accepted into the ledger [here]. Lab: `power_objectives.md` (step 4) |
 | Naquadah fuel | **met for generator → ledger only; fuel chain not designed** | 3 options at IV, 2 048-8 192 EU/t; accepted into the ledger [here]. Every option imports its fuel item through a gate (option 1: `gregtech:gt.metaitem.01@23326` at 0.00065536/s), so the line covers the generator, ledger and distribution, not the fuel. The MkI fluid line waits on GoodGenerator's Large Naquadah Reactor, `not_modelled` (D232, finding 2, Q-G4-1) |
-| G3 hand-off: fuel chains ±2% (G3 row, `G3_review.md`) | **tree farm: recipes met on the dev runtime, totals a Lab step; benzene: not met; naquadah: not met (no chain)** | Tree farm: TREE_FARM_NEI. No power line has a ±2% total reference (gtnhplanner.com and PlanNH design production lines, D66), so the tree farm's totals are judged by the Lab run (step 4, [QA:D12]). Benzene: blocked by finding 1 (its chain is the solver's EU-budget artefact, not a line to check). Naquadah: the options import the fuel, so there is no chain to check (finding 2) |
+| G3 hand-off: fuel chains ±2% (G3 row, `G3_review.md`) | **tree farm: recipes met on the dev runtime, totals a Lab step; benzene: not met; naquadah: not met (no chain)** | Tree farm: its chain recipe, the pyrolyse oven's `r:gt.recipe.pyro/40f1964c203d`, equals NEI's line with G3's check (`test_the_g3_hand_off_chain_recipes_match_nei[tree_farm]`, [here], client run `20261113T145833Z`). Its farm recipe (`r:gt.recipe.treefarm/1a6a43234da5`) isn't an NEI-checkable line (NEI shows the Tree Growth Simulator with its tools as inputs) and is checked against GT's own class by WO-4.2's `GtBoilerOracle` vectors. OC and parallel are `gtmath`'s, equal to GT's classes (D174). No power line has a ±2% total reference (gtnhplanner.com and PlanNH design production lines, D66), so the tree farm's totals are judged by the Lab run (step 4, [QA:D12]). Benzene: blocked by finding 1 (its chain is the solver's EU-budget artefact, not a line to check). Naquadah: the options import the fuel, so there is no fuel chain to check (finding 2); their side recipes on NEI-registered maps (12 of 15) equal NEI (`[naquadah]`, [here]). The 3 cutting-saw recipes can't be checked against NEI at all: GT doesn't register `gt.recipe.cuttingsaw` with NEI (`recipe_map.nei_visible` 0), and the test skips such maps by that flag |
 | End to end (design → effort → validator → accept → ledger → distribution) | met for the tree farm; for naquadah, generator → ledger → distribution only | `test_g4_lines_harness.py::test_accepted_lines_reach_the_ledger_and_the_distribution_checks` [here] |
 | Reviewer report | met | this report |
 | Clayton's sign-off | PC | after finding 1 and the steps below |
@@ -215,7 +216,7 @@ Chain: 10 pyrolyse ovens (`r:gt.recipe.pyro/40f1964c203d`), the Tree Growth Simu
 | 2 | `plan:pw-49ca6ff578` | Naquadah Reactor Mk-I (`mte:1190`) | Enriched Naquadah Bolt 0.001024/s (`r:gt.recipe.smallnaquadahreactor/e523e3be2ec8`) | 2 047.99 | 2 048 | 0.0101 | -0.224629 | 0 s | 9 | 0.923929 | 9 |
 | 3 | `plan:pw-153b841bdd` | Naquadah Reactor Mk-II (`mte:1191`) | Enriched Naquadah Rod, from long rods | 8 191.98 | 8 192 | 0.0236 | -0.237081 | 0 s | 12 | 1.18811 | 10 |
 
-None is closed: each imports its rods (or long rods), as a `best` line may. Option 1's chain holds a zero-sum loop (finding 5): `r:gt.recipe.hammer/9ccf2db95014` makes the long rod from 2 rods and `r:gt.recipe.cuttingsaw/e42b5fab4a2a` cuts it back into 2 rods, using 0.1176 EU/t and the saw's fluid for nothing. 0 candidates rejected.
+None is closed, and none designs a naquadah fuel chain: each imports its fuel item through a gate, as a `best` line may (`--json` boundary: option 1 `gregtech:gt.metaitem.01@23326` at 0.00065536/s, option 2 the same rod at 0.000256/s, cut into bolts, option 3 `gregtech:gt.metaitem.02@22326` at 0.000327681/s). Their other recipes are side processing at 1e-7 to 1e-6 crafts/s. Option 1's chain holds a zero-sum loop (finding 5): `r:gt.recipe.hammer/9ccf2db95014` makes the long rod from 2 rods and `r:gt.recipe.cuttingsaw/e42b5fab4a2a` cuts it back into 2 rods, each at 0.001 crafts/s, more than the generator's 0.00065536 rods/s, using 0.1176 EU/t and the saw's fluid for nothing. 0 candidates rejected.
 
 ### Accepted into the ledger [here]
 
@@ -225,11 +226,11 @@ None is closed: each imports its rods (or long rods), as a `best` line may. Opti
 
 ## Findings
 
-1. **HIGH: a power line's fuel chain spends the generator's EU without limit (WO-4.2, D233; `solve.py` stages, D192-D195).** The power network makes EU an output of the generator and an input of every chain machine, never imported (`banned`). But the staged MILP's objectives are gates, gated quantity (with a 1e-6 raw-input tiebreak that leaves EU out) and machines; EU isn't in any of them. So whenever processing in the chain can replace a gated import, the solver keeps doing more of it, cutting the import, until the chain draws exactly the generator's output. The EU budget is the only thing that stops it. On the dev runtime this kills two of the four D65 lines (above). It may also lower the net of lines that pass. `best` and `output_per_effort` rank on net EU/t afterwards, but they only see what the solver already chose. **Suggested fix (a follow-up WO, not done here):** cost EU in power networks. For example, add a stage before machines that maximises net EU/t, keeping stage 1's gate count. Or price EU in stage 2 at the fuel's own EU per unit. Either way, re-run the G4 lines and the 12 power-mode cases. The two xfails in `test_g4_lines_harness.py` flip when it lands. Clayton's call is only whether to fix it before he signs G4 (Q-G4-2).
-2. **MEDIUM: "naquadah fuel" in its usual GTNH sense isn't designable.** GoodGenerator's Large Naquadah Reactor (`mte:15537`, `gg.recipe.naquadah_reactor`), which burns the Naquadah Based Liquid Fuel MkI-VI fluids (all in the DB), is `not_modelled` (D232). The G4 line used GT's single-block Naquadah Reactors on enriched naquadah rods (D255). A follow-up WO would model that reactor (its fuel map, its output and its depleted-fuel return) and design the MkI fuel chain. Q-G4-1.
+1. **HIGH: a power line's fuel chain spends the generator's EU without limit (WO-4.2, D233; `solve.py` stages, D192-D195).** The power network makes EU an output of the generator and an input of every chain machine, never imported (`banned`). But the staged MILP's objectives are gates, gated quantity (with a 1e-6 raw-input tiebreak that leaves EU out) and machines; EU isn't in any of them. So whenever processing in the chain can replace a gated import, the solver keeps doing more of it, cutting the import, until the chain draws exactly the generator's output. The EU budget is the only thing that stops it. On the dev runtime this kills two of the four D65 lines (above). It may also lower the net of lines that pass. `best` and `output_per_effort` rank on net EU/t afterwards, but they only see what the solver already chose. Also, stage 2 compares gated quantities in row-scaled units (each divided by its row's scale c_k), so two different gated items (light fuel and heavy fuel, say) are weighed on different scales; a fix that adds an EU stage should look at this too. **Suggested fix (a follow-up WO, not done here):** cost EU in power networks. For example, add a stage after the gate count that maximises net EU/t. Or price EU in stage 2 at the fuel's own EU per unit. Either way, re-run the G4 lines and the 12 power-mode cases. The two xfails in `test_g4_lines_harness.py` (now the whole of D255 (3)'s pass rule) flip when it lands. **The follow-up WO also has to say what the "light-fuel loop" benchmark means:** the gate-free light-fuel chain draws about 362 EU/t against the generator's 128 (above), so once EU is priced the likely outcome is "import light fuel or heavy fuel through one gate", which is not a loop. A net-positive self-fed loop at MV may not exist on this data (Q-G4-4). Clayton's call is only whether to fix it before he signs G4 (Q-G4-2).
+2. **MEDIUM: the naquadah line is met on its generator side only; no naquadah fuel chain is designed.** GoodGenerator's Large Naquadah Reactor (`mte:15537`, `gg.recipe.naquadah_reactor`), which burns the Naquadah Based Liquid Fuel MkI-VI fluids (all in the DB), is `not_modelled` (D232). The G4 line used GT's single-block Naquadah Reactors, and every option imports its enriched naquadah rod (or long rod) through a gate, so "end to end" covers generator → ledger → distribution, not the fuel. Fixing finding 1 won't change this: a `best` line can always take the gate on the rod. A follow-up WO would model that reactor (its fuel map, its output and its depleted-fuel return) and design the MkI fuel chain. Q-G4-1.
 3. **MEDIUM (for Clayton's review of the 12 cases): imported late-game fuels rank high.** On the dev runtime, `hv-best` ranks first a Master Magic Energy Converter on Infinity Plate (`gregtech:gt.metaitem.01@17397`), and `lv-best`'s options 2-3 are a Novice Magic Energy Converter on Infinity Plate and on Infinity Dust. `lv-max` offers a Large Plasma Turbine on Bismuth Plasma at LV, and `iv-max` and `iv-effort` rank Bismuth Plasma first. These lines import their fuel, so the chain costs nothing, and the 26-row scarcity table (D197) doesn't cover these items. Whether to exclude imported fuels above the tier cap, or score them as scarce, is a gameplay preference (Q-G4-3). PR #96 Q7 (multiblock turbines at LV) is the same question.
 4. **LOW: effort is a lower bound on every D65 line.** The controllers have no route at the tier on this DB (all 3 naquadah options: 0 s effort, 3-12 uncounted; tree farm 4.5 min, 21 uncounted; benzene 31.3 min, 40 uncounted). `output_per_effort` ranks incomplete efforts after complete ones (D236). This is WO-3.5's controller-route follow-up (PR #85 Q3) and should be checked on the full pack (step 3).
-5. **LOW: zero-sum loops survive in a chain.** Naquadah option 1 keeps a hammer/cutting-saw loop (rod → long rod → rods) at a tiny rate, which costs 0.1176 EU/t and a fluid for nothing. Likely the stage-4 "every machine runs" floor holding a recipe the route picked. Worth a look with finding 1.
+5. **LOW: zero-sum loops survive in a chain.** Naquadah option 1 keeps a hammer/cutting-saw loop (rod → long rod → rods) at 0.001 crafts/s, faster than the generator burns rods (0.00065536/s). It costs 0.1176 EU/t and a fluid for nothing, and adds `loops: 1` to the option's complexity term, so it affects the ranking. Likely cause: the stage-4 floor (`FLOOR_MIN = 1e-6` row units, `solve.py`) set against a target normalised to 1, which beats a very small fuel rate. Worth fixing with finding 1.
 6. **LOW: decision rows D233-D237 and D243-D245 still read "Pending reviewer".** The per-PR reviewers agreed, with the changes the PR bodies list. The log is append-only, so the PM folds the verdicts at the next plan version. This reviewer agrees with D230-D245 as built, with findings 1 (D233) and 3 (D235) as open points.
 
 ---
@@ -304,9 +305,10 @@ The defaults stand, reversible, until Clayton answers (D158). "Agreed" means the
 9. Several options show 0 h effort with parts not counted. (Finding 4.)
 
 **New from this review**
-- **Q-G4-1:** D255, how the four lines are asked for (modes, tiers, kinds, fuels), and "naquadah fuel" read as GT's naquadah reactor fuels. Keep, or model GoodGenerator's Large Naquadah Reactor first and judge the MkI fluid line (finding 2)?
+- **Q-G4-1:** D255, how the four lines are asked for (modes, tiers, kinds, fuels). The naquadah line is recorded as "generator side only": it imports its rod and designs no fuel chain, and the MkI fluid line waits on modelling GoodGenerator's Large Naquadah Reactor (finding 2). Model that reactor in a follow-up WO before G4, or after?
 - **Q-G4-2:** fix finding 1 (EU costed in power networks) before signing G4? The reviewer recommends yes: two of the four benchmark lines depend on it, and every mode's chain choice does too.
-- **Q-G4-3:** imported late-game fuels (Infinity Plate, Bismuth Plasma) at LV-IV: exclude fuels above the tier cap, score them as scarce, or leave them as options (finding 3)?
+- **Q-G4-3:** imported late-game fuels (Infinity Plate, Bismuth Plasma) at LV-IV: exclude fuels above the tier cap, score them as scarce, or leave them as options (finding 3)? Until you answer, they stay listed and ranked as now.
+- **Q-G4-4:** what does the "light-fuel loop" benchmark mean? Once EU is priced (finding 1), the likely best MV light-fuel line imports light or heavy fuel through one gate; a self-fed loop with net EU/t above 0 may not exist at MV on this data. Is "one gate, net > 0" a pass, or must it be self-fed (then at which tier)?
 
 ---
 
@@ -343,6 +345,10 @@ uv run gos power design best --tier EV
 **4. The tree-farm line in the Lab:** `docs/runbooks/power_objectives.md`, "Checking the D65 tree-farm boiler line in the Lab", steps 1-3, using step 3's option 1.
 - [ ] The turbine's scanner output equals the line's `out` (gross EU/t), and the line keeps running on water only.
 
+**4b. The G3 hand-off for the tree-farm chain (G3 row, ±2%),** in the same Lab sitting as step 4. No web planner designs power lines, so the Lab run is the line-total reference [QA:D12].
+- [ ] In NEI on the full pack, the Pyrolyse Oven's recipe for the line's log (`r:gt.recipe.pyro/40f1964c203d` on the dev runtime: look it up from the log's "Recipes" page) shows the same EU/t, duration, inputs and outputs as `uv run gos power design ... --json` prints for that node.
+- [ ] In the Lab build: the pyrolyse ovens' creosote per second and the turbine's EU/t are within ±2% of the line's numbers (creosote rate and `out`).
+
 **5. Ledger and distribution, Clayton** (writes only his GOS home and vault, not Play):
 ```powershell
 & $gos ledger --write
@@ -351,7 +357,8 @@ uv run gos power design best --tier EV
 & $gos dist ledger --window 600
 ```
 - [ ] `ledger --write` reports the plans accepted before WO-4.4 (if any) joining the ledger (PR #88).
-- [ ] The accepted line is a source at EV with its net EU/t; `base/power.md` is in the vault. Retire it afterwards if you don't mean to build it: `& $gos plan --status <pw-id> retired`.
+- [ ] The accepted line is a source at EV with its net EU/t; `base/power.md` is in the vault.
+- [ ] Retire it afterwards, unless you mean to build it: your vault keeps it as a ledger source until you do. `& $gos plan --status <pw-id> retired`, then `& $gos ledger` shows it gone.
 
 **6. Power view and the 12 power-mode cases (WO-4.6 acceptance):** read `docs/reviews/WO-4.6_power_modes.md`, then open the dashboard, press 5, at 2560x1440 and on the phone. To see the cases on your own pack, gos-dev:
 ```powershell
@@ -364,8 +371,8 @@ uv run gos eval power-modes --report "$HOME\power_modes_fullpack.md"
 
 **Required before Clayton signs G4:**
 1. Finding 1 fixed (or Clayton's explicit "accept the two lines as they are", Q-G4-2), with this review's xfails turned into plain tests.
-2. Steps 0 to 6 with their paste-backs.
-3. His answers, or "keep as built", to Q-G4-1 to Q-G4-3 and the Phase 4 questions above (D158: the defaults stand and are reversible).
+2. Steps 0 to 6 (with 4b) and their paste-backs.
+3. His answers, or "keep as built", to Q-G4-1 to Q-G4-4 and the Phase 4 questions above (D158: the defaults stand and are reversible).
 
 ---
 
@@ -378,5 +385,5 @@ uv run gos eval power-modes --report "$HOME\power_modes_fullpack.md"
 
 ## After the review
 
-- Added: `tests/integration/test_g4_lines_harness.py`. It designs the four D65 lines on the server harness DB with the effort model (D255). It checks every option's numbers (net = gross - chain), citations, validator verdict and effort breakdown. It accepts the tree-farm and naquadah lines and a steel MV line into the ledger, and runs the ledger's nets through `distribution.from_ledger`. The light-fuel and benzene lines are strict xfails (`raises=AssertionError`) until finding 1 is fixed. CI's mod job runs it with the other integration tests (about 1.5 min).
+- Added: `tests/integration/test_g4_lines_harness.py`. It designs the four D65 lines on the server harness DB with the effort model (D255). It checks every option's numbers (net = gross - chain), citations, validator verdict and effort breakdown. It checks the tree-farm and naquadah chain recipes against the client harness's NEI dump with G3's check (the G3 hand-off). It accepts the tree-farm and naquadah lines and a steel MV line into the ledger, and runs the ledger's nets through `distribution.from_ledger`. The light-fuel and benzene lines are strict xfails (`raises=AssertionError`) on the whole of D255 (3)'s pass rule (2-3 ranked options, net > 0, chain < 99.9%) until finding 1 is fixed. CI's mod job runs it with the other integration tests (about 1.5 min).
 - Decision D255 records how the four lines are asked for and judged.
