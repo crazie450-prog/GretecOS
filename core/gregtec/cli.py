@@ -42,7 +42,7 @@ from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
 from gregtec.packupdate import cli as pack_cli
-from gregtec.planner import graphcli, ledgercli, plancli, powercli
+from gregtec.planner import distributioncli, graphcli, ledgercli, plancli, powercli
 from gregtec.quests import cli as quest_cli
 from gregtec.screen import eval_cli as screen_eval_cli
 from gregtec.vault import curator as vault_curator
@@ -601,6 +601,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     plancli.add_parsers(commands)
     powercli.add_parsers(commands)
     ledgercli.add_parsers(commands)
+    distributioncli.add_parsers(commands)
     appwindow.add_parsers(commands)
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
@@ -671,6 +672,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return plancli.run(args, sys.stdout)
     if args.command in ledgercli.COMMANDS:
         return ledgercli.run(args, sys.stdout)
+    if args.command in distributioncli.COMMANDS:
+        return distributioncli.run(args, sys.stdout)
     if args.command in powercli.COMMANDS:
         return powercli.run(args, sys.stdout)
     if args.command in appwindow.COMMANDS:
