@@ -190,3 +190,35 @@ def test_owning_only_the_turbine_lists_what_its_parts_need(
     assert m["unlock_h"] == pytest.approx(sum(r["h"] for r in rows), rel=1e-3, abs=1e-9)
     if not rows:
         assert any("no recipe or route" in n for n in m["effort"]["notes"])
+
+
+def test_owning_only_the_generator_counts_unlock_hours_on_a_chain_line(
+    conn: sqlite3.Connection,
+) -> None:
+    """Review L4: unlock hours counted on real data, on a line that runs a chain. Heavy fuel
+    at EV on a single block: owning only its generator, the machine types its parts' steps
+    need have items and routes at EV, so their hours are counted (the turbine line above lists
+    its unlocks without routes)."""
+    req = power.PowerRequest(
+        mode="output_per_effort",
+        tier_cap=EV,
+        kinds=("single_block",),
+        fuels=("fluid:liquid_heavy_fuel",),
+    )
+    first = power.design(conn, req, DefaultBaseInputs(EV), with_effort=False)
+    chained = [
+        p for p in first.options if any(n["kind"] == "recipe" for n in p["nodes"])
+    ]
+    assert chained, first.rejected
+    mte = _generator(chained[0])["machine"]["mte"]  # type: ignore[index]
+    d = power.design(conn, req, Owns({int(mte): 1}))
+    p = next(x for x in d.options if x["id"] == chained[0]["id"])
+    assert any(n["kind"] == "recipe" for n in p["nodes"]) and not p["power"]["direct"]
+    m = p["metrics"]
+    rows = [r for r in m["effort"]["rows"] if r["part"] == "unlock"]
+    assert rows and m["unlock_h"] > 0
+    assert m["unlock_h"] == pytest.approx(math.fsum(r["h"] for r in rows), rel=1e-3)
+    assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], rel=1e-3)
+    for r in rows:
+        assert r["map"] == effort.HAND or r["mte"] is not None
+        assert all(x["id"].startswith("r:") for x in r["recipes"])
