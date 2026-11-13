@@ -13,6 +13,15 @@ What the dashboard reads from the desktop comes from files the tests write in ``
 "AI offline"); the core polls them every second. Test-only: production code never reads these
 files. Its gos.toml marks setup done, so the shell shows.
 
+Ores (WO-6.6, :func:`load_ores`): WO-1.6's made-up ore mixes and Lab world (tests/unit/test_ores.py)
+are loaded into the same DB from a fake Lab instance in ``<tmp>/fixtures``, with Clayton standing
+at x 100, z 20 in its ``level.dat`` and JourneyMap's data folder made, so the Ores view lists,
+maps and proposes waypoints, and a confirmed one is written there (never a real instance).
+
+Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtures/crops) added
+to the tool fixtures' export run, never as a newer run of its own: the recipe tools read only the
+newest run, so a crop-only run would hide the e2e world's recipes.
+
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
@@ -20,6 +29,7 @@ files. Its gos.toml marks setup done, so the shell shows.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import json
 import shutil
@@ -72,6 +82,58 @@ def build_db(home: Path) -> None:
     module.build_home(home)
 
 
+def load_ores(home: Path) -> tuple[Path, str]:
+    """WO-1.6's ore fixture loaded into ``home``'s DB from a fake Lab instance in
+    ``home/fixtures``: (the instances folder, the Lab world's name)."""
+    spec = importlib.util.spec_from_file_location(
+        "ore_fixtures", REPO / "tests" / "unit" / "test_ore_intel.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the ore test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["ore_fixtures"] = module
+    spec.loader.exec_module(module)
+    f = module.F  # tests/unit/test_ores.py
+
+    from gregtec.db import access
+    from gregtec.db import ores as ore_db
+    from gregtec.ingest import ore_mixes
+
+    instances = home / "fixtures" / "instances"
+    lab = instances / "GTNH-Lab"
+    game = lab / ".minecraft"
+    (game / "saves").mkdir(parents=True)
+    (lab / "instance.cfg").write_text("name=GTNH-Lab\n", encoding="utf-8")
+    world = f.write_world(game)
+    (world / "level.dat").write_bytes(module.level_dat(*module.POS))
+    (game / "journeymap" / "data" / "sp" / f.WORLD).mkdir(parents=True)
+    mixes = ore_mixes.parse(f.ore_mix_bytes())
+    veins = ore_db.read_veins(world, game)
+    conn = access.connect(access.db_path(home))
+    try:
+        ore_db.write(conn, "e2e-ores", mixes, veins)
+    finally:
+        conn.close()
+    return instances, f.WORLD
+
+
+def load_crops(home: Path) -> None:
+    """WO-6.7's made-up crop world (tests/fixtures/crops/cropworld.py: crops, CropsNH's machines
+    and a Crop Breeder recipe) added to the newest export run in ``home``'s DB (the tool
+    fixtures'), so the recipe tools still answer from that run."""
+    spec = importlib.util.spec_from_file_location(
+        "crop_fixtures", REPO / "tests" / "fixtures" / "crops" / "cropworld.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the crop test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["crop_fixtures"] = module
+    spec.loader.exec_module(module)
+    from gregtec.db import access
+
+    module.write_db(access.db_path(home), into_latest=True)
+
+
 def _load_fakes() -> object:
     """tests/unit/setup/fakes.py: the file keyring and the fake Prism tree (WO-2.9)."""
     spec = importlib.util.spec_from_file_location(
@@ -122,11 +184,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root: Path = args.home.absolute()
     fresh_home(root)
+    ores_lab: tuple[Path, str] | None = None
     if args.fresh:
         home = setup_fresh(root)
     else:
         home = root
         build_db(home)
+        ores_lab = load_ores(home)
+        load_crops(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
@@ -175,6 +240,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         supervisor_port=args.port + 1,
         dashboard_host=args.host_name,
     )
+    if (
+        ores_lab is not None
+    ):  # the Ores view's Lab (WO-6.6): the fake instance load_ores made
+        cfg = dataclasses.replace(
+            cfg, prism_instances=ores_lab[0], lab_world=ores_lab[1]
+        )
     print(
         f"e2e core on http://{args.host_name}:{args.port}/ (GOS_HOME {home})",
         flush=True,

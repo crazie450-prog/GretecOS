@@ -19,9 +19,9 @@
   ],
   "$defs": {
     "Ref": {
-      "description": "A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki.",
+      "description": "A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki, vein: an ore vein, pos: his position at a save (D271).",
       "type": "string",
-      "pattern": "^(r|q|mte|crop|plan|w):\\S+$",
+      "pattern": "^(r|q|mte|crop|plan|w|vein|pos):\\S+$",
       "maxLength": 200
     },
     "Tier": {

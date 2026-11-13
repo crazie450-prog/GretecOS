@@ -19,6 +19,8 @@ import type {
   Device,
   Health,
   MyBase,
+  OresView,
+  CropsView,
   PersonaInfo,
   PersonaState,
   QuestsView,
@@ -29,6 +31,7 @@ import type {
   SetupState,
   Usage,
   Verify,
+  WaypointProposal,
 } from "./types";
 
 export class ApiError extends Error {
@@ -98,6 +101,21 @@ export const api = {
         ? "/api/quests"
         : `/api/quests?spoil=${spoil}` + (open ? `&open=${encodeURIComponent(open.join(","))}` : ""),
     ),
+  // The Ores view (WO-6.6): a material's veins, and a vein's waypoint proposed by its vein: id.
+  ores: (material: string | null = null, dim: number | null = null) => {
+    const q = new URLSearchParams();
+    if (material) q.set("material", material);
+    if (dim !== null) q.set("dim", String(dim));
+    const s = q.toString();
+    return get<OresView>(s ? `/api/ores?${s}` : "/api/ores");
+  },
+  oreWaypoint: (vein: string) => post<WaypointProposal>("/api/ores/waypoint", { vein }),
+  // The Crops view (WO-6.7): his crops, the target and its guide; edits answer with the view.
+  crops: (crop: string | null = null) =>
+    get<CropsView>(crop ? `/api/crops?crop=${encodeURIComponent(crop)}` : "/api/crops"),
+  cropHave: (crop: string, stats: number[]) => post<CropsView>("/api/crops/have", { crop, stats }),
+  cropHaveRemove: (crop: string) => request<CropsView>("DELETE", `/api/crops/have?crop=${encodeURIComponent(crop)}`),
+  cropTarget: (crop: string | null) => post<CropsView>("/api/crops/target", { crop }),
   // My base (WO-3.8): every edit answers with the whole of it.
   base: () => get<MyBase>("/api/base"),
   baseFind: (q: string, kind: "item" | "machine") =>
