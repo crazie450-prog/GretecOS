@@ -191,10 +191,32 @@ def test_a_timer_event_never_opens_extends_or_ends_a_session(
     events.record(conn, "play", [login(T0 + 600), ev("chat", T0 + 660, text="a")])
     events.record(conn, "play", [tick(T0 + 660 + 60 * m) for m in range(1, 61)])
     (s,) = sessions(conn)
-    assert (s["end_ts"], s["last_ts"], s["end_why"]) == (T0 + 660, T0 + 660, "idle")
-    assert events.close_idle(conn, T0 + 660 + 3601) == []
+    assert (s["end_ts"], s["last_ts"]) == (None, T0 + 660)  # the core's tick ends it
+    assert events.close_idle(conn, T0 + 660 + 3601) == [s["id"]]
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["end_why"]) == (T0 + 660, "idle")
     loose = conn.execute("SELECT COUNT(*) FROM event WHERE session_id IS NULL")
     assert loose.fetchone()[0] == 5 + 60 - 15  # in it: the 15 ticks before its idle end
+
+
+def test_in_the_restart_grace_a_link_event_leaves_a_stale_session_alone(
+    conn: sqlite3.Connection,
+) -> None:
+    """D264 (4): GregtecLink back before the watchers' backlog (``grace``) joins the stale
+    open session and neither ends nor extends it; the backlog then keeps it whole."""
+    events.record(conn, "play", [login(T0), ev("quest", T0 + 60, quest="q:1")])
+    chat = {**ev("chat", T0 + 1860, text="back"), "source": "link"}
+    out = events.record(conn, "play", [chat], grace=True)
+    assert (out.opened, out.closed) == ([], [])
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["last_ts"]) == (None, T0 + 60)
+    events.record(
+        conn, "play", [ev("quest", T0 + 60 + 600 * k, quest="q:2") for k in (1, 2, 3)]
+    )
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["last_ts"]) == (None, T0 + 1860)
+    loose = conn.execute("SELECT COUNT(*) FROM event WHERE session_id IS NULL")
+    assert loose.fetchone()[0] == 0
 
 
 def test_a_second_login_ends_the_first_and_instances_are_apart(

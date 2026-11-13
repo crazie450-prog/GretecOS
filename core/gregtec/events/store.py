@@ -23,7 +23,11 @@ in time order within a post:
 - **activity** is what the player does: every kind but the census, ``error``, ``export_stale``
   and ``world_closed``; a pause or unpause counts (he was there). An event sent on a timer
   (:data:`PERIODIC`: GregtecLink's ``location`` once a minute) is not activity either: it
-  joins an open session but never opens one, keeps one going or ends one.
+  joins an open session that isn't stale but never opens one, keeps one going or ends one
+  (the core's tick ends it);
+- after a **core restart**, until the watchers have posted (their backlog) or 15 minutes have
+  passed, GregtecLink's events (it reconnects first) end no stale session: they join it and
+  leave it as it is, for the backlog to show whether he played on (``grace``, D264 (4)).
 
 Events that belong to no session (a stray error with the game closed) keep ``session_id`` NULL.
 """
@@ -148,15 +152,25 @@ def _session_for(
     ts: int,
     out: Recorded,
     periodic: bool = False,
+    grace: bool = False,
 ) -> int | None:
     """The session an event at ``ts`` belongs to, opening and closing sessions on the way.
-    A ``periodic`` event (:data:`PERIODIC`) only joins the open session, if any."""
+    A ``periodic`` event (:data:`PERIODIC`) only joins the open session, if it isn't stale,
+    and never closes it. In the ``grace`` (:func:`record`) a stale open session is joined and
+    left as it is."""
     cur = _open(conn, instance)
-    if cur is not None and cur["last_ts"] is not None and ts - cur["last_ts"] > IDLE_S:
+    stale = (
+        cur is not None and cur["last_ts"] is not None and ts - cur["last_ts"] > IDLE_S
+    )
+    if stale and grace:
+        assert cur is not None
+        return int(cur["id"])  # the watchers' backlog decides whether it went on
+    if periodic:
+        return None if cur is None or stale else int(cur["id"])
+    if stale:
+        assert cur is not None
         _close(conn, cur["id"], cur["last_ts"], "idle", out)
         cur = None
-    if periodic:
-        return None if cur is None else int(cur["id"])
     if is_login(kind, data):
         if cur is not None:
             _close(conn, cur["id"], max(cur["last_ts"] or ts, ts), "relogin", out)
@@ -204,11 +218,14 @@ def record(
     instance: str | None,
     events: Iterable[Mapping[str, Any]],
     world: str | None = None,
+    grace: bool = False,
 ) -> Recorded:
     """Store ``events`` (the watchers' well-formed event dicts) for ``instance`` in one
     ``BEGIN IMMEDIATE`` transaction; sessions follow (see the module docstring). An event that
     can't be stored (a bad time, an id that isn't text) is skipped and counted, never the
-    whole post: only a DB error (locked, full) fails it, and the watchers send it again."""
+    whole post: only a DB error (locked, full) fails it, and the watchers send it again.
+    ``grace``: GregtecLink's events after a core restart, before the watchers' backlog
+    (D264 (4)): they close no stale session, which joins them and is left as it is."""
     out = Recorded()
     rows = []
     for e in events:
@@ -246,7 +263,15 @@ def record(
             ts = int(t)
             sid = (
                 _session_for(
-                    conn, inst, world, kind, data, ts, out, (source, kind) in PERIODIC
+                    conn,
+                    inst,
+                    world,
+                    kind,
+                    data,
+                    ts,
+                    out,
+                    (source, kind) in PERIODIC,
+                    grace,
                 )
                 if inst is not None
                 else None

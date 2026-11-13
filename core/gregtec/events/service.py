@@ -64,12 +64,20 @@ class EventService:
     # --- writing
 
     def record(
-        self, instance: str | None, items: Iterable[Mapping[str, Any]]
+        self,
+        instance: str | None,
+        items: Iterable[Mapping[str, Any]],
+        link: bool = False,
     ) -> events.Recorded:
+        """Store a post's events: the watchers', or GregtecLink's (``link``). The link's are
+        not the watchers having posted, and after a core restart they close no session as
+        idle until the watchers have (their backlog) or the grace has passed (D264 (4))."""
         with self._lock:
             world = self.worlds.get(instance or "")
-            found = events.record(self._db(), instance, items, world)
-            self.heard = True
+            grace = link and not self._grace_over(self.clock())
+            found = events.record(self._db(), instance, items, world, grace)
+            if not link:
+                self.heard = True
         if found.skipped:
             log.warning("game events skipped", extra={"skipped": found.skipped})
         return found
@@ -84,7 +92,7 @@ class EventService:
                 self.started = now
             # After a core restart mid-game the watchers' backlog comes first: closing the open
             # session as idle before it would split it (D264).
-            if self.heard or now >= self.started + events.IDLE_S:
+            if self._grace_over(now):
                 events.close_idle(conn, now)
             if stage is not None:
                 ages.observe(conn, stage, now, provisional)
@@ -96,6 +104,13 @@ class EventService:
             written = self.scribe.run(conn, now)
             self.problems = list(self.scribe.problems)
             return written
+
+    def _grace_over(self, now: float) -> bool:
+        """Whether the watchers have posted since the core started, or 15 minutes have
+        passed since its first tick (none yet: the core has just started)."""
+        return self.heard or (
+            self.started is not None and now >= self.started + events.IDLE_S
+        )
 
     # --- reading
 

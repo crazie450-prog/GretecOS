@@ -778,3 +778,69 @@ def test_a_real_link_event_counts_like_the_watchers(
     assert outcomes[1] == [
         {"start_ts": T0, "last_ts": T0 + 1800, "end_ts": None, "start_why": "resume"}
     ]
+
+
+def restarted(service: EventService) -> None:
+    """The core stops and starts again: the new service has heard nothing and not ticked."""
+    service.close()
+    service.heard, service.started = False, None
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [("location", None), ("chat", {"sender": "Bob", "text": "hi"})],
+)
+def test_the_link_back_before_the_watchers_backlog_keeps_the_session_whole(
+    linked: Linked, kind: str, payload: dict[str, Any] | None
+) -> None:
+    """D264 (4) with WO-8.1: after a core restart mid-game GregtecLink reconnects first (its
+    backoff is shorter than the watchers'). Its events neither count as the watchers having
+    posted nor close the open session as idle, so the watchers' backlog keeps it whole."""
+    store, service, link, clock = linked
+    service.record(
+        "play",
+        [
+            watcher_event("login", "location", T0, {"via": "login", **AT}),
+            watcher_event("q0", "quest", T0 + 60, {"quest": "q:1"}),
+        ],
+    )
+    restarted(service)
+    clock.now = T0 + 1860
+    service.tick(None)  # the restarted core's first tick
+    link._event(link_of("play"), kind, AT, payload)  # the link is back first
+    assert not service.heard
+    clock.now = T0 + 1870
+    service.tick(None)
+    link._event(link_of("play"), "location", AT, None)
+    service.record(  # then the watchers' backlog
+        "play",
+        [
+            watcher_event(f"q{k}", "quest", T0 + 60 + 600 * k, {"quest": f"q:{k}"})
+            for k in (1, 2, 3)
+        ],
+    )
+    clock.now = T0 + 1880
+    service.tick(None)
+    [session] = store.rows("SELECT * FROM session")
+    assert session["end_ts"] is None and session["start_why"] == "login"
+    assert (session["start_ts"], session["last_ts"]) == (T0, T0 + 1860)
+
+
+def test_without_the_watchers_the_restart_grace_ends_and_the_tick_closes_it(
+    linked: Linked,
+) -> None:
+    """The grace lasts 15 minutes: with no watchers post the tick then closes the session at
+    its last activity, though the link's timer keeps sending."""
+    store, service, link, clock = linked
+    service.record(
+        "play", [watcher_event("login", "location", T0, {"via": "login", **AT})]
+    )
+    restarted(service)
+    clock.now = T0 + 1800
+    service.tick(None)
+    for minute in range(1, 17):
+        clock.now = T0 + 1800 + 60 * minute
+        link._event(link_of("play"), "location", AT, None)
+        service.tick(None)
+    [session] = store.rows("SELECT * FROM session")
+    assert (session["end_ts"], session["end_why"]) == (T0, "idle")
