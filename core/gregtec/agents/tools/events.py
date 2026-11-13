@@ -193,8 +193,10 @@ def events_recent(call: Call, args: dict[str, Any], offset: int) -> Result:
         head=head,
         notes=[
             TEXT_NOTE,
-            "newest first; counts (n_<kind>) are computed by GOS (a death row with same_as "
-            "is a death another reader saw first, counted once)",
+            (
+                "newest first; counts (n_<kind>) are computed by GOS (a death row with "
+                "same_as is a death another reader saw first, counted once)"
+            ),
         ],
         total=total,
         offset=offset,
