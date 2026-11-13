@@ -25,7 +25,8 @@ commands and only while it fits in the reply's 2048 bytes:
   Notices are fixed templates about confirmed OC actions (confirmed, started, done, failed,
   check AE2, no result; D59's confirmations, plan 7.9 "Chat box ... for confirmations"), worded
   from the desk's own outcome (:func:`notice_text`, the same cases as the desk's read-out), with
-  no OC error text, said once per wording and only by the computer that runs the action. A
+  no OC error text, said once per wording and by one computer: the one that runs the action
+  when it has a chat box, else the binding's one chat-box computer (D278). A
   waypoint (core-side, nothing happens in OC) and a ``say`` get none; free text in chat stays
   the ``say`` action, which needs Clayton's confirmation.
 
@@ -49,7 +50,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gregtec.bridge.actions import CRAFT_FINAL, MAY_STILL_RUN, RESULT_TIMED_OUT, Action
+from gregtec.bridge.actions import (
+    CRAFT_FINAL,
+    MAY_STILL_RUN,
+    RESULT_TIMED_OUT,
+    Action,
+    ActionError,
+)
 from gregtec.bridge.ingest import AgentId
 from gregtec.bridge.live import Live
 from gregtec.db import access
@@ -224,7 +231,25 @@ class Displays:
             self._worded[action.id] = text
             while len(self._worded) > 4 * NOTICES_KEPT:
                 self._worded.pop(next(iter(self._worded)))
-            self._queue(action.target, text, action.computer)
+        speaker = self._speaker(action.target, action.computer)
+        with self._lock:
+            self._queue(action.target, text, speaker)
+
+    def _speaker(self, binding: str, computer: str | None) -> str | None:
+        """Which computer of ``binding`` says a notice about an action ``computer`` runs: that
+        computer when its latest telemetry says it has a chat box (``display.chat``), else the
+        binding's one chat-box computer (the rule ``locate`` uses for ``say``, D220), else
+        None (the first agent with a chat box that hears it; D278)."""
+        tel = self.live.telemetry
+        if computer:
+            msg = tel.latest.latest(AgentId(binding, computer))
+            shows = msg.doc.get("display") if msg is not None else None
+            if isinstance(shows, Mapping) and shows.get("chat") is True:
+                return computer
+        try:
+            return tel.locate(binding, "say", {})
+        except ActionError:
+            return None
 
     # --- the reply's display
 

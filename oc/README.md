@@ -69,8 +69,8 @@ them. The core composes every line and sends it in the reply (contract "The disp
   board has the screen, notes go there instead of the terminal). No reply for 30 s: the header says `NO REPLY` and
   the lines turn grey.
 - **OCGlasses HUD**, M2 only: 4 text widgets made once, only changed lines set (0.4 OC energy a tick).
-- **chat box** notices the core sends (fixed templates about confirmed OC actions, run by this computer), each said
-  once.
+- **chat box** notices the core sends (fixed templates about confirmed OC actions), each said once, by one computer:
+  the one that ran the action if it has a chat box, else the binding's one chat-box computer.
 
 Config: `display = true` (default), `false`, or a table of `board`, `screen`, `hud`, `chat`.
 

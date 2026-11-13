@@ -122,6 +122,9 @@ def msg(seq: int, **changes: object) -> dict[str, Any]:
     return doc
 
 
+OTHER = "c0c0c0c0-0000-4000-8000-0000000000ff"
+
+
 def machine(doc: dict[str, Any]) -> dict[str, Any]:
     return next(m for m in doc["machines"] if m["addr"] == EBF)
 
@@ -548,7 +551,7 @@ def test_only_the_running_computer_says_a_notice(rig: Rig) -> None:
     other = msg(3)
     other["computer"] = {
         **other["computer"],
-        "address": "c0c0c0c0-0000-4000-8000-0000000000ff",
+        "address": OTHER,
     }
     rig.clock.now += 1
     assert "chat" not in (rig.send(other).get("display") or {})
@@ -557,6 +560,55 @@ def test_only_the_running_computer_says_a_notice(rig: Rig) -> None:
     assert [n["t"] for n in mine["display"]["chat"]] == [
         f"GOS: Confirmed: {action.readback}"
     ]
+
+
+def test_a_runner_without_a_chat_box_leaves_its_notices_to_the_chat_box(
+    rig: Rig,
+) -> None:
+    """D220's usual layout: crafts run on the AE2 computer (no chat box), chat is another."""
+    rig.desk.on_change = rig.displays.on_action
+
+    def ae2_only(seq: int) -> dict[str, Any]:
+        doc = msg(seq)
+        doc["components"] = {
+            k: n for k, n in doc["components"].items() if k != "chat_box"
+        }
+        doc["display"] = {**doc["display"], "chat": False}
+        return doc
+
+    def chat_only(seq: int) -> dict[str, Any]:
+        doc = msg(seq)
+        doc.pop("ae2", None)
+        doc["computer"] = {**doc["computer"], "address": OTHER}
+        return doc
+
+    rig.send(ae2_only(1))
+    rig.send(chat_only(1))
+    proposed = rig.desk.propose("craft", dict(STEEL), target="lab")
+    assert proposed.action is not None
+    runner = proposed.action.computer
+    assert runner and runner != OTHER
+    rig.clock.now += 5
+    assert rig.desk.confirm("voice", proposed.action.id).ok
+    taken = rig.send(ae2_only(2))
+    assert [c["id"] for c in taken["cmds"]] == [proposed.action.id]
+    assert "chat" not in (taken.get("display") or {})
+    said = rig.send(chat_only(2))
+    assert [n["t"] for n in said["display"]["chat"]] == [
+        f"GOS: Confirmed: {proposed.action.readback}"
+    ]
+    assert [n.computer for n in rig.displays._notices["lab"]] == [OTHER]
+
+
+def test_a_notice_without_one_chat_box_goes_to_the_first_that_hears_it(
+    rig: Rig,
+) -> None:
+    rig.send(msg(1))
+    other = msg(1)
+    other["computer"] = {**other["computer"], "address": OTHER}
+    rig.send(other)  # two chat boxes, and the runner (unknown) says nothing
+    assert rig.displays._speaker("lab", "c0c0c0c0-0000-4000-8000-00000000dead") is None
+    assert rig.displays._speaker("lab", OTHER) == OTHER
 
 
 def test_a_full_reply_keeps_the_commands_and_sends_the_display_later(rig: Rig) -> None:

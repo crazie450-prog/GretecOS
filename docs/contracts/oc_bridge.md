@@ -320,7 +320,8 @@ for "confirm" in the agent's binding the reply carries `poll_s` 2. Notices are f
 actions, worded from the desk's outcome and never with the agent's error text: `GOS: Confirmed: <read-back>`,
 `Started: ... (AE2 is crafting it)`, `Done`, `Crafting done`, `Crafting cancelled in AE2`, `Crafting failed: ...
 (see the dashboard)`, `Check AE2: ... (it may still run)`, `Failed: ... (see the dashboard)`, `No result for: ...
-(it may have run; check in game)`; each wording once per action, to the computer that runs it only. Waypoints
+(it may have run; check in game)`; each wording once per action, to one computer: the one that runs it when its telemetry reports `display.chat`
+true, else the binding's one chat-box computer (as `locate` picks for `say`), else the first that says chat (D278). Waypoints
 (core-side) and `say` get none; free text in chat stays the `say` command. Everything is formatted from telemetry and the guide; nothing is estimated. Golden pair:
 `telemetry-display.json` and `reply-display.json` (built by `tests/unit/test_oc_display.py`, drawn by
 `tests/oc/test_display.lua`).
