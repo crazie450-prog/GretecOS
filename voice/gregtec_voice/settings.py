@@ -10,6 +10,11 @@
 | cancel_key       | F15     | global hotkey: drops what is being recorded or said, then       |
 |                  |         | says "cancel" to the core                                       |
 | next_card_key    | F16     | global hotkey: the dashboard shows its next card                |
+| screen_key       | F17     | global hotkey: one frame of the game window to the screen       |
+|                  |         | reader (WO-8.2, D288); "" turns it off. Left unset, it is off   |
+|                  |         | when F17 is already one of the other four keys                  |
+| screen_capture   | auto    | auto (dxcam, else the newest F2 screenshot) or screenshot (only |
+|                  |         | the newest F2 screenshot from the last minute; D288)            |
 | input_device     | ""      | "" = Windows' default capture device (WASAPI), else a part of   |
 |                  |         | a device name from ``gos voice devices``                        |
 | stt_engine       | auto    | speech-to-text (WO-5.2, D182): auto (Whisper on the GPU when    |
@@ -36,7 +41,7 @@
 |                  |         | Arctis Nova Elite's Chat endpoint, D56), "" = Windows' default; |
 |                  |         | no single match falls back to the default (D205)                |
 
-The four keys must differ. Appendix C's ``discord_auto_mute`` stays ``false`` and is
+The keys must differ. Appendix C's ``discord_auto_mute`` stays ``false`` and is
 ignored: GOS never mutes Discord (D58; WO-5.5, D247). The core's own keys
 (``[core] port``, ``[paths] gos_home``) come from :func:`gregtec.config.load`; ``gos_home``
 rides along here because the engines keep their models in ``GOS_HOME/models`` and read the
@@ -48,7 +53,7 @@ from __future__ import annotations
 import re
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +64,10 @@ from gregtec_voice.keys import Key
 
 WAKE, KEY, NONE = "wake", "key", "none"
 HOLD, TOGGLE = "hold", "toggle"
-HOTKEYS = ("confirm", "cancel", "next_card")
+HOTKEYS = ("confirm", "cancel", "next_card", "screen")
+SCREEN_DEFAULT = "f17"  # D288
+AUTO, SCREENSHOT = "auto", "screenshot"
+SCREEN_CAPTURES = (AUTO, SCREENSHOT)
 # speech-to-text engines (WO-5.2, D182); gregtec_voice.stt reads these
 STT_ENGINES = ("auto", "whisper-gpu", "whisper-cpu", "parakeet")
 STT_MODEL = "large-v3-turbo"  # Appendix C
@@ -89,6 +97,9 @@ class VoiceSettings:
     confirm_key: Key = field(default_factory=lambda: keys.KEYS["f14"])
     cancel_key: Key = field(default_factory=lambda: keys.KEYS["f15"])
     next_card_key: Key = field(default_factory=lambda: keys.KEYS["f16"])
+    # the screen key (WO-8.2, D288); None: off
+    screen_key: Key | None = field(default_factory=lambda: keys.KEYS[SCREEN_DEFAULT])
+    screen_capture: str = AUTO
     input_device: str = ""
     stt_engine: str = "auto"
     stt_model: str = STT_MODEL
@@ -111,11 +122,12 @@ class VoiceSettings:
         return WAKE in (self.primary_trigger, self.backup_trigger)
 
     def hotkeys(self) -> dict[str, Key]:
-        """Hotkey name -> key, in :data:`HOTKEYS` order."""
-        return {name: getattr(self, f"{name}_key") for name in HOTKEYS}
+        """Hotkey name -> key, in :data:`HOTKEYS` order (a key that is off is left out)."""
+        found = {name: getattr(self, f"{name}_key") for name in HOTKEYS}
+        return {name: key for name, key in found.items() if key is not None}
 
     def all_keys(self) -> dict[str, Key]:
-        """Every configured key by role: talk, confirm, cancel, next_card."""
+        """Every configured key by role: talk, confirm, cancel, next_card, screen."""
         return {"talk": self.talk_key, **self.hotkeys()}
 
 
@@ -222,6 +234,12 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
             "[voice] output_endpoint must be a part of a device name in quotes"
         )
         endpoint = defaults.output_endpoint
+    screen_value = table.get("screen_key")
+    screen_key: Key | None
+    if isinstance(screen_value, str) and not screen_value.strip():
+        screen_key = None  # "": off
+    else:
+        screen_key = key_of("screen_key", keys.KEYS[SCREEN_DEFAULT])
     found = VoiceSettings(
         primary_trigger=primary,
         backup_trigger=backup,
@@ -230,6 +248,10 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
         confirm_key=key_of("confirm_key", defaults.confirm_key),
         cancel_key=key_of("cancel_key", defaults.cancel_key),
         next_card_key=key_of("next_card_key", defaults.next_card_key),
+        screen_key=screen_key,
+        screen_capture=choice(
+            "screen_capture", SCREEN_CAPTURES, defaults.screen_capture
+        ),
         input_device=device.strip(),
         stt_engine=choice("stt_engine", STT_ENGINES, defaults.stt_engine),
         stt_model=model.strip(),
@@ -243,6 +265,11 @@ def parse(table: Mapping[str, Any], gos_home: Path | None = None) -> VoiceSettin
         output_endpoint=endpoint.strip(),
         gos_home=gos_home or defaults.gos_home,
     )
+    if screen_value is None and found.screen_key is not None:
+        # unset: the default never clashes with a key chosen before the screen key came
+        others = {k.name for r, k in found.all_keys().items() if r != "screen"}
+        if found.screen_key.name in others:
+            found = replace(found, screen_key=None)
     roles: dict[str, list[str]] = {}
     for role, key in found.all_keys().items():
         roles.setdefault(key.name, []).append(role)

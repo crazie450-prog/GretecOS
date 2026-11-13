@@ -39,7 +39,7 @@ from gregtec_voice.lexicon import Lexicon
 from gregtec_voice.ptt import KeyEvent
 from gregtec_voice.settings import VoiceSettings
 
-F13, F14, F15, F16 = 0x7C, 0x7D, 0x7E, 0x7F
+F13, F14, F15, F16, F17 = 0x7C, 0x7D, 0x7E, 0x7F, 0x80
 BLOCK = bytes(640)
 
 Pump = Callable[[VoiceClient, Callable[[], bool]], None]
@@ -613,12 +613,12 @@ def test_with_the_talk_key_off_the_hotkeys_still_work(
     core: Any,  # noqa: ANN401
 ) -> None:
     voice = make(primary_trigger="wake", backup_trigger="none")
-    assert voice.watched == {F14, F15, F16}
+    assert voice.watched == {F14, F15, F16, F17}
     key(voice, clock, F13, True)
     assert voice.recorder.recording is None
     key(voice, clock, F16, True)
     assert core.uis == ["next_card"]
-    assert make().watched == {F13, F14, F15, F16}
+    assert make().watched == {F13, F14, F15, F16, F17}
 
 
 def test_the_run_loop_reports_idle_then_off(

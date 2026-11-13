@@ -20,6 +20,15 @@ TYPE_MAX_LINES = {"index": 200, "plan": 40}
 KEY = re.compile(r"^([a-z][a-z0-9_]*): (.+)$")
 # D143: n_<kind>: N lines are the curator's computed counts, in the weekly and monthly logs only.
 COUNT_PREFIX = "n_"
+# D263: the session scribe's computed counts in a daily log, one n_<kind> line per kind it
+# journals (gregtec.events.journal); no other n_ key belongs in a daily log.
+JOURNAL_COUNTS = frozenset(
+    {"quest", "built", "removed", "death", "vein", "crash", "dim"}
+)
+# D263, D265: the keys only the session scribe writes (a session's opening and closing lines,
+# a finished age's recap): the Activity view reads a session's lines by them.
+SCRIBE_KEYS = frozenset({"session", "session_end"})
+SCRIBE_PREFIX = "age_"
 SUMMARY_LOG = re.compile(r"log/(wk|mo)/[^/]+\.md")
 # D201: only a plan note may hold a ```mermaid fence, and only the lines
 # gregtec.planner.outputs.mermaid writes: the header, a box (rectangle, stadium or subroutine)
@@ -177,7 +186,8 @@ def id_for(rel: str, kind: NoteType) -> str:
 def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:
     """Problems with a note's text at vault path ``rel``: :func:`check`'s, plus that its type
     lives at ``rel``, its id is the one :func:`id_for` gives, and a log other than a weekly or
-    monthly one holds no ``n_`` key (D143: those are the curator's counts)."""
+    monthly one holds no ``n_`` key (D143: those are the curator's counts) other than the
+    session scribe's ``n_<kind>: N`` (:data:`JOURNAL_COUNTS`, D263)."""
     try:
         note = parse(text)
     except ValueError as exc:
@@ -201,8 +211,14 @@ def check_text(rel: str, text: str, types: dict[str, NoteType]) -> list[str]:
         ]
     if rel.startswith("log/") and not SUMMARY_LOG.fullmatch(rel):
         problems += [
-            f"key {k}: {COUNT_PREFIX} keys are the curator's counts, in log/wk/ and log/mo/ only"
-            for k, _ in note.facts
+            f"key {k}: {COUNT_PREFIX} keys are the curator's counts, in log/wk/ and log/mo/ only "
+            "(and the session scribe's n_<kind> counts in daily logs)"
+            for k, v in note.facts
             if k.startswith(COUNT_PREFIX)
+            and not (
+                k.removeprefix(COUNT_PREFIX) in JOURNAL_COUNTS
+                and v.isascii()
+                and v.isdigit()
+            )
         ]
     return problems

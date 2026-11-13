@@ -8,7 +8,7 @@
 | [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
 | [paths] lab_world        | none (a Lab world: a folder in saves/)   | ores load (WO-1.6)          |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
-| [sync.lab] exclude       | nothing                                  | sync                        |
+| [sync.lab] exclude       | GregtecLink (WO-8.1, D287)               | sync                        |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
 | [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
 | [policy] ore_server_cache| true (D27: every generated vein)         | ores load (WO-1.6)          |
@@ -29,6 +29,7 @@
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [budget] task_max_usd    | 2.0 (until `gos eval design-cost`, D253) | deep lane (WO-2.4, D156)    |
 | [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
+| [models] vision          | claude-sonnet-5-5 (plan 7.7)             | screen lane (WO-8.2, D289)  |
 | [models] use_heavy       | false (planner and architect on heavy)   | deep lane (D155)            |
 | [launch] home            | gos_home                                 | gos launch (D115)           |
 | [maintenance] idle_minutes | 30 (QA:A9)                             | idle maintenance (WO-2.5)   |
@@ -93,7 +94,8 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
         "mods/gregteclink*",
         "config/gregteclink*",
     ),
-    "lab": (),
+    # GregtecLink in Lab is its own (install_gregteclink.py --instance lab, WO-8.1): never Play's
+    "lab": ("mods/gregteclink*", "config/gregteclink*"),
 }
 
 # Recipe-affecting configs in Play's fingerprint besides dreamcraft.cfg, which is always in it
@@ -113,8 +115,8 @@ WATCHERS_WITH_PLAY = ("lab", "play")  # [startup] watchers_with_play (D259)
 # which changes code, so it can't be done by editing a config file (WO-1.9).
 PACK_PIN = "2.9.0"
 GT_PIN = "5.09.54.265"
-# [models] keys the deep lane reads (plan 4.4, Appendix C; vision arrives with WO-8.2)
-MODEL_ROLES = ("orchestrator", "planner", "architect", "analyst", "heavy")
+# [models] keys the deep lane reads (plan 4.4, Appendix C), and vision, the screen lane's (WO-8.2)
+MODEL_ROLES = ("orchestrator", "planner", "architect", "analyst", "heavy", "vision")
 # M1, the OC file mailbox (plan 7.9, WO-7.3): the instances whose worlds can hold one, and the
 # agent's default folder on its drive (mailbox/ next to /home/gos/gos-agent.lua, oc/README.md).
 MAILBOX_ROLES = ("play", "lab")
@@ -197,6 +199,7 @@ class Config:
     model_architect: str = "claude-opus-5-5"
     model_analyst: str = "claude-haiku-5-5"
     model_heavy: str = "claude-fable-5-1"
+    model_vision: str = "claude-sonnet-5-5"  # the screen lane (plan 7.7, WO-8.2, D289)
     use_heavy: bool = False  # planner and architect on model_heavy (opt-in only)
     launch_home: Path | None = None
     idle_minutes: int = 30  # [maintenance]: no input this long, game closed (plan 6.6)

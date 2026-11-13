@@ -69,6 +69,7 @@ def test_the_curator_runs_on_the_real_db(home: Path) -> None:
         "fts": "ok",
         "backup": "ok",
         "git": "ok",
+        "wiki": "skipped",  # no wiki cache is passed in (WO-8.3)
     }, [r.line() for r in results]
     backup = home / "data" / "backups" / "gos-20261106.sqlite"
     conn = sqlite3.connect(backup)

@@ -21,6 +21,8 @@ quest_get(id, spoil)      both   :mod:`.quests` (nudge-first spoilers, D26, D268
 quest_frontier(n)         both   :mod:`.quests` (ranked by goals and lines, WO-6.4)
 quest_for_item(item)      both   :mod:`.quests`
 base_get()                both   :mod:`.base` (WO-3.8; My base, read-only)
+events_recent(window, ..) both   :mod:`.events` (WO-6.3; the event store, read-only)
+session_summary(id)       both   :mod:`.events` (WO-6.3; counts computed in code)
 db_query(name, params)    both   :mod:`.sql` (the game-data ``db/queries/*.sql``)
 db_sql(select)            deep   :mod:`.sql` (authorizer, read-only, time limit)
 note_read(path)           both   :mod:`.notes` (WO-2.5; no DB needed)
@@ -48,16 +50,17 @@ crop_plan(target)         both   :mod:`.crops` (WO-6.7; the breeding guide, code
 crop_step(target, n)      both   :mod:`.crops` (WO-6.7; one step: layout, odds, times)
 design_power(mode, ...)   deep   :mod:`.power` (WO-4.6; saves proposed plans, code-ranked)
 effort_estimate(id)       both   :mod:`.power` (WO-4.6; a saved plan's effort breakdown)
+wiki_search(q)            deep   :mod:`.wiki` (WO-8.3; the cache, the researcher's only)
+wiki_fetch(title, part)   deep   :mod:`.wiki` (WO-8.3; cache, else one polite request)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
 with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_set with
 WO-1.9; crop_status with WO-7.6; layout_estimate with Phase 3; ledger_update and
-plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
-session_summary with WO-6.3; screen_snapshot with
-WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
-with Phase 10.
+plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208);
+screen_snapshot never (WO-8.2, D288: frames come only from the screen key); notify with
+WO-9.2; schematic_export, theme_* and build_request with Phase 10.
 """
 
 from gregtec.agents.tools.catalog import LATER, TOOLS, build_registry, default_registry

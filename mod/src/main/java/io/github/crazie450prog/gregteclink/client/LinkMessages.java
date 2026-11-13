@@ -1,0 +1,197 @@
+package io.github.crazie450prog.gregteclink.client;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+
+import net.minecraft.item.ItemStack;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import io.github.crazie450prog.gregteclink.export.Json;
+import io.github.crazie450prog.gregteclink.export.StackJson;
+
+/**
+ * The messages the client module sends to the core ({@code gregteclink-client/1},
+ * docs/contracts/gregteclink-client-v1.md). Items and blocks are registry name + meta (+ NBT), never numeric IDs: NBT
+ * goes as {@link StackJson#nbt} gives it, minus the numeric {@code id} of every compound that also names its item
+ * ({@code __item}), the same step as the core's {@code normalize_nbt}, so the core hashes it as it hashed the export.
+ */
+public final class LinkMessages {
+
+    public static final int VERSION = 1;
+    /** Characters of NBT JSON sent with an item; the core reads messages of at most 4096 bytes. */
+    static final int NBT_MAX = 2048;
+    static final int CHAT_MAX = 500; // characters of a chat line and of its body: both fit in 4 KB as UTF-8
+    static final int DISPLAY_MAX = 128;
+    /**
+     * UTF-8 bytes a message may take: the core reads messages of at most 4096 bytes (uvicorn closes the socket on a
+     * bigger one), and {@link #NBT_MAX} counts characters, which a multi-byte name or lore can triple.
+     */
+    static final int BYTES_MAX = 3800;
+
+    private LinkMessages() {}
+
+    public static String hello(String player, String modVersion, ClientConfig cfg) {
+        JsonObject o = typed("hello");
+        o.addProperty("player", player);
+        o.addProperty("mod_version", modVersion);
+        JsonObject feeds = new JsonObject();
+        feeds.addProperty("position", cfg.position);
+        feeds.addProperty("target", cfg.target);
+        feeds.addProperty("chat", cfg.chat);
+        feeds.addProperty("notices", cfg.notices);
+        o.add("feeds", feeds);
+        return Json.COMPACT.toJson(o);
+    }
+
+    /** Position (blocks, one decimal) and dimension, once a second; {@code paused}: the game is paused (V29). */
+    public static String status(int dim, String dimName, double x, double y, double z, boolean paused) {
+        JsonObject o = typed("status");
+        o.addProperty("dim", dim);
+        o.add("dim_name", Json.str(dimName));
+        o.addProperty("x", Math.round(x * 10) / 10.0);
+        o.addProperty("y", Math.round(y * 10) / 10.0);
+        o.addProperty("z", Math.round(z * 10) / 10.0);
+        o.addProperty("paused", paused);
+        return Json.COMPACT.toJson(o);
+    }
+
+    /**
+     * What the player points at. {@code why}: {@code key} (the What's this? key) or {@code probe} (the core asked;
+     * {@code probe} is its id). {@code kind}: {@code item} (hovered in a GUI or NEI), {@code block} (looked at; its
+     * pick item in {@code item}), {@code none} or {@code off} (the target feed is off). {@code id} numbers this
+     * client's reports, so the answer names the one it answers.
+     */
+    public static String target(long id, String why, Long probe, String kind, JsonObject item, JsonObject block,
+        String display) {
+        JsonObject o = typed("target");
+        o.addProperty("id", id);
+        o.addProperty("why", why);
+        if (probe != null) o.addProperty("probe", probe);
+        o.addProperty("kind", kind);
+        if (item != null) o.add("item", item);
+        if (block != null) o.add("block", block);
+        if (display != null) o.addProperty("display", cut(display, DISPLAY_MAX));
+        String text = Json.COMPACT.toJson(o);
+        if (bytes(text) <= BYTES_MAX) return text;
+        // Too big for the core: the NBT goes first (the core answers for the plain item), then the display name.
+        if (item != null && item.has("nbt")) {
+            JsonObject lean = new JsonObject();
+            for (Map.Entry<String, JsonElement> m : item.entrySet()) {
+                if (!m.getKey()
+                    .equals("nbt")) lean.add(m.getKey(), m.getValue());
+            }
+            lean.addProperty("nbt_dropped", true);
+            o.add("item", lean);
+            text = Json.COMPACT.toJson(o);
+            if (bytes(text) <= BYTES_MAX) return text;
+        }
+        o.remove("display");
+        return Json.COMPACT.toJson(o);
+    }
+
+    /**
+     * {@code sender} and {@code body} only when the line is a player's chat message (vanilla's chat.type.text);
+     * {@code singleplayer} when the world is this client's own (single player or the LAN host), the only place the
+     * core takes {@code !gos} from (D286).
+     */
+    public static String chat(String text, String sender, String body, boolean singleplayer) {
+        JsonObject o = typed("chat");
+        o.addProperty("text", cut(text, CHAT_MAX));
+        if (sender != null) o.addProperty("sender", cut(sender, 32));
+        if (body != null) o.addProperty("body", cut(body, CHAT_MAX));
+        o.addProperty("singleplayer", singleplayer);
+        String out = Json.COMPACT.toJson(o);
+        // 500 characters fit unless they are escaped control characters; then each half is cut until they do.
+        for (int max = CHAT_MAX / 2; bytes(out) > BYTES_MAX && max > 0; max /= 2) {
+            o.addProperty("text", cut(text, max));
+            if (body != null) o.addProperty("body", cut(body, max));
+            out = Json.COMPACT.toJson(o);
+        }
+        return out;
+    }
+
+    /** {"item","meta","nbt"?} of a stack; null for no stack or an unregistered item. */
+    public static JsonObject itemRef(ItemStack stack) {
+        if (stack == null || stack.getItem() == null) return null;
+        String name = StackJson.itemName(stack.getItem());
+        if (name == null) return null;
+        JsonObject o = new JsonObject();
+        o.addProperty("item", name);
+        o.addProperty("meta", stack.getItemDamage());
+        if (stack.getTagCompound() != null && !stack.getTagCompound()
+            .hasNoTags()) {
+            JsonElement nbt = withoutIds(StackJson.nbt(stack.getTagCompound()));
+            // The core takes messages of at most 4 KB: a bigger NBT (a filled backpack) is left out and the
+            // core answers for the plain item.
+            if (Json.COMPACT.toJson(nbt)
+                .length() <= NBT_MAX) o.add("nbt", nbt);
+            else o.addProperty("nbt_dropped", true);
+        }
+        return o;
+    }
+
+    public static JsonObject blockRef(String registry, int meta, int x, int y, int z, int dim) {
+        JsonObject o = new JsonObject();
+        o.addProperty("block", registry);
+        o.addProperty("meta", meta);
+        o.addProperty("x", x);
+        o.addProperty("y", y);
+        o.addProperty("z", z);
+        o.addProperty("dim", dim);
+        return o;
+    }
+
+    /** A copy without the numeric {@code id} of each compound that has {@code __item} (its registry name). */
+    static JsonElement withoutIds(JsonElement e) {
+        if (e.isJsonObject()) {
+            JsonObject in = e.getAsJsonObject();
+            JsonObject out = new JsonObject();
+            boolean named = in.has("__item");
+            for (Map.Entry<String, JsonElement> m : in.entrySet()) {
+                if (named && m.getKey()
+                    .equals("id")) continue;
+                out.add(m.getKey(), withoutIds(m.getValue()));
+            }
+            return out;
+        }
+        if (e.isJsonArray()) {
+            com.google.gson.JsonArray out = new com.google.gson.JsonArray();
+            for (JsonElement v : e.getAsJsonArray()) out.add(withoutIds(v));
+            return out;
+        }
+        return e;
+    }
+
+    /** The core's message, or null when it isn't a JSON object with a string {@code type}. */
+    public static JsonObject parse(String text) {
+        try {
+            JsonElement e = new JsonParser().parse(text);
+            if (!e.isJsonObject()) return null;
+            JsonObject o = e.getAsJsonObject();
+            JsonElement t = o.get("type");
+            return t != null && t.isJsonPrimitive()
+                && t.getAsJsonPrimitive()
+                    .isString() ? o : null;
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    static int bytes(String s) {
+        return s.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    static String cut(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    private static JsonObject typed(String type) {
+        JsonObject o = new JsonObject();
+        o.addProperty("type", type);
+        o.addProperty("v", VERSION);
+        return o;
+    }
+}

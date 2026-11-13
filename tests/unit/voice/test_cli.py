@@ -208,7 +208,10 @@ def test_voice_test_stops_after_its_seconds_and_sums_up(
     fake_windows(monkeypatch, tmp_path)
     code, out = run("test", "--seconds", "0.3", "--config", str(setup(tmp_path)))
     assert code == 0
-    assert "Keys: talk F13 (hold); confirm F14, cancel F15, next card F16." in out
+    assert (
+        "Keys: talk F13 (hold); confirm F14, cancel F15, next card F16, screen F17."
+        in out
+    )
     assert "blocks dropped: 0" in out and "watchdog: 0 re-installs" in out
     assert "talk F13: 0 presses" in out
 

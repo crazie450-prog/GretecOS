@@ -493,6 +493,15 @@ DLL_FUNCTIONS_OK = {
     "CloseHandle",
     "GetAsyncKeyState",
     "GetTickCount",
+    # screen.py: the foreground window's title, class and client rectangle, read only, for
+    # the screen key's one frame (WO-8.2, D288); no other window is looked for or at, and no
+    # process is opened (OpenProcess stays forbidden above)
+    "GetForegroundWindow",
+    "GetWindowTextLengthW",
+    "GetWindowTextW",
+    "GetClassNameW",
+    "GetClientRect",
+    "ClientToScreen",
 }
 
 

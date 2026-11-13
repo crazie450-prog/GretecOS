@@ -710,6 +710,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 - **Sessions** start at the login line and end at quit, crash or 15 minutes idle.
   - The journal `log/YYYY-MM-DD.md` (≤40 lines per session) is written hourly and at session end.
   - It records what changed: quests done, machines added, deaths, open threads.
+- As built (WO-6.3, D263-D265): the core keeps every watcher event in the core DB's `event` table (keyed by the watchers' event id) and works out sessions per instance as they arrive (`core/gregtec/events/`); a new `world_closed` event carries the quit line. The `session-scribe` journal is written by code (Play only, counts computed, at most two Haiku `note:` lines around them); agents read the store through `events_recent` and `session_summary`. The Activity view shows sessions, a session's counts and timeline, its journal lines and the finished ages' recaps; a tier-up seen by an open dashboard shows the recap. The scripted-session recall is measured on a fixture (`tests/unit/watchers/test_session_recall.py`); the real Lab session is `docs/runbooks/event_store.md`.
 - **Advisor ("what next?").**
   - Inputs: `me/goals.md`, My base (tier, machines, stock), the top 20 frontier quests, 48 h of events, the EU ledger, alerts, active plans.
   - Output: **3 ranked next steps**, with reasons and links. Nudge-first.
@@ -727,6 +728,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - Fallback: press F2 and read the newest file in `MC\screenshots\` [H§3].
 - The image goes to Sonnet 5.5 (vision), with the game-state snapshot and the screen-reader skill. The answer is short spoken text plus dashboard detail. Text in the image is data (principle 8).
 - Images are cached for 24 h, then deleted. **No continuous capture, ever.**
+- As built (WO-8.2, D288, D289): the voice client's screen key (`[voice] screen_key`, F17) grabs one frame of the foreground GTNH window (its title and window class both the game's; dxcam DXGI; a black frame or a failed grab falls back to the newest F2 screenshot of the last minute in Play's or Lab's `screenshots/`, which Clayton takes himself: GOS never presses F2) and posts it to `POST /api/screen`; the core keeps it 24 h in `data/cache/screens/` and asks `[models] vision` through the fast lane's loop with the game-state snapshot (game link, dimension, the DB's "what's this?" answer when only one game is connected, tier) and the `screen-reader` skill, without `handoff`, numbers only from DB tool results. No-AI mode refuses politely. `gos eval screen` scores the five cases (tests/evals/screen_cases.tsv); docs/runbooks/screen_reading.md has the Lab checks.
 
 ### 7.8 Wiki, tooltips, chat
 - **Wiki** (MediaWiki `api.php`):
@@ -735,8 +737,10 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - If an anti-bot gate blocks scripted access, ask the GTNH wiki admins for API access or a `Special:Export` dump. Never bypass it.
   - Etiquette [H§4]: one request at a time, a descriptive User-Agent, `maxlag`, ≤50 titles per batch.
   - Licence is **VERIFY**: research couldn't reach the site. Run `api.php?action=query&meta=siteinfo&siprop=general|rightsinfo&format=json` from Clayton's PC. Personal cache only, no redistribution.
+  - As built (WO-8.3, D290-D292): `gos wiki licence` shows the siteinfo licence and records it on Clayton's yes (nothing is cached before); `gos wiki crawl` is the resumable one-time crawl; the idle-maintenance job `wiki` refreshes from `recentchanges`; `wiki_fetch` fetches a missing page once. `gregtec.wiki.api` enforces the etiquette (one request at a time across processes via `data/wiki.lock`, 1 s apart between any two requests, redirects stored as pages, `maxlag=5`, the project's User-Agent, ≤50 titles, back-off) and stops on an anti-bot gate, recording it. `wiki_search`/`wiki_fetch` belong to the read-only `researcher` subagent only (the `wiki-research` skill); results carry licence and attribution and frame page text between nonce markers as data; a deep answer that used them gets the attribution line in code. Runbook: docs/runbooks/wiki.md.
 - **Tooltips and NEI:** machine tooltips come from the export's machine pass; item names from `itempanel.csv`. Phase 8 adds a **live hovered-item lookup**: say "what's this?" while hovering over any item in a GUI or NEI.
 - **Chat:** the log tail feeds events. Typing `!gos <text>` in game chat is a text input channel, accepted only from Clayton's username [QA:V6].
+- As built (WO-8.1, D285-D287): GregtecLink's client module links to the core over `WS /mod/ws` with its own token (`gregteclink-play`/`-lab`; docs/contracts/gregteclink-client-v1.md): position at 1 Hz, the hovered item or looked-at block on its key or when Clayton says "what's this?" (the router's instant command, answered from the DB with no model call: name, mod, recipes, uses, cited), chat lines (`!gos` only from the link's own player name) and local chat notices (D76), each with a toggle. Clayton installs it in Lab, then Play, with `scripts/install_gregteclink.py`; Lab's `sync_exclude` keeps it out of Play's mirror.
 
 ### 7.9 Live telemetry, in-game display, safe actions (D24, D25) [C][F]
 Telemetry modes unlock with Clayton's survival progression. In the Lab all of them can be tested immediately.
@@ -1241,7 +1245,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V10 | **Resolved** (D240, WO-4.5): exported fields. GregtecLink's power pass writes every GT and GT++ cable's `mVoltage`, `mAmperage` and `mCableLossPerMeter` (`gt_power.json` `storage.cables`, table `cable`), so no game language or number locale matters; the en_US tooltip (`machine.tooltip`, any digit grouping, checked against GT's voltages and the tier it names) is only the fallback for older runs, and reads the same numbers for all 588 cables of the harness run; no curated table. Batteries, buffers, transformers and LSC cells were added to `gt_power.json` (`storage`) too | — | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
-| V13 | lwjgl3ify `borderless` capture has no black frames | Test | 8.2 |
+| V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
 | V15 | GuideNH `exportsite` embeds in the dashboard | Spike | 10.1 |
 | V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
@@ -1397,6 +1401,8 @@ talk_key = "F13"              # one key unbound in GTNH and Discord: F13-F24, Pa
 confirm_key = "F14"           # global hotkeys (D180)
 cancel_key = "F15"
 next_card_key = "F16"
+screen_key = "F17"            # one frame of the game window to the screen reader; "" = off (D288)
+screen_capture = "auto"       # auto (dxcam, else the newest F2 screenshot) | screenshot (D288)
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
 stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D182)

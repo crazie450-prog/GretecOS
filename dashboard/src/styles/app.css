@@ -1157,6 +1157,112 @@ tr.depleted td {
   overflow-wrap: anywhere;
 }
 
+/* Activity (WO-6.3): a session, its timeline, the sessions, the journal and the finished ages. */
+.activity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.activity-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.activity-timeline,
+.activity-sessions,
+.activity-journal {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.activity-timeline li {
+  display: grid;
+  grid-template-columns: 6ch 16ch minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  color: var(--text);
+}
+
+.activity-time {
+  color: var(--text-2);
+}
+
+.activity-kind {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.activity-what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-sessions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.activity-sessions li.active .gos-btn {
+  border-color: var(--accent);
+}
+
+.activity-journal li {
+  font-family: var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.activity-recap + .activity-recap {
+  margin-top: var(--space-4);
+}
+
+.recap-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14ch, 1fr));
+  gap: var(--space-3) var(--space-6);
+  margin: var(--space-3) 0 0;
+}
+
+.recap-figures dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.recap-figures dd.num {
+  font-size: 1.4em;
+}
+
+.recap-banner {
+  margin-bottom: var(--space-4);
+}
+
+@media (max-width: 760px) {
+  /* The phone: the time, then the kind over what happened. */
+  .activity-timeline li {
+    grid-template-columns: 6ch minmax(0, 1fr);
+  }
+
+  .activity-timeline .activity-what {
+    grid-column: 2;
+  }
+}
+
 /* Crops (WO-6.7): the path, the chosen step's layout grid and its cited lines. */
 .crops-grid {
   display: grid;
@@ -2373,7 +2479,8 @@ select.ask-input option {
   .live-grid,
   .quests-grid,
   .ores-grid,
-  .crops-grid {
+  .crops-grid,
+  .activity-grid {
     display: flex;
     flex-direction: column;
     align-items: stretch;

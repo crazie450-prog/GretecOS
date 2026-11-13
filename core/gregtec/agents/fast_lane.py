@@ -40,7 +40,7 @@ import anthropic
 import keyring.errors
 
 from gregtec.agents import prefetch
-from gregtec.agents.tools.registry import FAST, Registry
+from gregtec.agents.tools.registry import FAST, Output, Registry
 from gregtec.llm import keys
 from gregtec.llm.prices import HAIKU, PRICES, Usage, estimate_cost
 from gregtec.llm.usage import UsageMeter
@@ -104,8 +104,11 @@ response."""
 
 # Citations (plan 0.1 principle 2; D131's mte:, D219's tel:, D271's vein: and pos:) and DB keys; their digits
 # are ids, not numbers.
+# A wiki citation (D291) is w:<title>@<revid>, and a title may hold any character but space
+# and @ (parentheses, commas, quotes, accents): it is read whole, up to its revid.
 REF = re.compile(
-    r"\b(?:r|q|mte|crop|plan|w|tel|vein|pos):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]"
+    r"\bw:[^\s@]+@\d+"
+    r"|\b(?:r|q|mte|crop|plan|w|tel|vein|pos):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]"
 )
 KEY = re.compile(
     r"\bfluid:[A-Za-z0-9_.]+|[A-Za-z0-9_.|-]+:[A-Za-z0-9_.|-]+@\d+(?:#[0-9a-f]{8,64})?"
@@ -299,10 +302,18 @@ def _usage(message: Message) -> Usage:
 
 
 def _content(message: Message) -> list[dict[str, Any]]:
-    """The assistant turn as request blocks (thinking is off, so text and tool_use only)."""
+    """The assistant turn as request blocks. The fast lane's thinking is off; the screen
+    lane's is adaptive (WO-8.2), and its thinking blocks go back unchanged with the tool
+    results they came with."""
     out: list[dict[str, Any]] = []
     for b in message.content:
-        if b.type == "text" and b.text:
+        if b.type == "thinking":
+            out.append(
+                {"type": "thinking", "thinking": b.thinking, "signature": b.signature}
+            )
+        elif b.type == "redacted_thinking":
+            out.append({"type": "redacted_thinking", "data": b.data})
+        elif b.type == "text" and b.text:
             out.append({"type": "text", "text": b.text})
         elif b.type == "tool_use":
             out.append(
@@ -389,6 +400,10 @@ class FastLane:
         message = self.client.messages.create(**request)
         self._record(_usage(message), task, None)
 
+    def call_tool(self, name: str, args: object, request: str) -> Output:
+        """Run one tool call the model made (the screen lane narrows the set, WO-8.2)."""
+        return self.registry.call(name, args, lane=FAST, request=request)
+
     def _stream(
         self,
         messages: list[dict[str, Any]],
@@ -421,14 +436,19 @@ class FastLane:
         started: float | None = None,
         task: str = "ask",
         on_text: Callable[[str], None] | None = None,
+        attachments: Sequence[dict[str, Any]] = (),
     ) -> LaneAnswer:
         """Answer ``request`` with ``pre``'s results quoted; ``started``: the clock when the
-        request arrived (default now)."""
+        request arrived (default now). ``attachments``: content blocks (an image, WO-8.2) put
+        before the text in the user turn."""
         started = self.clock() if started is None else started
         quoted = prefetch.quoted(pre)
         content = f"{quoted}\n\n" if quoted else ""
         content += f"<request>\n{prefetch._safe(request)}\n</request>"
-        messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+        user: str | list[dict[str, Any]] = content
+        if attachments:
+            user = [*attachments, {"type": "text", "text": content}]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
         out = LaneAnswer("", False, None, sources=list(pre.sources))
         rounds, retried = 0, False
         while True:
@@ -453,9 +473,7 @@ class FastLane:
             if message.stop_reason == "tool_use" and uses and not tools_off:
                 results = []
                 for use in uses:
-                    result = self.registry.call(
-                        use["name"], use["input"], lane=FAST, request=request
-                    )
+                    result = self.call_tool(use["name"], use["input"], request)
                     out.tool_calls.append(use["name"])
                     out.sources.append(result.text)
                     results.append(
@@ -485,12 +503,14 @@ class FastLane:
                 out.text = NOT_CHECKED
                 return out
             retried = True
-            # Text only: a tool_use cut off by max_tokens has no tool_result to follow it.
-            said = [b for b in blocks if b["type"] == "text"]
+            # No tool_use: one cut off by max_tokens has no tool_result to follow it.
+            said = [b for b in blocks if b["type"] != "tool_use"]
+            if not any(b["type"] == "text" for b in said):
+                said.append({"type": "text", "text": "-"})
             messages += [
                 {
                     "role": "assistant",
-                    "content": said or [{"type": "text", "text": "-"}],
+                    "content": said,
                 },
                 {
                     "role": "user",
