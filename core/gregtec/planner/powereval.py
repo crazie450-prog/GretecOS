@@ -37,7 +37,7 @@ import re
 import sqlite3
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -190,13 +190,7 @@ def _numbers_ok(plans: Sequence[dict[str, Any]]) -> tuple[bool, str]:
     return (not bad, "; ".join(bad[:4]) or "net > 0 = gross - chain; cited")
 
 
-def run_case(
-    case: Case,
-    home: Path,
-    *,
-    farms_path: Path | None = None,
-    with_effort: bool = True,
-) -> CaseResult:
+def run_case(case: Case, home: Path) -> CaseResult:
     from gregtec.agents.tools.catalog import build_registry
     from gregtec.agents.tools.registry import DEEP
     from gregtec.cards import validate as card_problems
@@ -207,34 +201,15 @@ def run_case(
     res = CaseResult(case)
     t0 = time.monotonic()
     db = access.db_path(home)
-    writer: dict[str, Callable[[str], str]] = {"w": faithful}
-    reg = build_registry(db, writer=lambda: writer["w"])
+    reg = build_registry(db, writer=lambda: faithful)
     try:
-        if farms_path is not None or not with_effort:
-            # The unit tests' small fixture: its own farms table, effort off for speed.
-            d = powerview.design(
-                home,
-                powerview.request_from_spec({"mode": case.mode, "tier": case.tier}),
-                farms_path=farms_path,
-                with_effort=with_effort,
-            )
-            ids, tool_text = d.ids, ""
-        else:
-            out = reg.call(
-                "design_power", {"mode": case.mode, "tier": case.tier}, lane=DEEP
-            )
-            if out.is_error:
-                raise RuntimeError(out.text)
-            tool_text = out.text
-            ids = [
-                m[1]
-                for m in re.finditer(
-                    r"plan:(pw-[0-9a-f]+)", tool_text.split("\n", 4)[-1]
-                )
-            ]
-            ids = list(dict.fromkeys(ids))
-            ids = powerview.latest(home) or ids
-        plans = powerview.group(home, ids[0])
+        out = reg.call(
+            "design_power", {"mode": case.mode, "tier": case.tier}, lane=DEEP
+        )
+        if out.is_error:
+            raise RuntimeError(out.text)
+        tool_text = out.text
+        plans = powerview.group(home, powerview.latest(home)[0])
         res.plans = plans
         saved = powerview._latest(home)
         res.weights = str(saved.get("weights") or "")
@@ -243,9 +218,8 @@ def run_case(
         n = len(plans)
         res.checks["options"] = (2 <= n <= 3, f"{n} options")
         res.checks["order"] = _order_ok(plans, case.mode)
-        if tool_text:
-            ok = _in_text_order(tool_text, [f"plan:{p['id']}" for p in plans])
-            res.checks["tool order"] = (ok, "design_power's rows in rank order")
+        listed = _in_text_order(tool_text, [f"plan:{p['id']}" for p in plans])
+        res.checks["tool order"] = (listed, "design_power's rows in rank order")
         want = rank.describe_power(rank.BALANCED, case.mode)
         w_ok = res.weights == want and all(
             p["rank"]["weights"] == "balanced"
@@ -254,18 +228,17 @@ def run_case(
         )
         res.checks["weights"] = (w_ok, res.weights or "no weights line")
         res.checks["numbers"] = _numbers_ok(plans)
-        if with_effort:
-            problems = []
-            for p in plans:
-                if "effort" not in p["metrics"]:
-                    problems.append(f"{p['id']}: no effort")
-                    continue
+        problems: list[str] = []
+        for p in plans:
+            if "effort" not in p["metrics"]:
+                problems.append(f"{p['id']}: no effort")
+            else:
                 problems += card_problems(cards.effort_card(p))
-            res.checks["effort"] = (
-                not problems,
-                "; ".join(map(str, problems[:3]))
-                or "breakdown on every option; cards pass the catalog",
-            )
+        res.checks["effort"] = (
+            not problems,
+            "; ".join(problems[:3])
+            or "breakdown on every option; cards pass the catalog",
+        )
         if case.mode == "self_sustaining":
             closed = all(p["closed"]["ok"] and p.get("bootstrap") for p in plans)
             res.checks["closed"] = (closed, "every option proven closed, with its kit")
@@ -280,14 +253,12 @@ def run_case(
             exp_ok,
             f"faithful fake: {good.source}; reordering fake: {bad.source}",
         )
-        if tool_text:
-            out = reg.call("plan_explain", {"id": f"plan:{plans[0]['id']}"}, lane=DEEP)
-            src = re.search(r"^source\t(\S+)", out.text, re.MULTILINE)
-            ok = not out.is_error and src is not None and src[1] == "model"
-            res.checks["plan_explain"] = (
-                ok,
-                f"the deep lane's tool, faithful fake: {src[1] if src else out.text[:80]}",
-            )
+        told = reg.call("plan_explain", {"id": f"plan:{plans[0]['id']}"}, lane=DEEP)
+        src = re.search(r"^source: (\S+)", told.text, re.MULTILINE)
+        res.checks["plan_explain"] = (
+            not told.is_error and src is not None and src[1] == "model",
+            f"the deep lane's tool, faithful fake: {src[1] if src else told.text[:80]}",
+        )
         v = powerview.view(home, plans[0]["id"])
         res.checks["view"] = (
             [o["id"] for o in v["options"]] == [p["id"] for p in plans],
@@ -314,14 +285,11 @@ def run(
     cases: Sequence[Case],
     root: Path,
     out: TextIO | None = None,
-    *,
-    farms_path: Path | None = None,
-    with_effort: bool = True,
 ) -> list[CaseResult]:
     home = scratch_home(src_db, root)
     results = []
     for c in cases:
-        r = run_case(c, home, farms_path=farms_path, with_effort=with_effort)
+        r = run_case(c, home)
         results.append(r)
         if out is not None:
             print(

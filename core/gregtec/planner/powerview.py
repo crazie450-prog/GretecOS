@@ -37,7 +37,7 @@ from typing import Any
 
 from gregtec.base.state import MyBase
 from gregtec.packupdate.plans import PLAN_ID
-from gregtec.planner import designer, distribution, ledger, power, rank
+from gregtec.planner import chains, designer, distribution, ledger, power, rank
 from gregtec.planner.gtmath.tiers import VN, V
 from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
@@ -167,9 +167,11 @@ def design(
     *,
     farms_path: Path | None = None,
     with_effort: bool = True,
+    templates: chains.Templates | None = None,
 ) -> PowerDesigned:
-    """Solve ``req``, save every option as a proposed power plan and remember the design."""
-    extra = {} if farms_path is None else {"farms_path": farms_path}
+    """Solve ``req``, save every option as a proposed power plan and remember the design.
+    ``farms_path`` and ``templates`` default to the repo's curated farms and chain templates."""
+    extra: dict[str, Any] = {} if farms_path is None else {"farms_path": farms_path}
     prefs = power.read_prefs(home / "vault")
     with designer._LOCK, designer._conn(home, readonly=True) as conn:
         try:
@@ -179,6 +181,7 @@ def design(
                 MyBase.from_db(conn),
                 prefs=prefs,
                 with_effort=with_effort,
+                templates=templates,
                 **extra,
             )
         except power.PowerError as exc:

@@ -53,22 +53,22 @@ DESIGN_POWER_SCHEMA: dict[str, Any] = {
             "count, a net EU/t cap or a raw-input budget per hour (with bound)",
         },
         "bound": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "description": "the scale's bound: a count, EU/t or inputs per hour",
+            "type": "string",
+            "description": "the scale's bound, a number above 0: a generator count, a net "
+            "EU/t cap or inputs per hour",
+            "maxLength": 20,
         },
-        "kinds": {
-            "type": "array",
-            "items": {"type": "string", "enum": list(KINDS)},
-            "maxItems": 4,
-            "description": "only these generator kinds",
+        "kind": {
+            "type": "string",
+            "enum": list(KINDS),
+            "description": "only this generator kind",
         },
-        "fuels": {
-            "type": "array",
-            "items": {"type": "string", "minLength": 3, "maxLength": 200},
-            "maxItems": 8,
-            "description": "only these fuels, by key (item_resolve): fluid:<name> or "
+        "fuel": {
+            "type": "string",
+            "description": "only this fuel, by key (item_resolve): fluid:<name> or "
             "registry@meta",
+            "minLength": 3,
+            "maxLength": 200,
         },
         "options": {
             "type": "integer",
@@ -155,7 +155,19 @@ def design_power(call: Call, args: dict[str, Any], offset: int) -> Result:
     from gregtec.planner import power_explain, powerview
 
     home = _home(call)
-    req = _guard(powerview.request_from_spec, args)
+    spec: dict[str, Any] = {
+        k: args[k] for k in ("mode", "tier", "scale", "options") if k in args
+    }
+    if args.get("kind"):
+        spec["kinds"] = [args["kind"]]
+    if args.get("fuel"):
+        spec["fuels"] = [args["fuel"]]
+    if args.get("bound") not in (None, ""):
+        try:
+            spec["bound"] = float(args["bound"])
+        except ValueError:
+            raise ToolError(f"bound {args['bound']!r} is not a number") from None
+    req = _guard(powerview.request_from_spec, spec)
     d = _guard(powerview.design, home, req)
     rows = option_rows(d.plans)
     doc = power_explain.facts(d.plans)

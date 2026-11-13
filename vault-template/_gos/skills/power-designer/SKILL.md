@@ -9,7 +9,7 @@ GOS's power designer (plan 7.2) sizes each generator and the chain that makes it
 
 | Tool | What it does |
 |---|---|
-| `design_power(mode, tier?, scale?, bound?, kinds?, fuels?, options?)` | Solves and saves every option (each a plan, `plan:<id>`). Returns one row per option in rank order: generator, fuel, net EU/t (what the generator gives less what its own fuel chain uses), gross and chain EU/t, output tier and amps, score, EU/t per effort hour, effort hours, upkeep per hour and whether the validator proved it closed. The head has the weights line. |
+| `design_power(mode, tier?, scale?, bound?, kind?, fuel?, options?)` | Solves and saves every option (each a plan, `plan:<id>`). Returns one row per option in rank order: generator, fuel, net EU/t (what the generator gives less what its own fuel chain uses), gross and chain EU/t, output tier and amps, score, EU/t per effort hour, effort hours, upkeep per hour and whether the validator proved it closed. The head has the weights line. |
 | `plan_explain(id)` | The design's explanation, written by the planner model from the metrics only and checked by GOS: every number must be in the plans and the options must keep code's order (else GOS's own template). Returns the text and its `source`. |
 | `effort_estimate(id)` | One option's effort breakdown: per recipe, the part, map, machine, crafts, machines and hours, with build, unlock and not-counted totals. |
 | `ledger_get()` | The EU ledger: per tier, generation and use of every accepted plan, and its warnings (deficit, tier mismatch, amp overload). |
@@ -24,7 +24,7 @@ GOS's power designer (plan 7.2) sizes each generator and the chain that makes it
 | "the most power for the least work", "cheap to build" | `output_per_effort`: net EU/t per effort hour |
 | "no inputs", "runs by itself", "self-sustaining" | `self_sustaining`: nothing from outside the free set (water, air, cobblestone, stone, sunlight) or the line itself, proven by GOS's validator; it comes with a bootstrap kit |
 
-- Give `tier` only when he names one; otherwise My base's tier is used. `kinds` or `fuels` (keys from `item_resolve`) only when he names a generator kind or a fuel.
+- Give `tier` only when he names one; otherwise My base's tier is used. `kind` or `fuel` (a key from `item_resolve`) only when he names a generator kind or a fuel.
 - Unsure which mode he means: ask one short question naming two of them.
 
 ## 2. Explain the ranked options
