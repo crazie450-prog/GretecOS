@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -534,3 +535,90 @@ def status(telemetry: Telemetry, binding: str | None = None) -> list[dict[str, A
 def expected_fertilizer(plan: Plan) -> int:
     """mB of enriched fertilizer the breeder's runs take on average (a failure pays too)."""
     return sum(math.ceil(s.fert_mb * 100 / s.chance_pct) for s in plan.steps)
+
+
+# --- the station's parts, from the recipe DB (V31) -------------------------------------------
+
+# OpenComputers' parts by registry name, and for the shared ``opencomputers:item`` the English
+# name the export gives it (a report only: nothing is keyed on a name or a numeric id).
+OC_PARTS: tuple[tuple[str, str, str | None], ...] = (
+    ("Transposer", "opencomputers:transposer", None),
+    ("Adapter", "opencomputers:adapter", None),
+    ("Computer Case (Tier 1)", "opencomputers:case1", None),
+    ("Screen (Tier 1)", "opencomputers:screen1", None),
+    ("Keyboard", "opencomputers:keyboard", None),
+    ("Cable", "opencomputers:cable", None),
+    ("CPU (Tier 1)", "opencomputers:item", "Central Processing Unit (CPU) (Tier 1)"),
+    ("Memory (Tier 1)", "opencomputers:item", "Memory (Tier 1)"),
+    ("Graphics Card (Tier 1)", "opencomputers:item", "Graphics Card (Tier 1)"),
+    (
+        "Hard Disk Drive (Tier 1)",
+        "opencomputers:item",
+        "Hard Disk Drive (Tier 1) (1MB)",
+    ),
+    ("EEPROM (Lua BIOS)", "opencomputers:eeprom", None),
+)
+MV = 2
+
+
+def parts(conn: sqlite3.Connection, facts: Facts | None = None) -> list[dict[str, Any]]:
+    """Each part the station needs, the newest export run's recipes that make it (``r:``) and
+    whether one is a crafting-table recipe or a GT recipe at MV or below. A part the DB doesn't
+    have is reported as such (the dev harness has no OpenComputers; a full-pack export does),
+    never guessed."""
+    row = conn.execute(
+        "SELECT id FROM export_run ORDER BY created_at DESC, run_key DESC LIMIT 1"
+    ).fetchone()
+    run_id = row[0] if row else None
+    wanted: list[tuple[str, str, int | None, str | None]] = [
+        (label, reg, None, name) for label, reg, name in OC_PARTS
+    ]
+    if facts is not None:
+        for job, label in (
+            ("crop_breeder", "Crop Breeder"),
+            ("seed_generator", "Seed Generator"),
+        ):
+            m = facts.machine(job, MV)
+            if m is not None:
+                wanted.append(
+                    (f"{label} ({m.name})", "gregtech:gt.blockmachines", m.mte_id, None)
+                )
+    out: list[dict[str, Any]] = []
+    for label, reg, meta, name in wanted:
+        sql = "SELECT id FROM item WHERE registry_name = ?"
+        params: list[Any] = [reg]
+        if meta is not None:
+            sql += " AND meta = ?"
+            params.append(meta)
+        if name is not None:
+            sql += " AND name_en = ?"
+            params.append(name)
+        items = [r[0] for r in conn.execute(sql, params)]
+        recipes: list[dict[str, Any]] = []
+        if items and run_id is not None:
+            marks = ",".join("?" * len(items))
+            for ref, source, vt, eut in conn.execute(
+                "SELECT DISTINCT r.ref, r.source, r.voltage_tier, r.eut FROM recipe AS r"
+                " JOIN recipe_output AS o ON o.recipe_id = r.id"
+                f" WHERE o.item_id IN ({marks}) AND r.run_id = ?"
+                " ORDER BY r.voltage_tier, r.ref",
+                (*items, run_id),
+            ):
+                recipes.append(
+                    {"ref": ref, "source": source, "voltage_tier": vt, "eut": eut}
+                )
+        at_mv = any(
+            r["source"] in ("crafting", "nei") or (r["voltage_tier"] or 0) <= MV
+            for r in recipes
+        )
+        out.append(
+            {
+                "part": label,
+                "registry_name": reg,
+                "meta": meta,
+                "in_db": bool(items),
+                "recipes": recipes[:6],
+                "craftable_at_mv": at_mv if items else None,
+            }
+        )
+    return out
