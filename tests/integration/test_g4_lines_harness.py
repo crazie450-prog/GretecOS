@@ -11,17 +11,25 @@ the chain's MILP doesn't count the EU it draws, so it spends the generator's EU 
 imports) are strict xfails: they flip to a failure, to be turned into plain tests, once a fix
 lands.
 
+G3 handed G4 the fuel chains of the power lines (G3 row: every distinct (machine, recipe, tier, OC,
+parallel) within ±2% of NEI). The chain recipes of the lines that design are checked against the
+client harness's NEI dump with G3's check (``test_g3_lines_harness``); OC and parallel are
+``gtmath``'s, equal to GT's own classes (D174).
+
 As the other harness tests, these run only with GOS_REQUIRE_HARNESS_RUN=1 (CI's mod job, after
-the server harness; locally: mod/README.md) and write nothing outside tmp_path.
+both harnesses; locally: mod/README.md) and write nothing outside tmp_path.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sqlite3
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -35,6 +43,24 @@ from gregtec.vault import deploy as vault_deploy
 
 REPO = Path(__file__).resolve().parents[2]
 STEEL = "gregtech:gt.metaitem.01@11305"
+
+
+def _load_g3() -> ModuleType:
+    """G3's NEI check, test_g3_lines_harness.py (pytest imports test files by path)."""
+    name = "_g4_g3_lines_harness"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, Path(__file__).with_name("test_g3_lines_harness.py")
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+g3 = _load_g3()
 
 
 @dataclass(frozen=True)
@@ -125,12 +151,9 @@ def check_option(p: dict[str, Any], ln: Line) -> None:
     assert eff["rows"] or eff["uncounted"]  # a breakdown, or what it couldn't count
 
 
-@pytest.mark.parametrize("name", ["tree_farm", "naquadah"])
-def test_the_line_designs_two_or_three_ranked_options(
-    conn: sqlite3.Connection, name: str
-) -> None:
-    d = design(conn, name)
-    ln = LINES[name]
+def check_line(d: power.PowerDesign, ln: Line) -> None:
+    """D255 (3)'s pass rule: 2-3 ranked options, each with net EU/t above 0 and a chain under
+    99.9% of the generator's output, and each holding ``check_option``."""
     assert 2 <= len(d.options) <= 3, (d.notes, d.rejected)
     assert d.weights.startswith(f"mode {ln.mode}")
     assert [p["rank"]["position"] for p in d.options] == list(
@@ -140,6 +163,13 @@ def test_the_line_designs_two_or_three_ranked_options(
         check_option(p, ln)
         assert p["power"]["net_eut"] > 0
         assert p["power"]["chain_eut"] < p["power"]["gross_eut"] * 0.999
+
+
+@pytest.mark.parametrize("name", ["tree_farm", "naquadah"])
+def test_the_line_designs_two_or_three_ranked_options(
+    conn: sqlite3.Connection, name: str
+) -> None:
+    check_line(design(conn, name), LINES[name])
 
 
 def test_the_tree_farm_line_is_proven_closed_with_its_kit(
@@ -171,11 +201,36 @@ def test_the_naquadah_line_burns_gts_naquadah_reactors(
 def test_the_chain_leaves_the_generator_some_output(
     conn: sqlite3.Connection, name: str
 ) -> None:
-    d = design(conn, name)
-    assert d.options, d.rejected
-    for p in d.options:
-        check_option(p, LINES[name])
-        assert p["power"]["chain_eut"] < p["power"]["gross_eut"] * 0.999
+    check_line(design(conn, name), LINES[name])
+
+
+def chain_recipes(p: dict[str, Any]) -> set[str]:
+    """The option's chain recipes: its recipe nodes and its farm's own GT recipe."""
+    out = {n["recipe"] for n in p["nodes"] if n["kind"] == "recipe"}
+    out |= {
+        n["recipe"].removeprefix("farm:") for n in p["nodes"] if n["kind"] == "farm"
+    }
+    return out
+
+
+@pytest.fixture(scope="module")
+def client(home: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return g3._home(tmp_path_factory.mktemp("g4-client"), "client")
+
+
+@pytest.mark.parametrize("name", ["tree_farm", "naquadah"])
+def test_the_g3_hand_off_chain_recipes_match_nei(
+    conn: sqlite3.Connection, client: Path, name: str
+) -> None:
+    refs = set().union(*(chain_recipes(p) for p in design(conn, name).options))
+    assert refs and all(r.startswith("r:") for r in refs)
+    c, run_dir, run_id = g3.golden._open(client)
+    try:
+        verdicts = g3.check_recipes(c, run_dir, run_id, refs)
+    finally:
+        c.close()
+    bad = [v for v in verdicts.values() if not v.ok]
+    assert not bad, g3.golden.report(bad)
 
 
 def test_accepted_lines_reach_the_ledger_and_the_distribution_checks(
