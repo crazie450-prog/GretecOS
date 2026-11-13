@@ -28,7 +28,9 @@ which the core pushes to the dashboards.
 The WebSocket brings ``deep.task`` pushes: a task this client handed off (by its id, or by its
 request text, which the deep lane keeps verbatim, D152, made while the ask was on its way) is
 spoken when it is done (its first sentence, the deep lane's spoken result), when it waits at its
-spending cap, and when it fails. When the core's WebSocket has been down for 15 s, the client
+spending cap, and when it fails. It also brings ``alert`` pushes (WO-7.5): a telemetry alert
+that fired is said once, its ``say`` line (the core's fixed template; quiet hours are WO-9.2's).
+When the core's WebSocket has been down for 15 s, the client
 says "Core offline." once per outage (plan 4.2); a supervisor restart (about 2 s, D115) stays
 quiet. An ask that gets no answer says it at once while the WebSocket is down too (the outage's
 one), else "The core couldn't answer that." A token the core refuses is said as that, not as an
@@ -84,6 +86,9 @@ DEEP_CAP = (
     "The deep-lane task stopped at its spending cap. Approve it on the dashboard."
 )
 DEEP_FAILED = "The deep-lane task failed. The dashboard has the error."
+ALERT_SAY_MAX = (
+    300  # a telemetry alert's line (WO-7.5): the core's template, cut to this
+)
 OFFLINE_SAY_S = 15.0  # the core unreachable this long: say so, once per outage
 ASK_TIMEOUT_S = 60.0  # the fast lane gives up well within this (D152: 15 s, 1 retry)
 PREWARM_TIMEOUT_S = 30.0
@@ -715,6 +720,12 @@ class VoiceClient:
     # --- the core's pushes and reachability
 
     def _pushed(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "alert" and isinstance(message.get("data"), dict):
+            # A telemetry alert that just fired (WO-7.5): its fixed-template line, once.
+            alert = message["data"]
+            if alert.get("event") == "fired" and isinstance(alert.get("say"), str):
+                self.say(alert["say"][:ALERT_SAY_MAX])
+            return
         if message.get("type") != "deep.task" or not isinstance(
             message.get("data"), dict
         ):

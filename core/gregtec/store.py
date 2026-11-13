@@ -1,6 +1,7 @@
 """The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D),
 ``client_token`` (D117), ``answer`` (the dashboard's Chat: the newest 50 answers, D159), the
-OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), and My
+OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), the
+telemetry alerts' ``alert`` (Appendix D; WO-7.5, D281: a row per fired alert), and My
 base's ``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable
 item/fluid keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes
 them), ``my_base_machine_at``, where the placement events and the census put each machine they
@@ -44,6 +45,8 @@ CREATE INDEX IF NOT EXISTS ix_tel ON tel_sample(src, key, ts);
 CREATE TABLE IF NOT EXISTS action(id INTEGER PRIMARY KEY, created INT, kind TEXT, args TEXT,
   state TEXT CHECK(state IN ('proposed','confirmed','sent','done','failed','cancelled','expired')),
   confirmed_via TEXT, confirmed_ts INT, result TEXT);
+CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, level TEXT, msg TEXT,
+  ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS my_base_machine(mte_id INT NOT NULL,
   source TEXT NOT NULL CHECK(source IN ('manual','event','census')),
   count INT NOT NULL CHECK(count >= 0), upd INT NOT NULL, PRIMARY KEY(mte_id, source));
