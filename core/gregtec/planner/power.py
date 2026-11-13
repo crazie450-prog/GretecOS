@@ -862,6 +862,7 @@ def network(
         free_out=frozenset(set(chain.net.free_out) | {EU_KEY, UNIT}),
         choices=chain.net.choices,
         banned=frozenset(banned),
+        eu_value=((gen.fuel, gen.eu_per_fuel),),
     )
 
 
@@ -1025,13 +1026,15 @@ def build_plan(
         extra.append(node)
     nodes.extend(extra)
     p["edges"] = plan._edges(opt.net, flow, node_of)
-    rate = {k: v for k, v in flow.exports}
     gross = gen.eut * opt.units
     chain_eut = math.fsum(float(n.get("eut_avg") or 0.0) for n in nodes)
-    net_eut = rate.get(EU_KEY, 0.0) / 20
+    # Net = gross - the chain's own use, from the nodes (D243). The EU the solver exports is
+    # the same within HiGHS's row tolerance (1e-6 of the generator's EU per craft), which the
+    # EU stage (D323) no longer leaves unused.
+    net_eut = gross - chain_eut
     tier = gen.tier
     p.update(
-        id=_option_id(req, run_key, gen, flow),
+        id=_option_id(req, run_key, gen, flow, opt.chain.request.pins),
         kind=KIND,
         target={"id": EU_KEY, "eut": plan._num(net_eut)},
         tier_cap=p["tier_cap"],
@@ -1068,8 +1071,20 @@ def build_plan(
     return p
 
 
-def _option_id(req: PowerRequest, run_key: str, gen: Gen, flow: solve.Flow) -> str:
-    text = json.dumps([req.digest(), run_key, gen.id, list(flow.choice)])
+def _option_id(
+    req: PowerRequest,
+    run_key: str,
+    gen: Gen,
+    flow: solve.Flow,
+    pins: Sequence[Pin] = (),
+) -> str:
+    """``pw-`` + 10 hex of the request, run, generator, the route's choices and, for a chain
+    pinned to another recipe for the fuel, its pin (WO-4.7: two pinned chains with no choice
+    of their own got one id, and only the last solved was kept)."""
+    parts: list[Any] = [req.digest(), run_key, gen.id, list(flow.choice)]
+    if pins:
+        parts.append([[pn.node, pn.recipe] for pn in pins])
+    text = json.dumps(parts)
     return "pw-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
 
 

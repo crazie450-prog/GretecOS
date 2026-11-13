@@ -16,6 +16,7 @@ import argparse
 import importlib.util
 import io
 import json
+import math
 import shutil
 import sqlite3
 import sys
@@ -215,11 +216,13 @@ def test_best_returns_ranked_options_with_printed_weights(
         gen = next(n for n in p["nodes"] if n["kind"] == "generator")
         assert gen["machine"]["mte"] == GENERATOR and gen["count"] == 1
         assert "bootstrap" not in p
-    # Options differ in the generator, the fuel or a primary choice of the chain.
+    # Options differ in the generator, the fuel, a primary choice of the chain or the recipe
+    # the fuel's chain is pinned to (WO-4.7: each pinned chain is its own option).
     keys = {
         (
             p["power"]["generator"]["id"],
             tuple(c["recipe"] for c in p["route"]["choices"]),
+            tuple(pn["recipe"] for pn in p["pins"]),
         )
         for p in d.options
     }
@@ -244,7 +247,19 @@ def test_max_output_within_the_scale_bound(
     capped = design(
         conn, no_farms, mode="max_output", scale="eut_cap", bound=nets[0] * 1.5
     )
-    assert all(p["power"]["units"] == 1 for p in capped.options)
+    for p in capped.options:  # as many units as fit under the cap, at least one
+        pw = p["power"]
+        assert (
+            1
+            <= pw["units"]
+            == math.floor(nets[0] * 1.5 / (pw["net_eut"] / pw["units"]))
+        )
+        assert pw["net_eut"] <= nets[0] * 1.5
+    # The line with the most net per unit fits once; a smaller one may fit twice and rank first.
+    assert any(
+        p["power"]["units"] == 1 and p["power"]["net_eut"] == pytest.approx(nets[0])
+        for p in capped.options
+    )
     tiny = design(conn, no_farms, mode="max_output", scale="eut_cap", bound=0.001)
     assert tiny.options == () and any("over the cap" in w for _, w in tiny.rejected)
 
@@ -267,12 +282,15 @@ def test_self_sustaining_closes_on_water_and_proves_it(
     for p in d.options:
         proof = p["closed"]
         assert proof["ok"] and proof["imports"] == []
-        assert [b["id"] for b in p["boundary"]["in"]] == [WATER]
+        assert {b["id"] for b in p["boundary"]["in"]} <= {WATER}
         assert proof["net_eut"] > 0
         kit = p["bootstrap"]
         assert kit["starter_fuel"][0]["id"] == GAS and kit["starter_fuel"][0]["qty"] > 0
-        # The test gas comes from its loop on water: the chain's recipes run.
+        # The chain's recipes run.
         assert any(n["recipe"].startswith("r:") for n in p["nodes"])
+    # One option is the test gas from its loop on water (the other, since WO-4.7 shows each
+    # pinned chain, the gas from logs the DB's tree farm grows: it takes nothing at all).
+    assert any(WATER in {b["id"] for b in p["boundary"]["in"]} for p in d.options)
 
 
 def test_self_sustaining_with_a_farm(

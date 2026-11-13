@@ -55,7 +55,7 @@ import sys
 import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
@@ -67,6 +67,9 @@ FLOOR = 1e-3  # x the smallest running rate (stage 4)
 FLOOR_MIN = 1e-6  # a floor in row units (target 1/s) that HiGHS doesn't round to 0
 TIEBREAK = 1e-6  # raw-input weight in stage 2
 REL_TOL = 1e-7  # an optimum kept as a row may be this much worse (continuous stages)
+# The EU stage's optimum, kept: its row mixes EU/s with priced imports, and a solution
+# within HiGHS's bound tolerance may sit this much above it (D323)
+EU_REL_TOL = 1e-6
 ABS_TOL = 1e-9
 RUNNING = 1e-7  # crafts/s at a target rate of 1/s: above this a recipe runs (below: solver noise)
 TIME_LIMIT_S = 60.0
@@ -115,6 +118,15 @@ class Network:
     banned: frozenset[str] = (
         frozenset()
     )  # items never imported (a power line's own EU, D233)
+    # EU per unit an import of each item stands for: a power line's fuel at its generator's
+    # EU per unit (WO-4.7, D323). Only used when EU is banned (the EU stage, below).
+    eu_value: tuple[tuple[str, float], ...] = ()
+
+    @property
+    def costs_eu(self) -> bool:
+        """EU can't be imported, so what the network draws is spent from its own output: the
+        EU stage runs after the gate count (a power line, WO-4.7, D323)."""
+        return EU_KEY in self.banned
 
     def proc(self, pid: str) -> Proc:
         return next(p for p in self.procs if p.id == pid)
@@ -137,6 +149,9 @@ class Flow:
     objectives: tuple[int, float, float]
     big_m: float
     warnings: tuple[str, ...] = ()
+    # The EU stage's optimum (EU/s drawn plus the EU value of the priced imports), real
+    # units; None when the network doesn't cost EU (a production line).
+    eu: float | None = None
 
     def rate(self, pid: str) -> float:
         return dict(self.crafts).get(pid, 0.0)
@@ -267,6 +282,22 @@ def _build(
     return m
 
 
+def _eu_objective(m: _Model) -> dict[int, float]:
+    """The EU stage (power networks, D323): EU/s the recipes draw (normalised target) plus
+    each priced import at its EU per unit. Minimised after the gate count, before the gated
+    quantity, so the chain spends EU only where that saves more than it costs."""
+    out: dict[int, float] = {}
+    for p in m.procs:
+        a = sum(v for k, v in p.inputs if k == EU_KEY)
+        if a > 0:
+            out[m.x[p.id]] = a / m.cr[p.id]
+    for k, price in m.net.eu_value:
+        if k in m.imp and price > 0:
+            i = m.imp[k]
+            out[i] = out.get(i, 0.0) + price * m.c[k]
+    return out
+
+
 def _objectives(m: _Model) -> list[dict[int, float]]:
     gates = dict.fromkeys(m.gate.values(), 1.0)
     quantity: dict[int, float] = {}
@@ -358,9 +389,33 @@ def _value(obj: dict[int, float], x: np.ndarray) -> float:
     return float(sum(v * x[k] for k, v in obj.items()))
 
 
-def _keep(obj: dict[int, float], best: float) -> tuple[dict[int, float], float, float]:
+def _keep(
+    obj: dict[int, float], best: float, rel: float = REL_TOL
+) -> tuple[dict[int, float], float, float]:
     """``obj`` kept at its optimum ``best`` (a row of the next stage)."""
-    return obj, -math.inf, best + max(ABS_TOL, REL_TOL * abs(best))
+    return obj, -math.inf, best + max(ABS_TOL, rel * abs(best))
+
+
+def _normalised(obj: dict[int, float]) -> tuple[dict[int, float], float]:
+    """``obj`` divided by its largest coefficient (the same optimum, a better-conditioned
+    row when it is kept), and that coefficient."""
+    top = max((abs(v) for v in obj.values()), default=0.0) or 1.0
+    return {k: v / top for k, v in obj.items()}, top
+
+
+def _close_gates(m: _Model, x: np.ndarray) -> list[tuple[int, float, float]]:
+    """Fix each gate as its binary is in ``x``, a closed gate's crossings bounded at 0 (no
+    leak through ``M g``); returns the old bounds, to undo."""
+    old: list[tuple[int, float, float]] = []
+    for k, g in m.gate.items():
+        on = x[g] > 0.5
+        old.append((g, m.lb[g], m.ub[g]))
+        m.lb[g] = m.ub[g] = 1.0 if on else 0.0
+        if not on:
+            for v in m.gated[k]:
+                old.append((v, m.lb[v], m.ub[v]))
+                m.ub[v] = 0.0
+    return old
 
 
 def _open_gates(m: _Model, x: np.ndarray) -> dict[str, float]:
@@ -373,16 +428,29 @@ def _open_gates(m: _Model, x: np.ndarray) -> dict[str, float]:
     }
 
 
+Objectives = tuple[float, float, float, float | None]  # gates, quantity, machines, EU
+
+
 def _lexicographic(
     m: _Model, strict: bool = True
-) -> tuple[np.ndarray, tuple[float, float, float]] | None:
+) -> tuple[np.ndarray, Objectives] | None:
     """Stages 1-3; None when a stage finds no solution (``strict`` False: the last stage that
     found one). Stage 2 keeps stage 1's gate count; stage 3 keeps stage 2's gates (fixed, so
-    nothing leaks) and its gated quantity."""
+    nothing leaks) and its gated quantity. A network that costs EU (a power line, D323) runs
+    the EU stage first in stage 2's place: the gates are fixed from its optimum, and the
+    gated quantity and the machines keep it."""
     gates, quantity, machines = _objectives(m)
+    eu = _eu_objective(m) if m.net.costs_eu else None
+    eu_n = _normalised(eu)[0] if eu is not None else None
+    first = quantity if eu_n is None else eu_n
 
-    def result(x: np.ndarray) -> tuple[np.ndarray, tuple[float, float, float]]:
-        return x, (_value(gates, x), _value(quantity, x), _value(machines, x))
+    def result(x: np.ndarray) -> tuple[np.ndarray, Objectives]:
+        return x, (
+            _value(gates, x),
+            _value(quantity, x),
+            _value(machines, x),
+            None if eu is None else _value(eu, x),
+        )
 
     x = _solve(m, gates, [])
     if x is None:
@@ -392,18 +460,41 @@ def _lexicographic(
     n1 = sum(_open_gates(m, x).values())
     x2 = None
     for n in range(int(n1), len(m.gate) + 1):
-        x2 = _solve(m, quantity, [(gates, -math.inf, n + 0.5)])
+        x2 = _solve(m, first, [(gates, -math.inf, n + 0.5)])
         if x2 is not None:
             break
     if x2 is None:
         return None if strict else result(x)
-    for k, value in _open_gates(m, x2).items():
-        m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
-    x2b = _solve(m, quantity, [])
+    kept: list[tuple[dict[int, float], float, float]] = []
+    if eu_n is not None:
+        # Nothing in the EU stage penalises a leak through a closed gate, so its gates are
+        # closed by bounds (the crossing at 0), as the binaries say; if that has no solution,
+        # as the other stages fix them (a crossing at all is an open gate).
+        old = _close_gates(m, x2)
+        x2e = _solve(m, eu_n, [])
+        if x2e is None:
+            for v, lo, hi in old:
+                m.lb[v], m.ub[v] = lo, hi
+            for k, value in _open_gates(m, x2).items():
+                m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
+            x2e = _solve(m, eu_n, [])
+        if x2e is None:
+            return None if strict else result(x2)
+        kept.append(_keep(eu_n, _value(eu_n, x2e), EU_REL_TOL))
+        x2 = x2e
+    else:
+        for k, value in _open_gates(m, x2).items():
+            m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
+    x2b = _solve(m, quantity, kept)
     if x2b is None:
         return None if strict else result(x2)
     q = _value(quantity, x2b)
-    x3 = _solve(m, machines, [_keep(quantity, q)])
+    x3 = _solve(m, machines, [*kept, _keep(quantity, q)])
+    if x3 is None and kept:
+        # HiGHS can call the two kept optima together infeasible within its tolerances
+        # (a gated quantity of about 1e-6, the raw-input tiebreak): the EU optimum is kept,
+        # the gated quantity (a tiebreak after it) is not.
+        x3 = _solve(m, machines, kept)
     if x3 is None:
         return None if strict else result(x2b)
     return result(x3)
@@ -415,7 +506,7 @@ def _run(
     floors: Mapping[str, float] | None = None,
     cuts: Sequence[Mapping[str, str]] = (),
     strict: bool = True,
-) -> tuple[_Model, np.ndarray, tuple[float, float, float]] | None:
+) -> tuple[_Model, np.ndarray, Objectives] | None:
     for big_m in BIG_M:
         m = _build(net, procs, big_m, floors or {}, cuts)
         out = _lexicographic(m, strict)
@@ -496,7 +587,7 @@ def _choice(m: _Model, x: np.ndarray) -> dict[str, str]:
 def _flow(
     m: _Model,
     x: np.ndarray,
-    objectives: tuple[float, float, float],
+    objectives: Objectives,
     choice: Mapping[str, str],
     floor: float | None,
     warnings: Sequence[str],
@@ -529,6 +620,7 @@ def _flow(
         objectives=(round(objectives[0]), objectives[1] * s, objectives[2] * s),
         big_m=m.big_m,
         warnings=tuple(warnings),
+        eu=None if objectives[3] is None else objectives[3] * s,
     )
 
 
@@ -546,15 +638,7 @@ def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
     procs = active(net, pick)
     if not procs:
         raise SolveError("no recipe makes the target")
-    fixed = Network(
-        procs=tuple(procs),
-        targets=net.targets,
-        fixed=net.fixed,
-        free_in=net.free_in,
-        free_out=net.free_out,
-        prune=False,
-        banned=net.banned,
-    )
+    fixed = replace(net, procs=tuple(procs), choices=(), pinned=(), prune=False)
     first = _run(fixed, procs)
     if first is None:
         raise SolveError(
@@ -565,6 +649,16 @@ def solve_route(net: Network, choice: Mapping[str, str] | None = None) -> Flow:
     flow = _flow(m, x, objs, pick, None, ())
     if flow.all_run:
         return flow
+    if net.costs_eu:
+        # A power line (D323): a recipe idle at the optimum is one whose product the line
+        # imports for less EU (or fewer gates) than it would spend making it. The replay
+        # would run it at a floor, drawing EU for nothing, and on a cycle (rod -> long rod ->
+        # rod) as a zero-sum loop (G4 finding 5): it is left out of the line instead.
+        return replace(
+            flow,
+            crafts=tuple((pid, v) for pid, v in flow.crafts if v > 0),
+            all_run=True,
+        )
     running = [
         float(x[m.x[p.id]]) / m.cr[p.id] for p in procs if x[m.x[p.id]] >= RUNNING
     ]
@@ -607,18 +701,11 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
     their choices, are returned in that order: a fixed order, not a ranking (WO-3.5 ranks)."""
     pins = dict(net.pinned)
     open_choices = [(k, rs) for k, rs in net.choices if k not in pins and len(rs) > 1]
-    narrowed = Network(
-        procs=net.procs,
-        targets=net.targets,
-        fixed=net.fixed,
-        free_in=net.free_in,
-        free_out=net.free_out,
-        prune=net.prune,
+    narrowed = replace(
+        net,
         choices=tuple(
             (k, (pins[k],)) if k in pins else (k, rs) for k, rs in net.choices
         ),
-        pinned=net.pinned,
-        banned=net.banned,
     )
     if not open_choices:
         return [solve_route(narrowed)]
@@ -663,7 +750,7 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
         f.all_run for f in out
     ):  # a route that leaves machines idle is refused (step 4)
         out = [f for f in out if f.all_run]
-    out.sort(key=lambda f: (len(f.gates), f.objectives[1:], f.choice))
+    out.sort(key=lambda f: (len(f.gates), f.eu or 0.0, f.objectives[1:], f.choice))
     return out[:n]
 
 
@@ -675,15 +762,7 @@ def exact_counts(
     recipe without a machine (``crafts_per_s`` 0 or missing) gets none."""
     route = {pid for pid, _ in flow.crafts}
     procs = [p for p in net.procs if p.id in route]
-    fixed = Network(
-        procs=tuple(procs),
-        targets=net.targets,
-        fixed=net.fixed,
-        free_in=net.free_in,
-        free_out=net.free_out,
-        prune=False,
-        banned=net.banned,
-    )
+    fixed = replace(net, procs=tuple(procs), choices=(), pinned=(), prune=False)
     scale = max((r for _, r in net.targets), default=1.0)
     floor = flow.floor / scale if flow.floor else 0.0
     for big_m in BIG_M:
@@ -694,6 +773,8 @@ def exact_counts(
         for k, g in m.gate.items():
             m.lb[g] = m.ub[g] = 1.0 if k in flow.gates else 0.0
         extra = [_keep(quantity, flow.objectives[1] / m.scale)]
+        if flow.eu is not None and m.net.costs_eu:
+            extra.append(_keep(_eu_objective(m), flow.eu / m.scale, EU_REL_TOL))
         counts: dict[str, int] = {}
         for p in procs:
             cps = crafts_per_s.get(p.id, 0.0)
