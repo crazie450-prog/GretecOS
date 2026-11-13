@@ -2,7 +2,7 @@
 
 GOS keeps a **personal** cache of the GTNH wiki in `%GOS_HOME%\data\gos.sqlite` so the deep lane's researcher can read and cite it (`w:<Page>@<revid>`). Nothing is cached until you have seen and recorded the wiki's licence. The cache is never committed, bundled or shared.
 
-How GOS talks to the wiki (all in code, `gregtec.wiki.api`): one request at a time, 1 s apart, `maxlag=5`, a descriptive User-Agent (`GregtecOS-wiki-cache/0.1 (...; +https://github.com/crazie450-prog/GretecOS)`, no name or e-mail), gzip, at most 50 titles a request, read-only `action=query` GETs, back-off on lag, 429 and 5xx. If the wiki puts an anti-bot gate in the way (a 403, a challenge or login page), GOS **stops** and records it; it never tries another way in.
+How GOS talks to the wiki (all in code, `gregtec.wiki.api`): one request at a time across every GOS process (the core and any `gos wiki` command share `data\wiki.lock`), 1 s apart, `maxlag=5`, a descriptive User-Agent (`GregtecOS-wiki-cache/0.1 (...; +https://github.com/crazie450-prog/GretecOS)`, no name or e-mail), gzip, at most 50 titles a request, read-only `action=query` GETs, back-off on lag, 429 and 5xx. If the wiki puts an anti-bot gate in the way (a 403, a challenge or login page), GOS **stops** and records it; it never tries another way in.
 
 ## A. Licence check (V14) — Clayton's PC
 
@@ -36,7 +36,7 @@ gos wiki show "Electric Blast Furnace"   # its w: id, the attribution line, the 
 
 ## C. Daily refresh
 
-Nothing to do: idle maintenance (game closed, 30 idle minutes, once a day) runs the `wiki` job, which asks the wiki for the pages changed since the last refresh. `gos vault maintain --job wiki` runs it now; `gos wiki refresh` does the same without the other jobs. The job is skipped with no licence, before the crawl ends, or after a gate (the health strip's maintenance line shows why).
+Nothing to do: idle maintenance (game closed, 30 idle minutes, once a day) runs the `wiki` job, which asks the wiki for the pages changed since the last refresh. `gos vault maintain --job wiki` runs it now; `gos wiki refresh` does the same without the other jobs. Running these (or a crawl) while the core is up is fine: requests still go one at a time, and a researcher's fetch meanwhile may say the wiki is busy and to try again in a minute. The job is skipped with no licence, before the crawl ends, or after a gate (the health strip's maintenance line shows why).
 
 ## D. In use
 
