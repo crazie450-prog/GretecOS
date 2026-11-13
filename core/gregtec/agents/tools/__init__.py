@@ -46,8 +46,8 @@ with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_s
 WO-1.9; crop_status with WO-7.6; plan_*, design_production, effort_estimate and
 layout_estimate with Phase 3; design_power with WO-4.2; ledger_* with
 WO-4.4; speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
-session_summary with WO-6.3; screen_snapshot with
-WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
+session_summary with WO-6.3; screen_snapshot never (WO-8.2, D288: frames come only from
+the screen key); wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
 with Phase 10.
 """
 
