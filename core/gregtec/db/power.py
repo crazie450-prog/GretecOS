@@ -3,12 +3,14 @@
 From a run's ``gt_power.json`` (:mod:`gregtec.ingest.power`): ``rotor_size``,
 ``rotor_material``, ``rotor_gt``, ``generator``, ``generator_gt`` and ``fuel_container``. From the
 run's recipes, after they are written: ``fuel``, one row per fuel of GT's fuel maps, decoded by
-its map's rule (:mod:`gregtec.planner.fuels`). Like recipes, every table holds one set per export
-run, and pruning a run deletes its rows.
+its map's rule (:mod:`gregtec.planner.fuels`). From its ``storage`` (WO-4.5, D240): ``cable``,
+``battery``, ``battery_buffer``, ``transformer`` and ``lsc_cell``. Like recipes, every table holds
+one set per export run, and pruning a run deletes its rows.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Sequence
 
@@ -23,6 +25,11 @@ TABLES = (
     "generator_gt",
     "fuel_container",
     "fuel",
+    "cable",
+    "battery",
+    "battery_buffer",
+    "transformer",
+    "lsc_cell",
 )
 
 
@@ -126,6 +133,75 @@ def _write_power(
         [
             (run_id, c.registry_name, c.meta, c.nbt_hash, c.fluid, c.mb)
             for c in data.containers
+        ],
+    )
+    if data.storage is not None:
+        _write_storage(conn, run_id, data.storage)
+
+
+def _write_storage(
+    conn: sqlite3.Connection, run_id: int, data: power_ingest.Storage
+) -> None:
+    conn.executemany(
+        "INSERT INTO cable VALUES (?,?,?,?,?)",
+        [(run_id, c.mte_id, c.voltage, c.amperage, c.loss) for c in data.cables],
+    )
+    conn.executemany(
+        "INSERT OR REPLACE INTO battery VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                run_id,
+                b.registry_name,
+                b.meta,
+                b.nbt_hash,
+                json.dumps(list(b.ores)),
+                b.tier,
+                b.max_charge,
+                b.transfer_limit,
+                int(b.rechargeable),
+            )
+            for b in data.batteries
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO battery_buffer VALUES (?,?,?,?,?,?,?,?)",
+        [
+            (
+                run_id,
+                b.mte_id,
+                b.class_name,
+                b.tier,
+                b.slots,
+                b.eu_in,
+                b.eu_out,
+                b.eu_store,
+            )
+            for b in data.buffers
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO transformer VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                run_id,
+                t.mte_id,
+                t.class_name,
+                t.tier,
+                name,
+                m.eu_in,
+                m.amps_in,
+                m.eu_out,
+                m.amps_out,
+            )
+            for t in data.transformers
+            for name, m in (("down", t.down), ("up", t.up))
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO lsc_cell VALUES (?,?,?,?,?,?)",
+        [
+            (run_id, c.name, c.registry_name, c.meta, c.glass_tier, str(c.capacity))
+            for c in data.lsc
         ],
     )
 

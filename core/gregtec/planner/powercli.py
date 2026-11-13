@@ -16,8 +16,11 @@
   each line's generator, fuel chain, net EU/t, its effort breakdown table (WO-4.3: per part
   and recipe map, the crafts, machines and hours), the validator's verdict and, for
   ``self_sustaining``, its bootstrap kit. ``--json`` prints the plans as canonical JSON lines.
+  ``--accept N`` (WO-4.4): Clayton accepts option N: its JSON and ``plan`` row are saved, its
+  line note written and its net EU/t joins the EU ledger as a source (``base/power.md``).
 
-Read-only on ``GOS_HOME/data/gos.sqlite``; every number comes from the DB and ``gtmath``.
+Read-only on ``GOS_HOME/data/gos.sqlite`` except ``--accept``; every number comes from the DB and
+``gtmath``.
 """
 
 from __future__ import annotations
@@ -111,6 +114,14 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     d.add_argument("--options", type=int, default=3)
     d.add_argument("--no-effort", action="store_true", help="skip the effort model")
     d.add_argument("--json", action="store_true", help="the plans as JSON lines")
+    d.add_argument(
+        "--accept",
+        type=int,
+        default=None,
+        metavar="N",
+        help="accept option N (1-3, as ranked): its JSON, plan row, line note and its source "
+        "in the EU ledger (WO-4.4)",
+    )
 
 
 def _tier(text: str) -> int:
@@ -151,7 +162,7 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         if args.power_cmd == "generators":
             return show_generators(conn, out)
         if args.power_cmd == "design":
-            return show_design(conn, args, out, cfg.gos_home / "vault")
+            return show_design(conn, args, out, cfg.gos_home)
         return show_turbine(conn, args, out)
     finally:
         conn.close()
@@ -246,8 +257,12 @@ def show_turbine(
 
 
 def show_design(
-    conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO, vault: Path
+    conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO, home: Path
 ) -> int:
+    vault = home / "vault"
+    if args.json and getattr(args, "accept", None) is not None:
+        print("--accept prints what it did: leave out --json", file=out)
+        return 2
     try:
         req = power.PowerRequest(
             mode=args.mode,
@@ -319,4 +334,23 @@ def show_design(
             ]
             print("   bootstrap kit: " + "; ".join(items), file=out)
     print(f"({d.pool} lines ranked; {len(d.rejected)} candidates rejected)", file=out)
+    if getattr(args, "accept", None) is not None:
+        return accept_option(home, d, args.accept, out)
+    return 0
+
+
+def accept_option(home: Path, d: power.PowerDesign, n: int, out: TextIO) -> int:
+    """``--accept N``: Clayton accepts option N of this design (WO-4.4, D238)."""
+    from gregtec.planner import designer, plancli
+
+    if not 1 <= n <= len(d.options):
+        print(f"--accept {n}: there are {len(d.options)} options", file=out)
+        return 2
+    try:
+        done = designer.accept_power(home, d.options[n - 1])
+    except designer.DesignerError as exc:
+        print(f"refused: {exc}", file=out)
+        return 2
+    print(f"{done.id}: accepted; line note {done.line or '-'}", file=out)
+    plancli.print_moved(done, out)
     return 0
