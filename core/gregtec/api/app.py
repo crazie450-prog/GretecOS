@@ -28,6 +28,7 @@
 | GET  /api/quests?spoil=        | see ``quests.view``     | the Quests view's payload (WO-6.4)    |
 | GET/POST /api/ores...          | see ``ores.view``       | the Ores view, a vein's waypoint (WO-6.6)|
 | GET/POST/DELETE /api/crops... | see ``crops.view``      | the Crops view, his crops, the target (WO-6.7)|
+| POST /api/screen               | admin, the voice client | one frame, read (``screen.routes``, WO-8.2)|
 | WS   /ws                       | admin, client, device   | pushes ``health``, ``pair.pending``, ``deep.task``|
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
@@ -109,6 +110,8 @@ from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
 from gregtec.quests import view as quest_view
+from gregtec.screen import routes as screen_routes
+from gregtec.screen.reader import ScreenReader
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
 from gregtec.vault.scheduler import STOP_DEADLINE_S, TICK_S, Maintenance
@@ -202,6 +205,7 @@ class Core:
     oc: Bridge | None = None
     ops: Ops | None = None  # telemetry tables and the action desk (WO-7.1)
     gamelink: GameLink | None = None  # GregtecLink's client link (WO-8.1)
+    screen: ScreenReader | None = None  # screen reading (WO-8.2)
 
     # --- pushing to WebSocket clients
 
@@ -789,6 +793,7 @@ def create_app(core: Core) -> FastAPI:
     crop_view.add_routes(app, core, principal, trusted, _json_body)
     setup_routes.add_routes(app, core, principal, trusted, _json_body)
     gamelink.add_routes(app, core, principal)
+    screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     return app
 
 
@@ -892,6 +897,8 @@ async def _watch(core: Core) -> None:
             health = await asyncio.to_thread(core.health)
             if core.gamelink is not None:  # failures as in-game notices (D76, WO-8.1)
                 core.gamelink.health_changed(health)
+            if core.screen is not None:  # frames older than 24 h go (plan 7.7, WO-8.2)
+                await asyncio.to_thread(core.screen.cache.tick)
             signature = _health_signature(health)
             if signature != last_signature or now - last_push >= HEARTBEAT_S:
                 core.broadcast({"type": "health", "data": health})

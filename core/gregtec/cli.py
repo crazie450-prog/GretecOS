@@ -44,6 +44,7 @@ from gregtec.llm import keys
 from gregtec.packupdate import cli as pack_cli
 from gregtec.planner import graphcli, plancli, powercli
 from gregtec.quests import cli as quest_cli
+from gregtec.screen import eval_cli as screen_eval_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 
@@ -482,6 +483,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     recipe_eval_cli.add_parsers(eval_cmds)
     design_cost_cli.add_parsers(eval_cmds)
+    screen_eval_cli.add_parsers(eval_cmds)
     quest_cli.add_parsers(quest_cmds, eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
@@ -760,6 +762,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--limit must be at least 1")
         if args.eval_command == recipe_eval_cli.COMMAND:
             return recipe_eval_cli.run(args, sys.stdout)
+        if args.eval_command == screen_eval_cli.COMMAND:
+            return screen_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:
             return design_cost_cli.run(args, sys.stdout)
         if args.eval_command == quest_cli.EVAL:
