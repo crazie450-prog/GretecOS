@@ -20,6 +20,8 @@ import type {
   Health,
   MyBase,
   OresView,
+  ActivityView,
+  RecapReply,
   CropsView,
   PersonaInfo,
   PersonaState,
@@ -110,6 +112,11 @@ export const api = {
     return get<OresView>(s ? `/api/ores?${s}` : "/api/ores");
   },
   oreWaypoint: (vein: string) => post<WaypointProposal>("/api/ores/waypoint", { vein }),
+  // The Activity view (WO-6.3): one session's timeline (default the newest), and the finished
+  // age's recap the tier-up moment shows (D162, D265).
+  activity: (session: number | null = null) =>
+    get<ActivityView>(session === null ? "/api/activity" : `/api/activity?session=${session}`),
+  activityRecap: () => get<RecapReply>("/api/activity/recap"),
   // The Crops view (WO-6.7): his crops, the target and its guide; edits answer with the view.
   crops: (crop: string | null = null) =>
     get<CropsView>(crop ? `/api/crops?crop=${encodeURIComponent(crop)}` : "/api/crops"),

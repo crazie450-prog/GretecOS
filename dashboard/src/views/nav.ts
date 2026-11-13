@@ -34,7 +34,7 @@ export const VIEWS: readonly View[] = [
   { id: "costs", label: "Costs", key: "8", later: null, board: false },
   { id: "settings", label: "Settings", key: "9", later: null, board: true },
   { id: "base", label: "Base", key: null, later: null, board: false }, // My base (WO-3.8); stalled machines WO-7.4
-  { id: "activity", label: "Activity", key: null, later: "WO-6.3", board: false },
+  { id: "activity", label: "Activity", key: null, later: null, board: false }, // WO-6.3: needs Clayton's board approval
   { id: "ores", label: "Ores", key: null, later: null, board: false }, // WO-6.6: needs Clayton's board approval
   { id: "build", label: "Build", key: null, later: "Phase 10", board: false },
 ];

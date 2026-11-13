@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, act as runAction, api } from "./api/client";
 import { connect } from "./api/connection";
-import type { CreditChoice } from "./api/types";
+import type { AgeRecap, CreditChoice } from "./api/types";
 import { Card } from "./cards/Card";
 import { CardContext, type CardActions } from "./cards/context";
 import type { ApprovalCard, Card as CardData } from "./cards/types.gen";
@@ -21,6 +21,7 @@ import { useMedia, usePresence } from "./state/presence";
 import { isStale, stateChips } from "./state/states";
 import { store, useApp } from "./state/store";
 import { useTheme } from "./theme/useTheme";
+import { Activity } from "./views/Activity";
 import { Base } from "./views/Base";
 import { Chat } from "./views/Chat";
 import { Costs } from "./views/Costs";
@@ -33,6 +34,7 @@ import { Pairing } from "./views/Pairing";
 import { Crops } from "./views/Crops";
 import { Ores } from "./views/Ores";
 import { Quests } from "./views/Quests";
+import { TierUpRecap } from "./views/Recap";
 import { Search, type SearchTarget } from "./views/Search";
 import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
 import { Setup, SetupBanner } from "./views/Setup";
@@ -81,6 +83,24 @@ export function App() {
   }, [boot]);
 
   const themeCtl = useTheme(core?.tier?.stage);
+  // The tier-up moment's recap (D162, D265): a rise seen while this page is open asks the core for
+  // the age it just finished; shown until dismissed. A rise while the page was closed shows none
+  // here (the Activity view keeps every recap).
+  const [recap, setRecap] = useState<{ recap: AgeRecap; reached: number } | null>(null);
+  useEffect(() => {
+    const reached = themeCtl.risen;
+    if (reached === null) return;
+    let live = true;
+    api.activityRecap().then(
+      (r) => {
+        if (live && r.recap && r.recap.age < reached) setRecap({ recap: r.recap, reached });
+      },
+      () => undefined, // no event store, or the core is away: the theme still changes
+    );
+    return () => {
+      live = false;
+    };
+  }, [themeCtl.risen]);
   const phone = useMedia("(max-width: 760px)");
   const presence = usePresence(core?.game.focused ?? null);
   const [pin, setPinState] = useState<ModePin>(loadPin);
@@ -300,6 +320,8 @@ export function App() {
         return <Crops />;
       case "ores":
         return <Ores />;
+      case "activity":
+        return <Activity />;
       case "settings":
         return (
           <Settings
@@ -353,6 +375,7 @@ export function App() {
             </div>
           )}
           <Banners banners={bannersFor(core)} decide={decide} turnOn={turnOn} />
+          {recap && <TierUpRecap recap={recap.recap} reached={recap.reached} onClose={() => setRecap(null)} />}
           {glance ? (
             <Glance core={core} answers={answers} slug={themeCtl.slug} look={look} motion={motion} nextCard={nextCard} open={openFromGlance} act={act} />
           ) : (
