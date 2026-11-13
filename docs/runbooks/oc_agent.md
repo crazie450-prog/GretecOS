@@ -273,9 +273,12 @@ thresholds are `gos.toml` `[alerts]` (defaults pending your answer, D280); nothi
     the Base view.
 37. **AFK, unfocused, no menu.** Close every GUI, alt-tab to the desktop and leave the game unfocused for the
     rest of this step. Starve the base so the LSC falls below 20 % (`/gt` creative tools, or break the generators'
-    cables from a second account; or set `[alerts] power_low_pct` above the current fill and restart the core).
+    cables from a second account; or set `[alerts] power_low_pct` above the current fill and restart the core:
+    with `power_low_pct` alone set, `power_clear_pct` follows it at 10 points above, at most 100, so the core
+    starts; if you set `power_clear_pct` too, keep it at or above `power_low_pct` or the core refuses to start).
     Within 30 s plus a cycle of the fill dropping below the threshold: the dashboard shows the **Power low** card
-    on Now and Glance and in the Base view's Alerts; the voice says "Lab: power low. ... at N percent." once; the
+    on Now and Glance and in the Base view's Alerts; the voice says "Lab: power low. ... at N percent." once (or
+    one line for everything that fired in the same second, such as "Lab: power low and 6 machines stopped."); the
     board shows `LOW  <store> N%`. Note the seconds. Then stall the EBF (remove its input): **Machine stalled**
     (or **Machine stopped** if GT disables its work, step 31) after 60 s, said once. Break a maintenance part:
     **Maintenance** within `sensor_s` plus a cycle.

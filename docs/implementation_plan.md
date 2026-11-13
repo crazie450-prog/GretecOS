@@ -1446,7 +1446,7 @@ keep_backups = 7              # daily DB backups kept (D139)
 # [alerts]
 # rules = ["power_low", "maintenance", "machine_stalled", "crafting_done"]
 # power_low_pct = 20          # fires below; clears at power_clear_pct
-# power_clear_pct = 30
+# power_clear_pct = 30        # power_low_pct + 10 (at most 100) when only power_low_pct is set
 # power_low_s = 30            # how long each condition holds first
 # maintenance_s = 0
 # stalled_s = 60

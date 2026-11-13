@@ -210,4 +210,11 @@ describe("the live base", () => {
     render(<BaseLivePanel />);
     expect((await screen.findByTestId("live-no-alerts")).textContent).toContain("No alerts");
   });
+
+  it("held with no alerts says held, never No alerts (WO-7.5 review L3)", async () => {
+    live = { ts: 0, stale_s: 30, bindings: [binding({ held: "silent", alerts: [] })] };
+    render(<BaseLivePanel />);
+    expect((await screen.findByTestId("live-alerts-held")).textContent).toContain("OC is silent");
+    expect(screen.queryByTestId("live-no-alerts")).toBeNull();
+  });
 });
