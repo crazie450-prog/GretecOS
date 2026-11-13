@@ -113,6 +113,17 @@ describe("the live base", () => {
     expect(screen.getByTestId("live-lab").textContent).toContain("M2 HTTP");
   });
 
+  it("shows a machine GT stopped as a problem, and one GOS paused as paused", async () => {
+    const stopped = { level: "warn" as const, kind: "stopped", cite: `tel:${EBF}`, text: "Electric Blast Furnace: stopped (work disabled: power loss, maintenance or by hand)" };
+    live = { ts: 0, stale_s: 30, bindings: [binding({ problems: [stopped], machines: [{ ...binding().machines[0], status: "stopped" }] })] };
+    render(<BaseLivePanel />);
+    const problems = await screen.findByTestId("live-problems");
+    expect(problems.querySelector("li")?.getAttribute("data-kind")).toBe("stopped");
+    const row = document.querySelector(`[data-machine-live="${EBF}"]`);
+    expect(row?.getAttribute("data-status")).toBe("stopped");
+    expect(row?.textContent).toContain("stopped");
+  });
+
   it("says when OC went quiet and keeps the last readings marked stale", async () => {
     live = { ts: 0, stale_s: 30, bindings: [binding({ status: "stale", age_s: 95 })] };
     render(<BaseLivePanel />);
