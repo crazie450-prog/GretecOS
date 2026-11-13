@@ -105,6 +105,7 @@ def test_only_gos_tools_skill_and_agent(lane_reg: Registry, tmp_path: Path) -> N
         o.disallowed_tools
     )
     assert o.skills == [
+        "gos:advisor",  # WO-6.5
         "gos:crop-breeder",  # WO-6.7
         "gos:line-designer",
         "gos:ore-intel",
@@ -254,6 +255,7 @@ def test_the_plugin_copy_has_only_the_manifest_and_skills(
     written = json.loads((dest / ".claude-plugin" / "plugin.json").read_text("utf-8"))
     assert written == {"name": "gos", "version": "1.2.3"}
     assert deep_config.skill_names(dest) == [
+        "gos:advisor",
         "gos:crop-breeder",
         "gos:line-designer",
         "gos:ore-intel",
