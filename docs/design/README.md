@@ -23,7 +23,7 @@ WO-2.0 is done in Claude Design (D79) and Clayton approved it on 2026-11-05 (D92
 
 **Not approved:** the "Feature concepts" row (What's this?, Shopping list, Hazard watch, Tier ladder, Boots like a multiblock). Don't build from those boards. Any concept Clayton picks later gets its own decision and work order.
 
-**No board yet:** Chat, the Ctrl+K command palette and Costs (all in WO-2.6), Activity (WO-6.3), Ores (WO-6.6), My base and the Base view (WO-3.8, WO-7.4) and Build (Phase 10). Each gets a board and Clayton's approval before its work order builds it (§7.14).
+**No board yet:** Chat, the Ctrl+K command palette and Costs (all in WO-2.6), Activity (WO-6.3: built to the system, awaiting a board), Ores (WO-6.6), My base and the Base view (WO-3.8, WO-7.4) and Build (Phase 10). Each gets a board and Clayton's approval before its work order builds it (§7.14).
 
 ## The design system in one minute
 
