@@ -1261,6 +1261,90 @@ public final class Harness {
                 diesel >= 3 && generators == counts.get("generators")
                     .getAsInt(),
                 generators + " single-block generators, " + diesel + " diesel generators with GT's fuel values");
+            checkStorage(root.getAsJsonObject("storage"));
+        }
+
+        /**
+         * gt_power.json's storage (WO-4.5, D240): GT's cables with their voltage, amperage and loss, GT batteries with
+         * a
+         * charge, LV battery buffers with their slots, the LV transformer in both modes (down: in at MV, out at LV,
+         * more
+         * amps out than in), and the LSC's cells with capacities.
+         */
+        private void checkStorage(JsonObject storage) {
+            int cables = 0;
+            for (JsonElement e : storage.getAsJsonArray("cables")) {
+                JsonObject c = e.getAsJsonObject();
+                if (c.get("voltage")
+                    .getAsLong() > 0
+                    && c.get("amperage")
+                        .getAsLong() > 0)
+                    cables++;
+            }
+            int batteries = 0;
+            for (JsonElement e : storage.getAsJsonArray("batteries")) {
+                JsonObject b = e.getAsJsonObject();
+                if (b.has("max_charge") && b.get("max_charge")
+                    .getAsDouble() > 0
+                    && b.get("tier")
+                        .getAsInt() > 0)
+                    batteries++;
+            }
+            int buffers = 0;
+            for (JsonElement e : storage.getAsJsonArray("buffers")) {
+                JsonObject b = e.getAsJsonObject();
+                if (b.has("slots") && b.get("tier")
+                    .getAsInt() == 1
+                    && b.get("eu_out")
+                        .getAsLong() == 32
+                    && b.get("slots")
+                        .getAsInt() > 0)
+                    buffers++;
+            }
+            boolean lvTransformer = false;
+            for (JsonElement e : storage.getAsJsonArray("transformers")) {
+                JsonObject t = e.getAsJsonObject();
+                if (t.has("down") && t.get("tier")
+                    .getAsInt() == 1
+                    && t.get("class")
+                        .getAsString()
+                        .endsWith(".MTETransformer")) {
+                    JsonObject down = t.getAsJsonObject("down");
+                    JsonObject up = t.getAsJsonObject("up");
+                    lvTransformer = down.get("eu_in")
+                        .getAsLong() == 128
+                        && down.get("eu_out")
+                            .getAsLong() == 32
+                        && down.get("amps_out")
+                            .getAsLong()
+                            > down.get("amps_in")
+                                .getAsLong()
+                        && up.get("eu_out")
+                            .getAsLong() == 128;
+                }
+            }
+            int cells = 0;
+            for (JsonElement e : storage.getAsJsonArray("lsc")) {
+                JsonObject c = e.getAsJsonObject();
+                if (c.has("capacity") && c.has("block")
+                    && !"0".equals(
+                        c.get("capacity")
+                            .getAsString()))
+                    cells++;
+            }
+            check(
+                checks,
+                "storage_listed",
+                cables >= 500 && batteries >= 10 && buffers >= 3 && lvTransformer && cells >= 5,
+                cables + " cables, "
+                    + batteries
+                    + " batteries with a charge, "
+                    + buffers
+                    + " LV battery buffers, LV transformer modes "
+                    + lvTransformer
+                    + ", "
+                    + cells
+                    + " LSC cells");
         }
 
         /** gt_ore_mixes.json (D126): GT's ore layers with four keyed ores each, and the vanilla dimensions named. */

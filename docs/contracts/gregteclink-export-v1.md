@@ -70,7 +70,7 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
 | `gt_ore_mixes.json` | GT's worldgen ore layers (`WorldgenGTOreLayer.sList`) and the instance's dimension IDs (WO-1.6, D126) |
-| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230) |
+| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230); cables, batteries, battery buffers, transformers and LSC cells (`storage`, WO-4.5, D240) |
 | `oredict.jsonl` | The full ore dictionary: one line per oredict name, sorted by name, with its members (D145) |
 | `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` and the members of `oredict.jsonl` too), sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
@@ -176,7 +176,17 @@ WO-4.1 (D230): the power catalog's game data, what no recipe carries.
    "efficiency":95,"eu_out":32,"amps_out":1,"recipe_map":"gt.recipe.dieselgeneratorfuel",
    "fuels":[{"special":1000,"input":{"item":"gregtech:gt.metaitem.01","meta":30709,"n":1},"item_eu":950000,
      "item_eu_long":950000,"fluid":"nitrofuel","eu":950,"eu_long":950,"consumed":1}, ...]}, ...],
- "containers":[{"input":{"item":"gregtech:gt.metaitem.01","meta":30709,"n":1},"fluid":"nitrofuel","mb":1000}, ...]}
+ "containers":[{"input":{"item":"gregtech:gt.metaitem.01","meta":30709,"n":1},"fluid":"nitrofuel","mb":1000}, ...],
+ "storage":{
+   "cables":[{"mte_id":1246,"voltage":32,"amperage":1,"loss":1}, ...],
+   "batteries":[{"battery":{"item":"gregtech:gt.metaitem.01","meta":32538},"ore":["batteryHV"],"tier":3,
+     "max_charge":1600000.0,"transfer_limit":512.0,"rechargeable":true}, ...],
+   "buffers":[{"mte_id":193,"class":"...MTEBasicBatteryBuffer","tier":3,"slots":16,"eu_in":512,"eu_out":512,
+     "eu_store":524288}, ...],
+   "transformers":[{"mte_id":21,"class":"...MTETransformer","tier":1,
+     "down":{"eu_in":128,"amps_in":2,"eu_out":32,"amps_out":4},"up":{"eu_in":32,"amps_in":5,"eu_out":128,"amps_out":1}}, ...],
+   "lsc":[{"name":"IV","block":{"item":"kekztech:kekztech_lapotronicenergyunit_block","meta":1},"glass_tier":2,
+     "capacity":"600000000"}, ...]}}
 ```
 
 - `sizes`: GT's four turbine rotor sizes, the tool stats of `MetaGeneratedTool01`'s ids 170, 172, 174 and 176.
@@ -193,6 +203,23 @@ WO-4.1 (D230): the power catalog's game data, what no recipe carries.
 - `containers`: the fluid in each fluid container (`GTUtility.getFluidForFilledItem`) that a fuel map (a
   `FuelBackend` or `LargeBoilerFuelBackend` map) lists as an input, sorted by the input's JSON: GT indexes those fuels
   by the fluid, so a cell of benzene is the fuel benzene.
+- `storage` (WO-4.5, D240; absent from earlier runs): `cables` (absent from the first WO-4.5 runs): every
+  `MTECable` (GT++'s `GTPPMTECable` is one), by `mte_id`: its `mVoltage`, `mAmperage` and `mCableLossPerMeter` (EU per
+  metre per amp), GT's own fields, so neither the game language nor the JVM's number locale (which formats the
+  tooltip) matters. `batteries`: every member of an oredict name starting with `battery` whose item is an IC2
+  `IElectricItem` (one row per item ref, with all its `battery*` names, sorted by the ref's JSON; a member at the
+  wildcard meta, as IC2's batteries are, is read and keyed at meta 0): `getTier`, `getMaxCharge` (EU, a double), `getTransferLimit`, and `rechargeable` (IC2's
+  `ElectricItem.manager.charge` simulated on a copy gives more than 0: GT's one-use batteries and the ZPM module
+  don't). `buffers`: every `MTEBasicBatteryBuffer`: `mTier`, `getSizeInventory()` (slots), `maxEUInput()`,
+  `maxEUOutput()`, `maxEUStore()` (its own store). `transformers`: every `MTETransformer` (GT's, the power
+  transformers `MTEWetTransformer`, GT++'s `MTETransformerHiAmp`, and bartworks' energy distributor, which keeps the
+  voltage), read from a new `BaseMetaTileEntity` holding a new instance (`setInitialValuesAsNBT(null, id)`):
+  `maxEUInput`, `maxAmperesIn`, `maxEUOutput`, `maxAmperesOut` in mode `down` (allowed to work, GT's default) and
+  `up` (after `disableWorking()`); half mode (screwdriver) isn't read. `lsc`: kekztech's
+  `MTELapotronicSuperCapacitor.Capacitor.VALUES` in order, each with its block (the LSC part item at meta = index + 1,
+  as the LSC reads a cell from a stack), `getMinimalGlassTier()` and `getProvidedCapacity()` as a decimal string
+  (a BigInteger). A row that throws carries `error` (`counts.power_errors`). For a run without `cables`, the core
+  falls back to the cables' en_US `gt_machines.jsonl` tooltips (D240, V10).
 - Items are item refs and fluids registry names, never numeric IDs; the refs are recorded in `items.jsonl`.
 
 ### `oredict.jsonl` line
@@ -390,7 +417,8 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `core/gregtec/ingest/ore_mixes.py` (WO-1.6): `gt_ore_mixes.json`, only from runs with `parts.ore_mixes == "ok"`;
   `gos ores load` (`core/gregtec/db/ores.py`, D128) loads it into `ore_mix`.
 - `core/gregtec/ingest/power.py` (WO-4.1): `gt_power.json`, only from runs with `parts.power == "ok"`; `gos db
-  build` loads it into the power tables and decodes the fuel maps into `fuel` (`core/gregtec/db/power.py`, D230).
+  build` loads it into the power tables and decodes the fuel maps into `fuel` (`core/gregtec/db/power.py`, D230),
+  and its `storage` into `cable`, `battery`, `battery_buffer`, `transformer` and `lsc_cell` (WO-4.5, D240).
 - `core/gregtec/ingest/crops.py` (WO-1.10): `crops/*`, only from runs with `parts.crops == "ok"`, plus NEI's
   CropsNH tabs when `parts.nei == "ok"`; `gos db build` loads it into the crop tables (`core/gregtec/db/crops.py`,
   D136).
