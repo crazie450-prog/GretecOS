@@ -48,6 +48,7 @@ from gregtec.screen import eval_cli as screen_eval_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 from gregtec.watchers import cli as watch_cli
+from gregtec.wiki import cli as wiki_cli
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -606,6 +607,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
     watch_cli.add_parsers(commands)
+    wiki_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -684,6 +686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return personacli.run(args)
     if args.command in watch_cli.COMMANDS:
         return watch_cli.run(args)
+    if args.command in wiki_cli.COMMANDS:
+        return wiki_cli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
@@ -938,6 +942,7 @@ def _maintain(config_path: Path | None, jobs: list[str] | None, rerun: bool) -> 
     from gregtec.llm.usage import UsageMeter
     from gregtec.store import DB_NAME, Store
     from gregtec.vault.scheduler import KV_LAST_DAY
+    from gregtec.wiki.cache import WikiCache
 
     cfg = _load(config_path)
     if cfg is None:
@@ -962,6 +967,7 @@ def _maintain(config_path: Path | None, jobs: list[str] | None, rerun: bool) -> 
             ),
             keep_backups=cfg.keep_backups,
             retry_held=True,  # Clayton's own run: held log periods get another call
+            wiki=WikiCache(cfg.data_dir / DB_NAME).maintenance,
         )
         results = cur.run(dt.date.today(), jobs or vault_curator.JOBS)
     finally:
