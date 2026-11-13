@@ -281,7 +281,11 @@ CROP_STATUS_SCHEMA: dict[str, Any] = {
 CROP_STATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["start", "stop"]},
+        "action": {
+            "type": "string",
+            "enum": ["start", "stop"],
+            "description": "start: propose running the plan for the target; stop: propose stopping",
+        },
         "target": _TARGET,
         "count": {
             "type": "integer",

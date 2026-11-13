@@ -362,7 +362,7 @@ def _args(plan: Plan, pid: str) -> dict[str, Any]:
                 ],
                 "copies": s.copies,
                 "fert": s.fert_mb,
-                "ref": s.recipe.ref[:40],
+                "ref": s.recipe.ref,
             }
             for s in plan.steps
         ],

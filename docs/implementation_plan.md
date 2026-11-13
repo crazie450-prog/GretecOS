@@ -535,7 +535,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
 | advisor | Next steps (§7.5) | quest_frontier, events_recent, ledger_get, plan_list, base_get |
 | ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
-| crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
+| crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status, crop_station |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
 | wiki-research | Wiki cache and fetch, attribution (§7.8) | wiki_search, wiki_fetch |
 | ops | Telemetry, alerts, confirmed actions (§7.9) | telemetry_get, action_propose, action_status |
@@ -569,6 +569,7 @@ db_query(name, params)               db_sql(select)            speak(text)  noti
 timer_set(...)                       handoff(task)             persona_set(id)
 export_diff(run_a, run_b)            machine_fact_get/set(machine, key, ...)   screen_snapshot()
 crop_find(name|trait)                crop_plan(target, have?)  crop_step(plan_id, n) crop_status()
+crop_station(action, target?)        # proposes the breeding station's start (code's plan) or stop (D283); confirm is UI-only
 ```
 - Tool results return TSV, capped at 50 rows, with a `more` cursor.
 

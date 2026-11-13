@@ -367,7 +367,7 @@
         "cat": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/crop_item" } },
         "copies": { "description": "Seeds of each parent before the step's first run, when a copier makes them.", "type": "integer", "minimum": 2, "maximum": 64 },
         "fert": { "description": "mB of enriched fertilizer one run takes (GOS computes it).", "type": "integer", "minimum": 1, "maximum": 256000 },
-        "ref": { "description": "The recipe's r: id, for the log.", "type": "string", "maxLength": 40 }
+        "ref": { "description": "The recipe's r: id, for the log.", "type": "string", "maxLength": 80 }
       }
     },
     "crop_start_args": {
