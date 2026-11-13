@@ -300,7 +300,7 @@ def buildable_plans(conn: sqlite3.Connection, home: Path) -> list[Finding]:
                 "plan_buildable",
                 cite,
                 f"You can build {name} from stock",
-                f"every build part of {name} is in My base's stock: {len(total)} kinds, "
+                f"every build part of {name} is in My base's stock: {len(total)} kind{'' if len(total) == 1 else 's'}, "
                 f"{parts} blocks and machines in all ({cite})",
                 (cite,),
                 f"#/designer/{pid}",
