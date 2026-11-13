@@ -3,11 +3,15 @@
 Etiquette (https://www.mediawiki.org/wiki/API:Etiquette, [H§4]), all enforced here, not left to
 callers:
 
-- **One request at a time.** Every request of every :class:`WikiApi` in the process holds one
-  lock (:data:`_SERIAL`) from sending to the end of the pause after it, so the crawl, the idle
-  refresh and an agent's fetch on demand never overlap.
+- **One request at a time, across processes.** A query holds the turn (:func:`_turn`): this
+  process's lock (:data:`_SERIAL`) and, when the client has a ``lock_path`` (the cache's
+  ``data/wiki.lock``), an exclusive OS lock on that file (``fcntl`` on Linux, ``msvcrt`` on
+  Windows), from its first send through every retry and back-off to its last answer. So the
+  CLI's crawl, the core's idle refresh and an agent's fetch on demand never overlap, and while
+  one client backs off after a 503 or maxlag nobody else sends.
 - **A pause between requests**: at least ``interval_s`` (1 s, [H§4]) from the end of one to the
-  start of the next.
+  start of the next, whichever client or process sent them: the time of the last answer is kept
+  with the turn (in the process, and in the lock file for other processes).
 - **A descriptive User-Agent** (:data:`USER_AGENT`): the application and the project's public
   page, no personal details (no name, no e-mail), and ``Accept-Encoding: gzip``.
 - **maxlag** (5 s) on every request. A ``maxlag`` error, a 429 or a 503 waits its
@@ -29,16 +33,22 @@ Everything the wiki returns is data (plan 0.1 principle 8): this module only par
 from __future__ import annotations
 
 import gzip
+import io
 import json
+import math
+import os
 import random
+import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import IO, Any
 
 DEFAULT_API = "https://wiki.gtnewhorizons.com/api.php"
 USER_AGENT = (
@@ -52,6 +62,13 @@ RETRIES = 4
 BACKOFF_S = 2.0
 MAX_WAIT_S = 120.0  # the longest Retry-After or back-off honoured
 TIMEOUT_S = 30.0
+# A fetch on demand (an agent's wiki_fetch) is quick or gives up: it waits at most
+# ON_DEMAND_LOCK_S for the turn (a crawl or refresh holds it while it backs off), tries once more
+# after an error and waits at most ON_DEMAND_MAX_WAIT_S, so two of them fit wiki_fetch's 120 s.
+ON_DEMAND_LOCK_S = 5.0
+ON_DEMAND_RETRIES = 1
+ON_DEMAND_MAX_WAIT_S = 10.0
+ON_DEMAND_TIMEOUT_S = 20.0
 MAX_BODY = 32 << 20
 # Text a challenge or bot-check page carries (Cloudflare, Anubis, hCaptcha, reCAPTCHA ...).
 CHALLENGE_MARKS = (
@@ -64,8 +81,10 @@ CHALLENGE_MARKS = (
     b"verify you are human",
 )
 
-# One lock for every client in the process: one request at a time, whoever sends it.
+# One lock for every client in the process: one request at a time, whoever sends it. The time
+# of the last answer (for the pause) is kept with it, and in the lock file for other processes.
 _SERIAL = threading.Lock()
+_LAST_END: list[float] = []
 
 
 class WikiError(Exception):
@@ -74,6 +93,95 @@ class WikiError(Exception):
 
 class GateBlocked(WikiError):
     """An anti-bot gate or an access refusal: stop, never retry or work around it."""
+
+
+class Busy(WikiError):
+    """Another request to the wiki (this process's or another's) held the turn too long."""
+
+
+def _try_lock(fd: int) -> bool:
+    """An exclusive OS lock on byte 0 of ``fd`` without waiting; False when it is held."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _turn(lock_path: Path | None, wait_s: float | None) -> Iterator[IO[bytes] | None]:
+    """Hold the wiki's turn: this process's lock, then ``lock_path``'s OS lock. Waits at most
+    ``wait_s`` (None: as long as it takes), then raises :class:`Busy`. Yields the open lock
+    file (it holds the time of the last answer), or None without a ``lock_path``."""
+    busy = Busy(
+        "another request to the wiki is under way (a crawl or refresh): try again in a minute"
+    )
+    end = None if wait_s is None else time.monotonic() + wait_s
+    if not _SERIAL.acquire(timeout=-1 if wait_s is None else max(wait_s, 0.0)):
+        raise busy
+    try:
+        if lock_path is None:
+            yield None
+            return
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+b") as f:
+            fd = f.fileno()
+            # msvcrt's own wait gives up after 10 s, so both platforms poll
+            while not _try_lock(fd):
+                if end is not None and time.monotonic() >= end:
+                    raise busy
+                time.sleep(0.05)
+            try:
+                yield f
+            finally:
+                _unlock(fd)
+    finally:
+        _SERIAL.release()
+
+
+def _last_end(f: IO[bytes] | None) -> float | None:
+    """The time of the last answer: this process's, or another's from the lock file."""
+    times = list(_LAST_END)
+    if f is not None:
+        f.seek(0)
+        try:
+            times.append(float(f.read(64).decode("ascii")))
+        except (UnicodeDecodeError, ValueError):
+            pass
+    finite = [t for t in times if math.isfinite(t)]
+    return max(finite) if finite else None
+
+
+def _set_last_end(f: IO[bytes] | None, t: float) -> None:
+    _LAST_END[:] = [t]
+    if f is not None:
+        f.seek(0)
+        f.truncate()
+        f.write(repr(t).encode("ascii"))
+        f.flush()
 
 
 @dataclass(frozen=True)
@@ -125,20 +233,22 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
 
 @dataclass
 class WikiApi:
-    """A MediaWiki API at ``api`` with the etiquette above. ``transport``, ``sleep`` and
-    ``monotonic`` are injectable for tests."""
+    """A MediaWiki API at ``api`` with the etiquette above. ``lock_path`` is the file that
+    serialises requests across processes (the cache passes ``data/wiki.lock``); ``transport``,
+    ``sleep`` and ``clock`` (wall time: other processes read it from the lock file) are
+    injectable for tests."""
 
     api: str = DEFAULT_API
     transport: Transport = http_get
     sleep: Callable[[float], None] = time.sleep
-    monotonic: Callable[[], float] = time.monotonic
+    clock: Callable[[], float] = time.time
     interval_s: float = INTERVAL_S
     maxlag: int = MAXLAG_S
     retries: int = RETRIES
     backoff_s: float = BACKOFF_S
     max_wait_s: float = MAX_WAIT_S
+    lock_path: Path | None = None
     requests: int = 0  # sent, for reports and tests
-    _last_end: float | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         check_url(self.api)
@@ -146,9 +256,13 @@ class WikiApi:
 
     # --- one request -------------------------------------------------------------------
 
-    def query(self, params: Mapping[str, str]) -> dict[str, Any]:
+    def query(
+        self, params: Mapping[str, str], on_demand: bool = False
+    ) -> dict[str, Any]:
         """One ``action=query`` GET (format=json, formatversion=2, maxlag added), retried per
-        the etiquette. Raises :class:`GateBlocked` or :class:`WikiError`."""
+        the etiquette, all in one turn (no other request starts until it ends). ``on_demand``
+        (an agent is waiting): give up quickly, per the ``ON_DEMAND_`` limits. Raises
+        :class:`GateBlocked`, :class:`Busy` or :class:`WikiError`."""
         full = {
             **params,
             "action": "query",  # read-only: nothing else is ever sent
@@ -157,39 +271,46 @@ class WikiApi:
             "maxlag": str(self.maxlag),
         }
         url = f"{self.api}?{urllib.parse.urlencode(full)}"
+        retries = min(self.retries, ON_DEMAND_RETRIES) if on_demand else self.retries
+        cap = (
+            min(self.max_wait_s, ON_DEMAND_MAX_WAIT_S) if on_demand else self.max_wait_s
+        )
+        timeout = ON_DEMAND_TIMEOUT_S if on_demand else TIMEOUT_S
         last = "no answer"
-        for attempt in range(self.retries + 1):
-            try:
-                resp = self._send(url)
-            except OSError as exc:
-                last = f"network error: {exc}"
-                if attempt < self.retries:
-                    self._wait(None, attempt)
-                continue
-            data, retry_why = self._read(resp)
-            if data is not None:
-                return data
-            last = retry_why
-            if attempt < self.retries:
-                self._wait(_header(resp.headers, "retry-after"), attempt)
-        raise WikiError(f"gave up after {self.retries + 1} tries: {last}")
+        with _turn(self.lock_path, ON_DEMAND_LOCK_S if on_demand else None) as f:
+            for attempt in range(retries + 1):
+                try:
+                    resp = self._send(url, f, timeout)
+                except OSError as exc:
+                    last = f"network error: {exc}"
+                    if attempt < retries:
+                        self._wait(None, attempt, cap)
+                    continue
+                data, retry_why = self._read(resp)
+                if data is not None:
+                    return data
+                last = retry_why
+                if attempt < retries:
+                    self._wait(_header(resp.headers, "retry-after"), attempt, cap)
+        raise WikiError(f"gave up after {retries + 1} tries: {last}")
 
-    def _send(self, url: str) -> Response:
+    def _send(self, url: str, f: IO[bytes] | None, timeout: float) -> Response:
+        """One GET, in the turn, after the pause since the last answer (anyone's)."""
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "application/json",
             "Accept-Encoding": "gzip",
         }
-        with _SERIAL:
-            if self._last_end is not None:
-                gap = self.interval_s - (self.monotonic() - self._last_end)
-                if gap > 0:
-                    self.sleep(gap)
-            try:
-                self.requests += 1
-                return self.transport(url, headers, TIMEOUT_S)
-            finally:
-                self._last_end = self.monotonic()
+        last = _last_end(f)
+        if last is not None:
+            gap = min(self.interval_s - (self.clock() - last), self.interval_s)
+            if gap > 0:
+                self.sleep(gap)
+        try:
+            self.requests += 1
+            return self.transport(url, headers, timeout)
+        finally:
+            _set_last_end(f, self.clock())
 
     def _read(self, resp: Response) -> tuple[dict[str, Any] | None, str]:
         """(the JSON, "") for an answer; (None, why) for one to retry; raises otherwise."""
@@ -198,9 +319,12 @@ class WikiApi:
             raise WikiError(f"an answer over {MAX_BODY >> 20} MiB")
         if (_header(resp.headers, "content-encoding") or "").lower() == "gzip":
             try:
-                body = gzip.decompress(body)
+                with gzip.GzipFile(fileobj=io.BytesIO(body)) as unpacked:
+                    body = unpacked.read(MAX_BODY + 1)  # bounded: no gzip bomb
             except (OSError, EOFError) as exc:
                 raise WikiError(f"a gzip answer that doesn't unpack: {exc}") from None
+            if len(body) > MAX_BODY:
+                raise WikiError(f"an answer over {MAX_BODY >> 20} MiB unpacked")
         if urllib.parse.urlsplit(resp.url).hostname != self.host:
             raise GateBlocked(
                 f"the API redirected to {urllib.parse.urlsplit(resp.url).hostname}"
@@ -232,16 +356,17 @@ class WikiApi:
             raise WikiError(f"{code}: {str(error.get('info', ''))[:200]}")
         return data, ""
 
-    def _wait(self, retry_after: str | None, attempt: int) -> None:
+    def _wait(self, retry_after: str | None, attempt: int, cap: float) -> None:
+        """The back-off, in the turn: no other client sends meanwhile."""
         wait = None
         if retry_after is not None:
             try:
                 wait = float(retry_after)
             except ValueError:
                 wait = None
-        if wait is None or wait < 0:
+        if wait is None or not math.isfinite(wait) or wait < 0:
             wait = self.backoff_s * (2**attempt) * (1 + random.random() / 4)
-        self.sleep(min(wait, self.max_wait_s))
+        self.sleep(min(wait, cap))
 
     # --- the queries the cache uses ----------------------------------------------------
 
@@ -250,9 +375,12 @@ class WikiApi:
         q = self.query({"meta": "siteinfo", "siprop": "general|rightsinfo"})
         return q.get("query") or {}
 
-    def pages(self, titles: Sequence[str]) -> list[dict[str, Any]]:
-        """The newest revision (ids, timestamp, wikitext) of up to 50 ``titles``, following
-        redirects; every page object of the answer, ``missing`` ones included."""
+    def pages(
+        self, titles: Sequence[str], on_demand: bool = False
+    ) -> list[dict[str, Any]]:
+        """The newest revision (ids, timestamp, wikitext) of up to 50 ``titles``: every page
+        object of the answer, ``missing`` ones included. Redirects are not followed: a redirect
+        page comes with its own ``#REDIRECT [[...]]`` wikitext and revid (the cache follows it)."""
         if not titles:
             return []
         if len(titles) > MAX_TITLES:
@@ -266,13 +394,10 @@ class WikiApi:
             "prop": "revisions",
             "rvprop": "ids|timestamp|content",
             "rvslots": "main",
-            "redirects": "1",
             "titles": "|".join(titles),
         }
-        for q in self._continued(params):
+        for q in self._continued(params, on_demand=on_demand):
             out.extend(_list(q.get("pages")))
-            for r in _list(q.get("redirects")):
-                out.append({"redirect_from": r.get("from"), "title": r.get("to")})
         return out
 
     def all_pages(
@@ -317,9 +442,9 @@ class WikiApi:
         return titles, now
 
     def _continued(
-        self, params: Mapping[str, str], with_top: bool = False
+        self, params: Mapping[str, str], with_top: bool = False, on_demand: bool = False
     ) -> Iterator[Any]:
-        for q, _, top in self._pages_of(params, {}):
+        for q, _, top in self._pages_of(params, {}, on_demand):
             yield (q, top) if with_top else q
 
     def _continued_marks(
@@ -329,10 +454,10 @@ class WikiApi:
             yield _list(q.get("pages")), mark
 
     def _pages_of(
-        self, params: Mapping[str, str], cont: dict[str, str]
+        self, params: Mapping[str, str], cont: dict[str, str], on_demand: bool = False
     ) -> Iterator[tuple[dict[str, Any], dict[str, str] | None, dict[str, Any]]]:
         while True:
-            top = self.query({**params, **cont})
+            top = self.query({**params, **cont}, on_demand)
             q = top.get("query") or {}
             nxt = top.get("continue")
             mark = (

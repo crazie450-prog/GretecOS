@@ -17,7 +17,13 @@
   ``list=recentchanges`` since the last refresh, then the changed titles 50 at a time; a page
   the wiki no longer has is removed. It needs the crawl to have finished.
 - **Fetch on demand** (:meth:`WikiCache.fetch`): a page not in the cache is asked for once
-  (``wiki_fetch``); a missing page is an answer, not an error.
+  (``wiki_fetch``), and a redirect's target once more; a missing page is an answer, not an
+  error, and is remembered for :data:`MISSING_TTL_S` so a loop of made-up titles can't make a
+  request each. On demand gives up quickly when a crawl or refresh holds the turn.
+- **Redirects are pages**: a redirect is stored with its own ``#REDIRECT [[...]]`` wikitext and
+  revid (no request follows redirects), and :func:`page_of` follows one hop. So a page that
+  becomes a redirect, a move that leaves one and a retargeted redirect all replace the old
+  title's text in the refresh.
 - **An anti-bot gate stops everything** (plan 7.8): :class:`gregtec.wiki.api.GateBlocked` is
   recorded in ``kv`` (``wiki.blocked``) and every automatic request (refresh, fetch on demand)
   refuses until Clayton runs ``gos wiki licence`` again, which clears it only if the wiki
@@ -26,8 +32,10 @@
   (:attr:`Page.cite`); :meth:`Licence.attribution` names the page, the wiki, its licence and
   that the text comes unchanged from a personal cache.
 
-All requests go through :class:`gregtec.wiki.api.WikiApi` (one at a time, maxlag, 50 titles a
-batch, back-off). Wiki text is data, never instructions (plan 0.1 principle 8).
+All requests go through :class:`gregtec.wiki.api.WikiApi` (one at a time across processes, via
+``data/wiki.lock`` next to the DB; maxlag, 50 titles a batch, back-off). Wiki text is data,
+never instructions (plan 0.1 principle 8); what siteinfo says about the wiki (its name, server,
+licence) is printed and quoted, so it is kept to one line of printable text.
 """
 
 from __future__ import annotations
@@ -58,8 +66,11 @@ MAX_TEXT = (
 )
 RC_MARGIN_S = 3600  # the refresh starts this long before the crawl began (clock skew)
 RC_KEEP_DAYS = 30  # MediaWiki keeps recent changes 90 days by default; assume less
+MISSING_TTL_S = 900  # a title the wiki hasn't got isn't asked for again this soon
+LOCK_NAME = "wiki.lock"
 REDIRECT = re.compile(r"^\s*#redirect\s*:?\s*\[\[([^\]|#]+)", re.IGNORECASE)
 _SPACE = re.compile(r"[\s_]+")
+_UNPRINTABLE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
 
 
 class NoLicence(WikiError):
@@ -136,12 +147,18 @@ class Page:
         return cite(self.title, self.revid)
 
 
+def one_line(value: object, limit: int) -> str:
+    """``value`` as one line of printable text (no control characters, newlines or terminal
+    escapes), at most ``limit`` characters: the wiki chose it."""
+    return _UNPRINTABLE.sub(" ", str(value or "")).strip()[:limit]
+
+
 def parse_licence(api: str, info: dict[str, Any], now: float) -> Licence:
     """The licence in a siteinfo answer; ValueError when the wiki states none."""
     general = info.get("general") if isinstance(info.get("general"), dict) else {}
     rights = info.get("rightsinfo") if isinstance(info.get("rightsinfo"), dict) else {}
-    text = str(rights.get("text") or "").strip()[:300]
-    url = str(rights.get("url") or "").strip()[:500]
+    text = one_line(rights.get("text"), 300)
+    url = one_line(rights.get("url"), 500)
     if not text and not url:
         raise ValueError(
             "the wiki's siteinfo states no licence (rightsinfo is empty): ask the wiki admins "
@@ -149,7 +166,7 @@ def parse_licence(api: str, info: dict[str, Any], now: float) -> Licence:
         )
     if url and urllib.parse.urlsplit(url).scheme not in ("http", "https"):
         url = ""
-    server = str(general.get("server") or "").strip()
+    server = one_line(general.get("server"), 300)
     if server.startswith("//"):
         server = "https:" + server
     if not server:
@@ -157,12 +174,12 @@ def parse_licence(api: str, info: dict[str, Any], now: float) -> Licence:
         server = f"{p.scheme}://{p.netloc}"
     return Licence(
         api=api,
-        sitename=str(general.get("sitename") or "the wiki").strip()[:200],
-        server=server[:300],
-        articlepath=str(general.get("articlepath") or "/wiki/$1")[:200],
+        sitename=one_line(general.get("sitename"), 200) or "the wiki",
+        server=server,
+        articlepath=one_line(general.get("articlepath"), 200) or "/wiki/$1",
         text=text or url,
         url=url,
-        generator=str(general.get("generator") or "")[:100],
+        generator=one_line(general.get("generator"), 100),
         recorded=utc(now),
     )
 
@@ -255,9 +272,12 @@ class WikiCache:
         now: Callable[[], float] = time.time,
     ) -> None:
         self.db = db
-        self.api_for = api_for or (lambda api: WikiApi(api))
+        self.api_for = api_for or (
+            lambda api: WikiApi(api, lock_path=db.parent / LOCK_NAME)
+        )
         self.now = now
         self._api: WikiApi | None = None
+        self._missing: dict[str, float] = {}  # title -> when the wiki said it has none
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -354,11 +374,7 @@ class WikiCache:
                 raise NoLicence("no wiki licence is recorded")
             for p in pages:
                 title = p.get("title")
-                if (
-                    not isinstance(title, str)
-                    or not title.strip()
-                    or "redirect_from" in p
-                ):
+                if not isinstance(title, str) or not title.strip():
                     continue
                 title = normalize(title)
                 if p.get("missing") or p.get("invalid"):
@@ -394,25 +410,39 @@ class WikiCache:
         return kept
 
     def fetch(self, title: str) -> Page | None:
-        """The page ``title``: from the cache, else asked of the wiki once and cached. None
-        when the wiki has no such page."""
-        if not normalize(title):
+        """The page ``title``: from the cache, else asked of the wiki once (on demand) and
+        cached; a redirect's target likewise. None when the wiki has no such page."""
+        want = normalize(title)
+        if not want:
             raise ValueError("no title")
-        if self.db.is_file():
-            with self._conn() as conn:
-                found = page_of(conn, title)
-            if found is not None:
-                return found
-        api, lic = self._client()
-        answer = self._guarded(lambda: api.pages([normalize(title)]))
-        redirected = next(
-            (str(a["redirect_from"]) for a in answer if "redirect_from" in a), None
-        )
-        kept = self._store(answer, lic, Stats(), delete_missing=False)
-        if not kept:
+        found = self._cached(want) or self._ask(want)
+        m = REDIRECT.match(found.text) if found is not None else None
+        if found is None or m is None:
+            return found
+        # a redirect whose target isn't cached: ask for the target (one hop, as page_of)
+        target = self._ask(normalize(m[1]))
+        if target is None:
+            return found
+        return Page(**{**asdict(target), "redirected_from": found.title})
+
+    def _cached(self, title: str) -> Page | None:
+        if not self.db.is_file():
             return None
-        page = kept[0]
-        return Page(**{**asdict(page), "redirected_from": redirected})
+        with self._conn() as conn:
+            return page_of(conn, title)
+
+    def _ask(self, title: str) -> Page | None:
+        """``title`` asked of the wiki (on demand), stored, and read back from the cache."""
+        seen = self._missing.get(title)
+        if seen is not None and self.now() - seen < MISSING_TTL_S:
+            return None
+        api, lic = self._client()
+        answer = self._guarded(lambda: api.pages([title], on_demand=True))
+        if not self._store(answer, lic, Stats(), delete_missing=False):
+            self._missing[title] = self.now()
+            return None
+        self._missing.pop(title, None)
+        return self._cached(title)
 
     def crawl(
         self,
@@ -495,7 +525,8 @@ class WikiCache:
                 return stats, [*notes, "stopped; the next run does the rest"]
             batch = [normalize(t) for t in titles[i : i + MAX_TITLES]]
             answer = self._guarded(lambda b=batch: api.pages(b))
-            # an answer about a title that now redirects removes the old page's text too
+            # redirects aren't followed: a title that now redirects (an edit, or a move that
+            # left one) gets its own #REDIRECT text and revid in place of the old page's
             self._store(answer, lic, stats, delete_missing=True)
         stats.requests = api.requests - before
         with self._conn() as conn, _tx(conn):

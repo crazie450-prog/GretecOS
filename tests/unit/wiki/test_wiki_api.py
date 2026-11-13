@@ -3,9 +3,13 @@ maxlag, User-Agent, back-off; [H§4])."""
 
 from __future__ import annotations
 
+import gzip
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +18,8 @@ from gregtec.wiki.api import GateBlocked, Response, WikiApi, WikiError
 
 from .conftest import Sleeps
 from .fakewiki import FakeWiki, Server
+
+WORKER = Path(__file__).with_name("wiki_worker.py")
 
 
 def client(server: Server, sleeps: Sleeps, **kw: float) -> WikiApi:
@@ -176,3 +182,114 @@ def test_crawl_and_recentchanges_follow_continue(
         fake.edit(f"Page {i:03}", "new", f"2026-11-10T0{i}:00:00Z")
     titles, now = api.recent_titles("2026-11-09T00:00:00Z")
     assert titles == ["Page 000", "Page 001", "Page 002"] and now == fake.now
+
+
+def test_the_pause_is_kept_across_clients(server: Server, fake: FakeWiki) -> None:
+    """The core holds two caches (the tools' and the idle job's), each with its own client:
+    the pause is between any two requests, not per client."""
+    a, b = (WikiApi(server.api, interval_s=0.2) for _ in range(2))
+    for api in (a, b, a, b):
+        api.pages(["Pyrolyse Oven"])
+    gaps = [fake.seen[i + 1].start - fake.seen[i].end for i in range(3)]
+    assert all(g >= 0.18 for g in gaps), gaps
+
+
+def test_one_request_at_a_time_across_processes(
+    server: Server, fake: FakeWiki, tmp_path: Path
+) -> None:
+    """`gos wiki crawl` in the CLI while the core fetches or refreshes: two processes (and a
+    thread here) share data/wiki.lock, so one request reaches the wiki at a time, with the
+    pause between any two."""
+    fake.delay_s = 0.03
+    lock = tmp_path / "data" / "wiki.lock"
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(WORKER), server.api, str(lock), "4", "0.1"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        for _ in range(2)
+    ]
+    here = WikiApi(server.api, interval_s=0.1, lock_path=lock)
+    for _ in range(4):
+        here.pages(["Pyrolyse Oven"])
+    for p in procs:
+        out, _ = p.communicate(timeout=120)
+        assert p.returncode == 0, out.decode("utf-8", "replace")
+    assert len(fake.seen) == 12 and fake.max_in_flight == 1
+    seen = sorted(fake.seen, key=lambda s: s.start)
+    gaps = [seen[i + 1].start - seen[i].end for i in range(11)]
+    assert all(g >= 0.08 for g in gaps), gaps
+
+
+def test_a_back_off_holds_the_turn(
+    sleeps: Sleeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While one client waits out a 503, nobody else sends; a fetch on demand gives up."""
+    monkeypatch.setattr(wiki_api, "ON_DEMAND_LOCK_S", 0.1)
+    url = "https://wiki.example.test/api.php"
+    answers = [Response(503, {"Retry-After": "3"}, b"", url)]
+    sent: list[str] = []
+
+    def transport(u: str, headers: Mapping[str, str], timeout: float) -> Response:
+        sent.append(u)
+        return answers.pop(0) if answers else Response(200, {}, b'{"query": {}}', url)
+
+    other = WikiApi(url, transport, interval_s=0)
+    tried: list[BaseException] = []
+
+    def backing_off(s: float) -> None:
+        sleeps.append(s)
+
+        def go() -> None:
+            try:
+                other.query({"titles": "X"}, on_demand=True)
+            except WikiError as exc:
+                tried.append(exc)
+
+        t = threading.Thread(target=go)
+        t.start()
+        t.join()
+
+    WikiApi(url, transport, backing_off, interval_s=0).query({"titles": "Y"})
+    assert sleeps == [3.0] and len(sent) == 2  # only the backing-off client's two
+    assert len(tried) == 1 and isinstance(tried[0], wiki_api.Busy)
+
+
+def test_on_demand_gives_up_sooner(
+    server: Server, fake: FakeWiki, sleeps: Sleeps
+) -> None:
+    fake.faults.extend(["503"] * 10)
+    with pytest.raises(WikiError, match="gave up after 2 tries"):
+        client(server, sleeps).query({"titles": "Pyrolyse Oven"}, on_demand=True)
+    assert len(fake.seen) == 2 and sleeps == [3.0]
+
+
+def test_a_bad_retry_after_backs_off_instead(sleeps: Sleeps) -> None:
+    url = "https://wiki.example.test/api.php"
+    answers = [
+        Response(503, {"Retry-After": v}, b"", url)
+        for v in ("nan", "inf", "-5", "soon")
+    ]
+
+    def transport(u: str, headers: Mapping[str, str], timeout: float) -> Response:
+        return answers.pop(0) if answers else Response(200, {}, b'{"query": {}}', url)
+
+    WikiApi(url, transport, sleeps, interval_s=0, backoff_s=1.0).query({})
+    assert len(sleeps) == 4
+    assert all(1.0 <= s <= wiki_api.MAX_WAIT_S for s in sleeps), sleeps
+
+
+def test_a_gzip_bomb_is_refused(
+    sleeps: Sleeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(wiki_api, "MAX_BODY", 4096)
+    url = "https://wiki.example.test/api.php"
+    bomb = gzip.compress(b'{"query": "' + b"0" * 100_000 + b'"}')
+    assert len(bomb) < 4096
+
+    def transport(u: str, headers: Mapping[str, str], timeout: float) -> Response:
+        return Response(200, {"Content-Encoding": "gzip"}, bomb, url)
+
+    with pytest.raises(WikiError, match="unpacked"):
+        WikiApi(url, transport, sleeps, interval_s=0).query({})

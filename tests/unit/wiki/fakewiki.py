@@ -1,8 +1,9 @@
 """A fake MediaWiki ``api.php`` for the wiki tests (WO-8.3): hand-written pages, served on
 127.0.0.1 by a threaded HTTP server, so the client's etiquette is measured on real requests.
 
-It answers the four queries GOS makes (siteinfo; revisions by titles with redirects;
-generator=allpages; list=recentchanges) in ``formatversion=2`` JSON, honours ``continue``, and
+It answers the four queries GOS makes (siteinfo; revisions by titles, following redirects only
+when asked, which GOS never does; generator=allpages; list=recentchanges, moves with their
+target) in ``formatversion=2`` JSON, honours ``continue``, and
 records every request: its headers, parameters and how many requests were in flight at once.
 ``faults`` is a queue of answers to give instead of the next ones (maxlag, 429, 503, a 403, an
 HTML challenge page). Every page here is made up for the tests; none is the real wiki's text.
@@ -65,8 +66,8 @@ class Seen:
 class FakeWiki:
     pages: dict[str, tuple[int, str]] = field(default_factory=default_pages)
     rights: dict[str, str] = field(default_factory=lambda: dict(LICENCE))
-    # (timestamp, title, kind) newest last; kind: edit, new, log
-    changes: list[tuple[str, str, str]] = field(default_factory=list)
+    # (timestamp, title, kind, a move's new title) newest last; kind: edit, new, log
+    changes: list[tuple[str, str, str, str]] = field(default_factory=list)
     faults: deque[str] = field(default_factory=deque)
     delay_s: float = 0.0
     now: str = "2026-11-11T12:00:00Z"
@@ -81,11 +82,18 @@ class FakeWiki:
         revid = max((r for r, _ in self.pages.values()), default=1000) + 1
         kind = "edit" if title in self.pages else "new"
         self.pages[title] = (revid, text)
-        self.changes.append((ts, title, kind))
+        self.changes.append((ts, title, kind, ""))
 
     def delete(self, title: str, ts: str) -> None:
         self.pages.pop(title, None)
-        self.changes.append((ts, title, "log"))
+        self.changes.append((ts, title, "log", ""))
+
+    def move(self, old: str, new: str, ts: str) -> None:
+        """A move that leaves a redirect: one log entry, under the old title."""
+        revid = max(r for r, _ in self.pages.values()) + 1
+        self.pages[new] = (revid, self.pages[old][1])
+        self.pages[old] = (revid + 1, f"#REDIRECT [[{new}]]")
+        self.changes.append((ts, old, "log", new))
 
     # --- answers -----------------------------------------------------------------------
 
@@ -207,8 +215,14 @@ class FakeWiki:
             "curtimestamp": self.now,
             "query": {
                 "recentchanges": [
-                    {"type": kind, "ns": 0, "title": title, "timestamp": ts}
-                    for ts, title, kind in page
+                    {
+                        "type": kind,
+                        "ns": 0,
+                        "title": title,
+                        "timestamp": ts,
+                        **({"logparams": {"target_title": to}} if to else {}),
+                    }
+                    for ts, title, kind, to in page
                 ]
             },
         }
