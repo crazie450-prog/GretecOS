@@ -74,9 +74,9 @@ EXPLORE = (
     2  # routes solved beyond those asked for, the best kept (the proposals are rough)
 )
 MAX_TRIES = 3  # choice proposals per route solved, before giving up on more
-# No HiGHS presolve (D245): SciPy 1.17-1.18's crashes the process (SIGSEGV) on some of the power
-# designer's MILPs (LV networks on the harness DB), and 1.16's finds no solution where there is
-# one; the optimum is the same without it (mip_rel_gap 0).
+# No HiGHS presolve (D245): SciPy 1.17-1.18's crashes the process (abort/SIGSEGV) on some of the
+# power designer's MILPs (LV networks on the harness DB) and finds no solution where there is one
+# on others, as 1.16's does; the optimum is the same without it (mip_rel_gap 0).
 _OPTIONS = {"disp": False, "presolve": False, "mip_rel_gap": 0.0}
 
 
