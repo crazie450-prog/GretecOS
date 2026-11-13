@@ -8,7 +8,7 @@
 // (D158 (5)).
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { ActionRow, LiveBase, LiveBinding, LiveMachine, LivePower, LiveProblem, LiveStatus } from "../api/types";
+import type { ActionRow, LiveAlert, LiveBase, LiveBinding, LiveMachine, LivePower, LiveProblem, LiveStatus } from "../api/types";
 import { CitationChip, Panel, StatusGlyph, type Status } from "../components/core";
 import { GLYPH } from "../state/states";
 
@@ -66,6 +66,37 @@ function Problems(props: { problems: LiveProblem[]; status: LiveBinding["status"
         </li>
       ))}
     </ul>
+  );
+}
+
+const ALERT_STATUS: Record<LiveAlert["level"], Status> = { err: "err", warn: "warn", info: "ok" };
+
+/** WO-7.5's alerts for this instance: firing ones (held ones marked as such) and crafting done. */
+function Alerts(props: { alerts: LiveAlert[]; held: LiveBinding["held"] }) {
+  if (props.alerts.length === 0) {
+    return (
+      <p className="empty" data-testid="live-no-alerts">
+        {GLYPH.ok} No alerts.
+      </p>
+    );
+  }
+  return (
+    <>
+      {props.held && (
+        <p className="empty" data-testid="live-alerts-held">
+          {GLYPH.paused} Alerts held: {props.held === "paused" ? "the game is paused" : "OC is silent"}. Nothing fires or clears until
+          fresh readings come.
+        </p>
+      )}
+      <ul className="live-problems" data-testid="live-alerts">
+        {props.alerts.map((a) => (
+          <li key={a.key} data-alert={a.rule} data-level={a.level} data-stale={a.stale ?? undefined}>
+            <StatusGlyph status={a.stale ? "off" : ALERT_STATUS[a.level]} label={a.stale ? "held" : a.level === "info" ? "done" : "alert"} />{" "}
+            <span className="base-name">{a.title}</span> <CitationChip cite={a.cite} />
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -230,6 +261,8 @@ function BindingView(props: { b: LiveBinding }) {
       )}
       <div className="live-grid">
         <div className="col">
+          <span className="gos-label">Alerts</span>
+          <Alerts alerts={b.alerts ?? []} held={b.held ?? null} />
           <span className="gos-label">Problems · stopped and stalled first</span>
           <Problems problems={b.problems} status={b.status} />
           {b.ae2 && (

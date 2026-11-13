@@ -342,6 +342,23 @@ export interface LiveCraft {
   stale: boolean;
 }
 
+/** A telemetry alert (WO-7.5, gregtec.alerts.engine.Alert.as_dict). */
+export interface LiveAlert {
+  key: string;
+  rule: "power_low" | "maintenance" | "machine_stalled" | "crafting_done";
+  binding: string;
+  subject: string;
+  level: "err" | "warn" | "info";
+  title: string;
+  body: string;
+  say: string;
+  cite: string;
+  fired_at: number;
+  value: number | null;
+  unit: string | null;
+  stale: "paused" | "silent" | null;
+}
+
 export interface LiveBinding {
   binding: string;
   status: "connected" | "stale" | "not_set_up";
@@ -351,6 +368,9 @@ export interface LiveBinding {
   net_eu_t: number | null;
   machines: LiveMachine[];
   problems: LiveProblem[];
+  /** WO-7.5: the alerts firing here (crafting done included) and why they are held, if so. */
+  alerts: LiveAlert[];
+  held: "paused" | "silent" | null;
   ae2: {
     cpus: number;
     busy: number;
