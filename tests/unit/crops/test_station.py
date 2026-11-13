@@ -331,7 +331,7 @@ def test_a_dashboard_proposal_never_replaces_another_world_action(
 def test_status_from_telemetry_is_marked_stale(
     desk: tuple[ActionDesk, Telemetry, Clock],
 ) -> None:
-    d, tel, clock = desk
+    _, tel, clock = desk
     crops = {
         "state": "running",
         "plan": "0a1b2c3d",
