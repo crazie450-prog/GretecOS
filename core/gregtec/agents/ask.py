@@ -519,6 +519,8 @@ class Asker:
             return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
         if intent == router.PERSONA:
             return self._persona(route)
+        if intent == router.CROP_STEP:
+            return self._crop_step(route)
         if intent == router.SPOIL:
             return self._spoil(route)
         if intent in (router.PLANS, router.PLAN):
@@ -533,6 +535,32 @@ class Asker:
         else:
             text = card_text(pre, intent) or "I couldn't look that up."
         return self._base(route, pre, router.INSTANT, text)
+
+    def _crop_step(self, route: router.Route) -> Reply:
+        """The crop guide's next step, from code alone (WO-6.7): crop_step's card and a line
+        with the step's title and its first number, cited."""
+        out = self.registry.call("crop_step", {}, lane="fast", request=route.text)
+        block = prefetch.Block("crop_step", {}, out.text, out.is_error)
+        card = block.card()
+        if out.is_error:
+            text = card.get("error") or out.text
+            return Reply(text, router.INSTANT, route.intent, card=card)
+        parsed = block.parsed
+        head = parsed.head
+        if head.get("next") == "none":
+            return Reply(
+                f"Every step to {head.get('target', 'the target')} is done.",
+                router.INSTANT,
+                route.intent,
+                card=card,
+            )
+        first = next((r for r in parsed.rows if r.get("part") == "number"), None)
+        text = f"Step {head.get('step', '?')}: {head.get('title', '')}."
+        refs: list[str] = []
+        if first is not None:
+            text += f" {first['text']} ({first['refs']})."
+            refs = first["refs"].split()
+        return Reply(text, router.INSTANT, route.intent, card=card, refs=refs)
 
     def _spoil(self, route: router.Route) -> Reply:
         """A spoiler command (D268): its quests, at its level, granted to those ids only."""

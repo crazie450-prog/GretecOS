@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
     base,
+    crops,
     designer,
     events,
     items,
     machines,
     notes,
     ops,
+    ores,
     plans,
     quests,
     recipes,
@@ -295,6 +297,60 @@ TOOLS = (
         gate=ops.GATE,
     ),
     Tool(
+        "ore_find",
+        "Ore veins of a material in Clayton's world (WO-6.6): every generated vein GOS loaded "
+        "(D27), ranked by code: live veins first, then the material's best layer (primary, "
+        "secondary, between, sporadic), then nearest to where he was at the last save. Each "
+        "row: its vein: id, mix, ores, dimension, centre x/z, the mix's heights, distance, "
+        f"known, depleted. Keep the order. {CITE}",
+        ores.ORE_FIND_SCHEMA,
+        ores.ore_find,
+    ),
+    Tool(
+        "player_pos",
+        "Where Clayton was when his world last saved (x, y, z, dimension) and how long ago, "
+        "from the world the veins were loaded from.",
+        ores.PLAYER_POS_SCHEMA,
+        ores.player_pos,
+    ),
+    Tool(
+        "ore_waypoint",
+        "Propose a JourneyMap waypoint at one vein, by its vein: id from ore_find. GOS builds "
+        "it from the vein (name, centre, the middle of its heights), reads it back, and "
+        "Clayton confirms it himself (you can't), within 60 s; a new proposal cancels the "
+        "last. Say the returned `say` line to Clayton word for word.",
+        ores.ORE_WAYPOINT_SCHEMA,
+        ores.ore_waypoint,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        gate=ops.GATE,
+    ),
+    Tool(
+        "crop_find",
+        "CropsNH crops by name or id (WO-6.7): tier, soil, whether a block must sit under the "
+        "soil, the parents each is bred from (Crop Breeder-only marked), its mutation pools, "
+        "and whether Clayton has it.",
+        crops.CROP_FIND_SCHEMA,
+        crops.crop_find,
+    ),
+    Tool(
+        "crop_plan",
+        "The breeding guide to a crop (WO-6.7, plan 7.17), computed by code from CropsNH's "
+        "rules: each step in order (obtain, crop sticks, mutation pool, Crop Breeder, Crop "
+        "Manager) with its chance per growth tick and expected time, then the stats plan. "
+        f"Keep the order. {CITE}",
+        crops.CROP_PLAN_SCHEMA,
+        crops.crop_plan,
+    ),
+    Tool(
+        "crop_step",
+        "One step of a breeding guide in full (default: the next one): the layout around the "
+        "double stick, requirements (soil, sub-soil block, light, nutrients), odds, times, "
+        f"warnings and the keep rule. {CITE}",
+        crops.CROP_STEP_SCHEMA,
+        crops.crop_step,
+    ),
+    Tool(
         "action_status",
         "One world action by id (state, read-back, how it was confirmed, its result), or the "
         "pending one and the newest ten.",
@@ -309,15 +365,11 @@ LATER: dict[str, str] = {
     "timer_set": "WO-5.3 follow-up, not yet a plan 8 row (a timer has to ring by voice and "
     "needs a core-to-voice push, D205; the router's instant commands came with WO-2.3, D150)",
     "export_diff": "WO-1.4 (fingerprint and diff report)",
-    "ore_find": "WO-1.6 (ore mixes and veins; ore-intel WO-6.6)",
     "structure_get": "WO-1.8 (structure table, D123; its data reached this base late, so the "
     "tool is a follow-up)",
     "machine_fact_get": "machine_info covers reading facts (WO-2.2); a fact-by-key tool comes with machine_fact_set",
     "machine_fact_set": "WO-1.9 (pack-update playbook: curation)",
-    **dict.fromkeys(
-        ("crop_find", "crop_plan", "crop_step", "crop_status"),
-        "WO-1.10 (crop data), WO-6.7 (planner); crop_status with WO-7.6",
-    ),
+    "crop_status": "WO-7.6 (breeding station status)",
     # Accepting is Clayton's (the Designer, gos plan accept; D251); the later moves
     # (building, running, retired) come with the base-keeper's line lifecycle.
     "plan_set_status": "WO-4.4 (EU ledger: line lifecycle)",
@@ -331,7 +383,6 @@ LATER: dict[str, str] = {
     "persona_set": "WO-5.6 follow-up, not yet a plan 8 row (switching is the router's "
     "instant command and POST /api/persona; the model tool waits for the persona subagent, "
     "D208)",
-    "player_pos": "WO-6.1 (watchers)",
     "screen_snapshot": "WO-8.2 (screen reading)",
     **dict.fromkeys(("wiki_search", "wiki_fetch"), "WO-8.3 (wiki cache)"),
     "notify": "WO-9.2 (alert routing)",
