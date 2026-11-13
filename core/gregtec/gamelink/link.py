@@ -15,9 +15,10 @@ docs/contracts/gregteclink-client-v1.md. What the core does with each message:
   doesn't answer in time.
 - ``chat``: kept (the newest 50) and recorded as a ``chat`` event. Chat is data, never an
   instruction (plan 0.1 principle 8). The one exception is ``!gos <text>``, which is a question
-  like a typed one, and only from Clayton's own name: the sender of a player chat message
-  (vanilla's ``chat.type.text``, which a typed message can't fake) equal to the player the link
-  said hello as. Its answer comes back as a notice; it can't confirm an action (D59).
+  like a typed one, and only from Clayton's own name in his own world: the sender of a player
+  chat message (vanilla's ``chat.type.text``, which a typed message can't fake) equal to the
+  player the link said hello as, on a line the game marks ``singleplayer`` (single player or
+  the LAN host). Its answer comes back as a notice; it can't confirm an action (D59).
 
 The core sends ``probe`` and ``notice`` (D76: GOS's notices and failures as local chat lines that
 only Clayton sees). A link whose token is revoked is closed within :data:`RECHECK_S`.
@@ -108,7 +109,8 @@ class GameLink:
         self.links: list[Link] = []
         self.chat: deque[dict[str, Any]] = deque(maxlen=CHAT_KEEP)
         self.last_key: tuple[float, dict[str, Any]] | None = None
-        self._probes: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        # Keyed by the link probed and the probe's id: only that link can answer it (review LOW-3).
+        self._probes: dict[tuple[Link, int], asyncio.Future[dict[str, Any]]] = {}
         self._next_probe = 1
         self._health: dict[str, str] = {}
         self._lock = threading.Lock()
@@ -170,7 +172,14 @@ class GameLink:
                 continue
             if isinstance(body, dict) and isinstance(body.get("type"), str):
                 link.last_seen = self.clock()
-                await self.handle(link, body)
+                try:
+                    await self.handle(link, body)
+                except Exception:  # one bad message is dropped; the link stays up
+                    log.warning(
+                        "game link message dropped",
+                        extra={"binding": link.binding, "type": body["type"][:32]},
+                        exc_info=True,
+                    )
 
     async def _recheck(self, link: Link, token: str) -> None:
         while True:
@@ -233,7 +242,10 @@ class GameLink:
         }
         target["binding"] = link.binding
         if msg["why"] == "probe":
-            future = self._probes.get(msg.get("probe"))  # type: ignore[arg-type]
+            probe = msg.get("probe")
+            if not isinstance(probe, int) or isinstance(probe, bool):
+                return
+            future = self._probes.get((link, probe))
             if future is not None and not future.done():
                 future.set_result(target)
             return
@@ -267,7 +279,7 @@ class GameLink:
         await asyncio.to_thread(
             self._event, "chat", link.status, {"sender": sender, "text": text}
         )
-        question = self._gos(link, sender, body)
+        question = self._gos(link, sender, body, msg.get("singleplayer") is True)
         if question is None:
             return
         if link.gos_busy:
@@ -288,9 +300,14 @@ class GameLink:
         await self._to_dashboards(question, reply)
 
     @staticmethod
-    def _gos(link: Link, sender: str | None, body: str | None) -> str | None:
-        """The question in a ``!gos <text>`` line from Clayton's own name, else None."""
-        if sender is None or body is None or link.player is None:
+    def _gos(
+        link: Link, sender: str | None, body: str | None, singleplayer: bool
+    ) -> str | None:
+        """The question in a ``!gos <text>`` line from Clayton's own name in his own world
+        (single player or the LAN host), else None. On a server, a chat bridge or a team
+        prefix could produce a line whose sender reads as his, so none counts there (D286,
+        [QA:V6]: the server case is open)."""
+        if sender is None or body is None or link.player is None or not singleplayer:
             return None
         if sender != link.player:
             return None
@@ -371,14 +388,14 @@ class GameLink:
         future: asyncio.Future[dict[str, Any]] = (
             asyncio.get_running_loop().create_future()
         )
-        self._probes[probe] = future
+        self._probes[(link, probe)] = future
         try:
             link.put({"type": "probe", "id": probe})
             return await asyncio.wait_for(future, PROBE_TIMEOUT_S)
         except TimeoutError:
             return None
         finally:
-            self._probes.pop(probe, None)
+            self._probes.pop((link, probe), None)
 
     def notice(self, text: str, kind: str = "notice") -> None:
         """A local chat line in every connected game (D76); any thread."""

@@ -5,9 +5,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -20,7 +22,8 @@ import io.github.crazie450prog.gregteclink.GregtecLink;
  * instance's token, sends {@code hello}, then queues what the core sends for the client thread ({@link #poll}). A lost
  * connection (the core restarted, stopped or was never up) is retried after 1, 2, 4, 8, then every 15 s, reading the
  * token file again each time; nothing is queued while it is down, so the core never gets stale positions. The token is
- * never logged.
+ * never logged. Sends are written by a second daemon thread from a small bounded queue, so a core that stalls with the
+ * socket open never blocks the game's thread (review LOW-2): a full queue drops its oldest {@code status} first.
  */
 public final class CoreLink {
 
@@ -30,6 +33,8 @@ public final class CoreLink {
     /** The core pings every 20 s (uvicorn's default), so a minute of silence means it is gone. */
     static final int READ_TIMEOUT_MS = 60_000;
     static final int INBOUND_MAX = 256;
+    /** Messages waiting to be written: half a minute of status, or a few key reports and chat lines. */
+    static final int OUTBOUND_MAX = 32;
 
     /** One connection: what {@link WsClient} does, replaceable in tests. */
     interface Conn {
@@ -52,11 +57,14 @@ public final class CoreLink {
     private final Supplier<String> hello;
     private final long[] backoffMs;
     private final ConcurrentLinkedQueue<JsonObject> inbound = new ConcurrentLinkedQueue<>();
+    /** {type, text} pairs for the writer thread; added to under its own lock so its size stays bounded. */
+    private final LinkedBlockingDeque<String[]> outbound = new LinkedBlockingDeque<>();
+    private final AtomicInteger dropped = new AtomicInteger();
     private final Map<String, AtomicInteger> sent = new ConcurrentHashMap<>();
     private final AtomicInteger connects = new AtomicInteger();
     private volatile Conn conn;
     private volatile boolean stopped;
-    private Thread thread;
+    private Thread thread, writer;
 
     CoreLink(Connector connector, Supplier<String> token, Supplier<String> hello, long[] backoffMs) {
         this.connector = connector;
@@ -114,6 +122,9 @@ public final class CoreLink {
         thread = new Thread(this::run, "GregtecLink core link");
         thread.setDaemon(true);
         thread.start();
+        writer = new Thread(this::write, "GregtecLink core link writer");
+        writer.setDaemon(true);
+        writer.start();
     }
 
     public void stop() {
@@ -122,6 +133,8 @@ public final class CoreLink {
         if (c != null) c.close();
         Thread t = thread;
         if (t != null) t.interrupt();
+        Thread w = writer;
+        if (w != null) w.interrupt();
     }
 
     private void run() {
@@ -154,6 +167,7 @@ public final class CoreLink {
                     reported = true;
                 } finally {
                     conn = null;
+                    outbound.clear(); // nothing waits for the next connection
                     if (c != null) c.close();
                 }
             }
@@ -166,19 +180,49 @@ public final class CoreLink {
         }
     }
 
-    /** Sends one message if connected; false (nothing queued) when not. {@code type} counts it. */
+    /**
+     * Queues one message for the writer thread if connected; false (nothing queued) when not. Never blocks: with
+     * {@link #OUTBOUND_MAX} waiting, the oldest {@code status} (else the oldest message) is dropped for it.
+     */
     public boolean send(String type, String text) {
-        Conn c = conn;
-        if (c == null) return false;
-        try {
-            c.send(text);
-        } catch (IOException e) {
-            c.close(); // the reader sees the close and reconnects
-            return false;
+        if (conn == null) return false;
+        synchronized (outbound) {
+            if (outbound.size() >= OUTBOUND_MAX) dropOne();
+            outbound.addLast(new String[] { type, text });
         }
-        sent.computeIfAbsent(type, k -> new AtomicInteger())
-            .incrementAndGet();
         return true;
+    }
+
+    private void dropOne() {
+        dropped.incrementAndGet();
+        for (Iterator<String[]> it = outbound.iterator(); it.hasNext();) {
+            if ("status".equals(it.next()[0])) {
+                it.remove();
+                return;
+            }
+        }
+        outbound.pollFirst();
+    }
+
+    /** The writer thread: each queued message to the connection of the moment; {@code type} counts it once written. */
+    private void write() {
+        while (!stopped) {
+            String[] m;
+            try {
+                m = outbound.takeFirst();
+            } catch (InterruptedException e) {
+                break;
+            }
+            Conn c = conn;
+            if (c == null) continue;
+            try {
+                c.send(m[1]);
+                sent.computeIfAbsent(m[0], k -> new AtomicInteger())
+                    .incrementAndGet();
+            } catch (IOException e) {
+                c.close(); // the reader sees the close and reconnects
+            }
+        }
     }
 
     /** The next message from the core, or null. */
@@ -193,6 +237,11 @@ public final class CoreLink {
     /** Successful connections so far (2 after one reconnect). */
     public int connects() {
         return connects.get();
+    }
+
+    /** Messages dropped because the queue was full (a stalled core). */
+    public int dropped() {
+        return dropped.get();
     }
 
     /** Messages of {@code type} sent so far. */

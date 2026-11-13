@@ -7,7 +7,6 @@ import java.util.Deque;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiChat;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ChatComponentText;
@@ -71,7 +70,8 @@ public final class ClientModule {
             .getSession()
             .getUsername();
         CoreLink link = CoreLink.create(cfg.port, tokenFile, () -> LinkMessages.hello(player, Tags.VERSION, cfg));
-        // Unbound by default: GTNH binds a great many keys; the player picks one in Controls (GregtecLink).
+        // Unbound by default: GTNH binds a great many keys; the player picks one in Controls (GregtecLink), best a key
+        // that types nothing (F13-F24, Pause, a mouse button; D180), though typing into a text field doesn't fire it.
         KeyBinding key = new KeyBinding(KEY_WHATS_THIS, Keyboard.KEY_NONE, KEY_CATEGORY);
         ClientRegistry.registerKeyBinding(key);
         ClientModule m = new ClientModule(cfg, link, key);
@@ -111,13 +111,15 @@ public final class ClientModule {
 
     /**
      * Polled, not a key event: in a GUI the game hands keys to the screen, not to key bindings, and the hovered item
-     * is only there while a GUI is open. Not while typing in chat.
+     * is only there while a GUI is open. A keyboard key doesn't count while the player types (chat, a sign, a focused
+     * text field, NEI's search box: {@link Typing}).
      */
     private boolean keyDown(Minecraft mc) {
         int code = key.getKeyCode();
-        if (code == 0 || mc.currentScreen instanceof GuiChat) return false;
+        if (code == 0) return false;
         try {
-            return code < 0 ? Mouse.isButtonDown(code + 100) : Keyboard.isKeyDown(code);
+            if (code < 0) return Mouse.isButtonDown(code + 100);
+            return Keyboard.isKeyDown(code) && !Typing.typing(mc.currentScreen);
         } catch (RuntimeException e) {
             return false;
         }

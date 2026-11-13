@@ -26,7 +26,10 @@ protocol: [docs/contracts/gregteclink-client-v1.md](../contracts/gregteclink-cli
 
    It prints the jar, the config and `token: gregteclink-lab -> ...\GregtecOS\config\gregteclink-lab.token`.
 3. Launch Lab (Prism, or `gos launch lab`), open a Lab world. In Options, Controls, GregtecLink, bind
-   **What's this? (Gregtec OS)** to a key nothing else uses (it is unbound on purpose: GTNH binds many keys).
+   **What's this? (Gregtec OS)** to a key nothing else uses and that types nothing: F13-F24, Pause, or a mouse
+   button (as D180 does for the push-to-talk key). It is unbound on purpose (GTNH binds many keys). A letter works
+   but is a poor pick: the key is ignored while you type into chat, a sign, a book, a focused text field (an anvil,
+   an AE2 terminal's search) or NEI's search box, but a text box some mod draws its own way could still fire it.
 4. See the link: in PowerShell,
 
    ```powershell
@@ -39,7 +42,9 @@ protocol: [docs/contracts/gregteclink-client-v1.md](../contracts/gregteclink-cli
    the card shows on monitor 2. Hover in your inventory and in NEI's item list over: a GT ingot, a GT circuit, a
    bartworks or GT++ material, a GoodGenerator or TecTech part, an AE2 item, an IC2 battery (charged), a vanilla item;
    then look (no GUI) at a placed GT machine, a GT casing and an AE2 or other mod's block. Each answer must name what
-   the tooltip shows. Note any that doesn't.
+   the tooltip shows. Note any that doesn't. NEI's item list is checked only here (the harness hovers chest slots),
+   so do at least three of the hovers in it and one on an NEI recipe page. Screens that aren't containers (the quest
+   book, the Thaumonomicon) are not read: there the key answers that nothing is pointed at.
 6. **By voice** (with `gos voice run`): hover over an item and say "what's this?". The answer is spoken and the card
    shows. Do it once with no GUI open, looking at a block.
 7. **`!gos`**: type `!gos recipes for steel ingot` in chat. A `[GOS]` reply comes back. Only your own name works.

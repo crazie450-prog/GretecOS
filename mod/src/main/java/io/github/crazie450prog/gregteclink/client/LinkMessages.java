@@ -1,5 +1,6 @@
 package io.github.crazie450prog.gregteclink.client;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import net.minecraft.item.ItemStack;
@@ -24,6 +25,11 @@ public final class LinkMessages {
     static final int NBT_MAX = 2048;
     static final int CHAT_MAX = 500; // characters of a chat line and of its body: both fit in 4 KB as UTF-8
     static final int DISPLAY_MAX = 128;
+    /**
+     * UTF-8 bytes a message may take: the core reads messages of at most 4096 bytes (uvicorn closes the socket on a
+     * bigger one), and {@link #NBT_MAX} counts characters, which a multi-byte name or lore can triple.
+     */
+    static final int BYTES_MAX = 3800;
 
     private LinkMessages() {}
 
@@ -68,6 +74,21 @@ public final class LinkMessages {
         if (item != null) o.add("item", item);
         if (block != null) o.add("block", block);
         if (display != null) o.addProperty("display", cut(display, DISPLAY_MAX));
+        String text = Json.COMPACT.toJson(o);
+        if (bytes(text) <= BYTES_MAX) return text;
+        // Too big for the core: the NBT goes first (the core answers for the plain item), then the display name.
+        if (item != null && item.has("nbt")) {
+            JsonObject lean = new JsonObject();
+            for (Map.Entry<String, JsonElement> m : item.entrySet()) {
+                if (!m.getKey()
+                    .equals("nbt")) lean.add(m.getKey(), m.getValue());
+            }
+            lean.addProperty("nbt_dropped", true);
+            o.add("item", lean);
+            text = Json.COMPACT.toJson(o);
+            if (bytes(text) <= BYTES_MAX) return text;
+        }
+        o.remove("display");
         return Json.COMPACT.toJson(o);
     }
 
@@ -77,7 +98,14 @@ public final class LinkMessages {
         o.addProperty("text", cut(text, CHAT_MAX));
         if (sender != null) o.addProperty("sender", cut(sender, 32));
         if (body != null) o.addProperty("body", cut(body, CHAT_MAX));
-        return Json.COMPACT.toJson(o);
+        String out = Json.COMPACT.toJson(o);
+        // 500 characters fit unless they are escaped control characters; then each half is cut until they do.
+        for (int max = CHAT_MAX / 2; bytes(out) > BYTES_MAX && max > 0; max /= 2) {
+            o.addProperty("text", cut(text, max));
+            if (body != null) o.addProperty("body", cut(body, max));
+            out = Json.COMPACT.toJson(o);
+        }
+        return out;
     }
 
     /** {"item","meta","nbt"?} of a stack; null for no stack or an unregistered item. */
@@ -145,6 +173,10 @@ public final class LinkMessages {
         } catch (RuntimeException ex) {
             return null;
         }
+    }
+
+    static int bytes(String s) {
+        return s.getBytes(StandardCharsets.UTF_8).length;
     }
 
     static String cut(String s, int max) {

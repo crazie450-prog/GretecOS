@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,7 +31,7 @@ class CoreLinkTest {
     Path tmp;
 
     /** A connection the test drives: what the core "sends" goes in {@code incoming}; null ends it. */
-    static final class FakeConn implements CoreLink.Conn {
+    static class FakeConn implements CoreLink.Conn {
 
         final List<String> sent = new CopyOnWriteArrayList<>();
         final BlockingQueue<String> incoming = new LinkedBlockingQueue<>();
@@ -85,7 +86,7 @@ class CoreLinkTest {
         await(link::connected);
         assertEquals("{\"type\":\"hello\"}", first.sent.get(0));
         assertTrue(link.send("status", "{\"type\":\"status\"}"));
-        assertEquals(1, link.sent("status"));
+        await(() -> link.sent("status") == 1); // written by the writer thread
         first.incoming.add("{\"type\":\"notice\",\"text\":\"hi\"}");
         first.incoming.add("not json");
         first.incoming.add("{\"no\":\"type\"}");
@@ -134,11 +135,45 @@ class CoreLinkTest {
         link.start();
         await(link::connected);
         c.closed = true;
-        assertFalse(link.send("chat", "{}"));
+        assertTrue(link.send("chat", "{}")); // queued; the writer's failure drops the connection
         await(() -> !link.connected());
         assertEquals(0, link.sent("chat"));
         JsonObject none = link.poll();
         assertNull(none);
+        link.stop();
+    }
+
+    /** A core that stalls with the socket open never blocks the caller; the queue drops its oldest status first. */
+    @Test
+    void aStalledCoreNeverBlocksTheGameThread() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        FakeConn c = new FakeConn() {
+
+            @Override
+            public void send(String text) throws IOException {
+                if (!text.equals("{}")) { // the hello goes through; then the socket's buffer is full
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        throw new IOException(e);
+                    }
+                }
+                super.send(text);
+            }
+        };
+        CoreLink link = new CoreLink(t -> c, () -> "t", () -> "{}", new long[] { 10_000 });
+        link.start();
+        await(link::connected);
+        long start = System.nanoTime();
+        for (int i = 0; i < 100; i++) assertTrue(link.send("status", "s" + i));
+        assertTrue(link.send("target", "key"));
+        for (int i = 100; i < 200; i++) assertTrue(link.send("status", "s" + i));
+        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) < 1000, "send() blocked");
+        assertTrue(link.dropped() > 0);
+        release.countDown();
+        await(() -> c.sent.contains("s199"));
+        assertTrue(c.sent.contains("key"), "the key report outlives the statuses: " + c.sent);
+        assertTrue(c.sent.size() <= CoreLink.OUTBOUND_MAX + 2, "bounded: " + c.sent.size());
         link.stop();
     }
 }
