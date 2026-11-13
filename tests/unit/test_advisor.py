@@ -423,6 +423,88 @@ def test_a_kind_waits_out_its_cooldown_and_a_cleared_subject_can_come_back(
         n.close()
 
 
+def test_a_failed_check_or_a_quiet_oc_is_unknown_not_cleared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M2: a check that raised (any exception) or an OC entry gone quiet (the game
+    paused) keeps what was said, so the same ongoing problem isn't announced again after the
+    cooldown; only a fresh reading that shows it gone, or a long silence, clears it."""
+    sc = S.build(tmp_path, "trouble")
+    clock = Clock(sc.now)
+    n, given = make(sc, clock, enabled=("machine_stalled", "power_deficit"))
+    real = checks.power_deficit
+    try:
+        assert [x.kind for x in n.tick()] == ["power_deficit", "machine_stalled"]
+
+        def broken(conn: sqlite3.Connection, now: float) -> list[checks.Finding]:
+            raise ValueError("a bad plan file")
+
+        monkeypatch.setattr(checks, "power_deficit", broken)
+        clock.now = sc.now + notices.COOLDOWN_S + 1
+        S.send_oc(
+            sc.db, clock.now - 1, S.oc_message(3, active=False, eu_in=300, eu_out=300)
+        )
+        assert n.tick() == []  # not raised out of the tick
+        assert n.failed == {"power_deficit"}
+        assert any(p.startswith("power_deficit: a bad plan file") for p in n.problems)
+        assert [a["id"] for a in n.alerts()] == [
+            "notice:power_deficit",  # what held last tick still shows
+            "notice:machine_stalled",
+        ]
+        monkeypatch.setattr(checks, "power_deficit", real)
+        clock.now += 10
+        S.send_oc(
+            sc.db, clock.now - 1, S.oc_message(4, active=False, eu_in=300, eu_out=300)
+        )
+        assert n.tick() == []  # back, still true: not said again
+        # the game pauses: OC goes quiet past STALE_S; the stall is unknown
+        clock.now += 300
+        assert n.tick() == []
+        assert [a["id"] for a in n.alerts()] == ["notice:power_deficit"]
+        # it comes back, still stalled, past the cooldown: still not said again
+        clock.now += notices.COOLDOWN_S
+        S.send_oc(
+            sc.db, clock.now - 1, S.oc_message(5, active=False, eu_in=300, eu_out=300)
+        )
+        assert n.tick() == []
+        # silent past the grace: cleared, so it is announced when it holds again
+        clock.now += notices.UNKNOWN_GRACE_S + 60
+        assert n.tick() == []
+        S.send_oc(
+            sc.db, clock.now - 1, S.oc_message(6, active=False, eu_in=0, eu_out=0)
+        )
+        assert [x.kind for x in n.tick()] == ["machine_stalled"]
+    finally:
+        n.close()
+    assert [x.kind for x in given] == [
+        "power_deficit",
+        "machine_stalled",
+        "machine_stalled",
+    ]
+
+
+def test_a_cleared_problem_pushes_the_change(tmp_path: Path) -> None:
+    """Review M1: when an announced problem clears, ``changed`` is called once so the core
+    pushes the state (the alert card goes) and Now asks the advisor again."""
+    sc = S.build(tmp_path, "trouble")
+    clock = Clock(sc.now)
+    calls: list[int] = []
+    n, _ = make(
+        sc, clock, enabled=("machine_stalled",), changed=lambda: calls.append(1)
+    )
+    try:
+        assert len(n.tick()) == 1
+        assert calls == []  # the notice's own push refreshes the state
+        assert n.tick() == [] and calls == []  # nothing moved
+        clock.now += 30
+        S.send_oc(sc.db, clock.now, S.oc_message(3, active=True, eu_in=0, eu_out=300))
+        assert n.tick() == []
+        assert calls == [1] and n.alerts() == []
+        assert n.tick() == [] and calls == [1]
+    finally:
+        n.close()
+
+
 def test_a_draining_store_must_hold_before_its_notice(tmp_path: Path) -> None:
     sc = S.build(tmp_path, "early")
     S.send_oc(sc.db, sc.now - 5, S.oc_message(1, active=True, eu_in=0, eu_out=300))
@@ -530,7 +612,7 @@ def test_the_state_survives_a_bad_kv_row(tmp_path: Path) -> None:
         ).fetchone()
     finally:
         conn.close()
-    assert set(json.loads(row[0])) == {"seen", "said", "last"}
+    assert set(json.loads(row[0])) == {"seen", "said", "last", "kinds"}
 
 
 # --- the core ------------------------------------------------------------------------------

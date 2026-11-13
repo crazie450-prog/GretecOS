@@ -7,7 +7,11 @@ from stock; ``quest_opened`` is opt-in) is checked by :mod:`.checks` and becomes
 - **it is new**: its subject (a plan, an OC entry, a quest; :attr:`.checks.Finding.key`) wasn't
   true at the last tick, or has been true for its hold (a draining LSC for
   :data:`.checks.DRAIN_HOLD_S`, so one reading's flicker says nothing). A subject is announced
-  once while it holds; once it clears, it can be announced again;
+  once while it holds; once it clears, it can be announced again. Only a check that ran and found
+  it gone clears it: while its kind's check failed this tick (the DB busy with a build or a
+  backup), or while its OC entry has gone quiet (the game paused; a ``tel:`` subject heard
+  more than WO-7.1's ``STALE_S`` but at most :data:`UNKNOWN_GRACE_S` ago), it is unknown and
+  keeps its marks, so a pause doesn't announce the same problem again (review M2);
 - **its kind's cooldown is over**: one notice per kind per :data:`COOLDOWN_S` (10 minutes, plan
   7.5); the subjects of a kind that are due together go in one notice ("2 machines stalled"),
   and a subject that came up during the cooldown waits for its end (if it still holds);
@@ -19,6 +23,8 @@ A notice is handed to ``deliver`` (the core: a ``notice`` push to every socket, 
 client speaks, D76, and the dashboard shows) with a spoken line that holds no ids or numbers (the
 dashboard and the advisor carry them, cited). Problem notices (``power_deficit``,
 ``machine_stalled``) stay in :meth:`Notices.alerts` while they hold: the dashboard's alert cards.
+When the alerts change without a notice (a problem cleared), ``changed`` is called (the core
+pushes the state and a ``notice.cleared`` message, so the cards and Now's steps refresh).
 The state (what was announced, each kind's last notice) is kept in ``kv`` ``notices.state``, so a
 core restart doesn't announce again what was already said. Only the core writes it.
 """
@@ -36,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.advisor import checks
+from gregtec.bridge.telemetry import STALE_S
 from gregtec.config import NOTICES, NOTICES_DEFAULT
 
 log = logging.getLogger("gregtec.advisor")
@@ -44,6 +51,9 @@ TICK_S = 10.0
 COOLDOWN_S = 600  # plan 7.5: a 10-minute cooldown
 QUEST_WINDOW_S = 900  # quest_opened: a quest done in the last 15 minutes
 KV_STATE = "notices.state"
+UNKNOWN_GRACE_S = (
+    3600  # a quiet OC entry's marks are kept this long, then it counts as cleared
+)
 HIGH, NORMAL, LOW = 2, 1, 0
 PRIORITY: dict[str, int] = {
     "power_deficit": HIGH,
@@ -106,14 +116,22 @@ def _say(kind: str, found: Sequence[checks.Finding]) -> tuple[str, str]:
     return title, title + "."
 
 
+def _keys(holding: Mapping[str, Sequence[checks.Finding]]) -> dict[str, list[str]]:
+    return {k: sorted(f.key for f in v) for k, v in holding.items() if v}
+
+
 @dataclass
 class Notices:
     db: Path  # GOS_HOME/data/gos.sqlite
     enabled: Sequence[str] = DEFAULT
     deliver: Callable[[Notice], None] | None = None
+    changed: Callable[[], None] | None = None  # the alerts changed without a notice
     clock: Callable[[], float] = time.time
     cooldown_s: int = COOLDOWN_S
     problems: list[str] = field(default_factory=list)
+    failed: set[str] = field(
+        default_factory=set
+    )  # the kinds whose check failed last tick
     _holding: dict[str, list[checks.Finding]] = field(default_factory=dict)
     _conn: sqlite3.Connection | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -149,6 +167,7 @@ class Notices:
             "seen": dict(st.get("seen") or {}),  # key -> first ts it held (this spell)
             "said": dict(st.get("said") or {}),  # key -> ts announced (this spell)
             "last": dict(st.get("last") or {}),  # kind -> ts of its last notice
+            "kinds": dict(st.get("kinds") or {}),  # key -> its kind
         }
 
     def _save(self, conn: sqlite3.Connection, st: Mapping[str, Any], now: int) -> None:
@@ -162,9 +181,11 @@ class Notices:
     # --- checking
 
     def check(self, conn: sqlite3.Connection, now: float) -> list[checks.Finding]:
-        """Every enabled kind's findings now (a check that fails is reported, not fatal)."""
+        """Every enabled kind's findings now (a check that fails is reported in
+        :attr:`problems` and its kind in :attr:`failed`, not fatal)."""
         out: list[checks.Finding] = []
         self.problems = []
+        self.failed = set()
         for kind in KINDS:
             if kind not in self.enabled:
                 continue
@@ -177,9 +198,22 @@ class Notices:
                     out += checks.buildable_plans(conn, self.home)
                 else:
                     out += self._opened(conn, now)
-            except sqlite3.Error as exc:
+            except Exception as exc:  # noqa: BLE001 - one kind's failure (a busy DB) is its own
                 self.problems.append(f"{kind}: {exc}")
+                self.failed.add(kind)
+                log.info(
+                    "notice check failed", extra={"kind": kind, "why": str(exc)[:200]}
+                )
         return out
+
+    def _unknown(self, conn: sqlite3.Connection, key: str, now: float) -> bool:
+        """A ``tel:`` subject whose OC entry has gone quiet, but not for long: unknown."""
+        if not key.startswith("tel:") or not checks._has(conn, "tel_machine"):
+            return False
+        row = conn.execute(
+            "SELECT last_seen FROM tel_machine WHERE id = ?", (key[4:],)
+        ).fetchone()
+        return row is not None and STALE_S < now - int(row[0]) <= UNKNOWN_GRACE_S
 
     def _opened(self, conn: sqlite3.Connection, now: float) -> list[checks.Finding]:
         from gregtec.db import quests as quest_db
@@ -203,11 +237,17 @@ class Notices:
             st = self._state(conn)
             current = {f.key: f for f in found}
             for gone in [k for k in st["seen"] if k not in current]:
+                if st["kinds"].get(gone) in self.failed or self._unknown(
+                    conn, gone, now
+                ):
+                    continue  # not checked, or not heard: unknown, not cleared
                 del st["seen"][gone]
                 st["said"].pop(gone, None)
+                st["kinds"].pop(gone, None)
             by_kind: dict[str, list[checks.Finding]] = {}
             for f in found:
                 st["seen"].setdefault(f.key, int(now))
+                st["kinds"][f.key] = f.kind
                 if f.key in st["said"] or now - st["seen"][f.key] < f.hold_s:
                     continue
                 by_kind.setdefault(f.kind, []).append(f)
@@ -223,10 +263,18 @@ class Notices:
                     st["said"][f.key] = int(now)
                 st["last"][kind] = int(now)
                 given.append(notice)
+            before = self._holding
             self._holding = {
-                k: [f for f in found if f.kind == k and f.key in st["said"]]
+                k: (
+                    before.get(
+                        k, []
+                    )  # its check failed: what held last tick still shows
+                    if k in self.failed
+                    else [f for f in found if f.kind == k and f.key in st["said"]]
+                )
                 for k in PROBLEMS
             }
+            moved = _keys(before) != _keys(self._holding)
             self._save(conn, st, int(now))
         for notice in given:
             log.info(
@@ -237,6 +285,11 @@ class Notices:
                     self.deliver(notice)
                 except Exception:  # a failed push must not stop the notices
                     log.exception("notice delivery failed")
+        if moved and not given and self.changed is not None:
+            try:
+                self.changed()  # a notice's own push already refreshes the state
+            except Exception:
+                log.exception("notice change push failed")
         return given
 
     def _open(self, kind: str, last: Mapping[str, int], now: float) -> bool:

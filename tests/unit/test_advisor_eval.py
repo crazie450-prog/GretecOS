@@ -4,6 +4,7 @@ adversarial fake (behind the real Claude Code CLI, as WO-2.7's eval) passes all 
 from __future__ import annotations
 
 import io
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -133,3 +134,54 @@ def test_the_real_run_needs_a_key(
     out = io.StringIO()
     assert evaluate.main(cfg, False, out) == 2
     assert "Not run" in out.getvalue()
+
+
+def test_a_changed_number_fails_citations(
+    trouble: tuple[Any, list[dict[str, Any]]],
+) -> None:
+    """Review M4: a cited line's number must be the tool's: on a step line, that step's row;
+    elsewhere, a tool result the session saw."""
+    sc, want = trouble
+    lines = good(want).split("\n")
+    step1 = lines[1]
+    num = re.search(r"(?<![\w:.@/-])\d+(?![\w.])", step1.split(" | ", 1)[1])
+    assert num is not None, step1  # trouble's first step carries the ledger's numbers
+    lines[1] = step1.replace(f" {num[0]} ", " 9999 ", 1)
+    assert lines[1] != step1
+    problems = evaluate.check(sc, "deep", "\n".join(lines), want).problems["citations"]
+    assert any(p.startswith("9999 not in step 1's row") for p in problems), problems
+    # a number of another step's row is not this step's
+    other = "\n".join([*lines[:1], step1 + " (and 7 more)", *lines[2:]])
+    problems = evaluate.check(sc, "deep", other, want).problems["citations"]
+    assert any(p.startswith("7 not in step 1's row") for p in problems), problems
+    # a detail line's number must be in a tool result the session saw
+    detail = good(want) + "\n  eu_out 4217 (tel:lab/x)"
+    seen = ["telemetry_get {}\nlab/x eu_out 4217"]
+    got = evaluate.check(sc, "deep", detail, want, seen).problems["citations"]
+    assert not any("not in any tool result" in p for p in got), got
+    got = evaluate.check(sc, "deep", detail, want).problems["citations"]
+    assert any(p.startswith("4217 not in any tool result") for p in got), got
+
+
+def test_the_fake_with_one_number_changed_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gregtec.llm.fake_api import FakeMessagesAPI
+
+    real = evaluate.compose
+
+    def lying(seen: Any) -> str:  # noqa: ANN401
+        text = real(seen)
+        head, _, rest = text.partition("\nstep1: ")
+        title, _, tail = rest.partition(" | ")
+        tail = re.sub(r"(?<![\w:.@/-])\d+(?![\w.])", "9999", tail, count=1)
+        return f"{head}\nstep1: {title} | {tail}"
+
+    monkeypatch.setattr(evaluate, "compose", lying)
+    out = io.StringIO()
+    with FakeMessagesAPI(evaluate.policy(S.QUESTION)) as api:
+        code, results = evaluate.run(evaluate.fake_lane(api), out, names=("trouble",))
+    assert code == 1, out.getvalue()
+    assert any(
+        "9999 not in step 1's row" in p for p in results[0].problems["citations"]
+    )

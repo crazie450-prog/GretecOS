@@ -39,7 +39,7 @@ export function AnswerBlock({ answer, asking, big }: { answer: Answer | null; as
   );
 }
 
-const CITE = /^(r|q|mte|crop|plan|w|vein|pos):\S+$/;
+const CITE = /^(r|q|mte|crop|plan|w|vein|pos|tel):\S+$/; // tel: an OC reading (WO-7.1)
 
 export interface AdvisorStep {
   rank: string;

@@ -34,7 +34,7 @@
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
 |                                |                         | and ``action`` (WO-7.1)               |
-|                                |                         | and ``notice`` (WO-6.5, D267)         |
+|                                |                         | and ``notice``, ``notice.cleared``    |
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 | /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
@@ -272,6 +272,18 @@ class Core:
 
         self._threadsafe(push)
 
+    def notices_changed(self) -> None:
+        """The notices' ``changed`` (their thread): an announced problem cleared without a new
+        notice; refresh the state (its alert card goes) and tell the dashboards (``notice.cleared``,
+        so Now asks the advisor again; review M1)."""
+
+        def push() -> None:
+            self.broadcast({"type": "notice.cleared", "data": {}})
+            if self.loop is not None:
+                self.loop.create_task(dashboard.push_state(self))
+
+        self._threadsafe(push)
+
     def set_voice(self, state: str, trigger: str | None) -> dict[str, Any]:
         """Keep the voice client's state and push it to the dashboards (loop only)."""
         self.voice = {"state": state, "trigger": trigger, "ts": int(time.time())}
@@ -483,6 +495,8 @@ def create_app(core: Core) -> FastAPI:
         if core.notices is not None:
             if core.notices.deliver is None:
                 core.notices.deliver = core.notice_given
+            if core.notices.changed is None:
+                core.notices.changed = core.notices_changed
             tasks.append(asyncio.create_task(_notices(core.notices)))
         try:
             yield

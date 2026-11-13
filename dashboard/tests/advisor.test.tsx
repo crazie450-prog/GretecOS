@@ -99,4 +99,7 @@ describe("the notice push", () => {
   it("bumps the notices count and nothing else", () => {
     expect(applyMessage(initialState, { type: "notice", data: {} })).toEqual({ notices: 1 });
   });
+  it("bumps it too when an announced problem clears", () => {
+    expect(applyMessage(initialState, { type: "notice.cleared", data: {} })).toEqual({ notices: 1 });
+  });
 });

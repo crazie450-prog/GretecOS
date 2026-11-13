@@ -8,7 +8,10 @@ vault template and the scenario's tools, one fresh session each. The answer is c
 - **structure**: the router sent it to the deep lane; the answer says the steps GOS ranked
   (:func:`gregtec.advisor.steps.advise` on the scenario's DB, the truth), one ``step<n>:`` line
   each, in GOS's order, and the scenario's first step kinds are those it was built for;
-- **citations**: every number in the answer stands on a line that cites an id, every id it
+- **citations**: every number in the answer stands on a line that cites an id and is a tool's
+  number: on a ``step<n>:`` line, one of that step's row as GOS ranked it (title, reasons,
+  refs, link); anywhere else, one of GOS's steps or of a tool call the session made (its
+  arguments or its result, recorded as the lane's MCP server ran it; review M4). Every id it
   cites (``plan:``, ``q:``, ``tel:``, ``mte:``) is in the scenario's DB, and the ids the
   scenario rests on are all cited; the spoken first part holds no id and no number;
 - **spoiler level**: nothing past the quest frontier shows above the global level (0): a
@@ -112,6 +115,18 @@ def _exists(conn: sqlite3.Connection, cite: str) -> bool:
         return False
 
 
+def _numbers(text: str) -> set[float]:
+    """The numbers of ``text`` outside its citations, as values (``32`` is ``32.0``)."""
+    return {float(n) for n in _NUMBER.findall(_CITE.sub(" ", text))}
+
+
+def _row(w: Mapping[str, Any]) -> str:
+    return " ".join(
+        str(w.get(k, "")) if not isinstance(w.get(k), list) else " ".join(w[k])
+        for k in ("title", "why", "refs", "link")
+    )
+
+
 def spoken(answer: str) -> str:
     """The spoken part: everything before the first ``step<n>:`` line."""
     m = re.search(r"^step\d+:", answer, re.MULTILINE)
@@ -123,8 +138,10 @@ def check(
     lane: str,
     answer: str,
     want: Sequence[Mapping[str, Any]],
+    seen: Sequence[str] = (),
 ) -> Checked:
-    """Score one answer against the steps GOS ranked (``want``: their ``as_dict``)."""
+    """Score one answer against the steps GOS ranked (``want``: their ``as_dict``) and the
+    tool calls the session made (``seen``: each call's arguments and result, as text)."""
     from gregtec.quests import questeval
 
     out = Checked(sc.name, lane, answer)
@@ -147,10 +164,21 @@ def check(
         for cite in sc.cites:
             if cite not in cited:
                 c.append(f"{cite} is not cited")
+        rows = {int(w["rank"]): _numbers(_row(w)) for w in want}
+        tools = set().union(*rows.values(), *(_numbers(t) for t in seen))
         for line in answer.splitlines():
-            bare = re.sub(r"^step\d+:", "", _CITE.sub(" ", line))
-            if _NUMBER.search(bare) and not _CITE.search(line):
+            step = re.match(r"^step(\d+):", line)
+            bare = line[step.end() :] if step else line
+            if _NUMBER.search(_CITE.sub(" ", bare)) and not _CITE.search(line):
                 c.append(f"a number with no citation: {line.strip()[:120]}")
+            known = rows.get(int(step[1]), set()) if step else tools
+            made = sorted(_numbers(bare) - known)
+            if made:
+                where = f"step {step[1]}'s row" if step else "any tool result"
+                c.append(
+                    f"{', '.join(f'{n:g}' for n in made)} not in {where}: "
+                    f"{line.strip()[:120]}"
+                )
         voice = spoken(answer)
         if _CITE.search(voice) or _NUMBER.search(voice):
             c.append(f"the spoken part holds an id or a number: {voice.strip()[:120]}")
@@ -271,12 +299,27 @@ def policy(question: str) -> Callable[[dict[str, Any]], Any]:
 # --- the run ---------------------------------------------------------------------------------
 
 
+def _recording(registry: Any, seen: list[str]) -> Any:  # noqa: ANN401
+    """``registry`` with each call's arguments and result added to ``seen`` (the lane's MCP
+    server calls ``registry.call``)."""
+    call = registry.call
+
+    def recorded(name: str, args: object, **kw: Any) -> Any:  # noqa: ANN401
+        out = call(name, args, **kw)
+        seen.append(f"{name} {json.dumps(args, default=str)}\n{out.text}")
+        return out
+
+    registry.call = recorded
+    return registry
+
+
 def _ask(
     home: Path,
     sc: Any,  # noqa: ANN401
     lane_for: Callable[[Path], Any],
+    seen: list[str] | None = None,
 ) -> tuple[str, str, list[dict[str, Any]]]:
-    """(lane, answer, GOS's steps) for one scenario."""
+    """(lane, answer, GOS's steps) for one scenario; the session's tool calls go in ``seen``."""
     from gregtec.advisor import steps
     from gregtec.agents import router
     from gregtec.agents.tools.catalog import default_registry
@@ -296,7 +339,9 @@ def _ask(
         return route.kind, "", want
     lane = lane_for(home)
     try:
-        lane.registry = default_registry(home, deep=lane)
+        lane.registry = _recording(
+            default_registry(home, deep=lane), [] if seen is None else seen
+        )
         handed = lane.handoff(question, question, "router")
         task = lane.wait(handed.id, WAIT_S)
     finally:
@@ -323,8 +368,9 @@ def run(
         ) as d:
             home = Path(d)
             sc = S.build(home, name, time.time())
-            lane, answer, want = _ask(home, sc, lane_for)
-            checked = check(sc, lane, answer, want)
+            seen: list[str] = []
+            lane, answer, want = _ask(home, sc, lane_for, seen)
+            checked = check(sc, lane, answer, want, seen)
         results.append(checked)
         print(f"== {name}: {'PASS' if checked.passed else 'FAIL'}", file=out)
         print(answer, file=out)
