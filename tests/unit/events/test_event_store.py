@@ -176,6 +176,49 @@ def test_15_minutes_idle_ends_it_and_activity_resumes(conn: sqlite3.Connection) 
     assert sessions(conn)[1]["end_ts"] == T0 + 120 + 1200
 
 
+def test_a_timer_event_never_opens_extends_or_ends_a_session(
+    conn: sqlite3.Connection,
+) -> None:
+    """GregtecLink's once-a-minute ``location`` (``source`` ``link``, PERIODIC) is not the
+    player doing something: it joins an open session and nothing more (D264 (1))."""
+
+    def tick(ts: float) -> dict[str, Any]:
+        e = ev("location", ts, x=1, y=2, z=3, dim=0)
+        return {**e, "source": "link"}
+
+    events.record(conn, "play", [tick(T0 + 60 * m) for m in range(5)])
+    assert sessions(conn) == []
+    events.record(conn, "play", [login(T0 + 600), ev("chat", T0 + 660, text="a")])
+    events.record(conn, "play", [tick(T0 + 660 + 60 * m) for m in range(1, 61)])
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["last_ts"]) == (None, T0 + 660)  # the core's tick ends it
+    assert events.close_idle(conn, T0 + 660 + 3601) == [s["id"]]
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["end_why"]) == (T0 + 660, "idle")
+    loose = conn.execute("SELECT COUNT(*) FROM event WHERE session_id IS NULL")
+    assert loose.fetchone()[0] == 5 + 60 - 15  # in it: the 15 ticks before its idle end
+
+
+def test_in_the_restart_grace_a_link_event_leaves_a_stale_session_alone(
+    conn: sqlite3.Connection,
+) -> None:
+    """D264 (4): GregtecLink back before the watchers' backlog (``grace``) joins the stale
+    open session and neither ends nor extends it; the backlog then keeps it whole."""
+    events.record(conn, "play", [login(T0), ev("quest", T0 + 60, quest="q:1")])
+    chat = {**ev("chat", T0 + 1860, text="back"), "source": "link"}
+    out = events.record(conn, "play", [chat], grace=True)
+    assert (out.opened, out.closed) == ([], [])
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["last_ts"]) == (None, T0 + 60)
+    events.record(
+        conn, "play", [ev("quest", T0 + 60 + 600 * k, quest="q:2") for k in (1, 2, 3)]
+    )
+    (s,) = sessions(conn)
+    assert (s["end_ts"], s["last_ts"]) == (None, T0 + 1860)
+    loose = conn.execute("SELECT COUNT(*) FROM event WHERE session_id IS NULL")
+    assert loose.fetchone()[0] == 0
+
+
 def test_a_second_login_ends_the_first_and_instances_are_apart(
     conn: sqlite3.Connection,
 ) -> None:

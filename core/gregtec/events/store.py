@@ -21,7 +21,13 @@ in time order within a post:
   :data:`IDLE_S` (15 minutes) with no activity (``idle``; it ends at its last activity, and the
   core's tick closes it when no event comes at all, :func:`close_idle`);
 - **activity** is what the player does: every kind but the census, ``error``, ``export_stale``
-  and ``world_closed``; a pause or unpause counts (he was there).
+  and ``world_closed``; a pause or unpause counts (he was there). An event sent on a timer
+  (:data:`PERIODIC`: GregtecLink's ``location`` once a minute) is not activity either: it
+  joins an open session that isn't stale but never opens one, keeps one going or ends one
+  (the core's tick ends it);
+- after a **core restart**, until the watchers have posted (their backlog) or 15 minutes have
+  passed, GregtecLink's events (it reconnects first) end no stale session: they join it and
+  leave it as it is, for the backlog to show whether he played on (``grace``, D264 (4)).
 
 Events that belong to no session (a stray error with the game closed) keep ``session_id`` NULL.
 """
@@ -39,6 +45,10 @@ IDLE_S = 15 * 60  # plan 7.5: a session ends after 15 minutes idle
 AFTER_END_S = 120  # save files read this soon after a quit or crash still belong to it
 NOT_STORED = frozenset({"machine_census"})
 NOT_ACTIVITY = frozenset({"machine_census", "error", "export_stale", "world_closed"})
+# (source, kind) sent on a timer, not because the player did something: GregtecLink's
+# position once a minute (WO-8.1). Stored, and joins an open session, but never opens,
+# extends or ends one (D264 (1): played time never counts the idle wait).
+PERIODIC = frozenset({("link", "location")})
 INSTANCES = ("play", "lab")
 PAYLOAD_MAX = 16 << 10
 TS_MAX = 1e10  # epoch seconds: the year 2286
@@ -141,10 +151,24 @@ def _session_for(
     data: Mapping[str, Any],
     ts: int,
     out: Recorded,
+    periodic: bool = False,
+    grace: bool = False,
 ) -> int | None:
-    """The session an event at ``ts`` belongs to, opening and closing sessions on the way."""
+    """The session an event at ``ts`` belongs to, opening and closing sessions on the way.
+    A ``periodic`` event (:data:`PERIODIC`) only joins the open session, if it isn't stale,
+    and never closes it. In the ``grace`` (:func:`record`) a stale open session is joined and
+    left as it is."""
     cur = _open(conn, instance)
-    if cur is not None and cur["last_ts"] is not None and ts - cur["last_ts"] > IDLE_S:
+    stale = (
+        cur is not None and cur["last_ts"] is not None and ts - cur["last_ts"] > IDLE_S
+    )
+    if stale and grace:
+        assert cur is not None
+        return int(cur["id"])  # the watchers' backlog decides whether it went on
+    if periodic:
+        return None if cur is None or stale else int(cur["id"])
+    if stale:
+        assert cur is not None
         _close(conn, cur["id"], cur["last_ts"], "idle", out)
         cur = None
     if is_login(kind, data):
@@ -194,11 +218,14 @@ def record(
     instance: str | None,
     events: Iterable[Mapping[str, Any]],
     world: str | None = None,
+    grace: bool = False,
 ) -> Recorded:
     """Store ``events`` (the watchers' well-formed event dicts) for ``instance`` in one
     ``BEGIN IMMEDIATE`` transaction; sessions follow (see the module docstring). An event that
     can't be stored (a bad time, an id that isn't text) is skipped and counted, never the
-    whole post: only a DB error (locked, full) fails it, and the watchers send it again."""
+    whole post: only a DB error (locked, full) fails it, and the watchers send it again.
+    ``grace``: GregtecLink's events after a core restart, before the watchers' backlog
+    (D264 (4)): they close no stale session, which joins them and is left as it is."""
     out = Recorded()
     rows = []
     for e in events:
@@ -235,7 +262,17 @@ def record(
                 continue
             ts = int(t)
             sid = (
-                _session_for(conn, inst, world, kind, data, ts, out)
+                _session_for(
+                    conn,
+                    inst,
+                    world,
+                    kind,
+                    data,
+                    ts,
+                    out,
+                    (source, kind) in PERIODIC,
+                    grace,
+                )
                 if inst is not None
                 else None
             )

@@ -114,6 +114,7 @@ def test_only_gos_tools_skill_and_agent(lane_reg: Registry, tmp_path: Path) -> N
         "gos:recipe-lookup",
         "gos:screen-reader",  # WO-8.2 (the screen lane follows it)
         "gos:session-scribe",  # WO-6.3
+        "gos:wiki-research",  # WO-8.3 (the researcher holds the wiki tools)
     ]  # the template's, sorted
     assert o.plugins == [{"type": "local", "path": str(tmp_path / "agent" / "plugin")}]
     assert o.verbatim_prompts and o.forward_subagent_text and o.include_partial_messages
@@ -266,6 +267,7 @@ def test_the_plugin_copy_has_only_the_manifest_and_skills(
         "gos:recipe-lookup",
         "gos:screen-reader",
         "gos:session-scribe",
+        "gos:wiki-research",
     ]
     # a skill reached through a link isn't copied
     outside = tmp_path / "outside"
