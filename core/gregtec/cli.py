@@ -53,6 +53,7 @@ from gregtec.planner import (
 from gregtec.quests import cli as quest_cli
 from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
+from gregtec.watchers import cli as watch_cli
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -610,6 +611,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     appwindow.add_parsers(commands)
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
+    watch_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -686,6 +688,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return voicecli.run(args)
     if args.command in personacli.COMMANDS:
         return personacli.run(args)
+    if args.command in watch_cli.COMMANDS:
+        return watch_cli.run(args)
     if args.command == "doctor":
         return doctor.main(
             prism_roots=args.prism_root,
