@@ -26,7 +26,7 @@ All runs are on `c5d97c4`.
 | `uv run --locked ruff check .` | All checks passed |
 | `uv run --locked ruff format --check .` | 491 files already formatted |
 | Phase 8 unit and security tests (`tests/unit/tools/test_gamelink.py`, `test_install_gregteclink.py`, `test_sync.py`, `tools/test_screen.py`, `voice/test_screen_capture.py`, `voice/test_discord_coexistence.py`, `voice/test_settings.py`, `tests/unit/wiki`, `tests/security`, `tools/test_tool_registry.py`, `test_curator.py`, `tools/test_deep_lane.py`) | **499 passed, 23 skipped**. The skips are the Windows-only tests and the live isolation tests |
-| full `pytest` | see "Full run" below |
+| full `pytest` (default groups, as CI) | **9112 passed, 288 skipped**, exit 0 (9 min 27 s) |
 | `xvfb-run ... ./gradlew --no-daemon --max-workers=2 runClient25 -Pharness` | `harness passed: 56 checks, run 20261113T185917Z` (4 min 7 s) |
 | `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_whats_this_harness.py tests/integration/test_screen_harness.py` on a DB collected and built from that run | **13 passed** (the 10 items plus the mod-coverage check; the five screen cases with the fake model; the obeying model stopped) |
 | `tests/harness/client_link_core.py` (a real core on that DB) + `runClient25 -Pharness -PharnessNeiHandlerFail -PharnessNeiLookupFirst -PharnessClientLink` (CI's third client run) | **`harness passed: 73 checks, run 20261113T190357Z`**: `client_link_connected`, 4 `look_*` and 6 `hover_*` checks, `whats_this_10_items: 10 of 10 named correctly`, `reconnected_after_core_restart: connections 1 -> 2`, `gos_from_the_player_answered`, `gos_from_others_ignored`, `status_at_1_hz: 4 status messages in 5072 ms` |
@@ -43,7 +43,9 @@ All runs are on `c5d97c4`.
 | PR #94 head `2e2c5bb` | 43443287322, 43443287474 | success | success | success | success | success |
 | `a428fff` (#94, WO-8.2) | 43476445460 | success | **failure** (risk 1) | success | success | (path filter: no mod file) |
 | PR #97 head `cea4b28` | 43476701355 | success | success | success | success | (not re-run; 7f62975's run 43449242708 was green) |
-| `c5d97c4` (#97, WO-8.3, head) | 43487042611 | see "After the review" | | | | |
+| `c5d97c4` (#97, WO-8.3, head) | 43487042611 | success (9119 passed, 281 skipped) | success (9140 passed, 260 skipped) | success | success | (path filter: no mod file) |
+
+The `mod` job on `c5d97c4` (job 132098126907) ran the server harness (35 checks), the listener harness (19), two client harness runs (56 each), `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration` (**198 passed, 21 skipped**: `test_whats_this_harness`, `test_screen_harness` and `test_vault_harness` with the `wiki` job among them) and the client-link run (**73 checks**, `whats_this_10_items: 10 of 10 named correctly`).
 
 `a428fff`'s Windows failure is not a Phase 8 test. Two of three seeds of WO-7.3's `tests/unit/test_oc_mailbox_stress.py::test_concurrent_writer_and_core` failed with `assert 3 > 20` and `assert 4 > 20` (`r.agent.seq > 20  # Windows runners sleep coarsely`). That is a throughput floor that a slow Windows runner missed. Everything else passed: 9086 passed, 260 skipped. The same test passed on both PR heads and on every other `main` commit listed above.
 
@@ -136,7 +138,7 @@ Open: PR #97 Q1-Q6.
 **Required before Clayton signs G8:**
 1. The PC steps below, with their paste-backs.
 2. His answers, or "keep as built", to the Phase 8 questions below. Under D158 the defaults stand and are reversible.
-3. `main` green on every CI job at the commit he deploys. `a428fff` is not: its Windows job failed (risk 1). Use `c5d97c4` or later once its run is green.
+3. `main` green on every CI job at the commit he deploys. `a428fff` is not: its Windows job failed (risk 1). `c5d97c4` is green on all four jobs (run 43487042611).
 
 Should do (not blocking):
 1. **Slot plan §9's 15-question wiki eval.** PR #97 defers it to the WO-2.7 eval backlog, but no WO row writes the case file. G11's Q&A line needs it.
@@ -205,7 +207,7 @@ These run after G2's PC steps 0 to 3 (`docs/reviews/G2_review.md`: Node.js and p
 
 Spending: the "what's this?" key and `!gos` lookups make no model call. Each screen-key press in step 6 is one vision call (a few cents). Step 7's eval is about $1.40 worst case (it asks for `yes`). Step 9's deep-lane question is capped at the deep lane's $2 per task.
 
-**0. Deploy a green `main`:** `c5d97c4` or later, with every CI job green on that commit. Not `a428fff` (risk 1). In the profile clone: `git pull`, then `uv run gos deploy`. This builds GregtecLink's jar into `$app\mod-dist\` (D98), puts dxcam into the release, and adds `gos wiki`. Then run the usual sync once (`gregteclink_client.md` A.2):
+**0. Deploy a green `main`:** `c5d97c4` or later, with every CI job green on that commit (`c5d97c4`: run 43487042611). Not `a428fff` (risk 1). In the profile clone: `git pull`, then `uv run gos deploy`. This builds GregtecLink's jar into `$app\mod-dist\` (D98), puts dxcam into the release, and adds `gos wiki`. Then run the usual sync once (`gregteclink_client.md` A.2):
 ```powershell
 & "$app\.venv\Scripts\python.exe" "$app\scripts\sync_instances.py"
 ```
@@ -315,5 +317,5 @@ Bind the key in Play's Controls, as in step 1. Then start Play: step 1's `/api/g
 
 ## After the review
 
-- The full `pytest` and CI run 43487042611 on `c5d97c4` are recorded here once they finish.
+- The full `pytest` here and CI run 43487042611 on `c5d97c4` both finished green (tables above), so `c5d97c4` is a deployable commit for step 0.
 - No product code was changed, and no decision row was added (D294 unused).
