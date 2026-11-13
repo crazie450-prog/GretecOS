@@ -80,6 +80,17 @@ class LinkMessagesTest {
                 .getAsString());
     }
 
+    /** The core takes {@code !gos} only from a line in Clayton's own world (D286, review LOW-5). */
+    @Test
+    void chatSaysWhetherTheWorldIsThisClientsOwn() {
+        assertTrue(
+            obj(LinkMessages.chat("<Clayton> hi", "Clayton", "hi", true)).get("singleplayer")
+                .getAsBoolean());
+        assertFalse(
+            obj(LinkMessages.chat("<Clayton> hi", "Clayton", "hi", false)).get("singleplayer")
+                .getAsBoolean());
+    }
+
     @Test
     void ordinaryChatIsUntouched() {
         String line = repeat("§", LinkMessages.CHAT_MAX);
