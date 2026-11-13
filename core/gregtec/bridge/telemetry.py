@@ -8,8 +8,8 @@
 - upserts one ``tel_machine`` row per machine and power entry, ``id`` = ``<binding>/<addr>``
   (the component address within the binding its transport vouches for, D217), with GT's meta
   name, ``x``/``y``/``z`` from ``getCoordinates``, ``last_seen`` (epoch seconds, when the core
-  received it) and ``status``: ``running`` (``isMachineActive``), ``paused`` (work not
-  allowed), ``idle``, ``power`` (a power entry) or ``stale``. ``mte_id`` is the export's
+  received it) and ``status``: ``running`` (``isMachineActive``), ``paused`` (work not allowed, by
+  whoever: the live base tells GOS's pause from GT's own shutdown, D279), ``idle``, ``power`` (a power entry) or ``stale``. ``mte_id`` is the export's
   meta-name map's (WO-7.4, :mod:`gregtec.bridge.names`; NULL for a name it can't resolve to one
   machine) and ``dim`` stays NULL: no OC method gives it (D214);
 - writes ``tel_sample`` rows (``ts``, ``src`` = the ``tel_machine`` id or ``<binding>/<computer

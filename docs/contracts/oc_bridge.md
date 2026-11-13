@@ -311,11 +311,17 @@ an agent with a `board`: at most 12, each `t` at most 48 printable ASCII charact
 core sends no notice older than 60 s or from before the agent's current run.
 
 What the core puts there (`core/gregtec/bridge/display.py`, from `gregtec.bridge.live`): power (`PWR`, the store's
-fill and its reported in minus out EU/t), problems (`!`, stalled machines first, then Problems counts from sensor
-lines), the action waiting for "confirm" (`ACT`), Clayton's first goal (`GOAL`) and the quest guide's next step
-(`NEXT`), AE2 crafting (`AE2`, `CRFT`); on the HUD power, the worst problem and the next step. Notices are fixed
-templates about confirmed world actions (`GOS: Confirmed: <read-back>`, `Done`, `Failed`); free text in chat stays
-the `say` command. Everything is formatted from telemetry and the guide; nothing is estimated. Golden pair:
+fill and its reported in minus out EU/t), problems (`!`, stopped and stalled machines first, then Problems counts
+from sensor lines), the action waiting for "confirm" (`ACT`), Clayton's first goal (`GOAL`) and the quest guide's
+next step (`NEXT`), AE2 crafting (`AE2`, `CRFT`); on the HUD power, the worst problem and the next step. A machine
+with work disabled is `stopped` (a problem: GT disables work when a multiblock shuts itself down) unless the desk's
+latest finished pause or resume for its address is a confirmed pause, then `paused` (D279). While an action waits
+for "confirm" in the agent's binding the reply carries `poll_s` 2. Notices are fixed templates about confirmed OC
+actions, worded from the desk's outcome and never with the agent's error text: `GOS: Confirmed: <read-back>`,
+`Started: ... (AE2 is crafting it)`, `Done`, `Crafting done`, `Crafting cancelled in AE2`, `Crafting failed: ...
+(see the dashboard)`, `Check AE2: ... (it may still run)`, `Failed: ... (see the dashboard)`, `No result for: ...
+(it may have run; check in game)`; each wording once per action, to the computer that runs it only. Waypoints
+(core-side) and `say` get none; free text in chat stays the `say` command. Everything is formatted from telemetry and the guide; nothing is estimated. Golden pair:
 `telemetry-display.json` and `reply-display.json` (built by `tests/unit/test_oc_display.py`, drawn by
 `tests/oc/test_display.lua`).
 

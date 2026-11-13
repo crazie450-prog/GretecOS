@@ -63,12 +63,14 @@ Copy `display.lua` next to `gos-agent.lua` for the displays (plan 7.9, D277-D279
 them. The core composes every line and sends it in the reply (contract "The display"); the agent only lays it out:
 
 - **status board** on the screen the GPU is bound to (or the config's `display.screen` prefix): the GPU is set to at
-  most 50 x 16, a header with how fresh the core's reply is, up to 12 lines (power, problems with stalled machines
+  most 50 x 16 (the shell's own resolution is given back at stop), a header with how fresh the core's reply is, up
+  to 12 lines (power, problems with stopped and stalled machines
   first, the action waiting for "confirm", goal, next step, AE2), and the agent's newest note at the bottom (while the
   board has the screen, notes go there instead of the terminal). No reply for 30 s: the header says `NO REPLY` and
   the lines turn grey.
 - **OCGlasses HUD**, M2 only: 4 text widgets made once, only changed lines set (0.4 OC energy a tick).
-- **chat box** notices the core sends (confirmed world actions), each said once.
+- **chat box** notices the core sends (fixed templates about confirmed OC actions, run by this computer), each said
+  once.
 
 Config: `display = true` (default), `false`, or a table of `board`, `screen`, `hud`, `chat`.
 
