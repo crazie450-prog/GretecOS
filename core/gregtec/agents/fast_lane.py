@@ -104,8 +104,11 @@ response."""
 
 # Citations (plan 0.1 principle 2; D131's mte:, D219's tel:, D271's vein: and pos:) and DB keys; their digits
 # are ids, not numbers.
+# A wiki citation (D291) is w:<title>@<revid>, and a title may hold any character but space
+# and @ (parentheses, commas, quotes, accents): it is read whole, up to its revid.
 REF = re.compile(
-    r"\b(?:r|q|mte|crop|plan|w|tel|vein|pos):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]"
+    r"\bw:[^\s@]+@\d+"
+    r"|\b(?:r|q|mte|crop|plan|w|tel|vein|pos):[A-Za-z0-9_./@#:+-]*[A-Za-z0-9_/#-]"
 )
 KEY = re.compile(
     r"\bfluid:[A-Za-z0-9_.]+|[A-Za-z0-9_.|-]+:[A-Za-z0-9_.|-]+@\d+(?:#[0-9a-f]{8,64})?"

@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from gregtec.agents.deep_lane import DeepLane
     from gregtec.bridge.ops import Ops
     from gregtec.planner.explain import Writer
+    from gregtec.wiki.cache import WikiCache
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class Env:
     spoiler_default: int = (
         0  # [policy] spoiler_default, the one global level (D72, WO-6.4)
     )
+    wiki: WikiCache | None = None  # the wiki cache for wiki_fetch (WO-8.3)
 
 
 @dataclass
