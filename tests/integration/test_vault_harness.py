@@ -63,6 +63,7 @@ def test_the_curator_runs_on_the_real_db(home: Path) -> None:
     results = curator.Curator(root, db, home / "data" / "backups").run(TODAY)
     assert {r.job: r.status for r in results} == {
         "compact": "ok",
+        "quests": "skipped",  # the harness DB has no quests loaded (WO-6.4)
         "index": "ok",
         "schema": "ok",
         "fts": "ok",

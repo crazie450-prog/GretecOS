@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-11
+upd: 2026-11-12
 ---
 version: 0
 summary: note types and allowed keys
@@ -19,6 +19,7 @@ max_lines: 150 (INDEX.md: 200, plan notes: 40)
 index_summary: INDEX.md shows a note's summary: fact, else its first title:, note: or other fact
 log_counts: n_<kind>: N lines are the curator's computed counts, in log/wk/ and log/mo/ only; no other log uses an n_ key
 note: keys * means any key until the WO that owns the type defines them
+note: quest notes (WO-6.4): quests/qs-<line>.md are questline summaries made by code (gos quests summaries), at most 60 lines; agents add quest decisions as decision: lines in other qs-* notes
 note: persona packs (WO-5.6): the shipped ones are in _gos/personas/ (the repo's), Clayton's in personas/pe-<name>.md
 
 ```tsv
@@ -34,7 +35,7 @@ storage	base-storage	base/storage.md	generated	*
 places	base-places	base/places.md	agents	*
 line	ln-*	base/lines/	agents	st, tgt, tgt_rate_s, plan, eut, tier, deps, note
 plan	pl-*	plans/	agents	title, st, plan, json, run, tgt, tgt_rate_s, tier, machines, eut_avg, eut_peak, eff_h, scarcity, area, volume, footprint_unknown, rank, alts, exports, note
-quest	qs-*	quests/	agents	*
+quest	qs-*	quests/	agents	summary, line, done, available, locked, total, main_left, src, decision, note
 theme	th-*	themes/	agents	*
 persona	pe-*	personas/	both	name, voice, verbosity, humour, address, style, lexicon, sample, note
 log	log-*	log/	agents	*

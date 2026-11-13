@@ -19,9 +19,9 @@
   ],
   "$defs": {
     "Ref": {
-      "description": "A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki.",
+      "description": "A citation id (plan 0.1 principle 2, D131): r: recipe, q: quest, mte: machine fact, crop:, plan:, w: wiki, vein: an ore vein, pos: his position at a save (D271).",
       "type": "string",
-      "pattern": "^(r|q|mte|crop|plan|w):\\S+$",
+      "pattern": "^(r|q|mte|crop|plan|w|vein|pos):\\S+$",
       "maxLength": 200
     },
     "Tier": {
@@ -238,10 +238,10 @@
       }
     },
     "Quest": {
-      "description": "A quest as the quest tools show it, nudge-first (D26): a name the book doesn't show yet is null and drawn blurred.",
+      "description": "A quest as the quest tools show it, nudge-first (D26): a name the book doesn't show yet is null and drawn blurred. spoil: the spoiler level this quest is shown at (null: in reach, shown in full); a tap on it opens it at that level.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["ref", "name", "state", "lines", "main", "shown", "description", "rows"],
+      "required": ["ref", "name", "state", "lines", "main", "shown", "description", "rows", "spoil"],
       "properties": {
         "ref": {"$ref": "#/$defs/Ref"},
         "name": {"type": ["string", "null"], "maxLength": 300},
@@ -250,7 +250,8 @@
         "main": {"type": "boolean"},
         "shown": {"type": "boolean"},
         "description": {"type": ["string", "null"], "maxLength": 2000},
-        "rows": {"type": "array", "items": {"$ref": "#/$defs/QuestRow"}, "maxItems": 100}
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/QuestRow"}, "maxItems": 100},
+        "spoil": {"type": ["integer", "null"], "minimum": 0, "maximum": 2}
       }
     },
     "QuestCard": {

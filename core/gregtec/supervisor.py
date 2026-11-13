@@ -2,9 +2,25 @@ r"""``gos-supervisor`` (plan 4.2, D77, QA:A5, D115): starts, watches and restart
 
 It starts at Windows login from the HKCU Run key that ``scripts/install_login_start.ps1`` writes
 (D116), as ``GOS_APP\current\.venv\Scripts\gos-supervisor.exe --login``, a windowless launcher.
-``gos serve`` runs it in the foreground instead. Today it manages one process, the core; the
-Discord bot (WO-9.1) joins later, and so do, started with Play by its pre-launch hook (WO-1.4),
-voice (WO-5.7, D179; until then ``gos voice run``) and the game watchers (WO-6.1).
+``gos serve`` runs it in the foreground instead. It manages the core from the start; the Discord
+bot (WO-9.1) joins later.
+
+**With Play (D77, D259).** The game watchers (``python -m gregtec.watchers``, WO-6.1) and, with
+``[startup] voice_with_play`` (default true), the voice client (``python -m gregtec_voice run``,
+moved here from WO-5.7 by D249) start when Play's pre-launch hook says the instance is launching
+(``POST /play {"event": "launch", "instance": "play"}``; Lab's hooks say ``lab``, for the Lab
+test) and stop when its post-exit hook says it exited, which it does once the export question
+(D69) is answered or has timed out (plan 4.2). Prism runs post-exit only after a clean exit
+(D121), so while they run the supervisor also looks for the instance's client every
+:data:`PLAY_CHECK_S`: once it has gone (after it was seen, or :data:`PLAY_START_GRACE_S` after the
+launch) for :data:`PLAY_GONE_S`, the five minutes the post-exit question may take and a minute
+more, it stops them itself (a crash, a kill). A with-Play process that exits with its setup code
+(2: no token, no game folder, not Windows) stays stopped, with the reason in the status table.
+Play's own launch starts them only with ``[startup] watchers_with_play = "play"``; the default,
+``"lab"``, ignores it until Clayton has run the Lab checks (runbook ``watchers.md`` §2–§4).
+``/restart`` of a with-Play process while nothing plays is refused (409). A supervisor that
+restarts mid-session doesn't know the instance is playing: the watchers start again at its next
+launch.
 
 **Restarts.** A process that exits, or whose ``/health`` stops answering for 20 s, is restarted
 after a back-off of 1, 2, 4, 8, 16, 30, then 60 s between tries. A run that lasted 60 s resets the
@@ -27,6 +43,8 @@ dies. ``gos stop`` stops the managed processes and leaves the supervisor running
 | POST /restart    | admin        | ``{"name": "core"}``: stop and start one               |
 | POST /shutdown   | admin        | stop everything, then the supervisor                   |
 | POST /launch     | admin/launch | ``{"instance": "lab"\|"export"}``: Prism's CLI launch  |
+| POST /play       | admin        | ``{"event": "launch"\|"exit", "instance": "play"\|"lab"}``:|
+|                  |              | from the Prism hooks; starts or stops the with-Play ones|
 
 The admin token is in ``GOS_HOME\run\supervisor.json`` (Clayton only), the status token goes to
 the core in its environment, and the launch token is in ``GOS_HOME\data\launch.json``, which
@@ -53,6 +71,7 @@ supervisor starts would inherit an elevated token. Each refusal is in ``logs\sup
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hmac
 import json
 import logging
@@ -70,7 +89,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import IO, Any
 
-from gregtec import applog, appwindow, config, control
+from gregtec import applog, appwindow, config, control, prism
 from gregtec.config import LOOPBACK, Config
 
 log = logging.getLogger("gregtec.supervisor")
@@ -85,6 +104,14 @@ STABLE_AFTER_S = 60.0  # a run this long resets the back-off
 BACKOFF_S = (1, 2, 4, 8, 16, 30, 60)
 STOP_TIMEOUT_S = 5.0
 LAUNCH_EVERY_S = 30.0  # at most one launch, of any instance, this often
+PLAY_CHECK_S = (
+    15.0  # while the with-Play processes run: is the instance's client still there?
+)
+PLAY_START_GRACE_S = (
+    300.0  # Prism's account and update steps run after pre-launch (D121)
+)
+PLAY_GONE_S = 360.0  # the post-exit question's 5 minutes (plan 4.2), and a minute more
+EXIT_SETUP = 2  # a with-Play process that can't run here (setup): left stopped
 MAX_BODY = 4096
 STDERR_MAX = 5 * 1024 * 1024
 STDERR_TAIL = 64 * 1024
@@ -120,6 +147,9 @@ class ProcessSpec:
     health_port: int | None = None  # GET /health on 127.0.0.1:<port>
     health_service: str | None = None  # the "service" /health must report
     env: tuple[tuple[str, str], ...] = ()
+    with_play: bool = False  # started and stopped with Play (D77, D259)
+    # exit code -> why it stays stopped (instead of a restart with back-off)
+    stay_stopped: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass
@@ -160,6 +190,41 @@ def core_spec(cfg: Config, config_path: Path | None) -> ProcessSpec:
     )
 
 
+def watchers_spec(config_path: Path | None) -> ProcessSpec:
+    """The game watchers (WO-6.1): no /health; their instance comes in GOS_PLAY_INSTANCE."""
+    argv = [python_exe(), "-m", "gregtec.watchers", "--supervised"]
+    if config_path is not None:
+        argv += ["--config", str(config_path)]
+    return ProcessSpec(
+        name="watchers",
+        label="Game watchers",
+        argv=tuple(argv),
+        with_play=True,
+        stay_stopped=(
+            (EXIT_SETUP, "can't watch this instance (logs/watchers.log says why)"),
+        ),
+    )
+
+
+def voice_spec(config_path: Path | None) -> ProcessSpec:
+    """The voice client (WO-5.1), with Play (D77; moved from WO-5.7 by D249)."""
+    argv = [python_exe(), "-m", "gregtec_voice", "run", "--supervised"]
+    if config_path is not None:
+        argv += ["--config", str(config_path)]
+    return ProcessSpec(
+        name="voice",
+        label="Voice",
+        argv=tuple(argv),
+        with_play=True,
+        stay_stopped=(
+            (
+                EXIT_SETUP,
+                "can't start: no voice token, or not Windows (logs/voice.log says why)",
+            ),
+        ),
+    )
+
+
 def prism_command(cfg: Config, instance: str) -> list[str]:
     """Prism Launcher's CLI launch of ``instance`` (a folder name in ``instances``) [A§5.5]."""
     exe = cfg.prism_root / (
@@ -184,8 +249,11 @@ class Supervisor:
         status_token: str | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_ready: Callable[[], object] | None = None,
+        clients: Callable[[Config], list[str]] | None = None,
     ) -> None:
         self.cfg = cfg
+        # roles with a running GTNH client (prism.running_clients); injected by tests
+        self.clients = clients
         # Called once, in its own thread, when the core first answers /health (D163).
         self.on_ready = on_ready
         self._ready = False
@@ -193,6 +261,14 @@ class Supervisor:
         self.status_token = status_token or secrets.token_urlsafe(32)
         self.launch_token = secrets.token_urlsafe(32)
         self.procs = {s.name: Managed(s) for s in specs}
+        self.base_specs = {s.name: s for s in specs}
+        for managed in self.procs.values():
+            if managed.spec.with_play:
+                managed.detail = "starts when Play launches"
+        # The instance playing (D259): {"instance", "since", "seen", "gone_since"}, or None.
+        self.play: dict[str, Any] | None = None
+        self._next_play_check = 0.0
+        self._checking = False
         self.clock = clock
         self.started = time.time()
         self._lock = threading.RLock()
@@ -238,8 +314,123 @@ class Supervisor:
             self.start(name)
 
     def start_all(self) -> None:
-        for name in self.procs:
+        """Start every process; the with-Play ones only while an instance plays."""
+        for name, managed in self.procs.items():
+            if not managed.spec.with_play or self.play is not None:
+                self.start(name)
+
+    # --- with Play (D77, D259) ----------------------------------------------------------------
+
+    def play_event(
+        self, event: object, instance: object, *, detail: str = ""
+    ) -> dict[str, Any]:
+        """``launch``: start the with-Play processes for ``instance``; ``exit``: stop them."""
+        if event not in ("launch", "exit"):
+            raise ValueError('event must be "launch" or "exit"')
+        if instance not in ("play", "lab"):
+            raise ValueError('instance must be "play" or "lab"')
+        assert isinstance(instance, str)
+        names = [n for n, m in self.procs.items() if m.spec.with_play]
+        if (
+            event == "launch"
+            and instance == "play"
+            and self.cfg.watchers_with_play != "play"
+        ):
+            log.info("play launching; not watched until the Lab checks pass")
+            return {
+                "playing": None,
+                "ignored": True,
+                "why": '[startup] watchers_with_play = "lab": Play is not watched yet',
+            }
+        if event == "exit":
+            with self._lock:
+                playing = self.play
+                if playing is not None and playing["instance"] != instance:
+                    return {"playing": playing["instance"], "ignored": True}
+                self.play = None
+            for name in names:
+                self.stop(name, detail=detail or f"stopped: {instance} exited")
+            log.info("play exited", extra={"instance": instance})
+            return {"playing": None}
+        with self._lock:
+            before = self.play
+            self.play = {
+                "instance": instance,
+                "since": self.clock(),
+                "seen": False,
+                "gone_since": None,
+            }
+            self._next_play_check = self.clock() + PLAY_CHECK_S
+        for name in names:
+            base = self.base_specs[name]
+            spec = dataclasses.replace(
+                base, env=(*base.env, ("GOS_PLAY_INSTANCE", instance))
+            )
+            if before is not None and before["instance"] != instance:
+                self.stop(name, detail="restarting for another instance")
+            with self._lock:
+                self.procs[name].spec = spec
             self.start(name)
+        log.info("play launching", extra={"instance": instance})
+        return {"playing": instance}
+
+    def check_play(self) -> None:
+        """Stop the with-Play processes once the instance's client has gone for PLAY_GONE_S
+        (no post-exit hook came: a crash or a kill). Blocks on the process listing."""
+        with self._lock:
+            playing = self.play
+        if playing is None:
+            return
+        try:
+            running = (self.clients or prism.running_clients)(self.cfg)
+        except OSError as exc:
+            log.info("can't list GTNH clients", extra={"error": str(exc)})
+            return
+        now = self.clock()
+        stop = False
+        with self._lock:
+            if self.play is not playing:
+                return
+            if playing["instance"] in running:
+                playing["seen"], playing["gone_since"] = True, None
+            elif playing["seen"] or now - playing["since"] >= PLAY_START_GRACE_S:
+                if playing["gone_since"] is None:
+                    playing["gone_since"] = now
+                stop = now - playing["gone_since"] >= PLAY_GONE_S
+        if stop:
+            log.warning(
+                "client gone without a post-exit hook; stopping the with-Play processes",
+                extra={"instance": playing["instance"]},
+            )
+            self.play_event(
+                "exit",
+                playing["instance"],
+                detail=f"stopped: {playing['instance']}'s client went away (no post-exit)",
+            )
+
+    def _check_play_soon(self) -> None:
+        """From the monitor loop: :meth:`check_play` in a thread when due (it takes about a
+        second of PowerShell on Windows)."""
+        with self._lock:
+            if (
+                self.play is None
+                or self._checking
+                or self.clock() < self._next_play_check
+            ):
+                return
+            self._checking = True
+            self._next_play_check = self.clock() + PLAY_CHECK_S
+
+        def run() -> None:
+            try:
+                self.check_play()
+            except Exception:
+                log.exception("play check failed")
+            finally:
+                with self._lock:
+                    self._checking = False
+
+        threading.Thread(target=run, daemon=True).start()
 
     def stop_all(self, *, detail: str = "stopped by gos stop") -> None:
         for name in self.procs:
@@ -337,9 +528,13 @@ class Supervisor:
                     continue
                 if managed.proc is not None and managed.proc.poll() is not None:
                     code = self._reap(managed, expected=False)
+                    stay = dict(managed.spec.stay_stopped)
                     if code == EXIT_STOPPED:  # it asked to stay stopped
                         managed.wanted = False
                         managed.state, managed.detail = "stopped", EXIT_DETAIL[code]
+                    elif code in stay:  # it can't run here: a restart wouldn't help
+                        managed.wanted = False
+                        managed.state, managed.detail = "stopped", stay[code]
                     elif managed.wanted:
                         why = EXIT_DETAIL.get(code or 0, f"exited with code {code}")
                         self._schedule_restart(managed, why)
@@ -535,6 +730,7 @@ class Supervisor:
             while not self._stop.is_set():
                 try:
                     self.tick()
+                    self._check_play_soon()
                 except Exception:
                     log.exception("monitor tick failed")
                 self._stop.wait(TICK_S)
@@ -853,6 +1049,7 @@ class _Handler(BaseHTTPRequestHandler):
             ("POST", "/restart"): ("admin",),
             ("POST", "/shutdown"): ("admin",),
             ("POST", "/launch"): ("admin", "launch"),
+            ("POST", "/play"): ("admin",),
         }.get((method, path))
         if allowed is None:
             self._reply(404, {"error": "no such request"})
@@ -879,6 +1076,9 @@ class _Handler(BaseHTTPRequestHandler):
             if not isinstance(name, str) or name not in sup.procs:
                 self._reply(404, {"error": f"no managed process {name!r}"})
                 return
+            if sup.procs[name].spec.with_play and sup.play is None:
+                self._reply(409, {"error": f"{name} runs only while the game plays"})
+                return
             log.info("restart requested", extra={"proc": name})
             sup.restart(name)
             self._reply(200, sup.status())
@@ -886,6 +1086,13 @@ class _Handler(BaseHTTPRequestHandler):
             log.info("shutdown requested")
             self._reply(200, {"stopping": True})
             sup.request_shutdown()
+        elif path == "/play":
+            try:
+                result = sup.play_event(body.get("event"), body.get("instance"))
+            except ValueError as exc:
+                self._reply(400, {"error": str(exc)})
+                return
+            self._reply(200, {**result, **sup.status()})
         elif path == "/launch":
             try:
                 self._reply(200, sup.launch(body.get("instance")))
@@ -920,9 +1127,12 @@ def run(cfg: Config, config_path: Path | None, *, login: bool = False) -> int:
         log.info("a supervisor is already running")
         return 0
     window = appwindow.at_startup(cfg)
+    specs = [core_spec(cfg, config_path), watchers_spec(config_path)]
+    if cfg.voice_with_play:
+        specs.append(voice_spec(config_path))
     sup = Supervisor(
         cfg,
-        [core_spec(cfg, config_path)],
+        specs,
         on_ready=(
             (lambda: appwindow.open_window(cfg, is_open=appwindow.already_open))
             if window

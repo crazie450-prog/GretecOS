@@ -35,6 +35,7 @@ class Ops:
     bridge: Bridge
     telemetry: Telemetry
     desk: ActionDesk
+    cfg: Config | None = None  # where a vein's waypoint goes (WO-6.6, ore_waypoint)
 
     def tick(self) -> None:
         """Every second from the core: expiries, timeouts, staleness."""
@@ -103,4 +104,4 @@ def build(
         on_change=on_change,
     )
     telemetry.results = desk.results
-    return Ops(Bridge(telemetry, desk), telemetry, desk)
+    return Ops(Bridge(telemetry, desk), telemetry, desk, cfg)

@@ -58,6 +58,7 @@ from gregtec.db import access
 from gregtec.db import quests as quest_db
 from gregtec.ingest import fingerprint
 from gregtec.ingest import quests as bq
+from gregtec.quests import spoilers
 from gregtec.store import Store
 
 if TYPE_CHECKING:
@@ -393,7 +394,10 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         "game": {
             "running": board.running,
             "focused": board.focused,
-            "paused": None,  # V29: the pause signal arrives with WO-6.1
+            # V29: the watchers' paused state while heard and their client runs (WO-6.1, D258)
+            "paused": core.game.paused_now(board.running)
+            if core.game is not None
+            else None,
             "export": board.export,
             "error": board.game_error,
         },
@@ -701,7 +705,11 @@ def add_routes(
         if not isinstance(args, dict):
             raise HTTPException(400, "args must be a JSON object")
         registry = core.asker.registry
-        out = await asyncio.to_thread(registry.call, name, args, lane="fast")
+        # A spoil the dashboard sends is Clayton's own tap ("tap for a nudge", "Spoil it"):
+        # his request, so it is shown up to full (D26, D268); without one, his global level.
+        out = await asyncio.to_thread(
+            registry.call, name, args, lane="fast", spoil_max=spoilers.FULL
+        )
         card = await asyncio.to_thread(
             cards_build.from_tool, name, out.text, out.is_error, registry.env.db
         )

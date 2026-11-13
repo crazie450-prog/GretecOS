@@ -1404,7 +1404,7 @@ def test_the_recipe_lookup_skill(lane_reg: Registry, tmp_path: Path) -> None:
     assert not re.search(r"\b(?:eut|dur_t|dur_s): \d", body)
     # the deep lane's plugin copy carries it, as gos:recipe-lookup
     plugin = deep_config.build_plugin(TEMPLATE / "_gos", tmp_path / "plugin")
-    assert SKILL in deep_config.skill_names(plugin)
+    assert SKILL in deep_config.skill_names(plugin)  # beside quest-guide (WO-6.4)
     # deployed into a vault, the fast lane's cached prompt lists it (one line, plan 4.4)
     # and carries its body: the fast lane answers recipe questions itself (plan 7.3)
     vault = tmp_path / "vault"

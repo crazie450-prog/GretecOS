@@ -21,6 +21,8 @@
 | [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
 | [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
+| [startup] voice_with_play | true (voice starts and stops with Play) | supervisor (WO-6.1, D259)   |
+| [startup] watchers_with_play | "lab"; "play" once the Lab checks pass | supervisor (WO-6.1, D259)   |
 | [budget] monthly_included_usd | 100                                 | llm_usage meter (D47)       |
 | [budget] credit_alerts_pct    | [80, 100]                           | llm_usage meter (D48)       |
 | [budget] on_credits_out  | "no_ai", the only value (fixed by D48)   | credits flow (WO-2.8, D165) |
@@ -33,6 +35,7 @@
 | [maintenance] keep_backups | 7 daily DB backups (D139)              | idle maintenance (WO-2.5)   |
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
+| [policy] spoiler_default | 0, nudge (D26, D72); 1 partial, 2 full   | quest tools, view (WO-6.4)  |
 | [persona] default        | gt-veteran (D60)                         | personas (WO-5.6, D206)     |
 | [persona] random_per_session | false                                | personas (WO-5.6, D206)     |
 | [setup] former_plays     | none; plus config/former_plays.txt (D223)| sync, setup wizard (WO-2.9) |
@@ -49,7 +52,7 @@ three names with ``:<port>``). Every other key in the Appendix C skeleton is ign
 reads it.
 
 **Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
-``[mailbox]``, ``[persona]``) are read only by the core,
+``[mailbox]``, ``[persona]``, ``[policy] spoiler_default``) are read only by the core,
 the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -101,6 +104,7 @@ DEFAULT_FINGERPRINT_CONFIGS = (
     "config/GregTech/WorldGeneration.cfg",
 )
 EXPORT_ON_QUIT = ("ask", "never")  # [policy] export_on_quit (D69)
+WATCHERS_WITH_PLAY = ("lab", "play")  # [startup] watchers_with_play (D259)
 # The pack and GT versions GOS is pinned to (plan 0.1 principle 4, CLAUDE.md). Repo constants, not
 # gos.toml keys: a GT bump needs the GT pin-bump procedure (docs/runbooks/pack_update.md, D148),
 # which changes code, so it can't be done by editing a config file (WO-1.9).
@@ -173,6 +177,11 @@ class Config:
     extra_allowed_hosts: tuple[str, ...] = ()
     core_at_login: bool = True
     dashboard_window: bool = True  # [startup]: open the Chrome app window (D52, D163)
+    voice_with_play: bool = (
+        True  # [startup]: voice starts and stops with Play (D77, D259)
+    )
+    # [startup]: whose launch starts the watchers and voice: "lab", or "play" too (D259)
+    watchers_with_play: str = "lab"
     monthly_included_usd: float = 100.0
     credit_alerts_pct: tuple[int, ...] = (80, 100)
     cycle_day: int = 1
@@ -191,6 +200,9 @@ class Config:
     keep_backups: int = 7  # [maintenance]: VACUUM INTO backups kept (D139)
     persona_default: str = "gt-veteran"  # [persona] default (D60, WO-5.6)
     persona_random: bool = False  # [persona] random_per_session (D206)
+    spoiler_default: int = (
+        0  # [policy] spoiler_default: the one global spoiler level (D72)
+    )
     mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
@@ -326,6 +338,16 @@ def _bool(table: Mapping[str, Any], key: str, default: bool, where: str) -> bool
     if not isinstance(value, bool):
         raise ConfigError(f"gos.toml: {where} {key} must be true or false")
     return value
+
+
+def _watchers_with_play(startup: Mapping[str, Any], default: str) -> str:
+    value = startup.get("watchers_with_play", default)
+    if value not in WATCHERS_WITH_PLAY:
+        raise ConfigError(
+            "gos.toml: [startup] watchers_with_play must be one of "
+            + ", ".join(WATCHERS_WITH_PLAY)
+        )
+    return str(value)
 
 
 def _table(parent: Mapping[str, Any], key: str, where: str) -> Mapping[str, Any]:
@@ -478,6 +500,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
     )
     maintenance = table("maintenance")
     persona = table("persona")
+    policy = table("policy")
     models = table("models")
     host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
     port = soft(
@@ -522,6 +545,16 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 startup, "dashboard_window", defaults.dashboard_window, "[startup]"
             ),
             defaults.dashboard_window,
+        ),
+        "voice_with_play": soft(
+            lambda: _bool(
+                startup, "voice_with_play", defaults.voice_with_play, "[startup]"
+            ),
+            defaults.voice_with_play,
+        ),
+        "watchers_with_play": soft(
+            lambda: _watchers_with_play(startup, defaults.watchers_with_play),
+            defaults.watchers_with_play,
         ),
         "monthly_included_usd": monthly,
         "credit_alerts_pct": alerts,
@@ -578,6 +611,12 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
                 365,
             ),
             defaults.keep_backups,
+        ),
+        "spoiler_default": soft(
+            lambda: _int(
+                policy, "spoiler_default", defaults.spoiler_default, "[policy]", 0, 2
+            ),
+            defaults.spoiler_default,
         ),
         "mailboxes": soft(lambda: _mailboxes(data), ()),
         "service_errors": tuple(problems),
