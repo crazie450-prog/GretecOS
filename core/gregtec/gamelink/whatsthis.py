@@ -144,7 +144,21 @@ def answer(
         p = made.parsed
         first = _plain_first(p)
         total = p.total if p.total is not None else len(p.rows)
-        if first is None:
+        if first is None and "#" in key:
+            # an NBT variant (a charged battery) is rarely made as such: say what makes the
+            # plain item instead of "no recipe" (review LOW-6)
+            parts.append("No recipe in the DB makes it with this NBT.")
+            plain = _call(reg, "recipe_find", {"item": key.split("#", 1)[0]})
+            base = None if plain.is_error else _plain_first(plain.parsed)
+            if base is not None:
+                n = plain.parsed.total
+                n = n if n is not None else len(plain.parsed.rows)
+                parts.append(
+                    f"For the plain item, {_count(n, 'recipe')} {'makes' if n == 1 else 'make'} it; "
+                    f"the first is {base['machine']} ({base['ref']})."
+                )
+                refs.append(base["ref"])
+        elif first is None:
             parts.append("No recipe in the DB makes it.")
         else:
             parts.append(

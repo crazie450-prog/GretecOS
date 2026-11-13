@@ -92,12 +92,17 @@ public final class LinkMessages {
         return Json.COMPACT.toJson(o);
     }
 
-    /** {@code sender} and {@code body} only when the line is a player's chat message (vanilla's chat.type.text). */
-    public static String chat(String text, String sender, String body) {
+    /**
+     * {@code sender} and {@code body} only when the line is a player's chat message (vanilla's chat.type.text);
+     * {@code singleplayer} when the world is this client's own (single player or the LAN host), the only place the
+     * core takes {@code !gos} from (D286).
+     */
+    public static String chat(String text, String sender, String body, boolean singleplayer) {
         JsonObject o = typed("chat");
         o.addProperty("text", cut(text, CHAT_MAX));
         if (sender != null) o.addProperty("sender", cut(sender, 32));
         if (body != null) o.addProperty("body", cut(body, CHAT_MAX));
+        o.addProperty("singleplayer", singleplayer);
         String out = Json.COMPACT.toJson(o);
         // 500 characters fit unless they are escaped control characters; then each half is cut until they do.
         for (int max = CHAT_MAX / 2; bytes(out) > BYTES_MAX && max > 0; max /= 2) {

@@ -72,7 +72,7 @@ class LinkMessagesTest {
     @Test
     void chatOfEscapedControlCharactersIsCutToFit() {
         String line = repeat("\u0001", LinkMessages.CHAT_MAX);
-        String msg = LinkMessages.chat(line, "Clayton", line);
+        String msg = LinkMessages.chat(line, "Clayton", line, true);
         assertTrue(LinkMessages.bytes(msg) <= LinkMessages.BYTES_MAX, "bytes: " + LinkMessages.bytes(msg));
         assertEquals(
             "Clayton",
@@ -83,7 +83,7 @@ class LinkMessagesTest {
     @Test
     void ordinaryChatIsUntouched() {
         String line = repeat("§", LinkMessages.CHAT_MAX);
-        String msg = LinkMessages.chat(line, "Clayton", line);
+        String msg = LinkMessages.chat(line, "Clayton", line, true);
         assertEquals(
             line,
             obj(msg).get("text")

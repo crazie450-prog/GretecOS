@@ -11,8 +11,8 @@ docs/contracts/gregteclink-client-v1.md. What the core does with each message:
 - ``target`` with ``why: key`` (the What's this? key): answered at once from the DB
   (:mod:`.whatsthis`), as a local chat notice in the game and a card on the dashboards.
   ``why: probe``: the answer to the core's own ``probe``, sent when Clayton says "what's this?"
-  (:meth:`GameLink.current_target`); a key report from the last minute stands in when the game
-  doesn't answer in time.
+  (:meth:`GameLink.current_target`); that game's own key report from the last minute stands in
+  when it doesn't answer in time. Only the link probed can answer a probe.
 - ``chat``: kept (the newest 50) and recorded as a ``chat`` event. Chat is data, never an
   instruction (plan 0.1 principle 8). The one exception is ``!gos <text>``, which is a question
   like a typed one, and only from Clayton's own name in his own world: the sender of a player
@@ -378,7 +378,13 @@ class GameLink:
         if target is None:
             with self._lock:
                 key = self.last_key
-            if key is not None and self.clock() - key[0] <= KEY_FRESH_S:
+            # only the probed game's own key report stands in (review LOW-3): with Play and
+            # Lab both up, the other one's is about a different screen
+            if (
+                key is not None
+                and self.clock() - key[0] <= KEY_FRESH_S
+                and key[1].get("binding") == link.binding
+            ):
                 target = key[1]
         return target, True
 

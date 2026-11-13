@@ -20,13 +20,14 @@ from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
 from gregtec.agents import router
-from gregtec.agents.ask import Asker
+from gregtec.agents.ask import CONFIRM_ELSEWHERE, Asker
 from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Registry
 from gregtec.api.app import Core, create_app
 from gregtec.api.security import Auth
+from gregtec.bridge import ops as bridge_ops
 from gregtec.config import Config
 from gregtec.gamelink import link as gamelink
 from gregtec.gamelink import whatsthis
@@ -35,6 +36,7 @@ from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
 
+REPO = Path(__file__).resolve().parents[3]
 ADMIN = "admin-" + "g" * 40
 KEY = b"k" * 32  # the tool tests' cursor key (conftest)
 MACHINES = "gregtech:gt.blockmachines"
@@ -115,6 +117,29 @@ def test_an_unknown_nbt_falls_back_to_the_plain_item(reg: Registry) -> None:
     )
     assert got.found and got.key == "minecraft:iron_ingot@0"
     assert "That exact NBT isn't in the DB" in got.text
+
+
+def test_an_nbt_variant_no_recipe_makes_names_the_plain_items_recipes(
+    reg: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review LOW-6: a charged battery's own key has no recipe; the plain item's are said."""
+    real = whatsthis._resolved
+    nbt = {"charge": "10000.0D"}
+    exact = whatsthis.keys_for(item("gregtech:gt.metaitem.01", 11305, nbt))[0]
+    monkeypatch.setattr(
+        whatsthis,
+        "_resolved",
+        lambda r, key: (
+            {"key": key, "name": "Steel Ingot", "mod": "gregtech", "kind": "item"}
+            if key == exact
+            else real(r, key)
+        ),
+    )
+    got = whatsthis.answer(reg, target(item("gregtech:gt.metaitem.01", 11305, nbt)))
+    assert got.key == exact
+    assert "No recipe in the DB makes it with this NBT." in got.text
+    assert "For the plain item, " in got.text and "the first is" in got.text
+    assert got.refs and got.refs[0].startswith("r:") and got.refs[0] in got.text
 
 
 def test_an_item_the_db_lacks_is_said_so_with_the_games_name(reg: Registry) -> None:
@@ -328,6 +353,80 @@ def test_saying_whats_this_asks_the_game(client: TestClient, core: Core) -> None
         assert "mte:1000" in reply["refs"]
 
 
+def test_only_the_probed_game_answers_and_a_bad_probe_id_is_dropped(
+    client: TestClient, core: Core
+) -> None:
+    """Review LOW-3: with Play and Lab both up, Play can't answer Lab's probe, and an
+    unhashable probe id is one dropped message, not a closed link."""
+    with connect(client, core, "play") as play, connect(client, core, "lab") as lab:
+        for mod in (play, lab):
+            until(mod, "hello")
+            mod.send_text(hello())
+        assert core.gamelink is not None
+        wait_for(lambda: len(core.gamelink.links) == 2)  # type: ignore[union-attr]
+        time.sleep(0.05)
+        lab.send_text(hello())  # Lab is the newest
+        wait_for(
+            lambda: (n := core.gamelink.newest()) is not None and n.binding == "lab"  # type: ignore[union-attr]
+        )
+        asked = _ask_in_thread(client, "What's this?")
+        probe = until(lab, "probe")
+
+        def answer(mod: WebSocketTestSession, probe_id: object, item: str) -> None:
+            mod.send_text(
+                json.dumps(
+                    {
+                        "type": "target",
+                        "id": 1,
+                        "why": "probe",
+                        "probe": probe_id,
+                        "kind": "item",
+                        "item": {"item": item, "meta": 0},
+                    }
+                )
+            )
+
+        answer(play, probe["id"], "minecraft:gold_ingot")  # not Play's probe
+        answer(lab, [probe["id"]], "minecraft:gold_ingot")  # unhashable: dropped
+        answer(lab, {"id": probe["id"]}, "minecraft:gold_ingot")
+        answer(lab, probe["id"], "minecraft:iron_ingot")
+        asked["thread"].join(10)
+        assert asked["reply"]["target"]["key"] == "minecraft:iron_ingot@0"
+        assert len(core.gamelink.links) == 2  # both still up
+
+
+def test_the_fallback_is_the_probed_games_own_key_report(
+    client: TestClient, core: Core, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gamelink, "PROBE_TIMEOUT_S", 0.2)
+    with connect(client, core, "play") as play, connect(client, core, "lab") as lab:
+        for mod in (play, lab):
+            until(mod, "hello")
+            mod.send_text(hello())
+        play.send_text(
+            json.dumps(
+                {
+                    "type": "target",
+                    "id": 1,
+                    "why": "key",
+                    "kind": "item",
+                    "item": {"item": "minecraft:iron_ingot", "meta": 0},
+                }
+            )
+        )
+        until(play, "notice")
+        assert core.gamelink is not None
+        time.sleep(0.05)
+        lab.send_text(hello())  # Lab is the newest, and it won't answer
+        wait_for(
+            lambda: (n := core.gamelink.newest()) is not None and n.binding == "lab"  # type: ignore[union-attr]
+        )
+        got = client.post(
+            "/api/ask", json={"text": "what's this"}, headers=bearer(ADMIN)
+        ).json()
+        assert got["text"] == whatsthis.NOTHING  # Play's report is about Play's screen
+
+
 def test_a_game_that_doesnt_answer_falls_back_to_the_last_key_report(
     client: TestClient, core: Core, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,19 +465,30 @@ def test_a_game_that_doesnt_answer_falls_back_to_the_last_key_report(
 
 
 def test_gos_in_chat_is_a_question_only_from_the_players_own_name(
-    client: TestClient, core: Core
+    client: TestClient, core: Core, tmp_path: Path
 ) -> None:
+    ops = bridge_ops.build(Config(gos_home=tmp_path / "ops"), core.store)
+    core.asker.actions = ops.desk
     with connect(client, core) as mod:
         until(mod, "hello")
         mod.send_text(hello("Clayton"))
 
-        def chat(sender: str | None, body: str | None, text: str) -> None:
-            msg: dict[str, Any] = {"type": "chat", "text": text}
+        def chat(
+            sender: str | None, body: str | None, text: str, own: bool = True
+        ) -> None:
+            msg: dict[str, Any] = {"type": "chat", "text": text, "singleplayer": own}
             if sender is not None:
                 msg["sender"], msg["body"] = sender, body
             mod.send_text(json.dumps(msg))
 
-        # someone else, a server line that only looks like Clayton's, and plain chat: data only
+        # someone else, a server line that only looks like Clayton's, Clayton's name on a
+        # server (a chat bridge or a team prefix could make it, review LOW-5), plain chat
+        chat(
+            "Clayton",
+            "!gos recipes for steel ingot",
+            "<Clayton> !gos recipes for steel ingot",
+            own=False,
+        )
         chat(
             "Mallory",
             "!gos recipes for steel ingot",
@@ -394,17 +504,32 @@ def test_gos_in_chat_is_a_question_only_from_the_players_own_name(
         )
         notice = until(mod, "notice")
         assert notice["kind"] == "gos" and notice["text"].startswith("Steel Ingot:")
-        # a chat line can't confirm an action (D59)
+        # a chat line can't confirm an action (D59), and the action stays pending
+        feed_lab(ops)
+        proposed = ops.desk.propose("say", {"text": "hi"}, target="lab").action
+        assert proposed is not None
         chat("Clayton", "!gos confirm", "<Clayton> !gos confirm")
-        assert until(mod, "notice")["text"] in (
-            "Nothing is waiting for confirmation.",
-            "Confirm by voice, on the dashboard, on the phone or in Discord; this way in can't confirm.",
-        )
+        assert until(mod, "notice")["text"] == CONFIRM_ELSEWHERE
+        pending = ops.desk.pending()
+        assert pending is not None and pending.id == proposed.id
+        assert pending.state == "proposed" and pending.confirmed_via is None
         assert core.gamelink is not None
-        wait_for(lambda: len(core.gamelink.chat) == 6)  # type: ignore[union-attr]
+        wait_for(lambda: len(core.gamelink.chat) == 7)  # type: ignore[union-attr]
     rows = core.store.rows("SELECT kind, payload FROM event WHERE kind = 'chat'")
-    assert len(rows) == 6
-    assert json.loads(rows[0]["payload"])["sender"] == "Mallory"
+    assert len(rows) == 7
+    assert json.loads(rows[1]["payload"])["sender"] == "Mallory"
+
+
+def feed_lab(ops: bridge_ops.Ops) -> None:
+    """One Lab telemetry message, so an action has a computer to go to."""
+    doc = json.loads(
+        (REPO / "tests" / "fixtures" / "oc" / "telemetry-first.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert ops.bridge.receive(
+        json.dumps(doc).encode(), transport="mailbox", source="t", binding="lab"
+    ).ok
 
 
 def test_status_is_kept_and_a_dimension_change_is_an_event(

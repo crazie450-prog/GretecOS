@@ -147,7 +147,14 @@ public final class ClientModule {
                 body = plain(args[1]);
             }
         }
-        feeds.chat(text, from, body);
+        // isSingleplayer: an integrated server runs here (single player, or the LAN host). On another server a chat
+        // bridge or a team prefix could make a line whose sender reads as Clayton's (D286, [QA:V6]).
+        feeds.chat(
+            text,
+            from,
+            body,
+            Minecraft.getMinecraft()
+                .isSingleplayer());
     }
 
     private static String plain(Object arg) {

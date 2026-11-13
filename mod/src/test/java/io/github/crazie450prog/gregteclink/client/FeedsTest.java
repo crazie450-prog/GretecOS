@@ -72,7 +72,7 @@ class FeedsTest {
             t.getAsJsonObject("item")
                 .get("meta")
                 .getAsInt());
-        f.chat("<Clayton> hi", "Clayton", "hi");
+        f.chat("<Clayton> hi", "Clayton", "hi", true);
         assertEquals("chat", sent.get(sent.size() - 1)[0]);
         assertEquals("notice", f.receive(obj("{\"type\":\"notice\",\"text\":\"\\u00a7aOK\\nthen\"}"), () -> STEEL));
         assertEquals("[GOS] OK then", shown.get(0));
@@ -125,7 +125,7 @@ class FeedsTest {
     @Test
     void theChatToggle() {
         Feeds f = feeds("B:chat=false");
-        f.chat("<Clayton> !gos hi", "Clayton", "!gos hi");
+        f.chat("<Clayton> !gos hi", "Clayton", "!gos hi", true);
         assertTrue(sent.isEmpty());
     }
 

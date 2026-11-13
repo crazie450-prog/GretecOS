@@ -94,8 +94,8 @@ public final class Feeds {
         sender.send("target", LinkMessages.target(id, "probe", probe, t.kind, t.item, t.block, t.display));
     }
 
-    public void chat(String text, String from, String body) {
-        if (cfg.chat) sender.send("chat", LinkMessages.chat(text, from, body));
+    public void chat(String text, String from, String body, boolean singleplayer) {
+        if (cfg.chat) sender.send("chat", LinkMessages.chat(text, from, body, singleplayer));
     }
 
     /**
