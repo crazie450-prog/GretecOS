@@ -571,8 +571,8 @@ def test_the_eval_command(
     calls: list[tuple[Path, list[powereval.Case]]] = []
 
     def fake_run(
-        src: Path, cases: list[powereval.Case], root: Path, out: Any
-    ) -> list[powereval.CaseResult]:  # noqa: ANN401
+        src: Path, cases: list[powereval.Case], root: Path, out: object
+    ) -> list[powereval.CaseResult]:
         calls.append((src, cases))
         r = powereval.CaseResult(cases[0])
         r.checks["options"] = (True, "3 options")
