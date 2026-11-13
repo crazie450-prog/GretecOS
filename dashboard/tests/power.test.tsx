@@ -64,6 +64,7 @@ function option(id: string, position: number, net: number, extra: Partial<PowerO
     terms: {},
     values: {},
     rank_notes: [],
+    differs: position === 1 ? [] : ["fuel Test Acid"],
     weights: WEIGHTS,
     net_eut: net,
     gross_eut: net + 4,
@@ -253,6 +254,9 @@ describe("Power view", () => {
     fireEvent.click(screen.getByTestId("nodes-toggle-pw-one"));
     expect(screen.getByTestId("nodes-pw-one").textContent).toContain("Mixer");
     expect(screen.getByTestId("power-notes").textContent).toContain("gen:x: no route");
+    // How an option differs from option 1 is printed; option 1 has no such line.
+    expect(screen.getByTestId("differs-pw-two").textContent).toBe("Differs from option 1: fuel Test Acid");
+    expect(screen.queryByTestId("differs-pw-one")).toBeNull();
   });
 
   it("accepts only after a confirm, then shows the core's answer", async () => {

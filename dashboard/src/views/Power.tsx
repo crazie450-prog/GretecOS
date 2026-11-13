@@ -449,6 +449,11 @@ function OptionCard(props: { o: PowerOption; busy: boolean; onAccept: () => void
       <p className="gos-sub">
         Burns {o.fuel.name} at {plain(o.fuel.rate_s)}/s <Cite cite={o.fuel.ref} />
       </p>
+      {o.differs.length > 0 && (
+        <p className="gos-src" data-testid={`differs-${o.id}`}>
+          Differs from option 1: {o.differs.join("; ")}
+        </p>
+      )}
       <dl className="power-nums">
         <Num label="Out at" value={o.distribution.amps} unit={`A ${o.distribution.tier ?? ""}`} />
         <Num label="Per effort h" value={o.eut_per_effort_h} unit="EU/t" />

@@ -726,6 +726,8 @@ export interface PowerOption {
   terms: Record<string, number>;
   values: Record<string, number>;
   rank_notes: string[];
+  /** How this option differs from option 1 (empty for option 1). */
+  differs: string[];
   weights: string;
   net_eut: number;
   gross_eut: number;

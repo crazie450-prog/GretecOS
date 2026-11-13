@@ -191,6 +191,18 @@ def test_view_shows_every_option_with_its_checks(home: Path) -> None:
         assert led["warnings"] == [] and led["added"] == [] and led["cleared"] == []
         # The fixture has no storage tables: no cables, said so in the ledger section.
         assert o["cables"] == []
+    # Each option after the first says how it differs from option 1 (review verdict 7 (b)).
+    first, *rest = v["options"]
+    assert first["differs"] == [] and rest
+    for o in rest:
+        assert o["differs"] and o["differs"] == powerview.differs(first, o)
+    gen = {"label": "G", "kind": "k", "tier": "MV", "eut": 32, "cites": []}
+    a = {"id": "a", "generator": gen, "fuel": {"id": "f", "name": "F"}, "nodes": []}
+    b = {**a, "id": "b", "nodes": [{"kind": "recipe", "recipe": "r:x"}]}
+    assert powerview.differs(a, b) == ["1 recipe(s) option 1 doesn't use"]
+    assert powerview.differs(a, {**a, "id": "c"}) == [
+        "the same generator, fuel and recipes, run at other rates"
+    ]
     lv = v["ledger"]
     assert card_problems(lv["card"]) == [] and card_problems(lv["running"]) == []
     assert lv["lines"] == 0 and lv["warnings"] == []

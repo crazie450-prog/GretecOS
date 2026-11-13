@@ -465,6 +465,35 @@ def _option(
     }
 
 
+def differs(first: Mapping[str, Any], o: Mapping[str, Any]) -> list[str]:
+    """How view option ``o`` differs from option 1 (``first``): its generator, fuel and the
+    chain's recipes (review verdict 7 (b)). Empty for option 1 itself."""
+    if o["id"] == first["id"]:
+        return []
+    out: list[str] = []
+    if o["generator"]["label"] != first["generator"]["label"]:
+        out.append(f"generator {o['generator']['label']}")
+    if o["fuel"]["id"] != first["fuel"]["id"]:
+        out.append(f"fuel {o['fuel']['name']}")
+
+    def recipes(v: Mapping[str, Any]) -> set[str]:
+        return {
+            str(n["recipe"])
+            for n in v.get("nodes") or ()
+            if str(n.get("recipe") or "").startswith("r:")
+            and n.get("kind") not in ("generator", "farm")
+        }
+
+    mine, theirs = recipes(o), recipes(first)
+    if mine - theirs:
+        out.append(f"{len(mine - theirs)} recipe(s) option 1 doesn't use")
+    if theirs - mine:
+        out.append(f"{len(theirs - mine)} of option 1's recipe(s) not used")
+    if not out:
+        out.append("the same generator, fuel and recipes, run at other rates")
+    return out
+
+
 def _window(window_s: float) -> float:
     if not math.isfinite(window_s) or window_s < 0 or window_s > WINDOW_MAX_S:
         raise PowerViewError(f"a peak window is 0 to {WINDOW_MAX_S:g} seconds")
@@ -520,6 +549,8 @@ def view(home: Path, pid: str, window_s: float = 0.0) -> dict[str, Any]:
                     cat, window_s, why)
             for p in plans
         ]  # fmt: skip
+        for o in options:
+            o["differs"] = differs(options[0], o)
         section = _ledger_section(now, cat, why, window_s)
     first = plans[0]
     req = first.get("request") or {}
