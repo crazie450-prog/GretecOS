@@ -315,6 +315,20 @@ def test_power_explanation_checks_numbers_and_order(home: Path) -> None:
         ("plan:pw-c ranks first here.", "calls option 3 the best"),
         ("Option 1 is the best.", None),
         ("", None),
+        # Review M1: a later recommendation in the same sentence, best before the id, and
+        # "build X first".
+        ("Option 1 trails badly, but option 2 is the best here.", "calls option 2"),
+        (
+            "plan:pw-a, plan:pw-b and plan:pw-c: build plan:pw-c first.",
+            "calls option 3",
+        ),
+        ("The best line is plan:pw-c", "calls option 3"),
+        ("Option 1 leads. Pick option 3 instead.", "calls option 3"),
+        ("Option 1 and option 2 are close; I'd recommend option 2.", "calls option 2"),
+        ("Option 1 (plan:pw-a) is the best, option 2 is second best.", None),
+        ("Option 1 costs more to build, option 2 is cheaper to build.", None),
+        ("Option 1: 8,189 EU/t net. Option 2: 3.438 EU/t chain.", None),
+        ("plan:pw-ab is not an option id.", None),
     ],
 )
 def test_in_order(text: str, why: str | None) -> None:
