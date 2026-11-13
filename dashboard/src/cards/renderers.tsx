@@ -21,7 +21,7 @@ import type {
   TableCard,
 } from "./types.gen";
 
-const CITE = /^(r|q|mte|crop|plan|w):\S+$/;
+const CITE = /^(r|q|mte|crop|plan|w|vein|pos):\S+$/;
 
 function Chip({ cite }: { cite: string | null }) {
   const { stale, openCite } = useCardActions();
@@ -172,7 +172,7 @@ export function QuestCardView({ card, compact }: { card: QuestCard; compact?: bo
                 {QUEST_GLYPH[q.state]} {q.state}
               </span>
               {q.name !== null ? (
-                <button type="button" className="quest-name linkish" onClick={() => openQuest?.(q.ref, card.spoil ?? 0)}>
+                <button type="button" className="quest-name linkish" onClick={() => openQuest?.(q.ref, q.spoil ?? 0)}>
                   {q.name}
                 </button>
               ) : (
@@ -208,9 +208,9 @@ export function QuestCardView({ card, compact }: { card: QuestCard; compact?: bo
                 </tbody>
               </table>
             )}
-            {!compact && q.state === "locked" && card.spoil !== null && card.spoil < 2 && (
-              <button type="button" className="gos-btn spoil" onClick={() => openQuest?.(q.ref, (card.spoil ?? 0) + 1)}>
-                {card.spoil === 0 ? "What does it ask for?" : "Spoil it"}
+            {!compact && q.state === "locked" && q.spoil !== null && q.spoil < 2 && (
+              <button type="button" className="gos-btn spoil" onClick={() => openQuest?.(q.ref, (q.spoil ?? 0) + 1)}>
+                {q.spoil === 0 ? "What does it ask for?" : "Spoil it"}
               </button>
             )}
           </li>
@@ -396,7 +396,7 @@ export function OreListView({ card }: { card: OreListCard }) {
               <td className="num">
                 {r.x}, {r.z} <span className="gos-src">dim {r.dim}</span>
               </td>
-              <td className="num">{r.distance !== null ? `${r.distance} m` : ""}</td>
+              <td className="num">{r.distance !== null ? `${r.distance} blocks` : ""}</td>
               <td className="gos-src">{r.layer ?? ""}</td>
               <td>{r.depleted ? <StatusGlyph status="off" label="depleted" /> : null}</td>
               <td>

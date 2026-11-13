@@ -1053,6 +1053,314 @@ tr.depleted td {
   text-align: right;
 }
 
+/* --- Ores (WO-6.6) ------------------------------------------------------------------------- */
+
+.ores-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.ores-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.ore-card .table-wrap,
+.ore-card table.ores {
+  max-width: 100%;
+}
+
+.ore-marks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ore-marks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ore-mark-name {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Crops (WO-6.7): the path, the chosen step's layout grid and its cited lines. */
+.crops-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.crops-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.crop-path {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.crop-path-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  width: 100%;
+  min-height: var(--hit-min, 44px);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crop-path li.current .crop-path-step {
+  border-color: var(--accent);
+}
+
+.crop-path-title {
+  overflow-wrap: anywhere;
+}
+
+.crop-layout {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  max-width: 560px;
+  margin: var(--space-3) 0;
+}
+
+.crop-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 88px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.crop-cell.empty {
+  border-style: dashed;
+  border-color: var(--rule);
+  align-items: center;
+}
+
+.crop-cell.double {
+  border: 2px solid var(--accent);
+}
+
+.crop-cell-name {
+  font-weight: 600;
+}
+
+.crop-lines {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.crop-lines li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text);
+}
+
+.crop-line-text {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.crop-cites {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.crop-cites .gos-chip,
+.crop-step .gos-chip {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.crop-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.crop-picks button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  cursor: pointer;
+  font: inherit;
+}
+
+.crop-stats-input {
+  max-width: 9em;
+}
+
+/* The map: veins around him, north up. Only placement; the list's order is the core's. */
+.ore-map {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+}
+
+.ore-map-axis {
+  stroke: var(--rule);
+  stroke-width: 0.6;
+}
+
+.ore-map-north {
+  fill: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ore-map-you {
+  fill: var(--accent);
+}
+
+.ore-map-vein circle {
+  fill: var(--panel);
+  stroke: var(--text);
+  stroke-width: 1.2;
+}
+
+.ore-map-vein text {
+  fill: var(--text);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ore-map-vein.depleted circle {
+  stroke: var(--text-2);
+  stroke-dasharray: 2 2;
+}
+
+.ore-map-vein.depleted text {
+  fill: var(--text-2);
+}
+
+/* --- Quests (WO-6.4) ----------------------------------------------------------------------- */
+
+.quests-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 6fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.quests-grid .col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* Past the frontier: blurred until he taps it or says "spoil it" (plan 7.14 rule 5). Only the
+   look: the core sends nothing above his spoiler level. */
+.spoiler-zone:not(.revealed) {
+  filter: blur(6px);
+  user-select: none;
+  cursor: pointer;
+}
+
+.quests-spoil {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.quest-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.quest-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+
+.quest-links-name {
+  color: var(--text);
+  min-width: 12ch;
+}
+
+.quest-links-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.quest-links .gos-chip {
+  min-height: var(--hit-min);
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.quest-bar {
+  height: 6px;
+  margin-top: var(--space-1);
+  background: var(--track);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.quest-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.quest-goals {
+  margin: 0;
+  padding-left: var(--space-6);
+  color: var(--text);
+}
+
 /* --- Designer (WO-3.7) ------------------------------------------------------------------------ */
 
 .designer-top {
@@ -1811,7 +2119,10 @@ select.ask-input option {
   .search-grid,
   .settings-grid,
   .costs-grid,
-  .base-grid {
+  .base-grid,
+  .quests-grid,
+  .ores-grid,
+  .crops-grid {
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -1844,6 +2155,16 @@ select.ask-input option {
     white-space: normal;
     overflow-wrap: anywhere;
     max-width: 100%;
+  }
+
+  /* A quest card's item keys ([gregtech:gt.metaitem.01@11305]) wrap too (WO-6.4). */
+  table.rows td {
+    overflow-wrap: anywhere;
+  }
+
+  /* An ore list's rows wrap on the phone, its ores and citations included (WO-6.6). */
+  table.ores td {
+    overflow-wrap: anywhere;
   }
 
   .voice-strip {

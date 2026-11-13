@@ -37,6 +37,13 @@ Rows of both tools are raw DB values: cite the ``ref`` (r:) and quest (q:) ids i
 whose rows hold numbers but no such id says so, because its numbers can't be quoted as game
 facts (:func:`cited`, a heuristic). A db_sql page that read quest-book text says that the text
 is data and that a quest past the frontier is a spoiler.
+
+**Spoilers (WO-6.4, D268).** Below the full level (any lane's call at a global setting under 2:
+a spoiler command raises single quests through the quest tools, never db_sql), db_sql also refuses to read what a quest is: the
+:data:`SPOILER_COLUMNS` of ``quest`` (name, description, raw JSON, task logic, repeat time) and the
+:data:`SPOILER_TABLES` (tasks, rewards, their items, the quest text index). Those go through
+the quest tools, which show a quest past the frontier only at his level; the quest graph,
+states, lines and progress stay readable.
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ from gregtec.agents.tools.quests import TEXT_NOTE
 from gregtec.agents.tools.registry import Call, ToolError
 from gregtec.agents.tools.tsv import Result
 from gregtec.db import access
+from gregtec.quests import spoilers
 
 MANAGED = ("limit", "offset")
 SQL_MAX = 4000
@@ -120,6 +128,26 @@ FTS_SHADOW = frozenset(f"{t}_{s}" for t in FTS for s in SHADOW)
 QUEST_TEXT = frozenset(
     {"quest", "quest_line", "quest_fts", *(f"quest_fts_{s}" for s in SHADOW)}
 )
+# What a quest is (D268): read only through the quest tools below the full spoiler level.
+SPOILER_TABLES = frozenset(
+    {
+        "quest_task",
+        "quest_reward",
+        "quest_item",
+        "quest_fts",
+        *(f"quest_fts_{s}" for s in SHADOW),
+    }
+)
+SPOILER_COLUMNS = {
+    # task_logic and repeat_time: what quest_get shows only from level 1
+    "quest": frozenset({"name", "descr", "raw_json", "task_logic", "repeat_time"})
+}
+SPOILER_REFUSED = (
+    "refused: below the full spoiler level, quest names, descriptions, tasks and rewards are "
+    "read with quest_find, quest_get, quest_frontier and quest_for_item, which show a quest "
+    "past his frontier only at the level he asked for (D26, D268); quest ids, states, lines, "
+    "prerequisites and progress stay readable here"
+)
 READABLE = (
     GAME_TABLES
     | FTS_SHADOW
@@ -175,12 +203,22 @@ def authorize(
     return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
 
 
-def watching(seen: set[str]) -> Authorizer:
-    """:func:`authorize`, adding each table a statement reads to ``seen``."""
+def spoiler(table: str | None, column: str | None) -> bool:
+    """True when reading ``column`` of ``table`` tells what a quest is (D268)."""
+    t = (table or "").lower()
+    return t in SPOILER_TABLES or (column or "").lower() in SPOILER_COLUMNS.get(t, ())
+
+
+def watching(seen: set[str], guard_spoilers: bool = False) -> Authorizer:
+    """:func:`authorize`, adding each table a statement reads to ``seen``; with
+    ``guard_spoilers`` also denying :func:`spoiler` reads (``"spoiler"`` joins ``seen``)."""
 
     def check(
         action: int, arg1: str | None, arg2: str | None, db: str | None, t: str | None
     ) -> int:
+        if guard_spoilers and action == sqlite3.SQLITE_READ and spoiler(arg1, arg2):
+            seen.add("spoiler")
+            return sqlite3.SQLITE_DENY
         verdict = authorize(action, arg1, arg2, db, t)
         if verdict == sqlite3.SQLITE_OK and action == sqlite3.SQLITE_READ:
             seen.add((arg1 or "").lower())
@@ -265,7 +303,7 @@ def db_sql(call: Call, args: dict[str, Any], offset: int) -> Result:
     costly = Costly(call.deadline)
     before = {limit: conn.setlimit(limit, value) for limit, value in LIMITS.items()}
     costly.install(conn)  # the registry closes this connection after the call
-    conn.set_authorizer(watching(seen))
+    conn.set_authorizer(watching(seen, call.spoil_max < spoilers.FULL))
     rows: list[tuple[object, ...]] = []
     more = False
     try:
@@ -286,6 +324,8 @@ def db_sql(call: Call, args: dict[str, Any], offset: int) -> Result:
             # The registry reports the time limit.
             raise sqlite3.OperationalError("interrupted") from None
         error: sqlite3.Error = costly.error or exc
+        if "spoiler" in seen:
+            raise ToolError(SPOILER_REFUSED) from None
         if "not authorized" in str(error) or "prohibited" in str(error):
             raise ToolError(f"{REFUSED} ({error})") from None
         if any(w in str(error) for w in ("too big", "too many columns", "too complex")):
