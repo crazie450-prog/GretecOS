@@ -431,7 +431,9 @@ LATER: dict[str, str] = {
     **dict.fromkeys(
         ("events_recent", "session_summary"), "WO-6.3 (event store, sessions)"
     ),
-    "screen_snapshot": "WO-8.2 (screen reading)",
+    # never a model tool (D288): a frame comes only from Clayton's screen key, POST /api/screen
+    "screen_snapshot": "WO-8.2 keeps it out: a model-callable capture would capture without "
+    "the screen key (D288)",
     **dict.fromkeys(("wiki_search", "wiki_fetch"), "WO-8.3 (wiki cache)"),
     "notify": "WO-9.2 (alert routing)",
     "schematic_export": "WO-10.4 (schematic I/O)",

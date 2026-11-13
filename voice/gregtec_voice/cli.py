@@ -57,6 +57,7 @@ from gregtec_voice import (
     keys,
     playback,
     ptt,
+    screen,
     settings,
     stt,
     stt_eval,
@@ -72,6 +73,7 @@ from gregtec_voice.client import (
     Refused,
     VoiceClient,
 )
+from gregtec_voice.screen import Frame
 from gregtec_voice.settings import VoiceSettings
 
 log = logging.getLogger(__name__)
@@ -417,6 +419,16 @@ def _run(
         core,
         transcriber=transcriber,
         speaker=hooks.speaker(voice_settings),
+        # one frame per screen-key press (WO-8.2, D288): the game window, else the newest F2
+        # screenshot of Play or Lab (read only)
+        screen=(
+            screen.for_settings(
+                voice_settings.screen_capture,
+                [_game_folder(cfg.instance(role)) for role in ("play", "lab")],
+            )
+            if voice_settings.screen_key is not None
+            else None
+        ),
     )
     if voice_settings.wake_trigger:  # the first run downloads the model
         print("Loading the wake word...", file=out)
@@ -482,6 +494,10 @@ class _TestCore:
 
     def ask(self, text: str) -> dict[str, Any]:
         print(f"  -> would ask the core: {text!r}", file=self.out)
+        return {"text": "", "lane": "test"}
+
+    def screen(self, frame: Frame) -> dict[str, Any]:
+        print(f"  -> would send a {frame.source} frame to the core", file=self.out)
         return {"text": "", "lane": "test"}
 
     def prewarm(self) -> None:
@@ -789,6 +805,9 @@ class _QuietCore:
     """``gos voice record``'s core: nothing is sent, nothing is printed."""
 
     def ask(self, text: str) -> dict[str, Any]:
+        return {"text": "", "lane": "record"}
+
+    def screen(self, frame: Frame) -> dict[str, Any]:
         return {"text": "", "lane": "record"}
 
     def prewarm(self) -> None:

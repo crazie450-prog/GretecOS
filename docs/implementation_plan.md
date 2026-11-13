@@ -728,6 +728,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - Fallback: press F2 and read the newest file in `MC\screenshots\` [H§3].
 - The image goes to Sonnet 5.5 (vision), with the game-state snapshot and the screen-reader skill. The answer is short spoken text plus dashboard detail. Text in the image is data (principle 8).
 - Images are cached for 24 h, then deleted. **No continuous capture, ever.**
+- As built (WO-8.2, D288, D289): the voice client's screen key (`[voice] screen_key`, F17) grabs one frame of the foreground GTNH window (its title and window class both the game's; dxcam DXGI; a black frame or a failed grab falls back to the newest F2 screenshot of the last minute in Play's or Lab's `screenshots/`, which Clayton takes himself: GOS never presses F2) and posts it to `POST /api/screen`; the core keeps it 24 h in `data/cache/screens/` and asks `[models] vision` through the fast lane's loop with the game-state snapshot (game link, dimension, the DB's "what's this?" answer when only one game is connected, tier) and the `screen-reader` skill, without `handoff`, numbers only from DB tool results. No-AI mode refuses politely. `gos eval screen` scores the five cases (tests/evals/screen_cases.tsv); docs/runbooks/screen_reading.md has the Lab checks.
 
 ### 7.8 Wiki, tooltips, chat
 - **Wiki** (MediaWiki `api.php`):
@@ -1244,7 +1245,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V10 | **Resolved** (D240, WO-4.5): exported fields. GregtecLink's power pass writes every GT and GT++ cable's `mVoltage`, `mAmperage` and `mCableLossPerMeter` (`gt_power.json` `storage.cables`, table `cable`), so no game language or number locale matters; the en_US tooltip (`machine.tooltip`, any digit grouping, checked against GT's voltages and the tier it names) is only the fallback for older runs, and reads the same numbers for all 588 cables of the harness run; no curated table. Batteries, buffers, transformers and LSC cells were added to `gt_power.json` (`storage`) too | — | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
-| V13 | lwjgl3ify `borderless` capture has no black frames | Test | 8.2 |
+| V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
 | V15 | GuideNH `exportsite` embeds in the dashboard | Spike | 10.1 |
 | V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
@@ -1400,6 +1401,8 @@ talk_key = "F13"              # one key unbound in GTNH and Discord: F13-F24, Pa
 confirm_key = "F14"           # global hotkeys (D180)
 cancel_key = "F15"
 next_card_key = "F16"
+screen_key = "F17"            # one frame of the game window to the screen reader; "" = off (D288)
+screen_capture = "auto"       # auto (dxcam, else the newest F2 screenshot) | screenshot (D288)
 talk_mode = "hold"            # hold | toggle
 stt_model = "large-v3-turbo"
 stt_engine = "auto"           # auto | whisper-gpu | whisper-cpu | parakeet (D182)
