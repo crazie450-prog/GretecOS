@@ -24,6 +24,7 @@ import json
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -50,7 +51,7 @@ FIRST_AT, SECOND_AT = (
 )  # the unconfirmed start, then the one Clayton confirms
 
 
-def _world() -> Any:
+def _world() -> ModuleType:
     path = REPO / "tests" / "fixtures" / "crops" / "stationworld.py"
     spec = importlib.util.spec_from_file_location("_wo76_pipe_world", path)
     assert spec is not None and spec.loader is not None
