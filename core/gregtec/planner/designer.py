@@ -17,9 +17,12 @@ the routes keep the order rank.py gives them.
   the pin is a fixed choice in the request, so it is in every resulting plan's JSON and holds
   through a reload and any re-solve (:func:`resolve`).
 - :func:`accept`: the plan's lifecycle moves ``proposed -> accepted``; its vault note says so,
-  ``base/lines/ln-<id>.md`` is written and the EU ledger hook runs (:mod:`.ledger`, a stub
-  until WO-4.4). Accepting is Clayton's: the dashboard's button or ``gos plan --accept``, never a
-  model's tool (D251).
+  ``base/lines/ln-<id>.md`` is written and the plan joins the EU ledger (:mod:`.ledger`,
+  ``base/power.md``, WO-4.4); ``supersedes`` retires the plan it replaces in the same step.
+  Accepting is Clayton's: the dashboard's button or ``gos plan --accept``, never a model's tool
+  (D251). :func:`accept_power` does the same for a ``gos power design`` option.
+- :func:`set_status`: the later lifecycle moves (building, running, retired), Clayton's too; the
+  notes and the ledger follow (WO-4.4, D238).
 - :func:`rename`: a human plan name ([QA:D13]); the id stays for data. The row, the JSON, the
   exports and the note follow.
 """
@@ -44,9 +47,8 @@ from gregtec.cards.build import clip
 from gregtec.db import access
 from gregtec.packupdate.plans import PLAN_ID
 from gregtec.planner import alternatives as alts
-from gregtec.planner import graph, plan, rank, solve
+from gregtec.planner import graph, ledger, plan, rank, solve
 from gregtec.planner.gtmath.tiers import VN
-from gregtec.planner.ledger import ledger_update
 from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
 from gregtec.planner.outputs.book import Book
@@ -111,15 +113,19 @@ def _vault(home: Path) -> VaultIO | None:
     return VaultIO(root) if root.is_dir() else None
 
 
-def _pid(text: str) -> str:
+def _pid(text: str, *, power: bool = False) -> str:
+    """A production plan's id (``pl-``), or with ``power`` also a power plan's (``pw-``)."""
     pid = str(text).strip().removeprefix("plan:")
-    if not PLAN_ID.fullmatch(pid) or not pid.startswith("pl-"):
-        raise DesignerError(f"{text!r} isn't a plan id (pl-...)")
+    kinds = ("pl-", "pw-") if power else ("pl-",)
+    if not PLAN_ID.fullmatch(pid) or not pid.startswith(kinds):
+        raise DesignerError(
+            f"{text!r} isn't a plan id ({' or '.join(k + '...' for k in kinds)})"
+        )
     return pid
 
 
-def load(home: Path, pid: str) -> dict[str, Any]:
-    pid = _pid(pid)
+def load(home: Path, pid: str, *, power: bool = False) -> dict[str, Any]:
+    pid = _pid(pid, power=power)
     try:
         return store.load(home, pid)
     except (OSError, ValueError) as exc:
@@ -558,22 +564,38 @@ def alternatives(
 
 
 def line_id(pid: str) -> str:
-    return "ln-" + _pid(pid).removeprefix("pl-")
+    """``ln-<hex>`` for a production plan, ``ln-pw-<hex>`` for a power plan."""
+    return "ln-" + _pid(pid, power=True).removeprefix("pl-")
 
 
 def line_body(p: Mapping[str, Any], status: str) -> str:
-    """``base/lines/ln-<id>.md``'s body: the line's facts, every number the plan's."""
+    """``base/lines/ln-<id>.md``'s body: the line's facts, every number the plan's. A power
+    line's ``eut`` is its net output and ``tier`` its distribution tier (WO-4.4)."""
     m = p.get("metrics") or {}
-    facts: list[tuple[str, object]] = [
-        ("st", status),
-        ("plan", f"plan:{p['id']}"),
-        ("tgt", p["target"]["id"]),
-        ("tgt_rate_s", p["target"]["rate_s"]),
-        ("eut", m.get("eut_avg")),
-        ("tier", p["tier_cap"]),
-        ("note", p["name"]),
-        ("note", f"plan note [[{p['id']}]], json {store.json_rel(p['id'])}"),
-    ]
+    if p.get("kind") == "power":
+        pw = p.get("power") or {}
+        facts: list[tuple[str, object]] = [
+            ("st", status),
+            ("plan", f"plan:{p['id']}"),
+            ("eut", pw.get("net_eut")),
+            ("tier", (pw.get("distribution") or {}).get("tier")),
+            ("note", p["name"]),
+            (
+                "note",
+                f"power line; ledger [[base-power]], json {store.json_rel(p['id'])}",
+            ),
+        ]
+    else:
+        facts = [
+            ("st", status),
+            ("plan", f"plan:{p['id']}"),
+            ("tgt", p["target"]["id"]),
+            ("tgt_rate_s", p["target"]["rate_s"]),
+            ("eut", m.get("eut_avg")),
+            ("tier", p["tier_cap"]),
+            ("note", p["name"]),
+            ("note", f"plan note [[{p['id']}]], json {store.json_rel(p['id'])}"),
+        ]
     return "".join(f"{k}: {store._fact(v)}\n" for k, v in facts if v not in (None, ""))
 
 
@@ -609,13 +631,15 @@ def _notes(
     if vault is None:
         problems.append("no vault: the notes weren't written")
         return None, None
-    plan_text = store.note_body(p, b, status)
+    # A power plan has no plans/ note yet: note_body is production-shaped (WO-4.6, D238).
+    plan_text = store.note_body(p, b, status) if p.get("kind") != "power" else None
     line_text = line_body(p, status) if status != "proposed" else None
     note = line = None
-    try:
-        note = vault.write(f"plans/{p['id']}.md", plan_text)
-    except (VaultError, OSError) as exc:
-        problems.append(f"the plan note wasn't written: {exc}")
+    if plan_text is not None:
+        try:
+            note = vault.write(f"plans/{p['id']}.md", plan_text)
+        except (VaultError, OSError) as exc:
+            problems.append(f"the plan note wasn't written: {exc}")
     if line_text is not None:
         try:
             line = vault.write(f"{LINES}/{line_id(p['id'])}.md", line_text)
@@ -624,20 +648,87 @@ def _notes(
     return note, line
 
 
-def accept(home: Path, pid: str) -> Accepted:
-    """Accept saved plan ``pid`` (Clayton's action; see the module docstring)."""
-    p = load(home, pid)
+def _move(
+    home: Path,
+    moves: Sequence[tuple[Mapping[str, Any], str]],
+) -> tuple[list[tuple[str | None, str | None]], dict[str, Any], list[str]]:
+    """Move each plan to its status in one transaction, with its ledger entry (WO-4.4), then
+    write the notes and ``base/power.md``. Every names book is read first, so a plan whose run
+    is gone refuses the whole move (D252 review M1). Returns each plan's (note, line), the
+    first plan's ledger update and the problems. Called under ``_LOCK``."""
+    books = [_book(home, p) for p, _ in moves]
+    with _conn(home, readonly=False) as rw:
+        rw.execute("BEGIN IMMEDIATE")
+        try:
+            entries = []
+            for p, status in moves:
+                store.set_status(rw, p["id"], status)
+                entries.append(ledger.record(rw, p))
+            # Plans accepted before the ledger recorded anything join it now (review M1).
+            synced = ledger.sync(home, rw)
+        except ValueError as exc:
+            rw.execute("ROLLBACK")
+            raise DesignerError(str(exc)) from None
+        except BaseException:
+            rw.execute("ROLLBACK")
+            raise
+        rw.execute("COMMIT")
+        update = ledger.publish(home, rw, entries[0], moves[0][1])
+    problems = [*synced, *update.problems]
+    notes = [
+        _notes(home, p, b, s, problems) for (p, s), b in zip(moves, books, strict=True)
+    ]
+    return notes, update.as_dict(), problems
+
+
+def accept(home: Path, pid: str, supersedes: str | None = None) -> Accepted:
+    """Accept saved plan ``pid`` (Clayton's action; see the module docstring): its notes, and
+    its line in the EU ledger. ``supersedes``: an accepted, building or running plan this one
+    replaces, retired in the same step, so it leaves the ledger (D238)."""
+    p = load(home, pid, power=True)
+    moves: list[tuple[Mapping[str, Any], str]] = [(p, "accepted")]
+    if supersedes is not None:
+        old = load(home, supersedes, power=True)
+        if old["id"] == p["id"]:
+            raise DesignerError("a plan can't supersede itself")
+        moves.append((old, "retired"))
     with _LOCK:
-        b = _book(home, p)  # before the row changes
-        with _conn(home, readonly=False) as rw:
-            try:
-                store.set_status(rw, p["id"], "accepted")
-            except ValueError as exc:
-                raise DesignerError(str(exc)) from None
-        problems: list[str] = []
-        note, line = _notes(home, p, b, "accepted", problems)
-        entry = ledger_update(p, "accepted")
-    return Accepted(p["id"], "accepted", line, note, entry.as_dict(), problems)
+        notes, entry, problems = _move(home, moves)
+    note, line = notes[0]
+    return Accepted(p["id"], "accepted", line, note, entry, problems)
+
+
+def set_status(home: Path, pid: str, status: str) -> Accepted:
+    """Move an accepted plan along its lifecycle (Clayton's: ``gos plan --status``, the
+    dashboard): ``building``, ``running`` or ``retired`` (store.NEXT). Its notes follow and the
+    EU ledger updates; a retired plan leaves it (WO-4.4)."""
+    if status not in ("building", "running", "retired"):
+        raise DesignerError(
+            "status is building, running or retired (accepting is its own step)"
+        )
+    p = load(home, pid, power=True)
+    with _LOCK:
+        notes, entry, problems = _move(home, [(p, status)])
+    note, line = notes[0]
+    return Accepted(p["id"], status, line, note, entry, problems)
+
+
+def accept_power(home: Path, plan: Mapping[str, Any]) -> Accepted:
+    """Accept a power line (a ``gos power design`` option, WO-4.2): its JSON and ``plan`` row
+    are saved (:func:`store.save_power`), then it is accepted as :func:`accept` does. The two
+    are separate steps: if accepting fails, the saved row stays ``proposed`` (harmless: the
+    ledger doesn't count it, and accepting the option again picks it up)."""
+    if plan.get("kind") != "power":
+        raise DesignerError("not a power plan")
+    pid = _pid(str(plan["id"]), power=True)
+    with _LOCK, _conn(home, readonly=False) as rw:
+        try:
+            store.save_power(home, plan, rw)
+        except LookupError:
+            raise DesignerError(
+                f"plan {pid} was solved on an export run that's gone: re-solve it"
+            ) from None
+    return accept(home, pid)
 
 
 def clean_name(text: object) -> str:

@@ -15,7 +15,10 @@
   graph (D61), with ``--all`` the unchecked and rejected ones too.
 - ``gos plan --accept PLAN`` (WO-3.7): Clayton accepts a saved plan, as the Designer's Accept
   button does (:func:`gregtec.planner.designer.accept`: the plan note, ``base/lines/ln-<id>.md``,
-  the EU ledger hook); ``gos plan --rename PLAN NAME`` gives it a human name ([QA:D13]).
+  its line in the EU ledger, WO-4.4; ``--supersedes OLD`` retires the plan it replaces);
+  ``gos plan --rename PLAN NAME`` gives it a human name ([QA:D13]).
+- ``gos plan --status PLAN building|running|retired`` (WO-4.4): the later lifecycle moves; the
+  line note and ``base/power.md`` follow.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ import io
 import sqlite3
 import sys
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 from gregtec import config
 from gregtec.agents import prefetch
@@ -43,6 +46,9 @@ from gregtec.planner.request import (
     tier_index,
 )
 from gregtec.vault.io import VaultIO
+
+if TYPE_CHECKING:
+    from gregtec.planner import designer
 
 COMMANDS = ("plan",)
 
@@ -101,7 +107,21 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--accept",
         default=None,
         metavar="PLAN",
-        help="accept a saved plan (WO-3.7): its notes and the EU ledger hook",
+        help="accept a saved plan (WO-3.7): its notes and its line in the EU ledger (WO-4.4)",
+    )
+    p.add_argument(
+        "--supersedes",
+        default=None,
+        metavar="OLD",
+        help="with --accept: the plan it replaces, retired in the same step (WO-4.4)",
+    )
+    p.add_argument(
+        "--status",
+        nargs=2,
+        default=None,
+        metavar=("PLAN", "STATUS"),
+        help="move an accepted plan to building, running or retired (WO-4.4); the EU ledger "
+        "follows",
     )
     p.add_argument(
         "--rename",
@@ -125,8 +145,15 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     if not db.is_file():
         print(f"{db} doesn't exist: run `gos db build` first", file=out)
         return 2
-    if getattr(args, "accept", None) or getattr(args, "rename", None):
+    if (
+        getattr(args, "accept", None)
+        or getattr(args, "rename", None)
+        or getattr(args, "status", None)
+    ):
         return _lifecycle(cfg.gos_home, args, out)
+    if getattr(args, "supersedes", None):
+        print("--supersedes goes with --accept", file=out)
+        return 2
     conn = access.connect(db, readonly=True)
     try:
         vault = cfg.gos_home / "vault"
@@ -136,21 +163,36 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         conn.close()
 
 
+def print_moved(done: designer.Accepted, out: TextIO) -> None:
+    """A lifecycle move's EU ledger lines: what happened, its warnings, its problems."""
+    print(f"  EU ledger: {done.ledger['note']}", file=out)
+    for warning in done.ledger.get("warnings") or ():
+        print(f"  warning: {warning}", file=out)
+    for problem in done.problems:
+        print(f"  {problem}", file=out)
+
+
 def _lifecycle(home: Path, args: argparse.Namespace, out: TextIO) -> int:
-    """``--accept`` and ``--rename`` (WO-3.7)."""
+    """``--accept`` and ``--rename`` (WO-3.7), ``--status`` (WO-4.4)."""
     from gregtec.planner import designer
 
+    if getattr(args, "supersedes", None) and not args.accept:
+        print("--supersedes goes with --accept", file=out)
+        return 2
     try:
         if args.rename:
             pid, name = args.rename
             saved = designer.rename(home, pid, name)
             print(f"{saved['id']}: {saved['name']}", file=out)
         if args.accept:
-            done = designer.accept(home, args.accept)
+            done = designer.accept(home, args.accept, getattr(args, "supersedes", None))
             print(f"{done.id}: accepted; line note {done.line or '-'}", file=out)
-            print(f"  EU ledger: {done.ledger['note']}", file=out)
-            for problem in done.problems:
-                print(f"  {problem}", file=out)
+            print_moved(done, out)
+        if getattr(args, "status", None):
+            pid, status = args.status
+            done = designer.set_status(home, pid, status)
+            print(f"{done.id}: {done.status}; line note {done.line or '-'}", file=out)
+            print_moved(done, out)
     except designer.DesignerError as exc:
         print(f"refused: {exc}", file=out)
         return 2

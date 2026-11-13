@@ -3,8 +3,10 @@
 OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), and My
 base's ``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable
 item/fluid keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes
-them), and ``my_base_machine_at``, where the placement events and the census put each machine they
-saw (WO-6.2, D261; :mod:`gregtec.base.seen`).
+them), ``my_base_machine_at``, where the placement events and the census put each machine they
+saw (WO-6.2, D261; :mod:`gregtec.base.seen`), and the EU ledger's ``ledger_line`` (WO-4.4, D238:
+one entry per accepted plan, its status the ``plan`` row's; :mod:`gregtec.planner.ledger` writes
+it, also creating it on a DB this module hasn't opened).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -47,6 +49,7 @@ CREATE TABLE IF NOT EXISTS my_base_machine(mte_id INT NOT NULL,
   count INT NOT NULL CHECK(count >= 0), upd INT NOT NULL, PRIMARY KEY(mte_id, source));
 CREATE TABLE IF NOT EXISTS my_base_stock(key TEXT PRIMARY KEY, qty REAL NOT NULL CHECK(qty > 0),
   upd INT NOT NULL);
+CREATE TABLE IF NOT EXISTS ledger_line(plan TEXT PRIMARY KEY, entry TEXT NOT NULL, upd INT NOT NULL);
 CREATE TABLE IF NOT EXISTS my_base_machine_at(source TEXT NOT NULL CHECK(source IN ('event','census')),
   dim INT NOT NULL, x INT NOT NULL, y INT NOT NULL, z INT NOT NULL, mte_id INT NOT NULL,
   upd INT NOT NULL, PRIMARY KEY(source, dim, x, y, z));

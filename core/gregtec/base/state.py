@@ -21,9 +21,10 @@ recipe graph. A key a later pack update drops stays listed, marked as not in the
 
 :class:`MyBase` is what the designer reads: WO-3.3's ``BaseInputs`` interface
 (``gregtec.planner.request``), implemented structurally with exactly its four methods; `gos plan`
-and `gos graph` build with it, read in one transaction (:meth:`MyBase.from_db`). Accepted
-lines have no source yet (plans are accepted from WO-3.7, the EU ledger is WO-4.4), so
-:meth:`MyBase.line_outputs` is empty until one exists (D211).
+and `gos graph` build with it, read in one transaction (:meth:`MyBase.from_db`).
+:meth:`MyBase.line_outputs` is what **running** lines make, from the EU ledger's record
+(:func:`gregtec.planner.ledger.line_outputs`, WO-4.4, D211, D252): each running production
+line's target at its rate, summed per key.
 
 Edits come from Clayton in the dashboard (:mod:`gregtec.base.routes`), never from an agent
 (plan 7.0: ``base_set`` is UI-only, D212). Every write is one ``BEGIN IMMEDIATE`` transaction on
@@ -42,6 +43,7 @@ from typing import Any
 from gregtec.db import access
 from gregtec.db import quests as quest_db
 from gregtec.ingest import quests as bq
+from gregtec.planner import ledger
 
 MACHINE_TABLE = "my_base_machine"
 STOCK_TABLE = "my_base_stock"
@@ -393,7 +395,7 @@ class MyBase:
                 tier(conn).tier,
                 owned_machines(conn),
                 {s.key: s.qty for s in stock(conn)},
-                {},  # accepted lines have no source yet (D211)
+                ledger.line_outputs(conn),  # running lines (WO-4.4)
             )
 
     def tier_cap(self) -> int:
@@ -452,6 +454,13 @@ def snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             }
             for s in stock(conn)
         ],
-        "lines": [],
+        "lines": [
+            {
+                "key": k,
+                "rate_s": float(f"{v:.9g}"),  # as base/power.md writes a sum
+                "plans": [f"plan:{p}" for p in plans],
+            }
+            for k, (v, plans) in sorted(ledger.running_outputs(conn).items())
+        ],
         "has_db": has_table(conn, "machine"),
     }
