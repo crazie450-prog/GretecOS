@@ -80,7 +80,7 @@ def validators() -> dict[str, Draft202012Validator]:
         name: Draft202012Validator(
             {"$ref": f"#/$defs/{name}", "$defs": schema["$defs"]}
         )
-        for name in ("telemetry", "reply", "command")
+        for name in ("telemetry", "reply", "command", "display")
     }
 
 
@@ -190,6 +190,15 @@ class Commands(Protocol):
         ...
 
 
+class Display(Protocol):
+    """The in-game displays' content for a reply (WO-7.4, :mod:`gregtec.bridge.display`)."""
+
+    def for_agent(self, agent: AgentId) -> dict[str, Any] | None:
+        """The reply's ``display`` for ``agent`` (its newest message says what it shows), or
+        None when nothing changed or it draws nothing."""
+        ...
+
+
 class NoCommands:
     """No action queue yet (WO-7.1 brings one): nothing to send."""
 
@@ -294,10 +303,14 @@ class Bridge:
     :meth:`reply`. Thread-safe: one message is checked and recorded at a time."""
 
     def __init__(
-        self, sink: Sink | None = None, commands: Commands | None = None
+        self,
+        sink: Sink | None = None,
+        commands: Commands | None = None,
+        display: Display | None = None,
     ) -> None:
         self.sink: Sink = sink if sink is not None else Latest()
         self.commands: Commands = commands if commands is not None else NoCommands()
+        self.display = display
         self.seqs = Seqs()
         self._lock = threading.Lock()
 
@@ -416,7 +429,34 @@ class Bridge:
             self.give_back(full, "the reply was full; send it in the next one")
             doc["poll_s"] = 1
         doc["cmds"] = sent
+        self._add_display(doc, outcome.agent)
         return doc, [int(cmd["id"]) for cmd in sent]
+
+    def _add_display(self, doc: dict[str, Any], agent: AgentId) -> None:
+        """The displays' content after the commands, only while the reply stays within
+        :data:`REPLY_MAX` (without its chat notices if that is what fits); otherwise it waits
+        for the next reply, asked for in a second (WO-7.4)."""
+        if self.display is None:
+            return
+        try:
+            display = self.display.for_agent(agent)
+        except Exception:  # the displays must never stop a reply and its ack
+            log.exception("OC display not built; the reply goes without it")
+            return
+        if not display:
+            return
+        sized = dict(doc, poll_s=doc.get("poll_s", 1))
+        trimmed = {k: v for k, v in display.items() if k != "chat"}
+        for candidate in (display, trimmed):
+            if not _display_ok(candidate):
+                log.error("OC display refused by the schema; not sent")
+                return
+            if len(encode(dict(sized, display=candidate))) <= REPLY_MAX:
+                doc["display"] = candidate
+                if candidate is trimmed and "chat" in display:
+                    doc["poll_s"] = 1
+                return
+        doc["poll_s"] = 1
 
     def give_back(self, ids: Sequence[int], why: str) -> None:
         """Hand commands back to the queue (:meth:`Commands.returned`). A failing queue is
@@ -429,6 +469,12 @@ class Bridge:
             log.exception(
                 "OC commands not handed back", extra={"ids": list(ids), "why": why}
             )
+
+
+def _display_ok(display: object) -> bool:
+    return isinstance(display, dict) and not any(
+        validators()["display"].iter_errors(display)
+    )
 
 
 def _command_ok(cmd: object) -> bool:

@@ -175,7 +175,7 @@ def run(
         oc=ops.bridge,
         ops=ops,
     )
-    ops.desk.on_change = core.action_changed
+    ops.desk.on_change = ops.changed(core.action_changed)  # chat notices first (WO-7.4)
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
     core.asker = agents.asker(ai=ai, actions=ops.desk)
     core.personas = agents.personas

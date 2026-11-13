@@ -56,7 +56,68 @@
         "ae2": { "$ref": "#/$defs/ae2" },
         "crafts": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/craft" } },
         "results": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/result" } },
-        "errors": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/error" } }
+        "errors": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/error" } },
+        "display": { "$ref": "#/$defs/shows" }
+      }
+    },
+    "shows": {
+      "description": "What the agent draws (WO-7.4, D277): the display rev it shows (0: none yet), the highest chat notice id it has said this boot (0: none), its status board's text area, and whether it draws the OCGlasses HUD and says chat notices.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rev", "said", "hud", "chat"],
+      "properties": {
+        "rev": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "said": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "board": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["w", "h"],
+          "properties": {
+            "w": { "type": "integer", "minimum": 10, "maximum": 160 },
+            "h": { "type": "integer", "minimum": 4, "maximum": 50 }
+          }
+        },
+        "hud": { "type": "boolean" },
+        "chat": { "type": "boolean" }
+      }
+    },
+    "display": {
+      "description": "The in-game displays' content (WO-7.4, D277): sent when its rev differs from the one the agent shows, or a chat notice is waiting. Printable ASCII only, cut to fit OC's smallest screen.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rev"],
+      "properties": {
+        "rev": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "lines": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/board_line" } },
+        "hud": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/hud_line" } },
+        "chat": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/notice" } }
+      }
+    },
+    "board_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "c"],
+      "properties": {
+        "t": { "type": "string", "maxLength": 48, "pattern": "^[ -~]*$" },
+        "c": { "enum": ["ok", "warn", "bad", "info", "dim"] }
+      }
+    },
+    "hud_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "c"],
+      "properties": {
+        "t": { "type": "string", "maxLength": 40, "pattern": "^[ -~]*$" },
+        "c": { "enum": ["ok", "warn", "bad", "info", "dim"] }
+      }
+    },
+    "notice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "t"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "t": { "type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[ -~]+$" }
       }
     },
     "computer": {
@@ -212,7 +273,8 @@
         "err": { "type": ["string", "null"], "maxLength": 200 },
         "ack": { "type": "integer", "minimum": 1 },
         "boot": { "description": "The agent's boot that ack counts in; it always comes with ack (D216).", "type": "string", "pattern": "^[0-9a-f]{8}$" },
-        "poll_s": { "type": "integer", "minimum": 1, "maximum": 10 }
+        "poll_s": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "display": { "$ref": "#/$defs/display" }
       },
       "dependentRequired": { "ack": ["boot"] },
       "if": { "properties": { "ok": { "const": false } } },

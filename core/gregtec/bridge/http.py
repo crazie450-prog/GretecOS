@@ -4,7 +4,9 @@
 |---------------------------------|----------------------------------|-------------------------------|
 | POST /oc/telemetry              | an OC computer's token (D221)    | M2: one telemetry message in, |
 |                                 |                                  | the reply with its commands   |
-| GET  /api/actions               | admin, client, device            | the pending action, the newest|
+|                                 |                                  | and displays (WO-7.4)         |
+| GET  /api/base/live             | admin, client, device            | the live base (WO-7.4)        |
+| GET  /api/actions             | admin, client, device            | the pending action, the newest|
 | GET  /api/actions/{id}          | admin, client, device            | one action                    |
 | POST /api/actions/{id}/confirm  | a paired browser, voice, discord | confirm it by id (D59)        |
 | POST /api/actions/{id}/cancel   | those and admin                  | cancel it by id               |
@@ -159,6 +161,13 @@ def add_routes(
         return core.ops.desk
 
     Anyone = Depends(principal)
+
+    @app.get("/api/base/live")
+    def base_live(_: Principal = Anyone) -> dict[str, Any]:
+        """The Base view's live telemetry (WO-7.4, :class:`gregtec.bridge.live.Live`)."""
+        if core.ops is None or core.ops.live is None:
+            raise HTTPException(503, "the OC bridge isn't set up in this core")
+        return core.ops.live.snapshot()
 
     @app.get("/api/actions")
     def actions(_: Principal = Anyone) -> dict[str, Any]:
