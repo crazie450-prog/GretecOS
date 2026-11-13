@@ -118,7 +118,7 @@ def _args_ok(args: dict[str, Any]) -> None:
 # --- gos crops station -----------------------------------------------------------------------
 
 
-def _run(db: Path, monkeypatch: pytest.MonkeyPatch, **kw: Any) -> tuple[int, str]:
+def _run(db: Path, monkeypatch: pytest.MonkeyPatch, **kw: object) -> tuple[int, str]:
     monkeypatch.setattr(
         cropcli.config, "load", lambda path: config.Config(gos_home=db.parent.parent)
     )
