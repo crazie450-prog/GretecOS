@@ -11,7 +11,8 @@ session's events since the last block:
   ``death``, ``vein``, ``crash``, ``dim``), **counted here** from the event store, never by a
   model (D142 (f)); the curator's compaction adds these counts up (``event_counts``);
 - itemised lines of the same kinds, as many as the budget leaves (``quest: q:<id> <name>``,
-  ``built: mte:<id> <name> at x,y,z dim d``, ...), each citing what it names;
+  ``built: mte:<id> <name> at x,y,z dim d``, ...), each citing what it names: crashes and deaths
+  first, then machines removed and built, quests, veins and dimension changes (:data:`PRIORITY`);
 - the last block adds at most :data:`NOTES_MAX` ``note:`` lines of prose from the scribe model
   (Haiku, as the compaction runs, behind no-AI mode), which may use only the numbers of the
   block it was given (:func:`gregtec.llm.summarise.checked_lines`), and closes with
@@ -60,6 +61,9 @@ KINDS = {
     "dim_change": "dim",
 }
 assert set(KINDS.values()) == schema.JOURNAL_COUNTS
+# What a full block itemises first (sorted() keeps time order within a kind): what went wrong,
+# then what changed in the base, then progress.
+PRIORITY = ("crash", "death", "removed", "built", "quest", "vein", "dim")
 SESSION_MAX = 40  # plan 7.5: at most 40 lines per session
 NOTES_MAX = 2
 END_RESERVE = (
@@ -228,7 +232,8 @@ def block(
         if d.get("quest") or d.get("ref")
     }
     names = _names(conn, refs)
-    lines += [item_line(k, d, names) for k, d in events[: max(0, items)]]
+    picked = sorted(events, key=lambda e: PRIORITY.index(e[0]))[: max(0, items)]
+    lines += [item_line(k, d, names) for k, d in picked]
     return Block(lines, counts, upto)
 
 

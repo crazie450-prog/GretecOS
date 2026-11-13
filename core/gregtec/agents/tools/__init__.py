@@ -21,6 +21,8 @@ quest_get(id, spoil)      both   :mod:`.quests` (nudge-first spoilers, D26, D268
 quest_frontier(n)         both   :mod:`.quests` (ranked by goals and lines, WO-6.4)
 quest_for_item(item)      both   :mod:`.quests`
 base_get()                both   :mod:`.base` (WO-3.8; My base, read-only)
+events_recent(window, ..) both   :mod:`.events` (WO-6.3; the event store, read-only)
+session_summary(id)       both   :mod:`.events` (WO-6.3; counts computed in code)
 db_query(name, params)    both   :mod:`.sql` (the game-data ``db/queries/*.sql``)
 db_sql(select)            deep   :mod:`.sql` (authorizer, read-only, time limit)
 note_read(path)           both   :mod:`.notes` (WO-2.5; no DB needed)
@@ -39,8 +41,7 @@ The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``
 with WO-5.3; export_diff with WO-1.4; ore_find with WO-1.6; structure_get after WO-1.8; machine_fact_set with
 WO-1.9; crop_* with WO-1.10 and WO-6.7; plan_*, design_production, effort_estimate and
 layout_estimate with Phase 3; design_power with WO-4.2; ledger_* with
-WO-4.4; speak with WO-5.3; persona_set after WO-5.6 (D208); player_pos with WO-6.1; events_recent and
-session_summary with WO-6.3; screen_snapshot with
+WO-4.4; speak with WO-5.3; persona_set after WO-5.6 (D208); player_pos with WO-6.1; screen_snapshot with
 WO-8.2; wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
 with Phase 10.
 """
