@@ -7,7 +7,9 @@ screen lane's user turn:
   paused (no coordinates: no tool backs them, so the lane couldn't state them anyway);
 - what Clayton points at, asked of the game as "what's this?" is (D286), answered from the DB
   with its citations (:mod:`gregtec.gamelink.whatsthis`), so a hovered item's name and key are
-  the DB's, not read off the pixels;
+  the DB's, not read off the pixels. Only with one game connected: with Play and Lab both up,
+  the frame can be either game's window (the voice client can't tell which), so the other
+  game's answer could describe a different screen; it is left out (review L8);
 - his tier, the head of ``quest_frontier`` (as pre-retrieval gives the fast lane).
 
 Each part is quoted as data with its source, and only the DB-backed parts (the "what's this?"
@@ -85,13 +87,18 @@ def take(
     pointer: whatsthis.Pointer | None,
 ) -> Snapshot:
     """The snapshot now. Any part that fails is left out (logged): a frame is still read."""
+    links = 0
     try:
-        game, lines = game_line(state() if state is not None else None)
+        now = state() if state is not None else None
+        links = len((now or {}).get("links") or [])
+        game, lines = game_line(now)
     except Exception:  # the game link's state is best effort here
         log.exception("game state not read")
         game, lines = "unknown (the game link's state didn't read)", ["unknown"]
+    if links > 1:
+        game += f"; {links} games connected, so what he points at isn't asked"
     target = None
-    if pointer is not None:
+    if pointer is not None and links <= 1:
         try:
             found, linked = pointer.current_target()
             if found is not None:

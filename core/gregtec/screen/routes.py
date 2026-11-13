@@ -31,7 +31,6 @@ log = logging.getLogger(__name__)
 
 PATH = "/api/screen"
 CONTENT_TYPES = ("image/png", "image/jpeg")
-VOICE_CLIENT = "voice"  # the voice client's token name (gos token new voice)
 
 
 def wire(core: "Core") -> reader.ScreenReader | None:
@@ -72,6 +71,8 @@ def add_routes(
     app: FastAPI, core: "Core", principal: Callable[[Request], Principal]
 ) -> None:
     """``POST /api/screen`` (one call from :func:`gregtec.api.app.create_app`)."""
+    from gregtec.api.app import VOICE_CLIENT  # here: app imports this module
+
     if core.screen is None:
         core.screen = wire(core)
     Anyone = Annotated[Principal, Depends(principal)]

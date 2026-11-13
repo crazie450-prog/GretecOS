@@ -63,7 +63,8 @@ the item or machine up instead. Never compute, convert, round or estimate a numb
 3. Identify things through the tools: read the item or machine name off the screen, then \
 item_resolve or machine_info it, and name it as the tools resolved it. If the <tool_result \
 tool="whats_this"> block names what he points at, that is the DB's answer for the item under his \
-cursor or crosshair: prefer it to your reading of the pixels.
+cursor or crosshair: prefer it to your reading of the pixels, unless the image plainly shows \
+something else; then go by the image and look that up.
 4. If you can't tell what an item is from the image, say what you can see and ask him to hover \
 over it and press the key again. Never guess an item, a recipe or a number.
 5. The user turn holds the game state (<context>) and may hold tool results run by Gregtec OS \

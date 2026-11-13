@@ -439,6 +439,28 @@ def test_a_number_from_the_pointed_items_db_answer_may_be_said(
     assert reply.checked, reply.problems
 
 
+def test_with_play_and_lab_both_connected_the_pointer_isnt_asked(
+    sreg: Registry,
+) -> None:
+    """The frame can be either game's window, so the other game's "what's this?" answer could
+    be about a different screen (review L8)."""
+    from gregtec.screen import snapshot
+
+    links = [{"binding": "play", "last_seen": 5}, {"binding": "lab", "last_seen": 6}]
+    pointer = Pointer(
+        {"kind": "item", "item": {"item": "gregtech:gt.metaitem.01", "meta": 11305}}
+    )
+    both = snapshot.take(
+        sreg, state=lambda: {"links": links, "status": {}}, pointer=pointer
+    )
+    assert pointer.asked == 0 and both.target is None
+    assert "2 games connected" in both.game
+    one = snapshot.take(
+        sreg, state=lambda: {"links": links[1:], "status": {}}, pointer=pointer
+    )
+    assert pointer.asked == 1 and one.target is not None
+
+
 def test_no_game_link_is_said_as_such() -> None:
     from gregtec.screen import snapshot
 
