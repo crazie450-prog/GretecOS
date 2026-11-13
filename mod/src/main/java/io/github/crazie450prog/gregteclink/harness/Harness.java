@@ -73,6 +73,26 @@ public final class Harness {
     private static final String NEI_HANDLER = "codechicken.nei.recipe.ICraftingHandler";
     private static final String GT_NEI_HANDLER = "gregtech.nei.GTNEIDefaultHandler";
 
+    /** The palette pass's files (WO-10.3). */
+    private static final String PALETTE_FILE = "palette.jsonl";
+    private static final String PALETTE_TEXTURES = "textures.jsonl";
+    /** GT, two GT addons (bartworks, GoodGenerator) and non-GT mods (vanilla, AE2, IC2). */
+    private static final List<String> PALETTE_MODS = Arrays
+        .asList("gregtech", "bartworks", "GoodGenerator", "minecraft", "appliedenergistics2", "IC2");
+    /** Blocks with a tile entity in every state: GT's machine block, a vanilla chest, AE2's drive. */
+    private static final List<String> PALETTE_TE_BLOCKS = Arrays
+        .asList("gregtech:gt.blockmachines", "minecraft:chest", "appliedenergistics2:tile.BlockDrive");
+    /** Plain blocks a shell may use: GT's casings and coils, GT's and bartworks' glass (plan 7.10). */
+    private static final List<String> PALETTE_PLAIN_BLOCKS = Arrays.asList(
+        "gregtech:gt.blockcasings",
+        "gregtech:gt.blockcasings5",
+        "gregtech:gt.blockglass1",
+        "bartworks:BW_GlasBlocks",
+        "GoodGenerator:MAR_Casing",
+        "appliedenergistics2:tile.BlockSkyStone");
+    /** The LV casing's side, which must resolve to a PNG with an average colour. */
+    private static final String PALETTE_CASING_ICON = "gregtech:iconsets/MACHINE_LV_SIDE";
+
     /** Numeric-ID fields that must never appear (EndlessIDs: key on registry name + meta). NBT is not searched. */
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
         Arrays.asList("id", "item_id", "block_id", "fluid_id", "fluidID", "ore_id", "ore_ids", "oredict_id"));
@@ -914,6 +934,13 @@ public final class Harness {
                     "crops_not_run_on_server",
                     crops != null && "skipped_server".equals(crops.getAsString()),
                     "parts.crops=" + crops);
+                // The palette pass needs the client's block icons and creative lists (WO-10.3).
+                JsonElement palette = parts.get("palette");
+                check(
+                    checks,
+                    "palette_not_run_on_server",
+                    palette != null && "skipped_server".equals(palette.getAsString()),
+                    "parts.palette=" + palette);
                 check(checks, "autoexport_off", "off".equals(auto), "parts.autoexport=" + auto);
                 return counts;
             }
@@ -930,6 +957,7 @@ public final class Harness {
                 "parts.autoexport=" + auto + (errors == null ? "" : " part_errors=" + errors));
             boolean neiFail = Boolean.getBoolean(NEI_FAIL_PROPERTY);
             checkCrops(dir, manifest, !neiFail);
+            checkPalette(dir, manifest);
             if (neiFail) {
                 // -PharnessNeiFail: dumps/recipes is a file, so NEI's dump fails; NEI only logs it.
                 String why = errors != null && errors.getAsJsonObject()
@@ -1135,6 +1163,140 @@ public final class Harness {
                 }
                 if (s.has("anyOf")) for (JsonElement a : s.getAsJsonArray("anyOf")) stack(a.getAsJsonObject());
             }
+        }
+
+        /**
+         * The palette pass (WO-10.3, plan 7.10 "Palette rule"): palette.jsonl lists the placeable block states of GT, a
+         * GT addon and other mods, sorted and once each, keyed by registry name + meta with no numeric id; GT's machine
+         * block and other tile-entity blocks are flagged, GT's casings, coils and glass are not; every face icon has a
+         * textures.jsonl line, and GT's casing textures resolve to an average colour.
+         */
+        private void checkPalette(Path dir, JsonObject manifest) throws IOException {
+            JsonObject parts = manifest.getAsJsonObject("parts");
+            JsonObject counts = manifest.getAsJsonObject("counts");
+            JsonElement status = parts.get("palette");
+            int errors = counts.has("palette_errors") ? counts.get("palette_errors")
+                .getAsInt() : -1;
+            int states = counts.has("palette_states") ? counts.get("palette_states")
+                .getAsInt() : -1;
+            check(
+                checks,
+                "palette_ok",
+                status != null && "ok".equals(status.getAsString()) && errors == 0 && states >= 1000,
+                "parts.palette=" + status + " palette_states=" + states + " palette_errors=" + errors);
+            Path file = dir.resolve(PALETTE_FILE);
+            if (!Files.isRegularFile(file)) {
+                check(checks, "palette_file", false, PALETTE_FILE + " missing");
+                return;
+            }
+            List<String> keys = new ArrayList<>();
+            Set<String> mods = new TreeSet<>();
+            Set<String> icons = new TreeSet<>();
+            Map<String, int[]> wanted = new TreeMap<>(); // block -> {states, with has_te}
+            for (String b : PALETTE_TE_BLOCKS) wanted.put(b, new int[2]);
+            for (String b : PALETTE_PLAIN_BLOCKS) wanted.put(b, new int[2]);
+            int[] ids = { 0 };
+            String[] idExample = { null };
+            try (BufferedReader in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                String line;
+                while ((line = in.readLine()) != null) {
+                    JsonObject o = parser.parse(line)
+                        .getAsJsonObject();
+                    for (JsonObject x : new JsonObject[] { o, o.has("item") && o.get("item")
+                        .isJsonObject() ? o.getAsJsonObject("item") : new JsonObject() }) {
+                        for (Map.Entry<String, JsonElement> f : x.entrySet()) {
+                            if (FORBIDDEN_KEYS.contains(f.getKey()) && ids[0]++ == 0) idExample[0] = line;
+                        }
+                    }
+                    if (o.has("error")) continue;
+                    String block = o.get("block")
+                        .getAsString();
+                    JsonObject placer = o.getAsJsonObject("item");
+                    keys.add(
+                        block + "\t"
+                            + String.format(
+                                "%010d",
+                                o.get("meta")
+                                    .getAsLong() - Integer.MIN_VALUE)
+                            + "\t"
+                            + String.format(
+                                "%010d",
+                                placer.get("meta")
+                                    .getAsLong() - Integer.MIN_VALUE));
+                    mods.add(
+                        o.get("mod")
+                            .getAsString());
+                    boolean te = o.get("has_te")
+                        .getAsBoolean();
+                    int[] w = wanted.get(block);
+                    if (w != null) {
+                        w[0]++;
+                        if (te) w[1]++;
+                    }
+                    for (JsonElement f : o.getAsJsonArray("faces")) {
+                        if (f.isJsonPrimitive()) icons.add(f.getAsString());
+                    }
+                }
+            }
+            List<String> sorted = new ArrayList<>(new TreeSet<>(keys));
+            check(
+                checks,
+                "palette_sorted_once_no_numeric_ids",
+                sorted.equals(keys) && keys.size() == states && ids[0] == 0,
+                keys.size() + " states" + (ids[0] == 0 ? "" : ", numeric id key in " + idExample[0]));
+            boolean modsOk = mods.containsAll(PALETTE_MODS);
+            check(checks, "palette_gt_addon_and_other_mods", modsOk, mods.toString());
+            List<String> teBad = new ArrayList<>();
+            for (String b : PALETTE_TE_BLOCKS) {
+                int[] w = wanted.get(b);
+                if (w[0] == 0 || w[1] != w[0]) teBad.add(b + " " + w[1] + "/" + w[0]);
+            }
+            check(
+                checks,
+                "palette_tile_entities_flagged",
+                teBad.isEmpty(),
+                teBad.isEmpty() ? PALETTE_TE_BLOCKS + " all has_te" : "not all flagged: " + teBad);
+            List<String> plainBad = new ArrayList<>();
+            for (String b : PALETTE_PLAIN_BLOCKS) {
+                int[] w = wanted.get(b);
+                if (w[0] == 0 || w[1] != 0) plainBad.add(b + " " + w[1] + "/" + w[0]);
+            }
+            check(
+                checks,
+                "palette_casings_coils_glass_plain",
+                plainBad.isEmpty(),
+                plainBad.isEmpty() ? PALETTE_PLAIN_BLOCKS + " none has_te" : "flagged or missing: " + plainBad);
+            Set<String> listed = new TreeSet<>();
+            Map<String, String> rgb = new TreeMap<>();
+            int[] resolved = { 0 };
+            eachLine(dir.resolve(PALETTE_TEXTURES), o -> {
+                String icon = o.get("icon")
+                    .getAsString();
+                listed.add(icon);
+                if (o.has("rgb")) {
+                    resolved[0]++;
+                    rgb.put(
+                        icon,
+                        o.get("rgb")
+                            .getAsString());
+                }
+            });
+            Set<String> missing = new TreeSet<>(icons);
+            missing.removeAll(listed);
+            check(
+                checks,
+                "textures_cover_faces_and_resolve",
+                missing.isEmpty() && listed.equals(icons)
+                    && rgb.containsKey(PALETTE_CASING_ICON)
+                    && resolved[0] * 10 >= listed.size() * 9,
+                listed.size() + " icons, "
+                    + resolved[0]
+                    + " with a colour; "
+                    + PALETTE_CASING_ICON
+                    + "="
+                    + rgb.get(PALETTE_CASING_ICON)
+                    + "; not listed: "
+                    + first(missing));
         }
 
         /**
