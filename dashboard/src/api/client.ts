@@ -25,6 +25,8 @@ import type {
   PowerLatest,
   PowerSpec,
   PowerView,
+  CropStationProposal,
+  CropStationView,
   CropsView,
   PersonaInfo,
   PersonaState,
@@ -121,6 +123,11 @@ export const api = {
   cropHave: (crop: string, stats: number[]) => post<CropsView>("/api/crops/have", { crop, stats }),
   cropHaveRemove: (crop: string) => request<CropsView>("DELETE", `/api/crops/have?crop=${encodeURIComponent(crop)}`),
   cropTarget: (crop: string | null) => post<CropsView>("/api/crops/target", { crop }),
+  // The breeding station (WO-7.6): status and plan; start and stop only propose (D59).
+  cropStation: (crop: string | null = null) =>
+    get<CropStationView>(crop ? `/api/crops/station?crop=${encodeURIComponent(crop)}` : "/api/crops/station"),
+  cropStationPropose: (action: "start" | "stop", crop: string | null = null) =>
+    post<CropStationProposal>("/api/crops/station", crop ? { action, crop } : { action }),
   // My base (WO-3.8): every edit answers with the whole of it.
   base: () => get<MyBase>("/api/base"),
   baseFind: (q: string, kind: "item" | "machine") =>

@@ -614,6 +614,53 @@ export interface CropsView {
   error: string | null;
 }
 
+// --- The breeding station (WO-7.6, plan 7.17 item 4, D282-D284) --------------------------------
+// The plan is gregtec.crops.station's; the status is each OC station's last report (game data).
+
+export interface CropStationStatus {
+  binding: string;
+  address: string;
+  ref: string; // tel:<binding>/<address>
+  age_s: number;
+  stale: boolean;
+  state: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  stock: Record<string, number>;
+  plan?: string;
+  target?: string;
+  count?: number;
+  steps?: number;
+  step?: number;
+  doing?: string;
+  note?: string;
+  copiers?: (string | false)[];
+}
+
+export interface CropStationPlan {
+  id: string;
+  target: string;
+  target_name: string;
+  count: number;
+  tier: number;
+  steps: { n: number; child: string; child_name: string; chance_pct: number; runs: number; copies: number }[];
+  lines: string[];
+  refs: string[];
+}
+
+export interface CropStationView {
+  status: CropStationStatus[];
+  plan: CropStationPlan | null;
+  error: string | null;
+}
+
+export interface CropStationProposal {
+  ok: boolean;
+  say: string; // GOS's read-back: "Start the breeding station: ... Say confirm."
+  action: { id: number; state: string };
+}
+
 // --- The Designer (WO-3.7, plan 7.1, D250) ------------------------------------------------------
 // Every number is the planner's (core/gregtec/planner/designer.py); the routes come in rank order.
 

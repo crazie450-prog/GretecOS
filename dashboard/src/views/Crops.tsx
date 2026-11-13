@@ -9,6 +9,7 @@ import { ApiError, api } from "../api/client";
 import type { CropCell, CropLine, CropRequirement, CropStep, CropsView } from "../api/types";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip } from "../components/core";
 import { GLYPH } from "../state/states";
+import { CropStation } from "./CropStation";
 
 function message(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
@@ -375,8 +376,8 @@ export function Crops() {
                 The biome is the worst case: dry, {data.setup.liked_biome_tags} liked biome tags. Sky access. Run{" "}
                 {data.run}.
               </p>
-              <p className="gos-sub">{GLYPH.waiting} Breeding station status arrives with WO-7.6.</p>
             </Panel>
+            <CropStation crop={guide?.target ?? null} />
           </div>
         </div>
       )}
