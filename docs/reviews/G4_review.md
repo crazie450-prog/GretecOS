@@ -408,3 +408,18 @@ Added after the review by WO-4.7 (branch `wo/4.7-power-chain-eu`, decisions D323
 `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_g4_lines_harness.py`: **17 passed** (1 min 41 s; the two strict xfails are plain tests now). The 12 power-mode cases were re-run (`gos eval power-modes`, all 12): **12 of 12 pass**; `docs/reviews/WO-4.6_power_modes.md` is regenerated. Clayton's PC step 3 commands are unchanged; for lines 1 and 2, the chain's use should now be far below `out`.
 
 Required before Clayton signs G4, item 1 ("finding 1 fixed ... with this review's xfails turned into plain tests"): done in code, pending WO-4.7's review and merge; Q-G4-4 (D324) is his.
+
+## Addendum, 2026-11-13 (later): WO-4.7 after its review (the direct-import line)
+
+Added by WO-4.7's review round (PR #101; D323-D325 updated). The two sections above are unchanged. WO-4.7's review (H1) found that the EU stage prices only the fuel: an import one recipe short of the fuel costs no EU, so every chain imported a near-fuel and converted it rather than the fuel itself (naquadah Mk-II: long rods sawn on `r:gt.recipe.cuttingsaw/392f28a54a60`, with a 5-recipe lubricant chain for the saw). The fix keeps the EU stage and adds, for every candidate outside `self_sustaining`, its **direct-import line** (the generator alone, the fuel imported as it is; `power.direct` in the plan, its own id), which `planner/rank.py` ranks with the chains. Same harness runs as above, balanced weights, nothing owned.
+
+| Criterion | Verdict now | Evidence |
+|---|---|---|
+| Light-fuel loop | **met under D324's default reading (one gated import, `best` at MV); self-fed: not at MV, at HV** (unchanged verdict; Q-G4-4 stays Clayton's) | 3 options on the Advanced Combustion Generator (128 EU/t): light fuel imported as it is (net 128), toluene distilled 1:1 (`r:gt.recipe.distillery/8b48f69a9eb6`, net 122.020438), lightly hydrocracked heavy fuel distilled (`r:gt.recipe.distillery/f6d0602fa385`, net 122.394161). None is a loop. "None self-fed at MV" is now shown on the chains themselves: every MV light-fuel chain's fewest gates over all its routes is 1 (`fewest_gates`, review L5). At HV: direct 512, one-gate chain 488.277992, gate-free chain 23.5501883 (the gate count still comes first, D323) |
+| Benzene gas turbines | **met on the dev runtime** | 3 options on the Large Gas Turbine (972 EU/t): benzene imported (net 972), distilled from moderately steam-cracked light fuel (net 924, chain 48), from moderately steam-cracked heavy fuel (net 900, chain 72) |
+| Steam boilers on a tree farm | unchanged | `self_sustaining` has no direct-import line; same 2 options (35.8549306, 29.5786111 EU/t) |
+| Naquadah fuel | unchanged: generator → ledger only (finding 2) | 3 options: Mk-II on rods imported (`@23326`, net 8192), Mk-I on rods sawn into bolts (net 2047.98), Mk-I on bolts imported (net 2048); no zero-sum loop. `test_the_naquadah_mk2_line_offers_its_rod_as_imported` |
+| G3 hand-off (±2% of NEI) | unchanged | the naquadah line's ranked options now run only an NEI-hidden saw, so the check also takes each fuel's own design (the rod's runs the lubricant chain): passed |
+| End to end | unchanged | `test_accepted_lines_reach_the_ledger_and_the_distribution_checks` (naquadah's first option is now the direct Mk-II line): passed |
+
+`GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_g4_lines_harness.py`: **18 passed** (one test added). The 12 power-mode cases re-run: **12 of 12 pass**; `docs/reviews/WO-4.6_power_modes.md` regenerated again. For Clayton's PC step 3, the first option of lines 1, 2 and 4 is now the fuel bought as it is; the chain options follow it.
