@@ -518,7 +518,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Runs the daily jobs now, whatever the idle rule says: compact old logs (a Haiku "
             "call each, with the stored key; periods held after refused summaries are tried "
             "again), check the notes against _gos/schema.md, rebuild INDEX.md, mirror them "
-            "into note_fts, back up the DB, commit to the vault's git. The core runs the same jobs once a day when the game is closed and the PC "
+            "into note_fts, refresh the wiki cache, back up the DB, commit to the vault's git. The core runs the same jobs once a day when the game is closed and the PC "
             "has been idle for [maintenance] idle_minutes."
         ),
     )
