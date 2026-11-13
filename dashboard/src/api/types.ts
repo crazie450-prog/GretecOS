@@ -8,7 +8,9 @@ import type {
   ChoicesCard,
   FlowCard,
   HealthCard,
+  PowerLedgerCard,
   RouteComparisonCard,
+  TableCard,
 } from "../cards/types.gen";
 
 export type Role = "admin" | "client" | "device";
@@ -716,4 +718,181 @@ export interface SavedPlanRow {
   name: string;
   status: string;
   kind: string | null;
+}
+
+// --- The Power view (WO-4.6, plan 7.2, 7.14 "Power") -------------------------------------------
+// Every number is the power designer's (core/gregtec/planner/powerview.py), the EU ledger's or
+// the distribution checks'; the options come in rank order (planner/rank.py), never re-sorted.
+
+export type PowerMode = "best" | "max_output" | "output_per_effort" | "self_sustaining";
+
+export interface LedgerWarning {
+  kind: string; // deficit, tier_mismatch, amp_overload
+  tier: string | null;
+  detail: string;
+  plans: string[]; // plan:<id>
+}
+
+export interface LedgerEntry {
+  plan: string;
+  kind: string; // production or power
+  name: string;
+  status: string;
+  ref: string; // plan:<id>
+  draws: { tier: string; eut_avg: number; eut_peak: number; amps: number }[];
+  source: { tier: string; eut: number; gross_eut: number; amps: number; label: string } | null;
+}
+
+export interface BufferOption {
+  kind: string; // battery_buffer or lsc
+  count: number;
+  unit: string;
+  unit_ref: string;
+  unit_eu: number;
+  capacity_eu: number;
+  detail: string;
+  refs: string[];
+  eut_max: number | null;
+}
+
+export interface BufferSizing {
+  tier: string;
+  peak_eut: number;
+  gen_eut: number;
+  window_s: number;
+  deficit_eut: number;
+  energy_eu: number;
+  battery_buffer: BufferOption | null;
+  lsc: BufferOption | null;
+  recommend: string; // battery_buffer, lsc or none
+  reason: string;
+  notes: string[];
+}
+
+export interface TransformerStep {
+  high: string;
+  low: string;
+  mode: string; // down or up
+  unit: { name: string; ref: string; amps_out: number };
+  count: number;
+  amps_in: number;
+  amps_out: number;
+}
+
+export interface TransformerPlan {
+  source: string;
+  line: string;
+  amps: number;
+  source_amps: number;
+  steps: TransformerStep[];
+  notes: string[];
+}
+
+export interface PowerDistribution {
+  transformers: TransformerPlan[];
+  buffers: BufferSizing[];
+  notes: string[];
+}
+
+export interface PowerLedgerSection {
+  card: PowerLedgerCard;
+  running: PowerLedgerCard;
+  warnings: LedgerWarning[];
+  running_warnings: LedgerWarning[];
+  lines: number;
+  entries: LedgerEntry[];
+  window_s: number;
+  distribution: PowerDistribution;
+}
+
+export interface PowerNode {
+  n: string;
+  kind: string; // recipe, generator, farm, member
+  name: string;
+  recipe: string | null;
+  machine: string | null;
+  mte: string | null;
+  tier: string | null;
+  count: number | null;
+}
+
+export interface PowerKit {
+  seeds_saplings: { id: string; qty: number }[];
+  kept_inputs: { id: string; qty: number }[];
+  tools: { tool: string; qty: number }[];
+  parts: { part: string; qty: number }[];
+  starter_fuel: { id: string; qty: number }[];
+}
+
+export interface PowerOption {
+  id: string;
+  name: string;
+  status: PlanStatus;
+  position: number;
+  of: number;
+  mode: PowerMode;
+  score: number;
+  eut_per_effort_h: number | null;
+  terms: Record<string, number>;
+  values: Record<string, number>;
+  rank_notes: string[];
+  /** How this option differs from option 1 (empty for option 1). */
+  differs: string[];
+  weights: string;
+  net_eut: number;
+  gross_eut: number;
+  chain_eut: number;
+  units: number | null;
+  generator: { label: string; kind: string; tier: string; eut: number; cites: string[] };
+  fuel: { id: string; name: string; rate_s: number; ref: string | null };
+  distribution: { tier: string | null; voltage: number | null; amps: number | null };
+  upkeep_h: number | null;
+  machines: number | null;
+  effort: { eff_h: number; build_h: number; unlock_h: number; uncounted: number; card: TableCard } | null;
+  closed: {
+    ok: boolean;
+    imports: { id: string; name: string; rate_s: number }[];
+    surplus: { id: string; name: string; rate_s: number }[];
+    problems: string[];
+  };
+  bootstrap: PowerKit | null;
+  warnings: string[];
+  nodes: PowerNode[];
+  cables: { ref: string; name: string; voltage: number; amps: number; loss: number }[];
+  ledger: {
+    counted: boolean;
+    card: PowerLedgerCard;
+    warnings: LedgerWarning[];
+    cleared: LedgerWarning[];
+    added: LedgerWarning[];
+    transformers: TransformerPlan[];
+  };
+}
+
+export interface PowerView {
+  id: string;
+  ids: string[];
+  mode: PowerMode;
+  mode_label: string;
+  mode_how: string;
+  tier_cap: string | null;
+  weights: string;
+  w: Record<string, number>;
+  notes: string[];
+  rejected: { candidate: string; why: string }[];
+  options: PowerOption[];
+  ledger: PowerLedgerSection;
+}
+
+export interface PowerSpec {
+  mode: PowerMode;
+  tier?: string;
+  scale?: "unit" | "generators" | "eut_cap" | "raw_budget";
+  bound?: number;
+  options?: number;
+}
+
+export interface PowerLatest {
+  ids: string[];
+  ledger: PowerLedgerSection | null;
 }

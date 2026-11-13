@@ -1,0 +1,15 @@
+# WO-4.6 acceptance (plan 8 row 4.6): all four objective modes at LV, HV and IV, each to return
+# 2-3 ranked options (D11, D13). `gos eval power-modes` runs every row on a copy of the DB.
+id	mode	tier
+lv-best	best	LV
+lv-max	max_output	LV
+lv-effort	output_per_effort	LV
+lv-sustain	self_sustaining	LV
+hv-best	best	HV
+hv-max	max_output	HV
+hv-effort	output_per_effort	HV
+hv-sustain	self_sustaining	HV
+iv-best	best	IV
+iv-max	max_output	IV
+iv-effort	output_per_effort	IV
+iv-sustain	self_sustaining	IV
