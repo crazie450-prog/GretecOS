@@ -198,6 +198,11 @@ class Display(Protocol):
         None when nothing changed or it draws nothing."""
         ...
 
+    def poll_s(self, agent: AgentId) -> int | None:
+        """A shorter wait before ``agent``'s next message (an action waits for "confirm"
+        in its binding), or None."""
+        ...
+
 
 class NoCommands:
     """No action queue yet (WO-7.1 brings one): nothing to send."""
@@ -430,7 +435,21 @@ class Bridge:
             doc["poll_s"] = 1
         doc["cmds"] = sent
         self._add_display(doc, outcome.agent)
+        self._display_poll(doc, outcome.agent)
         return doc, [int(cmd["id"]) for cmd in sent]
+
+    def _display_poll(self, doc: dict[str, Any], agent: AgentId) -> None:
+        """The displays' ``poll_s``, if shorter than the reply's (room for one digit is kept
+        while filling, so it never breaks :data:`REPLY_MAX`)."""
+        if self.display is None:
+            return
+        try:
+            soon = self.display.poll_s(agent)
+        except Exception:
+            log.exception("OC display poll not read; the reply goes without it")
+            return
+        if soon is not None and 1 <= soon <= 9:
+            doc["poll_s"] = min(int(doc.get("poll_s", soon)), soon)
 
     def _add_display(self, doc: dict[str, Any], agent: AgentId) -> None:
         """The displays' content after the commands, only while the reply stays within

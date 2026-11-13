@@ -68,6 +68,9 @@ CHAT_PER_REPLY = 2
 NOTICES_KEPT = 8
 NOTICE_TTL_S = 60
 CONTEXT_S = 30.0  # the goal and next step are looked up again this often
+PENDING_POLL_S = (
+    2  # the agent's wait while an action waits for "confirm" in its binding
+)
 LEVELS = ("ok", "warn", "bad", "info", "dim")
 POWER_ROWS = 3
 PROBLEM_ROWS = 4
@@ -251,6 +254,12 @@ class Displays:
             log.exception("pending action not read for the display")
             return None
         return found if found is not None and found.target == binding else None
+
+    def poll_s(self, agent: AgentId) -> int | None:
+        """:data:`PENDING_POLL_S` while an action waits for "confirm" in ``agent``'s binding:
+        Clayton's answer (or its expiry) then reaches the board, and a confirmed command its
+        computer, within a couple of seconds instead of a cycle (D277)."""
+        return PENDING_POLL_S if self._pending(agent.binding) is not None else None
 
     def content(
         self, binding: str

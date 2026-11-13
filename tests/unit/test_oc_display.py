@@ -134,6 +134,10 @@ def test_problems_from_either_form_and_maintenance() -> None:
     assert sensors.read(["Problems: §c3"]).problems == 3
     assert sensors.read(["GT5U.multiblock.problems\\\\§c2§r"]).problems == 2
     assert sensors.read(["Problems: §c1,204"]).problems == 1204
+    # GT's info line often goes on after the count once the colour codes are gone.
+    trailing = ["Problems: §c2§r Efficiency: §e100.0§r %"]
+    assert sensors.read(trailing).problems == 2
+    assert sensors.read(["Problems: §c0§r Efficiency: §e9.5§r %"]).problems == 0
     lsc = sensors.read(["kekztech.infodata.multi.maintenance_status.bad"])
     assert lsc.maintenance_ok is False and lsc.bad
     assert sensors.read(["kekztech.infodata.multi.maintenance_status.ok"]).bad is False
@@ -590,9 +594,29 @@ def test_a_broken_display_never_stops_the_reply(rig: Rig) -> None:
         def for_agent(self, agent: AgentId) -> dict[str, Any] | None:
             raise RuntimeError("boom")
 
+        def poll_s(self, agent: AgentId) -> int | None:
+            raise RuntimeError("boom")
+
     rig.bridge.display = Broken()
     reply = rig.send(msg(1))
     assert reply["ok"] is True and "display" not in reply
+
+
+def test_the_agent_polls_soon_while_an_action_waits(rig: Rig) -> None:
+    assert "poll_s" not in rig.send(msg(1))
+    proposed = rig.desk.propose("craft", dict(STEEL), target="lab")
+    assert proposed.action is not None
+    rig.clock.now += 1
+    assert rig.send(msg(2))["poll_s"] == disp.PENDING_POLL_S
+    elsewhere = rig.send(msg(1, boot="0badc0de"), binding="play")
+    assert "poll_s" not in elsewhere  # only the binding the action is for
+    rig.clock.now += 5
+    assert rig.desk.confirm("voice", proposed.action.id).ok
+    taken = rig.send(msg(3))
+    # Nothing waits now; the agent sends its results 1 s after commands by itself.
+    assert taken["cmds"] and "poll_s" not in taken
+    rig.clock.now += 1
+    assert "poll_s" not in rig.send(msg(4))
 
 
 # --- a change reaches the display within 10 s (the core's half, on a fake clock)

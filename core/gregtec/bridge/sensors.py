@@ -22,7 +22,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 _CODE = re.compile("§.", re.DOTALL)
-_LOCAL = re.compile(r"^\s*Problems:\s*([0-9][0-9,.\s]*)$", re.IGNORECASE)
+_LOCAL = re.compile(r"^\s*Problems:\s*([0-9][0-9,]*)", re.IGNORECASE)  # text may follow
 _NUMBER = re.compile(r"^\s*([0-9][0-9,.\s]*)\s*$")
 SEPARATOR = (
     "\\\\"  # two backslash characters, as IGregTechDeviceInformation.encode writes
