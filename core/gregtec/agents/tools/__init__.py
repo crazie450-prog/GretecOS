@@ -46,6 +46,8 @@ ore_waypoint(vein)        deep   :mod:`.ores` (WO-6.6; proposes only: Clayton co
 crop_find(text)           both   :mod:`.crops` (WO-6.7; crops, how each is bred)
 crop_plan(target)         both   :mod:`.crops` (WO-6.7; the breeding guide, code-ordered)
 crop_step(target, n)      both   :mod:`.crops` (WO-6.7; one step: layout, odds, times)
+wiki_search(q)            deep   :mod:`.wiki` (WO-8.3; the cache, the researcher's only)
+wiki_fetch(title, part)   deep   :mod:`.wiki` (WO-8.3; cache, else one polite request)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
@@ -55,7 +57,7 @@ WO-1.9; crop_status with WO-7.6; effort_estimate and layout_estimate with
 Phase 3; design_power with WO-4.2; ledger_update and
 plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
 session_summary with WO-6.3; screen_snapshot never (WO-8.2, D288: frames come only from
-the screen key); wiki_* with WO-8.3; notify with WO-9.2; schematic_export, theme_* and build_request
+the screen key); notify with WO-9.2; schematic_export, theme_* and build_request
 with Phase 10.
 """
 
