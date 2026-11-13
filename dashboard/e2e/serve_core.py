@@ -22,6 +22,9 @@ Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtur
 to the tool fixtures' export run, never as a newer run of its own: the recipe tools read only the
 newest run, so a crop-only run would hide the e2e world's recipes.
 
+``--power`` (WO-4.6, :func:`setup_power`): WO-4.2's made-up power export instead of the tool
+fixtures', so the Power view designs, ranks and accepts real (made-up) power lines.
+
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
@@ -134,6 +137,33 @@ def load_crops(home: Path) -> None:
     module.write_db(access.db_path(home), into_latest=True)
 
 
+def setup_power(home: Path) -> None:
+    """``--power`` (WO-4.6): WO-4.2's made-up power export (tests/unit/planner/test_power.py: a
+    test gas burnt in a test combustion generator, closed on water through its loop) built into
+    ``home``'s DB, the vault from the template and setup done. The fixture has none of the
+    curated farms' or chain templates' items, so the core's power designer runs without them."""
+    spec = importlib.util.spec_from_file_location(
+        "power_fixtures", REPO / "tests" / "unit" / "planner" / "test_power.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the power test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["power_fixtures"] = module
+    spec.loader.exec_module(module)
+    module.make_home(home)
+    farms = home / "e2e" / "farms.tsv"
+    farms.write_text("\t".join(module.farms.HEADER) + "\n", encoding="utf-8")
+
+    from gregtec.planner import chains, powerview
+
+    real = powerview.design
+
+    def design(h: Path, req: object, **kw: object) -> object:
+        return real(h, req, farms_path=farms, templates=chains.EMPTY)  # type: ignore[arg-type]
+
+    powerview.design = design  # type: ignore[assignment]
+
+
 def _load_fakes() -> object:
     """tests/unit/setup/fakes.py: the file keyring and the fake Prism tree (WO-2.9)."""
     spec = importlib.util.spec_from_file_location(
@@ -180,6 +210,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="a first run (WO-2.9): no gos.toml and no DB; see setup_fresh",
     )
+    parser.add_argument(
+        "--power",
+        action="store_true",
+        help="the Power view's core (WO-4.6): WO-4.2's power fixture; see setup_power",
+    )
     parser.add_argument("--host-name", default=DASHBOARD_HOST)
     args = parser.parse_args(argv)
     root: Path = args.home.absolute()
@@ -189,9 +224,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         home = setup_fresh(root)
     else:
         home = root
-        build_db(home)
-        ores_lab = load_ores(home)
-        load_crops(home)
+        if args.power:
+            setup_power(home)
+        else:
+            build_db(home)
+            ores_lab = load_ores(home)
+            load_crops(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
