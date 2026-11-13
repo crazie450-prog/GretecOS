@@ -253,8 +253,9 @@ class Notices:
         """The announced problems that still hold, as catalog alert cards (D160)."""
         from gregtec.cards import build as cards_build
 
-        with self._lock:
-            holding = {k: list(v) for k, v in self._holding.items()}
+        # No lock: the dashboard reads this on the event loop while a tick may be checking; the
+        # tick replaces the whole mapping at once, so this reads one tick's or the next's.
+        holding = self._holding
         out = []
         for kind in PROBLEMS:
             found = holding.get(kind) or []
