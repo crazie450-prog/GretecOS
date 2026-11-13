@@ -6,7 +6,7 @@
 |                                 |                                  | the reply with its commands   |
 |                                 |                                  | and displays (WO-7.4)         |
 | GET  /api/base/live             | admin, client, device            | the live base (WO-7.4)        |
-| GET  /api/actions             | admin, client, device            | the pending action, the newest|
+| GET  /api/actions              | admin, client, device            | the pending action, the newest|
 | GET  /api/actions/{id}          | admin, client, device            | one action                    |
 | POST /api/actions/{id}/confirm  | a paired browser, voice, discord | confirm it by id (D59)        |
 | POST /api/actions/{id}/cancel   | those and admin                  | cancel it by id               |

@@ -191,6 +191,17 @@ test("the board fits OC's smallest screen and draws the core's lines", function(
   end
 end)
 
+test("close gives the shell back its resolution", function()
+  local w = http_world({ screen = { w = 80, h = 25 } })
+  T.eq(w.screen.res_w, 80)
+  local M, st = agent(w)
+  T.ok(M.cycle(st))
+  T.eq(w.screen.res_w, 50)
+  st.display:close()
+  T.eq(w.screen.res_w, 80, "width after close")
+  T.eq(w.screen.res_h, 25, "height after close")
+end)
+
 test("lines are cut to the width and drawn as text, never run", function()
   local w = T.base({ screen = { w = 50, h = 16 } })
   local M, st = agent(w)

@@ -183,8 +183,14 @@ function Display:attach(inv, transport)
       end
       if ok and okr and type(mw) == "number" and type(mh) == "number" then
         local w, h = math.min(mw, D.W), math.min(mh, D.H)
+        -- The shell's resolution, given back at close (a T2/T3 screen is bigger than the board).
+        local okg, ow, oh = self.call(gpu, "getResolution")
         if w >= 10 and h >= 4 and self.call(gpu, "setResolution", w, h) then
           self.gpu, self.screen, self.w, self.h = gpu, screen, math.floor(w), math.floor(h)
+          self.restore = nil
+          if okg and math.type(ow) == "integer" and math.type(oh) == "integer" then
+            self.restore = { ow, oh }
+          end
           self.drawn = {}
           self:draw(true)
         end
@@ -350,7 +356,7 @@ function Display:apply(doc)
     return
   end
   local rev = doc.rev
-  if math.type and math.type(rev) == "integer" and rev >= 1 and rev ~= self.rev then
+  if math.type(rev) == "integer" and rev >= 1 and rev ~= self.rev then
     self.rev = rev
     self.lines = lines_of(doc.lines, D.LINES, D.W)
     self.hud = lines_of(doc.hud, D.HUD_MAX, D.HUD_W)
@@ -393,9 +399,13 @@ end
 
 function Display:close()
   if self.gpu then
+    local w, h = self.w, self.h
+    if self.restore and self.call(self.gpu, "setResolution", self.restore[1], self.restore[2]) then
+      w, h = self.restore[1], self.restore[2]
+    end
     self.call(self.gpu, "setBackground", BLACK)
     self.call(self.gpu, "setForeground", D.COLORS.info)
-    self.call(self.gpu, "fill", 1, 1, self.w, self.h, " ")
+    self.call(self.gpu, "fill", 1, 1, w, h, " ")
   end
   self:clear_hud()
 end
