@@ -60,6 +60,8 @@ OC_KINDS = (
     "machine_pause",
     "machine_resume",
     "say",
+    "crop_start",  # the breeding station (WO-7.6): a plan gregtec.crops.station built
+    "crop_stop",
 )  # the contract's commands
 KINDS = (*OC_KINDS, "waypoint")  # plan 7.9's safe actions; nothing destructive exists
 VIAS = ("voice", "dashboard", "phone", "discord")  # how Clayton confirms (D59, D214)
@@ -416,9 +418,9 @@ class ActionDesk:
             self.tick()
             rows = self.store.rows(
                 f"SELECT {_COLUMNS} FROM action WHERE state = 'confirmed' AND target = ? "
-                "AND computer = ? AND kind IN ('craft','machine_pause','machine_resume','say') "
+                f"AND computer = ? AND kind IN ({','.join('?' * len(OC_KINDS))}) "
                 "ORDER BY id LIMIT ?",
-                (agent.binding, agent.address, max(0, limit)),
+                (agent.binding, agent.address, *OC_KINDS, max(0, limit)),
             )
             actions = [_action(r) for r in rows]
             if not actions:
@@ -518,6 +520,10 @@ class ActionDesk:
             return f"{verb} machine {args['addr'][:8]}{where}"
         if kind == "say":
             return f'Say "{args["text"]}" in chat{where}'
+        if kind in ("crop_start", "crop_stop"):
+            from gregtec.crops.station import readback
+
+            return f"{readback(kind, args)}{where}"
         return (
             f'Add waypoint "{args["name"]}" at {args["x"]}, {args["y"]}, {args["z"]} '
             f"in dimension {args['dim']}{where}"
@@ -673,6 +679,10 @@ def _result_words(action: Action) -> str:
     if action.state == "done":
         if result.get("state") == "submitted":
             return f"Started: {action.readback}. AE2 is crafting it."
+        if action.kind == "crop_start":
+            return f"The breeding station took it: {action.readback}."
+        if action.kind == "crop_stop":
+            return "The breeding station is stopping: it finishes the run under way, then collects its items."
         return f"Done: {action.readback}."
     err = str(result.get("err") or result.get("why") or "no reason given")
     if MAY_STILL_RUN in err:

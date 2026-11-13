@@ -375,6 +375,28 @@ TOOLS = (
         crops.crop_step,
     ),
     Tool(
+        "crop_status",
+        "What each OC breeding station last reported (WO-7.6): its state, the step, runs and "
+        "failures, the plan's seeds in its chest and its own note, with the age and a stale "
+        "flag; cite rows by their tel: ref. A stale row is old data, never the station now.",
+        crops.CROP_STATUS_SCHEMA,
+        crops.crop_status,
+        needs_db=False,
+    ),
+    Tool(
+        "crop_station",
+        "Propose starting the OC breeding station on a crop (WO-7.6), on the plan GOS's code "
+        "builds from his crops and tier (Crop Breeder steps, copies first, 4 stocked by "
+        "default), or stopping it. It only proposes: GOS reads it back and Clayton confirms it "
+        "himself (you can't), within 60 s; a new proposal cancels the last. Say the returned "
+        "`say` line to Clayton word for word.",
+        crops.CROP_STATION_SCHEMA,
+        crops.crop_station,
+        read_only=False,
+        lanes=frozenset({DEEP}),
+        gate=ops.GATE,
+    ),
+    Tool(
         "action_status",
         "One world action by id (state, read-back, how it was confirmed, its result), or the "
         "pending one and the newest ten.",
@@ -393,7 +415,6 @@ LATER: dict[str, str] = {
     "tool is a follow-up)",
     "machine_fact_get": "machine_info covers reading facts (WO-2.2); a fact-by-key tool comes with machine_fact_set",
     "machine_fact_set": "WO-1.9 (pack-update playbook: curation)",
-    "crop_status": "WO-7.6 (breeding station status)",
     # Accepting and every later move are Clayton's (the Designer, gos plan --accept/--status,
     # POST /api/plans/{id}/status; D251, D238): no model moves a plan or writes the ledger.
     "plan_set_status": "WO-4.4 made lifecycle moves Clayton's (gos plan --status, the "
