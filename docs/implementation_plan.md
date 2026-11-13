@@ -533,7 +533,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | quest-guide | Quest Q&A, frontier, spoiler levels (§7.4) | quest_find, quest_get, quest_frontier, quest_for_item |
 | base-keeper | Base-state notes, line lifecycle, goals | note_read/write, ledger_*, plan_set_status, base_get |
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
-| advisor | Next steps (§7.5) | quest_frontier, events_recent, ledger_get, plan_list, base_get |
+| advisor | Next steps (§7.5) | advisor_next (D266), quest_frontier, events_recent, ledger_get, plan_list, base_get |
 | ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
 | crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
@@ -560,6 +560,7 @@ plan_pin(id, node, recipe?)          plan_rename(id, name)     base_get()       
 layout_estimate(plan)                ledger_get()              ledger_update(...)     plan_explain(id)      # D199, D251
 quest_find(text)                     quest_get(id, spoil=0..2) quest_frontier(n)     quest_for_item(item)
 events_recent(window, kinds?)        session_summary(id)       ore_find(mat, dim?, near?)  player_pos()
+advisor_next(n?)                     # the next steps, ranked by code (D266)
 ore_waypoint(vein)                   # proposes a vein's waypoint from the DB row (D272); confirm is UI-only
 telemetry_get(scope)                 action_propose(kind,args) action_status(id)     # confirm is UI-only
 wiki_search(q)                       wiki_fetch(title)         structure_get(machine, variant)
@@ -714,6 +715,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - Inputs: `me/goals.md`, My base (tier, machines, stock), the top 20 frontier quests, 48 h of events, the EU ledger, alerts, active plans.
   - Output: **3 ranked next steps**, with reasons and links. Nudge-first.
 - **Proactive notices** (priority-gated, 10-minute cooldown). On by default (D71): power deficit or machine stalled, and a plan buildable from current stock. Others (e.g., "a quest just opened up") are opt-in.
+- As built (WO-6.5, D266, D267): `core/gregtec/advisor/` ranks the steps in code (problems, a plan buildable from stock, his goals' quests, power for accepted lines, lines to build, other frontier quests), each with reasons, `plan:`/`q:`/`tel:` citations and a dashboard link, through the read-only `advisor_next` tool (both lanes) and the `advisor` skill (deep lane); Now's "Next steps" shows them with no model call. The notices (`[policy] notices`; `quest_opened` opt-in) are delivered as a `notice` push (spoken by the voice client) and, for problems, alert cards; a higher-priority notice holds lower ones for 10 minutes and each kind has its own 10-minute cooldown. `gos eval advisor` runs the three scenarios (`--fake`: an adversarial oracle); Clayton's rating and the Lab run are `docs/runbooks/advisor.md`.
 
 ### 7.6 Ore intel
 - **Sources:** the VisualProspecting server cache (every vein, D27), the client cache, live "You found a … vein" lines, and ore mixes (§5.2 step 6).
@@ -1428,7 +1430,7 @@ confirm_expiry_s = 60
 stock_default = "none"        # D63
 tier_source = "quests"        # D64, overridable
 export_on_quit = "ask"        # D69
-notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71
+notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71; + "quest_opened" opt-in (D267)
 
 [launch]
 # home = "C:/Users/<you>/GregtecOS"   # GOS_HOME for gos launch; default [paths] gos_home (D115)
