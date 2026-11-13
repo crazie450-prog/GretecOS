@@ -70,6 +70,7 @@ WRITERS = {
     "design_production",  # WO-3.7: saves plans through the planner's store
     "plan_pin",
     "plan_rename",
+    "design_power",  # WO-4.6: saves power plans through the planner's store
 }  # WO-2.5, behind the path guard
 HANDOFF = "handoff"  # WO-2.3: the fast lane's one writing tool, to the deep lane
 

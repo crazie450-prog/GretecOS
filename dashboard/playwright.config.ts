@@ -5,6 +5,7 @@
 import { defineConfig } from "@playwright/test";
 import { FRESH_HOST, FRESH_PORT, FRESH_ROOT } from "./e2e/fresh";
 import { BASE, HOME, PORT } from "./e2e/harness";
+import { POWER_HOME, POWER_HOST, POWER_PORT } from "./e2e/power";
 
 export default defineConfig({
   testDir: "e2e",
@@ -33,6 +34,14 @@ export default defineConfig({
       command: `uv run python dashboard/e2e/serve_core.py --home "${FRESH_ROOT}" --port ${FRESH_PORT} --fresh --host-name ${FRESH_HOST}`,
       cwd: "..",
       url: `http://127.0.0.1:${FRESH_PORT}/health`,
+      timeout: 120_000,
+      reuseExistingServer: false,
+      stdout: "pipe",
+    },
+    {
+      command: `uv run python dashboard/e2e/serve_core.py --home "${POWER_HOME}" --port ${POWER_PORT} --power --host-name ${POWER_HOST}`,
+      cwd: "..",
+      url: `http://127.0.0.1:${POWER_PORT}/health`,
       timeout: 120_000,
       reuseExistingServer: false,
       stdout: "pipe",

@@ -32,6 +32,7 @@ import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
 import { Crops } from "./views/Crops";
 import { Ores } from "./views/Ores";
+import { Power } from "./views/Power";
 import { Quests } from "./views/Quests";
 import { Search, type SearchTarget } from "./views/Search";
 import { type DoctorRun, Settings, runDoctor } from "./views/Settings";
@@ -298,6 +299,8 @@ export function App() {
         );
       case "crops":
         return <Crops />;
+      case "power":
+        return <Power />;
       case "ores":
         return <Ores />;
       case "settings":

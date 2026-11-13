@@ -46,6 +46,8 @@ ore_waypoint(vein)        deep   :mod:`.ores` (WO-6.6; proposes only: Clayton co
 crop_find(text)           both   :mod:`.crops` (WO-6.7; crops, how each is bred)
 crop_plan(target)         both   :mod:`.crops` (WO-6.7; the breeding guide, code-ordered)
 crop_step(target, n)      both   :mod:`.crops` (WO-6.7; one step: layout, odds, times)
+design_power(mode, ...)   deep   :mod:`.power` (WO-4.6; saves proposed plans, code-ranked)
+effort_estimate(id)       both   :mod:`.power` (WO-4.6; a saved plan's effort breakdown)
 wiki_search(q)            deep   :mod:`.wiki` (WO-8.3; the cache, the researcher's only)
 wiki_fetch(title, part)   deep   :mod:`.wiki` (WO-8.3; cache, else one polite request)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
@@ -53,8 +55,7 @@ more(cursor)              both   :mod:`.registry` (the next page of any result)
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
 with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_set with
-WO-1.9; crop_status with WO-7.6; effort_estimate and layout_estimate with
-Phase 3; design_power with WO-4.2; ledger_update and
+WO-1.9; crop_status with WO-7.6; layout_estimate with Phase 3; ledger_update and
 plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208); events_recent and
 session_summary with WO-6.3; screen_snapshot never (WO-8.2, D288: frames come only from
 the screen key); notify with WO-9.2; schematic_export, theme_* and build_request
