@@ -198,9 +198,11 @@ def ask(
     try:
         while True:
             got = read_question(home)
-            if got is None or got.id != q.id:
-                return None  # removed, or replaced by a newer question
-            if got.answer is not None:
+            if got is None and not (home / QUESTION).exists():
+                return None  # removed
+            if got is not None and got.id != q.id:
+                return None  # replaced by a newer question
+            if got is not None and got.answer is not None:
                 return got.answer == YES
             if shown and shown[0] is not None:
                 answer(home, q.id, bool(shown[0]), "dialog")
