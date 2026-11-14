@@ -58,7 +58,9 @@ class BlockState:
     light: int | None
     light_opacity: int | None
     tab: str | None
-    hidden: bool  # in no creative tab: the plain item (meta 0) still places it
+    hidden: (
+        bool  # in no creative tab (tab null), or its variant list was empty or threw
+    )
     faces: tuple[str | None, ...]  # SIDES icon names
     errors: tuple[str, ...] = ()
 

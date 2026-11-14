@@ -51,7 +51,10 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="the world's folder in the Lab's saves/ (default [paths] lab_world)",
     )
     where.add_argument(
-        "--world-dir", type=Path, default=None, help="a world folder anywhere"
+        "--world-dir",
+        type=Path,
+        default=None,
+        help="a Lab or test world folder (read-only); GOS never reads Play on its own",
     )
     blocks = sub.add_parser("blocks", help="list block states in the catalog")
     blocks.add_argument(
@@ -80,7 +83,7 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     if args.palette_command == "blocks":
         return _blocks(db, args, out)
     try:
-        entries = palette.parse(args.file.read_text(encoding="utf-8"))
+        entries = palette.parse(args.file.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, palette.PaletteError) as exc:
         print(f"Can't read the palette: {exc}", file=out)
         return 2

@@ -88,10 +88,24 @@ def write(
 
 
 def catalog_run(conn: sqlite3.Connection) -> tuple[int, str] | None:
-    """(export_run.id, run key) of the newest run with a block catalog, or None."""
+    """(export_run.id, run key) of the newest run with a block catalog, or None (also for a
+    DB still at schema 5, opened read-only so never upgraded: no ``block_state`` table)."""
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'block_state'"
+    ).fetchone()
+    if has_table is None:
+        return None
     row = conn.execute(
         "SELECT r.id, r.run_key FROM export_run r WHERE EXISTS"
         " (SELECT 1 FROM block_state b WHERE b.run_id = r.id) ORDER BY r.id DESC LIMIT 1"
+    ).fetchone()
+    return None if row is None else (int(row[0]), str(row[1]))
+
+
+def newest_run(conn: sqlite3.Connection) -> tuple[int, str] | None:
+    """(export_run.id, run key) of the newest export run, catalog or not, or None."""
+    row = conn.execute(
+        "SELECT id, run_key FROM export_run ORDER BY id DESC LIMIT 1"
     ).fetchone()
     return None if row is None else (int(row[0]), str(row[1]))
 
@@ -111,7 +125,9 @@ class State:
     falls: bool
     liquid: bool | None
     light: int | None
-    hidden: bool  # every variant is out of the creative tabs
+    hidden: (
+        bool  # in no creative tab (the export's ``hidden``: no tab, or an empty list)
+    )
 
     @property
     def key(self) -> str:

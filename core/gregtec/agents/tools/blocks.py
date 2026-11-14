@@ -89,6 +89,11 @@ def block_find(call: Call, args: dict[str, Any], offset: int) -> Result:
         offset=offset,
     )
     notes = [NOTE]
+    newest = block_db.newest_run(call.conn)
+    if newest is not None and newest[0] != run_id:
+        notes.append(
+            f"the newest export run {newest[1]} has no block catalog: this one may be stale"
+        )
     if len(text.split()) > block_db.MAX_WORDS:
         notes.append(f"only the first {block_db.MAX_WORDS} words were used")
     head: list[tuple[str, object]] = [("run", run_key)]

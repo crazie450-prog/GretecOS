@@ -319,8 +319,9 @@ in registry-name order. A block is **placeable** when it has an item (`Item.getI
 count in `counts.palette_unplaceable` and get no line. A placeable block's states are its item's variants as the
 creative menu lists them (`item.getSubItems(item, block.getCreativeTabToDisplayOn(), list)`, stacks of that item
 only), each placed at the block meta the item gives it (`item.getMetadata(damage)`). A block whose list is empty (or
-throws) gets one line for the plain item at damage 0, marked `hidden`. Two variants that give the same
-(meta, item meta) are written once (`counts.palette_duplicates`).
+throws) gets one line for the plain item at damage 0. A line is marked `hidden` when the block is in no creative tab
+(`getCreativeTabToDisplayOn()` is null, so `tab` is null) or its list was empty or threw. Two variants that give the
+same (meta, item meta) are written once (`counts.palette_duplicates`).
 
 ```json
 {"block":"<registry name>","meta":0,"item":{"item":"<registry name>|null","meta":0},
@@ -381,7 +382,7 @@ throws) gets one line for the plain item at damage 0, marked `hidden`. Two varia
            "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_serial_load"?,"nei_files"?,
            "nei_recipes"?,
            "crop_dumpers"?,"crop_files"?,
-           "palette_blocks","palette_states","palette_tile_entities","palette_unplaceable","palette_hidden",
+           "palette_blocks","palette_variants","palette_te_variants","palette_unplaceable","palette_hidden",
            "palette_duplicates","palette_errors","textures","texture_errors"},
  "options":{"recipe_owners":true},
  "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","oredict":"ok|failed",
@@ -446,8 +447,10 @@ throws) gets one line for the plain item at damage 0, marked `hidden`. Two varia
   - `ok`: both files were written. Single states that failed are in the file as error lines and in
     `counts.palette_errors`; textures that didn't resolve in `counts.texture_errors`.
   - `failed`: writing a file failed (`part_errors.palette`), or the client step never reached the pass.
-  - `counts.palette_blocks` counts the registry's blocks, `palette_states` the lines written (item variants: two
-    items can place one state), `palette_tile_entities` the lines with `has_te`, `palette_hidden` the `hidden` ones;
+  - `counts.palette_blocks` counts the registry's blocks, `palette_variants` the lines written (item variants, not
+    states: two items can place one state, and `gt.blockmachines` alone has thousands), `palette_te_variants` the
+    lines with `has_te`, `palette_hidden` the `hidden` lines written (duplicates not counted); `gos db build` reports
+    the distinct states (registry name + meta);
     `textures` and `texture_errors` count `textures.jsonl`. The counts and the `palette` duration are present only
     when the pass ran (on a client).
 - `java.charset` (WO-1.10) is the JVM's default charset, which CropsNH's dumpers write in; runs without it are

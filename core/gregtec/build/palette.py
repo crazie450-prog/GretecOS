@@ -53,9 +53,10 @@ class Entry:
 
 
 def parse_entry(text: str) -> Entry:
-    """``registry:name@meta`` to an :class:`Entry`; ``PaletteError`` for anything else."""
+    """``registry:name@meta`` to an :class:`Entry`; ``PaletteError`` for anything else,
+    including a name with a control or format character (a stray byte-order mark)."""
     m = _ENTRY.fullmatch(text.strip())
-    if m is None or int(m["meta"]) > 32767:
+    if m is None or not m["block"].isprintable() or int(m["meta"]) > 32767:
         raise PaletteError(
             f"{text.strip()[:120]!r} is not <registry name>@<meta> "
             "(e.g. gregtech:gt.blockcasings@2; never a numeric id)"
@@ -65,9 +66,10 @@ def parse_entry(text: str) -> Entry:
 
 def parse(text: str) -> list[Entry]:
     """A palette file: one entry per line, its first field; blank lines and ``#`` comments
-    are skipped, and anything after the first tab or space is a note."""
+    are skipped, and anything after the first tab or space is a note. A leading byte-order
+    mark (Notepad, PowerShell 5.1's ``-Encoding utf8``) is dropped."""
     out: list[Entry] = []
-    for n, raw in enumerate(text.splitlines(), 1):
+    for n, raw in enumerate(text.removeprefix("\ufeff").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -97,6 +99,9 @@ class Report:
     world: str  # the world whose registry was used
     verdicts: tuple[Verdict, ...]
     problems: tuple[str, ...] = field(default=())  # about the palette as a whole
+    newer_run: str | None = (
+        None  # a newer export run without a catalog: this one is stale
+    )
 
     @property
     def ok(self) -> bool:
@@ -123,6 +128,8 @@ def check(
             "`gos export collect` and `gos db build`"
         )
     run_id, run_key = found
+    newest = block_db.newest_run(conn)
+    newer = newest[1] if newest is not None and newest[0] != run_id else None
     verdicts: list[Verdict] = []
     seen: set[str] = set()
     for e in entries:
@@ -179,7 +186,7 @@ def check(
         )
     if not seen:
         problems.append("the palette is empty")
-    return Report(run_key, world.world, tuple(verdicts), tuple(problems))
+    return Report(run_key, world.world, tuple(verdicts), tuple(problems), newer)
 
 
 def render(report: Report) -> list[str]:
@@ -187,6 +194,11 @@ def render(report: Report) -> list[str]:
     out = [
         f"Palette check against the world {report.world!r} and block catalog run {report.run_key}"
     ]
+    if report.newer_run is not None:
+        out.append(
+            f"note: the newest export run {report.newer_run} has no block catalog (its palette "
+            f"pass didn't run or failed), so this catalog, from {report.run_key}, may be stale"
+        )
     for v in report.verdicts:
         mark = "ok     " if v.accepted else "REFUSED"
         name = f" ({v.name})" if v.name else ""

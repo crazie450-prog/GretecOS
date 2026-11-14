@@ -1179,13 +1179,13 @@ public final class Harness {
             JsonElement status = parts.get("palette");
             int errors = counts.has("palette_errors") ? counts.get("palette_errors")
                 .getAsInt() : -1;
-            int states = counts.has("palette_states") ? counts.get("palette_states")
+            int states = counts.has("palette_variants") ? counts.get("palette_variants")
                 .getAsInt() : -1;
             check(
                 checks,
                 "palette_ok",
                 status != null && "ok".equals(status.getAsString()) && errors == 0 && states >= 1000,
-                "parts.palette=" + status + " palette_states=" + states + " palette_errors=" + errors);
+                "parts.palette=" + status + " palette_variants=" + states + " palette_errors=" + errors);
             Path file = dir.resolve(PALETTE_FILE);
             if (!Files.isRegularFile(file)) {
                 check(checks, "palette_file", false, PALETTE_FILE + " missing");

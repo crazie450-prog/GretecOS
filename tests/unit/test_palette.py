@@ -300,6 +300,13 @@ def test_find_filters_and_orders_by_key(conn: sqlite3.Connection) -> None:
     assert [r["block"] for r in block_db.find(conn, 1, "stone glow")] == [
         "minecraft:glowstone@0"
     ]
+    # the words match after grouping: a state found by one variant's name keeps all its variants
+    (furnace,) = block_db.find(conn, 1, "furnace")
+    assert (furnace["block"], furnace["variants"], furnace["name"]) == (
+        "gregtech:gt.blockmachines@0",
+        2,
+        "Bronze Hull",
+    )
 
 
 def test_a_version_5_db_gets_the_block_tables(tmp_path: Path) -> None:
@@ -382,6 +389,18 @@ def test_parse_palette_files() -> None:
         palette.parse("minecraft:stone@0\n42\n")
 
 
+def test_parse_drops_a_byte_order_mark_and_crlf() -> None:
+    # Notepad and PowerShell 5.1's Set-Content -Encoding utf8 start the file with U+FEFF
+    text = "\ufeffgregtech:gt.blockcasings@2\r\nminecraft:stone@0\r\n"
+    assert palette.parse(text) == [
+        palette.Entry("gregtech:gt.blockcasings", 2),
+        palette.Entry("minecraft:stone", 0),
+    ]
+    for bad in ("gregtech:gt.block\ufeffcasings@2", "mine\u200bcraft:stone@0"):
+        with pytest.raises(palette.PaletteError, match="registry name>@<meta>"):
+            palette.parse_entry(bad)
+
+
 def verdicts(report: palette.Report) -> dict[str, tuple[str, ...]]:
     return {v.entry.key: v.refused for v in report.verdicts}
 
@@ -428,6 +447,9 @@ def test_the_palette_rule(
     ]
     lines = palette.render(report)
     assert lines[0].startswith("Palette check against the world 'lab-shells'")
+    # run-b, newer, has no catalog: the report says the one used may be stale
+    assert report.newer_run == "run-b"
+    assert lines[1].startswith("note: the newest export run run-b has no block catalog")
     assert lines[-1] == "7 of 13 entries accepted; the palette is refused"
 
 
@@ -536,6 +558,11 @@ def test_cli_check(tmp_path: Path) -> None:
         ["palette", "check", str(good), "--config", str(toml), "--world", "missing"]
     )
     assert code == 2 and "Can't read the world's registry" in text
+    bom = tmp_path / "bom.txt"
+    bom.write_bytes(b"\xef\xbb\xbfgregtech:gt.blockcasings@2\r\nminecraft:stone@0\r\n")
+    code, text = run_cli(["palette", "check", str(bom), "--config", str(toml)])
+    assert code == 0 and "2 of 2 entries accepted" in text, text
+    assert "note:" not in text
     junk = tmp_path / "junk.txt"
     junk.write_text("4096\n", encoding="utf-8")
     code, text = run_cli(["palette", "check", str(junk), "--config", str(toml)])
@@ -554,6 +581,30 @@ def test_cli_blocks(tmp_path: Path) -> None:
     )
 
 
+def test_cli_on_a_version_5_db_says_build_it(tmp_path: Path) -> None:
+    # gos palette opens the DB read-only, so a DB still at schema 5 has no block tables
+    toml, _ = _home(tmp_path)
+    db = tmp_path / "home" / "data" / "gos.sqlite"
+    db.unlink()
+    c = sqlite3.connect(db)
+    try:
+        c.executescript(FIXTURE_V5.read_text(encoding="utf-8"))
+        c.commit()
+    finally:
+        c.close()
+    good = tmp_path / "good.txt"
+    good.write_text("minecraft:stone@0\n", encoding="utf-8")
+    code, text = run_cli(["palette", "check", str(good), "--config", str(toml)])
+    assert code == 2 and "no block catalog in the DB" in text and "gos db build" in text
+    code, text = run_cli(["palette", "blocks", "--config", str(toml)])
+    assert code == 2 and "no block catalog" in text
+    c = sqlite3.connect(db)
+    try:
+        assert c.execute("PRAGMA user_version").fetchone() == (5,)  # still read-only
+    finally:
+        c.close()
+
+
 # --- the tool ------------------------------------------------------------------------------
 
 
@@ -566,6 +617,9 @@ def test_block_find_tool(conn: sqlite3.Connection, tmp_path: Path) -> None:
     assert not out.is_error, out.text
     parsed = parse_tsv(out.text)
     assert parsed.head["run"] == "run-a"
+    assert any(
+        "newest export run run-b has no block catalog" in n for n in parsed.notes
+    )
     assert [r["block"] for r in parsed.rows] == [
         "GoodGenerator:MAR_Casing@0",
         "gregtech:gt.blockcasings@1",

@@ -57,8 +57,10 @@ final class PalettePass {
     static final String MISSING_ICON = "MISSING_ICON_";
 
     int blocks;
-    int states;
-    int tileEntities;
+    /** Lines written: item variants, so one state placed by two items counts twice. */
+    int variants;
+    /** Variant lines with {@code has_te}. */
+    int teVariants;
     int unplaceable;
     int hidden;
     int duplicates;
@@ -106,8 +108,8 @@ final class PalettePass {
         }
         run.durations.put("palette", System.currentTimeMillis() - t);
         run.counts.put("palette_blocks", pass.blocks);
-        run.counts.put("palette_states", pass.states);
-        run.counts.put("palette_tile_entities", pass.tileEntities);
+        run.counts.put("palette_variants", pass.variants);
+        run.counts.put("palette_te_variants", pass.teVariants);
         run.counts.put("palette_unplaceable", pass.unplaceable);
         run.counts.put("palette_hidden", pass.hidden);
         run.counts.put("palette_duplicates", pass.duplicates);
@@ -149,8 +151,9 @@ final class PalettePass {
         }
         List<ItemStack> subs = new ArrayList<>();
         boolean listed = true;
+        CreativeTabs tab = null;
         try {
-            CreativeTabs tab = block.getCreativeTabToDisplayOn();
+            tab = block.getCreativeTabToDisplayOn();
             List<ItemStack> raw = new ArrayList<>();
             item.getSubItems(item, tab, raw);
             for (Object o : raw) {
@@ -165,7 +168,7 @@ final class PalettePass {
             subs.clear();
         }
         if (subs.isEmpty()) {
-            // Not in any creative tab (or its list failed): the plain item still places the block.
+            // Its list was empty or failed: the plain item still places the block.
             listed = false;
             subs.add(new ItemStack(item, 1, 0));
         }
@@ -183,10 +186,9 @@ final class PalettePass {
                 placer.addProperty("meta", damage);
                 line.add("item", placer);
                 fill(line, block, stack, meta);
-                if (!listed) {
-                    line.addProperty("hidden", true);
-                    hidden++;
-                }
+                // In no creative tab: the block has none, or its variant list was empty or failed.
+                boolean hide = tab == null || !listed;
+                if (hide) line.addProperty("hidden", true);
                 // Sorted by meta, then the item's meta, as unsigned numbers (10 digits each).
                 String key = String
                     .format("%010d %010d", meta - (long) Integer.MIN_VALUE, damage - (long) Integer.MIN_VALUE);
@@ -195,6 +197,7 @@ final class PalettePass {
                     continue;
                 }
                 lines.put(key, line);
+                if (hide) hidden++;
             } catch (Throwable t) {
                 JsonObject err = new JsonObject();
                 err.addProperty("block", name);
@@ -208,9 +211,9 @@ final class PalettePass {
             }
         }
         for (JsonObject line : lines.values()) {
-            states++;
+            variants++;
             if (line.get("has_te")
-                .getAsBoolean()) tileEntities++;
+                .getAsBoolean()) teVariants++;
             out.add(line);
         }
         return out;

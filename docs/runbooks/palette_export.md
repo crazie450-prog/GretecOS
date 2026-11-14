@@ -1,6 +1,6 @@
 # Block catalog check (WO-10.3)
 
-WO-10.3's acceptance, on Clayton's PC: **the catalog includes addon blocks; TE blocks are flagged** (plan 8 row 10.3), for the full pack. Claude Code has run the palette pass in the dev runtime's client harness (GT 5.09.54.265 and its dependencies, not the pack): 871 blocks, 7,565 placeable states from 21 mods (GT, its merged addons bartworks, GoodGenerator, TecTech, kekztech and more, and vanilla, AE2, IC2, Tinkers' Construct, Draconic Evolution), every state of `gregtech:gt.blockmachines`, the vanilla chest and AE2's drive flagged, GT's casings, coils and glass and bartworks' glass not (D307). Only a full-pack export says the same for the pack, where every mod adds its blocks and their display names are localised. It takes about 15 minutes after the export.
+WO-10.3's acceptance, on Clayton's PC: **the catalog includes addon blocks; TE blocks are flagged** (plan 8 row 10.3), for the full pack. Claude Code has run the palette pass in the dev runtime's client harness (GT 5.09.54.265 and its dependencies, not the pack): 871 blocks and 7,565 item variants (each a placeable state; `gt.blockmachines` alone has thousands, so the distinct block states are fewer) from 21 mods (GT, its merged addons bartworks, GoodGenerator, TecTech, kekztech and more, and vanilla, AE2, IC2, Tinkers' Construct, Draconic Evolution), every state of `gregtech:gt.blockmachines`, the vanilla chest and AE2's drive flagged, GT's casings, coils and glass and bartworks' glass not (D307). Only a full-pack export says the same for the pack, where every mod adds its blocks and their display names are localised. It takes about 15 minutes after the export.
 
 **Where commands run.** `gos deploy` and the sync run in **your own account** from your clone and GOS_APP, as for every Export update (D91, D98). The `gos` commands after that run as **gos-dev** in its dev clone: they read Export's newest run and the Lab world's `level.dat`, and write only gos-dev's own `GOS_HOME`. The game part is in Export (one click). Nothing here touches Play.
 
@@ -17,7 +17,7 @@ WO-10.3's acceptance, on Clayton's PC: **the catalog includes addon blocks; TE b
 4. In the newest `GTNH-Export\.minecraft\gregteclink\exports\<run_id>\manifest.json`:
    - `parts` has `"palette": "ok"`, and there is no `part_errors.palette`;
    - `files` lists `palette.jsonl` and `textures.jsonl`;
-   - `counts.palette_errors` is 0 (any other number: send the `"error"` lines of `palette.jsonl` back), and `counts.palette_states` is well above the dev runtime's 7,565.
+   - `counts.palette_errors` is 0 (any other number: send the `"error"` lines of `palette.jsonl` back), and `counts.palette_variants` (item variants, not states) is well above the dev runtime's 7,565.
 5. As gos-dev:
 
    ```powershell
@@ -60,7 +60,7 @@ WO-10.3's acceptance, on Clayton's PC: **the catalog includes addon blocks; TE b
    gregtech:gt.blockmachines@0
    minecraft:chest@0
    notamod:fancy_brick@0
-   "@ | Set-Content -Encoding utf8 "$env:TEMP\palette-test.txt"
+   "@ | Set-Content -Encoding ascii "$env:TEMP\palette-test.txt"
    uv run gos palette check "$env:TEMP\palette-test.txt"
    ```
 
