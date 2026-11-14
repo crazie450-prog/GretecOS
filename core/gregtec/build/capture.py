@@ -140,9 +140,11 @@ def from_cells(
     for p, (block, m) in sorted(cells.items()):
         fp.block_name(block)
         fp.meta_value(m)
-        if block == AIR:
-            continue
         named = tuple(str(k) for k in kinds.get(p, ()))
+        if block == AIR:
+            if named:
+                hatches.append((rel(p), named, None))  # a hatch-only cell left air
+            continue
         if block == GT_MACHINES and p != origin:
             hatches.append((rel(p), named or (CAPTURED,), f"{block}@{m}"))
             continue
