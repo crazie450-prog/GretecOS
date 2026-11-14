@@ -405,6 +405,34 @@ def test_a_stall_alert_holds_an_opportunity_back(tmp_path: Path) -> None:
     assert [x.kind for x in given] == ["plan_buildable"]
 
 
+def test_a_stall_alone_holds_an_opportunity_back(tmp_path: Path) -> None:
+    """The stall's own part of the gate: only ``machine_stalled`` fires (the buffer balanced,
+    the LSC full), and the buildable plan still waits out the cooldown."""
+    sc = S.build(tmp_path, "stocked")
+    lab = S.Lab(sc.db)
+    for seq, at in ((1, sc.now - 120), (2, sc.now - 5)):
+        doc = S.oc_message(seq, active=False, eu_in=9, eu_out=9)
+        for p in doc["power"]:
+            if "eu_max_str" in p:
+                p["eu_str"] = p["eu_max_str"]
+        lab.send(at, doc)
+    clock = Clock(sc.now)
+    n, given = make(sc, clock)
+    try:
+        assert [e.alert.rule for e in lab.events if e.kind == "fired"] == [
+            "machine_stalled"
+        ]
+        assert n.tick() == []
+        clock.now = sc.now + notices.COOLDOWN_S - 10
+        assert n.tick() == []
+        clock.now = sc.now + notices.COOLDOWN_S
+        assert [x.kind for x in n.tick()] == ["plan_buildable"]
+    finally:
+        n.close()
+        lab.close()
+    assert [x.kind for x in given] == ["plan_buildable"]
+
+
 def test_the_stocked_scenario_fires_the_buildable_notice_at_once(
     tmp_path: Path,
 ) -> None:
@@ -487,21 +515,27 @@ def test_a_failed_check_or_a_quiet_oc_is_unknown_not_cleared(
         clock.now += 10
         drain(sc, clock.now - 1, 4)
         assert n.tick() == []  # back, still true: not said again
+        clock.now += checks.DRAIN_HOLD_S + 1
+        drain(sc, clock.now - 1, 40)
+        assert n.tick() == []  # nor once a new hold would be over
         # the game pauses: OC goes quiet past STALE_S; the drain is unknown
         clock.now += 300
         assert n.tick() == []
         assert n.alerts() == []
         # it comes back, still draining, past the cooldown: still not said again
         clock.now += notices.COOLDOWN_S
-        drain(sc, clock.now - 1, 5)
+        drain(sc, clock.now - 1, 41)
         assert n.tick() == []
+        clock.now += checks.DRAIN_HOLD_S + 1
+        drain(sc, clock.now - 1, 42)
+        assert n.tick() == []  # nor once a new hold would be over
         # silent past the grace: cleared, so it is announced when it holds again
         clock.now += notices.UNKNOWN_GRACE_S + 60
         assert n.tick() == []
-        drain(sc, clock.now - 1, 6)
+        drain(sc, clock.now - 1, 43)
         assert n.tick() == []  # its hold again
         clock.now += checks.DRAIN_HOLD_S
-        drain(sc, clock.now - 1, 7)
+        drain(sc, clock.now - 1, 44)
         assert [x.kind for x in n.tick()] == ["power_deficit"]
     finally:
         n.close()

@@ -93,6 +93,17 @@ describe("NextSteps", () => {
     await vi.waitFor(() => expect(screen.queryByTestId("advisor-step-3")).toBeNull());
     expect(calls.filter((u) => u.includes("advisor_next"))).toHaveLength(2);
   });
+
+  it.each(["fired", "cleared"])("asks the advisor again when a stall alert is %s", async (event) => {
+    // The alert engine owns the stall (D281) and advisor_next ranks its rows (review M1 for stalls).
+    queue.push({ card: card(ROWS) }, { card: card([ROWS[1]]) });
+    render(<NextSteps />);
+    await screen.findByTestId("advisor-step-3");
+    const message = { type: "alert", data: { event, binding: "lab", alert: { rule: "machine_stalled" } } };
+    act(() => store.set(applyMessage(store.get(), message)));
+    await vi.waitFor(() => expect(screen.queryByTestId("advisor-step-3")).toBeNull());
+    expect(calls.filter((u) => u.includes("advisor_next"))).toHaveLength(2);
+  });
 });
 
 describe("the notice push", () => {
@@ -101,5 +112,11 @@ describe("the notice push", () => {
   });
   it("bumps it too when an announced problem clears", () => {
     expect(applyMessage(initialState, { type: "notice.cleared", data: {} })).toEqual({ notices: 1 });
+  });
+  it("bumps it on a fired or cleared alert, not on a stale or fresh one", () => {
+    expect(applyMessage(initialState, { type: "alert", data: { event: "fired" } })).toEqual({ notices: 1 });
+    expect(applyMessage(initialState, { type: "alert", data: { event: "cleared" } })).toEqual({ notices: 1 });
+    expect(applyMessage(initialState, { type: "alert", data: { event: "stale" } })).toEqual({});
+    expect(applyMessage(initialState, { type: "alert", data: null })).toEqual({});
   });
 });
