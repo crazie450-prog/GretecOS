@@ -22,7 +22,7 @@ Evidence tags, as in G0 to G8:
 |---|---|
 | `uv run --locked ruff check .` / `ruff format --check .` | All checks passed / 537 files already formatted (after the fixes) |
 | `GOS_REQUIRE_LUA=1 uv run --locked pytest` on `e481ca4` + the floor fix | **9349 passed, 316 skipped**, exit 0 (7 min 28 s) |
-| the same after the import fix (`d7b7241`) | see "After the review" |
+| the same after the import fix (`d7b7241`) | **9352 passed, 316 skipped**, exit 0 (7 min 18 s): the 3 new import cases added |
 | `lua5.3 tests/oc/run.lua` (the fake OC world: agent, mailbox, display, station) | **161 passed, 0 failed** |
 | `luac5.2 -p` and `luac5.3 -p` on `oc/*.lua oc/crop/*.lua` | ok |
 | Phase 7 Python tests, each file also collected on its own (`test_oc_actions`, `_ingest`, `_mailbox`, `_mailbox_stress`, `_telemetry`, `_display`, `test_alert_rules`, `test_alert_imports`, `crops/test_station*`, `security/test_oc_bridge_api`, `tests/oc`, `test_advisor*`) | **365 passed, 4 skipped**. Before the import fix, `test_oc_actions.py` and `test_alert_rules.py` gave 2 collection errors when run in this set |
@@ -47,7 +47,7 @@ No export, DB, world or Playwright output is committed. They stay in the session
 | `92a5380` (#99, WO-7.5) | 43503983769, 43503983687 | success | success | success | success | success |
 | `3845486` (#103, WO-7.6) | 43560633501, 43560633531 | success | success | success | success | success |
 | `95034ff` (#101) | 43566610090 | success | success | success | success | (path filter) |
-| `e481ca4` (#98, head) | 43571468861, 43571468424 | success | success | in progress at writing | success | success |
+| `e481ca4` (#98, head) | 43571468861, 43571468424 | success | success | still running when this was written (the PR's own CI re-runs it) | success | success |
 
 ---
 
@@ -316,4 +316,5 @@ Spending: the deep-lane proposals in steps 3, 7, 8 and 9 are a few cents each (`
 
 ## After the review
 
+- The full `pytest` after both fixes finished green (9352 passed, 316 skipped).
 - Fixes on `review/g7`: `553979c` (the stress-test floor) and `d7b7241` (the import cycle and its test). No decision row was added (D293 unused): both are test-evidence fixes inside the phase's acceptance, with no behaviour change in the running core.
