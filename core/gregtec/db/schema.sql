@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 6 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1, WO-10.3).
+-- Gregtec OS SQLite schema, version 7 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1, WO-10.3, WO-4.8).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -259,4 +259,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
