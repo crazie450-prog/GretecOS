@@ -4,11 +4,12 @@
 import type { ReactNode } from "react";
 import type { Answer, CoreState } from "../api/types";
 import { Card } from "../cards/Card";
-import type { ApprovalCard } from "../cards/types.gen";
-import { AlertView, Panel, StatusGlyph } from "../components/core";
+import type { ApprovalCard, TableCard } from "../cards/types.gen";
+import { AlertView, CitationChip, Panel, StatusGlyph } from "../components/core";
 import { Approvals, Jobs } from "../components/Rail";
 import { type Section, rankNow } from "../state/now";
 import { GLYPH } from "../state/states";
+import { useApp } from "../state/store";
 import { useTool } from "./useTool";
 
 export function AnswerBlock({ answer, asking, big }: { answer: Answer | null; asking: string | null; big?: boolean }) {
@@ -38,22 +39,89 @@ export function AnswerBlock({ answer, asking, big }: { answer: Answer | null; as
   );
 }
 
+const CITE = /^(r|q|mte|crop|plan|w|vein|pos|tel):\S+$/; // tel: an OC reading (WO-7.1)
+
+export interface AdvisorStep {
+  rank: string;
+  kind: string;
+  title: string;
+  why: string[];
+  refs: string[];
+  link: string;
+}
+
+/** The advisor's steps from its table card (advisor_next, WO-6.5), in GOS's order: never sorted
+ * here (the ranking is code's, D266). */
+export function advisorSteps(card: TableCard): AdvisorStep[] {
+  const col = (name: string) => card.columns.indexOf(name);
+  const idx = ["rank", "kind", "step", "why", "refs", "link"].map(col);
+  if (idx.some((i) => i < 0)) return [];
+  const [rank, kind, step, why, refs, link] = idx;
+  const split = (text: string, sep: string) =>
+    text
+      .split(sep)
+      .map((t) => t.trim())
+      .filter(Boolean);
+  return card.rows.map((r) => ({
+    rank: r[rank] ?? "",
+    kind: r[kind] ?? "",
+    title: r[step] ?? "",
+    why: split(r[why] ?? "", "; "),
+    refs: split(r[refs] ?? "", ", "),
+    link: (r[link] ?? "").startsWith("#/") ? (r[link] ?? "") : "#/now",
+  }));
+}
+
 export function NextSteps({ compact }: { compact?: boolean }) {
-  const frontier = useTool("quest_frontier", { n: compact ? 3 : 6 });
-  if (frontier.loading && !frontier.card) return <p className="empty">{GLYPH.progress} Loading your quest book</p>;
-  const card = frontier.card;
-  if (!card || (card.type === "table" && card.error)) {
+  const notices = useApp((s) => s.notices); // a notice asks the advisor again
+  const advice = useTool("advisor_next", { n: 3 }, notices);
+  if (advice.loading && !advice.card) return <p className="empty">{GLYPH.progress} Working out your next steps</p>;
+  const card = advice.card;
+  if (!card || card.type !== "table" || card.error) {
     return (
       <p className="empty">
-        {GLYPH.todo} No quest data yet. Load Play's quest book (<code>gos quests load</code>) to see what you can do next.
+        {GLYPH.todo} No advice yet. Load Play's quest book (<code>gos quests load</code>), add goals in Settings or accept a
+        plan in the Designer.
+      </p>
+    );
+  }
+  const steps = advisorSteps(card);
+  if (steps.length === 0) {
+    return (
+      <p className="empty" data-testid="steps-empty">
+        {GLYPH.todo} {card.notes[card.notes.length - 1] ?? "Nothing to suggest yet."}
       </p>
     );
   }
   return (
-    <>
-      <p className="gos-src">From your quest book until the advisor arrives (WO-6.5).</p>
-      <Card card={card} compact={compact} />
-    </>
+    <ol className="advisor-steps" data-testid="advisor-steps">
+      {steps.map((s) => (
+        <li key={s.rank} className="advisor-step" data-kind={s.kind}>
+          <div className="advisor-step-head">
+            <span className="gos-label">{s.rank}</span>
+            <a className="gos-title advisor-step-title" href={s.link} data-testid={`advisor-step-${s.rank}`}>
+              {s.title}
+            </a>
+          </div>
+          {!compact && s.why.length > 0 && (
+            <ul className="gos-sub advisor-why">
+              {s.why.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          )}
+          {s.refs.length > 0 && (
+            <div className="answer-meta">
+              {s.refs
+                .filter((r) => CITE.test(r))
+                .map((r) => (
+                  <CitationChip key={r} cite={r} />
+                ))}
+            </div>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }
 

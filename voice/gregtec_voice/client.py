@@ -796,6 +796,13 @@ class VoiceClient:
             if alert.get("event") == "fired" and isinstance(alert.get("say"), str):
                 self.say(alert["say"][:ALERT_SAY_MAX])
             return
+        data = message.get("data")
+        if message.get("type") == "notice" and isinstance(data, dict):
+            # a proactive notice (WO-6.5, D76): its spoken line, which holds no ids or numbers
+            say = data.get("say")
+            if isinstance(say, str) and say.strip():
+                self.say(" ".join(say.split())[:300])
+            return
         if message.get("type") != "deep.task" or not isinstance(
             message.get("data"), dict
         ):
