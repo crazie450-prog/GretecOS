@@ -121,7 +121,9 @@ def test_plan_and_power_from_discord_on_a_real_db(home: Path, no_key: None) -> N
             await bot.interaction(
                 plan, "plan", {"target": "steel ingot", "amount": "2/s", "tier": "MV"}
             )
-            await bot.interaction(power, "power", {"mode": "best", "tier": "LV"})
+            await bot.interaction(
+                power, "power", {"mode": "self_sustaining", "tier": "LV"}
+            )
 
         asyncio.run(ask())
         assert "queued" in plan.texts[0] and "queued" in power.texts[0]
