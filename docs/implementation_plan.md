@@ -793,6 +793,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - Base-pack multiblocks: MrBruh's `gtnh-extractor` (Apache-2.0) records every cell's `registry@meta`, which hatch types each cell accepts, and coil/glass/pipe tier tables [G][A§4.2]. It's pinned to 2.9.0-beta-3, so **re-pin it to 2.9.0** (needs JDK 25; the bump is documented but untested).
   - Addon multiblocks: capture in the Lab with GuideNH's region wand (block + meta per position), or with the projector plus WorldEdit `//copy`. Set tiers with StructureLib `/sl_channel set` [G][E§5.5].
   - Keep one footprint per (controller, tier channels, facing). Track 2.9's legacy and new turbine/LCE/boiler variants separately.
+  - As built (WO-10.2, D305, D306): `gregtec.build.footprints` computes every footprint from the `structure` table (no files); `gos footprints list|show|coverage|capture|compare`. Addon captures use GOS's minimal `gos-capture` JSON until WO-10.4's `.schematic` reader is on main. Runbook: `docs/runbooks/footprints_lab.md` (L1).
 - **3D build guide** for machinery, which is built legitimately (D35).
   - **Primary:** GuideNH 1.3.55 ships in 2.9.0. `/guidenhc exportsite` records what the client actually draws (GT overlays, tints, glow, active textures) plus the texture atlas. It ships a **three.js viewer with hover and layer controls**, and `<ImportStructureLib controller=… tier=…>` pulls in any multiblock at any tier [G].
   - Embedding it in the dashboard is a 1–2 h **spike** (WO-10.1, **VERIFY**).
