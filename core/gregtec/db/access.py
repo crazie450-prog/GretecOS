@@ -23,7 +23,7 @@ HERE = Path(__file__).parent
 SCHEMA = HERE / "schema.sql"
 QUERIES = HERE / "queries"
 MIGRATIONS = HERE / "migrations"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DB_FILE = Path("data", "gos.sqlite")  # in GOS_HOME (plan 4.3)
 _QUERY_NAME = re.compile(r"[a-z][a-z0-9_]*")
 

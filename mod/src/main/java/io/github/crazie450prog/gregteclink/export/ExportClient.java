@@ -20,7 +20,8 @@ import io.github.crazie450prog.gregteclink.harness.Harness;
 /**
  * The export module's client side (client only, {@code export=true}). On the client tick: with autoexport, opens
  * GregtecLink's world from the main menu; in any world with a run waiting ({@link ExportModule}), waits for NEI, runs
- * the NEI step and then the crop step ({@link CropTrigger}), finishes the run; with autoexport, then quits. Without
+ * the NEI step, the crop step ({@link CropTrigger}) and the palette pass ({@link PalettePass}), finishes the run; with
+ * autoexport, then quits. Without
  * autoexport (a world opened by hand) it posts two
  * local chat lines and stays in the world.
  */
@@ -107,7 +108,10 @@ public final class ExportClient {
         }
         if (!NeiTrigger.writerPresent()) {
             ExportRun run = ExportModule.takePending();
-            if (run != null) done(mc, run, run.finish("absent", auto ? "ok" : "off"));
+            if (run != null) {
+                PalettePass.run(run);
+                done(mc, run, run.finish("absent", auto ? "ok" : "off"));
+            }
             return;
         }
         switch (wait.tick(NeiTrigger.ready(), now)) {
@@ -122,6 +126,7 @@ public final class ExportClient {
                 String nei = NeiTrigger.dump(run);
                 if (Harness.clientRunActive()) Harness.afterNeiStep();
                 run.crops = CropTrigger.dump(run);
+                PalettePass.run(run);
                 done(mc, run, run.finish(nei, auto ? "ok" : "off"));
                 break;
             }
@@ -131,6 +136,7 @@ public final class ExportClient {
                 run.durations.put("nei_wait", now - inWorldMs);
                 run.partErrors
                     .put("nei", "NEI not ready " + AutoExport.NEI_TIMEOUT_MS / 60_000 + " min after the world opened");
+                PalettePass.run(run);
                 done(mc, run, run.finish("failed", auto ? "ok" : "off"));
                 break;
             }

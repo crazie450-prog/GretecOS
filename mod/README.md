@@ -110,6 +110,16 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   (`part_errors.crops`), and `absent` without CropsNH. One of the other six failing only adds
   `part_warnings.crops`. A file in `dumps/` that is a link is refused, since the dumper writes through it. It takes
   about 25 ms.
+- **Palette pass** (WO-10.3, D307). Last on the client thread (after the crop step, or when the run finishes without
+  NEI), GregtecLink writes `palette.jsonl`: one line per placeable block state (a block with an item, at each meta
+  its item's creative variants place), keyed by registry name + meta, with the display name, Forge's
+  `hasTileEntity(meta)`, opacity, full cube, light, falls, liquid, creative tab, mod and the six faces' icon names;
+  and `textures.jsonl`: each icon name's PNG in the loaded resource packs with its size, sha256 and average colour.
+  No numeric block or item ID is written. `parts.palette` is `ok`, `failed` or `skipped_server`; it is not part of
+  `complete`. The dev client takes under half a second for it. The client harness checks that GT, GT addons (bartworks,
+  GoodGenerator) and other mods (vanilla, AE2, IC2) are in it, that `gregtech:gt.blockmachines`, a chest and AE2's
+  drive are flagged in every state and that GT's casings, coils and glass, bartworks' glass, a GoodGenerator casing and
+  AE2's sky stone are not, and that the faces' textures resolve.
 - Without autoexport (a world opened by hand) the module posts two local chat lines, "GregtecLink: exporting NEI's
   recipes; ..." just before the freeze and "GregtecLink: export <run_id> finished: ..." after it, and stays in the
   world. CropsNH's dumpers add a chat line each.
@@ -319,7 +329,11 @@ copied equal NEI's count and exceed 50,000; one handler id per file and at least
 `id` in any stack, `anyOf` or `returns`; NEI's files left in `dumps/recipes`; the crop step `ok` with as many files
 as CropsNH registered dumpers, the five Python reads among them, all left in `dumps/`, and at least 50 crops in the
 crop registry dump; every crop id in NEI's CropsNH tabs (Crop Breeding, crop pages, mutation pools) in that dump
-(V33); the old marked world rebuilt (no
+(V33); the palette pass `ok` with no error lines and at least 1,000 states, sorted and once each, with no numeric
+id key, states from GT, bartworks, GoodGenerator, vanilla, AE2 and IC2, every state of `gregtech:gt.blockmachines`,
+`minecraft:chest` and AE2's drive flagged `has_te` and none of GT's casings, coils (`gt.blockcasings5`) and glass,
+bartworks' glass, GoodGenerator's `MAR_Casing` and AE2's sky stone, and a `textures.jsonl` line for every face icon,
+at least 70% with a colour, GT's LV casing side and vanilla stone among them (WO-10.3); the old marked world rebuilt (no
 `.old-*` copy left) and the decoy untouched; the integrated server stopped before `Minecraft.shutdown()`, and the
 world's `level.dat` written after the run finished (the save on quitting). Writes are checked in the two windows where the export's code runs, `saves/` aside: while the GT
 parts are written at server start nothing outside `gregteclink/` may change, and from just before NEI's dump to the
