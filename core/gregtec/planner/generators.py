@@ -18,9 +18,14 @@ sized:
   turbine and the magical energy absorber; a map the catalog does not decode, such as
   bartworks' acid generator; or GT++'s RTG, whose map reads as EU per pellet) are catalogued
   ``not_modelled``;
+- ``naquadah_reactor``: GoodGenerator's Large Naquadah Reactor (``MTELargeNaquadahReactor``,
+  WO-4.8, D326), sized by ``gtmath.naquadah`` (oracle-tested) from its fuel map's recipes, its own
+  boost lists and liquid air (the export's ``reactor_boost`` rows) and the smallest dynamo hatch
+  its ``exotic_hatches`` fact lets it use whose voltage x amps holds its output (:func:`dynamo`);
+  its legacy copy (``MTEMultiNqGeneratorLegacy``) stays ``not_modelled``;
 - ``not_modelled``: catalogued with kind, legacy flag and fuel maps, not sized yet: large
-  combustion engines, large boilers, XL turbines, the large naquadah reactor and the rest
-  (WO-4.2 sizes the ones its objective modes need; D232).
+  combustion engines, large boilers, XL turbines and the rest (WO-4.2 sizes the ones its
+  objective modes need; D232).
 
 Numbers come only from the DB and gtmath, each with its citation (``r:`` for a fuel, ``mte:`` for
 the generator, ``rotor:<material>/<size>`` for the rotor's export row).
@@ -32,6 +37,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from gregtec.planner import fuels
+from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import V
 from gregtec.planner.gtmath.turbine import Kind
@@ -43,7 +49,7 @@ class ClassInfo:
 
     kind: str
     legacy: bool
-    sizing: str  # turbine | single_block | not_modelled
+    sizing: str  # turbine | single_block | naquadah_reactor | not_modelled
     turbine: Kind | None = None
     note: str = ""
 
@@ -118,7 +124,7 @@ CLASSES: dict[str, ClassInfo] = {
     "MTEThermalBoiler": ClassInfo("heat_exchanger", False, "not_modelled"),
     "MTEThermalBoilerLegacy": ClassInfo("heat_exchanger", True, "not_modelled"),
     "MTELargeNaquadahReactor": ClassInfo(
-        "naquadah_reactor_multi", False, "not_modelled"
+        "naquadah_reactor_multi", False, "naquadah_reactor"
     ),
     "MTEMultiNqGeneratorLegacy": ClassInfo(
         "naquadah_reactor_multi", True, "not_modelled"
@@ -414,3 +420,151 @@ def turbine(
 
 def voltage(tier: int) -> int:
     return V[tier]
+
+
+# --- the Large Naquadah Reactor (WO-4.8, D326) ----------------------------------------------------
+
+NAQUADAH_MAP = "gg.recipe.naquadah_reactor"
+# The dynamo hatches the planner offers (GT++'s buffered dynamo is left out: its buffer isn't
+# modelled), by class simple name, with the exotic kind each needs the controller to take.
+DYNAMO_KINDS = {
+    "MTEHatchDynamo": None,
+    "MTEHatchDynamoMulti": "multiamp",
+    "MTEHatchDynamoTunnel": "laser",
+}
+# What each exotic_hatches fact value lets a multiblock take (machine_facts, WO-1.7).
+EXOTIC = {
+    None: frozenset({None}),
+    "multiamp": frozenset({None, "multiamp"}),
+    "laser": frozenset({None, "laser"}),
+    "any": frozenset({None, "multiamp", "laser"}),
+}
+
+
+def reactor(
+    conn: sqlite3.Connection, mte_id: int, run_id: int
+) -> gt_naquadah.Reactor | None:
+    """The reactor's liquid air and boost lists from the run's ``reactor_boost`` rows (the
+    export read them from the reactor's own class), or None when the run has none."""
+    rows = conn.execute(
+        "SELECT kind, fluid, amount, value FROM reactor_boost WHERE run_id = ? AND mte_id = ?"
+        " ORDER BY kind, rank",
+        (run_id, mte_id),
+    ).fetchall()
+    air = [r for r in rows if r[0] == "air"]
+    if not air:
+        return None
+
+    def boosts(kind: str) -> tuple[gt_naquadah.Boost, ...]:
+        return tuple(
+            gt_naquadah.Boost(str(r[1]), int(r[2]), int(r[3]))
+            for r in rows
+            if r[0] == kind
+        )
+
+    return gt_naquadah.Reactor(
+        air=int(air[0][2]),
+        coolants=boosts("coolant"),
+        excited=boosts("excited"),
+        air_fluid=str(air[0][1]),
+    )
+
+
+@dataclass(frozen=True)
+class ReactorFuel:
+    """One recipe of the reactor's fuel map: 1 L of ``fluid`` for ``duration`` ticks at
+    ``basic`` EU/t, giving back 1 L of ``depleted``."""
+
+    ref: str
+    fluid: str
+    depleted: str
+    basic: int
+    duration: int
+
+
+def reactor_fuels(conn: sqlite3.Connection, run_id: int) -> list[ReactorFuel]:
+    """The run's ``gg.recipe.naquadah_reactor`` recipes (GT's own rows), by ref."""
+    out = []
+    for ref, special, duration, fluid, depleted in conn.execute(
+        "SELECT r.ref, r.special_value, r.duration_ticks, fi.name, fo.name FROM recipe AS r"
+        " JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+        " JOIN recipe_input AS i ON i.recipe_id = r.id JOIN fluid AS fi ON fi.id = i.fluid_id"
+        " LEFT JOIN recipe_output AS o ON o.recipe_id = r.id"
+        " LEFT JOIN fluid AS fo ON fo.id = o.fluid_id"
+        " WHERE r.run_id = ? AND m.unloc_name = ? AND r.source IN ('gt', 'gt+nei')"
+        " AND NOT r.fake ORDER BY r.ref",
+        (run_id, NAQUADAH_MAP),
+    ):
+        if special is None or duration is None or depleted is None:
+            continue
+        out.append(
+            ReactorFuel(
+                str(ref), str(fluid), str(depleted), int(special), int(duration)
+            )
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class Dynamo:
+    """A dynamo hatch from the run's ``dynamo_hatch`` rows."""
+
+    mte_id: int
+    name: str | None
+    class_name: str
+    tier: int
+    eu_out: int
+    amps_out: int
+
+    @property
+    def cap(self) -> int:
+        """What GT's generators check an output against: voltage x amps."""
+        return self.eu_out * self.amps_out
+
+    @property
+    def ref(self) -> str:
+        return f"mte:{self.mte_id}"
+
+
+def exotic(conn: sqlite3.Connection, mte_id: int) -> str | None:
+    """The multiblock's ``exotic_hatches`` fact (its most confident row), or None."""
+    row = conn.execute(
+        "SELECT f.value FROM machine_fact AS f JOIN machine AS m ON m.id = f.machine_id"
+        " WHERE m.mte_id = ? AND f.key = 'exotic_hatches' ORDER BY f.confidence DESC LIMIT 1",
+        (mte_id,),
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def dynamo(
+    conn: sqlite3.Connection,
+    run_id: int,
+    *,
+    eut: int,
+    tier_cap: int,
+    takes: str | None,
+) -> Dynamo | None:
+    """The dynamo hatch a multiblock generator of ``eut`` EU/t needs, at or below
+    ``tier_cap``: of the kinds its ``exotic_hatches`` fact (``takes``) allows, the lowest tier
+    whose voltage x amps holds the output, then GT's 1 A hatch before a multi-amp one before a
+    laser, then the fewest amps (D326). None when none does."""
+    allowed = EXOTIC.get(takes, EXOTIC[None])
+    best: tuple[tuple[int, int, int, int], Dynamo] | None = None
+    for mte_id, class_name, tier, eu_out, amps, name in conn.execute(
+        "SELECT d.mte_id, d.class_name, d.tier, d.eu_out, d.amps_out, m.name_en"
+        " FROM dynamo_hatch AS d LEFT JOIN machine AS m ON m.mte_id = d.mte_id"
+        " WHERE d.run_id = ? AND d.tier <= ?",
+        (run_id, tier_cap),
+    ):
+        kind = DYNAMO_KINDS.get(_simple(str(class_name)), "unknown")
+        if kind == "unknown" or kind not in allowed:
+            continue
+        d = Dynamo(
+            int(mte_id), name, str(class_name), int(tier), int(eu_out), int(amps)
+        )
+        if d.cap < eut:
+            continue
+        rank = (d.tier, list(DYNAMO_KINDS.values()).index(kind), d.amps_out, d.mte_id)
+        if best is None or rank < best[0]:
+            best = (rank, d)
+    return best[1] if best else None

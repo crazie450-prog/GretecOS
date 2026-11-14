@@ -612,6 +612,30 @@ def _choice(m: _Model, x: np.ndarray) -> dict[str, str]:
     return out
 
 
+def _net_out(
+    imports: tuple[tuple[str, float], ...],
+    exports: list[tuple[str, float]],
+    targets: set[str],
+) -> tuple[tuple[tuple[str, float], ...], list[tuple[str, float]]]:
+    """A power network's item both imported and exported (not a target) crosses its boundary
+    only by the difference (WO-4.8, D327): at a power line's EU scale the gated-quantity
+    tiebreak (1e-6) is below HiGHS's tolerance, so the LP can leave an import matched by an
+    equal export (empty cells in and out of a canner line). Crafts are unchanged."""
+    out_by = dict(exports)
+    keep_in = []
+    for k, v in imports:
+        o = out_by.get(k, 0.0)
+        if k in targets or o <= 0:
+            keep_in.append((k, v))
+            continue
+        common = min(v, o)
+        if v - common > 0:
+            keep_in.append((k, v - common))
+        out_by[k] = o - common
+    kept_out = [(k, out_by[k]) for k, _ in exports if k in targets or out_by[k] > 0]
+    return tuple(keep_in), kept_out
+
+
 def _flow(
     m: _Model,
     x: np.ndarray,
@@ -637,6 +661,8 @@ def _flow(
         (k, max(r, _value(m.target_rows[k], x) * m.c[k] * s)) for k, r in m.net.targets
     ]
     gates = tuple(sorted(k for k, g in m.gate.items() if x[g] > 0.5))
+    if m.net.costs_eu:
+        imports, exports = _net_out(imports, exports, {k for k, _ in m.net.targets})
     return Flow(
         choice=tuple(sorted(choice.items())),
         crafts=crafts,

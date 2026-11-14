@@ -17,7 +17,12 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
   doesn't cap it;
 - ``boiler_steam``: a 2.9 large boiler on a fluid fuel (``gtmath.boiler``) feeding a large steam
   turbine (an HP steam turbine for the superheated boilers) at its optimal flow: as many boilers
-  as the flow needs, throttled by GT's circuit so their fuel follows the steam taken.
+  as the flow needs, throttled by GT's circuit so their fuel follows the steam taken;
+- ``naquadah_reactor``: GoodGenerator's Large Naquadah Reactor (WO-4.8, D327) on one fuel of
+  its map, unboosted (no coolant, no excited fluid: ``gtmath.naquadah``'s steady run), taking
+  its liquid air (an input of the line like the fuel) and giving back the depleted fuel (a
+  byproduct), on the smallest dynamo hatch its ``exotic_hatches`` fact allows that holds the
+  output, up to the tier cap (``generators.dynamo``).
 
 For each generator the fuels are pruned to the top :data:`TOP_FUELS` by EU per unit of fuel
 (the request's ``candidates``; ``self_sustaining`` keeps only fuels a forward closure over the
@@ -82,6 +87,7 @@ from gregtec.planner import (
 )
 from gregtec.planner.graph import EU_KEY, Graph
 from gregtec.planner.gtmath import boiler as gt_boiler
+from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import VN, V
 from gregtec.planner.gtmath.turbine import Kind
@@ -100,7 +106,13 @@ VERSION = 1
 UNIT = "power:unit"  # the build-unit pseudo-item each generator gives one of per second
 MODES = rank.POWER_MODES
 SCALES = ("unit", "generators", "eut_cap", "raw_budget")
-KINDS = ("single_block", "gas_turbine", "plasma_turbine", "boiler_steam")
+KINDS = (
+    "single_block",
+    "gas_turbine",
+    "plasma_turbine",
+    "boiler_steam",
+    "naquadah_reactor",
+)
 TOP_FUELS = 4
 CHAIN_ROUTES = 2  # routes per candidate (its chain's primary choices, no-good cuts)
 # The free set (plan 7.2): water, air, cobble and stone generators, sunlight. Configurable.
@@ -246,6 +258,10 @@ class Gen:
     # What the validator re-derives the ports from (sustain.gen_ports): the kind, the mte ids,
     # the fuel row, the rotor, the dynamo tier, the boilers and their throttle circuit.
     spec: tuple[tuple[str, Any], ...] = ()
+    # Other inputs and outputs per build unit (the naquadah reactor's liquid air and its
+    # depleted fuel, D327); outputs are byproducts of the line.
+    extra_in: tuple[tuple[str, float], ...] = ()
+    extra_out: tuple[tuple[str, float], ...] = ()
 
     @property
     def eu_per_fuel(self) -> float:
@@ -255,7 +271,12 @@ class Gen:
         ins = {self.fuel: self.fuel_per_s}
         if self.water_per_s > 0:
             ins["fluid:water"] = self.water_per_s
-        return ins, {EU_KEY: float(self.eut * 20)}
+        for k, v in self.extra_in:
+            ins[k] = ins.get(k, 0.0) + v
+        outs = {EU_KEY: float(self.eut * 20)}
+        for k, v in self.extra_out:
+            outs[k] = outs.get(k, 0.0) + v
+        return ins, outs
 
     def proc(self) -> solve.Proc:
         ins, outs = self.ports()
@@ -548,12 +569,99 @@ def candidates(
                         ),
                     )
                 )
+    if "naquadah_reactor" in want:
+        lnr, lnr_notes = _naquadah_reactors(conn, run_id, cat, tier)
+        gens.extend(lnr)
+        notes.extend(lnr_notes)
     out = [
         g
         for g in gens
         if (not req.fuels or g.fuel in req.fuels) and g.tier <= max(tier, 1)
     ]
     return out, notes
+
+
+def _naquadah_reactors(
+    conn: sqlite3.Connection,
+    run_id: int,
+    cat: Sequence[generators.Entry],
+    tier: int,
+) -> tuple[list[Gen], list[str]]:
+    """The Large Naquadah Reactor on each fuel of its map, unboosted, on the dynamo its output
+    needs (D327)."""
+    gens: list[Gen] = []
+    notes: list[str] = []
+    entries = [e for e in cat if e.sizing == "naquadah_reactor"]
+    if not entries:
+        return gens, notes
+    fuel_rows = {
+        f.ref: f
+        for f in fuels.fuels(conn, gt_name="naquadahReactorFuels", run_id=run_id)
+    }
+    recipes = generators.reactor_fuels(conn, run_id)
+    for e in entries:
+        spec = generators.reactor(conn, e.mte_id, run_id)
+        if spec is None:
+            notes.append(
+                f"{e.ref}: no reactor lists in the export run (gt_power.json before"
+                " WO-4.8): not sized"
+            )
+            continue
+        takes = generators.exotic(conn, e.mte_id)
+        for r in recipes:
+            f = fuel_rows.get(r.ref)
+            if f is None or r.basic <= 0:
+                continue
+            run = gt_naquadah.steady(spec, basic=r.basic, duration=r.duration)
+            hatch = generators.dynamo(
+                conn, run_id, eut=run.eut, tier_cap=tier, takes=takes
+            )
+            if hatch is None:
+                notes.append(
+                    f"{e.ref} on {r.fluid}: its {run.eut} EU/t needs a dynamo hatch that no"
+                    f" hatch at or below {VN[tier]} holds (exotic hatches: {takes or 'none'})"
+                )
+                continue
+            per_s = run.per_second
+            gens.append(
+                Gen(
+                    id=f"gen:naquadah_reactor/{e.ref}/{r.ref}/{hatch.ref}",
+                    kind="naquadah_reactor",
+                    label=f"{e.name} on {r.fluid}",
+                    slot=e.ref,
+                    fuel=f"fluid:{r.fluid}",
+                    fuel_ref=r.ref,
+                    fuel_per_s=per_s(run.fuel),
+                    water_per_s=0.0,
+                    eut=run.eut,
+                    tier=hatch.tier,
+                    machines=(Machine(e.mte_id, e.name, "multiblock", 1.0),),
+                    cites=(e.ref, r.ref, hatch.ref),
+                    parts=((f"dynamo hatch {hatch.name or hatch.ref}", 1),),
+                    notes=(
+                        (
+                            f"{run.duration}-tick runs of 1 L at {r.basic} EU/t, unboosted"
+                            f" (no coolant, no excited fluid); {run.checks} liquid-air checks"
+                            f" a run take {spec.air} L each; on {hatch.name or hatch.ref}"
+                            f" ({hatch.eu_out} V x {hatch.amps_out} A, exotic hatches:"
+                            f" {takes or 'none'})"
+                        ),
+                    ),
+                    spec=(
+                        ("kind", "naquadah_reactor"),
+                        ("mte", e.mte_id),
+                        ("fuel_ref", r.ref),
+                        ("dynamo_mte", hatch.mte_id),
+                    ),
+                    extra_in=(
+                        ((f"fluid:{spec.air_fluid}", per_s(run.air)),)
+                        if run.air
+                        else ()
+                    ),
+                    extra_out=((f"fluid:{r.depleted}", per_s(run.depleted)),),
+                )
+            )
+    return gens, notes
 
 
 def prune(
@@ -764,6 +872,60 @@ def _chain(
     )
 
 
+def with_sides(main: Chain, sides: Sequence[Chain]) -> Chain:
+    """``main`` (the fuel's chain) with the chains of the generator's other inputs merged in
+    (the naquadah reactor's liquid air, D327): one graph, one network, the fuel's request. A
+    recipe or item both have is kept once (the fuel's)."""
+    if not sides:
+        return main
+    g = main.graph
+    items = {i.id: i for i in g.items}
+    recipes = {r.id: r for r in g.recipes}
+    procs = {pr.id: pr for pr in main.net.procs}
+    choices = dict(main.net.choices)
+    sized = dict(main.sized)
+    edges = list(g.edges)
+    free_in = set(main.net.free_in)
+    free_out = set(main.net.free_out)
+    skipped = set(main.skipped)
+    primary = list(g.primary)
+    warnings = list(g.warnings)
+    for side in sides:
+        sg = side.graph
+        for i in sg.items:
+            items.setdefault(i.id, i)
+        for r in sg.recipes:
+            if r.id not in recipes:
+                recipes[r.id] = r
+                sized.setdefault(r.id, side.sized[r.id])
+        for pr in side.net.procs:
+            procs.setdefault(pr.id, pr)
+        for k, refs in side.net.choices:
+            choices.setdefault(k, refs)
+        edges.extend(e for e in sg.edges if e not in edges)
+        free_in |= set(side.net.free_in)
+        free_out |= set(side.net.free_out)
+        skipped |= set(side.skipped)
+        primary.extend(k for k in sg.primary if k not in primary)
+        warnings.extend(f"{sg.target}: {w}" for w in sg.warnings)
+    graph_ = replace(
+        g,
+        items=tuple(items.values()),
+        recipes=tuple(recipes.values()),
+        edges=tuple(edges),
+        primary=tuple(primary),
+        warnings=tuple(warnings),
+    )
+    net = replace(
+        main.net,
+        procs=tuple(procs.values()),
+        choices=tuple(choices.items()),
+        free_in=frozenset(free_in),
+        free_out=frozenset(free_out),
+    )
+    return Chain(graph_, main.request, sized, net, tuple(sorted(skipped)))
+
+
 def fuel_chains(
     conn: sqlite3.Connection,
     fuel: str,
@@ -872,7 +1034,9 @@ def network(
         procs=tuple(procs),
         targets=((UNIT, float(units)),),
         free_in=frozenset(free_in),
-        free_out=frozenset(set(chain.net.free_out) | {EU_KEY, UNIT}),
+        free_out=frozenset(
+            set(chain.net.free_out) | {EU_KEY, UNIT} | {k for k, _ in gen.extra_out}
+        ),
         choices=() if direct else chain.net.choices,
         banned=frozenset(banned),
         eu_value=((gen.fuel, gen.eu_per_fuel),),
@@ -1168,18 +1332,28 @@ def parts(
                 )
             else:
                 out.append(effort.Component(key, count, of, "rotor"))
-        if spec.get("dynamo_tier") is not None:
-            tier = int(spec["dynamo_tier"])
-            mte = hatch_mte(conn, DYNAMO_HATCH, tier)
+        if spec.get("dynamo_tier") is not None or spec.get("dynamo_mte") is not None:
+            if spec.get("dynamo_mte") is not None:  # the hatch the line chose (D327)
+                mte = int(spec["dynamo_mte"])
+                what = f"mte:{mte}"
+            else:
+                tier = int(spec["dynamo_tier"])
+                mte = hatch_mte(conn, DYNAMO_HATCH, tier)
+                what = VN[tier]
             item = effort.machine_items(conn, [mte]).get(mte) if mte else None
             if item is None:
                 missing += 1
                 notes.append(
-                    f"dynamo hatch {VN[tier]}: no such machine item in the DB, its making"
+                    f"dynamo hatch {what}: no such machine item in the DB, its making"
                     " is not counted"
                 )
             else:
                 out.append(effort.Component(item, count, of, "hatch"))
+        if spec.get("kind") == "naquadah_reactor":
+            notes.append(
+                f"{node['n']}: its other hatches (maintenance, input, output) and a laser"
+                " source hatch's target and pipes are not counted (D236, D327)"
+            )
         if spec.get("kind") in ("gas_turbine", "plasma_turbine", "boiler_steam"):
             notes.append(
                 f"{node['n']}: its other hatches (maintenance, input, output, muffler), the"
@@ -1344,6 +1518,7 @@ def design(
         )
     rejected: list[tuple[str, str]] = []
     chains_by_fuel: dict[str, tuple[list[Chain], list[str]]] = {}
+    side_chains: dict[str, Chain | None] = {}
     options: list[Option] = []
     for gen in pool:
         if gen.fuel not in chains_by_fuel:
@@ -1353,7 +1528,22 @@ def design(
         found, errors = chains_by_fuel[gen.fuel]
         for why in errors:
             rejected.append((gen.id, why))
-        for chain in found:
+        # The generator's other inputs (the naquadah reactor's liquid air) get their own
+        # chain, merged into each fuel chain (D327); one that can't be built stays an import.
+        sides = []
+        for key, _ in gen.extra_in:
+            if key not in side_chains:
+                try:
+                    side_chains[key] = _chain(
+                        conn, key, req, base, tier, run, templates
+                    )
+                except (graph.GraphError, RequestError, LookupError) as exc:
+                    side_chains[key] = None
+                    notes.append(f"{key}: no chain ({exc}), imported")
+            side = side_chains[key]
+            if side is not None:
+                sides.append(side)
+        for chain in (with_sides(c, sides) for c in found):
             for ref in chain.skipped:
                 notes.append(f"{ref} left out: the export lists no input it uses up")
             net = network(conn, chain, gen, 1.0, req, farm_list)

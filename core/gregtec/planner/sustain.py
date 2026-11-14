@@ -19,7 +19,9 @@ the node's crafts per second and sums each item over the whole line:
   FUEL_VALUE), and for a single block GT's own EU per unit (``generator_gt``, else
   ``fuels.single_block_eu``) at the block's voltage x amps; for a turbine GT's math at its rotor and
   dynamo (``generators.turbine``); for boilers ``gtmath.boiler`` at their throttle circuit feeding
-  the steam turbine. Ports the node declares must match (each item within :data:`TOL` of its
+  the steam turbine; for the Large Naquadah Reactor ``gtmath.naquadah``'s steady run on the fuel
+  recipe it cites, its liquid air and depleted fuel included, with the output checked against
+  its dynamo hatch's voltage x amps (``dynamo_hatch``, D327). Ports the node declares must match (each item within :data:`TOL` of its
   flow), or the proof names the difference.
 
 A GT recipe that uses up nothing but gives something outside the free set (an export quirk: an
@@ -53,6 +55,7 @@ from gregtec.planner import fuels, generators, graph
 from gregtec.planner.farms import Farm
 from gregtec.planner.graph import EU_KEY
 from gregtec.planner.gtmath import boiler as gt_boiler
+from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath.turbine import Kind
 
 TOL = 1e-6  # float noise, relative to the item's own flow (made or used, the larger)
@@ -320,6 +323,8 @@ def gen_ports(
                 count * st.water * 20
             )
             return Ports(ins, {EU_KEY: float(tr.eut * 20)}), None
+        if kind == "naquadah_reactor":
+            return _reactor_ports(conn, ref, spec, run, key)
     except (
         generators.CatalogError,
         gt_boiler.BoilerError,
@@ -328,6 +333,50 @@ def gen_ports(
     ) as exc:
         return None, f"{ref}: {exc}"
     return None, f"{ref}: unknown generator kind {kind!r}"
+
+
+def _reactor_ports(
+    conn: sqlite3.Connection,
+    ref: str,
+    spec: Mapping[str, Any],
+    run: int,
+    key: str,
+) -> tuple[Ports | None, str | None]:
+    """The Large Naquadah Reactor's ports per build unit, from the DB (D327)."""
+    mte = int(spec["mte"])
+    if _class(conn, mte) != "MTELargeNaquadahReactor":
+        return None, f"{ref}: mte:{mte} is not a Large Naquadah Reactor"
+    reactor = generators.reactor(conn, mte, run)
+    if reactor is None:
+        return None, f"{ref}: the DB has no lists for mte:{mte}"
+    fuel = next(
+        (f for f in generators.reactor_fuels(conn, run) if f.ref == spec["fuel_ref"]),
+        None,
+    )
+    if fuel is None or f"fluid:{fuel.fluid}" != key:
+        return None, f"{ref}: {spec['fuel_ref']} is not a fuel of mte:{mte}'s map"
+    s = gt_naquadah.steady(reactor, basic=fuel.basic, duration=fuel.duration)
+    hatch = conn.execute(
+        "SELECT eu_out, amps_out FROM dynamo_hatch WHERE run_id = ? AND mte_id = ?",
+        (run, int(spec["dynamo_mte"])),
+    ).fetchone()
+    if hatch is None:
+        return None, f"{ref}: mte:{spec['dynamo_mte']} is not a dynamo hatch"
+    cap = int(hatch[0]) * int(hatch[1])
+    if cap < s.eut:
+        return None, (
+            f"{ref}: {s.eut} EU/t is more than mte:{spec['dynamo_mte']} takes ({cap}):"
+            " GT stops the reactor"
+        )
+    used = {key: s.per_second(s.fuel)}
+    if s.air:
+        air = f"fluid:{reactor.air_fluid}"
+        used[air] = used.get(air, 0.0) + s.per_second(s.air)
+    given = {
+        EU_KEY: float(s.eut * 20),
+        f"fluid:{fuel.depleted}": s.per_second(s.depleted),
+    }
+    return Ports(used, given), None
 
 
 def _mismatch(declared: Ports, derived: Ports) -> list[str]:
