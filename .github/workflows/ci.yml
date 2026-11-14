@@ -116,6 +116,9 @@ jobs:
       # WO-6.2: the listener harness (a fake player places and breaks 10 GT machine kinds); it keeps the export
       # harness's runs, and leaves the events file and the census copies for tests/integration.
       - run: timeout 1500 ./gradlew --no-daemon runServer -Pharness -PharnessListener
+      # WO-10.4: the schematic harness (worldedit-gtnh pastes GOS-written shells and copies them back); it keeps the
+      # other harnesses' output, and leaves the copies for tests/integration/test_schematic_harness.py.
+      - run: timeout 1500 ./gradlew --no-daemon runServer -Pharness -PharnessSchematic
       # Java 25 with lwjgl3ify, as GTNH's Java 17+ build on the PC. LWJGL needs xrandr (x11-xserver-utils).
       - run: |
           sudo apt-get update
@@ -159,6 +162,7 @@ jobs:
             mod/run/server/gregteclink/harness-result.json
             mod/run/server/gregteclink/events/
             mod/run/server/gregteclink/listener-harness/expected.json
+            mod/run/server/gregteclink/schematic-harness/out/
             mod/run/server/gregteclink/exports/*/manifest.json
             mod/run/client/logs/
             mod/run/client/crash-reports/
