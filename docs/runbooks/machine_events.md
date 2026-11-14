@@ -68,7 +68,9 @@ which turns WO-8.1's client module off).
 
 With GOS running and the watchers started by Lab's launch (D259), the same events show in the
 dashboard's event feed (`GET /api/game/events?kind=machine_built`) within a few seconds, and a
-`machine_census` event follows each save.
+`machine_census` event follows each save. The census part needs `[paths] lab_world =
+"lab-structures"` in gos.toml when Lab is launched (the watchers' census reads only that world);
+steps 4 and 5 above don't.
 
 Record the result (pass, or what differed) in the PR / VERIFY V26.
 
