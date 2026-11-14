@@ -141,22 +141,33 @@ uv run gos power naquadah --fuel "naquadah based liquid fuel mki" --excited molt
 
 The first prints the reactor's liquid air and boost lists and, per fuel of its map, its EU/t, the
 litres of fuel, liquid air, coolant and excited fluid one run takes and a second, the depleted
-fuel a second, and the smallest dynamo hatch up to IV that holds it (MkI: the IV 256 A laser
-source hatch). Save the output next to your Lab notes.
+fuel a second, and the smallest dynamo hatch up to IV that holds it. The other two print the
+boosted rows with no tier limit, each with the smallest hatch that holds it. Every number is for
+a reactor with **exactly one** dynamo hatch (the planner doesn't model several). Save the output
+next to your Lab notes.
 
 **Build it** in `lab-ops` with creative: the controller and its casings (NEI's multiblock preview
 or a blueprint), one maintenance hatch (fixed), one input hatch per fluid, one output hatch, and
-**one** dynamo hatch: the one the table names for MkI (or any bigger one; the reactor stops at
-once if a tick's output is above the hatch's voltage x amps, which is worth seeing once with a
-smaller hatch). Put a creative-energy sink or a big battery buffer on the dynamo's laser or cable.
+**one** dynamo hatch: the one the `--excited` row names (review M2: the excited run is the
+biggest output of the three, so this hatch holds all three runs; the hatch the first table names
+for MkI is too small for it, and GT would stop the reactor). The reactor stops at once if a
+tick's output is above the hatch's voltage x amps, which is worth seeing once with a smaller
+hatch (the first table's MkI hatch on the excited run). Put a creative-energy sink or a big
+battery buffer on the dynamo's laser or cable.
 
 **Feed and read, three runs**, each with the tanks full (creative fluid tanks or super tanks):
 
 | run | input hatches | expected (from the table) |
 |---|---|---|
-| MkI | MkI fuel, liquid air | EU/t = MkI's `EU/t`; fuel L/s and air L/s as printed |
-| MkI + IC2 coolant | as above, plus IC2 coolant | the `--coolant ic2coolant` row: EU/t x 1.05, coolant 1000 L/s |
-| MkI + molten naquadah | as above (no coolant), plus molten naquadah | the `--excited molten.naquadah` row: EU/t x 4, fuel x 4 |
+| MkI | MkI fuel, liquid air | the first table's MkI row: its `EU/t`, fuel L/s and air L/s |
+| MkI + IC2 coolant | as above, plus IC2 coolant | the `--coolant ic2coolant` row as printed (its EU/t, coolant L/s) |
+| MkI + molten naquadah | as above (no coolant), plus molten naquadah | the `--excited molten.naquadah` row as printed (its EU/t, fuel and excited L/s) |
+
+Read the expected numbers from the printed rows, not from a multiplier: they come from your
+`GoodGenerator.cfg` (D326). The liquid air you feed must be the fluid the first line of the output
+names (`liquid air: ... of <fluid>`, the one the export read from GT's `Materials.LiquidAir`):
+if the reactor takes none of it, or runs on another liquid air, note both fluids' names (NEI
+shows them), since the planner would then be chaining the wrong one (review L3).
 
 For each run, after a minute (the output is steady from its first second), read the controller
 with a **Portable Scanner**: the output line (EU/t) and the efficiency line (100 %, or the

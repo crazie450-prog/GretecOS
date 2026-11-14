@@ -386,6 +386,15 @@ def test_three_rotor_setups_per_turbine_kind_size_from_the_db(
                 assert report.refs[1].startswith("r:")
 
 
+# The oracle runs GT's Materials outside the game, where three fluids keep their default
+# names; in the game they are registered under these (the dev runtime's fluid table).
+ORACLE_FLUID = {
+    "molten.time": "temporalfluid",
+    "molten.space": "spatialfluid",
+    "molten.atomicseparationcatalyst": "molten.atomic separation catalyst",
+}
+
+
 def _naquadah_vectors() -> dict[str, dict[str, str]]:
     """The reactor oracle's rows (GT's own class at the pin, make_naquadah_vectors.py), by id."""
     mnv = _load("make_naquadah_vectors")
@@ -420,11 +429,12 @@ def test_the_large_naquadah_reactor_reads_as_gts_own_class(
     lists = vec["lists"]
     assert reactor.air == int(lists["liquid_air_per_second"])
     for prefix, boosts in (("coolant", reactor.coolants), ("excited", reactor.excited)):
-        oracle = [
-            tuple(int(x) for x in lists[f"{prefix}_{i}"].rsplit(":", 2)[1:])
-            for i in range(len(boosts))
-        ]
-        assert [(b.amount, b.value) for b in boosts] == oracle
+        oracle = []
+        for i in range(len(boosts)):
+            name, amount, value = lists[f"{prefix}_{i}"].rsplit(":", 2)
+            oracle.append((ORACLE_FLUID.get(name, name), int(amount), int(value)))
+        # Names too (review L1): a renamed or reordered fluid with the same numbers fails.
+        assert [(b.fluid, b.amount, b.value) for b in boosts] == oracle
         assert f"{prefix}_{len(boosts)}" not in lists
     # The oracle's map holds GoodGenerator's nine (basic output, burn time) pairs first.
     oracle_fuels = {
