@@ -99,6 +99,7 @@ from gregtec.alerts.engine import AlertEvent
 from gregtec.api import (
     ai_routes,
     dashboard,
+    guide_routes,
     persona_routes,
     plan_routes,
     power_routes,
@@ -902,6 +903,7 @@ def create_app(core: Core) -> FastAPI:
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
+    guide_routes.add_routes(app, core, principal)
     remote_routes.add_routes(app, core, principal, _json_body)
     return app
 

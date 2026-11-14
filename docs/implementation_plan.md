@@ -796,6 +796,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
 - **3D build guide** for machinery, which is built legitimately (D35).
   - **Primary:** GuideNH 1.3.55 ships in 2.9.0. `/guidenhc exportsite` records what the client actually draws (GT overlays, tints, glow, active textures) plus the texture atlas. It ships a **three.js viewer with hover and layer controls**, and `<ImportStructureLib controller=… tier=…>` pulls in any multiblock at any tier [G].
   - Embedding it in the dashboard is a 1–2 h **spike** (WO-10.1, **VERIFY**).
+  - As built (WO-10.1, D304, pending Clayton's Lab export): the core serves Clayton's copied export from `GOS_HOME/data/guide-site` under `/guide/` with a CSP limited to `/guide/`, and the Build view frames a scene page (never embeds or vendors GuideNH's LGPL viewer). The frame is same-origin, so its scripts are trusted until WO-10.8 serves `/guide/` from its own origin. Report: `docs/reviews/WO-10.1_guide_spike.md`.
   - **Fallbacks:** MrBruh's previewer (Apache-2.0; three.js, layer slider, hover labels) with his texture manifest; then NEI item-panel icons with average colours.
   - Exports must run in a client with a game window, because a dedicated server lacks textures for 208 of 296 multiblocks [G].
 - **Viewer features:** rotate/zoom; hover shows block name and registry ID; layer slider; materials for the current layer; build checklist; hatch-slot markers with allowed hatch types; BOM per structure.
@@ -1253,7 +1254,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
 | V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
-| V15 | GuideNH `exportsite` embeds in the dashboard | Spike | 10.1 |
+| V15 | GuideNH `exportsite` embeds in the dashboard. **Partly** (WO-10.1, D304): framed under `/guide/` with its own CSP (which limits loads but is not isolation: same origin, so WO-10.8 gives `/guide/` its own origin), proven with a stand-in export; the real Lab export run is Clayton's | Spike; Lab export (report WO-10.1) | 10.1 |
 | V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
 | V17 | **Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW | — | 10.0 |
 | V18 | Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open | Weekly; watcher reports | 11.1 |
