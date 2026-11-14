@@ -106,7 +106,7 @@ final class SchematicHarness {
     private static void run(List<JsonObject> checks) throws Exception {
         PathGuard in = new PathGuard(gameDir.toPath(), IN);
         PathGuard out = new PathGuard(gameDir.toPath(), OUT);
-        
+
         List<Path> files = new ArrayList<>();
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(in.root(), "*.schematic")) {
             for (Path p : ds) files.add(p);
@@ -131,6 +131,14 @@ final class SchematicHarness {
                 tag.getInteger("WEOffsetZ"));
             Vector min = player.add(offset);
             Vector max = min.add(w - 1, h - 1, l - 1);
+
+            // A player has the chunks around it loaded; with no player on the server, unloaded chunks are the empty
+            // chunk, which takes and drops every block. Load the box and the cells around it.
+            for (int cx = (min.getBlockX() - 1) >> 4; cx <= (max.getBlockX() + 1) >> 4; cx++) {
+                for (int cz = (min.getBlockZ() - 1) >> 4; cz <= (max.getBlockZ() + 1) >> 4; cz++) {
+                    mc.theChunkProviderServer.loadChunk(cx, cz);
+                }
+            }
 
             // //schem load + //paste (air included)
             Clipboard clipboard;
