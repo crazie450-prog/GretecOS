@@ -564,6 +564,7 @@ ore_waypoint(vein)                   # proposes a vein's waypoint from the DB ro
 telemetry_get(scope)                 action_propose(kind,args) action_status(id)     # confirm is UI-only
 wiki_search(q)                       wiki_fetch(title)         structure_get(machine, variant)
 theme_get/list/save                  build_request(spec)       schematic_export(build, part)
+block_find(text?, mod?, plain?)      # the block catalog for shell palettes, deep lane only (D307)
 note_read/note_write/note_append     inbox_propose(title,body) vault_search(q)
 db_query(name, params)               db_sql(select)            speak(text)  notify(ch,text,lvl)
 timer_set(...)                       handoff(task)             persona_set(id)

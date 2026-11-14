@@ -116,7 +116,7 @@ the manifest and renames the folder. With autoexport (below) the game then quits
   `hasTileEntity(meta)`, opacity, full cube, light, falls, liquid, creative tab, mod and the six faces' icon names;
   and `textures.jsonl`: each icon name's PNG in the loaded resource packs with its size, sha256 and average colour.
   No numeric block or item ID is written. `parts.palette` is `ok`, `failed` or `skipped_server`; it is not part of
-  `complete`. The dev client takes about 2 s for it. The client harness checks that GT, GT addons (bartworks,
+  `complete`. The dev client takes under half a second for it. The client harness checks that GT, GT addons (bartworks,
   GoodGenerator) and other mods (vanilla, AE2, IC2) are in it, that `gregtech:gt.blockmachines`, a chest and AE2's
   drive are flagged in every state and that GT's casings, coils and glass, bartworks' glass, a GoodGenerator casing and
   AE2's sky stone are not, and that the faces' textures resolve.

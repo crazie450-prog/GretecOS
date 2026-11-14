@@ -84,6 +84,7 @@ def test_the_catalog_has_addon_blocks_and_flags_tile_entities(
         "GoodGenerator",
         "minecraft",
         "appliedenergistics2",
+        "IC2",
     } <= mods
     for block in TE:
         rows = conn.execute(
@@ -104,9 +105,12 @@ def test_the_catalog_has_addon_blocks_and_flags_tile_entities(
     ).fetchone()
     assert machines[0] == 1 and machines[1] > 1000
     # no row is keyed on a numeric id: every key is registry name + meta
-    assert conn.execute(
-        "SELECT count(*) FROM block_state WHERE registry_name NOT LIKE '%:%'"
-    ).fetchone() == (0,)
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM block_state WHERE registry_name NOT LIKE '%:%'"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_the_report_counts_the_catalog(built: build.Result) -> None:
@@ -154,7 +158,9 @@ def test_the_palette_rule_on_the_harness_world(conn: sqlite3.Connection) -> None
 
 def test_block_find_on_the_harness_db(built: build.Result) -> None:
     reg = build_registry(built.db)
-    out = reg.call("block_find", {"text": "glass", "mod": "bartworks"}, lane=DEEP)
+    # "glas": the dev runtime has no lang entries for bartworks' glass (its names read
+    # BW_GlasBlocks.0.name), so the word is matched in the registry name.
+    out = reg.call("block_find", {"text": "glas", "mod": "bartworks"}, lane=DEEP)
     assert not out.is_error, out.text
     rows = parse_tsv(out.text).rows
     assert rows and all(r["te"] == "0" for r in rows)
