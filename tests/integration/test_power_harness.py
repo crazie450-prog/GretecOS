@@ -66,6 +66,19 @@ def test_the_committed_turbine_vectors_are_what_gts_own_classes_compute(
         )
 
 
+def test_the_committed_naquadah_vectors_are_what_gts_own_class_computes(
+    tmp_path: Path,
+) -> None:
+    """WO-4.8 (D326): GT's own Large Naquadah Reactor, rerun on the mod's GT jar."""
+    _require_harness()
+    assert _load("make_naquadah_vectors").main(["--out", str(tmp_path)]) == 0
+    fresh = (tmp_path / "naquadah.tsv").read_text(encoding="utf-8").splitlines()
+    kept = (GTMATH_TESTS / "vectors" / "naquadah.tsv").read_text(encoding="utf-8")
+    assert fresh == kept.splitlines(), (
+        "naquadah.tsv: run make_naquadah_vectors.py and commit"
+    )
+
+
 @pytest.fixture(scope="module")
 def conn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connection]:
     _require_harness()
