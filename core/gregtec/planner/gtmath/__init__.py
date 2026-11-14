@@ -8,6 +8,8 @@ The planner sizes machines with these rules, never with estimates (plan §0.1 pr
 - :mod:`.processing`: the processing-logic power rules (energy hatches, single blocks, a run);
 - :mod:`.turbine`: ``TurbineStatCalculator`` and the large turbines' ``fluidIntoPower``
   (WO-4.1, D230);
+- :mod:`.naquadah`: GoodGenerator's Large Naquadah Reactor (``MTELargeNaquadahReactor``: its fuel
+  runs, liquid air, coolant and excited-fluid boosts and dynamo rule; WO-4.8, D326);
 - :mod:`.jmath`: the Java arithmetic they rely on.
 
 The port is pinned to :data:`GT_VERSION`, which must equal ``config.GT_PIN``: a GT pin bump

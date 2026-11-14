@@ -19,7 +19,9 @@ the node's crafts per second and sums each item over the whole line:
   FUEL_VALUE), and for a single block GT's own EU per unit (``generator_gt``, else
   ``fuels.single_block_eu``) at the block's voltage x amps; for a turbine GT's math at its rotor and
   dynamo (``generators.turbine``); for boilers ``gtmath.boiler`` at their throttle circuit feeding
-  the steam turbine. Ports the node declares must match (each item within :data:`TOL` of its
+  the steam turbine; for the Large Naquadah Reactor ``gtmath.naquadah``'s steady run on the fuel
+  recipe it cites, its liquid air and depleted fuel included, with the output checked against
+  its dynamo hatch's voltage x amps (``dynamo_hatch``, D327). Ports the node declares must match (each item within :data:`TOL` of its
   flow), or the proof names the difference.
 
 A GT recipe that uses up nothing but gives something outside the free set (an export quirk: an
@@ -53,6 +55,7 @@ from gregtec.planner import fuels, generators, graph
 from gregtec.planner.farms import Farm
 from gregtec.planner.graph import EU_KEY
 from gregtec.planner.gtmath import boiler as gt_boiler
+from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath.turbine import Kind
 
 TOL = 1e-6  # float noise, relative to the item's own flow (made or used, the larger)
@@ -241,10 +244,14 @@ def _turbine_run(
 
 
 def gen_ports(
-    conn: sqlite3.Connection, node: Mapping[str, Any], run_id: int | None = None
+    conn: sqlite3.Connection,
+    node: Mapping[str, Any],
+    run_id: int | None = None,
+    tier_cap: int | None = None,
 ) -> tuple[Ports | None, str | None]:
     """A generator node's ports per build unit, derived again from the DB and GT's math by its
-    ``spec`` (see the module docstring), or (None, why not)."""
+    ``spec`` (see the module docstring), or (None, why not). ``tier_cap`` is the plan's: a
+    dynamo hatch the node names above it is refused."""
     ref = str(node.get("recipe"))
     spec = node.get("spec")
     if not isinstance(spec, Mapping) or "kind" not in spec or "fuel_ref" not in spec:
@@ -320,6 +327,8 @@ def gen_ports(
                 count * st.water * 20
             )
             return Ports(ins, {EU_KEY: float(tr.eut * 20)}), None
+        if kind == "naquadah_reactor":
+            return _reactor_ports(conn, ref, spec, run, key, tier_cap)
     except (
         generators.CatalogError,
         gt_boiler.BoilerError,
@@ -328,6 +337,65 @@ def gen_ports(
     ) as exc:
         return None, f"{ref}: {exc}"
     return None, f"{ref}: unknown generator kind {kind!r}"
+
+
+def _reactor_ports(
+    conn: sqlite3.Connection,
+    ref: str,
+    spec: Mapping[str, Any],
+    run: int,
+    key: str,
+    tier_cap: int | None = None,
+) -> tuple[Ports | None, str | None]:
+    """The Large Naquadah Reactor's ports per build unit, from the DB (D327), on a dynamo hatch
+    the designer's own rule allows (``generators.dynamo_allowed``: the controller's
+    ``exotic_hatches`` fact, never GT++'s buffered dynamo) at or below the plan's tier."""
+    mte = int(spec["mte"])
+    if _class(conn, mte) != "MTELargeNaquadahReactor":
+        return None, f"{ref}: mte:{mte} is not a Large Naquadah Reactor"
+    reactor = generators.reactor(conn, mte, run)
+    if reactor is None:
+        return None, f"{ref}: the DB has no lists for mte:{mte}"
+    fuel = next(
+        (f for f in generators.reactor_fuels(conn, run) if f.ref == spec["fuel_ref"]),
+        None,
+    )
+    if fuel is None or f"fluid:{fuel.fluid}" != key:
+        return None, f"{ref}: {spec['fuel_ref']} is not a fuel of mte:{mte}'s map"
+    s = gt_naquadah.steady(reactor, basic=fuel.basic, duration=fuel.duration)
+    hatch = conn.execute(
+        "SELECT eu_out, amps_out, class_name, tier FROM dynamo_hatch"
+        " WHERE run_id = ? AND mte_id = ?",
+        (run, int(spec["dynamo_mte"])),
+    ).fetchone()
+    if hatch is None:
+        return None, f"{ref}: mte:{spec['dynamo_mte']} is not a dynamo hatch"
+    takes = generators.exotic(conn, mte)
+    if not generators.dynamo_allowed(str(hatch[2]), takes):
+        return None, (
+            f"{ref}: mte:{mte} is not offered mte:{spec['dynamo_mte']} ({hatch[2]};"
+            f" exotic hatches: {takes or 'none'})"
+        )
+    if tier_cap is not None and int(hatch[3]) > tier_cap:
+        return None, (
+            f"{ref}: mte:{spec['dynamo_mte']} is above the plan's tier cap"
+            f" ({hatch[3]} > {tier_cap})"
+        )
+    cap = int(hatch[0]) * int(hatch[1])
+    if cap < s.eut:
+        return None, (
+            f"{ref}: {s.eut} EU/t is more than mte:{spec['dynamo_mte']} takes ({cap}):"
+            " GT stops the reactor"
+        )
+    used = {key: s.per_second(s.fuel)}
+    if s.air:
+        air = f"fluid:{reactor.air_fluid}"
+        used[air] = used.get(air, 0.0) + s.per_second(s.air)
+    given = {
+        EU_KEY: float(s.eut * 20),
+        f"fluid:{fuel.depleted}": s.per_second(s.depleted),
+    }
+    return Ports(used, given), None
 
 
 def _mismatch(declared: Ports, derived: Ports) -> list[str]:
@@ -349,6 +417,7 @@ def node_ports(
     node: Mapping[str, Any],
     farms: Mapping[str, Farm],
     run_id: int | None = None,
+    tier_cap: int | None = None,
 ) -> tuple[Ports | None, str | None]:
     """A node's ports read again from their source, or (None, why not)."""
     ref = str(node.get("recipe"))
@@ -374,7 +443,7 @@ def node_ports(
             return None, f"{member} is not a member of {slot}"
         return Ports({member: 1.0}, {slot: 1.0}), None
     if ref.startswith("gen:"):
-        derived, why = gen_ports(conn, node, run_id)
+        derived, why = gen_ports(conn, node, run_id, tier_cap)
         if derived is None:
             return None, why
         if node.get("ports"):
@@ -414,6 +483,13 @@ class Proof:
         }
 
 
+def _tier_cap(plan: Mapping[str, Any]) -> int | None:
+    """The power request's tier cap (an index), or None for a plan without one."""
+    req = plan.get("request")
+    cap = req.get("tier_cap") if isinstance(req, Mapping) else None
+    return cap if isinstance(cap, int) and not isinstance(cap, bool) else None
+
+
 def validate(
     conn: sqlite3.Connection,
     plan: Mapping[str, Any],
@@ -426,7 +502,8 @@ def validate(
     free_set = frozenset(free)
     farm_map = farms or {}
     run_id = run_of(conn, plan)
-    read = ports or (lambda n: node_ports(conn, n, farm_map, run_id))
+    tier_cap = _tier_cap(plan)
+    read = ports or (lambda n: node_ports(conn, n, farm_map, run_id, tier_cap))
     balance: dict[str, float] = {}
     problems: list[str] = []
     gross: dict[str, float] = {}  # per item, the larger of what is made and used

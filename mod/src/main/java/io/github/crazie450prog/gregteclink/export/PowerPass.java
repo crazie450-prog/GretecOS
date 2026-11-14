@@ -9,21 +9,26 @@ import java.util.List;
 import net.minecraft.item.ItemStack;
 import net.minecraftforge.fluids.FluidStack;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import goodgenerator.main.GGConfigLoader;
 import gregtech.api.GregTechAPI;
 import gregtech.api.enums.Materials;
 import gregtech.api.enums.OrePrefixes;
 import gregtech.api.interfaces.IToolStats;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEBasicGenerator;
+import gregtech.api.metatileentity.implementations.MTEHatchDynamo;
 import gregtech.api.recipe.RecipeMap;
 import gregtech.api.util.GTOreDictUnificator;
 import gregtech.api.util.GTRecipe;
 import gregtech.api.util.GTUtility;
 import gregtech.api.util.TurbineStatCalculator;
 import gregtech.common.items.MetaGeneratedTool01;
+import gregtech.common.tileentities.machines.multi.MTELargeNaquadahReactor;
 
 /**
  * The power catalog's game data (WO-4.1, D230), what no recipe carries. Turbine rotors: what the planner's turbine
@@ -41,6 +46,11 @@ import gregtech.common.items.MetaGeneratedTool01;
  * game. Fuels are keyed by fluid registry name or item ref, never by numeric IDs.
  * <p>
  * {@code storage} (WO-4.5, D240): batteries, battery buffers, transformers and LSC cells, see {@link StoragePass}.
+ * <p>
+ * {@code naquadah_reactors} (WO-4.8, D326): GoodGenerator's Large Naquadah Reactor's own coolant and excited-fluid
+ * lists (fluid, litres a second, efficiency or multiplier, in its order) and its liquid air a second, read from the
+ * reactor class and GoodGenerator's config as this instance loaded them. {@code dynamos}: every dynamo hatch (GT's,
+ * TecTech's multi-amp and laser source hatches) with its voltage and amps out, the cap a generator's output must fit.
  */
 final class PowerPass {
 
@@ -128,6 +138,8 @@ final class PowerPass {
         root.add("materials", mats);
         root.add("generators", generators());
         root.add("containers", containers());
+        root.add("naquadah_reactors", naquadahReactors());
+        root.add("dynamos", dynamos());
         StoragePass storage = new StoragePass(stacks);
         root.add("storage", storage.json());
         errors += storage.errors;
@@ -191,6 +203,82 @@ final class PowerPass {
                     o.addProperty("recipe_map", map.unlocalizedName);
                     o.add("fuels", fuels(g, map));
                 }
+            } catch (Throwable t) {
+                o.addProperty("error", Json.error(t));
+                errors++;
+            }
+            a.add(o);
+        }
+        return a;
+    }
+
+    /** The Large Naquadah Reactor's boosts as its class builds them (private static lists, read by reflection). */
+    @SuppressWarnings("unchecked")
+    private JsonArray naquadahReactors() {
+        JsonArray a = new JsonArray();
+        IMetaTileEntity[] all = GregTechAPI.METATILEENTITIES;
+        for (int id = 0; id < all.length; id++) {
+            if (all[id] == null || all[id].getClass() != MTELargeNaquadahReactor.class) continue;
+            JsonObject o = new JsonObject();
+            o.addProperty("mte_id", id);
+            o.addProperty("class", MTELargeNaquadahReactor.class.getName());
+            try {
+                o.addProperty("recipe_map", ((MTELargeNaquadahReactor) all[id]).getRecipeMap().unlocalizedName);
+                JsonObject air = new JsonObject();
+                FluidStack liquidAir = gregtech.api.enums.Materials.LiquidAir.getFluid(1);
+                air.add("fluid", stacks.fluidRef(liquidAir == null ? null : liquidAir.getFluid()));
+                air.addProperty("per_second", GGConfigLoader.LiquidAirConsumptionPerSecond);
+                o.add("liquid_air", air);
+                String[][] lists = { { "coolants", "getCoolant" }, { "excited", "getExcitedLiquid" } };
+                for (String[] list : lists) {
+                    java.lang.reflect.Method m = MTELargeNaquadahReactor.class.getDeclaredMethod(list[1]);
+                    m.setAccessible(true);
+                    JsonArray entries = new JsonArray();
+                    for (Object e : (List<?>) m.invoke(null)) {
+                        Pair<FluidStack, Integer> p = (Pair<FluidStack, Integer>) e;
+                        JsonObject b = new JsonObject();
+                        if (p.getKey() == null) {
+                            b.addProperty("error", "no fluid");
+                            errors++;
+                        } else {
+                            b.add(
+                                "fluid",
+                                stacks.fluidRef(
+                                    p.getKey()
+                                        .getFluid()));
+                            b.addProperty("amount", p.getKey().amount);
+                        }
+                        b.addProperty("value", p.getValue());
+                        entries.add(b);
+                    }
+                    o.add(list[0], entries);
+                }
+            } catch (Throwable t) {
+                o.addProperty("error", Json.error(t));
+                errors++;
+            }
+            a.add(o);
+        }
+        return a;
+    }
+
+    /** Every dynamo hatch: voltage and amps out (GT's 1 A hatch, TecTech's multi-amp and laser hatches). */
+    private JsonArray dynamos() {
+        JsonArray a = new JsonArray();
+        IMetaTileEntity[] all = GregTechAPI.METATILEENTITIES;
+        for (int id = 0; id < all.length; id++) {
+            if (!(all[id] instanceof MTEHatchDynamo)) continue;
+            MTEHatchDynamo h = (MTEHatchDynamo) all[id];
+            JsonObject o = new JsonObject();
+            o.addProperty("mte_id", id);
+            o.addProperty(
+                "class",
+                h.getClass()
+                    .getName());
+            try {
+                o.addProperty("tier", h.mTier);
+                o.addProperty("eu_out", h.maxEUOutput());
+                o.addProperty("amps_out", h.maxAmperesOut());
             } catch (Throwable t) {
                 o.addProperty("error", Json.error(t));
                 errors++;

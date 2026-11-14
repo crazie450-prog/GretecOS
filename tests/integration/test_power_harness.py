@@ -14,6 +14,9 @@ the harnesses; locally: mod/README.md):
   GT's own ``getFuelValue`` gave in the game (``generator_gt``), fluid and item alike.
 - **The generator catalog.** New and legacy turbine, engine and boiler controllers are separate
   entries; three rotor set-ups per turbine kind size from the DB.
+- **The Large Naquadah Reactor** (WO-4.8, D326): ``make_naquadah_vectors.py`` reruns GT's own
+  class and must write exactly ``vectors/naquadah.tsv``; the export's reactor lists and fuel map
+  are the oracle's, and the catalog's steady run on each fuel equals the oracle's run.
 
 Nothing is written outside tmp_path.
 """
@@ -32,6 +35,7 @@ import pytest
 from gregtec.db import access, build
 from gregtec.ingest import collect
 from gregtec.planner import fuels, generators
+from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath.turbine import Kind
 
 REPO = Path(__file__).resolve().parents[2]
@@ -64,6 +68,19 @@ def test_the_committed_turbine_vectors_are_what_gts_own_classes_compute(
         assert fresh == kept.splitlines(), (
             f"{name}.tsv: run make_turbine_vectors.py and commit"
         )
+
+
+def test_the_committed_naquadah_vectors_are_what_gts_own_class_computes(
+    tmp_path: Path,
+) -> None:
+    """WO-4.8 (D326): GT's own Large Naquadah Reactor, rerun on the mod's GT jar."""
+    _require_harness()
+    assert _load("make_naquadah_vectors").main(["--out", str(tmp_path)]) == 0
+    fresh = (tmp_path / "naquadah.tsv").read_text(encoding="utf-8").splitlines()
+    kept = (GTMATH_TESTS / "vectors" / "naquadah.tsv").read_text(encoding="utf-8")
+    assert fresh == kept.splitlines(), (
+        "naquadah.tsv: run make_naquadah_vectors.py and commit"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -367,3 +384,96 @@ def test_three_rotor_setups_per_turbine_kind_size_from_the_db(
             assert report.refs[0] == f"rotor:{material}/{size}"
             if fuel is not None:
                 assert report.refs[1].startswith("r:")
+
+
+# The oracle runs GT's Materials outside the game, where three fluids keep their default
+# names; in the game they are registered under these (the dev runtime's fluid table).
+ORACLE_FLUID = {
+    "molten.time": "temporalfluid",
+    "molten.space": "spatialfluid",
+    "molten.atomicseparationcatalyst": "molten.atomic separation catalyst",
+}
+
+
+def _naquadah_vectors() -> dict[str, dict[str, str]]:
+    """The reactor oracle's rows (GT's own class at the pin, make_naquadah_vectors.py), by id."""
+    mnv = _load("make_naquadah_vectors")
+    lines = (GTMATH_TESTS / "vectors" / "naquadah.tsv").read_text(encoding="utf-8")
+    out = {}
+    for line in lines.splitlines():
+        if line.startswith(("#", "id\t")):
+            continue
+        case_id, _inputs, outputs = line.split("\t")
+        out[case_id] = mnv.parse_fields(outputs)
+    return out
+
+
+def test_the_large_naquadah_reactor_reads_as_gts_own_class(
+    conn: sqlite3.Connection,
+) -> None:
+    """WO-4.8 (D326): the export's reactor lists and fuel map are what GT's own class has at
+    the pin (the dev runtime runs GoodGenerator's default config, as the oracle does), and the
+    catalog's steady run on each fuel, unboosted and with each coolant and excited fluid,
+    equals the oracle's run of the real class (its third run: the first starts from 0 EU/t)."""
+    run = _run(conn)
+    cat = generators.catalog(conn, run)
+    [entry] = [e for e in cat if e.sizing == "naquadah_reactor"]
+    assert entry.class_name.endswith(".MTELargeNaquadahReactor") and not entry.legacy
+    assert {e.legacy for e in cat if e.kind == "naquadah_reactor_multi"} == {
+        False,
+        True,
+    }
+    reactor = generators.reactor(conn, entry.mte_id, run)
+    assert reactor is not None
+    vec = _naquadah_vectors()
+    lists = vec["lists"]
+    assert reactor.air == int(lists["liquid_air_per_second"])
+    for prefix, boosts in (("coolant", reactor.coolants), ("excited", reactor.excited)):
+        oracle = []
+        for i in range(len(boosts)):
+            name, amount, value = lists[f"{prefix}_{i}"].rsplit(":", 2)
+            oracle.append((ORACLE_FLUID.get(name, name), int(amount), int(value)))
+        # Names too (review L1): a renamed or reordered fluid with the same numbers fails.
+        assert [(b.fluid, b.amount, b.value) for b in boosts] == oracle
+        assert f"{prefix}_{len(boosts)}" not in lists
+    # The oracle's map holds GoodGenerator's nine (basic output, burn time) pairs first.
+    oracle_fuels = {
+        tuple(int(x) for x in lists[f"fuel_{i}"].split(":")[:2]): i for i in range(9)
+    }
+    db_fuels = generators.reactor_fuels(conn, run)
+    assert {(f.basic, f.duration) for f in db_fuels} == set(oracle_fuels)
+    for f in db_fuels:
+        i = oracle_fuels[(f.basic, f.duration)]
+        cases: list[tuple[str, gt_naquadah.Boost | None, gt_naquadah.Boost | None]]
+        cases = [("none", None, None)]
+        cases += [(f"c{c}", b, None) for c, b in enumerate(reactor.coolants)]
+        cases += [(f"e{e}", None, b) for e, b in enumerate(reactor.excited)]
+        for name, coolant, excited in cases:
+            s = gt_naquadah.steady(
+                reactor,
+                basic=f.basic,
+                duration=f.duration,
+                coolant=coolant,
+                excited=excited,
+            )
+            out = vec[f"steady:f{i}:{name}"]
+            assert (s.eut, s.eu, s.fuel, s.depleted, s.air, s.coolant, s.excited) == (
+                int(out["r2_eut"]),
+                int(out["r2_eu"]),
+                int(out["r2_fuel"]),
+                int(out["r2_depleted"]),
+                int(out["r2_air"]),
+                int(out["r2_coolant"]),
+                int(out["r2_excited"]),
+            ), (f.fluid, name)
+    # MkI: 975 000 EU/t for 60 ticks a litre, 7200 L of liquid air a run (2400 L/s).
+    mk1 = next(f for f in db_fuels if f.fluid == "naquadah based liquid fuel mki")
+    s = gt_naquadah.steady(reactor, basic=mk1.basic, duration=mk1.duration)
+    assert (s.eut, s.per_second(s.air)) == (975000, 2400)
+    assert s.per_second(s.fuel) == pytest.approx(1 / 3)
+    # The IV dynamo that holds it: TecTech's 256 A laser source hatch.
+    d = generators.dynamo(
+        conn, run, eut=s.eut, tier_cap=5, takes=generators.exotic(conn, entry.mte_id)
+    )
+    assert d is not None and d.class_name.endswith(".MTEHatchDynamoTunnel")
+    assert (d.tier, d.amps_out) == (5, 256)
