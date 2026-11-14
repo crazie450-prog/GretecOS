@@ -54,7 +54,8 @@ def problems() -> list[str]:
     return out
 
 
-def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
+def run(args: argparse.Namespace, out: TextIO | None = None) -> int:
+    out = out if out is not None else sys.stdout
     try:
         cfg, s = bot_settings.load(args.config)
     except (OSError, ValueError) as exc:
