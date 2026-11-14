@@ -781,9 +781,8 @@ def _export_locked(
             after = addons.after_export(
                 cfg, run.name, exported.digest, out, allow_harness=allow_harness
             )
+            # A run that couldn't be loaded is still recorded: the lines say what to run.
             summary += "\n\n" + "\n".join(after.lines)
-            if not after.ok:
-                code = 1
     if warnings:
         summary += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
 

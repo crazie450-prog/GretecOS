@@ -165,7 +165,8 @@ function SavedPlans(props: { plans: SavedPlanRow[] | null; current: string | nul
               >
                 <span>{p.name}</span>
                 <span className="gos-src">
-                  {p.status} · plan:{p.id}
+                  {p.status}
+                  {p.affected ? ` · ${GLYPH.warn} affected by update` : ""} · plan:{p.id}
                 </span>
               </button>
             </li>
@@ -207,6 +208,7 @@ function RouteColumn(props: {
   onUnpin: (node: string) => void;
   onAccept: () => void;
   onRename: (name: string) => void;
+  onResolve: () => void;
 }) {
   const r = props.route;
   const [confirming, setConfirming] = useState(false);
@@ -259,6 +261,29 @@ function RouteColumn(props: {
           {r.target.name} · {plain(r.target.rate_s)}/s · cap <TierChip tier={r.tier_cap} />
         </span>
       </div>
+      {r.affected && (
+        <div className="notice" role="status" data-testid={`affected-${r.id}`}>
+          <span className="gos-label">
+            {GLYPH.warn} Affected by update
+          </span>
+          <p className="gos-sub">
+            Export {r.affected.run} changed or removed what this plan cites. Re-solve it on the new data, then accept the
+            new route.
+          </p>
+          {r.affected.hits.length > 0 && (
+            <ul className="designer-pins">
+              {r.affected.hits.slice(0, 5).map((h) => (
+                <li key={h.cite}>
+                  <Cite cite={h.cite} /> <span className="gos-src">{h.why}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button variant="primary" disabled={props.busy} onClick={props.onResolve} testId={`affected-resolve-${r.id}`}>
+            Re-solve
+          </Button>
+        </div>
+      )}
       {r.pins.length > 0 && (
         <ul className="designer-pins" data-testid={`pins-${r.id}`}>
           {r.pins.map((p) => (
@@ -628,6 +653,7 @@ export function Designer() {
                 onUnpin={(node) => void run("Solving without the pin", () => api.pin(r.id, node, null))}
                 onAccept={() => void run("Accepting", () => api.accept(r.id))}
                 onRename={(name) => void run("Renaming", () => api.rename(r.id, name))}
+                onResolve={() => void run("Solving again on the new export", () => api.resolve(r.id))}
               />
             ))}
           </div>

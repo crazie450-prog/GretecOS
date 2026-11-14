@@ -414,7 +414,7 @@ def note_body(
     s: diff.Summary,
     md: MachineDiff,
     tasks: Sequence[Curation],
-    flagged: Sequence[plans.Flagged],
+    flags: Flags,
     report: Path | None,
 ) -> list[str]:
     """The inbox note (``_gos/schema.md``: key: value lines and TSV tables, under 150 lines)."""
@@ -438,8 +438,14 @@ def note_body(
         f"machines_removed: {len(md.removed)}",
         f"curation_tasks: {len(tasks)}",
         "plans_affected: "
-        + (", ".join(f"plan:{f.plan.id}" for f in flagged) if flagged else "none"),
+        + (", ".join(f"plan:{f.plan.id}" for f in flags.new) if flags.new else "none"),
     ]
+    if flags.still:
+        out.append(
+            "plans_still_affected: " + ", ".join(f"plan:{p}" for p in flags.still)
+        )
+    if flags.cleared:
+        out.append("plans_cleared: " + ", ".join(f"plan:{p}" for p in flags.cleared))
     if s.gt_problem is not None:
         out.append(f"note: {s.gt_problem}")
     if md.note:
@@ -491,9 +497,9 @@ def note_body(
             "note: curated machine_fact rows go in data/curated/machine_facts.tsv; "
             "capture the structure in the Lab (plan 7.10)"
         )
-    if flagged:
+    if flags.new:
         out += ["```tsv", "plan\tname\tstatus\tcite\twhy"]
-        for f in flagged[:NOTE_PLANS]:
+        for f in flags.new[:NOTE_PLANS]:
             for h in f.hits[:3]:
                 out.append(
                     f"plan:{f.plan.id}\t{_cell(f.plan.name)}\t{f.plan.status or '-'}\t"
@@ -503,6 +509,45 @@ def note_body(
         out.append(
             "note: each affected plan has a one-click re-solve in the Designer (#/designer/<id>)"
         )
+    return out
+
+
+@dataclass
+class Flags:
+    new: list[plans.Flagged] = field(default_factory=list)  # marked by this run
+    still: list[str] = field(
+        default_factory=list
+    )  # flagged by an earlier run, still so
+    cleared: list[str] = field(default_factory=list)  # flagged earlier, fine again
+
+
+def flag(
+    conn: sqlite3.Connection,
+    checked: Sequence[plans.Plan],
+    flagged: Sequence[plans.Flagged],
+    run_id: int,
+) -> Flags:
+    """Record the flags (D331): a newly affected plan gets ``affected_run`` = this run; one
+    flagged by an earlier run keeps that run (the update that broke it); a flagged plan this run
+    finds fine again (its cites match its own run) is cleared. Only ``checked`` plans change."""
+    prior = {
+        str(pid): run for pid, run in conn.execute("SELECT id, affected_run FROM plan")
+    }
+    hit = {f.plan.id for f in flagged}
+    out = Flags(
+        [f for f in flagged if prior.get(f.plan.id) is None],
+        [f.plan.id for f in flagged if prior.get(f.plan.id) is not None],
+        [p.id for p in checked if p.id not in hit and prior.get(p.id) is not None],
+    )
+    plans.mark_affected(conn, [f.plan.id for f in out.new], run_id)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for pid in out.cleared:
+            conn.execute("UPDATE plan SET affected_run = NULL WHERE id = ?", (pid,))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
     return out
 
 
@@ -638,11 +683,11 @@ def after_export(
             lambda key: plans.view(conn, key),
             plans.RunView(conn, new.run_id, new.run_key),
         )
-        marked = plans.mark_affected(conn, [f.plan.id for f in flagged], new.run_id)
+        flags = flag(conn, found, flagged, new.run_id)
         tasks = curation(conn, md.added)
     finally:
         conn.close()
-    res.flagged = [f.plan.id for f in flagged]
+    res.flagged = [f.plan.id for f in flags.new]
     plan_lines = plans.lines(flagged, len(found), problems)
     text = diff.report(s, plan_lines)
     text += "\n" + "\n".join(_machine_lines(md, tasks)) + "\n"
@@ -657,10 +702,12 @@ def after_export(
     if tasks:
         say(f"{len(tasks)} curation tasks for new controllers: {res.curation}")
     say(
-        f"{marked} plans marked affected by {new.run_key}"
+        f"{len(flags.new)} plans newly affected by {new.run_key}"
         + (f": {', '.join(res.flagged)}" if res.flagged else "")
+        + (f"; still affected: {', '.join(flags.still)}" if flags.still else "")
+        + (f"; no longer affected: {', '.join(flags.cleared)}" if flags.cleared else "")
     )
-    note, why = write_note(home, note_body(s, md, tasks, flagged, report), today)
+    note, why = write_note(home, note_body(s, md, tasks, flags, report), today)
     res.note = note
     say(f"vault note: {note}" if note else f"warning: no vault note ({why})")
     say(f"signature diff report: {report}")
