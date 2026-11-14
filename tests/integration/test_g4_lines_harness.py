@@ -80,8 +80,11 @@ class Line:
 # D255: the four lines. Tiers as the phase's own tests and runbooks use them (light fuel at MV as
 # in G3's chain, the gas turbine and the tree farm at EV as in WO-4.2/4.3), naquadah at IV, where
 # GT's Naquadah Reactor Mk-II (largeNaquadahReactorFuels) is. "Naquadah fuel" is read as GT's
-# naquadah reactor fuels (enriched naquadah bolt, rod and long rod): GoodGenerator's Large
-# Naquadah Reactor, which burns the Naquadah Fuel MkI-VI fluids, is `not_modelled` (D232).
+# naquadah reactor fuels (enriched naquadah bolt, rod and long rod) and, since WO-4.8 (D328),
+# GoodGenerator's Naquadah Based Liquid Fuel MkI burned in its Large Naquadah Reactor
+# (`naquadah_reactor`, D326-D327; MkII and up need a dynamo above IV's).
+MK1 = "fluid:naquadah based liquid fuel mki"
+LNR = 15537  # MTELargeNaquadahReactor
 LINES = {
     "light_fuel": Line("best", 2, ("single_block",), ("fluid:liquid_light_fuel",)),
     "benzene": Line("best", 4, ("gas_turbine",), ("fluid:benzene",)),
@@ -89,11 +92,12 @@ LINES = {
     "naquadah": Line(
         "best",
         5,
-        ("single_block",),
+        ("single_block", "naquadah_reactor"),
         (
             "gregtech:gt.metaitem.01@26326",  # enriched naquadah bolt (Mk-I)
             "gregtech:gt.metaitem.01@23326",  # enriched naquadah rod (Mk-II)
             "gregtech:gt.metaitem.02@22326",  # long enriched naquadah rod (Mk-III)
+            MK1,  # GoodGenerator's MkI, in the Large Naquadah Reactor (D328)
         ),
     ),
 }
@@ -180,17 +184,18 @@ def test_the_tree_farm_line_is_proven_closed_with_its_kit(
         assert p["bootstrap"]["seeds_saplings"] and p["bootstrap"]["starter_fuel"]
 
 
-def test_the_naquadah_line_burns_gts_naquadah_reactors(
+def test_the_naquadah_line_burns_naquadah_reactors(
     conn: sqlite3.Connection,
 ) -> None:
     names = {
         r["mte_id"]: r["name_en"]
         for r in conn.execute(
             "SELECT mte_id, name_en FROM machine"
-            " WHERE name_en LIKE 'Naquadah Reactor Mk-%'"
+            " WHERE name_en LIKE 'Naquadah Reactor Mk-%' OR mte_id = ?",
+            (LNR,),
         )
     }
-    assert names
+    assert LNR in names and len(names) > 1
     for p in design(conn, "naquadah").options:
         mte = next(c for c in p["power"]["generator"]["cites"] if c.startswith("mte:"))
         assert int(mte.removeprefix("mte:")) in names
@@ -220,6 +225,45 @@ def test_the_naquadah_mk2_line_offers_its_rod_as_imported(
         p["power"]["direct"] and p["power"]["fuel"]["id"] == rod
         for p in design(conn, "naquadah").options
     )
+
+
+def test_the_iv_naquadah_line_runs_the_large_naquadah_reactor_on_a_designed_mki_chain(
+    conn: sqlite3.Connection,
+) -> None:
+    """WO-4.8's acceptance (D328): the IV naquadah line's ranked options include the Large
+    Naquadah Reactor on MkI with a chain the designer built from the recipe DB (no hand-written
+    chain) and net EU/t above 0, and the validator closes it or names the gate. On this DB MkI's
+    only recipe is a fusion reactor's (LuV, and fusion is not sized, D176), so the chain takes MkI
+    from its cells (the canner) and the validator names the cell as the gate; the reactor's
+    liquid air is made in the line from air (the vacuum freezer, the side chain of D327)."""
+    ranked = [
+        p
+        for p in design(conn, "naquadah").options
+        if p["power"]["generator"]["kind"] == "naquadah_reactor"
+    ]
+    assert ranked
+    chained = [p for p in ranked if not p["power"]["direct"]]
+    assert chained, [p["id"] for p in ranked]
+    p = chained[0]
+    pw = p["power"]
+    assert pw["fuel"]["id"] == MK1
+    assert pw["net_eut"] > 0 and pw["chain_eut"] < 0.01 * pw["gross_eut"]
+    gen = next(n for n in p["nodes"] if n["kind"] == "generator")
+    assert gen["machine"]["mte"] == LNR and gen["spec"]["kind"] == "naquadah_reactor"
+    dynamo = conn.execute(
+        "SELECT tier, eu_out * amps_out FROM dynamo_hatch WHERE mte_id = ? AND run_id = ?",
+        (gen["spec"]["dynamo_mte"], current_run(conn)),
+    ).fetchone()
+    assert dynamo[0] <= 5 and dynamo[1] >= gen["eut"]
+    maps = {n["recipe"].split("/")[0] for n in p["nodes"] if n["kind"] == "recipe"}
+    assert maps  # a chain the designer built, not the fuel imported as it is
+    imported = {b["id"] for b in p["boundary"]["in"]}
+    assert "fluid:liquidair" not in imported  # made in the line
+    verdict = p["closed"]
+    assert verdict["problems"] == []
+    assert verdict["ok"] or verdict["imports"]  # closed, or the gate named
+    for imp in verdict["imports"]:
+        assert imp["id"] in imported
 
 
 def test_the_benzene_chain_draws_well_under_the_turbines_output(
@@ -377,6 +421,17 @@ def test_the_g3_hand_off_chain_recipes_match_nei(
     assert refs and all(r.startswith("r:") for r in refs)
     shown = refs - nei_hidden(conn, refs)
     assert shown, refs  # each line has recipes NEI can check
+    if name == "naquadah":
+        # WO-4.8 (D328): the Large Naquadah Reactor's designed MkI chain (the fuel from its
+        # cells, the liquid air from air) is checked against NEI with the rest.
+        lnr = set().union(
+            *(
+                chain_recipes(p)
+                for p in hand_off(conn, name)
+                if p["power"]["generator"]["kind"] == "naquadah_reactor"
+            )
+        )
+        assert lnr and lnr <= shown, lnr - shown
     c, run_dir, run_id = g3.golden._open(client)
     try:
         verdicts = g3.check_recipes(c, run_dir, run_id, shown)
