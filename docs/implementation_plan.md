@@ -855,6 +855,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - credit warnings with buttons (D48);
   - "GOS offline" and "game paused" **only while he's away** (D76), meaning no keyboard or mouse input on the PC for 10 minutes. Each is sent once, when both conditions are true, whichever comes second.
 - Results are also saved to the vault.
+- As built (WO-9.2, D298–D300): one router in the core (`gregtec.alerts.router`) takes the alert engine's events (WO-7.5), the proactive notices (WO-6.5), the D48 credit alert (WO-2.8) and the paused game (WO-6.1); every alert has a level and a key, and `gregtec.alerts.policy.decide` (one table, `[notify]` in gos.toml, defaults pending Clayton) sends it to the dashboard (always: its cards, banners and pause chip), voice (base alerts while he is present), in game (GregtecLink chat lines) and a Discord DM (base alerts while away, D46; credit DMs whatever his presence, D48; "game paused" only while away, D76), each once per occurrence (the `alert_route` table, so not again after a restart), never both by voice and DM, with a per-key cooldown, quiet hours and `/alerts off|quiet` holding them until they end. Away is no keyboard or mouse input for 10 minutes (`gregtec.presence`: `GetLastInputInfo` on Windows, unknown elsewhere, V35). Being level-triggered, the paused DM goes once per pause on the first tick that finds the game paused and him away, in either order. DMs go through an outbox (`alert_dm`) the bot posts and marks; the credit DM's buttons (Open billing, No-AI mode or Resume AI, Stop with a second press) reach the bot's one door and the core's own `POST /api/credits/decision`. "GOS offline" is the bot's (it outlives the core): the core silent for `offline_after_s` while he is away, not when the supervisor says it was stopped on purpose, once per outage, then "GOS is back". `gos alerts routed|test`. Runbook: `docs/runbooks/alert_routing.md`.
 - As built (WO-9.1, D295–D297): `gregtec.discordbot` is its own process (`python -m gregtec.discordbot run --supervised`, started by the supervisor at login with the core, left stopped until `[discord] owner_id` and its two keyring secrets exist). Every command and interaction goes through one door that drops anyone but `owner_id` with no response and no core call; no gateway intents, so it reads no messages. `/plan` and `/power` are jobs in the core's durable queue (`remote_job` in gos.sqlite, keyed by the interaction id; never completes twice, re-run once after a crash mid-run), acknowledged at once; results come as a follow-up (or a DM after 14 min or a bot restart) with the PNG and BOM of route 1 and its `#/designer/<id>` (or `#/power/<id>`) phone link. Confirm buttons post the pending action's read-back and confirm through the action desk as `discord`. Answers go to the day's journal through the core; `/alerts` sets `kv` `discord.alerts` for WO-9.2. Runbook: `docs/runbooks/discord_bot.md`.
 - **Limitation:** everything off-PC needs the PC on and awake. GOS starts at login (D77), so a reboot doesn't need a game launch to bring phone access back.
 
@@ -1273,6 +1274,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 | V34 | When a GT multiblock shuts down on its own (power loss, a maintenance problem), OC's `isWorkAllowed` reads false; if so, it reads as WO-7.4's `stopped` (D279), which WO-7.5's `machine_stalled` alert counts (`[alerts] stalled_stopped`, D280) and the advisor follows (D267, D281); the Lab test checks it does | Lab test | 6.5 |
+| V35 | GOS's processes (the core and the Discord bot, started windowless by the supervisor in Clayton's logon session, D116) read his real keyboard and mouse input through `GetLastInputInfo`, so D76's "away" (10 minutes without input) is right: `gos alerts routed` shows `away` false while he types and true after 10 idle minutes (D298) | PC step (runbook `alert_routing.md`) | 9.2 |
 
 ---
 
@@ -1319,8 +1321,10 @@ gregtec-os/
     bridge/    oc_api.py  mailbox.py  actions.py  parsers_29.py  mod_ws.py
     vault/     io.py  index.py  curator.py  schema.py
     build/     schematic.py  palette.py  footprints.py  themes.py  shells.py  shell_designer.py
-    alerts/  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
+    alerts/    rules.py  engine.py (WO-7.5)  policy.py  router.py  routes.py (alert routing, WO-9.2)
+    presence.py (input idle, D76)  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
     discordbot/ handlers.py  adapter.py (only importer of discord.py)  core_api.py  texts.py  settings.py  cli.py
+               alerts.py (alert DMs, credit buttons, "GOS offline", WO-9.2)
     remote/    jobs.py (durable design-job queue, D295)  routes.py (/api/jobs, /api/discord/*)
     crops/     data.py  planner.py  odds.py (§7.17)
   voice/gregtec_voice/   audio.py  ptt.py  wake.py  stt.py  tts.py  lexicon.py  speech_filter.py  client.py
@@ -1470,6 +1474,14 @@ keep_backups = 7              # daily DB backups kept (D139)
 # cooldown_s = 600            # plan 7.5's 10 minutes
 # done_show_s = 300
 
+# Alert routing (WO-9.2, D298): every key optional; the defaults, pending Clayton, are below.
+# [notify]
+# quiet_hours = ""            # e.g. "23:00-07:00" (local; may wrap midnight); "" for none
+# quiet_min_level = "err"     # what still goes out in quiet hours and with /alerts quiet
+# discord_min_level = "warn"  # the lowest base alert DMed while he is away
+# cooldown_s = 1800           # a base alert's key, per channel, after it went there
+# offline_after_s = 60        # the core silent this long is "GOS offline" (the bot's DM)
+
 # The Discord bot (WO-9.1, D296). Ids are Discord snowflakes (Developer Mode > Copy ID); the bot
 # token is in the keyring (gos key set discord), the bot's core token too (gos token new discord).
 # [discord]
@@ -1581,6 +1593,11 @@ CREATE TABLE device(id TEXT PRIMARY KEY, name TEXT, paired INT, last_seen INT, r
 CREATE TABLE alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, level TEXT, msg TEXT, ref TEXT,
   state TEXT, acked_ts INT);
 CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
+-- alert routing (WO-9.2, D299): what went to which channel, and the Discord DM outbox
+CREATE TABLE alert_route(channel TEXT NOT NULL, key TEXT NOT NULL, occ TEXT NOT NULL, ts INT NOT NULL,
+  PRIMARY KEY(channel, key, occ));
+CREATE TABLE alert_dm(id INTEGER PRIMARY KEY, created INT NOT NULL, level TEXT NOT NULL, text TEXT NOT NULL,
+  buttons TEXT, keys TEXT, delivered INT, dropped INT);
 ```
 
 ## Appendix E. Research index and key sources
