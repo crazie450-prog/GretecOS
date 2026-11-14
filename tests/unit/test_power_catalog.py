@@ -25,7 +25,8 @@ from gregtec.planner.gtmath.turbine import Kind
 
 def test_every_fuel_map_of_the_plan_is_catalogued_once() -> None:
     names = [m.gt_name for m in fuels.MAPS]
-    assert len(names) == len(set(names)) == 16
+    # The 16 of plan 7.2, and GoodGenerator's Large Naquadah Reactor's (WO-4.8, D326).
+    assert len(names) == len(set(names)) == 17
     assert {
         "dieselFuels",
         "extremeDieselFuels",
@@ -39,6 +40,7 @@ def test_every_fuel_map_of_the_plan_is_catalogued_once() -> None:
         "largeBoilerFakeFuels",
     } <= set(names)
     assert sum("NaquadahReactor" in n for n in names) == 5
+    assert "naquadahReactorFuels" in names
 
 
 @pytest.mark.parametrize("fuel_map", fuels.MAPS, ids=lambda m: m.gt_name)
@@ -48,6 +50,9 @@ def test_each_map_decodes_by_its_rule(fuel_map: fuels.FuelMap) -> None:
     if fuel_map.rule == "eu":
         assert fluid == fuels.Decoded(fuels.Unit.EU_PER_L, 7.0)
         assert item == fuels.Decoded(fuels.Unit.EU_PER_ITEM, 7000.0)
+    elif fuel_map.rule == "lnr":
+        # GoodGenerator's reactor: 1 L for the burn time at the basic output, unboosted.
+        assert fluid == fuels.Decoded(fuels.Unit.EU_PER_L, 280.0)
     elif fuel_map.rule == "rtg":
         # MTERTGenerator: 7 x 1 728 000 ticks at the recipe's EU/t (0 here).
         assert item == fuels.Decoded(fuels.Unit.EU_PER_ITEM, 0.0)

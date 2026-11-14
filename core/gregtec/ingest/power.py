@@ -17,7 +17,12 @@ GregtecLink's power pass writes what no recipe carries (docs/contracts/gregtecli
   (every GT battery buffer: tier, slots, voltage in and out, own EU store), ``transformers``
   (every GT transformer, GT's power and GT++'s hi-amp ones too: voltage and amps in and out in
   both modes, ``down`` and ``up``) and ``lsc`` (the Lapotronic Supercapacitor's cells: block,
-  glass tier, capacity as a decimal string).
+  glass tier, capacity as a decimal string);
+- ``naquadah_reactors`` (WO-4.8, D326; absent from runs made before it): GoodGenerator's Large
+  Naquadah Reactor's own coolant and excited-fluid lists (fluid, litres a check, efficiency % or
+  multiplier, in the reactor's order) and its liquid air a second, as the instance loaded
+  GoodGenerator's config; ``dynamos``: every dynamo hatch (GT's, TecTech's multi-amp and laser
+  source hatches), its tier, voltage and amps out.
 
 Floats were written as the double of GT's ``float``, so they read back to the bit. Read only from
 runs whose ``parts.power`` is ``ok``.
@@ -26,7 +31,7 @@ runs whose ``parts.power`` is ``ok``.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -125,6 +130,35 @@ class Generator:
 
 
 @dataclass(frozen=True)
+class ReactorBoost:
+    """One entry of the Large Naquadah Reactor's coolant or excited list."""
+
+    fluid: str
+    amount: int  # litres a check (a second)
+    value: int  # coolant: efficiency %; excited: multiplier
+
+
+@dataclass(frozen=True)
+class NaquadahReactor:
+    mte_id: int
+    class_name: str
+    recipe_map: str
+    air_fluid: str
+    air_per_second: int
+    coolants: tuple[ReactorBoost, ...]
+    excited: tuple[ReactorBoost, ...]
+
+
+@dataclass(frozen=True)
+class Dynamo:
+    mte_id: int
+    class_name: str
+    tier: int
+    eu_out: int
+    amps_out: int
+
+
+@dataclass(frozen=True)
 class CableStats:
     """A GT cable's own fields (``MTECable``), so no tooltip's language or number locale."""
 
@@ -201,6 +235,8 @@ class Power:
     generators: tuple[Generator, ...]
     containers: tuple[Container, ...] = ()
     storage: Storage | None = None
+    naquadah_reactors: tuple[NaquadahReactor, ...] = ()
+    dynamos: tuple[Dynamo, ...] = ()
 
 
 def status(manifest: Mapping[str, Any]) -> str:
@@ -323,6 +359,28 @@ def _storage(d: Mapping[str, Any]) -> Storage:
     return Storage(tuple(batteries), buffers, transformers, tuple(cells), cables)
 
 
+def _boosts(entries: Sequence[Mapping[str, Any]]) -> tuple[ReactorBoost, ...]:
+    out = []
+    for b in entries:
+        if "error" in b:
+            raise FormatError(f"a reactor list entry has no fluid: {b['error']}")
+        out.append(ReactorBoost(str(b["fluid"]), _int(b, "amount"), _int(b, "value")))
+    return tuple(out)
+
+
+def _reactor(d: Mapping[str, Any]) -> NaquadahReactor:
+    air = d["liquid_air"]
+    return NaquadahReactor(
+        mte_id=_int(d, "mte_id"),
+        class_name=str(d["class"]),
+        recipe_map=str(d["recipe_map"]),
+        air_fluid=str(air["fluid"]),
+        air_per_second=_int(air, "per_second"),
+        coolants=_boosts(d["coolants"]),
+        excited=_boosts(d["excited"]),
+    )
+
+
 def parse(root: Mapping[str, Any]) -> Power:
     try:
         sizes = tuple(
@@ -370,9 +428,23 @@ def parse(root: Mapping[str, Any]) -> Power:
         )
         containers = tuple(_container(c) for c in root.get("containers", ()))
         storage = _storage(root["storage"]) if "storage" in root else None
+        reactors = tuple(
+            _reactor(r) for r in root.get("naquadah_reactors", ()) if "error" not in r
+        )
+        dynamos = tuple(
+            Dynamo(
+                _int(d, "mte_id"),
+                str(d["class"]),
+                _int(d, "tier"),
+                _int(d, "eu_out"),
+                _int(d, "amps_out"),
+            )
+            for d in root.get("dynamos", ())
+            if "error" not in d
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise FormatError(f"{FILE}: {type(exc).__name__}: {exc}") from None
-    return Power(sizes, materials, generators, containers, storage)
+    return Power(sizes, materials, generators, containers, storage, reactors, dynamos)
 
 
 def read(run: Path) -> Power:
