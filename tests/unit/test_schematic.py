@@ -795,3 +795,115 @@ def test_sample_places_every_state_once() -> None:
     assert set(s.used()) == set(states) and set(s.used().values()) == {1}
     with pytest.raises(schematic.SchematicError):
         schematic.sample([])
+
+
+# --- gos schematic --------------------------------------------------------------------------
+
+
+def _home(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """GOS_HOME with the fixture catalog, a Lab instance with world lab-shells, gos.toml."""
+    home = tmp_path / "home"
+    (home / "data").mkdir(parents=True)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / ingest.FILE).write_text(
+        "".join(json.dumps(s) + "\n" for s in CATALOG), encoding="utf-8"
+    )
+    (run / ingest.TEXTURES).write_text("", encoding="utf-8")
+    c = access.connect(home / "data" / "gos.sqlite")
+    try:
+        c.execute(
+            "INSERT INTO export_run(id, fingerprint, run_key) VALUES (1, '', 'run-a')"
+        )
+        block_db.write(c, 1, ingest.read(run))
+    finally:
+        c.close()
+    instances = tmp_path / "instances"
+    world = instances / "GTNH-Lab" / ".minecraft" / "saves" / "lab-shells"
+    world.mkdir(parents=True)
+    (instances / "GTNH-Lab" / "instance.cfg").write_text(
+        "name=GTNH-Lab\n", encoding="utf-8"
+    )
+    (world / "level.dat").write_bytes(level_dat(WORLD))
+    toml = tmp_path / "gos.toml"
+    toml.write_text(
+        "[paths]\n"
+        f"gos_home = {json.dumps(home.as_posix())}\n"
+        f"prism_instances = {json.dumps(instances.as_posix())}\n"
+        'lab_world = "lab-shells"\n',
+        encoding="utf-8",
+    )
+    return toml, home, world
+
+
+def run_cli(argv: list[str]) -> tuple[int, str]:
+    import argparse
+    import io
+
+    from gregtec.build import schematic_cli
+
+    parser = argparse.ArgumentParser()
+    schematic_cli.add_parsers(parser.add_subparsers(dest="command"))
+    out = io.StringIO()
+    code = schematic_cli.run(parser.parse_args(argv), out)
+    return code, out.getvalue()
+
+
+def test_cli_sample_read_and_compare(tmp_path: Path) -> None:
+    toml, home, world = _home(tmp_path)
+    pal = tmp_path / "shell.txt"
+    pal.write_text(
+        "minecraft:stone@0\ngregtech:gt.blockcasings@2\ngregtech:gt.blockcasings5@0\n",
+        encoding="utf-8",
+    )
+    code, text = run_cli(["schematic", "sample", str(pal), "--config", str(toml)])
+    assert code == 0, text
+    made = home / "data" / "schematics" / "shells" / "gos_roundtrip.schematic"
+    assert made.is_file() and f"wrote {made}" in text and "without //rotate" in text
+    code, text = run_cli(["schematic", "read", str(made)])
+    assert code == 0 and "2x1x2 (W x H x L), written by worldedit" in text
+    assert "WEOffset (-1, 0, 1)" in text and "gregtech:gt.blockcasings@2" in text
+    # a //copy of the paste, standing on the same block: the world's ids, above 4095
+    s = schematic.read(made.read_bytes()).schematic
+    ids = {"minecraft:air": 0, **{n: 4096 + i for i, n in enumerate(s.names())}}
+    cells = [(ids[e.block], e.meta) for _, e in cells_of(s)]
+    copy = tmp_path / "copy.schematic"
+    copy.write_bytes(worldedit_copy((2, 1, 2), cells, ids, s.offset))
+    code, text = run_cli(["schematic", "compare", str(made), str(copy)])
+    assert code == 0 and "identical: 2x1x2, 3 block states" in text, text
+    cells[0] = (0, 0)
+    copy.write_bytes(worldedit_copy((2, 1, 2), cells, ids, (0, 0, 0)))
+    code, text = run_cli(["schematic", "compare", str(made), str(copy)])
+    assert code == 1 and "(0, 0, 0):" in text and "DIFFERENT" in text
+    assert "(differ: did you //copy from the spot you pasted from?)" in text
+    # without a mapping: the source world names the ids
+    copy.write_bytes(worldedit_copy((1, 1, 1), [(4097, 0)], None))
+    code, text = run_cli(["schematic", "read", str(copy)])
+    assert code == 2 and "give the world it was copied in" in text
+    code, text = run_cli(["schematic", "read", str(copy), "--source-world", str(world)])
+    assert code == 0 and f"{WORLD[1]}@0" in text
+
+
+def test_cli_sample_refuses_and_splits(tmp_path: Path) -> None:
+    toml, _, world = _home(tmp_path)
+    pal = tmp_path / "shell.txt"
+    pal.write_text("minecraft:stone@0\nminecraft:chest@0\n", encoding="utf-8")
+    out = tmp_path / "out" / "s.schematic"
+    base = ["schematic", "sample", str(pal), "--config", str(toml), "--out", str(out)]
+    code, text = run_cli(base)
+    assert code == 1 and "REFUSED minecraft:chest@0" in text and not out.exists()
+    pal.write_text(
+        "".join(f"t:b{i:03d}@{i % 16}\n" for i in range(300)), encoding="utf-8"
+    )
+    code, text = run_cli(base)
+    assert code == 0 and "split into 2 parts" in text, text
+    assert sorted(p.name for p in out.parent.iterdir()) == [
+        "s-part-1.schematic",
+        "s-part-2.schematic",
+    ]
+    code, text = run_cli([*base, "--over", "addblocks", "--world-dir", str(world)])
+    assert (
+        code == 0 and "AddBlocks in WorldEdit's nibble order" in text and out.is_file()
+    )
+    code, text = run_cli(["schematic", "read", str(tmp_path / "nothing.schematic")])
+    assert code == 2 and "Can't read nothing.schematic" in text
