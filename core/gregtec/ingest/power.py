@@ -31,7 +31,7 @@ runs whose ``parts.power`` is ``ok``.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -359,7 +359,7 @@ def _storage(d: Mapping[str, Any]) -> Storage:
     return Storage(tuple(batteries), buffers, transformers, tuple(cells), cables)
 
 
-def _boosts(entries: Any) -> tuple[ReactorBoost, ...]:
+def _boosts(entries: Sequence[Mapping[str, Any]]) -> tuple[ReactorBoost, ...]:
     out = []
     for b in entries:
         if "error" in b:
