@@ -22,6 +22,10 @@ import pytest
         "gregtec.bridge.ops",
         "gregtec.advisor.checks",
         "gregtec.advisor.steps",
+        "gregtec.alerts.router",  # WO-9.2
+        "gregtec.alerts.routes",
+        "gregtec.discordbot.alerts",
+        "gregtec.config",
     ],
 )
 def test_imports_first_in_a_fresh_interpreter(module: str) -> None:
