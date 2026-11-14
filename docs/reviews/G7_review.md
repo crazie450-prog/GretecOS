@@ -7,7 +7,7 @@
 **G7 is ready for Clayton's sign-off at the deployment test, with the fake OC world, the harness DBs and fakes standing in for his `lab-ops` world.** All six Phase 7 work orders are built and merged. Every acceptance criterion that can be checked without the real game is met here or on CI. Each §8 acceptance in this phase is a Lab check ("1 h stable in `lab-ops`", "readable in game", "alerts fire in `lab-ops`", "at MV, it breeds ..."), except WO-7.1's, which is fully met in code. So WO-7.1 is **met**, and WO-7.2 to WO-7.6 are **met with fakes**: the PC steps below are their acceptance.
 
 This review found and fixed one defect inside the phase's acceptance evidence, and one CI flake G8 had already reported (both on `review/g7`, no behaviour change in the running core):
-1. **An import cycle** (`d7b7241`). WO-6.5's `advisor/checks.py` imported `place()` from `gregtec.alerts.engine`, and the engine's `cards` import reaches the tool catalog and the advisor again. Imported first in a fresh interpreter, `gregtec.alerts.engine` and `gregtec.bridge.ops` failed with `ImportError: cannot import name 'place' from partially initialized module`. So WO-7.1's confirm-flow property test (`tests/unit/test_oc_actions.py`) and WO-7.5's rule matrix (`tests/unit/test_alert_rules.py`) could not be collected when run alone; the full suite and `gos serve` hid it, because something else imports the catalog first. `place()` now lives in `gregtec.alerts.rules` (which imports nothing of GOS), the engine re-exports it, and `tests/unit/test_alert_imports.py` imports the three modules in a fresh interpreter (2 of its 3 cases fail on `e481ca4`, all 3 pass now).
+1. **An import cycle** (`d7b7241`). WO-6.5's `advisor/checks.py` imported `place()` from `gregtec.alerts.engine`, and the engine's `cards` import reaches the tool catalog and the advisor again. Imported first in a fresh interpreter, `gregtec.alerts.engine` and `gregtec.bridge.ops` failed with `ImportError: cannot import name 'place' from partially initialized module`, and `gregtec.advisor.steps` with `AttributeError: partially initialized module 'gregtec.advisor.steps' has no attribute 'STEPS_MAX'`. So WO-7.1's confirm-flow property test (`tests/unit/test_oc_actions.py`) and WO-7.5's rule matrix (`tests/unit/test_alert_rules.py`) could not be collected when run alone; the full suite and `gos serve` hid it, because something else imports the catalog first. `place()` now lives in `gregtec.alerts.rules` (which imports nothing of GOS), the engine re-exports it, and `tests/unit/test_alert_imports.py` imports four modules (the engine, `bridge.ops`, `advisor.checks` and `advisor.steps`) in a fresh interpreter (3 of its 4 cases fail on `e481ca4`, all 4 pass now).
 2. **WO-7.3's stress-test floor** (`553979c`, G8 risk 1). `test_concurrent_writer_and_core` asserted more than 20 exchanges in a fixed 1.5 s, which a coarse-sleeping Windows runner missed on `a428fff`. `run()` now keeps going, up to 20 times the time, until the agent has made 21 exchanges. The checks it then makes are unchanged.
 
 Evidence tags, as in G0 to G8:
@@ -71,7 +71,7 @@ No export, DB, world or Playwright output is committed. They stay in the session
 | Dashboard and voice confirmation | met with fakes; **PC step** | the approval card (Playwright, WO-2.6's ApprovalCard) and `test_saying_confirm`, `test_voice_and_discord_confirm_as_themselves`, `test_only_claytons_ways_can_confirm` [here]. Phone (WO-9.3) and Discord (WO-9.1) use the same confirm-by-id route later |
 | Agents cannot confirm | met | `test_nothing_but_the_routes_and_the_router_calls_confirm`, `test_an_oc_message_cant_confirm_or_run_a_proposal`; `action_propose` is deep lane only [here] |
 | On a real harness DB | met | `test_oc_bridge_harness.py::test_a_craft_from_telemetry_to_the_reply` [here] |
-| Waypoint action (V23) | met with fakes; **PC step (G6)** | `test_a_confirmed_waypoint_is_written_by_the_core` and the two failure tests [here]. The JourneyMap check is `ore_intel_check.md` B, WO-6.6's runbook, so it is G6's step, not repeated below |
+| Waypoint action (V23) | met with fakes; **PC step** | `test_a_confirmed_waypoint_is_written_by_the_core` and the two failure tests [here]. The JourneyMap check is `ore_intel_check.md` B, WO-6.6's runbook. It belongs to G6, but G6's gate report isn't written yet, so step 10 below runs it unless G6's steps are already done |
 
 Open: PR #64 Q11-Q14 (below).
 
@@ -178,12 +178,13 @@ Open: PR #103 Q1-Q5.
 
 **Required before Clayton signs G7:**
 1. The PC steps below, with their paste-backs.
-2. His answers, or "keep as built", to the Phase 7 questions below. Under D158 the defaults stand and are reversible, except question 5, which must be answered before an OC computer goes on Play over M2.
+2. His answers, or "keep as built", to the Phase 7 questions below. Under D158 the defaults stand and are reversible, except question 5, which must be answered before an OC computer goes on Play over M2 (its default until then is no M2 on Play: Play stays on M1).
 3. `main` green on every CI job at the commit he deploys, with `review/g7` merged (or both fixes otherwise in).
 
 Should do (not blocking):
 1. **Update plan §7.9's payload bullet.** It still says "watchlist items via `getItemsInNetworkById`", which D213 replaced with exact `getItemInNetwork` lookups. The "As built" notes don't mention it. Owner: the PM.
 2. **A Play OC runbook.** Phase 7's runbooks are all Lab. Putting the agent, displays and station on Play (M1 at MV) is Clayton's own copy to Play's drive (breeding_station.md's intro says so) and a `[mailbox.play]` table he adds; no runbook spells out the order (token `oc-play`, `check_tweaks.py` on Play, the files, `[mailbox.play]`). It should come after question 5's answer. G4's telemetry reconcile (`gos ledger` with `tel_eu_in`/`tel_eu_out`) waits for it too.
+3. **Break the `deep_lane` import cycle** (outside Phase 7, from WO-2.3 `8a53ad5`). `python -c "import gregtec.agents.deep_lane"` fails with `ImportError: cannot import name 'HANDOFF_TOOL' from partially initialized module`: deep_lane imports `gregtec.agents.tools`, whose `catalog.py` imports `HANDOFF_TOOL` from deep_lane. The core and the full suite import the catalog first, so nothing fails today. A follow-up WO could move `HANDOFF_TOOL` to a module with no GOS imports (as fix 1 did for `place`) and replace `test_alert_imports.py`'s list with a test that imports every `gregtec` module first in a fresh interpreter. Owner: the PM.
 
 ---
 
@@ -193,7 +194,7 @@ Should do (not blocking):
 |---|---|---|---|
 | **V19** (Open to LAN avoids the pause freeze?) | 7.2 | Open | Step 4 below (`oc_agent.md` F) |
 | **V20** (`gt_machine` on 2.9.0 stable) | 7.2 | Open | Step 2 below (`gos-agent --list`, `oc_agent.md` step 7) |
-| **V23** (JourneyMap picks up waypoint files) | 7.1 (writer), 6.6 (owner) | Partly resolved from source (D271): read at the next dimension change or rejoin | `ore_intel_check.md` B, G6's step |
+| **V23** (JourneyMap picks up waypoint files) | 7.1 (writer), 6.6 (owner) | Partly resolved from source (D271): read at the next dimension change or rejoin | Step 10 below (`ore_intel_check.md` B), unless G6's steps already ran it |
 | **V29** (a reliable "game paused" signal) | 7.5 (consumer), 6.1 (owner) | Resolved from the log line (D258) | Step 8 below (`oc_agent.md` step 40) is extra evidence that the alerts hold on pause |
 | **V31** (OC reads for the breeding station) | 7.6 | Partly resolved from source (D284) | Step 9 below (`breeding_station.md` A.3 parts, C.7 reads) |
 | **V34** (a GT shutdown reads as `isWorkAllowed` false, so `stopped`) | 7.4/7.5 (evidence), 6.5 (row's WO) | Open | Step 7 below (`oc_agent.md` step 31) |
@@ -212,7 +213,7 @@ No later decision answers them, except PR #99 Q1 (settled by #98, above) and PR 
 2. Q2 (D213): `max_watch` at most 64 (was 256); more costs a slower `ae2_s`. OK?
 3. Q3 (D214): the agent keeps a message under 96 KB; the core accepts 256 KB. OK?
 4. Q4 (D214): a craft OC lost track of is `failed` with a fixed "may still run" text, shown as "check AE2", not a new state. OK?
-5. **Q5 (D214, also PR #64 Q11): nothing tells the agent a reply came from the core.** A program that binds the core's port while the core is down gets the token and can make the agent run an allowed command unconfirmed. **May Play's agent use M2, or should Play stay on M1 (gos-dev can't write its `inbox.json`), or should the core sign each command (a contract `v` bump)?** This one must be answered before Play gets M2.
+5. **Q5 (D214, also PR #64 Q11): nothing tells the agent a reply came from the core.** A program that binds the core's port while the core is down gets the token and can make the agent run an allowed command unconfirmed. **May Play's agent use M2, or should Play stay on M1 (gos-dev can't write its `inbox.json`), or should the core sign each command (a contract `v` bump)?** This one must be answered before Play gets M2. **Default until he answers: no M2 on Play.** Play stays on M1 (gos-dev can't write its `inbox.json`); "M2 as built" is not a default for Play. Lab keeps M2.
 6. Q6 (D213): `--once` runs on for at most 30 s when the reply carried commands, to report their results. OK?
 7. Q7: the earlier calls the advisor agreed with (Lua 5.3 CPU, ASCII JSON, LSC by meta name, cost limits, 8 KB sensor budget, 32 CPUs and 16 crafts, at-most-once delivery, Lua on Linux CI only, sensor parsing in Python). Keep?
 
@@ -254,13 +255,13 @@ No later decision answers them, except PR #99 Q1 (settled by #98, above) and PR 
 34. Q4: the station reads the tank's level, not the fluid's name. Read `getFluidInTank` names in a follow-up once the Lab run shows what OC reports?
 35. Q5: D282-D284 record the advisor's verdicts. Noted.
 
-**Boards (D92):** the Base view and its Alerts list (WO-7.4, 7.5) have no approved board; the approval card (WO-7.1) is WO-2.6's ApprovalCard; the Crops view is approved, but its station panel (WO-7.6) is new. Each "needs Clayton's board approval" (step 10).
+**Boards (D92):** the Base view and its Alerts list (WO-7.4, 7.5) have no approved board; the approval card (WO-7.1) is WO-2.6's ApprovalCard; the Crops view is approved, but its station panel (WO-7.6) is new. Each "needs Clayton's board approval" (step 11).
 
 ---
 
 ## Clayton's PC steps before signing G7
 
-These run after G2's PC steps 0 to 3 (`docs/reviews/G2_review.md`: Node.js and pnpm, `phase1_pc_checks.md` steps 1 to 12 with the export and the DB build, the setup wizard and the API key), G5's steps 0, 1 and 6 (`docs/reviews/G5_review.md`: the voice token, devices and keys, `gos voice run` answering), and G6's Lab watcher setup (`[startup] watchers_with_play = "lab"`, WO-6.1). They don't repeat those steps, and they don't repeat the runbooks: each step names the runbook section to follow. `$gos` is `C:\GregtecOS-app\current\.venv\Scripts\gos.exe`, as in the runbooks. Use a normal PowerShell window in his own account (never "Run as administrator"), with `$ProgressPreference = 'SilentlyContinue'`. **Everything is in GTNH-Lab's `lab-ops` world; nothing touches Play.** In all, about 6 h, most of it unattended (two OC hours and the breeding run).
+These run after G2's PC steps 0 to 3 (`docs/reviews/G2_review.md`: Node.js and pnpm, `phase1_pc_checks.md` steps 1 to 12 with the export and the DB build, the setup wizard and the API key), G5's steps 0, 1 and 6 (`docs/reviews/G5_review.md`: the voice token, devices and keys, `gos voice run` answering). G6's gate report is not written yet, so nothing here relies on its steps: the one Lab watcher precondition is stated where it is used (step 8: `[startup] watchers_with_play = "lab"`, the default in `config.py`, with the Lab watchers running as `oc_agent.md` step 36 says), and WO-7.1's JourneyMap check is step 10. They don't repeat those steps, and they don't repeat the runbooks: each step names the runbook section to follow. `$gos` is `C:\GregtecOS-app\current\.venv\Scripts\gos.exe`, as in the runbooks. Use a normal PowerShell window in his own account (never "Run as administrator"), with `$ProgressPreference = 'SilentlyContinue'`. **Everything is in GTNH-Lab's `lab-ops` world; nothing touches Play.** In all, about 6 h, most of it unattended (two OC hours and the breeding run).
 
 Spending: the deep-lane proposals in steps 3, 7, 8 and 9 are a few cents each (`action_propose` and `crop_station` are deep lane). Nothing else calls a model.
 
@@ -275,7 +276,7 @@ Spending: the deep-lane proposals in steps 3, 7, 8 and 9 are a few cents each (`
 
 **2. The computer and the first run** (`oc_agent.md` B-D, steps 4-8, **V20**). Build the T3 computer with a Lua 5.3 CPU, an internet card, adapters on an EBF, a battery buffer, the LSC and the ME controller, a chat box and a tps card; copy the agent with step 6's PowerShell; `gos-agent --list`, then `gos-agent --once`. Note whether `gt_machine` appears and what type the LSC shows as.
 
-**3. One hour on M2, and the confirm flow** (`oc_agent.md` E, steps 9-15; the WO-7.2 acceptance). `/forge tps` three times before, then every 15 min during the hour. During the hour, also check WO-7.1's flow on the dashboard and by voice (with `& $gos voice run` up):
+**3. One hour on M2, and the confirm flow** (`oc_agent.md` E, steps 9-15; the WO-7.2 acceptance). `/forge tps` three times before, then every 15 min during the hour. During the hour, check WO-7.1's flow on the dashboard and by voice (with `& $gos voice run` up), **in place of `oc_agent.md` step 12** (these checks cover its say, pause/resume and craft, so don't do both):
 - Ask the deep lane "say hello in Lab chat". It reads back `Say "hello" in chat in Lab. Say confirm.` **Don't confirm:** after 60 s the card says it expired, and saying "confirm" then does nothing.
 - Ask again, then, before confirming, ask "pause the EBF": GOS says the first was cancelled and reads back the second. Say "confirm" more than 3 s after the read-back: the EBF pauses within about 10 s and the action shows `done`. Resume it the same way.
 - Confirm one small craft by the card's button.
@@ -290,18 +291,21 @@ Spending: the deep-lane proposals in steps 3, 7, 8 and 9 are a few cents each (`
 
 **7. Displays** (`oc_agent.md` I, steps 29-35; the WO-7.4 acceptance, **V34** and the two runbook VERIFYs). Copy `display.lua`; check the board from 3 blocks away; time the EBF's `stopped` and its return to `OK` over M2 and M1 at `cycle_s` 5 (each ≤ 10 s); a starved basic machine reads `stalled`; Esc for 45 s gives `NO REPLY`; the pause and craft notices come once each; the HUD over M2 (OCGlasses at HV); a broken maintenance part gives `1 maintenance problem`.
 
-**8. Alerts, AFK** (`oc_agent.md` J, steps 36-40; the WO-7.5 acceptance). `pauseOnLostFocus` off, the Lab watchers and the voice client on, the dashboard on monitor 2; leave the game **unfocused with no menu open** while the LSC falls below 20 % (or set only `[alerts] power_low_pct` above the fill and restart the core). **Pass:** Power low, Machine stalled (or stopped) and Maintenance each fire within their hold and are said once; nothing flaps for 10 minutes; crafting done is said once; on Esc they are held, not cleared.
+**8. Alerts, AFK** (`oc_agent.md` J, steps 36-40; the WO-7.5 acceptance). `pauseOnLostFocus` off, `[startup] watchers_with_play = "lab"` (the default) and the Lab watchers running (`oc_agent.md` step 36), the voice client on, the dashboard on monitor 2; leave the game **unfocused with no menu open** while the LSC falls below 20 % (or set only `[alerts] power_low_pct` above the fill and restart the core). **Pass:** Power low, Machine stalled (or stopped) and Maintenance each fire within their hold and are said once; nothing flaps for 10 minutes; crafting done is said once; on Esc they are held, not cleared.
 
 **9. The breeding station** (`breeding_station.md` A-F; the WO-7.6 acceptance and **V31**). `gos quests tier --set MV` (Lab only; `--clear` after), `gos crops have ...`, then `gos crops station "<target>"` until a plan says `in 3 step(s)`; `gos crops station --parts` (note any `NOT`, `MV unknown` or `not in this DB`); build the MV breeder, three MV generators, the transposer and the chest; copy `crop\station.lua`; the V31 reads in the OC shell; an unconfirmed start expires with nothing moved; a confirmed run to 4 stocked, unattended; a stop mid-run; a restart while copying. **Pass:** 4 or more of the target, no parent's chest count ever at 0 because of the breeder, `stopped; nothing of the station's is left in transit`, and the generators paused after the restart.
 
-**10. Boards.** On the dashboard, look at the Base view with its Alerts list, the action approval card and the Crops view's station panel, and approve each or redline it (D92, D158 (5)).
+**10. The waypoint (V23), only if G6's PC steps haven't run it** (`ore_intel_check.md` B, in `lab-ores`; WO-7.1's waypoint action). **Pass:** the confirmed waypoint shows in JourneyMap after the next dimension change or rejoin (D271).
 
-**11. Sign-off.** Answer question 5, and say whether to keep each other default listed above.
+**11. Boards.** On the dashboard, look at the Base view with its Alerts list, the action approval card and the Crops view's station panel, and approve each or redline it (D92, D158 (5)).
+
+**12. Sign-off.** Answer question 5, and say whether to keep each other default listed above.
 
 **What to paste back for G7:**
 - the runbooks' own "What to send back" lists: `oc_agent.md` (sections D to J) and `breeding_station.md`;
 - step 3's three confirm-flow outcomes;
-- the board verdicts (step 10) and his answers to the questions.
+- `ore_intel_check.md`'s B outcome if step 10 ran;
+- the board verdicts (step 11) and his answers to the questions.
 
 ---
 
@@ -312,7 +316,7 @@ Spending: the deep-lane proposals in steps 3, 7, 8 and 9 are a few cents each (`
 3. **The tick cost is only measured in Lab.** The fake counts ticks; real AE2 lookups grow with the network's item types. Step 5 measures it on 300+ types. (Unknown until step 5)
 4. **OCGlasses and the sensor-line format are modelled from sources, not seen in game** (runbook VERIFYs in step 7). A wrong method name turns the HUD off with `display: no HUD ...`; a wrong Problems format leaves maintenance alerts silent. (Possible)
 5. **The station keeps a parked seed in each generator for good** (GT lets automation take only from outputs, D282), and breeding at MV is 50 %, so a 3-step run can take an hour or more. The runbook says to use spare generators. (Confirmed, by design)
-6. **Import-order defects hide in the full suite.** Fix 1 was invisible to CI because another test imported the catalog first. `test_alert_imports.py` now guards the three modules involved; other cycles could still exist elsewhere. (Fixed for these modules)
+6. **Import-order defects hide in the full suite.** Fix 1 was invisible to CI because another test imported the catalog first. `test_alert_imports.py` now guards the four modules involved. One more cycle exists outside Phase 7: `gregtec.agents.deep_lane` imported first fails (deep_lane → `agents/tools/__init__` → `catalog.py` → `from gregtec.agents.deep_lane import HANDOFF_TOOL`), from WO-2.3 (`8a53ad5`); a fresh-interpreter import of all 276 `gregtec` modules finds no other (should-do 3). (Fixed for these modules; deep_lane open, not a G7 blocker)
 
 ## After the review
 
