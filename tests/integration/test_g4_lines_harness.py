@@ -29,7 +29,7 @@ import importlib.util
 import os
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -402,8 +402,12 @@ def nei_hidden(conn: sqlite3.Connection, refs: set[str]) -> set[str]:
 
 
 @pytest.fixture(scope="module")
-def client(home: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return g3._home(tmp_path_factory.mktemp("g4-client"), "client")
+def client(
+    home: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    built_home: Callable[[Path, Path], Path],
+) -> Path:
+    return g3._home(tmp_path_factory.mktemp("g4-client"), "client", built_home)
 
 
 def hand_off(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:

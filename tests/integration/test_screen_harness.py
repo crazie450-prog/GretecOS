@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ import gregtec.agents.tools  # noqa: F401 - first: deep_lane and the catalog imp
 from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.screen import eval as screen_eval
 from gregtec.screen.cache import ScreenCache
@@ -33,15 +34,16 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
-def db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def db(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the client harness")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("screen-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     return access.db_path(home)
 
 

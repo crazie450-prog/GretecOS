@@ -13,12 +13,12 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner import distribution as dist
 from gregtec.planner import ledger
@@ -28,15 +28,16 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
-def conn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connection]:
+def conn(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Iterator[sqlite3.Connection]:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     h = tmp_path_factory.mktemp("distribution-harness")
-    collect.collect(game, h, 1, allow_harness=True)
-    build.build(h, allow_harness=True)
+    built_home(game, h)
     c = access.connect(access.db_path(h), readonly=True)
     yield c
     c.close()
