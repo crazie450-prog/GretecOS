@@ -58,6 +58,7 @@ from gregtec.db import access
 from gregtec.db import quests as quest_db
 from gregtec.ingest import fingerprint
 from gregtec.ingest import quests as bq
+from gregtec.packupdate import routes as addon_routes
 from gregtec.quests import spoilers
 from gregtec.store import Store
 
@@ -357,6 +358,7 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
     approvals = _valid(
         [cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"]
         + action_cards(core)
+        + addon_routes.cards(core)  # the export question (WO-11.1, D69)
     )
     pairing = _valid(
         [
@@ -540,6 +542,8 @@ async def tick(core: "Core") -> None:
     if now >= board.next_data:
         board.next_data = now + DATA_EVERY_S
         await asyncio.to_thread(board.refresh_data)
+        # the stale notice and the export question, each said once (WO-11.1)
+        await asyncio.to_thread(addon_routes.tick, core)
     variants = await asyncio.to_thread(snapshots, core)
     signature = json.dumps(_steady(variants[True]), sort_keys=True)
     if signature != board.signature or now - board.last_push >= HEARTBEAT_S:

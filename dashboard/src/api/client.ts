@@ -213,5 +213,11 @@ export async function act(card: ApprovalCard, action: string): Promise<void> {
     await post(`/api/actions/${id}/${action}`);
     return;
   }
+  // The export question after Play quits (D69, WO-11.1): by its id, so an old card can't answer
+  // a newer question; the core sets who answered from who asked.
+  if (card.kind === "export" && kind === "export" && (action === "confirm" || action === "cancel")) {
+    await post(`/api/export/question/${id}/${action}`);
+    return;
+  }
   throw new ApiError(400, `${action} isn't an action for this card`);
 }

@@ -231,11 +231,11 @@ export interface Action {
   primary: boolean;
 }
 
-/** Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1). */
+/** Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1), the export question after Play quits (D69, WO-11.1). */
 export interface ApprovalCard {
   type: "approval";
   id: string;
-  kind: "deep_budget" | "pairing" | "action";
+  kind: "deep_budget" | "pairing" | "action" | "export";
   title: string;
   readback: string;
   detail: string | null;

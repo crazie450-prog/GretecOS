@@ -19,8 +19,8 @@ best effort: GOS not running is a note, and the game launches anyway.
 
 **Post-exit** (Play only; Prism runs it only after a clean exit): if Play's fingerprint equals the
 last export's, nothing runs. Otherwise, with ``[policy] export_on_quit = "ask"`` (D69), it asks
-"Mods changed. Export now?" in a dialog that times out after 5 minutes as a no (plan 4.2). The
-dashboard and voice take that question over in WO-2.6 and Phase 5. On yes it starts
+"Mods changed. Export now?" on the dashboard, by voice and in a dialog (below), timing out after
+5 minutes as a no (plan 4.2). On yes it starts
 ``gos export run`` as a separate process, waits until that holds the instance lock, and returns,
 so Prism is free and Play can't launch until the export is done.
 
@@ -30,9 +30,14 @@ GregtecLink included, D98); ``prismlauncher --launch GTNH-Export``, which autoex
 for a new complete run in Export's ``gregteclink/exports/`` and for Export to quit; record the
 fingerprint for that run, unless NEI's part isn't ok, the oredict part failed (D145) or the
 autoexport failed (:func:`run_problems`: then recipe data stays stale); write the diff against the previous export (D122) to
-``GOS_HOME/data/reports/``. Then release the lock and show the result, part warnings included.
-Collecting the run into GOS_HOME (WO-1.2) and loading it into the DB (WO-1.3) join this pipeline
-once those are merged; flagging affected plans comes with plans (WO-1.9).
+``GOS_HOME/data/reports/``; then, still under the lock, collect the run into GOS_HOME, build it
+into the DB, write the signature diff per mod to the vault inbox, the curation tasks for new
+controllers, and mark the plans it affects (:mod:`gregtec.packupdate.addons`, WO-11.1). Then
+release the lock and show the result, part warnings included.
+
+**The question on the dashboard and by voice** (WO-11.1, D329): post-exit asks through
+:func:`gregtec.packupdate.addons.ask`, which the core shows as an approval card and says once,
+and the Windows dialog at the same time; the first answer wins.
 """
 
 from __future__ import annotations
@@ -263,6 +268,21 @@ def notify_dialog(title: str, text: str) -> None:
     box = getattr(user32, "MessageBoxTimeoutW", None)
     if box is not None:  # MB_ICONINFORMATION | MB_TOPMOST
         box(None, text, title, 0x40 | 0x40000, 0, 600_000)
+
+
+def ask_everywhere(cfg: config.Config, dialog: Ask = ask_dialog) -> Ask:
+    """The export question on the dashboard and by voice (the core reads it from GOS_HOME's
+    ``run`` folder) and in ``dialog``, whichever answers first (WO-11.1, D69, D329)."""
+
+    def ask(title: str, question: str, timeout_s: int) -> bool | None:
+        from gregtec.packupdate import addons  # lazy: pre-launch never needs it
+
+        try:
+            return addons.ask(cfg.gos_home, title, question, timeout_s, dialog=dialog)
+        except OSError:  # GOS_HOME's run folder can't be written: the dialog alone
+            return dialog(title, question, timeout_s)
+
+    return ask
 
 
 @dataclass
@@ -591,10 +611,14 @@ def run_export(
     poll_s: float = POLL_S,
     ticket: str = "",
     config_path: Path | None = None,
+    load: bool = True,
 ) -> int:
     """``gos export run``. 0: exported; 1: refused or failed (the stale flag is kept).
     ``config_path`` is the gos.toml ``cfg`` was read from (default: ``config`` in GOS_HOME):
-    its former-Plays record gets Play before Export is planned (D223)."""
+    its former-Plays record gets Play before Export is planned (D223). ``load``: collect and
+    build the recorded run, then the signature diff, curation tasks and plan flags
+    (:func:`gregtec.packupdate.addons.after_export`, WO-11.1); the pack-update playbook loads
+    its own."""
     if getpass.getuser().lower() == prism.DEV_ACCOUNT:
         _say(
             out,
@@ -622,6 +646,7 @@ def run_export(
                 sleep,
                 poll_s,
                 config_path or home / "config" / "gos.toml",
+                load,
             )
         except ExportFailed as exc:
             _say(out, f"export failed: {exc}. Recipe data stays stale.")
@@ -646,6 +671,7 @@ def _export_locked(
     sleep: Callable[[float], None],
     poll_s: float,
     config_path: Path,
+    load: bool = False,
 ) -> tuple[int, str]:
     home = cfg.gos_home
     try:
@@ -749,6 +775,15 @@ def _export_locked(
         status = fingerprint.record_export(home, run.name, exported, play_now)
         _say(out, f"recorded export {run.name}: {status.line()}")
         code, summary = 0, f"Export {run.name} done. {status.line()}"
+        if load:  # under the lock: collect reads Export's folder (WO-11.1, D329)
+            from gregtec.packupdate import addons  # lazy: the hooks never need it
+
+            after = addons.after_export(
+                cfg, run.name, exported.digest, out, allow_harness=allow_harness
+            )
+            summary += "\n\n" + "\n".join(after.lines)
+            if not after.ok:
+                code = 1
     if warnings:
         summary += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
 
@@ -836,7 +871,7 @@ def hook_main(args: argparse.Namespace, out: TextIO, env: Mapping[str, str]) -> 
         return 2
     if args.event == "pre-launch":
         return pre_launch(cfg, role, out)
-    ask: Ask = ask_dialog
+    ask: Ask = ask_everywhere(cfg)
     if args.answer is not None:
         answer = args.answer == "yes"
 

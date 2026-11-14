@@ -348,14 +348,14 @@
       }
     },
     "ApprovalCard": {
-      "description": "Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1).",
+      "description": "Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1), the export question after Play quits (D69, WO-11.1).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "id", "kind", "title", "readback", "detail", "expires_at", "actions"],
       "properties": {
         "type": {"const": "approval"},
         "id": {"type": "string", "maxLength": 100},
-        "kind": {"type": "string", "enum": ["deep_budget", "pairing", "action"]},
+        "kind": {"type": "string", "enum": ["deep_budget", "pairing", "action", "export"]},
         "title": {"type": "string", "maxLength": 200},
         "readback": {"type": "string", "maxLength": 1000},
         "detail": {"type": ["string", "null"], "maxLength": 1000},

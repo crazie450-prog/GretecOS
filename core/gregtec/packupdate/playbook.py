@@ -828,6 +828,7 @@ def step_play_export(ctx: Ctx, u: Update) -> Outcome:
         sleep=ctx.sleep,
         poll_s=ctx.poll_s,
         config_path=ctx.config_path,
+        load=False,  # loaded below, then flagged by the flag step
     )
     last = fingerprint.last_export(ctx.home)
     if code != 0 or last is None:

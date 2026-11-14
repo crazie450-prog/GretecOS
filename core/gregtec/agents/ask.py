@@ -692,7 +692,7 @@ class Asker:
         """The instant "confirm" or "cancel" (D59): the pending action, whichever it is."""
         desk = self.actions
         if desk is None or desk.pending() is None:
-            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+            return self._export_answer(intent, via)
         if intent == router.CONFIRM:
             if via not in VIAS:
                 return Reply(CONFIRM_ELSEWHERE, router.INSTANT, intent, pending=True)
@@ -708,6 +708,27 @@ class Asker:
             pending=True,
             refs=[f"action:{out.action.id}"],
         )
+
+    def _export_answer(self, intent: str, via: str | None) -> Reply:
+        """With no world action waiting, "confirm" or "cancel" answers the open export question
+        after Play quit (D69, WO-11.1): yes, export now; or no."""
+        from gregtec.packupdate import addons  # lazy: only when nothing else waits
+
+        q = addons.current(self.home) if self.home is not None else None
+        if q is None:
+            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+        yes = intent == router.CONFIRM
+        if yes and via not in VIAS:
+            return Reply(CONFIRM_ELSEWHERE, router.INSTANT, intent, pending=True)
+        done = addons.answer(self.home, q.id, yes, via if via in VIAS else "admin")
+        if done is None:
+            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+        text = (
+            "Exporting now. Play can't start until it's done."
+            if yes
+            else "Not exporting. Recipe data stays stale; I'll ask next time you quit."
+        )
+        return Reply(text, router.INSTANT, intent, pending=True, refs=[])
 
     def _plans(
         self, route: router.Route, *, fall_through: bool = False

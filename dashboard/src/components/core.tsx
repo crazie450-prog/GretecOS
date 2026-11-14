@@ -228,7 +228,7 @@ export function ApprovalView(props: {
       <h3 className="gos-title approval-title">{c.title}</h3>
       <p className="readback">
         {c.readback}
-        {c.kind === "action" ? " Or just say confirm." : ""}
+        {c.kind === "action" || c.kind === "export" ? " Or just say confirm." : ""}
       </p>
       {c.detail && <p className="gos-sub">{c.detail}</p>}
       <div className="actions">
