@@ -691,72 +691,59 @@ def _ids(
             f"AddBlocks has {len(add)} bytes: a nibble per cell needs {(n + 1) // 2}"
         )
     low = [b | a for b, a in zip(base, _nibbles(add, n, True, 8), strict=True)]
-    high = [b | a for b, a in zip(base, _nibbles(add, n, False, 8), strict=True)]
-    order: Order
-    if low == high:
-        ids, order = low, "low-first"
-    else:
-        fits_low = bool(known) and set(low) <= known
-        fits_high = bool(known) and set(high) <= known
-        preferred: Order | None = (
-            "low-first"
-            if writer == "worldedit"
-            else "high-first"
-            if writer == "schematica"
-            else None
-        )
-        who = {"low-first": "WorldEdit's", "high-first": "Schematica's"}
-        if (
-            preferred == "low-first"
-            and fits_low
-            or preferred == "high-first"
-            and fits_high
-        ):
-            order = preferred
-            if fits_low and fits_high:
-                notes.append(
-                    f"both AddBlocks nibble orders fit the mapping; took the writer's ({who[order]})"
-                )
-        elif fits_low != fits_high:
-            order = "low-first" if fits_low else "high-first"
-            notes.append(
-                f"AddBlocks detected in {who[order]} nibble order"
-                + (f" although the file looks written by {writer}" if preferred else "")
-            )
-        elif fits_low and fits_high:
-            raise CaptureError(
-                "AddBlocks fits the ids in both nibble orders and the file doesn't say who "
-                "wrote it: refused rather than guess"
-            )
-        else:
-            raise CaptureError(
-                "AddBlocks gives ids that "
-                + (
-                    "no mapping or source world names"
-                    if not known
-                    else "the mapping doesn't list"
-                )
-                + " in either nibble order (WorldEdit's low nibble first or Schematica's high "
-                "nibble first): refused rather than guess"
-            )
-        ids = low if order == "low-first" else high
-    if (
-        "AddBlocks2" in root
-    ):  # worldedit-gtnh, bits 12-15, low nibble first like AddBlocks
+    if "AddBlocks2" in root:
+        # only worldedit-gtnh writes it: bits 12-15, even cell in the low nibble like AddBlocks
         add2 = root["AddBlocks2"]
         if not isinstance(add2, bytes) or len(add2) < (n + 1) // 2:
             raise CaptureError("AddBlocks2 is shorter than a nibble per cell")
-        if order != "low-first":
-            raise CaptureError(
-                "AddBlocks2 with AddBlocks not in WorldEdit's nibble order"
+        low = [b | a for b, a in zip(low, _nibbles(add2, n, True, 12), strict=True)]
+        return low, "low-first", notes
+    high = [b | a for b, a in zip(base, _nibbles(add, n, False, 8), strict=True)]
+    if low == high:
+        return low, "low-first", notes
+    fits = {"low-first": set(low) <= known, "high-first": set(high) <= known}
+    preferred: Order | None = (
+        "low-first"
+        if writer == "worldedit"
+        else "high-first"
+        if writer == "schematica"
+        else None
+    )
+    who = {"low-first": "WorldEdit's", "high-first": "Schematica's"}
+    order: Order
+    if preferred is not None and fits[preferred]:
+        order = preferred
+        if all(fits.values()):
+            notes.append(
+                f"both AddBlocks nibble orders fit the mapping; took the writer's ({who[order]})"
             )
-        ids = [
-            (b & 0xFFF) | a
-            for b, a in zip(ids, _nibbles(add2, n, True, 12), strict=True)
-        ]
-        if known and not set(ids) <= known:
-            raise CaptureError("AddBlocks2 gives ids the mapping doesn't list")
-    return ids, order, notes
+    elif fits["low-first"] != fits["high-first"]:
+        order = "low-first" if fits["low-first"] else "high-first"
+        notes.append(
+            f"AddBlocks detected in {who[order]} nibble order"
+            + (f" although the file looks written by {writer}" if preferred else "")
+        )
+    elif all(fits.values()):
+        raise CaptureError(
+            "AddBlocks fits the ids in both nibble orders and the file doesn't say who "
+            "wrote it: refused rather than guess"
+        )
+    elif preferred is not None:
+        order = (
+            preferred  # neither fits: the ids left unnamed are refused by name below
+        )
+    else:
+        raise CaptureError(
+            "AddBlocks gives ids that "
+            + (
+                "nothing names"
+                if not known
+                else "the mapping or source world doesn't name"
+            )
+            + " in either nibble order (WorldEdit's low nibble first or Schematica's high "
+            "nibble first) and the file doesn't say who wrote it: refused rather than guess"
+        )
+    return (low if order == "low-first" else high), order, notes
 
 
 def summary(c: Capture, top: int = 40) -> list[str]:
