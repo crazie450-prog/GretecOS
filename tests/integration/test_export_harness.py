@@ -100,6 +100,7 @@ def test_pipeline_on_a_real_run(tmp_path: Path) -> None:
         launch=launch,
         clients=lambda cfg: ["export"] if running[0] else [],
         allow_harness=True,
+        load=False,  # WO-1.4 only: no collect, build or diff (WO-11.1)
         poll_s=0.05,
     )
     text = out.getvalue()

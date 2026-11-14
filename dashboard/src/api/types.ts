@@ -699,6 +699,8 @@ export interface DesignerRoute {
   pins: PlanPin[];
   nodes: DesignerNode[];
   warnings: string[];
+  /** "affected by update" (QA:D9, WO-11.1): the export run that flagged it and what it hit */
+  affected: { run: string; hits: { cite: string; why: string }[] } | null;
   /** the comparison metrics, by key (machines, eut_avg, ..., score) */
   metrics: Record<string, number>;
   /** the choices another route of the design makes differently: "name (r:...)" */
@@ -766,6 +768,7 @@ export interface SavedPlanRow {
   name: string;
   status: string;
   kind: string | null;
+  affected?: boolean; // flagged by an export (WO-11.1)
 }
 
 // --- The Activity view (WO-6.3, GET /api/activity, plan 7.5, 7.14) ------------------------------
