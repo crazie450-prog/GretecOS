@@ -3,7 +3,8 @@
 - ``gos schematic sample PALETTE``: a test shell with every entry of PALETTE (one
   ``registry@meta`` per line) once, through :func:`gregtec.build.schematic.write_shell` (the
   palette rule against the newest block catalog and a Lab world's registry), written to
-  ``GOS_HOME/data/schematics/shells/`` (or ``--out``). GOS never writes into the Lab: Clayton
+  ``GOS_HOME/data/schematics/shells/`` (or ``--out``, refused with exit 2 inside Play, Prism's
+  instances folder, Export or Lab: ``doctor.touch_problem``). GOS never writes into the Lab: Clayton
   copies the file into the Lab's ``config/worldedit/schematics/`` himself (runbook
   ``schematic_roundtrip.md``). Exit 0 written, 1 refused, 2 bad input or setup.
 - ``gos schematic read FILE``: a capture's size, writer, offset and block states. Exit 0, or 2.
@@ -23,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from gregtec import config
+from gregtec import config, doctor
 from gregtec.build import palette, schematic, worldreg
 from gregtec.db import access
 from gregtec.db import ores as ore_db
@@ -185,12 +186,22 @@ def _sample(args: argparse.Namespace, out: TextIO) -> int:
     target = (
         args.out or cfg.data_dir / "schematics" / "shells" / f"{SAMPLE_NAME}.schematic"
     )
-    for part in written.parts:
-        path = (
-            target
-            if not part.name
-            else target.with_name(f"{target.stem}-{part.name}.schematic")
-        )
+    paths = [
+        target
+        if not part.name
+        else target.with_name(f"{target.stem}-{part.name}.schematic")
+        for part in written.parts
+    ]
+    folders = doctor.guarded(cfg)
+    for path in paths:
+        if (why := doctor.touch_problem(path, folders)) is not None:
+            # D309 (6): GOS never writes into the Lab, Export or Play; Clayton copies the file
+            print(
+                f"Won't write {path}: it {why}. Write it elsewhere and copy it",
+                file=out,
+            )
+            return 2
+    for part, path in zip(written.parts, paths, strict=True):
         try:
             atomic_write(path, part.data)
         except OSError as exc:

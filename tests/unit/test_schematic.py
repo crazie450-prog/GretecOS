@@ -520,6 +520,27 @@ def test_nibble_order_detected_or_refused() -> None:
         )
 
 
+def test_nibble_order_counts_id_0_as_air_without_a_mapping() -> None:
+    # low nibble first: ids 0x101, 0, 0; high first: 1, 0x100, 0. The source world names 0x101
+    # and 1 but not air: WorldEdit's order fits, since id 0 is air anyway
+    cells = [(0x101, 0), (0, 0), (0, 0)]
+    ids = {1: "minecraft:stone", 0x101: "minecraft:glass"}
+    c = schematic.read(_bare(cells, bytes((0x01, 0x00))), source_ids=ids)
+    assert c.order == "low-first" and c.schematic.at(0, 0, 0).block == "minecraft:glass"
+    assert c.schematic.at(1, 0, 0) == schematic.AIR_STATE
+
+
+def test_more_block_states_than_a_schematic_numbers_is_refused() -> None:
+    # 90,000 distinct (id, meta) states through 16-bit metas: refused, not an OverflowError
+    n = 300 * 300
+    cells = [(1 + (i >> 16), i & 0xFFFF) for i in range(n)]
+    data = worldedit_copy(
+        (300, 1, 300), cells, {"minecraft:stone": 1, "minecraft:dirt": 2}
+    )
+    with pytest.raises(schematic.CaptureError, match="90,000 block states"):
+        schematic.read(data)
+
+
 @pytest.mark.parametrize(
     ("change", "match"),
     [
@@ -757,6 +778,25 @@ def test_write_shell_splits_above_255_types(
     ]
 
 
+def test_write_shell_split_makes_no_all_air_part(
+    conn: sqlite3.Connection, world: worldreg.WorldRegistry
+) -> None:
+    # 300 types on layer y=1 of a 20x3x15 box, air above and below: the air layers ride in the
+    # cuts of the crowded layer instead of becoming parts that place only air
+    base = [e for _, e in cells_of(many_types(300))]
+    air = [schematic.AIR_STATE] * len(base)
+    s = schematic.Schematic.from_cells(20, 3, 15, [*air, *base, *air], (0, 0, 0))
+    out = schematic.write_shell(conn, world, s)
+    assert out.how == "split" and len(out.parts) == 2
+    assert all(p.schematic.names() for p in out.parts)
+    assert _reassemble(s, out.parts) == [e for _, e in cells_of(s)]
+    # air between two crowded layers folds into the first, air at the end into the last
+    s = schematic.Schematic.from_cells(20, 4, 15, [*base, *air, *base, *air], (0, 0, 0))
+    out = schematic.write_shell(conn, world, s)
+    assert all(p.schematic.names() for p in out.parts) and len(out.parts) == 4
+    assert _reassemble(s, out.parts) == [e for _, e in cells_of(s)]
+
+
 def test_write_shell_add_blocks_on_request(
     conn: sqlite3.Connection, world: worldreg.WorldRegistry
 ) -> None:
@@ -927,3 +967,24 @@ def test_cli_sample_refuses_and_splits(tmp_path: Path) -> None:
     )
     code, text = run_cli(["schematic", "read", str(tmp_path / "nothing.schematic")])
     assert code == 2 and "Can't read nothing.schematic" in text
+
+
+@pytest.mark.parametrize("instance", ["GTNH-Lab", "GTNH"])
+def test_cli_sample_never_writes_into_an_instance(
+    tmp_path: Path, instance: str
+) -> None:
+    # D309 (6): a --out in the Lab (or Play, or anywhere in Prism's instances folder) is refused
+    toml, _, _ = _home(tmp_path)
+    pal = tmp_path / "shell.txt"
+    for text in (
+        "minecraft:stone@0\n",
+        "".join(f"t:b{i:03d}@{i % 16}\n" for i in range(300)),  # the -part-N files too
+    ):
+        pal.write_text(text, encoding="utf-8")
+        schems = tmp_path / "instances" / instance / ".minecraft" / "schematics"
+        out = schems / "x.schematic"
+        code, msg = run_cli(
+            ["schematic", "sample", str(pal), "--config", str(toml), "--out", str(out)]
+        )
+        assert code == 2 and "Won't write" in msg and "overlaps" in msg, msg
+        assert not schems.exists()

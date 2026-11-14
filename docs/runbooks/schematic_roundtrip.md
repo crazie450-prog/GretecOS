@@ -44,7 +44,7 @@ WO-10.4's acceptance, on Clayton's PC: **paste → `//copy` → identical blocks
    ```
 
 2. **Expect** from `compare`: `offset: (-1, 0, 1) pasted, (-1, 0, 1) copied` and `identical: 3x1x3, 8 block states in every cell`, exit code 0. From `read`: `written by worldedit, AddBlocks low-first` when any id is above 255 (WorldEdit writes the Lab's own ids; GOS turns them into names through the file's `BlockMapping`), and each state of the palette once. A differing offset with identical blocks means you moved between paste and copy: copy again from the gold block. `DIFFERENT` lines are the criterion not met: send them back with the `read` output.
-3. **Ids above 4095:** the `read` output doesn't show numeric ids (GOS never keys on them). To confirm the file holds some, run `uv run python -c "from gregtec.ingest import nbt; import sys; print(nbt.read(open(sys.argv[1],'rb').read())[1].get('BlockMapping'))" "$lab\gos_roundtrip_copy.schematic"`: ids above 4095 show as numbers above 4095 (or negative above 32767), and `AddBlocks2` exists in the file.
+3. **Ids above 4095:** the `read` output doesn't show numeric ids (GOS never keys on them). To confirm the file holds some, run `uv run python -c "from gregtec.ingest import nbt; from gregtec.gamestate.safe_open import read_bytes; import sys; print(nbt.read(read_bytes(sys.argv[1]))[1].get('BlockMapping'))" "$lab\gos_roundtrip_copy.schematic"`: ids above 4095 show as numbers above 4095 (or negative above 32767), and `AddBlocks2` exists in the file.
 
 ## D. Meta above 15 (worldedit-gtnh #30, V16)
 

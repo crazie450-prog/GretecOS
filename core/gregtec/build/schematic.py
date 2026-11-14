@@ -64,6 +64,9 @@ MAX_CELLS = 32 << 20  # Blocks + Data + AddData stay well under nbt.MAX_BYTES
 MAX_COMPACT = 255  # block types numbered 1..255 in Blocks alone (plan 7.10)
 MAX_ADDBLOCKS = 4095  # 12 bits with AddBlocks
 MAX_META = 0xFFFF  # Data + AddData; EndlessIDs' 16-bit metadata
+MAX_STATES = (
+    0xFFFF  # non-air block states a Schematic numbers (cells are unsigned shorts)
+)
 AIR_STATE = Entry(AIR, 0)
 
 type Pos = tuple[int, int, int]
@@ -440,22 +443,34 @@ def _split(s: Schematic, box: Box, depth: int) -> list[Box]:
         return [box]
     axis = _AXES[depth]
     lo, hi = box[axis], box[axis + 3]
-    out: list[Box] = []
+    segs: list[tuple[int, int, bool, bool]] = []  # lo, hi, over 255 types, all air
     start, run = lo, set[str]()
     for v in range(lo, hi):
         names = _box_names(s, _slab(box, axis, v, v + 1))
         if len(names) > MAX_COMPACT:
             if start < v:
-                out.append(_slab(box, axis, start, v))
-            out.extend(_split(s, _slab(box, axis, v, v + 1), depth + 1))
+                segs.append((start, v, False, not run))
+            segs.append((v, v + 1, True, False))
             start, run = v + 1, set()
             continue
         if len(run | names) > MAX_COMPACT:
-            out.append(_slab(box, axis, start, v))
+            segs.append((start, v, False, not run))
             start, run = v, set()
         run |= names
     if start < hi:
-        out.append(_slab(box, axis, start, hi))
+        segs.append((start, hi, False, not run))
+    # An all-air run only arises next to a slab of over 255 types: it is folded into that
+    # slab, whose cuts then span it (air adds no type), so no part places only air.
+    merged: list[tuple[int, int, bool, bool]] = []
+    for seg in segs:
+        if merged and ((seg[3] and merged[-1][2]) or (seg[2] and merged[-1][3])):
+            merged[-1] = (merged[-1][0], seg[1], True, False)
+        else:
+            merged.append(seg)
+    out: list[Box] = []
+    for a, b, over, _ in merged:
+        slab = _slab(box, axis, a, b)
+        out.extend(_split(s, slab, depth + 1) if over else [slab])
     return out
 
 
@@ -570,6 +585,11 @@ def read(data: bytes, source_ids: Mapping[int, str] | None = None) -> Capture:
             e = AIR_STATE if names[ids[i]] == AIR else Entry(names[ids[i]], meta)
             entry_of[key] = e
         cells.append(e)
+    states = {e for e in entry_of.values() if e is not AIR_STATE}
+    if len(states) > MAX_STATES:
+        raise CaptureError(
+            f"{len(states):,} block states (id + meta): at most {MAX_STATES:,}"
+        )
     origin = _triple(root, "WEOrigin")
     offset = _triple(root, "WEOffset")
     if offset is None:
@@ -585,7 +605,10 @@ def read(data: bytes, source_ids: Mapping[int, str] | None = None) -> Capture:
             f"{len(tile_entities)} tile entities in the file (a capture, never a shell)"
         )
     entities = root.get("Entities")
-    s = Schematic.from_cells(w, h, ln, cells, offset or (0, 0, 0))
+    try:
+        s = Schematic.from_cells(w, h, ln, cells, offset or (0, 0, 0))
+    except SchematicError as exc:
+        raise CaptureError(str(exc)) from None
     return Capture(
         s,
         writer,
@@ -701,7 +724,8 @@ def _ids(
     high = [b | a for b, a in zip(base, _nibbles(add, n, False, 8), strict=True)]
     if low == high:
         return low, "low-first", notes
-    fits = {"low-first": set(low) <= known, "high-first": set(high) <= known}
+    named = known | {0}  # id 0 is air even when nothing lists it (named so below)
+    fits = {"low-first": set(low) <= named, "high-first": set(high) <= named}
     preferred: Order | None = (
         "low-first"
         if writer == "worldedit"

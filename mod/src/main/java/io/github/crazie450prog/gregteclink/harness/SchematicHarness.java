@@ -206,13 +206,20 @@ final class SchematicHarness {
                 for (int z = min.getBlockZ() - 1; z <= max.getBlockZ() + 1; z++) {
                     if (!mc.isAirBlock(x, max.getBlockY() + 1, z)) outside++;
                     if (!mc.isAirBlock(x, min.getBlockY() - 1, z)) outside++;
+                    boolean ring = x < min.getBlockX() || x > max.getBlockX()
+                        || z < min.getBlockZ()
+                        || z > max.getBlockZ();
+                    if (!ring) continue;
+                    for (int y = min.getBlockY(); y <= max.getBlockY(); y++) {
+                        if (!mc.isAirBlock(x, y, z)) outside++;
+                    }
                 }
             }
             Harness.check(
                 checks,
                 "nothing_outside_" + name,
                 outside == 0,
-                outside + " non-air cells in the layers above and below the box");
+                outside + " non-air cells around the box (above, below and its four sides)");
 
             // //copy (origin = the player) + //schem save
             CuboidRegion region = new CuboidRegion(world, min, max);
