@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from gregtec import cli, supervisor
+from gregtec import applog, cli, supervisor
 from gregtec.discordbot import cli as discord_cli
 from gregtec.discordbot import settings
 from gregtec.discordbot.settings import BotSettings, SettingsError
@@ -107,6 +107,8 @@ def test_run_exits_with_the_setup_code_until_it_is_set_up(
 ) -> None:
     """The supervisor leaves the bot stopped on exit 2 (no owner, no secrets)."""
     monkeypatch.setattr(keys, "has_key", lambda name: False)
+    logs: list[str] = []  # applog.setup would rewire the test run's logging
+    monkeypatch.setattr(applog, "setup", lambda process, logs_dir: logs.append(process))
 
     def never(*a: object, **kw: object) -> int:
         raise AssertionError("the bot started without its setup")
@@ -118,6 +120,7 @@ def test_run_exits_with_the_setup_code_until_it_is_set_up(
     path = toml(tmp_path, f"[discord]\nowner_id = {OWNER}\n")
     assert discord_cli.run(ns(path, "run"), io.StringIO()) == discord_cli.EXIT_SETUP
     assert discord_cli.EXIT_SETUP == supervisor.EXIT_SETUP
+    assert logs == ["discord", "discord"]  # both refusals go to logs/discord.log
 
 
 def test_gos_discord_is_wired_into_the_cli(
