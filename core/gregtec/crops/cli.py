@@ -1,9 +1,13 @@
 """``gos crops guide|have|target|check`` (WO-6.7): the breeding guide in a terminal, what
-Clayton has, the crop he follows, and the citation check over guides (WO-6.7's acceptance)."""
+Clayton has, the crop he follows, and the citation check over guides (WO-6.7's acceptance);
+``gos crops station`` (WO-7.6): the breeding station's plan for a crop, and ``--parts`` the
+station's parts and the recipes that make them (V31). It never proposes: starting the station is
+a world action, proposed from the dashboard or by voice and confirmed by Clayton (D59)."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
@@ -11,10 +15,10 @@ from typing import TextIO
 
 from gregtec import config, store
 from gregtec.crops import facts as crop_facts
-from gregtec.crops import planner, state, view
+from gregtec.crops import planner, state, station, view
 from gregtec.db import access
 
-COMMANDS = frozenset({"guide", "have", "target", "check"})
+COMMANDS = frozenset({"guide", "have", "target", "check", "station"})
 
 
 def _config_arg(p: argparse.ArgumentParser) -> None:
@@ -60,6 +64,28 @@ def add_parsers(crop_cmds: argparse._SubParsersAction[argparse.ArgumentParser]) 
     c.add_argument("crop", nargs="*", help="crop names or ids")
     c.add_argument("--tier", type=int, default=None, help="GT tier to plan at (1 = LV)")
     _config_arg(c)
+    s = crop_cmds.add_parser(
+        "station",
+        help="the breeding station's plan for a crop (default: the target), or --parts",
+        description=(
+            "Prints the plan the OC breeding station would run for a crop from your crops "
+            "(gos crops have) at your tier: each Crop Breeder step with its chance, runs, "
+            "copies made first and fertilizer, the crops worth a Seed Generator, and the "
+            "crop_start command it becomes. --parts lists the station's parts and the recipes "
+            "that make them. It proposes nothing: start the station from the dashboard or by "
+            "voice, and confirm it."
+        ),
+    )
+    s.add_argument("crop", nargs="?", help="crop name or id (default: the target)")
+    s.add_argument(
+        "--count", type=int, default=station.TARGET_COUNT, help="seeds to stock"
+    )
+    s.add_argument("--tier", type=int, default=None, help="GT tier to plan at (1 = LV)")
+    s.add_argument("--json", action="store_true", help="print the plan as JSON")
+    s.add_argument(
+        "--parts", action="store_true", help="the station's parts and recipes"
+    )
+    _config_arg(s)
 
 
 def _print_lines(out: TextIO, title: str, lines: Sequence[planner.Line]) -> None:
@@ -211,6 +237,8 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
             state.set_target(conn, crop, None, cur.facts.data.crops)
             print(f"Following crop:{crop}", file=out)
             return 0
+        if cmd == "station":
+            return _station(args, conn, cur, out)
         # check
         crops = [c for w in args.crop if (c := _pick(cur, w, out))] or [
             c for c in view.PM_PICKS if c in cur.facts.data.crops
@@ -230,8 +258,64 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
                 print(f"  {p}", file=out)
             code = code or (1 if problems else 0)
         return code
-    except (crop_facts.NoCropData, planner.GuideError, state.CropStateError) as exc:
+    except (
+        crop_facts.NoCropData,
+        planner.GuideError,
+        state.CropStateError,
+        station.StationError,
+    ) as exc:
         print(str(exc), file=out)
         return 1
     finally:
         conn.close()
+
+
+def _station(
+    args: argparse.Namespace, conn: sqlite3.Connection, cur: view.Current, out: TextIO
+) -> int:
+    if args.parts:
+        rows = station.parts(conn, cur.facts)
+        if args.json:
+            print(json.dumps(rows, indent=2), file=out)
+            return 0
+        for r in rows:
+            if not r["in_db"]:
+                print(f"{r['part']}: not in this DB (no export of it here)", file=out)
+                continue
+            mv = {
+                True: "craftable at MV",
+                False: "NOT craftable at MV",
+                None: "MV unknown (a recipe without a tier)",
+            }[r["craftable_at_mv"]]
+            refs = ", ".join(
+                f"{x['ref']} ({x['source']}, tier {x['voltage_tier']})"
+                for x in r["recipes"]
+            )
+            print(f"{r['part']}: {mv} [{refs or 'no recipe'}]", file=out)
+        return 0
+    crop = _pick(cur, args.crop, out) if args.crop else None
+    if args.crop and crop is None:
+        return 1
+    crop = crop or (cur.target.crop if cur.target else None)
+    if crop is None:
+        print("No target: name a crop, or set one with gos crops target", file=out)
+        return 1
+    plan = station.build(cur.facts, cur.have, crop, cur.tier, args.count)
+    if args.json:
+        print(
+            json.dumps({"plan": station.as_dict(plan), "args": plan.args()}, indent=2),
+            file=out,
+        )
+        return 0
+    for line in plan.lines:
+        print(line, file=out)
+    print(
+        f"About {station.expected_fertilizer(plan)} mB of enriched fertilizer for the "
+        f"breeder's runs on average [{', '.join(plan.refs[:2])}]",
+        file=out,
+    )
+    print(
+        f"Plan {plan.id}: {station.as_dict(plan)['args_bytes']} bytes as a command",
+        file=out,
+    )
+    return 0

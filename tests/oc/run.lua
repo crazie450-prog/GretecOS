@@ -28,6 +28,7 @@ local SUITES = {
   "test_mailbox",
   "test_display",
   "test_runtime",
+  "test_station",
 }
 
 local filters = {}

@@ -163,6 +163,7 @@ BREEDER = crop_facts.BreederRecipe(
     400,
     2,
     (("Iron Ore", 1),),
+    (("minecraft:iron_ore", 0, 1),),  # the catalyst by key (WO-7.6)
 )
 
 

@@ -99,7 +99,14 @@ local MAX_SAY = 256
 local CRAFT_COMPUTE_MAX_S = 300 -- AE2 still planning after this long: give up on the result
 local ONCE_MAX_S = 30 -- --once waits this long at most for the results of commands it ran
 
-M.ALLOWED = { craft = true, machine_pause = true, machine_resume = true, say = true }
+M.ALLOWED = {
+  craft = true,
+  machine_pause = true,
+  machine_resume = true,
+  say = true,
+  crop_start = true, -- the breeding station (WO-7.6, crop/station.lua): only with a crops table
+  crop_stop = true,
+}
 M.MAX_BODY = 98304 -- bytes of JSON: over it, sensor lines and then the watchlist wait (D214)
 -- How Clayton confirmed a command (D59); the contract's four values, nothing else.
 M.CONFIRMED_VIA = { voice = true, dashboard = true, phone = true, discord = true }
@@ -133,6 +140,7 @@ M.DEFAULTS = {
   state = true, -- true: gos-agent.state next to the config; false: none; or a path
   mailbox = false, -- options for the M1 mailbox transport (WO-7.3 checks them)
   display = true, -- the in-game displays (WO-7.4, display.lua checks them): true, false or a table
+  crops = false, -- the breeding station (WO-7.6, crop/station.lua checks it): false or a table
 }
 
 local RANGES = {
@@ -283,6 +291,9 @@ function M.check_config(t)
   end
   if cfg.display ~= true and cfg.display ~= false and type(cfg.display) ~= "table" then
     return nil, "display must be true, false or a table of display options"
+  end
+  if cfg.crops ~= false and type(cfg.crops) ~= "table" then
+    return nil, "crops must be false or a table of breeding station options"
   end
   cfg.power_set = {}
   for _, n in ipairs(cfg.power_names) do
@@ -1152,6 +1163,29 @@ function HANDLERS.say(st, id, a)
   return result(id, "say", true, "done")
 end
 
+-- The breeding station (WO-7.6): start and stop are commands Clayton confirmed (D59); the
+-- station never starts itself.
+local function crop_command(st, id, kind, a)
+  if not st.station then
+    return refused(id, kind, "no breeding station on this computer (gos-agent.cfg has no crops table)")
+  end
+  local r
+  if kind == "crop_start" then
+    r = st.station:start(id, a)
+  else
+    r = st.station:stop(id)
+  end
+  return result(id, kind, r.ok, r.state, r.err and clip(r.err, MAX_ERR_MSG) or nil)
+end
+
+function HANDLERS.crop_start(st, id, a)
+  return crop_command(st, id, "crop_start", a)
+end
+
+function HANDLERS.crop_stop(st, id, a)
+  return crop_command(st, id, "crop_stop", a)
+end
+
 function M.run_command(st, cmd)
   if type(cmd) ~= "table" or json.is_array(cmd) then
     M.record_error(st, "command", "a command that is not an object was ignored")
@@ -1274,6 +1308,7 @@ function M.build_payload(st, opts)
     results = json.array(),
     errors = json.array(),
     display = st.display and st.display:state() or nil,
+    crops = st.station and st.station:doc() or nil,
   }
   for _, e in ipairs(st.inv.power) do
     p.power[#p.power + 1] = entry_doc(e, seq, budget)
@@ -1538,6 +1573,67 @@ function M.open_display(st)
   d:note(("gos-agent %s, every %s s; Ctrl+C stops it"):format(VERSION, st.cfg.cycle_s))
 end
 
+-- The breeding station (WO-7.6): crop/station.lua under this file's folder, when the config has a
+-- crops table. A bad crops table stops the agent, as a bad config does.
+function M.open_station(st)
+  if st.station or type(st.cfg.crops) ~= "table" then
+    return
+  end
+  local mod, err = load_module("crop/station")
+  if not mod then
+    error({ fatal = "crops: crop/station.lua is not installed next to gos-agent.lua (" .. tostring(err) .. ")" }, 0)
+  end
+  local cfg, cerr = mod.check_config(st.cfg.crops, st.cfg.base or DIR)
+  if not cfg then
+    error({ fatal = "config: " .. tostring(cerr) }, 0)
+  end
+  st.station = mod.new(cfg, {
+    call = call,
+    now = now,
+    json = json,
+    list = function(t)
+      local out = {}
+      for addr, ty in component.list(t, true) do
+        out[addr] = ty
+      end
+      return out
+    end,
+    read = function(path)
+      if not filesystem.exists(path) then
+        return nil
+      end
+      return read_file(path)
+    end,
+    write = function(path, text)
+      local ok, err = write_file(path .. ".tmp", text)
+      if ok then
+        if filesystem.exists(path) then
+          filesystem.remove(path)
+        end
+        ok, err = filesystem.rename(path .. ".tmp", path)
+      end
+      return ok, err
+    end,
+    log = function(level, msg)
+      M.log(st, level, msg)
+    end,
+  })
+  M.log(st, "info", "breeding station ready (crop/station.lua " .. tostring(mod.VERSION) .. ")")
+end
+
+-- One station step when it is due; never raises.
+function M.station_step(st)
+  local s = st.station
+  if not s or now() < (s.next_at or 0) then
+    return
+  end
+  local ok, err = try(s.step, s)
+  if not ok then
+    s.next_at = now() + 5
+    M.record_error(st, "crops", err)
+  end
+end
+
 ---------------------------------------------------------------------------------------------
 -- The cycle
 
@@ -1783,6 +1879,7 @@ function M.run(st, opts)
       st.transport = t
     end
     M.open_display(st)
+    M.open_station(st)
     M.log(st, "info", ("gos-agent %s started (boot %s, %s, every %s s)"):format(VERSION, st.boot, st.transport.name, st.cfg.cycle_s))
     local once_until = now() + ONCE_MAX_S
     while not st.stop do
@@ -1792,7 +1889,12 @@ function M.run(st, opts)
           break
         end
       end
-      local wait = st.next_cycle - now()
+      M.station_step(st)
+      local due = st.next_cycle
+      if st.station and st.station.next_at < due then
+        due = st.station.next_at
+      end
+      local wait = due - now()
       if not st.stop then
         if wait > 0 then
           event.pull(wait)
