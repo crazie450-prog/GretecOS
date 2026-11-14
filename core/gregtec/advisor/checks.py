@@ -11,9 +11,9 @@ reads them).
 - :func:`power_deficit` (D71, on by default): the running lines use more than their sources give
   (the EU ledger's ``deficit`` warning in the ``running`` scope, D239), or a fresh OC power entry
   (an LSC, a battery buffer) whose average EU/t out is above its EU/t in (draining);
-- :func:`stalled_machines` (D71, on by default): a GT machine OC sees with a job (``hasWork``),
-  allowed to work, not running (``isMachineActive`` false) for :data:`STALL_S` or more, counted
-  from its first inactive reading after its last active one;
+- :func:`stalled_machines`: the stalled or stopped machines WO-7.5's alert engine has firing
+  (its ``alert`` rows; the engine owns the condition and announces it, D281), for the advisor's
+  steps; the notices leave it to the engine (D267);
 - :func:`buildable_plans` (D71, on by default): an accepted plan whose every build component (its
   machines' items and, for a multiblock, the blocks of its smallest structure variant, WO-4.3's
   :func:`gregtec.planner.effort.components`) is in My base's stock in the amount it needs;
@@ -29,9 +29,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gregtec.alerts.engine import place
 from gregtec.bridge.telemetry import HEARTBEAT_S, STALE_S
 
-STALL_S = 60  # a machine with a job that hasn't run this long is stalled
 DRAIN_HOLD_S = (
     60  # an OC power entry draining this long is a deficit (the notices' hold)
 )
@@ -181,44 +181,46 @@ def ledger_warnings(conn: sqlite3.Connection) -> list[Finding]:
 
 
 def stalled_machines(conn: sqlite3.Connection, now: float) -> list[Finding]:
-    """GT machines OC sees with a job, allowed to work and not running for :data:`STALL_S` or
-    more (fresh readings only; one Clayton paused himself is ``paused``, never stalled)."""
+    """The machines WO-7.5's alert engine has a ``machine_stalled`` alert firing for (its
+    ``alert`` rows, D281: the engine owns the condition, so a stall is detected once), stalled
+    (a job, work allowed, not running) or ``stopped`` (work disabled, not by GOS: GT's own
+    shutdown, when ``[alerts] stalled_stopped``), each while its OC entry is fresh (a held
+    alert, the game paused or OC silent, is the engine's to show, never a claim here)."""
+    if not _has(conn, "alert") or not _has(conn, "tel_machine"):
+        return []
     out = []
-    for r in _fresh(conn, "idle", now):
-        since = int(r.last_seen) - HEARTBEAT_S
-        work = _sample(conn, r.id, "work", since)
-        if work is None or work[0] != 1.0:
+    seen: set[str] = set()
+    for ts, msg, ref in conn.execute(
+        "SELECT ts, msg, ref FROM alert WHERE kind = 'machine_stalled' AND state = 'firing'"
+        " ORDER BY ts, id"
+    ):
+        if not isinstance(ref, str) or not ref.startswith("tel:") or ref in seen:
             continue
-        ran = conn.execute(
-            "SELECT max(ts) FROM tel_sample WHERE src = ? AND key = 'active' AND value = 1",
-            (r.id,),
-        ).fetchone()[0]
-        # From the moment it stopped: the first inactive reading after the last active one.
-        # (WO-7.1 writes an unchanged reading again only every HEARTBEAT_S, so the last
-        # active=1 sample can be up to a minute before the machine stopped; review H1.)
-        start = conn.execute(
-            "SELECT min(ts) FROM tel_sample WHERE src = ? AND key = 'active' AND value = 0"
-            " AND ts > ?",
-            (r.id, -1 if ran is None else int(ran)),
-        ).fetchone()[0]
-        if start is None or now - float(start) < STALL_S:
+        row = conn.execute(
+            "SELECT name, last_seen FROM tel_machine WHERE id = ?", (ref[4:],)
+        ).fetchone()
+        if row is None or int(row[1]) < int(now) - STALE_S:
             continue
-        minutes = int((now - float(start)) // 60)
-        cite = f"tel:{r.id}"
-        name = r.name or "a machine"
+        seen.add(ref)
+        # The engine's own title, as its card shows it: "<title>. <place>: <body>" (D281).
+        title = str(msg or "").split(f". {place(ref[4:].split('/', 1)[0])}: ", 1)[0]
+        word = "stopped" if title.startswith("Machine stopped: ") else "stalled"
+        name = title.split(": ", 1)[1] if ": " in title else ""
+        name = name or (str(row[0]) if row[0] else "a machine")
+        minutes = max(0, int((now - float(ts or now)) // 60))
+        why = (
+            "has a job but isn't running"
+            if word == "stalled"
+            else "had its work disabled, not by GOS (GT stops a multiblock on power loss or"
+            " maintenance)"
+        )
         out.append(
             Finding(
                 "machine_stalled",
-                cite,
-                f"Machine stalled: {name}",
-                f"{name} has a job but hasn't run for {minutes} min"
-                + (
-                    ""
-                    if ran is not None
-                    else " (not seen running since OC began reporting it)"
-                )
-                + f" ({cite}, OC reading)",
-                (cite,),
+                ref,
+                f"Machine {word}: {name}",
+                f"{name} {why}, alert firing for {minutes} min ({ref}, OC reading)",
+                (ref,),
                 "#/base",
             )
         )

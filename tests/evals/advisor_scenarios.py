@@ -9,8 +9,9 @@ ingest with the contract's own telemetry fixture, WO-6.3's event store, My base'
 - **early**: nothing else. Day one: what now? (his goals' frontier quests, then the steel line);
 - **trouble**: a running LV macerator line (two Basic Macerators, 64 EU/t) on a running 32 EU/t
   power line, so the EU ledger's running scope is short 32 EU/t; and OC (the Lab's ``oc-lab``
-  binding) reporting an Electric Blast Furnace with a job that hasn't run for two minutes and an
-  EV battery buffer giving out 300 EU/t with nothing coming in. Both default problem notices;
+  binding) reporting an Electric Blast Furnace with a job that hasn't run for two minutes (WO-7.5's
+  alert engine fires its ``machine_stalled`` alert on it, D281) and an EV battery buffer giving
+  out 300 EU/t with nothing coming in (the power deficit notice);
 - **stocked**: the macerator line accepted, both Basic Macerators in My base's stock (so it is
   buildable from stock, the third default notice), and "Logs" finished two hours ago (it
   opened the Steam line's quests).
@@ -177,6 +178,41 @@ def send_oc(db: Path, at: float, doc: Mapping[str, Any]) -> None:
         st.close()
 
 
+class Lab:
+    """The core's OC pipeline for the ``lab`` binding: WO-7.1's ingest, WO-7.4's live base and
+    WO-7.5's alert engine (writing its ``alert`` rows), on a clock each message sets. The engine
+    ticks after each message, as the core's watcher does once a second."""
+
+    def __init__(self, db: Path) -> None:
+        from gregtec.alerts.engine import AlertEngine
+        from gregtec.bridge.live import Live
+
+        self.now = 0.0
+        self.store = core_store.Store(db)
+        self.telemetry = Telemetry(self.store, clock=lambda: self.now)
+        self.live = Live(self.telemetry)
+        self.telemetry.observers.append(self.live.observe)
+        self.bridge = Bridge(self.telemetry, None)
+        self.alerts = AlertEngine(self.live, store=self.store)
+        self.events: list[Any] = []
+
+    def send(self, at: float, doc: Mapping[str, Any]) -> None:
+        self.now = at
+        out = self.bridge.receive(
+            json.dumps(doc).encode(),
+            transport="http",
+            source="fixture",
+            binding="lab",
+            now=at,
+        )
+        if not out.ok:
+            raise RuntimeError(f"the OC fixture was refused: {out}")
+        self.events += self.alerts.tick()
+
+    def close(self) -> None:
+        self.store.close()
+
+
 def stock(db: Path, key: str, qty: float, now: float) -> None:
     from gregtec.base import state
 
@@ -208,8 +244,30 @@ def quest_done(db: Path, n: int, at: float) -> None:
         conn.close()
 
 
+def trouble_oc(lab: Lab, t: float) -> Lab:
+    """The trouble scenario's OC: the EBF not running and the buffer draining, at ``t - 120``
+    and ``t - 5``. The stall is the alert engine's (D281): it fires on these two."""
+    lab.send(t - 120, oc_message(1, active=False, eu_in=0, eu_out=300))
+    lab.send(t - 5, oc_message(2, active=False, eu_in=0, eu_out=300))
+    return lab
+
+
+def trouble_lab(home: Path, now: float | None = None) -> tuple[Scenario, Lab]:
+    """The trouble scenario with its OC pipeline still open, for tests that go on sending
+    (close the Lab when done)."""
+    sc, lab = _build(home, "trouble", now, keep=True)
+    assert lab is not None
+    return sc, lab
+
+
 def build(home: Path, name: str, now: float | None = None) -> Scenario:
     """Scenario ``name`` in ``home`` (an empty folder)."""
+    return _build(home, name, now)[0]
+
+
+def _build(
+    home: Path, name: str, now: float | None, *, keep: bool = False
+) -> tuple[Scenario, Lab | None]:
     if name not in NAMES:
         raise ValueError(f"no scenario {name!r}: one of {', '.join(NAMES)}")
     t = time.time() if now is None else now
@@ -220,12 +278,13 @@ def build(home: Path, name: str, now: float | None = None) -> Scenario:
     ).close()  # the core's tables (My base, telemetry, events, ledger)
     steel = "plan:pl-steel"
     if name == "early":
-        return Scenario(name, home, db, t, ("goal", "goal", "line"), (steel,), ())
+        return Scenario(name, home, db, t, ("goal", "goal", "line"), (steel,), ()), None
     if name == "trouble":
         save_plan(home, MACERATORS, "running")
         save_plan(home, BOILERS, "running", created=3)
-        send_oc(db, t - 120, oc_message(1, active=False, eu_in=0, eu_out=300))
-        send_oc(db, t - 5, oc_message(2, active=False, eu_in=0, eu_out=300))
+        lab = trouble_oc(Lab(db), t)
+        if not keep:
+            lab.close()
         return Scenario(
             name,
             home,
@@ -233,8 +292,8 @@ def build(home: Path, name: str, now: float | None = None) -> Scenario:
             t,
             ("fix", "fix", "goal"),
             ("plan:pl-macer", f"tel:lab/{EBF_ADDR}", f"tel:lab/{BUFFER_ADDR}"),
-            ("power_deficit", "machine_stalled"),
-        )
+            ("power_deficit",),  # the stall is the alert engine's line (D281)
+        ), (lab if keep else None)
     save_plan(home, MACERATORS, "accepted")
     stock(db, f"{MACHINES}@{MACERATOR}", 2, t)
     quest_done(db, 10, t - 2 * 3600)
@@ -246,4 +305,4 @@ def build(home: Path, name: str, now: float | None = None) -> Scenario:
         ("build", "goal", "goal"),
         ("plan:pl-macer",),
         ("plan_buildable",),
-    )
+    ), None

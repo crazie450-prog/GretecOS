@@ -3,8 +3,9 @@
 
 The "Lab scenario" acceptance (both D71 default notices fire) is
 :func:`test_both_default_notices_fire_in_the_lab_scenario`: the OC contract's own telemetry fixture
-goes through WO-7.1's real ingest as the ``oc-lab`` binding, the plans through the real store and
-EU ledger, the stock through My base; the real Lab run is ``docs/runbooks/advisor.md``.
+goes through WO-7.1's real ingest as the ``oc-lab`` binding, WO-7.4's live base and WO-7.5's alert
+engine (which owns the stall, D281), the plans through the real store and EU ledger, the stock
+through My base; the real Lab run is ``docs/runbooks/advisor.md``.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from gregtec import store as core_store
 from gregtec.advisor import checks, notices, steps
 from gregtec.agents.tools.catalog import default_registry
 from gregtec.agents.tools.tsv import parse
+from gregtec.alerts.rules import RULES
 from gregtec.quests import questeval
 
 REPO = Path(__file__).resolve().parents[2]
@@ -134,79 +136,74 @@ def test_buckets_put_problems_before_goals_before_lines() -> None:
 # --- the checks ----------------------------------------------------------------------------
 
 
-def test_stalled_needs_a_job_a_minute_and_fresh_readings(
+def test_stalls_are_the_alert_engines_firing_rows(
     tmp_path: Path,
     conn_of: Any,  # noqa: ANN401
 ) -> None:
-    sc = S.build(tmp_path, "trouble")
+    """D281 (PM 2026-11-14): the advisor reads WO-7.5's ``machine_stalled`` alerts, not its own
+    second detection: firing and fresh only, ``stopped`` (GT's own shutdown) included."""
+    sc, lab = S.trouble_lab(tmp_path)
     conn = conn_of(sc.db)
     ebf = f"tel:lab/{S.EBF_ADDR}"
-    assert [f.key for f in checks.stalled_machines(conn, sc.now)] == [ebf]
-    # stale: nothing heard for longer than WO-7.1's STALE_S, so nothing is claimed
-    assert checks.stalled_machines(conn, sc.now + 3600) == []
-    assert checks.power_deficit(conn, sc.now + 3600)[0].key == "ledger:running"
-    # running again a moment ago: not stalled
-    S.send_oc(sc.db, sc.now, S.oc_message(3, active=True, eu_in=0, eu_out=300))
-    S.send_oc(sc.db, sc.now + 1, S.oc_message(4, active=False, eu_in=0, eu_out=300))
-    assert checks.stalled_machines(conn, sc.now + 2) == []
-    S.send_oc(sc.db, sc.now + 65, S.oc_message(5, active=False, eu_in=0, eu_out=300))
-    assert [f.key for f in checks.stalled_machines(conn, sc.now + 70)] == [ebf]
-    # paused by Clayton (work not allowed): never stalled
-    doc = S.oc_message(6, active=False, eu_in=0, eu_out=300)
-    for m in doc["machines"]:
-        m["allowed"] = False
-    S.send_oc(sc.db, sc.now + 80, doc)
-    assert checks.stalled_machines(conn, sc.now + 200) == []
+    try:
+        found = checks.stalled_machines(conn, sc.now)
+        assert [f.key for f in found] == [ebf]
+        assert (
+            found[0].title == "Machine stalled: blastfurnace"
+        )  # the engine's card title
+        assert ebf in found[0].detail and "alert firing for 0 min" in found[0].detail
+        # stale: nothing heard for longer than WO-7.1's STALE_S, so nothing is claimed
+        assert checks.stalled_machines(conn, sc.now + 3600) == []
+        assert checks.power_deficit(conn, sc.now + 3600)[0].key == "ledger:running"
+        # running again for the engine's clear_s: the alert clears, so no stall
+        for dt in range(0, lab.alerts.rules.clear_s + 10, 5):
+            lab.send(
+                sc.now + dt, S.oc_message(10 + dt, active=True, eu_in=0, eu_out=300)
+            )
+        assert checks.stalled_machines(conn, lab.now) == []
+        # work disabled, not by GOS (GT stops a multiblock on power loss): WO-7.4's
+        # ``stopped`` counts (``[alerts] stalled_stopped``), once the cooldown is over
+        t0 = lab.now + lab.alerts.rules.cooldown_s
+        for dt in range(0, lab.alerts.rules.stalled_s + 10, 5):
+            doc = S.oc_message(200 + dt, active=False, eu_in=0, eu_out=300)
+            for m in doc["machines"]:
+                m["allowed"] = False
+            lab.send(t0 + dt, doc)
+        found = checks.stalled_machines(conn, lab.now)
+        assert [f.title for f in found] == ["Machine stopped: blastfurnace"]
+        assert "work disabled, not by GOS" in found[0].detail
+    finally:
+        lab.close()
 
 
-def test_a_stall_counts_from_when_it_stopped_not_the_last_heartbeat(
+def test_a_restarted_engine_loses_its_rows_and_the_advisor_follows(
     tmp_path: Path,
     conn_of: Any,  # noqa: ANN401
 ) -> None:
-    """Review H1: one long-lived ingest dedupes the steady ``active=1`` reading to one sample a
-    HEARTBEAT_S, so the stall is timed from the first inactive reading, not the last active
-    sample (which can be up to a minute older)."""
-    from gregtec.bridge.ingest import Bridge
-    from gregtec.bridge.telemetry import Telemetry
-
-    sc = S.build(tmp_path, "early")
-    conn = conn_of(sc.db)
-    t0 = sc.now + 1000
-    clock = Clock(t0)
-    st = core_store.Store(sc.db)
+    """WO-7.5's ``_lose_old_rows`` marks only the engine's own ``alert`` rows ``lost``: this
+    branch writes no ``alert`` rows (the notices keep ``kv`` ``notices.state``), so nothing of
+    the notices is lost, and a lost stall is no stall until the new engine fires it again."""
+    sc = S.build(tmp_path, "trouble")
+    n, _ = make(sc, Clock(sc.now))
     try:
-        bridge = Bridge(Telemetry(st, clock=clock), None)
-
-        def send(at: float, seq: int, active: bool) -> None:
-            clock.now = at
-            doc = S.oc_message(seq, active=active, eu_in=300, eu_out=300)
-            out = bridge.receive(
-                json.dumps(doc).encode(),
-                transport="http",
-                source="fixture",
-                binding="lab",
-                now=at,
-            )
-            assert out.ok, out
-
-        seq = 100
-        for dt in range(0, 300, 5):  # running steadily for five minutes
-            send(t0 + dt, seq, True)
-            seq += 1
-        send(t0 + 299, seq, False)  # one inactive reading
-        assert checks.stalled_machines(conn, t0 + 300) == []
-        for dt in range(304, 360, 5):  # still not running, under a minute
-            seq += 1
-            send(t0 + dt, seq, False)
-        assert checks.stalled_machines(conn, t0 + 358) == []
-        seq += 1
-        send(t0 + 360, seq, False)
-        found = checks.stalled_machines(conn, t0 + 360)
-        assert [f.key for f in found] == [f"tel:lab/{S.EBF_ADDR}"]
-        assert "for 1 min" in found[0].detail
-        assert "not seen running" not in found[0].detail
+        assert [x.kind for x in n.tick()] == ["power_deficit"]
     finally:
-        st.close()
+        n.close()
+    conn = conn_of(sc.db)
+    kinds = {r[0] for r in conn.execute("SELECT DISTINCT kind FROM alert")}
+    assert kinds and kinds <= set(RULES)  # every alert row is the engine's
+    state = conn.execute(
+        "SELECT value FROM kv WHERE key = ?", (notices.KV_STATE,)
+    ).fetchone()
+    S.Lab(sc.db).close()  # a core restart: a new engine
+    assert checks.stalled_machines(conn, sc.now) == []
+    assert {r[0] for r in conn.execute("SELECT DISTINCT state FROM alert")} == {"lost"}
+    assert (
+        conn.execute(
+            "SELECT value FROM kv WHERE key = ?", (notices.KV_STATE,)
+        ).fetchone()
+        == state
+    )
 
 
 def test_a_balanced_power_entry_is_no_deficit(
@@ -330,27 +327,38 @@ def make(sc: Any, clock: Clock, **kw: Any) -> tuple[notices.Notices, list[Any]]:
 
 def test_both_default_notices_fire_in_the_lab_scenario(tmp_path: Path) -> None:
     """Plan 8 row 6.5: both D71 defaults (power deficit or machine stalled; a plan buildable
-    from current stock) fire in a Lab scenario, each once, each with a spoken line."""
-    sc = S.build(tmp_path, "trouble")
+    from current stock) fire in a Lab scenario, each once, each with a spoken line. The stall is
+    WO-7.5's alert engine's (D281): its ``fired`` event carries the line, the notices add none."""
+    sc, lab = S.trouble_lab(tmp_path)
     clock = Clock(sc.now)
     n, given = make(sc, clock)
     try:
+        stall = [
+            e
+            for e in lab.events
+            if e.kind == "fired" and e.alert.rule == "machine_stalled"
+        ]
+        assert len(stall) == 1
+        said = [e.say for e in lab.events if e.say]  # one line per binding per tick
+        assert [x for x in said if "stalled" in x] == [
+            "Lab: power low and blastfurnace has stalled."
+        ]
         first = n.tick()
-        assert [x.kind for x in first] == ["power_deficit", "machine_stalled"]
+        assert [x.kind for x in first] == ["power_deficit"]
         assert all(x.say and not any(c.isdigit() for c in x.say) for x in first)
         assert all(":" not in x.say.split(".", 1)[1] for x in first)  # no ids spoken
         assert n.tick() == []  # announced once while it holds
         alerts = n.alerts()
-        assert [a["id"] for a in alerts] == [
-            "notice:power_deficit",
-            "notice:machine_stalled",
-        ]
+        assert [a["id"] for a in alerts] == ["notice:power_deficit"]
         for a in alerts:
             assert cards.validate(a) == []
         assert alerts[0]["ref"] == "plan:pl-macer"
+        assert [c["title"] for c in lab.alerts.cards() if "stall" in c["title"]] == [
+            "Machine stalled: blastfurnace"
+        ]
         # the macerator line is accepted again and both its machines are put in stock: the
         # buildable notice waits for the problems' cooldown (an opportunity never talks over
-        # a problem), then fires once
+        # a problem, the alert engine's included), then fires once
         conn = core_store.connect(sc.db)
         try:
             conn.execute("UPDATE plan SET status = 'accepted' WHERE id = 'pl-macer'")
@@ -362,25 +370,39 @@ def test_both_default_notices_fire_in_the_lab_scenario(tmp_path: Path) -> None:
         # buffer is balanced again
         for seq, at in enumerate(range(60, notices.COOLDOWN_S, 60), 3):
             clock.now = sc.now + at
-            S.send_oc(
-                sc.db, clock.now - 5, S.oc_message(seq, active=False, eu_in=9, eu_out=9)
-            )
+            lab.send(clock.now - 5, S.oc_message(seq, active=False, eu_in=9, eu_out=9))
             assert n.tick() == []
         clock.now = sc.now + notices.COOLDOWN_S + 1
-        S.send_oc(
-            sc.db, clock.now - 5, S.oc_message(99, active=False, eu_in=9, eu_out=9)
-        )
+        lab.send(clock.now - 5, S.oc_message(99, active=False, eu_in=9, eu_out=9))
         late = n.tick()
         assert [x.kind for x in late] == ["plan_buildable"]
         assert late[0].say == "You have everything to build Macerators · LV in stock."
         assert late[0].refs == ["plan:pl-macer"]
+        fired = [e.alert.rule for e in lab.events if e.kind == "fired"]
+        assert fired.count("machine_stalled") == 1  # said once while it holds
     finally:
         n.close()
-    assert [x.kind for x in given] == [
-        "power_deficit",
-        "machine_stalled",
-        "plan_buildable",
-    ]
+        lab.close()
+    assert [x.kind for x in given] == ["power_deficit", "plan_buildable"]
+
+
+def test_a_stall_alert_holds_an_opportunity_back(tmp_path: Path) -> None:
+    """The priority gate counts the alert engine's problem alerts as HIGH notices: a plan
+    buildable from stock waits out the cooldown after a stall fired."""
+    sc = S.build(tmp_path, "stocked")
+    lab = S.trouble_oc(S.Lab(sc.db), sc.now)
+    clock = Clock(sc.now)
+    n, given = make(sc, clock)
+    try:
+        assert n.tick() == []
+        clock.now = sc.now + notices.COOLDOWN_S - 10
+        assert n.tick() == []
+        clock.now = sc.now + notices.COOLDOWN_S
+        assert [x.kind for x in n.tick()] == ["plan_buildable"]
+    finally:
+        n.close()
+        lab.close()
+    assert [x.kind for x in given] == ["plan_buildable"]
 
 
 def test_the_stocked_scenario_fires_the_buildable_notice_at_once(
@@ -398,27 +420,38 @@ def test_the_stocked_scenario_fires_the_buildable_notice_at_once(
     assert given[0].as_dict()["link"] == "#/designer/pl-macer"
 
 
+def drain(sc: Any, at: float, seq: int, out: int = 300) -> None:  # noqa: ANN401
+    """One OC message with the battery buffer giving out ``out`` EU/t and taking in none."""
+    S.send_oc(sc.db, at, S.oc_message(seq, active=True, eu_in=0, eu_out=out))
+
+
 def test_a_kind_waits_out_its_cooldown_and_a_cleared_subject_can_come_back(
     tmp_path: Path,
 ) -> None:
-    sc = S.build(tmp_path, "trouble")
+    sc = S.build(tmp_path, "early")
     clock = Clock(sc.now)
-    n, _ = make(sc, clock, enabled=("machine_stalled",))
+    n, _ = make(sc, clock, enabled=("power_deficit",))
     try:
-        assert [x.kind for x in n.tick()] == ["machine_stalled"]
-        # it runs again: the subject clears
+        drain(sc, sc.now, 1)
+        assert n.tick() == []  # its hold starts
+        clock.now += checks.DRAIN_HOLD_S
+        drain(sc, clock.now, 2)
+        assert [x.kind for x in n.tick()] == ["power_deficit"]
+        said = clock.now
+        # balanced again: the subject clears
         clock.now += 30
-        S.send_oc(sc.db, clock.now, S.oc_message(3, active=True, eu_in=0, eu_out=300))
+        drain(sc, clock.now, 3, out=0)
         assert n.tick() == [] and n.alerts() == []
-        # and stalls again: due, but its kind is in its cooldown
+        # and drains again past its hold: due, but its kind is in its cooldown
         clock.now += 30
-        S.send_oc(sc.db, clock.now, S.oc_message(4, active=False, eu_in=0, eu_out=300))
-        clock.now += checks.STALL_S + 5
-        S.send_oc(sc.db, clock.now, S.oc_message(5, active=False, eu_in=0, eu_out=300))
+        drain(sc, clock.now, 4)
         assert n.tick() == []
-        clock.now = sc.now + notices.COOLDOWN_S + 1
-        S.send_oc(sc.db, clock.now, S.oc_message(6, active=False, eu_in=0, eu_out=300))
-        assert [x.kind for x in n.tick()] == ["machine_stalled"]
+        clock.now += checks.DRAIN_HOLD_S + 5
+        drain(sc, clock.now, 5)
+        assert n.tick() == []
+        clock.now = said + notices.COOLDOWN_S + 1
+        drain(sc, clock.now, 6)
+        assert [x.kind for x in n.tick()] == ["power_deficit"]
     finally:
         n.close()
 
@@ -429,75 +462,69 @@ def test_a_failed_check_or_a_quiet_oc_is_unknown_not_cleared(
     """Review M2: a check that raised (any exception) or an OC entry gone quiet (the game
     paused) keeps what was said, so the same ongoing problem isn't announced again after the
     cooldown; only a fresh reading that shows it gone, or a long silence, clears it."""
-    sc = S.build(tmp_path, "trouble")
+    sc = S.build(tmp_path, "early")
     clock = Clock(sc.now)
-    n, given = make(sc, clock, enabled=("machine_stalled", "power_deficit"))
+    n, given = make(sc, clock, enabled=("power_deficit",))
     real = checks.power_deficit
     try:
-        assert [x.kind for x in n.tick()] == ["power_deficit", "machine_stalled"]
+        drain(sc, sc.now, 1)
+        n.tick()
+        clock.now += checks.DRAIN_HOLD_S
+        drain(sc, clock.now, 2)
+        assert [x.kind for x in n.tick()] == ["power_deficit"]
 
         def broken(conn: sqlite3.Connection, now: float) -> list[checks.Finding]:
             raise ValueError("a bad plan file")
 
         monkeypatch.setattr(checks, "power_deficit", broken)
-        clock.now = sc.now + notices.COOLDOWN_S + 1
-        S.send_oc(
-            sc.db, clock.now - 1, S.oc_message(3, active=False, eu_in=300, eu_out=300)
-        )
+        clock.now += notices.COOLDOWN_S + 1
+        drain(sc, clock.now - 1, 3)
         assert n.tick() == []  # not raised out of the tick
         assert n.failed == {"power_deficit"}
         assert any(p.startswith("power_deficit: a bad plan file") for p in n.problems)
-        assert [a["id"] for a in n.alerts()] == [
-            "notice:power_deficit",  # what held last tick still shows
-            "notice:machine_stalled",
-        ]
+        assert [a["id"] for a in n.alerts()] == ["notice:power_deficit"]  # still shows
         monkeypatch.setattr(checks, "power_deficit", real)
         clock.now += 10
-        S.send_oc(
-            sc.db, clock.now - 1, S.oc_message(4, active=False, eu_in=300, eu_out=300)
-        )
+        drain(sc, clock.now - 1, 4)
         assert n.tick() == []  # back, still true: not said again
-        # the game pauses: OC goes quiet past STALE_S; the stall is unknown
+        # the game pauses: OC goes quiet past STALE_S; the drain is unknown
         clock.now += 300
         assert n.tick() == []
-        assert [a["id"] for a in n.alerts()] == ["notice:power_deficit"]
-        # it comes back, still stalled, past the cooldown: still not said again
+        assert n.alerts() == []
+        # it comes back, still draining, past the cooldown: still not said again
         clock.now += notices.COOLDOWN_S
-        S.send_oc(
-            sc.db, clock.now - 1, S.oc_message(5, active=False, eu_in=300, eu_out=300)
-        )
+        drain(sc, clock.now - 1, 5)
         assert n.tick() == []
         # silent past the grace: cleared, so it is announced when it holds again
         clock.now += notices.UNKNOWN_GRACE_S + 60
         assert n.tick() == []
-        S.send_oc(
-            sc.db, clock.now - 1, S.oc_message(6, active=False, eu_in=0, eu_out=0)
-        )
-        assert [x.kind for x in n.tick()] == ["machine_stalled"]
+        drain(sc, clock.now - 1, 6)
+        assert n.tick() == []  # its hold again
+        clock.now += checks.DRAIN_HOLD_S
+        drain(sc, clock.now - 1, 7)
+        assert [x.kind for x in n.tick()] == ["power_deficit"]
     finally:
         n.close()
-    assert [x.kind for x in given] == [
-        "power_deficit",
-        "machine_stalled",
-        "machine_stalled",
-    ]
+    assert [x.kind for x in given] == ["power_deficit", "power_deficit"]
 
 
 def test_a_cleared_problem_pushes_the_change(tmp_path: Path) -> None:
     """Review M1: when an announced problem clears, ``changed`` is called once so the core
     pushes the state (the alert card goes) and Now asks the advisor again."""
-    sc = S.build(tmp_path, "trouble")
+    sc = S.build(tmp_path, "early")
     clock = Clock(sc.now)
     calls: list[int] = []
-    n, _ = make(
-        sc, clock, enabled=("machine_stalled",), changed=lambda: calls.append(1)
-    )
+    n, _ = make(sc, clock, enabled=("power_deficit",), changed=lambda: calls.append(1))
     try:
+        drain(sc, sc.now, 1)
+        n.tick()
+        clock.now += checks.DRAIN_HOLD_S
+        drain(sc, clock.now, 2)
         assert len(n.tick()) == 1
         assert calls == []  # the notice's own push refreshes the state
         assert n.tick() == [] and calls == []  # nothing moved
         clock.now += 30
-        S.send_oc(sc.db, clock.now, S.oc_message(3, active=True, eu_in=0, eu_out=300))
+        drain(sc, clock.now, 3, out=0)
         assert n.tick() == []
         assert calls == [1] and n.alerts() == []
         assert n.tick() == [] and calls == [1]
@@ -527,12 +554,12 @@ def test_what_was_said_is_not_said_again_after_a_restart(tmp_path: Path) -> None
     sc = S.build(tmp_path, "trouble")
     clock = Clock(sc.now)
     n, _ = make(sc, clock)
-    assert len(n.tick()) == 2
+    assert len(n.tick()) == 1
     n.close()
     again, _ = make(sc, clock)
     try:
         assert again.tick() == []
-        assert len(again.alerts()) == 2
+        assert len(again.alerts()) == 1
     finally:
         again.close()
 
@@ -555,7 +582,9 @@ def test_opt_in_quest_notice_and_turned_off_defaults(tmp_path: Path) -> None:
 
 
 def test_the_priorities_cover_every_configured_kind() -> None:
-    assert set(notices.PRIORITY) == set(config.NOTICES)
+    assert set(notices.PRIORITY) == set(config.NOTICES) - set(notices.ALERT_OWNED)
+    assert notices.KINDS == tuple(notices.PRIORITY)
+    assert set(notices.ALERT_PROBLEMS) <= set(RULES)
     assert notices.DEFAULT == config.NOTICES_DEFAULT
     assert notices.PRIORITY["power_deficit"] > notices.PRIORITY["plan_buildable"]
 
@@ -602,7 +631,7 @@ def test_the_state_survives_a_bad_kv_row(tmp_path: Path) -> None:
         conn.close()
     n, _ = make(sc, Clock(time.time()))
     try:
-        assert len(n.tick()) == 2
+        assert len(n.tick()) == 1
     finally:
         n.close()
     conn = core_store.connect(sc.db)
@@ -652,10 +681,11 @@ def test_the_core_shows_the_problems_and_pushes_each_notice(
                 if pushed:
                     break
                 time.sleep(0.05)
-            assert [x.kind for x in pushed] == ["power_deficit", "machine_stalled"]
+            assert [x.kind for x in pushed] == ["power_deficit"]
             alerts = client.get("/api/state", headers=head).json()["alerts"]
             ids = [a["id"] for a in alerts]
-            assert "notice:power_deficit" in ids and "notice:machine_stalled" in ids
+            assert "notice:power_deficit" in ids
+            assert "notice:machine_stalled" not in ids  # the alert engine's card (D281)
             with client.websocket_connect("ws://127.0.0.1:8765/ws", headers=head) as ws:
                 core.notice_given(pushed[0])
                 got: dict[str, Any] = {}

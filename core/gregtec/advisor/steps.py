@@ -3,8 +3,9 @@
 :func:`advise` reads the plan's inputs: ``me/goals.md`` (Clayton's, read only, never written), My
 base (tier, machines, stock), the top :data:`FRONTIER_N` frontier quests (WO-6.4's ranking), the
 last :data:`EVENTS_H` hours of events (WO-6.3's store), the EU ledger (WO-4.4), the problems
-the advisor checks (a power deficit, stalled machines: :mod:`.checks`; the head's ``problems``) and the active plans; and returns the steps
-**ranked by code** ([QA:D2]: models explain, never reorder), each with its reasons, citations and
+the advisor checks (a power deficit: :mod:`.checks`), the stalled and stopped machines WO-7.5's
+alert engine has firing (its ``alert`` rows, D281; the head's ``problems``) and the active plans;
+and returns the steps **ranked by code** ([QA:D2]: models explain, never reorder), each with its reasons, citations and
 a dashboard link. The order is fixed by :data:`BUCKETS`, then each source's own order:
 
 1. ``fix``: a power deficit (running lines, or a draining OC power entry), then stalled machines
@@ -161,7 +162,7 @@ def advise(
         title = (
             stalled[0].title
             if len(stalled) == 1
-            else f"Machines stalled: {len(stalled)} have a job and aren't running"
+            else f"Machines stalled: {len(stalled)} aren't running"
         )
         why = tuple(f.detail for f in shown)
         if len(stalled) > len(shown):
@@ -275,7 +276,7 @@ def advise(
         "frontier": len(frontier),
         f"events_{EVENTS_H}h": sum(counts.values()),
         "active_plans": len(active),
-        "problems": len(deficits) + len(stalled),  # the advisor's own checks only
+        "problems": len(deficits) + len(stalled),  # its checks and the stall alerts
     }
     if not out:
         notes.append(

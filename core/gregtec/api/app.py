@@ -302,6 +302,7 @@ class Core:
         if game.paused_now(dashboard.board_of(self).running) is not True:
             return None
         return game.since if game.since is not None else math.inf
+
     def notice_given(self, notice: Notice) -> None:
         """The notices' ``deliver`` (their thread): push the notice to every socket (the voice
         client says its ``say`` line, D76) and refresh the state, whose alerts now hold it."""

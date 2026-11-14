@@ -2,7 +2,11 @@
 
 The core calls :meth:`Notices.tick` every :data:`TICK_S`. Each enabled kind (``[policy]
 notices``; D71's defaults :data:`DEFAULT`: a power deficit, a stalled machine, a plan buildable
-from stock; ``quest_opened`` is opt-in) is checked by :mod:`.checks` and becomes a notice when:
+from stock; ``quest_opened`` is opt-in) is checked by :mod:`.checks` and becomes a notice when
+the rules below allow. **A stalled machine is the alert engine's** (WO-7.5, D281): its
+``machine_stalled`` rule (``[alerts]``, which counts a machine GT stopped too) gives the one
+card and the one spoken line, so the notices never check it (:data:`ALERT_OWNED`; the name stays
+a valid ``[policy] notices`` kind, Appendix C, D267). A kind becomes a notice when:
 
 - **it is new**: its subject (a plan, an OC entry, a quest; :attr:`.checks.Finding.key`) wasn't
   true at the last tick, or has been true for its hold (a draining LSC for
@@ -16,13 +20,14 @@ from stock; ``quest_opened`` is opt-in) is checked by :mod:`.checks` and becomes
   7.5); the subjects of a kind that are due together go in one notice ("2 machines stalled"),
   and a subject that came up during the cooldown waits for its end (if it still holds);
 - **the priority gate is open** (:data:`PRIORITY`): no notice of a higher priority was given in
-  the last :data:`COOLDOWN_S`, so an opportunity never talks over a problem. A problem is never
-  held back by an opportunity.
+  the last :data:`COOLDOWN_S`, and no telemetry problem alert (:data:`ALERT_PROBLEMS`, the alert
+  engine's ``alert`` rows) fired in it, so an opportunity never talks over a problem. A problem
+  is never held back by an opportunity.
 
 A notice is handed to ``deliver`` (the core: a ``notice`` push to every socket, which the voice
 client speaks, D76, and the dashboard shows) with a spoken line that holds no ids or numbers (the
-dashboard and the advisor carry them, cited). Problem notices (``power_deficit``,
-``machine_stalled``) stay in :meth:`Notices.alerts` while they hold: the dashboard's alert cards.
+dashboard and the advisor carry them, cited). Problem notices (``power_deficit``) stay in
+:meth:`Notices.alerts` while they hold: the dashboard's alert cards.
 When the alerts change without a notice (a problem cleared), ``changed`` is called (the core
 pushes the state and a ``notice.cleared`` message, so the cards and Now's steps refresh).
 The state (what was announced, each kind's last notice) is kept in ``kv`` ``notices.state``, so a
@@ -57,13 +62,19 @@ UNKNOWN_GRACE_S = (
 HIGH, NORMAL, LOW = 2, 1, 0
 PRIORITY: dict[str, int] = {
     "power_deficit": HIGH,
-    "machine_stalled": HIGH,
     "plan_buildable": NORMAL,
     "quest_opened": LOW,
 }
-KINDS = NOTICES  # [policy] notices' kinds, in this order
+ALERT_OWNED = (
+    "machine_stalled",
+)  # the alert engine's to detect and say (WO-7.5, D281)
+# the alert engine's problem rules: one firing holds the lower notices back, as HIGH would
+ALERT_PROBLEMS = ("power_low", "maintenance", "machine_stalled")
+KINDS = tuple(
+    k for k in NOTICES if k not in ALERT_OWNED
+)  # the kinds checked here, in order
 DEFAULT = NOTICES_DEFAULT  # D71: on unless [policy] notices says otherwise
-PROBLEMS = ("power_deficit", "machine_stalled")  # shown as alert cards while they hold
+PROBLEMS = ("power_deficit",)  # shown as alert cards while they hold
 
 
 @dataclass(frozen=True)
@@ -101,10 +112,6 @@ def _say(kind: str, found: Sequence[checks.Finding]) -> tuple[str, str]:
                 "Heads up: power deficit. Your running lines use more than they make."
             )
         return found[0].title, "Heads up: power deficit. A power store is draining."
-    if kind == "machine_stalled":
-        if n == 1:
-            return found[0].title, "Heads up: a machine has stalled."
-        return f"Machines stalled: {n}", f"Heads up: {n} machines have stalled."
     if kind == "plan_buildable":
         name = found[0].title.removeprefix("You can build ").removesuffix(" from stock")
         if n == 1 and not any(c.isdigit() for c in name):
@@ -198,8 +205,6 @@ class Notices:
             try:
                 if kind == "power_deficit":
                     out += checks.power_deficit(conn, now)
-                elif kind == "machine_stalled":
-                    out += checks.stalled_machines(conn, now)
                 elif kind == "plan_buildable":
                     out += checks.buildable_plans(conn, self.home)
                 else:
@@ -258,8 +263,9 @@ class Notices:
                     continue
                 by_kind.setdefault(f.kind, []).append(f)
             given: list[Notice] = []
+            alerted = self._alerted(conn, now)
             for kind in sorted(by_kind, key=lambda k: (-PRIORITY[k], KINDS.index(k))):
-                if not self._open(kind, st["last"], now):
+                if not self._open(kind, st["last"], now, alerted):
                     continue
                 title, say = _say(kind, by_kind[kind])
                 notice = Notice(
@@ -298,9 +304,25 @@ class Notices:
                 log.exception("notice change push failed")
         return given
 
-    def _open(self, kind: str, last: Mapping[str, int], now: float) -> bool:
-        """The kind's own cooldown is over and no higher-priority notice is in its cooldown."""
+    def _alerted(self, conn: sqlite3.Connection, now: float) -> bool:
+        """A telemetry problem alert fired within the cooldown (the alert engine's rows)."""
+        if not checks._has(conn, "alert"):
+            return False
+        marks = ", ".join("?" for _ in ALERT_PROBLEMS)
+        row = conn.execute(
+            f"SELECT 1 FROM alert WHERE kind IN ({marks}) AND ts > ? LIMIT 1",
+            (*ALERT_PROBLEMS, int(now) - self.cooldown_s),
+        ).fetchone()
+        return row is not None
+
+    def _open(
+        self, kind: str, last: Mapping[str, int], now: float, alerted: bool = False
+    ) -> bool:
+        """The kind's own cooldown is over and no higher-priority notice (or, below HIGH, a
+        telemetry problem alert) is in its cooldown."""
         if now - last.get(kind, -self.cooldown_s) < self.cooldown_s:
+            return False
+        if alerted and PRIORITY[kind] < HIGH:
             return False
         return not any(
             PRIORITY[k] > PRIORITY[kind] and now - ts < self.cooldown_s
