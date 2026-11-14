@@ -32,23 +32,21 @@ $ProgressPreference = 'SilentlyContinue'
 
 ## 1. Install the listener in Lab (once per deploy)
 
-Lab is a mirror of Play, so first keep sync from deleting Lab's copy: in `%USERPROFILE%\GregtecOS\gos.toml` add
-
-```toml
-[sync.lab]
-exclude = ["mods/gregteclink*", "config/gregteclink*"]
-```
-
-Then copy the deployed jar (D98: `gos deploy` keeps it in `mod-dist`, with its SHA256 in
-`release.json`) and turn the listener on:
+Since WO-8.1 this is `scripts/install_gregteclink.py` (D287, `gregteclink_client.md` B.1-B.2). It
+copies the deployed jar (D98: `gos deploy` keeps it in `mod-dist`, with its SHA256 in
+`release.json`) and writes Lab's `config\gregteclink.cfg` with the listener and client modules on
+and export off, plus the link's token. Lab's default `[sync.lab] exclude` already keeps
+`mods/gregteclink*` and `config/gregteclink*` (if your gos.toml has its own `[sync.lab] exclude`,
+it must keep both). Close every GTNH client, then:
 
 ```powershell
-$jar = Get-ChildItem "$app\mod-dist\gregteclink-*.jar" | Select-Object -First 1
-(Get-FileHash $jar.FullName -Algorithm SHA256).Hash   # matches release.json's gregteclink sha256
-Remove-Item "$lab\mods\gregteclink*.jar" -ErrorAction SilentlyContinue
-Copy-Item $jar.FullName "$lab\mods\"
-Set-Content -Encoding utf8 "$lab\config\gregteclink.cfg" "modules {`n    B:client=false`n    B:export=false`n    B:listener=true`n}`n"
+& "$app\.venv\Scripts\python.exe" "$app\scripts\install_gregteclink.py" --instance lab
+& "$app\.venv\Scripts\python.exe" "$app\scripts\install_gregteclink.py" --instance lab --apply
 ```
+
+If you already ran it for `gregteclink_client.md` B, it is done: don't run it again, and don't
+write Lab's `gregteclink.cfg` by hand (an older version of this step did, with `B:client=false`,
+which turns WO-8.1's client module off).
 
 ## 2. The check (V26): 10 machines placed and broken
 
