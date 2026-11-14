@@ -30,6 +30,7 @@ from gregtec import (
     voicecli,
 )
 from gregtec import deploy as app_deploy
+from gregtec.advisor import cli as advisor_cli
 from gregtec.agents import design_cost_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.crops import cli as cropcli
@@ -495,6 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     screen_eval_cli.add_parsers(eval_cmds)
     powereval.add_parsers(eval_cmds)
     quest_cli.add_parsers(quest_cmds, eval_cmds)
+    advisor_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -792,6 +794,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return powereval.main(args, sys.stdout)
         if args.eval_command == quest_cli.EVAL:
             return quest_cli.run_eval(args, sys.stdout)
+        if args.eval_command == advisor_cli.COMMAND:
+            return advisor_cli.run(args, sys.stdout)
         if args.eval_command == "deep-lane":
             from gregtec.agents import deep_eval
 
