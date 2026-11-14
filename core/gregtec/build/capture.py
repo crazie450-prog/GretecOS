@@ -362,3 +362,51 @@ def _machine_id(conn: sqlite3.Connection, capture: Capture) -> int | None:
 
 def _json(value: object) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class Compared:
+    footprint: fp.Footprint  # the library's, at the tiers the capture holds
+    differences: tuple[str, ...]  # one line per cell that differs
+
+
+def compare(capture: Capture, lib: fp.Library) -> Compared:
+    """A capture of a multi the library has (L1: build it with the projector in the Lab, then
+    capture it) against its footprint: the cells that differ. A tier channel is taken at the
+    value whose block the capture holds. A hatch cell matches a placed hatch, its fallback
+    block, or nothing (a hatch-only cell); any other cell must hold the footprint's block."""
+    found = lib.for_controller(capture.registry_name, capture.meta)
+    if not found:
+        raise CaptureError(f"the library has no footprint for {capture.controller}")
+    if capture.variant not in {f.variant for f in found}:
+        variants = ", ".join(f.variant for f in found)
+        raise CaptureError(
+            f"{capture.controller} has no variant {capture.variant!r} (its variants: "
+            f"{variants}); set trigger_stack_size and channels as built"
+        )
+    base = next(f for f in found if f.variant == capture.variant)
+    held = {f"{b}@{m}" for _, b, m in capture.blocks}
+    tiers = {}
+    for channel, options in base.choices.items():
+        values = [t.value for t in options if t.key in held]
+        if len(values) == 1:
+            tiers[channel] = values[0]
+    try:
+        f = lib.get(capture.registry_name, capture.meta, capture.variant, tiers=tiers)
+    except fp.FootprintError:
+        f = base
+    got = {d: f"{b}@{m}" for d, b, m in capture.blocks}
+    placed = {d for d, _, p in capture.hatches if p}
+    diffs: list[str] = []
+    for c in f.cells:
+        have = got.pop(c.d, None)
+        if c.hatches and (c.d in placed or have in (None, c.key)):
+            continue
+        if have != c.key:
+            want = c.key or "nothing (a hatch cell)"
+            diffs.append(f"{list(c.d)}: footprint {want}, capture {have or 'air'}")
+    for d in sorted(placed - {c.d for c in f.cells}):
+        diffs.append(f"{list(d)}: footprint air, capture a hatch")
+    for d, key in sorted(got.items()):
+        diffs.append(f"{list(d)}: footprint air, capture {key}")
+    return Compared(f, tuple(sorted(diffs)))

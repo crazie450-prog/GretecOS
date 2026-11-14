@@ -582,3 +582,71 @@ def test_the_gos_cli_has_the_command() -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main(["footprints", "--help"])
     assert exc.value.code == 0
+
+
+def _as_captured(
+    f: fp.Footprint, at: fp.Offset = (10, 70, -5)
+) -> dict[fp.Offset, tuple[str, int]]:
+    """``f``'s cells as a Lab capture would hold them: world positions, hatch-only cells filled
+    with a placed GT hatch."""
+    cells: dict[fp.Offset, tuple[str, int]] = {}
+    for c in f.cells:
+        p = (at[0] + c.d[0], at[1] + c.d[1], at[2] + c.d[2])
+        cells[p] = (c.block, int(c.meta or 0)) if c.block else (GT, 70)
+    return cells
+
+
+def test_compare_a_capture_with_its_footprint(conn: sqlite3.Connection) -> None:
+    lib = fp.library(conn)
+    hot = lib.get(GT, 9001, facing="south", tiers={"coil": 2})
+    cells = _as_captured(hot)
+    cap = capture.from_cells(cells, controller=(GT, 9001), facing="south")
+    result = capture.compare(cap, lib)
+    assert result.differences == ()
+    assert result.footprint.tiers == (("coil", 2),)  # the tier the capture holds
+    wrong = next(p for p, b in cells.items() if b == ("fixture:casing", 0))
+    cells[wrong] = ("fixture:casing", 9)
+    cells[(99, 99, 99)] = ("fixture:casing", 0)
+    cap = capture.from_cells(cells, controller=(GT, 9001), facing="south")
+    diffs = capture.compare(cap, lib).differences
+    assert len(diffs) == 2
+    assert any(
+        "footprint fixture:casing@0, capture fixture:casing@9" in d for d in diffs
+    )
+    assert any("footprint air, capture fixture:casing@0" in d for d in diffs)
+    tall = capture.from_cells(
+        cells, controller=(GT, 9001), facing="south", trigger_stack_size=2
+    )
+    with pytest.raises(capture.CaptureError, match="no variant 't2'"):
+        capture.compare(tall, lib)
+    other = capture.from_cells(
+        {(0, 0, 0): ("a:b", 0)}, controller=("a:b", 0), facing="north"
+    )
+    with pytest.raises(capture.CaptureError, match="no footprint"):
+        capture.compare(other, lib)
+
+
+def test_cli_compare(tmp_path: Path) -> None:
+    _, toml = _home(tmp_path)
+    tower = _fixture_library().get(GT, 9003, "t2", facing="east")
+    doc: dict[str, Any] = {
+        "format": "gos-capture",
+        "schema": 1,
+        "controller": {"block": GT, "meta": 9003},
+        "facing": "east",
+        "trigger_stack_size": 2,
+        "tool": "guidenh-region-wand",
+        "cells": [
+            {"p": list(p), "block": b, "meta": m}
+            for p, (b, m) in _as_captured(tower).items()
+        ],
+    }
+    path = tmp_path / "tower.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    code, out = _gos(toml, "compare", str(path))
+    assert code == 0 and "every cell matches" in out
+    casing = next(c for c in doc["cells"] if c["block"] == "fixture:casing")
+    casing["meta"] = 7
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    code, out = _gos(toml, "compare", str(path))
+    assert code == 1 and "1 cell(s) differ" in out

@@ -9,6 +9,8 @@
   the machine catalog have a footprint and which need a Lab capture.
 - ``gos footprints capture FILE [--dry-run]``: reads a ``gos-capture`` file
   (:mod:`gregtec.build.capture`) and loads it into ``GOS_HOME/data/gos.sqlite``.
+- ``gos footprints compare FILE``: a capture of a multi the library has against its footprint
+  (L1's "cells match structure"); exit 1 when a cell differs.
 
 Everything but ``capture`` only reads the DB. Nothing here reads or writes a world.
 """
@@ -71,7 +73,12 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     cap.add_argument(
         "--dry-run", action="store_true", help="read and check it, write nothing"
     )
-    for each in (ls, show, cov, cap):
+    cmp = sub.add_parser(
+        "compare",
+        help="a Lab capture of a multi the library has, against its footprint",
+    )
+    cmp.add_argument("file", type=Path, help="the capture file")
+    for each in (ls, show, cov, cap, cmp):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
 
@@ -94,6 +101,8 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
             return _list(conn, args, out)
         if cmd == "show":
             return _show(conn, args, out)
+        if cmd == "compare":
+            return _compare(conn, args, out)
         plans, bad = coverage.accepted_plans(cfg.gos_home, conn)
         report = coverage.coverage(conn, plans, unreadable=bad)
     except sqlite3.Error as exc:
@@ -190,3 +199,19 @@ def _capture(db: Path, args: argparse.Namespace, out: TextIO) -> int:
     verb = "replaced the earlier capture" if loaded.replaced else "loaded"
     print(f"{verb}: {loaded.footprint.key} (structure run {loaded.run_id})", file=out)
     return 0
+
+
+def _compare(conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO) -> int:
+    try:
+        result = capture.compare(capture.read(args.file), fp.library(conn))
+    except (capture.CaptureError, fp.FootprintError) as exc:
+        print(f"Not compared: {exc}", file=out)
+        return 2
+    f = result.footprint
+    if not result.differences:
+        print(f"{f.key}: every cell matches ({len(f.cells)} cells)", file=out)
+        return 0
+    print(f"{f.key}: {len(result.differences)} cell(s) differ", file=out)
+    for line in result.differences[:200]:
+        print(f"  {line}", file=out)
+    return 1
