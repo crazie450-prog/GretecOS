@@ -17,7 +17,7 @@ What goes where (defaults pending your answer, D298): base alerts (power low, ma
    ```powershell
    & $gos alerts routed
    ```
-   `"away": false` under `context`.
+   `"away": false` and `"presence": "present"` under `context`. If `presence` says `unknown`, the input-idle check failed: away-only DMs are off (the dashboard's health strip shows Presence as a warning). Note it in the PR.
 2. Typing a command is input, so check "away" with a delay. Start this, then leave the keyboard and mouse alone (a video playing is fine; a game pad doesn't count):
    ```powershell
    Start-Sleep -Seconds 660; & $gos alerts routed > $env:TEMP\routed.json
@@ -29,7 +29,7 @@ What goes where (defaults pending your answer, D298): base alerts (power low, ma
 ```powershell
 & $gos alerts test
 ```
-Within a few seconds the bot DMs "Test alert from GOS". Nothing else in your DMs.
+Within a few seconds the bot DMs "Test alert from GOS". Nothing else in your DMs. (DMs are queued only while the bot is reading the outbox: with the bot stopped, `& $gos alerts routed` shows the test alert held as `no Discord bot`, and it goes within seconds of the bot starting, if within 5 minutes.)
 
 ## 3. Esc, then walk away (the paused DM, D76)
 
@@ -69,9 +69,9 @@ Simulated: no money is spent; the cycle's spend is the meter's own rows.
 The supervisor restarts a crashed core in about 2 seconds, so a plain kill isn't an outage. Make the core fail to start instead, and leave the PC:
 
 1. In `gos.toml`, under `[core]`, set `host = "0.0.0.0"` (the core refuses to start with it; the bot and the supervisor don't mind).
-2. `Get-Process python | Where-Object { $_.CommandLine -like '*gregtec.api*' } | Stop-Process` (the supervisor restarts it; it now exits at once and backs off).
+2. `Get-CimInstance Win32_Process | Where-Object CommandLine -like '*gregtec.api*' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }` (Windows PowerShell 5.1's `Get-Process` has no `CommandLine`; this also catches the venv launcher and its child; or stop the `pid` that `& $gos status` shows for `core`). The supervisor restarts it; it now exits at once and backs off.
 3. Walk away. About 10 minutes after your last input, one DM: "GOS offline: the core on your PC hasn't answered for ... s".
-4. Come back, remove the `host` line, wait a minute: "GOS is back" arrives once the core's next try starts it (or run `& $gos serve`).
+4. Come back, remove the `host` line, wait a minute for the core's next try (or run `& $gos serve`). No "GOS is back" DM: you're at the PC (D300: it goes under the same rules as the offline DM, so only while you're still away). To see it, stay away until the core is back: put the `host` line back, kill the core as in 2, walk away, and when the offline DM comes remove the line from your phone over Remote Desktop, or skip this check.
 
 ## 7. Quiet hours and /alerts
 
