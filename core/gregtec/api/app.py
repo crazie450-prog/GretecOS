@@ -40,6 +40,7 @@
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 | /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
 | GET  /api/activity[/recap]     | see ``gregtec.events.routes`` | sessions, timeline, recap (WO-6.3)|
+| /api/jobs..., /api/discord/... | see ``gregtec.remote.routes`` | design jobs, Discord alerts and journal (WO-9.1)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -129,6 +130,8 @@ from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
 from gregtec.quests import view as quest_view
+from gregtec.remote import routes as remote_routes
+from gregtec.remote.jobs import JobQueue
 from gregtec.screen import routes as screen_routes
 from gregtec.screen.reader import ScreenReader
 from gregtec.setup.service import SetupService
@@ -230,6 +233,8 @@ class Core:
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
     _alert_state_due: bool = False  # a state push for alert events is queued (WO-7.5)
     events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
+    jobs: JobQueue | None = None  # the durable design-job queue for Discord (WO-9.1)
+    journal: Callable[[list[str]], None] | None = None  # the day's journal (WO-9.1)
     notices: Notices | None = None  # the proactive notices (WO-6.5, D71)
 
     # --- pushing to WebSocket clients
@@ -897,6 +902,7 @@ def create_app(core: Core) -> FastAPI:
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
+    remote_routes.add_routes(app, core, principal, _json_body)
     return app
 
 

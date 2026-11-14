@@ -43,6 +43,8 @@ from gregtec.events.journal import HaikuScribe, Scribe
 from gregtec.events.service import EventService
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
+from gregtec.remote.jobs import JobQueue
+from gregtec.remote.routes import run_job
 from gregtec.setup.service import record_plays
 from gregtec.store import DB_NAME, Store
 from gregtec.vault import fts
@@ -252,9 +254,14 @@ def run(
         extra={"port": cfg.core_port, "supervised": supervised, "pid": os.getpid()},
     )
     mailboxes.start()
+    # Discord's design jobs (WO-9.1, D295): queued in the DB, run one at a time here.
+    core.journal = bridge_ops.journal_to(cfg.gos_home / "vault")
+    core.jobs = JobQueue(store, run_job(cfg.gos_home), journal=core.journal)
+    core.jobs.start()
     try:
         server.run(sockets=[sock])
     finally:
+        core.jobs.stop()
         mailboxes.stop()
         control.remove_run_file(run_file, os.getpid())
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
