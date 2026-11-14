@@ -1466,4 +1466,511 @@ function F.write_config(w, text, path)
   return path
 end
 
+---------------------------------------------------------------------------------------------
+-- The breeding station's blocks (WO-7.6): a chest, a transposer, and CropsNH's Crop Breeder and
+-- Seed Generator as GT basic machines with their adapters. As read from GT 5.09.54.265
+-- (MTEBasicMachine: 5 slots, the inputs, one output, one special slot; automation may put items
+-- only into the inputs and take them only from the output; a run's inputs are taken when it
+-- starts, its output appears when it ends; a paused machine finishes the run it has and starts no
+-- other; a recipe check follows an inventory change, the run's end and work being switched on),
+-- CropsNH 2.0.140 (MTECropBreeder: one of each parent and the catalysts used per run, the child
+-- only on a success; MTESeedGenerator: copies the first seed it finds and never uses it up) and
+-- OC 1.12.68 (the transposer: every call a server tick, transferItem atomic and side-checked,
+-- getAllStacks' getAll 0-based with {} for an empty slot, getTankLevel the sum of the tanks).
+-- Nothing is copied from them.
+
+F.SEED = "cropsnh:genericSeed"
+
+-- A CropsNH seed stack: analysed (its label names the crop) unless label is "Unknown Seeds".
+function F.seed(label, n, stats)
+  return { name = F.SEED, damage = 0, label = label, size = n or 1, maxSize = 64, hasTag = true, stats = stats or { 1, 1, 1 } }
+end
+
+function F.item(name, damage, n, label)
+  return { name = name, damage = damage or 0, label = label or name, size = n or 1, maxSize = 64, hasTag = false }
+end
+
+local function stats_key(s)
+  return s.stats and table.concat(s.stats, "/") or ""
+end
+
+local function same_stack(a, b)
+  return a and b and a.name == b.name and a.damage == b.damage and a.label == b.label and stats_key(a) == stats_key(b)
+end
+F.same_stack = same_stack
+
+local function copy_stack(s, n)
+  local c = {}
+  for k, v in pairs(s) do
+    c[k] = v
+  end
+  if s.stats then
+    c.stats = { s.stats[1], s.stats[2], s.stats[3] }
+  end
+  c.size = n or s.size
+  return c
+end
+
+-- A plain chest: any slot takes any item, any slot gives.
+function F.chest(size)
+  local inv = { size = size or 27, slots = {}, kind = "chest" }
+  function inv.put_ok()
+    return true
+  end
+  function inv.take_ok()
+    return true
+  end
+  function inv.sync() end
+  function inv.changed() end
+  return inv
+end
+
+-- Put stacks into a chest's first slots (tests).
+function F.fill(inv, stacks)
+  for i, s in ipairs(stacks) do
+    inv.slots[i] = s
+  end
+end
+
+function F.count(inv, label, name)
+  local c = 0
+  for i = 1, inv.size do
+    local s = inv.slots[i]
+    if s and (s.label == label) and (name == nil or s.name == name) then
+      c = c + s.size
+    end
+  end
+  return c
+end
+
+-- A simple deterministic generator (an LCG), so failures are reproducible per seed.
+local function rng(seed)
+  local x = seed or 12345
+  return function()
+    x = (x * 1103515245 + 12345) % 2147483648
+    return x / 2147483648
+  end
+end
+
+local function basic_machine(w, opts, nin)
+  local m = {
+    w = w,
+    kind = "machine",
+    nin = nin,
+    size = 5 + nin + 2,
+    slots = {},
+    allowed = opts.allowed ~= false,
+    run = nil,
+    fluid = opts.fluid or 100000,
+    duration = opts.duration or 10,
+    check_due = nil,
+    runs = 0,
+    rand = rng(opts.seed),
+  }
+  m.first, m.last, m.out = 6, 5 + nin, 6 + nin
+  -- MTEBasicMachine.allowPutStack (mDisableMultiStack on, as GT sets it by default): an input
+  -- slot, empty or holding the same stack, and only that slot when another input holds it.
+  function m.put_ok(slot, stack)
+    if slot < m.first or slot > m.last then
+      return false
+    end
+    local cur = m.slots[slot]
+    if cur and not same_stack(cur, stack) then
+      return false
+    end
+    for i = m.first, m.last do
+      if i ~= slot and same_stack(m.slots[i], stack) then
+        return false
+      end
+    end
+    return true
+  end
+  -- MTEBasicMachine.allowPullStack: the output slot only.
+  function m.take_ok(slot)
+    return slot == m.out
+  end
+  function m.changed()
+    m.check_due = m.check_due or (w.clock + 0.05)
+  end
+  function m.sync()
+    local t = w.clock
+    while true do
+      local r = m.run
+      if r and t >= r.end_t then
+        if r.out then
+          local cur = m.slots[m.out]
+          if cur and same_stack(cur, r.out) then
+            cur.size = cur.size + r.out.size
+          elseif not cur then
+            m.slots[m.out] = r.out
+          end
+        end
+        m.run = nil
+        m.check_due = r.end_t
+      elseif r then
+        return
+      end
+      if m.allowed and m.check_due and m.check_due <= t then
+        local at = m.check_due
+        m.check_due = nil
+        if not m.check(at) then
+          return
+        end
+      else
+        return
+      end
+    end
+  end
+  function m.input(i)
+    return m.slots[i]
+  end
+  function m.use(i, n)
+    local s = m.slots[i]
+    s.size = s.size - n
+    if s.size <= 0 then
+      m.slots[i] = nil
+    end
+  end
+  function m.can_output(stack)
+    local cur = m.slots[m.out]
+    return not cur or (same_stack(cur, stack) and cur.size < 64)
+  end
+  return m
+end
+
+-- The adapter on a machine: a gt_machine named for it, whose progress and work switch follow it.
+local function adapter(w, m, name, opts)
+  local d = F.gt_machine(w, {
+    name = name,
+    prefix = opts.prefix,
+    addr = opts.addr,
+    xyz = opts.xyz or { 10, 64, 10 },
+    sensor = {},
+  })
+  local mm = d.methods
+  mm.hasWork = direct(function()
+    m.sync()
+    return m.run ~= nil
+  end)
+  mm.isMachineActive = direct(function()
+    m.sync()
+    return m.run ~= nil
+  end)
+  mm.getWorkProgress = direct(function()
+    m.sync()
+    return m.run and math.floor((w.clock - m.run.start_t) * 20) or 0
+  end)
+  mm.getWorkMaxProgress = direct(function()
+    m.sync()
+    return m.run and math.floor((m.run.end_t - m.run.start_t) * 20) or 0
+  end)
+  mm.isWorkAllowed = direct(function()
+    return m.allowed
+  end)
+  mm.setWorkAllowed = direct(function(_, v)
+    if type(v) ~= "boolean" then
+      return
+    end
+    w:after_ticks(1, function()
+      m.sync()
+      local was = m.allowed
+      m.allowed = v
+      if v and not was then
+        m.check_due = w.clock -- hasWorkJustBeenEnabled
+      end
+      m.sync()
+    end)
+  end)
+  m.adapter = d
+  return d
+end
+
+-- CropsNH's Crop Breeder (MV: 3 inputs). opts.recipes = { { parents = {labels}, child = label,
+-- cat = { {name, damage, n} } } }; opts.outcomes = { true, false, ... } decides runs in order
+-- (then opts.chance, default 0.5, from opts.seed); opts.fert = mB a run takes.
+function F.crop_breeder(w, opts)
+  opts = opts or {}
+  local m = basic_machine(w, opts, opts.tier and opts.tier >= 3 and 6 or 3)
+  m.fert = opts.fert or 500
+  m.recipes = opts.recipes or {}
+  m.outcomes = opts.outcomes or {}
+  m.chance = opts.chance or 0.5
+  m.results = {}
+  function m.check(t)
+    if m.fluid < m.fert then
+      return false
+    end
+    local parents, n = {}, 0
+    for i = m.first, m.last do
+      local s = m.slots[i]
+      if s and s.name == F.SEED and s.label ~= "Unknown Seeds" and not parents[s.label] then
+        parents[s.label] = i
+        n = n + 1
+      end
+    end
+    if n < 2 then
+      return false
+    end
+    local found = {}
+    for _, r in ipairs(m.recipes) do
+      local ok = true
+      for _, p in ipairs(r.parents) do
+        if not parents[p] then
+          ok = false
+        end
+      end
+      if ok then
+        found[#found + 1] = r
+      end
+    end
+    table.sort(found, function(a, b)
+      return #a.parents > #b.parents
+    end)
+    for _, r in ipairs(found) do
+      local use = {}
+      local ok = true
+      for _, c in ipairs(r.cat or {}) do
+        local left = c.n
+        for i = m.first, m.last do
+          local s = m.slots[i]
+          if left > 0 and s and s.name == c.name and s.damage == c.damage then
+            local take = math.min(left, s.size - (use[i] or 0))
+            use[i] = (use[i] or 0) + take
+            left = left - take
+          end
+        end
+        if left > 0 then
+          ok = false
+        end
+      end
+      if ok then
+        local g, ga, re = 0, 0, 0
+        for _, p in ipairs(r.parents) do
+          local st = m.slots[parents[p]].stats or { 1, 1, 1 }
+          g, ga, re = g + st[1], ga + st[2], re + st[3]
+        end
+        local np = #r.parents
+        local child = F.seed(r.child, 1, { g // np, ga // np, re // np })
+        if m.can_output(child) then
+          for i, k in pairs(use) do
+            m.use(i, k)
+          end
+          for _, p in ipairs(r.parents) do
+            m.use(parents[p], 1)
+          end
+          m.fluid = m.fluid - m.fert
+          local win
+          if #m.outcomes > 0 then
+            win = table.remove(m.outcomes, 1)
+          else
+            win = m.rand() < m.chance
+          end
+          m.runs = m.runs + 1
+          m.results[#m.results + 1] = { t = t, child = r.child, ok = win }
+          m.run = { start_t = t, end_t = t + m.duration, out = win and child or nil }
+          return true
+        end
+      end
+    end
+    return false
+  end
+  local tier = opts.tier or 2
+  adapter(w, m, ("basicmachine.cropbreeder.tier.%02d"):format(tier), opts)
+  return m
+end
+
+-- CropsNH's Seed Generator (2 inputs). opts.cats[label] = { name, damage, n } a copy uses;
+-- opts.no_copy[label] = true for a crop it can't copy. Each copy takes 36 mB per stat point.
+function F.seed_generator(w, opts)
+  opts = opts or {}
+  local m = basic_machine(w, opts, 2)
+  m.duration = opts.duration or 4
+  m.cats = opts.cats or {}
+  m.no_copy = opts.no_copy or {}
+  m.copies = 0
+  function m.check(t)
+    for i = m.first, m.last do
+      local s = m.slots[i]
+      if s and s.name == F.SEED and s.label ~= "Unknown Seeds" then
+        if m.no_copy[s.label] then
+          goto continue
+        end
+        local st = s.stats or { 1, 1, 1 }
+        local need = 36 * (st[1] + st[2] + st[3])
+        if need > m.fluid then
+          goto continue
+        end
+        local cat = m.cats[s.label]
+        local ci
+        if cat then
+          for j = m.first, m.last do
+            local c = m.slots[j]
+            if c and c.name == cat.name and c.damage == cat.damage and c.size >= cat.n then
+              ci = j
+            end
+          end
+          if not ci then
+            return false
+          end
+        end
+        local out = copy_stack(s, 1)
+        if not m.can_output(out) then
+          return false
+        end
+        if ci then
+          m.use(ci, cat.n)
+        end
+        m.fluid = m.fluid - need
+        m.copies = m.copies + 1
+        m.run = { start_t = t, end_t = t + m.duration, out = out }
+        return true
+      end
+      ::continue::
+    end
+    return false
+  end
+  adapter(w, m, ("basicmachine.seedgenerator.tier.%02d"):format(opts.tier or 2), opts)
+  return m
+end
+
+-- A transposer touching inventories by side: sides[0..5] = a chest or a machine (or nil).
+-- w.crop_moves records every move that moved something (for the property tests).
+function F.transposer(w, opts)
+  opts = opts or {}
+  local d = device(w, "transposer", opts)
+  d.sides = opts.sides or {}
+  w.crop_moves = w.crop_moves or {}
+  local function inv(sd)
+    local i = d.sides[sd]
+    if i then
+      i.sync()
+    end
+    return i
+  end
+  local m = d.methods
+  m.getInventorySize = nondirect(function(s, sd)
+    local i = inv(sd)
+    if not i then
+      return nil, "no inventory"
+    end
+    return i.size
+  end)
+  m.getStackInSlot = nondirect(function(s, sd, slot)
+    local i = inv(sd)
+    if not i then
+      return nil, "no inventory"
+    end
+    if type(slot) ~= "number" or slot < 1 or slot > i.size then
+      error("invalid slot", 0)
+    end
+    local st = i.slots[slot]
+    return st and copy_stack(st) or nil
+  end)
+  m.getAllStacks = nondirect(function(s, sd)
+    local i = inv(sd)
+    if not i then
+      return nil, "no inventory"
+    end
+    local snap = {}
+    for k = 1, i.size do
+      local st = i.slots[k]
+      local c = st and copy_stack(st) or {}
+      c.stats = nil -- the converter doesn't show NBT contents (allowItemStackNBTTags gives gzip bytes)
+      snap[k - 1] = c
+    end
+    return w:value("ItemStackArray", {
+      getAll = { direct = false, fn = function()
+        return snap
+      end },
+      count = { direct = false, fn = function()
+        return i.size
+      end },
+    })
+  end)
+  m.getTankLevel = nondirect(function(s, sd)
+    local i = inv(sd)
+    if not i or i.kind ~= "machine" then
+      return nil, "no tank"
+    end
+    return i.fluid
+  end)
+  m.transferItem = nondirect(function(s, src, dst, n, from, to)
+    local a, b = inv(src), inv(dst)
+    if not a or not b then
+      return nil, "no inventory"
+    end
+    n = n or 64
+    local function slots_of(i)
+      local out = {}
+      for k = 1, i.size do
+        out[#out + 1] = k
+      end
+      return out
+    end
+    local sources = from and { from } or slots_of(a)
+    local moved = 0
+    for _, fs in ipairs(sources) do
+      local st = a.slots[fs]
+      if st and moved == 0 and a.take_ok(fs) then
+        local want = math.min(n, st.size)
+        local targets = to and { to } or slots_of(b)
+        -- merge into a matching stack first, then an empty slot (InventoryUtils.insertIntoInventory)
+        for pass = 1, 2 do
+          for _, ts in ipairs(targets) do
+            local cur = b.slots[ts]
+            if want > 0 and b.put_ok(ts, st) and ((pass == 1 and cur and same_stack(cur, st)) or (pass == 2 and not cur)) then
+              local room = 64 - (cur and cur.size or 0)
+              local k = math.min(room, want)
+              if k > 0 then
+                if cur then
+                  cur.size = cur.size + k
+                else
+                  b.slots[ts] = copy_stack(st, k)
+                end
+                want = want - k
+                moved = moved + k
+              end
+            end
+          end
+        end
+        if moved > 0 then
+          st.size = st.size - moved
+          if st.size <= 0 then
+            a.slots[fs] = nil
+          end
+          w.crop_moves[#w.crop_moves + 1] = {
+            t = w.clock, src = src, dst = dst, label = st.label, name = st.name, n = moved, from = fs, to = to,
+            left = a.kind == "chest" and F.count(a, st.label, st.name) or nil, -- what the chest kept
+          }
+          a.changed()
+          b.changed()
+        end
+      end
+    end
+    return moved
+  end)
+  return w:add(d, opts.quiet ~= false)
+end
+
+-- The standard station: a chest (side 0), a Crop Breeder (side 1) and `gens` Seed Generators
+-- (sides 2, 3, 4) on one transposer. Returns { chest, breeder, gens = {...}, tp }.
+function F.station(w, opts)
+  opts = opts or {}
+  local chest = F.chest(opts.chest_size or 27)
+  F.fill(chest, opts.stock or {})
+  local breeder = F.crop_breeder(w, opts.breeder or {})
+  local gens, sides = {}, { [0] = chest, [1] = breeder }
+  for i = 1, opts.gens or 1 do
+    local gopts = {}
+    for k, v in pairs(opts.generator or {}) do
+      gopts[k] = v
+    end
+    gopts.prefix = ("9e%d"):format(i)
+    gens[i] = F.seed_generator(w, gopts)
+    sides[1 + i] = gens[i]
+  end
+  local tp = F.transposer(w, { sides = sides, prefix = "7b" })
+  return { chest = chest, breeder = breeder, gens = gens, tp = tp }
+end
+
 return F

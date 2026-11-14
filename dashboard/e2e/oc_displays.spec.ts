@@ -5,7 +5,8 @@
 // machines and AE2 with their tel: citations; the next message (the EBF running) reaches the view
 // within 10 s, and the reply to each message carries the in-game display. Every theme reads at
 // WCAG contrast at 2560x1440 and 390x844, and nothing is cut off on the phone. Screenshots go to
-// test-results/. Runs after the other harness-core specs that read the shell's state chips (the
+// test-results/. WO-7.5: the golden LSC at 12.3 % raises the power-low alert (after 5 s here,
+// serve_core.py), on the Base view and as an AlertCard on Now. Runs after the other harness-core specs that read the shell's state chips (the
 // OC chip goes "disconnected" 30 s after the last message here).
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -118,4 +119,18 @@ test("every theme reads at WCAG contrast, and nothing is cut off on the phone", 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(PHONE.width);
   await page.screenshot({ path: shot("phone-base-live"), fullPage: true });
   await page.setViewportSize(MONITOR_2);
+});
+
+test("a low store raises an alert on the Base view and on Now (WO-7.5)", async () => {
+  await send(4, true);
+  await openBase();
+  const alerts = page.getByTestId("live-lab").getByTestId("live-alerts");
+  await expect(alerts.locator('[data-alert="power_low"]')).toBeVisible({ timeout: 15_000 });
+  await expect(alerts).toContainText("Power low");
+  await page.screenshot({ path: shot("base-live-alert") });
+  await page.getByTestId("nav-now").click();
+  const card = page.locator('[data-testid="alert"][data-alert^="oc-power_low:lab/"]');
+  await expect(card.first()).toBeVisible({ timeout: 10_000 });
+  await expect(card.first()).toContainText("12.3");
+  await page.screenshot({ path: shot("now-alert") });
 });

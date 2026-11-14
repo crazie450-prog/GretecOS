@@ -334,6 +334,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from gregtec import desktop, prism
     from gregtec.agents import ask
+    from gregtec.alerts.rules import AlertRules
     from gregtec.api import app as core_app
     from gregtec.api import dashboard, server
     from gregtec.config import Config
@@ -369,6 +370,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         core_port=args.port,
         supervisor_port=args.port + 1,
         dashboard_host=args.host_name,
+        # WO-7.5: a low store alerts after 5 s, not 30, so oc_displays.spec.ts needn't wait.
+        alerts=AlertRules(power_low_s=5),
     )
     if (
         ores_lab is not None

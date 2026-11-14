@@ -208,6 +208,7 @@ def test_the_agent_compiles_on_lua_5_2() -> None:
             "oc/json.lua",
             "oc/mailbox.lua",
             "oc/display.lua",
+            "oc/crop/station.lua",
         ],
         check=False,
         cwd=REPO,

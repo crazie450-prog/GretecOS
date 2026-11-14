@@ -52,12 +52,38 @@ MACHINE = "2e000000-0000-4000-8000-000000000008"
 LAB = AgentId("lab", ADDR)
 CRAFT = {"name": "gregtech:gt.metaitem.01", "damage": 11306, "amount": 64}
 WAYPOINT = {"name": "Base", "x": 100, "y": 64, "z": -200, "dim": 0}
+# A breeding plan as gregtec.crops.station builds it (WO-7.6): the station's start and stop are
+# confirmed actions like the rest, so the property below covers them too.
+CROP_PLAN: dict[str, Any] = {
+    "plan": "0a1b2c3d",
+    "target": "Tomato Seeds",
+    "count": 4,
+    "steps": [
+        {
+            "child": "Carrot Seeds",
+            "parents": ["Reed Seeds", "Wheat Seeds"],
+            "cat": [],
+            "copies": 5,
+            "fert": 720,
+        },
+        {
+            "child": "Tomato Seeds",
+            "parents": ["Carrot Seeds", "Pumpkin Seeds"],
+            "cat": [{"name": "minecraft:dye", "damage": 15, "n": 1}],
+            "copies": 5,
+            "fert": 1152,
+        },
+    ],
+    "copy": ["Tomato Seeds", "Carrot Seeds"],
+}
 ARGS: dict[str, dict[str, Any]] = {
     "craft": CRAFT,
     "machine_pause": {"addr": MACHINE},
     "machine_resume": {"addr": MACHINE},
     "say": {"text": "hello"},
     "waypoint": WAYPOINT,
+    "crop_start": CROP_PLAN,
+    "crop_stop": {},
 }
 
 
@@ -133,6 +159,9 @@ def test_read_backs_of_every_kind(d: Desk) -> None:
         "machine_resume": "Resume machine 2e000000 in Lab",
         "say": 'Say "hello" in chat in Lab',
         "waypoint": 'Add waypoint "Base" at 100, 64, -200 in dimension 0 in Lab',
+        "crop_start": "Start the breeding station: breed Tomato Seeds in 2 Crop Breeder "
+        "steps and stock 4 in Lab; Seed Generators keep one seed of each crop they copy, for good",
+        "crop_stop": "Stop the breeding station in Lab",
     }
     unknown = dict(CRAFT, damage=1)
     assert d.desk.describe("craft", unknown, "play") == (
@@ -769,10 +798,15 @@ TestConfirmFlow = ConfirmFlow.TestCase
 
 
 def test_the_module_lists_no_destructive_kind() -> None:
-    assert set(actions.KINDS) == {
-        "craft",
-        "machine_pause",
-        "machine_resume",
-        "say",
-        "waypoint",
-    }
+    assert (
+        set(actions.KINDS)
+        == {
+            "craft",
+            "machine_pause",
+            "machine_resume",
+            "say",
+            "waypoint",
+            "crop_start",  # the breeding station (WO-7.6): it never uses the last seed of a parent
+            "crop_stop",
+        }
+    )
