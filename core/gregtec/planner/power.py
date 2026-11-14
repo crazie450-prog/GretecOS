@@ -1090,6 +1090,84 @@ class Option:
     direct: bool = False
 
 
+def _fills(conn: sqlite3.Connection, run_id: int, container: str, fluid: str) -> bool:
+    """Whether a recipe of the run fills ``container`` (an item key) with ``fluid``: what makes
+    an item a container of the fluid (a cell, a capsule)."""
+    row = conn.execute(
+        "SELECT 1 FROM recipe AS r JOIN recipe_output AS ro ON ro.recipe_id = r.id"
+        " JOIN item AS i ON i.id = ro.item_id JOIN recipe_input AS ri ON ri.recipe_id = r.id"
+        f" JOIN fluid AS f ON f.id = ri.fluid_id WHERE r.run_id = ? AND {graph._ITEM_KEY_SQL} = ?"
+        " AND 'fluid:' || f.name = ? LIMIT 1",
+        (run_id, container, fluid),
+    ).fetchone()
+    return row is not None
+
+
+def decanted(conn: sqlite3.Connection, run_id: int, ref: str, fuel: str) -> str | None:
+    """The container ``ref`` only empties into ``fuel`` (review H1): a recipe whose one used-up
+    input is an item a recipe of the run fills with the fuel, and which gives the fuel. Such a
+    step imports the fuel in its container; it designs nothing. None for any other recipe."""
+    ports = sustain.db_ports(conn, ref, run_id)
+    if ports is None or fuel not in ports.given:
+        return None
+    used = {k for k in ports.used if k != EU_KEY}
+    if len(used) != 1:
+        return None
+    (c,) = used
+    if c.startswith(("fluid:", "ore:")) or not _fills(conn, run_id, c, fuel):
+        return None
+    return c
+
+
+def fuel_source(
+    conn: sqlite3.Connection, opt: Option, crafted: Sequence[str]
+) -> dict[str, Any]:
+    """How the line gets its fuel (review H1): ``made`` when a recipe of the line that is not a
+    decanting step gives it (``by``). A chain that doesn't make it imports it, as it is or in
+    the containers it empties (``decanted``), and ``gate`` names the fuel and the other recipes
+    of the DB that make it, each with its tier and why the line can't use it (the graph's
+    reasons: a tier above the cap, ...). The direct-import line (D323) imports it by design:
+    no gate."""
+    if opt.direct:
+        return {"made": False, "by": [], "decanted": [], "gate": None}
+    g, fuel = opt.chain.graph, opt.gen.fuel
+    makers = [
+        r.id
+        for r in g.recipes
+        if r.id in crafted and any(p.key == fuel for p in r.outputs)
+    ]
+    cans = {ref: decanted(conn, g.run_id, ref, fuel) for ref in makers}
+    made = sorted(ref for ref, c in cans.items() if c is None)
+    out: dict[str, Any] = {
+        "made": bool(made),
+        "by": made,
+        "decanted": sorted({c for c in cans.values() if c}),
+        "gate": None,
+    }
+    if made:
+        return out
+    node = next((i for i in g.items if i.id == fuel), None)
+    recipes = []
+    for c in node.candidates if node else ():
+        if c.recipe in cans or decanted(conn, g.run_id, c.recipe, fuel) is not None:
+            continue
+        row = conn.execute(
+            "SELECT voltage_tier FROM recipe WHERE ref = ? AND run_id = ?",
+            (c.recipe, g.run_id),
+        ).fetchone()
+        tier = int(row[0]) if row and row[0] is not None else None
+        recipes.append(
+            {
+                "ref": c.recipe,
+                "tier": VN[tier] if tier is not None else None,
+                "status": c.status,
+                "reason": c.reason,
+            }
+        )
+    out["gate"] = {"id": fuel, "recipes": recipes}
+    return out
+
+
 def build_plan(
     conn: sqlite3.Connection,
     run_key: str,
@@ -1238,6 +1316,9 @@ def build_plan(
                 "id": gen.fuel,
                 "ref": gen.fuel_ref,
                 "rate_s": plan._num(fuel_rate),
+                "source": fuel_source(
+                    conn, opt, [pid for pid, x in flow.crafts if x > 0]
+                ),
             },
             "gross_eut": plan._num(gross),
             "chain_eut": plan._num(chain_eut),

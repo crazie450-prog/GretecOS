@@ -44,6 +44,8 @@ AIR = "fluid:liquidair"
 FREE = ("fluid:water",)
 GG_MAP = "gg.recipe.naquadah_reactor"
 BASIC, DURATION, AIR_PER_S = 2048, 30, 100
+NQ_CELL_META = 12
+NQ_CELL = f"{tg.T}@{NQ_CELL_META}"
 # Dynamo hatches: (mte, class, tier, volts, amps)
 GT_DYN = "gregtech.api.metatileentity.implementations.MTEHatchDynamo"
 TT_DYN = "tectech.thing.metaTileEntity.hatch.MTEHatchDynamoMulti"
@@ -61,19 +63,50 @@ DYNAMOS = (
 )
 
 
-def make_home(home: Path) -> Path:
-    recipes, machines, maps, fluids, recipe_maps = (
+def make_home(home: Path, decant: bool = False) -> Path:
+    """The fixture; ``decant``: the fuel's only recipe within MV empties its cell (on the base
+    mixer; the fill recipe is the addon canner's), its other recipe is IV (review H1)."""
+    recipes, machines, maps, fluids, recipe_maps, items = (
         tg.recipes,
         tg.machines,
         tg.MAPS,
         tg.fluids,
         tg.recipe_maps,
+        tg.items,
     )
+
+    def fuel_recipes() -> list[dict[str, object]]:
+        if not decant:
+            return [
+                tg.gt(
+                    "mixer",
+                    8,
+                    30,
+                    20,
+                    fin=[tg.fl("water", 10)],
+                    fout=[tg.fl("testnq", 10)],
+                )
+            ]
+        return [
+            tg.gt("mixer", 8, 8192, 20, fin=[tg.fl("water", 10)], fout=[tg.fl("testnq", 10)]),
+            tg.gt("mixer", 10, 1, 16, ins=[tg.ref(NQ_CELL_META)], outs=[tg.ref(11)],
+                  fout=[tg.fl("testnq", 1000)]),
+            tg.gt("canner", 2, 1, 16, ins=[tg.ref(11)], fin=[tg.fl("testnq", 1000)],
+                  outs=[tg.ref(NQ_CELL_META)]),
+        ]  # fmt: skip
+
+    def more_items() -> list[dict[str, object]]:
+        out = items()
+        cell = dict(next(i for i in out if i["meta"] == 11))
+        cell.update(
+            meta=NQ_CELL_META, unlocalized=f"{tg.T}.{NQ_CELL_META}", name="Testnq Cell"
+        )
+        return [*out, cell]
 
     def more_recipes() -> list[dict[str, object]]:
         return [
             *recipes(),
-            tg.gt("mixer", 8, 30, 20, fin=[tg.fl("water", 10)], fout=[tg.fl("testnq", 10)]),
+            *fuel_recipes(),
             tg.gt("mixer", 9, 16, 20, fin=[tg.fl("water", 200)], fout=[tg.fl("liquidair", 200)]),
             tg.gt("naquadah_reactor", 0, 0, DURATION, map=GG_MAP, category=GG_MAP,
                   fin=[tg.fl("testnq", 1)], fout=[tg.fl("testnq depleted", 1)],
@@ -119,22 +152,24 @@ def make_home(home: Path) -> Path:
         )
         return [*out, gg]
 
-    tg.recipes, tg.machines, tg.fluids, tg.recipe_maps = (
+    tg.recipes, tg.machines, tg.fluids, tg.recipe_maps, tg.items = (
         more_recipes,
         more_machines,
         more_fluids,
         more_maps,
+        more_items,
     )
     tg.MAPS = (*maps, "naquadah_reactor")
     try:
         db = tg.make_home(home)
     finally:
-        tg.recipes, tg.machines, tg.MAPS, tg.fluids, tg.recipe_maps = (
+        tg.recipes, tg.machines, tg.MAPS, tg.fluids, tg.recipe_maps, tg.items = (
             recipes,
             machines,
             maps,
             fluids,
             recipe_maps,
+            items,
         )
     c = sqlite3.connect(db)
     try:
@@ -438,6 +473,52 @@ def test_the_best_line_offers_the_direct_import_too(conn: sqlite3.Connection) ->
     assert direct and chained
     imports = {b["id"] for b in direct[0]["boundary"]["in"]}
     assert imports == {FUEL, AIR}
+    # How each gets its fuel (review H1): the chain makes it (the mixer); the direct line
+    # imports it by design, no gate.
+    (mixer,) = {n["recipe"] for n in chained[0]["nodes"] if "mixer" in n["recipe"]} & {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT r.ref FROM recipe AS r JOIN recipe_output AS o ON o.recipe_id = r.id"
+            " JOIN fluid AS f ON f.id = o.fluid_id WHERE f.name = 'testnq'"
+        )
+    }
+    assert chained[0]["power"]["fuel"]["source"] == {
+        "made": True,
+        "by": [mixer],
+        "decanted": [],
+        "gate": None,
+    }
+    assert direct[0]["power"]["fuel"]["source"]["gate"] is None
+
+
+def test_a_chain_that_only_empties_cells_names_the_fuels_gate(
+    tmp_path: Path,
+) -> None:
+    """Review H1: emptying the fuel's cells (a canner) imports the fuel in its cells; it is not
+    a designed chain. The option says so and names the gate: the fuel and its recipe the cap
+    rules out (here an IV mixer, as MkI's fusion recipe is LuV on the harness DB, D328)."""
+    db = make_home(tmp_path / "decant", decant=True)
+    c = access.connect(db, readonly=True)
+    try:
+        d = power.design(
+            c,
+            power.PowerRequest(free=FREE, tier_cap=2, kinds=("naquadah_reactor",)),
+            tg.Base(),
+            templates=chains.EMPTY,
+            with_effort=False,
+        )
+        chained = [p for p in d.options if not p["power"]["direct"]]
+        assert chained, (d.notes, d.rejected)
+        src = chained[0]["power"]["fuel"]["source"]
+        assert not src["made"] and src["by"] == []
+        assert src["decanted"] == [NQ_CELL]
+        assert src["gate"]["id"] == FUEL
+        [gate] = src["gate"]["recipes"]
+        assert gate["ref"].startswith("r:gt.recipe.mixer/") and gate["tier"] == "IV"
+        assert gate["status"] == "rejected" and "above the cap" in gate["reason"]
+        assert NQ_CELL in {b["id"] for b in chained[0]["boundary"]["in"]}
+    finally:
+        c.close()
 
 
 def test_a_dynamo_the_line_chose_is_counted_by_its_mte(
@@ -475,6 +556,13 @@ def test_an_item_both_imported_and_exported_crosses_by_the_difference() -> None:
     assert dict(e) == pytest.approx({"a": 0.0003, "c": 1.0, "t": 3.0})
     i, e = solve._net_out((("a", 0.5),), [("a", 0.2)], set())
     assert dict(i) == pytest.approx({"a": 0.3}) and e == []
+
+
+def test_a_gate_netted_to_nothing_is_no_gate() -> None:
+    """Review M3: the gates (and so the gate count) are the netted boundary's."""
+    i, e = solve._net_out((("a", 0.2), ("b", 1.0)), [("a", 0.2), ("c", 1.0)], set())
+    assert dict(i) == {"b": 1.0} and dict(e) == {"c": 1.0}
+    assert solve._crossing(("a", "b", "c"), i, e) == ("b", "c")
 
 
 # --- gos power naquadah ------------------------------------------------------------------------

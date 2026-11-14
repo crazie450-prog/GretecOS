@@ -636,6 +636,17 @@ def _net_out(
     return tuple(keep_in), kept_out
 
 
+def _crossing(
+    gates: tuple[str, ...],
+    imports: tuple[tuple[str, float], ...],
+    exports: list[tuple[str, float]],
+) -> tuple[str, ...]:
+    """The gates whose item still crosses the netted boundary (review M3): one netted to
+    nothing both ways is no gate, nor counted as one."""
+    crossing = {k for k, _ in imports} | {k for k, _ in exports}
+    return tuple(k for k in gates if k in crossing)
+
+
 def _flow(
     m: _Model,
     x: np.ndarray,
@@ -661,8 +672,14 @@ def _flow(
         (k, max(r, _value(m.target_rows[k], x) * m.c[k] * s)) for k, r in m.net.targets
     ]
     gates = tuple(sorted(k for k, g in m.gate.items() if x[g] > 0.5))
+    shut, gated_qty = 0, objectives[1] * s
     if m.net.costs_eu:
         imports, exports = _net_out(imports, exports, {k for k, _ in m.net.targets})
+        open_ = _crossing(gates, imports, exports)
+        shut, gates = len(gates) - len(open_), open_
+        gated_qty = math.fsum(
+            v / m.c[k] for k, v in (*imports, *exports) if k in m.gated
+        )
     return Flow(
         choice=tuple(sorted(choice.items())),
         crafts=crafts,
@@ -671,7 +688,7 @@ def _flow(
         gates=gates,
         all_run=all(v > 0 for _, v in crafts),
         floor=floor,
-        objectives=(round(objectives[0]), objectives[1] * s, objectives[2] * s),
+        objectives=(round(objectives[0]) - shut, gated_qty, objectives[2] * s),
         big_m=m.big_m,
         warnings=tuple(warnings),
         eu=None if objectives[3] is None else objectives[3] * s,
