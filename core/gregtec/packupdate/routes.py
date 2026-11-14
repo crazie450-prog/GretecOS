@@ -45,15 +45,22 @@ def cards(core: "Core") -> list[dict[str, Any]]:
 
 def tick(core: "Core") -> list[dict[str, Any]]:
     """Push each due notice once (its thread: the dashboard's tick runs it in one). Returns
-    the notices pushed."""
+    the notices pushed. Reads only, unless one is due: then one quick write, which a busy DB
+    (a build, a backup) only postpones to a later tick, never holding the core's store."""
     try:
-        with core.store.transaction() as conn:
-            announced = addons.load_announced(conn)
-            due = addons.due_notices(core.cfg.gos_home, announced)
-            if due:
-                addons.save_announced(conn, [*announced, *(k for k, _ in due)])
+        rows = core.store.rows(
+            "SELECT value FROM kv WHERE key = ?", (addons.KV_ANNOUNCED,)
+        )
+        announced = addons.parse_announced(rows[0][0] if rows else None)
+        due = addons.due_notices(core.cfg.gos_home, announced)
+        if not due:
+            return []
+        core.store.try_write(
+            addons.SAVE_ANNOUNCED,
+            addons.announced_row([*announced, *(k for k, _ in due)]),
+        )
     except sqlite3.Error as exc:
-        log.info("addon notices skipped", extra={"why": str(exc)[:200]})
+        log.info("addon notices postponed", extra={"why": str(exc)[:200]})
         return []
     for _, notice in due:
         core.broadcast({"type": "notice", "data": notice})

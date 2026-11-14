@@ -274,23 +274,24 @@ def due_notices(
     return out
 
 
-def load_announced(conn: sqlite3.Connection) -> list[str]:
+def parse_announced(value: object) -> list[str]:
+    """The keys said so far, from ``kv`` ``addons.announced``'s value."""
     try:
-        row = conn.execute(
-            "SELECT value FROM kv WHERE key = ?", (KV_ANNOUNCED,)
-        ).fetchone()
-        got = json.loads(row[0]) if row else []
-    except (sqlite3.Error, ValueError, TypeError):
+        got = json.loads(str(value)) if value is not None else []
+    except ValueError:
         return []
     return [str(k) for k in got] if isinstance(got, list) else []
 
 
-def save_announced(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
-    conn.execute(
-        "INSERT INTO kv(key, value, upd) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE"
-        " SET value = excluded.value, upd = excluded.upd",
-        (KV_ANNOUNCED, json.dumps(list(keys)[-ANNOUNCED_KEEP:]), int(time.time())),
-    )
+SAVE_ANNOUNCED = (
+    "INSERT INTO kv(key, value, upd) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE"
+    " SET value = excluded.value, upd = excluded.upd"
+)
+
+
+def announced_row(keys: Sequence[str]) -> tuple[str, str, int]:
+    """:data:`SAVE_ANNOUNCED`'s parameters for ``keys`` (the newest kept)."""
+    return KV_ANNOUNCED, json.dumps(list(keys)[-ANNOUNCED_KEEP:]), int(time.time())
 
 
 def approval_card(q: Question) -> dict[str, Any]:

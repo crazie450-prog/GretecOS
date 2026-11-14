@@ -731,3 +731,23 @@ def test_the_approval_card_is_a_catalog_card(tmp_path: Path) -> None:
     card = addons.approval_card(q)
     assert cards.validate(card) == []
     assert [a["id"] for a in card["actions"]] == ["confirm", "cancel"]
+
+
+def test_the_notice_tick_never_waits_on_a_busy_db(tmp_path: Path) -> None:
+    """A build or a backup holding the DB postpones a due notice; nothing due reads only."""
+    cfg = config.Config(gos_home=tmp_path)
+    core = FakeCore(cfg, Store(tmp_path / "gos.sqlite"))
+    other = sqlite3.connect(tmp_path / "gos.sqlite", isolation_level=None)
+    try:
+        other.execute("BEGIN IMMEDIATE")  # holds the write lock
+        started = time.monotonic()
+        assert addon_routes.tick(core) == []  # type: ignore[arg-type]  # nothing due
+        addons.open_question(tmp_path, "Mods changed. Export now?", "Q", 300)
+        assert addon_routes.tick(core) == []  # type: ignore[arg-type]  # postponed
+        assert time.monotonic() - started < 3 and core.pushed == []
+        other.execute("ROLLBACK")
+    finally:
+        other.close()
+    assert [n["kind"] for n in addon_routes.tick(core)] == ["export_question"]  # type: ignore[arg-type]
+    assert addon_routes.tick(core) == []  # type: ignore[arg-type]
+    core.store.close()
