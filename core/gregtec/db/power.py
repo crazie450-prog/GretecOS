@@ -4,7 +4,8 @@ From a run's ``gt_power.json`` (:mod:`gregtec.ingest.power`): ``rotor_size``,
 ``rotor_material``, ``rotor_gt``, ``generator``, ``generator_gt`` and ``fuel_container``. From the
 run's recipes, after they are written: ``fuel``, one row per fuel of GT's fuel maps, decoded by
 its map's rule (:mod:`gregtec.planner.fuels`). From its ``storage`` (WO-4.5, D240): ``cable``,
-``battery``, ``battery_buffer``, ``transformer`` and ``lsc_cell``. Like recipes, every table holds
+``battery``, ``battery_buffer``, ``transformer`` and ``lsc_cell``. From its ``naquadah_reactors``
+and ``dynamos`` (WO-4.8, D326): ``reactor_boost`` and ``dynamo_hatch``. Like recipes, every table holds
 one set per export run, and pruning a run deletes its rows.
 """
 
@@ -30,6 +31,8 @@ TABLES = (
     "battery_buffer",
     "transformer",
     "lsc_cell",
+    "reactor_boost",
+    "dynamo_hatch",
 )
 
 
@@ -137,6 +140,22 @@ def _write_power(
     )
     if data.storage is not None:
         _write_storage(conn, run_id, data.storage)
+    rows = []
+    for r in data.naquadah_reactors:
+        rows.append((run_id, r.mte_id, "air", 0, r.air_fluid, r.air_per_second, 0))
+        for kind, boosts in (("coolant", r.coolants), ("excited", r.excited)):
+            rows.extend(
+                (run_id, r.mte_id, kind, i, b.fluid, b.amount, b.value)
+                for i, b in enumerate(boosts)
+            )
+    conn.executemany("INSERT INTO reactor_boost VALUES (?,?,?,?,?,?,?)", rows)
+    conn.executemany(
+        "INSERT INTO dynamo_hatch VALUES (?,?,?,?,?,?)",
+        [
+            (run_id, d.mte_id, d.class_name, d.tier, d.eu_out, d.amps_out)
+            for d in data.dynamos
+        ],
+    )
 
 
 def _write_storage(
