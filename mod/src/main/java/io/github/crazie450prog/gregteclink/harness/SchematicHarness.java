@@ -147,6 +147,12 @@ final class SchematicHarness {
                 .build();
             Operations.completeLegacy(op);
             paste.flushQueue();
+            GregtecLink.LOG.info(
+                "schematic harness: {} pasted, {} blocks changed; WorldEdit reads {} at {}",
+                name,
+                paste.getBlockChangeCount(),
+                world.getBlock(min),
+                min);
 
             // the world, read back by registry name + meta
             Vector cmin = clipboard.getRegion()
