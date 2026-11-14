@@ -28,6 +28,7 @@ from gregtec.remote.routes import alerts_state
 
 if TYPE_CHECKING:
     from gregtec.api.app import Core
+    from gregtec.watchers.feed import GameFeed
 
 DISCORD = "discord"
 VOICE = "voice"  # gregtec.api.app.VOICE_CLIENT
@@ -35,6 +36,17 @@ VOICE = "voice"  # gregtec.api.app.VOICE_CLIENT
 
 def _is(who: Principal, name: str) -> bool:
     return who.role == "client" and who.name == name
+
+
+def paused_of(
+    game: "GameFeed | None", running: list[str] | None
+) -> tuple[str, float | None] | None:
+    """The router's paused source: the watchers' feed as the dashboard shows it (D258)."""
+    if game is None or game.instance is None:
+        return None
+    if game.paused_now(running) is not True:
+        return None
+    return game.instance, game.since
 
 
 def wire(core: "Core", router: AlertRouter) -> None:
@@ -45,12 +57,9 @@ def wire(core: "Core", router: AlertRouter) -> None:
         return core.credits.state() if core.credits is not None else None
 
     def paused() -> tuple[str, float | None] | None:
-        game = core.game
-        if game is None or game.instance is None:
+        if core.game is None:
             return None
-        if game.paused_now(dashboard.board_of(core).running) is not True:
-            return None
-        return game.instance, game.since
+        return paused_of(core.game, dashboard.board_of(core).running)
 
     def voice_up() -> bool:
         return any(_is(s.who, VOICE) for s in list(core.sockets))
@@ -88,6 +97,8 @@ def wire(core: "Core", router: AlertRouter) -> None:
     router.game_up = game_up
     router.say = say
     router.chat = chat
+    if core.ops is not None and core.ops.alerts is not None:  # WO-7.5's engine
+        router.settled = core.ops.alerts.settled
 
 
 def add_routes(
@@ -107,6 +118,8 @@ def add_routes(
     @app.get("/api/alerts/outbox")
     async def outbox(who: Anyone) -> dict[str, Any]:
         bot_or_admin(who)
+        if _is(who, DISCORD):  # the bot is up: DMs may be queued (D298)
+            router().bot_seen()
         dms = await asyncio.to_thread(router().outbox)
         state = await asyncio.to_thread(alerts_state, core.store)
         return {"dms": dms, "alerts": state}

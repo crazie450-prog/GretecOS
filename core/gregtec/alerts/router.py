@@ -29,8 +29,14 @@ tick that finds the game paused *and* him away, in either order, and only once p
 **Once.** What went where is the ``alert_route`` table (channel, key, occurrence), so a core
 restart never sends it again; a base alert's key also waits ``[notify] cooldown_s`` per channel
 before a new occurrence goes there. The alert engine fires afresh after a restart (D281: old rows
-``lost``), so the router keeps the keys that were firing (``kv`` ``alerts.routing``) and, for
-:data:`ADOPT_S` after it starts, a key that fires again is the same occurrence: not repeated.
+``lost``), so the router keeps the keys that were firing (``kv`` ``alerts.routing``): a key that
+fires again is the same occurrence, not repeated, until the engine has evaluated its binding on
+fresh telemetry long enough that it would have fired again (:meth:`AlertEngine.settled`), never
+by wall time, so a game left paused across a restart doesn't make it new (D300).
+
+**Only through a bot.** A DM counts as sent when it is queued, so it is queued only while the
+Discord bot reads the outbox (:data:`BOT_SEEN_S`); with no bot (not set up yet, D296, or down)
+Discord's verdict is "no Discord bot" and voice still says a base alert when he is back.
 
 **Grouped.** Base alerts due in one tick on one binding are one voice line, one chat line and
 one DM (the engine's :func:`~gregtec.alerts.engine.summary`: "Lab: power low and 6 machines
@@ -40,7 +46,10 @@ stopped."), so a power loss is one message, not seven.
 The bot lists the undelivered ones (``GET /api/alerts/outbox``), posts each, then marks it
 (``POST /api/alerts/outbox/{id}/delivered``): at least once, like WO-9.1's jobs (D295). A row
 whose alerts all ended (cleared, answered, unpaused) before it was posted is dropped, as is one
-older than :data:`OUTBOX_TTL_S`, so a bot that was down never posts stale news.
+older than :data:`OUTBOX_TTL_S`, so a bot that was down never posts stale news. After a restart,
+an alert is "ended" once the first tick has read the sources and the alert is neither active nor
+one the engine may still fire again. A dropped DM was never posted, so it doesn't count as sent:
+if its alert is active again, it is offered to Discord (and voice) afresh.
 
 Game text (machine and item names) is data in fixed templates (plan 0.1 principle 8); every
 telemetry number is OC's, cited ``tel:``; credit numbers are the meter's (D118).
@@ -73,9 +82,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("gregtec.alerts.router")
 
 NOTICE_TTL_S = 600  # a notice stays deliverable this long (the notices' own cooldown)
-ADOPT_S = (
-    600.0  # after a start, a key that was firing and fires again is the same occurrence
-)
+BOT_SEEN_S = 30.0  # the bot polls every 5 s: silent this long is "no Discord bot"
+PRUNE_S = 60.0  # how often the in-memory history is pruned
 OUTBOX_TTL_S = 6 * 3600  # an undelivered DM older than this is dropped
 KEEP_S = 30 * 86400  # route and outbox rows kept
 TEST_TTL_S = 300
@@ -169,6 +177,10 @@ class AlertRouter:
         self.discord_mode: Callable[[], str] = self._mode_from_kv
         self.voice_up: Callable[[], bool] = lambda: False
         self.game_up: Callable[[], bool] = lambda: False
+        # The alert engine's AlertEngine.settled (None: no engine, keep what was firing).
+        self.settled: Callable[[str, str], bool] | None = None
+        # Whether a Discord bot reads the outbox (default: it read it in BOT_SEEN_S).
+        self.discord_up: Callable[[], bool] = self._bot_recent
         # Senders the core sets: each returns whether the line reached someone.
         self.say: Callable[[str], bool] = lambda text: False
         self.chat: Callable[[str], bool] = lambda text: False
@@ -178,7 +190,12 @@ class AlertRouter:
             tuple[str, str], dict[str, int]
         ] = {}  # (key, occ) -> channel: ts
         self._last: dict[tuple[str, str], int] = {}  # (channel, key) -> last sent ts
-        self._closed: set[tuple[str, str]] = set()  # (key, occ) that ended in this run
+        self._closed: dict[tuple[str, str], float] = {}  # (key, occ) ended, when
+        # binding -> why its telemetry is held (the engine's stale events)
+        self._stale: dict[str, str] = {}
+        self._bot_seen: float | None = None  # the bot's last outbox read
+        self._ticked = False  # the sources were read once in this run
+        self._pruned = 0.0
         self.started = clock()
         self._load()
 
@@ -236,8 +253,15 @@ class AlertRouter:
     def alert_event(self, event: AlertEvent) -> None:
         """The alert engine's sink (WO-7.5, D281)."""
         a = event.alert
+        if event.kind in ("stale", "fresh"):  # a held alert stays active as it was
+            with self._lock:
+                if event.kind == "stale":
+                    self._stale[event.binding] = event.why or "held"
+                else:
+                    self._stale.pop(event.binding, None)
+            return
         if a is None or event.kind not in ("fired", "cleared"):
-            return  # stale and fresh: a held alert stays active as it was
+            return
         key = f"{a.binding}/{a.key}"
         with self._lock:
             if event.kind == "cleared":
@@ -245,10 +269,8 @@ class AlertRouter:
                 self._adoptable.pop(key, None)
                 self._save_open()
                 return
-            occ = str(int(a.fired_at))
-            if key in self._adoptable and self.clock() - self.started < ADOPT_S:
-                occ = self._adoptable[key]  # fired again after a restart: the same one
-            self._adoptable.pop(key, None)
+            # Fired again after a restart, before it settled: the same occurrence.
+            occ = self._adoptable.pop(key, None) or str(int(a.fired_at))
             self._open(
                 Routed(
                     key=key,
@@ -307,13 +329,40 @@ class AlertRouter:
     def _open(self, r: Routed) -> None:
         old = self._active.get(r.key)
         if old is not None and old.occ != r.occ:
-            self._closed.add((old.key, old.occ))
+            self._closed[(old.key, old.occ)] = self.clock()
+        self._closed.pop((r.key, r.occ), None)  # active again: its DM isn't stale news
         self._active[r.key] = r
 
     def _close(self, key: str) -> None:
         old = self._active.pop(key, None)
         if old is not None:
-            self._closed.add((old.key, old.occ))
+            self._closed[(old.key, old.occ)] = self.clock()
+
+    def _prune(self, now: float) -> None:
+        """Keep the in-memory history bounded: ended occurrences past the outbox's TTL, sends
+        past the routes' own retention (as the DB keeps them), cooldowns that are over."""
+        self._pruned = now
+        self._closed = {
+            k: t for k, t in self._closed.items() if now - t <= OUTBOX_TTL_S
+        }
+        live = {(r.key, r.occ) for r in self._active.values()}
+        self._sent = {
+            k: v
+            for k, v in self._sent.items()
+            if k in live or now - max(v.values(), default=0) <= KEEP_S
+        }
+        self._last = {
+            k: t for k, t in self._last.items() if now - t < self.policy.cooldown_s
+        }
+
+    def bot_seen(self) -> None:
+        """The Discord bot read the outbox (its route calls this)."""
+        with self._lock:
+            self._bot_seen = self.clock()
+
+    def _bot_recent(self) -> bool:
+        seen = self._bot_seen
+        return seen is not None and self.clock() - seen <= BOT_SEEN_S
 
     def _poll(self, now: float) -> None:
         """The credit alert and the paused game, read from their owners."""
@@ -345,7 +394,12 @@ class AlertRouter:
             instance, since = game
             key = f"game_paused:{instance}"
             want.add(key)
-            occ = str(int(since)) if since is not None else "unknown"
+            if since is not None:
+                occ = str(int(since))
+            elif key in self._active:
+                occ = self._active[key].occ  # the same pause, still without a start
+            else:
+                occ = f"t{int(now)}"  # no start known: this pause is new from now
             if key not in self._active or self._active[key].occ != occ:
                 where = place(instance)
                 when = f" since {_hhmm(since, self.local)}" if since is not None else ""
@@ -389,7 +443,37 @@ class AlertRouter:
             discord_mode=mode if mode in pol.DISCORD_MODES else "on",
             voice_up=self.voice_up(),
             game_up=self.game_up(),
+            discord_up=self.discord_up(),
         )
+
+    def presence(self) -> str:
+        """``away``, ``present`` or ``unknown`` (no idle source, or it failed: D299 counts
+        unknown as present, so AFK DMs are off while it lasts; the health strip says so)."""
+        try:
+            idle = self.idle.idle_s()
+        except OSError:
+            idle = None
+        if idle is None:
+            return "unknown"
+        return "away" if is_away(idle) else "present"
+
+    def _forget_settled(self) -> None:
+        """Forget the keys firing before a restart that the engine, on fresh telemetry, would
+        have fired again by now (they ended while the core was down)."""
+        if not self._adoptable or self.settled is None:
+            return
+        gone = []
+        for key in self._adoptable:
+            binding, _, rest = key.partition("/")
+            try:
+                if self.settled(binding, rest.split(":", 1)[0]):
+                    gone.append(key)
+            except Exception:  # an engine question must never stop the routing
+                log.exception("alert engine not asked")
+        for key in gone:
+            del self._adoptable[key]
+        if gone:
+            self._save_open()
 
     def _cooling(self, channel: str, r: Routed, now: float) -> bool:
         if pol.group_of(r.kind) != "base":
@@ -405,9 +489,10 @@ class AlertRouter:
             for key in [k for k, r in self._active.items() if r.until is not None]:
                 if now >= self._active[key].until:  # type: ignore[operator]
                     self._close(key)
-            if self._adoptable and now - self.started >= ADOPT_S:
-                self._adoptable.clear()  # those didn't fire again: they ended while down
-                self._save_open()
+            self._forget_settled()
+            self._ticked = True
+            if now - self._pruned >= PRUNE_S:
+                self._prune(now)
             ctx = self.context(now)
             due: dict[str, list[Routed]] = {c: [] for c in PUSH}
             for r in self._active.values():
@@ -468,12 +553,18 @@ class AlertRouter:
                 sent += group
         return sent
 
+    def _text(self, r: Routed) -> str:
+        if r.src is not None and r.binding in self._stale:
+            first, sep, rest = r.text.partition("\n")
+            return f"{first} (held: no fresh telemetry){sep}{rest}"
+        return r.text
+
     def _dm(self, group: list[Routed], now: float) -> bool:
         if len(group) == 1:
-            text = group[0].text
+            text = self._text(group[0])
         else:
             head = f"{place(group[0].binding or '')}: {len(group)} alerts"
-            text = "\n".join([head, *(r.text for r in group)])
+            text = "\n".join([head, *(self._text(r) for r in group)])
         level = max((r.level for r in group), key=pol.rank)
         buttons = [b for r in group for b in r.buttons]
         keys = [[r.key, r.occ] for r in group]
@@ -521,20 +612,23 @@ class AlertRouter:
     # --- the outbox, for the Discord bot
 
     def outbox(self) -> list[dict[str, Any]]:
-        """Undelivered DMs, oldest first. A DM whose alerts all ended in this run, or older
-        than :data:`OUTBOX_TTL_S`, is dropped instead (marked ``dropped``)."""
+        """Undelivered DMs, oldest first. A DM whose alerts all ended, or older than
+        :data:`OUTBOX_TTL_S`, is dropped instead (marked ``dropped``) and its alerts are no
+        longer counted as DMed."""
         now = int(self.clock())
         rows = self.store.rows(
             "SELECT id, created, level, text, buttons, keys FROM alert_dm "
             "WHERE delivered IS NULL AND dropped IS NULL ORDER BY id"
         )
         out, drop = [], []
+        unsent: list[tuple[str, str]] = []
         with self._lock:
             for row in rows:
-                keys = {tuple(k) for k in json.loads(row["keys"] or "[]")}
-                ended = bool(keys) and keys <= self._closed
+                keys = {(str(k), str(o)) for k, o in json.loads(row["keys"] or "[]")}
+                ended = bool(keys) and all(self._ended(k) for k in keys)
                 if ended or now - row["created"] > OUTBOX_TTL_S:
                     drop.append(row["id"])
+                    unsent += keys
                     continue
                 out.append(
                     {
@@ -545,12 +639,34 @@ class AlertRouter:
                         "buttons": json.loads(row["buttons"] or "[]"),
                     }
                 )
+            for k in unsent:
+                self._sent.get(k, {}).pop("discord", None)
         if drop:
             marks = ", ".join("?" for _ in drop)
-            self.store.try_write(
-                f"UPDATE alert_dm SET dropped = ? WHERE id IN ({marks})", (now, *drop)
-            )
+            try:
+                with self.store.transaction() as conn:
+                    conn.execute(
+                        f"UPDATE alert_dm SET dropped = ? WHERE id IN ({marks})",
+                        (now, *drop),
+                    )
+                    conn.executemany(
+                        "DELETE FROM alert_route WHERE channel = 'discord' AND key = ? "
+                        "AND occ = ?",
+                        unsent,
+                    )
+            except sqlite3.Error as exc:
+                log.info("stale alert DMs not dropped", extra={"why": str(exc)[:200]})
         return out
+
+    def _ended(self, k: tuple[str, str]) -> bool:
+        """An occurrence that is over: it ended in this run, or (after the first tick read the
+        sources) it isn't active and isn't one the engine may still fire again."""
+        if k in self._closed:
+            return True
+        if not self._ticked:
+            return False
+        r = self._active.get(k[0])
+        return (r is None or r.occ != k[1]) and self._adoptable.get(k[0]) != k[1]
 
     def delivered(self, dm_id: int) -> bool:
         with self.store.transaction() as conn:
@@ -569,4 +685,5 @@ class AlertRouter:
                 r.as_dict(self._sent.get((r.key, r.occ), {}))
                 for r in self._active.values()
             ]
-        return {"context": dataclasses.asdict(ctx), "active": active}
+        context = {**dataclasses.asdict(ctx), "presence": self.presence()}
+        return {"context": context, "active": active}

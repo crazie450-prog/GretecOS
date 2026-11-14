@@ -57,6 +57,7 @@ class World:
     policy: NotifyPolicy = field(default_factory=NotifyPolicy)
     voice_up: bool = True
     game_up: bool = True
+    bot_up: bool = True  # a Discord bot reads the outbox
     mode: str = "on"
     said: list[str] = field(default_factory=list)
     chat: list[str] = field(default_factory=list)
@@ -81,6 +82,7 @@ class World:
         r.discord_mode = lambda: self.mode
         r.voice_up = lambda: self.voice_up
         r.game_up = lambda: self.game_up
+        r.discord_up = lambda: self.bot_up
 
         def say(text: str) -> bool:
             if not self.voice_up:

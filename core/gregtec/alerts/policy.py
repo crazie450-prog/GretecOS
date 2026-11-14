@@ -15,7 +15,10 @@ the test matrix drives it directly):
   (:mod:`gregtec.presence`); unknown counts as present.
 - **Dedupe across channels:** voice and a Discord DM both mean "Clayton was told", so an alert
   goes to at most one of them: a base alert said while he was there isn't DMed when he walks
-  away, and one DMed while he was away isn't said when he comes back. The dashboard (cards,
+  away, and one DMed while he was away isn't said when he comes back. "DMed" needs a bot: while
+  none has read the outbox lately, nothing is queued for Discord (``no Discord bot``), so voice
+  still carries a base alert when he is back, and a DM the bot never posted, once dropped, is
+  not counted as sent. The dashboard (cards,
   banners, the pause chip) and the in-game chat line are passive and always carry it.
 - **Quiet hours** (``quiet_hours``, local time) hold voice and DMs below ``quiet_min_level``;
   Discord's ``/alerts quiet <h>`` (D297) holds DMs the same way, and ``/alerts off`` stops them.
@@ -178,6 +181,9 @@ class Context:
     discord_mode: str = "on"  # /alerts: on, off, quiet (quiet's hours not over)
     voice_up: bool = True  # a voice client is connected to the core
     game_up: bool = True  # a game's GregtecLink client is connected
+    discord_up: bool = (
+        True  # the Discord bot read the outbox lately (the router's view)
+    )
 
 
 def decide(
@@ -215,6 +221,8 @@ def decide(
         raise ValueError(f"no channel {channel!r}")
     if ctx.discord_mode == "off":
         return "/alerts off"
+    if not ctx.discord_up:
+        return "no Discord bot"  # not "DMed": voice can still carry it when he is back
     if group == "base":
         if rank(level) < rank(policy.discord_min_level):
             return "below discord_min_level"

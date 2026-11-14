@@ -18,8 +18,11 @@
   whichever came second; not when the supervisor says the core was stopped on purpose
   (``gos stop``, D48's Stop: state ``stopped``). ``/alerts`` off or quiet and quiet hours apply as
   for the core's DMs (the last ``/alerts`` state the core gave is kept). When the core answers
-  again after such a DM, "GOS is back" follows. The outage is kept in
-  ``GOS_HOME\\run\\discord-alerts.json``, so a bot restart doesn't send it twice.
+  again after such a DM, "GOS is back" follows, under the same policy (so ``/alerts off``, quiet
+  hours and his being back at the PC silence it). The outage is kept in
+  ``GOS_HOME\\run\\discord-alerts.json``, so a bot restart doesn't send it twice; an outage
+  that wasn't DMed yet starts again when the bot starts, so one from before a deliberate stop
+  is never counted from days ago.
 """
 
 from __future__ import annotations
@@ -112,6 +115,10 @@ class AlertDesk:
             self.state.update(
                 {k: saved.get(k) for k in ("down_since", "sent", "alerts")}
             )
+        if not self.state.get(
+            "sent"
+        ):  # not DMed: count it from this start, if it lasts
+            self.state["down_since"] = None
 
     def _save(self) -> None:
         if self.state_file is None:
@@ -183,7 +190,7 @@ class AlertDesk:
         was_sent = bool(self.state.get("sent"))
         self.state.update(down_since=None, sent=False)
         self._save()
-        if was_sent:
+        if was_sent and self._decide(self.wall()) == pol.SEND:
             try:
                 await self.bot.dm(Message(BACK_DM))
             except Exception:  # noqa: BLE001 (best effort)
@@ -206,12 +213,7 @@ class AlertDesk:
             on_purpose = False
         if on_purpose:
             return
-        ctx = pol.Context(
-            away=is_away(self.idle.idle_s()),
-            quiet_hours=self.policy.in_quiet_hours(self.local(now)),
-            discord_mode=self._mode(now),
-        )
-        if pol.decide("discord", "gos_offline", "warn", ctx, self.policy) != pol.SEND:
+        if self._decide(now) != pol.SEND:
             return
         try:
             await self.bot.dm(Message(OFFLINE_DM.format(s=int(down_s))))
@@ -221,6 +223,19 @@ class AlertDesk:
         log.warning("GOS offline DM sent", extra={"down_s": int(down_s)})
         self.state["sent"] = True
         self._save()
+
+    def _decide(self, now: float) -> str:
+        """The core's policy for a ``gos_offline`` DM (and its "GOS is back")."""
+        try:
+            idle = self.idle.idle_s()
+        except OSError:
+            idle = None
+        ctx = pol.Context(
+            away=is_away(idle),
+            quiet_hours=self.policy.in_quiet_hours(self.local(now)),
+            discord_mode=self._mode(now),
+        )
+        return pol.decide("discord", "gos_offline", "warn", ctx, self.policy)
 
     async def run_forever(self) -> None:
         while True:

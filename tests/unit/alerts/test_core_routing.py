@@ -127,8 +127,16 @@ def test_away_it_becomes_a_dm_in_the_outbox(
     idle.touch(time.time() - 3600)
     core.alert_changed(stalled(time.time()))
     assert core.router is not None
-    core.router.tick()
+    core.router.tick()  # no bot has read the outbox: nothing is queued for Discord (M1)
+    assert core.store.rows("SELECT id FROM alert_dm") == []
+    assert core.router.view()["active"][0]["held"]["discord"] == "no Discord bot"
+    admin = client.get("/api/alerts/outbox", headers=bearer(ADMIN))
+    assert admin.json()["dms"] == []
+    core.router.tick()  # an admin read is not a bot
+    assert core.store.rows("SELECT id FROM alert_dm") == []
     bot = bearer(core.auth.issue_client_token("discord"))
+    assert client.get("/api/alerts/outbox", headers=bot).json()["dms"] == []
+    core.router.tick()  # the bot read it: now it is queued
     got = client.get("/api/alerts/outbox", headers=bot)
     assert got.status_code == 200, got.text
     (dm,) = got.json()["dms"]
@@ -151,6 +159,7 @@ def test_the_paused_game_comes_from_the_watchers_feed(
     )
     idle.touch(time.time() - 3600)
     assert core.router is not None
+    core.router.bot_seen()
     core.router.tick()
     rows = core.store.rows("SELECT text FROM alert_dm")
     assert len(rows) == 1 and "Lab is paused" in rows[0]["text"]
@@ -166,9 +175,11 @@ def test_who_may_use_the_alert_routes(core: Core, client: TestClient) -> None:
     assert client.get("/api/alerts/routed", headers=bot).status_code == 403
     view = client.get("/api/alerts/routed", headers=admin).json()
     assert set(view) == {"context", "active"}
+    assert view["context"]["presence"] in ("away", "present")  # the fixture's FakeIdle
     assert client.post("/api/alerts/test", headers=bot).status_code == 403
     assert client.post("/api/alerts/test", headers=admin).status_code == 200
     assert core.router is not None
+    client.get("/api/alerts/outbox", headers=bot)
     core.router.tick()
     (dm,) = client.get("/api/alerts/outbox", headers=bot).json()["dms"]
     assert "Test alert" in dm["text"]

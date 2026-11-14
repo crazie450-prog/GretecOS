@@ -76,6 +76,7 @@ import logging
 import math
 import os
 import sqlite3
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -446,6 +447,8 @@ class Core:
             items.append(self._maintenance_item())
         if self.deep is not None:
             items.append(_item("deep_lane", "check", "Deep lane", *self.deep.health()))
+        if self.router is not None:
+            items.append(self._presence_item())
         statuses = {i["status"] for i in items}
         overall = (
             "error" if "error" in statuses else "warn" if "warn" in statuses else "ok"
@@ -483,6 +486,21 @@ class Core:
                 "maintenance", "check", "Maintenance", "error", type(exc).__name__
             )
         return _item("maintenance", "check", "Maintenance", status, detail)
+
+    def _presence_item(self) -> dict[str, Any]:
+        """Is Clayton at the PC (WO-9.2, D76)? Unknown counts as present (D299), so the AFK
+        DMs are off while it lasts: a warning on Windows, where it should be known."""
+        assert self.router is not None
+        presence = self.router.presence()
+        if presence != "unknown":
+            return _item("presence", "check", "Presence", "ok", presence)
+        if sys.platform == "win32":
+            return _item(
+                "presence", "check", "Presence", "warn", "unknown: AFK DMs are off"
+            )
+        return _item(
+            "presence", "check", "Presence", "off", "no input-idle source here"
+        )
 
     def _credits_item(self) -> dict[str, Any]:
         try:
