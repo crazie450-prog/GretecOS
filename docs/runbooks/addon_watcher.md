@@ -79,3 +79,17 @@ restarts GOS). `$gos` below is `GOS_APP`'s `gos.exe` as in the other runbooks.
 
 If the core isn't running, only the dialog asks (as WO-1.4 did) and the rest of the chain is the
 same.
+
+## Tests
+
+- `tests/unit/test_addon_watcher.py` (every CI run): the whole chain on fake Prism instances and
+  tiny exports: the jar swap, pre-launch's notice, post-exit's question answered on the
+  dashboard, the export under the lock, the note, the curation task, the flags, a round where
+  only a config changed (nothing new flagged) and a revert (flags cleared); the question, the
+  notices, the routes and the card on their own.
+- `tests/integration/test_addon_watcher_harness.py`: the same on two real client-harness
+  exports (the second a "GoodGenerator 1.1" made from a copy of the first), with an accepted
+  Designer line, its flag in the Designer view and its re-solve. About 4 minutes, so it runs on
+  request, not in CI's mod job:
+  `GOS_REQUIRE_HARNESS_RUN=1 GOS_ADDON_WATCHER_HARNESS=1 uv run pytest tests/integration/test_addon_watcher_harness.py`
+  after `cd mod && ./gradlew runClient25 -Pharness` (mod/README.md).
