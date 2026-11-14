@@ -30,6 +30,18 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+
+def place(binding: str) -> str:
+    """How a binding is said: ``play`` is Play, ``lab`` and ``lab-<label>`` are the Lab."""
+    if binding == "play":
+        return "Play"
+    if binding == "lab":
+        return "Lab"
+    if binding.startswith("lab-"):
+        return f"Lab ({binding[4:]})"
+    return binding
+
+
 BAND_PCT = 10.0  # power_clear_pct above power_low_pct when only the low end is set
 RULES = ("power_low", "maintenance", "machine_stalled", "crafting_done")
 LEVEL = {

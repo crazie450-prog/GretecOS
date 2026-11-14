@@ -311,9 +311,11 @@ def run(
     stall_every: int = 0,
     rate: float = 0.3,
     scale: float = 0.01,
+    min_exchanges: int = 0,
 ) -> Run:
-    """The writer and a real MailboxService for ``seconds``, then a drain: the queue closes and
-    the agent keeps cycling until every command given out has reached it."""
+    """The writer and a real MailboxService for ``seconds`` (and on, up to 20 times as long, until
+    the agent has made ``min_exchanges`` exchanges: a slow runner sleeps coarsely), then a drain:
+    the queue closes and the agent keeps cycling until every command given out has reached it."""
     place, folder = layout(tmp_path)
     rng = random.Random(seed)
     sink, queue = Recording(), Queue(random.Random(seed + 1), rate)
@@ -327,7 +329,9 @@ def run(
     service.start()
     start = time.monotonic()
     try:
-        while time.monotonic() - start < seconds:
+        while (t := time.monotonic() - start) < seconds or (
+            agent.seq < min_exchanges and t < seconds * 20
+        ):
             if stall_every and agent.seq % stall_every == stall_every - 1:
                 agent.box.pause_s = ttl_s * rng.uniform(2.0, 4.0)
             agent.cycle()
@@ -396,9 +400,9 @@ def numbers(r: Run) -> dict[str, Any]:
 
 @pytest.mark.parametrize("seed", range(3))
 def test_concurrent_writer_and_core(tmp_path: Path, seed: int) -> None:
-    r = run(tmp_path, seconds=1.5, seed=seed)
+    r = run(tmp_path, seconds=1.5, seed=seed, min_exchanges=21)
     check(r)
-    assert r.agent.seq > 20  # Windows runners sleep coarsely
+    assert r.agent.seq > 20  # Windows runners sleep coarsely: run() goes on until 21
     assert r.box.stats["withdrawn"] == 0
 
 
