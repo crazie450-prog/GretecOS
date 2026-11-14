@@ -47,7 +47,7 @@ No export, DB, world or Playwright output is committed. They stay in the session
 | `92a5380` (#99, WO-7.5) | 43503983769, 43503983687 | success | success | success | success | success |
 | `3845486` (#103, WO-7.6) | 43560633501, 43560633531 | success | success | success | success | success |
 | `95034ff` (#101) | 43566610090 | success | success | success | success | (path filter) |
-| `e481ca4` (#98, head) | 43571468861, 43571468424 | success | success | still running when this was written (the PR's own CI re-runs it) | success | success |
+| `e481ca4` (#98, head) | 43571468861, 43571468424 | success | success | success (finished 08:22Z, after this was first written) | success | success |
 
 ---
 
@@ -321,4 +321,6 @@ Spending: the deep-lane proposals in steps 3, 7, 8 and 9 are a few cents each (`
 ## After the review
 
 - The full `pytest` after both fixes finished green (9352 passed, 316 skipped).
+- CI, final conclusions: run 43571468861 on `e481ca4` (`main`'s head): ubuntu, windows, mod and dashboard all **success** (mod finished 08:22Z). Run 43574239243 on `aae4046` (PR #106): ubuntu, windows, mod and dashboard all **success**; its Windows job is the first real check of the stress-floor fix on Windows, and it passed.
+- Review of this report (`a093ef8`): `test_alert_imports.py` now also covers `gregtec.advisor.steps` (it failed the same way on `e481ca4`); the report no longer leans on a G6 report that isn't written yet (V23 is step 10 here, conditional on G6's steps not having run it, and the watcher precondition is stated in step 8); step 3 replaces `oc_agent.md` step 12; question 5 states its default (no M2 on Play); the `deep_lane` cycle is named in Risk 6 and should-do 3. Full `pytest` after it: 9353 passed, 316 skipped.
 - Fixes on `review/g7`: `553979c` (the stress-test floor) and `d7b7241` (the import cycle and its test). No decision row was added (D293 unused): both are test-evidence fixes inside the phase's acceptance, with no behaviour change in the running core.
