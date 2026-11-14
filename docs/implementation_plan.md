@@ -857,6 +857,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - credit warnings with buttons (D48);
   - "GOS offline" and "game paused" **only while he's away** (D76), meaning no keyboard or mouse input on the PC for 10 minutes. Each is sent once, when both conditions are true, whichever comes second.
 - Results are also saved to the vault.
+- As built (WO-9.1, D295–D297): `gregtec.discordbot` is its own process (`python -m gregtec.discordbot run --supervised`, started by the supervisor at login with the core, left stopped until `[discord] owner_id` and its two keyring secrets exist). Every command and interaction goes through one door that drops anyone but `owner_id` with no response and no core call; no gateway intents, so it reads no messages. `/plan` and `/power` are jobs in the core's durable queue (`remote_job` in gos.sqlite, keyed by the interaction id; never completes twice, re-run once after a crash mid-run), acknowledged at once; results come as a follow-up (or a DM after 14 min or a bot restart) with the PNG and BOM of route 1 and its `#/designer/<id>` (or `#/power/<id>`) phone link. Confirm buttons post the pending action's read-back and confirm through the action desk as `discord`. Answers go to the day's journal through the core; `/alerts` sets `kv` `discord.alerts` for WO-9.2. Runbook: `docs/runbooks/discord_bot.md`.
 - **Limitation:** everything off-PC needs the PC on and awake. GOS starts at login (D77), so a reboot doesn't need a game launch to bring phone access back.
 
 ### 7.13 Addon watcher and pack updates
@@ -1321,9 +1322,11 @@ gregtec-os/
     vault/     io.py  index.py  curator.py  schema.py
     build/     schematic.py  palette.py  footprints.py  themes.py  shells.py  shell_designer.py
     alerts/  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
+    discordbot/ handlers.py  adapter.py (only importer of discord.py)  core_api.py  texts.py  settings.py  cli.py
+    remote/    jobs.py (durable design-job queue, D295)  routes.py (/api/jobs, /api/discord/*)
     crops/     data.py  planner.py  odds.py (§7.17)
   voice/gregtec_voice/   audio.py  ptt.py  wake.py  stt.py  tts.py  lexicon.py  speech_filter.py  client.py
-  discord_bot/gregtec_discord/
+  (the Discord bot is core/gregtec/discordbot/, its job queue core/gregtec/remote/: WO-9.1, D296)
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
@@ -1468,6 +1471,13 @@ keep_backups = 7              # daily DB backups kept (D139)
 # clear_s = 30
 # cooldown_s = 600            # plan 7.5's 10 minutes
 # done_show_s = 300
+
+# The Discord bot (WO-9.1, D296). Ids are Discord snowflakes (Developer Mode > Copy ID); the bot
+# token is in the keyring (gos key set discord), the bot's core token too (gos token new discord).
+# [discord]
+# owner_id = <Clayton's user id>   # required: the only user the bot answers
+# guild_id = <his private server's id>   # commands appear there at once (else: global sync)
+# dashboard_url = "https://<pc>.<tailnet>.ts.net"   # default: the ts.net name in [core] allowed_hosts
 
 # M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
 # drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.

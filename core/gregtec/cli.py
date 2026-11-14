@@ -41,6 +41,7 @@ from gregtec.db import crops as crop_db
 from gregtec.db import ores as ore_db
 from gregtec.db import quests as quest_db
 from gregtec.db import structures as structure_db
+from gregtec.discordbot import cli as discord_cli
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
@@ -618,6 +619,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     appwindow.add_parsers(commands)
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
+    discord_cli.add_parsers(commands)
     watch_cli.add_parsers(commands)
     wiki_cli.add_parsers(commands)
     palette_cli.add_parsers(commands)
@@ -696,6 +698,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return appwindow.run(args)
     if args.command in voicecli.COMMANDS:
         return voicecli.run(args)
+    if args.command in discord_cli.COMMANDS:
+        return discord_cli.run(args)
     if args.command in personacli.COMMANDS:
         return personacli.run(args)
     if args.command in watch_cli.COMMANDS:
