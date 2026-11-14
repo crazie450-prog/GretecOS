@@ -80,11 +80,16 @@ class WindowsIdle:
 
         self._info = LastInputInfo()
         self._info.cbSize = ctypes.sizeof(LastInputInfo)
-        windll = ctypes.windll  # type: ignore[attr-defined]
-        self._get_last = windll.user32.GetLastInputInfo
+        # Private DLL handles: ``ctypes.windll.user32.GetLastInputInfo`` is one function object
+        # shared by the whole process (the vault scheduler's ``seconds_since_input`` calls it
+        # with its own structure), so setting argtypes on it would break every other caller.
+        # Each ``WinDLL`` instance caches its own function objects.
+        user32 = ctypes.WinDLL("user32")  # type: ignore[attr-defined]
+        kernel32 = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
+        self._get_last = user32.GetLastInputInfo
         self._get_last.argtypes = [ctypes.POINTER(LastInputInfo)]
         self._get_last.restype = wintypes.BOOL
-        self._tick = windll.kernel32.GetTickCount
+        self._tick = kernel32.GetTickCount
         self._tick.restype = wintypes.DWORD
         self._ref = ctypes.byref(self._info)
         self._warned = False

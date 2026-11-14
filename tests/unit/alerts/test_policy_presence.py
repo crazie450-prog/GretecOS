@@ -167,3 +167,60 @@ def test_on_windows_get_last_input_info_answers() -> None:
     assert isinstance(src, presence.WindowsIdle)
     idle = src.idle_s()
     assert idle is None or idle >= 0.0  # a runner's service session may have no input
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' GetLastInputInfo")
+def test_windows_idle_leaves_the_schedulers_input_check_working() -> None:
+    # Regression: WindowsIdle used to set argtypes on the process-wide
+    # ctypes.windll.user32.GetLastInputInfo, after which the vault scheduler's own call
+    # (its own LastInputInfo) raised ctypes.ArgumentError and maintenance never ran.
+    from gregtec.vault import scheduler
+
+    first, second = presence.WindowsIdle(), presence.system_idle()
+    for got in (scheduler.seconds_since_input(), first.idle_s(), second.idle_s()):
+        assert got is None or got >= 0.0
+    after = scheduler.seconds_since_input()
+    assert after is None or after >= 0.0
+
+
+class _Fn:
+    def __init__(self, result: int) -> None:
+        self.result = result
+        self.argtypes: object = None
+        self.restype: object = None
+
+    def __call__(self, *args: object) -> int:
+        return self.result
+
+
+class _Dll:
+    def __init__(self) -> None:
+        self.GetLastInputInfo = _Fn(1)
+        self.GetTickCount = _Fn(5000)
+
+
+def test_windows_idle_never_touches_the_shared_windll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same regression, on every OS: WindowsIdle loads its own DLL handles and never sets
+    # argtypes or restype on ctypes.windll's process-wide function objects.
+    import ctypes
+
+    shared = type("WinDll", (), {"user32": _Dll(), "kernel32": _Dll()})()
+    private: list[_Dll] = []
+
+    def win_dll(name: str) -> _Dll:
+        private.append(_Dll())
+        return private[-1]
+
+    monkeypatch.setattr(ctypes, "windll", shared, raising=False)
+    monkeypatch.setattr(ctypes, "WinDLL", win_dll, raising=False)
+    src = presence.WindowsIdle()
+    assert len(private) == 2
+    for dll in (shared.user32, shared.kernel32):
+        assert (
+            dll.GetLastInputInfo.argtypes is None
+            and dll.GetLastInputInfo.restype is None
+        )
+        assert dll.GetTickCount.restype is None
+    assert src.idle_s() == 5.0  # dwTime 0 against tick 5000 ms
