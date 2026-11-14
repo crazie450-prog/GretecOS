@@ -28,11 +28,12 @@ from pathlib import Path
 
 import uvicorn
 
-from gregtec import applog, config, control, supervisor
+from gregtec import applog, config, control, presence, supervisor
 from gregtec.advisor.notices import Notices
 from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
 from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
+from gregtec.alerts.router import AlertRouter
 from gregtec.api import ai_routes, persona_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
@@ -207,6 +208,7 @@ def run(
         ops=ops,
         events=event_service(cfg, store, meter, ai),
         notices=Notices(store.path, cfg.notices),
+        router=AlertRouter(store, cfg.notify, idle=presence.system_idle()),
     )
     ops.desk.on_change = ops.changed(core.action_changed)  # chat notices first (WO-7.4)
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
