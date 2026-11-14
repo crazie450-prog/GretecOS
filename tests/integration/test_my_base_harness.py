@@ -13,6 +13,7 @@ server harness; locally: mod/README.md), and writes nothing outside tmp_path:
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -37,15 +38,16 @@ EBF_RECIPE = (
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     h = tmp_path_factory.mktemp("my-base-harness")
-    collect.collect(game, h, 1, allow_harness=True)
-    build.build(h, allow_harness=True)
+    built_home(game, h)
     return h
 
 

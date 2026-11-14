@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ import pytest
 from gregtec.agents import deep, deep_config
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.llm import fake_api
 from gregtec.llm.fake_api import ApiTurn, FakeMessagesAPI
@@ -34,15 +34,16 @@ KEY = "sk-ant-fake-0000000000000000000000000000000000000"
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the client harness")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("deep-lane-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     shutil.copytree(REPO / "vault-template", home / "vault")
     return home
 

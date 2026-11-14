@@ -55,7 +55,7 @@ import json
 import os
 import sqlite3
 import sys
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -687,28 +687,28 @@ def test_the_committed_golden_set_is_30_db_keys_without_numbers() -> None:
 
 
 @pytest.fixture(scope="module")
-def golden_home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def golden_home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     """A GOS_HOME with a DB built from a real harness run (one build for the module)."""
     where = os.environ.get("GOS_GOLDEN_HOME")
     if where:
         return Path(where)
-    return _golden_home(tmp_path_factory.mktemp("golden"))
+    return _golden_home(tmp_path_factory.mktemp("golden"), built_home)
 
 
-def _golden_home(tmp: Path) -> Path:
+def _golden_home(tmp: Path, built_home: Callable[[Path, Path], Path]) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip(
             "set GOS_REQUIRE_HARNESS_RUN=1 after the client harness, or GOS_GOLDEN_HOME"
         )
-    from gregtec.db import build
 
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(
             f"no client harness run in {game / collect.EXPORTS} (mod/README.md)"
         )
-    collect.collect(game, tmp, 1, allow_harness=True)
-    build.build(tmp, allow_harness=True)
+    built_home(game, tmp)
     return tmp
 
 

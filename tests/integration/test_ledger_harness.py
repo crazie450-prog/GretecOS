@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ import pytest
 from gregtec import store as core_store
 from gregtec.base.state import MyBase
 from gregtec.cards import validate as card_problems
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner import designer, ledger, power
 from gregtec.planner.request import DefaultBaseInputs, Request
@@ -30,15 +31,16 @@ HV = 3
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     h = tmp_path_factory.mktemp("ledger-harness")
-    collect.collect(game, h, 1, allow_harness=True)
-    build.build(h, allow_harness=True)
+    built_home(game, h)
     vault_deploy.deploy(h / "vault", REPO / "vault-template")
     return h
 

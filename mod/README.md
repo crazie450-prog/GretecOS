@@ -29,6 +29,14 @@ On Linux without a display, run the client harness under Xvfb (CI does):
 `x11-xserver-utils` (LWJGL 2 crashes at startup without `xrandr`) and Mesa's `libgl1-mesa-dri`. `runClient` (Java 8,
 LWJGL 2) works the same way.
 
+After the harnesses, the Python integration tests check their runs, from the repo root:
+`GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest tests/integration` (serial; the
+`GOS_CLIENT_RUN_B` copy is described under the client harness and in `tests/integration/test_db_harness.py`). CI's
+`mod` job adds `-n 4 --dist loadfile` (pytest-xdist, D340): four workers, each running whole test files, so a file's
+module fixtures (most build their own DB from the harness runs) are built once, as in a serial run. Each worker
+writes only under its own pytest temp folder and reads `mod/run/` without changing it. A new integration test must
+keep that true: no fixed ports, no writes outside `tmp_path`, no dependence on another file's tests having run.
+
 The jar to install is `build/libs/gregteclink-<version>.jar` (not `-dev` or `-sources`). Its name matches the
 `mods/gregteclink*` entry of Export's `sync_exclude`.
 

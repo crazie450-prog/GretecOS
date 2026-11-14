@@ -20,13 +20,13 @@ import io
 import json
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner import plan
 from gregtec.planner.outputs import (
@@ -52,15 +52,16 @@ LINES = {
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     h = tmp_path_factory.mktemp("outputs-harness")
-    collect.collect(game, h, 1, allow_harness=True)
-    build.build(h, allow_harness=True)
+    built_home(game, h)
     vault_deploy.deploy(h / "vault", REPO / "vault-template")
     return h
 

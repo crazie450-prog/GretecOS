@@ -44,6 +44,9 @@ module-name = "gregtec"
 dev = [
     "hypothesis>=6.100",
     "pytest>=9.2",
+    # D340: CI's mod job runs tests/integration with -n 4 --dist loadfile (MIT; plain
+    # `uv run pytest` stays serial).
+    "pytest-xdist>=3.8",
     # Ruff changed its default rule set in 0.16 and 0.17; take minor bumps on purpose.
     "ruff>=0.17.3,<0.18",
 ]

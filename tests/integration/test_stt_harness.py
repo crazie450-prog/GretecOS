@@ -18,7 +18,7 @@ from __future__ import annotations
 import io
 import os
 import wave
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -26,7 +26,7 @@ import pytest
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Registry
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec_voice import cli, stt, stt_eval
 from gregtec_voice.audio import SAMPLE_RATE, Segment
@@ -54,15 +54,16 @@ HEARD = {
 
 
 @pytest.fixture(scope="module")
-def db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def db(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the client harness")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("stt-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     return access.db_path(home)
 
 

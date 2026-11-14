@@ -9,6 +9,7 @@ only with GOS_REQUIRE_HARNESS_RUN=1 after the client harness; nothing is written
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ import pytest
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Registry
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.gamelink import whatsthis
 from gregtec.ingest import collect
 
@@ -38,15 +39,16 @@ ITEMS: list[tuple[str, int, dict[str, Any] | None, str]] = [
 
 
 @pytest.fixture(scope="module")
-def reg(tmp_path_factory: pytest.TempPathFactory) -> Registry:
+def reg(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Registry:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the client harness")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("whats-this-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     return build_registry(access.db_path(home), Glossary.find(None))
 
 
