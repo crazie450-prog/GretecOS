@@ -229,6 +229,8 @@ the core shows it as "check AE2", not as a failure.
 | `machine_pause` | `addr`: a `machines[]` address from this agent | `setWorkAllowed(false)`, then checks `isWorkAllowed` on the next tick |
 | `machine_resume` | `addr` | `setWorkAllowed(true)`, checked the same way |
 | `say` | `text`: 1–256 bytes | `chat_box.say(text)` with control characters and section-sign colour codes removed. 40 blocks around the chat box, in its dimension [F§4.2] |
+| `crop_start` | a breeding plan (below, `#/$defs/crop_start_args`) | The breeding station (WO-7.6) takes the plan and runs it; `done` means it started (or already runs that plan). Refused without a `crops` table |
+| `crop_stop` | `{}` | The station starts no new work and winds down (below); `done` means the stop was taken |
 
 Only a `machines[]` address can be paused or resumed: never a power entry (a battery buffer, an LSC) or any other
 component. No destructive kind exists (plan §7.9).
@@ -288,12 +290,104 @@ the Problems count from either form. Numbers in the lines are locale-formatted (
   `registry_name` and `meta` with no NBT (`nbt_hash` empty); the same harness test checks the examples' items resolve
   that way.
 
+## The display (WO-7.4)
+
+The in-game displays (plan 7.9: the OC screen status board, the OCGlasses HUD, chat-box notices; D277-D279) travel in
+the same two documents over both transports. They are displays, not actions: no confirmation, no command id, and the
+agent never runs anything from them. **v stays 1**: both fields are optional, an agent that sends no `display` gets
+none, and core and agent ship together (D277).
+
+**Telemetry `display`** (`#/$defs/shows`), sent by an agent that loaded `oc/display.lua` with at least one display:
+`rev` (the display rev it shows; 0 before the first), `said` (the highest chat notice id it has said in this `boot`;
+0 none), `board` (present when it draws the board: `w` and `h`, its text area, at most 50 x 16), `hud` (it draws
+OCGlasses text: a glasses terminal is in and the transport is http, M2 only per plan 7.9's mode table), `chat` (it
+says notices: a chat box is in and the config allows it).
+
+**Reply `display`** (`#/$defs/display`): sent when its `rev` differs from the one the agent reports, or a notice is
+waiting; placed after the commands and only while the reply stays within 2048 bytes (first without its `chat`, else
+not at all, with `poll_s` 1). Fields: `rev` (1 to 2^31-1, a checksum of what the board and HUD show), `lines` (only to
+an agent with a `board`: at most 12, each `t` at most 48 printable ASCII characters and `c` one of `ok`, `warn`,
+`bad`, `info`, `dim`), `hud` (only to an agent with `hud`: at most 4, `t` at most 40), `chat` (only to an agent with
+`chat`: at most 2 notices, `id` rising, `t` 1 to 160 printable ASCII characters). The agent says each notice whose
+`id` is above its `said` once, in order, with control and non-ASCII bytes replaced, and reports the new `said`; the
+core sends no notice older than 60 s or from before the agent's current run.
+
+What the core puts there (`core/gregtec/bridge/display.py`, from `gregtec.bridge.live`): power (`PWR`, the store's
+fill and its reported in minus out EU/t), problems (`!`, stopped and stalled machines first, then Problems counts
+from sensor lines), the action waiting for "confirm" (`ACT`), Clayton's first goal (`GOAL`) and the quest guide's
+next step (`NEXT`), AE2 crafting (`AE2`, `CRFT`); on the HUD power, the worst problem and the next step. A machine
+with work disabled is `stopped` (a problem: GT disables work when a multiblock shuts itself down) unless the desk's
+latest finished pause or resume for its address is a confirmed pause, then `paused` (D279). While an action waits
+for "confirm" in the agent's binding the reply carries `poll_s` 2. Notices are fixed templates about confirmed OC
+actions, worded from the desk's outcome and never with the agent's error text: `GOS: Confirmed: <read-back>`,
+`Started: ... (AE2 is crafting it)`, `Done`, `Crafting done`, `Crafting cancelled in AE2`, `Crafting failed: ...
+(see the dashboard)`, `Check AE2: ... (it may still run)`, `Failed: ... (see the dashboard)`, `No result for: ...
+(it may have run; check in game)`; each wording once per action, to one computer: the one that runs it when its telemetry reports `display.chat`
+true, else the binding's one chat-box computer (as `locate` picks for `say`), else the first that says chat (D278). Waypoints
+(core-side) and `say` get none; free text in chat stays the `say` command. Everything is formatted from telemetry and the guide; nothing is estimated. Golden pair:
+`telemetry-display.json` and `reply-display.json` (built by `tests/unit/test_oc_display.py`, drawn by
+`tests/oc/test_display.lua`).
+
+## The breeding station (WO-7.6)
+
+An agent whose `gos-agent.cfg` has a `crops` table loads `oc/crop/station.lua` (D282-D284): one transposer touching a
+storage chest (`storage`, a side 0-5), CropsNH's Crop Breeder (`breeder`) and one to three Seed Generators
+(`generators`: `{ side, adapter }`, `adapter` an address prefix, needed with more than one), each machine with an
+adapter (`gt_machine`, found by GT's meta name `basicmachine.cropbreeder.tier.NN` /
+`basicmachine.seedgenerator.tier.NN`). Options: `transposer` (address prefix), `step_s` 2 (1-10), `start_s` 30,
+`run_max_s` 1800, `keep` 1 (1-8), `state` (`gos-crops.state` next to the config). **v stays 1**: the `crops`
+telemetry field is optional and the two kinds are new; core and agent ship together, as with `display` (D282).
+
+**Plan** (`crop_start` `args`, built by `gregtec.crops.station`, never by a model): `plan` (8 hex), `target` and every
+other crop as a `seed_label` (an analysed seed's label, `<crop name> Seeds`: CropsNH's one seed item
+`cropsnh:genericSeed` names its species in its label once analysed; `Unknown Seeds` never), `count` (1-64 to stock),
+`steps` (1-8 Crop Breeder recipes in order, the last one breeding the target: `child`, `parents` (2-4 labels), `cat`
+(catalysts: `crop_item` = `name` registry name, `damage`, `n`), `copies` (2-64 of each parent before the step's
+first run when a copier makes them), `fert` (mB of enriched fertilizer a run takes), `ref` (the recipe's `r:` id,
+logged only)), `copy` (the crops worth a copier, best first), `copy_cat` (a crop's duplication catalyst for the
+Seed Generator) and `copy_fert` (mB of fertilizer one copy of a crop takes, from its stats). The agent checks the plan again (labels, bounds, the target bred last) and refuses a bad one.
+
+**What GT allows.** GT 5.09.54.265's basic machines let automation take items only from their **output** slot
+(`MTEBasicMachine.allowPullStack`; OC's transposer honours `ISidedInventory.canExtractItem`). A seed put in an input
+slot stays there until the machine uses it or a player takes it. So a Seed Generator, which never uses up the seed it
+copies (`MTESeedGenerator.checkRecipe`), becomes the **copier** of the first crop put in it, for good: the station
+parks one seed of a crop on the plan's `copy` list in an empty generator (the first ranks get the generators), only
+once the generator's tank holds a copy's `copy_fert` and the chest holds the copy's catalyst, and never a starter's
+last `keep` seeds (a crop the plan breeds may be parked as its only seed: the plan breeds it again), and
+then switches it on (`setWorkAllowed`) only while that crop is short. The Crop Breeder is loaded only when it is idle
+and empty, its tank holds the run's `fert` (`getTankLevel`), and the chest holds `keep` + 1 of every parent, so a
+load never takes the last seed: paused, catalysts and exactly one of each parent into its input slots (slot 6 on,
+the size telling 3 inputs below HV and 6 from HV), resumed. A seed of the step's child in its output at the end of
+the run is success; an empty output when it has no work is a failure (the run used up its inputs, `MTECropBreeder`);
+the next look finds the parents short and copies or breeds them again. Seeds are identified by `name` and `label`
+only, never numeric ids, never planted crops; stats are never read (`tag` is gzip, which the data card can't
+inflate: V31); GOS computes them from the breeding maths.
+
+**Telemetry `crops`** (`#/$defs/crops`): `state` (`idle`, `running`, `stopping`, `stopped`, `done`, `failed`,
+`interrupted`: the agent restarted during a run, which only a confirmed start (resume) or stop moves on), `plan`,
+`action` (the `crop_start` id), `target`, `count`, `steps`, `step` (the run under way), `runs`, `ok`, `fail`, `doing`
+and `note` (the station's own words, at most 200 bytes, data), `stock` (the plan's seeds in the chest, by label) and
+`copiers` (each generator's parked crop, or false: also when it holds a seed the station can't name, such as
+`Unknown Seeds` or a renamed one, which it never uses) and `cat_left` (the catalyst items left in each generator's
+inputs: it gets one copy's worth at a time, and GT never gives it back).
+
+**Stop.** A confirmed `crop_stop` starts no new work: the copiers are paused, a run under way is waited for and its
+child collected, the copiers' last copies are collected, and the breeder's work switch is put back. `stopped` then
+means no item the station moved is anywhere but the chest, except each copier's one parked seed (listed in
+`copiers`) and at most one copy's catalyst (`cat_left`, also in the stop note). Every configured copier is paused,
+whoever switched it on (a running one would fill its output with copies), and every copier's `hasWork` is read
+before `stopped` (a failed read counts as busy). A breeder load that never started is left paused with its inputs,
+and the note says so. The station never starts itself: a run interrupted by a restart waits for Clayton, and loading
+the saved run pauses every copier at once (the work switches the station found are saved with the run, so a stop
+after a restart puts the breeder's back).
+
 ## Security
 
 - Payload text is data (plan §0.1 principle 8): sensor lines, machine names, CPU names, error messages and item
   names come from the game and from mods. The core shows and parses them; no agent treats them as instructions.
-- The agent runs only the four kinds above, with `confirmed_via` one of the four and arguments checked, and has no
-  free-form code path (no `load` of anything it receives).
+- The agent runs only the six kinds above, with `confirmed_via` one of the four and arguments checked, and has no
+  free-form code path (no `load` of anything it receives). The breeding station's plan is data: labels, counts and
+  registry names it compares with what the transposer reports, nothing it runs.
 - Everything posted with the agent's token is data too (see Token): the core never starts an action because of it.
 - **The agent can't tell the core from any other program on `127.0.0.1:<port>`.** A reply isn't authenticated: the
   token only goes from agent to core, and `confirmed_via` is a plain value. A program that binds the port while the

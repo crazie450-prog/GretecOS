@@ -287,6 +287,116 @@ export interface MyBase {
   has_db: boolean;
 }
 
+// The live base (WO-7.4, GET /api/base/live): OC telemetry as the core reads it. Every row
+// carries its tel: citation and its age; stale rows are old readings, never current ones.
+export type LiveStatus = "running" | "stopped" | "stalled" | "paused" | "idle" | "unknown" | "stale";
+export type LiveLevel = "bad" | "warn" | "info";
+
+export interface LivePower {
+  id: string;
+  cite: string;
+  name: string;
+  meta: string | null;
+  mte_id: number | null;
+  kind: "battery_buffer" | "storage" | string;
+  age_s: number;
+  stale: boolean;
+  eu_in: number | null;
+  eu_out: number | null;
+  eu?: number | null;
+  eu_max?: number | null;
+  eu_str?: string | null;
+  eu_max_str?: string | null;
+  pct: number | null;
+}
+
+export interface LiveMachine {
+  id: string;
+  cite: string;
+  name: string;
+  meta: string | null;
+  mte_id: number | null;
+  xyz: number[] | null;
+  status: LiveStatus;
+  progress: number | null;
+  progress_max: number | null;
+  problems: number | null;
+  problems_age_s: number | null;
+  age_s: number;
+  stale: boolean;
+}
+
+export interface LiveProblem {
+  level: LiveLevel;
+  kind: string;
+  cite: string;
+  text: string;
+  age_s?: number;
+}
+
+export interface LiveCraft {
+  id: number;
+  name: string;
+  amount: number;
+  state: string;
+  err: string | null;
+  cite: string;
+  stale: boolean;
+}
+
+/** A telemetry alert (WO-7.5, gregtec.alerts.engine.Alert.as_dict). */
+export interface LiveAlert {
+  key: string;
+  rule: "power_low" | "maintenance" | "machine_stalled" | "crafting_done";
+  binding: string;
+  subject: string;
+  level: "err" | "warn" | "info";
+  title: string;
+  body: string;
+  say: string;
+  cite: string;
+  fired_at: number;
+  value: number | null;
+  unit: string | null;
+  stale: "paused" | "silent" | null;
+}
+
+export interface LiveBinding {
+  binding: string;
+  status: "connected" | "stale" | "not_set_up";
+  age_s: number | null;
+  agents: { address: string; cite: string; transport: "http" | "mailbox"; age_s: number; stale: boolean; tick_ms: number | null }[];
+  power: LivePower[];
+  net_eu_t: number | null;
+  machines: LiveMachine[];
+  problems: LiveProblem[];
+  /** WO-7.5: the alerts firing here (crafting done included) and why they are held, if so. */
+  alerts: LiveAlert[];
+  held: "paused" | "silent" | null;
+  ae2: {
+    cpus: number;
+    busy: number;
+    crafts: LiveCraft[];
+    items: { key: string; name: string; size: number | null; craftable: boolean | null; cite: string }[];
+  } | null;
+}
+
+export interface LiveBase {
+  ts: number;
+  stale_s: number;
+  bindings: LiveBinding[];
+}
+
+export interface ActionRow {
+  id: number;
+  kind: string;
+  state: string;
+  target: string;
+  readback: string;
+  created: number;
+  done_ts: number | null;
+}
+
 export interface BaseCandidate {
   kind: "item" | "fluid" | "machine";
   key: string;
@@ -504,6 +614,54 @@ export interface CropsView {
   error: string | null;
 }
 
+// --- The breeding station (WO-7.6, plan 7.17 item 4, D282-D284) --------------------------------
+// The plan is gregtec.crops.station's; the status is each OC station's last report (game data).
+
+export interface CropStationStatus {
+  binding: string;
+  address: string;
+  ref: string; // tel:<binding>/<address>
+  age_s: number;
+  stale: boolean;
+  state: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  stock: Record<string, number>;
+  plan?: string;
+  target?: string;
+  count?: number;
+  steps?: number;
+  step?: number;
+  doing?: string;
+  note?: string;
+  copiers?: (string | false)[];
+  cat_left?: number[]; // catalyst items left in each Seed Generator's inputs
+}
+
+export interface CropStationPlan {
+  id: string;
+  target: string;
+  target_name: string;
+  count: number;
+  tier: number;
+  steps: { n: number; child: string; child_name: string; chance_pct: number; runs: number; copies: number }[];
+  lines: string[];
+  refs: string[];
+}
+
+export interface CropStationView {
+  status: CropStationStatus[];
+  plan: CropStationPlan | null;
+  error: string | null;
+}
+
+export interface CropStationProposal {
+  ok: boolean;
+  say: string; // GOS's read-back: "Start the breeding station: ... Say confirm."
+  action: { id: number; state: string };
+}
+
 // --- The Designer (WO-3.7, plan 7.1, D250) ------------------------------------------------------
 // Every number is the planner's (core/gregtec/planner/designer.py); the routes come in rank order.
 
@@ -608,6 +766,65 @@ export interface SavedPlanRow {
   name: string;
   status: string;
   kind: string | null;
+}
+
+// --- The Activity view (WO-6.3, GET /api/activity, plan 7.5, 7.14) ------------------------------
+// Sessions, one session's events and counts (computed by the core, D142 (f)), its journal lines
+// and the finished ages' recaps (D162, D265). Event text is the game's: data, shown as plain text.
+
+export interface ActivityEvent {
+  id: number;
+  ts: number; // epoch seconds
+  kind: string;
+  session: number | null;
+  instance: "play" | "lab" | null;
+  source: string | null;
+  ref: string | null; // q:<id>, mte:<id>
+  where: { dim: number | null; x: number; y: number | null; z: number | null } | null;
+  data: Record<string, unknown>;
+}
+
+export interface ActivitySession {
+  id: number;
+  instance: "play" | "lab" | null;
+  world: string | null;
+  start_ts: number;
+  end_ts: number | null;
+  open: boolean;
+  start_why: string | null; // login, resume
+  end_why: string | null; // quit, crash, idle, relogin
+  last_ts: number | null;
+  played_s: number;
+  journal: string | null;
+  counts: Record<string, number>;
+}
+
+export interface AgeRecap {
+  age: number;
+  stage: string;
+  start_ts: number;
+  end_ts: number;
+  hours_played: number;
+  sessions: number;
+  machines_built: number;
+  best_net_eut: number | null; // null: no OC power readings in the age
+  best_ref: string | null; // db:tel_sample/<src>@<ts>
+}
+
+export interface ActivityView {
+  ts: number;
+  sessions: ActivitySession[];
+  session: ActivitySession | null;
+  events: ActivityEvent[]; // newest first
+  outside_sessions: number;
+  journal: { paths: string[]; lines: string[]; written: string | null } | null;
+  recaps: AgeRecap[]; // newest first
+  problems: string[];
+}
+
+export interface RecapReply {
+  recap: AgeRecap | null;
+  age: { age: number; stage: string; start_ts: number } | null;
 }
 
 // --- The Power view (WO-4.6, plan 7.2, 7.14 "Power") -------------------------------------------

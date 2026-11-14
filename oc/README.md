@@ -33,7 +33,7 @@ The wire format is [docs/contracts/oc_bridge.md](../docs/contracts/oc_bridge.md)
 
 ## Install
 
-Put `gos-agent.lua`, `json.lua` and `gos-agent.cfg` (from `gos-agent.cfg.example`) in one folder on the drive, e.g.
+Put `gos-agent.lua`, `json.lua`, `display.lua` and `gos-agent.cfg` (from `gos-agent.cfg.example`) in one folder on the drive, e.g.
 `/home/gos/`. A managed drive is the folder `<world>/opencomputers/<drive address>/` in the save, so the files can be
 copied there from Windows while the game runs (GTNH sets `bufferChanges=false`; OC sees them at once).
 docs/runbooks/oc_agent.md has the exact steps for the Lab.
@@ -56,6 +56,36 @@ When it starts, the agent logs the line gos.toml needs, e.g.
 own core, `[mailbox.play]`) with the world's folder name, and restart the core. The core writes nothing in the world
 but `inbox.tmp`, `inbox.json` and the rename of `outbox.json` back to `outbox.tmp`, in that one folder. Files and
 steps: docs/contracts/oc_bridge.md, "M1".
+
+## In-game displays (WO-7.4)
+
+Copy `display.lua` next to `gos-agent.lua` for the displays (plan 7.9, D277-D279); without it the agent runs without
+them. The core composes every line and sends it in the reply (contract "The display"); the agent only lays it out:
+
+- **status board** on the screen the GPU is bound to (or the config's `display.screen` prefix): the GPU is set to at
+  most 50 x 16 (the shell's own resolution is given back at stop), a header with how fresh the core's reply is, up
+  to 12 lines (power, problems with stopped and stalled machines
+  first, the action waiting for "confirm", goal, next step, AE2), and the agent's newest note at the bottom (while the
+  board has the screen, notes go there instead of the terminal). No reply for 30 s: the header says `NO REPLY` and
+  the lines turn grey.
+- **OCGlasses HUD**, M2 only: 4 text widgets made once, only changed lines set (0.4 OC energy a tick).
+- **chat box** notices the core sends (fixed templates about confirmed OC actions), each said once, by one computer:
+  the one that ran the action if it has a chat box, else the binding's one chat-box computer.
+
+Config: `display = true` (default), `false`, or a table of `board`, `screen`, `hud`, `chat`.
+
+## The breeding station (WO-7.6, from MV)
+
+Copy `crop/station.lua` to `/home/gos/crop/station.lua` and add a `crops` table to the config (the example has one)
+to run GOS breeding plans on CropsNH's Crop Breeder and Seed Generators (plan 7.17, D282-D284). Build: ONE transposer
+touching a chest (`storage`), the Crop Breeder (`breeder`) and 1 to 3 Seed Generators (`generators`), an adapter on
+each machine, all on the computer's network; feed the machines enriched fertilizer and power, and keep their
+auto-output off. GT lets automation take items only from a machine's output, so a seed given to a Seed Generator stays
+in it as that generator's copier for good; the chest gets analysed starter seeds (labels `<crop> Seeds`; unanalysed
+`Unknown Seeds` are never touched) and any catalysts. The station starts and stops only on commands Clayton confirmed
+(`crop_start`, `crop_stop`); its status rides in every telemetry message (`crops`) and shows as `crop_status`, on the
+dashboard (`/api/crops/station`) and in `gos crops station`. Contract: docs/contracts/oc_bridge.md, "The breeding
+station"; steps: docs/runbooks/breeding_station.md.
 
 ## Run
 

@@ -208,6 +208,90 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
 28. Set `transport` back to `"auto"` in `gos-agent.cfg` if section E should use HTTP again. Leave `[mailbox.lab]` in
     gos.toml or remove it; with it, the core keeps watching the folder.
 
+## I. In-game displays: the board, the HUD, chat (WO-7.4, about 30 minutes)
+
+Plan 8 WO-7.4's acceptance in game: "readable in game; updates within 10 s". The code side is tested on the fake
+OC (tests/oc/test_display.lua, tests/oc/test_display_pipeline.py); this checks what only the real game can show.
+Displays need no confirmation (plan 7.9); nothing here acts on the world except step 33's confirmed pause.
+
+29. Copy `display.lua` next to the agent (it is optional: without it the agent runs with no displays and says why):
+    ```powershell
+    $ProgressPreference = 'SilentlyContinue'
+    Copy-Item C:\GregtecOS-app\current\oc\display.lua $gos
+    ```
+    Leave `display` out of `gos-agent.cfg` (all displays on), or set e.g. `display = { hud = false }`.
+30. **The board.** The computer's screen (any tier, one block or a multiblock of 2x2 or more) must show
+    `GREGTEC OS ... M2 3s` (M1 over the mailbox) in the top row, then power (`PWR`), problems (`!`, stopped
+    and stalled first) or `OK   no problems reported`, `GOAL` and `NEXT` if `me/goals.md` and the quest book are loaded, `AE2`,
+    and the agent's newest note in the bottom row. The GPU is set to 50 x 16 at most, so text is large. Stand
+    3 blocks back: **is every line readable?** Write down the screen's size in blocks and its tier. Stop the agent
+    (Ctrl+C): the shell must get its own resolution back (on a T2/T3 screen, small text again).
+31. **Updates within 10 s, and the stop VERIFY.** Break the EBF's power (remove its energy hatch's cable) with a
+    stopwatch running. Note the seconds until the board shows `!    Electric Blast Furnace: stopped (work disabled:
+    power loss, maintenance or by hand)`. **VERIFY:** GT 5.09.54 shuts a multiblock down on power loss and disables
+    its work, so `stopped` is expected, not `stalled` or `paused` (`paused` is only for a pause GOS ran, step 33).
+    If it shows `stalled` instead, GT kept work allowed: write that down. Put the cable back, re-enable the EBF
+    (soft mallet or its controller's button) and note the seconds until `OK` (or its other problems) return.
+    Repeat over the mailbox (section H's `transport = "mailbox"`). Each must be at most 10 s with `cycle_s = 5`
+    (at `cycle_s = 10` a change can wait a full cycle, plus the mailbox hand-off over M1).
+    **VERIFY the stall:** starve a single-block basic machine with a job (an LV macerator with ore in, its cable
+    removed, or its output full): within 10 s it must read `!    <machine>: stalled (has a job, not running)`
+    (amber) on the board and the Base view.
+32. **Stale.** Press Esc for 45 s and come back: the header must read `NO REPLY ..s` in red and every line grey,
+    then return to normal within 10 s of unpausing. (The dashboard's Base view says the same: "No OC report for
+    .. s".)
+33. **Chat notices.** With a chat box on the computer, ask GOS to pause the EBF and confirm on the dashboard. While
+    it waits for "confirm" the board shows `ACT  Say confirm: ...` and the agent sends every 2 s. Within 10 s of
+    confirming, the chat (within 40 blocks, same dimension) must show `[ChatBox] GOS: Confirmed: Pause machine ...`
+    and then `GOS: Done: ...`, once each, from this computer only; the board then lists the EBF as `paused` with
+    no problem row. Resume it the same way. Then ask GOS to craft something AE2 can make (64 of an ingot it has a
+    pattern for) and confirm: the chat says `GOS: Confirmed: Craft ...`, `GOS: Started: Craft ... (AE2 is crafting
+    it)`, and when AE2 finishes `GOS: Crafting done: Craft ...` (or `Crafting failed: ... (see the dashboard)` or
+    `Crafting cancelled in AE2: ...`), each once. A waypoint gets no chat notice (nothing happens in OC).
+34. **HUD (M2 only, HV).** Place an OCGlasses terminal on the computer (an adapter is not needed: it is a block
+    component), bind the glasses to it (right-click the terminal with them), wear them. Up to 4 text lines show top
+    left: power, the worst problem, `NEXT` or `Say confirm`. Check they read at your GUI scale and change within
+    10 s with step 31. **VERIFY** (the fake models OCGlasses 1.6.9-GTNH from its sources, not tested in game):
+    `addTextLabel`, the widget's `setText`/`setPosition`/`setColor(r, g, b)` with 0..1 floats and `setScale`,
+    and `removeObject` at stop; the agent's `--list` shows the `glasses` component. If a widget call fails the agent
+    logs `display: no HUD ...` and carries on.
+35. **Problems count VERIFY.** Break a maintenance part on the EBF (or let it lose maintenance): within `sensor_s`
+    (60 s) plus a cycle, the board must show `!    <EBF>: 1 maintenance problem` (red) and the Base view the same
+    row. It is parsed from the sensor lines' `Problems: N` (localised, any text after the count is ignored) or a
+    `...problems` key (encoded); send back the EBF's raw sensor lines from the dashboard's network log or
+    `gos-agent.log` if it does not.
+
+## J. Alerts, including AFK (WO-7.5, D46, about 40 minutes)
+
+Plan 8 WO-7.5's acceptance: "alerts fire in `lab-ops`, including with the game unfocused and no menu open (the
+AFK case, D46)". The rules are tested on recorded-shape streams and end to end from the fake OC's posts to the
+dashboard (tests/unit/test_alert_rules.py, tests/oc/test_alert_pipeline.py); this checks the real game. The
+thresholds are `gos.toml` `[alerts]` (defaults pending your answer, D280); nothing here acts on the world.
+
+36. **Before.** `pauseOnLostFocus` off (F3+P, section A), the watchers running for Lab (`[startup]
+    watchers_with_play = "lab"`), the voice client on, the dashboard open on monitor 2. Note the LSC's fill on
+    the Base view.
+37. **AFK, unfocused, no menu.** Close every GUI, alt-tab to the desktop and leave the game unfocused for the
+    rest of this step. Starve the base so the LSC falls below 20 % (`/gt` creative tools, or break the generators'
+    cables from a second account; or set `[alerts] power_low_pct` above the current fill and restart the core:
+    with `power_low_pct` alone set, `power_clear_pct` follows it at 10 points above, at most 100, so the core
+    starts; if you set `power_clear_pct` too, keep it at or above `power_low_pct` or the core refuses to start).
+    Within 30 s plus a cycle of the fill dropping below the threshold: the dashboard shows the **Power low** card
+    on Now and Glance and in the Base view's Alerts; the voice says "Lab: power low. ... at N percent." once (or
+    one line for everything that fired in the same second, such as "Lab: power low and 6 machines stopped."); the
+    board shows `LOW  <store> N%`. Note the seconds. Then stall the EBF (remove its input): **Machine stalled**
+    (or **Machine stopped** if GT disables its work, step 31) after 60 s, said once. Break a maintenance part:
+    **Maintenance** within `sensor_s` plus a cycle.
+38. **No flapping.** Leave it all as it is for 10 minutes: no alert is said again and none clears. Restore power
+    and the EBF: each clears 30 s after its reading is good again (the card goes away; nothing is said).
+39. **Crafting done.** Ask GOS to craft 64 of an ingot AE2 has a pattern for and confirm on the dashboard: when
+    AE2 finishes, the voice says "Lab: crafting done, 64 ..." once, the board shows `DONE 64 ...` and the Base
+    view's Alerts list it for 5 minutes.
+40. **Stale on pause.** With a power-low alert firing, focus the game and press Esc for 2 minutes: within a few
+    seconds of the pause line (D258) the Base view says "Alerts held: the game is paused" and the card starts
+    "Held: the game is paused"; nothing is said or cleared. Fix the power while paused (it can't change: the world
+    is stopped) and unpause: the alert is fresh again within a cycle and clears only 30 s after a good reading.
+
 ## What to send back
 
 - Step 7's `--list` output (V20) and step 8's line.
@@ -216,3 +300,8 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
 - Steps 12, 13 (the ingot counts), 16 and 17's outcomes, and any step whose output differed from what is written here.
 - Section G's two sets of mean tick times and step 21's checks.
 - Section H: step 25's line, both `df` lines (steps 25 and 27), and step 27's output.
+- Section I: the screen size and tier and whether it read well (step 30), the four timings of step 31 and what the
+  EBF and the starved machine read (`stopped`, `stalled` or other), steps 32-34's outcomes (the craft's notices), and
+  step 35's line or the raw sensor lines.
+- Section J: step 37's three timings (or that one did not fire), step 38's outcome, step 39's line, step 40's
+  outcome, and any alert said twice or not at all.

@@ -8,6 +8,8 @@
 | POST   /api/crops/have    | admin, device          | ``{"crop", "stats": [g, ga, r]}``          |
 | DELETE /api/crops/have    | admin, device          | ``?crop=``: drop a crop from his list      |
 | POST   /api/crops/target  | admin, device          | ``{"crop", "aim"?}`` or ``{"crop": null}`` |
+| GET    /api/crops/station | admin, client, device  | the breeding station: status, the plan     |
+| POST   /api/crops/station | admin, device          | propose start or stop (Clayton confirms)   |
 
 The guide is :func:`gregtec.crops.planner.guide`'s, in its order; the view only draws it. Edits
 are Clayton's, from a paired dashboard, as My base's are (D212): client tokens read, never write.
@@ -29,7 +31,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from gregtec import store
 from gregtec.api.security import Principal
 from gregtec.crops import facts as crop_facts
-from gregtec.crops import planner, state
+from gregtec.crops import planner, state, station
 from gregtec.db import access
 
 if TYPE_CHECKING:
@@ -280,6 +282,111 @@ def add_routes(
         return await edited(
             who, "have", lambda c, k: state.remove_have(c, crop), checks_crop=False
         )
+
+    # --- the breeding station (WO-7.6, D282-D284) ---
+
+    def station_view(crop: str | None, count: int) -> dict[str, Any]:
+        """The station's status (each OC computer's last report) and the plan it would run
+        for ``crop`` (default: his target)."""
+        out: dict[str, Any] = {
+            "status": station.status(core.ops.telemetry)
+            if core.ops is not None
+            else [],
+            "plan": None,
+            "error": None,
+        }
+        try:
+            conn = _open_ro(core.cfg.gos_home)
+        except HTTPException as exc:
+            out["error"] = str(exc.detail)
+            return out
+        try:
+            cur = current(conn)
+            cid = None
+            if crop:
+                found = find(cur.facts, crop)
+                cid = found[0] if found else None
+                if cid is None:
+                    out["error"] = f"no crop matches {crop!r}"
+            elif cur.target is not None:
+                cid = cur.target.crop
+            if cid is not None:
+                out["plan"] = station.as_dict(
+                    station.build(cur.facts, cur.have, cid, cur.tier, count)
+                )
+        except (crop_facts.NoCropData, station.StationError) as exc:
+            out["error"] = str(exc)
+        finally:
+            conn.close()
+        return out
+
+    @app.get("/api/crops/station")
+    async def station_get(
+        _: Anyone,
+        crop: Annotated[str | None, Query(max_length=120)] = None,
+        count: Annotated[int, Query(ge=1, le=64)] = station.TARGET_COUNT,
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(station_view, crop or None, count)
+        except sqlite3.Error as exc:
+            raise HTTPException(
+                503, f"the DB can't be read now ({type(exc).__name__})"
+            ) from None
+
+    def station_propose(body: dict[str, Any], who: str) -> dict[str, Any]:
+        ops = core.ops
+        if ops is None:
+            raise HTTPException(503, "the action desk isn't running in this core")
+        action = body.get("action")
+        instance = body.get("instance", "lab")
+        if action not in ("start", "stop") or instance not in ("lab", "play"):
+            raise HTTPException(
+                400, "send {action: start|stop, crop?, count?, instance?: lab|play}"
+            )
+        try:
+            if action == "stop":
+                out = station.propose_stop(
+                    ops.desk, target=instance, source=who, replace_any=False
+                )
+            else:
+                count = body.get("count", station.TARGET_COUNT)
+                if not isinstance(count, int) or isinstance(count, bool):
+                    raise HTTPException(400, "count must be a whole number 1 to 64")
+                conn = _open_ro(core.cfg.gos_home)
+                try:
+                    cur = current(conn)
+                    crop = body.get("crop")
+                    cid = (
+                        (find(cur.facts, crop) or [None])[0]
+                        if isinstance(crop, str)
+                        else (cur.target.crop if cur.target else None)
+                    )
+                    if cid is None:
+                        raise HTTPException(400, "no crop: name one or set a target")
+                    plan = station.build(cur.facts, cur.have, cid, cur.tier, count)
+                finally:
+                    conn.close()
+                out = station.propose_start(
+                    ops.desk, plan, target=instance, source=who, replace_any=False
+                )
+        except (crop_facts.NoCropData, station.StationError) as exc:
+            raise HTTPException(409, str(exc)) from None
+        assert out.action is not None
+        return {"ok": out.ok, "say": out.text, "action": out.action.as_dict()}
+
+    @app.post("/api/crops/station")
+    async def station_post(request: Request, who: Trusted) -> dict[str, Any]:
+        """Propose starting or stopping the station: GOS reads it back and Clayton confirms
+        it on the approval card or by voice (D59); this never confirms."""
+        body = await json_body(request)
+        try:
+            return await asyncio.to_thread(
+                station_propose, body, f"dashboard:{who.name}"[:40]
+            )
+        except sqlite3.Error as exc:
+            raise HTTPException(
+                503, f"the DB can't be read now ({type(exc).__name__})"
+            ) from None
 
     @app.post("/api/crops/target")
     async def set_target(request: Request, who: Trusted) -> dict[str, Any]:

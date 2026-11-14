@@ -3,6 +3,7 @@
 import type { ApprovalCard, Card } from "../cards/types.gen";
 import type {
   Accepted,
+  ActionRow,
   AiState,
   Alternatives,
   DesignAnswer,
@@ -18,11 +19,16 @@ import type {
   DeepTask,
   Device,
   Health,
+  LiveBase,
   MyBase,
   OresView,
+  ActivityView,
+  RecapReply,
   PowerLatest,
   PowerSpec,
   PowerView,
+  CropStationProposal,
+  CropStationView,
   CropsView,
   PersonaInfo,
   PersonaState,
@@ -113,12 +119,22 @@ export const api = {
     return get<OresView>(s ? `/api/ores?${s}` : "/api/ores");
   },
   oreWaypoint: (vein: string) => post<WaypointProposal>("/api/ores/waypoint", { vein }),
+  // The Activity view (WO-6.3): one session's timeline (default the newest), and the finished
+  // age's recap the tier-up moment shows (D162, D265).
+  activity: (session: number | null = null) =>
+    get<ActivityView>(session === null ? "/api/activity" : `/api/activity?session=${session}`),
+  activityRecap: () => get<RecapReply>("/api/activity/recap"),
   // The Crops view (WO-6.7): his crops, the target and its guide; edits answer with the view.
   crops: (crop: string | null = null) =>
     get<CropsView>(crop ? `/api/crops?crop=${encodeURIComponent(crop)}` : "/api/crops"),
   cropHave: (crop: string, stats: number[]) => post<CropsView>("/api/crops/have", { crop, stats }),
   cropHaveRemove: (crop: string) => request<CropsView>("DELETE", `/api/crops/have?crop=${encodeURIComponent(crop)}`),
   cropTarget: (crop: string | null) => post<CropsView>("/api/crops/target", { crop }),
+  // The breeding station (WO-7.6): status and plan; start and stop only propose (D59).
+  cropStation: (crop: string | null = null) =>
+    get<CropStationView>(crop ? `/api/crops/station?crop=${encodeURIComponent(crop)}` : "/api/crops/station"),
+  cropStationPropose: (action: "start" | "stop", crop: string | null = null) =>
+    post<CropStationProposal>("/api/crops/station", crop ? { action, crop } : { action }),
   // My base (WO-3.8): every edit answers with the whole of it.
   base: () => get<MyBase>("/api/base"),
   baseFind: (q: string, kind: "item" | "machine") =>
@@ -128,6 +144,9 @@ export const api = {
   baseMachineClear: (mteId: number) => request<MyBase>("DELETE", `/api/base/machines/${mteId}`),
   baseStock: (key: string, qty: number) => post<MyBase>("/api/base/stock", { key, qty }),
   baseStockRemove: (key: string) => request<MyBase>("DELETE", `/api/base/stock?key=${encodeURIComponent(key)}`),
+  // The live base (WO-7.4): OC telemetry as the core reads it; and the world actions.
+  baseLive: () => get<LiveBase>("/api/base/live"),
+  actions: () => get<{ pending: ActionRow | null; recent: ActionRow[] }>("/api/actions"),
   // The Designer (WO-3.7, D250): routes ranked by the core's code; every change re-solves there.
   designerLatest: () => get<{ ids: string[] }>("/api/designer"),
   plans: () => get<{ plans: SavedPlanRow[]; problems: string[] }>("/api/plans"),

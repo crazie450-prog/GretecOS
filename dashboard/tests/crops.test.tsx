@@ -81,13 +81,22 @@ let urls: string[];
 let methods: string[];
 let bodies: unknown[];
 let queue: { status: number; body: unknown }[];
+// The breeding station panel (WO-7.6) polls its own route; answered apart from the view's queue.
+let station: { status: number; body: unknown };
+let stationCalls: { url: string; method: string; body: unknown }[];
 
 beforeEach(() => {
   urls = [];
   methods = [];
   bodies = [];
   queue = [];
+  station = { status: 200, body: { status: [], plan: null, error: null } };
+  stationCalls = [];
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/crops/station")) {
+      stationCalls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(JSON.stringify(station.body), { status: station.status });
+    }
     urls.push(url);
     methods.push(init?.method ?? "GET");
     bodies.push(init?.body ? JSON.parse(String(init.body)) : null);
@@ -197,5 +206,86 @@ describe("Crops view", () => {
     queue.push({ status: 404, body: { error: "no crop data yet: run gos db build" } });
     render(<Crops />);
     expect((await screen.findByTestId("crops-empty")).textContent).toContain("gos db build");
+  });
+});
+
+describe("Breeding station panel", () => {
+  it("shows each station's last report, marks a stale one, and only proposes", async () => {
+    station = {
+      status: 200,
+      body: {
+        status: [
+          {
+            binding: "lab",
+            address: "1a000000-0000-4000-8000-000000000001",
+            ref: "tel:lab/1a000000-0000-4000-8000-000000000001",
+            age_s: 3,
+            stale: false,
+            state: "running",
+            runs: 5,
+            ok: 2,
+            fail: 3,
+            stock: { "Lily Seeds": 1 },
+            target: "Lily Seeds",
+            count: 4,
+            steps: 3,
+            step: 2,
+            note: "step 2: bred Reed Seeds (run 5)",
+          },
+          {
+            binding: "lab",
+            address: "1a000000-0000-4000-8000-000000000002",
+            ref: "tel:lab/1a000000-0000-4000-8000-000000000002",
+            age_s: 95,
+            stale: true,
+            state: "running",
+            runs: 0,
+            ok: 0,
+            fail: 0,
+            stock: {},
+          },
+        ],
+        plan: {
+          id: "0a1b2c3d",
+          target: "cropsnh:lily",
+          target_name: "Lily",
+          count: 4,
+          tier: 2,
+          steps: [{ n: 1, child: "cropsnh:lily", child_name: "Lily", chance_pct: 50, runs: 4, copies: 5 }],
+          lines: ["Step 1: Carrot + Reed -> Lily: 50% a run [r:x, mte:28026]"],
+          refs: ["r:x"],
+        },
+        error: null,
+      },
+    };
+    queue.push({ status: 200, body: view() });
+    render(<Crops />);
+    const rows = await screen.findAllByTestId("crops-station-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("step 2 of 3");
+    expect(rows[0].textContent).toContain("Lily Seeds: 1 of 4");
+    expect(rows[0].querySelectorAll("[data-cite]")).toHaveLength(1);
+    expect(rows[1].textContent).toContain("stale, 95 s old");
+    expect(screen.getByTestId("crops-station-plan").textContent).toContain("50% a run");
+    expect(stationCalls[0].url).toBe("/api/crops/station?crop=cropsnh%3Alily");
+    station = {
+      status: 200,
+      body: { ok: true, say: "Start the breeding station: breed Lily Seeds in 1 Crop Breeder step and stock 4 in Lab. Say confirm.", action: { id: 7, state: "proposed" } },
+    };
+    fireEvent.click(screen.getByTestId("crops-station-start"));
+    expect((await screen.findByTestId("crops-station-said")).textContent).toContain("Say confirm.");
+    const post = stationCalls.find((c) => c.method === "POST");
+    expect(post?.body).toEqual({ action: "start", crop: "cropsnh:lily" });
+  });
+
+  it("says when no station has reported, and a stop proposes too", async () => {
+    queue.push({ status: 200, body: view(false) });
+    render(<Crops />);
+    expect((await screen.findByTestId("crops-station-none")).textContent).toContain("No OC computer");
+    expect((screen.getByTestId("crops-station-start") as HTMLButtonElement).disabled).toBe(true);
+    station = { status: 503, body: { error: "the action desk isn't running in this core" } };
+    fireEvent.click(screen.getByTestId("crops-station-stop"));
+    expect((await screen.findByTestId("crops-station-said")).textContent).toContain("action desk");
+    expect(stationCalls.find((c) => c.method === "POST")?.body).toEqual({ action: "stop" });
   });
 });

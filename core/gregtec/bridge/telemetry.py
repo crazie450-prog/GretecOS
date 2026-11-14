@@ -8,9 +8,10 @@
 - upserts one ``tel_machine`` row per machine and power entry, ``id`` = ``<binding>/<addr>``
   (the component address within the binding its transport vouches for, D217), with GT's meta
   name, ``x``/``y``/``z`` from ``getCoordinates``, ``last_seen`` (epoch seconds, when the core
-  received it) and ``status``: ``running`` (``isMachineActive``), ``paused`` (work not
-  allowed), ``idle``, ``power`` (a power entry) or ``stale``. ``mte_id`` and ``dim`` stay NULL:
-  no OC method gives them (D214; the meta-name map is WO-7.4's);
+  received it) and ``status``: ``running`` (``isMachineActive``), ``paused`` (work not allowed, by
+  whoever: the live base tells GOS's pause from GT's own shutdown, D279), ``idle``, ``power`` (a power entry) or ``stale``. ``mte_id`` is the export's
+  meta-name map's (WO-7.4, :mod:`gregtec.bridge.names`; NULL for a name it can't resolve to one
+  machine) and ``dim`` stays NULL: no OC method gives it (D214);
 - writes ``tel_sample`` rows (``ts``, ``src`` = the ``tel_machine`` id or ``<binding>/<computer
   address>`` for the computer's own readings, ``key``, ``value`` or ``text``) for each reading
   that **changed**, and again every :data:`HEARTBEAT_S` while it doesn't, so a gap in the
@@ -58,6 +59,8 @@ MAX_AGENTS_PER_BINDING = (
 )
 
 Results = Callable[[AgentId, Mapping[str, Any]], None]
+Resolve = Callable[[str | None], int | None]  # GT meta name -> mte_id (WO-7.4)
+Observer = Callable[[Received], None]
 
 
 def _num(value: object) -> float | None:
@@ -89,10 +92,14 @@ class Telemetry:
         *,
         results: Results | None = None,
         clock: Callable[[], float] = time.time,
+        resolve: Resolve | None = None,
     ) -> None:
         self.store = store
         self.results = results
         self.clock = clock
+        self.resolve = resolve
+        # Each new message after it is recorded (WO-7.4's live base keeps sensor readings).
+        self.observers: list[Observer] = []
         self.latest = Latest()
         self._lock = threading.Lock()
         self._written: dict[tuple[str, str], tuple[float | None, str | None, int]] = {}
@@ -133,6 +140,7 @@ class Telemetry:
                     (
                         mid,
                         entry.get("name"),
+                        self._mte(entry.get("name")),
                         xyz[0],
                         xyz[1],
                         xyz[2],
@@ -164,9 +172,10 @@ class Telemetry:
                     self._sample(samples, now, asrc, key, _num(item.get("size")), None)
             with self.store.transaction() as conn:
                 conn.executemany(
-                    "INSERT INTO tel_machine(id, name, x, y, z, last_seen, status) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
-                    "name = excluded.name, x = excluded.x, y = excluded.y, z = excluded.z, "
+                    "INSERT INTO tel_machine(id, name, mte_id, x, y, z, last_seen, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                    "name = excluded.name, mte_id = excluded.mte_id, x = excluded.x, "
+                    "y = excluded.y, z = excluded.z, "
                     "last_seen = excluded.last_seen, status = excluded.status",
                     machines,
                 )
@@ -179,11 +188,25 @@ class Telemetry:
             for mid, keys in carried.items():
                 self._carried[mid] = (now, keys)
         self.latest.ingest(msg)
+        for observe in self.observers:
+            try:
+                observe(msg)
+            except Exception:  # a display's failure never refuses a recorded message
+                log.exception("OC message observer failed")
         if self.results is not None:
             self.results(
                 agent, doc
             )  # a failing desk refuses the message: it comes again
         return None
+
+    def _mte(self, name: object) -> int | None:
+        if self.resolve is None or not isinstance(name, str):
+            return None
+        try:
+            return self.resolve(name)
+        except Exception:
+            log.exception("meta name not resolved")
+            return None
 
     def _sample(
         self,
@@ -268,6 +291,9 @@ class Telemetry:
         elif kind == "craft":
             found = [m for m in fresh if isinstance(m.doc.get("ae2"), dict)]
             what = "an AE2 network"
+        elif kind in ("crop_start", "crop_stop"):
+            found = [m for m in fresh if isinstance(m.doc.get("crops"), dict)]
+            what = "a breeding station (a crops table in gos-agent.cfg)"
         else:  # say
             found = [
                 m

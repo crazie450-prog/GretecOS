@@ -1,0 +1,60 @@
+{
+  "ack": 2,
+  "boot": "b0075eed",
+  "cmds": [],
+  "display": {
+    "chat": [
+      {
+        "id": 1,
+        "t": "GOS: Confirmed: Craft 64 Steel Ingot"
+      },
+      {
+        "id": 2,
+        "t": "GOS: Done: Craft 64 Steel Ingot"
+      }
+    ],
+    "hud": [
+      {
+        "c": "ok",
+        "t": "GOS PWR 12.3% 0 EU/t"
+      },
+      {
+        "c": "warn",
+        "t": "! Electric Blast Furnace: stalled (h..."
+      },
+      {
+        "c": "info",
+        "t": "NEXT Steam Age: Bronze Boiler"
+      }
+    ],
+    "lines": [
+      {
+        "c": "ok",
+        "t": "PWR  Lapotronic Su...  12.3% 0 EU/t"
+      },
+      {
+        "c": "ok",
+        "t": "PWR  batterybuffer...  25.0% 0 EU/t"
+      },
+      {
+        "c": "warn",
+        "t": "!    Electric Blast Furnace: stalled (has a j..."
+      },
+      {
+        "c": "info",
+        "t": "GOAL Reach HV: an Electric Blast Furnace running"
+      },
+      {
+        "c": "info",
+        "t": "NEXT Steam Age: Bronze Boiler"
+      },
+      {
+        "c": "info",
+        "t": "AE2  0/1 crafting CPUs busy"
+      }
+    ],
+    "rev": 48325870
+  },
+  "ok": true,
+  "v": 1
+}

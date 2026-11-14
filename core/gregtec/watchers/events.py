@@ -15,7 +15,8 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
-# plan 7.5's list (alert is the core's own); machine_* are WO-6.2's listener and census (D260)
+# plan 7.5's list (alert is the core's own); machine_* are WO-6.2's listener and census (D260);
+# world_closed is WO-6.3's session end
 KINDS = (
     "quest_done",
     "item_delta",
@@ -33,6 +34,7 @@ KINDS = (
     "machine_built",
     "machine_removed",
     "machine_census",
+    "world_closed",  # the log's "Stopping server" / "Stopping!": a session ends (WO-6.3, D264)
 )
 TEXT_MAX = 500
 _COLOUR = re.compile("\u00a7.?")  # Minecraft's colour and format codes

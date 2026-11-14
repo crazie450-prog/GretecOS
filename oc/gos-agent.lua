@@ -99,7 +99,14 @@ local MAX_SAY = 256
 local CRAFT_COMPUTE_MAX_S = 300 -- AE2 still planning after this long: give up on the result
 local ONCE_MAX_S = 30 -- --once waits this long at most for the results of commands it ran
 
-M.ALLOWED = { craft = true, machine_pause = true, machine_resume = true, say = true }
+M.ALLOWED = {
+  craft = true,
+  machine_pause = true,
+  machine_resume = true,
+  say = true,
+  crop_start = true, -- the breeding station (WO-7.6, crop/station.lua): only with a crops table
+  crop_stop = true,
+}
 M.MAX_BODY = 98304 -- bytes of JSON: over it, sensor lines and then the watchlist wait (D214)
 -- How Clayton confirmed a command (D59); the contract's four values, nothing else.
 M.CONFIRMED_VIA = { voice = true, dashboard = true, phone = true, discord = true }
@@ -132,6 +139,8 @@ M.DEFAULTS = {
   log_max = 32768, -- bytes before the log is rotated to .1
   state = true, -- true: gos-agent.state next to the config; false: none; or a path
   mailbox = false, -- options for the M1 mailbox transport (WO-7.3 checks them)
+  display = true, -- the in-game displays (WO-7.4, display.lua checks them): true, false or a table
+  crops = false, -- the breeding station (WO-7.6, crop/station.lua checks it): false or a table
 }
 
 local RANGES = {
@@ -280,6 +289,12 @@ function M.check_config(t)
   if cfg.mailbox ~= false and type(cfg.mailbox) ~= "table" then
     return nil, "mailbox must be false or a table of mailbox options"
   end
+  if cfg.display ~= true and cfg.display ~= false and type(cfg.display) ~= "table" then
+    return nil, "display must be true, false or a table of display options"
+  end
+  if cfg.crops ~= false and type(cfg.crops) ~= "table" then
+    return nil, "crops must be false or a table of breeding station options"
+  end
   cfg.power_set = {}
   for _, n in ipairs(cfg.power_names) do
     cfg.power_set[n] = true
@@ -398,7 +413,11 @@ end
 function M.log(st, level, msg)
   msg = tostring(msg)
   if level ~= "debug" then
-    st.out(("[gos-agent] %s"):format(msg))
+    if st.display and st.display:board_on() then
+      st.display:note(msg) -- the board owns the screen: the newest note goes in its footer
+    else
+      st.out(("[gos-agent] %s"):format(msg))
+    end
   end
   local path = st.cfg.log_path
   if not path then
@@ -564,13 +583,32 @@ function M.discover(st)
         inv.chat = inv.chat or addr
       elseif ctype == "tps_card" then
         inv.tps = inv.tps or addr
+      elseif ctype == "gpu" then
+        inv.gpu = inv.gpu or addr
+      elseif ctype == "screen" then
+        inv.screens = inv.screens or {}
+        inv.screens[#inv.screens + 1] = addr
+      elseif ctype == "glasses" then
+        inv.glasses = inv.glasses or addr
       end
     end
   end
   if st.inv and st.inv.me and inv.me and st.inv.me.addr == inv.me.addr then
     inv.me = st.inv.me
   end
+  if inv.gpu and inv.screens and #inv.screens > 1 then
+    -- The screen the GPU is bound to (OpenOS's terminal) first: the board takes that one.
+    local okb, bound = call(inv.gpu, "getScreen")
+    if okb and type(bound) == "string" then
+      table.sort(inv.screens, function(a, b)
+        return (a == bound and 0 or 1) < (b == bound and 0 or 1)
+      end)
+    end
+  end
   st.inv = inv
+  if st.display then
+    st.display:attach(inv, st.transport and st.transport.name or "none")
+  end
   st.rediscover = false
   st.next_discover = now() + cfg.discover_s
   if inv.skipped > 0 then
@@ -1125,6 +1163,29 @@ function HANDLERS.say(st, id, a)
   return result(id, "say", true, "done")
 end
 
+-- The breeding station (WO-7.6): start and stop are commands Clayton confirmed (D59); the
+-- station never starts itself.
+local function crop_command(st, id, kind, a)
+  if not st.station then
+    return refused(id, kind, "no breeding station on this computer (gos-agent.cfg has no crops table)")
+  end
+  local r
+  if kind == "crop_start" then
+    r = st.station:start(id, a)
+  else
+    r = st.station:stop(id)
+  end
+  return result(id, kind, r.ok, r.state, r.err and clip(r.err, MAX_ERR_MSG) or nil)
+end
+
+function HANDLERS.crop_start(st, id, a)
+  return crop_command(st, id, "crop_start", a)
+end
+
+function HANDLERS.crop_stop(st, id, a)
+  return crop_command(st, id, "crop_stop", a)
+end
+
 function M.run_command(st, cmd)
   if type(cmd) ~= "table" or json.is_array(cmd) then
     M.record_error(st, "command", "a command that is not an object was ignored")
@@ -1246,6 +1307,8 @@ function M.build_payload(st, opts)
     crafts = json.array(),
     results = json.array(),
     errors = json.array(),
+    display = st.display and st.display:state() or nil,
+    crops = st.station and st.station:doc() or nil,
   }
   for _, e in ipairs(st.inv.power) do
     p.power[#p.power + 1] = entry_doc(e, seq, budget)
@@ -1477,6 +1540,100 @@ function M.open_transport(st)
   })
 end
 
+-- The in-game displays (WO-7.4): display.lua, when it is installed and the config wants any.
+function M.open_display(st)
+  if st.display or st.cfg.display == false then
+    return
+  end
+  local mod, err = load_module("display")
+  if not mod then
+    M.log(st, "warn", "no in-game displays: display.lua is not installed next to gos-agent.lua (" .. tostring(err) .. ")")
+    return
+  end
+  local d, derr = mod.new(st.cfg.display, {
+    call = call,
+    now = now,
+    log = function(level, msg)
+      M.log(st, level, msg)
+    end,
+  })
+  if not d then
+    error({ fatal = "config: " .. tostring(derr) }, 0)
+  end
+  st.display = d
+  if st.rediscover then
+    -- Discovery (direct calls only) now, so the board has the screen before the first note.
+    local okd, derr = try(M.discover, st)
+    if not okd then
+      M.record_error(st, "discover", derr)
+    end
+  else
+    d:attach(st.inv, st.transport and st.transport.name or "none")
+  end
+  d:note(("gos-agent %s, every %s s; Ctrl+C stops it"):format(VERSION, st.cfg.cycle_s))
+end
+
+-- The breeding station (WO-7.6): crop/station.lua under this file's folder, when the config has a
+-- crops table. A bad crops table stops the agent, as a bad config does.
+function M.open_station(st)
+  if st.station or type(st.cfg.crops) ~= "table" then
+    return
+  end
+  local mod, err = load_module("crop/station")
+  if not mod then
+    error({ fatal = "crops: crop/station.lua is not installed next to gos-agent.lua (" .. tostring(err) .. ")" }, 0)
+  end
+  local cfg, cerr = mod.check_config(st.cfg.crops, st.cfg.base or DIR)
+  if not cfg then
+    error({ fatal = "config: " .. tostring(cerr) }, 0)
+  end
+  st.station = mod.new(cfg, {
+    call = call,
+    now = now,
+    json = json,
+    list = function(t)
+      local out = {}
+      for addr, ty in component.list(t, true) do
+        out[addr] = ty
+      end
+      return out
+    end,
+    read = function(path)
+      if not filesystem.exists(path) then
+        return nil
+      end
+      return read_file(path)
+    end,
+    write = function(path, text)
+      local ok, err = write_file(path .. ".tmp", text)
+      if ok then
+        if filesystem.exists(path) then
+          filesystem.remove(path)
+        end
+        ok, err = filesystem.rename(path .. ".tmp", path)
+      end
+      return ok, err
+    end,
+    log = function(level, msg)
+      M.log(st, level, msg)
+    end,
+  })
+  M.log(st, "info", "breeding station ready (crop/station.lua " .. tostring(mod.VERSION) .. ")")
+end
+
+-- One station step when it is due; never raises.
+function M.station_step(st)
+  local s = st.station
+  if not s or now() < (s.next_at or 0) then
+    return
+  end
+  local ok, err = try(s.step, s)
+  if not ok then
+    s.next_at = now() + 5
+    M.record_error(st, "crops", err)
+  end
+end
+
 ---------------------------------------------------------------------------------------------
 -- The cycle
 
@@ -1540,6 +1697,12 @@ function M.handle_reply(st, reply, seq)
     M.ack(st, ack)
   end
   local n = M.handle_commands(st, reply.cmds)
+  if st.display and reply.display ~= nil then
+    local okd, derr = try(st.display.apply, st.display, reply.display)
+    if not okd then
+      M.record_error(st, "display", derr)
+    end
+  end
   local poll = reply.poll_s
   if mtype(poll) == "integer" and poll >= 1 and poll < st.cfg.cycle_s then
     return true, nil, false, poll
@@ -1587,6 +1750,7 @@ function M.cycle(st)
       M.log(st, "info", "the core answers again after " .. st.failures .. " failed tries")
     end
     st.failures = 0
+    st.ok_at = now()
     st.sent = st.sent + 1
     st.next_cycle = t0 + (poll or st.cfg.cycle_s)
   else
@@ -1596,6 +1760,12 @@ function M.cycle(st)
     st.next_cycle = t0 + backoff(st, long)
   end
   st.cycles = st.cycles + 1
+  if st.display then
+    local okd, derr = try(st.display.tick, st.display, st.ok_at)
+    if not okd then
+      M.record_error(st, "display", derr)
+    end
+  end
   if t0 >= st.next_heartbeat then
     st.next_heartbeat = t0 + 300
     local line = ("alive: %d cycles, %d sent, %d failed, %d bytes last, %d bytes free, %.2f s sampling")
@@ -1708,6 +1878,8 @@ function M.run(st, opts)
       end
       st.transport = t
     end
+    M.open_display(st)
+    M.open_station(st)
     M.log(st, "info", ("gos-agent %s started (boot %s, %s, every %s s)"):format(VERSION, st.boot, st.transport.name, st.cfg.cycle_s))
     local once_until = now() + ONCE_MAX_S
     while not st.stop do
@@ -1717,7 +1889,12 @@ function M.run(st, opts)
           break
         end
       end
-      local wait = st.next_cycle - now()
+      M.station_step(st)
+      local due = st.next_cycle
+      if st.station and st.station.next_at < due then
+        due = st.station.next_at
+      end
+      local wait = due - now()
       if not st.stop then
         if wait > 0 then
           event.pull(wait)
@@ -1730,6 +1907,11 @@ function M.run(st, opts)
   event.ignore("interrupted", on_interrupt)
   event.ignore("component_added", on_component)
   event.ignore("component_removed", on_component)
+  if st.display then
+    -- The screen goes back to OpenOS before the last lines are printed on it.
+    pcall(st.display.close, st.display)
+    st.display = nil
+  end
   -- The final counts, the transport's too, go on the stop line: the M1 Lab soak compares them
   -- with the core's last stats line, written at its stop (the alive: lines come on another clock).
   local counts = ("; %d cycles, %d sent, %d failed"):format(st.cycles or 0, st.sent or 0, st.failed or 0)

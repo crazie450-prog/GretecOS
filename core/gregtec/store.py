@@ -1,12 +1,15 @@
 """The core's tables in ``data/gos.sqlite`` (WO-2.1): ``llm_usage``, ``device``, ``kv`` (Appendix D),
 ``client_token`` (D117), ``answer`` (the dashboard's Chat: the newest 50 answers, D159), the
-OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), and My
+OC bridge's ``tel_machine``, ``tel_sample`` and ``action`` (Appendix D; WO-7.1, D219, D220), the
+telemetry alerts' ``alert`` (Appendix D; WO-7.5, D281: a row per fired alert), and My
 base's ``my_base_machine`` and ``my_base_stock`` (WO-3.8, D210: keyed on GT mte ids and stable
 item/fluid keys, so they outlive every ``gos db build``; :mod:`gregtec.base.state` reads and writes
 them), ``my_base_machine_at``, where the placement events and the census put each machine they
-saw (WO-6.2, D261; :mod:`gregtec.base.seen`), and the EU ledger's ``ledger_line`` (WO-4.4, D238:
+saw (WO-6.2, D261; :mod:`gregtec.base.seen`), the EU ledger's ``ledger_line`` (WO-4.4, D238:
 one entry per accepted plan, its status the ``plan`` row's; :mod:`gregtec.planner.ledger` writes
-it, also creating it on a DB this module hasn't opened).
+it, also creating it on a DB this module hasn't opened), and the event store: Appendix D's ``event``
+and ``session`` with the columns WO-6.3 adds (D263; :mod:`gregtec.events.store`), and ``age_mark``,
+when each voltage age was first seen and its recap (D162, D265; :mod:`gregtec.events.ages`).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -44,6 +47,8 @@ CREATE INDEX IF NOT EXISTS ix_tel ON tel_sample(src, key, ts);
 CREATE TABLE IF NOT EXISTS action(id INTEGER PRIMARY KEY, created INT, kind TEXT, args TEXT,
   state TEXT CHECK(state IN ('proposed','confirmed','sent','done','failed','cancelled','expired')),
   confirmed_via TEXT, confirmed_ts INT, result TEXT);
+CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, level TEXT, msg TEXT,
+  ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS my_base_machine(mte_id INT NOT NULL,
   source TEXT NOT NULL CHECK(source IN ('manual','event','census')),
   count INT NOT NULL CHECK(count >= 0), upd INT NOT NULL, PRIMARY KEY(mte_id, source));
@@ -54,6 +59,20 @@ CREATE TABLE IF NOT EXISTS my_base_machine_at(source TEXT NOT NULL CHECK(source 
   dim INT NOT NULL, x INT NOT NULL, y INT NOT NULL, z INT NOT NULL, mte_id INT NOT NULL,
   upd INT NOT NULL, PRIMARY KEY(source, dim, x, y, z));
 CREATE INDEX IF NOT EXISTS ix_my_base_machine_at_mte ON my_base_machine_at(source, mte_id);
+CREATE TABLE IF NOT EXISTS session(id INTEGER PRIMARY KEY, start_ts INT, end_ts INT, world TEXT,
+  journal_path TEXT);
+CREATE TABLE IF NOT EXISTS event(id INTEGER PRIMARY KEY, ts INT NOT NULL, session_id INT,
+  kind TEXT NOT NULL, dim INT, x INT, y INT, z INT, ref TEXT, payload TEXT);
+CREATE INDEX IF NOT EXISTS ix_event_ts ON event(ts);
+CREATE INDEX IF NOT EXISTS ix_event_kind ON event(kind, ts);
+CREATE TABLE IF NOT EXISTS age_mark(age INT PRIMARY KEY, stage TEXT NOT NULL, start_ts INT NOT NULL,
+  end_ts INT, best_net_eut INT, best_ref TEXT, recap TEXT, journaled INT, provisional INT);
+"""
+# Indexes on columns ADDED_COLUMNS may have just added (a DB whose table predates them).
+POST_SCHEMA = """
+CREATE UNIQUE INDEX IF NOT EXISTS ux_event_uid ON event(uid);
+CREATE INDEX IF NOT EXISTS ix_event_session ON event(session_id, ts);
+CREATE INDEX IF NOT EXISTS ix_session_open ON session(instance, end_ts);
 """
 # Columns GOS adds to Appendix D tables, for a DB whose table was created without them.
 ADDED_COLUMNS = (
@@ -71,6 +90,25 @@ ADDED_COLUMNS = (
     ("action", "source", "TEXT"),
     ("action", "sent_ts", "INT"),
     ("action", "done_ts", "INT"),
+    # The event store (WO-6.3, D263): the watchers' event id (a retried post is one row), the
+    # reader, and the instance it came from; a session's instance, how it began and ended, its
+    # last activity and the session scribe's progress through it.
+    ("event", "uid", "TEXT"),
+    ("event", "source", "TEXT"),
+    ("event", "instance", "TEXT"),
+    ("session", "instance", "TEXT"),
+    ("session", "start_why", "TEXT"),
+    ("session", "end_why", "TEXT"),
+    ("session", "last_ts", "INT"),
+    ("session", "journal_upto", "INT"),  # the newest event id the journal has counted
+    ("session", "journal_ts", "INT"),  # when the journal was last written
+    ("session", "journal_lines", "INT"),  # lines written for this session (<= 40)
+    ("session", "journal_done", "INT"),  # the end block is written (or not wanted)
+    (
+        "age_mark",
+        "provisional",
+        "INT",
+    ),  # opened by his override above the detected tier
 )
 
 
@@ -91,6 +129,7 @@ def connect(path: Path) -> sqlite3.Connection:
         have = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in have:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+    conn.executescript(POST_SCHEMA)
     return conn
 
 

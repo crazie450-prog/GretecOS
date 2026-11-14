@@ -34,9 +34,11 @@
 |                                |                         | and, to admin and devices, ``ask.reply``, |
 |                                |                         | ``ui``, ``voice.state``, ``state`` (D179) |
 |                                |                         | and ``action`` (WO-7.1)               |
+|                                |                         | and ``alert`` (WO-7.5, every socket)  |
 | GET  /, /api/state, ...        | see ``dashboard``       | the dashboard and what its views read (WO-2.6)|
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 | /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
+| GET  /api/activity[/recap]     | see ``gregtec.events.routes`` | sessions, timeline, recap (WO-6.3)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -69,6 +71,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import sqlite3
 import time
@@ -88,6 +91,7 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.agents.personas import Personas
+from gregtec.alerts.engine import AlertEvent
 from gregtec.api import (
     ai_routes,
     dashboard,
@@ -113,6 +117,9 @@ from gregtec.bridge.ingest import Bridge
 from gregtec.bridge.ops import Ops
 from gregtec.config import LOOPBACK, Config
 from gregtec.crops import view as crop_view
+from gregtec.events import routes as event_routes
+from gregtec.events.service import TICK_S as EVENTS_TICK_S
+from gregtec.events.service import EventService
 from gregtec.gamelink import link as gamelink
 from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
@@ -218,6 +225,8 @@ class Core:
     gamelink: GameLink | None = None  # GregtecLink's client link (WO-8.1)
     screen: ScreenReader | None = None  # screen reading (WO-8.2)
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
+    _alert_state_due: bool = False  # a state push for alert events is queued (WO-7.5)
+    events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
 
     # --- pushing to WebSocket clients
 
@@ -250,6 +259,45 @@ class Core:
                 self.loop.create_task(dashboard.push_state(self))
 
         self._threadsafe(push)
+
+    def alert_changed(self, event: AlertEvent) -> None:
+        """The alert engine's sink (its thread): push the event to every socket, the voice
+        client's included (it says a ``fired`` event's ``say``), and refresh the state so the
+        alert cards come and go (WO-7.5, D281)."""
+        data = event.as_dict()
+
+        async def state() -> None:
+            self._alert_state_due = False
+            await dashboard.push_state(self)
+
+        def push() -> None:
+            self.broadcast({"type": "alert", "data": data})
+            # One state push for the events of one tick, not one per event.
+            if self.loop is not None and not self._alert_state_due:
+                self._alert_state_due = True
+                self.loop.create_task(state())
+
+        self._threadsafe(push)
+
+    def paused_since(self, binding: str) -> float | None:
+        """When ``binding``'s game paused, by the watchers (D258): ``play`` is Play's, ``lab``
+        and ``lab-<label>`` the Lab's; ``math.inf`` when paused since an unknown time; None
+        when not paused or not known (the alert engine's ``paused``, WO-7.5)."""
+        game = self.game
+        if game is None:
+            return None
+        role = (
+            "play"
+            if binding == "play"
+            else "lab"
+            if binding.startswith("lab")
+            else None
+        )
+        if role is None or game.instance != role:
+            return None
+        if game.paused_now(dashboard.board_of(self).running) is not True:
+            return None
+        return game.since if game.since is not None else math.inf
 
     def set_voice(self, state: str, trigger: str | None) -> dict[str, Any]:
         """Keep the voice client's state and push it to the dashboards (loop only)."""
@@ -454,9 +502,15 @@ def create_app(core: Core) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         core.loop = asyncio.get_running_loop()
         core.pairing.on_change = core.pairing_changed
+        if core.ops is not None and core.ops.alerts is not None:  # WO-7.5
+            core.ops.alerts.paused = core.paused_since
+            if core.alert_changed not in core.ops.alerts.sinks:
+                core.ops.alerts.sinks.append(core.alert_changed)
         tasks = [asyncio.create_task(_watch(core))]
         if core.maintenance is not None:
             tasks.append(asyncio.create_task(_maintain(core.maintenance)))
+        if core.events is not None:
+            tasks.append(asyncio.create_task(_events(core)))
         try:
             yield
         finally:
@@ -808,6 +862,7 @@ def create_app(core: Core) -> FastAPI:
     gamelink.add_routes(app, core, principal)
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
+    event_routes.add_routes(app, core, principal)
     return app
 
 
@@ -896,6 +951,13 @@ async def _watch(core: Core) -> None:
     last_key = -KEY_CHECK_S
     while True:
         now = time.monotonic()
+        # Action expiry and timeouts, stale telemetry (WO-7.1) and the alert rules (WO-7.5):
+        # first and on their own, so a slow network step or a failing one never holds them up.
+        if core.ops is not None:
+            try:
+                await asyncio.to_thread(core.ops.tick)
+            except Exception:  # the watcher must keep running
+                log.exception("ops tick failed")
         try:
             if now - last_key >= KEY_CHECK_S:
                 await asyncio.to_thread(core.refresh_key)
@@ -904,10 +966,6 @@ async def _watch(core: Core) -> None:
             await asyncio.to_thread(
                 ai_routes.refresh, core
             )  # credits, API probe (WO-2.8)
-            if (
-                core.ops is not None
-            ):  # action expiry and timeouts, stale telemetry (WO-7.1)
-                await asyncio.to_thread(core.ops.tick)
             health = await asyncio.to_thread(core.health)
             if core.gamelink is not None:  # failures as in-game notices (D76, WO-8.1)
                 core.gamelink.health_changed(health)
@@ -922,6 +980,20 @@ async def _watch(core: Core) -> None:
         except Exception:  # the watcher must keep running
             log.exception("health refresh failed")
         await asyncio.sleep(POLL_S)
+
+
+async def _events(core: Core) -> None:
+    """Every 10 s: idle sessions closed, the tier's age noted, the session scribe's journal
+    (WO-6.3, :mod:`gregtec.events.service`), in a thread."""
+    while True:
+        service = core.events
+        if service is None:
+            return
+        try:
+            await asyncio.to_thread(service.tick, *event_routes.stage_of(core))
+        except Exception:  # the loop must keep running
+            log.exception("events tick failed")
+        await asyncio.sleep(EVENTS_TICK_S)
 
 
 async def _maintain(maintenance: Maintenance) -> None:
