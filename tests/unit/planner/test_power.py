@@ -16,6 +16,7 @@ import argparse
 import importlib.util
 import io
 import json
+import math
 import shutil
 import sqlite3
 import sys
@@ -215,11 +216,15 @@ def test_best_returns_ranked_options_with_printed_weights(
         gen = next(n for n in p["nodes"] if n["kind"] == "generator")
         assert gen["machine"]["mte"] == GENERATOR and gen["count"] == 1
         assert "bootstrap" not in p
-    # Options differ in the generator, the fuel or a primary choice of the chain.
+    # Options differ in the generator, the fuel, a primary choice of the chain or the recipe
+    # the fuel's chain is pinned to (WO-4.7: each pinned chain is its own option), or are the
+    # direct-import line (D323).
     keys = {
         (
             p["power"]["generator"]["id"],
             tuple(c["recipe"] for c in p["route"]["choices"]),
+            tuple(pn["recipe"] for pn in p["pins"]),
+            p["power"]["direct"],
         )
         for p in d.options
     }
@@ -227,6 +232,30 @@ def test_best_returns_ranked_options_with_printed_weights(
     # The same request gives the same order (D235: ranking is rank.py's, deterministic).
     again = design(conn, no_farms, mode="best")
     assert [p["id"] for p in again.options] == ids
+
+
+def test_the_direct_import_line_is_an_option_of_its_own(
+    conn: sqlite3.Connection, no_farms: Path
+) -> None:
+    """D323, review H1: the EU stage prices only the fuel, so a chain never imports the fuel
+    itself; the plain line (the generator fed its fuel as imported, no chain) is solved for
+    every candidate with its own id, and rank.py chooses. A self-sustaining line imports
+    nothing, so it has none."""
+    d = design(conn, no_farms, mode="best", fuels=(GAS,), kinds=("single_block",))
+    direct = [p for p in d.options if p["power"]["direct"]]
+    assert len(direct) == 1
+    p = direct[0]
+    assert [n["kind"] for n in p["nodes"]] == ["generator"]
+    assert [(b["id"], b["rate_s"]) for b in p["boundary"]["in"]] == [(GAS, 16.0)]
+    pw = p["power"]
+    assert pw["chain_eut"] == 0 and pw["net_eut"] == pw["gross_eut"] == 32
+    assert p["route"]["choices"] == []
+    chains_ = [q for q in d.options if not q["power"]["direct"]]
+    assert chains_ and all(q["id"] != p["id"] for q in chains_)
+    assert all(any(n["kind"] == "recipe" for n in q["nodes"]) for q in chains_)
+    closed = design(conn, no_farms, mode="self_sustaining", fuels=(GAS,))
+    assert closed.options
+    assert not any(q["power"]["direct"] for q in closed.options)
 
 
 def test_max_output_within_the_scale_bound(
@@ -244,7 +273,19 @@ def test_max_output_within_the_scale_bound(
     capped = design(
         conn, no_farms, mode="max_output", scale="eut_cap", bound=nets[0] * 1.5
     )
-    assert all(p["power"]["units"] == 1 for p in capped.options)
+    for p in capped.options:  # as many units as fit under the cap, at least one
+        pw = p["power"]
+        assert (
+            1
+            <= pw["units"]
+            == math.floor(nets[0] * 1.5 / (pw["net_eut"] / pw["units"]))
+        )
+        assert pw["net_eut"] <= nets[0] * 1.5
+    # The line with the most net per unit fits once; a smaller one may fit twice and rank first.
+    assert any(
+        p["power"]["units"] == 1 and p["power"]["net_eut"] == pytest.approx(nets[0])
+        for p in capped.options
+    )
     tiny = design(conn, no_farms, mode="max_output", scale="eut_cap", bound=0.001)
     assert tiny.options == () and any("over the cap" in w for _, w in tiny.rejected)
 
@@ -267,12 +308,15 @@ def test_self_sustaining_closes_on_water_and_proves_it(
     for p in d.options:
         proof = p["closed"]
         assert proof["ok"] and proof["imports"] == []
-        assert [b["id"] for b in p["boundary"]["in"]] == [WATER]
+        assert {b["id"] for b in p["boundary"]["in"]} <= {WATER}
         assert proof["net_eut"] > 0
         kit = p["bootstrap"]
         assert kit["starter_fuel"][0]["id"] == GAS and kit["starter_fuel"][0]["qty"] > 0
-        # The test gas comes from its loop on water: the chain's recipes run.
+        # The chain's recipes run.
         assert any(n["recipe"].startswith("r:") for n in p["nodes"])
+    # One option is the test gas from its loop on water (the other, since WO-4.7 shows each
+    # pinned chain, the gas from logs the DB's tree farm grows: it takes nothing at all).
+    assert any(WATER in {b["id"] for b in p["boundary"]["in"]} for p in d.options)
 
 
 def test_self_sustaining_with_a_farm(
@@ -613,13 +657,18 @@ def test_the_most_efficient_single_block_for_sustain_and_effort(
 def test_raw_budget_sizes_a_closed_line_like_the_best_open_one(
     conn: sqlite3.Connection, no_farms: Path
 ) -> None:
-    # The two lines that import take 115.2 and 230.4 per hour: a budget of 1000 gives 8 and 4
-    # units. The closed line (water only) gets 8, never 1 (LOW-2).
+    # The two chains that import take 115.2 and 230.4 per hour: a budget of 1000 gives 8 and 4
+    # units; the direct-import gas line (D323: 16 L/s, 57.6 per hour) gets 17. The closed line
+    # (water only) gets as many as the best of them, 17, never 1 (LOW-2).
     d = design(conn, no_farms, mode="max_output", scale="raw_budget", bound=1000)
     closed = [p for p in d.options if [b["id"] for b in p["boundary"]["in"]] == [WATER]]
-    assert [p["power"]["units"] for p in closed] == [8]
+    assert [p["power"]["units"] for p in closed] == [17]
     assert any("as many as the best line" in w for w in closed[0]["warnings"])
-    assert d.options[0]["power"]["units"] == 8
+    direct = [p for p in d.options if p["power"]["direct"]]
+    assert [p["power"]["units"] for p in direct] == [17]
+    assert [b["id"] for b in direct[0]["boundary"]["in"]] == [GAS]
+    assert 8 in [p["power"]["units"] for p in d.options]
+    assert d.options[0]["power"]["units"] == 17
 
 
 def test_two_routes_that_differ_only_at_zero_flow_are_one_line() -> None:
