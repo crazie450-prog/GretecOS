@@ -51,6 +51,10 @@ $ProgressPreference = 'SilentlyContinue'
 
 - WO-6.2's listener is on in Lab (`docs/runbooks/machine_events.md` §1).
 - GOS is running (`& $gos serve` or the logon task) with this build deployed.
+- `[paths] lab_world` in gos.toml names the world you open in §2 (e.g. `lab_world = "lab-progress"`),
+  set before you launch Lab. The watchers read only that world's save files (quests, level.dat and
+  playerdata, stats, the census), so with another world named there the quest, dimension and item
+  events of §2 are missed and recall drops; the log events (chat, death, pause) come either way.
 
 ## 2. The scripted Lab session (the §8 acceptance)
 
