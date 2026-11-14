@@ -168,11 +168,15 @@ def test_the_breakdown_adds_up_and_ranks_the_mode(
     assert keys == sorted(keys)
 
 
-def test_owning_only_the_turbine_unlocks_what_its_parts_need(
+def test_owning_only_the_turbine_lists_what_its_parts_need(
     conn: sqlite3.Connection,
 ) -> None:
-    # The densest fuel's line (candidates=1): its parts' steps need machine types that have
-    # an item and a route at EV, so their unlock hours are counted.
+    # The densest fuel's line (candidates=1). Owning only its turbine, the machine types its
+    # parts' steps need are unlocks. On the harness DB none of them has a route at EV, so they
+    # are listed and not counted (WO-4.7: until then the every-machine-runs replay ran chain
+    # recipes at a floor on maps whose machines have routes, which gave this line unlock hours;
+    # the line now imports its fuel and runs no chain, D323). Unlock hours themselves are
+    # hand-checked in tests/unit/planner/test_power_effort.py (worked example 2).
     req = dataclasses.replace(REQ, candidates=1, options=2)
     first = power.design(conn, req, DefaultBaseInputs(EV)).options[0]
     spec = _generator(first)["spec"]
@@ -180,7 +184,41 @@ def test_owning_only_the_turbine_unlocks_what_its_parts_need(
     d = power.design(conn, req, Owns({int(spec["mte"]): 1}))
     p = next(x for x in d.options if x["id"] == first["id"])
     m = p["metrics"]
-    assert m["effort"]["unlocks"] and m["unlock_h"] > 0
+    assert m["effort"]["unlocks"]
     assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], rel=1e-3)
-    unlocked = {r["map"] for r in m["effort"]["rows"] if r["part"] == "unlock"}
-    assert unlocked
+    rows = [r for r in m["effort"]["rows"] if r["part"] == "unlock"]
+    assert m["unlock_h"] == pytest.approx(sum(r["h"] for r in rows), rel=1e-3, abs=1e-9)
+    if not rows:
+        assert any("no recipe or route" in n for n in m["effort"]["notes"])
+
+
+def test_owning_only_the_generator_counts_unlock_hours_on_a_chain_line(
+    conn: sqlite3.Connection,
+) -> None:
+    """Review L4: unlock hours counted on real data, on a line that runs a chain. Heavy fuel
+    at EV on a single block: owning only its generator, the machine types its parts' steps
+    need have items and routes at EV, so their hours are counted (the turbine line above lists
+    its unlocks without routes)."""
+    req = power.PowerRequest(
+        mode="output_per_effort",
+        tier_cap=EV,
+        kinds=("single_block",),
+        fuels=("fluid:liquid_heavy_fuel",),
+    )
+    first = power.design(conn, req, DefaultBaseInputs(EV), with_effort=False)
+    chained = [
+        p for p in first.options if any(n["kind"] == "recipe" for n in p["nodes"])
+    ]
+    assert chained, first.rejected
+    mte = _generator(chained[0])["machine"]["mte"]  # type: ignore[index]
+    d = power.design(conn, req, Owns({int(mte): 1}))
+    p = next(x for x in d.options if x["id"] == chained[0]["id"])
+    assert any(n["kind"] == "recipe" for n in p["nodes"]) and not p["power"]["direct"]
+    m = p["metrics"]
+    rows = [r for r in m["effort"]["rows"] if r["part"] == "unlock"]
+    assert rows and m["unlock_h"] > 0
+    assert m["unlock_h"] == pytest.approx(math.fsum(r["h"] for r in rows), rel=1e-3)
+    assert m["eff_h"] == pytest.approx(m["build_h"] + m["unlock_h"], rel=1e-3)
+    for r in rows:
+        assert r["map"] == effort.HAND or r["mte"] is not None
+        assert all(x["id"].startswith("r:") for x in r["recipes"])

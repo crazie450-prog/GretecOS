@@ -25,9 +25,11 @@ plans, or no saved plan for one of the lines below (a wrong GOS_HOME, or a line 
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import io
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -37,11 +39,12 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import numpy as np
 import pytest
 
 from gregtec.db import access, build
 from gregtec.ingest import collect
-from gregtec.planner import plan
+from gregtec.planner import plan, solve
 from gregtec.planner.request import DefaultBaseInputs, Request
 
 REPO = Path(__file__).resolve().parents[2]
@@ -176,20 +179,99 @@ def _home(tmp: Path, side: str) -> Path:
     return tmp
 
 
+Stages = tuple[np.ndarray, tuple[float, float, float]]
+
+
+def _lexicographic_v1(m: solve._Model, strict: bool = True) -> Stages | None:
+    """The solver's stages 1-3 as WO-3.4 wrote them, before WO-4.7's EU stage (D323), frozen
+    here verbatim for the differential check below."""
+    gates, quantity, machines = solve._objectives(m)
+
+    def result(x: np.ndarray) -> Stages:
+        return x, (
+            solve._value(gates, x),
+            solve._value(quantity, x),
+            solve._value(machines, x),
+        )
+
+    x = solve._solve(m, gates, [])
+    if x is None:
+        return None
+    n1 = sum(solve._open_gates(m, x).values())
+    x2 = None
+    for n in range(int(n1), len(m.gate) + 1):
+        x2 = solve._solve(m, quantity, [(gates, -math.inf, n + 0.5)])
+        if x2 is not None:
+            break
+    if x2 is None:
+        return None if strict else result(x)
+    for k, value in solve._open_gates(m, x2).items():
+        m.lb[m.gate[k]] = m.ub[m.gate[k]] = value
+    x2b = solve._solve(m, quantity, [])
+    if x2b is None:
+        return None if strict else result(x2)
+    q = solve._value(quantity, x2b)
+    x3 = solve._solve(m, machines, [solve._keep(quantity, q)])
+    if x3 is None:
+        return None if strict else result(x2b)
+    return result(x3)
+
+
+# Every stage call made while the G3 lines are designed: (EU costed, same as before WO-4.7).
+DIFFERENTIAL: list[tuple[bool, bool]] = []
+
+
+def _differential(
+    m: solve._Model, strict: bool = True
+) -> tuple[np.ndarray, solve.Objectives] | None:
+    """The solver's stages, and the frozen pre-WO-4.7 ones on a copy of the same model."""
+    before = copy.deepcopy(m)
+    new = _CURRENT(m, strict)
+    old = _lexicographic_v1(before, strict)
+    same = (new is None) == (old is None)
+    if same and new is not None and old is not None:
+        same = (
+            np.array_equal(new[0], old[0])
+            and new[1][:3] == old[1]
+            and new[1][3] is None
+            and (m.lb, m.ub) == (before.lb, before.ub)
+        )
+    DIFFERENTIAL.append((m.net.costs_eu, same))
+    return new
+
+
+_CURRENT = solve._lexicographic
+
+
 @pytest.fixture(scope="module")
 def plans(tmp_path_factory: pytest.TempPathFactory) -> list[dict[str, Any]]:
+    """The lines' best routes, designed with the differential check on every stage call
+    (``test_production_lines_solve_exactly_as_before_the_eu_stage``)."""
     home = _home(tmp_path_factory.mktemp("g3-server"), "server")
     conn = access.connect(access.db_path(home), readonly=True)
     try:
         base = DefaultBaseInputs.from_db(conn)
         out = []
-        for key, tier in LINES.values():
-            d = plan.design(conn, Request(key, qty=1, tier_cap=tier), base)
-            assert d.plans, key
-            out.append(d.plans[0])
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(solve, "_lexicographic", _differential)
+            for key, tier in LINES.values():
+                d = plan.design(conn, Request(key, qty=1, tier_cap=tier), base)
+                assert d.plans, key
+                out.append(d.plans[0])
         return out
     finally:
         conn.close()
+
+
+def test_production_lines_solve_exactly_as_before_the_eu_stage(
+    plans: list[dict[str, Any]],
+) -> None:
+    """WO-4.7 changed the staged MILP for power networks only (EU banned, D323): every G3
+    line, its 3 routes and their replays, solves to the same vector and objectives as the
+    frozen pre-WO-4.7 stages, and no production network costs EU."""
+    assert len(DIFFERENTIAL) >= len(LINES)
+    assert not any(eu for eu, _ in DIFFERENTIAL)
+    assert all(same for _, same in DIFFERENTIAL)
 
 
 @pytest.fixture(scope="module")

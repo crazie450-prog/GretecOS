@@ -533,7 +533,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | quest-guide | Quest Q&A, frontier, spoiler levels (§7.4) | quest_find, quest_get, quest_frontier, quest_for_item |
 | base-keeper | Base-state notes, line lifecycle, goals | note_read/write, ledger_*, plan_set_status, base_get |
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
-| advisor | Next steps (§7.5) | quest_frontier, events_recent, ledger_get, plan_list, base_get |
+| advisor | Next steps (§7.5) | advisor_next (D266; it reads the frontier, My base, the plans and events itself), quest_get, plan_get, ledger_get, telemetry_get, events_recent |
 | ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
 | crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status, crop_station |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
@@ -560,6 +560,7 @@ plan_pin(id, node, recipe?)          plan_rename(id, name)     base_get()       
 layout_estimate(plan)                ledger_get()              ledger_update(...)     plan_explain(id)      # D199, D251
 quest_find(text)                     quest_get(id, spoil=0..2) quest_frontier(n)     quest_for_item(item)
 events_recent(window, kinds?)        session_summary(id)       ore_find(mat, dim?, near?)  player_pos()
+advisor_next(n?)                     # the next steps, ranked by code (D266)
 ore_waypoint(vein)                   # proposes a vein's waypoint from the DB row (D272); confirm is UI-only
 telemetry_get(scope)                 action_propose(kind,args) action_status(id)     # confirm is UI-only
 wiki_search(q)                       wiki_fetch(title)         structure_get(machine, variant)
@@ -716,6 +717,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - Inputs: `me/goals.md`, My base (tier, machines, stock), the top 20 frontier quests, 48 h of events, the EU ledger, alerts, active plans.
   - Output: **3 ranked next steps**, with reasons and links. Nudge-first.
 - **Proactive notices** (priority-gated, 10-minute cooldown). On by default (D71): power deficit or machine stalled, and a plan buildable from current stock. Others (e.g., "a quest just opened up") are opt-in.
+- As built (WO-6.5, D266, D267): `core/gregtec/advisor/` ranks the steps in code (problems, a plan buildable from stock, his goals' quests, power for accepted lines, lines to build, other frontier quests), each with reasons, `plan:`/`q:`/`tel:` citations and a dashboard link, through the read-only `advisor_next` tool (both lanes) and the `advisor` skill (deep lane); Now's "Next steps" shows them with no model call. The notices (`[policy] notices`; `quest_opened` opt-in; a stalled machine is WO-7.5's alert engine's, D281, whose firing alerts the advisor reads, so one stall is one card and one voice line) are delivered as a `notice` push (spoken by the voice client) and, for problems, alert cards; a higher-priority notice holds lower ones for 10 minutes and each kind has its own 10-minute cooldown. `gos eval advisor` runs the three scenarios (`--fake`: an adversarial oracle); Clayton's rating and the Lab run are `docs/runbooks/advisor.md`.
 
 ### 7.6 Ore intel
 - **Sources:** the VisualProspecting server cache (every vein, D27), the client cache, live "You found a … vein" lines, and ore mixes (§5.2 step 6).
@@ -1269,6 +1271,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V31 | **Partly resolved from source** (D284, WO-7.6; CropsNH 2.0.140, GT 5.09.54.265, OC 1.12.68): a transposer shows a seed as `cropsnh:genericSeed`, damage 0, label `<crop name> Seeds` once analysed (`Unknown Seeds` before), so the station identifies seeds by label; stats are NOT readable (OC's `tag` is gzip, the data card inflates zlib), so it tracks them from the breeding maths; the Crop Breeder is a GT basic machine whose progress OC reads like the others (`hasWork`) and whose tank the transposer reads; automation takes items only from a GT machine's output (D282); the transposer is an MV Assembler recipe, the other parts are checked from the recipe DB by `gos crops station --parts` (partial: the part's own recipe, `MV unknown` for a recipe without a tier). Still open: the full parts answer from Clayton's export and the Lab check (`docs/runbooks/breeding_station.md`) [I§3, I§6] | Lab test | 7.6 |
 | V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
+| V34 | When a GT multiblock shuts down on its own (power loss, a maintenance problem), OC's `isWorkAllowed` reads false; if so, it reads as WO-7.4's `stopped` (D279), which WO-7.5's `machine_stalled` alert counts (`[alerts] stalled_stopped`, D280) and the advisor follows (D267, D281); the Lab test checks it does | Lab test | 6.5 |
 
 ---
 
@@ -1441,7 +1444,7 @@ confirm_expiry_s = 60
 stock_default = "none"        # D63
 tier_source = "quests"        # D64, overridable
 export_on_quit = "ask"        # D69
-notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71
+notices = ["power_deficit", "machine_stalled", "plan_buildable"]   # D71; + "quest_opened" opt-in (D267)
 
 [launch]
 # home = "C:/Users/<you>/GregtecOS"   # GOS_HOME for gos launch; default [paths] gos_home (D115)

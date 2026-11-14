@@ -42,6 +42,7 @@ telemetry_get(scope)      both   :mod:`.ops` (WO-7.1; OC readings with age and s
 action_propose(kind,args) deep   :mod:`.ops` (WO-7.1; proposes only: Clayton confirms, D59)
 action_status(id)         both   :mod:`.ops` (WO-7.1)
 ledger_get()              both   :mod:`.ledger` (WO-4.4; the EU ledger, read-only)
+advisor_next(n)           both   :mod:`.advisor` (WO-6.5; next steps ranked by code, D266)
 ore_find(material, ...)   both   :mod:`.ores` (WO-6.6; veins by layer, then distance)
 player_pos()              both   :mod:`.ores` (WO-6.6; at the world's last save)
 ore_waypoint(vein)        deep   :mod:`.ores` (WO-6.6; proposes only: Clayton confirms)
