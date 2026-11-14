@@ -77,6 +77,8 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `manifest.json` | Run facts, file hashes, counts, part status. Not listed in its own `files` |
 | `nei/<NEI file name>.jsonl` | On a client with NEI 2.8.172: a byte-for-byte copy of each file NEI's `dumpAll(true)` wrote to `dumps/recipes/` during this run (see below) |
 | `crops/<dumper>.<csv\|txt>` | On a client with CropsNH: a byte-for-byte copy of the file each of CropsNH's NEI data dumpers wrote to `dumps/` during this run (WO-1.10, D134; see below) |
+| `palette.jsonl` | On a client: one line per placeable block state, sorted by block registry name, meta, then the placing item's meta (WO-10.3, D307; see below) |
+| `textures.jsonl` | On a client: one line per block icon name a `palette.jsonl` face uses, sorted by icon name (WO-10.3) |
 
 ### `gt_recipe_maps.json` entry
 
@@ -309,6 +311,60 @@ registry names), and NEI's other CropsNH tabs (`cropsnhBreeding`, `mutationPool`
 same crops by the seed's NBT `crop` (the crop id) (D136). `mutationPool` has no `cropsnh` prefix: readers take its
 lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neither the files nor NEI's lines carry a numeric ID.
 
+### `palette.jsonl` line (WO-10.3, D307)
+
+The palette and texture pass runs on the client thread right after the crop step (or, with no NEI step, when the
+run finishes), once the game has loaded its block icons. It walks Forge's block registry (`GameData.getBlockRegistry()`)
+in registry-name order. A block is **placeable** when it has an item (`Item.getItemFromBlock`); blocks without one
+count in `counts.palette_unplaceable` and get no line. A placeable block's states are its item's variants as the
+creative menu lists them (`item.getSubItems(item, block.getCreativeTabToDisplayOn(), list)`, stacks of that item
+only), each placed at the block meta the item gives it (`item.getMetadata(damage)`). A block whose list is empty (or
+throws) gets one line for the plain item at damage 0. A line is marked `hidden` when the block is in no creative tab
+(`getCreativeTabToDisplayOn()` is null, so `tab` is null) or its list was empty or threw. Two variants that give the
+same (meta, item meta) are written once (`counts.palette_duplicates`).
+
+```json
+{"block":"<registry name>","meta":0,"item":{"item":"<registry name>|null","meta":0},
+ "name":"<display name>|null","unlocalized":"<unlocalized name>|null","mod":"<registry domain>","has_te":false,
+ "opaque":true,"full_cube":true,"normal_cube":true,"standard_render":true,"liquid":false,"falls":false,
+ "light":0,"light_opacity":0,"tab":"<creative tab label>|null","hidden":true?,
+ "faces":["<icon name>|null", "... six, down up north south west east"],"errors":["<what threw>"]?}
+```
+
+- `block` + `meta` is the state's key (`<block>@<meta>` in palettes, `core/gregtec/build/palette.py`); `item` is the
+  item that places it (`item` null if the item has no registry name). No numeric block or item ID is written
+  anywhere in the file; the harness fails a run that has an `id`, `block_id` or `item_id` key.
+- `has_te` is Forge's `block.hasTileEntity(meta)`: a shell never holds such a state (plan 7.10). GT's machine block
+  `gregtech:gt.blockmachines` is `true` for every meta; GT's casings, coils and glass are `false` [G§4.4].
+- `opaque` (`isOpaqueCube`), `full_cube` (`renderAsNormalBlock`), `normal_cube` (`isNormalCube`), `standard_render`
+  (`getRenderType() == 0`), `liquid` (the material's `isLiquid`), `falls` (a `BlockFalling`), `light`
+  (`getLightValue()`, the block's base light; a block that lights by meta or by its tile entity can differ in the
+  world) and `light_opacity` (`getLightOpacity()`) are block-wide in 1.7.10 (their no-argument forms take no meta),
+  so every meta of a block has the same values. Each is `null` with a line in `errors` if it threw.
+- `tab` is the creative tab's label (`getTabLabel()`), `null` for none; `mod` is the registry name's domain.
+- `name` is the stack's display name in the client's language, `unlocalized` the block's; either can be null.
+- `faces` holds the six sides' icon names (`block.getIcon(side, meta).getIconName()`), in Minecraft's order: down,
+  up, north, south, west, east. A face that has none, or Forge's `MISSING_ICON_BLOCK_<id>_<name>` placeholder (whose
+  name holds a numeric ID), is `null` with a line in `errors`.
+- A variant whose `getMetadata` or `hasTileEntity` throws, or a block whose `getSubItems` throws, is
+  `{"block","item"?,"error"}` and counts in `counts.palette_errors`.
+
+### `textures.jsonl` line (WO-10.3)
+
+```json
+{"icon":"<domain>:<path>","path":"assets/<domain>/textures/blocks/<path>.png",
+ "sha256":"<hex>"?,"width":0?,"height":0?,"rgb":"#rrggbb"?,"alpha":0?,"error":"<why it didn't resolve>"?}
+```
+
+- `path` is where the block atlas looks for the icon (`domain:path` to `assets/<domain>/textures/blocks/<path>.png`;
+  no domain is `minecraft`), read through the client's resource manager, so a resource pack in use wins. The PNG
+  itself is not copied.
+- `rgb` is the alpha-weighted mean colour of the image's top square (an animated texture stacks its frames, so the
+  first frame), `alpha` the mean alpha (0..255); a fully transparent image is `#000000` with alpha 0.
+- An icon with no PNG of its own (IC2 cuts its icons from sheets, `ic2:blockAlloy:0`; icons registered with
+  custom `TextureAtlasSprite` loaders), a file over 4 MB, or one ImageIO can't read is `{"icon","path","error"}`
+  and counts in `counts.texture_errors`.
+
 ### `manifest.json`
 
 ```json
@@ -325,16 +381,19 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
            "items","item_errors","fluids","unregistered",
            "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_serial_load"?,"nei_files"?,
            "nei_recipes"?,
-           "crop_dumpers"?,"crop_files"?},
+           "crop_dumpers"?,"crop_files"?,
+           "palette_blocks","palette_variants","palette_te_variants","palette_unplaceable","palette_hidden",
+           "palette_duplicates","palette_errors","textures","texture_errors"},
  "options":{"recipe_owners":true},
  "parts":{"gt_dump":"ok|failed","machines":"ok|failed","ore_mixes":"ok|failed","oredict":"ok|failed",
           "refs":"ok|failed",
           "nei":"absent|skipped_server|ok|failed","crops":"absent|skipped_server|ok|failed",
+          "palette":"skipped_server|ok|failed",
           "autoexport":"off|ok|failed"},
  "part_errors":{"<part>":"<why it failed>"}?,
  "part_warnings":{"nei":"<what an ok NEI step left out>","crops":"<an optional crop dumper that failed>"}?,
  "durations_ms":{"gt_dump","machines","ore_mixes","oredict","refs","nei_wait"?,"nei_dump"?,"nei_copy"?,"crops_dump"?,
-                 "crops_copy"?}}
+                 "crops_copy"?,"palette"?}}
 ```
 
 - `mods` lists **Export's** loaded mods, sorted by modid. `file` is relative to the game dir, or only the file name
@@ -382,6 +441,18 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
   - `failed`: anything else, with the reason in `part_errors.crops`; also when NEI's recipe step didn't run (NEI
     absent or not ready, the world closed first, the autoexport deadline), since the crop step runs right after it.
   - A file already in `dumps/` that is a link or not a regular file is refused (the dumper would write through it).
+- `parts.palette` (WO-10.3, D307) is not part of `complete`; **readers of `palette.jsonl` and `textures.jsonl`
+  check `parts.palette == "ok"`**. Runs made before WO-10.3 have no such part and no files.
+  - `skipped_server`: a dedicated server (block icons and creative lists are client-only).
+  - `ok`: both files were written. Single states that failed are in the file as error lines and in
+    `counts.palette_errors`; textures that didn't resolve in `counts.texture_errors`.
+  - `failed`: writing a file failed (`part_errors.palette`), or the client step never reached the pass.
+  - `counts.palette_blocks` counts the registry's blocks, `palette_variants` the lines written (item variants, not
+    states: two items can place one state, and `gt.blockmachines` alone has thousands), `palette_te_variants` the
+    lines with `has_te`, `palette_hidden` the `hidden` lines written (duplicates not counted); `gos db build` reports
+    the distinct states (registry name + meta);
+    `textures` and `texture_errors` count `textures.jsonl`. The counts and the `palette` duration are present only
+    when the pass ran (on a client).
 - `java.charset` (WO-1.10) is the JVM's default charset, which CropsNH's dumpers write in; runs without it are
   UTF-8.
 - `parts.autoexport`: `off` without `-Dgregtec.autoexport=true` (or on a dedicated server); `ok` when the
@@ -422,6 +493,10 @@ lines as CropsNH's only when they show `cropsnh:genericSeed` stacks alone. Neith
 - `core/gregtec/ingest/crops.py` (WO-1.10): `crops/*`, only from runs with `parts.crops == "ok"`, plus NEI's
   CropsNH tabs when `parts.nei == "ok"`; `gos db build` loads it into the crop tables (`core/gregtec/db/crops.py`,
   D136).
+- `core/gregtec/ingest/palette.py` (WO-10.3): `palette.jsonl` and `textures.jsonl`, only from runs with
+  `parts.palette == "ok"`; `gos db build` loads them into `block_state` and `block_texture`
+  (`core/gregtec/db/blocks.py`, D307), and `gos palette check` applies plan 7.10's palette rule against them and a
+  world's `level.dat` (`core/gregtec/build/`, D308).
 - `core/gregtec/ingest/normalize.py` (keys, NBT hash, identity and content hashes, D104) and
   `core/gregtec/ingest/merge.py` (NEI into GT, the collision test, D105, D106); `gos db build`
   (`core/gregtec/db/build.py`, D107) loads a collected run into `GOS_HOME\data\gos.sqlite`.

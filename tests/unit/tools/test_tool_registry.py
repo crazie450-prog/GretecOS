@@ -96,8 +96,8 @@ def test_lanes(reg: Registry) -> None:
     assert deep | {HANDOFF} == {t.name for t in TOOLS} | {MORE}
     assert HANDOFF not in deep
     # db_sql, plan_explain (a planner-model call: spend) and the wiki tools (the researcher's,
-    # D290) are the deep lane's only
-    deep_only = {"db_sql", "plan_explain", "wiki_search", "wiki_fetch"}
+    # D290) and block_find (the architect's, D307) are the deep lane's only
+    deep_only = {"db_sql", "plan_explain", "wiki_search", "wiki_fetch", "block_find"}
     assert fast == (deep - deep_only - WRITERS) | {HANDOFF}
     assert {"note_read", "vault_search"} <= fast  # the fast lane's two vault tools
 
