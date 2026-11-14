@@ -62,6 +62,7 @@ from typing import Any
 from gregtec.alerts import policy as pol
 from gregtec.alerts.engine import Alert as EngineAlert
 from gregtec.alerts.engine import AlertEvent, summary
+from gregtec.alerts.policy import credit_buttons
 from gregtec.alerts.rules import place
 from gregtec.presence import IdleSource, NoIdle, is_away
 from gregtec.store import Store
@@ -77,13 +78,6 @@ KEEP_S = 30 * 86400  # route and outbox rows kept
 TEST_TTL_S = 300
 KV_OPEN = "alerts.routing"
 DM_MAX = 1900  # Discord's limit is 2000 characters
-CREDIT_PREFIX = "gos:credit:"
-CREDIT_LABELS = {
-    "billing": "Open billing",
-    "no_ai": "No-AI mode",
-    "resume": "Resume AI",
-    "stop": "Stop",
-}
 MARK = {"err": "[!]", "warn": "[warn]", "info": "[info]"}
 PUSH = ("voice", "in_game", "discord")  # the channels the router sends to itself
 
@@ -129,24 +123,6 @@ def _clip(text: str, limit: int = DM_MAX) -> str:
 
 def _hhmm(ts: float, local: Callable[[float], datetime]) -> str:
     return local(ts).strftime("%H:%M")
-
-
-def credit_buttons(state: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
-    """The credit banner's own actions as DM buttons (D48, D165): Open billing, No-AI mode (or
-    Resume AI while paused), Stop. Each names the cycle, so an old DM's button can't answer a
-    later cycle's alert."""
-    cycle = str(state.get("cycle_start") or "")[:10]
-    out = []
-    for choice in state.get("actions") or ():
-        if choice in CREDIT_LABELS:
-            out.append(
-                {
-                    "custom_id": f"{CREDIT_PREFIX}{choice}:{cycle}",
-                    "label": CREDIT_LABELS[choice],
-                    "danger": choice == "stop",
-                }
-            )
-    return tuple(out)
 
 
 def credit_text(state: Mapping[str, Any]) -> str:

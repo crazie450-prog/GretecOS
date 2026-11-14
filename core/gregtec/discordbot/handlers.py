@@ -154,6 +154,9 @@ class Bot:
         self.failing: dict[str, tuple[int, float]] = {}
         self.given_up: set[str] = set()  # left alone until the bot restarts
         self.tasks: set[asyncio.Task[None]] = set()
+        # The credit DM's buttons (WO-9.2, :meth:`gregtec.discordbot.alerts.AlertDesk.
+        # credit_button`): ``gos:credit:...`` presses, after the door and the ack.
+        self.credit: Callable[[Interaction, str], Awaitable[None]] | None = None
 
     # --- the one door
 
@@ -401,6 +404,9 @@ class Bot:
     async def button(self, it: Interaction, custom: str) -> None:
         verb, _, raw = custom.partition(":")
         await it.ack()  # removes the buttons: a second press can't send it again
+        if verb == "credit" and self.credit is not None:  # D48's buttons (WO-9.2)
+            await self.credit(it, raw)
+            return
         if verb not in (CONFIRM, CANCEL) or not raw.isdigit():
             await it.send(Message(texts.GONE))
             return

@@ -19,7 +19,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
-from gregtec import applog
+from gregtec import applog, config
 from gregtec.discordbot import settings as bot_settings
 from gregtec.llm import keys
 
@@ -77,26 +77,27 @@ def run(args: argparse.Namespace, out: TextIO | None = None) -> int:
         for p in missing:
             log.error("can't start", extra={"why": p})
         return EXIT_SETUP
-    return _run_bot(cfg.core_port, s, supervised=args.supervised)
+    return _run_bot(cfg, s, supervised=args.supervised)
 
 
 def _log_setup_problem(config_path: Path | None, why: str) -> None:
     try:
-        from gregtec import config
-
         applog.setup("discord", config.load(config_path).logs_dir)
         log.error("can't start", extra={"why": why[:300]})
     except (OSError, ValueError):
         pass
 
 
-def _run_bot(port: int, s: bot_settings.BotSettings, *, supervised: bool) -> int:
+def _run_bot(
+    cfg: config.Config, s: bot_settings.BotSettings, *, supervised: bool
+) -> int:
     import discord
 
     from gregtec.discordbot.adapter import GosClient
     from gregtec.discordbot.core_api import HttpCore
 
-    client = GosClient(s, HttpCore(port, keys.get_key(bot_settings.CORE_TOKEN_KEY)))
+    token = keys.get_key(bot_settings.CORE_TOKEN_KEY)
+    client = GosClient(s, HttpCore(cfg.core_port, token), cfg)
 
     async def main() -> int:
         if supervised:

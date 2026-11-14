@@ -58,6 +58,15 @@ NOTICE_KINDS = ("power_deficit", "plan_buildable", "quest_opened")  # WO-6.5
 BASE = (*RULES, *NOTICE_KINDS)
 KINDS = (*BASE, *DIRECT, *AWAY_ONLY)
 SEND = "send"
+CREDIT_PREFIX = (
+    "gos:credit:"  # a credit DM's buttons (the bot's door checks the user first)
+)
+CREDIT_LABELS = {
+    "billing": "Open billing",
+    "no_ai": "No-AI mode",
+    "resume": "Resume AI",
+    "stop": "Stop",
+}
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
@@ -218,3 +227,21 @@ def decide(
     if ctx.discord_mode == "quiet" and policy.quiet_holds(level):
         return "/alerts quiet"
     return SEND
+
+
+def credit_buttons(state: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """The credit banner's own actions as DM buttons (D48, D165): Open billing, No-AI mode (or
+    Resume AI while paused), Stop. Each names the cycle, so an old DM's button can't answer a
+    later cycle's alert."""
+    cycle = str(state.get("cycle_start") or "")[:10]
+    out = []
+    for choice in state.get("actions") or ():
+        if choice in CREDIT_LABELS:
+            out.append(
+                {
+                    "custom_id": f"{CREDIT_PREFIX}{choice}:{cycle}",
+                    "label": CREDIT_LABELS[choice],
+                    "danger": choice == "stop",
+                }
+            )
+    return tuple(out)

@@ -2,7 +2,7 @@
 
 | route                                 | who                    | what                                  |
 |---------------------------------------|------------------------|---------------------------------------|
-| GET  /api/alerts/outbox               | admin, the Discord bot | undelivered DMs and Discord's ``/alerts`` mode |
+| GET  /api/alerts/outbox               | admin, the Discord bot | undelivered DMs and Discord's ``/alerts`` state |
 | POST /api/alerts/outbox/{id}/delivered| admin, the Discord bot | that DM was posted                    |
 | GET  /api/alerts/routed               | admin, a paired device | the moment (away, quiet, ...), the active alerts and where each went |
 | POST /api/alerts/test                 | admin (gos alerts test)| one test DM, whatever his presence    |
@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from gregtec.alerts.router import AlertRouter
 from gregtec.api.security import Principal
+from gregtec.remote.routes import alerts_state
 
 if TYPE_CHECKING:
     from gregtec.api.app import Core
@@ -106,10 +107,9 @@ def add_routes(
     @app.get("/api/alerts/outbox")
     async def outbox(who: Anyone) -> dict[str, Any]:
         bot_or_admin(who)
-        r = router()
-        dms = await asyncio.to_thread(r.outbox)
-        mode = await asyncio.to_thread(r.discord_mode)
-        return {"dms": dms, "mode": mode, "policy": _policy(r)}
+        dms = await asyncio.to_thread(router().outbox)
+        state = await asyncio.to_thread(alerts_state, core.store)
+        return {"dms": dms, "alerts": state}
 
     @app.post("/api/alerts/outbox/{dm_id}/delivered")
     async def delivered(dm_id: int, who: Anyone) -> dict[str, Any]:
@@ -131,13 +131,3 @@ def add_routes(
             raise HTTPException(403, "only gos")
         router().test()
         return {"queued": True}
-
-
-def _policy(r: AlertRouter) -> dict[str, Any]:
-    """What the bot needs of ``[notify]`` for its own "GOS offline" DM while the core is down."""
-    p = r.policy
-    return {
-        "quiet_hours": list(p.quiet_hours) if p.quiet_hours is not None else None,
-        "quiet_min_level": p.quiet_min_level,
-        "offline_after_s": p.offline_after_s,
-    }
