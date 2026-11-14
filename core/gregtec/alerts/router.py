@@ -57,7 +57,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gregtec.alerts import policy as pol
 from gregtec.alerts.engine import Alert as EngineAlert
@@ -66,6 +66,9 @@ from gregtec.alerts.policy import credit_buttons
 from gregtec.alerts.rules import place
 from gregtec.presence import IdleSource, NoIdle, is_away
 from gregtec.store import Store
+
+if TYPE_CHECKING:
+    from gregtec.advisor.notices import Notice
 
 log = logging.getLogger("gregtec.alerts.router")
 
@@ -262,7 +265,7 @@ class AlertRouter:
             )
             self._save_open()
 
-    def notice(self, n: Any) -> None:  # noqa: ANN401 - gregtec.advisor.notices.Notice
+    def notice(self, n: Notice) -> None:
         """A proactive notice (WO-6.5): one-shot, deliverable for :data:`NOTICE_TTL_S`."""
         level = "warn" if n.kind == "power_deficit" else "info"
         detail = " ".join(str(d) for d in (n.as_dict().get("detail") or ())[:3])
