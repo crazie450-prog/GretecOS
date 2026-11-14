@@ -119,6 +119,7 @@ def test_stale_detection_on_a_real_export_run(tmp_path: Path) -> None:
             launch=prism.launch,
             clients=prism.clients,
             allow_harness=True,
+            load=False,  # WO-1.4 only: no collect, build or diff (WO-11.1)
             sleep=lambda s: None,
             poll_s=0.0,
         )

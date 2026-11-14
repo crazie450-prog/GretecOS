@@ -49,7 +49,7 @@ from gregtec.gamestate.safe_open import read_bytes
 from gregtec.ingest import collect, fingerprint, machines
 from gregtec.packupdate import diff, plans
 from gregtec.vault import fts
-from gregtec.vault.io import VaultError, VaultIO
+from gregtec.vault.io import VaultError, VaultIO, atomic_write
 
 QUESTION = Path("run", "export-question.json")  # in GOS_HOME
 QUESTION_FORMAT = "gos-export-question/1"
@@ -100,7 +100,8 @@ class Question:
 
 
 def _write(home: Path, q: Question) -> None:
-    fingerprint.atomic_write(home / QUESTION, json.dumps(q.as_dict()).encode("utf-8"))
+    # vault.io's atomic write retries the rename while a reader on Windows holds the file
+    atomic_write(home / QUESTION, json.dumps(q.as_dict()).encode("utf-8"))
 
 
 def read_question(home: Path) -> Question | None:
