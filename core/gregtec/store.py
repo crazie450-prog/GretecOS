@@ -11,7 +11,8 @@ it, also creating it on a DB this module hasn't opened), and the event store: Ap
 and ``session`` with the columns WO-6.3 adds (D263; :mod:`gregtec.events.store`), and ``age_mark``,
 when each voltage age was first seen and its recap (D162, D265; :mod:`gregtec.events.ages`), and
 ``remote_job``, the durable queue of design jobs asked from off the PC (WO-9.1, D295;
-:mod:`gregtec.remote.jobs`).
+:mod:`gregtec.remote.jobs`), and the alert router's ``alert_route`` (what went to which channel)
+and ``alert_dm`` (the Discord DM outbox) (WO-9.2, D299; :mod:`gregtec.alerts.router`).
 
 The core is the DB's single owner (plan 4.2); nothing else writes these tables. ``device`` keeps
 Appendix D's columns plus ``token_sha256``, the SHA-256 of the device's cookie secret. Only hashes
@@ -74,6 +75,10 @@ CREATE TABLE IF NOT EXISTS remote_job(id TEXT PRIMARY KEY, client TEXT NOT NULL,
   state TEXT NOT NULL CHECK(state IN ('queued','running','done','failed')), created INT NOT NULL,
   started INT, finished INT, attempts INT NOT NULL DEFAULT 0, result TEXT, error TEXT, delivered INT,
   UNIQUE(client, key));
+CREATE TABLE IF NOT EXISTS alert_route(channel TEXT NOT NULL, key TEXT NOT NULL, occ TEXT NOT NULL,
+  ts INT NOT NULL, PRIMARY KEY(channel, key, occ));
+CREATE TABLE IF NOT EXISTS alert_dm(id INTEGER PRIMARY KEY, created INT NOT NULL, level TEXT NOT NULL,
+  text TEXT NOT NULL, buttons TEXT, keys TEXT, delivered INT, dropped INT);
 """
 # Indexes on columns ADDED_COLUMNS may have just added (a DB whose table predates them).
 POST_SCHEMA = """

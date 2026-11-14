@@ -9,7 +9,8 @@ WO-6.6's acceptance, on Clayton's PC: **nearest-vein answers check out in the La
 ```powershell
 cd C:\GregtecOS-dev\GretecOS
 git fetch origin
-git switch wo/6.6-ore-intel
+git switch main            # WO-6.6 is merged; use the same commit Clayton deployed, or later
+git pull --ff-only
 uv sync
 pnpm -C dashboard install
 pnpm -C dashboard build

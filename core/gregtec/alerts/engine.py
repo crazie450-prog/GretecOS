@@ -64,6 +64,7 @@ from gregtec.store import Store
 
 log = logging.getLogger("gregtec.alerts")
 
+SETTLE_S = 30.0  # see AlertEngine.settled: a few telemetry messages past a rule's hold
 PAUSE_GRACE_S = 5.0  # a message this soon after the pause line was written before it
 DONE_KEPT = 256  # crafting-done ids remembered, so each fires once
 EVENTS = ("fired", "cleared", "stale", "fresh")
@@ -269,6 +270,9 @@ class AlertEngine:
         self._lock = threading.Lock()
         self._tracks: dict[tuple[str, str], _Track] = {}  # (binding, key)
         self._held: dict[str, str | None] = {}  # binding -> why it is held, or None
+        self._fresh: dict[
+            str, float
+        ] = {}  # binding -> evaluated on fresh readings since
         self._done: dict[str, Alert] = {}  # crafting-done alerts still shown
         self._done_seen: OrderedDict[str, None] = OrderedDict()
         if store is not None:
@@ -279,6 +283,18 @@ class AlertEngine:
     def held(self, binding: str) -> str | None:
         with self._lock:
             return self._held.get(binding)
+
+    def settled(self, binding: str, rule: str) -> bool:
+        """Whether ``binding`` has been evaluated on fresh readings in this run for longer than
+        ``rule`` needs to fire (its hold, plus :data:`SETTLE_S` for the readings' cadence): an
+        alert of that rule still firing would have fired again by now. The alert router asks
+        this before it forgets what was firing before a restart (WO-9.2)."""
+        with self._lock:
+            since = self._fresh.get(binding)
+        return (
+            since is not None
+            and self.clock() - since >= self.rules.hold_s(rule) + SETTLE_S
+        )
 
     def active(self, binding: str | None = None) -> list[Alert]:
         """Every firing alert (held ones included) and the crafting done still shown, worst
@@ -358,6 +374,10 @@ class AlertEngine:
         why = self._why_held(base, now)
         before = self._held.get(binding)
         self._held[binding] = why
+        if why is None:
+            self._fresh.setdefault(binding, now)
+        else:
+            self._fresh.pop(binding, None)
         if why != before and (why is None) != (before is None):
             events.append(
                 AlertEvent("stale" if why else "fresh", binding, now, why=why)
