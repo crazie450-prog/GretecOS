@@ -57,7 +57,8 @@
         "crafts": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/craft" } },
         "results": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/result" } },
         "errors": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/error" } },
-        "display": { "$ref": "#/$defs/shows" }
+        "display": { "$ref": "#/$defs/shows" },
+        "crops": { "$ref": "#/$defs/crops" }
       }
     },
     "shows": {
@@ -292,7 +293,7 @@
       "required": ["id", "kind", "args", "confirmed_via"],
       "properties": {
         "id": { "$ref": "#/$defs/command_id" },
-        "kind": { "enum": ["craft", "machine_pause", "machine_resume", "say"] },
+        "kind": { "enum": ["craft", "machine_pause", "machine_resume", "say", "crop_start", "crop_stop"] },
         "args": { "type": "object" },
         "confirmed_via": { "enum": ["voice", "dashboard", "phone", "discord"] }
       },
@@ -302,7 +303,15 @@
           "if": { "properties": { "kind": { "enum": ["machine_pause", "machine_resume"] } } },
           "then": { "properties": { "args": { "$ref": "#/$defs/machine_args" } } }
         },
-        { "if": { "properties": { "kind": { "const": "say" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/say_args" } } } }
+        { "if": { "properties": { "kind": { "const": "say" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/say_args" } } } },
+        {
+          "if": { "properties": { "kind": { "const": "crop_start" } } },
+          "then": { "properties": { "args": { "$ref": "#/$defs/crop_start_args" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "crop_stop" } } },
+          "then": { "properties": { "args": { "$ref": "#/$defs/crop_stop_args" } } }
+        }
       ]
     },
     "craft_args": {
@@ -327,6 +336,112 @@
       "additionalProperties": false,
       "required": ["text"],
       "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 256 } }
+    },
+    "seed_label": {
+      "description": "An analysed CropsNH seed's label, '<crop name> Seeds' (cropsnh:genericSeed's display name, which names the species; WO-7.6). Never 'Unknown Seeds' (not analysed) or a numeric id.",
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001f]+ Seeds$",
+      "not": { "enum": ["Unknown Seeds", "Invalid Seeds"] }
+    },
+    "crop_item": {
+      "description": "A catalyst by registry name and damage, and how many one run or one copy uses.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "damage", "n"],
+      "properties": {
+        "name": { "$ref": "#/$defs/registry_name" },
+        "damage": { "$ref": "#/$defs/damage" },
+        "n": { "type": "integer", "minimum": 1, "maximum": 64 }
+      }
+    },
+    "crop_step": {
+      "description": "One Crop Breeder recipe of a breeding plan.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["child", "parents", "cat", "copies", "fert"],
+      "properties": {
+        "child": { "$ref": "#/$defs/seed_label" },
+        "parents": { "type": "array", "minItems": 2, "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/seed_label" } },
+        "cat": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/crop_item" } },
+        "copies": { "description": "Seeds of each parent before the step's first run, when a copier makes them.", "type": "integer", "minimum": 2, "maximum": 64 },
+        "fert": { "description": "mB of enriched fertilizer one run takes (GOS computes it).", "type": "integer", "minimum": 1, "maximum": 256000 },
+        "ref": { "description": "The recipe's r: id, for the log.", "type": "string", "maxLength": 80 }
+      }
+    },
+    "crop_start_args": {
+      "description": "A breeding plan GOS built (gregtec.crops.station), run by oc/crop/station.lua.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan", "target", "count", "steps"],
+      "properties": {
+        "plan": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+        "target": { "$ref": "#/$defs/seed_label" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/$defs/crop_step" } },
+        "copy": {
+          "description": "The crops worth a Seed Generator (a copier), best first.",
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/seed_label" }
+        },
+        "copy_cat": {
+          "description": "A crop's duplication catalyst for the Seed Generator, by its label.",
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": { "$ref": "#/$defs/seed_label" },
+          "additionalProperties": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/crop_item" } }
+        },
+        "copy_fert": {
+          "description": "mB of fertilizer one Seed Generator copy of a crop takes (GOS computes it), by its label; checked before a seed is parked.",
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": { "$ref": "#/$defs/seed_label" },
+          "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 256000 }
+        }
+      }
+    },
+    "crop_stop_args": { "type": "object", "additionalProperties": false, "maxProperties": 0 },
+    "crops": {
+      "description": "The breeding station's status (WO-7.6), in every message of an agent with a crops table.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "runs", "ok", "fail", "stock"],
+      "properties": {
+        "state": { "enum": ["idle", "running", "stopping", "stopped", "done", "failed", "interrupted"] },
+        "plan": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+        "action": { "$ref": "#/$defs/command_id" },
+        "target": { "$ref": "#/$defs/seed_label" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "steps": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "step": { "description": "The step of the run under way.", "type": "integer", "minimum": 1, "maximum": 8 },
+        "runs": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "doing": { "type": "string", "maxLength": 200 },
+        "note": { "type": "string", "maxLength": 200 },
+        "stock": {
+          "description": "The plan's seeds in the chest, by label.",
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": { "$ref": "#/$defs/seed_label" },
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "copiers": {
+          "description": "Each Seed Generator's parked crop (its label), or false when it holds none.",
+          "type": "array",
+          "maxItems": 3,
+          "items": { "oneOf": [{ "$ref": "#/$defs/seed_label" }, { "const": false }] }
+        },
+        "cat_left": {
+          "description": "Items other than seeds (duplication catalysts) in each Seed Generator's inputs, which GT never gives back.",
+          "type": "array",
+          "maxItems": 3,
+          "items": { "type": "integer", "minimum": 0 }
+        }
+      }
     }
   }
 }

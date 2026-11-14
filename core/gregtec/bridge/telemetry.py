@@ -291,6 +291,9 @@ class Telemetry:
         elif kind == "craft":
             found = [m for m in fresh if isinstance(m.doc.get("ae2"), dict)]
             what = "an AE2 network"
+        elif kind in ("crop_start", "crop_stop"):
+            found = [m for m in fresh if isinstance(m.doc.get("crops"), dict)]
+            what = "a breeding station (a crops table in gos-agent.cfg)"
         else:  # say
             found = [
                 m

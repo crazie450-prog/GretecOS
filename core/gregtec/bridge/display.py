@@ -12,7 +12,8 @@ commands and only while it fits in the reply's 2048 bytes:
   reaches the screen with the reply to the first message after it (one ``cycle_s``, 5 s).
 - ``lines`` (board, at most :data:`BOARD_LINES` of :data:`BOARD_W` printable ASCII characters:
   everything fits OC's smallest screen and GPU, 50 x 16, with the agent's own header and footer):
-  power, problems (stopped and stalled first), the action waiting for "confirm", the current goal, the next
+  power, WO-7.5's firing alerts the problems don't already say (power low, crafting done),
+  problems (stopped and stalled first), the action waiting for "confirm", the current goal, the next
   step, AE2 crafting. Each a level: ``ok warn bad info dim``.
 - ``hud`` (OCGlasses, at most :data:`HUD_LINES` of :data:`HUD_W`): power, the worst problem, the
   waiting action or the next step. Only to an agent that says it draws one (an M2 agent with a
@@ -145,6 +146,7 @@ class Context:
 
 ContextSource = Callable[[], Context]
 PendingSource = Callable[[], Action | None]
+AlertLines = Callable[[str], list[tuple[str, str]]]  # binding -> WO-7.5's board lines
 
 
 def quest_context(gos_home: Path) -> ContextSource:
@@ -189,9 +191,11 @@ class Displays:
         *,
         context: ContextSource | None = None,
         pending: PendingSource | None = None,
+        alerts: AlertLines | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.live = live
+        self.alerts = alerts
         self.context = context
         self.pending = pending
         self.clock = clock
@@ -291,9 +295,10 @@ class Displays:
     ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         """(board lines, HUD lines) for ``binding`` now."""
         base = self.live.binding(binding)
-        return board_lines(base, self._context(), self._pending(binding)), hud_lines(
-            base, self._context(), self._pending(binding)
-        )
+        alerts = self.alerts(binding) if self.alerts is not None else []
+        return board_lines(
+            base, self._context(), self._pending(binding), alerts
+        ), hud_lines(base, self._context(), self._pending(binding))
 
     def for_agent(self, agent: AgentId) -> dict[str, Any] | None:
         """The ``display`` for the reply to ``agent``'s newest message, or None (nothing new,
@@ -404,9 +409,13 @@ def _power_text(p: Mapping[str, Any], width: int) -> tuple[str, str]:
 
 
 def board_lines(
-    base: Mapping[str, Any], ctx: Context, pending: Action | None
+    base: Mapping[str, Any],
+    ctx: Context,
+    pending: Action | None,
+    alerts: Sequence[tuple[str, str]] = (),
 ) -> list[dict[str, str]]:
-    """The status board: power, problems, the waiting action, goal, next step, AE2."""
+    """The status board: power, alerts and problems, the waiting action, goal, next step, AE2.
+    ``alerts`` are WO-7.5's (text, level) lines, shown first in the problems' part."""
     stale = base.get("status") == "stale"
     power: list[dict[str, str]] = []
     rows = sorted(base.get("power") or [], key=lambda p: p.get("kind") != "storage")
@@ -415,7 +424,7 @@ def board_lines(
         power.append(_line(text, level))
     if not rows:
         power.append(_line("PWR  no power readings", "dim"))
-    problems: list[dict[str, str]] = []
+    problems: list[dict[str, str]] = [_line(t, level) for t, level in alerts]
     found = base.get("problems") or []
     for pr in found[:PROBLEM_ROWS]:
         problems.append(_line(f"!    {pr['text']}", pr["level"]))
@@ -423,7 +432,7 @@ def board_lines(
         problems.append(
             _line(f"     and {len(found) - PROBLEM_ROWS} more problems", "dim")
         )
-    if not found and base.get("status") == "connected":
+    if not found and not alerts and base.get("status") == "connected":
         problems.append(_line("OK   no problems reported", "ok"))
     act: list[dict[str, str]] = []
     if pending is not None:

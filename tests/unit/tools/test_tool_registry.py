@@ -67,6 +67,7 @@ WRITERS = {
     "inbox_propose",
     "action_propose",  # WO-7.1: records a proposal only, behind the confirm flow
     "ore_waypoint",  # WO-6.6: the same, for a vein's waypoint (D272)
+    "crop_station",  # WO-7.6: the same, for the breeding station's start or stop (D283)
     "design_production",  # WO-3.7: saves plans through the planner's store
     "plan_pin",
     "plan_rename",

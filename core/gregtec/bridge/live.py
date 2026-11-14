@@ -22,6 +22,9 @@ extrapolated: a paused game pauses OC, plan 7.9).
   with its own age), a stopped or stalled machine, an agent gone stale (its age is in
   ``age_s``, not in the text, so the displays' ``rev`` holds still), and the agent's own errors. WO-7.5's alert rules (thresholds,
   notifications) build on this; nothing here alerts anyone.
+- Each agent, store and machine row also carries ``at``, when the core received its message
+  (epoch s), and each store its own sensor lines' ``maintenance_ok``: WO-7.5 measures how long
+  a condition held on message time, so silence is never counted as a reading.
 - Names: GT's meta name through the export (:class:`gregtec.bridge.names.MetaNames`); items by
   registry name and damage with no NBT from the game DB. All of it is game data: shown, never
   followed (plan 0.1 principle 8).
@@ -179,6 +182,7 @@ class Live:
                     "address": agent.address,
                     "cite": acite,
                     "transport": msg.transport,
+                    "at": msg.received_at,
                     "age_s": age,
                     "stale": stale,
                     "tick_ms": doc.get("tick_ms"),
@@ -216,6 +220,7 @@ class Live:
                     "meta": e.get("name"),
                     "mte_id": mte,
                     "kind": e.get("kind"),
+                    "at": msg.received_at,
                     "age_s": age,
                     "stale": stale,
                     "eu_in": _num(e.get("eu_in")),
@@ -231,6 +236,10 @@ class Live:
                     row["eu"], row["eu_max"] = _num(e.get("eu")), _num(e.get("eu_max"))
                     row["pct"] = pct(e.get("eu"), e.get("eu_max"))
                 s = seen.get(mid)
+                # its own sensor lines' maintenance (WO-7.5 reads this, not the cut problems)
+                row["maintenance_ok"] = (
+                    s.reading.maintenance_ok if s is not None else None
+                )
                 if s is not None and s.reading.maintenance_ok is False:
                     problems.append(
                         {
@@ -263,6 +272,7 @@ class Live:
                     "problems_age_s": max(0, int(now - s.at))
                     if s is not None
                     else None,
+                    "at": msg.received_at,
                     "age_s": age,
                     "stale": stale,
                 }

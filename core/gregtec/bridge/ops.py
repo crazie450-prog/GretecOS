@@ -8,6 +8,9 @@ wired together once per core (:func:`build`).
   Base view and the displays, :class:`~gregtec.bridge.display.Displays` builds each reply's
   ``display`` (the status board, the OCGlasses HUD, chat notices about confirmed actions), and
   :class:`~gregtec.bridge.names.MetaNames` maps GT's meta names to the DB's machines.
+- The telemetry alert rules (WO-7.5): :class:`~gregtec.alerts.engine.AlertEngine` reads the live
+  base each second (:meth:`Ops.tick`), its power-low and crafting-done lines go on the status
+  board, and the core sends its events to the dashboards and the voice client.
 - The desk reads item names from the game DB (read-only, by registry name and damage with no
   NBT), writes waypoints through :mod:`gregtec.bridge.waypoint`, and journals each change to the
   day's log through :class:`gregtec.vault.io.VaultIO` (the note grammar's ``key: value`` line).
@@ -22,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gregtec.alerts.engine import AlertEngine
 from gregtec.bridge import waypoint
 from gregtec.bridge.actions import Action, ActionDesk
 from gregtec.bridge.display import Displays, quest_context
@@ -45,6 +49,7 @@ class Ops:
     cfg: Config | None = None  # where a vein's waypoint goes (WO-6.6, ore_waypoint)
     live: Live | None = None  # the live base (WO-7.4)
     displays: Displays | None = None  # the in-game displays (WO-7.4)
+    alerts: AlertEngine | None = None  # the telemetry alert rules (WO-7.5)
 
     def changed(
         self, then: Callable[[Action, str], None] | None
@@ -63,9 +68,11 @@ class Ops:
         return on_change
 
     def tick(self) -> None:
-        """Every second from the core: expiries, timeouts, staleness."""
+        """Every second from the core: expiries, timeouts, staleness, the alert rules."""
         self.desk.tick()
         self.telemetry.sweep()
+        if self.alerts is not None:
+            self.alerts.tick()
 
 
 def item_namer(db: Path) -> Callable[[str, int], str | None]:
@@ -138,7 +145,15 @@ def build(
     )
     live.paused_by = desk.paused  # GOS's pauses vs GT's own shutdowns (D279)
     telemetry.results = desk.results
-    displays = Displays(live, context=quest_context(cfg.gos_home), pending=desk.pending)
-    ops = Ops(Bridge(telemetry, desk, displays), telemetry, desk, cfg, live, displays)
+    alerts = AlertEngine(live, cfg.alerts, store=store)
+    displays = Displays(
+        live,
+        context=quest_context(cfg.gos_home),
+        pending=desk.pending,
+        alerts=alerts.board,
+    )
+    ops = Ops(
+        Bridge(telemetry, desk, displays), telemetry, desk, cfg, live, displays, alerts
+    )
     desk.on_change = ops.changed(on_change)
     return ops
