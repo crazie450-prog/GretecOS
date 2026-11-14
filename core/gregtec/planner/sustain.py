@@ -244,10 +244,14 @@ def _turbine_run(
 
 
 def gen_ports(
-    conn: sqlite3.Connection, node: Mapping[str, Any], run_id: int | None = None
+    conn: sqlite3.Connection,
+    node: Mapping[str, Any],
+    run_id: int | None = None,
+    tier_cap: int | None = None,
 ) -> tuple[Ports | None, str | None]:
     """A generator node's ports per build unit, derived again from the DB and GT's math by its
-    ``spec`` (see the module docstring), or (None, why not)."""
+    ``spec`` (see the module docstring), or (None, why not). ``tier_cap`` is the plan's: a
+    dynamo hatch the node names above it is refused."""
     ref = str(node.get("recipe"))
     spec = node.get("spec")
     if not isinstance(spec, Mapping) or "kind" not in spec or "fuel_ref" not in spec:
@@ -324,7 +328,7 @@ def gen_ports(
             )
             return Ports(ins, {EU_KEY: float(tr.eut * 20)}), None
         if kind == "naquadah_reactor":
-            return _reactor_ports(conn, ref, spec, run, key)
+            return _reactor_ports(conn, ref, spec, run, key, tier_cap)
     except (
         generators.CatalogError,
         gt_boiler.BoilerError,
@@ -341,8 +345,11 @@ def _reactor_ports(
     spec: Mapping[str, Any],
     run: int,
     key: str,
+    tier_cap: int | None = None,
 ) -> tuple[Ports | None, str | None]:
-    """The Large Naquadah Reactor's ports per build unit, from the DB (D327)."""
+    """The Large Naquadah Reactor's ports per build unit, from the DB (D327), on a dynamo hatch
+    the designer's own rule allows (``generators.dynamo_allowed``: the controller's
+    ``exotic_hatches`` fact, never GT++'s buffered dynamo) at or below the plan's tier."""
     mte = int(spec["mte"])
     if _class(conn, mte) != "MTELargeNaquadahReactor":
         return None, f"{ref}: mte:{mte} is not a Large Naquadah Reactor"
@@ -357,11 +364,23 @@ def _reactor_ports(
         return None, f"{ref}: {spec['fuel_ref']} is not a fuel of mte:{mte}'s map"
     s = gt_naquadah.steady(reactor, basic=fuel.basic, duration=fuel.duration)
     hatch = conn.execute(
-        "SELECT eu_out, amps_out FROM dynamo_hatch WHERE run_id = ? AND mte_id = ?",
+        "SELECT eu_out, amps_out, class_name, tier FROM dynamo_hatch"
+        " WHERE run_id = ? AND mte_id = ?",
         (run, int(spec["dynamo_mte"])),
     ).fetchone()
     if hatch is None:
         return None, f"{ref}: mte:{spec['dynamo_mte']} is not a dynamo hatch"
+    takes = generators.exotic(conn, mte)
+    if not generators.dynamo_allowed(str(hatch[2]), takes):
+        return None, (
+            f"{ref}: mte:{mte} is not offered mte:{spec['dynamo_mte']} ({hatch[2]};"
+            f" exotic hatches: {takes or 'none'})"
+        )
+    if tier_cap is not None and int(hatch[3]) > tier_cap:
+        return None, (
+            f"{ref}: mte:{spec['dynamo_mte']} is above the plan's tier cap"
+            f" ({hatch[3]} > {tier_cap})"
+        )
     cap = int(hatch[0]) * int(hatch[1])
     if cap < s.eut:
         return None, (
@@ -398,6 +417,7 @@ def node_ports(
     node: Mapping[str, Any],
     farms: Mapping[str, Farm],
     run_id: int | None = None,
+    tier_cap: int | None = None,
 ) -> tuple[Ports | None, str | None]:
     """A node's ports read again from their source, or (None, why not)."""
     ref = str(node.get("recipe"))
@@ -423,7 +443,7 @@ def node_ports(
             return None, f"{member} is not a member of {slot}"
         return Ports({member: 1.0}, {slot: 1.0}), None
     if ref.startswith("gen:"):
-        derived, why = gen_ports(conn, node, run_id)
+        derived, why = gen_ports(conn, node, run_id, tier_cap)
         if derived is None:
             return None, why
         if node.get("ports"):
@@ -463,6 +483,13 @@ class Proof:
         }
 
 
+def _tier_cap(plan: Mapping[str, Any]) -> int | None:
+    """The power request's tier cap (an index), or None for a plan without one."""
+    req = plan.get("request")
+    cap = req.get("tier_cap") if isinstance(req, Mapping) else None
+    return cap if isinstance(cap, int) and not isinstance(cap, bool) else None
+
+
 def validate(
     conn: sqlite3.Connection,
     plan: Mapping[str, Any],
@@ -475,7 +502,8 @@ def validate(
     free_set = frozenset(free)
     farm_map = farms or {}
     run_id = run_of(conn, plan)
-    read = ports or (lambda n: node_ports(conn, n, farm_map, run_id))
+    tier_cap = _tier_cap(plan)
+    read = ports or (lambda n: node_ports(conn, n, farm_map, run_id, tier_cap))
     balance: dict[str, float] = {}
     problems: list[str] = []
     gross: dict[str, float] = {}  # per item, the larger of what is made and used

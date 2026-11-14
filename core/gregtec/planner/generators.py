@@ -536,6 +536,13 @@ def exotic(conn: sqlite3.Connection, mte_id: int) -> str | None:
     return str(row[0]) if row else None
 
 
+def dynamo_allowed(class_name: str, takes: str | None) -> bool:
+    """Whether the planner offers a dynamo hatch of ``class_name`` on a multiblock whose
+    ``exotic_hatches`` fact is ``takes`` (D327: GT++'s buffered dynamo never)."""
+    kind = DYNAMO_KINDS.get(_simple(class_name), "unknown")
+    return kind != "unknown" and kind in EXOTIC.get(takes, EXOTIC[None])
+
+
 def dynamo(
     conn: sqlite3.Connection,
     run_id: int,
@@ -548,7 +555,6 @@ def dynamo(
     ``tier_cap``: of the kinds its ``exotic_hatches`` fact (``takes``) allows, the lowest tier
     whose voltage x amps holds the output, then GT's 1 A hatch before a multi-amp one before a
     laser, then the fewest amps (D326). None when none does."""
-    allowed = EXOTIC.get(takes, EXOTIC[None])
     best: tuple[tuple[int, int, int, int], Dynamo] | None = None
     for mte_id, class_name, tier, eu_out, amps, name in conn.execute(
         "SELECT d.mte_id, d.class_name, d.tier, d.eu_out, d.amps_out, m.name_en"
@@ -556,9 +562,9 @@ def dynamo(
         " WHERE d.run_id = ? AND d.tier <= ?",
         (run_id, tier_cap),
     ):
-        kind = DYNAMO_KINDS.get(_simple(str(class_name)), "unknown")
-        if kind == "unknown" or kind not in allowed:
+        if not dynamo_allowed(str(class_name), takes):
             continue
+        kind = DYNAMO_KINDS[_simple(str(class_name))]
         d = Dynamo(
             int(mte_id), name, str(class_name), int(tier), int(eu_out), int(amps)
         )

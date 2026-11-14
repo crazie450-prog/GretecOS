@@ -352,6 +352,45 @@ def test_the_validator_refuses_what_gt_would_not_run(
     assert p is None and why is not None and match in why
 
 
+def test_the_validator_applies_the_designers_dynamo_rule(
+    db: Path, tmp_path: Path
+) -> None:
+    """Review M1: a hatch the controller's ``exotic_hatches`` fact doesn't allow, GT++'s
+    buffered dynamo (D327), or a hatch above the plan's tier cap is refused, whatever it holds."""
+    c = _writable_copy(db, tmp_path)
+    try:
+        g = _gen(c)
+        node = {"recipe": g.id, "spec": {**dict(g.spec), "dynamo_mte": 901}}
+        p, why = sustain.gen_ports(c, node)
+        assert p is None and why is not None and "is not offered" in why
+        node = {"recipe": g.id, "spec": dict(g.spec)}
+        p, why = sustain.gen_ports(c, node, tier_cap=1)
+        assert p is None and why is not None and "above the plan's tier cap" in why
+        assert sustain.gen_ports(c, node, tier_cap=2)[0] is not None
+        c.execute(
+            "UPDATE machine_fact SET value = 'multiamp' WHERE key = 'exotic_hatches'"
+        )
+        node = {"recipe": g.id, "spec": {**dict(g.spec), "dynamo_mte": 15232}}
+        p, why = sustain.gen_ports(c, node)
+        assert p is None and why is not None and "exotic hatches: multiamp" in why
+    finally:
+        c.close()
+
+
+def test_the_validator_reads_the_plans_tier_cap(conn: sqlite3.Connection) -> None:
+    d = power.design(
+        conn,
+        power.PowerRequest(free=FREE, tier_cap=2, kinds=("naquadah_reactor",)),
+        tg.Base(),
+        templates=chains.EMPTY,
+        with_effort=False,
+    )
+    p = d.options[0]
+    assert sustain.validate(conn, p, FREE).problems == ()
+    low = {**p, "request": {**p["request"], "tier_cap": 1}}
+    assert any("tier cap" in w for w in sustain.validate(conn, low, FREE).problems)
+
+
 def test_the_line_designs_its_fuel_and_its_air_and_closes_on_water(
     conn: sqlite3.Connection,
 ) -> None:
