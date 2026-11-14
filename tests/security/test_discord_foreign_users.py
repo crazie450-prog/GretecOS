@@ -137,13 +137,13 @@ class Response:
     def is_done(self) -> bool:
         return False
 
-    async def defer(self, **kw: Any) -> None:
+    async def defer(self, **kw: object) -> None:
         self.calls.append("defer")
 
-    async def edit_message(self, **kw: Any) -> None:
+    async def edit_message(self, **kw: object) -> None:
         self.calls.append("edit_message")
 
-    async def send_message(self, *a: Any, **kw: Any) -> None:
+    async def send_message(self, *a: object, **kw: object) -> None:
         self.calls.append("send_message")
 
 
@@ -151,7 +151,7 @@ class Followup:
     def __init__(self) -> None:
         self.sent: list[Any] = []
 
-    async def send(self, *a: Any, **kw: Any) -> None:
+    async def send(self, *a: object, **kw: object) -> None:
         self.sent.append(kw)
 
 

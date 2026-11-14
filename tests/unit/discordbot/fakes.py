@@ -98,7 +98,7 @@ class FakeInteraction:
 
 
 def ask_reply(
-    text: str = "Steel Ingot: Electric Blast Furnace [r:abc123].", **more: Any
+    text: str = "Steel Ingot: Electric Blast Furnace [r:abc123].", **more: object
 ) -> dict[str, Any]:
     return {"text": text, "lane": "fast", "refs": ["r:abc123"], **more}
 
@@ -180,7 +180,7 @@ class FakeCore:
     )
     journal_lines: list[tuple[str, str]] = field(default_factory=list)
 
-    def _rec(self, name: str, *args: Any) -> None:
+    def _rec(self, name: str, *args: object) -> None:
         self.calls.append((name, args))
         if self.offline:
             raise CoreError(f"{name}: no answer on port 8765")

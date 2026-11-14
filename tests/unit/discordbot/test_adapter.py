@@ -30,11 +30,11 @@ class Response:
     def is_done(self) -> bool:
         return self.done
 
-    async def defer(self, **kw: Any) -> None:
+    async def defer(self, **kw: object) -> None:
         self.calls.append(("defer", kw))
         self.done = True
 
-    async def edit_message(self, **kw: Any) -> None:
+    async def edit_message(self, **kw: object) -> None:
         self.calls.append(("edit_message", kw))
         self.done = True
 
@@ -43,7 +43,7 @@ class Response:
 class Followup:
     sent: list[dict[str, Any]] = field(default_factory=list)
 
-    async def send(self, **kw: Any) -> None:
+    async def send(self, **kw: object) -> None:
         self.sent.append(kw)
 
 

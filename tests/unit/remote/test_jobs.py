@@ -97,8 +97,10 @@ def test_a_job_runs_once_and_a_finished_job_is_never_claimed_again(
     assert q.run_one() is None and len(runs.runs) == 1
     assert journal == [
         [
-            f"remote_{job.id.replace('-', '_')}: plan; done; via discord; steel ingot; "
-            "plan:pl-aaaa1111, plan:pl-aaaa2222"
+            (
+                f"remote_{job.id.replace('-', '_')}: plan; done; via discord; steel ingot; "
+                "plan:pl-aaaa1111, plan:pl-aaaa2222"
+            )
         ]
     ]
 
