@@ -652,3 +652,83 @@ def test_only_the_low_end_set_moves_the_clear_end_with_it(
     cfg = load(toml)
     assert cfg.service_errors == ()
     assert (cfg.alerts.power_low_pct, cfg.alerts.power_clear_pct) == (float(low), clear)
+
+
+# --- WO-9.2: what the alert router asks the engine after a restart (D300, review L1)
+
+
+@pytest.mark.parametrize("rule", sorted(CASES))
+def test_a_rule_still_bad_fires_before_its_binding_is_settled(
+    rule: str, rig: Rig
+) -> None:
+    bad, _good, _hold = CASES[rule]
+    assert rig.engine.settled("lab", rule) is False  # never evaluated
+    for _ in range(600):
+        rig.run(1, **bad)
+        if rig.kinds(rule):
+            break
+    assert rig.kinds(rule) == ["fired"]
+    assert rig.engine.settled("lab", rule) is False  # it fired first
+    rig.run(int(rig.engine.rules.hold_s(rule)) + 40)
+    assert rig.engine.settled("lab", rule) is True
+
+
+def test_a_paused_or_silent_binding_is_never_settled(rig: Rig) -> None:
+    rig.run(200)
+    assert rig.engine.settled("lab", "power_low") is True
+    rig.paused_at = rig.clock.now
+    rig.silent = True
+    rig.run(3600)
+    assert rig.engine.settled("lab", "power_low") is False
+    rig.paused_at, rig.silent = None, False
+    rig.run(20)
+    assert rig.engine.settled("lab", "power_low") is False  # 30 s hold + 30 s
+    rig.run(60)
+    assert rig.engine.settled("lab", "power_low") is True
+
+
+def test_a_restart_while_paused_keeps_the_dmed_occurrence(rig: Rig) -> None:
+    """Review probe (b): a stalled EBF is DMed while he is away; the core restarts while the game
+    is paused for 40 minutes (longer than any wall-clock window and the cooldown); on unpause the
+    new engine fires it afresh. The router adopts it: the same occurrence, no second DM."""
+    from gregtec.alerts.router import AlertRouter
+    from gregtec.presence import FakeIdle
+
+    idle = FakeIdle(rig.clock, last=rig.clock.now - 3600)
+
+    def router() -> AlertRouter:
+        r = AlertRouter(rig.store, idle=idle, clock=rig.clock)
+        r.discord_up = lambda: True
+        r.settled = rig.engine.settled
+        rig.engine.sinks.append(r.alert_event)
+        return r
+
+    first = router()
+    rig.run(200, active=False)
+    first.tick()
+    assert rig.kinds("machine_stalled") == ["fired"]
+    assert len(rig.store.rows("SELECT id FROM alert_dm")) == 1
+    # The core restarts with the game paused: a new engine and router on the same store.
+    rig.paused_at, rig.silent = rig.clock.now, True
+    rig.engine = AlertEngine(
+        rig.live,
+        AlertRules(),
+        paused=lambda b: rig.paused_at,
+        store=rig.store,
+        clock=rig.clock,
+    )
+    rig.engine.sinks.append(rig.events.append)
+    second = router()
+    for _ in range(40 * 60 // 10):
+        rig.run(10)
+        second.tick()
+    rig.paused_at, rig.silent = None, False
+    for _ in range(300):
+        rig.run(1)
+        second.tick()
+    assert rig.kinds("machine_stalled") == ["fired", "fired"]  # afresh, as D281 says
+    assert len(rig.store.rows("SELECT id FROM alert_dm")) == 1
+    rig.run(200, active=True)  # it clears: nothing is left to adopt
+    second.tick()
+    saved = rig.store.rows("SELECT value FROM kv WHERE key = 'alerts.routing'")
+    assert json.loads(saved[0]["value"]) == {}

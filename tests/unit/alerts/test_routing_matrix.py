@@ -150,3 +150,38 @@ def test_every_alert_has_a_level_and_a_key(world: World) -> None:
     keys = [a["key"] for a in active]
     assert len(keys) == len(set(keys)) == 7
     assert all(a["key"] and a["occ"] for a in active)
+
+
+# M1: is a Discord bot reading the outbox? Away by day, then he comes back (still no bot), then
+# a bot starts. Cumulative channels after each step, written out by hand:
+# kind -> (away, bot up), (away, no bot), (back, no bot), (then a bot starts)
+BOT = {
+    "power_low": ("GD", "G", "VG", "VG"),  # said when he is back: it was never DMed
+    "machine_stalled": ("GD", "G", "VG", "VG"),
+    "crafting_done": ("G", "G", "VG", "VG"),
+    "power_deficit": ("GD", "G", "VG", "VG"),
+    "plan_buildable": ("G", "G", "VG", "VG"),
+    "credits80": ("D", "", "", "D"),  # D48: waits for a bot, whatever his presence
+    "credits100": ("D", "", "", "D"),
+    "game_paused": ("D", "", "", ""),  # D76: he is back, so not any more
+}
+
+
+@pytest.mark.parametrize("bot", [True, False], ids=["bot", "no_bot"])
+@pytest.mark.parametrize("kind", list(BOT))
+def test_matrix_bot_up_or_down(world: World, kind: str, bot: bool) -> None:
+    w = world
+    w.bot_up = bot
+    w.away()
+    RAISE[kind](w)
+    w.run(30)
+    assert w.got() == counts(BOT[kind][0 if bot else 1]), "away"
+    if bot:
+        return
+    w.present()
+    w.run(5)
+    assert w.got() == counts(BOT[kind][2]), "back, no bot"
+    w.bot_up = True
+    w.present()
+    w.run(5)
+    assert w.got() == counts(BOT[kind][3]), "a bot starts"

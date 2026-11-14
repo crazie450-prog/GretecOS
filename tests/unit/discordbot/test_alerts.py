@@ -406,3 +406,47 @@ def test_the_bot_reports_a_real_core_that_died(tmp_path: Path) -> None:
 
     run(go)
     assert len(dms) == 1 and "GOS offline" in dms[0].text
+
+
+# --- review L3: "GOS is back" by the policy, and an unsent outage restarts with the bot
+
+
+def test_back_online_follows_the_policy(rig: Rig, core: FakeCore) -> None:
+    async def go() -> None:
+        rig.away()
+        core.offline = True
+        await rig.passes(70)
+        assert len(rig.dms) == 1
+        rig.idle.touch()  # he is back at the PC: he sees it is back
+        core.offline = False
+        await rig.passes(5)
+        assert len(rig.dms) == 1
+        rig.away()
+        core.offline = True
+        await rig.passes(70)
+        assert len(rig.dms) == 2
+        core.alerts_state = {"mode": "off", "until": None}  # /alerts off meanwhile
+        core.offline = False
+        await rig.passes(5)
+        assert BACK_DM not in rig.texts
+
+    run(go)
+
+
+def test_an_outage_not_dmed_restarts_with_the_bot(rig: Rig, core: FakeCore) -> None:
+    """A down_since left from before a deliberate stop days ago is not counted from then."""
+    state = rig.tmp / "run" / "discord-alerts.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    old = {"down_since": T0 - 3 * 86400, "sent": False, "alerts": None}
+    state.write_text(json.dumps(old), encoding="utf-8")
+    rig.desk = rig.new_desk()
+    core.offline = True
+
+    async def go() -> None:
+        rig.away()
+        await rig.passes(30)
+        assert rig.dms == []  # counted from this start
+        await rig.passes(40)
+        assert len(rig.dms) == 1 and "hasn't answered for 6" in rig.texts[0]
+
+    run(go)

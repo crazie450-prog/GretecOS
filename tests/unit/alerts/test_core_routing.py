@@ -216,3 +216,23 @@ def test_gos_alerts_says_when_the_core_is_not_running(tmp_path: Path) -> None:
         args = argparse.Namespace(alerts_command=command, config=toml)
         assert cli.run(args, out) == 1
     assert "isn't running" in out.getvalue()
+
+
+def test_the_health_strip_shows_presence(
+    core: Core, idle: FakeIdle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Advisor verdict 2: unknown presence silently turns the AFK DMs off, so it is shown."""
+    import sys
+
+    def presence() -> dict[str, Any]:
+        (item,) = [i for i in core.health()["items"] if i["id"] == "presence"]
+        return item
+
+    idle.touch(time.time() - 3600)
+    assert (presence()["status"], presence()["detail"]) == ("ok", "away")
+    idle.known = False
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert presence()["status"] == "off"  # no idle source on this OS: not a fault
+    monkeypatch.setattr(sys, "platform", "win32")
+    item = presence()
+    assert item["status"] == "warn" and "AFK DMs are off" in item["detail"]

@@ -4,14 +4,19 @@ DM never both, grouping, and the outbox the bot posts from."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from gregtec.alerts.router import OUTBOX_TTL_S
+from gregtec.alerts.engine import AlertEvent
+from gregtec.alerts.router import KEEP_S, OUTBOX_TTL_S
+from gregtec.alerts.routes import paused_of
+from gregtec.watchers.feed import HEARD_S, GameFeed
+from gregtec.watchers.runner import HEARTBEAT_S
 
-from .world import DAY, NIGHT, NOON, QUIET, Clock, World
+from .world import DAY, NIGHT, NOON, QUIET, RAISE, Clock, World
 
 
 @pytest.fixture
@@ -298,3 +303,200 @@ def test_a_failing_channel_never_stops_the_others(world: World) -> None:
     w.fire("machine_stalled")
     w.router.tick()
     assert len(w.chat) == 1
+
+
+# --- review fixes (M1, M2, L1, L2, L5, L6)
+
+
+def _feed_post(feed: GameFeed, paused: bool, since: float | None) -> None:
+    """One watchers' post (WO-6.1's shape): its paused state rides on every post."""
+    state = {"paused": paused, "since": since, "why": "esc" if paused else None}
+    feed.receive({"instance": "lab", "paused": state, "events": []})
+
+
+def test_esc_then_walk_away_through_the_watchers_real_feed(world: World) -> None:
+    """M2: the real path. The watchers post on the change and a heartbeat every HEARTBEAT_S;
+    the core's GameFeed takes them; paused_of reads it as the router's source; the bot polls the
+    outbox every 5 s but hasn't posted yet. 11 minutes: exactly one DM, still in the outbox."""
+    w = world
+    feed = GameFeed(clock=w.clock)
+    w.router.paused = lambda: paused_of(feed, None)
+    w.present()  # Esc
+    esc = w.clock.t
+    _feed_post(feed, True, esc)
+    last = w.clock.t
+    while w.clock.t < esc + 11 * 60:
+        w.clock.t += 1
+        if w.clock.t - last >= HEARTBEAT_S:
+            _feed_post(feed, True, esc)
+            last = w.clock.t
+        w.router.tick()
+        if int(w.clock.t) % 5 == 0:
+            w.router.outbox()  # the bot's poll (Discord is slow today: not posted yet)
+    (dm,) = w.router.outbox()
+    assert "Lab is paused since 12:00" in dm["text"]
+    assert dm["created"] == int(esc + 600)  # the first tick he counted as away
+    assert len(w.dms()) == 1
+
+
+def test_watchers_unheard_for_a_while_dont_lose_the_paused_dm(world: World) -> None:
+    """M2's second half: the watchers miss heartbeats past HEARD_S after the DM was queued and
+    the bot polls in the gap. The DM is dropped as stale, but it was never posted, so when the
+    same pause is heard again it is queued again: one DM in the outbox at the end."""
+    w = world
+    feed = GameFeed(clock=w.clock)
+    w.router.paused = lambda: paused_of(feed, None)
+    w.away()
+    esc = w.clock.t
+    _feed_post(feed, True, esc)
+    w.router.tick()
+    assert len(w.router.outbox()) == 1
+    w.run(HEARD_S + 10)  # no heartbeat: paused is unknown, the occurrence closes
+    assert w.router.outbox() == []  # the bot polled in the gap
+    _feed_post(feed, True, esc)  # heard again: the same pause
+    w.router.tick()
+    (dm,) = w.router.outbox()
+    assert "Lab is paused" in dm["text"]
+    assert len(w.dms()) == 1
+
+
+def test_a_pause_that_flaps_without_a_poll_keeps_its_dm(world: World) -> None:
+    w = world
+    w.away()
+    w.pause()
+    w.router.tick()
+    since = w.paused
+    w.unpause()
+    w.router.tick()  # closed for a tick
+    w.paused = since  # the same pause again
+    w.router.tick()
+    assert len(w.router.outbox()) == 1  # reopened: not stale news, not queued twice
+    assert len(w.dms()) == 1
+
+
+@pytest.mark.parametrize("kind", ["machine_stalled", "credits80", "game_paused"])
+def test_no_bot_nothing_is_counted_as_dmed(world: World, kind: str) -> None:
+    """M1: Discord isn't set up (the bot stays stopped, D296): nothing is queued and a base
+    alert is said when he is back; once a bot reads the outbox, what is still due goes."""
+    w = world
+    w.bot_up = False
+    w.away()
+    RAISE[kind](w)
+    w.run(60)
+    assert w.dms() == []
+    assert w.router.view()["active"][0]["held"]["discord"] == "no Discord bot"
+    w.present()
+    w.router.tick()
+    assert len(w.said) == (1 if kind == "machine_stalled" else 0)
+    w.bot_up = True
+    w.router.tick()
+    assert len(w.dms()) == (1 if kind == "credits80" else 0)
+
+
+def test_after_a_restart_a_key_is_adopted_until_its_binding_settles(
+    world: World,
+) -> None:
+    """L1: adoption ends on the engine's word (AlertEngine.settled), not on wall time."""
+    w = world
+    w.away()
+    w.fire("machine_stalled")
+    w.router.tick()
+    assert len(w.dms()) == 1
+    settled = {"lab": False}
+    w.restart()
+    w.router.settled = lambda binding, rule: settled[binding]
+    w.run(3600, step=10)  # paused for an hour across the restart: never settled
+    w.away()
+    w.fire("machine_stalled")  # the new engine fires it afresh
+    w.run(5)
+    assert len(w.dms()) == 1  # the same occurrence
+    w.restart()  # and once more, now it settles without firing: it ended while down
+    w.router.settled = lambda binding, rule: True
+    w.router.tick()
+    saved = w.store.rows("SELECT value FROM kv WHERE key = 'alerts.routing'")
+    assert json.loads(saved[0]["value"]) == {}
+
+
+def test_after_a_restart_a_dm_whose_alert_ended_while_down_is_dropped(
+    world: World,
+) -> None:
+    """L2: after the first tick read the sources, a DM is stale news if none of its alerts is
+    active or may still fire again; a key the engine may still fire keeps its DM."""
+    w = world
+    w.away()
+    w.fire("machine_stalled")
+    w.fire("power_low", binding="base", subject="base/7")
+    w.credits(80)
+    w.router.tick()
+    assert len(w.router.outbox()) == 3
+    w.credit = None  # answered on the dashboard while the core was down
+    w.restart()
+    settled = {"lab": True, "base": False}
+    w.router.settled = lambda binding, rule: settled[binding]
+    assert len(w.router.outbox()) == 3  # before the first tick: not known yet
+    w.router.tick()
+    (left,) = w.router.outbox()
+    assert "Power low" in left["text"]  # base hasn't settled: it may still be firing
+
+
+def test_two_pauses_with_no_start_are_two_dms(world: World) -> None:
+    """L5: a pause whose start is unknown is new from the first poll that sees it."""
+    w = world
+    w.away()
+    w.paused = ("lab", None)
+    w.router.tick()
+    w.run(30)
+    assert len(w.dms()) == 1
+    w.unpause()
+    w.run(60)
+    w.paused = ("lab", None)
+    w.router.tick()
+    assert len(w.dms()) == 2
+    assert all("since" not in d["text"] for d in w.dms())
+
+
+def test_a_held_telemetry_alert_says_so_in_its_dm(world: World) -> None:
+    """L6: DMed while its binding's telemetry is held (paused, OC silent)."""
+    w = world
+    w.away()
+    w.fire("machine_stalled")
+    w.router.alert_event(AlertEvent("stale", "lab", w.clock.t, why="paused"))
+    w.router.tick()
+    (dm,) = w.dms()
+    assert dm["text"].startswith(
+        "[warn] Machine stalled: EBF (held: no fresh telemetry)"
+    )
+    w.router.alert_event(AlertEvent("fresh", "lab", w.clock.t))
+    w.fire("power_low")
+    w.router.tick()
+    assert "held" not in w.dms()[-1]["text"]
+
+
+def test_the_in_memory_history_is_pruned(world: World) -> None:
+    """L2: ended occurrences, sends and cooldowns don't grow without limit."""
+    w = world
+    w.away()
+    for n in range(20):
+        w.fire("machine_stalled", subject=f"lab/{n}")
+        w.router.tick()
+        w.clear("machine_stalled", subject=f"lab/{n}")
+    w.router.tick()
+    assert len(w.router._closed) == 20
+    w.at(w.clock.t + OUTBOX_TTL_S + 120)
+    w.router.tick()
+    assert w.router._closed == {} and w.router._last == {}
+    w.at(w.clock.t + KEEP_S)
+    w.router.tick()
+    assert w.router._sent == {}
+
+
+def test_the_routed_view_says_when_presence_is_unknown(world: World) -> None:
+    """Advisor verdict 2: unknown counts as present, and the view says it is unknown."""
+    w = world
+    w.away()
+    assert w.router.view()["context"]["presence"] == "away"
+    w.present()
+    assert w.router.view()["context"]["presence"] == "present"
+    w.idle.known = False
+    view = w.router.view()["context"]
+    assert view["presence"] == "unknown" and view["away"] is False
