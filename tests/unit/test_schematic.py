@@ -788,6 +788,26 @@ def test_world_block_ids_name_a_capture_without_mappings(tmp_path: Path) -> None
     assert c.schematic.at(0, 0, 1) == schematic.AIR_STATE
 
 
+def test_the_schematic_harness_inputs_are_current() -> None:
+    """mod/harness/schematic/in/ is what tests/harness/schematic_inputs.py writes (compared as
+    NBT: gzip's bytes may differ between zlib builds)."""
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "harness" / "schematic_inputs.py"
+    spec = importlib.util.spec_from_file_location("schematic_inputs", script)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    committed = sorted(p.name for p in mod.OUT.glob("*.schematic"))
+    assert committed == sorted(mod.files())
+    for name, data in mod.files().items():
+        assert gzip.decompress((mod.OUT / name).read_bytes()) == gzip.decompress(
+            data
+        ), name
+    for s in mod.inputs().values():
+        assert all(e.meta <= 15 for e in s.used())  # no EndlessIDs in the dev runtime
+
+
 def test_sample_places_every_state_once() -> None:
     states = [E(f"t:b{i:03d}", 0) for i in range(10)]
     s = schematic.sample(states + states[:2])
