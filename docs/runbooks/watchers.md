@@ -53,7 +53,9 @@ $ProgressPreference = 'SilentlyContinue'
 3. If voice isn't set up yet: `& $gos token new voice` (WO-5.1). Voice with Play is on by default;
    `[startup] voice_with_play = false` in gos.toml turns it off.
 4. `[paths] lab_world = "<your Lab world folder>"` in gos.toml (the watchers' Lab world).
-5. Lab's hooks are installed (WO-1.4's runbook `play_hooks.md` step 3, `--instance lab`).
+5. Lab's hooks are installed (WO-1.4's runbook `play_hooks.md` §3 step 1 only, `--instance lab`;
+   its step 6 and `phase1_pc_checks.md` step 10 remove them again, so reinstall if you ran those).
+   The watchers start only from Lab's pre-launch hook.
 
 ## 2. Lab: start, pause, stop (V29, the 5 s acceptance)
 
