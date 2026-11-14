@@ -103,6 +103,20 @@ def test_media_types_are_fixed_and_gz_is_bytes() -> None:
     assert guide.media_type(Path("noext")) is None
 
 
+# What GuideNH 1.3.55's site can hold: its own _site files, and _res files named with their
+# source resource's extension, or .bin without one (GuideSitePageAssetExporter.extensionOf).
+EXPORT_SUFFIXES = (
+    ".html", ".js", ".mjs", ".css", ".json", ".svg", ".png", ".webp", ".woff2", ".woff",
+    ".gz", ".md", ".bin", ".jpg", ".jpeg", ".gif", ".ttf", ".otf", ".mcmeta", ".ogg", ".txt",
+)  # fmt: skip
+
+
+def test_every_suffix_an_export_holds_is_served() -> None:
+    missing = [s for s in EXPORT_SUFFIXES if guide.media_type(Path(f"a{s}")) is None]
+    assert missing == []
+    assert guide.media_type(Path("_res/icons/abc.bin")) == "application/octet-stream"
+
+
 def test_frame_headers_keep_the_frame_inside_guide() -> None:
     headers = guide.frame_headers("http://gos.localhost:8765")
     csp = dict(
@@ -176,8 +190,29 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
             assert got.content == scene.read_bytes()
             assert json.loads(gzip.decompress(got.content))["blocks"]
 
+            res = guide.site_root(core.cfg) / "_res" / "misc"
+            res.mkdir()
+            for suffix in EXPORT_SUFFIXES:
+                (res / f"f{suffix}").write_bytes(b"x")
+                got = c.get(f"/guide/_res/misc/f{suffix}", headers=admin)
+                assert got.status_code == 200, suffix
+
             (guide.site_root(core.cfg) / "tool.exe").write_bytes(b"MZ")
-            for bad in ("tool.exe", "_site/../../gos.toml", "_site/nope.js", "_site/"):
+            # Real files of a served type outside the folder: only the path guard hides them.
+            for above in (home, home / "data"):
+                (above / "secret.json").write_text("{}", "utf-8")
+            for bad in (
+                "tool.exe",
+                "_site/../../secret.json",  # httpx folds this to /secret.json before sending
+                "_site/%2e%2e/%2e%2e/secret.json",  # these reach the route as `..` paths
+                "_site/..%2f..%2fsecret.json",
+                "..%2fsecret.json",
+                "..%2f..%2fsecret.json",
+                "%2e%2e/%2e%2e/secret.json",
+                "_site/..%5c..%5csecret.json",
+                "_site/nope.js",
+                "_site/",
+            ):
                 assert c.get(f"/guide/{bad}", headers=admin).status_code == 404, bad
     finally:
         core.store.close()

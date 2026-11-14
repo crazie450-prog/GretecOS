@@ -1,6 +1,8 @@
 // Build (plan 7.10, 7.14): "How do I build this multi?" WO-10.1's spike: the core serves Clayton's
 // GuideNH export (GOS_HOME/data/guide-site, /guide/...) and this view frames one of its scene pages.
-// The frame's own CSP keeps its scripts and fetches inside /guide/ (gregtec.build.guide, D304).
+// The frame's CSP limits which files it loads to /guide/, but the frame is same-origin, so that is
+// not isolation: the folder's contents are trusted until WO-10.8 serves /guide/ from its own
+// origin (gregtec.build.guide, D304).
 // WO-10.8 builds the real viewer UI. Built to the design system: needs Clayton's board approval.
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
@@ -15,6 +17,12 @@ export function guideSrc(path: string): string {
   return `/guide/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+/** The page the view opens first: one of GOS's own guide (`gos/...`, the Lab steps' spike page) if
+ * the export has one, else the first scene page. A full export holds every guide in the pack. */
+export function firstPage(pages: GuideSite["pages"]): string | null {
+  return (pages.find((p) => p.path.startsWith("gos/")) ?? pages[0])?.path ?? null;
+}
+
 export function Build() {
   const [site, setSite] = useState<GuideSite | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +33,7 @@ export function Build() {
       (s) => {
         if (!live) return;
         setSite(s);
-        setPage(s.pages[0]?.path ?? null);
+        setPage(firstPage(s.pages));
       },
       (e: unknown) => {
         if (live) setError(e instanceof ApiError ? e.message : String(e));

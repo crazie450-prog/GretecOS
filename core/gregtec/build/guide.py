@@ -14,9 +14,14 @@ serves the folder as it is under ``/guide/`` and the dashboard's Build view fram
 What this module does:
 
 - :func:`scan`: which pages carry scenes, and the folder's file count and size.
-- :func:`frame_headers`: the headers a framed guide file is sent with. Its CSP limits every
-  fetch, script, style, image and font to ``/guide/`` on the core's own origin, so a page in the
-  frame can't reach ``/api`` (where a paired browser's cookie would open the core).
+- :func:`frame_headers`: the headers a framed guide file is sent with. Its CSP limits which
+  files the page loads (scripts, styles, images, fonts, its own ``fetch``) to ``/guide/`` on the
+  core's own origin and blocks inline scripts. It is **not** an isolation boundary: the frame is
+  same-origin with the dashboard, so a script from the folder can call ``window.parent.fetch``
+  (checked against the dashboard's ``connect-src 'self'``) and reach ``/api`` with the paired
+  browser's cookie, or read the dashboard's DOM and ``localStorage``. The trust boundary today
+  is the folder's contents: only Clayton's own unmodified export goes there. WO-10.8 serves
+  ``/guide/`` from its own origin, with a credential that is not the dashboard cookie (D304).
 - :func:`media_type`: the fixed types the files are sent as. ``.gz`` files go out as
   ``application/octet-stream`` with no ``Content-Encoding``: the viewer reads the bytes and
   gunzips them itself (``DecompressionStream``), so the browser must not.
@@ -34,20 +39,31 @@ from gregtec.config import Config
 SITE_DIR = "guide-site"  # under GOS_HOME/data
 PREFIX = "/guide/"
 # Fixed here, never from mimetypes (the Windows registry), as the dashboard's own files are.
+# GuideNH names a shared ``_res`` file with its source resource's extension, or ``.bin`` when it
+# has none (``GuideSitePageAssetExporter.extensionOf``), so the set covers what a pack's
+# resources carry, not only what the stand-in has.
 TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript",
     ".mjs": "text/javascript",
     ".css": "text/css",
     ".json": "application/json",
+    ".mcmeta": "application/json",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
     ".webp": "image/webp",
     ".woff2": "font/woff2",
     ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
     ".gz": "application/octet-stream",
+    ".bin": "application/octet-stream",
     ".ogg": "audio/ogg",
     ".md": "text/plain; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
 }
 # Pages GuideNH's site has that are not guide pages.
 _SKIP_TOP = ("_site", "_res")
@@ -141,7 +157,10 @@ class Site:
 
 def scan(root: Path) -> Site:
     """The scene pages under ``root`` and the folder's file count and size. Links are neither
-    followed nor counted. A missing folder is ``present`` false."""
+    followed nor counted. A missing folder is ``present`` false.
+
+    It parses every page on each call; a full pack export has hundreds to thousands, so WO-10.8
+    caches the result (for example on the folder's mtime)."""
     if not root.is_dir():
         return Site(False, (), 0, 0)
     pages: list[Page] = []
