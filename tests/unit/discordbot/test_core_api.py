@@ -95,7 +95,7 @@ def test_the_bot_s_calls_work_against_a_real_core(live: tuple[Core, int]) -> Non
     plans = core.cfg.gos_home / "data" / "plans" / "pl-00000001"
     plans.mkdir(parents=True)
     (plans / "flow.png").write_bytes(b"\x89PNG fake")
-    (plans / "bom.tsv").write_text("item\tcount\n", encoding="utf-8")
+    (plans / "bom.tsv").write_bytes(b"item\tcount\n")
     assert api.export("pl-00000001", "png") == b"\x89PNG fake"
     assert api.export("pl-00000001", "bom") == b"item\tcount\n"
     with pytest.raises(CoreError) as missing:
