@@ -119,6 +119,7 @@ GAME_TABLES = frozenset(
         "rotor_size", "rotor_material", "rotor_gt", "generator", "generator_gt",
         "fuel_container", "fuel",
         "cable", "battery", "battery_buffer", "transformer", "lsc_cell",  # WO-4.5 (D240)
+        "reactor_boost", "dynamo_hatch",  # WO-4.8 (D326)
         "block_state", "block_texture",  # the block catalog, WO-10.3 (D307)
     }
 )  # fmt: skip

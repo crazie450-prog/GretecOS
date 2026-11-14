@@ -70,7 +70,7 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
 | `gt_ore_mixes.json` | GT's worldgen ore layers (`WorldgenGTOreLayer.sList`) and the instance's dimension IDs (WO-1.6, D126) |
-| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230); cables, batteries, battery buffers, transformers and LSC cells (`storage`, WO-4.5, D240) |
+| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230); cables, batteries, battery buffers, transformers and LSC cells (`storage`, WO-4.5, D240); the Large Naquadah Reactor's boost lists and every dynamo hatch (`naquadah_reactors`, `dynamos`, WO-4.8, D326) |
 | `oredict.jsonl` | The full ore dictionary: one line per oredict name, sorted by name, with its members (D145) |
 | `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` and the members of `oredict.jsonl` too), sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
@@ -188,7 +188,13 @@ WO-4.1 (D230): the power catalog's game data, what no recipe carries.
    "transformers":[{"mte_id":21,"class":"...MTETransformer","tier":1,
      "down":{"eu_in":128,"amps_in":2,"eu_out":32,"amps_out":4},"up":{"eu_in":32,"amps_in":5,"eu_out":128,"amps_out":1}}, ...],
    "lsc":[{"name":"IV","block":{"item":"kekztech:kekztech_lapotronicenergyunit_block","meta":1},"glass_tier":2,
-     "capacity":"600000000"}, ...]}}
+     "capacity":"600000000"}, ...]},
+ "naquadah_reactors":[{"mte_id":15537,"class":"gregtech.common.tileentities.machines.multi.MTELargeNaquadahReactor",
+   "recipe_map":"gg.recipe.naquadah_reactor","liquid_air":{"fluid":"liquidair","per_second":2400},
+   "coolants":[{"fluid":"temporalfluid","amount":20,"value":500}, ...],
+   "excited":[{"fluid":"spatialfluid","amount":20,"value":64}, ...]}],
+ "dynamos":[{"mte_id":15230,"class":"tectech.thing.metaTileEntity.hatch.MTEHatchDynamoTunnel","tier":5,
+   "eu_out":8192,"amps_out":256}, ...]}
 ```
 
 - `sizes`: GT's four turbine rotor sizes, the tool stats of `MetaGeneratedTool01`'s ids 170, 172, 174 and 176.
@@ -222,6 +228,16 @@ WO-4.1 (D230): the power catalog's game data, what no recipe carries.
   as the LSC reads a cell from a stack), `getMinimalGlassTier()` and `getProvidedCapacity()` as a decimal string
   (a BigInteger). A row that throws carries `error` (`counts.power_errors`). For a run without `cables`, the core
   falls back to the cables' en_US `gt_machines.jsonl` tooltips (D240, V10).
+- `naquadah_reactors` (WO-4.8, D326; absent from earlier runs): every `METATILEENTITIES` entry whose class is
+  GoodGenerator's `MTELargeNaquadahReactor` (GT 5.09.54.265 keeps it in GT's package), by `mte_id`: its recipe map,
+  `GGConfigLoader.LiquidAirConsumptionPerSecond` with `Materials.LiquidAir`'s fluid (`liquid_air`), and its own
+  private `getCoolant()` and `getExcitedLiquid()` lists read by reflection, in their order (the reactor takes the
+  first present): each entry's fluid, `amount` (litres a check, a second) and `value` (a coolant's efficiency %, an
+  excited fluid's multiplier). These are GoodGenerator's config as the instance loaded it. An entry whose fluid
+  isn't registered carries `error` (`counts.power_errors`). The legacy `MTEMultiNqGeneratorLegacy` isn't read.
+- `dynamos` (WO-4.8, D326; absent from earlier runs): every `MTEHatchDynamo` (GT's, GT++'s buffered one, TecTech's
+  multi-amp `MTEHatchDynamoMulti` and laser source `MTEHatchDynamoTunnel`), by `mte_id`: `mTier`, `maxEUOutput()`
+  and `maxAmperesOut()`, the cap a multiblock generator's output is checked against.
 - Items are item refs and fluids registry names, never numeric IDs; the refs are recorded in `items.jsonl`.
 
 ### `oredict.jsonl` line
@@ -489,7 +505,8 @@ same (meta, item meta) are written once (`counts.palette_duplicates`).
   `gos ores load` (`core/gregtec/db/ores.py`, D128) loads it into `ore_mix`.
 - `core/gregtec/ingest/power.py` (WO-4.1): `gt_power.json`, only from runs with `parts.power == "ok"`; `gos db
   build` loads it into the power tables and decodes the fuel maps into `fuel` (`core/gregtec/db/power.py`, D230),
-  and its `storage` into `cable`, `battery`, `battery_buffer`, `transformer` and `lsc_cell` (WO-4.5, D240).
+  and its `storage` into `cable`, `battery`, `battery_buffer`, `transformer` and `lsc_cell` (WO-4.5, D240), its
+  `naquadah_reactors` and `dynamos` into `reactor_boost` and `dynamo_hatch` (WO-4.8, D326).
 - `core/gregtec/ingest/crops.py` (WO-1.10): `crops/*`, only from runs with `parts.crops == "ok"`, plus NEI's
   CropsNH tabs when `parts.nei == "ok"`; `gos db build` loads it into the crop tables (`core/gregtec/db/crops.py`,
   D136).
