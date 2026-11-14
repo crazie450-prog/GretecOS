@@ -125,6 +125,10 @@ changes GT, before answering yes:
      Then the boiler and tree-farm vectors (WO-4.2, D233):
      `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py`; if a 2.9 large boiler or
      `MTETreeFarm` changed, port it into `gtmath/boiler.py` or `gtmath/treefarm.py` first.
+     Then the Large Naquadah Reactor's (WO-4.8, D326):
+     `uv run python tests/unit/gtmath/oracle/make_naquadah_vectors.py`; if
+     `MTELargeNaquadahReactor` (or GoodGenerator's fuel loader) changed, port it into
+     `gtmath/naquadah.py` first.
      Commit `tests/unit/gtmath/vectors/`.
    - `uv run pytest tests/unit/gtmath` must pass (GT's unit tests, the vectors replayed through
      the port bit for bit, the property tests), then, after the harnesses,

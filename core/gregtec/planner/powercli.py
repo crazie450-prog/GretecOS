@@ -13,7 +13,7 @@
   export read them, and for each fuel of its map (or one) a steady run: EU/t, litres of fuel,
   liquid air, coolant and excited fluid a run and a second, the depleted fuel it gives back, and
   the smallest dynamo hatch up to ``--dynamo`` that holds it. The numbers
-  ``docs/runbooks/turbines_lab.md`` section 5 checks in the Lab.
+  ``docs/runbooks/turbines_lab.md`` section 4 checks in the Lab.
 - ``gos power design MODE [--tier T] [--scale unit|generators|eut_cap|raw_budget --bound N]
   [--free KEY ...] [--kind KIND ...] [--fuel KEY ...] [--rotor MATERIAL SIZE] [--candidates K]
   [--options N] [--no-effort] [--json]`` (WO-4.2): 2-3 ranked power lines for one of the four

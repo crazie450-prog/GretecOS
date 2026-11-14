@@ -1,4 +1,4 @@
-# Turbine output in the Lab (WO-4.1, §8 row 4.1, D230-D232)
+# Turbine and naquadah reactor output in the Lab (WO-4.1, §8 row 4.1, D230-D232; WO-4.8, D326)
 
 WO-4.1's acceptance is "turbine output matches the Lab for 3 rotor setups". In CI the port
 (`core/gregtec/planner/gtmath/turbine.py`) already matches GT's own classes bit for bit:
@@ -121,3 +121,56 @@ controller and `--loose` after a screwdriver click if you want the extra checks.
 
 If a row differs, note the turbine, rotor, fuel, the flow fed and both numbers, and file it:
 the planner's number is wrong for your pack, and WO-4.2 must not use it until it is explained.
+
+## 4. The Large Naquadah Reactor (WO-4.8, D326-D328)
+
+GoodGenerator's Large Naquadah Reactor (`mte:15537`) is modelled from GT 5.09.54.265's own class,
+and in CI the port equals that class run outside the game (`tests/unit/gtmath/vectors/naquadah.tsv`,
+824 cases). What CI can't see is your pack's `config/GoodGenerator.cfg`: the export reads the
+reactor's fuel values, liquid air and boost lists from the game, so your DB has your numbers, and
+this step checks them on a real reactor. It is a PC step in Lab's `lab-ops` world (creative),
+never in Play.
+
+**Expected numbers, from your DB** (after an Export run with this GregtecLink and `gos db build`):
+
+```
+uv run gos power naquadah --dynamo IV
+uv run gos power naquadah --fuel "naquadah based liquid fuel mki" --coolant ic2coolant
+uv run gos power naquadah --fuel "naquadah based liquid fuel mki" --excited molten.naquadah
+```
+
+The first prints the reactor's liquid air and boost lists and, per fuel of its map, its EU/t, the
+litres of fuel, liquid air, coolant and excited fluid one run takes and a second, the depleted
+fuel a second, and the smallest dynamo hatch up to IV that holds it (MkI: the IV 256 A laser
+source hatch). Save the output next to your Lab notes.
+
+**Build it** in `lab-ops` with creative: the controller and its casings (NEI's multiblock preview
+or a blueprint), one maintenance hatch (fixed), one input hatch per fluid, one output hatch, and
+**one** dynamo hatch: the one the table names for MkI (or any bigger one; the reactor stops at
+once if a tick's output is above the hatch's voltage x amps, which is worth seeing once with a
+smaller hatch). Put a creative-energy sink or a big battery buffer on the dynamo's laser or cable.
+
+**Feed and read, three runs**, each with the tanks full (creative fluid tanks or super tanks):
+
+| run | input hatches | expected (from the table) |
+|---|---|---|
+| MkI | MkI fuel, liquid air | EU/t = MkI's `EU/t`; fuel L/s and air L/s as printed |
+| MkI + IC2 coolant | as above, plus IC2 coolant | the `--coolant ic2coolant` row: EU/t x 1.05, coolant 1000 L/s |
+| MkI + molten naquadah | as above (no coolant), plus molten naquadah | the `--excited molten.naquadah` row: EU/t x 4, fuel x 4 |
+
+For each run, after a minute (the output is steady from its first second), read the controller
+with a **Portable Scanner**: the output line (EU/t) and the efficiency line (100 %, or the
+coolant's). Then measure what it burns over a timed minute: read the fuel, liquid air and
+depleted-fuel amounts in their hatches (or tanks) at the start and after exactly 60 s
+(1200 ticks), and divide by 60.
+
+| run | EU/t shown | efficiency shown | fuel L/s | liquid air L/s | coolant L/s | excited L/s | depleted L/s |
+|---|---|---|---|---|---|---|---|
+
+**Pass**: the EU/t and efficiency equal the table's exactly (GT's integer arithmetic); each
+litre rate equals the table's over a whole number of runs (MkI's run is 60 ticks, so a 60 s window
+holds 20 runs and the rates are exact; for a fuel whose burn time doesn't divide 1200 ticks,
+time the window to a whole number of runs). Without liquid air the reactor makes nothing: worth
+seeing once too. If a number differs, note the run, both numbers and your `GoodGenerator.cfg`'s
+`LargeNaquadahReactor` section, and file it: the planner's reactor numbers are wrong for your pack
+until it is explained.
