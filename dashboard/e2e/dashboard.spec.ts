@@ -60,6 +60,16 @@ test("the workbench fills monitor 2 at 2560x1440", async () => {
   await page.screenshot({ path: shot("workbench-now") });
 });
 
+test("Now's next steps are the advisor's, in its order, each a link (WO-6.5)", async () => {
+  await page.keyboard.press("1");
+  const steps = page.getByTestId("advisor-steps");
+  await expect(steps).toBeVisible();
+  const hrefs = await steps.getByRole("link").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+  expect(hrefs.length).toBeGreaterThan(0);
+  for (const h of hrefs) expect(h).toMatch(/^#\//);
+  await expect(page.getByTestId("advisor-step-1")).toBeVisible();
+});
+
 test("switching themes moves nothing, and every theme reads at WCAG contrast", async () => {
   await page.getByTestId("ask-input").fill("recipe for steel");
   await page.getByTestId("ask-send").click();
