@@ -57,7 +57,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from gregtec.alerts.rules import LEVEL, RULES, AlertRules, Seen, observe
+from gregtec.alerts.rules import LEVEL, RULES, AlertRules, Seen, observe, place
 from gregtec.bridge.live import Live
 from gregtec.cards import build as cards_build
 from gregtec.store import Store
@@ -71,17 +71,6 @@ SOURCE = "OC telemetry"
 
 # binding -> when its game paused (epoch s; math.inf: paused, start unknown), or None
 PausedSince = Callable[[str], float | None]
-
-
-def place(binding: str) -> str:
-    """How a binding is said: ``play`` is Play, ``lab`` and ``lab-<label>`` are the Lab."""
-    if binding == "play":
-        return "Play"
-    if binding == "lab":
-        return "Lab"
-    if binding.startswith("lab-"):
-        return f"Lab ({binding[4:]})"
-    return binding
 
 
 @dataclass
