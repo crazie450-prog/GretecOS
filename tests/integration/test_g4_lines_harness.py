@@ -6,10 +6,13 @@ power designer (WO-4.2) with its effort breakdown (WO-4.3), and the lines that d
 accepted into the EU ledger (WO-4.4), whose per-tier nets go through the distribution checks
 (WO-4.5). How each line is asked for (mode, tier, generator kind, fuel keys) is D255.
 
-The two lines whose chain uses up the generator's whole output on this DB (G4 review finding 1:
-the chain's MILP doesn't count the EU it draws, so it spends the generator's EU to cut its gated
-imports) are strict xfails: they flip to a failure, to be turned into plain tests, once a fix
-lands.
+The light-fuel and benzene lines were strict xfails until WO-4.7 (G4 review finding 1: the
+chain's MILP didn't count the EU it drew, so it spent the generator's EU to cut its gated
+imports); with the EU stage (D323) they pass D255 (3)'s rule. The EU stage prices only the fuel,
+so each candidate also has its direct-import line (the fuel imported as it is, no chain), and
+rank.py weighs it against the chains (review H1). The light-fuel line is read as ``best`` at MV,
+one gate allowed (D324, pending Clayton, Q-G4-4); what the "self-fed" reading finds on this DB
+is pinned by its own test. No option keeps a zero-sum loop (finding 5).
 
 G3 handed G4 the fuel chains of the power lines (G3 row: every distinct (machine, recipe, tier, OC,
 parallel) within ±2% of NEI). The chain recipes of the lines that design are checked against the
@@ -36,8 +39,9 @@ import pytest
 
 from gregtec.db import access, build
 from gregtec.ingest import collect
-from gregtec.planner import designer, ledger, power
+from gregtec.planner import designer, ledger, power, solve
 from gregtec.planner import distribution as dist
+from gregtec.planner.machines import current_run
 from gregtec.planner.request import DefaultBaseInputs, Request
 from gregtec.vault import deploy as vault_deploy
 
@@ -93,10 +97,6 @@ LINES = {
         ),
     ),
 }
-FINDING_1 = (
-    "G4 finding 1: the chain's MILP doesn't count the EU it draws, so on this DB the chain "
-    "uses up the generator's whole output (net 0 or rejected)"
-)
 
 
 @pytest.fixture(scope="module")
@@ -165,7 +165,7 @@ def check_line(d: power.PowerDesign, ln: Line) -> None:
         assert p["power"]["chain_eut"] < p["power"]["gross_eut"] * 0.999
 
 
-@pytest.mark.parametrize("name", ["tree_farm", "naquadah"])
+@pytest.mark.parametrize("name", list(LINES))
 def test_the_line_designs_two_or_three_ranked_options(
     conn: sqlite3.Connection, name: str
 ) -> None:
@@ -196,12 +196,131 @@ def test_the_naquadah_line_burns_gts_naquadah_reactors(
         assert int(mte.removeprefix("mte:")) in names
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=FINDING_1)
-@pytest.mark.parametrize("name", ["light_fuel", "benzene"])
-def test_the_chain_leaves_the_generator_some_output(
-    conn: sqlite3.Connection, name: str
+def test_the_naquadah_mk2_line_offers_its_rod_as_imported(
+    conn: sqlite3.Connection,
 ) -> None:
-    check_line(design(conn, name), LINES[name])
+    """Review H1: the EU stage prices only the fuel, so a chain imports a long rod and saws it
+    (with a lubricant chain for the saw) rather than import the rod. The plain line, the
+    reactor fed rods as imported, is an option of its own, and in the naquadah line it ranks."""
+    rod = "gregtech:gt.metaitem.01@23326"
+    d = power.design(
+        conn,
+        power.PowerRequest(
+            mode="best", tier_cap=5, kinds=("single_block",), fuels=(rod,)
+        ),
+        DefaultBaseInputs(5),
+        with_effort=False,
+    )
+    [direct] = [p for p in d.options if p["power"]["direct"]]
+    assert [b["id"] for b in direct["boundary"]["in"]] == [rod]
+    assert [n["kind"] for n in direct["nodes"]] == ["generator"]
+    pw = direct["power"]
+    assert pw["chain_eut"] == 0 and pw["net_eut"] == pw["gross_eut"]
+    assert any(
+        p["power"]["direct"] and p["power"]["fuel"]["id"] == rod
+        for p in design(conn, "naquadah").options
+    )
+
+
+def test_the_benzene_chain_draws_well_under_the_turbines_output(
+    conn: sqlite3.Connection,
+) -> None:
+    """WO-4.7's acceptance: the benzene line's chain draws well under the gas turbine's output
+    (before the EU stage: 971.999 of 972 EU/t)."""
+    for p in design(conn, "benzene").options:
+        assert p["power"]["chain_eut"] < 0.25 * p["power"]["gross_eut"]
+
+
+def zero_sum_loops(p: dict[str, Any]) -> list[tuple[str, str]]:
+    """Chain nodes ``b`` that take only from one node ``a`` and give only back to it, while
+    ``a`` takes from ``b``: a loop that makes nothing for the line (G4 finding 5: a hammer
+    making long rods from the saw's rods, sawn back into rods)."""
+    ins: dict[str, set[str]] = {}
+    outs: dict[str, set[str]] = {}
+    for e in p["edges"]:
+        outs.setdefault(e["from"], set()).add(e["to"])
+        ins.setdefault(e["to"], set()).add(e["from"])
+    chain = {n["n"] for n in p["nodes"] if n["kind"] == "recipe"}
+    out = []
+    for b in sorted(chain):
+        src, dst = ins.get(b, set()), outs.get(b, set())
+        if len(src) == 1 and src == dst and b in ins.get(next(iter(src)), set()):
+            out.append((next(iter(src)), b))
+    return out
+
+
+@pytest.mark.parametrize("name", list(LINES))
+def test_no_option_keeps_a_zero_sum_loop(conn: sqlite3.Connection, name: str) -> None:
+    for p in design(conn, name).options:
+        assert zero_sum_loops(p) == [], p["id"]
+    assert zero_sum_loops(
+        {
+            "nodes": [{"n": "n1", "kind": "recipe"}, {"n": "n2", "kind": "recipe"}],
+            "edges": [{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n1"}],
+        }
+    ) == [("n2", "n1"), ("n1", "n2")]
+
+
+def fewest_gates(conn: sqlite3.Connection, tier: int) -> list[tuple[str, int, float]]:
+    """Every light-fuel chain at ``tier`` as the designer solves it (its candidates, fuel
+    chains and networks, ``solve.routes``): (generator, the fewest gates of any route, the net
+    EU/t of the best route with that many). Stage 1 minimises gates over every primary choice
+    at once, so the first route has the fewest; a gate-free route imports nothing the chain
+    makes, its fuel included, so its EU-stage value is the EU it draws."""
+    req = power.PowerRequest(
+        mode="best",
+        tier_cap=tier,
+        kinds=("single_block",),
+        fuels=LINES["light_fuel"].fuels,
+    )
+    run = current_run(conn)
+    base = DefaultBaseInputs(tier)
+    gens, _ = power.candidates(conn, run, req, tier)
+    out = []
+    for gen in power.prune(gens, req.candidates):
+        found, _ = power.fuel_chains(conn, gen.fuel, req, base, tier, run, None)
+        for chain in found:
+            try:
+                f = solve.routes(power.network(conn, chain, gen, 1.0, req), 1)[0]
+            except solve.SolveError:
+                continue
+            out.append((gen.id, len(f.gates), gen.eut - (f.eu or 0.0) / 20))
+    return out
+
+
+def test_the_self_fed_reading_of_the_light_fuel_loop(conn: sqlite3.Connection) -> None:
+    """Q-G4-4's other reading (D324): a light-fuel line with no gated import. On this DB none
+    exists at MV: every MV chain's fewest gates is 1, or its gate-free route nets no EU (review
+    L5: shown on the chains themselves, not only on the ranked options). Each MV option is a
+    chain with one gated fluid, or the fuel imported as it is (D323). At HV the Turbo Combustion
+    Generator's line from oilsands ore and leaves closes with no gate and net EU/t above 0."""
+    mv = fewest_gates(conn, 2)
+    assert mv
+    assert all(gates >= 1 or net <= 0 for _, gates, net in mv), mv
+    for p in design(conn, "light_fuel").options:
+        if p["power"]["direct"]:
+            assert [b["id"] for b in p["boundary"]["in"]] == list(
+                LINES["light_fuel"].fuels
+            )
+        else:
+            assert len(p["route"]["gates"]) >= 1
+    assert any(gates == 0 and net > 0 for _, gates, net in fewest_gates(conn, 3))
+    hv = power.design(
+        conn,
+        power.PowerRequest(
+            mode="best",
+            tier_cap=3,
+            kinds=("single_block",),
+            fuels=LINES["light_fuel"].fuels,
+        ),
+        DefaultBaseInputs(3),
+        with_effort=False,
+    )
+    fed = [
+        p for p in hv.options if not p["route"]["gates"] and not p["power"]["direct"]
+    ]
+    assert fed and all(p["power"]["net_eut"] > 0 for p in fed)
+    assert all(p["power"]["chain_eut"] < p["power"]["gross_eut"] for p in fed)
 
 
 def chain_recipes(p: dict[str, Any]) -> set[str]:
@@ -229,11 +348,32 @@ def client(home: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
     return g3._home(tmp_path_factory.mktemp("g4-client"), "client")
 
 
-@pytest.mark.parametrize("name", ["tree_farm", "naquadah"])
+def hand_off(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:
+    """The line's options and, for a line of several fuels, each fuel's own (the ranked 2-3
+    of the line can all be one fuel's direct-import lines and NEI-hidden saws: since D323 the
+    naquadah line's are)."""
+    out = list(design(conn, name).options)
+    ln = LINES[name]
+    if len(ln.fuels) > 1:
+        for fuel in ln.fuels:
+            req = power.PowerRequest(
+                mode=ln.mode, tier_cap=ln.tier, kinds=ln.kinds, fuels=(fuel,)
+            )
+            try:
+                d = power.design(
+                    conn, req, DefaultBaseInputs(ln.tier), with_effort=False
+                )
+            except power.PowerError:  # no generator burns it at the tier (Mk-III at IV)
+                continue
+            out.extend(d.options)
+    return out
+
+
+@pytest.mark.parametrize("name", list(LINES))
 def test_the_g3_hand_off_chain_recipes_match_nei(
     conn: sqlite3.Connection, client: Path, name: str
 ) -> None:
-    refs = set().union(*(chain_recipes(p) for p in design(conn, name).options))
+    refs = set().union(*(chain_recipes(p) for p in hand_off(conn, name)))
     assert refs and all(r.startswith("r:") for r in refs)
     shown = refs - nei_hidden(conn, refs)
     assert shown, refs  # each line has recipes NEI can check

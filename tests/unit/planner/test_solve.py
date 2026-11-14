@@ -254,3 +254,100 @@ def test_an_unreachable_target_is_refused() -> None:
     )
     with pytest.raises(solve.SolveError):
         solve.solve_route(net)
+
+
+# --- power networks: the EU stage (WO-4.7, D323) ---------------------------------------------
+
+
+def power_net(make_f_eu: float, make_h_eu: float = 140.0) -> Network:
+    """A generator burning 1 fuel F a second for 100 EU/s (5 EU/t); F's chain: F from H
+    (``make_f_eu`` EU a craft), H from a raw R (``make_h_eu`` EU). EU is never imported and an
+    import of F stands for its 100 EU (a power line, ``power.network``)."""
+    return Network(
+        procs=(
+            Proc("gen", (("F", 1.0),), (("eu", 100.0), ("unit", 1.0)), 1.0, ("unit",)),
+            Proc("make_f", (("H", 1.0), ("eu", make_f_eu)), (("F", 1.0),), 1.0),
+            Proc("make_h", (("R", 1.0), ("eu", make_h_eu)), (("H", 1.0),), 1.0),
+        ),
+        targets=(("unit", 1.0),),
+        free_out=frozenset({"eu", "unit"}),
+        banned=frozenset({"eu"}),
+        eu_value=(("F", 100.0),),
+    )
+
+
+def test_a_power_chain_spends_eu_only_where_it_saves_more_than_it_costs() -> None:
+    """G4 finding 1: the gate-free chain needs 150 EU per F (more than F's 100), so one gate is
+    needed. Without the EU stage the gated quantity was minimised, and the chain made as much H
+    from R as the generator's EU allowed (net 0). With it, the gate is H, all of it imported,
+    and the chain draws only F's 10 EU: 90 EU/s are left."""
+    net = power_net(10.0)
+    assert net.costs_eu
+    flow = solve.solve_route(net)
+    assert flow.gates == ("H",)
+    assert dict(flow.imports) == pytest.approx({"H": 1.0})
+    assert dict(flow.crafts) == pytest.approx({"gen": 1.0, "make_f": 1.0})
+    assert dict(flow.exports)["eu"] == pytest.approx(90.0)
+    assert flow.eu == pytest.approx(10.0) and flow.all_run
+
+
+def test_the_fuel_is_imported_when_making_it_costs_more_eu_than_it_gives() -> None:
+    """Making F from H costs 120 EU, more than F's own 100: the line imports F through one
+    gate, and the chain's recipes, idle at the optimum, are not part of it (a power line has no
+    every-machine-runs floor, D323)."""
+    flow = solve.solve_route(power_net(120.0))
+    assert flow.gates == ("F",)
+    assert dict(flow.crafts) == {"gen": 1.0}
+    assert dict(flow.imports) == pytest.approx({"F": 1.0})
+    assert dict(flow.exports)["eu"] == pytest.approx(100.0)
+    assert flow.eu == pytest.approx(100.0) and flow.all_run
+
+
+def test_a_gate_free_power_chain_is_kept_when_its_eu_fits() -> None:
+    """Gates come first: when the gate-free chain fits in the generator's EU (90 of 100 EU/s),
+    it is the line, with the 10 EU/s left as its net."""
+    flow = solve.solve_route(power_net(10.0, 80.0))
+    assert flow.gates == ()
+    assert dict(flow.crafts) == pytest.approx(
+        {"gen": 1.0, "make_f": 1.0, "make_h": 1.0}
+    )
+    assert dict(flow.exports)["eu"] == pytest.approx(10.0)
+
+
+def test_no_zero_sum_loop_survives_in_a_power_line() -> None:
+    """G4 finding 5: rods burn at 0.00065536/s; a saw cuts a long rod into 2 rods and a hammer
+    makes the long rod from 2 rods. The line imports long rods and saws them; the hammer is
+    idle at the optimum (the replay used to run it with the saw, a rod -> long rod -> rod loop
+    above the generator's own rate)."""
+    rate = 0.00065536
+    eu = 163840.0
+    net = Network(
+        procs=(
+            Proc("gen", (("rod", rate),), (("eu", eu), ("unit", 1.0)), 1.0, ("unit",)),
+            Proc("saw", (("eu", 5.0), ("long", 1.0)), (("rod", 2.0),), 1.0),
+            Proc("hammer", (("eu", 5.0), ("rod", 2.0)), (("long", 1.0),), 1.0),
+        ),
+        targets=(("unit", 1.0),),
+        free_out=frozenset({"eu", "unit"}),
+        banned=frozenset({"eu"}),
+        eu_value=(("rod", eu / rate),),
+    )
+    flow = solve.solve_route(net)
+    assert flow.gates == ("long",)
+    assert dict(flow.crafts) == pytest.approx({"gen": 1.0, "saw": rate / 2})
+    assert "hammer" not in dict(flow.crafts) and flow.all_run
+
+
+def test_a_production_network_has_no_eu_stage() -> None:
+    """A production line imports its EU (WO-4's generators supply it): no EU stage and the
+    every-machine-runs replay as before (D192-D195)."""
+    net = load_flow(FIXTURES / "light_fuel_hydrogen_loop.yaml")
+    assert not net.costs_eu
+    assert solve.solve_route(net).eu is None
+    # The same chain making F as a production line: its EU is imported freely, so the
+    # gate-free chain is the line whatever it draws.
+    prod = Network(procs=power_net(10.0).procs[1:], targets=(("F", 1.0),))
+    assert not prod.costs_eu
+    flow = solve.solve_route(prod)
+    assert flow.eu is None and flow.gates == ()
+    assert dict(flow.imports)["eu"] == pytest.approx(150.0)
