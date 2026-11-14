@@ -107,7 +107,7 @@ Open: PR #89 Q1-Q9.
 | Sessions (login to quit, crash or 15 min idle; GregtecLink's timer never activity, D264) | met | `test_event_store.py`; `tools/test_gamelink.py::test_an_afk_hour_with_the_link_connected_ends_idle_at_the_last_activity` and the restart-grace tests [here] |
 | `session-scribe` journal (Play only, through `gregtec.vault`, counts by code) | met with fakes | `test_journal.py` (including `test_the_end_block_waits_for_the_quits_own_save_files`); `test_event_store_harness.py::test_listener_events_in_a_session_and_its_journal` on the listener harness's real events [here] |
 | Activity view; the finished age's recap on a tier-up (D162) | met with fakes; **board approval** | `test_ages.py` (provisional ages, H2), vitest `activity.test.tsx`, `e2e/activity.spec.ts` at both sizes [here]. No board (docs/design/README.md "No board yet": Activity) |
-| ≥ 95% recall on a scripted Lab session | met with fakes; **PC step** | `tests/unit/watchers/test_session_recall.py`: real watchers over fake Lab files and listener lines, 28 ground-truth events, 100% recall; the control without the listener file drops below 95% [here]. On the PC: `event_store.md` §2 (PC step 5) |
+| ≥ 95% recall on a scripted Lab session | met with fakes; **PC step** | `tests/unit/watchers/test_session_recall.py`: real watchers over fake Lab files and listener lines, 28 ground-truth events, recall ≥ 95% asserted (100% observed); the control without the listener file drops below 95% [here]. On the PC: `event_store.md` §2 (PC step 5) |
 
 Finding 1 (below) is in this WO's runbook and is fixed on this branch. Open: PR #93 Q1-Q7.
 
@@ -326,9 +326,14 @@ Spending: steps 7 (quest eval, about $0.01, at most $0.10) and 11 (advisor eval,
 ```powershell
 & $gos token new watchers
 ```
-Leave `[startup] watchers_with_play` unset (the default `"lab"`). Lab's hooks are in (`play_hooks.md` step 3, `--instance lab`; skip if done for G7). Set `[paths] lab_world = "lab-progress"` for steps 2 to 5.
+Leave `[startup] watchers_with_play` unset (the default `"lab"`). Then install Lab's hooks: G2's PC steps removed them (`phase1_pc_checks.md` step 10 and `play_hooks.md` §3 step 6 both end with `--uninstall`), and the watchers start only from Lab's pre-launch hook (D259). With Prism closed:
+```powershell
+$py = "$app\.venv\Scripts\python.exe"
+& $py "$app\scripts\install_prism_hooks.py" --instance lab
+```
+That is `play_hooks.md` §3 step 1 only: don't run on to its step 6. Leave them in until G6 and G7 are done. Set `[paths] lab_world = "lab-progress"` for steps 2 to 5.
 
-**2. Paused** (`watchers.md` §2, the WO-6.1 5 s acceptance, **V29**). Launch Lab, open `lab-progress`: `& $gos status` shows Game watchers and Voice running. Esc: **pass** "Game paused" within 5 s; note when `Saving and pausing game...` appears in `latest.log`. Stay in the menu 60 s: the chip stays. Close it: the chip clears within about 45 s. Quit: both stopped.
+**2. Paused** (`watchers.md` §2, the WO-6.1 5 s acceptance, **V29**). Launch Lab: Prism's console shows the hook's `GOS: the game watchers and voice start (lab).` (its `POST /play`; if it is missing, step 1's hooks are not in). Open `lab-progress`: `& $gos status` shows Game watchers and Voice running. Esc: **pass** "Game paused" within 5 s; note when `Saving and pausing game...` appears in `latest.log`. Stay in the menu 60 s: the chip stays. Close it: the chip clears within about 45 s. Quit: both stopped.
 
 **3. The 2 h session** (`watchers.md` §4, the WO-6.1 acceptance, **V27**). Play Lab for 2 hours with the watchers running, pausing now and then; this can be the same sitting as steps 4 and 5. Then, with Lab closed, the runbook's `Select-String` over both logs and over `watchers.log`. **Pass:** no lines.
 
@@ -372,19 +377,25 @@ uv run pytest tests/integration/test_quest_guide_harness.py -k real_book
 
 **12. The notices in `lab-ops`** (`advisor.md` C, steps 5-10; the other half of WO-6.5, **V34**), after G7's steps 1 to 3 (the OC computer reporting as `oc-lab`). `[paths] lab_world = "lab-ops"`, `[policy] notices` left out, the dashboard open, the voice client running. C6 power deficit (the voice line and the Now alert within about 70 s); C7 machine stalled (**one** line and **one** card, Next steps updates without a reload both ways) and the EBF power cut (paste its `telemetry_get` row: V34; G7's steps 7-8 need no second paste); C8 buildable from stock; C9 "what should I do next?"; C10 the notice log lines.
 
-**13. The crop guide** (`crop_guide.md` §0-§3, the WO-6.7 acceptance, **V30**, **V32**), **as gos-dev** in the dev clone (judgement 2), `uv run gos ...` as the runbook writes it. First he picks his **five target crops** (question 57; at least one needing a block under it and one needing the Crop Breeder), or keeps the PM's five. Then:
+**13. The crop guide** (`crop_guide.md` §0-§3, the WO-6.7 acceptance, **V30**, **V32**), **as gos-dev** in the dev clone (judgement 2), `uv run gos ...` as the runbook writes it. First he picks his **five target crops** (question 57; at least one needing a block under it and one needing the Crop Breeder), or keeps the PM's five. gos-dev has no quest progress and no dashboard up here, so `crop_guide.md` §1.1's "set your tier (My base)" becomes `--tier <n>` on every call: `<n>` is the GT tier he will be at in `lab-progress` (1 = LV, 2 = MV), the same in each. Then:
 ```powershell
-uv run gos crops check
-uv run gos crops check "<each of his picks>"
-uv run gos crops guide "<each of his picks>"
+uv run gos crops check --tier <n>
+uv run gos crops check "<each of his picks>" --tier <n>
+uv run gos crops guide "<each of his picks>" --tier <n>
 ```
-**Pass:** 0 problems each, and he reads each guide (that is his review). Then §1: follow one guide to its target in `lab-progress` (water and fertilizer kept topped up), noting the times seen against the guide's. Then the V30 checks in §2 (weeds at Growth 24/25, extra neighbours, identical seeds, the Crop Manager past 100 with fertilizing switched on in its GUI, upkeep) and the V32 checks in §3 (the NEI page, the LV and MV tank caps, ten LV runs, Bauxia never from sticks). Once, in his own account with the voice client up, say "next crop step": it answers (from his own crop state, which this step left alone).
+(and `--tier <n>` on any `uv run gos crops station` call the runbook asks for).
+**Pass:** 0 problems each, and he reads each guide (that is his review). Then §1: follow one guide to its target in `lab-progress` (water and fertilizer kept topped up), noting the times seen against the guide's. Then the V30 checks in §2 (weeds at Growth 24/25, extra neighbours, identical seeds, the Crop Manager past 100 with fertilizing switched on in its GUI, upkeep) and the V32 checks in §3 (the NEI page, the LV and MV tank caps, ten LV runs, Bauxia never from sticks). Once, in his own account with the voice client up, say "next crop step": his own crop state has no target (this step left it alone), so the expected answer is the no-target reply, which proves only the voice path. To hear a real step over a guide: `& $gos crops target "<one of his picks>"`, say "next crop step" again (**pass:** the guide's next step, as `& $gos crops guide --next` prints it), then `& $gos crops target --clear`.
 
 **14. The Crops and Quests views against their boards** (`quest_guide.md` E; WO-6.7's board check). Both boards are approved (D92), but both views were built without the canvas handoff: compare each with its board in Claude Design and note any differences.
 
 **15. Boards still to approve** (D92, D158 (5)): the Activity view and its tier-up recap panel (after step 5's session; `event_store.md` §3 shows the recap: set the override one stage up, then Clear, and check Activity lists no new finished age and today's log has no `age_done:` line), the Ores view (step 10) and Now's Next steps (step 12). Approve each or redline it.
 
-**16. Turn the watchers on for Play** (`watchers.md` §6), only after steps 2 to 4 passed. Add `[startup] watchers_with_play = "play"` to `gos.toml`, then `& $gos stop --all` and sign out and in (or `install_login_start.ps1 -StartNow`). The next Play launch prints `GOS: the game watchers and voice start (play).` After that first Play session: `watchers.md` §4.2's `Select-String` over Play's logs finds nothing, and `vault\log\<date>.md` has the session's block, whose `n_` counts match what he did (the journal, D263). If G8's step 11 has installed GregtecLink in Play, My base's machine counts follow his placements within a save (D261).
+**16. Turn the watchers on for Play** (`watchers.md` §6), only after steps 2 to 4 passed. Add `[startup] watchers_with_play = "play"` to `gos.toml`, then `& $gos stop --all` and sign out and in (or `install_login_start.ps1 -StartNow`). The next Play launch prints `GOS: the game watchers and voice start (play).` After that first Play session, with Play closed, `watchers.md` §4.2's check on Play's logs finds nothing:
+```powershell
+$play = "C:\Games\PrismLauncher\instances\GTNH-Play\.minecraft"
+Select-String -Path "$play\logs\latest.log","$play\logs\fml-client-latest.log" -Pattern 'An error occurred while saving|Exception while saving|Failed to save|Could not save|AccessDeniedException|FileSystemException|being used by another process'
+```
+(it only reads Play's logs); and `vault\log\<date>.md` has the session's block, whose `n_` counts match what he did (the journal, D263). If G8's step 11 has installed GregtecLink in Play, My base's machine counts follow his placements within a save (D261).
 
 **17. Sign-off.** Answer question 57 (the crop picks, step 13), and say whether to keep each other default listed above.
 
