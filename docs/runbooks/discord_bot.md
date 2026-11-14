@@ -13,9 +13,9 @@ $gos = 'C:\GregtecOS-app\current\.venv\Scripts\gos.exe'
 
 1. Open <https://discord.com/developers/applications>, **New Application**, name it `Gregtec OS`.
 2. **Bot** tab: **Reset Token**, copy the token (you'll paste it in step B2; don't paste it anywhere else). Under **Privileged Gateway Intents** leave all three **off** (GOS uses no intents). Turn **Public Bot** off.
-3. **Installation** tab (or **OAuth2 > URL Generator**): scopes `bot` and `applications.commands`; bot permissions `Send Messages` and `Attach Files` only. Open the generated URL and add the bot to **your private server** (make one first if needed: `+` > Create My Own > For me and my friends; keep it to yourself).
+3. **Installation** tab (or **OAuth2 > URL Generator**): scopes `bot` and `applications.commands`; bot permissions `Send Messages` and `Attach Files` only. Open the generated URL and add the bot to **your private server** (make one first if needed: `+` > Create My Own > For me and my friends; keep it to yourself). Replies to `/ask`, `/plan` and `/status` are visible to everyone who can read the channel (base telemetry, the ledger, plans), so use a server or channel only you can read.
 4. In Discord: **Settings > Advanced > Developer Mode** on. Right-click your own name > **Copy User ID** (your `owner_id`); right-click the server icon > **Copy Server ID** (`guild_id`).
-5. Let the bot DM you: in the server, right-click its icon > **Privacy Settings** > **Direct Messages** on (results of long jobs come by DM when the command's 15 minutes are up).
+5. Let the bot DM you: in the server, right-click its icon > **Privacy Settings** > **Direct Messages** on (results of long jobs come by DM when the command's 15 minutes are up). If DMs are off, the bot tries a result 3 times over about 2 minutes, then leaves it on the dashboard and tries again only when the bot restarts.
 
 ## B. Tell GOS (once, on the PC)
 
