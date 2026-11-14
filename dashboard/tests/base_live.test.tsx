@@ -1,5 +1,5 @@
 // The Base view's live half (WO-7.4): power, machines, problems (stalled first) and AE2 from
-// GET /api/base/live with their tel: citations, the stale state when OC went quiet, pending
+// GET /api/base/live with their tel: citations, WO-7.5's alerts (held while paused), the stale state when OC went quiet, pending
 // actions, and a refresh every 5 s so a change shows within 10 s.
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,8 @@ function binding(over: Partial<LiveBinding> = {}): LiveBinding {
       crafts: [{ id: 7, name: "Steel Ingot", amount: 64, state: "check_ae2", err: "may still run", cite: "tel:lab/c0", stale: false }],
       items: [{ key: "gregtech:gt.metaitem.01@11305", name: "Steel Ingot", size: 640, craftable: true, cite: "tel:lab/5e" }],
     },
+    alerts: [],
+    held: null,
     ...over,
   };
 }
@@ -159,5 +161,60 @@ describe("the live base", () => {
     expect(document.querySelector(`[data-machine-live="${EBF}"]`)?.getAttribute("data-status")).toBe("running");
     expect(gets).toBeGreaterThanOrEqual(2);
     expect(LIVE_POLL_MS).toBeLessThanOrEqual(5000);
+  });
+
+  it("shows the alerts, crafting done included, and says when they are held (WO-7.5)", async () => {
+    const lowPower = {
+      key: `power_low:${LSC}`,
+      rule: "power_low" as const,
+      binding: "lab",
+      subject: LSC,
+      level: "err" as const,
+      title: "Power low: Lapotronic Supercapacitor",
+      body: "Lab: 12.3 % stored",
+      say: "Lab: power low.",
+      cite: `tel:${LSC}`,
+      fired_at: 100,
+      value: 12.3,
+      unit: "%",
+      stale: null,
+    };
+    const done = {
+      ...lowPower,
+      key: "crafting_done:lab/7",
+      rule: "crafting_done" as const,
+      subject: "lab/7",
+      level: "info" as const,
+      title: "Crafting done: 64 Steel Ingot",
+      cite: "tel:lab/c0",
+      value: 64,
+      unit: null,
+    };
+    live = { ts: 0, stale_s: 30, bindings: [binding({ alerts: [lowPower, done] })] };
+    render(<BaseLivePanel />);
+    const alerts = await screen.findByTestId("live-alerts");
+    const rows = alerts.querySelectorAll("li");
+    expect([...rows].map((r) => r.getAttribute("data-alert"))).toEqual(["power_low", "crafting_done"]);
+    expect(alerts.textContent).toContain("Power low: Lapotronic Supercapacitor");
+    expect(alerts.textContent).toContain("Crafting done: 64 Steel Ingot");
+    expect(alerts.querySelector(`[data-cite="tel:${LSC}"]`)).not.toBeNull();
+    expect(screen.queryByTestId("live-alerts-held")).toBeNull();
+    cleanup();
+    live = { ts: 0, stale_s: 30, bindings: [binding({ held: "paused", alerts: [{ ...lowPower, stale: "paused" }] })] };
+    render(<BaseLivePanel />);
+    expect((await screen.findByTestId("live-alerts-held")).textContent).toContain("the game is paused");
+    expect(screen.getByTestId("live-alerts").querySelector("li")?.getAttribute("data-stale")).toBe("paused");
+  });
+
+  it("with no alerts, says so", async () => {
+    render(<BaseLivePanel />);
+    expect((await screen.findByTestId("live-no-alerts")).textContent).toContain("No alerts");
+  });
+
+  it("held with no alerts says held, never No alerts (WO-7.5 review L3)", async () => {
+    live = { ts: 0, stale_s: 30, bindings: [binding({ held: "silent", alerts: [] })] };
+    render(<BaseLivePanel />);
+    expect((await screen.findByTestId("live-alerts-held")).textContent).toContain("OC is silent");
+    expect(screen.queryByTestId("live-no-alerts")).toBeNull();
   });
 });

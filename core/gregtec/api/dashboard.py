@@ -328,6 +328,8 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         credit = None
     if credit is not None:
         alerts.append(credit)
+    if core.ops is not None and core.ops.alerts is not None:
+        alerts += core.ops.alerts.cards()  # the telemetry alert rules (WO-7.5, D281)
     # The deep lane's warning is already on screen while the AI is offline (the state chip) or a
     # task waits at its cap (its approval card).
     said = (

@@ -13,6 +13,9 @@ from gregtec.db import crops as crop_db
 from gregtec.ingest.crops import CropData
 
 BREEDER_MAP = "cropsnh.recipes.cropBreeder"
+GENERATOR_MAP = (
+    "cropsnh.recipes.seedGenerator"  # CropsNH's fake duplication recipes (WO-7.6)
+)
 SEED_ITEM = "cropsnh:genericSeed"
 # CropsNH's machine classes, by the job the guide gives them
 MACHINE_CLASSES = {
@@ -37,6 +40,20 @@ class BreederRecipe:
     duration_ticks: int
     voltage_tier: int
     catalysts: tuple[tuple[str, int], ...]  # (display name or registry@meta, amount)
+    # (registry name, meta, amount): the breeding station moves catalysts by key (WO-7.6)
+    catalyst_keys: tuple[tuple[str, int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class GeneratorRecipe:
+    """One Seed Generator duplication recipe of the export (WO-7.6): a crop it can copy (one
+    without a recipe can't be copied, MTESeedGenerator skips it) and any catalyst a copy uses."""
+
+    ref: str
+    crop: str
+    catalysts: tuple[
+        tuple[str, int, int, str], ...
+    ]  # (registry name, meta, amount, name)
 
 
 @dataclass(frozen=True)
@@ -58,6 +75,7 @@ class Facts:
     machines: dict[str, list[Machine]] = field(default_factory=dict)  # by job, by tier
     names: dict[str, str] = field(default_factory=dict)  # registry@meta -> display name
     recipe_refs: frozenset[str] = frozenset()  # every r: the guide may cite
+    generator: dict[str, list[GeneratorRecipe]] = field(default_factory=dict)  # by crop
 
     def crop_name(self, crop: str) -> str:
         c = self.data.crops.get(crop)
@@ -116,6 +134,7 @@ def _breeder(conn: sqlite3.Connection, run_id: int) -> list[BreederRecipe]:
             child = _seed_crop(nbt) or child
         parents: set[str] = set()
         catalysts: list[tuple[str, int]] = []
+        keys: list[tuple[str, int, int]] = []
         for reg, meta, nbt, name, amount, fluid in conn.execute(
             "SELECT it.registry_name, it.meta, it.nbt_json, it.name_en, i.amount, i.fluid_id"
             " FROM recipe_input AS i LEFT JOIN item AS it ON it.id = i.item_id"
@@ -128,6 +147,7 @@ def _breeder(conn: sqlite3.Connection, run_id: int) -> list[BreederRecipe]:
                 parents.add(crop)
             else:
                 catalysts.append((name or f"{reg}@{meta}", int(amount)))
+                keys.append((str(reg), int(meta or 0), int(amount)))
         if child is None or len(parents) < 2:
             continue
         out.append(
@@ -139,8 +159,44 @@ def _breeder(conn: sqlite3.Connection, run_id: int) -> list[BreederRecipe]:
                 int(duration or 0),
                 int(vt or 0),
                 tuple(catalysts),
+                tuple(keys),
             )
         )
+    return out
+
+
+def _generator(
+    conn: sqlite3.Connection, run_id: int
+) -> dict[str, list[GeneratorRecipe]]:
+    """The Seed Generator's duplication recipes by crop (an ore-dictionary catalyst is one
+    recipe per alternative item, in ref order)."""
+    if not _has(conn, "recipe_map"):
+        return {}
+    rows = conn.execute(
+        "SELECT r.id, r.ref FROM recipe AS r JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+        " WHERE m.unloc_name = ? AND r.run_id = ? ORDER BY r.ref",
+        (GENERATOR_MAP, run_id),
+    ).fetchall()
+    out: dict[str, list[GeneratorRecipe]] = {}
+    for rid, ref in rows:
+        crop = None
+        cats: list[tuple[str, int, int, str]] = []
+        for reg, meta, nbt, name, amount, fluid in conn.execute(
+            "SELECT it.registry_name, it.meta, it.nbt_json, it.name_en, i.amount, i.fluid_id"
+            " FROM recipe_input AS i LEFT JOIN item AS it ON it.id = i.item_id"
+            " WHERE i.recipe_id = ? ORDER BY i.slot",
+            (rid,),
+        ):
+            if fluid is not None or reg is None:
+                continue
+            if reg == SEED_ITEM:
+                crop = _seed_crop(nbt) or crop
+            else:
+                cats.append(
+                    (str(reg), int(meta or 0), int(amount), name or f"{reg}@{meta}")
+                )
+        if crop is not None:
+            out.setdefault(crop, []).append(GeneratorRecipe(ref, crop, tuple(cats)))
     return out
 
 
@@ -190,13 +246,16 @@ def load(conn: sqlite3.Connection) -> Facts:
     run_id, run_key = runs[0]
     data = crop_db.read(conn, run_id)
     breeder = _breeder(conn, run_id)
+    generator = _generator(conn, run_id)
     return Facts(
         data=data,
         run_key=run_key,
         breeder=breeder,
         machines=_machines(conn),
         names=_names(conn, data),
-        recipe_refs=frozenset(b.ref for b in breeder),
+        recipe_refs=frozenset(b.ref for b in breeder)
+        | frozenset(g.ref for gs in generator.values() for g in gs),
+        generator=generator,
     )
 
 
@@ -206,14 +265,18 @@ def from_parts(
     machines: Mapping[str, list[Machine]] | None = None,
     names: Mapping[str, str] | None = None,
     run_key: str = "test",
+    generator: Mapping[str, list[GeneratorRecipe]] | None = None,
 ) -> Facts:
     """Facts built in memory (tests and fixtures)."""
     b = list(breeder or [])
+    g = dict(generator or {})
     return Facts(
         data=data,
         run_key=run_key,
         breeder=b,
         machines=dict(machines or {}),
         names=dict(names or {}),
-        recipe_refs=frozenset(r.ref for r in b),
+        recipe_refs=frozenset(r.ref for r in b)
+        | frozenset(x.ref for xs in g.values() for x in xs),
+        generator=g,
     )

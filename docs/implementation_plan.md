@@ -535,7 +535,7 @@ note: 4 EBF cupronickel; o2 from electrolyzer line
 | session-scribe | Events → journal (§7.5) | events_recent, note_append |
 | advisor | Next steps (§7.5) | advisor_next (D266; it reads the frontier, My base, the plans and events itself), quest_get, plan_get, ledger_get, telemetry_get, events_recent |
 | ore-intel | Veins (§7.6) | ore_find, player_pos, ore_waypoint |
-| crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status |
+| crop-breeder | Breeding guides, stat plans, crop machines (§7.17) | crop_find, crop_plan, crop_step, crop_status, crop_station |
 | screen-reader | Screenshot protocol (§7.7) | image input, snapshot |
 | wiki-research | Wiki cache and fetch, attribution (§7.8) | wiki_search, wiki_fetch |
 | ops | Telemetry, alerts, confirmed actions (§7.9) | telemetry_get, action_propose, action_status |
@@ -570,6 +570,7 @@ db_query(name, params)               db_sql(select)            speak(text)  noti
 timer_set(...)                       handoff(task)             persona_set(id)
 export_diff(run_a, run_b)            machine_fact_get/set(machine, key, ...)   screen_snapshot()
 crop_find(name|trait)                crop_plan(target, have?)  crop_step(plan_id, n) crop_status()
+crop_station(action, target?)        # proposes the breeding station's start (code's plan) or stop (D283); confirm is UI-only
 ```
 - Tool results return TSV, capped at 50 rows, with a `more` cursor.
 
@@ -771,6 +772,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - OC screen status board: power, alerts, current goal, next step.
   - **OCGlasses** HUD (HV Assembler recipes; 12 widget types: text, shapes, item icons, 3D). There's no fixed rate and every change is sent at once, so batch updates. Power use scales with widget count [F].
   - **Chat box** `say` (LV recipe; 1 tick per call; 40-block radius, same dimension) for confirmations [F].
+  - As built (WO-7.5, D280, D281): telemetry alert rules (`gregtec.alerts`): power low (a store's fill, with a band), maintenance (the Problems count or an LSC's bad maintenance), machine stalled (or stopped by GT) and crafting done (a craft GOS started), each with a hold, a clear delay and a 10-minute cooldown from gos.toml `[alerts]` (defaults pending Clayton); nothing fires or clears while the game is paused (D258) or OC is silent: firing alerts are held and marked stale. They show as AlertCards on the dashboard (crafting done on the Base view), on the status board (power low, crafting done), as a voice line, and in the `alert` table; WO-9.2 routes them from `AlertEngine.sinks`.
   - As built (WO-7.4, D277-D279): the core composes the board, HUD and chat notices (`gregtec.bridge.display`) and sends them in the reply's optional `display` over M1 and M2 alike; `oc/display.lua` lays them out (50 x 16 at most, `NO REPLY` and grey after 30 s without a reply; HUD M2 only, 4 widgets; notices only fixed templates about confirmed actions). The dashboard's Base view shows the same live base (`GET /api/base/live`).
 - **Pause caveat** [F][C§4]. In single-player, the Esc menu pauses the integrated server and therefore OC, unless the world is opened to LAN (untested, V19). Alt-tab also pauses unless `pauseOnLostFocus` is off (F3+P; Hodgepodge confirms the toggle; **VERIFY** the exact `options.txt` key). Telemetry gaps are marked stale, never extrapolated. AFK alerts only work while the game is unpaused (D46, §5.6).
 - **Safe actions (D25):**
@@ -944,6 +946,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
    - It identifies seeds by item name, which carries the species, so it never reads planted crops (CropsNH doesn't allow that). It reads stats from item NBT if V31 passes; otherwise it tracks them from the breeding math.
    - Start and stop are confirmed actions (§7.9), and status shows on the dashboard and phone. Lab first; Clayton installs it on Play himself.
    - At ZPM the breeder reaches 100% success, so plain AE2 autocrafting can take over.
+   - As built (WO-7.6, D282-D284): `oc/crop/station.lua`, a module of the OC agent, runs a plan `gregtec.crops.station` builds (the shortest Crop Breeder chain his breeder runs, copies first, 4 stocked) through one transposer touching a chest, the Crop Breeder and 1 to 3 Seed Generators. GT lets automation take items only from a machine's output, so each Seed Generator becomes the copier of the first crop put in it (the plan ranks which crops get one) and the breeder is loaded only when its tank holds the run's fertilizer; a load always leaves a seed of each parent in the chest. Start and stop are `crop_start` / `crop_stop` on the action desk (the deep lane's `crop_station`, the dashboard's `/api/crops/station`); status rides in the telemetry (`crop_status`). The Lab run is `docs/runbooks/breeding_station.md`.
    - Field breeding (raising stats with fertilizer above 100) stays manual with Crop Managers until the EV synthesizer makes it unnecessary. No field robot is planned (R28).
 - **Voice:** "next crop step", "what does X need to grow", "how long until X".
 - **Dashboard:** the Crops view (§7.14).
@@ -1264,7 +1267,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
 | V29 | A reliable "game paused" signal (log line or GregtecLink). Resolved from what the game writes (D258): the `Saving and pausing game...` line, unpaused by the server's next own line or autosave; the Lab test measures the line's delay | Lab test | 6.1 |
 | V30 | **Partly resolved from source** (D273, WO-6.7; CropsNH 2.0.140): weeds spread above each crop's own `weeds_above` (24 for most crops, 8 for Necrobloom; the quest's 23 is wrong) and only while Resistance is below Growth; an extra neighbour can block a parent-combination recipe (recipes match the first distinct breedable neighbours in registration order), so guides keep the other sides clear; two identical seeds can pool-mutate (pool matching counts duplicates) but never make a recipe (it needs two distinct parents); a Crop Manager tops sticks to 200 fertilizer once fertilizing is switched on in its GUI (it starts off); a stick uses 1 water and 1 fertilizer every growth tick, so the guide's times are the topped-up best case and it shows the dry nutrients. Still open: the Lab check of each (`docs/runbooks/crop_guide.md`) [I§2] | Lab test | 6.7 |
-| V31 | Through a transposer, OC sees CropsNH seed names (and stats, via item NBT), reads the Crop Breeder's progress like other GT machines, and the station's OC parts are craftable at MV [I§3, I§6] | Lab test | 7.6 |
+| V31 | **Partly resolved from source** (D284, WO-7.6; CropsNH 2.0.140, GT 5.09.54.265, OC 1.12.68): a transposer shows a seed as `cropsnh:genericSeed`, damage 0, label `<crop name> Seeds` once analysed (`Unknown Seeds` before), so the station identifies seeds by label; stats are NOT readable (OC's `tag` is gzip, the data card inflates zlib), so it tracks them from the breeding maths; the Crop Breeder is a GT basic machine whose progress OC reads like the others (`hasWork`) and whose tank the transposer reads; automation takes items only from a GT machine's output (D282); the transposer is an MV Assembler recipe, the other parts are checked from the recipe DB by `gos crops station --parts` (partial: the part's own recipe, `MV unknown` for a recipe without a tier). Still open: the full parts answer from Clayton's export and the Lab check (`docs/runbooks/breeding_station.md`) [I§3, I§6] | Lab test | 7.6 |
 | V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 | V34 | When a GT multiblock shuts down on its own (power loss, a maintenance problem), OC's `isWorkAllowed` reads false; if so, WO-6.5's stall notice (which skips machines with work not allowed, as Clayton's own pause) misses it until WO-7.4's `stopped` state (D279) joins `machine_stalled` (D267) | Lab test | 6.5 |
@@ -1449,6 +1452,19 @@ configs = []                  # recipe-affecting configs added to GT's defaults,
 [maintenance]
 idle_minutes = 30             # QA:A9
 keep_backups = 7              # daily DB backups kept (D139)
+
+# Telemetry alerts (WO-7.5, D280): every key optional; the defaults, pending Clayton, are below.
+# [alerts]
+# rules = ["power_low", "maintenance", "machine_stalled", "crafting_done"]
+# power_low_pct = 20          # fires below; clears at power_clear_pct
+# power_clear_pct = 30        # power_low_pct + 10 (at most 100) when only power_low_pct is set
+# power_low_s = 30            # how long each condition holds first
+# maintenance_s = 0
+# stalled_s = 60
+# stalled_stopped = true      # a machine GT stopped counts as stalled
+# clear_s = 30
+# cooldown_s = 600            # plan 7.5's 10 minutes
+# done_show_s = 300
 
 # M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
 # drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.

@@ -44,6 +44,7 @@
 | [mailbox.play] / [mailbox.lab] drive | none (no M1 mailbox)         | core (WO-7.3, D217)         |
 | [mailbox.<role>] dir     | home/gos/mailbox                         | core (WO-7.3)               |
 | [mailbox.<role>] world   | [paths] world (play), lab_world (lab)    | core (WO-7.3)               |
+| [alerts] ...             | gregtec.alerts.rules, pending Clayton    | alert rules (WO-7.5, D280)  |
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -54,8 +55,8 @@ three names with ``:<port>``). Every other key in the Appendix C skeleton is ign
 reads it.
 
 **Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
-``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``) are read only by the core,
-the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
+``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``, ``[alerts]``) are
+read only by the core, the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
 ``Config.service_errors``. :func:`service_problems` adds one more, gos-dev using Clayton's ports or
@@ -78,6 +79,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
+from gregtec.alerts.rules import AlertRules
+from gregtec.alerts.rules import parse as parse_alert_rules
 from gregtec.llm.prices import PRICES
 
 T = TypeVar("T")
@@ -213,6 +216,8 @@ class Config:
     # [policy] notices: the proactive notices that are on (D71's three by default; WO-6.5)
     notices: tuple[str, ...] = NOTICES_DEFAULT
     mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
+    # [alerts]: the telemetry alert rules (WO-7.5, D280)
+    alerts: AlertRules = field(default_factory=AlertRules)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
@@ -629,6 +634,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         ),
         "notices": soft(lambda: _notices(policy, defaults.notices), defaults.notices),
         "mailboxes": soft(lambda: _mailboxes(data), ()),
+        "alerts": soft(lambda: _alert_rules(data), defaults.alerts),
         "service_errors": tuple(problems),
     }
 
@@ -756,6 +762,15 @@ def _launch_home(launch: Mapping[str, Any]) -> Path | None:
     if home is not None and (not isinstance(home, str) or not home):
         raise ConfigError("gos.toml: [launch] home must be a non-empty string")
     return Path(home) if home else None
+
+
+def _alert_rules(data: Mapping[str, Any]) -> AlertRules:
+    try:
+        return parse_alert_rules(_table(data, "alerts", ""))
+    except ValueError as exc:
+        if isinstance(exc, ConfigError):
+            raise
+        raise ConfigError(str(exc)) from exc
 
 
 def _mailboxes(data: Mapping[str, Any]) -> tuple[OcMailbox, ...]:

@@ -40,4 +40,14 @@
   -- In-game displays (WO-7.4; needs display.lua next to gos-agent.lua): the status board on the screen, the
   -- OCGlasses HUD (M2 only) and chat-box notices about confirmed actions. true: all on; false: none.
   -- display = { board = true, screen = false, hud = true, chat = true },
+
+  -- The breeding station (WO-7.6; needs crop/station.lua under this folder, docs/runbooks/
+  -- breeding_station.md): one transposer touching a chest, a Crop Breeder and 1 to 3 Seed
+  -- Generators, each machine with an adapter. Sides are the transposer's (0 down, 1 up, 2 north,
+  -- 3 south, 4 west, 5 east). It runs only plans Clayton confirmed (crop_start / crop_stop).
+  -- crops = {
+  --   storage = 0, breeder = 1,
+  --   generators = { { side = 2 } },                 -- with more than one: adapter = "ab12" each
+  --   transposer = false, keep = 1, step_s = 2,
+  -- },
 }

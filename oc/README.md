@@ -74,6 +74,19 @@ them. The core composes every line and sends it in the reply (contract "The disp
 
 Config: `display = true` (default), `false`, or a table of `board`, `screen`, `hud`, `chat`.
 
+## The breeding station (WO-7.6, from MV)
+
+Copy `crop/station.lua` to `/home/gos/crop/station.lua` and add a `crops` table to the config (the example has one)
+to run GOS breeding plans on CropsNH's Crop Breeder and Seed Generators (plan 7.17, D282-D284). Build: ONE transposer
+touching a chest (`storage`), the Crop Breeder (`breeder`) and 1 to 3 Seed Generators (`generators`), an adapter on
+each machine, all on the computer's network; feed the machines enriched fertilizer and power, and keep their
+auto-output off. GT lets automation take items only from a machine's output, so a seed given to a Seed Generator stays
+in it as that generator's copier for good; the chest gets analysed starter seeds (labels `<crop> Seeds`; unanalysed
+`Unknown Seeds` are never touched) and any catalysts. The station starts and stops only on commands Clayton confirmed
+(`crop_start`, `crop_stop`); its status rides in every telemetry message (`crops`) and shows as `crop_status`, on the
+dashboard (`/api/crops/station`) and in `gos crops station`. Contract: docs/contracts/oc_bridge.md, "The breeding
+station"; steps: docs/runbooks/breeding_station.md.
+
 ## Run
 
 ```

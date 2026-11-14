@@ -60,6 +60,10 @@ test("the guide to Iron Fern comes in the core's order, with its layout and cite
   await page.getByTestId("crops-step-5").click();
   await expect(page.getByTestId("crops-step")).toContainText("Crop Breeder");
   await expect(page.getByTestId("crops-reqs")).toContainText("Catalyst: 1 x Iron Ore");
+  // The breeding station panel (WO-7.6): no OC station has reported to the e2e core; the core
+  // answers for the crop shown (his tier and crops decide whether there is a plan).
+  await expect(page.getByTestId("crops-station")).toBeVisible();
+  await expect(page.getByTestId("crops-station-none")).toContainText("No OC computer");
   await page.screenshot({ path: shot("crops-iron-fern") });
 });
 

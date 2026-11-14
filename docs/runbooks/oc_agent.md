@@ -261,6 +261,37 @@ Displays need no confirmation (plan 7.9); nothing here acts on the world except 
     `...problems` key (encoded); send back the EBF's raw sensor lines from the dashboard's network log or
     `gos-agent.log` if it does not.
 
+## J. Alerts, including AFK (WO-7.5, D46, about 40 minutes)
+
+Plan 8 WO-7.5's acceptance: "alerts fire in `lab-ops`, including with the game unfocused and no menu open (the
+AFK case, D46)". The rules are tested on recorded-shape streams and end to end from the fake OC's posts to the
+dashboard (tests/unit/test_alert_rules.py, tests/oc/test_alert_pipeline.py); this checks the real game. The
+thresholds are `gos.toml` `[alerts]` (defaults pending your answer, D280); nothing here acts on the world.
+
+36. **Before.** `pauseOnLostFocus` off (F3+P, section A), the watchers running for Lab (`[startup]
+    watchers_with_play = "lab"`), the voice client on, the dashboard open on monitor 2. Note the LSC's fill on
+    the Base view.
+37. **AFK, unfocused, no menu.** Close every GUI, alt-tab to the desktop and leave the game unfocused for the
+    rest of this step. Starve the base so the LSC falls below 20 % (`/gt` creative tools, or break the generators'
+    cables from a second account; or set `[alerts] power_low_pct` above the current fill and restart the core:
+    with `power_low_pct` alone set, `power_clear_pct` follows it at 10 points above, at most 100, so the core
+    starts; if you set `power_clear_pct` too, keep it at or above `power_low_pct` or the core refuses to start).
+    Within 30 s plus a cycle of the fill dropping below the threshold: the dashboard shows the **Power low** card
+    on Now and Glance and in the Base view's Alerts; the voice says "Lab: power low. ... at N percent." once (or
+    one line for everything that fired in the same second, such as "Lab: power low and 6 machines stopped."); the
+    board shows `LOW  <store> N%`. Note the seconds. Then stall the EBF (remove its input): **Machine stalled**
+    (or **Machine stopped** if GT disables its work, step 31) after 60 s, said once. Break a maintenance part:
+    **Maintenance** within `sensor_s` plus a cycle.
+38. **No flapping.** Leave it all as it is for 10 minutes: no alert is said again and none clears. Restore power
+    and the EBF: each clears 30 s after its reading is good again (the card goes away; nothing is said).
+39. **Crafting done.** Ask GOS to craft 64 of an ingot AE2 has a pattern for and confirm on the dashboard: when
+    AE2 finishes, the voice says "Lab: crafting done, 64 ..." once, the board shows `DONE 64 ...` and the Base
+    view's Alerts list it for 5 minutes.
+40. **Stale on pause.** With a power-low alert firing, focus the game and press Esc for 2 minutes: within a few
+    seconds of the pause line (D258) the Base view says "Alerts held: the game is paused" and the card starts
+    "Held: the game is paused"; nothing is said or cleared. Fix the power while paused (it can't change: the world
+    is stopped) and unpause: the alert is fresh again within a cycle and clears only 30 s after a good reading.
+
 ## What to send back
 
 - Step 7's `--list` output (V20) and step 8's line.
@@ -272,3 +303,5 @@ Displays need no confirmation (plan 7.9); nothing here acts on the world except 
 - Section I: the screen size and tier and whether it read well (step 30), the four timings of step 31 and what the
   EBF and the starved machine read (`stopped`, `stalled` or other), steps 32-34's outcomes (the craft's notices), and
   step 35's line or the raw sensor lines.
+- Section J: step 37's three timings (or that one did not fire), step 38's outcome, step 39's line, step 40's
+  outcome, and any alert said twice or not at all.
