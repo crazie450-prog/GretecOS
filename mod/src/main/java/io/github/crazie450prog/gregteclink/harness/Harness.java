@@ -1266,6 +1266,39 @@ public final class Harness {
                 diesel >= 3 && generators == counts.get("generators")
                     .getAsInt(),
                 generators + " single-block generators, " + diesel + " diesel generators with GT's fuel values");
+            // WO-4.8 (D326): the Large Naquadah Reactor's own lists, and the dynamo hatches with their amps.
+            int reactors = 0;
+            boolean lists = false;
+            for (JsonElement e : root.getAsJsonArray("naquadah_reactors")) {
+                JsonObject r = e.getAsJsonObject();
+                reactors++;
+                lists = !r.has("error") && r.getAsJsonArray("coolants")
+                    .size() == 4
+                    && r.getAsJsonArray("excited")
+                        .size() == 5
+                    && r.getAsJsonObject("liquid_air")
+                        .get("per_second")
+                        .getAsInt() > 0;
+            }
+            int lasers = 0;
+            int dynamos = 0;
+            for (JsonElement e : root.getAsJsonArray("dynamos")) {
+                JsonObject d = e.getAsJsonObject();
+                dynamos++;
+                if (d.has("amps_out") && d.get("amps_out")
+                    .getAsLong() >= 256) lasers++;
+            }
+            check(
+                checks,
+                "naquadah_reactor_lists",
+                reactors == 1 && lists && dynamos >= 30 && lasers >= 5,
+                reactors + " large naquadah reactor(s), lists read: "
+                    + lists
+                    + ", "
+                    + dynamos
+                    + " dynamo hatches, "
+                    + lasers
+                    + " of 256 A or more");
             checkStorage(root.getAsJsonObject("storage"));
         }
 

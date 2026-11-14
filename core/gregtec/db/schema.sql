@@ -205,6 +205,17 @@ CREATE INDEX IF NOT EXISTS ix_fuel_fluid ON fuel(run_id, fluid);
 -- (GT's, its power and wet transformers, GT++'s hi-amp ones), one row per mode (down: GT's
 -- default, in at the tier above; up: soft-mallet'd); lsc_cell: the LSC's cells, their block,
 -- glass tier and capacity (EU, a decimal string: some are past a 64-bit integer's range).
+-- Large Naquadah Reactor and dynamo hatches (WO-4.8, D326). From gt_power.json's naquadah_reactors
+-- and dynamos. reactor_boost: per reactor (mte_id), its liquid air (kind 'air', rank 0: litres a
+-- second, value 0) and its own coolant and excited-fluid lists in their order (rank; the first
+-- present wins): litres a check (a second) and the efficiency % (coolant) or multiplier (excited),
+-- GoodGenerator's config as the instance loaded it. dynamo_hatch: every dynamo hatch (GT's,
+-- TecTech's multi-amp and laser source hatches), its voltage and amps out.
+CREATE TABLE IF NOT EXISTS reactor_boost(run_id INT NOT NULL, mte_id INT NOT NULL, kind TEXT NOT NULL
+  CHECK(kind IN ('air','coolant','excited')), rank INT NOT NULL, fluid TEXT NOT NULL, amount INT NOT NULL,
+  value INT NOT NULL, PRIMARY KEY(run_id, mte_id, kind, rank));
+CREATE TABLE IF NOT EXISTS dynamo_hatch(run_id INT NOT NULL, mte_id INT NOT NULL, class_name TEXT NOT NULL,
+  tier INT NOT NULL, eu_out INT NOT NULL, amps_out INT NOT NULL, PRIMARY KEY(run_id, mte_id));
 CREATE TABLE IF NOT EXISTS cable(run_id INT NOT NULL, mte_id INT NOT NULL, voltage INT NOT NULL,
   amperage INT NOT NULL, loss INT NOT NULL, PRIMARY KEY(run_id, mte_id));
 CREATE TABLE IF NOT EXISTS battery(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
@@ -231,4 +242,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
