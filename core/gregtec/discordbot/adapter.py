@@ -36,6 +36,7 @@ from gregtec.discordbot.settings import BotSettings
 log = logging.getLogger("gregtec.discordbot")
 
 NO_MENTIONS = discord.AllowedMentions.none()
+VIEW_TIMEOUT_S = 180.0
 
 
 def kind_of(inter: discord.Interaction) -> str:
@@ -74,10 +75,12 @@ class DiscordInteraction:
 
 
 class ButtonsView(discord.ui.View):
-    """Confirm and Cancel; presses are handled by ``on_interaction``, never here."""
+    """Confirm and Cancel; presses are handled by ``on_interaction``, never here. It times
+    out (leaving discord.py's view store) after the action desk's 60 s expiry: a later press
+    still reaches ``on_interaction``, and the desk answers that it expired."""
 
     def __init__(self, msg: Message) -> None:
-        super().__init__(timeout=None)
+        super().__init__(timeout=VIEW_TIMEOUT_S)
         for b in msg.buttons:
             self.add_item(
                 discord.ui.Button(
