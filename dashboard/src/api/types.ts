@@ -213,6 +213,14 @@ export interface Usage {
   by_model: UsageRow[];
 }
 
+// GET /api/guide (WO-10.1, D304): Clayton's GuideNH export in GOS_HOME/data/guide-site.
+export interface GuideSite {
+  present: boolean;
+  pages: { path: string; title: string; scenes: number }[];
+  files: number;
+  bytes: number;
+}
+
 export interface Device {
   id: string;
   name: string;
