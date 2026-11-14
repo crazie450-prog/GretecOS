@@ -91,7 +91,8 @@ jobs:
     # WO-1.1: GregtecLink build, then the headless harness (dev server, scripted export, checks, exit),
     # then the client harness (dev client under Xvfb: autoexport world, export, NEI's dump, checks, exit).
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 60 was too tight once the schematic harness came in (WO-10.4): main already took 44-59 min on runner variance.
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: mod
