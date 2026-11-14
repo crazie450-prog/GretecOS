@@ -119,6 +119,7 @@ GAME_TABLES = frozenset(
         "rotor_size", "rotor_material", "rotor_gt", "generator", "generator_gt",
         "fuel_container", "fuel",
         "cable", "battery", "battery_buffer", "transformer", "lsc_cell",  # WO-4.5 (D240)
+        "reactor_boost", "dynamo_hatch",  # WO-4.8 (D326)
     }
 )  # fmt: skip
 PRIVATE = frozenset({"kv", "device"})  # app state and paired devices: not for agents
