@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Request
 
 from gregtec.api.security import Principal
+from gregtec.planner.request import RequestError, parse_duration, parse_qty, tier_index
 from gregtec.remote.jobs import Job, JobError, JobQueue
 from gregtec.store import Store
 
@@ -79,9 +80,31 @@ def check_spec(kind: str, spec: object) -> dict[str, Any]:
             raise JobError("name a target item or fluid")
         if "rate" in out and "batch" in out:
             raise JobError("give a rate or a batch, not both")
+        _check_amounts(out)
     elif not out.get("mode"):
         raise JobError("name a mode")
     return out
+
+
+def _check_amounts(spec: Mapping[str, str]) -> None:
+    """The rate, batch, within and tier parsed by the designer's own parsers
+    (:func:`gregtec.planner.designer.request_from_spec`'s rules), so a typo is a 400 at once
+    instead of a failed job later."""
+    try:
+        if "batch" in spec:
+            if parse_qty(spec["batch"])[1] is not None:
+                raise JobError("a batch is a quantity, without /s, /min or /h")
+            if "within" in spec:
+                parse_duration(spec["within"])
+        else:
+            if "within" in spec:
+                raise JobError("within is for a batch only")
+            if "rate" in spec and parse_qty(spec["rate"])[1] is None:
+                raise JobError("a rate needs /s, /min or /h")
+        if "tier" in spec:
+            tier_index(spec["tier"])
+    except RequestError as exc:
+        raise JobError(str(exc)) from None
 
 
 def run_job(home: Path) -> Callable[[str, Mapping[str, Any]], dict[str, Any]]:

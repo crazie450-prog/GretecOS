@@ -102,7 +102,6 @@ def test_the_bot_s_calls_work_against_a_real_core(live: tuple[Core, int]) -> Non
         api.export("pl-00000002", "png")
     assert missing.value.status == 404
 
-    assert api.alerts() == {"mode": "on", "until": None}
     assert api.set_alerts("quiet", 2.0)["mode"] == "quiet"
     api.journal("status", "status asked")
     assert api.ai()["ai"]["online"] is False  # no key in this test
@@ -118,7 +117,7 @@ def test_errors_carry_the_core_s_status_and_reason(live: tuple[Core, int]) -> No
         api.actions()
     assert no_bridge.value.status == 503 and not no_bridge.value.offline
     with pytest.raises(CoreError) as refused:
-        HttpCore(port, "not-a-token").alerts()
+        HttpCore(port, "not-a-token").set_alerts("on", None)
     assert refused.value.status == 401
     with pytest.raises(CoreError) as down:
         HttpCore(1, "x").ledger()  # nobody on port 1

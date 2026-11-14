@@ -592,3 +592,75 @@ def test_deliver_forever_keeps_going_after_an_error(core: FakeCore) -> None:
         assert calls >= 3
 
     run(go)
+
+
+def test_a_job_that_can_t_be_posted_never_blocks_the_next_and_is_given_up(
+    core: FakeCore,
+) -> None:
+    """Review M1: his DMs refuse the plan job's message (Discord's 403, or a payload too
+    large). The power job after it is still delivered; the plan job is tried again only after
+    a backoff (no export, no DM in between) and, after DELIVER_TRIES, left alone with one
+    short text-only notice until the bot restarts."""
+    dms: list[Message] = []
+    refused: list[Message] = []
+
+    async def dm(msg: Message) -> None:
+        if msg.text.startswith("Plan job "):
+            refused.append(msg)
+            raise RuntimeError("403 Forbidden (error code: 50007)")
+        dms.append(msg)
+
+    async def go() -> None:
+        asker = make_bot(core, [])  # the bot that was asked; then it restarts
+        await asker.interaction(
+            clayton(core), "plan", {"target": "steel ingot", "amount": "2/s"}
+        )
+        await asker.interaction(clayton(core), "power", {"mode": "best"})
+        core.queue.run_one()
+        core.queue.run_one()
+        bot = make_bot(core, dms)
+        bot.dm = dm
+        assert await bot.deliver() == 1  # the power job, past the failing plan job
+        assert len(refused) == 1 and dms[0].text.startswith("Power job ")
+        exports = core.names().count("export")
+        for _ in range(5):  # inside the backoff: nothing exported, nothing posted
+            await core.clock.advance(handlers.JOB_POLL_S)
+            assert await bot.deliver() == 0
+        assert core.names().count("export") == exports and len(refused) == 1
+        for tries in range(2, handlers.DELIVER_TRIES + 1):
+            await core.clock.advance(handlers.DELIVER_BACKOFF_S * (tries - 1))
+            assert await bot.deliver() == 0
+            assert len(refused) == tries
+        assert dms[-1].text == texts.UNDELIVERABLE and not dms[-1].files
+        assert len(dms) == 2  # the power result and the one notice
+        await core.clock.advance(3600.0)
+        assert await bot.deliver() == 0 and len(refused) == handlers.DELIVER_TRIES
+        # Still undelivered in the core: a restarted bot (DMs open again) posts it.
+        assert len(core.queue.jobs("discord", undelivered=True)) == 1
+        assert await make_bot(core, dms).deliver() == 1
+        assert dms[-1].text.startswith("Plan job ") and dms[-1].files
+
+    run(go)
+
+
+def test_a_deep_task_the_core_lost_says_so(core: FakeCore) -> None:
+    """Review L2: a 404 on the deep task means the core restarted and lost it."""
+    core.answer = lambda text: {
+        "text": "Deep lane.",
+        "lane": "deep",
+        "handoff": {"id": "t-9"},
+    }
+
+    def lost(task_id: str) -> dict[str, Any]:
+        raise CoreError(f"GET /api/deep/tasks/{task_id}: 404 no such task", 404)
+
+    core.deep_task = lost  # type: ignore[method-assign]
+
+    async def go() -> None:
+        bot = make_bot(core, [])
+        it = clayton(core)
+        await bot.interaction(it, "ask", {"text": "compare my steel routes"})
+        await core.clock.advance(handlers.DEEP_POLL_S * 2)
+        assert it.texts == ["Deep lane.", texts.DEEP_LOST]
+
+    run(go)

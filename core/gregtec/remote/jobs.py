@@ -5,11 +5,13 @@ A **job** is one ``/plan`` (a production design, :func:`gregtec.api.plan_routes.
 lives in the core's DB (``remote_job`` in ``gos.sqlite``), so it survives a restart of the bot
 or of the core, and the core's one worker thread runs the queue in order.
 
-**Never run twice.**
+**Never completes twice** (re-run once after a crash mid-run, below).
 
 - *Submitting* is idempotent: a job is keyed by its client and the client's own key (the Discord
-  interaction's id), so a bot that sends the same command again after a restart, or retries a
-  request whose answer it lost, gets the job it already made (``created`` false).
+  interaction's id), so a repeated HTTP submit of the same interaction (a retried request whose
+  answer was lost) gets the job already made (``created`` false). The bot keeps no state
+  across its own restart and never resubmits; a new ``/plan`` from Clayton is a new
+  interaction, so a new job.
 - *Running*: the worker claims the oldest queued job by moving it to ``running`` in one write
   (``UPDATE ... WHERE state = 'queued'``) and records ``done`` or ``failed`` only on a running
   job. A job that is ``done`` or ``failed`` is never claimed again.
@@ -115,7 +117,7 @@ class Job:
 class JobQueue:
     """The queue over the core's ``store``. ``run(kind, spec)`` does one job (in the worker
     thread) and returns its result, or raises with the reason it failed. ``journal`` gets the
-    journal lines of each finished job; ``on_change`` each job whose state changed."""
+    journal lines of each finished job."""
 
     def __init__(
         self,
@@ -123,13 +125,11 @@ class JobQueue:
         run: Runner,
         *,
         journal: Callable[[list[str]], None] | None = None,
-        on_change: Callable[[Job], None] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.store = store
         self.run = run
         self.journal = journal
-        self.on_change = on_change
         self.clock = clock
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -174,7 +174,6 @@ class JobQueue:
                 ).fetchone()
             )
         log.info("job queued", extra={"job": job_id, "kind": kind, "client": client})
-        self._changed(made)
         self._wake.set()
         return made, True
 
@@ -255,7 +254,6 @@ class JobQueue:
                     "SELECT * FROM remote_job WHERE id = ?", (row["id"],)
                 ).fetchone()
             )
-        self._changed(job)
         return job
 
     def run_one(self) -> Job | None:
@@ -296,7 +294,6 @@ class JobQueue:
         done = Job.from_row(row) if row is not None else None
         if done is not None:
             log.info("job finished", extra={"job": job.id, "state": done.state})
-            self._changed(done)
             if self.journal is not None:
                 try:
                     self.journal(journal_lines(done))
@@ -328,13 +325,6 @@ class JobQueue:
             if job is None:
                 self._wake.wait(timeout=5.0)
                 self._wake.clear()
-
-    def _changed(self, job: Job) -> None:
-        if self.on_change is not None:
-            try:
-                self.on_change(job)
-            except Exception:
-                log.exception("job on_change failed")
 
 
 def journal_lines(job: Job) -> list[str]:

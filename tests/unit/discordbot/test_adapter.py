@@ -38,6 +38,10 @@ class Response:
         self.calls.append(("edit_message", kw))
         self.done = True
 
+    async def send_message(self, **kw: object) -> None:
+        self.calls.append(("send_message", kw))
+        self.done = True
+
 
 @dataclass
 class Followup:
@@ -180,6 +184,42 @@ def test_a_button_press_from_clayton_goes_through_on_interaction(
         cmd = fake_inter(CLAYTON, discord.InteractionType.application_command)
         await client.on_interaction(cmd)
         assert cmd.response.calls == [] and cmd.followup.sent == []
+        await client.close()
+
+    asyncio.run(go())
+
+
+def test_an_unexpected_error_tells_clayton_and_no_one_else(core: Any) -> None:  # noqa: ANN401
+    """Review L1: his interaction doesn't sit on "thinking…"; a stranger's failed gate (which
+    lands in on_error too) gets nothing."""
+
+    async def go() -> None:
+        client = adapter.GosClient(SETTINGS, core)
+        cmd = discord.InteractionType.application_command
+        error = discord.app_commands.AppCommandError("boom")
+        deferred = fake_inter(CLAYTON, cmd)
+        deferred.response.done = True
+        await client.tree.on_error(deferred, error)
+        assert [s["content"] for s in deferred.followup.sent] == [adapter.texts.FAILED]
+        assert deferred.followup.sent[0]["allowed_mentions"] == adapter.NO_MENTIONS
+        fresh = fake_inter(CLAYTON, cmd)
+        await client.tree.on_error(fresh, error)
+        assert [c[0] for c in fresh.response.calls] == ["send_message"]
+        stranger = fake_inter(STRANGER, cmd)
+        await client.tree.on_error(stranger, discord.app_commands.CheckFailure())
+        assert stranger.response.calls == [] and stranger.followup.sent == []
+
+        async def broken(*args: object, **kw: object) -> None:
+            raise KeyError("odd payload")
+
+        client.bot.interaction = broken  # type: ignore[method-assign]
+        press = fake_inter(
+            CLAYTON,
+            discord.InteractionType.component,
+            {"component_type": 2, "custom_id": "gos:confirm:7"},
+        )
+        await client.on_interaction(press)
+        assert [c[0] for c in press.response.calls] == ["send_message"]
         await client.close()
 
     asyncio.run(go())

@@ -276,10 +276,6 @@ class FakeCore:
             raise CoreError(f"POST /api/persona: 404 no persona called {name}", 404)
         return {"persona": {"id": "plain", "name": "Plain"}}
 
-    def alerts(self) -> dict[str, Any]:
-        self._rec("alerts")
-        return self.alerts_state
-
     def set_alerts(self, mode: str, hours: float | None) -> dict[str, Any]:
         self._rec("set_alerts", mode, hours)
         self.alerts_state = {

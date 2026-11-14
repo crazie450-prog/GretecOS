@@ -134,6 +134,30 @@ def test_check_spec_folds_whitespace_and_drops_empty_fields() -> None:
         routes.check_spec("power", {"mode": "best", "target": "x"})
 
 
+@pytest.mark.parametrize(
+    ("spec", "why"),
+    [
+        ({"rate": "64 per hour"}, "a number, then /s"),
+        ({"batch": "64 per hour"}, "a number, then /s"),
+        ({"rate": "64"}, "a rate needs /s"),
+        ({"batch": "64/s"}, "a batch is a quantity"),
+        ({"batch": "64", "within": "soon"}, "within 'soon'"),
+        ({"rate": "2/s", "within": "2h"}, "within is for a batch only"),
+        ({"rate": "2/s", "tier": "XV"}, "unknown voltage tier"),
+    ],
+)
+def test_check_spec_parses_amounts_with_the_designer_s_rules(
+    spec: dict[str, str], why: str
+) -> None:
+    """Review L5: a typo in the amount is a 400 at once (inside the 10 s bound), not a failed
+    job later."""
+    with pytest.raises(JobError) as bad:
+        routes.check_spec("plan", {"target": "steel", **spec})
+    assert why in str(bad.value)
+    good = {"target": "steel", "batch": "64", "within": "2h", "tier": "MV"}
+    assert routes.check_spec("plan", good) == good
+
+
 def test_a_finished_job_is_delivered_once(core: Core, client: TestClient) -> None:
     discord = bearer(core.auth.issue_client_token("discord"))
     body = {"kind": "power", "key": "k1", "spec": {"mode": "best"}}

@@ -24,6 +24,7 @@ from typing import Any
 import discord
 from discord import app_commands
 
+from gregtec.discordbot import texts
 from gregtec.discordbot.core_api import CoreApi
 from gregtec.discordbot.handlers import (
     ALERT_MODES,
@@ -118,7 +119,27 @@ class GateTree(app_commands.CommandTree):
     async def on_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError, /
     ) -> None:
+        # A stranger's command fails the gate and lands here too: tell_failed stays silent.
         log.info("command error", extra={"error": type(error).__name__})
+        await tell_failed(interaction, self.owner_id)
+
+
+async def tell_failed(inter: discord.Interaction, owner_id: int) -> None:
+    """Clayton's interaction raised: a generic reply, so it doesn't sit on "thinking…" until
+    Discord gives up. Anyone else gets nothing ([QA:V9])."""
+    if inter.user.id != owner_id:
+        return
+    try:
+        if inter.response.is_done():
+            await inter.followup.send(
+                content=texts.FAILED, allowed_mentions=NO_MENTIONS
+            )
+        else:
+            await inter.response.send_message(
+                content=texts.FAILED, allowed_mentions=NO_MENTIONS
+            )
+    except Exception:
+        log.info("failure notice not sent", exc_info=True)
 
 
 class GosClient(discord.Client):
@@ -151,9 +172,13 @@ class GosClient(discord.Client):
         ):
             return  # commands go through the tree (and its gate)
         data: Any = inter.data or {}
-        await self.bot.interaction(
-            DiscordInteraction(inter), str(data.get("custom_id"))
-        )
+        try:
+            await self.bot.interaction(
+                DiscordInteraction(inter), str(data.get("custom_id"))
+            )
+        except Exception as exc:  # noqa: BLE001 (any bug: logged, and Clayton is told)
+            log.info("interaction error", extra={"error": type(exc).__name__})
+            await tell_failed(inter, self.settings.owner_id)
 
     async def close(self) -> None:
         if self._deliver is not None:

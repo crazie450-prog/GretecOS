@@ -20,6 +20,12 @@ DEEP_PAUSED = (
     "The deep-lane task stopped at its spending cap. Approve it on the dashboard "
     "(on the phone too)."
 )
+DEEP_LOST = "GOS's core restarted and that deep-lane task was lost; ask again."
+FAILED = "Something went wrong on the bot's side; try again in a minute."
+UNDELIVERABLE = (
+    "A finished job's result couldn't be sent here (are DMs from this server allowed?). "
+    "It's on the dashboard; I'll try again when the bot restarts."
+)
 
 
 def clip(text: str, limit: int = MSG_MAX) -> str:

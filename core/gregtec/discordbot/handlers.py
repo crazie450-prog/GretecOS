@@ -58,7 +58,6 @@ log = logging.getLogger("gregtec.discordbot")
 T = TypeVar("T")
 
 COMMANDS = ("ask", "plan", "power", "status", "alerts", "persona")
-KINDS = ("command", "component", "select", "modal", "autocomplete")
 ANSWER_S = 8.0  # a reply (or "still working") is posted by then: inside the 10 s bound
 DEEP_POLL_S = 3.0
 DEEP_MAX_S = (
@@ -66,6 +65,10 @@ DEEP_MAX_S = (
 )  # the deep lane stops a paused task after 30 min (APPROVAL_WAIT_S)
 JOB_POLL_S = 2.0
 FOLLOWUP_TTL_S = 14 * 60.0  # Discord's interaction tokens last 15 minutes
+DELIVER_TRIES = (
+    3  # a job whose result can't be posted is left alone after this many tries
+)
+DELIVER_BACKOFF_S = 30.0  # times the tries so far, between tries
 TEXT_MAX = 1000  # gregtec.agents.ask.TEXT_MAX
 POWER_MODES = ("best", "max_output", "output_per_effort", "self_sustaining")
 ALERT_MODES = ("on", "off", "quiet")
@@ -147,6 +150,9 @@ class Bot:
         self.waiting: dict[str, tuple[Interaction, float]] = {}
         self.offered: set[int] = set()  # action ids whose buttons were posted
         self.ignored = 0  # interactions dropped because they weren't Clayton's
+        # job id -> (failed posts, not before): one undeliverable job never blocks the rest
+        self.failing: dict[str, tuple[int, float]] = {}
+        self.given_up: set[str] = set()  # left alone until the bot restarts
         self.tasks: set[asyncio.Task[None]] = set()
 
     # --- the one door
@@ -245,7 +251,7 @@ class Bot:
                 task = await self.call(lambda: self.core.deep_task(task_id))
             except CoreError as exc:
                 if exc.status == 404:  # the core restarted and lost it
-                    await self.post(it, sent_at, Message(texts.deep_result({})))
+                    await self.post(it, sent_at, Message(texts.DEEP_LOST))
                     return
                 continue  # the core is restarting: try again
             status = task.get("status")
@@ -414,7 +420,10 @@ class Bot:
     # --- delivering finished jobs
 
     async def deliver(self) -> int:
-        """Post every finished, undelivered job of this bot's; the number posted."""
+        """Post every finished, undelivered job of this bot's; the number posted. A job whose
+        post fails (his DMs closed, a payload Discord refuses) is tried again after a backoff
+        and, after :data:`DELIVER_TRIES`, left alone until the bot restarts; it never holds up
+        the jobs after it."""
         try:
             jobs = await self.call(self.core.undelivered)
         except CoreError:
@@ -422,9 +431,16 @@ class Bot:
         posted = 0
         for job in jobs:
             job_id = str(job.get("id"))
-            msg = await self.job_message(job)
+            tries, not_before = self.failing.get(job_id, (0, 0.0))
+            if job_id in self.given_up or self.clock.now() < not_before:
+                continue  # no export and no post until its backoff is over
             it, asked_at = self.waiting.get(job_id, (None, 0.0))
-            await self.post(it, asked_at, msg)
+            try:
+                await self.post(it, asked_at, await self.job_message(job))
+            except Exception as exc:  # noqa: BLE001 (any Discord refusal: logged, backed off)
+                await self.post_failed(job_id, tries + 1, it, asked_at, exc)
+                continue
+            self.failing.pop(job_id, None)
             try:
                 await self.call(lambda job_id=job_id: self.core.delivered(job_id))
             except CoreError as exc:
@@ -435,6 +451,34 @@ class Bot:
             self.waiting.pop(job_id, None)
             posted += 1
         return posted
+
+    async def post_failed(
+        self,
+        job_id: str,
+        tries: int,
+        it: Interaction | None,
+        asked_at: float,
+        exc: Exception,
+    ) -> None:
+        """A job's post failed for the ``tries``-th time: back off, or give up with one
+        text-only notice and one log line."""
+        if tries < DELIVER_TRIES:
+            self.failing[job_id] = (tries, self.clock.now() + DELIVER_BACKOFF_S * tries)
+            log.info(
+                "job result not posted; trying again later",
+                extra={"job": job_id, "error": type(exc).__name__},
+            )
+            return
+        self.failing.pop(job_id, None)
+        self.given_up.add(job_id)
+        log.warning(
+            "job result not posted; left until the bot restarts",
+            extra={"job": job_id, "error": type(exc).__name__},
+        )
+        try:  # short and without files, so a payload Discord refused can't refuse it too
+            await self.post(it, asked_at, Message(texts.UNDELIVERABLE))
+        except Exception:  # noqa: BLE001 (best effort; the job stays undelivered in the core)
+            log.info("undeliverable notice not posted", extra={"job": job_id})
 
     async def job_message(self, job: Mapping[str, Any]) -> Message:
         res = job.get("result") or {}
