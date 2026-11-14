@@ -81,6 +81,8 @@ public final class ExportRun {
     final List<HashedFile> files = new ArrayList<>();
     /** The crop step's status ({@link CropTrigger#dump}); null if it did not run. */
     String crops;
+    /** The palette pass's status ({@link PalettePass#run}, WO-10.3); null if it did not run. */
+    String palette;
     /** Null if the exports folder could not be set up: then nothing is written. */
     private final PathGuard guard;
     private final long t0;
@@ -159,6 +161,12 @@ public final class ExportRun {
             source);
     }
 
+    /** A new file written by a client step into {@code <run_id>.partial/<name>}, listed in the manifest. */
+    HashedFile newFile(String name) throws IOException {
+        if (guard == null) throw new IOException("no exports folder");
+        return open(runId + ".partial", name);
+    }
+
     /**
      * Copies another program's file, byte for byte, into {@code <run_id>.partial/<name>}, listed in the manifest as
      * {@code name}. A failed copy is deleted again and not listed.
@@ -199,6 +207,8 @@ public final class ExportRun {
         parts.put("nei", nei);
         // Not part of "complete" either (WO-1.10): `gos db build` checks the part before it reads crops/.
         parts.put("crops", crops != null ? crops : CropTrigger.notRun(this));
+        // Not part of "complete" either (WO-10.3): `gos db build` loads the block catalog only when it is "ok".
+        parts.put("palette", palette != null ? palette : PalettePass.notRun(this));
         parts.put("autoexport", autoexport);
         boolean complete = gtOk;
         // Last, and not listed in its own "files".
