@@ -131,7 +131,9 @@ jobs:
           version: "0.13.6"
       - run: uv python install
         working-directory: .
-      - run: uv run --locked pytest tests/integration
+      # D340: 4 workers (the runner's 4 vCPUs), one test file per worker, so each file's module fixtures
+      # (its DB built from the harness runs) are built once, as in a serial run. --durations shows where the time goes.
+      - run: uv run --locked pytest tests/integration -n 4 --dist loadfile --durations=25
         working-directory: .
         env:
           GOS_REQUIRE_HARNESS_RUN: "1"
