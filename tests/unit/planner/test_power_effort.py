@@ -192,6 +192,7 @@ def design(
     farms_path: Path,
     owned: Mapping[int, int],
     prefs: rank.Prefs = rank.BALANCED,
+    **kw: tuple[str, ...],
 ) -> power.PowerDesign:
     return power.design(
         conn,
@@ -200,6 +201,7 @@ def design(
             tier_cap=2,
             free=("fluid:water",),
             rotor=("Testium", "large"),
+            **kw,
         ),
         tg.Base(owned=dict(owned)),
         prefs=prefs,
@@ -273,11 +275,23 @@ def rows_of(p: Mapping[str, Any], part: str) -> dict[str, dict[str, Any]]:
     return {r["map"]: r for r in p["metrics"]["effort"]["rows"] if r["part"] == part}
 
 
-def line(d: power.PowerDesign, fuel: str, kind: str = "single_block") -> dict[str, Any]:
+def line(
+    d: power.PowerDesign, fuel: str, kind: str = "single_block", via: str = ""
+) -> dict[str, Any]:
+    """The option on ``fuel`` and ``kind`` that runs a chain (not the direct-import line,
+    D323); with ``via``, the one whose chain runs a recipe of that map (each chain pinned to
+    another recipe for the fuel is an option of its own since WO-4.7: the test gas from logs
+    by mixers, or from its acid/gas loop by the electrolyzer)."""
     return next(
         p
         for p in d.options
-        if p["power"]["fuel"]["id"] == fuel and p["power"]["generator"]["kind"] == kind
+        if p["power"]["fuel"]["id"] == fuel
+        and p["power"]["generator"]["kind"] == kind
+        and not p["power"]["direct"]
+        and (
+            not via
+            or any(n["recipe"].startswith(f"r:gt.recipe.{via}/") for n in p["nodes"])
+        )
     )
 
 
@@ -313,7 +327,10 @@ def test_worked_example_1_gas_line_build_only(
     """§8 row 4.3, line 1: the generator on test gas, its chain the acid/gas loop. My base owns
     a machine on every map the components need (3 mixers, 2 reactors), so unlock_h is 0 and the
     build hours are spread over them."""
-    p = line(design(conn, no_farms, OWNED_ALL), tg.GAS)
+    # Asked for the gas single block alone: its direct-import line and two chains fill the
+    # 3 options (with every candidate, the direct-import lines rank first, D323).
+    d = design(conn, no_farms, OWNED_ALL, fuels=(tg.GAS,), kinds=("single_block",))
+    p = line(d, tg.GAS, via="electrolyzer")
     n = counts(p)
     # The line: 1 electrolyzer (acid -> gas), 1 chemical reactor (gas + water -> acid), and
     # the generator; no mixer and no assembler is built.
@@ -411,7 +428,8 @@ def test_worked_example_2_turbine_line_with_rotor_hatch_and_unlocks(
     item, its material in the NBT) and the LV dynamo hatch the line sized it on, each made by
     its assembler recipe. My base owns a chemical reactor and the combustion generator only:
     the assembler and mixer maps the steps need are unlocked (their machines made once)."""
-    p = line(design(conn, no_farms, OWNED_FEW), tg.GAS, "gas_turbine")
+    d = design(conn, no_farms, OWNED_FEW, kinds=("gas_turbine",))
+    p = line(d, tg.GAS, "gas_turbine", via="electrolyzer")
     n = counts(p)
     # The line: 1 electrolyzer, 1 chemical reactor and the turbine, sized on an LV dynamo
     # (its output fits 1 A at LV, so the smallest hatch that doesn't cap it is LV).
@@ -550,7 +568,8 @@ def test_acid_line_with_an_unlock(conn: sqlite3.Connection, no_farms: Path) -> N
     chemical reactor and the generator only: the generator's item needs an assembler, a machine
     type he doesn't own and the line doesn't build, so its components are unlock_h (depth 1;
     its own steps run on maps he owns or the line builds)."""
-    p = line(design(conn, no_farms, OWNED_FEW), tg.ACID)
+    d = design(conn, no_farms, OWNED_FEW, fuels=(tg.ACID,), kinds=("single_block",))
+    p = line(d, tg.ACID)
     n = counts(p)
     # The line: 2 mixers (logs -> Dust B, Dust B -> gas), 1 reactor (gas + water -> acid),
     # the generator.
@@ -624,7 +643,7 @@ def test_output_per_effort_ranks_by_net_eut_per_effort_hour(
     """The mode's order is planner/rank.py's: complete efforts first (an effort that leaves
     items out is a lower bound, D236), each group by net EU/t / eff_h, highest first; the ratio
     is printed with each option."""
-    d = design(conn, no_farms, OWNED_FEW)
+    d = design(conn, no_farms, OWNED_FEW, fuels=(tg.GAS,))
     assert len(d.options) == 3 and d.weights.startswith("mode output_per_effort")
     keys = []
     for p in d.options:
@@ -632,15 +651,24 @@ def test_output_per_effort_ranks_by_net_eut_per_effort_hour(
         assert p["rank"]["eut_per_effort_h"] == pytest.approx(ratio, rel=1e-3)
         keys.append((p["metrics"]["effort"]["uncounted"] > 0, -ratio))
     assert keys == sorted(keys)
-    # The turbine line leaves its casings out, so it ranks after both single blocks, with a
-    # note.
-    last = d.options[-1]
-    assert last["power"]["generator"]["kind"] == "gas_turbine"
-    assert any("ranked after the lines whose effort is complete" in x
-               for x in last["rank"]["notes"])  # fmt: skip
+    # The turbine lines leave their casings out, so they rank after the three single-block
+    # lines (the direct-import line, D323, and the two chains), with a note.
+    assert d.pool > len(d.options)
+    assert {p["power"]["generator"]["kind"] for p in d.options} == {"single_block"}
+    assert sorted(p["power"]["direct"] for p in d.options) == [False, False, True]
+    turbines = design(
+        conn, no_farms, OWNED_FEW, fuels=(tg.GAS,), kinds=("gas_turbine",)
+    )
+    assert turbines.options
+    for p in turbines.options:
+        assert p["metrics"]["effort"]["uncounted"] > 0
+        assert any("ranked after the lines whose effort is complete" in x
+                   for x in p["rank"]["notes"])  # fmt: skip
     # With a crafting-table step of 60 s instead of 2 s (me/prefs.md's craft_s), the hand
     # steps weigh more and the effort changes accordingly.
-    slow = design(conn, no_farms, OWNED_FEW, rank.parse_prefs("craft_s: 60\n"))
+    slow = design(
+        conn, no_farms, OWNED_FEW, rank.parse_prefs("craft_s: 60\n"), fuels=(tg.GAS,)
+    )
     for p in slow.options:
         fast = next(q for q in d.options if q["id"] == p["id"])
         hand = sum(
@@ -709,7 +737,9 @@ def test_parts_count_the_dynamo_hatch_and_list_what_isnt_counted(
     assert missing == 1
     assert any(n.startswith("rotor Steel large: no such item") for n in notes)
     assert any("maintenance, input, output, muffler" in n for n in notes)
-    assert any("cables" in n and "WO-4.5" in n for n in notes)
+    # Cable runs (WO-4.5) are options for the output tier; a run's length is the layout's.
+    assert any("cables are not counted" in n and "D242" in n for n in notes)
+    assert not any("come with WO-4.5" in n for n in notes)
     # The Testium rotor is there (its material from the item's NBT).
     node["spec"]["rotor"] = ["Testium", "large"]
     out, _, missing = power.parts(conn, {"nodes": [node]}, 1)
@@ -821,8 +851,8 @@ CITE = re.compile(
 def test_breakdown_card_is_a_catalog_table_card(
     conn: sqlite3.Connection, no_farms: Path
 ) -> None:
-    d = design(conn, no_farms, OWNED_FEW)
-    p = line(d, tg.GAS, "gas_turbine")
+    d = design(conn, no_farms, OWNED_FEW, kinds=("gas_turbine",))
+    p = line(d, tg.GAS, "gas_turbine", via="electrolyzer")
     card = cards.effort_card(p)
     assert validate(card) == []
     assert card["type"] == "table" and card["tool"] == "effort_estimate"
