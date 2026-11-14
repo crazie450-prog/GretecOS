@@ -37,7 +37,7 @@
 | [fingerprint] configs    | GT's recipe configs (D120)               | fingerprint (WO-1.4)        |
 | [policy] export_on_quit  | ask (D69); never turns it off            | post-exit hook (WO-1.4)     |
 | [policy] spoiler_default | 0, nudge (D26, D72); 1 partial, 2 full   | quest tools, view (WO-6.4)  |
-| [policy] notices         | power_deficit, machine_stalled, plan_buildable (D71); + quest_opened | notices (WO-6.5) |
+| [policy] notices         | power_deficit, machine_stalled, plan_buildable (D71); + quest_opened | notices (WO-6.5); the stall is [alerts]' (D281) |
 | [persona] default        | gt-veteran (D60)                         | personas (WO-5.6, D206)     |
 | [persona] random_per_session | false                                | personas (WO-5.6, D206)     |
 | [setup] former_plays     | none; plus config/former_plays.txt (D223)| sync, setup wizard (WO-2.9) |
