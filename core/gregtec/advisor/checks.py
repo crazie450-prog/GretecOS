@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gregtec.alerts.engine import place
+from gregtec.alerts.rules import place
 from gregtec.bridge.telemetry import HEARTBEAT_S, STALE_S
 
 DRAIN_HOLD_S = (

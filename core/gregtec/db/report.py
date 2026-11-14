@@ -319,6 +319,7 @@ def lines(result: Result, full: bool) -> list[str]:
     out.extend(fact_lines(result, full))
     out.extend(crop_lines(result, full))
     out.extend(power_lines(result))
+    out.extend(palette_lines(result))
     for key in result.pruned:
         out.append(f"Pruned run {key} from the DB (keeping the newest [db] keep_runs)")
     if result.report_path is not None:
@@ -481,6 +482,52 @@ def power_lines(result: Result) -> list[str]:
         f"single-block generators: {len(data.generators)}; fuel containers: "
         f"{len(data.containers)}"
     )
+    return out
+
+
+def palette_lines(result: Result) -> list[str]:
+    """The block catalog's counts (WO-10.3, D307): states, tile-entity states, mods, textures."""
+    loaded = result.loaded
+    data = loaded.palette
+    if data is None:
+        if loaded.palette_error is not None:
+            return [f"WARNING: block catalog not loaded: {loaded.palette_error}"]
+        if loaded.palette_status in ("absent", "skipped_server"):
+            return [
+                (
+                    f"Block catalog: none (parts.palette is {loaded.palette_status!r}: the palette "
+                    "pass runs on Export's client, from WO-10.3)"
+                )
+            ]
+        errors = loaded.run.manifest.get("part_errors")
+        why = errors.get("palette") if isinstance(errors, dict) else None
+        tail = f": {why}" if why else ""
+        return [
+            (
+                f"WARNING: block catalog not loaded (parts.palette is {loaded.palette_status!r}"
+                f"{tail})"
+            )
+        ]
+    keys = {s.key for s in data.states}
+    te = {s.key for s in data.states if s.has_te}
+    mods = Counter(s.mod for s in data.states)
+    shown = ", ".join(
+        f"{m} {n:,}" for m, n in sorted(mods.items(), key=lambda x: (-x[1], x[0]))
+    )
+    out = [
+        (
+            f"Block catalog: {len(keys):,} block states ({len(data.states):,} item variants) from "
+            f"{len(mods)} mods, {len(te):,} with a tile entity (never in a shell); "
+            f"{len(data.textures):,} textures, "
+            f"{sum(t.rgb is not None for t in data.textures):,} with an average colour"
+        ),
+        f"  by mod: {shown}",
+    ]
+    if data.errors:
+        out.append(
+            f"WARNING: {len(data.errors)} blocks didn't read: "
+            + "; ".join(f"{b} ({why})" for b, why in data.errors[:5])
+        )
     return out
 
 

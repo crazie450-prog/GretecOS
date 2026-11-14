@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 5 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1).
+-- Gregtec OS SQLite schema, version 6 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1, WO-10.3).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -19,6 +19,8 @@
 -- run; new tables only, so no migration file.
 -- Version 5 (D240, WO-4.5): the storage tables (cables, batteries, battery buffers, transformers,
 -- LSC cells), one set per export run; new tables only, so no migration file.
+-- Version 6 (D307, WO-10.3): the block catalog (block_state, block_texture), one set per export
+-- run; new tables only, so no migration file.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -229,6 +231,21 @@ CREATE TABLE IF NOT EXISTS transformer(run_id INT NOT NULL, mte_id INT NOT NULL,
   amps_in INT NOT NULL, eu_out INT NOT NULL, amps_out INT NOT NULL, PRIMARY KEY(run_id, mte_id, mode));
 CREATE TABLE IF NOT EXISTS lsc_cell(run_id INT NOT NULL, name TEXT NOT NULL, registry_name TEXT NOT NULL,
   meta INT NOT NULL, glass_tier INT NOT NULL, capacity TEXT NOT NULL, PRIMARY KEY(run_id, name));
+-- block catalog (WO-10.3, D307). From palette.jsonl and textures.jsonl (runs with parts.palette =
+-- ok). block_state: every placeable block state, keyed by the block's registry name and the meta
+-- it is placed at, one row per item variant that places it (item_name@item_meta); has_te is
+-- Forge's hasTileEntity(meta) (a shell never holds such a block, plan 7.10); hidden: in no
+-- creative tab; faces: a JSON list of the six faces' icon names (down, up, north, south, west,
+-- east). block_texture: each icon name's PNG in the instance's resource packs and its average
+-- colour (#rrggbb, alpha 0..255); error when it didn't resolve. Never a numeric block or item id.
+CREATE TABLE IF NOT EXISTS block_state(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
+  item_name TEXT NOT NULL, item_meta INT NOT NULL, name TEXT, unlocalized TEXT, mod_id TEXT NOT NULL,
+  has_te INT NOT NULL, opaque INT, full_cube INT, normal_cube INT, standard_render INT, liquid INT,
+  falls INT NOT NULL, light INT, light_opacity INT, tab TEXT, hidden INT NOT NULL, faces TEXT NOT NULL,
+  errors TEXT, PRIMARY KEY(run_id, registry_name, meta, item_name, item_meta));
+CREATE INDEX IF NOT EXISTS ix_block_state_mod ON block_state(run_id, mod_id);
+CREATE TABLE IF NOT EXISTS block_texture(run_id INT NOT NULL, icon TEXT NOT NULL, path TEXT NOT NULL,
+  sha256 TEXT, width INT, height INT, rgb TEXT, alpha INT, error TEXT, PRIMARY KEY(run_id, icon));
 -- wiki, notes, usage
 CREATE TABLE IF NOT EXISTS wiki_page(title TEXT PRIMARY KEY, revid INT, fetched INT, url TEXT, text TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(title, text, content='wiki_page');
