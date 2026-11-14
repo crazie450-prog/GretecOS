@@ -127,7 +127,9 @@ final class SchematicHarness {
                 tag = CompressedStreamTools.readCompressed(s);
             }
             int w = tag.getShort("Width"), h = tag.getShort("Height"), l = tag.getShort("Length");
-            Vector offset = new Vector(tag.getInteger("WEOffsetX"), tag.getInteger("WEOffsetY"),
+            Vector offset = new Vector(
+                tag.getInteger("WEOffsetX"),
+                tag.getInteger("WEOffsetY"),
                 tag.getInteger("WEOffsetZ"));
             Vector min = player.add(offset);
             Vector max = min.add(w - 1, h - 1, l - 1);
@@ -194,7 +196,10 @@ final class SchematicHarness {
                 checks,
                 "pasted_at_offset_" + name,
                 wrong == 0 && solid > 0,
-                solid + " solid cells at player " + player + " + WEOffset " + offset
+                solid + " solid cells at player "
+                    + player
+                    + " + WEOffset "
+                    + offset
                     + (wrong == 0 ? "" : "; " + wrong + " cells differ, first " + first));
             int outside = 0;
             for (int x = min.getBlockX() - 1; x <= max.getBlockX() + 1; x++) {
