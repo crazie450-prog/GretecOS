@@ -8,7 +8,9 @@ export's power pass would write (its liquid air and boost lists, the dynamo hatc
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import io
 import shutil
 import sqlite3
 import sys
@@ -19,7 +21,7 @@ from types import ModuleType
 import pytest
 
 from gregtec.db import access
-from gregtec.planner import chains, generators, power, solve, sustain
+from gregtec.planner import chains, generators, power, powercli, solve, sustain
 from gregtec.planner.graph import EU_KEY
 
 
@@ -434,3 +436,44 @@ def test_an_item_both_imported_and_exported_crosses_by_the_difference() -> None:
     assert dict(e) == pytest.approx({"a": 0.0003, "c": 1.0, "t": 3.0})
     i, e = solve._net_out((("a", 0.5),), [("a", 0.2)], set())
     assert dict(i) == pytest.approx({"a": 0.3}) and e == []
+
+
+# --- gos power naquadah ------------------------------------------------------------------------
+
+
+def run_cli(home: Path, *argv: str) -> tuple[int, str]:
+    cfg = home / "gos.toml"
+    cfg.write_text(f'[paths]\ngos_home = "{home.as_posix()}"\n', encoding="utf-8")
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="command")
+    powercli.add_parsers(sub)
+    args = p.parse_args(["power", "--config", str(cfg), *argv])
+    buf = io.StringIO()
+    code = powercli.run(args, buf)
+    return code, buf.getvalue()
+
+
+def test_cli_prints_the_reactor_runs_from_the_db(db: Path) -> None:
+    home = db.parent.parent
+    code, text = run_cli(home, "naquadah", "--dynamo", "MV")
+    assert code == 0, text
+    assert "liquid air: 100 L of liquidair a check" in text
+    assert "coolant 1: testcoolant, 20 L a check, 500%" in text
+    row = next(line for line in text.splitlines() if line.startswith("testnq\t"))
+    cols = row.split("\t")
+    # EU/t, fuel, air a run (2 checks), fuel L/s, air L/s, the hatch, the citation
+    assert cols[3:6] == ["2048", "1", "200"]
+    assert cols[8:10] == ["0.666667", "133.333"]
+    assert "mte:15219" in cols[11] and cols[12].startswith(
+        "r:gg.recipe.naquadah_reactor/"
+    )
+    code, text = run_cli(
+        home, "naquadah", "--coolant", "testcoolant", "--excited", "testexcited"
+    )
+    row = next(line for line in text.splitlines() if line.startswith("testnq\t"))
+    # 2048 x 500 % x 4 = 40960 EU/t; 4 L of fuel a run; 2 checks of 20 L of each boost
+    assert row.split("\t")[3:8] == ["40960", "4", "200", "40", "40"]
+    code, text = run_cli(home, "naquadah", "--coolant", "water")
+    assert code == 2 and "not one of its coolants" in text
+    code, text = run_cli(home, "naquadah", "--fuel", "lava")
+    assert code == 2 and "not a fuel" in text

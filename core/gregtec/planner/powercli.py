@@ -8,6 +8,12 @@
   [--loose] [--legacy]``: a large turbine's output at half its optimal flow, its optimal flow and
   its maximum flow, from the DB's rotor and fuel rows and the GT turbine port. These are the
   numbers ``docs/runbooks/turbines_lab.md`` checks in the Lab.
+- ``gos power naquadah [--fuel FLUID] [--coolant FLUID] [--excited FLUID] [--dynamo TIER]``
+  (WO-4.8, D326): GoodGenerator's Large Naquadah Reactor: its liquid air and boost lists as the
+  export read them, and for each fuel of its map (or one) a steady run: EU/t, litres of fuel,
+  liquid air, coolant and excited fluid a run and a second, the depleted fuel it gives back, and
+  the smallest dynamo hatch up to ``--dynamo`` that holds it. The numbers
+  ``docs/runbooks/turbines_lab.md`` section 5 checks in the Lab.
 - ``gos power design MODE [--tier T] [--scale unit|generators|eut_cap|raw_budget --bound N]
   [--free KEY ...] [--kind KIND ...] [--fuel KEY ...] [--rotor MATERIAL SIZE] [--candidates K]
   [--options N] [--no-effort] [--json]`` (WO-4.2): 2-3 ranked power lines for one of the four
@@ -35,9 +41,11 @@ from gregtec import config
 from gregtec.base.state import MyBase
 from gregtec.db import access
 from gregtec.planner import effort, fuels, generators, power
+from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath import turbine as gt_turbine
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.gtmath.turbine import Kind
+from gregtec.planner.machines import current_run
 from gregtec.planner.request import RequestError
 
 COMMANDS = ("power",)
@@ -77,6 +85,18 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     t.add_argument("--loose", action="store_true", help="loose fitting (screwdriver)")
     t.add_argument(
         "--legacy", action="store_true", help="the legacy (pre-2.9) controller"
+    )
+    n = sub.add_parser(
+        "naquadah", help="the Large Naquadah Reactor's runs on its fuels (WO-4.8)"
+    )
+    n.add_argument("--fuel", default=None, help="one fuel, by fluid name")
+    n.add_argument("--coolant", default=None, help="a coolant of its list, by fluid")
+    n.add_argument("--excited", default=None, help="an excited fluid of its list")
+    n.add_argument(
+        "--dynamo",
+        type=_tier,
+        default=len(VN) - 1,
+        help="the highest dynamo hatch tier to pick from (default: any)",
     )
     d = sub.add_parser(
         "design", help="2-3 ranked power lines for an objective mode (WO-4.2)"
@@ -163,6 +183,8 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
             return show_generators(conn, out)
         if args.power_cmd == "design":
             return show_design(conn, args, out, cfg.gos_home)
+        if args.power_cmd == "naquadah":
+            return show_naquadah(conn, args, out)
         return show_turbine(conn, args, out)
     finally:
         conn.close()
@@ -253,6 +275,87 @@ def show_turbine(
     for run in report.runs:
         print(f"{run.label}\t{run.flow}\t{run.eut}\t{int(run.optimal_flow)}", file=out)
     print("refs: " + " ".join(report.refs), file=out)
+    return 0
+
+
+def show_naquadah(
+    conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO
+) -> int:
+    run = current_run(conn)
+    entries = [
+        e for e in generators.catalog(conn, run) if e.sizing == "naquadah_reactor"
+    ]
+    if not entries:
+        print("no Large Naquadah Reactor in the export run", file=out)
+        return 2
+    e = entries[0]
+    reactor = generators.reactor(conn, e.mte_id, run)
+    if reactor is None:
+        print(
+            f"{e.ref}: the export run has no reactor lists: export again with this"
+            " GregtecLink, then `gos db build`",
+            file=out,
+        )
+        return 2
+
+    def pick(
+        name: str | None, boosts: tuple[gt_naquadah.Boost, ...], what: str
+    ) -> gt_naquadah.Boost | None:
+        if name is None:
+            return None
+        b = next((b for b in boosts if b.fluid == name), None)
+        if b is None:
+            raise ValueError(
+                f"{name!r} is not one of its {what}: "
+                + ", ".join(x.fluid for x in boosts)
+            )
+        return b
+
+    try:
+        coolant = pick(args.coolant, reactor.coolants, "coolants")
+        excited = pick(args.excited, reactor.excited, "excited fluids")
+    except ValueError as exc:
+        print(str(exc), file=out)
+        return 2
+    takes = generators.exotic(conn, e.mte_id)
+    print(f"{e.name} ({e.ref}), exotic hatches: {takes or 'none'}", file=out)
+    print(f"liquid air: {reactor.air} L of {reactor.air_fluid} a check", file=out)
+    for what, boosts, unit in (
+        ("coolant", reactor.coolants, "%"),
+        ("excited", reactor.excited, "x"),
+    ):
+        for i, b in enumerate(boosts, 1):
+            print(
+                f"{what} {i}: {b.fluid}, {b.amount} L a check, {b.value}{unit}",
+                file=out,
+            )
+    fuel_rows = generators.reactor_fuels(conn, run)
+    if args.fuel is not None:
+        fuel_rows = [f for f in fuel_rows if f.fluid == args.fuel]
+        if not fuel_rows:
+            print(f"{args.fuel!r} is not a fuel of {generators.NAQUADAH_MAP}", file=out)
+            return 2
+    print(
+        "fuel\tbasic EU/t\tburn ticks\tEU/t\tfuel L/run\tair L/run\tcoolant L/run"
+        "\texcited L/run\tfuel L/s\tair L/s\tdepleted L/s\tdynamo\tref",
+        file=out,
+    )
+    for f in sorted(fuel_rows, key=lambda f: f.basic):
+        s = gt_naquadah.steady(
+            reactor,
+            basic=f.basic,
+            duration=f.duration,
+            coolant=coolant,
+            excited=excited,
+        )
+        d = generators.dynamo(conn, run, eut=s.eut, tier_cap=args.dynamo, takes=takes)
+        hatch = f"{d.name or d.ref} ({d.ref})" if d else "none holds it"
+        print(
+            f"{f.fluid}\t{f.basic}\t{f.duration}\t{s.eut}\t{s.fuel}\t{s.air}\t{s.coolant}"
+            f"\t{s.excited}\t{s.per_second(s.fuel):.6g}\t{s.per_second(s.air):.6g}"
+            f"\t{s.per_second(s.depleted):.6g}\t{hatch}\t{f.ref}",
+            file=out,
+        )
     return 0
 
 

@@ -233,8 +233,7 @@ def test_a_version_4_db_gets_the_storage_tables(tmp_path: Path) -> None:
     conn = access.connect(path)
     try:
         assert (
-            conn.execute("PRAGMA user_version").fetchone()[0]
-            == access.SCHEMA_VERSION
+            conn.execute("PRAGMA user_version").fetchone()[0] == access.SCHEMA_VERSION
         )
         assert access.SCHEMA_VERSION >= 5
         assert conn.execute("SELECT count(*) FROM lsc_cell").fetchone()[0] == 0
