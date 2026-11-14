@@ -179,6 +179,12 @@ class FakeCore:
         default_factory=lambda: {"mode": "on", "until": None}
     )
     journal_lines: list[tuple[str, str]] = field(default_factory=list)
+    # WO-9.2: the alert outbox, the credit banner's state and the decisions made
+    outbox: list[dict[str, Any]] = field(default_factory=list)
+    marked: list[int] = field(default_factory=list)
+    credits_state: dict[str, Any] = field(default_factory=dict)
+    decisions: list[str] = field(default_factory=list)
+    decision_error: CoreError | None = None
 
     def _rec(self, name: str, *args: object) -> None:
         self.calls.append((name, args))
@@ -257,8 +263,11 @@ class FakeCore:
     def ai(self) -> dict[str, Any]:
         self._rec("ai")
         if self.ai_online:
-            return {"ai": {"online": True}}
-        return {"ai": {"online": False, "reason": "no API key"}}
+            return {"ai": {"online": True}, "credits": self.credits_state}
+        return {
+            "ai": {"online": False, "reason": "no API key"},
+            "credits": self.credits_state,
+        }
 
     def personas(self) -> dict[str, Any]:
         self._rec("personas")
@@ -303,6 +312,29 @@ class FakeCore:
         self._rec("cancel", action_id)
         self.pending = None
         return {"ok": True, "text": "Cancelled."}
+
+    def alert_outbox(self) -> dict[str, Any]:
+        self._rec("alert_outbox")
+        return {"dms": list(self.outbox), "alerts": self.alerts_state}
+
+    def alert_delivered(self, dm_id: int) -> dict[str, Any]:
+        self._rec("alert_delivered", dm_id)
+        self.marked.append(dm_id)
+        self.outbox = [d for d in self.outbox if d["id"] != dm_id]
+        return {"delivered": dm_id}
+
+    def credit_decision(self, choice: str) -> dict[str, Any]:
+        self._rec("credit_decision", choice)
+        if self.decision_error is not None:
+            raise self.decision_error
+        self.decisions.append(choice)
+        return {
+            "choice": choice,
+            "open": "https://console.anthropic.com/settings/billing"
+            if choice == "billing"
+            else None,
+            "credits": self.credits_state,
+        }
 
     def names(self) -> list[str]:
         return [n for n, _ in self.calls]

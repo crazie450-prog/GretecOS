@@ -24,7 +24,9 @@ from typing import Any
 import discord
 import pytest
 
+from gregtec.alerts.policy import NotifyPolicy
 from gregtec.discordbot import adapter, handlers
+from gregtec.discordbot.alerts import AlertDesk
 from gregtec.discordbot.handlers import Message
 from gregtec.remote.jobs import JobQueue
 from gregtec.store import Store
@@ -41,7 +43,18 @@ from ..unit.discordbot.fakes import (
 )
 
 KINDS = ("command", "autocomplete", "component", "select", "modal")
-NAMES = (*handlers.COMMANDS, "gos:confirm:7", "gos:cancel:7", "gos:pick", "unknown")
+NAMES = (
+    *handlers.COMMANDS,
+    "gos:confirm:7",
+    "gos:cancel:7",
+    "gos:pick",
+    "unknown",
+    # WO-9.2: the credit DM's buttons (D48), each one, and Stop's second press
+    *(
+        f"gos:credit:{c}:2033-05-01"
+        for c in ("billing", "no_ai", "resume", "stop", "stop!")
+    ),
+)
 OPTIONS: dict[str, Any] = {
     "text": "confirm",  # a stranger's "confirm" must never reach /api/ask
     "target": "steel ingot",
@@ -77,6 +90,9 @@ def test_a_stranger_s_interaction_of_any_kind_is_dropped_without_a_word(
 
     async def go() -> None:
         bot = make_bot(core, dms)
+        bot.credit = AlertDesk(
+            bot, NotifyPolicy()
+        ).credit_button  # as the adapter wires it
         it = FakeInteraction(STRANGER, kind, core.clock)
         await bot.interaction(it, name, dict(OPTIONS))
         await core.clock.advance(60)
@@ -87,6 +103,7 @@ def test_a_stranger_s_interaction_of_any_kind_is_dropped_without_a_word(
 
     asyncio.run(go())
     assert core.pending == PENDING  # still waiting for Clayton
+    assert core.decisions == []  # no stranger answers the credit alert (D48)
     assert core.queue.jobs("discord") == []
     logged = " ".join(r.getMessage() + str(r.__dict__) for r in caplog.records)
     assert str(STRANGER) not in logged and "confirm" not in logged.replace(
