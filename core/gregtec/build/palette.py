@@ -117,10 +117,14 @@ class CatalogError(RuntimeError):
 
 
 def check(
-    conn: sqlite3.Connection, entries: Iterable[Entry], world: WorldRegistry
+    conn: sqlite3.Connection,
+    entries: Iterable[Entry],
+    world: WorldRegistry,
+    max_types: int | None = MAX_TYPES,
 ) -> Report:
     """Apply the palette rule to ``entries`` with the newest block catalog in ``conn`` and the
-    target world's registry."""
+    target world's registry. ``max_types`` (None: no limit) caps the distinct entries; the
+    schematic writer (WO-10.4, D309) lifts it when it splits the shell or writes ``AddBlocks``."""
     found = block_db.catalog_run(conn)
     if found is None:
         raise CatalogError(
@@ -179,9 +183,9 @@ def check(
             )
         verdicts.append(Verdict(e, name, tuple(refused), tuple(warnings)))
     problems: list[str] = []
-    if len(seen) > MAX_TYPES:
+    if max_types is not None and len(seen) > max_types:
         problems.append(
-            f"{len(seen)} block types: a schematic's palette holds at most {MAX_TYPES}; split "
+            f"{len(seen)} block types: a schematic's palette holds at most {max_types}; split "
             "the shell (plan 7.10)"
         )
     if not seen:

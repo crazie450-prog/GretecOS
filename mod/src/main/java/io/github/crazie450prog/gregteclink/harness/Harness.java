@@ -63,6 +63,11 @@ public final class Harness {
 
     public static final String PROPERTY = "gregtec.harness";
     public static final String RESULT = "harness-result.json";
+    /**
+     * The schematic harness (WO-10.4): read here, so that {@link SchematicHarness} and its WorldEdit classes load
+     * only in that run, which is the only one with worldedit-gtnh on the classpath.
+     */
+    private static final String SCHEMATIC_PROPERTY = "gregtec.harness.schematic";
     /** Set by {@code -PharnessNeiFail}: the client harness expects NEI's dump to fail. */
     private static final String NEI_FAIL_PROPERTY = "gregtec.harness.neiFail";
     /** Set by {@code -PharnessNeiHandlerFail}: the NEI step gets one more recipe handler, which always fails (D188). */
@@ -179,6 +184,10 @@ public final class Harness {
         ran = true;
         if (ListenerHarness.requested()) {
             ListenerHarness.start(gameDir, modules);
+            return;
+        }
+        if (Boolean.getBoolean(SCHEMATIC_PROPERTY)) {
+            SchematicHarness.start(gameDir);
             return;
         }
         List<JsonObject> checks = new ArrayList<>();

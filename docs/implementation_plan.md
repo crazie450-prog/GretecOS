@@ -815,6 +815,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
     - #24: EndlessIDs support for schematic save and load.
     - #28: chunk corruption when placing a meta value that doesn't exist. Validate every palette entry first.
   - worldedit-gtnh v0.0.10 isn't bundled in the pack; install it in Play and Lab yourself [F].
+  - **Built** (WO-10.4, D309-D311): `gregtec.build.schematic` writes this layout (block types numbered by registry name; above 255 the shell is split into parts, or `AddBlocks` on request) only through `write_shell`, which applies WO-10.3's palette rule to every state the shell uses (meta > 15 refused until #30 is resolved); its reader takes worldedit-gtnh `//copy` saves and Schematica saves, with or without mappings, nibble order detected or refused. `gos schematic sample|read|compare`. The dev-server schematic harness pastes and copies GOS shells with worldedit-gtnh (D310); the Lab round trip is runbook `schematic_roundtrip.md`.
 - **Themes (D36).** Each `themes/<id>.md` holds:
   - a palette (`registry@meta`, from Clayton's client palette), motifs, massing rules, roof/window/lighting rules, adaptations per line type, references to sample builds, and a version `v:`.
   - Themes are created from prompts and refined in conversation.
@@ -1253,7 +1254,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
 | V15 | GuideNH `exportsite` embeds in the dashboard | Spike | 10.1 |
-| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
+| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta); and the paste offset `WEOffset` = `(-⌊W/2⌋, 0, 1)` in game | Lab paste (runbook `schematic_roundtrip.md`). The dev-server harness pastes and copies with worldedit-gtnh v0.0.10, ids < 4096 and meta ≤ 15 only (D310) | 10.4 |
 | V17 | **Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW | — | 10.0 |
 | V18 | Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open | Weekly; watcher reports | 11.1 |
 | V19 | Does Open to LAN avoid the pause freeze? | Lab: the OC agent's messages through 60 s in the Esc menu, without and with Open to LAN (`docs/runbooks/oc_agent.md` F) | 7.2 |

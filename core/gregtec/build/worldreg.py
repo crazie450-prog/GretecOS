@@ -78,6 +78,21 @@ def parse(
     return WorldRegistry(world, frozenset(blocks), frozenset(items), source)
 
 
+def block_ids(root: Mapping[str, Any], world: str) -> dict[int, str]:
+    """A ``level.dat``'s block ids to registry names (``FML.ItemData``'s ``V`` to ``K``).
+
+    Only to read a capture whose schematic has no ``BlockMapping``/``SchematicaMapping``
+    (:mod:`gregtec.build.schematic`): its numeric ids are those of the world it was copied in, and
+    are turned into names as the file is read, never kept (WO-10.4, D311)."""
+    parse(root, world)  # the same refusals as the names
+    out: dict[int, str] = {}
+    for entry in root["FML"]["ItemData"]:
+        key, value = entry["K"], entry.get("V")
+        if key[0] == BLOCK_PREFIX and isinstance(value, int):
+            out[value] = key[1:]
+    return out
+
+
 def _read(path: Path) -> dict[str, Any]:
     data = read_bytes(path, validate=nbt.read, limit=LEVEL_MAX)
     return nbt.read(data)[1]
@@ -85,6 +100,16 @@ def _read(path: Path) -> dict[str, Any]:
 
 def read(world: Path) -> WorldRegistry:
     """The registry of the world folder ``world`` (its ``level.dat``)."""
+    root, source = _root(world)
+    return parse(root, world.name, source)
+
+
+def read_block_ids(world: Path) -> dict[int, str]:
+    """:func:`block_ids` of the world folder ``world`` (its ``level.dat``, read-only)."""
+    return block_ids(_root(world)[0], world.name)
+
+
+def _root(world: Path) -> tuple[dict[str, Any], str]:
     path = world / LEVEL_DAT
     source = LEVEL_DAT
     try:
@@ -107,4 +132,4 @@ def read(world: Path) -> WorldRegistry:
             f"can't read the world {world.name!r}'s level.dat ({type(exc).__name__}); try "
             "again in a moment"
         ) from None
-    return parse(root, world.name, source)
+    return root, source
