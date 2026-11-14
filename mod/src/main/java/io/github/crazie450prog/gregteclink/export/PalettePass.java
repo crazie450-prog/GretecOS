@@ -53,6 +53,8 @@ final class PalettePass {
     static final int SIDES = 6;
     /** A texture bigger than this is not read (the average colour is then missing). */
     static final int MAX_TEXTURE_BYTES = 4 << 20;
+    /** Forge names the icon of a block that registered none {@code MISSING_ICON_BLOCK_<numeric id>_<name>}. */
+    static final String MISSING_ICON = "MISSING_ICON_";
 
     int blocks;
     int states;
@@ -260,6 +262,11 @@ final class PalettePass {
             try {
                 IIcon i = block.getIcon(side, meta);
                 icon = i == null ? null : i.getIconName();
+                if (icon != null && icon.startsWith(MISSING_ICON)) {
+                    // Forge's placeholder for a block with no icon; its name holds the numeric block id.
+                    errs.add("face " + side + ": no icon");
+                    icon = null;
+                }
             } catch (Throwable t) {
                 errs.add("face " + side + ": " + Json.error(t));
             }

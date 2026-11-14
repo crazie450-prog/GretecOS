@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
     base,
+    blocks,
     crops,
     designer,
     events,
@@ -421,6 +422,18 @@ TOOLS = (
         ops.ACTION_STATUS_SCHEMA,
         ops.action_status,
         needs_db=False,
+    ),
+    Tool(
+        "block_find",
+        "Block states of Clayton's own export (the block catalog) for shell palettes: key "
+        "<registry name>@<meta>, name, mod, tile entity (te=1 is never in a shell), opaque, "
+        "full cube, light, falls, liquid, creative tab and face colours. Plain states only "
+        "unless plain is false. A palette is checked against the target world by gos palette "
+        "check, not by this tool.",
+        blocks.BLOCK_FIND_SCHEMA,
+        blocks.block_find,
+        # The architect's (plan 7.10); the fast lane answers recipes, not shells (D307).
+        lanes=frozenset({DEEP}),
     ),
 )
 

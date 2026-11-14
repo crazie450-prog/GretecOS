@@ -92,6 +92,8 @@ public final class Harness {
         "appliedenergistics2:tile.BlockSkyStone");
     /** The LV casing's side, which must resolve to a PNG with an average colour. */
     private static final String PALETTE_CASING_ICON = "gregtech:iconsets/MACHINE_LV_SIDE";
+    /** Vanilla stone's icon, which has no domain. */
+    private static final String PALETTE_STONE_ICON = "stone";
 
     /** Numeric-ID fields that must never appear (EndlessIDs: key on registry name + meta). NBT is not searched. */
     private static final Set<String> FORBIDDEN_KEYS = new HashSet<>(
@@ -1286,9 +1288,14 @@ public final class Harness {
             check(
                 checks,
                 "textures_cover_faces_and_resolve",
+                // IC2 cuts its icons from sheets of its own (ic2:blockAlloy:0), so they have no PNG of their own and no
+                // colour: at least 70% must resolve. No icon name may be Forge's MISSING_ICON_BLOCK_<id> placeholder.
                 missing.isEmpty() && listed.equals(icons)
                     && rgb.containsKey(PALETTE_CASING_ICON)
-                    && resolved[0] * 10 >= listed.size() * 9,
+                    && rgb.containsKey(PALETTE_STONE_ICON)
+                    && resolved[0] * 10 >= listed.size() * 7
+                    && !listed.toString()
+                        .contains("MISSING_ICON_"),
                 listed.size() + " icons, "
                     + resolved[0]
                     + " with a colour; "

@@ -14,6 +14,7 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from gregtec.db import access
 from gregtec.ingest import palette as palette_ingest
 
 TABLES = ("block_state", "block_texture")
@@ -69,7 +70,17 @@ def write(
     conn.executemany(
         "INSERT INTO block_texture VALUES (?,?,?,?,?,?,?,?,?)",
         [
-            (run_id, t.icon, t.path, t.sha256, t.width, t.height, t.rgb, t.alpha, t.error)
+            (
+                run_id,
+                t.icon,
+                t.path,
+                t.sha256,
+                t.width,
+                t.height,
+                t.rgb,
+                t.alpha,
+                t.error,
+            )
             for t in data.textures
         ],
     )
@@ -166,3 +177,62 @@ def counts(conn: sqlite3.Connection, run_id: int) -> dict[str, int]:
         "tile_entity_states": int(row[2]),
         "mods": int(row[3]),
     }
+
+
+FIND_COLUMNS = (
+    "block",
+    "name",
+    "mod",
+    "variants",
+    "te",
+    "opaque",
+    "full_cube",
+    "light",
+    "falls",
+    "liquid",
+    "hidden",
+    "tab",
+    "top_rgb",
+    "side_rgb",
+)
+MAX_WORDS = 3
+
+
+def _like(word: str) -> str:
+    return word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def find(
+    conn: sqlite3.Connection,
+    run_id: int,
+    text: str = "",
+    *,
+    mod: str | None = None,
+    plain: bool = False,
+    hidden: bool = False,
+    opaque: bool | None = None,
+    light_min: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    """Catalog states matching every word of ``text`` (name or registry name, at most
+    :data:`MAX_WORDS`), in registry name and meta order: the named query ``block_find``."""
+    words = [_like(w) for w in text.split()][:MAX_WORDS]
+    words += [""] * (MAX_WORDS - len(words))
+    return access.query(
+        conn,
+        "block_find",
+        {
+            "run": run_id,
+            "w1": words[0],
+            "w2": words[1],
+            "w3": words[2],
+            "mod": mod,
+            "plain": int(plain),
+            "hidden": int(hidden),
+            "opaque": None if opaque is None else int(opaque),
+            "light_min": light_min,
+            "limit": limit,
+            "offset": offset,
+        },
+    )

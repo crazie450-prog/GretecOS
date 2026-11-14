@@ -83,7 +83,9 @@ class Texture:
 class Palette:
     states: tuple[BlockState, ...]
     textures: tuple[Texture, ...]
-    errors: tuple[tuple[str, str], ...]  # (block, why) for blocks whose state didn't read
+    errors: tuple[
+        tuple[str, str], ...
+    ]  # (block, why) for blocks whose state didn't read
 
 
 def status(manifest: Mapping[str, Any]) -> str:
@@ -140,7 +142,7 @@ def _bool(d: Mapping[str, Any], key: str, default: bool | None = None) -> bool:
 def _no_ids(d: Mapping[str, Any]) -> None:
     bad = NUMERIC_ID_KEYS & set(d)
     if bad:
-        raise FormatError(f"numeric id key {sorted(bad)[0]!r} (keys are registry names)")
+        raise FormatError(f"numeric id key {min(bad)!r} (keys are registry names)")
 
 
 def parse_state(d: Mapping[str, Any]) -> BlockState | tuple[str, str]:

@@ -19,7 +19,8 @@
 4. **Write** everything in one transaction, so a failed build leaves the DB as it was: the run
    (``export_run``, ``mod``), the catalog tables shared by every run (items, fluids, ores, recipe
    maps, NEI handlers, machines and their facts, latest run wins), the run's recipes and crop
-   data (:mod:`gregtec.db.crops`), and the name index (``name_fts``). Loading a run that is
+   data (:mod:`gregtec.db.crops`), its block catalog (:mod:`gregtec.db.blocks`, WO-10.3, when
+   ``parts.palette`` is ``ok``), and the name index (``name_fts``). Loading a run that is
    already in the DB replaces its recipes and crops. Then
    runs past the newest ``[db] keep_runs`` (default 2, so WO-1.4 can diff a run with the one
    before) are deleted, except the run just loaded and any run a plan references (plan section
@@ -46,9 +47,11 @@ from typing import TextIO
 
 from gregtec import config
 from gregtec.db import access, report
+from gregtec.db import blocks as block_db
 from gregtec.db import crops as crop_db
 from gregtec.db import power as power_db
 from gregtec.ingest import collect, crops, gtdump, machine_facts, machines, merge, nei
+from gregtec.ingest import palette as palette_ingest
 from gregtec.ingest import power as power_ingest
 from gregtec.ingest.normalize import FLUID, ITEM, Json, OreIndex, Recipe, Ref, canonical
 from gregtec.packupdate import gtpin
@@ -103,6 +106,11 @@ class Loaded:
     power: power_ingest.Power | None = None
     power_error: str | None = None
     fuels: int = 0  # fuel rows written
+    # The block catalog (WO-10.3, D307): parts.palette, the data when it is "ok" and reads,
+    # else why not. Not part of "complete": a run without it still builds its recipes.
+    palette_status: str = "absent"
+    palette: palette_ingest.Palette | None = None
+    palette_error: str | None = None
 
 
 @dataclass
@@ -233,6 +241,12 @@ def load(
             loaded.power = power_ingest.read(path)
         except (power_ingest.FormatError, OSError) as exc:
             loaded.power_error = str(exc)
+    loaded.palette_status = palette_ingest.status(run.manifest)
+    if loaded.palette_status == "ok":
+        try:
+            loaded.palette = palette_ingest.read(path)
+        except (palette_ingest.FormatError, OSError) as exc:
+            loaded.palette_error = str(exc)
     loaded.crops_status = crops.status(run.manifest)
     if loaded.crops_status == "ok":
         nei_ok = loaded.nei_status == "ok"
@@ -311,6 +325,7 @@ def _delete_runs(conn: sqlite3.Connection, run_ids: Sequence[int]) -> None:
         conn.execute("DELETE FROM mod WHERE run_id = ?", (run_id,))
     crop_db.delete(conn, run_ids)
     power_db.delete(conn, run_ids)
+    block_db.delete(conn, run_ids)
 
 
 def _export_run(
@@ -814,6 +829,7 @@ def write(
             crop_db.write(conn, run_id, loaded.crops, items)
         _machines(conn, loaded, items, maps)
         loaded.fuels = power_db.write(conn, run_id, loaded.power)
+        block_db.write(conn, run_id, loaded.palette)
         pruned = prune(conn, keep, run_id)
         _names(conn)
         conn.execute("COMMIT")
