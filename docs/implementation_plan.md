@@ -821,6 +821,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - a palette (`registry@meta`, from Clayton's client palette), motifs, massing rules, roof/window/lighting rules, adaptations per line type, references to sample builds, and a version `v:`.
   - Themes are created from prompts and refined in conversation.
   - **Per build:** theme + optional prompt, prompt only, or blank. Blank means the architect proposes a concept from the line type (e.g., chemistry gets pipework and tanks; EBF gets heavy industrial), using themes already used nearby for consistency.
+  - **Built** (WO-10.6, D314-D315): `gregtec.build.themes` parses and validates themes (every palette entry a catalog state without a tile entity, meta ≤ 15); `theme_list`/`theme_get` (both lanes) and `theme_save` (deep lane, the architect's; each refinement a new version, earlier ones in `themes/versions/`; only `theme_save` writes `themes/`); the starter themes `th-foundry` and `th-marble-works` in `vault-template/_gos/themes/`; the `architect` skill; `themes.select` for the three modes (blank: line type's concept, the theme most used within 256 blocks, else one that fits); `gos theme list|check|select`. Runbook `themes.md`.
 - **Shell designer (img2schem merged, D74).**
   - The `architect` subagent designs shells, as the img2schem SOW intended. Input: bounding volume, keep-outs, entrances, theme, palette constraints, prompt, max blocks. Output: `.schematic`, palette manifest, preview mesh, notes.
   - The palette comes from Clayton's client export (WO-10.3), so modded blocks are available.
@@ -1330,7 +1331,7 @@ gregtec-os/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
-  vault-template/        _gos/{skills,agents,personas,schema.md}  personas/  me/(stubs)
+  vault-template/        _gos/{skills,agents,personas,themes,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
   tests/                 unit/  fixtures/{gt_oc_tests,plannh}/  golden/  evals/*.tsv  security/
