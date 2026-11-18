@@ -413,6 +413,7 @@ def test_backup_vacuums_into_a_dated_file_and_keeps_the_newest(tmp_path: Path) -
         "gos-20261007.sqlite",
         "gos-20261008.sqlite",
         "gos-20261106.sqlite",
+        "gos-20261106.sqlite.manifest.json",  # WO-11.2 (D332)
         "notes.txt",
     ]
     conn = sqlite3.connect(folder / "gos-20261106.sqlite")
@@ -636,7 +637,10 @@ def test_a_stale_backup_tmp_is_removed(tmp_path: Path) -> None:
     folder.mkdir()
     (folder / "gos-20261001.sqlite.tmp").write_bytes(b"half")
     curator.backup(db, folder, TODAY)
-    assert sorted(p.name for p in folder.iterdir()) == ["gos-20261106.sqlite"]
+    assert sorted(p.name for p in folder.iterdir()) == [
+        "gos-20261106.sqlite",
+        "gos-20261106.sqlite.manifest.json",
+    ]
 
 
 def test_git_never_commits_a_killed_writes_temp_file(vault: Path) -> None:

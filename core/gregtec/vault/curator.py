@@ -66,6 +66,7 @@ from gregtec.llm.summarise import (
     event_counts,
 )
 from gregtec.llm.usage import UsageMeter
+from gregtec.ops import backups
 from gregtec.vault import fts, index, io, schema
 from gregtec.vault.deploy import _cmd
 
@@ -74,7 +75,6 @@ log = logging.getLogger(__name__)
 JOBS = ("compact", "quests", "schema", "index", "fts", "wiki", "backup", "git")
 OK, SKIPPED, FAILED = "ok", "skipped", "failed"
 KEEP_BACKUPS = 7
-BACKUP = re.compile(r"gos-(\d{8})\.sqlite")
 BACKUP_TMP = re.compile(r"gos-(\d{8})\.sqlite\.tmp")
 # A backup with a deadline that ends in one of these was cut short, not failed.
 _CUT_SHORT = {
@@ -508,10 +508,14 @@ def backup(
     today: dt.date,
     keep: int = KEEP_BACKUPS,
     deadline: float | None = None,
+    vault: Path | None = None,
 ) -> JobResult:
     """``deadline`` (a ``time.monotonic()`` value): past it, ``VACUUM INTO`` is interrupted (and
     a wait on a locked DB ends at it), its ``.tmp`` removed and the job ``skipped``, so a
-    stopping core ends the backup itself before the supervisor's kill."""
+    stopping core ends the backup itself before the supervisor's kill.
+
+    Each backup gets its manifest before it gets its name, and ``vault`` (when given and
+    deployed) is snapshotted as ``vault-YYYYMMDD.zip`` (WO-11.2, D332: :mod:`gregtec.ops.backups`)."""
     if not db.is_file():
         return JobResult("backup", SKIPPED, "no DB yet")
     folder.mkdir(parents=True, exist_ok=True)
@@ -522,6 +526,8 @@ def backup(
     target = folder / f"gos-{today:%Y%m%d}.sqlite"
     if target.exists():
         detail = f"{target.name} already exists"
+        if not backups.manifest_path(target).is_file():  # made before WO-11.2
+            backups.write_manifest(target, backups.db_manifest(target))
     else:
         tmp = folder / f"{target.name}.tmp"
         busy_s = 30.0  # the progress handler doesn't run while SQLite waits on a lock
@@ -544,14 +550,18 @@ def backup(
             # removed once closed: Windows won't delete an open file
             tmp.unlink(missing_ok=True)
             return JobResult("backup", SKIPPED, f"cut short: {cut_short}")
-        os.replace(tmp, target)
+        try:  # the manifest first: a backup under its name always has one (D332)
+            backups.write_manifest(target, backups.db_manifest(tmp))
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
         detail = f"wrote {target.name}"
-    kept = sorted(
-        (p for p in folder.iterdir() if BACKUP.fullmatch(p.name)), reverse=True
-    )
-    for old in kept[keep:]:
-        old.unlink()
-    pruned = len(kept[keep:])
+    if vault is not None and (vault / io.SCHEMA_NOTE).is_file():
+        try:
+            detail += "; " + backups.snapshot_vault(vault, folder, today, deadline)
+        except backups.CutShort as exc:
+            detail += f"; vault snapshot cut short: {exc}"
+    pruned = backups.prune(folder, keep)
     return JobResult(
         "backup", OK, detail + (f"; removed {pruned} older" if pruned else "")
     )
@@ -644,7 +654,9 @@ class Curator:
             status, detail = self.wiki(stop)
             return JobResult(job, status, detail)
         if job == "backup":
-            return backup(self.db, self.backups, today, self.keep_backups)
+            return backup(
+                self.db, self.backups, today, self.keep_backups, vault=self.vault
+            )
         commit = commit_agent_writes(self.vault, f"GOS idle maintenance {today}")
         return JobResult(
             job, OK, f"committed {commit}" if commit else "nothing to commit"
