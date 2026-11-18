@@ -1052,6 +1052,10 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
     def _dispatch(self, method: str) -> None:
+        # Read the body before any answer: a refusal that closes the socket with the body
+        # unread makes the OS reset the connection, and Windows clients then lose the answer
+        # (WinError 10053 instead of the 403, D340).
+        body = self._body() if method == "POST" else {}
         if (why := self._refused()) is not None:
             self._reply(403, {"error": why})
             return
@@ -1079,7 +1083,6 @@ class _Handler(BaseHTTPRequestHandler):
         if role not in allowed:
             self._reply(403, {"error": f"the {role} token can't do that"})
             return
-        body = self._body() if method == "POST" else {}
         if body is None:
             self._reply(400, {"error": "send a small JSON object"})
             return

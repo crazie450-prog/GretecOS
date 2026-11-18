@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -27,14 +27,16 @@ from jsonschema import Draft202012Validator
 
 from gregtec.crops import facts as crop_facts
 from gregtec.crops import rules, station
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 
 REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
-def conn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connection]:
+def conn(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Iterator[sqlite3.Connection]:
     built = os.environ.get("GOS_CROPS_HOME")
     if built:
         home = Path(built)
@@ -45,8 +47,7 @@ def conn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connectio
         if not (game / collect.EXPORTS).is_dir():
             pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
         home = tmp_path_factory.mktemp("station")
-        collect.collect(game, home, 1, allow_harness=True)
-        build.build(home, allow_harness=True)
+        built_home(game, home)
     c = access.connect(access.db_path(home), readonly=True)
     yield c
     c.close()

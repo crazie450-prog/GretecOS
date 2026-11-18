@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +32,7 @@ import pytest
 
 from gregtec import store
 from gregtec.base import seen, state
-from gregtec.db import access, build
-from gregtec.ingest import collect
+from gregtec.db import access
 from gregtec.watchers import census, machines, runner
 
 REPO = Path(__file__).resolve().parents[2]
@@ -99,11 +99,12 @@ def test_events_say_what_the_player_did(
 
 
 def test_my_base_counts_through_the_watchers(
-    expected: dict[str, Any], tmp_path_factory: pytest.TempPathFactory
+    expected: dict[str, Any],
+    tmp_path_factory: pytest.TempPathFactory,
+    built_home: Callable[[Path, Path], Path],
 ) -> None:
     home = tmp_path_factory.mktemp("machine-events-home")
-    collect.collect(GAME, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(GAME, home)
     lines = (GAME / machines.EVENTS_FILE).read_text(encoding="utf-8").splitlines()
     game = tmp_path_factory.mktemp("game")
     world = game / "saves" / "harness"

@@ -542,6 +542,36 @@ def test_control_port_tokens_and_roles(served: Supervisor) -> None:
     assert status == 400
 
 
+@pytest.mark.parametrize(
+    ("path", "auth"),
+    [("/stop", "launch"), ("/stop", None), ("/nope", "admin")],
+)
+def test_a_refused_request_s_body_is_read_before_the_socket_closes(
+    served: Supervisor, path: str, auth: str | None
+) -> None:
+    """A refusal (403, 401, 404) reads the request's body before it answers. urllib sends the
+    head and the body apart; answered and closed before the body arrived, the socket is reset
+    when it does, and a Windows client loses the answer (WinError 10053 instead of the 403,
+    D340). So no answer may come while the body is still on its way."""
+    port = served.cfg.supervisor_port
+    tokens = {"launch": served.launch_token, "admin": served.admin_token}
+    body = b"{}"
+    head = f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+    if auth is not None:
+        head += f"Authorization: Bearer {tokens[auth]}\r\n"
+    head += f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n"
+    with socket.create_connection(("127.0.0.1", port), timeout=0.3) as sock:
+        sock.sendall(head.encode())
+        with pytest.raises(TimeoutError):
+            sock.recv(65536)  # the supervisor waits for the body it was promised
+        sock.settimeout(5)
+        sock.sendall(body)
+        got = b""
+        while chunk := sock.recv(65536):
+            got += chunk
+    assert got.split(b" ", 2)[1] in (b"401", b"403", b"404")
+
+
 def test_launch_lab_and_export_never_play(served: Supervisor, tmp_path: Path) -> None:
     port, token = served.cfg.supervisor_port, served.launch_token
     out = tmp_path / "launched.txt"

@@ -12,12 +12,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from gregtec import cli
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.ops import backups
 from gregtec.store import Store
@@ -28,19 +29,20 @@ TODAY = dt.date(2026, 11, 11)
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the server harness")
     game = Path(os.environ.get("GOS_SERVER_RUN") or REPO / "mod" / "run" / "server")
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("backup-harness")
-    (home / "config").mkdir()
+    built_home(game, home)  # collect + db build, shared by the run (D340)
+    (home / "config").mkdir(exist_ok=True)
     (home / "config" / "gos.toml").write_text(
         f'[paths]\ngos_home = "{home.as_posix()}"\n', encoding="utf-8"
     )
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
     Store(
         access.db_path(home)
     ).close()  # the core's own tables, as the core's start adds them
