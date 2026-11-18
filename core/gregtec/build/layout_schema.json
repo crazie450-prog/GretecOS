@@ -76,7 +76,8 @@
     "integer",
     "string",
     "null"
-   ]
+   ],
+   "description": "the export run the plans were solved on, as the plan says"
   },
   "axes": {
    "type": "string"

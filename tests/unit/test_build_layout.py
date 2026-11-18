@@ -599,3 +599,47 @@ def test_the_gos_cli_has_the_command() -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main(["layout", "--help"])
     assert exc.value.code == 0
+
+
+def test_the_api_serves_the_layout_and_its_card(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec import config
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    _home(tmp_path, production(), power())
+    home = tmp_path / "home"
+    db = Store(home / "data" / "store.sqlite")
+    try:
+        core = Core(
+            cfg=config.Config(gos_home=home),
+            store=db,
+            auth=Auth(db, "a" * 43),
+            meter=UsageMeter(db, 100.0, (80, 100)),
+        )
+        auth = {"Authorization": "Bearer " + "a" * 43}
+        with TestClient(create_app(core), base_url="http://127.0.0.1:8765") as client:
+            got = client.get("/api/plans/pl-steel/layout", headers=auth)
+            assert got.status_code == 200
+            body = got.json()
+            check(body["layout"])
+            assert body["card"]["layout"] == body["layout"]["id"]
+            assert cards.validate(body["card"]) == []
+            both = client.get("/api/plans/pl-steel/layout?power=pl-power", headers=auth)
+            assert [p["id"] for p in both.json()["layout"]["plans"]] == [
+                "pl-steel",
+                "pl-power",
+            ]
+            same = client.get("/api/plans/pl-steel/layout?power=pl-steel", headers=auth)
+            assert same.status_code == 400 and "twice" in same.text
+            missing = client.get("/api/plans/pl-none/layout", headers=auth)
+            assert missing.status_code == 404
+            assert (
+                client.get("/api/plans/PL..x/layout", headers=auth).status_code == 400
+            )
+            assert client.get("/api/plans/pl-steel/layout").status_code == 401
+    finally:
+        db.close()
