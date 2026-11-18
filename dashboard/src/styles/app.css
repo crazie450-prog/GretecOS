@@ -1711,6 +1711,96 @@ tr.depleted td {
   color: var(--text-2);
 }
 
+/* --- Layout card (WO-10.5, D313): the floor plan from above ----------------------------------- */
+
+.layout-plan {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  margin: var(--space-2) 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.layout-plan rect,
+.layout-plan polygon {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1px;
+}
+
+.layout-bounds {
+  fill: none;
+  stroke: var(--rule);
+  stroke-dasharray: 4 3;
+}
+
+.layout-corridor rect,
+.swatch.layout-corridor {
+  fill: var(--track);
+  background: var(--track);
+  stroke: none;
+}
+
+.layout-chase rect,
+.swatch.layout-chase {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-dasharray: 3 3;
+  border: 1px dashed var(--text-3);
+}
+
+.layout-keepout rect,
+.swatch.layout-keepout {
+  fill: none;
+  stroke: var(--rule);
+  border: 1px solid var(--rule);
+}
+
+.layout-machine rect,
+.swatch.layout-machine {
+  fill: var(--panel);
+  background: var(--panel);
+  stroke: var(--text-2);
+  border: 1px solid var(--text-2);
+}
+
+.layout-machine.bad rect {
+  stroke: var(--err);
+}
+
+.layout-front {
+  fill: var(--text);
+}
+
+.layout-entrance rect,
+.swatch.layout-entrance {
+  fill: var(--accent);
+  background: var(--accent);
+  stroke: none;
+}
+
+.layout-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.layout-legend .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+}
+
+.designer-layout > summary {
+  cursor: pointer;
+}
+
 /* --- Power (WO-4.6) --------------------------------------------------------------------------- */
 
 .view-power {

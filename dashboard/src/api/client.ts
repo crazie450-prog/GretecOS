@@ -42,6 +42,7 @@ import type {
   Usage,
   Verify,
   WaypointProposal,
+  PlanLayout,
 } from "./types";
 
 export class ApiError extends Error {
@@ -162,6 +163,8 @@ export const api = {
     post<Designed>(`/api/plans/${encodeURIComponent(id)}/pin`, { node, recipe }),
   resolve: (id: string) => post<Designed>(`/api/plans/${encodeURIComponent(id)}/resolve`),
   accept: (id: string) => post<Accepted>(`/api/plans/${encodeURIComponent(id)}/accept`),
+  // The line layout (WO-10.5, D312): the plan's floor plan, computed by the core.
+  layout: (id: string) => get<PlanLayout>(`/api/plans/${encodeURIComponent(id)}/layout`),
   rename: (id: string, name: string) =>
     post<{ view: DesignerView }>(`/api/plans/${encodeURIComponent(id)}/name`, { name }),
   // The Power view (WO-4.6): options ranked by the core's code; accepting is Clayton's.

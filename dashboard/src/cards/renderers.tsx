@@ -11,6 +11,8 @@ import type {
   ChoicesCard,
   FlowCard,
   HealthCard,
+  LayoutCard,
+  LayoutRect,
   OreListCard,
   PowerLedgerCard,
   QuestCard,
@@ -451,3 +453,94 @@ export function HealthView({ card }: { card: HealthCard }) {
 }
 
 export { AlertView, ApprovalView };
+
+// The layout card (WO-10.5, D313): the line's floor plan seen from above, x east and z south in
+// blocks. Corridors and the entrance are filled, chases (overhead) dashed, keep-outs outlined, each
+// machine filled with a mark on the side its front faces; a machine whose front or a hatch kind
+// can't be reached is drawn in the error colour. Sizes come from the footprints: the machines are
+// listed under the plan with their mte: chips (rule 2).
+const LAYER: Record<LayoutRect["kind"], number> = { corridor: 0, keepout: 1, chase: 2, machine: 3, entrance: 4 };
+
+function frontMark(r: LayoutRect): string | null {
+  const { x, z, w, l } = r;
+  const t = Math.min(0.45, w / 2, l / 2);
+  switch (r.facing) {
+    case "north":
+      return `${x + w / 2 - t},${z + t} ${x + w / 2 + t},${z + t} ${x + w / 2},${z}`;
+    case "south":
+      return `${x + w / 2 - t},${z + l - t} ${x + w / 2 + t},${z + l - t} ${x + w / 2},${z + l}`;
+    case "west":
+      return `${x + t},${z + l / 2 - t} ${x + t},${z + l / 2 + t} ${x},${z + l / 2}`;
+    case "east":
+      return `${x + w - t},${z + l / 2 - t} ${x + w - t},${z + l / 2 + t} ${x + w},${z + l / 2}`;
+    default:
+      return null;
+  }
+}
+
+export function LayoutView({ card }: { card: LayoutCard }) {
+  const rects = [...card.rects].sort((a, b) => LAYER[a.kind] - LAYER[b.kind]);
+  const machines = new Map<string, { label: string; tier: LayoutRect["tier"]; ref: string | null; n: number; w: number; l: number; bad: number }>();
+  for (const r of card.rects) {
+    if (r.kind !== "machine") continue;
+    const key = `${r.ref}|${r.label}|${r.w}x${r.l}`;
+    const m = machines.get(key) ?? { label: r.label ?? "?", tier: r.tier, ref: r.ref, n: 0, w: r.w, l: r.l, bad: 0 };
+    m.n += 1;
+    if (r.ok === false) m.bad += 1;
+    machines.set(key, m);
+  }
+  return (
+    <div className="card layout-card" data-card="layout">
+      <CardHead
+        label="Floor plan · top down"
+        title={card.title}
+        cite={card.ref}
+        extra={`${card.size.x} × ${card.size.z} blocks · ${card.size.y} high`}
+      />
+      <svg
+        className="layout-plan"
+        viewBox={`-0.5 -0.5 ${card.size.x + 1} ${card.size.z + 1}`}
+        role="img"
+        aria-label={`Floor plan, ${card.size.x} by ${card.size.z} blocks`}
+        data-testid="layout-plan"
+      >
+        <rect className="layout-bounds" x={0} y={0} width={card.size.x} height={card.size.z} />
+        {rects.map((r) => (
+          <g key={r.id} className={`layout-${r.kind}${r.ok === false ? " bad" : ""}`} data-rect={r.id}>
+            <rect x={r.x} y={r.z} width={r.w} height={r.l}>
+              {r.label && <title>{`${r.label}${r.ref ? ` (${r.ref})` : ""}`}</title>}
+            </rect>
+            {r.kind === "machine" && frontMark(r) && <polygon className="layout-front" points={frontMark(r) ?? ""} />}
+          </g>
+        ))}
+      </svg>
+      <ul className="layout-legend gos-src" aria-label="Legend">
+        <li><span className="swatch layout-corridor" /> corridor</li>
+        <li><span className="swatch layout-chase" /> chase (overhead)</li>
+        <li><span className="swatch layout-keepout" /> keep-out</li>
+        <li><span className="swatch layout-machine" /> machine, ▲ front</li>
+        <li><span className="swatch layout-entrance" /> entrance</li>
+      </ul>
+      <table className="bom layout-machines">
+        <tbody>
+          {[...machines.values()].map((m) => (
+            <tr key={`${m.ref}|${m.label}|${m.w}x${m.l}`}>
+              <td>
+                {m.n}× {m.label}
+              </td>
+              <td>{m.tier && <TierChip tier={m.tier} />}</td>
+              <td className="num">
+                {m.w} × {m.l}
+              </td>
+              <td>{m.bad ? `${GLYPH.warn} ${m.bad} not reached` : `${GLYPH.ok} reached`}</td>
+              <td>
+                <Chip cite={m.ref} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Notes notes={card.notes} />
+    </div>
+  );
+}

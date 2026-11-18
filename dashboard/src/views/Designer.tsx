@@ -15,8 +15,10 @@ import type {
   DesignerRoute,
   DesignerView,
   DesignSpec,
+  PlanLayout,
   SavedPlanRow,
 } from "../api/types";
+import { Card } from "../cards/Card";
 import { FlowDiagram } from "../cards/FlowDiagram";
 import { useCardActions } from "../cards/context";
 import { RouteComparisonView } from "../cards/renderers";
@@ -198,6 +200,37 @@ function NodeRow(props: { route: DesignerRoute; node: DesignerNode; picked: bool
   );
 }
 
+/** The route's floor plan (WO-10.5, D312, D313): the core lays the machines out on open, never
+ * here; the card draws it. Needs Clayton's board approval (D92, D158 (5)). */
+function FloorPlan({ planId }: { planId: string }) {
+  const [open, setOpen] = useState(false);
+  const [got, setGot] = useState<PlanLayout | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || got || error) return;
+    let live = true;
+    api.layout(planId).then(
+      (r) => live && setGot(r),
+      (e: unknown) => live && setError(message(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, got, error, planId]);
+  return (
+    <details
+      className="designer-layout"
+      data-testid={`layout-${planId}`}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="gos-label">Floor plan</summary>
+      {open && !got && !error && <p className="empty">{GLYPH.progress} Laying out the machines</p>}
+      {error && <p className="empty">{GLYPH.warn} {error}</p>}
+      {got && <Card card={got.card} />}
+    </details>
+  );
+}
+
 function RouteColumn(props: {
   route: DesignerRoute;
   names: Map<string, string>; // item key -> name, from every route of the design
@@ -293,6 +326,7 @@ function RouteColumn(props: {
           <NodeRow key={n.n} route={r} node={n} picked={props.picked === n.n} onPick={() => props.onPick(n)} />
         ))}
       </ul>
+      <FloorPlan planId={r.id} />
       <div className="designer-exports">
         {EXPORTS.map(([fmt, label]) => (
           <a key={fmt} className="gos-src" href={`/api/plans/${r.id}/export/${fmt}`}>
