@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
@@ -122,9 +123,15 @@ def _close(client: object) -> None:
 
 def _watch_stdin(stop: Callable[[], object]) -> None:
     def watch() -> None:
+        # os.read, not sys.stdin.buffer: a daemon thread blocked inside the BufferedReader
+        # holds its lock, and an exit not started here (Discord refused the token) then aborts
+        # at interpreter shutdown (exit -6), which the supervisor restarts forever (QA 5-9).
         try:
-            for line in sys.stdin.buffer:
-                if line.strip() == b"stop":
+            fd = sys.stdin.fileno()
+            pending = b""
+            while chunk := os.read(fd, 4096):
+                *lines, pending = (pending + chunk).split(b"\n")
+                if any(line.strip() == b"stop" for line in lines):
                     break
         except (OSError, ValueError, AttributeError):
             pass

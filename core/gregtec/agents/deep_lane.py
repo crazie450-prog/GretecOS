@@ -25,7 +25,8 @@ from typing import Any, Protocol
 # this module first no longer loops back into it through the catalog (QA 5-9).
 from gregtec.agents.tools.handoff import HANDOFF_SCHEMA, HANDOFF_TOOL, TASK_MAX, handoff
 
-__all__ = ["HANDOFF_SCHEMA", "HANDOFF_TOOL", "TASK_MAX", "handoff"]  # and the classes below
+# The re-exported names (the classes below are this module's own).
+__all__ = ["HANDOFF_SCHEMA", "HANDOFF_TOOL", "TASK_MAX", "handoff"]
 
 log = logging.getLogger(__name__)
 

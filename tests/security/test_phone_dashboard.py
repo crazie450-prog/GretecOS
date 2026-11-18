@@ -384,7 +384,7 @@ def test_setup_undoes_a_handler_that_came_up_with_funnel(
     assert code == tailnet.EXIT_REFUSED, out
     assert calls(state)[-2:] == [
         ["serve", "status", "--json"],
-        ["serve", "--https=443", "off"],
+        ["serve", "--https=443", "--set-path=/", "off"],  # GOS's path only (QA 5-9)
     ]
     serve = json.loads(state.read_text(encoding="utf-8"))["serve"]
     assert not tailnet.funnels(serve)
@@ -510,6 +510,51 @@ def test_off_removes_the_handler(
     assert cli(tmp_path, ts, "off")[0] == 0
     serve = json.loads(state.read_text(encoding="utf-8"))["serve"]
     assert tailnet.handler(serve, TAILNET) is None
+
+
+def test_off_removes_only_gos_s_path_and_never_waits_on_a_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA 5-9: ``serve --https=443 off`` removes every path on 443 and, with more than one,
+    asks on a stdin GOS hid; it now removes ``/`` only and checks that it's gone."""
+    state = fake_state(tmp_path)
+    ts = fake_cli(monkeypatch, state)
+    assert cli(tmp_path, ts, "setup")[0] == 0
+    data = json.loads(state.read_text(encoding="utf-8"))
+    web = data["serve"]["Web"][f"{TAILNET}:443"]["Handlers"]
+    web["/grafana"] = {"Proxy": "http://127.0.0.1:3000"}
+    state.write_text(json.dumps(data), encoding="utf-8")
+    code, out = cli(tmp_path, ts, "off")
+    assert code == 0, out
+    serve = json.loads(state.read_text(encoding="utf-8"))["serve"]
+    assert tailnet.handler(serve, TAILNET) is None
+    handlers = serve["Web"][f"{TAILNET}:443"]["Handlers"]
+    assert handlers == {"/grafana": {"Proxy": "http://127.0.0.1:3000"}}
+    assert calls(state)[-2] == ["serve", "--https=443", "--set-path=/", "off"]
+
+
+def test_off_that_doesnt_take_is_a_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = fake_state(tmp_path)
+    ts = fake_cli(monkeypatch, state)
+    assert cli(tmp_path, ts, "setup")[0] == 0
+    data = json.loads(state.read_text(encoding="utf-8"))
+    state.write_text(json.dumps({**data, "ignore_off": True}), encoding="utf-8")
+    code, out = cli(tmp_path, ts, "off")
+    assert code == tailnet.EXIT_PROBLEM
+    assert "didn't take" in out and "no longer served" not in out
+
+
+def test_the_cli_never_reads_our_stdin() -> None:
+    seen: dict[str, object] = {}
+
+    def runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    tailnet.Tailscale(["tailscale"], runner=runner).run("serve", "status", "--json")
+    assert seen["stdin"] is subprocess.DEVNULL
 
 
 def test_gos_dev_cant_change_clayton_s_tailscale(

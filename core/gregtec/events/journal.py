@@ -400,10 +400,7 @@ class Scribe:
         if not target.is_file():
             return False
         tag = f"session: s{session_id} "
-        return any(
-            line.startswith(tag)
-            for line in read_utf8(target, rel).splitlines()
-        )
+        return any(line.startswith(tag) for line in read_utf8(target, rel).splitlines())
 
     def _append(self, lines: list[str], rel: str | None = None) -> str:
         return self.vault.append(
