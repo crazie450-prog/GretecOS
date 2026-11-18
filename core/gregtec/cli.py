@@ -168,6 +168,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="show the result in a message box (Windows)",
     )
+    run.add_argument(
+        "--load-only",
+        action="store_true",
+        help="collect and build the last recorded export if it isn't loaded (no new export)",
+    )
     # Set by the post-exit hook, which waits until the export holding the lock shows it.
     run.add_argument("--ticket", default="", help=argparse.SUPPRESS)
     diff = export_cmds.add_parser(
@@ -1037,6 +1042,7 @@ def _export(args: argparse.Namespace) -> int:
             notify=notify,
             ticket=args.ticket,
             config_path=args.config or config.default_path(),
+            load_only=args.load_only,
         )
     refs = args.runs
     if len(refs) not in (0, 2):

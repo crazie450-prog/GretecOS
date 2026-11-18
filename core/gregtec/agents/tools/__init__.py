@@ -60,7 +60,7 @@ more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
 The rest of plan 7.0's catalog arrives with later work orders (``catalog.LATER``): timer_set
-with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_set with
+with WO-5.3; export_diff after WO-11.1 (D330); structure_get after WO-1.8; machine_fact_set with
 WO-1.9; crop_status with WO-7.6; layout_estimate with Phase 3; ledger_update and
 plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208);
 screen_snapshot never (WO-8.2, D288: frames come only from the screen key); notify with

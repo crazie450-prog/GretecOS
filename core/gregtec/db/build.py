@@ -779,14 +779,16 @@ def _names(conn: sqlite3.Connection) -> None:
 
 
 def prune(conn: sqlite3.Connection, keep: int, current: int) -> list[str]:
-    """Delete runs past the newest ``keep``, except ``current`` and runs plans reference."""
+    """Delete runs past the newest ``keep``, except ``current`` and runs plans reference: their
+    own run, and the run that flagged them affected by an update (D331)."""
     runs = conn.execute(
         "SELECT id, run_key FROM export_run ORDER BY created_at DESC, run_key DESC"
     ).fetchall()
     pinned = {
         row[0]
         for row in conn.execute(
-            "SELECT DISTINCT run_id FROM plan WHERE run_id IS NOT NULL"
+            "SELECT run_id FROM plan WHERE run_id IS NOT NULL"
+            " UNION SELECT affected_run FROM plan WHERE affected_run IS NOT NULL"
         )
     }
     doomed = [r for r in runs[keep:] if r[0] != current and r[0] not in pinned]

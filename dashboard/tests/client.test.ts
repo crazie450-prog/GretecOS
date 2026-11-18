@@ -33,6 +33,19 @@ describe("act", () => {
     ]);
   });
 
+  it("answers the export question by its id (WO-11.1)", async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    await act(card("export", "export-0a1b2c3d4e5f"), "confirm");
+    await act(card("export", "export-0a1b2c3d4e5f"), "cancel");
+    await expect(act(card("export", "export-0a1b2c3d4e5f"), "approve")).rejects.toThrow("isn't an action");
+    await expect(act(card("export", "action-42"), "confirm")).rejects.toThrow("isn't an action");
+    expect(fetch.mock.calls.map((c) => [c[0], c[1].method])).toEqual([
+      ["/api/export/question/0a1b2c3d4e5f/confirm", "POST"],
+      ["/api/export/question/0a1b2c3d4e5f/cancel", "POST"],
+    ]);
+  });
+
   it("refuses anything else on an action card", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

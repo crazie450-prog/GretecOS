@@ -225,6 +225,7 @@ def test_a_simulated_gt_update_through_the_whole_playbook(
             launch=prism.launch,
             clients=prism.clients,
             allow_harness=True,
+            load=False,  # collected and built below, as before WO-11.1
             **quiet,
         )
         == 0

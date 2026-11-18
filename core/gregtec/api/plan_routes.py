@@ -4,7 +4,7 @@
 |-------------------------------------|-----------------------------|-------------------------------|
 | GET /api/plans/{id}/cards           | admin, client, device       | ``{"flow": card, "bom": card}`` (catalog cards, D160) |
 | GET /api/plans/{id}/export/{format} | admin, client, device       | the export file: ``bom`` (TSV), ``mermaid``, ``png``, ``gtnhplanner`` (JSON), ``gtnhflow`` (YAML) |
-| GET /api/plans                      | admin, client, device       | saved plans, newest first (id, name, status, kind) |
+| GET /api/plans                      | admin, client, device       | saved plans, newest first (id, name, status, kind, affected) |
 | GET /api/designer                   | admin, client, device       | the Designer's latest design: ``{"ids": [...]}`` |
 | GET /api/plans/{id}/designer        | admin, client, device       | the Designer's view of the plan's routes (WO-3.7) |
 | GET /api/plans/{id}/alternatives    | admin, client, device       | ``?node=<key>[&all=1]``: a node's candidate recipes (D61) |
@@ -206,7 +206,13 @@ def add_routes(
         )
         return {
             "plans": [
-                {"id": p.id, "name": p.name, "status": p.status, "kind": p.kind}
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "status": p.status,
+                    "kind": p.kind,
+                    "affected": p.affected_run is not None,  # WO-11.1
+                }
                 for p in found
             ],
             "problems": problems,

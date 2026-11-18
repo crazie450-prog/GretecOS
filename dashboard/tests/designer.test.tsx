@@ -30,6 +30,7 @@ function route(id: string, position: number, over: Partial<DesignerRoute> = {}):
         machine: "Basic Macerator", mte: "mte:30", tier: "LV", count: 5, pinned: false, primary: true },
     ],
     warnings: [],
+    affected: null,
     metrics: { machines: 18, score: position === 1 ? 0.76 : 0.5 },
     differs: [],
     flow: { type: "flow", title: "Steel", ref: `plan:${id}`, nodes: [], edges: [], notes: [] },
@@ -176,6 +177,37 @@ describe("the Designer view", () => {
     expect(pins.textContent).toContain("pinned Steel Dust");
     expect(pins.querySelector(`[data-cite="${other}"]`)).not.toBeNull();
     expect(window.location.hash).toBe(`#/designer/${pinned.id}`);
+  });
+
+  it("shows a plan an export affected, with a one-click re-solve on the new data (WO-11.1)", async () => {
+    const hit = "r:gt.recipe.blastfurnace/9c40869458cb";
+    const flagged = view(FIRST.id, [
+      route(FIRST.id, 1, {
+        status: "accepted",
+        affected: { run: "20261114T124556Z", hits: [{ cite: hit, why: "changed in 20261114T124556Z" }] },
+      }),
+    ]);
+    window.location.hash = `/designer/${FIRST.id}`;
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: flagged });
+    routes["GET /api/plans"] = () => ({
+      status: 200,
+      body: { plans: [{ id: FIRST.id, name: "Steel", status: "accepted", kind: "production", affected: true }], problems: [] },
+    });
+    const fresh = view("pl-dddddddddd", [route("pl-dddddddddd", 1)]);
+    routes[`POST /api/plans/${FIRST.id}/resolve`] = () => ({ status: 200, body: { ids: [fresh.id], problems: [], view: fresh } });
+    render(<Designer />);
+    const banner = await screen.findByTestId(`affected-${FIRST.id}`);
+    expect(banner.textContent).toContain("Affected by update");
+    expect(banner.textContent).toContain("20261114T124556Z");
+    expect(banner.querySelector(`[data-cite="${hit}"]`)).not.toBeNull();
+    expect((await screen.findByTestId("designer-saved")).textContent).toContain("affected by update");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`affected-resolve-${FIRST.id}`));
+    });
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual([`/api/plans/${FIRST.id}/resolve`]);
+    await screen.findByTestId("route-1-base");
+    expect(window.location.hash).toBe(`#/designer/${fresh.id}`);
+    expect(screen.queryByTestId(`affected-${fresh.id}`)).toBeNull();
   });
 
   it("asks before accepting, then shows the route accepted", async () => {

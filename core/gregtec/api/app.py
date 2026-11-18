@@ -133,6 +133,7 @@ from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
+from gregtec.packupdate import routes as addon_routes
 from gregtec.quests import view as quest_view
 from gregtec.remote import routes as remote_routes
 from gregtec.remote.jobs import JobQueue
@@ -934,6 +935,7 @@ def create_app(core: Core) -> FastAPI:
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
+    addon_routes.add_routes(app, core, principal)  # the export question (WO-11.1)
     guide_routes.add_routes(app, core, principal)
     remote_routes.add_routes(app, core, principal, _json_body)
     alert_routes.add_routes(app, core, principal)
