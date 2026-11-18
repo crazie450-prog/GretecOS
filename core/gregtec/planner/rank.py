@@ -11,8 +11,11 @@ every route has 0), so each term is in [0, 1]. The cost is the weighted mean of 
 :data:`DIGITS` decimals, so float noise can't decide an order.
 
 **Order.** Higher score first; ties (equal rounded scores) break on fewer new machine types,
-then the lower highest machine tier, then the plan id (a hash of the route's choices). Nothing
-depends on dict or set order. The base routes are ranked among themselves; the addon route
+then the lower highest machine tier, then the route itself (:func:`route_key`: a power line's
+generator, fuel and direct-import flag, then the plan's pins and the route's choices). The plan
+id is never a key: it hashes the export run's key, so it changes with every export collected,
+and exactly tied routes changed places with it (D329). Nothing depends on dict or set order,
+or on the run. The base routes are ranked among themselves; the addon route
 (D12) gets its score against the base routes and itself, and keeps its own column after them.
 
 **Weights** live in the vault's ``me/prefs.md`` (§6.2 grammar, read only here; never written):
@@ -207,6 +210,24 @@ def _tier(m: Mapping[str, Any]) -> int:
     return metrics.TIERS[t] if t else -1
 
 
+def route_key(p: Mapping[str, Any]) -> tuple[object, ...]:
+    """The last tie-break: what the route is, whatever export run it was solved on (D329).
+    A power line's generator id, fuel and direct-import flag (empty for a production plan),
+    then the plan's pins and the route's choices, each sorted: the parts the plan id hashes,
+    without the run key. A design's base routes each differ in a choice; its power options
+    in the generator, the pin, the direct flag or a choice that runs (two that differ in none
+    are one line, kept once by ``power.distinct``). Any two left equal keep the order they
+    were given in."""
+    power = p.get("power") or {}
+    return (
+        str(power["generator"]["id"]) if power else "",
+        str(power["fuel"]["id"]) if power else "",
+        bool(power["direct"]) if power else False,
+        sorted((str(c["node"]), str(c["recipe"])) for c in p["pins"]),
+        sorted((str(c["node"]), str(c["recipe"])) for c in p["route"]["choices"]),
+    )
+
+
 def order(
     plans: Sequence[dict[str, Any]], prefs: Prefs = BALANCED
 ) -> list[dict[str, Any]]:
@@ -222,7 +243,7 @@ def order(
             -t[2][0],
             len(t[0]["metrics"]["new_types"]),
             _tier(t[0]["metrics"]),
-            t[0]["id"],
+            route_key(t[0]),
         ),
     )
     out: list[dict[str, Any]] = []
@@ -334,7 +355,12 @@ def order_power(
             )
         else:
             head = (-score,)
-        return (*head, len(p["metrics"]["new_types"]), _tier(p["metrics"]), p["id"])
+        return (
+            *head,
+            len(p["metrics"]["new_types"]),
+            _tier(p["metrics"]),
+            route_key(p),
+        )
 
     keyed = sorted(zip(plans, vals, scored, strict=True), key=key)
     out: list[dict[str, Any]] = []

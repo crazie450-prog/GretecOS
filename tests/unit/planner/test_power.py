@@ -511,6 +511,8 @@ def test_cli_design(db: Path) -> None:
 def _plan(pid: str, net: float, eff: float, upkeep: float = 0.0) -> dict[str, Any]:
     return {
         "id": pid,
+        "pins": [],
+        "route": {"choices": []},
         "metrics": {
             "net_eut": net, "eff_h": eff, "upkeep": upkeep, "scarcity": 0.0,
             "complexity": {"score": 3}, "new_types": [], "tier": "MV",
@@ -539,6 +541,48 @@ def test_order_power_by_mode() -> None:
     with pytest.raises(ValueError):
         rank.order_power(plans, "fastest")
     assert "net EU/t 1" in rank.describe_power(rank.BALANCED, "best")
+
+
+def test_tied_options_rank_the_same_under_another_run_key(
+    db: Path, tmp_path: Path, no_farms: Path
+) -> None:
+    """D329 (WO-4.8 review M3): an option's id hashes the export run's key, so exactly tied
+    options changed places (or another 3 made the cut) whenever a new export was collected.
+    The same design, solved on the same data under several run keys and ranked with every
+    option exactly tied, comes out in one order."""
+
+    def line(p: dict[str, Any]) -> tuple[object, ...]:
+        return (
+            p["power"]["generator"]["id"],
+            tuple(c["recipe"] for c in p["route"]["choices"]),
+            tuple(pn["recipe"] for pn in p["pins"]),
+            p["power"]["direct"],
+        )
+
+    orders, by_id = set(), set()
+    for run_key in ("20261114T083504Z", "20261117T101500Z", "run-3", "run-4"):
+        copy = tmp_path / f"{run_key}.sqlite"
+        shutil.copy(db, copy)
+        rw = sqlite3.connect(copy)
+        try:
+            rw.execute("UPDATE export_run SET run_key = ?", (run_key,))
+            rw.commit()
+        finally:
+            rw.close()
+        c = access.connect(copy, readonly=True)
+        try:
+            d = design(c, no_farms, mode="best")
+        finally:
+            c.close()
+        assert {p["run"] for p in d.options} == {run_key} and len(d.options) >= 2
+        tied = [{**p, "metrics": _plan("", 32, 1)["metrics"]} for p in d.options]
+        by_id.add(tuple(line(p) for p in sorted(tied, key=lambda p: p["id"])))
+        for mode in rank.POWER_MODES:
+            ranked = rank.order_power([dict(p) for p in reversed(tied)], mode)
+            assert len({p["rank"]["score"] for p in ranked}) == 1
+            orders.add(tuple(line(p) for p in ranked))
+    assert len(orders) == 1
+    assert len(by_id) > 1  # the ids' own order does change with the run
 
 
 def test_farms_tsv(tmp_path: Path, conn: sqlite3.Connection) -> None:

@@ -688,6 +688,8 @@ def test_an_incomplete_effort_ranks_after_complete_ones() -> None:
     def plan(pid: str, net: float, eff: float, uncounted: int) -> dict[str, Any]:
         return {
             "id": pid,
+            "pins": [],
+            "route": {"choices": []},
             "metrics": {
                 "net_eut": net, "eff_h": eff, "upkeep": 0.0, "scarcity": 0.0,
                 "complexity": {"score": 3}, "new_types": [], "tier": "MV",

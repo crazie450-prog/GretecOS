@@ -1,6 +1,7 @@
 """Deterministic route ranking and the ranking prefs (WO-3.5, plan §7.1 step 8, [QA:D2], D67).
 
-Plans here carry only what :func:`gregtec.planner.rank.order` reads (made-up metrics).
+Plans here carry only what :func:`gregtec.planner.rank.order` reads (made-up metrics, and one
+made-up route choice each: ``recipe``, by default named after the plan's id).
 """
 
 from __future__ import annotations
@@ -12,7 +13,11 @@ from typing import Any
 
 import pytest
 
+from gregtec.planner import plan as plan_mod
 from gregtec.planner import rank
+from gregtec.planner.request import Request
+
+NODE = "item:test"
 
 
 def plan(
@@ -26,10 +31,15 @@ def plan(
     cx: int = 5,
     tier: str = "MV",
     column: str = "base",
+    recipe: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": pid,
-        "route": {"column": column},
+        "pins": [],
+        "route": {
+            "column": column,
+            "choices": [{"node": NODE, "recipe": recipe or f"r:test/{pid}"}],
+        },
         "metrics": {
             "machines": machines,
             "new_types": [f"mte:{i}" for i in range(new)],
@@ -72,7 +82,7 @@ def test_score_is_one_minus_the_weighted_mean_of_normalised_terms() -> None:
     assert 0 <= out[1]["rank"]["score"] <= 1
 
 
-def test_ties_break_on_new_types_then_tier_then_id() -> None:
+def test_ties_break_on_new_types_then_tier_then_the_route() -> None:
     # Equal scores by construction: every term the same but new types / tier.
     x = plan("pl-z", new=1, tier="HV")
     y = plan("pl-y", new=1, tier="MV")
@@ -92,7 +102,32 @@ def test_float_noise_cannot_decide_the_order() -> None:
     b = plan("pl-a", eut=100.0 + 1e-12)
     out = rank.order([a, b])
     assert out[0]["rank"]["score"] == out[1]["rank"]["score"]
-    assert ids(out) == ["pl-a", "pl-b"]  # the id breaks the tie, not the noise
+    assert ids(out) == ["pl-a", "pl-b"]  # the route breaks the tie, not the noise
+
+
+def test_exact_ties_rank_the_same_under_another_run_key() -> None:
+    """D329 (WO-4.8 review M3): a plan's id hashes the export run's key, so it changes with
+    every export collected and is no tie-break. The same three tied routes, under the ids
+    each of several runs gives them, rank in one order: by their choices."""
+    request = Request("fluid:test")
+    recipes = [f"r:test/{c}" for c in "abc"]
+    orders, by_id = set(), set()
+    for run in ("20261114T083504Z", "20261117T101500Z", "20261118T020000Z", "run-4"):
+        routes = [
+            plan(plan_mod.plan_id(request, run, "base", [(NODE, r)]), recipe=r)
+            for r in reversed(recipes)
+        ]
+        by_id.add(
+            tuple(
+                p["route"]["choices"][0]["recipe"]
+                for p in sorted(routes, key=lambda p: p["id"])
+            )
+        )
+        out = rank.order(routes)
+        assert len({p["rank"]["score"] for p in out}) == 1
+        orders.add(tuple(p["route"]["choices"][0]["recipe"] for p in out))
+    assert orders == {tuple(recipes)}
+    assert len(by_id) > 1  # the ids' own order does change with the run
 
 
 def test_all_zero_metrics_score_one() -> None:
