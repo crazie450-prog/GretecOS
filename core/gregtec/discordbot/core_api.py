@@ -57,6 +57,9 @@ class CoreApi(Protocol):
     def actions(self) -> dict[str, Any]: ...
     def confirm(self, action_id: int) -> dict[str, Any]: ...
     def cancel(self, action_id: int) -> dict[str, Any]: ...
+    def alert_outbox(self) -> dict[str, Any]: ...
+    def alert_delivered(self, dm_id: int) -> dict[str, Any]: ...
+    def credit_decision(self, choice: str) -> dict[str, Any]: ...
 
 
 class HttpCore:
@@ -145,3 +148,14 @@ class HttpCore:
 
     def cancel(self, action_id: int) -> dict[str, Any]:
         return self._call("POST", f"/api/actions/{int(action_id)}/cancel")
+
+    def alert_outbox(self) -> dict[str, Any]:
+        """The alert DMs to post and Discord's /alerts state (WO-9.2)."""
+        return self._call("GET", "/api/alerts/outbox")
+
+    def alert_delivered(self, dm_id: int) -> dict[str, Any]:
+        return self._call("POST", f"/api/alerts/outbox/{int(dm_id)}/delivered")
+
+    def credit_decision(self, choice: str) -> dict[str, Any]:
+        """D48's answer through the core's own budget control (D165)."""
+        return self._call("POST", "/api/credits/decision", {"choice": choice})

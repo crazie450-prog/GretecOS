@@ -486,6 +486,15 @@ export function Designer() {
   const [altsError, setAltsError] = useState<string | null>(null);
   const [all, setAll] = useState(false);
   const shown = useRef<string | null>(null);
+  // A design that arrives after he left the view must not put its plan back in the address, or
+  // the phone's More tab (WO-9.3) would bounce back here.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const altsRef = useRef<HTMLDivElement | null>(null);
 
   const refreshPlans = useCallback(() => {
@@ -499,7 +508,7 @@ export function Designer() {
     shown.current = v.id;
     setView(v);
     setError(null);
-    showPlan(v.id);
+    if (mounted.current) showPlan(v.id);
   }, []);
 
   const load = useCallback(

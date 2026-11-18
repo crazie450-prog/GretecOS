@@ -2,7 +2,9 @@
 
 **Host and Origin.** Every HTTP request and WebSocket handshake must carry a ``Host`` from
 ``[core] allowed_hosts`` (``127.0.0.1:<port>``, ``localhost:<port>``, the dashboard's
-``gos.localhost:<port>``, later the PC's tailnet name), which stops DNS rebinding. A request with an ``Origin`` must come from one of those hosts over
+``gos.localhost:<port>``, and the PC's tailnet name once it is configured there, WO-9.3), which
+stops DNS rebinding. A request Tailscale marks as having come through Funnel is refused whatever
+its Host (D301). A request with an ``Origin`` must come from one of those hosts over
 http or https, and one a browser marks ``Sec-Fetch-Site: cross-site`` or ``same-site`` is refused,
 which stops other web pages, other localhost ports included. Requests without ``Origin`` (local
 clients, same-origin GETs) pass this check and still need a credential.
@@ -69,6 +71,7 @@ OC_TOKEN = re.compile(r"^oc-(play|lab)(-[a-z0-9]+)*$")
 LINK_TOKEN = re.compile(r"^gregteclink-(play|lab)$")
 _DEVICE_ID = re.compile(r"^[0-9a-f]{16}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+FUNNEL_HEADER = "tailscale-funnel-request"
 
 
 def sha256(secret: str) -> str:
@@ -103,6 +106,12 @@ def origin_allowed(origin: str, allowed: Iterable[str]) -> bool:
 def refusal(headers: dict[str, str], allowed: Iterable[str]) -> str | None:
     """Why a request with these (lower-case) headers is refused, or None."""
     allowed = tuple(allowed)
+    # Tailscale sets this on every request that came through an HTTP Funnel, from the public
+    # internet, and strips any copy a client sends (ipn/ipnlocal/serve.go; WO-9.3, D301): the
+    # dashboard is for the tailnet only (D53, PM06). A TCP Funnel passes bytes on unmarked, so
+    # this can't see one: `gos tailnet check` catches it (Funnel on, a raw TCP forward).
+    if FUNNEL_HEADER in headers:
+        return "funnel request"
     if not host_allowed(headers.get("host"), allowed):
         return "host not allowed"
     origin = headers.get("origin")
