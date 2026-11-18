@@ -112,6 +112,11 @@ W, A, P = io.WRITE, io.APPEND, io.PROPOSE
         ("personas/pe-ship.md", A, "live persona packs are Clayton's"),
         ("personas/old/pe-ship.md", W, "live persona packs are Clayton's"),
         ("Plans/pl-1.md", W, "lower-case only"),
+        # WO-10.6 (D314): themes/ only through theme_save, which checks the palette
+        ("themes/th-brass.md", W, "saved with theme_save"),
+        ("themes/th-brass.md", A, "saved with theme_save"),
+        ("plans/pl-1.md", io.THEME, "theme versions go in themes/ only"),
+        ("me/goals.md", io.THEME, "Clayton's"),
     ],
 )
 def test_write_refusals(rel: str, op: str, why: str) -> None:
@@ -127,7 +132,8 @@ def test_write_refusals(rel: str, op: str, why: str) -> None:
         ("plans/pl-0007.md", W),
         ("plans/pl-0007.md", A),
         ("quests/qs-steam.md", W),
-        ("themes/th-brass.md", W),
+        ("themes/th-brass.md", io.THEME),
+        ("themes/versions/th-brass--v1.md", io.THEME),
         ("personas/drafts/pe-ship.md", W),
         ("personas/drafts/pe-ship.md", A),
         ("inbox/ib-20261106-x.md", A),
@@ -174,6 +180,8 @@ def test_the_guard_matches_the_schema_writers() -> None:
             rel, op = f"log/{TODAY.isoformat()}.md", A
         elif kind.t == "inbox":
             op = P
+        elif kind.t == "theme":  # only through theme_save (WO-10.6, D314)
+            op = io.THEME
         elif (
             kind.t == "persona"
         ):  # both: Clayton's live packs, the agents' drafts (WO-5.6)
@@ -190,9 +198,9 @@ def test_a_link_cant_lead_a_write_out_of_its_folder(vault: io.VaultIO) -> None:
     shutil.rmtree(vault.root / "themes")
     (vault.root / "themes").symlink_to(vault.root / "me")
     before = text(vault, "me/goals.md")
-    for rel in ("plans/pl-link.md", "themes/th-x.md"):
+    for rel, op in (("plans/pl-link.md", W), ("themes/th-x.md", io.THEME)):
         with pytest.raises(io.VaultError, match="a link leads elsewhere"):
-            vault.write(rel, "note: x")
+            vault.write(rel, "note: x", op=op)
     assert text(vault, "me/goals.md") == before
     assert not (vault.root / "me" / "th-x.md").exists()
 

@@ -104,8 +104,8 @@ def test_index_from_the_template_follows_the_schema(vault: Path) -> None:
     assert rows[2][3] == "Clayton's goals, one per line as goal: {text}; agents rea..."
     assert len(rows[1][3]) <= index.SUMMARY_MAX
     assert (
-        "upd: 2026-11-12" in text
-    )  # the newest row's date (the schema note's, WO-6.4)
+        "upd: 2026-11-18" in text
+    )  # the newest row's date (the schema note's, WO-10.6)
     assert not index.build(
         vault, TODAY + dt.timedelta(days=3)
     )  # unchanged: not rewritten
