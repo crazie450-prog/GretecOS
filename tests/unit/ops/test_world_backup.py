@@ -73,14 +73,16 @@ def tree(tmp_path: Path) -> dict[str, Path]:
     (play / "level.dat").write_bytes(b"play")
     cfg = home / "config" / "gos.toml"
     cfg.parent.mkdir(parents=True)
+    app = tmp_path / "GregtecOS-app"
     cfg.write_text(
         "[paths]\n"
         f'gos_home = "{home.as_posix()}"\n'
+        f'gos_app = "{app.as_posix()}"\n'
         f'prism_root = "{prism.as_posix()}"\n'
         f'prism_instances = "{(prism / "instances").as_posix()}"\n',
         encoding="utf-8",
     )
-    return {"home": home, "backups": backups, "prism": prism, "cfg": cfg}
+    return {"home": home, "backups": backups, "prism": prism, "cfg": cfg, "app": app}
 
 
 def snapshot(root: Path) -> dict[str, tuple[int, int]]:
@@ -184,7 +186,15 @@ def test_no_backups_fails(tree: dict[str, Path]) -> None:
 
 
 @pytest.mark.parametrize(
-    "where", ["prism/instances/GTNH-Play/.minecraft/saves", "prism", "backups"]
+    "where",
+    [
+        "prism/instances/GTNH-Play/.minecraft/saves",
+        "prism",
+        "backups",
+        "app",
+        "home/vault",
+        "home/data",
+    ],
 )
 def test_work_never_goes_in_an_instance_or_the_backups(
     tree: dict[str, Path], where: str
@@ -214,3 +224,32 @@ def test_the_script_runs_from_the_repo(tree: dict[str, Path]) -> None:
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert "ok   the world restores and reads" in done.stdout
+
+
+def test_too_little_free_space_fails_before_extracting(
+    tree: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world_zip(tree["backups"] / "b.zip")
+    real = worldbackup.shutil.disk_usage
+    monkeypatch.setattr(
+        worldbackup.shutil,
+        "disk_usage",
+        lambda p: real(p)._replace(free=1000),
+    )
+    code, out = check(tree)
+    assert code == 1
+    assert "FAIL only 0.0 GiB free" in out and "WORLD BACKUP CHECK FAILED" in out
+
+
+def test_a_backup_that_cant_be_read_fails_without_a_traceback(
+    tree: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world_zip(tree["backups"] / "b.zip")
+
+    def locked(src: Path, dest: Path, tries: int = 3) -> None:
+        raise PermissionError(13, "locked", str(src))
+
+    monkeypatch.setattr(worldbackup, "copy_in", locked)
+    code, out = check(tree)
+    assert code == 1
+    assert "FAIL can't read or copy b.zip" in out

@@ -9,9 +9,11 @@ no-AI pause) stay :class:`gregtec.agents.no_ai.CreditWatch`'s. This adds, read f
 - **the day cap** ``[budget] day_max_usd``: today's spend (local midnight to midnight) reaching
   it is a ``warn`` alert, key ``cost:day``, once per day. It only tells Clayton; nothing is paused
   or downgraded (D16);
-- **the task cap** ``[budget] task_max_usd``: a task whose metered spend today reached it is a
-  ``warn`` alert, key ``cost:task:<task>``, once per task. The deep lane already paused that
-  task and asked (D156); the alert carries the question to Discord while he is away.
+- **the task cap** ``[budget] task_max_usd``: a deep-lane task paused at its cap (status
+  ``needs_approval``, D156) is a ``warn`` alert, key ``cost:task:<id>``, occurrence = its
+  ``approvals``, so each pause DMs once and the alert clears when he answers or the task ends.
+  The source is the deep lane's own state, not the meter: a task spanning midnight, or its
+  second cap after an approval, still alerts, and an answered one never lingers.
 
 :meth:`CostWatch.alerts` is the router's ``costs`` source (kind ``cost``, routed like the credit
 alert: dashboard, and a DM whatever his presence, D334); :meth:`CostWatch.caps` is the Costs
@@ -21,16 +23,34 @@ view's "Caps" card (``GET /api/usage`` ``caps``). Every number is the meter's (D
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from gregtec.config import Config
 from gregtec.llm.usage import UsageMeter
 from gregtec.store import Store
 
 TOP_TASKS = 5
+NEEDS_APPROVAL = (
+    "needs_approval"  # gregtec.agents.deep's status (not imported: no SDK here)
+)
+
+
+class Paused(Protocol):
+    """The fields of a :class:`gregtec.agents.deep.DeepTask` the cap alert reads."""
+
+    id: str
+    task: str
+    status: str
+    spent_usd: float
+    cap_usd: float
+    approvals: int
+
+
+def _no_tasks() -> Iterable[Paused]:
+    return ()
 
 
 @dataclass(frozen=True)
@@ -43,9 +63,15 @@ class CostWatch:
     day_max_usd: float
     cycle_day: int = 1
     clock: Callable[[], float] = time.time
+    tasks: Callable[[], Iterable[Paused]] = _no_tasks  # the deep lane's tasks (D334)
 
     @classmethod
-    def of(cls, store: Store, cfg: Config) -> CostWatch:
+    def of(
+        cls,
+        store: Store,
+        cfg: Config,
+        tasks: Callable[[], Iterable[Paused]] = _no_tasks,
+    ) -> CostWatch:
         return cls(
             store,
             cfg.monthly_included_usd,
@@ -54,6 +80,7 @@ class CostWatch:
             cfg.task_max_usd,
             cfg.day_max_usd,
             cfg.cycle_day,
+            tasks=tasks,
         )
 
     def _now(self) -> datetime:
@@ -157,19 +184,20 @@ class CostWatch:
                     ),
                 }
             )
-        for task in caps["task"]["top"]:
-            if task["reached"]:
-                out.append(
-                    {
-                        "key": f"cost:task:{task['task']}",
-                        "occ": task["task"],
-                        "level": "warn",
-                        "title": "A task reached its cap",
-                        "text": (
-                            f"Task {task['task'][:40]} has used ${task['usd']:.2f}, its "
-                            f"${self.task_max_usd:.2f} cap ([budget] task_max_usd): it "
-                            "paused and waits for your answer on the dashboard (D16)."
-                        ),
-                    }
-                )
+        for task in self.tasks():
+            if task.status != NEEDS_APPROVAL:
+                continue
+            out.append(
+                {
+                    "key": f"cost:task:{task.id}",
+                    "occ": str(task.approvals),
+                    "level": "warn",
+                    "title": "A task reached its cap",
+                    "text": (
+                        f"Task {task.task[:40]} ({task.id}) has used ${task.spent_usd:.2f}, "
+                        f"its ${task.cap_usd:.2f} cap ([budget] task_max_usd): it paused "
+                        "and waits for your answer on the dashboard (D16, D156)."
+                    ),
+                }
+            )
         return out

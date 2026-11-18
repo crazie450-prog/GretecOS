@@ -330,17 +330,24 @@ def test_no_vault_note_is_ever_half_written(tmp_path: Path, seed: int) -> None:
 
 def test_sweep_tmp_takes_only_atomic_writes_temp_files(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
-    (vault / "me").mkdir(parents=True)
+    (vault / "plans").mkdir(parents=True)
+    (vault / "me" / "sub").mkdir(parents=True)
     keep = [
-        vault / "me" / "goals.md",
-        vault / "me" / "x.gos-tmp",  # not an atomic_write name
-        vault / "me" / ".goals.md.nothex!.gos-tmp",
+        vault / "plans" / "pl-1.md",
+        vault / "plans" / "x.gos-tmp",  # not an atomic_write name
+        vault / "plans" / ".pl-1.md.nothex!.gos-tmp",
+        # Clayton's own me/ is never written, not even by the sweep (CLAUDE.md)
+        vault / "me" / ".goals.md.0a1b2c3d.gos-tmp",
+        vault / "me" / "sub" / ".n.md.0a1b2c3d.gos-tmp",
     ]
     for p in keep:
         p.write_text("x", "utf-8")
-    (vault / "me" / ".goals.md.0a1b2c3d.gos-tmp").write_text("half", "utf-8")
-    assert vault_io.sweep_tmp(vault) == 1
-    assert sorted(vault.rglob("*")) == sorted([vault / "me", *keep])
+    (vault / "plans" / ".pl-1.md.0a1b2c3d.gos-tmp").write_text("half", "utf-8")
+    (vault / "plans" / "me").mkdir()  # only the vault's top-level me/ is Clayton's
+    (vault / "plans" / "me" / ".a.md.0a1b2c3d.gos-tmp").write_text("half", "utf-8")
+    assert vault_io.sweep_tmp(vault) == 2
+    dirs = [vault / "plans", vault / "plans" / "me", vault / "me", vault / "me" / "sub"]
+    assert sorted(vault.rglob("*")) == sorted([*dirs, *keep])
     assert vault_io.sweep_tmp(tmp_path / "none") == 0
 
 

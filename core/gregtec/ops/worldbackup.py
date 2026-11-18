@@ -216,6 +216,46 @@ def verify_zip(zip_path: Path, into: Path) -> Report:
     return report
 
 
+def no_room(folder: Path, need: int) -> str | None:
+    """Why ``folder``'s drive can't take ``need`` more bytes (None: it can)."""
+    free = shutil.disk_usage(folder).free
+    if free >= need:
+        return None
+    gib = 1 << 30
+    return (
+        f"only {free / gib:.1f} GiB free where the check works ({folder}); it needs "
+        f"{need / gib:.1f} GiB: free some space or pass --work on a bigger drive"
+    )
+
+
+def check_copy(src: Path, scratch: Path) -> Report:
+    """Copy ``src`` into ``scratch`` and check it there, with room checked first: twice the zip
+    for the copy, then twice its uncompressed size for the world (review L4). A file that can't
+    be read (locked, access denied) is a problem, not a traceback."""
+    report = Report(zip_name=src.name)
+    try:
+        why = no_room(scratch, 2 * src.stat().st_size)
+        if why is None:
+            copy = scratch / src.name
+            copy_in(src, copy)
+            try:
+                with zipfile.ZipFile(copy) as zf:
+                    size = sum(i.file_size for i in zf.infolist())
+            except zipfile.BadZipFile:
+                size = 0  # verify_zip says why
+            why = no_room(scratch, 2 * size)
+            if why is None:
+                world = scratch / "world"
+                world.mkdir()
+                report = verify_zip(copy, world)
+            copy.unlink(missing_ok=True)
+    except OSError as exc:
+        why = f"can't read or copy {src.name}: {exc}"
+    if why is not None:
+        report.problems.append(why)
+    return report
+
+
 def refuse_work(work: Path, forbidden: Sequence[Path]) -> str | None:
     resolved = work.resolve()
     for place in forbidden:
@@ -249,12 +289,7 @@ def run(
     else:
         scratch = Path(tempfile.mkdtemp(prefix="gos-world-check-"))
     try:
-        copy = scratch / src.name
-        copy_in(src, copy)
-        world = scratch / "world"
-        world.mkdir()
-        report = verify_zip(copy, world)
-        copy.unlink(missing_ok=True)
+        report = check_copy(src, scratch)
     finally:
         if not keep:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -302,5 +337,12 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         print(f"Can't read gos.toml: {exc}", file=out)
         return 2
     backups = args.backups or cfg.gos_home / WORLD_BACKUPS
-    forbidden = [cfg.prism_instances, cfg.prism_root]
+    # never in Prism, GOS_APP, the vault or the core's data (review L2)
+    forbidden = [
+        cfg.prism_instances,
+        cfg.prism_root,
+        cfg.gos_app,
+        cfg.gos_home / "vault",
+        cfg.data_dir,
+    ]
     return run(args.zip, backups, args.work, args.keep, forbidden, out)

@@ -262,13 +262,15 @@ def sweep_tmp(vault: Path) -> int:
     """Remove the temporary files of :func:`atomic_write`\\ s that a kill or a power loss cut
     short (WO-11.2, D333): the note itself is always whole, but its half-written temp file would
     stay. Only the core calls this, at its start, before anything writes. Links are never
-    followed and ``.git`` is left alone. Returns how many went."""
+    followed; ``.git`` and Clayton's own ``me/`` (GOS never writes there, so a temp file there is
+    not GOS's) are left alone. Returns how many went."""
     if not vault.is_dir():
         return 0
     gone = 0
     for root, dirs, files in os.walk(vault):
         here = Path(root)
-        dirs[:] = [d for d in dirs if d != ".git" and not (here / d).is_symlink()]
+        skip = {".git", "me"} if here == vault else {".git"}
+        dirs[:] = [d for d in dirs if d not in skip and not (here / d).is_symlink()]
         for name in files:
             path = here / name
             if _TMP.fullmatch(name) and not path.is_symlink():

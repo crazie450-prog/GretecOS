@@ -118,15 +118,36 @@ def test_restore_to_a_folder_keeps_a_usable_copy(
     assert not (dest / "vault" / ".git" / "index.lock").exists()
 
 
-@pytest.mark.parametrize("where", ["data", "vault", "data/backups", "."])
+@pytest.mark.parametrize(
+    "where",
+    [
+        "data",
+        "vault",
+        "data/backups",
+        ".",  # GOS_HOME itself holds data and vault
+        "backups/world/x",  # the world backups (CLAUDE.md: backups\\world)
+        "../Prism/instances/GTNH-Play/x",
+        "../Prism",
+        "../GregtecOS-app/x",
+    ],
+)
 def test_restore_never_goes_over_live_data(
     home: Path, where: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    target = home / "data" if where == "." else home / where
-    if where == ".":
-        target = home  # GOS_HOME itself holds data and vault
+    cfg = home / "config" / "gos.toml"
+    prism = home.parent / "Prism"
+    cfg.write_text(
+        "[paths]\n"
+        f'gos_home = "{home.as_posix()}"\n'
+        f'gos_app = "{(home.parent / "GregtecOS-app").as_posix()}"\n'
+        f'prism_root = "{prism.as_posix()}"\n'
+        f'prism_instances = "{(prism / "instances").as_posix()}"\n',
+        encoding="utf-8",
+    )
+    target = home / where
     code, out = gos(home, "backup", "restore", "--to", str(target), capsys=capsys)
     assert code == 2 and "Refused" in out
+    assert not target.exists() or where in ("data", "vault", "data/backups", ".")
 
 
 def test_restore_needs_verify_or_to(
@@ -297,6 +318,37 @@ def test_date_picks_that_days_backups_and_list_shows_them(
     ]
 
 
+def test_db_and_vault_from_different_days(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A vault snapshot cut short leaves a newer DB than vault (review L3): --verify notes it and
+    checks each; --to refuses the mismatched pair unless --date names the day."""
+    run_job(home, TODAY + dt.timedelta(days=1))
+    for name in ("vault-20261112.zip", "vault-20261112.zip.manifest.json"):
+        (folder(home) / name).unlink()
+    code, out = gos(home, "backup", "restore", "--verify", capsys=capsys)
+    assert code == 0, out
+    assert (
+        "ok   backup days: the newest DB backup is from 20261112 but the newest" in out
+    )
+    dest = tmp_path / "pair"
+    code, out = gos(home, "backup", "restore", "--to", str(dest), capsys=capsys)
+    assert code == 1 and "FAIL backup days" in out and "--date" in out
+    dest2 = tmp_path / "pair2"
+    code, out = gos(
+        home,
+        "backup",
+        "restore",
+        "--to",
+        str(dest2),
+        "--date",
+        "20261111",
+        capsys=capsys,
+    )
+    assert code == 0, out
+    assert "backup days" not in out
+
+
 def test_retention_prunes_backups_with_their_manifests(home: Path) -> None:
     for d in range(1, 10):
         run_job(home, TODAY + dt.timedelta(days=d))
@@ -324,12 +376,30 @@ def test_a_backup_killed_after_its_manifest_is_redone(
     assert code == 0, out
 
 
-def test_a_pre_wo_backup_gets_its_manifest(home: Path) -> None:
+def test_a_pre_wo_backup_gets_its_manifest(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     db = folder(home) / "gos-20261111.sqlite"
     backups.manifest_path(db).unlink()
     [result] = run_job(home)
     assert result.detail.startswith("gos-20261111.sqlite already exists")
     assert backups.read_manifest(db)["tables"]["kv"] == 25
+    # every older manifest-less DB backup gets one too, not only today's (review L7)
+    run_job(home, TODAY + dt.timedelta(days=1))
+    backups.manifest_path(db).unlink()
+    run_job(home, TODAY + dt.timedelta(days=2))
+    assert backups.read_manifest(db)["tables"]["kv"] == 25
+    code, out = gos(
+        home, "backup", "restore", "--verify", "--date", "20261111", capsys=capsys
+    )
+    assert code == 0, out
+
+
+def test_a_cut_short_manifest_write_is_swept(home: Path) -> None:
+    left = folder(home) / "gos-20261111.sqlite.manifest.json.tmp"
+    left.write_bytes(b"{half")
+    run_job(home, TODAY + dt.timedelta(days=1))
+    assert not left.exists()
 
 
 def test_a_vault_snapshot_past_its_deadline_leaves_nothing(home: Path) -> None:

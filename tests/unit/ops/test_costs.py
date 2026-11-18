@@ -4,6 +4,7 @@ cap, the caps card, and each sent once through the alert router, a restart inclu
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -54,6 +55,18 @@ def watch(store: Store, clock: Clock, **kw: object) -> CostWatch:
     }
     args.update(kw)
     return CostWatch(store, **args)  # type: ignore[arg-type]
+
+
+@dataclass
+class FakeTask:
+    """The deep lane's task as the cap alert reads it (gregtec.agents.deep.DeepTask)."""
+
+    id: str
+    task: str
+    status: str = "running"
+    spent_usd: float = 0.0
+    cap_usd: float = 2.0
+    approvals: int = 0
 
 
 def keys(w: CostWatch) -> dict[str, str]:
@@ -107,16 +120,34 @@ def test_the_day_cap_counts_only_today(store: Store) -> None:
     assert keys(w) == {}
 
 
-def test_a_task_at_its_cap(store: Store) -> None:
+def test_the_caps_card_lists_todays_biggest_tasks(store: Store) -> None:
     clock = Clock(NOON)
     spend(store, 1.25, NOON - 120, task="design-7")
     spend(store, 0.75, NOON - 60, task="design-7")
     spend(store, 0.5, NOON - 60, task="ask-1")
     w = watch(store, clock)
-    assert keys(w) == {"cost:task:design-7": "warn"}
+    assert keys(w) == {}  # the meter alone never raises the task alert (the lane does)
     caps = w.caps()["task"]
     assert caps["reached"] == 1
     assert [t["task"] for t in caps["top"]] == ["design-7", "ask-1"]
+
+
+def test_the_task_alert_follows_the_deep_lanes_pause(store: Store) -> None:
+    clock = Clock(NOON)
+    t = FakeTask("dl-1", "design-7")
+    w = watch(store, clock, tasks=lambda: [t, FakeTask("dl-2", "ask-1")])
+    assert keys(w) == {}
+    t.status, t.spent_usd = "needs_approval", 2.01  # paused at its cap (D156)
+    [a] = w.alerts()
+    assert (a["key"], a["occ"], a["level"]) == ("cost:task:dl-1", "0", "warn")
+    assert "design-7 (dl-1) has used $2.01, its $2.00 cap" in a["text"]
+    t.status, t.approvals, t.cap_usd = "running", 1, 4.0  # approved: the alert clears
+    assert keys(w) == {}
+    t.status, t.spent_usd = "needs_approval", 4.0  # the second cap is a new occurrence
+    [a] = w.alerts()
+    assert a["occ"] == "1" and "$4.00 cap" in a["text"]
+    t.status = "done"
+    assert keys(w) == {}
 
 
 def test_config_reads_and_checks_the_new_keys(tmp_path: Path) -> None:
@@ -152,17 +183,17 @@ def test_each_cost_alert_is_dmed_once_even_across_a_restart(store: Store) -> Non
     spend(store, 55.0, NOON - 86400 * 3)
     spend(store, 2.5, NOON - 60, task="design-9")
     spend(store, 8.0, NOON - 30)
-    w = watch(store, clock)
+    t = FakeTask("dl-9", "design-9", "needs_approval", 2.5)
+    w = watch(store, clock, tasks=lambda: [t])
     r = router_for(store, clock, w)
     for _ in range(3):
         clock.t += 1
         r.tick()
     sent = dms(store)
     assert len(sent) == 3, sent  # present at the PC: direct alerts still DM (D334)
-    assert any(t.startswith("[info] API credits: 6") for t in sent)
-    assert any(t.startswith("[warn] Today's API spend is $10.50") for t in sent)
-    assert any(t.startswith("[warn] Task design-9 has used $2.50") for t in sent)
-    assert not any(t.startswith("[warn] Task") and "$8" in t for t in sent)
+    assert any(m.startswith("[info] API credits: 6") for m in sent)
+    assert any(m.startswith("[warn] Today's API spend is $10.50") for m in sent)
+    assert any(m.startswith("[warn] Task design-9 (dl-9) has used $2.50") for m in sent)
     r = router_for(store, clock, w)  # the core restarted
     for _ in range(3):
         clock.t += 1
@@ -173,6 +204,14 @@ def test_each_cost_alert_is_dmed_once_even_across_a_restart(store: Store) -> Non
     clock.t += 1
     r.tick()
     assert len(dms(store)) == 4
+    t.status, t.approvals = "running", 1  # answered: the alert closes
+    clock.t += 1
+    r.tick()
+    t.status, t.cap_usd = "needs_approval", 4.0  # paused again at 2x: DMed again
+    clock.t += 1
+    r.tick()
+    assert len(dms(store)) == 5
+    assert dms(store)[-1].startswith("[warn] Task design-9 (dl-9)")
 
 
 def test_cost_alerts_are_direct_and_never_spoken() -> None:

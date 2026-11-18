@@ -38,7 +38,7 @@ import sqlite3
 import time
 import zipfile
 import zlib
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -251,7 +251,8 @@ def vault_manifest(zip_path: Path) -> dict[str, Any]:
 
 def prune(folder: Path, keep: int) -> int:
     """Keep the newest ``keep`` DB and vault backups (with their manifests); remove orphan
-    manifests. Returns how many backups went."""
+    manifests and the ``.tmp`` of a manifest write a kill cut short. Returns how many backups
+    went."""
     if not folder.is_dir():
         return 0
     gone = 0
@@ -264,7 +265,9 @@ def prune(folder: Path, keep: int) -> int:
             manifest_path(old).unlink(missing_ok=True)
             gone += 1
     for m in folder.iterdir():
-        if m.name.endswith(MANIFEST):
+        if m.name.endswith(MANIFEST + ".tmp"):  # _fsync_write killed before its rename
+            m.unlink(missing_ok=True)
+        elif m.name.endswith(MANIFEST):
             data = m.with_name(m.name.removesuffix(MANIFEST))
             if not data.exists() and not data.with_name(data.name + ".tmp").exists():
                 m.unlink(missing_ok=True)
@@ -447,8 +450,9 @@ def restore_vault(backup: Path, dest: Path) -> list[Check]:
     return checks
 
 
-def refuse_dest(dest: Path, live: tuple[Path, ...]) -> str | None:
-    """Why ``dest`` can't take a restore: not empty, or in or around the live data or vault."""
+def refuse_dest(dest: Path, live: Sequence[Path]) -> str | None:
+    """Why ``dest`` can't take a restore: not empty, or in or around a place it must never
+    write (the live data and vault, the world backups, Prism, GOS_APP)."""
     resolved = dest.resolve()
     for place in live:
         p = place.resolve()
@@ -461,17 +465,43 @@ def refuse_dest(dest: Path, live: tuple[Path, ...]) -> str | None:
     return None
 
 
-def restore(folder: Path, dest: Path, day: str | None = None) -> list[Check]:
-    """Restore the newest (or ``day``'s) DB and vault backups into ``dest`` and check them."""
+def _day(path: Path) -> str:
+    m = DB_BACKUP.fullmatch(path.name) or VAULT_BACKUP.fullmatch(path.name)
+    assert m is not None
+    return m[1]
+
+
+def restore(
+    folder: Path, dest: Path, day: str | None = None, same_day: bool = False
+) -> list[Check]:
+    """Restore the newest (or ``day``'s) DB and vault backups into ``dest`` and check them.
+
+    Without ``day`` the newest of each is taken, and they can be from different days (a vault
+    snapshot cut short): that is a failed check when ``same_day`` (a ``--to`` restore, which
+    Clayton may swap in as a pair) and a noted one otherwise (``--verify`` checks each alone)."""
     checks: list[Check] = []
     db = pick(folder, "db", day)
+    vault = pick(folder, "vault", day)
     when = f" for {day}" if day else ""
+    if day is None and db is not None and vault is not None and _day(db) != _day(vault):
+        checks.append(
+            Check(
+                "backup days",
+                not same_day,
+                f"the newest DB backup is from {_day(db)} but the newest vault backup is "
+                f"from {_day(vault)}"
+                + (
+                    ": not a matching pair; say --date YYYYMMDD (gos backup list)"
+                    if same_day
+                    else " (each is checked on its own)"
+                ),
+            )
+        )
     if db is None:
         checks.append(Check("db backup", False, f"no DB backup{when} in {folder}"))
     else:
         checks.append(Check("db backup", True, db.name))
         checks += restore_db(db, dest)
-    vault = pick(folder, "vault", day)
     if vault is None:
         checks.append(
             Check(

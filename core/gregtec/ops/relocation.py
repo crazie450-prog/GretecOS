@@ -35,6 +35,9 @@ from gregtec.gamestate.safe_open import read_text
 
 OK, TODO, PROBLEM = "ok", "todo", "problem"
 LOOPBACK_RULE = tweaks.LOOPBACK
+RFC1918 = tuple(
+    ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 
 @dataclass(frozen=True)
@@ -57,7 +60,9 @@ def check_ip(raw: str) -> Item:
         ip = ipaddress.ip_address(raw)
     except ValueError:
         return Item("core_ip", PROBLEM, f"{raw!r} is not an IP address")
-    if ip.version != 4 or ip.is_loopback or not ip.is_private or ip.is_link_local:
+    # Explicit RFC 1918 membership: ip.is_private also covers 0.0.0.0/8,
+    # 255.255.255.255, the TEST-NETs, 198.18/15 and 240/4.
+    if not isinstance(ip, ipaddress.IPv4Address) or not any(ip in n for n in RFC1918):
         return Item(
             "core_ip",
             PROBLEM,

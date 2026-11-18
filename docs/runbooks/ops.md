@@ -100,7 +100,7 @@ After a crash, check: `gos status`, the health strip, `gos backup restore --veri
 | heads-up | the cycle's spend passes `[budget] notice_pct` (50%) | dashboard Costs, a Discord DM (info) |
 | credit alert | 80% and 100% (`credit_alerts_pct`, D48): buttons; 100% pauses to no-AI | banner, DM with buttons |
 | day cap | today's spend reaches `[budget] day_max_usd` ($10) | Costs "Caps" card, a DM (warn); nothing pauses |
-| task cap | a task reaches `[budget] task_max_usd`; the task already paused and asked (D156) | Costs "Caps" card, a DM (warn) |
+| task cap | a deep-lane task pauses at `[budget] task_max_usd` (or 2x, 3x after approvals) and asks (D156); clears when answered | Costs "Caps" card, a DM (warn) per pause |
 
 Each is sent once per cycle, day or task, a restart included. Quiet hours hold them (they are
 below `err`). Check the routing with `gos alerts routed` while one is active.

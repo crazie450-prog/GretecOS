@@ -524,10 +524,18 @@ def backup(
             missing_ok=True
         )  # a run killed in VACUUM INTO, maybe on another day
     target = folder / f"gos-{today:%Y%m%d}.sqlite"
+    for old in backups.listing(
+        folder
+    ):  # DB backups made before WO-11.2 (vault zips weren't)
+        if old.kind == "db" and not old.has_manifest:
+            try:
+                backups.write_manifest(old.path, backups.db_manifest(old.path))
+            except (
+                sqlite3.DatabaseError
+            ) as exc:  # unreadable: restore says "no manifest"
+                log.warning("backup %s has no manifest: %s", old.path.name, exc)
     if target.exists():
         detail = f"{target.name} already exists"
-        if not backups.manifest_path(target).is_file():  # made before WO-11.2
-            backups.write_manifest(target, backups.db_manifest(target))
     else:
         tmp = folder / f"{target.name}.tmp"
         busy_s = 30.0  # the progress handler doesn't run while SQLite waits on a lock

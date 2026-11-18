@@ -108,7 +108,15 @@ def run(args: argparse.Namespace, out: TextIO | None = None) -> int:
             file=out,
         )
         return 2
-    live = (cfg.data_dir, cfg.gos_home / "vault")
+    # never over live data, the world backups, Prism or GOS_APP (CLAUDE.md; review L2)
+    live = (
+        cfg.data_dir,
+        cfg.gos_home / "vault",
+        cfg.gos_home / "backups",
+        cfg.prism_instances,
+        cfg.prism_root,
+        cfg.gos_app,
+    )
     if args.to is not None:
         why = backups.refuse_dest(args.to, live)
         if why is not None:
@@ -119,7 +127,7 @@ def run(args: argparse.Namespace, out: TextIO | None = None) -> int:
     else:
         dest, temporary = Path(tempfile.mkdtemp(prefix="gos-restore-")), True
     try:
-        checks = backups.restore(folder, dest, args.date)
+        checks = backups.restore(folder, dest, args.date, same_day=not temporary)
     finally:
         if temporary:
             shutil.rmtree(dest, ignore_errors=True)
