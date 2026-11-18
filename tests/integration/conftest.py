@@ -39,3 +39,15 @@ def built_home(
         base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base
     ) / "harness-homes"
     return _load_cache_module().HomeCache(root).home
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Under pytest-xdist only (a plain `uv run pytest` keeps its order): the slowest files
+    first. Every worker sorts the same collection the same way, as xdist requires; CI passes
+    ``--no-loadscope-reorder`` so the scheduler keeps this order (D340)."""
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    order = _load_cache_module().slow_first([item.path.name for item in items])
+    items[:] = [items[i] for i in order]

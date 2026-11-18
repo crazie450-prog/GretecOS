@@ -146,6 +146,25 @@ def test_a_lock_never_released_times_out(tmp_path: Path) -> None:
         cache.home(tmp_path / "server", tmp_path / "h")
 
 
+def test_slow_files_go_first_and_each_file_keeps_its_order() -> None:
+    names = [
+        "test_a.py",
+        "test_power_view_harness.py",
+        "test_rank_harness.py",
+        "test_a.py",
+        "test_rank_harness.py",
+        "test_b.py",
+    ]
+    assert hc.slow_first(names) == [2, 4, 1, 0, 3, 5]
+    assert hc.slow_first([]) == []
+
+
+def test_every_slow_file_named_exists() -> None:
+    """A renamed or removed file would silently lose its place at the front."""
+    here = Path(__file__).parent
+    assert [n for n in hc.SLOW_FIRST if not (here / n).is_file()] == []
+
+
 # --- on a real harness run ------------------------------------------------------------------
 
 

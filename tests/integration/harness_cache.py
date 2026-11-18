@@ -12,6 +12,8 @@ holding a lock (``mkdir`` of ``<key>.lock``, atomic on every OS) and the others 
 home is built once per run, not once per worker. A failed build is recorded (``<key>.failed``) so the
 waiting workers fail with its message instead of waiting forever; the builder re-raises its own error.
 
+It also holds the order the workers take test files in (:data:`SLOW_FIRST`, :func:`slow_first`).
+
 Not a test file (no ``test_`` prefix): ``conftest.py`` and ``test_harness_cache.py`` load it.
 """
 
@@ -25,6 +27,36 @@ from collections.abc import Callable
 from pathlib import Path
 
 Builder = Callable[[Path, Path], None]  # (game folder, empty GOS_HOME) -> None
+
+# The integration test files that take longest, slowest first: seconds per file (setup + call +
+# teardown, on 4 workers) from a local `-n 4 --dist loadfile` run on 2026-11-18 (D340). Under
+# pytest-xdist, conftest.py sorts these to the front so the long files start at once; xdist's own
+# order (most tests first, `--loadscope-reorder`) left the 340 s single-test file to the end of
+# the run. Unlisted files follow in collection order. A new file that takes more than about a
+# minute belongs here (only the order changes: every test still runs).
+SLOW_FIRST: dict[str, float] = {
+    "test_rank_harness.py": 442,
+    "test_power_view_harness.py": 340,
+    "test_power_objectives_harness.py": 259,
+    "test_db_harness.py": 200,
+    "test_plan_harness.py": 178,
+    "test_g3_lines_harness.py": 144,
+    "test_power_effort_harness.py": 127,
+    "test_pack_update_harness.py": 114,
+    "test_g4_lines_harness.py": 109,
+    "test_discord_harness.py": 107,
+    "test_crops_harness.py": 103,
+    "test_power_harness.py": 95,
+    "test_dashboard_harness.py": 70,
+    "test_gtmath_harness.py": 59,
+}
+
+
+def slow_first(names: list[str]) -> list[int]:
+    """The order to run items in, given each item's file name: indices into ``names``, the
+    files of :data:`SLOW_FIRST` first (slowest first), then the rest; the items of one file keep
+    their order (the sort is stable)."""
+    return sorted(range(len(names)), key=lambda i: -SLOW_FIRST.get(names[i], 0.0))
 
 
 class CacheError(RuntimeError):
