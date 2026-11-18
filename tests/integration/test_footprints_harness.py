@@ -18,8 +18,10 @@ Then:
   row's ``hatches_json``.
 - **The coverage report on the benchmark plans**: G3's lines (``test_g3_lines_harness.LINES``)
   are designed on the harness DB, and the report says for each multi their best routes use
-  whether it has a footprint or needs a Lab capture, consistently with the library. ``-s``
-  prints it.
+  whether it has a footprint or needs a Lab capture, consistently with the library; with a real
+  dump every one of them has a footprint. ``-s`` prints it. Designing all 13 lines takes about
+  7 minutes, so without GOS_STRUCTURES_DATASET (CI: the fixture dump covers none of them anyway)
+  only ``CHEAP_LINES`` are designed, which still checks the report end to end.
 
 Nothing is written outside tmp_path.
 """
@@ -50,6 +52,9 @@ REPO = Path(__file__).resolve().parents[2]
 GAME = REPO / "mod" / "run" / "server"
 FIXTURE = REPO / "tests" / "fixtures" / "gtnh-extractor"
 DATASET = os.environ.get("GOS_STRUCTURES_DATASET")
+CHEAP_LINES = (
+    "steel (EBF)",
+)  # the lines designed without a real dump (CI's time budget)
 
 
 def _g3() -> ModuleType:
@@ -114,6 +119,9 @@ def test_a_footprint_for_every_structure_row(conn: sqlite3.Connection) -> None:
         assert {c.d: (c.block, c.meta) for c in f.blocks} == blocks, f.key
         hatches = {tuple(h["d"]): tuple(h["kinds"]) for h in json.loads(r[7])}
         assert {c.d: c.hatches for c in f.hatch_cells} == hatches, f.key
+        # a tier swap is by block (D305): no block may be a tier block of two channels
+        tier_blocks = [{t.key for t in options} for options in f.choices.values()]
+        assert sum(map(len, tier_blocks)) == len(set().union(*tier_blocks)), f.key
         for facing in fp.FACINGS:
             turned = f.rotated(facing)
             quarter = facing in ("east", "west")
@@ -140,7 +148,9 @@ def benchmark_plans(db: Path) -> list[dict[str, Any]]:
     try:
         base = DefaultBaseInputs.from_db(conn)
         out = []
-        for name, (key, tier) in _g3().LINES.items():
+        lines = _g3().LINES
+        for name in lines if DATASET else CHEAP_LINES:
+            key, tier = lines[name]
             d = plan.design(conn, Request(key, qty=1, tier_cap=tier), base)
             assert d.plans, name
             p = dict(d.plans[0])
@@ -173,4 +183,5 @@ def test_the_coverage_report_on_the_benchmark_plans(
     if DATASET:  # a real dump covers the base pack's controllers the plans use
         missing = [n for n in cov.needed if n.status == coverage.NEEDS]
         print(f"\nbenchmark multis without an extractor footprint: {missing}")
+        assert not missing
     print("\n" + "\n".join(coverage.render(cov)))
