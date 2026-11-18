@@ -14,7 +14,7 @@
 
 **The export** is ``GOS_HOME/data/guide-site`` (:func:`gregtec.build.guide.site_root`): Clayton's
 copy of GuideNH's ``/guidenhc exportsite`` output, served as it is and never written by GOS. Its
-files are served **only on the guide host** (``guide.<dashboard_host>:<port>``, D319), its own
+files are served **only on the guide host** (``guide-<dashboard_host>:<port>``, D319), its own
 origin: the framed page can't reach the dashboard's window, DOM, ``localStorage`` or (with its
 Origin) ``/api``, and the dashboard's host-only cookie never goes there. The credential is the
 path token :class:`gregtec.build.guide.Tokens` issues to a paired dashboard in ``GET /api/guide``,

@@ -17,7 +17,7 @@ What this module does:
   :class:`ScanCache` keeps the result and re-parses only pages whose size or time changed
   (a full pack export has thousands of pages, WO-10.8, D304).
 - **Its own origin** (WO-10.8, D304, D319): the files are served only on the guide host
-  (``guide.<dashboard_host>:<port>``, :attr:`gregtec.config.Config.guide_host`), never on the
+  (``guide-<dashboard_host>:<port>``, :attr:`gregtec.config.Config.guide_host`), never on the
   dashboard's, so the framed page is cross-origin with the dashboard: its scripts can't reach the
   parent window, the dashboard's ``localStorage`` or its DOM, and the core refuses any ``/api``
   request carrying the guide's Origin. The dashboard's cookie is host-only and never goes there;

@@ -37,8 +37,11 @@ checklist (in its own DB). **You build by hand, in the Lab.** GOS never pastes m
 4. Hover a block. **Expect** `<name> · <registry name>@<meta> · layer N · ... of the controller`, and
    for a hatch cell `takes Input Bus, ...`. Never a number on its own.
 5. If the export is in place, the **In-game look** panel below shows GuideNH's page. Its address
-   starts `http://guide.gos.localhost:8765/guide/<token>/`. Open the browser's developer tools on the
-   frame and run `window.parent.fetch` : **expect** a SecurityError (the frame is isolated).
+   starts `http://guide-gos.localhost:8765/guide/<token>/`. Open the browser's developer tools on the
+   frame and run `window.parent.fetch` : **expect** a SecurityError (the frame is isolated). Then,
+   still in the frame, run `document.cookie = "gos_device=x; domain=gos.localhost; path=/"` and
+   reload the dashboard: **expect** it still paired (the guide host is a sibling name, so that
+   cookie is never set; D319).
 
 ## C. Build it (L6)
 

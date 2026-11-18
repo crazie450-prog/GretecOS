@@ -14,7 +14,7 @@ const furnace = furnaceJson as unknown as BuildGuide;
 const CONTROLLER = "gregtech:gt.blockmachines@9001";
 
 describe("guideSrc", () => {
-  const base = "http://guide.gos.localhost:8765/guide/1800000000-abcdef/";
+  const base = "http://guide-gos.localhost:8765/guide/1800000000-abcdef/";
   it("keeps the folders and encodes each segment under the token", () => {
     expect(guideSrc(base, "standin/en_us/multiblock.html")).toBe(`${base}standin/en_us/multiblock.html`);
     expect(guideSrc(base, "gt/en_us/a b#?.html")).toBe(`${base}gt/en_us/a%20b%23%3F.html`);

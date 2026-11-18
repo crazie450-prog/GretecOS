@@ -126,12 +126,13 @@ GUIDE_PATH = "/guide/"
 
 
 def guide_refusal(headers: dict[str, str], method: str, path: str) -> str | None:
-    """Why a request to the 3D guide's own host (``guide.<dashboard_host>:<port>``, WO-10.8,
+    """Why a request to the 3D guide's own host (``guide-<dashboard_host>:<port>``, WO-10.8,
     D304, D319) is refused, or None. That host serves the guide export's files and nothing else:
     GET or HEAD under ``/guide/``, no WebSocket (checked by the caller). An ``Origin`` must be
-    that host's own (the guide page's own fetches), and a cross-site request is refused; a
-    same-site one is the dashboard framing it (``gos.localhost`` and ``guide.gos.localhost`` are
-    one site). The credential is the path token (:mod:`gregtec.build.guide`), never a cookie."""
+    that host's own (the guide page's own fetches). A request from another site is refused
+    unless it is a frame's navigation: the dashboard (a sibling host name, so another site)
+    framing the guide. The credential is the path token (:mod:`gregtec.build.guide`), never a
+    cookie."""
     if FUNNEL_HEADER in headers:
         return "funnel request"
     if method not in ("GET", "HEAD") or not path.startswith(GUIDE_PATH):
@@ -142,9 +143,25 @@ def guide_refusal(headers: dict[str, str], method: str, path: str) -> str | None
         f"https://{headers.get('host', '').lower()}",
     ):
         return "origin not allowed"
-    if headers.get("sec-fetch-site") == "cross-site":
+    framed = (
+        headers.get("sec-fetch-dest") in ("iframe", "frame")
+        and headers.get("sec-fetch-mode") == "navigate"
+    )
+    if headers.get("sec-fetch-site") in ("cross-site", "same-site") and not framed:
         return "cross-site request"
     return None
+
+
+def cookie_count(scope: Scope, name: str) -> int:
+    """How many cookies called ``name`` the request carries, over every ``Cookie`` header."""
+    count = 0
+    for raw_key, raw_value in scope.get("headers", []):
+        if raw_key.lower() != b"cookie":
+            continue
+        for chunk in raw_value.decode("latin-1").split(";"):
+            if chunk.partition("=")[0].strip() == name:
+                count += 1
+    return count
 
 
 def _headers(scope: Scope) -> dict[str, str]:
@@ -191,6 +208,10 @@ class HostOriginGuard:
             )
         else:
             reason = refusal(headers, self.allowed)
+            # Two gos_device cookies mean some other page planted one (a parent-domain cookie,
+            # D319): Starlette keeps the last copy, so never guess which one is Clayton's.
+            if reason is None and cookie_count(scope, COOKIE) > 1:
+                reason = "repeated device cookie"
         if reason is None:
             await self.app(scope, receive, send)
             return

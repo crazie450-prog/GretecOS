@@ -119,13 +119,13 @@ def test_every_suffix_an_export_holds_is_served() -> None:
 
 def test_frame_headers_keep_the_frame_inside_guide() -> None:
     headers = guide.frame_headers(
-        "http://guide.gos.localhost:8765", "http://gos.localhost:8765"
+        "http://guide-gos.localhost:8765", "http://gos.localhost:8765"
     )
     csp = dict(
         part.strip().split(" ", 1)
         for part in headers["Content-Security-Policy"].split(";")
     )
-    here = "http://guide.gos.localhost:8765/guide/"
+    here = "http://guide-gos.localhost:8765/guide/"
     assert csp["default-src"] == "'none'"
     for directive in ("script-src", "connect-src", "font-src", "media-src"):
         assert csp[directive] == here, directive
@@ -196,8 +196,8 @@ def _core(home: Path) -> Any:  # noqa: ANN401
 
 def _frame_base(c: Any, headers: dict[str, str]) -> str:  # noqa: ANN401
     frame = c.get("/api/guide", headers=headers).json()["frame"]
-    assert frame["base"].startswith("http://guide.gos.localhost:8765/guide/")
-    return str(frame["base"])[len("http://guide.gos.localhost:8765") :]
+    assert frame["base"].startswith("http://guide-gos.localhost:8765/guide/")
+    return str(frame["base"])[len("http://guide-gos.localhost:8765") :]
 
 
 def test_guide_api_and_files(tmp_path: Path) -> None:
@@ -208,7 +208,7 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
     home = tmp_path / "home"
     core = _core(home)
     admin = {"Authorization": f"Bearer {ADMIN}"}
-    on_guide = {"Host": "guide.gos.localhost:8765"}
+    on_guide = {"Host": "guide-gos.localhost:8765"}
     try:
         with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
             assert c.get("/api/guide").status_code == 401
@@ -225,7 +225,7 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
             assert page.status_code == 200
             assert page.headers["content-type"] == "text/html; charset=utf-8"
             csp = page.headers["content-security-policy"]
-            assert "connect-src http://guide.gos.localhost:8765/guide/;" in csp
+            assert "connect-src http://guide-gos.localhost:8765/guide/;" in csp
             assert csp.endswith("frame-ancestors http://gos.localhost:8765")
             assert "x-frame-options" not in page.headers
 
@@ -284,8 +284,8 @@ def test_the_guide_host_serves_the_guide_only(tmp_path: Path) -> None:
     home = tmp_path / "home"
     core = _core(home)
     admin = {"Authorization": f"Bearer {ADMIN}"}
-    on_guide = {"Host": "guide.gos.localhost:8765"}
-    guide_origin = {"Origin": "http://guide.gos.localhost:8765"}
+    on_guide = {"Host": "guide-gos.localhost:8765"}
+    guide_origin = {"Origin": "http://guide-gos.localhost:8765"}
     try:
         standin.make(guide.site_root(core.cfg))
         with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
@@ -299,17 +299,30 @@ def test_the_guide_host_serves_the_guide_only(tmp_path: Path) -> None:
             # The guide page's own fetches pass; another site's are refused.
             ok = c.get(f"{base}{standin.PAGE}", headers={**on_guide, **guide_origin})
             assert ok.status_code == 200
-            framed = {"Sec-Fetch-Site": "same-site", "Sec-Fetch-Dest": "iframe"}
-            assert (
-                c.get(
-                    f"{base}{standin.PAGE}", headers={**on_guide, **framed}
-                ).status_code
-                == 200
-            )
+            # The dashboard framing it: a sibling host name, so another site (D319).
+            for site in ("cross-site", "same-site"):
+                framed = {
+                    "Sec-Fetch-Site": site,
+                    "Sec-Fetch-Dest": "iframe",
+                    "Sec-Fetch-Mode": "navigate",
+                }
+                got = c.get(f"{base}{standin.PAGE}", headers={**on_guide, **framed})
+                assert got.status_code == 200, site
             for bad in (
                 {"Origin": "http://gos.localhost:8765"},
                 {"Origin": "http://evil.example"},
                 {"Sec-Fetch-Site": "cross-site"},
+                {"Sec-Fetch-Site": "same-site"},
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Dest": "script",
+                    "Sec-Fetch-Mode": "no-cors",
+                },
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                },
                 {"Tailscale-Funnel-Request": "?1"},
             ):
                 got = c.get(f"{base}{standin.PAGE}", headers={**on_guide, **bad})
@@ -361,7 +374,7 @@ def test_the_dashboard_page_may_frame_the_guide_host_only(tmp_path: Path) -> Non
     try:
         with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
             csp = c.get("/").headers["content-security-policy"]
-            assert csp.endswith("; frame-src http://guide.gos.localhost:8765")
+            assert csp.endswith("; frame-src http://guide-gos.localhost:8765")
             assert "frame-ancestors 'none'" in csp
     finally:
         core.store.close()

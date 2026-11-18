@@ -144,7 +144,7 @@ test("the 3D build guide, and the GuideNH frame on its own origin", async ({ bro
     await expect(body).toHaveAttribute("data-ready", "1");
     await expect(body).toHaveAttribute("data-blocks", "26");
     await expect(body).toHaveAttribute("data-api-blocked", "1");
-    const guideFrame = page.frames().find((f) => new URL(f.url()).hostname.startsWith("guide."));
+    const guideFrame = page.frames().find((f) => new URL(f.url()).hostname.startsWith("guide-"));
     if (!guideFrame) throw new Error("no guide frame");
     expect(new URL(guideFrame.url()).pathname).toMatch(/^\/guide\/\d{10}-[0-9a-f]{32}\//);
     // D304's gap, closed: the parent window is another origin, and the core refuses /api from it.
@@ -167,6 +167,23 @@ test("the 3D build guide, and the GuideNH frame on its own origin", async ({ bro
     expect(reach.parent).toBe("blocked");
     expect(reach.api).toBe("blocked"); // the frame's CSP (connect-src: /guide/ only)
     // Even past the CSP the core refuses /api with the guide's Origin (tests/unit/test_build_guide.py).
+    // The guide host is a sibling of the dashboard's, never a child (review H1, D319): a script in the
+    // frame can't plant a gos_device cookie the dashboard would then be sent.
+    const dashboardHost = new URL(page.url()).hostname;
+    await guideFrame.evaluate((host) => {
+      for (const domain of [host, host.split(".").slice(1).join("."), ""]) {
+        for (const path of ["/", "/api"]) {
+          document.cookie = `gos_device=tossed;${domain ? ` domain=${domain};` : ""} path=${path}`;
+        }
+      }
+    }, dashboardHost);
+    const sent = await page.evaluate(async () => {
+      const r = await fetch("/api/state", { credentials: "same-origin" });
+      return r.status;
+    });
+    expect(sent).toBe(200);
+    const cookies = await page.context().cookies(page.url());
+    expect(cookies.filter((c) => c.name === "gos_device")).toHaveLength(1);
 
     const canvas = frame.locator("canvas.game-scene");
     await expect(canvas).toBeVisible();
