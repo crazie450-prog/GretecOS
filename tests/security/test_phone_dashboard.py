@@ -17,7 +17,6 @@ import logging
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
