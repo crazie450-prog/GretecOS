@@ -15,7 +15,9 @@
     {"$ref": "#/$defs/AlertCard"},
     {"$ref": "#/$defs/HealthCard"},
     {"$ref": "#/$defs/ChoicesCard"},
-    {"$ref": "#/$defs/TableCard"}
+    {"$ref": "#/$defs/TableCard"},
+    {"$ref": "#/$defs/LayoutCard"},
+    {"$ref": "#/$defs/ShellCard"}
   ],
   "$defs": {
     "Ref": {
@@ -459,6 +461,97 @@
         },
         "span": {"type": ["string", "null"], "maxLength": 100},
         "total": {"type": ["integer", "null"]},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "LayoutRect": {
+      "description": "One box of a line layout seen from above (WO-10.5): x and z its west and north edge, w and l its size along x and z, in blocks. A machine names its machine (ref mte:), tier, the way its front faces and whether every hatch kind and its front are reached from the entrance (ok); the rest have null there.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "x", "z", "w", "l", "label", "tier", "ref", "facing", "ok"],
+      "properties": {
+        "id": {"type": "string", "maxLength": 20},
+        "kind": {"type": "string", "enum": ["corridor", "chase", "keepout", "machine", "entrance"]},
+        "x": {"type": "integer", "minimum": 0},
+        "z": {"type": "integer", "minimum": 0},
+        "w": {"type": "integer", "minimum": 1},
+        "l": {"type": "integer", "minimum": 1},
+        "label": {"type": ["string", "null"], "maxLength": 300},
+        "tier": {"anyOf": [{"$ref": "#/$defs/Tier"}, {"type": "null"}]},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]},
+        "facing": {"type": ["string", "null"], "enum": ["north", "east", "south", "west", null]},
+        "ok": {"type": ["boolean", "null"]}
+      }
+    },
+    "LayoutCard": {
+      "description": "A line layout's top-down preview (WO-10.5, plan 7.10, D313): the bounding volume (x by z, y high), its corridors, chases, keep-outs, machines and entrance as boxes. Sizes come from the footprints, cited by the plan in ref and each machine's mte:.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "ref", "layout", "size", "rects", "notes"],
+      "properties": {
+        "type": {"const": "layout"},
+        "title": {"type": "string", "maxLength": 300},
+        "ref": {"$ref": "#/$defs/Ref"},
+        "layout": {"type": "string", "pattern": "^lo-[0-9a-f]{12}$"},
+        "size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "z"],
+          "properties": {
+            "x": {"type": "integer", "minimum": 1},
+            "y": {"type": "integer", "minimum": 1},
+            "z": {"type": "integer", "minimum": 1}
+          }
+        },
+        "rects": {"type": "array", "items": {"$ref": "#/$defs/LayoutRect"}, "maxItems": 1500},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "ShellMaterial": {
+      "description": "One block state of a shell's palette manifest (WO-10.7): its role in the theme (or block, named directly), the registry name and meta (never a numeric id), the catalog's display name and how many cells hold it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "block", "name", "count"],
+      "properties": {
+        "role": {"type": "string", "enum": ["wall", "trim", "pillar", "floor", "roof", "window", "light", "accent", "block"]},
+        "block": {"type": "string", "maxLength": 300},
+        "name": {"type": ["string", "null"], "maxLength": 300},
+        "count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "ShellCard": {
+      "description": "A decorative shell's preview (WO-10.7, plan 7.10, D316-D318): what made it (the architect's design or the procedural generator), accepted as designed or repaired, its theme, bounding size, block count, palette manifest, the preview mesh's faces and the Lab-only paste steps. A face is [d, x, y, z, a, b, c]: d the way it looks (0 east, 1 west, 2 up, 3 down, 4 south, 5 north), x y z its lowest cell in the shell, a and b its extent along the plane's axes (x faces z then y, y faces x then z, z faces x then y), c the palette entry it shows. The shell holds no tile entity and no GT machine block; ref cites the plan it houses.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "ref", "build", "layout", "status", "source", "theme", "size", "blocks", "max_blocks", "palette", "faces", "paste", "notes"],
+      "properties": {
+        "type": {"const": "shell"},
+        "title": {"type": "string", "maxLength": 300},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]},
+        "build": {"type": "string", "pattern": "^sh-[0-9a-f]{12}$"},
+        "layout": {"type": "string", "pattern": "^lo-[0-9a-f]{12}$"},
+        "status": {"type": "string", "enum": ["accepted", "repaired"]},
+        "source": {"type": "string", "enum": ["architect", "procedural"]},
+        "theme": {"type": ["string", "null"], "maxLength": 100},
+        "size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "z"],
+          "properties": {
+            "x": {"type": "integer", "minimum": 1},
+            "y": {"type": "integer", "minimum": 1},
+            "z": {"type": "integer", "minimum": 1}
+          }
+        },
+        "blocks": {"type": "integer", "minimum": 1},
+        "max_blocks": {"type": "integer", "minimum": 1},
+        "palette": {"type": "array", "items": {"$ref": "#/$defs/ShellMaterial"}, "maxItems": 64},
+        "faces": {
+          "type": "array",
+          "maxItems": 6000,
+          "items": {"type": "array", "items": {"type": "integer"}, "minItems": 7, "maxItems": 7}
+        },
+        "paste": {"type": "array", "items": {"$ref": "#/$defs/Text"}, "maxItems": 8},
         "notes": {"$ref": "#/$defs/Notes"}
       }
     }

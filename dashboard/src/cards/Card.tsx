@@ -10,6 +10,7 @@ import {
   ChoicesCardView,
   FlowView,
   HealthView,
+  LayoutView,
   OreListView,
   PowerLedgerView,
   QuestCardView,
@@ -17,6 +18,7 @@ import {
   RouteComparisonView,
   TableCardView,
 } from "./renderers";
+import { ShellView } from "./ShellView";
 import type { Card as CardData } from "./types.gen";
 import { validate } from "./validate";
 
@@ -73,6 +75,10 @@ function Draw({ card, compact }: { card: CardData; compact: boolean }) {
       return <AlertView card={card} />;
     case "health":
       return <HealthView card={card} />;
+    case "layout":
+      return <LayoutView card={card} />;
+    case "shell":
+      return <ShellView card={card} />;
   }
 }
 

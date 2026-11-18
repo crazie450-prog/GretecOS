@@ -9,6 +9,7 @@
 // Needs Clayton's board approval (no board, D92).
 import { expect, test } from "@playwright/test";
 import { clipped, pair } from "./harness";
+import { checkShells } from "./shells";
 
 test("the Build view frames the guide export; its CSP limits loads, not the parent", async ({ browser }) => {
   const page = await browser.newPage({ viewport: { width: 2560, height: 1440 } });
@@ -44,6 +45,8 @@ test("the Build view frames the guide export; its CSP limits loads, not the pare
     await expect(body).toHaveAttribute("data-layer", "0");
     expect(await clipped(page)).toEqual([]);
     await page.screenshot({ path: test.info().outputPath("build-guide.png") });
+    // WO-10.7: the same view's Shells panel, on this page (pairing is rate-limited, e2e/shells.ts)
+    await checkShells(page, test.info());
   } finally {
     await page.close();
   }

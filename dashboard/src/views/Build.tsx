@@ -4,9 +4,13 @@
 // not isolation: the folder's contents are trusted until WO-10.8 serves /guide/ from its own
 // origin (gregtec.build.guide, D304).
 // WO-10.8 builds the real viewer UI. Built to the design system: needs Clayton's board approval.
+// WO-10.7 adds the decorative shells: the core designs and checks them (gregtec.build.shell); this
+// view lists them and draws the chosen one's card (preview, palette, Lab-only paste steps).
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { GuideSite } from "../api/types";
+import type { GuideSite, ShellSummary } from "../api/types";
+import { Card } from "../cards/Card";
+import type { Card as CardData } from "../cards/types.gen";
 import { Panel } from "../components/core";
 import { GLYPH } from "../state/states";
 
@@ -21,6 +25,73 @@ export function guideSrc(path: string): string {
  * the export has one, else the first scene page. A full export holds every guide in the pack. */
 export function firstPage(pages: GuideSite["pages"]): string | null {
   return (pages.find((p) => p.path.startsWith("gos/")) ?? pages[0])?.path ?? null;
+}
+
+/** The saved shells, newest first; the chosen one's card (WO-10.7, D316). */
+export function Shells() {
+  const [list, setList] = useState<ShellSummary[] | null>(null);
+  const [pick, setPick] = useState<string | null>(null);
+  const [card, setCard] = useState<CardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.shells().then(
+      (r) => {
+        if (!live) return;
+        setList(r.shells);
+        setPick(r.shells[0]?.id ?? null);
+      },
+      (e: unknown) => live && setError(e instanceof ApiError ? e.message : String(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!pick) return;
+    let live = true;
+    setCard(null);
+    api.shell(pick).then(
+      (r) => live && setCard(r.card),
+      (e: unknown) => live && setError(e instanceof ApiError ? e.message : String(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [pick]);
+  return (
+    <Panel
+      label="Shells"
+      testId="shells"
+      aside={list ? <span className="gos-src">{list.length} saved</span> : undefined}
+    >
+      {error && <p className="empty">{GLYPH.warn} {error}</p>}
+      {!list && !error && <p className="empty">{GLYPH.progress} Looking for shells</p>}
+      {list && !list.length && (
+        <p className="gos-sub" data-testid="shells-empty">
+          {GLYPH.todo} No shell yet. Ask for one ("design a foundry shell around my steel line"), or run gos shell design
+          with the plan's id.
+        </p>
+      )}
+      {list && list.length > 1 && (
+        <select
+          className="ask-input base-select"
+          aria-label="Shell"
+          value={pick ?? ""}
+          onChange={(e) => setPick(e.target.value)}
+          data-testid="shell-pick"
+        >
+          {list.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.id} · {s.theme_name ?? "no theme"} · {s.source} · plans {s.plans.join(", ")}
+            </option>
+          ))}
+        </select>
+      )}
+      {pick && !card && !error && <p className="empty">{GLYPH.progress} Loading the shell</p>}
+      {card && <Card card={card} />}
+    </Panel>
+  );
 }
 
 export function Build() {
@@ -97,6 +168,7 @@ export function Build() {
           />
         </Panel>
       )}
+      <Shells />
     </div>
   );
 }

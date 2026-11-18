@@ -24,6 +24,7 @@ from gregtec.agents.tools import (
     power,
     quests,
     recipes,
+    shells,
     sql,
     themes,
     wiki,
@@ -500,6 +501,23 @@ TOOLS = (
         lanes=frozenset({DEEP}),
         gate=themes.GATE,
     ),
+    Tool(
+        "build_request",
+        "Design a decorative shell (walls, roof, windows, lights; never machines) around saved "
+        "plans' layout, from a theme or a prompt: without design GOS draws its procedural shell, "
+        "with design your operations in the building vocabulary are turned into blocks by code. "
+        "Code checks every design: blocks in a machine's keep-out, a corridor, a chase or the "
+        "doorway are removed and said; a tile-entity block, GT's machine block, a block outside "
+        "the palette or more than max_blocks is refused and nothing is saved. Returns the build "
+        "id, its geometry, the palette manifest and the operations used.",
+        shells.BUILD_REQUEST_SCHEMA,
+        shells.build_request,
+        read_only=False,
+        # The architect's and the orchestrator's (plan 7.10): writes a build, deep lane only.
+        lanes=frozenset({DEEP}),
+        gate=shells.GATE,
+        deadline_s=30.0,
+    ),
 )
 
 # Plan 7.0's other tools: none is registered, and no stub stands in for one.
@@ -517,8 +535,8 @@ LATER: dict[str, str] = {
     # POST /api/plans/{id}/status; D251, D238): no model moves a plan or writes the ledger.
     "plan_set_status": "WO-4.4 made lifecycle moves Clayton's (gos plan --status, the "
     "dashboard): not an agent tool (D238)",
-    "layout_estimate": "WO-10.5 (corridor-aware layout; plan_export footprint has the "
-    "bounding-box one)",
+    "layout_estimate": "WO-10.7 does not register it: build_request lays the plans out "
+    "itself; WO-10.5's layout is gos layout and GET /api/plans/{id}/layout (D313)",
     "ledger_update": "WO-4.4: the ledger follows Clayton's accepts and lifecycle moves; "
     "not an agent tool (D238)",
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "
@@ -530,8 +548,9 @@ LATER: dict[str, str] = {
     "screen_snapshot": "WO-8.2 keeps it out: a model-callable capture would capture without "
     "the screen key (D288)",
     "notify": "WO-9.2 (alert routing)",
-    "schematic_export": "WO-10.4 (schematic I/O)",
-    "build_request": "WO-10.7 (shell designer)",
+    # the .schematic is Clayton's: it reads the Lab world's registry (D318)
+    "schematic_export": "WO-10.7 made it Clayton's `gos shell export` (it reads the Lab "
+    "world's level.dat; no agent reads a world, D318)",
 }
 
 

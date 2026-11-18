@@ -15,12 +15,14 @@ import type {
   DesignerRoute,
   DesignerView,
   DesignSpec,
+  PlanLayout,
   SavedPlanRow,
 } from "../api/types";
+import { Card } from "../cards/Card";
 import { FlowDiagram } from "../cards/FlowDiagram";
 import { useCardActions } from "../cards/context";
 import { RouteComparisonView } from "../cards/renderers";
-import type { ChoicesCard } from "../cards/types.gen";
+import type { Card as CardData, ChoicesCard } from "../cards/types.gen";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip } from "../components/core";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
@@ -199,6 +201,66 @@ function NodeRow(props: { route: DesignerRoute; node: DesignerNode; picked: bool
   );
 }
 
+/** The route's floor plan (WO-10.5, D312, D313): the core lays the machines out on open, never
+ * here; the card draws it. Needs Clayton's board approval (D92, D158 (5)). */
+function FloorPlan({ planId }: { planId: string }) {
+  const [open, setOpen] = useState(false);
+  const [got, setGot] = useState<PlanLayout | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // WO-10.7 (D316): the procedural shell around this floor plan, no AI needed (No-AI mode).
+  const [shell, setShell] = useState<CardData | null>(null);
+  const [shellBusy, setShellBusy] = useState(false);
+  const [shellError, setShellError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || got || error) return;
+    let live = true;
+    api.layout(planId).then(
+      (r) => live && setGot(r),
+      (e: unknown) => live && setError(message(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, got, error, planId]);
+  const designShell = () => {
+    setShellBusy(true);
+    setShellError(null);
+    api.designShell([planId]).then(
+      (r) => {
+        setShell(r.card);
+        setShellBusy(false);
+      },
+      (e: unknown) => {
+        setShellError(message(e));
+        setShellBusy(false);
+      },
+    );
+  };
+  return (
+    <details
+      className="designer-layout"
+      data-testid={`layout-${planId}`}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) setError(null); // reopening tries a failed load again
+        setOpen(now);
+      }}
+    >
+      <summary className="gos-label">Floor plan</summary>
+      {open && !got && !error && <p className="empty">{GLYPH.progress} Laying out the machines</p>}
+      {error && <p className="empty">{GLYPH.warn} {error}</p>}
+      {got && <Card card={got.card} />}
+      {got && !shell && (
+        <Button testId={`shell-design-${planId}`} disabled={shellBusy} onClick={designShell}>
+          {shellBusy ? `${GLYPH.progress} Designing a shell` : "Design a shell around it"}
+        </Button>
+      )}
+      {shellError && <p className="empty">{GLYPH.warn} {shellError}</p>}
+      {shell && <Card card={shell} />}
+    </details>
+  );
+}
+
 function RouteColumn(props: {
   route: DesignerRoute;
   names: Map<string, string>; // item key -> name, from every route of the design
@@ -318,6 +380,7 @@ function RouteColumn(props: {
           <NodeRow key={n.n} route={r} node={n} picked={props.picked === n.n} onPick={() => props.onPick(n)} />
         ))}
       </ul>
+      <FloorPlan planId={r.id} />
       <div className="designer-exports">
         {EXPORTS.map(([fmt, label]) => (
           <a key={fmt} className="gos-src" href={`/api/plans/${r.id}/export/${fmt}`}>

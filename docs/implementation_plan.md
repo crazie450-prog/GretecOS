@@ -632,6 +632,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
    - **Footprint:**
      - Phase 3: a bounding box per machine from `structure.size_*` plus clearance, summed into a floor-area and volume estimate. Addon multis without structure data are marked `footprint: unknown`.
      - WO-10.5 adds corridor-aware layout (floor plan and bounding volume), which feeds §7.10.
+     - As built (WO-10.5, D312, D313): `gregtec.build.layout`, `gos layout`, `GET /api/plans/{id}/layout`: the `gos-layout` v1 JSON (`core/gregtec/build/layout_schema.json`) and a `layout` card in the Designer's Floor plan panel. The plan's own `layout` stays the bounding-box estimate.
 10. **Persist:** `data/plans/<id>.json` (canonical), `plans/<id>.md` and a DB row.
     - Plans get a human name ("Steel line · 2/s · HV"), editable [QA:D13]. IDs stay for data.
     - Lifecycle: `proposed → accepted → building → running → retired`.
@@ -805,6 +806,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
 - **Shells (decorative only).**
   - **Never include `gregtech:gt.blockmachines` or any tile-entity block.** A pasted machine arrives free and working, and covers break because they're stored by numeric ID [G].
   - Shells get keep-out volumes around machine footprints, plus access corridors and pipe/cable chases.
+  - As built (WO-10.5, D312): the layout planner places each plan's footprints (machines and generators, a multi at its largest variant, warned) facing spine corridors off a west hall with one entrance, keep-outs of the footprint plus clearance, chases over every corridor, and a flood-fill reach check of every front and hatch kind; multis with no footprint are listed, never sized by guess. Its JSON is what WO-10.7's shells must leave free.
 - **Schematic writer** (worldedit-gtnh ≥ 0.0.9) [G][E§5.1]:
   - root `Schematic`; `Materials="Alpha"`; `Width/Height/Length`; `Blocks`; `Data`; `TileEntities` and `Entities` as empty lists (`TileEntities` is required);
   - `WEOriginX/Y/Z` = 0 and `WEOffsetX/Y/Z` = the paste offset relative to the player, e.g. `(-⌊W/2⌋, 0, 1)` (**VERIFY** in game);
@@ -830,6 +832,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - The procedural generator (walls, roof, windows from theme rules) stays as the fallback and the test baseline.
   - All schematic and palette code lives in `core/gregtec/build/`; there is no separate img2schem repo.
   - WO-10.0 imports the img2schem SOW and re-scopes Phase 10 from it, including any reference-image input.
+  - **Built** (WO-10.7, D316-D318; from 7.10 as written, the SOW not yet in the repo): `gregtec.build.shell` takes a WO-10.5 layout (bounds grown by a 1-block wall ring and roof headroom; keep-outs, corridors, chases, a doorway per entrance and the rest of the layout's interior below the roof left empty, so walls stand in the ring only), the theme's palette (WO-10.6's three modes), prompt and `max_blocks`. The architect designs through `build_request` in a building vocabulary (walls, pillars, windows, roof, lights, fill, frame, clear) that code turns into blocks; every design (the model's or the procedural generator's, which is the fallback, the No-AI path and the test baseline) passes one gate: small breaches removed and said, anything else (a block outside the palette, so any tile entity or machine block; too many blocks; a malformed design) refused with nothing written. Builds are files in `GOS_HOME/data/build/shells/` with a palette manifest, a preview mesh (the dashboard's shell card in the Build view) and notes; `gos shell design|list|show|export`; the `.schematic` is Clayton's `gos shell export` (WO-10.4's writer, the Lab world's registry; refused when the plans' layout changed since the design), pasted from the first entrance's corridor cell. The Lab paste (L6) is runbook `shells_lab.md`.
 - **Placement.**
   - Shells are pasted with WorldEdit (free, D35).
   - Machinery is built by Clayton from the 3D guide. Optional helpers:
