@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from gregtec.alerts.router import AlertRouter
 from gregtec.api.security import Principal
+from gregtec.ops.costs import CostWatch
 from gregtec.remote.routes import alerts_state
 
 if TYPE_CHECKING:
@@ -92,6 +93,7 @@ def wire(core: "Core", router: AlertRouter) -> None:
         return True
 
     router.credits = credits
+    router.costs = CostWatch.of(core.store, core.cfg).alerts  # WO-11.2 (D334)
     router.paused = paused
     router.voice_up = voice_up
     router.game_up = game_up
