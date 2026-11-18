@@ -21,12 +21,13 @@ from __future__ import annotations
 import importlib.util
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner.gtmath.jmath import INT_MAX, ceil_div
 from gregtec.planner.gtmath.overclock import heat_discount_multiplier
@@ -73,14 +74,15 @@ def test_the_committed_vectors_are_what_gts_own_classes_compute(tmp_path: Path) 
 
 
 @pytest.fixture(scope="module")
-def db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def db(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     _require_harness()
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("gtmath-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     return access.db_path(home)
 
 

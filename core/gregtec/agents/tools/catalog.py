@@ -25,6 +25,7 @@ from gregtec.agents.tools import (
     quests,
     recipes,
     sql,
+    themes,
     wiki,
 )
 from gregtec.agents.tools.glossary import Glossary
@@ -165,7 +166,7 @@ TOOLS = (
     ),
     Tool(
         "note_write",
-        "Create or replace a note in base/, plans/, quests/, themes/ or personas/drafts/ in "
+        "Create or replace a note in base/, plans/, quests/ or personas/drafts/ in "
         "the note grammar; the tool writes the frontmatter. me/, _gos/, INDEX.md and the generated "
         "base notes are refused (propose with inbox_propose); logs take note_append.",
         notes.NOTE_WRITE_SCHEMA,
@@ -468,6 +469,37 @@ TOOLS = (
         # The architect's (plan 7.10); the fast lane answers recipes, not shells (D307).
         lanes=frozenset({DEEP}),
     ),
+    Tool(
+        "theme_list",
+        "Every building theme (the starter themes and Clayton's): id, name, current version, "
+        "source, the line types it fits and its summary.",
+        themes.THEME_LIST_SCHEMA,
+        themes.theme_list,
+        needs_db=False,
+    ),
+    Tool(
+        "theme_get",
+        "One building theme, its current version or an earlier one (v): summary, prompt, "
+        "change history, motif, massing, roof, window and lighting rules, adaptations per line "
+        "type, sample builds and its palette (role, <registry name>@<meta>, note).",
+        themes.THEME_GET_SCHEMA,
+        themes.theme_get,
+        needs_db=False,
+    ),
+    Tool(
+        "theme_save",
+        "Create a building theme from Clayton's prompt (name, prompt, palette and rules), or "
+        "refine one (its id and change, plus only the fields that change): each refinement "
+        "is a new version and the earlier one is kept. Every palette entry must be a block "
+        "state in his block catalog without a tile entity (find them with block_find); one "
+        "refused entry and nothing is saved, the error says which and why: tell Clayton.",
+        themes.THEME_SAVE_SCHEMA,
+        themes.theme_save,
+        read_only=False,
+        # The architect's and the orchestrator's (plan 7.10): writes, so deep lane only.
+        lanes=frozenset({DEEP}),
+        gate=themes.GATE,
+    ),
 )
 
 # Plan 7.0's other tools: none is registered, and no stub stands in for one.
@@ -499,7 +531,6 @@ LATER: dict[str, str] = {
     "the screen key (D288)",
     "notify": "WO-9.2 (alert routing)",
     "schematic_export": "WO-10.4 (schematic I/O)",
-    **dict.fromkeys(("theme_get", "theme_list", "theme_save"), "WO-10.6 (themes)"),
     "build_request": "WO-10.7 (shell designer)",
 }
 

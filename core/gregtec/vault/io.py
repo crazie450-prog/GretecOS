@@ -5,14 +5,16 @@ is :mod:`gregtec.vault.fts`) call :class:`VaultIO`. It owns the **path guard** (
 WO-2.4's ``PreToolUse`` hook also asks, through :meth:`VaultIO.refusal` (the guard plus the link
 check; :func:`write_refusal` is the guard alone). Both take the operation: ``write`` (create or
 replace a note: ``note_write``, and an SDK ``Write`` or ``Edit``), ``append`` (``note_append``)
-or ``propose`` (a new inbox note: ``inbox_propose`` only):
+``propose`` (a new inbox note: ``inbox_propose`` only) or ``theme`` (a theme version:
+``gregtec.build.themes`` only, which checks the palette against the block catalog first, D314):
 
 | path                                    | agents may                                         |
 |-----------------------------------------|----------------------------------------------------|
 | ``me/``                                 | read; propose changes through ``inbox_propose``    |
 | ``_gos/``                               | read (repo-owned, deployed by ``gos vault deploy``)|
 | ``INDEX.md``, ``base/{tier,machines,storage}.md`` | read (generated: the curator, My base)   |
-| ``base/ plans/ quests/ themes/``         | read, write, append                                |
+| ``base/ plans/ quests/``                | read, write, append                                |
+| ``themes/``                             | read; ``theme`` (theme_save) only                  |
 | ``personas/``                           | read; write and append drafts in ``personas/drafts/`` only |
 | ``log/``                                | read; ``append`` to today's daily log only         |
 | ``inbox/``                              | read, ``append``; new notes only by ``propose``    |
@@ -63,12 +65,16 @@ _DEVICES = frozenset(
 )
 DAILY = re.compile(r"log/(\d{4}-\d{2}-\d{2})(-[2-9]|-[1-9][0-9])?\.md")
 REPLACE_TRIES = 3
-WRITE, APPEND, PROPOSE = (
+WRITE, APPEND, PROPOSE, THEME = (
     "write",
     "append",
     "propose",
+    "theme",
 )  # the operations the guard decides on
-OPS = (WRITE, APPEND, PROPOSE)
+OPS = (WRITE, APPEND, PROPOSE, THEME)
+# Themes (WO-10.6, D314): written only by gregtec.build.themes (theme_save), never note_write,
+# so no palette reaches themes/ without the block catalog check.
+THEMES = "themes/"
 
 # Who writes where (plan 6.5): the first part of the path, or the whole path.
 CLAYTON, REPO, GENERATED, AGENTS, BOTH, JOURNAL, INBOX, NOBODY = (
@@ -100,8 +106,9 @@ FOLDERS = {
 # by moving it up a folder.
 PERSONA_DRAFTS = "personas/drafts/"
 # Folders the curator and the index skip: skills and agents are loaded by the SDK, not read;
-# the shipped persona packs are the repo's and read by gregtec.agents.personas (WO-5.6).
-NOT_NOTES = ("_gos/skills/", "_gos/agents/", "_gos/personas/")
+# the shipped persona packs are the repo's and read by gregtec.agents.personas (WO-5.6), the
+# starter themes by gregtec.build.themes (WO-10.6).
+NOT_NOTES = ("_gos/skills/", "_gos/agents/", "_gos/personas/", "_gos/themes/")
 
 
 class VaultError(ValueError):
@@ -164,8 +171,9 @@ def write_refusal(rel: object, op: str, *, today: dt.date | None = None) -> str 
         return f"{path} is generated (the curator or My base writes it); agents don't edit it"
     if who == NOBODY:
         return (
-            f"{path} isn't in a folder agents write: base/, plans/, quests/, themes/, "
-            "personas/drafts/, log/ (today's log, append only), inbox/"
+            f"{path} isn't in a folder agents write: base/, plans/, quests/, "
+            "personas/drafts/, log/ (today's log, append only), inbox/, themes/ "
+            "(through theme_save)"
         )
     if path.split("/", 1)[0].lower() == "personas" and not path.startswith(
         PERSONA_DRAFTS
@@ -173,6 +181,13 @@ def write_refusal(rel: object, op: str, *, today: dt.date | None = None) -> str 
         return (
             f"{path}: live persona packs are Clayton's; draft one at "
             f"{PERSONA_DRAFTS}pe-<name>.md and he moves it up to make it live"
+        )
+    if path.startswith(THEMES) != (op == THEME):
+        if op == THEME:
+            return f"{path}: theme versions go in {THEMES} only"
+        return (
+            f"{path}: themes are saved with theme_save, which checks every palette entry "
+            "against the block catalog"
         )
     if who == JOURNAL:
         day = DAILY.fullmatch(path)
@@ -344,9 +359,12 @@ class VaultIO:
             )
         return text
 
-    def write(self, rel: object, body: object) -> str:
-        """Create or replace a note; the frontmatter is made from its path and today's date."""
-        self._refuse(rel, WRITE)
+    def write(self, rel: object, body: object, *, op: str = WRITE) -> str:
+        """Create or replace a note; the frontmatter is made from its path and today's date.
+        ``op`` is :data:`THEME` for gregtec.build.themes' theme versions (D314)."""
+        if op not in (WRITE, THEME):
+            raise ValueError(f"write takes op {WRITE} or {THEME}, not {op!r}")
+        self._refuse(rel, op)
         name, target = self.path(rel, write=True)
         lines = _strip_frontmatter(_body_lines(body))
         with self._lock:

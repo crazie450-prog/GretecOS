@@ -53,6 +53,9 @@ design_power(mode, ...)   deep   :mod:`.power` (WO-4.6; saves proposed plans, co
 effort_estimate(id)       both   :mod:`.power` (WO-4.6; a saved plan's effort breakdown)
 wiki_search(q)            deep   :mod:`.wiki` (WO-8.3; the cache, the researcher's only)
 wiki_fetch(title, part)   deep   :mod:`.wiki` (WO-8.3; cache, else one polite request)
+theme_list()              both   :mod:`.themes` (WO-10.6; starter and Clayton's themes)
+theme_get(id, v)          both   :mod:`.themes` (WO-10.6; a theme, any kept version)
+theme_save(...)           deep   :mod:`.themes` (WO-10.6; palette checked first, new version)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
@@ -61,7 +64,7 @@ with WO-5.3; export_diff after WO-11.1 (D330); structure_get after WO-1.8; machi
 WO-1.9; crop_status with WO-7.6; layout_estimate with Phase 3; ledger_update and
 plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208);
 screen_snapshot never (WO-8.2, D288: frames come only from the screen key); notify with
-WO-9.2; schematic_export, theme_* and build_request with Phase 10.
+WO-9.2; schematic_export and build_request with Phase 10.
 """
 
 from gregtec.agents.tools.catalog import LATER, TOOLS, build_registry, default_registry
