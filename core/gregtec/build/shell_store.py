@@ -17,8 +17,8 @@ A saved build is ``GOS_HOME/data/build/shells/<sh-id>/``:
 - ``preview.json``: the preview mesh for the dashboard (:func:`gregtec.build.shell.mesh`);
 - ``notes.txt``: the notes and the paste steps.
 
-:func:`export` (``gos shell export``, Clayton's) rebuilds the design from those files, inspects it
-again, applies the palette rule against the catalog **and the Lab world's registry**
+:func:`export` (``gos shell export``, Clayton's) refuses when the plans' layout today is not the
+saved one (:func:`check_layout`), rebuilds the design from those files, inspects it again, applies the palette rule against the catalog **and the Lab world's registry**
 (:func:`gregtec.build.schematic.write_shell`) and writes ``GOS_HOME/data/schematics/shells/
 <sh-id>.schematic`` (parts ``-part-N`` above 255 block types). GOS never writes into the Lab or
 Play: Clayton copies the file and pastes it in the Lab (runbook ``shells_lab.md``, L6).
@@ -201,8 +201,8 @@ def notes(
             for w in v.warnings
         ]
     out.append(
-        "no tile entity, no GT machine block, nothing in a keep-out, corridor, chase or doorway "
-        f"(checked: {len(spec.clear)} volumes)"
+        "no tile entity, no GT machine block, nothing in a keep-out, corridor, chase, doorway or "
+        f"the layout's interior below the roof (checked: {len(spec.clear)} volumes)"
     )
     return out
 
@@ -248,6 +248,11 @@ def preview(spec: shell.Spec, outcome: shell.Outcome) -> dict[str, Any]:
     }
 
 
+def paste_steps(rec: Mapping[str, Any]) -> tuple[str, ...]:
+    """A saved build's Lab-only paste steps, naming the cell its WEOffset is relative to."""
+    return shell.paste_steps(rec["origin"])
+
+
 def _json(data: object) -> bytes:
     return (json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
 
@@ -265,9 +270,7 @@ def save(home: Path, made: Made, lay: Mapping[str, Any]) -> Path:
     atomic_write(where / "layout.json", _json(lay))
     atomic_write(where / "palette.tsv", ("\n".join(rows) + "\n").encode("utf-8"))
     atomic_write(where / "preview.json", _json(preview(made.spec, made.outcome)))
-    text = (
-        "\n".join([*rec["notes"], "", "Paste (Lab only):", *shell.PASTE_STEPS]) + "\n"
-    )
+    text = "\n".join([*rec["notes"], "", "Paste (Lab only):", *paste_steps(rec)]) + "\n"
     atomic_write(where / "notes.txt", text.encode("utf-8"))
     atomic_write(
         where / "design.json", _json(rec)
@@ -365,6 +368,30 @@ def rebuild(
     return spec, outcome
 
 
+def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -> None:
+    """The layout of the build's plans laid out again now must be the saved one (its id hashes
+    the geometry, WO-10.5): after a re-solve or new footprint data its keep-outs and corridors
+    moved, and the shell would stand in them."""
+    redo = "design the shell again (gos shell design, or the Designer's button)"
+    plans = []
+    for pid in rec.get("plans") or []:
+        try:
+            plans.append(plan_store.load(home, pid))
+        except (OSError, ValueError):
+            raise shell.ShellError(f"plan {pid} isn't saved any more: {redo}") from None
+    try:
+        now = layout_lib.plan_layout(conn, plans)["id"] if plans else None
+    except layout_lib.LayoutError as exc:
+        raise shell.ShellError(
+            f"the plans can't be laid out now ({exc}): {redo}"
+        ) from None
+    if now != rec.get("layout"):
+        raise shell.ShellError(
+            f"the layout changed since this shell was designed (it was {rec.get('layout')}, "
+            f"now {now}): {redo}"
+        )
+
+
 @dataclass(frozen=True)
 class Exported:
     paths: tuple[Path, ...]
@@ -380,7 +407,10 @@ def export(
     out: Path | None = None,
 ) -> Exported:
     """The build's ``.schematic`` file(s) after every check again and the palette rule against
-    the Lab world's registry (:class:`gregtec.build.schematic.ShellRefused` when refused)."""
+    the Lab world's registry (:class:`gregtec.build.schematic.ShellRefused` when refused).
+    Refused (:class:`~gregtec.build.shell.ShellError`) when the plans' layout today is not the
+    one the shell was designed against: the 3D guide and the floor plan show today's."""
+    check_layout(conn, home, load(home, build))
     spec, outcome = rebuild(conn, home, build)
     written = schematic.write_shell(
         conn, world, shell.to_schematic(spec, outcome.cells), over
@@ -450,7 +480,7 @@ def card(home: Path, build: str) -> dict[str, Any]:
             for m in rec["materials"][:MAX_CARD_PALETTE]
         ],
         "faces": faces,
-        "paste": [*shell.PASTE_STEPS, f"Export first: gos shell export {build}"],
+        "paste": [*paste_steps(rec), f"Export first: gos shell export {build}"],
         "notes": notes,
     }
     return checked(out)

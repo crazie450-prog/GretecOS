@@ -9,8 +9,9 @@ machines** (D35).
 bounding volume (the layout's bounds grown by :data:`MARGIN` blocks on every horizontal side for
 the walls, and ``headroom`` blocks above the layout's top for the roof); the volumes the shell
 must leave empty (every keep-out, which holds its machine's footprint and service ring, every
-corridor, every pipe/cable chase, and a doorway through the wall ring in front of each
-entrance); the theme (WO-10.6) and its palette, plus any extra swatches (palette constraints:
+corridor, every pipe/cable chase, a doorway through the wall ring in front of each entrance,
+and the rest of the layout's interior below the roof: walls stand in the margin ring only,
+D316); the paste origin (the first entrance's ``lo`` cell, D318); the theme (WO-10.6) and its palette, plus any extra swatches (palette constraints:
 prompt-only builds bring their own); Clayton's prompt; the line type; and ``max_blocks``.
 
 **The building vocabulary** (D316). The ``architect`` model never writes blocks or code: it sends
@@ -25,10 +26,10 @@ procedural generator's, goes through the same gate. A design is refused (nothing
 an operation is malformed or names a role the palette doesn't have, a cell uses a state outside
 the palette (a tile-entity block, ``gregtech:gt.blockmachines``, a meta above 15 or a state not in
 the block catalog is never in it: the palette passed :func:`gregtec.build.palette.check` first),
-it has more than ``max_blocks`` blocks, or it has none. Cells outside the bounding volume or
-inside a keep-out, corridor, chase or doorway are **repaired** by removing them (they are
-decoration lost, never a block placed where it mustn't be), unless they are more than
-:data:`REPAIR_SHARE` of the design: then it is refused as too far off to repair. A repaired design
+it has more than ``max_blocks`` blocks, or it has none. Blocks placed outside the bounding
+volume or inside a keep-out, corridor, chase, doorway or the interior are **repaired** by
+removing them (they are decoration lost, never a block placed where it mustn't be), unless they
+are more than :data:`REPAIR_SHARE` of the placed cells (a ``clear`` places none): then it is refused as too far off to repair. A repaired design
 is inspected again and must be clean. The palette rule runs once more on the states the shell
 finally uses, and again against the Lab world's registry when the ``.schematic`` is written
 (:func:`gregtec.build.schematic.write_shell`).
@@ -40,10 +41,10 @@ grid of lights. It is the fallback when the model's design is refused or no mode
 (No-AI mode, the CLI and the dashboard's button), and the test baseline: it is always clean.
 
 **Output** (:func:`outputs`): the cells as a :class:`~gregtec.build.schematic.Schematic` (shell
-min corner at index 0; WEOffset is that corner relative to the layout's origin, where Clayton
-stands to paste), the palette manifest (role, block, name, count), the preview mesh
+min corner at index 0; WEOffset is that corner relative to the paste origin, the cell Clayton
+stands in), the palette manifest (role, block, name, count), the preview mesh
 (:func:`mesh`: the exposed faces, merged into rectangles, for the dashboard) and the notes,
-including the paste steps (Lab only: :data:`PASTE_STEPS`).
+including the paste steps (Lab only: :func:`paste_steps`).
 
 Deterministic: the same layout, palette and operations give the same cells, id and files.
 Nothing here writes a world; :mod:`gregtec.build.shell_store` writes the build's files.
@@ -81,26 +82,42 @@ SIDES = ("north", "south", "east", "west")
 STATUSES = ("accepted", "repaired")
 SOURCES = ("architect", "procedural")
 BUILD_ID_PREFIX = "sh-"
-PASTE_STEPS = (
-    (
-        "Lab only: never paste a shell in Play. Machines are built by you from the 3D guide; GOS "
-        "never pastes machines."
-    ),
-    "Copy the .schematic file(s) into the Lab instance's config/worldedit/schematics/.",
-    (
-        "In the Lab world, stand on the layout's origin: the floor-level block at the north-west "
-        "corner of the hall corridor (layout x 0, y 0, z 0). The layout's north is the world's "
-        "north: the shell is pre-rotated, so never //rotate it."
-    ),
-    (
-        "Run //schem load <name> then //paste (with several parts, load and paste each one from "
-        "the same block)."
-    ),
-    (
-        "Check: //copy the pasted shell from the same block and `gos schematic compare` it with the "
-        "file; then walk the doorway and every corridor."
-    ),
-)
+INTERIOR = "interior"  # the clear volume id of the layout's own bounds (D316)
+# Which end of an entrance its lo cell is, by the edge it is on (lo is the min x and z).
+_LO_END = {"west": "north", "east": "north", "north": "west", "south": "west"}
+
+
+def paste_steps(origin: Mapping[str, Any]) -> tuple[str, ...]:
+    """The Lab-only paste steps for a shell whose paste origin is ``origin`` (:func:`spec_json`'s
+    ``origin``: the entrance id, its side and its cell). The cell named here is the one
+    :func:`to_schematic`'s WEOffset is computed from (D318)."""
+    x, y, z = origin["cell"]
+    side = str(origin["side"])
+    return (
+        (
+            "Lab only: never paste a shell in Play. Machines are built by you from the 3D guide; "
+            "GOS never pastes machines."
+        ),
+        "Copy the .schematic file(s) into the Lab instance's config/worldedit/schematics/.",
+        (
+            f"In the Lab world, stand in entrance {origin['entrance']}, the hall corridor's way in "
+            f"on the layout's {side} edge: feet in its {_LO_END[side]}-most floor-level cell "
+            f"(layout x {x}, y {y}, z {z}), the corridor cell just inside where the shell's "
+            "doorway will be. The layout's north is the world's north: the shell is pre-rotated, "
+            "so never //rotate it."
+        ),
+        (
+            "Run //schem load <name> then //paste (with several parts, load and paste each one "
+            "from the same block)."
+        ),
+        (
+            "Check: select the pasted shell (the wand, or //hpos1 and //hpos2, on its bottom "
+            "north-west and top south-east corner blocks), go back to the same block, //copy, "
+            "//schem save <name>-check and `gos schematic compare` it with the file; then walk "
+            "the doorway and every corridor."
+        ),
+    )
+
 
 type Cell = tuple[int, int, int]
 # gregtec.build.layout is imported where it's used: layout -> planner -> agents.tools ->
@@ -144,6 +161,10 @@ class Spec:
     max_blocks: int = LIMITS["max_blocks"][0]
     headroom: int = LIMITS["headroom"][0]
     theme_rules: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # where Clayton stands to paste: the first entrance's lo cell (D318)
+    origin: Cell = (0, 0, 0)
+    origin_entrance: str = ""
+    origin_side: str = "west"
 
     @property
     def wall_top(self) -> int:
@@ -331,6 +352,11 @@ def spec_from_layout(
         raise ShellError("the layout has no entrance: a shell needs a doorway")
     for e in entrances:
         clear.append(Volume(f"door-{e['id']}", "doorway", doorway(e, bounds)))
+    # Last, so a cell in a keep-out, corridor or chase is reported as that. The rest of the
+    # layout's interior below the roof is the machines' and their runs' space (a short machine's
+    # runs drop through corridor headroom), never the shell's: walls stand in the margin ring.
+    clear.append(Volume(INTERIOR, "interior", inner))
+    first = entrances[0]
     rules: dict[str, tuple[str, ...]] = {}
     if theme is not None:
         rules = {k: tuple(getattr(theme, k)) for k in theme_lib.RULE_KEYS}
@@ -350,6 +376,9 @@ def spec_from_layout(
         max_blocks=mb,
         headroom=hr,
         theme_rules=rules,
+        origin=_box(first).lo,
+        origin_entrance=str(first["id"]),
+        origin_side=str(first.get("side")),
     )
 
 
@@ -360,7 +389,7 @@ def spec_from_layout(
 class Compiled:
     cells: dict[Cell, Entry]
     roles: dict[Entry, str]  # the role each state was placed as (first seen)
-    outside: int  # cells the operations put outside the bounding volume (dropped)
+    outside: int  # blocks the operations placed outside the bounding volume (dropped)
 
 
 def _cell(v: object, what: str) -> Cell:
@@ -444,7 +473,8 @@ class _Builder:
 
     def put(self, c: Cell, e: Entry | None) -> None:
         if not self.spec.bounds.contains(c):
-            self.outside += 1
+            if e is not None:  # clearing air outside the bounds places nothing (D317)
+                self.outside += 1
             return
         if e is None:
             self.cells.pop(c, None)
@@ -462,7 +492,8 @@ class _Builder:
         size = _volume(lo, hi)
         got = _clamp(lo, hi, self.spec.bounds)
         inside = 0 if got is None else _volume(*got)
-        self.outside += size - inside
+        if e is not None:  # clearing air outside the bounds places nothing (D317)
+            self.outside += size - inside
         if got is None:
             return
         if e is not None and inside > self.cap:
@@ -803,8 +834,8 @@ def design(
     bad = f.outside + f.breached
     if total and bad > REPAIR_SHARE * total:
         return refuse(
-            f"{bad} of {total} cells are outside the bounding volume or inside a keep-out, "
-            f"corridor, chase or doorway: more than {round(REPAIR_SHARE * 100)}% is too far off "
+            f"{bad} of {total} placed cells are outside the bounding volume or inside a "
+            "keep-out, corridor, chase, doorway or the layout's interior: more than {round(REPAIR_SHARE * 100)}% is too far off "
             "to repair; redesign",
             f=f,
         )
@@ -819,7 +850,13 @@ def design(
         repairs.append(f"removed {f.outside} cells outside the bounding volume")
     kinds = {v.id: v.kind for v in spec.clear}
     for vid, count in sorted(f.breaches.items()):
-        repairs.append(f"removed {count} cells inside {kinds[vid]} {vid}")
+        if kinds[vid] == "interior":
+            repairs.append(
+                f"removed {count} cells inside the layout's interior (below the roof: the "
+                "machines' and their runs' space)"
+            )
+        else:
+            repairs.append(f"removed {count} cells inside {kinds[vid]} {vid}")
     final = inspect(spec, cells)
     if final.blocks == 0:
         return refuse("the design has no blocks", f=final)
@@ -943,11 +980,12 @@ def build_id(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> str:
 
 def to_schematic(spec: Spec, cells: Mapping[Cell, Entry]) -> schematic.Schematic:
     """The cells as a schematic of the whole bounding volume; WEOffset is its min corner
-    relative to the layout's origin (where Clayton stands to paste)."""
-    lo = spec.bounds.lo
+    relative to the paste origin, ``spec.origin`` (the cell Clayton stands in, D318)."""
+    lo, o = spec.bounds.lo, spec.origin
     w, h, ln = spec.bounds.size
     blocks = {(c[0] - lo[0], c[1] - lo[1], c[2] - lo[2]): e for c, e in cells.items()}
-    return schematic.Schematic.from_blocks(w, h, ln, blocks, offset=lo)
+    offset = (lo[0] - o[0], lo[1] - o[1], lo[2] - o[2])
+    return schematic.Schematic.from_blocks(w, h, ln, blocks, offset=offset)
 
 
 @dataclass(frozen=True)
@@ -1040,6 +1078,11 @@ def spec_json(spec: Spec) -> dict[str, Any]:
         "wall_top": spec.wall_top,
         "roof_y": spec.roof_y,
         "doorways": [{"id": v.id, **v.box.to_json()} for v in spec.doorways()],
+        "origin": {
+            "entrance": spec.origin_entrance,
+            "side": spec.origin_side,
+            "cell": list(spec.origin),
+        },
         "clear": len(spec.clear),
         "theme": spec.theme,
         "prompt": spec.prompt,

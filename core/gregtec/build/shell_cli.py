@@ -76,7 +76,7 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--world-dir",
         type=Path,
         default=None,
-        help="a Lab or test world folder (read-only)",
+        help="a Lab world or a test copy only, never Play (only its level.dat registry is read)",
     )
     e.add_argument("--over", choices=("split", "addblocks"), default="split")
     e.add_argument("--out", type=Path, default=None, help="the .schematic to write")
@@ -137,7 +137,7 @@ def _show(home: Path, args: argparse.Namespace, out: TextIO) -> int:
     for line in render(rec):
         print(line, file=out)
     print("Paste (Lab only):", file=out)
-    for step in shell.PASTE_STEPS:
+    for step in shell_store.paste_steps(rec):
         print(f"  {step}", file=out)
     print(f"  Export it first: gos shell export {rec['id']}", file=out)
     return 0
@@ -222,7 +222,7 @@ def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
 def _export(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     home = cfg.gos_home
     try:
-        shell_store.load(home, args.build)
+        rec = shell_store.load(home, args.build)
         world = args.world_dir or ore_db.world_folder(cfg, "lab", args.world)[0]
         registry = worldreg.read(world)
     except shell.ShellError as exc:
@@ -269,6 +269,6 @@ def _export(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     for note in exported.written.notes:
         print(f"note: {note}", file=out)
     print("Paste (Lab only):", file=out)
-    for step in shell.PASTE_STEPS:
+    for step in shell_store.paste_steps(rec):
         print(f"  {step}", file=out)
     return 0

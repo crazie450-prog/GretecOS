@@ -230,9 +230,9 @@
     "paste": [
       "Lab only: never paste a shell in Play. Machines are built by you from the 3D guide; GOS never pastes machines.",
       "Copy the .schematic file(s) into the Lab instance's config/worldedit/schematics/.",
-      "In the Lab world, stand on the layout's origin: the floor-level block at the north-west corner of the hall corridor (layout x 0, y 0, z 0). The layout's north is the world's north: the shell is pre-rotated, so never //rotate it.",
+      "In the Lab world, stand in entrance e1, the hall corridor's way in on the layout's west edge: feet in its north-most floor-level cell (layout x 0, y 0, z 5), the corridor cell just inside where the shell's doorway will be. The layout's north is the world's north: the shell is pre-rotated, so never //rotate it.",
       "Run //schem load <name> then //paste (with several parts, load and paste each one from the same block).",
-      "Check: //copy the pasted shell from the same block and `gos schematic compare` it with the file; then walk the doorway and every corridor."
+      "Check: select the pasted shell (the wand, or //hpos1 and //hpos2, on its bottom north-west and top south-east corner blocks), go back to the same block, //copy, //schem save <name>-check and `gos schematic compare` it with the file; then walk the doorway and every corridor."
     ],
     "notes": [
       "theme Foundry (th-foundry@v1): theme mode, chosen"

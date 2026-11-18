@@ -3,11 +3,11 @@
 WO-10.7's acceptance on Clayton's PC: **a Claude-designed shell is pasted in the Lab with no tile entities, and respects keep-outs and corridors** (plan 8 row 10.7, Lab test L6). Claude Code has checked everything up to the paste:
 
 - the procedural shell around both benchmark layouts (G3's steel line, G4's benzene line) on a real server harness run, with both starter themes against a real client run's block catalog (`tests/integration/test_shell_harness.py`);
-- the validator with property tests (`tests/unit/test_shell.py`): whatever it accepts or repairs has no cell in a keep-out, corridor, chase or doorway, none outside the bounding volume, only palette states, none with a tile entity, at most `max_blocks`;
+- the validator with property tests (`tests/unit/test_shell.py`): whatever it accepts or repairs has no cell in a keep-out, corridor, chase, doorway or anywhere else inside the layout below the roof (walls stand in the one-block ring outside it, D316), none outside the bounding volume, only palette states, none with a tile entity, at most `max_blocks`;
 - the architect's path with a fake model through the real Claude Code CLI (`tests/unit/tools/test_shell_architect.py`): a good design accepted, a chest refused, a keep-out breach repaired, too many blocks refused, nothing written when refused;
 - the `.schematic` through WO-10.4's writer and reader, the dashboard card (vitest, Playwright at 2560x1440 and 390x844).
 
-What is left is the real model, your own catalog, and the paste. About 30 minutes; one or two deep-lane tasks of API credit (each under `[budget] task_max_usd`; a shell costs about $0.40 to $1, see the PR).
+What is left is the real model, your own catalog, and the paste. About 30 minutes; one or two deep-lane tasks of API credit (each stops at `[budget] task_max_usd`, 2.0 by default, the hard bound; a shell is estimated at about $0.10 with Sonnet and $0.40 to $1 with Opus, D318).
 
 **Where it runs.** GOS runs on your account and writes only `GOS_HOME` (`data/build/shells/`, `data/schematics/shells/`). It reads the **Lab** world's `level.dat` (read-only) at export. **The paste is yours, in the Lab only: never paste a shell in Play.** GOS never pastes anything and never pastes machines.
 
@@ -39,18 +39,18 @@ With the core running and the key stored, ask by voice or in the dashboard: **"D
 uv run gos shell export <sh-id>
 ```
 
-**Expect** `wrote ...\data\schematics\shells\<sh-id>.schematic (WxHxL, WEOffset (-1, 0, -1))` and the paste steps. A `REFUSED` line names the block your Lab world doesn't have: report it.
+**Expect** `wrote ...\data\schematics\shells\<sh-id>.schematic (WxHxL, WEOffset (-1, 0, -6))` (the shell's north-west bottom corner relative to the cell you will stand in; the numbers depend on the layout) and the paste steps, which name that cell. A `REFUSED` line names the block your Lab world doesn't have: report it. `REFUSED ... the layout changed` means the plan was re-solved or the footprints changed since the shell was designed: design it again (B or C), so it keeps clear of today's keep-outs.
 
 Then, **in the Lab only**:
 
 1. Copy the `.schematic` (every `-part-N` file if it was split) into the Lab instance's `config\worldedit\schematics\`.
-2. In the Lab world, build or mark the line's layout first (the floor plan, or the machines from the 3D guide), then stand on the layout's origin: the floor-level block at the north-west corner of the hall corridor (layout x 0, y 0, z 0). The layout's north is the world's north (F3: facing north is -Z). The shell is pre-rotated: never `//rotate` it.
+2. In the Lab world, build or mark the line's layout first (the floor plan, or the machines from the 3D guide), then stand in the cell the paste steps name: entrance e1, the hall corridor's way in on the layout's west edge, feet in its north-most floor-level cell (for the steel line, layout x 0, y 0, z 5), the corridor cell just inside where the shell's doorway will be. `gos shell show <sh-id>` prints it for your build. The layout's north is the world's north (F3: facing north is -Z). The shell is pre-rotated: never `//rotate` it.
 3. `//schem load <sh-id>` then `//paste`.
 4. Check, and note each result for the PR:
    - **No tile entities pasted**: no chest, machine or any block with a GUI appeared; `//count gregtech:gt.blockmachines` in the shell's region says 0.
    - **Keep-outs and corridors respected**: walk in through the doorway; every corridor and every machine's front, sides and top are open; nothing of the shell stands inside a machine's footprint or its ring.
    - The roof sits above the tallest machine and the chases; the doorway is open.
-   - `//copy` from the same block, `//schem save <sh-id>-copy`, then on the PC: `uv run gos schematic compare <the .schematic> <the copy>` says `identical`.
+   - Select the pasted shell: with the wand (`//wand`), left-click its bottom north-west corner block and right-click its top south-east corner block (or `//hpos1`/`//hpos2` looking at them; `//paste -s` does it where your WorldEdit has that flag). Then go back to the same block you pasted from, `//copy`, `//schem save <sh-id>-copy`, then on the PC: `uv run gos schematic compare <the .schematic> <the copy>` says `identical`.
 5. Build one machine from the 3D guide inside the shell (L6's second half): its controller forms.
 
 ## E. If something is off

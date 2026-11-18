@@ -228,6 +228,9 @@ def rules_hold(
     outer = ((lo[0] - 1, lo[1], lo[2] - 1), (hi[0] + 1, hi[1] + headroom, hi[2] + 1))
     clear = [_b(v) for k in ("keepouts", "corridors", "chases") for v in lay[k]]
     clear += [door_box(e, outer) for e in lay["entrances"]]
+    clear.append(
+        _b(lay["bounds"])
+    )  # the interior below the roof: walls in the ring only
     tes = {Entry(s.block, s.meta) for s in STATES if s.has_te}
     assert 0 < len(cells) <= max_blocks
     for c, e in cells.items():
@@ -581,6 +584,53 @@ def test_a_small_breach_is_repaired_a_large_one_refused(
     assert out.status == "repaired" and "outside the bounding volume" in out.repairs[0]
 
 
+def test_a_clear_outside_the_bounds_places_nothing_and_is_not_counted(
+    conn: sqlite3.Connection, lay: dict[str, Any]
+) -> None:
+    spec = spec_for(conn, lay)
+    base = shell.procedural(spec)
+    clean = accepted(conn, spec)
+    b = spec.bounds
+    # a big no-op clear west of the shell: still accepted as designed (review M1)
+    far = {
+        "op": "clear",
+        "lo": [b.lo[0] - 11, 0, b.lo[2]],
+        "hi": [b.lo[0] - 1, b.hi[1], b.hi[2] + 10],
+    }
+    # a few air cells just past the edge
+    edge = {"op": "clear", "lo": [b.lo[0] - 1, 0, b.lo[2]], "hi": [b.lo[0] - 1, 0, 3]}
+    for extra in (far, edge):
+        out = shell.design(conn, spec, [*base, extra], "architect")
+        assert out.status == "accepted" and out.repairs == (), (
+            out.reasons,
+            out.repairs,
+        )
+        assert out.cells == clean.cells
+    assert shell.compile_ops(spec, [*base, far]).outside == 0
+
+
+def test_the_interior_below_the_roof_is_never_the_shells(
+    conn: sqlite3.Connection, lay: dict[str, Any]
+) -> None:
+    """Cells in no keep-out, corridor or chase but inside the layout (above a short machine,
+    between keep-outs) are the machines' and their runs' space: repaired away (D316, review M2)."""
+    spec = spec_for(conn, lay)
+    i = spec.interior
+    vols = [v.box for v in spec.clear if v.kind != "interior"]
+    free = next(
+        c for c in i.cells() if c[1] == i.hi[1] and not any(v.contains(c) for v in vols)
+    )
+    stub = {"op": "fill", "role": "pillar", "lo": list(free), "hi": list(free)}
+    out = shell.design(conn, spec, [*good_design(spec), stub], "architect")
+    assert out.status == "repaired" and free not in out.cells
+    assert any("the layout's interior" in r for r in out.repairs), out.repairs
+    rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+    # walls set in from the ring are inside the interior too
+    inset = {"op": "walls", "role": "wall", "y": [0, 1], "inset": 1}
+    out = shell.design(conn, spec, [*good_design(spec), inset], "architect")
+    assert out.ok and not any(i.contains(c) for c in out.cells)
+
+
 def test_too_many_blocks_is_refused(
     conn: sqlite3.Connection, lay: dict[str, Any]
 ) -> None:
@@ -670,7 +720,30 @@ def test_the_schematic_puts_each_cell_where_the_layout_has_it(
     out = accepted(conn, spec)
     s = shell.to_schematic(spec, out.cells)
     assert (s.width, s.height, s.length) == spec.bounds.size
-    assert s.offset == spec.bounds.lo == (-1, 0, -1)
+    # WEOffset: the shell's min corner relative to the paste origin, entrance e1's lo cell
+    # (the cell the paste steps tell Clayton to stand in, D318), from the layout JSON alone
+    e1 = lay["entrances"][0]
+    assert e1["id"] == "e1" and e1["lo"] == [
+        0,
+        0,
+        5,
+    ]  # in the hall corridor, not (0, 0, 0)
+    lo_b = lay["bounds"]["lo"]
+    corner = (lo_b[0] - 1, lo_b[1], lo_b[2] - 1)
+    assert s.offset == tuple(corner[i] - e1["lo"][i] for i in range(3)) == (-1, 0, -6)
+    stand = shell.paste_steps(shell.spec_json(spec)["origin"])[2]
+    x, y, z = e1["lo"]
+    assert "entrance e1" in stand and f"(layout x {x}, y {y}, z {z})" in stand
+    assert "west edge" in stand and "north-most" in stand
+    # pasting at that cell puts every block back at its layout cell
+    for c in list(out.cells)[:200]:
+        idx = (
+            c[0] - spec.bounds.lo[0],
+            c[1] - spec.bounds.lo[1],
+            c[2] - spec.bounds.lo[2],
+        )
+        world = tuple(e1["lo"][i] + s.offset[i] + idx[i] for i in range(3))
+        assert world == c
     lo = spec.bounds.lo
     for c, e in list(out.cells.items())[:500]:
         assert s.at(c[0] - lo[0], c[1] - lo[1], c[2] - lo[2]) == e
@@ -747,6 +820,19 @@ def test_make_saves_a_build_and_export_rechecks_it(
     assert [p.name for p in ex.paths] == [f"{made.build}.schematic"]
     got = schematic.read(ex.paths[0].read_bytes())
     assert sum(got.schematic.used().values()) == rec["blocks"]
+    # a re-solve moved the machines: the saved layout is stale, export refuses (review M3)
+    plan_file = home / "data" / "plans" / "pl-steel.json"
+    saved_plan = plan_file.read_text(encoding="utf-8")
+    resolved = json.loads(saved_plan)
+    resolved["nodes"][0]["count"] += 1
+    plan_file.write_text(json.dumps(resolved), encoding="utf-8")
+    with pytest.raises(shell.ShellError, match="the layout changed"):
+        shell_store.export(conn, home, made.build, world)
+    plan_file.unlink()
+    with pytest.raises(shell.ShellError, match="isn't saved any more"):
+        shell_store.export(conn, home, made.build, world)
+    plan_file.write_text(saved_plan, encoding="utf-8")
+    assert shell_store.export(conn, home, made.build, world).paths == ex.paths
     # a tampered design is refused at export, never written
     rec["ops"].append(
         {"op": "fill", "block": CHEST, "lo": [-1, 0, -1], "hi": [-1, 0, -1]}
