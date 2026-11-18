@@ -57,9 +57,8 @@ import sqlite3
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from gregtec.build import layout as layout_lib
 from gregtec.build import palette, schematic
 from gregtec.build import themes as theme_lib
 from gregtec.build.palette import Entry
@@ -71,6 +70,7 @@ REPAIR_SHARE = (
     0.25  # a design breaching more than this share of its cells is refused (D317)
 )
 MAX_OPS = 200
+MAX_PLANS = 3  # plans one shell houses (a line and its power)
 MAX_BLOCKS = 200_000
 LIMITS: dict[str, tuple[int, int, int]] = {  # (default, lowest, highest)
     "max_blocks": (20_000, 1, MAX_BLOCKS),
@@ -103,7 +103,10 @@ PASTE_STEPS = (
 )
 
 type Cell = tuple[int, int, int]
-Box = layout_lib.Box
+# gregtec.build.layout is imported where it's used: layout -> planner -> agents.tools ->
+# the shell tool -> this module would otherwise be a cycle.
+if TYPE_CHECKING:
+    from gregtec.build.layout import Box
 
 
 class ShellError(ValueError):
@@ -250,6 +253,8 @@ def check_palette(
 
 
 def _box(d: Mapping[str, Any]) -> Box:
+    from gregtec.build import layout as layout_lib
+
     try:
         return layout_lib.box_of(d)
     except (KeyError, IndexError, TypeError) as exc:
@@ -258,6 +263,8 @@ def _box(d: Mapping[str, Any]) -> Box:
 
 def doorway(entrance: Mapping[str, Any], bounds: Box) -> Box:
     """The cells of the wall ring in front of an entrance: from its face out to the bounds."""
+    from gregtec.build import layout as layout_lib
+
     e = _box(entrance)
     side = entrance.get("side")
     lo, hi = list(e.lo), list(e.hi)
@@ -275,7 +282,7 @@ def doorway(entrance: Mapping[str, Any], bounds: Box) -> Box:
         )
     if any(lo[i] > hi[i] for i in range(3)):
         raise ShellError(f"entrance {entrance.get('id')} is not on the layout's edge")
-    return Box((lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2]))
+    return layout_lib.Box((lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2]))
 
 
 def spec_from_layout(
@@ -290,6 +297,8 @@ def spec_from_layout(
 ) -> Spec:
     """The shell's input from a WO-10.5 layout JSON (gos-layout v1). The palette must already
     have passed :func:`check_palette`."""
+    from gregtec.build import layout as layout_lib
+
     if lay.get("schema") != layout_lib.SCHEMA or lay.get("v") != layout_lib.VERSION:
         raise ShellError(
             f"not a {layout_lib.SCHEMA} v{layout_lib.VERSION} layout: "
@@ -305,7 +314,7 @@ def spec_from_layout(
             f"the prompt is longer than {theme_lib.MAX_TEXT * 5} characters"
         )
     inner = _box(lay["bounds"])
-    bounds = Box(
+    bounds = layout_lib.Box(
         (inner.lo[0] - MARGIN, inner.lo[1], inner.lo[2] - MARGIN),
         (inner.hi[0] + MARGIN, inner.hi[1] + hr, inner.hi[2] + MARGIN),
     )

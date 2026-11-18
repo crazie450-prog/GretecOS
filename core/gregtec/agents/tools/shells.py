@@ -23,7 +23,7 @@ from typing import Any
 
 from gregtec.agents.tools.registry import Call, ToolError
 from gregtec.agents.tools.tsv import Result
-from gregtec.build import palette, shell, shell_store
+from gregtec.build import palette, shell
 from gregtec.build import themes as theme_lib
 from gregtec.packupdate.plans import PLAN_ID
 
@@ -54,7 +54,7 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             "type": "string",
             "maxLength": 200,
             "description": "the saved plan ids the shell houses, comma-separated (a line and "
-            f"the power plan that feeds it; at most {shell_store.MAX_PLANS}): their layout is "
+            f"the power plan that feeds it; at most {shell.MAX_PLANS}): their layout is "
             "the shell's input",
         },
         "theme": {
@@ -131,6 +131,10 @@ def _palette_lines(text: str) -> list[tuple[str, str]]:
 
 
 def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
+    from gregtec.build import (
+        shell_store,
+    )  # imports the layout planner (and the planner)
+
     home = call.env.db.parent.parent  # GOS_HOME/data/gos.sqlite
     plan_ids = [p.strip() for p in args["plans"].split(",") if p.strip()]
     for pid in plan_ids:

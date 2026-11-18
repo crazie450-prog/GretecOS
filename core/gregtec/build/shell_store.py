@@ -46,7 +46,7 @@ ROOT = Path("data", "build", "shells")
 SCHEMATICS = Path("data", "schematics", "shells")
 BUILD_ID = re.compile(r"sh-[0-9a-f]{12}")
 FILES = ("design.json", "layout.json", "palette.tsv", "preview.json", "notes.txt")
-MAX_PLANS = 3
+MAX_PLANS = shell.MAX_PLANS
 MAX_CARD_FACES = 6000  # the shell card's limit (core/gregtec/cards/schema.json)
 MAX_CARD_PALETTE = 64
 
