@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import io
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from gregtec.agents import design_cost
-from gregtec.db import build
 from gregtec.ingest import collect
 from gregtec.planner import designer
 from gregtec.planner.request import Request
@@ -32,15 +32,16 @@ STEEL = "gregtech:gt.metaitem.01@11305"
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     h = tmp_path_factory.mktemp("designer-harness")
-    collect.collect(game, h, 1, allow_harness=True)
-    build.build(h, allow_harness=True)
+    built_home(game, h)
     vault_deploy.deploy(h / "vault", REPO / "vault-template")
     (h / "config").mkdir()
     (h / "config" / "gos.toml").write_text(

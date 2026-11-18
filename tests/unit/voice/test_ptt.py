@@ -370,6 +370,9 @@ def test_the_watchdog_thread_runs_and_stops() -> None:
 # --- Windows: the real hook -----------------------------------------------------------------
 
 windows = pytest.mark.skipif(sys.platform != "win32", reason="the hook is Windows only")
+# The real hook is one per desktop and SendInput reaches every hook on it, and Windows drops a
+# low-level hook that answers slowly: CI runs these alone, in its serial step (D340).
+serial = pytest.mark.serial
 # SendInput types into whatever window has focus: on the gaming PC (gos-dev shares Clayton's
 # desktop, D82) that could be Play. Injection runs only on GitHub's own Windows runners, or
 # where someone opted in with GOS_TEST_SENDINPUT=1 on a PC with no game open.
@@ -465,6 +468,7 @@ def thread_priority(native_id: int) -> int:
 
 
 @windows
+@serial
 def test_the_real_hook_runs_at_high_priority() -> None:
     """Installs the real hook (it only watches F24 and injects nothing)."""
     hook = ptt.WindowsHook(KeyFilter({F24}, lambda event: None))
@@ -478,6 +482,7 @@ def test_the_real_hook_runs_at_high_priority() -> None:
 
 
 @injects
+@serial
 def test_the_real_hook_sees_an_injected_key() -> None:
     got: queue.Queue[KeyEvent] = queue.Queue()
     tick = ptt.tick_count()
@@ -496,6 +501,7 @@ def test_the_real_hook_sees_an_injected_key() -> None:
 
 
 @injects
+@serial
 def test_the_watchdog_catches_a_removed_hook_with_the_real_key_state() -> None:
     """The hook's thread gone: GetAsyncKeyState still sees the injected F24, so the watchdog
     re-installs the hook and passes the press on."""
@@ -552,6 +558,7 @@ def unhook(hook: ptt.WindowsHook) -> None:
 
 
 @injects
+@serial
 def test_the_watchdog_catches_a_silently_removed_hook() -> None:
     """The hook removed but its thread alive (the review's case): a 150 ms tap of F24 is
     passed on within two polls and the hook re-installed; the new hook sees the next key."""

@@ -122,7 +122,7 @@ def payload(v: object) -> bytes:
 
 def nbt_file(root: dict[str, Any], compressed: bool = True) -> bytes:
     data = bytes((nbt.COMPOUND,)) + jstring("") + payload(root)
-    return gzip.compress(data) if compressed else data
+    return gzip.compress(data, mtime=0) if compressed else data
 
 
 Entry = tuple[int, int, str, bool, int]  # cx, cz, mix, depleted, source byte

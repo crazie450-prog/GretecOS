@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -285,7 +286,10 @@ def test_the_named_query_gives_the_same_frontier(
 
 
 def test_quest_items_link_to_a_harness_export(
-    book: bq.Book, keys: list[bq.TierKey], tmp_path: Path
+    book: bq.Book,
+    keys: list[bq.TierKey],
+    tmp_path: Path,
+    built_home: Callable[[Path, Path], Path],
 ) -> None:
     """With GOS_REQUIRE_HARNESS_RUN=1 too (after ``./gradlew runServer -Pharness``, as in
     test_db_harness.py; ``GOS_SERVER_RUN`` names another server run folder): the harness's
@@ -293,7 +297,6 @@ def test_quest_items_link_to_a_harness_export(
     export has gets its item, and so do the key quests' machine hulls."""
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the server harness")
-    from gregtec.db import build
     from gregtec.ingest import collect
 
     repo = Path(__file__).resolve().parents[2]
@@ -301,8 +304,7 @@ def test_quest_items_link_to_a_harness_export(
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path / "home"
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     loaded = quest_db.Loaded(
         book=book,
         progress=bq.Progress({}, {PLAYER: "Clayton"}),

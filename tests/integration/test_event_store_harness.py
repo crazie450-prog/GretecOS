@@ -19,16 +19,16 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from gregtec import store
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.events import journal
 from gregtec.events import store as event_store
-from gregtec.ingest import collect
 from gregtec.watchers import machines
 
 REPO = Path(__file__).resolve().parents[2]
@@ -57,11 +57,12 @@ class Clock:
 
 
 def test_listener_events_in_a_session_and_its_journal(
-    expected: dict[str, Any], tmp_path: Path
+    expected: dict[str, Any],
+    tmp_path: Path,
+    built_home: Callable[[Path, Path], Path],
 ) -> None:
     home = tmp_path / "home"
-    collect.collect(GAME, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(GAME, home)
     clock = Clock()
     watch = machines.MachineEventWatch(GAME, clock, {})
     found = [e.as_dict() for e in watch.poll()]
