@@ -298,7 +298,7 @@ export function GuideView(props: { query: GuideQuery; onQuery: (q: GuideQuery) =
               <tbody>
                 {Object.entries(layer.materials).map(([k, n]) => (
                   <tr key={k} data-block={k} data-count={n}>
-                    <td>{blockName(g, k)}</td>
+                    <td>{g.palette.find((p) => p.block === k)?.name ?? "—"}</td>
                     <td className="gos-src">{k}</td>
                     <td className="num">{n}</td>
                   </tr>
@@ -385,7 +385,7 @@ export function GuideView(props: { query: GuideQuery; onQuery: (q: GuideQuery) =
             <tbody>
               {g.palette.map((p) => (
                 <tr key={p.block} data-block={p.block} data-count={p.count}>
-                  <td>{p.name ?? p.block}</td>
+                  <td>{p.name ?? "—"}</td>
                   <td className="gos-src">{p.block}</td>
                   <td className="num">{p.count}</td>
                 </tr>
