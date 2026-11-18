@@ -206,12 +206,14 @@ class Parts:
     source: audio.FakeSource = field(default_factory=audio.FakeSource)
     state: ptt.FakeKeyState = field(default_factory=ptt.FakeKeyState)
     hook: ptt.FakeHook | None = None
+    voice: Any = None  # the VoiceClient, once record made it
 
     def __call__(
         self,
         voice: Any,  # noqa: ANN401 - a VoiceClient
         device: str,
     ) -> tuple[audio.AudioPipe, ptt.FakeHook, ptt.Watchdog]:
+        self.voice = voice
         key_filter = ptt.KeyFilter(voice.watched, voice.post)
         self.hook = ptt.FakeHook(key_filter)
         dog = ptt.Watchdog(self.hook, self.state, key_filter)
@@ -248,7 +250,7 @@ def test_record_saves_one_talk_key_segment_per_line(
             str(toml),
         )
 
-    runner = threading.Thread(target=main)
+    runner = threading.Thread(target=main, daemon=True)  # a failure can't hang pytest
     runner.start()
     try:
         wait(lambda: parts.hook is not None and parts.hook.alive())
@@ -258,8 +260,12 @@ def test_record_saves_one_talk_key_segment_per_line(
             for _ in range(20):
                 parts.source.push(pcm)
             assert parts.hook is not None
+            before = parts.voice.recorder.started
             parts.state.down.add(F13)
             parts.hook.press(F13)
+            # The key-down reaches the recorder on the client's thread: hold the key only once
+            # the segment is open, else a slow runner leaves just the 0.3 s pre-roll (QA 5-9).
+            wait(lambda b=before: parts.voice.recorder.started not in (None, b))
             for _ in range(60):  # held for 1.2 s
                 parts.source.push(pcm)
                 time.sleep(0.005)

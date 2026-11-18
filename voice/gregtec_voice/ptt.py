@@ -54,6 +54,9 @@ MISSES = (
     2  # polls in a row on which a key's state and the hook's report disagree: a miss
 )
 REINSTALL_GAP_S = 1.0
+HOOKED_WAIT_S = (
+    1.0  # install() waits this long at most for SetWindowsHookEx (pynput 1.8.2)
+)
 THREAD_PRIORITY_HIGHEST = 2
 THREAD_SET_INFORMATION = 0x0020
 MIN_HOLD_S = 0.3  # hold mode: a shorter press only stops speech
@@ -169,6 +172,7 @@ class WindowsHook:
         listener = keyboard.Listener(win32_event_filter=event_filter)
         listener.start()
         listener.wait()
+        _wait_hooked(listener)
         if not raise_priority(listener.native_id):
             log.warning("can't raise the key hook thread's priority")
         self._listener = listener
@@ -181,6 +185,24 @@ class WindowsHook:
 
     def alive(self) -> bool:
         return self._listener is not None and self._listener.is_alive()
+
+
+def _wait_hooked(listener: Any, timeout: float = HOOKED_WAIT_S) -> bool:  # noqa: ANN401
+    """Wait until the listener's thread has really called SetWindowsHookEx. pynput 1.8.2 (the
+    uv.lock pin) marks a listener ready *before* its ``SystemHook`` installs the hook, so a key
+    pressed just after ``wait()`` returned was lost (QA 5-9). Bounded: if pynput's internals
+    change, log it and go on; the watchdog still covers a hook that never comes up."""
+    from pynput._util.win32 import SystemHook  # Windows only (D180)
+
+    deadline = time.monotonic() + timeout
+    while getattr(SystemHook._HOOKS.get(listener.ident), "_hook", None) is None:
+        if time.monotonic() > deadline or not listener.is_alive():
+            log.warning(
+                "the key hook wasn't in place %.0f s after its thread started", timeout
+            )
+            return False
+        time.sleep(0.005)
+    return True
 
 
 class AsyncKeyState:
