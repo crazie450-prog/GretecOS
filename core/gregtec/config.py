@@ -18,7 +18,8 @@
 | [core] port              | 8765                                     | core, clients               |
 | [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
 | [core] dashboard_host    | gos.localhost (pairing and the dashboard)| core (D117)                 |
-| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
+| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8); |
+|                          | + the tailnet name (gos tailnet, D301)   | the phone (WO-9.3)          |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
 | [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
 | [startup] voice_with_play | true (voice starts and stops with Play) | supervisor (WO-6.1, D259)   |
@@ -45,6 +46,7 @@
 | [mailbox.<role>] dir     | home/gos/mailbox                         | core (WO-7.3)               |
 | [mailbox.<role>] world   | [paths] world (play), lab_world (lab)    | core (WO-7.3)               |
 | [alerts] ...             | gregtec.alerts.rules, pending Clayton    | alert rules (WO-7.5, D280)  |
+| [notify] ...             | gregtec.alerts.policy, pending Clayton   | alert routing (WO-9.2, D298)|
 
 ``play``, ``export`` and ``lab`` are instance folder names inside ``prism_instances``. An
 ``exclude`` list adds to its default, so the NEI and GregtecLink patterns can't be dropped by
@@ -55,7 +57,8 @@ three names with ``:<port>``). Every other key in the Appendix C skeleton is ign
 reads it.
 
 **Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
-``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``, ``[alerts]``) are
+``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``, ``[alerts]``,
+``[notify]``) are
 read only by the core, the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
 is such a value): the key keeps its default and the problem goes into
@@ -79,6 +82,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
+from gregtec.alerts.policy import NotifyPolicy
+from gregtec.alerts.policy import parse as parse_notify
 from gregtec.alerts.rules import AlertRules
 from gregtec.alerts.rules import parse as parse_alert_rules
 from gregtec.llm.prices import PRICES
@@ -218,6 +223,8 @@ class Config:
     mailboxes: tuple[OcMailbox, ...] = ()  # [mailbox.play], [mailbox.lab] (WO-7.3)
     # [alerts]: the telemetry alert rules (WO-7.5, D280)
     alerts: AlertRules = field(default_factory=AlertRules)
+    # [notify]: where alerts go, quiet hours, cooldowns (WO-9.2, D298)
+    notify: NotifyPolicy = field(default_factory=NotifyPolicy)
     # Problems with the service keys; the core and the supervisor refuse to start while any.
     service_errors: tuple[str, ...] = ()
     fingerprint_configs: tuple[str, ...] = DEFAULT_FINGERPRINT_CONFIGS
@@ -243,7 +250,24 @@ class Config:
             f"localhost:{port}",
             f"{self.dashboard_host}:{port}",
         )
-        return tuple(dict.fromkeys([*base, *self.extra_allowed_hosts]))
+        # A browser leaves out the default port, so the tailnet name behind Tailscale Serve
+        # arrives as a bare Host; an entry written with :443 means that name too (WO-9.3, D301).
+        extra = [
+            h
+            for entry in self.extra_allowed_hosts
+            for h in (entry, *([entry[:-4]] if entry.endswith(":443") else []))
+        ]
+        return tuple(dict.fromkeys([*base, *extra]))
+
+    @property
+    def tailnet_host(self) -> str | None:
+        """The PC's tailnet name (``pc.tail1234.ts.net``) when ``[core] allowed_hosts`` has one:
+        the phone dashboard's address behind Tailscale Serve (D53, WO-9.3); else None."""
+        for host in self.extra_allowed_hosts:
+            name, _, port = host.partition(":")
+            if name.endswith(".ts.net") and port in ("", "443"):
+                return name
+        return None
 
     @property
     def data_dir(self) -> Path:
@@ -635,6 +659,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         "notices": soft(lambda: _notices(policy, defaults.notices), defaults.notices),
         "mailboxes": soft(lambda: _mailboxes(data), ()),
         "alerts": soft(lambda: _alert_rules(data), defaults.alerts),
+        "notify": soft(lambda: _notify(data), defaults.notify),
         "service_errors": tuple(problems),
     }
 
@@ -762,6 +787,15 @@ def _launch_home(launch: Mapping[str, Any]) -> Path | None:
     if home is not None and (not isinstance(home, str) or not home):
         raise ConfigError("gos.toml: [launch] home must be a non-empty string")
     return Path(home) if home else None
+
+
+def _notify(data: Mapping[str, Any]) -> NotifyPolicy:
+    try:
+        return parse_notify(_table(data, "notify", ""))
+    except ValueError as exc:
+        if isinstance(exc, ConfigError):
+            raise
+        raise ConfigError(str(exc)) from exc
 
 
 def _alert_rules(data: Mapping[str, Any]) -> AlertRules:

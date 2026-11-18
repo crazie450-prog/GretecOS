@@ -24,7 +24,15 @@ from typing import Any
 import discord
 from discord import app_commands
 
+from gregtec import presence
+from gregtec.config import Config
 from gregtec.discordbot import texts
+from gregtec.discordbot.alerts import (
+    STATE_FILE,
+    AlertDesk,
+    status_token,
+    supervisor_says_stopped,
+)
 from gregtec.discordbot.core_api import CoreApi
 from gregtec.discordbot.handlers import (
     ALERT_MODES,
@@ -143,13 +151,29 @@ async def tell_failed(inter: discord.Interaction, owner_id: int) -> None:
 
 
 class GosClient(discord.Client):
-    def __init__(self, settings: BotSettings, core: CoreApi) -> None:
+    def __init__(
+        self, settings: BotSettings, core: CoreApi, cfg: Config | None = None
+    ) -> None:
         super().__init__(intents=discord.Intents.none(), allowed_mentions=NO_MENTIONS)
         self.settings = settings
         self.bot = Bot(settings, core, dm=self.dm)
         self.tree = GateTree(self, settings.owner_id)
         add_commands(self.tree, self.bot)
         self._deliver: asyncio.Task[None] | None = None
+        # Alert DMs, the credit buttons and "GOS offline" (WO-9.2).
+        self.desk: AlertDesk | None = None
+        if cfg is not None:
+            self.desk = AlertDesk(
+                self.bot,
+                cfg.notify,
+                idle=presence.system_idle(),
+                state_file=cfg.run_dir / STATE_FILE,
+                core_stopped=supervisor_says_stopped(
+                    cfg.supervisor_port, status_token()
+                ),
+            )
+            self.bot.credit = self.desk.credit_button
+        self._alerts: asyncio.Task[None] | None = None
 
     async def dm(self, msg: Message) -> None:
         user = await self.fetch_user(self.settings.owner_id)
@@ -163,6 +187,8 @@ class GosClient(discord.Client):
         else:
             await self.tree.sync()
         self._deliver = asyncio.ensure_future(self.bot.deliver_forever())
+        if self.desk is not None:
+            self._alerts = asyncio.ensure_future(self.desk.run_forever())
         log.info("discord bot ready")
 
     async def on_interaction(self, inter: discord.Interaction) -> None:
@@ -183,6 +209,8 @@ class GosClient(discord.Client):
     async def close(self) -> None:
         if self._deliver is not None:
             self._deliver.cancel()
+        if self._alerts is not None:
+            self._alerts.cancel()
         await super().close()
 
 

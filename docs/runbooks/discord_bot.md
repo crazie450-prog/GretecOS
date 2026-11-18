@@ -1,6 +1,6 @@
 # Discord bot: setup and the from-the-phone checks (WO-9.1)
 
-Clayton runs these on the gaming PC and his phone after the WO-9.1 PR is merged and deployed. About 20 minutes. Decisions: D295 (the design-job queue), D296 (the bot process, settings, secrets, the 10 s bound), D297 (Clayton only, confirm buttons, alerts, journal). Plan 7.12, §8 row 9.1.
+Clayton runs these on the gaming PC and his phone after the WO-9.1 PR is merged and deployed. About 20 minutes. Alert DMs, the credit buttons and "GOS offline" (WO-9.2) are checked in `alert_routing.md` after this. Decisions: D295 (the design-job queue), D296 (the bot process, settings, secrets, the 10 s bound), D297 (Clayton only, confirm buttons, alerts, journal). Plan 7.12, §8 row 9.1.
 
 `gos` below means the release copy, `C:\GregtecOS-app\current\.venv\Scripts\gos.exe` (D91). Nothing here costs money: a Discord bot and a private server are free. The bot never reads messages; it answers only your slash commands and buttons, and only from your user id.
 
