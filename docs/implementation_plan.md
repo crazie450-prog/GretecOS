@@ -796,6 +796,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
 - **3D build guide** for machinery, which is built legitimately (D35).
   - **Primary:** GuideNH 1.3.55 ships in 2.9.0. `/guidenhc exportsite` records what the client actually draws (GT overlays, tints, glow, active textures) plus the texture atlas. It ships a **three.js viewer with hover and layer controls**, and `<ImportStructureLib controller=… tier=…>` pulls in any multiblock at any tier [G].
   - Embedding it in the dashboard is a 1–2 h **spike** (WO-10.1, **VERIFY**).
+  - As built (WO-10.1, D304, pending Clayton's Lab export): the core serves Clayton's copied export from `GOS_HOME/data/guide-site` under `/guide/` with a CSP limited to `/guide/`, and the Build view frames a scene page (never embeds or vendors GuideNH's LGPL viewer). The frame is same-origin, so its scripts are trusted until WO-10.8 serves `/guide/` from its own origin. Report: `docs/reviews/WO-10.1_guide_spike.md`.
   - **Fallbacks:** MrBruh's previewer (Apache-2.0; three.js, layer slider, hover labels) with his texture manifest; then NEI item-panel icons with average colours.
   - Exports must run in a client with a game window, because a dedicated server lacks textures for 208 of 296 multiblocks [G].
 - **Viewer features:** rotate/zoom; hover shows block name and registry ID; layer slider; materials for the current layer; build checklist; hatch-slot markers with allowed hatch types; BOM per structure.
@@ -856,6 +857,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - credit warnings with buttons (D48);
   - "GOS offline" and "game paused" **only while he's away** (D76), meaning no keyboard or mouse input on the PC for 10 minutes. Each is sent once, when both conditions are true, whichever comes second.
 - Results are also saved to the vault.
+- As built (WO-9.1, D295–D297): `gregtec.discordbot` is its own process (`python -m gregtec.discordbot run --supervised`, started by the supervisor at login with the core, left stopped until `[discord] owner_id` and its two keyring secrets exist). Every command and interaction goes through one door that drops anyone but `owner_id` with no response and no core call; no gateway intents, so it reads no messages. `/plan` and `/power` are jobs in the core's durable queue (`remote_job` in gos.sqlite, keyed by the interaction id; never completes twice, re-run once after a crash mid-run), acknowledged at once; results come as a follow-up (or a DM after 14 min or a bot restart) with the PNG and BOM of route 1 and its `#/designer/<id>` (or `#/power/<id>`) phone link. Confirm buttons post the pending action's read-back and confirm through the action desk as `discord`. Answers go to the day's journal through the core; `/alerts` sets `kv` `discord.alerts` for WO-9.2. Runbook: `docs/runbooks/discord_bot.md`.
 - **Limitation:** everything off-PC needs the PC on and awake. GOS starts at login (D77), so a reboot doesn't need a game launch to bring phone access back.
 
 ### 7.13 Addon watcher and pack updates
@@ -1253,7 +1255,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
 | V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
-| V15 | GuideNH `exportsite` embeds in the dashboard | Spike | 10.1 |
+| V15 | GuideNH `exportsite` embeds in the dashboard. **Partly** (WO-10.1, D304): framed under `/guide/` with its own CSP (which limits loads but is not isolation: same origin, so WO-10.8 gives `/guide/` its own origin), proven with a stand-in export; the real Lab export run is Clayton's | Spike; Lab export (report WO-10.1) | 10.1 |
 | V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta); and the paste offset `WEOffset` = `(-⌊W/2⌋, 0, 1)` in game | Lab paste (runbook `schematic_roundtrip.md`). The dev-server harness pastes and copies with worldedit-gtnh v0.0.10, ids < 4096 and meta ≤ 15 only (D310) | 10.4 |
 | V17 | **Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW | — | 10.0 |
 | V18 | Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open | Weekly; watcher reports | 11.1 |
@@ -1320,9 +1322,11 @@ gregtec-os/
     vault/     io.py  index.py  curator.py  schema.py
     build/     schematic.py  palette.py  footprints.py  themes.py  shells.py  shell_designer.py
     alerts/  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
+    discordbot/ handlers.py  adapter.py (only importer of discord.py)  core_api.py  texts.py  settings.py  cli.py
+    remote/    jobs.py (durable design-job queue, D295)  routes.py (/api/jobs, /api/discord/*)
     crops/     data.py  planner.py  odds.py (§7.17)
   voice/gregtec_voice/   audio.py  ptt.py  wake.py  stt.py  tts.py  lexicon.py  speech_filter.py  client.py
-  discord_bot/gregtec_discord/
+  (the Discord bot is core/gregtec/discordbot/, its job queue core/gregtec/remote/: WO-9.1, D296)
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
@@ -1467,6 +1471,13 @@ keep_backups = 7              # daily DB backups kept (D139)
 # clear_s = 30
 # cooldown_s = 600            # plan 7.5's 10 minutes
 # done_show_s = 300
+
+# The Discord bot (WO-9.1, D296). Ids are Discord snowflakes (Developer Mode > Copy ID); the bot
+# token is in the keyring (gos key set discord), the bot's core token too (gos token new discord).
+# [discord]
+# owner_id = <Clayton's user id>   # required: the only user the bot answers
+# guild_id = <his private server's id>   # commands appear there at once (else: global sync)
+# dashboard_url = "https://<pc>.<tailnet>.ts.net"   # default: the ts.net name in [core] allowed_hosts
 
 # M1, the OC file mailbox (WO-7.3, D217): one table per instance whose OC agent uses it.
 # drive and dir as the agent prints them when it starts; world defaults to [paths] world / lab_world.

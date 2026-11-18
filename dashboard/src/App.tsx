@@ -23,6 +23,7 @@ import { store, useApp } from "./state/store";
 import { useTheme } from "./theme/useTheme";
 import { Activity } from "./views/Activity";
 import { Base } from "./views/Base";
+import { Build } from "./views/Build";
 import { Chat } from "./views/Chat";
 import { Costs } from "./views/Costs";
 import { Glance } from "./views/Glance";
@@ -325,6 +326,8 @@ export function App() {
         return <Ores />;
       case "activity":
         return <Activity />;
+      case "build":
+        return <Build />;
       case "settings":
         return (
           <Settings
