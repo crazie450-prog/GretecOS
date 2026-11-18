@@ -15,6 +15,7 @@ and options give the same JSON; and the JSON matches ``layout_schema.json``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import io
 import itertools
 import json
@@ -270,9 +271,12 @@ def test_a_production_line_is_laid_out(conn: sqlite3.Connection) -> None:
         assert p["facing"] in ("north", "south")
         size = [p["hi"][i] - p["lo"][i] + 1 for i in range(3)]
         if p["kind"] == "multiblock":
-            f = lib.get(fp.GT_MACHINES, p["mte"]).rotated(p["facing"])
+            every = lib.for_mte(p["mte"])  # the largest variant by volume (D312)
+            big = max(every, key=lambda v: v.size[0] * v.size[1] * v.size[2])
+            f = big.rotated(p["facing"])
             assert size == list(f.size)
             assert p["footprint"] == f.key and p["source"] == "gtnh-extractor"
+            assert p["variant"] == big.variant
             assert len(p["hatches"]) == len(f.hatch_cells)
         else:
             assert size == [1, 1, 1] and p["source"] == "single block"
@@ -300,12 +304,107 @@ def test_services_carry_the_plans_flows_boundary_and_power(
     raw = by[("minecraft:iron_ingot@0", "plan:pl-steel")]
     assert raw["from"] == ["e1"] and raw["to"] == []
     assert by[("gregtech:ingot@11305", "plan:pl-steel")]["to"] == ["e1"]
-    # EU: HV machines fed by the power plan's HV generators; LV ones from the base grid
+    # EU: HV machines fed by the power plan's HV generators; LV ones by them through a
+    # transformer step (no LV generator in the layout), flagged
     hv = by[("eu:HV", "plan:pl-steel")]
     assert hv["kind"] == "eu" and hv["rate_s"] is None and hv["from"] == gens
-    assert by[("eu:LV", "plan:pl-steel")]["from"] == ["e1"]
+    assert hv["via_transformer"] is False
+    lv = by[("eu:LV", "plan:pl-steel")]
+    assert lv["from"] == gens and lv["via_transformer"] is True
+    assert any(
+        w.startswith("pl-steel eu:LV: no LV generator") and "transformer" in w
+        for w in lay["warnings"]
+    )
     # a generator's node with eut 0 isn't a consumer
     assert ("eu:HV", "plan:pl-power") not in by
+
+
+def test_without_a_generator_eu_comes_from_the_base_grid(
+    conn: sqlite3.Connection,
+) -> None:
+    lay = layout.plan_layout(conn, [production()])
+    by = {s["item"]: s for s in lay["services"]}
+    for tier in ("eu:HV", "eu:LV"):
+        assert by[tier]["from"] == ["e1"] and by[tier]["via_transformer"] is False
+    assert not any("transformer" in w for w in lay["warnings"])
+
+
+def test_an_mv_line_on_an_ev_power_plan_needs_a_transformer(
+    conn: sqlite3.Connection,
+) -> None:
+    pw = power()
+    pw["power"] = {"generator": {"tier": "EV"}}
+    plan = production(
+        nodes=[node("n1", 9001, 1, tier="MV"), node("n2", 50, 2, "singleblock", "MV")],
+        edges=[{"from": "n2", "to": "n1", "item": "gregtech:dust@1", "rate_s": 1.0}],
+    )
+    lay = layout.plan_layout(conn, [plan, pw])
+    check(lay)
+    gens = [p["id"] for p in lay["placements"] if p["role"] == "generator"]
+    (mv,) = [s for s in lay["services"] if s["kind"] == "eu"]
+    assert mv["item"] == "eu:MV" and mv["from"] == gens and mv["to"]
+    assert mv["via_transformer"] is True and "e1" not in mv["from"]
+    (w,) = [w for w in lay["warnings"] if "eu:MV" in w]
+    assert "EV generator(s) " + " ".join(gens) in w
+    assert "gos dist transformer" in w
+
+
+def test_a_multi_with_several_variants_is_placed_at_its_largest(
+    conn: sqlite3.Connection,
+) -> None:
+    # the fixture's tower has two variants: t1 3x3x3 and t2 3x4x3 (a taller build)
+    plan = production(nodes=[node("n1", 9003, 2)], edges=[], boundary={})
+    lay = layout.plan_layout(conn, [plan])
+    check(lay)
+    for p in lay["placements"]:
+        assert p["variant"] == "t2" and "|t2|" in p["footprint"]
+        assert p["hi"][1] - p["lo"][1] + 1 == 4
+        k = next(k for k in lay["keepouts"] if k["of"] == p["id"])
+        assert k["hi"][1] == 4  # the tall build plus clearance_top, never the short one
+    (w,) = [w for w in lay["warnings"] if "variant" in w]
+    assert "(m1, m2)" in w and "t1 3x3x3" in w and "t2 3x4x3" in w
+    assert "largest variant t2 of 2" in w
+
+
+def test_a_flow_to_an_unplaced_machine_is_warned(conn: sqlite3.Connection) -> None:
+    plan = production(
+        edges=[{"from": "n3", "to": "n4", "item": "gregtech:dust@2", "rate_s": 1.0}]
+    )
+    lay = layout.plan_layout(conn, [plan])
+    assert not any(s["item"] == "gregtech:dust@2" for s in lay["services"])
+    assert (
+        "pl-steel n3 -> n4 gregtech:dust@2: not routed, n4 has no placement"
+        in lay["warnings"]
+    )
+    assert any("not routed" in n for n in layout.card(lay)["notes"])
+
+
+def test_a_multi_with_no_hatch_data_is_warned(conn: sqlite3.Connection) -> None:
+    lib = fp.library(conn)
+    f = lib.get(fp.GT_MACHINES, 9001)
+    bare = dataclasses.replace(
+        f, cells=tuple(dataclasses.replace(c, hatches=()) for c in f.cells)
+    )
+    assert not bare.hatch_cells
+    plan = production(nodes=[node("n1", 9001, 1)], edges=[], boundary={})
+    before = layout.plan_layout(conn, [plan])
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(layout._Footprints, "_find", lambda self, mte, kind, name: bare)
+        lay = layout.plan_layout(conn, [plan])
+    (p,) = lay["placements"]
+    assert p["reach"]["ok"] is True and p["reach"]["hatch_cells"] == 0
+    assert "m1 Machine 9001: no hatch data, hatches not checked" in lay["warnings"]
+    # the same plan and options on different footprint data give a different id
+    assert lay["id"] != before["id"]
+
+
+def test_the_layout_id_follows_the_footprints(conn: sqlite3.Connection) -> None:
+    plan = production(nodes=[node("n1", 9003, 1)], edges=[], boundary={})
+    a = layout.plan_layout(conn, [plan])
+    conn.execute("DELETE FROM structure WHERE meta = 9003 AND variant = 't2'")
+    b = layout.plan_layout(conn, [plan])  # a new dump: only the short tower is left
+    assert b["placements"][0]["variant"] == "t1"
+    assert a["id"] != b["id"]
 
 
 def test_the_same_plans_and_options_give_the_same_layout(
@@ -565,7 +664,12 @@ def test_cli(tmp_path: Path) -> None:
     code, out = _gos(toml, "pl-steel", "pl-power")
     assert code == 0, out
     assert out.startswith("Layout lo-") and "plan:pl-steel + plan:pl-power" in out
-    assert "NOT reached" not in out and "warning" not in out
+    assert "NOT reached" not in out
+    # the only warnings: the tower's variants and the LV machines' transformer step
+    warned = [line for line in out.splitlines() if "warning:" in line]
+    assert len(warned) == 2, warned
+    assert "largest variant t2 of 2" in warned[0]
+    assert "gos dist transformer --from HV --to LV" in warned[1]
     code, out = _gos(toml, "pl-steel", "--json")
     check(json.loads(out))
     code, out = _gos(toml, "pl-steel", "--card")

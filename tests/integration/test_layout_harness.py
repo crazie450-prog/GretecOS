@@ -185,7 +185,10 @@ def test_two_benchmark_lines_are_laid_out(
         unit.check(lay)
         print("\n" + "\n".join(render(lay)))
         assert lay["unplaced"] == [], lay["unplaced"]
-        assert lay["warnings"] == []
+        # together, the MV steel line draws from the EV turbines through a transformer step
+        # (D312); nothing else is warned about
+        allowed = "a transformer step" if len(chosen) > 1 else None
+        assert [w for w in lay["warnings"] if not allowed or allowed not in w] == []
         wanted = sum(
             int(g["count"]) if n.get("kind") == "generator" else int(n["count"])
             for p in chosen
@@ -203,3 +206,11 @@ def test_two_benchmark_lines_are_laid_out(
     assert gens, "the benzene line placed no gas turbine"
     eu = [s for s in both["services"] if s["kind"] == "eu"]
     assert eu and all(s["to"] for s in eu)
+    # a consumer tier with no generator of its own is fed from the turbines, flagged; one at
+    # the turbines' tier from them directly; never silently from the base grid (e1)
+    ids = {p["id"] for p in gens}
+    for s in eu:
+        assert set(s["from"]) == ids, s
+        flagged = any(f"{s['item']}:" in w for w in both["warnings"])
+        assert s["via_transformer"] is flagged
+    print("eu services:", [(s["item"], s["via_transformer"]) for s in eu])
