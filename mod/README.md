@@ -282,6 +282,22 @@ outside `gregteclink/`. `tests/integration/test_machine_events_harness.py` then 
 region files against `expected.json` and runs the events and the census through the watchers into My base on a DB
 built from the export harness's run. CI runs it in the `mod` job, after the export harness.
 
+### Schematic harness (WO-10.4)
+
+`./gradlew runServer -Pharness -PharnessSchematic` puts worldedit-gtnh `v0.0.10:dev` on the dev server's classpath
+for that run only (the harness code compiles against it, `compileOnly`; no other run and not the shipped jar has
+WorldEdit) and turns no GregtecLink module on. It deletes only the world, `gregteclink/schematic-harness/`, the old
+result and `config/worldedit/`, and copies `harness/schematic/in/` (GOS-written shells,
+`tests/harness/schematic_inputs.py`) to `gregteclink/schematic-harness/in/`. 40 ticks after server start, for each
+shell, through WorldEdit's own classes: read it (`ClipboardFormat.SCHEMATIC`, as `//schem load`), paste it with air at
+a "player" position high above the superflat (`ClipboardHolder.createPaste().to(player)`, as `//paste`), check the
+world cell by cell (registry name + meta against WorldEdit's reading) in the box at the player plus the file's
+`WEOffset` read from the NBT, and air in the layers above and below it, then copy that box with the player as origin
+(`ForwardExtentCopy` into a `BlockArrayClipboard`, as `//copy`) and save it to `gregteclink/schematic-harness/out/`
+(as `//schem save`). `tests/integration/test_schematic_harness.py` reads each copy with GOS's reader and requires the
+same block state in every cell and the same offset (D310). The dev runtime has no EndlessIDs: ids above 4095 and metas
+above 15 are the Lab round trip (`docs/runbooks/schematic_roundtrip.md`). CI runs it after the listener harness.
+
 ## Listener module (WO-6.2)
 
 With `B:listener=true` (and `export` off: the module refuses to start beside the export module, so Export never
