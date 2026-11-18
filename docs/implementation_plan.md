@@ -793,6 +793,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - Base-pack multiblocks: MrBruh's `gtnh-extractor` (Apache-2.0) records every cell's `registry@meta`, which hatch types each cell accepts, and coil/glass/pipe tier tables [G][A§4.2]. It's pinned to 2.9.0-beta-3, so **re-pin it to 2.9.0** (needs JDK 25; the bump is documented but untested).
   - Addon multiblocks: capture in the Lab with GuideNH's region wand (block + meta per position), or with the projector plus WorldEdit `//copy`. Set tiers with StructureLib `/sl_channel set` [G][E§5.5].
   - Keep one footprint per (controller, tier channels, facing). Track 2.9's legacy and new turbine/LCE/boiler variants separately.
+  - As built (WO-10.2, D305, D306): `gregtec.build.footprints` computes every footprint from the `structure` table (no files); `gos footprints list|show|coverage|capture|compare`. Addon captures use GOS's minimal `gos-capture` JSON until WO-10.4's `.schematic` reader is on main. Runbook: `docs/runbooks/footprints_lab.md` (L1).
 - **3D build guide** for machinery, which is built legitimately (D35).
   - **Primary:** GuideNH 1.3.55 ships in 2.9.0. `/guidenhc exportsite` records what the client actually draws (GT overlays, tints, glow, active textures) plus the texture atlas. It ships a **three.js viewer with hover and layer controls**, and `<ImportStructureLib controller=… tier=…>` pulls in any multiblock at any tier [G].
   - Embedding it in the dashboard is a 1–2 h **spike** (WO-10.1, **VERIFY**).
@@ -816,10 +817,12 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
     - #24: EndlessIDs support for schematic save and load.
     - #28: chunk corruption when placing a meta value that doesn't exist. Validate every palette entry first.
   - worldedit-gtnh v0.0.10 isn't bundled in the pack; install it in Play and Lab yourself [F].
+  - **Built** (WO-10.4, D309-D311): `gregtec.build.schematic` writes this layout (block types numbered by registry name; above 255 the shell is split into parts, or `AddBlocks` on request) only through `write_shell`, which applies WO-10.3's palette rule to every state the shell uses (meta > 15 refused until #30 is resolved); its reader takes worldedit-gtnh `//copy` saves and Schematica saves, with or without mappings, nibble order detected or refused. `gos schematic sample|read|compare`. The dev-server schematic harness pastes and copies GOS shells with worldedit-gtnh (D310); the Lab round trip is runbook `schematic_roundtrip.md`.
 - **Themes (D36).** Each `themes/<id>.md` holds:
   - a palette (`registry@meta`, from Clayton's client palette), motifs, massing rules, roof/window/lighting rules, adaptations per line type, references to sample builds, and a version `v:`.
   - Themes are created from prompts and refined in conversation.
   - **Per build:** theme + optional prompt, prompt only, or blank. Blank means the architect proposes a concept from the line type (e.g., chemistry gets pipework and tanks; EBF gets heavy industrial), using themes already used nearby for consistency.
+  - **Built** (WO-10.6, D314-D315): `gregtec.build.themes` parses and validates themes (every palette entry a catalog state without a tile entity, meta ≤ 15); `theme_list`/`theme_get` (both lanes) and `theme_save` (deep lane, the architect's; each refinement a new version, earlier ones in `themes/versions/`; only `theme_save` writes `themes/`); the starter themes `th-foundry` and `th-marble-works` in `vault-template/_gos/themes/`; the `architect` skill; `themes.select` for the three modes (blank: line type's concept, the theme most used within 256 blocks, else one that fits); `gos theme list|check|select`. Runbook `themes.md`.
 - **Shell designer (img2schem merged, D74).**
   - The `architect` subagent designs shells, as the img2schem SOW intended. Input: bounding volume, keep-outs, entrances, theme, palette constraints, prompt, max blocks. Output: `.schematic`, palette manifest, preview mesh, notes.
   - The palette comes from Clayton's client export (WO-10.3), so modded blocks are available.
@@ -856,7 +859,9 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - credit warnings with buttons (D48);
   - "GOS offline" and "game paused" **only while he's away** (D76), meaning no keyboard or mouse input on the PC for 10 minutes. Each is sent once, when both conditions are true, whichever comes second.
 - Results are also saved to the vault.
+- As built (WO-9.2, D298–D300): one router in the core (`gregtec.alerts.router`) takes the alert engine's events (WO-7.5), the proactive notices (WO-6.5), the D48 credit alert (WO-2.8) and the paused game (WO-6.1); every alert has a level and a key, and `gregtec.alerts.policy.decide` (one table, `[notify]` in gos.toml, defaults pending Clayton) sends it to the dashboard (always: its cards, banners and pause chip), voice (base alerts while he is present), in game (GregtecLink chat lines) and a Discord DM (base alerts while away, D46; credit DMs whatever his presence, D48; "game paused" only while away, D76), each once per occurrence (the `alert_route` table, so not again after a restart), never both by voice and DM, with a per-key cooldown, quiet hours and `/alerts off|quiet` holding them until they end. Away is no keyboard or mouse input for 10 minutes (`gregtec.presence`: `GetLastInputInfo` on Windows, unknown elsewhere, V35). Being level-triggered, the paused DM goes once per pause on the first tick that finds the game paused and him away, in either order. DMs go through an outbox (`alert_dm`) the bot posts and marks, queued only while the bot reads it (else voice still carries a base alert); the credit DM's buttons (Open billing, No-AI mode or Resume AI, Stop with a second press) reach the bot's one door and the core's own `POST /api/credits/decision`. "GOS offline" is the bot's (it outlives the core): the core silent for `offline_after_s` while he is away, not when the supervisor says it was stopped on purpose, once per outage, then "GOS is back" under the same rules. `gos alerts routed|test`. Runbook: `docs/runbooks/alert_routing.md`.
 - As built (WO-9.1, D295–D297): `gregtec.discordbot` is its own process (`python -m gregtec.discordbot run --supervised`, started by the supervisor at login with the core, left stopped until `[discord] owner_id` and its two keyring secrets exist). Every command and interaction goes through one door that drops anyone but `owner_id` with no response and no core call; no gateway intents, so it reads no messages. `/plan` and `/power` are jobs in the core's durable queue (`remote_job` in gos.sqlite, keyed by the interaction id; never completes twice, re-run once after a crash mid-run), acknowledged at once; results come as a follow-up (or a DM after 14 min or a bot restart) with the PNG and BOM of route 1 and its `#/designer/<id>` (or `#/power/<id>`) phone link. Confirm buttons post the pending action's read-back and confirm through the action desk as `discord`. Answers go to the day's journal through the core; `/alerts` sets `kv` `discord.alerts` for WO-9.2. Runbook: `docs/runbooks/discord_bot.md`.
+- As built (WO-9.3, D301–D303): `gos tailnet setup` (Clayton runs it; `gregtec.tailnet`) runs `tailscale serve --bg --https=443 http://127.0.0.1:<port>` after checking Tailscale is logged in, Funnel is off for every port, no raw TCP forward reaches the core and nothing else holds 443, reads it back (Funnel still off, else it undoes the handler), and prints the tailnet name for `[core] allowed_hosts`, which it never writes; `gos tailnet check` reads, `gos tailnet off` removes the handler only when it is GOS's; `setup`/`off` refuse as gos-dev and nothing in GOS passes `funnel` to the CLI. The core refuses any request Tailscale marks as from an HTTP Funnel (`Tailscale-Funnel-Request`; a TCP Funnel is unmarked, so `check` is its guard), and accepts the tailnet name only once it is in `[core] allowed_hosts` (a `<name>:443` entry also allows the bare name browsers send). The phone pairs once on that name (D117, cookie `Secure`) and is revoked from Settings. Its tabs are D159's approved Now, Chat, Search, Costs, Settings and **More**, which lists every other view (Base among them, D302; needs Clayton's board approval); a Discord plan link opens the plan with More lit; approvals come first on Now with the same buttons (confirmed as `phone`, D220). Tests: `tests/security/test_phone_dashboard.py` (fake tailscale CLI) and `dashboard/e2e/phone.spec.ts` (a fake Serve on a tailnet name, 390x844). Runbook: `docs/runbooks/phone_dashboard.md`.
 - **Limitation:** everything off-PC needs the PC on and awake. GOS starts at login (D77), so a reboot doesn't need a game launch to bring phone access back.
 
 ### 7.13 Addon watcher and pack updates
@@ -1248,14 +1253,14 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V06 | ServerUtilities world-logging config keys and the single-player `world.log` path. **Keys confirmed** (PR #6); the path moves to WO-6.1 (D97), which watches `MC\logs\world.log` (D257); the Lab session confirms it and the wording for broken blocks | Lab session | 6.1 |
 | V07 | **Partly resolved** (D127, WO-1.6): from VisualProspecting 1.5.42's source and a cache it wrote in the dev runtime, both caches are in the game folder (`visualprospecting\server\<world id>\`, `visualprospecting\client\<uuid>\<world id>\`), format v3. Still open: the Lab check (`docs/runbooks/ores_check.md`) | Lab | 1.6 |
 | V08 | **Resolved** (D126, WO-1.6): GT's worldgen registry, exported by GregtecLink as `gt_ore_mixes.json`; NEI's vein pages have no mix name, heights, weight, density or size | — | 1.6 |
-| V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
+| V09 | **Resolved** (WO-10.2, 2026-11-14): `gos structures extract` built and ran in the dev container; the dev server loaded GT5-Unofficial 5.09.54.265, StructureLib 1.4.47, CropsNH 2.0.140; 297 controllers (455 variants) dumped, 2 not (client-only classes), all 297 linked to the harness DB's machine rows (D305) | Build | 1.8 |
 | V10 | **Resolved** (D240, WO-4.5): exported fields. GregtecLink's power pass writes every GT and GT++ cable's `mVoltage`, `mAmperage` and `mCableLossPerMeter` (`gt_power.json` `storage.cables`, table `cable`), so no game language or number locale matters; the en_US tooltip (`machine.tooltip`, any digit grouping, checked against GT's voltages and the tier it names) is only the fallback for older runs, and reads the same numbers for all 588 cables of the harness run; no curated table. Batteries, buffers, transformers and LSC cells were added to `gt_power.json` (`storage`) too | — | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
 | V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
 | V15 | GuideNH `exportsite` embeds in the dashboard. **Partly** (WO-10.1, D304): framed under `/guide/` with its own CSP (which limits loads but is not isolation: same origin, so WO-10.8 gives `/guide/` its own origin), proven with a stand-in export; the real Lab export run is Clayton's | Spike; Lab export (report WO-10.1) | 10.1 |
-| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
+| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta); and the paste offset `WEOffset` = `(-⌊W/2⌋, 0, 1)` in game | Lab paste (runbook `schematic_roundtrip.md`). The dev-server harness pastes and copies with worldedit-gtnh v0.0.10, ids < 4096 and meta ≤ 15 only (D310) | 10.4 |
 | V17 | **Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW | — | 10.0 |
 | V18 | Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open | Weekly; watcher reports | 11.1 |
 | V19 | Does Open to LAN avoid the pause freeze? | Lab: the OC agent's messages through 60 s in the Esc menu, without and with Open to LAN (`docs/runbooks/oc_agent.md` F) | 7.2 |
@@ -1267,13 +1272,14 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V25 | **Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC | Lab test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player. **Passes in the listener harness** (D260, D262: 10 kinds placed and 4 broken by a fake player through Forge's events, ids from `mID`, registry name + meta); the Lab check (runbook `machine_events.md`) confirms it in the real pack | Lab test | 6.2 |
 | V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads. Soak-tested on a fake game on Linux and Windows CI (D257); the Lab save loop confirms it on the game | Lab save loop | 6.1 |
-| V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
+| V28 | **Partly resolved from Tailscale's docs and source** (D301, WO-9.3; read 2026-11-18): Serve shares a local service within the tailnet only and Funnel is a separate command (tailscale.com/kb/1242/tailscale-serve); Serve needs HTTPS certificates enabled for the tailnet (tailscale.com/kb/1312/serve); the proxied request keeps the browser's Host (`<pc>.<tailnet>.ts.net`) and Funnel traffic carries `Tailscale-Funnel-Request`, which Tailscale strips from what clients send (`ipn/ipnlocal/serve.go`), so the core allows the name only once it is in `[core] allowed_hosts` and refuses Funnel requests. `gos tailnet setup` sets Serve up and refuses Funnel. Still open: the phone on cellular (L8, `docs/runbooks/phone_dashboard.md` E) | Test | 9.3 |
 | V29 | A reliable "game paused" signal (log line or GregtecLink). Resolved from what the game writes (D258): the `Saving and pausing game...` line, unpaused by the server's next own line or autosave; the Lab test measures the line's delay | Lab test | 6.1 |
 | V30 | **Partly resolved from source** (D273, WO-6.7; CropsNH 2.0.140): weeds spread above each crop's own `weeds_above` (24 for most crops, 8 for Necrobloom; the quest's 23 is wrong) and only while Resistance is below Growth; an extra neighbour can block a parent-combination recipe (recipes match the first distinct breedable neighbours in registration order), so guides keep the other sides clear; two identical seeds can pool-mutate (pool matching counts duplicates) but never make a recipe (it needs two distinct parents); a Crop Manager tops sticks to 200 fertilizer once fertilizing is switched on in its GUI (it starts off); a stick uses 1 water and 1 fertilizer every growth tick, so the guide's times are the topped-up best case and it shows the dry nutrients. Still open: the Lab check of each (`docs/runbooks/crop_guide.md`) [I§2] | Lab test | 6.7 |
 | V31 | **Partly resolved from source** (D284, WO-7.6; CropsNH 2.0.140, GT 5.09.54.265, OC 1.12.68): a transposer shows a seed as `cropsnh:genericSeed`, damage 0, label `<crop name> Seeds` once analysed (`Unknown Seeds` before), so the station identifies seeds by label; stats are NOT readable (OC's `tag` is gzip, the data card inflates zlib), so it tracks them from the breeding maths; the Crop Breeder is a GT basic machine whose progress OC reads like the others (`hasWork`) and whose tank the transposer reads; automation takes items only from a GT machine's output (D282); the transposer is an MV Assembler recipe, the other parts are checked from the recipe DB by `gos crops station --parts` (partial: the part's own recipe, `MV unknown` for a recipe without a tier). Still open: the full parts answer from Clayton's export and the Lab check (`docs/runbooks/breeding_station.md`) [I§3, I§6] | Lab test | 7.6 |
 | V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 | V34 | When a GT multiblock shuts down on its own (power loss, a maintenance problem), OC's `isWorkAllowed` reads false; if so, it reads as WO-7.4's `stopped` (D279), which WO-7.5's `machine_stalled` alert counts (`[alerts] stalled_stopped`, D280) and the advisor follows (D267, D281); the Lab test checks it does | Lab test | 6.5 |
+| V35 | GOS's processes (the core and the Discord bot, started windowless by the supervisor in Clayton's logon session, D116) read his real keyboard and mouse input through `GetLastInputInfo`, so D76's "away" (10 minutes without input) is right: `gos alerts routed` shows `away` false while he types and true after 10 idle minutes (D298) | PC step (runbook `alert_routing.md`) | 9.2 |
 
 ---
 
@@ -1320,8 +1326,11 @@ gregtec-os/
     bridge/    oc_api.py  mailbox.py  actions.py  parsers_29.py  mod_ws.py
     vault/     io.py  index.py  curator.py  schema.py
     build/     schematic.py  palette.py  footprints.py  themes.py  shells.py  shell_designer.py
-    alerts/  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
+    alerts/    rules.py  engine.py (WO-7.5)  policy.py  router.py  routes.py (alert routing, WO-9.2)
+    presence.py (input idle, D76)  tailnet.py (gos tailnet: Tailscale Serve, never Funnel, WO-9.3)
+    wiki/  api/ (security.py: Host/Origin, cookies, pairing)
     discordbot/ handlers.py  adapter.py (only importer of discord.py)  core_api.py  texts.py  settings.py  cli.py
+               alerts.py (alert DMs, credit buttons, "GOS offline", WO-9.2)
     remote/    jobs.py (durable design-job queue, D295)  routes.py (/api/jobs, /api/discord/*)
     crops/     data.py  planner.py  odds.py (§7.17)
   voice/gregtec_voice/   audio.py  ptt.py  wake.py  stt.py  tts.py  lexicon.py  speech_filter.py  client.py
@@ -1329,7 +1338,7 @@ gregtec-os/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
-  vault-template/        _gos/{skills,agents,personas,schema.md}  personas/  me/(stubs)
+  vault-template/        _gos/{skills,agents,personas,themes,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
   tests/                 unit/  fixtures/{gt_oc_tests,plannh}/  golden/  evals/*.tsv  security/
@@ -1374,7 +1383,7 @@ host = "127.0.0.1"
 port = 8765
 supervisor_port = 8766        # D115; gos-dev sets its own port, port and dashboard_host (D115, D117)
 dashboard_host = "gos.localhost"   # pairing and the dashboard (D117)
-allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]   # QA:A8, D53
+allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]   # QA:A8, D53; the name gos tailnet setup prints (D301)
 
 [startup]
 core_at_login = true          # D77
@@ -1470,6 +1479,14 @@ keep_backups = 7              # daily DB backups kept (D139)
 # clear_s = 30
 # cooldown_s = 600            # plan 7.5's 10 minutes
 # done_show_s = 300
+
+# Alert routing (WO-9.2, D298): every key optional; the defaults, pending Clayton, are below.
+# [notify]
+# quiet_hours = ""            # e.g. "23:00-07:00" (local; may wrap midnight); "" for none
+# quiet_min_level = "err"     # what still goes out in quiet hours and with /alerts quiet
+# discord_min_level = "warn"  # the lowest base alert DMed while he is away
+# cooldown_s = 1800           # a base alert's key, per channel, after it went there
+# offline_after_s = 60        # the core silent this long is "GOS offline" (the bot's DM)
 
 # The Discord bot (WO-9.1, D296). Ids are Discord snowflakes (Developer Mode > Copy ID); the bot
 # token is in the keyring (gos key set discord), the bot's core token too (gos token new discord).
@@ -1582,6 +1599,11 @@ CREATE TABLE device(id TEXT PRIMARY KEY, name TEXT, paired INT, last_seen INT, r
 CREATE TABLE alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, level TEXT, msg TEXT, ref TEXT,
   state TEXT, acked_ts INT);
 CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
+-- alert routing (WO-9.2, D299): what went to which channel, and the Discord DM outbox
+CREATE TABLE alert_route(channel TEXT NOT NULL, key TEXT NOT NULL, occ TEXT NOT NULL, ts INT NOT NULL,
+  PRIMARY KEY(channel, key, occ));
+CREATE TABLE alert_dm(id INTEGER PRIMARY KEY, created INT NOT NULL, level TEXT NOT NULL, text TEXT NOT NULL,
+  buttons TEXT, keys TEXT, delivered INT, dropped INT);
 ```
 
 ## Appendix E. Research index and key sources

@@ -44,6 +44,9 @@ dependencies {
     runtimeOnlyNonPublishable("com.github.GTNewHorizons:CropsNH:2.0.140:dev")
     // CropsNH's postInit loads its BetterBuildersWands compat classes unconditionally; 2.9.0 ships 0.13.12-GTNH.
     runtimeOnlyNonPublishable("com.github.GTNewHorizons:BetterBuildersWands:0.13.12-GTNH:dev") { transitive = false }
+    // WO-10.4: the schematic harness's code (-PharnessSchematic) uses WorldEdit's classes; worldedit-gtnh is not in the
+    // pack (plan 7.10), so it is on the runtime classpath only in that run (addon.late.gradle.kts).
+    compileOnly("com.github.GTNewHorizons:worldedit-gtnh:v0.0.10:dev") { transitive = false }
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
