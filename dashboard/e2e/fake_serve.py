@@ -36,7 +36,9 @@ def certificate(name: str, folder: Path) -> tuple[Path, Path]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=1))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False
+        )
         .sign(key, hashes.SHA256())
     )
     cert_file, key_file = folder / "cert.pem", folder / "key.pem"
