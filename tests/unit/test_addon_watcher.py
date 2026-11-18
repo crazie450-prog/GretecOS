@@ -16,6 +16,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -565,6 +566,21 @@ def test_an_addon_jar_swap_end_to_end(
     assert rel2 != rel and "plans_affected: none\n" in note2
     assert "recipes_added: 0\n" in note2 and "machines_added: 0\n" in note2
 
+    # A third such round with the default keep_runs = 2: the run that flagged the plans is
+    # past the newest two, and is kept for them (D331), so the Designer still shows the flag.
+    cfgfile.write_text("S:ModPackVersion=2.9.0\nB:tweak=false\n", encoding="utf-8")
+    playhooks.pre_launch(
+        cfg, "play", io.StringIO(), clients=prism.clients, tell=no_tell
+    )
+    _, exported, _ = post_exit_answered(cfg, prism, core, monkeypatch, "dialog")
+    assert "still affected: pl-changed, pl-removed" in exported
+    assert flags(cfg)["pl-changed"] == new_run == run_id(cfg, new_key)
+    conn = access.connect(db, readonly=True)
+    try:
+        assert addons.affected(conn, home, "pl-changed") == got
+    finally:
+        conn.close()
+
 
 def test_a_plan_fine_again_is_cleared(
     world: tuple[config.Config, FakePrism], monkeypatch: pytest.MonkeyPatch
@@ -590,6 +606,168 @@ def test_a_plan_fine_again_is_cleared(
     _, exported, _ = post_exit_answered(cfg, prism, core, monkeypatch, "dialog")
     assert "no longer affected: pl-changed, pl-removed" in exported
     assert set(flags(cfg).values()) == {None}
+
+
+def test_a_run_that_fails_to_load_stays_stale_and_is_offered_alone(
+    world: tuple[config.Config, FakePrism], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D329: the export worked but the DB build failed. The run is recorded, the stale flag
+    stays up (notice and dashboard line), and the next post-exit offers the load alone, which
+    loads, notes and flags without exporting again."""
+    cfg, prism = world
+    home = cfg.gos_home
+    assert (
+        playhooks.run_export(
+            cfg, io.StringIO(), launch=prism.launch, clients=prism.clients, **quiet()
+        )
+        == 0
+    )
+    add_plans(cfg)
+    core = FakeCore(cfg, Store(access.db_path(home)))
+    mods = cfg.instance("play") / ".minecraft" / "mods"
+    (mods / OLD_JAR).unlink()
+    (mods / NEW_JAR).write_bytes(b"1.1")
+
+    real_build = addons.build.build
+
+    def busy(*a: object, **k: object) -> object:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(addons.build, "build", busy)
+    out = io.StringIO()
+    assert (
+        playhooks.run_export(
+            cfg, out, launch=prism.launch, clients=prism.clients, **quiet()
+        )
+        == 0
+    )
+    assert "not loaded into the DB: database is locked" in out.getvalue()
+    assert "export failed" not in out.getvalue()
+    last = fingerprint.last_export(home)
+    assert last is not None and last["loaded"] is False
+    assert fingerprint.load_state(home)["stale"] is True
+    assert set(flags(cfg).values()) == {None}  # nothing flagged from an unloaded run
+    play = fingerprint.compute_play(cfg)
+    assert fingerprint.status(home, play).only_unloaded
+    said = addon_routes.tick(core)  # type: ignore[arg-type]
+    assert [n["say"] for n in said] == [addons.SAY_UNLOADED]
+    assert addons.stale_key(home) == f"unloaded:{last['run_id']}"
+
+    # Post-exit: Play is unchanged, so it asks to load, and starts the load alone.
+    monkeypatch.setattr(addons.build, "build", real_build)
+    asked: list[str] = []
+    started: list[bool] = []
+
+    def spawn_load() -> playhooks.Started:
+        started.append(True)
+        lock = locks.InstanceLock(home).acquire("export", "test", ticket="t-load")
+        lock.release()
+        return playhooks.Started("t-load", home / "logs" / "load.log", None)
+
+    def ask(title: str, question: str, timeout_s: int) -> bool:
+        asked.append(title)
+        return True
+
+    out = io.StringIO()
+    playhooks.post_exit(
+        cfg,
+        "play",
+        out,
+        ask=ask,
+        spawn=lambda: pytest.fail("no new export"),  # type: ignore[arg-type,return-value]
+        spawn_load=spawn_load,
+        wait_s=0.5,
+        tell=no_tell,
+    )
+    assert asked == ["Gregtec OS: last export not loaded. Load it now?"] and started
+    assert addons.say_question(addons.Question("q", asked[0], "", 0.0, 1.0)).startswith(
+        "Last export not loaded. Load it now?"
+    )
+
+    # What that started: gos export run --load-only.
+    launched: list[object] = []
+    out = io.StringIO()
+    assert (
+        playhooks.run_export(
+            cfg,
+            out,
+            launch=launched.append,
+            clients=prism.clients,
+            load_only=True,
+            **quiet(),
+        )
+        == 0
+    ), out.getvalue()
+    assert launched == [] and "collected and built into" in out.getvalue()
+    assert "1 added, 1 removed, 1 changed" in out.getvalue()
+    assert {k for k, v in flags(cfg).items() if v} == {"pl-changed", "pl-removed"}
+    assert "loaded" not in (fingerprint.last_export(home) or {})
+    assert fingerprint.load_state(home)["stale"] is False
+    out = io.StringIO()
+    assert (
+        playhooks.run_export(
+            cfg,
+            out,
+            launch=launched.append,
+            clients=prism.clients,
+            load_only=True,
+            **quiet(),
+        )
+        == 0
+    )
+    assert "already loaded" in out.getvalue()
+    core.store.close()
+
+
+def test_a_failure_after_the_build_says_what_was_not_written(
+    world: tuple[config.Config, FakePrism], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, prism = world
+    assert (
+        playhooks.run_export(
+            cfg, io.StringIO(), launch=prism.launch, clients=prism.clients, **quiet()
+        )
+        == 0
+    )
+    add_plans(cfg)
+    mods = cfg.instance("play") / ".minecraft" / "mods"
+    (mods / OLD_JAR).unlink()
+    (mods / NEW_JAR).write_bytes(b"1.1")
+
+    def broken(*a: object, **k: object) -> object:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(addons, "flag", broken)
+    out = io.StringIO()
+    assert (
+        playhooks.run_export(
+            cfg, out, launch=prism.launch, clients=prism.clients, **quiet()
+        )
+        == 0
+    )
+    text = out.getvalue()
+    assert (
+        "but the diff note, curation tasks and plan flags weren't all written" in text
+    )
+    assert "export failed" not in text and "stays stale" not in text
+    assert fingerprint.load_state(cfg.gos_home)["stale"] is False  # it is loaded
+
+
+def test_the_curation_file_keeps_one_row_per_task(tmp_path: Path) -> None:
+    m = addons.MachineRow(
+        "gregtech:gt.blockmachines@1", 1, "Evil\tName\nrow", "M\tod", "a.B", True
+    )
+    path = addons.write_curation(tmp_path, "r1", [addons.Curation(m, ("structure",))])
+    assert path is not None
+    rows = path.read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 2 and rows[1].split("\t") == [
+        "1",
+        "gregtech:gt.blockmachines@1",
+        "Evil Name row",
+        "M od",
+        "a.B",
+        "structure",
+    ]
 
 
 # --- the export question ------------------------------------------------------------------------
@@ -649,6 +827,47 @@ def test_ask_takes_the_first_answer_and_times_out_as_no_answer(tmp_path: Path) -
         is True
     )
     t.join()
+
+
+def test_answers_at_once_accept_only_the_first(tmp_path: Path) -> None:
+    """D329: answers from several processes are taken one at a time, under the lock."""
+    q = addons.open_question(tmp_path, "T", "Q", 300)
+    go = threading.Barrier(8)
+    got: list[addons.Question | None] = []
+
+    def answer(i: int) -> None:
+        go.wait()
+        got.append(addons.answer(tmp_path, q.id, i % 2 == 0, "dashboard"))
+
+    threads = [threading.Thread(target=answer, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    [won] = [a for a in got if a is not None]
+    assert addons.read_question(tmp_path) == won
+    # The dialog's answer comes second: the first one is what ask returns.
+    q = addons.open_question(tmp_path, "T", "Q", 300)
+    late = addons.ask(
+        tmp_path,
+        "T",
+        "Q",
+        5,
+        dialog=lambda t, q_, s: (
+            addons.answer(tmp_path, addons.current(tmp_path).id, False, "voice")  # type: ignore[union-attr]
+            and True
+        ),
+        poll_s=0.01,
+    )
+    assert late is False
+    # A lock left by a process that died is broken once stale.
+    lock = tmp_path / addons.QUESTION_LOCK
+    lock.write_bytes(b"")
+    old = time.time() - addons.LOCK_STALE_S - 1
+    os.utime(lock, (old, old))
+    q = addons.open_question(tmp_path, "T", "Q", 300)
+    assert addons.answer(tmp_path, q.id, True, "dashboard") is not None
+    assert not lock.exists()
 
 
 def test_a_question_that_cannot_be_written_falls_back_to_the_dialog(
