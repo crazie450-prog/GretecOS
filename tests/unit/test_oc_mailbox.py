@@ -670,14 +670,16 @@ drive = "{DRIVE}"
 # and so does a plain open() here)
 
 
-def _hold(path: Path, seconds: float) -> threading.Thread:
-    """Hold ``path`` open like OC does, from another thread, for ``seconds``."""
+def _hold(path: Path, release: threading.Event) -> threading.Thread:
+    """Hold ``path`` open like OC does, from another thread, until ``release`` is set (at most
+    10 s). Released by the test, not after a fixed time: a loaded runner could otherwise let go
+    before the core even looked (D340)."""
     ready = threading.Event()
 
     def run() -> None:
         with open(path, "rb"):
             ready.set()
-            time.sleep(seconds)
+            release.wait(10)
 
     thread = threading.Thread(target=run)
     thread.start()
@@ -690,13 +692,22 @@ def test_windows_the_reply_waits_for_ocs_handle(tmp_path: Path) -> None:
     """The plan's case: os.replace onto inbox.json while OC reads it raises PermissionError
     (MoveFileExW refuses while any handle is open, D84); the core retries until OC lets go."""
     place, folder = layout(tmp_path)
-    box = Mailbox(place, Bridge(Recording()))
+    release = threading.Event()
+
+    def sleep(s: float) -> None:
+        # OC lets go once the core has met its handle and waits to retry.
+        release.set()
+        holder.join()
+        time.sleep(s)
+
+    box = Mailbox(place, Bridge(Recording()), sleep=sleep)
     target = folder / "inbox.json"
     target.write_bytes(b"old")
-    holder = _hold(target, 0.15)
+    holder = _hold(target, release)
     try:
         assert box._install(folder, b"new")
     finally:
+        release.set()
         holder.join()
     assert target.read_bytes() == b"new"
     assert box.stats["permission_retries"] >= 1
@@ -710,12 +721,14 @@ def test_windows_a_reply_oc_is_reading_isnt_withdrawn(tmp_path: Path) -> None:
     oc_send(folder, message())
     box.poll()
     clock.t += mb.REPLY_TTL_S
-    holder = _hold(folder / "inbox.json", 1.5)
+    release = threading.Event()
+    holder = _hold(folder / "inbox.json", release)
     try:
         box.poll()
         assert (folder / "inbox.json").exists(), "OC is reading it: it stays"
         assert queue.back == []
     finally:
+        release.set()
         holder.join()
     box.poll()
     assert not (folder / "inbox.json").exists()
@@ -728,12 +741,14 @@ def test_windows_the_rename_back_waits_for_a_held_outbox_tmp(tmp_path: Path) -> 
     box = Mailbox(place, Bridge(Recording()))
     oc_send(folder, message())
     (folder / "outbox.tmp").write_bytes(b"an antivirus scans the old one")
-    holder = _hold(folder / "outbox.tmp", 1.5)
+    release = threading.Event()
+    holder = _hold(folder / "outbox.tmp", release)
     try:
         box.poll()
         assert (folder / "outbox.json").exists(), "not taken while outbox.tmp is held"
         assert box.stats["taken"] == 0
     finally:
+        release.set()
         holder.join()
     box.poll()
     assert not (folder / "outbox.json").exists()
@@ -750,10 +765,12 @@ def test_windows_the_core_reads_outbox_while_another_program_holds_it(
     sink = Recording()
     box = Mailbox(place, Bridge(sink))
     oc_send(folder, message())
-    holder = _hold(folder / "outbox.json", 0.3)
+    release = threading.Event()
+    holder = _hold(folder / "outbox.json", release)
     try:
         box.poll()
     finally:
+        release.set()
         holder.join()
     assert len(sink.got) == 1
     box.poll()

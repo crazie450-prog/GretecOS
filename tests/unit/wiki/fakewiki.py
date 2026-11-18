@@ -256,6 +256,16 @@ class Server:
                     w.in_flight += 1
                     w.max_in_flight = max(w.max_in_flight, w.in_flight)
                     w.seen.append(seen)
+                done = False
+
+                def finish() -> None:
+                    nonlocal done
+                    if not done:
+                        done = True
+                        with w._lock:
+                            w.in_flight -= 1
+                            seen.end = time.monotonic()
+
                 try:
                     if w.delay_s:
                         time.sleep(w.delay_s)
@@ -263,6 +273,9 @@ class Server:
                     if "gzip" in self.headers.get("Accept-Encoding", ""):
                         body = gzip.compress(body)
                         headers = {**headers, "Content-Encoding": "gzip"}
+                    # Out of flight before the answer goes out: once the client has it, it may
+                    # send the next request before this thread runs again (D340).
+                    finish()
                     self.send_response(status)
                     headers.setdefault(
                         "Content-Type", "application/json; charset=utf-8"
@@ -273,9 +286,7 @@ class Server:
                     self.end_headers()
                     self.wfile.write(body)
                 finally:
-                    with w._lock:
-                        w.in_flight -= 1
-                        seen.end = time.monotonic()
+                    finish()
 
             def log_message(self, format: str, *args: object) -> None:
                 pass
