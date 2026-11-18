@@ -1,6 +1,6 @@
 # Gregtec OS: G10 gate review (Phase 10, building design)
 
-2026-11-18 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/wo/10.8-build-guide` at `76dd152` (PR #124, WO-10.8), which contains `origin/main` at `6aa5d6f` (PR #121 merged). WO-10.8 had passed its merge gate but was not on `main` when this review started, so this branch (`review/g10`) is based on `76dd152`; see "After the review" for its merge commit.
+2026-11-18 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/wo/10.8-build-guide` at `76dd152` (PR #124, WO-10.8), whose tree holds everything on `origin/main` at `6aa5d6f` (PR #121's branch is merged into it; `6aa5d6f` itself, a no-file merge, was merged into this branch after the review). WO-10.8 had passed its merge gate but was not on `main` when this review started, so this branch (`review/g10`) is based on `76dd152`; see "After the review" for its merge commit.
 
 Phase 10 PRs and where they landed on `main`:
 
@@ -427,7 +427,7 @@ uv run pytest tests/integration/test_layout_harness.py -s
 
 ## After the review
 
-- Everything above ran green on `76dd152` (WO-10.8's merge-gate head, which contains `main` at `6aa5d6f`). No product code was changed: defect 1 is listed for the PM, not fixed here.
+- Everything above ran green on `76dd152` (WO-10.8's merge-gate head, whose tree holds `main` at `6aa5d6f`; merging `6aa5d6f` into this branch afterwards changed no file, and the full pytest ran green again on the review fixes). No product code was changed: defect 1 is listed for the PM, not fixed here.
 - No decision row was added (D322 unused): this review makes no judgement call that needs one.
 - WO-10.8 (#124) was still open when this report was written (`origin/main` at `6aa5d6f`), and still open when the review fixes were pushed (2026-11-18; #124's head then `3f0a160`, a no-file merge of `main` on top of `76dd152`). This branch carries `76dd152`, so this PR shows WO-10.8 too until #124 merges; after that only this report remains in its diff. **When #124 merges, the PM records its merge commit here or in this PR.**
 - Review applied (PR #126's review): H1 (PC steps 1, 6 and 7 now run in the right accounts, and step 1 builds his own DB's catalog), M1 (the verdict now says G10 is not ready to sign until defect 1 is fixed), L1 (step reference), L2 (questions 52 to 57 added), L3 (this note). Two further wrong references found while applying it were fixed (WO-10.0's question range; keyboard access is question 50).
