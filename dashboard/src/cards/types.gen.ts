@@ -310,8 +310,38 @@ export interface TableCard {
   notes: Notes;
 }
 
-export type Card = RecipeCard | RouteComparisonCard | BomCard | FlowCard | QuestCard | OreListCard | PowerLedgerCard | ApprovalCard | AlertCard | HealthCard | ChoicesCard | TableCard;
+/** One box of a line layout seen from above (WO-10.5): x and z its west and north edge, w and l its size along x and z, in blocks. A machine names its machine (ref mte:), tier, the way its front faces and whether every hatch kind and its front are reached from the entrance (ok); the rest have null there. */
+export interface LayoutRect {
+  id: string;
+  kind: "corridor" | "chase" | "keepout" | "machine" | "entrance";
+  x: number;
+  z: number;
+  w: number;
+  l: number;
+  label: string | null;
+  tier: Tier | null;
+  ref: Ref | null;
+  facing: "north" | "east" | "south" | "west" | null;
+  ok: boolean | null;
+}
+
+/** A line layout's top-down preview (WO-10.5, plan 7.10, D313): the bounding volume (x by z, y high), its corridors, chases, keep-outs, machines and entrance as boxes. Sizes come from the footprints, cited by the plan in ref and each machine's mte:. */
+export interface LayoutCard {
+  type: "layout";
+  title: string;
+  ref: Ref;
+  layout: string;
+  size: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  rects: LayoutRect[];
+  notes: Notes;
+}
+
+export type Card = RecipeCard | RouteComparisonCard | BomCard | FlowCard | QuestCard | OreListCard | PowerLedgerCard | ApprovalCard | AlertCard | HealthCard | ChoicesCard | TableCard | LayoutCard;
 
 export type CardType = Card["type"];
 
-export const CARD_TYPES: readonly CardType[] = ["recipe", "route_comparison", "bom", "flow", "quest", "ore_list", "power_ledger", "approval", "alert", "health", "choices", "table"] as const;
+export const CARD_TYPES: readonly CardType[] = ["recipe", "route_comparison", "bom", "flow", "quest", "ore_list", "power_ledger", "approval", "alert", "health", "choices", "table", "layout"] as const;
