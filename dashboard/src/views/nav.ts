@@ -13,7 +13,8 @@ export type ViewId =
   | "base"
   | "activity"
   | "ores"
-  | "build";
+  | "build"
+  | "more";
 
 export interface View {
   id: ViewId;
@@ -36,12 +37,21 @@ export const VIEWS: readonly View[] = [
   { id: "base", label: "Base", key: null, later: null, board: false }, // My base (WO-3.8); stalled machines WO-7.4
   { id: "activity", label: "Activity", key: null, later: null, board: false }, // WO-6.3: needs Clayton's board approval
   { id: "ores", label: "Ores", key: null, later: null, board: false }, // WO-6.6: needs Clayton's board approval
-  { id: "build", label: "Build", key: null, later: "Phase 10", board: false },
+  { id: "build", label: "Build", key: null, later: null, board: false }, // WO-10.1 spike frame (WO-10.8 the viewer): needs Clayton's board approval
 ];
 
-export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "base", "costs", "settings"];
+// The phone's five tabs from D159's approved Phone board, then "More" for every other view (D53,
+// D159, WO-9.3, D302).
+export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "costs", "settings"];
+
+/** The phone's sixth tab: a list of every view that isn't one of its five (WO-9.3). */
+export const MORE: View = { id: "more", label: "More", key: null, later: null, board: false };
+
+/** The views the phone reaches through More, in the left nav's order. */
+export const MORE_VIEWS: readonly View[] = VIEWS.filter((v) => !PHONE_TABS.includes(v.id));
 
 export function viewOf(id: string): View {
+  if (id === MORE.id) return MORE;
   return VIEWS.find((v) => v.id === id) ?? VIEWS[0];
 }
 
@@ -52,5 +62,5 @@ export function viewForKey(key: string): View | null {
 /** The view a location hash names (#/chat), else Now. */
 export function viewFromHash(hash: string): ViewId {
   const id = hash.replace(/^#\/?/, "").split(/[/?]/)[0];
-  return VIEWS.some((v) => v.id === id) ? (id as ViewId) : "now";
+  return VIEWS.some((v) => v.id === id) || id === MORE.id ? (id as ViewId) : "now";
 }

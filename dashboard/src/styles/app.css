@@ -474,6 +474,42 @@ button.gos-chip.cite {
   min-height: 100%;
 }
 
+/* The phone's More tab (WO-9.3): one row per view, each a full-width tap target. */
+.view-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.more-list {
+  margin: 0;
+  list-style: none;
+}
+
+.more-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.more-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-3) var(--space-2);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-item .gos-title {
+  margin: 0;
+}
+
 .view-now {
   height: 100%;
 }
@@ -2638,4 +2674,26 @@ select.ask-input option {
   .power-net .gos-big {
     font-size: 40px;
   }
+}
+
+/* --- Build (WO-10.1 spike: the framed guide export) ------------------------------------------ */
+
+.view-build {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-height: 100%;
+}
+
+.guide-pick {
+  margin-bottom: var(--space-3);
+}
+
+.guide-frame {
+  display: block;
+  width: 100%;
+  height: min(72vh, 960px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel);
 }

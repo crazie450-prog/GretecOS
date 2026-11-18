@@ -29,6 +29,9 @@ tier-up recap.
 ``--power`` (WO-4.6, :func:`setup_power`): WO-4.2's made-up power export instead of the tool
 fixtures', so the Power view designs, ranks and accepts real (made-up) power lines.
 
+``--tailnet <name>:<port>`` (WO-9.3): that Host is allowed too, as the phone's tailnet name is
+in ``[core] allowed_hosts``; ``e2e/fake_serve.py`` stands in for Tailscale Serve in front of it.
+
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
@@ -139,6 +142,23 @@ def load_crops(home: Path) -> None:
     from gregtec.db import access
 
     module.write_db(access.db_path(home), into_latest=True)
+
+
+def load_guide(home: Path) -> None:
+    """WO-10.1's hand-made stand-in for a GuideNH export (tests/fixtures/guide_site/standin.py)
+    in ``home/data/guide-site``, so the Build view frames a scene page through the core."""
+    spec = importlib.util.spec_from_file_location(
+        "guide_standin", REPO / "tests" / "fixtures" / "guide_site" / "standin.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the guide stand-in")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["guide_standin"] = module
+    spec.loader.exec_module(module)
+    from gregtec.build import guide
+    from gregtec.config import Config
+
+    module.make(guide.site_root(Config(gos_home=home)))
 
 
 def load_events(home: Path) -> None:
@@ -307,6 +327,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="the Power view's core (WO-4.6): WO-4.2's power fixture; see setup_power",
     )
     parser.add_argument("--host-name", default=DASHBOARD_HOST)
+    parser.add_argument(
+        "--tailnet",
+        action="append",
+        default=[],
+        help="a tailnet Host to allow, as [core] allowed_hosts takes it (the phone, WO-9.3)",
+    )
     args = parser.parse_args(argv)
     root: Path = args.home.absolute()
     fresh_home(root)
@@ -322,6 +348,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ores_lab = load_ores(home)
             load_crops(home)
             load_events(home)
+            load_guide(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
@@ -359,6 +386,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
     core_app.KEY_CHECK_S = 1.0
+    # Every spec pairs its own page (and the phone spec pairs over the tailnet, WO-9.3), more
+    # than D117's 10 starts per 10 minutes in one run; the limit itself is tested in tests/security.
+    from gregtec.api import security
+
+    security.PAIR_RATE = (40, 600)
     dashboard.GAME_EVERY_S = 1.0
     dashboard.DATA_EVERY_S = 1.0
 
@@ -370,6 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         core_port=args.port,
         supervisor_port=args.port + 1,
         dashboard_host=args.host_name,
+        extra_allowed_hosts=tuple(args.tailnet),
         # WO-7.5: a low store alerts after 5 s, not 30, so oc_displays.spec.ts needn't wait.
         alerts=AlertRules(power_low_s=5),
     )

@@ -110,6 +110,13 @@ test("number keys switch views and Ctrl+K opens the palette", async () => {
     await page.keyboard.press(key);
     await expect(page.getByTestId("view")).toHaveAttribute("data-view", view);
   }
+  // More is the phone's tab: a phone link to it shows Now here, with Now lit (WO-9.3).
+  await page.evaluate(() => {
+    window.location.hash = "/more";
+  });
+  await expect(page.getByTestId("view")).toHaveAttribute("data-view", "now");
+  await expect(page.getByTestId("nav-now")).toHaveAttribute("aria-current", "page");
+  await page.keyboard.press("1");
   await page.keyboard.press("Control+k");
   const input = page.getByTestId("palette-input");
   await expect(input).toBeFocused();
@@ -390,7 +397,7 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   const header = await page.getByTestId("header").boundingBox();
   const chipBox = await chips.boundingBox();
   expect(chipBox && header && chipBox.y + chipBox.height <= header.y + header.height).toBe(true);
-  for (const tab of ["chat", "search", "base", "costs", "settings"]) {
+  for (const tab of ["chat", "search", "costs", "settings", "more"]) {
     await page.getByTestId(`nav-${tab}`).click();
     await expect(page.getByTestId("view")).toHaveAttribute("data-view", tab);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), tab).toBeLessThanOrEqual(390);

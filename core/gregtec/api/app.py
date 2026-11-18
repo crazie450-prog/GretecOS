@@ -40,6 +40,7 @@
 | /api/setup...                  | admin, device           | the setup wizard (``setup_routes``, WO-2.9)|
 | /api/game/events               | see ``gregtec.watchers.routes`` | the game watchers (WO-6.1)    |
 | GET  /api/activity[/recap]     | see ``gregtec.events.routes`` | sessions, timeline, recap (WO-6.3)|
+| /api/jobs..., /api/discord/... | see ``gregtec.remote.routes`` | design jobs, Discord alerts and journal (WO-9.1)|
 
 Pairing works only on the dashboard's own names: ``[core] dashboard_host`` (``gos.localhost``,
 which browsers resolve to loopback) and the tailnet name, never bare ``127.0.0.1`` or
@@ -75,6 +76,7 @@ import logging
 import math
 import os
 import sqlite3
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -94,10 +96,13 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.agents.personas import Personas
+from gregtec.alerts import routes as alert_routes
 from gregtec.alerts.engine import AlertEvent
+from gregtec.alerts.router import AlertRouter
 from gregtec.api import (
     ai_routes,
     dashboard,
+    guide_routes,
     persona_routes,
     plan_routes,
     power_routes,
@@ -129,6 +134,8 @@ from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
 from gregtec.ores import view as ore_view
 from gregtec.quests import view as quest_view
+from gregtec.remote import routes as remote_routes
+from gregtec.remote.jobs import JobQueue
 from gregtec.screen import routes as screen_routes
 from gregtec.screen.reader import ScreenReader
 from gregtec.setup.service import SetupService
@@ -230,7 +237,10 @@ class Core:
     game: GameFeed | None = None  # the game watchers' paused state and events (WO-6.1)
     _alert_state_due: bool = False  # a state push for alert events is queued (WO-7.5)
     events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
+    jobs: JobQueue | None = None  # the durable design-job queue for Discord (WO-9.1)
+    journal: Callable[[list[str]], None] | None = None  # the day's journal (WO-9.1)
     notices: Notices | None = None  # the proactive notices (WO-6.5, D71)
+    router: AlertRouter | None = None  # the alert router (WO-9.2, D298)
 
     # --- pushing to WebSocket clients
 
@@ -267,8 +277,12 @@ class Core:
     def alert_changed(self, event: AlertEvent) -> None:
         """The alert engine's sink (its thread): push the event to every socket, the voice
         client's included (it says a ``fired`` event's ``say``), and refresh the state so the
-        alert cards come and go (WO-7.5, D281)."""
+        alert cards come and go (WO-7.5, D281). With the alert router (WO-9.2), the router
+        says the line (or holds it: quiet hours, away, a DM instead), so the push has none."""
         data = event.as_dict()
+        if self.router is not None:
+            self.router.alert_event(event)
+            data["say"] = None
 
         async def state() -> None:
             self._alert_state_due = False
@@ -305,8 +319,12 @@ class Core:
 
     def notice_given(self, notice: Notice) -> None:
         """The notices' ``deliver`` (their thread): push the notice to every socket (the voice
-        client says its ``say`` line, D76) and refresh the state, whose alerts now hold it."""
+        client says its ``say`` line, D76) and refresh the state, whose alerts now hold it.
+        With the alert router (WO-9.2), the router says it, so the push has no line."""
         data = notice.as_dict()
+        if self.router is not None:
+            self.router.notice(notice)
+            data["say"] = None
 
         def push() -> None:
             self.broadcast({"type": "notice", "data": data})
@@ -430,6 +448,8 @@ class Core:
             items.append(self._maintenance_item())
         if self.deep is not None:
             items.append(_item("deep_lane", "check", "Deep lane", *self.deep.health()))
+        if self.router is not None:
+            items.append(self._presence_item())
         statuses = {i["status"] for i in items}
         overall = (
             "error" if "error" in statuses else "warn" if "warn" in statuses else "ok"
@@ -467,6 +487,21 @@ class Core:
                 "maintenance", "check", "Maintenance", "error", type(exc).__name__
             )
         return _item("maintenance", "check", "Maintenance", status, detail)
+
+    def _presence_item(self) -> dict[str, Any]:
+        """Is Clayton at the PC (WO-9.2, D76)? Unknown counts as present (D299), so the AFK
+        DMs are off while it lasts: a warning on Windows, where it should be known."""
+        assert self.router is not None
+        presence = self.router.presence()
+        if presence != "unknown":
+            return _item("presence", "check", "Presence", "ok", presence)
+        if sys.platform == "win32":
+            return _item(
+                "presence", "check", "Presence", "warn", "unknown: AFK DMs are off"
+            )
+        return _item(
+            "presence", "check", "Presence", "off", "no input-idle source here"
+        )
 
     def _credits_item(self) -> dict[str, Any]:
         try:
@@ -534,6 +569,8 @@ def create_app(core: Core) -> FastAPI:
             core.ops.alerts.paused = core.paused_since
             if core.alert_changed not in core.ops.alerts.sinks:
                 core.ops.alerts.sinks.append(core.alert_changed)
+        if core.router is not None:  # WO-9.2
+            alert_routes.wire(core, core.router)
         tasks = [asyncio.create_task(_watch(core))]
         if core.maintenance is not None:
             tasks.append(asyncio.create_task(_maintain(core.maintenance)))
@@ -897,6 +934,9 @@ def create_app(core: Core) -> FastAPI:
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
+    guide_routes.add_routes(app, core, principal)
+    remote_routes.add_routes(app, core, principal, _json_body)
+    alert_routes.add_routes(app, core, principal)
     return app
 
 
@@ -992,6 +1032,11 @@ async def _watch(core: Core) -> None:
                 await asyncio.to_thread(core.ops.tick)
             except Exception:  # the watcher must keep running
                 log.exception("ops tick failed")
+        if core.router is not None:  # the alert router, right after the alerts (WO-9.2)
+            try:
+                await asyncio.to_thread(core.router.tick)
+            except Exception:  # the watcher must keep running
+                log.exception("alert routing failed")
         try:
             if now - last_key >= KEY_CHECK_S:
                 await asyncio.to_thread(core.refresh_key)

@@ -2,8 +2,9 @@ r"""``gos-supervisor`` (plan 4.2, D77, QA:A5, D115): starts, watches and restart
 
 It starts at Windows login from the HKCU Run key that ``scripts/install_login_start.ps1`` writes
 (D116), as ``GOS_APP\current\.venv\Scripts\gos-supervisor.exe --login``, a windowless launcher.
-``gos serve`` runs it in the foreground instead. It manages the core from the start; the Discord
-bot (WO-9.1) joins later.
+``gos serve`` runs it in the foreground instead. It manages the core and the Discord bot
+(``python -m gregtec.discordbot run``, WO-9.1) from the start; the bot exits with the setup code
+(2) and stays stopped until ``[discord] owner_id`` and its two secrets are set.
 
 **With Play (D77, D259).** The game watchers (``python -m gregtec.watchers``, WO-6.1) and, with
 ``[startup] voice_with_play`` (default true), the voice client (``python -m gregtec_voice run``,
@@ -220,6 +221,27 @@ def voice_spec(config_path: Path | None) -> ProcessSpec:
             (
                 EXIT_SETUP,
                 "can't start: no voice token, or not Windows (logs/voice.log says why)",
+            ),
+        ),
+    )
+
+
+def discord_spec(config_path: Path | None) -> ProcessSpec:
+    """The Discord bot (WO-9.1): at login with the core (D77); no /health."""
+    argv = [python_exe(), "-m", "gregtec.discordbot", "run", "--supervised"]
+    if config_path is not None:
+        argv += ["--config", str(config_path)]
+    return ProcessSpec(
+        name="discord",
+        label="Discord bot",
+        argv=tuple(argv),
+        stay_stopped=(
+            (
+                EXIT_SETUP,
+                (
+                    "can't start: no [discord] owner_id, bot token or core token "
+                    "(logs/discord.log says why)"
+                ),
             ),
         ),
     )
@@ -1127,7 +1149,11 @@ def run(cfg: Config, config_path: Path | None, *, login: bool = False) -> int:
         log.info("a supervisor is already running")
         return 0
     window = appwindow.at_startup(cfg)
-    specs = [core_spec(cfg, config_path), watchers_spec(config_path)]
+    specs = [
+        core_spec(cfg, config_path),
+        discord_spec(config_path),
+        watchers_spec(config_path),
+    ]
     if cfg.voice_with_play:
         specs.append(voice_spec(config_path))
     sup = Supervisor(

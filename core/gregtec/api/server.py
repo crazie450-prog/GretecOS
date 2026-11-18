@@ -28,11 +28,12 @@ from pathlib import Path
 
 import uvicorn
 
-from gregtec import applog, config, control, supervisor
+from gregtec import applog, config, control, presence, supervisor
 from gregtec.advisor.notices import Notices
 from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
 from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
+from gregtec.alerts.router import AlertRouter
 from gregtec.api import ai_routes, persona_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
@@ -43,6 +44,8 @@ from gregtec.events.journal import HaikuScribe, Scribe
 from gregtec.events.service import EventService
 from gregtec.llm.summarise import HaikuSummariser
 from gregtec.llm.usage import UsageMeter
+from gregtec.remote.jobs import JobQueue
+from gregtec.remote.routes import run_job
 from gregtec.setup.service import record_plays
 from gregtec.store import DB_NAME, Store
 from gregtec.vault import fts
@@ -205,6 +208,7 @@ def run(
         ops=ops,
         events=event_service(cfg, store, meter, ai),
         notices=Notices(store.path, cfg.notices),
+        router=AlertRouter(store, cfg.notify, idle=presence.system_idle()),
     )
     ops.desk.on_change = ops.changed(core.action_changed)  # chat notices first (WO-7.4)
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
@@ -252,9 +256,14 @@ def run(
         extra={"port": cfg.core_port, "supervised": supervised, "pid": os.getpid()},
     )
     mailboxes.start()
+    # Discord's design jobs (WO-9.1, D295): queued in the DB, run one at a time here.
+    core.journal = bridge_ops.journal_to(cfg.gos_home / "vault")
+    core.jobs = JobQueue(store, run_job(cfg.gos_home), journal=core.journal)
+    core.jobs.start()
     try:
         server.run(sockets=[sock])
     finally:
+        core.jobs.stop()
         mailboxes.stop()
         control.remove_run_file(run_file, os.getpid())
         agents.close()  # the deep lane's tasks end as stopped, its CLI processes exit
