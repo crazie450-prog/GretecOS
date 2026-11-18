@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- A hand-made stand-in for one page of GuideNH's /guidenhc exportsite (WO-10.1): the same
+     layout points (a <base>, a module script from _site/, an <img class="game-scene"> with
+     data-scene-src naming a gzip file in _res/scenes/), none of GuideNH's code or text. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <base href="../../">
+    <title>Stand-in multiblock</title>
+    <link rel="stylesheet" href="_site/standin.css">
+  </head>
+  <body class="guide-site-body">
+    <article id="page-content">
+      <h1>Stand-in multiblock</h1>
+      <img class="game-scene guide-scene" src="_site/blank.svg" alt="3D scene preview" width="512" height="384"
+        data-scene-width="256" data-scene-height="192" data-scene-interactive="true"
+        data-scene-src="_res/scenes/__SCENE__" data-scene-asset-prefix="">
+      <p class="readout" style="min-height: 1.5em" data-testid="hover">hover a block</p>
+    </article>
+    <script type="module" src="_site/viewer.js"></script>
+  </body>
+</html>

@@ -2639,3 +2639,25 @@ select.ask-input option {
     font-size: 40px;
   }
 }
+
+/* --- Build (WO-10.1 spike: the framed guide export) ------------------------------------------ */
+
+.view-build {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-height: 100%;
+}
+
+.guide-pick {
+  margin-bottom: var(--space-3);
+}
+
+.guide-frame {
+  display: block;
+  width: 100%;
+  height: min(72vh, 960px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+}
