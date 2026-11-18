@@ -22,6 +22,8 @@ Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtur
 to the tool fixtures' export run, never as a newer run of its own: the recipe tools read only the
 newest run, so a crop-only run would hide the e2e world's recipes.
 
+Shells (WO-10.7, :func:`load_shell`): one shell build made by the real designer on made-up data.
+
 Activity (WO-6.3, :func:`load_events`): made-up Play and Lab sessions in the event store, the open
 age first seen three days ago and one OC power reading in it, for the Activity view and the
 tier-up recap.
@@ -156,6 +158,42 @@ def load_guide(home: Path) -> None:
     from gregtec.config import Config
 
     module.make(guide.site_root(Config(gos_home=home)))
+
+
+def load_shell(home: Path) -> None:
+    """WO-10.7: one shell build, made by the real designer (the procedural generator around WO-10.5's
+    made-up steel line, on tests/unit/test_shell.py's made-up catalog) in a scratch home, then
+    copied into ``home/data/build/shells`` so the Build view lists and draws it."""
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location(
+        "shell_fixtures", REPO / "tests" / "unit" / "test_shell.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the shell test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["shell_fixtures"] = module
+    spec.loader.exec_module(module)
+    from gregtec.build import shell_store
+    from gregtec.db import access
+    from gregtec.vault.io import VaultIO
+
+    with tempfile.TemporaryDirectory(prefix="gos-e2e-shell-") as tmp:
+        scratch = module.make_home(Path(tmp), module.lay_tests.production())
+        conn = access.connect(access.db_path(scratch), readonly=True)
+        try:
+            made = shell_store.make(
+                conn,
+                scratch,
+                VaultIO(scratch / "vault"),
+                ["pl-steel"],
+                theme_id="th-foundry",
+            )
+        finally:
+            conn.close()
+        if made.saved is None:
+            raise RuntimeError(f"the e2e shell was refused: {made.outcome.reasons}")
+        shutil.copytree(made.saved, home / shell_store.ROOT / made.build)
 
 
 def load_events(home: Path) -> None:
@@ -340,6 +378,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             load_crops(home)
             load_events(home)
             load_guide(home)
+            load_shell(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
