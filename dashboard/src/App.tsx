@@ -29,7 +29,8 @@ import { Costs } from "./views/Costs";
 import { Glance } from "./views/Glance";
 import { Designer } from "./views/Designer";
 import { Later } from "./views/Later";
-import { PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
+import { More } from "./views/More";
+import { MORE, PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
 import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
 import { Crops } from "./views/Crops";
@@ -328,6 +329,8 @@ export function App() {
         return <Activity />;
       case "build":
         return <Build />;
+      case "more":
+        return <More open={setView} />;
       case "settings":
         return (
           <Settings
@@ -353,12 +356,13 @@ export function App() {
         <Header chips={chips} core={core} glance={glance} held={held} onLeave={() => setPin("auto")} onSearch={() => setPalette(true)} />
         {!glance && (
           <nav className="gos-shell shell-nav" data-testid="nav" aria-label="Views">
-            {(phone ? VIEWS.filter((v) => PHONE_TABS.includes(v.id)) : VIEWS).map((v) => (
+            {(phone ? [...VIEWS.filter((v) => PHONE_TABS.includes(v.id)), MORE] : VIEWS).map((v) => (
               <NavItem
                 key={v.id}
                 label={v.label}
                 keyHint={v.key}
-                active={v.id === current.id}
+                // On the phone, More stays lit while one of its views is open (WO-9.3).
+                active={v.id === current.id || (phone && v.id === MORE.id && !PHONE_TABS.includes(current.id))}
                 badge={v.later ? "later" : null}
                 onClick={() => setView(v.id)}
                 testId={`nav-${v.id}`}

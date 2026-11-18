@@ -390,7 +390,7 @@ test("the phone layout fits 390x844 with tabs at the bottom", async () => {
   const header = await page.getByTestId("header").boundingBox();
   const chipBox = await chips.boundingBox();
   expect(chipBox && header && chipBox.y + chipBox.height <= header.y + header.height).toBe(true);
-  for (const tab of ["chat", "search", "base", "costs", "settings"]) {
+  for (const tab of ["chat", "search", "base", "settings", "more"]) {
     await page.getByTestId(`nav-${tab}`).click();
     await expect(page.getByTestId("view")).toHaveAttribute("data-view", tab);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), tab).toBeLessThanOrEqual(390);

@@ -29,6 +29,9 @@ tier-up recap.
 ``--power`` (WO-4.6, :func:`setup_power`): WO-4.2's made-up power export instead of the tool
 fixtures', so the Power view designs, ranks and accepts real (made-up) power lines.
 
+``--tailnet <name>:<port>`` (WO-9.3): that Host is allowed too, as the phone's tailnet name is
+in ``[core] allowed_hosts``; ``e2e/fake_serve.py`` stands in for Tailscale Serve in front of it.
+
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
@@ -324,6 +327,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="the Power view's core (WO-4.6): WO-4.2's power fixture; see setup_power",
     )
     parser.add_argument("--host-name", default=DASHBOARD_HOST)
+    parser.add_argument(
+        "--tailnet",
+        action="append",
+        default=[],
+        help="a tailnet Host to allow, as [core] allowed_hosts takes it (the phone, WO-9.3)",
+    )
     args = parser.parse_args(argv)
     root: Path = args.home.absolute()
     fresh_home(root)
@@ -388,6 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         core_port=args.port,
         supervisor_port=args.port + 1,
         dashboard_host=args.host_name,
+        extra_allowed_hosts=tuple(args.tailnet),
         # WO-7.5: a low store alerts after 5 s, not 30, so oc_displays.spec.ts needn't wait.
         alerts=AlertRules(power_low_s=5),
     )
