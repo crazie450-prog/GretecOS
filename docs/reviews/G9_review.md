@@ -35,6 +35,8 @@ The runs in this table are on `7f0b4a1`. The re-run on this branch's head after 
 | `gos tailnet` with `tests/fixtures/fake_tailscale.py` as the `tailscale` on `PATH`, scratch `GOS_HOME` | `setup --funnel`: "Refused: GOS never turns on Tailscale Funnel", exit 3. `setup`: "https://gamingpc.tail1234.ts.net/ now proxies to http://127.0.0.1:8765", "Funnel is off", and the `allowed_hosts` line to add (gos.toml untouched). `check` before the name was added: four `ok`, one `BAD ... isn't in [core] allowed_hosts`, exit 1; after: five `ok`, exit 0. `off`: removed; `check` then `BAD ... isn't served to the core`. The fake CLI's call log has `serve --bg --https=443 http://127.0.0.1:8765` and `serve --https=443 off`, and no `funnel` call anywhere |
 | `gos discord check` in a scratch `GOS_HOME` | with no `[discord]`: "owner_id is missing: your Discord user id (...)", exit 2. With `owner_id`, `guild_id` and the tailnet name in `allowed_hosts`: `owner_id: set; guild_id: set`, `phone links: https://gamingpc.tail1234.ts.net`, and the two missing secrets named (`gos key set discord`, `gos token new discord`), never a value; exit 1 |
 | `gos alerts routed` with no core | "The core isn't running: start it (gos serve).", exit 1 |
+| **Re-run after merging `ee7449c`** (PR reviewer, at `b18609e`) | ruff and format clean (608 files); full `pytest` **10828 passed, 338 skipped**; `pnpm test` 337 passed, build ok; Playwright **77 of 77**; server harness 37 checks; `test_discord_harness.py` 1 passed |
+| **Re-run on the final head** (this reviewer; it differs from `b18609e` only in this report) | ruff and format clean (608 files); full `pytest` **10828 passed, 338 skipped**, exit 0 (8 min 30 s). Gradle, the harness and Playwright were not re-run: no code changed since `b18609e` |
 
 No DB, export, token or keyring entry from these runs is committed. They stay in the session's scratch folder.
 
@@ -49,7 +51,8 @@ No DB, export, token or keyring entry from these runs is committed. They stay in
 | `42366b6` (#111 merged, WO-9.2) | 44328264420 | success | success | success | success | (path filter) |
 | PR #119 head `a0e9fcc` | 44323082821, 44323082842 | success | success | success | success | success |
 | `7f0b4a1` (#119 merged, WO-9.3) | 44332258659, 44332258528 | success (10758 passed, 322 skipped) | success (10775 passed, 305 skipped) | success | **failure** (risk 1) | success |
-| `705c88a` (#109, WO-10.4, current head) | 44342011407 | success | (running at writing) | (running at writing) | success | n/a |
+| `705c88a` (#109, WO-10.4) | 44342011407 | success | (running at writing) | (running at writing) | success | n/a |
+| `ee7449c` (#118, WO-10.6, current head) | 44344126201 | (running at writing) | (running at writing) | (running at writing) | (running at writing) | n/a |
 
 The `mod` job on `7f0b4a1` (job 134899498413) ran the server harness (37 checks), the listener harness (19), two client runs (63 each), `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration` (**237 passed, 21 skipped**, `test_discord_harness.py` among them) and the client-link run (80 checks).
 
@@ -297,4 +300,6 @@ Order: Tailscale (step 2) comes before the Discord checks (step 3), so the plan 
 ## After the review
 
 - The full `pytest` here (10751 passed, 329 skipped) and the Playwright suite (77 passed) finished green on `7f0b4a1`, as did CI's Ubuntu, Windows and `mod` jobs on it. Only its `dashboard` job is red, on the WO-3.7 flake (risk 1), so deploy `705c88a` or later once all its jobs are green (step 0).
+- After merging `ee7449c` (#118, WO-10.6, no Phase 9 file), the full `pytest` (10828 passed, 338 skipped), Playwright (77 of 77), the server harness and the Discord harness test were green again on this branch.
+- The PR review's fixes: C11 now stands on its own in step 3, C8 says Lab must be running, E.4 is named as the only real network-level check of "unreachable", and the head is `ee7449c`.
 - No product code was changed, and no decision row was added (D321 unused).
