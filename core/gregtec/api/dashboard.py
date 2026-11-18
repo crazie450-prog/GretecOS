@@ -239,7 +239,12 @@ class Board:
         last = fingerprint.last_export(home)
         stale = state.get("stale") if isinstance(state.get("stale"), bool) else None
         line = None
-        if stale:
+        if stale and last and last.get("loaded") is False:  # WO-11.1, D329
+            line = (
+                f"Export {last['run_id']} isn't loaded into the DB; load it after the next "
+                "quit or with gos export run --load-only."
+            )
+        elif stale:
             line = (
                 f"Play changed since export {last['run_id']}; export again to refresh it."
                 if last

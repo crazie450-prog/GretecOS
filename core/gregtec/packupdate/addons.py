@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -53,8 +55,10 @@ from gregtec.vault.io import VaultError, VaultIO, atomic_write
 
 QUESTION = Path("run", "export-question.json")  # in GOS_HOME
 QUESTION_FORMAT = "gos-export-question/1"
+QUESTION_LOCK = Path("run", "export-question.lock")  # in GOS_HOME: one answer at a time
+LOCK_STALE_S = 5.0  # a lock older than this was left by a process that died holding it
 YES, NO = "yes", "no"
-VIAS = ("dashboard", "phone", "voice", "discord", "admin", "dialog")
+VIAS = ("dashboard", "phone", "voice", "discord", "admin", "dialog", "other")
 ASK_POLL_S = 1.0
 KV_ANNOUNCED = "addons.announced"
 ANNOUNCED_KEEP = 20
@@ -67,7 +71,11 @@ SAY_STALE = (
     "Heads up: your mods changed since the last export, so recipe data is stale. "
     "I'll ask about exporting when you quit."
 )
-SAY_QUESTION = "Mods changed. Export now? Say confirm or cancel."
+SAY_UNLOADED = (
+    "Heads up: the last export wasn't loaded into the database, so recipe data is stale. "
+    "I'll offer to load it when you quit."
+)
+SAY_ANSWER = "Say confirm or cancel."
 
 
 # --- the export question (D69) -----------------------------------------------------------------
@@ -142,28 +150,61 @@ def open_question(
     return q
 
 
+@contextmanager
+def _locked(home: Path) -> Iterator[None]:
+    """Hold the question's lock file (``O_EXCL``): the dialog, the dashboard and the voice
+    answer from different processes, and only the first answer may be written (D329)."""
+    path = home / QUESTION_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except (FileExistsError, PermissionError):  # Windows: a lock being deleted
+            try:
+                if time.time() - path.stat().st_mtime > LOCK_STALE_S:
+                    path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass  # removed meanwhile: try again
+            time.sleep(0.01)
+    try:
+        yield
+    finally:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass  # goes stale, then the next answer breaks it
+
+
 def answer(
     home: Path, qid: str, yes: bool, via: str, now: float | None = None
 ) -> Question | None:
-    """Answer question ``qid``; None when it isn't the open one (answered, expired or gone)."""
+    """Answer question ``qid``; None when it isn't the open one (answered, expired or gone).
+    Under the question's lock, so of two answers at once only the first is accepted."""
     if via not in VIAS:
         raise ValueError(f"via must be one of {', '.join(VIAS)}")
-    q = current(home, now)
-    if q is None or q.id != qid:
-        return None
-    done = Question(q.id, q.title, q.text, q.asked, q.expires, YES if yes else NO, via)
-    _write(home, done)
+    with _locked(home):
+        q = current(home, now)
+        if q is None or q.id != qid:
+            return None
+        done = Question(
+            q.id, q.title, q.text, q.asked, q.expires, YES if yes else NO, via
+        )
+        _write(home, done)
     return done
 
 
 def close(home: Path, qid: str) -> None:
-    """Remove question ``qid``'s file (a newer question's stays)."""
-    q = read_question(home)
-    if q is not None and q.id == qid:
-        try:
-            (home / QUESTION).unlink(missing_ok=True)
-        except OSError:
-            pass  # it expires anyway
+    """Remove question ``qid``'s file (a newer question's stays); under the lock, so an answer
+    can't write it back."""
+    with _locked(home):
+        q = read_question(home)
+        if q is not None and q.id == qid:
+            try:
+                (home / QUESTION).unlink(missing_ok=True)
+            except OSError:
+                pass  # it expires anyway
 
 
 # (title, question, timeout in s) -> yes, no, or None for timed out
@@ -205,8 +246,15 @@ def ask(
             if got is not None and got.answer is not None:
                 return got.answer == YES
             if shown and shown[0] is not None:
-                answer(home, q.id, bool(shown[0]), "dialog")
-                return bool(shown[0])
+                done = answer(home, q.id, bool(shown[0]), "dialog")
+                if done is not None:
+                    return done.answer == YES
+                got = read_question(
+                    home
+                )  # another way answered first: that answer wins
+                if got is not None and got.id == q.id and got.answer is not None:
+                    return got.answer == YES
+                return None
             if clock() >= deadline:
                 return None
             sleep(poll_s)
@@ -218,12 +266,26 @@ def ask(
 
 
 def stale_key(home: Path) -> str | None:
-    """The stale episode: Play's fingerprint while it differs from the last export's."""
+    """The stale episode: Play's fingerprint while it differs from the last export's, or the
+    last export while it is recorded but not loaded into the DB (D329)."""
     state = fingerprint.load_state(home)
     if state.get("stale") is not True:
         return None
     play = state.get("play") if isinstance(state.get("play"), dict) else {}
+    last = state["exports"][-1] if state["exports"] else None
+    if (
+        last is not None
+        and last.get("loaded") is False
+        and last["fingerprint"] == play.get("fingerprint")
+    ):
+        return f"unloaded:{last['run_id']}"
     return f"stale:{play.get('fingerprint') or 'unknown'}"
+
+
+def say_question(q: Question) -> str:
+    """The question's spoken line: its title, then how to answer (no numbers in titles)."""
+    title = q.title.removeprefix("Gregtec OS: ").strip()
+    return f"{title[:1].upper()}{title[1:]} {SAY_ANSWER}"
 
 
 def _notice(kind: str, title: str, say: str, detail: str, ts: int) -> dict[str, Any]:
@@ -249,18 +311,24 @@ def due_notices(
     key = stale_key(home)
     if key is not None and key not in announced:
         last = fingerprint.last_export(home)
-        detail = (
-            f"Play changed since export {last['run_id']}; recipe answers use that export "
-            "until a new one is built."
-            if last
-            else "No export is recorded yet, so recipe data may not match Play."
-        )
+        unloaded = key.startswith("unloaded:")
+        if unloaded and last:
+            detail = (
+                f"Export {last['run_id']} is recorded but wasn't loaded into the DB; recipe "
+                "answers use the DB's older run until it is (gos export run --load-only)."
+            )
+        elif last:
+            detail = (
+                f"Play changed since export {last['run_id']}; recipe answers use that "
+                "export until a new one is built."
+            )
+        else:
+            detail = "No export is recorded yet, so recipe data may not match Play."
+        say = SAY_UNLOADED if unloaded else SAY_STALE
         out.append(
             (
                 key,
-                _notice(
-                    "recipes_stale", "Recipe data is stale", SAY_STALE, detail, int(t)
-                ),
+                _notice("recipes_stale", "Recipe data is stale", say, detail, int(t)),
             )
         )
     q = current(home, t)
@@ -268,7 +336,7 @@ def due_notices(
         out.append(
             (
                 f"question:{q.id}",
-                _notice("export_question", q.title, SAY_QUESTION, q.text, int(t)),
+                _notice("export_question", q.title, say_question(q), q.text, int(t)),
             )
         )
     return out
@@ -400,9 +468,9 @@ def write_curation(home: Path, run_key: str, tasks: Sequence[Curation]) -> Path 
     if not tasks:
         return None
     lines = ["mte\titem\tname\tmod\tclass\tneeds"]
-    lines += [
-        f"{t.machine.mte_id}\t{t.machine.key}\t{t.machine.name}\t{t.machine.mod}\t"
-        f"{t.machine.class_name}\t{', '.join(t.needs)}"
+    lines += [  # names come from the export: one cell each, never a tab or line break
+        f"{t.machine.mte_id}\t{_cell(t.machine.key)}\t{_cell(t.machine.name)}\t"
+        f"{_cell(t.machine.mod)}\t{_cell(t.machine.class_name)}\t{', '.join(t.needs)}"
         for t in tasks
     ]
     path = home / CURATION / f"controllers-{run_key}.tsv"
@@ -570,6 +638,7 @@ class AfterExport:
     flagged: list[str] = field(default_factory=list)
     curation: Path | None = None
     ok: bool = True
+    loaded: bool = False  # collected and built into the DB
 
 
 def write_note(
@@ -621,45 +690,73 @@ def after_export(
 ) -> AfterExport:
     """Collect and build export ``run_name`` (Play's fingerprint ``exported``), then diff it
     against the run the DB answered from before (its newest), note it, task and flag (module
-    docstring). Never raises for a step that fails: the result says what didn't happen."""
-    home = cfg.gos_home
+    docstring). Never raises for a step that fails: the result says what didn't happen, and
+    ``loaded`` whether the run is in the DB (the caller keeps the stale flag up if not, D329)."""
     res = AfterExport()
-    db = access.db_path(home)
-    previous = _newest_run(db)
 
     def say(text: str) -> None:
         res.lines.append(text)
         print(f"GOS: {text}", file=out, flush=True)
 
+    previous = _newest_run(access.db_path(cfg.gos_home))
     try:
-        got = collect.collect(
-            fingerprint.game_folder(cfg.instance("export")),
-            home,
-            cfg.keep_collected,
-            allow_harness=allow_harness,
-        )
-        if got.run.run_id != run_name:
-            raise collect.CollectError(
-                f"collected {got.run.run_id}, but the export was {run_name}"
-            )
-        built = build.build(
-            home,
-            run_name,
-            keep=cfg.keep_runs,
-            fingerprint=exported,
-            allow_harness=allow_harness,
-        )
-    except (collect.CollectError, build.BuildError, OSError) as exc:
+        built = _load(cfg, run_name, exported, allow_harness)
+    except Exception as exc:  # noqa: BLE001 (any failure: the run is recorded, not loaded)
         res.ok = False
         say(
-            f"export {run_name} not loaded into the DB: {exc}. Recipe data stays as it was."
+            f"export {run_name} not loaded into the DB: {exc}. Recipe data stays stale "
+            "until it is (gos export run --load-only, or the offer after the next quit)."
         )
         return res
-    res.run_key = run_name
+    res.run_key, res.loaded = run_name, True
     say(f"export {run_name} collected and built into {built.db}.")
+    try:
+        _after_build(cfg, run_name, previous, res, say, today)
+    except Exception as exc:  # noqa: BLE001 (the run is loaded; say what wasn't written)
+        res.ok = False
+        say(
+            f"built {run_name} into the DB, but the diff note, curation tasks and plan "
+            f"flags weren't all written: {exc!r}"
+        )
+    return res
+
+
+def _load(
+    cfg: config.Config, run_name: str, exported: str, allow_harness: bool
+) -> build.Result:
+    home = cfg.gos_home
+    got = collect.collect(
+        fingerprint.game_folder(cfg.instance("export")),
+        home,
+        cfg.keep_collected,
+        allow_harness=allow_harness,
+    )
+    if got.run.run_id != run_name:
+        raise collect.CollectError(
+            f"collected {got.run.run_id}, but the export was {run_name}"
+        )
+    return build.build(
+        home,
+        run_name,
+        keep=cfg.keep_runs,
+        fingerprint=exported,
+        allow_harness=allow_harness,
+    )
+
+
+def _after_build(
+    cfg: config.Config,
+    run_name: str,
+    previous: str | None,
+    res: AfterExport,
+    say: Callable[[str], None],
+    today: dt.date | None,
+) -> None:
+    home = cfg.gos_home
+    db = access.db_path(home)
     if previous is None or previous == run_name:
         say("no earlier export in the DB: nothing to diff against.")
-        return res
+        return
     try:
         old = diff.side(db, previous, home)
         new = diff.side(db, run_name, home)
@@ -672,7 +769,7 @@ def after_export(
     except diff.DiffError as exc:
         res.ok = False
         say(f"no signature diff: {exc}")
-        return res
+        return
     md = machine_diff(old, new)
     conn = access.connect(db)
     try:
@@ -715,7 +812,6 @@ def after_export(
     res.note = note
     say(f"vault note: {note}" if note else f"warning: no vault note ({why})")
     say(f"signature diff report: {report}")
-    return res
 
 
 def _machine_lines(md: MachineDiff, tasks: Sequence[Curation]) -> list[str]:
@@ -732,6 +828,25 @@ def _machine_lines(md: MachineDiff, tasks: Sequence[Curation]) -> list[str]:
 
 
 # --- what the Designer shows -------------------------------------------------------------------
+
+
+class _CitedView(plans.RunView):
+    """A run's recipe hashes looked up one cited ref at a time (``ix_recipe_ref``), not the
+    whole run: the Designer checks one plan per view."""
+
+    def recipe(self, ref: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT content_hash FROM recipe WHERE run_id = ? AND ref = ?",
+            (self.run_id, ref),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+
+def _cited_view(conn: sqlite3.Connection, run_key: str) -> _CitedView | None:
+    row = conn.execute(
+        "SELECT id FROM export_run WHERE run_key = ?", (run_key,)
+    ).fetchone()
+    return None if row is None else _CitedView(conn, int(row[0]), run_key)
 
 
 def affected(conn: sqlite3.Connection, home: Path, pid: str) -> dict[str, Any] | None:
@@ -756,8 +871,8 @@ def affected(conn: sqlite3.Connection, home: Path, pid: str) -> dict[str, Any] |
             plan = plans.Plan(plan.id, plan.name, plan.status, str(row[3]), plan.cites)
         flagged = plans.check(
             [plan],
-            lambda key: plans.view(conn, key),
-            plans.RunView(conn, int(row[0]), str(row[1])),
+            lambda key: _cited_view(conn, key),
+            _CitedView(conn, int(row[0]), str(row[1])),
         )
         hits = [{"cite": h.cite, "why": h.why} for f in flagged for h in f.hits][:20]
     return {"run": str(row[1]), "hits": hits}

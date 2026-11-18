@@ -609,16 +609,16 @@ def test_confirm_or_cancel_answers_the_export_question_when_no_action_waits(
     refused = a.ask("confirm")  # no via: not a way Clayton confirms
     assert refused.pending is True and addons.current(tmp_path) == q
     yes = a.ask("confirm", via="voice")
-    assert yes.text.startswith("Exporting now") and yes.pending is True
+    assert yes.text.startswith("Yes: starting it now") and yes.pending is True
     done = addons.read_question(tmp_path)
     assert done is not None and (done.answer, done.via) == ("yes", "voice")
     assert (
         a.ask("confirm", via="voice").text == NOTHING_PENDING
     )  # answered: nothing waits
     q = addons.open_question(tmp_path, "Mods changed. Export now?", "Export now?", 60)
-    assert a.ask("cancel").text.startswith("Not exporting")
+    assert a.ask("cancel").text.startswith("Not now")
     done = addons.read_question(tmp_path)
-    assert done is not None and (done.answer, done.via) == ("no", "admin")
+    assert done is not None and (done.answer, done.via) == ("no", "other")
 
 
 def test_deep_requests_are_handed_off(

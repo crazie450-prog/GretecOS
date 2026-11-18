@@ -292,8 +292,11 @@ class Started:
     proc: subprocess.Popen[bytes] | None = None
 
 
-def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
-    """Start ``gos export run --notify`` on its own, logging to ``GOS_HOME/logs/``."""
+def spawn_export(
+    cfg: config.Config, config_path: Path | None, load_only: bool = False
+) -> Started:
+    """Start ``gos export run --notify`` (``--load-only``: D329) on its own, logging to
+    ``GOS_HOME/logs/``."""
     logs = cfg.gos_home / LOGS
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / time.strftime("export-%Y%m%dT%H%M%SZ.log", time.gmtime())
@@ -302,6 +305,8 @@ def spawn_export(cfg: config.Config, config_path: Path | None) -> Started:
     # which must neither be on the export's sys.path nor held as its directory for an hour.
     argv = [sys.executable, "-P", "-m", "gregtec.cli", "export", "run", "--notify"]
     argv += ["--ticket", ticket]
+    if load_only:
+        argv.append("--load-only")
     if config_path is not None:
         argv += ["--config", str(config_path)]
     # Its own process, without a console window, outside any job the hook runs in (a job that
@@ -384,17 +389,28 @@ def _post_exit(
     if holder is not None:
         _say(out, f"an export is already running ({holder.describe()}).")
         return 0
-    what = (
-        "No export is recorded yet."
-        if status.export_run is None
-        else f"Play's mods or configs changed since the last export ({status.changes.summary()})."
-    )
-    question = (
-        f"{what}\n\nExport now? This syncs Play to {cfg.export} and launches it to export "
-        "recipes; it quits by itself (up to about 30 minutes). Play can't start until it is "
-        f"done.\n\nNo answer in {ASK_TIMEOUT_S // 60} minutes counts as No."
-    )
-    answer = ask("Gregtec OS: mods changed. Export now?", question, ASK_TIMEOUT_S)
+    only_load = status.only_unloaded  # Play matches the last export: load it (D329)
+    if only_load:
+        title = "Gregtec OS: last export not loaded. Load it now?"
+        question = (
+            f"Export {status.export_run} matches Play but couldn't be loaded into the "
+            "database, so recipe data is stale.\n\nLoad it now? This collects and builds it "
+            "without exporting again (a few minutes). Play can't start until it is done."
+            f"\n\nNo answer in {ASK_TIMEOUT_S // 60} minutes counts as No."
+        )
+    else:
+        what = (
+            "No export is recorded yet."
+            if status.export_run is None
+            else f"Play's mods or configs changed since the last export ({status.changes.summary()})."
+        )
+        title = "Gregtec OS: mods changed. Export now?"
+        question = (
+            f"{what}\n\nExport now? This syncs Play to {cfg.export} and launches it to export "
+            "recipes; it quits by itself (up to about 30 minutes). Play can't start until it "
+            f"is done.\n\nNo answer in {ASK_TIMEOUT_S // 60} minutes counts as No."
+        )
+    answer = ask(title, question, ASK_TIMEOUT_S)
     if answer is None:
         _say(
             out,
@@ -408,7 +424,7 @@ def _post_exit(
             "not exporting (No). Recipe data stays stale; you'll be asked next quit.",
         )
         return 0
-    started = (spawn or (lambda: spawn_export(cfg, None)))()
+    started = (spawn or (lambda: spawn_export(cfg, None, load_only=only_load)))()
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
         holder = locks.held(cfg.gos_home)
@@ -612,13 +628,15 @@ def run_export(
     ticket: str = "",
     config_path: Path | None = None,
     load: bool = True,
+    load_only: bool = False,
 ) -> int:
     """``gos export run``. 0: exported; 1: refused or failed (the stale flag is kept).
     ``config_path`` is the gos.toml ``cfg`` was read from (default: ``config`` in GOS_HOME):
     its former-Plays record gets Play before Export is planned (D223). ``load``: collect and
     build the recorded run, then the signature diff, curation tasks and plan flags
     (:func:`gregtec.packupdate.addons.after_export`, WO-11.1); the pack-update playbook loads
-    its own."""
+    its own. A run that is recorded but couldn't be loaded keeps the stale flag up
+    (:func:`fingerprint.mark_loaded`, D329); ``load_only`` loads it again without exporting."""
     if getpass.getuser().lower() == prism.DEV_ACCOUNT:
         _say(
             out,
@@ -636,18 +654,21 @@ def run_export(
     result: tuple[int, str]
     with lock:
         try:
-            result = _export_locked(
-                cfg,
-                out,
-                launch,
-                clients,
-                allow_harness,
-                clock,
-                sleep,
-                poll_s,
-                config_path or home / "config" / "gos.toml",
-                load,
-            )
+            if load_only:
+                result = _load_locked(cfg, out, allow_harness)
+            else:
+                result = _export_locked(
+                    cfg,
+                    out,
+                    launch,
+                    clients,
+                    allow_harness,
+                    clock,
+                    sleep,
+                    poll_s,
+                    config_path or home / "config" / "gos.toml",
+                    load,
+                )
         except ExportFailed as exc:
             _say(out, f"export failed: {exc}. Recipe data stays stale.")
             result = (1, f"Export failed: {exc}")
@@ -659,6 +680,34 @@ def run_export(
     if notify is not None:
         notify("Gregtec OS export", result[1])
     return result[0]
+
+
+def _load_recorded(
+    cfg: config.Config, run_name: str, digest: str, out: TextIO, allow_harness: bool
+) -> str:
+    """Collect, build, diff, note and flag recorded export ``run_name``; a run that isn't
+    loaded stays recorded with the stale flag up (D329). Returns the result's lines."""
+    from gregtec.packupdate import addons  # lazy: the hooks never need it
+
+    after = addons.after_export(cfg, run_name, digest, out, allow_harness=allow_harness)
+    fingerprint.mark_loaded(cfg.gos_home, run_name, after.loaded)
+    return "\n".join(after.lines)
+
+
+def _load_locked(
+    cfg: config.Config, out: TextIO, allow_harness: bool
+) -> tuple[int, str]:
+    """``gos export run --load-only``: load the last recorded export when it isn't (D329)."""
+    last = fingerprint.last_export(cfg.gos_home)
+    if last is None:
+        raise ExportFailed("no export is recorded: run gos export run")
+    if last.get("loaded") is not False:
+        _say(out, f"export {last['run_id']} is already loaded: nothing to do.")
+        return 0, f"Export {last['run_id']} is already loaded."
+    lines = _load_recorded(cfg, last["run_id"], last["fingerprint"], out, allow_harness)
+    loaded = fingerprint.last_export(cfg.gos_home) or {}
+    code = 0 if loaded.get("loaded") is not False else 1
+    return code, f"Load of export {last['run_id']}:\n\n{lines}"
 
 
 def _export_locked(
@@ -776,13 +825,9 @@ def _export_locked(
         _say(out, f"recorded export {run.name}: {status.line()}")
         code, summary = 0, f"Export {run.name} done. {status.line()}"
         if load:  # under the lock: collect reads Export's folder (WO-11.1, D329)
-            from gregtec.packupdate import addons  # lazy: the hooks never need it
-
-            after = addons.after_export(
-                cfg, run.name, exported.digest, out, allow_harness=allow_harness
+            summary += "\n\n" + _load_recorded(
+                cfg, run.name, exported.digest, out, allow_harness
             )
-            # A run that couldn't be loaded is still recorded: the lines say what to run.
-            summary += "\n\n" + "\n".join(after.lines)
     if warnings:
         summary += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
 

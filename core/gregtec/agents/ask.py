@@ -720,13 +720,15 @@ class Asker:
         yes = intent == router.CONFIRM
         if yes and via not in VIAS:
             return Reply(CONFIRM_ELSEWHERE, router.INSTANT, intent, pending=True)
-        done = addons.answer(self.home, q.id, yes, via if via in VIAS else "admin")
+        # A cancel from a way in that can't confirm (admin, the OC client, in-game chat: the
+        # asker can't tell which) is recorded as "other", never as one it isn't.
+        done = addons.answer(self.home, q.id, yes, via if via in VIAS else "other")
         if done is None:
             return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
         text = (
-            "Exporting now. Play can't start until it's done."
+            "Yes: starting it now. Play can't start until it's done."
             if yes
-            else "Not exporting. Recipe data stays stale; I'll ask next time you quit."
+            else "Not now. Recipe data stays stale; I'll ask next time you quit."
         )
         return Reply(text, router.INSTANT, intent, pending=True, refs=[])
 
