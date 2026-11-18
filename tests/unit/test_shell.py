@@ -946,3 +946,53 @@ def test_build_request_designs_validates_and_refuses(reg: Any, home: Path) -> No
         out = reg.call("build_request", {"plans": "pl-steel", **args}, lane=DEEP)
         assert out.is_error and why in out.text, out.text
     assert reg.call("build_request", {"plans": "pl-steel"}, lane=FAST).is_error
+
+
+# --- the API --------------------------------------------------------------------------------
+
+ADMIN = "admin-" + "s" * 40
+
+
+def test_the_shell_routes(home: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.config import Config
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    store = Store(home / "data" / "core.sqlite")
+    core = Core(
+        cfg=Config(gos_home=home),
+        store=store,
+        auth=Auth(store, ADMIN),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+    )
+    admin = {"Authorization": f"Bearer {ADMIN}"}
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            assert c.get("/api/shells").status_code == 401
+            assert c.get("/api/shells", headers=admin).json() == {"shells": []}
+            made = c.post(
+                "/api/shells",
+                headers=admin,
+                json={"plans": ["pl-steel"], "theme": "th-foundry"},
+            )
+            assert made.status_code == 200, made.text
+            card = made.json()["card"]
+            assert cards.validate(card) == [] and card["source"] == "procedural"
+            listed = c.get("/api/shells", headers=admin).json()["shells"]
+            assert [s["id"] for s in listed] == [card["build"]]
+            got = c.get(f"/api/shells/{card['build']}", headers=admin).json()["card"]
+            assert got == card
+            assert (
+                c.get("/api/shells/sh-000000000000", headers=admin).status_code == 404
+            )
+            assert c.get("/api/shells/..%2fx", headers=admin).status_code == 404
+            bad = c.post("/api/shells", headers=admin, json={"plans": "pl-steel"})
+            assert bad.status_code == 400
+            nope = c.post("/api/shells", headers=admin, json={"plans": ["pl-nope"]})
+            assert nope.status_code == 400 and "isn't saved" in nope.text
+    finally:
+        store.close()

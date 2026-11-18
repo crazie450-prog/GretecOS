@@ -104,6 +104,7 @@ from gregtec.api import (
     plan_routes,
     power_routes,
     setup_routes,
+    shell_routes,
 )
 from gregtec.api.security import (
     COOKIE,
@@ -904,6 +905,7 @@ def create_app(core: Core) -> FastAPI:
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
     guide_routes.add_routes(app, core, principal)
+    shell_routes.add_routes(app, core, principal, trusted, _json_body)
     remote_routes.add_routes(app, core, principal, _json_body)
     return app
 
