@@ -179,8 +179,12 @@ def load_tails(path: Path) -> dict[str, Any]:
 
 
 def save_tails(path: Path, tails: dict[str, Any]) -> None:
-    """GOS's own file (never a game file): a temp file, then a rename."""
+    """GOS's own file (never a game file): a temp file, fsynced, then a rename, so a power
+    loss leaves the old tails or the new ones, never an empty file (WO-11.2, D333)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(tails), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(tails))
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)

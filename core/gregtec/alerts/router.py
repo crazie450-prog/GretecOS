@@ -15,7 +15,10 @@ pushed to the voice client), **in game** (a GregtecLink chat line, D76) and a **
 - the D48 credit alert, read from the credit watch each tick: active while a threshold waits for
   his answer; key ``credits:<pct>``, occurrence the cycle, so once per threshold per cycle;
 - the paused game (D258, WO-6.1), read from the watchers' feed each tick: active while paused;
-  key ``game_paused:<instance>``, occurrence the pause's start, so once per pause (D76).
+  key ``game_paused:<instance>``, occurrence the pause's start, so once per pause (D76);
+- the cost watch's alerts (WO-11.2, D334: :class:`gregtec.ops.costs.CostWatch`), read each
+  tick: the credit heads-up, the day cap and a task at its cap; kind ``cost``, routed like the
+  credit alert; each key once per occurrence (the cycle, the day, the task).
 
 "GOS offline" can't come from the core (it is the core that is down): the Discord bot sends it
 (:class:`gregtec.discordbot.alerts.OfflineWatch`), with the same policy.
@@ -174,6 +177,7 @@ class AlertRouter:
         # Sources the core sets (None: that source isn't there).
         self.credits: Callable[[], Mapping[str, Any] | None] | None = None
         self.paused: Callable[[], tuple[str, float | None] | None] | None = None
+        self.costs: Callable[[], list[dict[str, Any]]] | None = None  # WO-11.2
         self.discord_mode: Callable[[], str] = self._mode_from_kv
         self.voice_up: Callable[[], bool] = lambda: False
         self.game_up: Callable[[], bool] = lambda: False
@@ -420,8 +424,27 @@ class AlertRouter:
                         binding=instance,
                     )
                 )
+        for cost in self.costs() if self.costs is not None else ():
+            key = str(cost["key"])
+            want.add(key)
+            if key not in self._active or self._active[key].occ != str(cost["occ"]):
+                level = str(cost["level"])
+                self._open(
+                    Routed(
+                        key=key,
+                        occ=str(cost["occ"]),
+                        kind="cost",
+                        level=level,
+                        title=str(cost["title"]),
+                        text=_clip(f"{MARK[level]} {cost['text']}"),
+                        say=None,
+                        since=now,
+                    )
+                )
         for key in [
-            k for k, r in self._active.items() if r.kind in ("credits", "game_paused")
+            k
+            for k, r in self._active.items()
+            if r.kind in ("credits", "game_paused", "cost")
         ]:
             if key not in want:
                 self._close(key)

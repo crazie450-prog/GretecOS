@@ -126,7 +126,10 @@ class AlertDesk:
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.state_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.state), encoding="utf-8")
+            with open(tmp, "w", encoding="utf-8") as f:  # fsynced: WO-11.2 (D333)
+                f.write(json.dumps(self.state))
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self.state_file)
         except OSError as exc:
             log.info("alert state not saved", extra={"why": str(exc)[:200]})
