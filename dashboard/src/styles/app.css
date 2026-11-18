@@ -2816,6 +2816,7 @@ select.ask-input option {
 }
 
 .guide-viewer {
+  position: relative; /* the compass sits in the scene's top right corner */
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -2868,6 +2869,51 @@ select.ask-input option {
   stroke: var(--primary);
   stroke-width: 0.12;
   opacity: 1;
+}
+
+/* The controller's front and the compass (review M1): which way the multi faces, however turned. */
+.guide-face.controller-front {
+  stroke: var(--text);
+  stroke-width: 0.12;
+}
+
+.guide-front-arrow {
+  fill: var(--text);
+  stroke: var(--bg);
+  stroke-width: 0.04;
+  pointer-events: none;
+}
+
+.guide-compass {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: 64px;
+  height: 64px;
+  pointer-events: none;
+}
+
+.guide-compass circle {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 0.06;
+}
+
+.guide-compass line {
+  stroke: var(--text);
+  stroke-width: 0.12;
+}
+
+.guide-compass text {
+  fill: var(--text-2);
+  font-size: 0.6px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.guide-compass text.north {
+  fill: var(--text);
+  font-weight: 700;
 }
 
 .guide-hover {

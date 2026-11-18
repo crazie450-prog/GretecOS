@@ -11,7 +11,18 @@ import { ApiError, api } from "../api/client";
 import type { BuildGuide as GuideData, Facing, GuideQuery } from "../api/types";
 import { Button, CitationChip, Panel } from "../components/core";
 import { GLYPH } from "../state/states";
-import { DEFAULT_VIEW, type ViewAngle, fallbackColour, hatchWords, project, zoomed } from "./guideMesh";
+import {
+  DEFAULT_VIEW,
+  type Vec,
+  type ViewAngle,
+  compass,
+  fallbackColour,
+  frontArrow,
+  hatchWords,
+  normalIndex,
+  project,
+  zoomed,
+} from "./guideMesh";
 
 const FACINGS: Facing[] = ["north", "east", "south", "west"];
 const message = (e: unknown): string => (e instanceof ApiError ? e.message : String(e));
@@ -41,6 +52,13 @@ function Viewer(props: { g: GuideData; upTo: number }) {
   const drag = useRef<{ x: number; y: number; moved: number } | null>(null);
   const drawing = useMemo(() => project(g.cells, g.size, upTo, view), [g.cells, g.size, upTo, view]);
   const box = zoomed(drawing.box, zoom);
+  // The controller and the way its front looks (review M1): its front face is marked, an arrow
+  // points out of it, and the compass turns with the drawing, so a turned view can't mirror it.
+  const [ax, ay, az] = g.controller_at;
+  const controller = g.cells.findIndex(([x, y, z]) => x === ax && y === ay && z === az);
+  const frontDir = normalIndex(g.front);
+  const arrow =
+    controller >= 0 && frontDir >= 0 && ay <= upTo ? frontArrow(g.size as Vec, [ax, ay, az], g.front as Vec, view) : null;
 
   useEffect(() => {
     // A wheel listener React would add is passive, so it couldn't keep the page from scrolling.
@@ -119,15 +137,37 @@ function Viewer(props: { g: GuideData; upTo: number }) {
             block ? "" : "hatch-only",
             s >= 0 ? "hatch-slot" : "",
             y === upTo ? "current" : "below",
+            p.cell === controller ? "controller" : "",
+            p.cell === controller && p.dir === frontDir ? "controller-front" : "",
             hover === p.cell ? "hovered" : "",
           ]
             .filter(Boolean)
             .join(" ");
           return <polygon key={`${p.cell}-${p.dir}`} className={cls} points={p.points} fill={colour} data-cell={p.cell} />;
         })}
+        {arrow && <path className="guide-front-arrow" d={arrow} data-testid="guide-front-arrow" />}
+      </svg>
+      <svg
+        className="guide-compass"
+        viewBox="-1.6 -1.6 3.2 3.2"
+        role="img"
+        aria-label={`Compass: the controller's front faces ${g.facing}`}
+        data-testid="guide-compass"
+      >
+        <circle r={1.05} />
+        {compass(view).map((c) => (
+          <g key={c.letter}>
+            {c.letter === "N" && <line x1={0} y1={0} x2={c.x * 0.7} y2={c.y * 0.7} />}
+            <text x={(c.x * 1.2).toFixed(3)} y={(c.y * 1.2).toFixed(3)} className={c.letter === "N" ? "north" : undefined} data-letter={c.letter}>
+              {c.letter}
+            </text>
+          </g>
+        ))}
       </svg>
       <p className="gos-sub guide-hover" data-testid="guide-hover" aria-live="polite">
-        {hover === null ? "Hover or tap a block for its name and registry name." : cellLabel(g, hover)}
+        {hover === null
+          ? "Hover or tap a block for its name and registry name. The arrow shows which way the controller's front faces."
+          : cellLabel(g, hover)}
       </p>
       <div className="guide-controls">
         <Button testId="guide-turn-left" title="Turn left" onClick={() => turn(-45)}>
@@ -308,9 +348,10 @@ export function GuideView(props: { query: GuideQuery; onQuery: (q: GuideQuery) =
           ) : (
             <p className="empty">{GLYPH.todo} No blocks in this layer</p>
           )}
-          {layer && layer.hatch_cells > 0 && (
+          {layer && layer.hatch_slots > 0 && (
             <p className="gos-src">
-              {layer.hatch_cells} {layer.hatch_cells === 1 ? "cell takes" : "cells take"} a hatch in this layer (marked)
+              {layer.hatch_slots} hatch {layer.hatch_slots === 1 ? "slot" : "slots"} in this layer (outlined)
+              {layer.hatch_only > 0 && `, ${layer.hatch_only} of them hatch-only (dashed, air until a hatch goes in)`}
             </p>
           )}
         </Panel>

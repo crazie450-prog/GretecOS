@@ -280,7 +280,8 @@
   {
    "y": 0,
    "blocks": 9,
-   "hatch_cells": 8,
+   "hatch_slots": 8,
+   "hatch_only": 0,
    "materials": {
     "fixture:casing@0": 8,
     "gregtech:gt.blockmachines@9001": 1
@@ -289,7 +290,8 @@
   {
    "y": 1,
    "blocks": 8,
-   "hatch_cells": 0,
+   "hatch_slots": 0,
+   "hatch_only": 0,
    "materials": {
     "fixture:coil@0": 8
    }
@@ -297,7 +299,8 @@
   {
    "y": 2,
    "blocks": 8,
-   "hatch_cells": 1,
+   "hatch_slots": 1,
+   "hatch_only": 1,
    "materials": {
     "fixture:casing@0": 8
    }

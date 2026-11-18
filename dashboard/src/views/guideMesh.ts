@@ -149,6 +149,49 @@ export function project(cells: GuideCell[], size: Vec, upTo: number, view: ViewA
   return { polys, box: [minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad] };
 }
 
+/** Which of NORMALS ``v`` is (the controller's front, from the core), or -1. */
+export function normalIndex(v: number[]): number {
+  return NORMALS.findIndex((n) => n[0] === v[0] && n[1] === v[1] && n[2] === v[2]);
+}
+
+/** An arrow out of the controller's front face, as an SVG path in the drawing's frame: from the
+ * face's middle one block out along ``front`` (review M1: which way the controller looks, whatever
+ * the turn). ``at`` is the controller's cell, ``size`` the structure's (as for :func:`project`). */
+export function frontArrow(size: Vec, at: Vec, front: Vec, view: ViewAngle): string {
+  const centre: Vec = [size[0] / 2, size[1] / 2, size[2] / 2];
+  const mid: Vec = [at[0] + 0.5 + front[0] * 0.5, at[1] + 0.5, at[2] + 0.5 + front[2] * 0.5];
+  const side: Vec = [-front[2], 0, front[0]]; // across the front, level
+  const pt = (along: number, across: number): string => {
+    const [px, py] = toView(
+      [
+        mid[0] + front[0] * along + side[0] * across - centre[0],
+        mid[1] - centre[1],
+        mid[2] + front[2] * along + side[2] * across - centre[2],
+      ],
+      view,
+    );
+    return `${px.toFixed(3)},${(-py).toFixed(3)}`;
+  };
+  // A path, not a polygon: the drawing's polygons are its cells' faces.
+  return `M${pt(0.9, 0)} L${pt(0.1, 0.35)} L${pt(0.1, -0.35)} Z`;
+}
+
+/** The compass's four letters as unit directions on the screen (x right, y down) for ``view``:
+ * where north, east, south and west lie in the drawing as it is turned and tilted. */
+export function compass(view: ViewAngle): { letter: "N" | "E" | "S" | "W"; x: number; y: number }[] {
+  const dirs: ["N" | "E" | "S" | "W", Vec][] = [
+    ["N", [0, 0, -1]],
+    ["E", [1, 0, 0]],
+    ["S", [0, 0, 1]],
+    ["W", [-1, 0, 0]],
+  ];
+  return dirs.map(([letter, d]) => {
+    const [x, y] = toView(d, view);
+    const len = Math.hypot(x, y) || 1;
+    return { letter, x: x / len, y: -y / len };
+  });
+}
+
 /** ``box`` zoomed by ``zoom`` (1 = all of it) about its centre. */
 export function zoomed(box: Drawing["box"], zoom: number): Drawing["box"] {
   const [x, y, w, h] = box;

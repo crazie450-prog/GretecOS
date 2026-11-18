@@ -14,8 +14,9 @@ tooltip, not ``registry@meta`` (D304). The dashboard only draws it.
   side faces' average colours (the catalog's ``block_texture.rgb``; no texture file is copied or
   committed) and how many cells hold it, controller included. The controller is a
   ``gregtech:gt.blockmachines`` block: it is built from its item, never pasted (D35).
-- **Layers**: per ``y`` the materials it takes (``registry@meta`` -> count), its block and
-  hatch-cell counts. The per-layer counts add up to the footprint's own materials (tested).
+- **Layers**: per ``y`` the materials it takes (``registry@meta`` -> count), its block count,
+  ``hatch_slots`` (cells that take a hatch, casings included) and ``hatch_only`` (of those, the
+  cells with no block: air until a hatch goes in). The per-layer counts add up to the footprint's own materials (tested).
 - **Checklist** (D320): one item per layer, kept in the core's ``kv`` table per footprint shape
   (controller, variant and tiers; the facing doesn't change what is built), so it survives a
   reload and is the same on monitor 2 and the phone.
@@ -40,7 +41,6 @@ from gregtec.store import Store
 KV_PREFIX = "build.checklist|"
 MAX_KEY = 400  # a checklist key's length (a footprint key is far shorter)
 _ITEM = re.compile(r"layer:(0|[1-9][0-9]{0,2})")
-SIDES = ("down", "up", "north", "south", "west", "east")  # the catalog's face order
 
 
 @dataclass(frozen=True)
@@ -154,7 +154,10 @@ def guide(
             {
                 "y": y,
                 "blocks": sum(layer.values()),
-                "hatch_cells": sum(1 for c in in_layer if c.hatches),
+                # Every cell that takes a hatch (casings too), and of those the hatch-only ones
+                # (air until a hatch goes in; what the checklist's label counts). Review L1.
+                "hatch_slots": sum(1 for c in in_layer if c.hatches),
+                "hatch_only": sum(1 for c in in_layer if c.block is None),
                 "materials": layer,
             }
         )

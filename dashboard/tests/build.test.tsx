@@ -8,7 +8,7 @@ import { guideParams } from "../src/api/client";
 import type { BuildGuide } from "../src/api/types";
 import { Build, firstPage, guideFor, guideFromHash, guideHash, guideSrc } from "../src/views/Build";
 import { GuideView, cellLabel } from "../src/views/BuildGuide";
-import { DEFAULT_VIEW, type GuideCell, fallbackColour, hatchWords, project, shown, toView, zoomed } from "../src/views/guideMesh";
+import { DEFAULT_VIEW, type GuideCell, compass, fallbackColour, hatchWords, project, shown, toView, zoomed } from "../src/views/guideMesh";
 
 const furnace = furnaceJson as unknown as BuildGuide;
 const CONTROLLER = "gregtech:gt.blockmachines@9001";
@@ -209,6 +209,33 @@ describe("GuideView", () => {
     const slots = screen.getByTestId("guide-slots");
     expect(slots.textContent).toContain("8 cells take Energy, Input Bus, Maintenance, Output Bus");
     expect(slots.textContent).toContain("1 cell takes Muffler");
+  });
+
+  it("marks the controller's front and turns the compass with the drawing (review M1)", async () => {
+    render(<GuideView query={q} onQuery={() => undefined} />);
+    const scene = await screen.findByTestId("guide-scene");
+    expect(furnace.front).toEqual([0, 0, -1]); // the fixture's controller faces north
+    const [ax, ay, az] = furnace.controller_at;
+    const controller = furnace.cells.findIndex((c) => c[0] === ax && c[1] === ay && c[2] === az);
+    expect(screen.getByTestId("guide-front-arrow").getAttribute("d")).toMatch(/^M[-\d.,]+ L[-\d.,]+ L[-\d.,]+ Z$/);
+    const northY = () => Number(screen.getByTestId("guide-compass").querySelector('[data-letter="N"]')?.getAttribute("y"));
+    expect(northY()).toBeLessThan(0); // the first view looks from the south-east: north is away, up the screen
+    // From the first view the north face looks away; turned half round it faces the viewer.
+    expect(scene.querySelector("polygon.controller-front")).toBeNull();
+    for (let i = 0; i < 4; i++) fireEvent.click(screen.getByTestId("guide-turn-right"));
+    const front = scene.querySelector("polygon.controller-front");
+    expect(Number(front?.getAttribute("data-cell"))).toBe(controller);
+    expect(front?.getAttribute("class")).toContain("controller");
+    expect(northY()).toBeGreaterThan(0); // now north is towards the viewer, down the screen
+    expect(screen.getByTestId("guide-compass").getAttribute("aria-label")).toContain("faces north");
+  });
+
+  it("puts the compass's letters where the directions lie on the screen", () => {
+    const at = (yaw: number) => Object.fromEntries(compass({ yaw, pitch: 30 }).map((c) => [c.letter, [c.x, c.y]]));
+    const flat = at(0); // from the south: east to the right, north up the screen
+    expect(flat.E[0]).toBeCloseTo(1);
+    expect(flat.N[1]).toBeCloseTo(-1);
+    expect(at(90).N[0]).toBeCloseTo(1); // turned a quarter: north is now to the right
   });
 
   it("turns and zooms", async () => {

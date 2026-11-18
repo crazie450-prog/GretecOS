@@ -126,6 +126,13 @@ def test_the_guide_matches_its_footprint(
         assert total == f.materials()
         assert [layer["y"] for layer in doc["layers"]] == list(range(f.size[1]))
         assert sum(s["cells"] for s in doc["slots"]) == len(f.hatch_cells)
+        # Review L1: hatch slots (casings included) and the hatch-only cells among them.
+        assert sum(layer["hatch_slots"] for layer in doc["layers"]) == len(
+            f.hatch_cells
+        )
+        assert sum(layer["hatch_only"] for layer in doc["layers"]) == sum(
+            1 for c in f.cells if c.block is None
+        )
         # The controller sits at its offset 0.
         x, y, z = doc["controller_at"]
         at = next(c for c in doc["cells"] if c[:3] == [x, y, z])

@@ -263,7 +263,7 @@ export interface BuildGuide {
   palette: { block: string; name: string | null; top: string | null; side: string | null; count: number }[];
   slots: { kinds: string[]; cells: number }[];
   cells: [number, number, number, number, number][]; // x, y, z, palette index (-1 hatch-only), slot (-1 none)
-  layers: { y: number; blocks: number; hatch_cells: number; materials: Record<string, number> }[];
+  layers: { y: number; blocks: number; hatch_slots: number; hatch_only: number; materials: Record<string, number> }[];
   checklist: { id: string; label: string }[];
   done: string[];
   catalog: boolean;
