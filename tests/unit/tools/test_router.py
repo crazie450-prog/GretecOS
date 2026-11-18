@@ -84,6 +84,23 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         ("what does the plan say about steel", "fast", "general", None, None),
         ("plan my power line", "deep", "handoff", None, None),
         ("how many macerators do I need", "deep", "handoff", None, None),
+        # building themes (WO-10.6): making or refining one is the deep lane's theme_save
+        (
+            "make a new theme with dark concrete and brass",
+            "deep",
+            "handoff",
+            None,
+            None,
+        ),
+        ("refine the foundry theme with more glass", "deep", "handoff", None, None),
+        (
+            "the foundry theme, swap the windows for reinforced glass",
+            "deep",
+            "handoff",
+            None,
+            None,
+        ),
+        ("what themes do I have", "fast", "general", None, None),
     ],
 )
 def test_route(
