@@ -93,7 +93,10 @@ class Mailbox:
     # the driver's side
     def send(self, command: dict[str, Any]) -> None:
         self._n += 1
-        write_atomic(self.inbox / f"{time.time_ns():020d}-{self._n:04d}.json", json.dumps(command))
+        write_atomic(
+            self.inbox / f"{time.time_ns():020d}-{self._n:04d}.json",
+            json.dumps(command),
+        )
 
     def results(self) -> list[dict[str, Any]]:
         try:

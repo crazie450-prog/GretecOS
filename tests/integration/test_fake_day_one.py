@@ -1,7 +1,7 @@
 """WO-11.3: the automated fake day one on a real harness DB (plan 8 row 11.3, plan 10; D336).
 
 tests/rehearsal/day_one.py starts the real supervisor, core, watchers, voice client and Discord
-bot on a fake Prism tree and a GOS_HOME built from the server harness's export (``gos export
+bot on a fake Prism tree and a GOS_HOME built from the client harness's export (``gos export
 collect`` + ``gos db build``, D340's cache), and drives one scripted session through every
 subsystem with fakes for the model, the mic, Discord's gateway and the game; the game's files are
 written by the watchers' soak writer for :data:`SOAK_S` (default a real 10 minutes, time-
@@ -10,7 +10,7 @@ supervisor's hard-kill test run beside it. The report (each plan-10 line green, 
 is printed and written to ``GOS_REHEARSAL_REPORT`` when set.
 
 As the other harness tests: only with GOS_REQUIRE_HARNESS_RUN=1 after the server harnesses
-(the export and the listener's, mod/README.md); nothing is written outside tmp_path.
+(the client export and the server listener run, mod/README.md); nothing is written outside tmp_path.
 """
 
 from __future__ import annotations
@@ -25,9 +25,11 @@ from gregtec.ingest import collect
 
 REPO = Path(__file__).resolve().parents[2]
 REHEARSAL = REPO / "tests" / "rehearsal"
-GAME = REPO / "mod" / "run" / "server"
-LISTENER = GAME / "gregteclink" / "events" / "machines.jsonl"
-SOAK_S = float(os.environ.get("GOS_REHEARSAL_SOAK_S", 600))
+# The client harness's run: recipes, quests, crops (CropsNH) and power data, as Play's export
+# has (WO-1.10); GregtecLink's listener events come from the server harness's listener run.
+GAME = REPO / "mod" / "run" / "client"
+LISTENER = REPO / "mod" / "run" / "server" / "gregteclink" / "events" / "machines.jsonl"
+SOAK_S = float(os.environ.get("GOS_REHEARSAL_SOAK_S", "600"))
 SUITES = {
     "suite_g3": ["tests/integration/test_g3_lines_harness.py"],
     "suite_g4": ["tests/integration/test_g4_lines_harness.py"],
@@ -66,6 +68,8 @@ def test_the_fake_day_one_on_a_real_harness_db(
             soak_s=SOAK_S,
             suites=SUITES,
             listener_events=LISTENER if LISTENER.is_file() else None,
+            # while developing a step: GOS_REHEARSAL_ONLY=step,step (the rest not run)
+            only=frozenset(os.environ.get("GOS_REHEARSAL_ONLY", "").split(",")) - {""},
         ),
     )
     results = r.run()

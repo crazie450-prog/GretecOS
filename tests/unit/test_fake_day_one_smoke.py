@@ -18,12 +18,16 @@ from pathlib import Path
 import pytest
 
 REHEARSAL = Path(__file__).resolve().parents[1] / "rehearsal"
+# While developing a step: GOS_REHEARSAL_ONLY=step,step runs only those (the rest not run).
+ONLY = frozenset(os.environ.get("GOS_REHEARSAL_ONLY", "").split(",")) - {""}
 
 
 @pytest.fixture
 def rehearsal_path(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.syspath_prepend(str(REHEARSAL))
-    monkeypatch.setenv("GOS_ALLOW_ELEVATED", "1")  # GitHub's Windows runners run elevated
+    monkeypatch.setenv(
+        "GOS_ALLOW_ELEVATED", "1"
+    )  # GitHub's Windows runners run elevated
     yield
 
 
@@ -36,7 +40,11 @@ def test_the_fake_day_one_smoke_on_made_up_data(tmp_path: Path) -> None:
     r = day_one.Rehearsal(
         tmp_path / "day-one",
         day_one.fixture_home,
-        day_one.Options(db="fixture", soak_s=float(os.environ.get("GOS_REHEARSAL_SOAK_S", 20))),
+        day_one.Options(
+            db="fixture",
+            soak_s=float(os.environ.get("GOS_REHEARSAL_SOAK_S", "20")),
+            only=ONLY,
+        ),
     )
     results = r.run()
     text = day_one.main_report(results, tmp_path / "report.md", "Fake day one (smoke)")
@@ -58,5 +66,5 @@ def test_the_fake_day_one_smoke_on_made_up_data(tmp_path: Path) -> None:
         "suite_supervisor_crash",
     }
     not_run = {k for k, v in results.items() if v.status == cl.NOT_RUN}
-    assert not_run <= harness_only, not_run
+    assert ONLY or not_run <= harness_only, not_run
     assert sys.platform == "win32" or results["crash_core"].status == cl.GREEN

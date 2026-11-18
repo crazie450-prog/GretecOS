@@ -56,7 +56,10 @@ CHECKLIST: tuple[Line, ...] = (
         "pack-update playbook passed its dry run",
         (
             pc("all 4 addons on 2.9-compatible releases", "addon_watcher.md"),
-            pc("Play built (WO-0.7); its fingerprint matches the export", "phase1_pc_checks.md"),
+            pc(
+                "Play built (WO-0.7); its fingerprint matches the export",
+                "phase1_pc_checks.md",
+            ),
             here(
                 "pack-update playbook: a simulated 2.9.x walked end to end (L10)",
                 "suite_pack_update",
@@ -76,14 +79,22 @@ CHECKLIST: tuple[Line, ...] = (
                 "design_pin_rank",
                 runbook="designer.md",
             ),
-            here("a planner export is written", "design_export", runbook="plan_outputs.md"),
+            here(
+                "a planner export is written",
+                "design_export",
+                runbook="plan_outputs.md",
+            ),
             pc("the export opens in gtnhplanner.com", "plan_outputs.md"),
             here(
                 "plan -> vault -> ledger (accepted from the dashboard API)",
                 "design_accept",
                 runbook="designer.md",
             ),
-            here("batch mode (a quantity within a time)", "design_batch", runbook="designer.md"),
+            here(
+                "batch mode (a quantity within a time)",
+                "design_batch",
+                runbook="designer.md",
+            ),
             here(
                 "My base fills from GregtecLink's listener (the boundary's input)",
                 "my_base",
@@ -114,21 +125,45 @@ CHECKLIST: tuple[Line, ...] = (
         "personas",
         (
             pc("wake word: <= 1 false wake/h, >= 38/40 hits", "wake.md"),
-            here("the wake path: trigger -> question -> spoken answer", "voice_wake", runbook="wake.md"),
-            here("the talk key backup: hold -> question -> spoken answer", "voice_talk", runbook="voice_client.md"),
+            here(
+                "the wake path: trigger -> question -> spoken answer",
+                "voice_wake",
+                runbook="wake.md",
+            ),
+            here(
+                "the talk key backup: hold -> question -> spoken answer",
+                "voice_talk",
+                runbook="voice_client.md",
+            ),
             pc("entity accuracy >= 95% (50 utterances)", "voice_benchmarks.md"),
             pc("latency per PM14", "voice_benchmarks.md"),
             pc("pronunciation and the speech filter, heard", "tts.md"),
-            here("personas switch (gt-veteran default)", "persona_switch", runbook="voice_client.md"),
+            here(
+                "personas switch (gt-veteran default)",
+                "persona_switch",
+                runbook="voice_client.md",
+            ),
         ),
     ),
     Line(
         "C5",
         "Q&A: recipe, quest, wiki, screen, hover and ambiguous-item evals; no-AI mode (L9)",
         (
-            here("a recipe question on the fast lane, cited", "ask_recipe", runbook="fast_lane.md"),
-            here("a quest question on the fast lane", "ask_quest", runbook="quest_guide.md"),
-            here("a design request handed to the deep lane", "ask_deep", runbook="deep_lane.md"),
+            here(
+                "a recipe question on the fast lane, cited",
+                "ask_recipe",
+                runbook="fast_lane.md",
+            ),
+            here(
+                "a quest question on the fast lane",
+                "ask_quest",
+                runbook="quest_guide.md",
+            ),
+            here(
+                "a design request handed to the deep lane",
+                "ask_deep",
+                runbook="deep_lane.md",
+            ),
             pc("the evals pass (gos eval, paid)", "fast_lane.md"),
             here(
                 "no-AI mode: key revoked -> lookups answer, AI offline; key restored -> back (L9)",
@@ -154,15 +189,25 @@ CHECKLIST: tuple[Line, ...] = (
             ),
             pc("listener and census agree in the Lab (L3)", "machine_events.md"),
             here("the day's journal is written", "journal", runbook="event_store.md"),
-            pc("advisor and default notices sensible in lab-progress (L2)", "advisor.md"),
+            pc(
+                "advisor and default notices sensible in lab-progress (L2)",
+                "advisor.md",
+            ),
         ),
     ),
     Line(
         "C7",
         "Crops: 5 guides reviewed; one followed; Crop Manager and Breeder; the station",
         (
-            here("a crop guide's next step answered", "crop_step", runbook="crop_guide.md"),
-            pc("the 5 target guides reviewed; one followed in lab-progress", "crop_guide.md"),
+            here(
+                "a crop guide's next step answered",
+                "crop_step",
+                runbook="crop_guide.md",
+            ),
+            pc(
+                "the 5 target guides reviewed; one followed in lab-progress",
+                "crop_guide.md",
+            ),
             pc("the breeding station bred a target unattended", "breeding_station.md"),
         ),
     ),
@@ -176,8 +221,16 @@ CHECKLIST: tuple[Line, ...] = (
                 "oc_action",
                 runbook="oc_agent.md",
             ),
-            here("an unconfirmed action expires at 60 s", "oc_expiry", runbook="oc_agent.md"),
-            here("an alert reaches Discord while away", "alert_discord", runbook="alert_routing.md"),
+            here(
+                "an unconfirmed action expires at 60 s",
+                "oc_expiry",
+                runbook="oc_agent.md",
+            ),
+            here(
+                "an alert reaches Discord while away",
+                "alert_discord",
+                runbook="alert_routing.md",
+            ),
             pc("AFK alerts with the game unfocused, 1 h telemetry (L4)", "oc_agent.md"),
         ),
     ),
@@ -185,16 +238,31 @@ CHECKLIST: tuple[Line, ...] = (
         "C9",
         "Discord and phone: commands, alerts, credit and offline DMs; phone over Tailscale (L8)",
         (
-            here("Discord commands answered, others' ignored", "discord_commands", runbook="discord_bot.md"),
-            here("the phone's tailnet name serves the dashboard; others refused", "phone", runbook="phone_dashboard.md"),
-            pc("commands, alerts and DMs on his phone; Tailscale on cellular (L8)", "phone_dashboard.md"),
+            here(
+                "Discord commands answered, others' ignored",
+                "discord_commands",
+                runbook="discord_bot.md",
+            ),
+            here(
+                "the phone's tailnet name serves the dashboard; others refused",
+                "phone",
+                runbook="phone_dashboard.md",
+            ),
+            pc(
+                "commands, alerts and DMs on his phone; Tailscale on cellular (L8)",
+                "phone_dashboard.md",
+            ),
         ),
     ),
     Line(
         "C10",
         "Build: footprints; 3D guide; >= 2 themes; a Claude-designed shell pasted in the Lab",
         (
-            here("a build guide opens from its footprint", "build_guide", runbook="build_guide_lab.md"),
+            here(
+                "a build guide opens from its footprint",
+                "build_guide",
+                runbook="build_guide_lab.md",
+            ),
             pc(">= 2 themes and a shell pasted in the Lab (L6)", "shells_lab.md"),
         ),
     ),
@@ -219,18 +287,31 @@ CHECKLIST: tuple[Line, ...] = (
                 "suite_supervisor_crash",
                 runbook="ops.md",
             ),
-            here("the DB and vault backup restores and checks", "backup_restore", runbook="ops.md"),
+            here(
+                "the DB and vault backup restores and checks",
+                "backup_restore",
+                runbook="ops.md",
+            ),
             pc("an off-instance world backup restored once", "ops.md"),
             pc("Claude Code isolation re-tested", "phase1_pc_checks.md"),
             here("the cost view's caps", "costs", runbook="ops.md"),
-            here("Play's instance untouched by the whole session", "play_untouched", runbook="ops.md"),
+            here(
+                "Play's instance untouched by the whole session",
+                "play_untouched",
+                runbook="ops.md",
+            ),
         ),
     ),
     Line(
         "C12",
         "A 2-hour fake day one in the Lab with everything on",
         (
-            here("the automated rehearsal (this run)", "soak", "shutdown", runbook="fake_day_one.md"),
+            here(
+                "the automated rehearsal (this run)",
+                "soak",
+                "shutdown",
+                runbook="fake_day_one.md",
+            ),
             pc("the 2-hour Lab rehearsal", "fake_day_one.md"),
         ),
     ),
@@ -240,10 +321,22 @@ CHECKLIST: tuple[Line, ...] = (
 SCENARIOS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("L1", "projector builds and captures", ()),
     ("L2", "progress states: frontier, tier, advisor", ("ask_quest",)),
-    ("L3", "30 min survival session: event recall, listener ids, journal", ("game_events", "journal")),
-    ("L4", "OC telemetry, confirmed craft and pause, alerts to Discord", ("oc_action", "alert_discord")),
+    (
+        "L3",
+        "30 min survival session: event recall, listener ids, journal",
+        ("game_events", "journal"),
+    ),
+    (
+        "L4",
+        "OC telemetry, confirmed craft and pause, alerts to Discord",
+        ("oc_action", "alert_discord"),
+    ),
     ("L5", "voice in game: latency and false wakes", ("voice_talk", "voice_wake")),
-    ("L6", "a themed shell pasted; a machine built from the 3D guide", ("build_guide",)),
+    (
+        "L6",
+        "a themed shell pasted; a machine built from the 3D guide",
+        ("build_guide",),
+    ),
     ("L7", "performance with everything on", ()),
     ("L8", "phone over Tailscale on cellular", ("phone",)),
     ("L9", "API key revoked mid-session, then restored", ("l9_key",)),
@@ -265,7 +358,9 @@ class Result:
 def item_status(item: Item, results: Mapping[str, Result]) -> str:
     if not item.here:
         return PC
-    found = [results.get(s, Result(NOT_RUN, "no such step ran")).status for s in item.steps]
+    found = [
+        results.get(s, Result(NOT_RUN, "no such step ran")).status for s in item.steps
+    ]
     if RED in found:
         return RED
     return GREEN if all(f == GREEN for f in found) else NOT_RUN
@@ -303,7 +398,13 @@ def report(results: Mapping[str, Result], *, title: str = "Fake day one") -> str
             out.append(f"{sid} [{PC}] {text}")
             continue
         found = [results.get(s, Result(NOT_RUN)).status for s in steps]
-        status = RED if RED in found else GREEN if all(f == GREEN for f in found) else NOT_RUN
+        status = (
+            RED
+            if RED in found
+            else GREEN
+            if all(f == GREEN for f in found)
+            else NOT_RUN
+        )
         out.append(f"{sid} [{status} here; real run: {PC}] {text}")
     bad = {k: v for k, v in results.items() if v.status != GREEN}
     if bad:

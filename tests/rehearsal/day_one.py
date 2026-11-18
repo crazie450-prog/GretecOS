@@ -69,7 +69,9 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
-def wait_for[T](check_: Callable[[], T | None], timeout: float, what: str, step: float = 0.2) -> T:
+def wait_for[T](
+    check_: Callable[[], T | None], timeout: float, what: str, step: float = 0.2
+) -> T:
     deadline = time.monotonic() + timeout
     while True:
         value = check_()
@@ -105,11 +107,16 @@ class Options:
     db: str = "fixture"
     soak_s: float = 30.0
     suites: dict[str, list[str]] = field(default_factory=dict)
-    listener_events: Path | None = None  # GregtecLink's machines.jsonl from the listener harness
+    listener_events: Path | None = (
+        None  # GregtecLink's machines.jsonl from the listener harness
+    )
+    only: frozenset[str] = frozenset()  # while developing: run just these steps
 
 
 class Rehearsal:
-    def __init__(self, root: Path, build_home: Callable[[Path], None], options: Options) -> None:
+    def __init__(
+        self, root: Path, build_home: Callable[[Path], None], options: Options
+    ) -> None:
         self.root = root
         self.opt = options
         self.results: dict[str, Result] = {}
@@ -137,8 +144,13 @@ class Rehearsal:
     # --- running a step ------------------------------------------------------------------
 
     def step(self, name: str, fn: Callable[[], str | None], *, needs: str = "") -> None:
+        if self.opt.only and name not in self.opt.only:
+            self.results[name] = Result(NOT_RUN, "not in Options.only")
+            return
         if needs == "harness" and self.opt.db != "harness":
-            self.results[name] = Result(NOT_RUN, "needs a harness DB (the smoke runs on fixtures)")
+            self.results[name] = Result(
+                NOT_RUN, "needs a harness DB (the smoke runs on fixtures)"
+            )
             return
         started = time.monotonic()
         try:
@@ -146,7 +158,7 @@ class Rehearsal:
             self.results[name] = Result(GREEN, detail)
         except Exception as exc:  # noqa: BLE001 - every failure is a red step, reported
             tb = traceback.format_exception_only(type(exc), exc)[-1].strip()
-            self.results[name] = Result(RED, tb[:600])
+            self.results[name] = Result(RED, tb[:1200])
         self.log.append(
             f"{name}: {self.results[name].status} ({time.monotonic() - started:.1f} s) "
             f"{self.results[name].detail}"
@@ -163,12 +175,23 @@ class Rehearsal:
 
         self.root.mkdir(parents=True, exist_ok=True)
         self.control.mkdir(parents=True, exist_ok=True)
-        fakes = _load(REPO / "tests" / "unit" / "setup" / "fakes.py", "gos_rehearsal_setup_fakes")
+        fakes = _load(
+            REPO / "tests" / "unit" / "setup" / "fakes.py", "gos_rehearsal_setup_fakes"
+        )
         fakes.make_prism(self.prism)
         fg = _load(FAKEGAME, "gos_rehearsal_fakegame")
         self.fg = fg
         self.tree = fg.Tree(self.prism, WORLD)  # writes instances/GTNH-Lab/.minecraft
         self.tree.save_level(fg.level_dat())
+        # The session's first lines, before the watchers start (a log is tailed from its end):
+        # the login names the player, so his death lines read as deaths.
+        self.tree.log(
+            fg.stamp_line(
+                f"{fg.PLAYER}[local:E:1a2b3c4d] logged in with entity id 7 at "
+                "(100.5, 64.0, -200.5)",
+                "Server thread",
+            )
+        )
         self.build_home(self.home)
         (self.home / "config").mkdir(parents=True, exist_ok=True)
         port, sport = free_port(), free_port()
@@ -220,7 +243,10 @@ class Rehearsal:
         rfakes.write_atomic(self.control / "running", json.dumps([]))
 
     def env(self) -> tuple[tuple[str, str], ...]:
-        paths = [str(HERE), *[p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]]
+        paths = [
+            str(HERE),
+            *[p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p],
+        ]
         return (
             ("PYTHONPATH", os.pathsep.join(paths)),
             ("PYTHON_KEYRING_BACKEND", "rfakes.FileKeyring"),
@@ -255,7 +281,14 @@ class Rehearsal:
             ProcessSpec(
                 "watchers",
                 "Game watchers",
-                (python_exe(), "-m", "gregtec.watchers", "--supervised", "--config", conf),
+                (
+                    python_exe(),
+                    "-m",
+                    "gregtec.watchers",
+                    "--supervised",
+                    "--config",
+                    conf,
+                ),
                 env=env,
                 with_play=True,
                 stay_stopped=((2, "can't watch this instance"),),
@@ -278,9 +311,22 @@ class Rehearsal:
         assert data is not None
         return str(data["token"])
 
-    def api(self, method: str, path: str, body: dict[str, Any] | None = None, *, token: str | None = None, timeout: float = 60.0) -> dict[str, Any]:
+    def api(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        token: str | None = None,
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
         return control.call(
-            self.cfg.core_port, method, path, token=token or self.admin(), body=body, timeout=timeout
+            self.cfg.core_port,
+            method,
+            path,
+            token=token or self.admin(),
+            body=body,
+            timeout=timeout,
         )
 
     def ask(self, text: str, token: str | None = None) -> dict[str, Any]:
@@ -307,7 +353,9 @@ class Rehearsal:
         self.sup = Supervisor(
             cfg,
             self.specs(),
-            clients=lambda c: [str(r) for r in rfakes.read_json(self.control / "running", [])],
+            clients=lambda c: [
+                str(r) for r in rfakes.read_json(self.control / "running", [])
+            ],
         )
         self.sup.bind()
         self._sup_thread = threading.Thread(target=self.sup.serve, daemon=True)
@@ -343,11 +391,15 @@ class Rehearsal:
             self.oc_seq += 1
             doc["seq"] = self.oc_seq
             low = self.oc_low
-        if low:  # every store at 5 %: power_low (plan 7.5)
-            for p in doc.get("power", []):
-                if p.get("eu_max"):
-                    p["eu"] = p["eu_max"] // 20
-                p.pop("sensor", None)
+        # Every store at 80 % (the fixture's supercapacitor reads 12 %), or at 5 % for the alert
+        # step: power_low (plan 7.5). The stores' sensor lines would override eu, so they go.
+        for p in doc.get("power", []):
+            if p.get("eu_max"):
+                p["eu"] = p["eu_max"] // 20 if low else p["eu_max"] * 4 // 5
+            if p.get("eu_max_str"):  # an LSC: past 2^53, so strings (the OC contract)
+                big = int(p["eu_max_str"])
+                p["eu_str"] = str(big // 20 if low else big * 4 // 5)
+            p.pop("sensor", None)
         return doc
 
     def post_telemetry(self) -> dict[str, Any]:
@@ -383,7 +435,9 @@ class Rehearsal:
             self.start()
             self.session()
         except Exception as exc:  # noqa: BLE001 - setup failed: every step is red
-            self.results.setdefault("processes_up", Result(RED, f"setup: {exc!r}"[:600]))
+            self.results.setdefault(
+                "processes_up", Result(RED, f"setup: {exc!r}"[:600])
+            )
         finally:
             self.step("shutdown", self.shutdown)
             self.step("play_untouched", self.play_untouched)
@@ -427,23 +481,47 @@ class Rehearsal:
     # --- steps -------------------------------------------------------------------------------
 
     def processes_up(self) -> str:
-        wait_for(lambda: self.running("core") and self.running("discord"), 60, "core and bot running")
+        wait_for(
+            lambda: self.running("core") and self.running("discord"),
+            60,
+            "core and bot running",
+        )
         st = self.status()
-        check(st["watchers"]["state"] == "stopped", "the watchers ran before Lab launched")
+        check(
+            st["watchers"]["state"] == "stopped", "the watchers ran before Lab launched"
+        )
         check(st["voice"]["state"] == "stopped", "voice ran before Lab launched")
-        wait_for(lambda: any(r.get("started") for r in self.discord_box.results()), 30, "the bot's start")
-        return "core and Discord bot running; watchers and voice wait for Play/Lab (D259)"
+        wait_for(
+            lambda: any(r.get("started") for r in self.discord_box.results()),
+            30,
+            "the bot's start",
+        )
+        return (
+            "core and Discord bot running; watchers and voice wait for Play/Lab (D259)"
+        )
 
     def play_linked(self) -> str:
         assert self.sup is not None
         rfakes.write_atomic(self.control / "running", json.dumps(["lab"]))
         out = self.sup.play_event("launch", "lab")
         check(out.get("playing") == "lab", f"launch refused: {out}")
-        wait_for(lambda: self.running("watchers") and self.running("voice"), 60, "watchers and voice")
-        wait_for(lambda: any(r.get("started") for r in self.voice_box.results()), 30, "voice start")
         wait_for(
-            lambda: (self.api("GET", "/api/game/events").get("watchers") or {}).get("instance")
-            or self.api("GET", "/api/game/events").get("watchers"),
+            lambda: self.running("watchers") and self.running("voice"),
+            60,
+            "watchers and voice",
+        )
+        wait_for(
+            lambda: any(r.get("started") for r in self.voice_box.results()),
+            30,
+            "voice start",
+        )
+        wait_for(
+            lambda: (
+                (self.api("GET", "/api/game/events").get("watchers") or {}).get(
+                    "instance"
+                )
+                or self.api("GET", "/api/game/events").get("watchers")
+            ),
             30,
             "the watchers' first heartbeat",
         )
@@ -470,14 +548,22 @@ class Rehearsal:
     def ask_recipe(self) -> str:
         name = self.item_name()
         r = self.ask(f"how do I make {name}")
-        check(r.get("lane") in ("fast", "instant"), f"lane {r.get('lane')}: {r.get('text')}")
+        check(
+            r.get("lane") in ("fast", "instant"),
+            f"lane {r.get('lane')}: {r.get('text')}",
+        )
         check(r.get("refs"), f"no citations: {r}")
-        check(any(str(x).startswith("r:") for x in r["refs"]), f"no r: ref in {r['refs']}")
+        check(
+            any(str(x).startswith("r:") for x in r["refs"]), f"no r: ref in {r['refs']}"
+        )
         return f"{name}: lane {r['lane']}, {len(r['refs'])} refs"
 
     def ask_quest(self) -> str:
         r = self.ask("what quests can I do next")
-        check(r.get("lane") in ("fast", "instant"), f"lane {r.get('lane')}: {r.get('text')}")
+        check(
+            r.get("lane") in ("fast", "instant"),
+            f"lane {r.get('lane')}: {r.get('text')}",
+        )
         check(r.get("text"), "no answer")
         return f"lane {r['lane']}, intent {r.get('intent')}"
 
@@ -498,13 +584,18 @@ class Rehearsal:
         check(not done.get("problems"), f"accept problems: {done.get('problems')}")
         check(done.get("line"), f"no line note: {done}")
         line = self.home / "vault" / str(done["line"])
-        check(line.is_file() and "st: accepted" in line.read_text("utf-8"), f"{line} not accepted")
+        check(
+            line.is_file() and "st: accepted" in line.read_text("utf-8"),
+            f"{line} not accepted",
+        )
         plan_note = self.home / "vault" / "plans" / f"{pid}.md"
         check(plan_note.is_file(), "no plan note in the vault")
         ledger = self.api("GET", "/api/ledger")
         check(ledger.get("card"), "no ledger card")
         self.accepted = pid
-        return f"{pid} accepted: {done['line']}, ledger card {ledger['card'].get('type')}"
+        return (
+            f"{pid} accepted: {done['line']}, ledger card {ledger['card'].get('type')}"
+        )
 
     def design_pin_rank(self) -> str:
         out = self.designed({"target": STEEL, "rate": "1/s", "tier": "HV"})
@@ -523,9 +614,12 @@ class Rehearsal:
                     if not node.get("item"):
                         continue
                     alts = self.api(
-                        "GET", f"/api/plans/{route['id']}/alternatives?node={_q(node['item'])}"
+                        "GET",
+                        f"/api/plans/{route['id']}/alternatives?node={_q(node['item'])}",
                     )
-                    free = [a for a in alts.get("alternatives", []) if not a.get("used")]
+                    free = [
+                        a for a in alts.get("alternatives", []) if not a.get("used")
+                    ]
                     if not free:
                         continue
                     pinned = self.api(
@@ -535,14 +629,21 @@ class Rehearsal:
                         timeout=300,
                     )
                     want = {"node": node["item"], "recipe": free[0]["recipe"]}
-                    re = self.api("POST", f"/api/plans/{pinned['ids'][0]}/resolve", timeout=300)
+                    re = self.api(
+                        "POST", f"/api/plans/{pinned['ids'][0]}/resolve", timeout=300
+                    )
                     plan = self.api("GET", f"/api/plans/{re['ids'][0]}/designer")
-                    check(want in (plan.get("pins") or []), f"pin lost on re-solve: {plan.get('pins')}")
+                    pins = [
+                        p for r in plan.get("routes", []) for p in r.get("pins") or []
+                    ]
+                    check(want in pins, f"pin lost on re-solve: {pins}")
                     return f"ranking stable over 2 runs; pin {free[0]['recipe']} kept"
         raise StepFailed("no node with another recipe to pin")
 
     def design_batch(self) -> str:
-        out = self.designed({"target": STEEL, "batch": "640", "within": "1h", "tier": "MV"})
+        out = self.designed(
+            {"target": STEEL, "batch": "640", "within": "1h", "tier": "MV"}
+        )
         return f"{len(out['ids'])} routes for 640 in 1 h"
 
     def design_export(self) -> str:
@@ -553,14 +654,21 @@ class Rehearsal:
         return f"gtnhplanner export of {pid}: {len(json.dumps(out))} bytes"
 
     def power_design(self) -> str:
-        out = self.api("POST", "/api/power/design", {"mode": "best", "tier": "HV"}, timeout=300)
+        out = self.api(
+            "POST", "/api/power/design", {"mode": "best", "tier": "HV"}, timeout=300
+        )
         check(out.get("ids"), f"no power options: {str(out)[:300]}")
         pid = out["ids"][0]
         done = self.api("POST", f"/api/power/{pid}/accept", timeout=120)
         check(not done.get("problems"), f"accept problems: {done.get('problems')}")
         check(done.get("ledger") is not None, "no ledger after accept")
         view = done.get("view") or {}
-        check("storage" in json.dumps(view).casefold(), "no storage sizing in the view")
+        # WO-4.5's storage and distribution checks on the ledger (buffers need a peak window)
+        led = self.api("GET", "/api/power?window=600")
+        dist = json.dumps(led.get("ledger"))
+        check('"buffers"' in dist, f"no storage checks: {dist[:300]}")
+        check("no storage data" not in dist, f"no storage data: {dist[:300]}")
+        check(view, "no view")
         return f"{pid} accepted into the ledger"
 
     def said_after(self, t0: float, timeout: float = 60) -> str:
@@ -574,7 +682,9 @@ class Rehearsal:
         t0 = time.time()
         self.voice_box.send({"op": "talk", "text": f"how do I make {self.item_name()}"})
         said = self.said_after(t0)
-        pushes = {r.get("push") for r in self.voice_box.results() if r.get("t", 0) >= t0}
+        pushes = {
+            r.get("push") for r in self.voice_box.results() if r.get("t", 0) >= t0
+        }
         return f"said {said[:80]!r}; pushes {sorted(p for p in pushes if p)}"
 
     def voice_wake(self) -> str:
@@ -585,17 +695,33 @@ class Rehearsal:
 
     def persona_switch(self) -> str:
         before = self.api("GET", "/api/persona")
-        check("gt-veteran" in json.dumps(before), f"gt-veteran isn't the default: {before}")
+        check(
+            "gt-veteran" in json.dumps(before),
+            f"gt-veteran isn't the default: {before}",
+        )
         self.api("POST", "/api/persona", {"id": "ship-ai"})
         after = self.api("GET", "/api/persona")
-        check("ship-ai" in json.dumps(after.get("current", after)), f"didn't switch: {after}")
+        check(
+            "ship-ai" in json.dumps(after.get("current", after)),
+            f"didn't switch: {after}",
+        )
         self.api("POST", "/api/persona", {"id": "gt-veteran"})
         return "gt-veteran -> ship-ai -> gt-veteran"
 
     def game_events(self) -> str:
         stamp = time.strftime("%H:%M:%S")
-        self.tree.log(f"[{stamp}] [Client thread/INFO]: [CHAT] <Clayton> hello from the rehearsal\n")
-        self.tree.log(f"[{stamp}] [Client thread/INFO]: [CHAT] Clayton was slain by Zombie\n")
+        # the login names the player, so his death line reads as a death (logparse)
+        self.tree.log(
+            f"[{stamp}] [Server thread/INFO]: Clayton[local:E:1a2b3c4d] logged in with "
+            "entity id 7 at (100.5, 64.0, -200.5)\n"
+        )
+        time.sleep(1.5)  # one log poll, so the name is known before the death line
+        self.tree.log(
+            f"[{stamp}] [Client thread/INFO]: [CHAT] <Clayton> hello from the rehearsal\n"
+        )
+        self.tree.log(
+            f"[{stamp}] [Client thread/INFO]: [CHAT] Clayton was slain by Zombie\n"
+        )
         machines = self.tree.game / "gregteclink" / "events" / "machines.jsonl"
         machines.parent.mkdir(parents=True, exist_ok=True)
         src = self.opt.listener_events
@@ -606,9 +732,18 @@ class Rehearsal:
             lines = [
                 json.dumps(
                     {
-                        "v": 1, "kind": "machine_built", "boot": 1700000000000, "seq": i,
-                        "ts_ms": 1700000000500 + i, "dim": 0, "x": 10 + i, "y": 64, "z": -5,
-                        "mte_id": 1000, "registry": "gregtech:gt.blockmachines", "meta": 1000,
+                        "v": 1,
+                        "kind": "machine_built",
+                        "boot": 1700000000000,
+                        "seq": i,
+                        "ts_ms": 1700000000500 + i,
+                        "dim": 0,
+                        "x": 10 + i,
+                        "y": 64,
+                        "z": -5,
+                        "mte_id": 1000,
+                        "registry": "gregtech:gt.blockmachines",
+                        "meta": 1000,
                     }
                 )
                 + "\n"
@@ -622,17 +757,29 @@ class Rehearsal:
         def seen() -> dict[str, Any] | None:
             events = self.api("GET", "/api/game/events?limit=500")["events"]
             kinds = [e.get("kind") for e in events]
-            ok = "chat" in kinds and "death" in kinds and kinds.count("machine_built") >= min(built, 1)
+            ok = (
+                "chat" in kinds
+                and "death" in kinds
+                and kinds.count("machine_built") >= min(built, 1)
+            )
             return {"kinds": kinds} if ok else None
 
         got = wait_for(seen, 60, "chat, death and machine events at the core")
         # the pause and the resume (D258): the dashboard's game state follows within 5 s
         self.tree.log(f"[{stamp}] [Server thread/INFO]: Saving and pausing game...\n")
-        wait_for(lambda: (self.api("GET", "/api/state").get("game") or {}).get("paused"), 15, "paused")
-        self.tree.log(f"[{stamp}] [Server thread/INFO]: Clayton joined the game\n")
-        self.tree.log(f"[{stamp}] [Server thread/INFO]: Saving chunks for level 'lab-world'/Overworld\n")
+        wait_for(
+            lambda: (self.api("GET", "/api/state").get("game") or {}).get("paused"),
+            15,
+            "paused",
+        )
+        time.sleep(1.1)  # the resume's line must be stamped after the pause's
+        later = time.strftime("%H:%M:%S")
+        self.tree.log(f"[{later}] [Server thread/INFO]: <Clayton> back from the menu\n")
         resumed = wait_for(
-            lambda: not (self.api("GET", "/api/state").get("game") or {}).get("paused") or None,
+            lambda: (
+                not (self.api("GET", "/api/state").get("game") or {}).get("paused")
+                or None
+            ),
             30,
             "resumed",
             step=0.5,
@@ -640,9 +787,27 @@ class Rehearsal:
         return f"{len(got['kinds'])} events ({origin}); paused and resumed: {resumed}"
 
     def my_base(self) -> str:
-        base = self.api("GET", "/api/base")
-        check(json.dumps(base).count("mte:") or base.get("machines"), f"My base empty: {str(base)[:300]}")
-        return "My base lists the listener's machines"
+        """Only Play's watchers feed My base (D261): the Lab's listener events just replayed must
+        not be counted; a machine Clayton adds by hand is, and the designer reads it."""
+        before = self.api("GET", "/api/base")
+        check(
+            '"event"' not in json.dumps(before.get("machines", [])),
+            f"Lab's events were counted as his base: {str(before)[:300]}",
+        )
+        conn = access.connect(access.db_path(self.home), readonly=True)
+        try:
+            row = conn.execute(
+                "SELECT m.mte_id FROM machine m JOIN machine_map mm ON mm.machine_id = m.id "
+                "ORDER BY m.mte_id LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        check(row is not None, "no machine in the DB")
+        mte = int(row[0])
+        self.api("POST", "/api/base/machines", {"mte_id": mte, "count": 2})
+        after = self.api("GET", "/api/base")
+        check(f'"mte_id": {mte}' in json.dumps(after), f"mte:{mte} not in My base")
+        return f"Lab events not counted (D261); mte:{mte} x2 added by hand"
 
     def actions(self) -> dict[str, Any]:
         return self.api("GET", "/api/actions")
@@ -651,29 +816,49 @@ class Rehearsal:
         wait_for(lambda: self.replies, 30, "the first OC reply")
         check(all(r.get("ok") for r in self.replies), f"OC refused: {self.replies[-1]}")
         self.ask("automate the steel line: craft 64 steel ingots")
-        first = wait_for(lambda: self.actions().get("pending"), 30, "the craft proposal")
-        check("Say confirm" in str(first.get("readback")), f"no read-back: {first}")
+        first = wait_for(
+            lambda: self.actions().get("pending"), 30, "the craft proposal"
+        )
+        check(
+            str(first.get("readback", "")).startswith("Craft 64 "),
+            f"no read-back: {first}",
+        )
+        dlog = (self.control / "deep.jsonl").read_text("utf-8")
+        check(
+            "Say confirm." in dlog, f"the tool's read-back lacks 'Say confirm.': {dlog}"
+        )
         # one pending: a newer proposal replaces it
         self.ask("set up a chat line: say hello in the base")
         second = wait_for(
-            lambda: (p := self.actions().get("pending")) and p["id"] != first["id"] and p,
+            lambda: (
+                (p := self.actions().get("pending")) and p["id"] != first["id"] and p
+            ),
             30,
             "the second proposal",
         )
         old = self.api("GET", f"/api/actions/{first['id']}")
-        check(old.get("state") == "cancelled", f"the first wasn't cancelled: {old.get('state')}")
+        check(
+            old.get("state") == "cancelled",
+            f"the first wasn't cancelled: {old.get('state')}",
+        )
         # confirm by voice (D59) after the settle time
         time.sleep(3.5)
         t0 = time.time()
         self.voice_box.send({"op": "talk", "text": "confirm"})
         self.said_after(t0)
         confirmed = wait_for(
-            lambda: (a := self.api("GET", f"/api/actions/{second['id']}")).get("state")
-            in ("confirmed", "sent", "done") and a,
+            lambda: (
+                (a := self.api("GET", f"/api/actions/{second['id']}")).get("state")
+                in ("confirmed", "sent", "done")
+                and a
+            ),
             30,
             "the confirm",
         )
-        check(confirmed.get("confirmed_via") == "voice", f"via {confirmed.get('confirmed_via')}")
+        check(
+            confirmed.get("confirmed_via") == "voice",
+            f"via {confirmed.get('confirmed_via')}",
+        )
         n = len(self.replies)
 
         def sent() -> list[Any] | None:
@@ -687,7 +872,9 @@ class Rehearsal:
         check(len(later) == 1, f"sent more than once: {later}")
         # one more, never confirmed: it must expire at 60 s (checked after the soak)
         self.ask("set up the base for a chat line: say goodbye")
-        self.expiring = wait_for(lambda: self.actions().get("pending"), 30, "a third proposal")
+        self.expiring = wait_for(
+            lambda: self.actions().get("pending"), 30, "a third proposal"
+        )
         self.expiring_at = time.monotonic()
         return f"read back {second.get('readback')!r}; confirmed by voice; sent once"
 
@@ -698,8 +885,13 @@ class Rehearsal:
         if wait > 0:
             time.sleep(wait)
         a = wait_for(
-            lambda: (x := self.api("GET", f"/api/actions/{self.expiring['id']}")).get("state")
-            == "expired" and x,  # type: ignore[index]
+            lambda: (
+                (x := self.api("GET", f"/api/actions/{self.expiring['id']}")).get(
+                    "state"
+                )
+                == "expired"
+                and x
+            ),  # type: ignore[index]
             15,
             "expired",
         )
@@ -712,25 +904,58 @@ class Rehearsal:
             self.oc_low = True
 
         def dm() -> dict[str, Any] | None:
-            dms = [r for r in self.discord_box.results() if r.get("dm") and r["t"] >= t0]
+            dms = [
+                r
+                for r in self.discord_box.results()
+                if r.get("dm")
+                and r["t"] >= t0
+                and "power" in r.get("text", "").casefold()
+            ]
             return dms[0] if dms else None
 
         try:
             got = wait_for(dm, 90, "an alert DM")
+        except StepFailed as exc:
+            live = self.api("GET", "/api/base/live")
+            alerts = [
+                (b.get("alerts"), b.get("held")) for b in live.get("bindings", [])
+            ]
+            routed = self.api("GET", "/api/alerts/routed")
+            raise StepFailed(
+                f"{exc}; alerts: {json.dumps(alerts)[:400]}; routed: {json.dumps(routed)[:600]}"
+            ) from None
         finally:
             with self.oc_lock:
                 self.oc_low = False
             rfakes.write_atomic(self.control / "idle_s", json.dumps(0))
         return f"DM: {got['text'][:100]!r}"
 
-    def discord(self, name: str, options: dict[str, Any], user: int = CLAYTON, timeout: float = 60) -> list[dict[str, Any]]:
+    def discord(
+        self,
+        name: str,
+        options: dict[str, Any],
+        user: int = CLAYTON,
+        timeout: float = 60,
+    ) -> list[dict[str, Any]]:
         ref = f"{name}-{time.time_ns()}"
-        self.discord_box.send({"op": "command", "name": name, "options": options, "user": user, "ref": ref})
+        self.discord_box.send(
+            {
+                "op": "command",
+                "name": name,
+                "options": options,
+                "user": user,
+                "ref": ref,
+            }
+        )
         if user != CLAYTON:
             time.sleep(3)
             return [r for r in self.discord_box.results() if r.get("ref") == ref]
         return wait_for(
-            lambda: [r for r in self.discord_box.results() if r.get("ref") == ref and r.get("text")],
+            lambda: [
+                r
+                for r in self.discord_box.results()
+                if r.get("ref") == ref and r.get("text")
+            ],
             timeout,
             f"/{name}'s answer",
         )
@@ -747,7 +972,9 @@ class Rehearsal:
         import http.client
 
         def get(host: str) -> tuple[int, str]:
-            conn = http.client.HTTPConnection("127.0.0.1", self.cfg.core_port, timeout=10)
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.cfg.core_port, timeout=10
+            )
             try:
                 conn.request("GET", "/", headers={"Host": host})
                 r = conn.getresponse()
@@ -808,6 +1035,8 @@ class Rehearsal:
 
     def start_suites(self) -> None:
         for name, args in self.opt.suites.items():
+            if self.opt.only and name not in self.opt.only:
+                continue
             out = open(self.root / f"{name}.log", "wb")  # noqa: SIM115 - closed in finish_suites
             env = dict(os.environ)
             env.pop("PYTEST_XDIST_WORKER", None)
@@ -821,9 +1050,15 @@ class Rehearsal:
 
     def finish_suites(self) -> None:
         for name, proc in self.suite_procs.items():
+
             def run(p: subprocess.Popen[bytes] = proc, n: str = name) -> str:
                 code = p.wait(timeout=1800)
-                tail = (self.root / f"{n}.log").read_text("utf-8", "replace").strip().splitlines()
+                tail = (
+                    (self.root / f"{n}.log")
+                    .read_text("utf-8", "replace")
+                    .strip()
+                    .splitlines()
+                )
                 check(code == 0, f"exit {code}: {' | '.join(tail[-3:])}")
                 return tail[-1] if tail else ""
 
@@ -835,7 +1070,14 @@ class Rehearsal:
         before = {n: p.get("restarts", 0) for n, p in self.status().items()}
         result = self.root / "fakegame.json"
         game = subprocess.Popen(
-            [sys.executable, str(FAKEGAME), str(self.prism), str(self.opt.soak_s), str(result), "0.5"],
+            [
+                sys.executable,
+                str(FAKEGAME),
+                str(self.prism),
+                str(self.opt.soak_s),
+                str(result),
+                "0.5",
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
@@ -852,8 +1094,12 @@ class Rehearsal:
         st = self.status()
         for name in ("core", "watchers", "voice", "discord"):
             check(st[name]["state"] == "running", f"{name}: {st[name]['state']}")
-            check(st[name].get("restarts", 0) == before.get(name, 0), f"{name} restarted")
-        problems = (self.api("GET", "/api/game/events").get("watchers") or {}).get("problems")
+            check(
+                st[name].get("restarts", 0) == before.get(name, 0), f"{name} restarted"
+            )
+        problems = (self.api("GET", "/api/game/events").get("watchers") or {}).get(
+            "problems"
+        )
         check(not problems, f"watcher problems: {problems}")
         return f"{self.opt.soak_s:.0f} s, {res.get('writes', '?')} game writes, {asked} questions"
 
@@ -878,14 +1124,28 @@ class Rehearsal:
         elif name == "discord":
             self.discord("status", {})
         elif name == "watchers":
+            # Once it has polled: a line logged while the watchers are down after a log
+            # rotation isn't read (they start a new file's tail at its end; finding F1, D337).
+            time.sleep(3)
             stamp = time.strftime("%H:%M:%S")
-            self.tree.log(f"[{stamp}] [Client thread/INFO]: [CHAT] <Clayton> after the crash\n")
+            self.tree.log(
+                f"[{stamp}] [Client thread/INFO]: [CHAT] <Clayton> after the crash\n"
+            )
 
-            def chat() -> bool:
-                events = self.api("GET", "/api/game/events?limit=500&kind=chat")["events"]
-                return sum("after the crash" in json.dumps(e) for e in events) == 1
+            def chat() -> list[dict[str, Any]] | None:
+                events = self.api("GET", "/api/game/events?limit=500&kind=chat")[
+                    "events"
+                ]
+                return (
+                    events
+                    if any("after the crash" in json.dumps(e) for e in events)
+                    else None
+                )
 
-            wait_for(chat, 60, "the chat line once after the restart")
+            events = wait_for(chat, 60, "the chat line after the restart")
+            for text in ("after the crash", "hello from the rehearsal"):
+                n = sum(text in json.dumps(e) for e in events)
+                check(n <= 1, f"{text!r} {n} times in the feed")
         return f"pid {before['pid']} -> {after['pid']}"
 
     def journal(self) -> str:
@@ -901,11 +1161,18 @@ class Rehearsal:
 
     def backup_restore(self) -> str:
         db = access.db_path(self.home)
-        res = curator.backup(db, self.home / "data" / "backups", dt.date.today(), vault=self.home / "vault")
+        res = curator.backup(
+            db,
+            self.home / "data" / "backups",
+            dt.date.today(),
+            vault=self.home / "vault",
+        )
         check(res.status == "ok", f"backup: {res}")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = cli.main(["backup", "restore", "--verify", "--config", str(self.config_path)])
+            code = cli.main(
+                ["backup", "restore", "--verify", "--config", str(self.config_path)]
+            )
         check(code == 0, f"restore --verify: {out.getvalue()[-400:]}")
         return "backup made during play, restored and checked"
 
@@ -918,7 +1185,10 @@ class Rehearsal:
         return "every process stopped"
 
     def play_untouched(self) -> str:
-        check(tree_hash(self.prism / "instances" / "GTNH-Play") == self.play_hash, "Play changed")
+        check(
+            tree_hash(self.prism / "instances" / "GTNH-Play") == self.play_hash,
+            "Play changed",
+        )
         return "the fake Play instance is byte-identical"
 
 
@@ -954,7 +1224,9 @@ def fixture_home(home: Path) -> None:
     vault_deploy.deploy(home / "vault", REPO / "vault-template")
 
 
-def harness_home(game: Path, built_home: Callable[[Path, Path], Path]) -> Callable[[Path], None]:
+def harness_home(
+    game: Path, built_home: Callable[[Path, Path], Path]
+) -> Callable[[Path], None]:
     """The full run's GOS_HOME: a real harness export (collect + db build), WO-1.8's structure
     fixture for the footprints, and the vault from the template."""
 
@@ -988,5 +1260,3 @@ def main_report(results: dict[str, Result], path: Path | None, title: str) -> st
             encoding="utf-8",
         )
     return text
-
-

@@ -50,7 +50,9 @@ def shown(msg: Message) -> dict[str, Any]:
 class Inter:
     """One interaction through the fake gateway."""
 
-    def __init__(self, box: rfakes.Mailbox, user_id: int, kind: str, ref: object) -> None:
+    def __init__(
+        self, box: rfakes.Mailbox, user_id: int, kind: str, ref: object
+    ) -> None:
         self.box = box
         self.id = str(next(_ids))
         self.user_id = user_id
@@ -98,7 +100,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if cmd.get("op") == "command":
                     it = Inter(box, user, "command", cmd.get("ref"))
                     bot.spawn(
-                        bot.interaction(it, str(cmd.get("name")), cmd.get("options") or {})
+                        bot.interaction(
+                            it, str(cmd.get("name")), cmd.get("options") or {}
+                        )
                     )
                 elif cmd.get("op") == "button":
                     it = Inter(box, user, "component", cmd.get("ref"))
