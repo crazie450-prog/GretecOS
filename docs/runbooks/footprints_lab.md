@@ -25,7 +25,12 @@ gos footprints coverage --all    # also every catalog multi without a footprint
 ```
 
 Each needed multi is `footprint` (the extractor's), `capture` (yours) or `needs capture`.
-Legacy turbines, LCEs and boilers are marked `legacy` (they are separate controllers in 2.9).
+A controller whose class name ends in `Legacy` is marked `legacy`: 2.9 keeps 60+ old
+controllers as separate MTEs beside their new ones, mostly GT++ and bartworks machines (e.g.
+`MTEIndustrialMixerLegacy`), not only the turbines, LCEs and boilers; those three also get a
+family (`legacy turbine`, `legacy lce`, `legacy boiler`). A `legacy` line in a plan means the
+planner chose the old controller: build the one the plan names, or ask for the plan to be
+redesigned; the coverage report does not swap it.
 
 ## C. Capture an addon multi in the Lab (L1)
 
@@ -37,9 +42,13 @@ For each `needs capture` line:
    - **WorldEdit:** `//pos1`, `//pos2` around the whole structure, `//copy`, `//schem save <name>`.
    - **GuideNH region wand:** select the same box and export it.
 3. Until WO-10.4's `.schematic` reader is merged, GOS reads only its own `gos-capture` JSON
-   (format in `core/gregtec/build/capture.py`). Keep the files from step 2 in
-   `GOS_HOME\data\schematics\captures\`; once WO-10.4 lands they convert without re-capturing.
-4. Load a capture and check it:
+   (format in `core/gregtec/build/capture.py`), and no tool writes that format yet. Keep the
+   files from step 2 in `GOS_HOME\data\schematics\captures\`. They convert after WO-10.4 only
+   if they kept their tile entities: a GT machine block's world meta is not the machine, which
+   is in its tile entity's `mID`. WorldEdit's `//copy` + `//schem save` keeps them; check the
+   GuideNH export does too before relying on it, else re-capture with WorldEdit.
+4. **After WO-10.4** (blocked until then: nothing writes a `gos-capture` file today). Load a
+   capture and check it:
 
 ```powershell
 gos footprints capture C:\path\to\capture.json --dry-run   # reads and prints the size, cells, hatch cells
@@ -50,6 +59,8 @@ gos footprints coverage                                     # the multi now show
 A capture of a multi the extractor already has is refused (its footprint comes from the dump).
 
 ## D. Check base footprints against the game (L1 "cells match structure")
+
+**After WO-10.4**, like C.4: it needs a capture file GOS can read.
 
 Build a base multi in the Lab with the projector, capture it as in C, then:
 
