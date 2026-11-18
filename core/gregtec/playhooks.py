@@ -346,11 +346,13 @@ def post_exit(
     spawn: Callable[[], Started] | None = None,
     wait_s: float = LOCK_WAIT_S,
     tell: Tell | None = None,
+    spawn_load: Callable[[], Started] | None = None,
 ) -> int:
     """The export question (Play), then the watchers and voice stop (D259): plan 4.2 stops
-    them once the question is answered or has timed out."""
+    them once the question is answered or has timed out. ``spawn`` starts the export,
+    ``spawn_load`` the load alone of a recorded export that isn't loaded (D329)."""
     try:
-        return _post_exit(cfg, role, out, ask, spawn, wait_s)
+        return _post_exit(cfg, role, out, ask, spawn, wait_s, spawn_load)
     finally:
         if role in WATCHED:
             (tell or tell_supervisor)(cfg, "exit", role, out)
@@ -363,6 +365,7 @@ def _post_exit(
     ask: Ask,
     spawn: Callable[[], Started] | None,
     wait_s: float,
+    spawn_load: Callable[[], Started] | None = None,
 ) -> int:
     _clear_launch(cfg.gos_home)  # its client has run and quit
     if role != "play":
@@ -424,7 +427,8 @@ def _post_exit(
             "not exporting (No). Recipe data stays stale; you'll be asked next quit.",
         )
         return 0
-    started = (spawn or (lambda: spawn_export(cfg, None, load_only=only_load)))()
+    start = spawn_load if only_load else spawn
+    started = (start or (lambda: spawn_export(cfg, None, load_only=only_load)))()
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
         holder = locks.held(cfg.gos_home)
@@ -432,6 +436,11 @@ def _post_exit(
             _say(out, f"export started (pid {holder.pid}); its log is {started.log}.")
             return 0
         if started.proc is not None and started.proc.poll() is not None:
+            if (
+                started.proc.returncode == 0
+            ):  # a load alone can be done that soon (D329)
+                _say(out, f"it is done already; its log is {started.log}.")
+                return 0
             _say(
                 out,
                 f"the export stopped at once (exit {started.proc.returncode}); see {started.log}.",
@@ -923,5 +932,10 @@ def hook_main(args: argparse.Namespace, out: TextIO, env: Mapping[str, str]) -> 
             return answer
 
     return post_exit(
-        cfg, role, out, ask=ask, spawn=lambda: spawn_export(cfg, args.config)
+        cfg,
+        role,
+        out,
+        ask=ask,
+        spawn=lambda: spawn_export(cfg, args.config),
+        spawn_load=lambda: spawn_export(cfg, args.config, load_only=True),
     )
