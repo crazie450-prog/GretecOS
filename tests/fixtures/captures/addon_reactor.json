@@ -1,0 +1,213 @@
+{
+ "format": "gos-capture",
+ "schema": 1,
+ "controller": {
+  "block": "fixtureaddon:reactor_controller",
+  "meta": 0,
+  "name": "Fixture Addon Reactor",
+  "class_name": "fixtureaddon.tile.FixtureReactor"
+ },
+ "facing": "east",
+ "trigger_stack_size": 1,
+ "channels": {
+  "tier": 2
+ },
+ "tool": "worldedit-copy",
+ "cells": [
+  {
+   "p": [
+    100,
+    64,
+    199
+   ],
+   "block": "gregtech:gt.blockmachines",
+   "meta": 70
+  },
+  {
+   "p": [
+    100,
+    64,
+    200
+   ],
+   "block": "fixtureaddon:reactor_controller",
+   "meta": 0
+  },
+  {
+   "p": [
+    100,
+    64,
+    201
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    99,
+    64,
+    199
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    99,
+    64,
+    200
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    99,
+    64,
+    201
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    98,
+    64,
+    199
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    98,
+    64,
+    200
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    98,
+    64,
+    201
+   ],
+   "block": "fixtureaddon:casing",
+   "meta": 3
+  },
+  {
+   "p": [
+    100,
+    65,
+    199
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    100,
+    65,
+    200
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    100,
+    65,
+    201
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    99,
+    65,
+    199
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    99,
+    65,
+    200
+   ],
+   "block": "minecraft:air",
+   "meta": 0
+  },
+  {
+   "p": [
+    99,
+    65,
+    201
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    98,
+    65,
+    199
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    98,
+    65,
+    200
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  },
+  {
+   "p": [
+    98,
+    65,
+    201
+   ],
+   "block": "fixtureaddon:glass",
+   "meta": 2
+  }
+ ],
+ "hatches": [
+  {
+   "p": [
+    99,
+    64,
+    201
+   ],
+   "kinds": [
+    "InputHatch",
+    "OutputHatch"
+   ]
+  },
+  {
+   "p": [
+    99,
+    65,
+    200
+   ],
+   "kinds": [
+    "Muffler"
+   ]
+  },
+  {
+   "p": [
+    99,
+    66,
+    200
+   ],
+   "kinds": [
+    "Maintenance"
+   ]
+  }
+ ]
+}
