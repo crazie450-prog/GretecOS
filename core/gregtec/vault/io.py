@@ -115,6 +115,15 @@ class VaultError(ValueError):
     """Refused or failed; the vault is as it was. The message is for the model."""
 
 
+def read_utf8(path: Path, name: str) -> str:
+    """``path``'s text; a byte that isn't UTF-8 (an ANSI editor's save) is a VaultError naming
+    ``name``, never rewritten to U+FFFD behind Clayton's back."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise VaultError(f"{name} isn't UTF-8: re-save it as UTF-8") from None
+
+
 def owner(rel: str) -> str:
     """Who writes ``rel`` (a cleaned path), per the plan 6.5 table above."""
     if rel in GENERATED_NOTES:
@@ -408,7 +417,7 @@ class VaultIO:
                 if not target.is_file():
                     maker = "inbox_propose" if owner(name) == INBOX else "note_write"
                     raise VaultError(f"no note at {name} yet: {maker} makes it")
-                old = target.read_text(encoding="utf-8").replace("\r\n", "\n")
+                old = read_utf8(target, name).replace("\r\n", "\n")
                 try:
                     schema.parse(old)
                 except ValueError as exc:
@@ -433,7 +442,7 @@ class VaultIO:
     ) -> None:
         added = "".join(line + "\n" for line in lines)
         try:
-            old = target.read_text(encoding="utf-8")
+            old = read_utf8(target, name)
         except FileNotFoundError:
             text = self._compose(name, lines, types)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -442,7 +451,7 @@ class VaultIO:
                     f.write(text.encode("utf-8"))
                 return
             except FileExistsError:
-                old = target.read_text(encoding="utf-8")
+                old = read_utf8(target, name)
         old = old.replace("\r\n", "\n")
         joined = old if old.endswith("\n") else old + "\n"
         problems = schema.check_text(name, joined + added, types)

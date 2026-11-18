@@ -21,13 +21,15 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from gregtec.agents.tools.registry import FAST, Call, Tool, ToolError
-from gregtec.agents.tools.tsv import Result
+# The handoff tool lives with the tools (the catalog imports it), re-exported here: importing
+# this module first no longer loops back into it through the catalog (QA 5-9).
+from gregtec.agents.tools.handoff import HANDOFF_SCHEMA, HANDOFF_TOOL, TASK_MAX, handoff
+
+__all__ = ["HANDOFF_SCHEMA", "HANDOFF_TOOL", "TASK_MAX", "handoff"]  # and the classes below
 
 log = logging.getLogger(__name__)
 
 KEEP = 50
-TASK_MAX = 2000
 NOT_YET = "recorded only: no deep lane runs in this process"
 
 
@@ -83,48 +85,3 @@ class HandoffRecorder:
     def recent(self) -> list[Handoff]:
         with self._lock:
             return list(self._recent)
-
-
-HANDOFF_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "task": {
-            "type": "string",
-            "description": "the task for the deep lane, in one or two sentences, with the "
-            "items and keys already resolved",
-            "minLength": 1,
-            "maxLength": TASK_MAX,
-        }
-    },
-    "required": ["task"],
-    "additionalProperties": False,
-}
-
-
-def handoff(call: Call, args: dict[str, Any], offset: int) -> Result:
-    deep = call.env.deep
-    if deep is None:
-        raise ToolError("the deep lane isn't connected here; answer what you can")
-    if not call.request:
-        # Only a lane answering one of Clayton's requests can hand off: the request it passes
-        # is the deep lane's instruction, so a call without one has nothing to hand over.
-        raise ToolError("handoff runs only for a request Clayton made")
-    item = deep.handoff(args["task"], call.request, "fast_lane")
-    return Result(
-        head=[("handoff", item.id), ("status", item.status)],
-        notes=["tell Clayton in one sentence that the deep lane has the task"],
-    )
-
-
-HANDOFF_TOOL = Tool(
-    "handoff",
-    "Hand a task to the deep lane: designing or planning a line, comparing options, advice "
-    "on what to do next, or research over several steps. Then say in one sentence that it is "
-    "handed off; don't attempt it yourself.",
-    HANDOFF_SCHEMA,
-    handoff,
-    read_only=False,
-    lanes=frozenset({FAST}),
-    needs_db=False,
-    gate="the deep lane's own tool gate, path guard and cost cap (D154, D156)",
-)

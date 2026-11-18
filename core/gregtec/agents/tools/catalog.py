@@ -6,7 +6,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from gregtec.agents.deep_lane import HANDOFF_TOOL, DeepLane
 from gregtec.agents.tools import (
     advisor,
     base,
@@ -29,6 +28,7 @@ from gregtec.agents.tools import (
     wiki,
 )
 from gregtec.agents.tools.glossary import Glossary
+from gregtec.agents.tools.handoff import HANDOFF_TOOL
 from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
 from gregtec.agents.tools.tsv import PAGE
 from gregtec.db import access
@@ -37,6 +37,7 @@ from gregtec.vault.io import VaultIO
 from gregtec.wiki.cache import WikiCache
 
 if TYPE_CHECKING:
+    from gregtec.agents.deep_lane import DeepLane
     from gregtec.bridge.ops import Ops
     from gregtec.planner.explain import Writer
 

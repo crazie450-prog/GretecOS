@@ -47,7 +47,7 @@ from gregtec.llm.summarise import (
 )
 from gregtec.llm.usage import UsageMeter
 from gregtec.vault import schema
-from gregtec.vault.io import VaultError, VaultIO
+from gregtec.vault.io import VaultError, VaultIO, read_utf8
 from gregtec.watchers.events import clean
 
 log = logging.getLogger(__name__)
@@ -389,7 +389,7 @@ class Scribe:
             _, target = self.vault.path(rel, write=True)
             if not target.is_file():
                 return rel
-            have = len(target.read_text(encoding="utf-8").splitlines())
+            have = len(read_utf8(target, rel).splitlines())
             if have + need <= schema.MAX_LINES:
                 return rel
         raise VaultError(f"every log of {day} is full")
@@ -402,7 +402,7 @@ class Scribe:
         tag = f"session: s{session_id} "
         return any(
             line.startswith(tag)
-            for line in target.read_text(encoding="utf-8").splitlines()
+            for line in read_utf8(target, rel).splitlines()
         )
 
     def _append(self, lines: list[str], rel: str | None = None) -> str:

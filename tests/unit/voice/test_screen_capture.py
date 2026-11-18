@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
+from gregtec.gamestate import safe_open
 from gregtec_voice import screen
 from gregtec_voice.audio import Block
 from gregtec_voice.client import (
@@ -133,7 +134,10 @@ def test_the_newest_screenshot_of_play_or_lab_is_the_frame(tmp_path: Path) -> No
     assert missing.source == SCREENSHOT
 
 
-def test_a_screenshot_that_doesnt_read_says_so(tmp_path: Path) -> None:
+def test_a_screenshot_that_doesnt_read_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(safe_open.time, "sleep", lambda s: None)  # its 3 tries, no wait
     folder = tmp_path / "screenshots"
     folder.mkdir()
     (folder / "bad.png").write_bytes(b"not a png")
@@ -141,6 +145,29 @@ def test_a_screenshot_that_doesnt_read_says_so(tmp_path: Path) -> None:
         Screenshots(
             [tmp_path], clock=lambda: (folder / "bad.png").stat().st_mtime
         ).grab()
+
+
+def test_a_screenshot_still_being_written_is_read_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA 5-9: Minecraft writes an F2 screenshot straight to its final name; a half-written PNG
+    is decoded inside read_bytes' retries (copy, then parse, retry x3), not failed at once."""
+    folder = tmp_path / "screenshots"
+    folder.mkdir()
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (200, 40, 40)).save(buf, "PNG")
+    png = buf.getvalue()
+    shot = folder / "2026-11-18_12.00.00.png"
+    shot.write_bytes(png[: len(png) // 2])
+    waits: list[float] = []
+
+    def game_finishes(s: float) -> None:  # the backoff: the game writes the rest
+        waits.append(s)
+        shot.write_bytes(png)
+
+    monkeypatch.setattr(safe_open.time, "sleep", game_finishes)
+    frame = Screenshots([tmp_path], clock=lambda: shot.stat().st_mtime).grab()
+    assert frame.width == 64 and len(waits) == 1
 
 
 # --- the window on its monitor ---------------------------------------------------------------
