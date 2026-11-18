@@ -42,9 +42,10 @@ import json
 import math
 import re
 import sqlite3
+import threading
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,7 @@ LIST_KEYS = (*RULE_KEYS, "change", "sample", "note")
 KEYS = frozenset({"name", "v", "summary", "fits", "prompt", "adapt", *LIST_KEYS})
 PALETTE_HEADER = ["role", "block", "note"]
 MAX_TEXT = 200  # characters of one value
+MAX_CHANGE = MAX_TEXT - 8  # a change line is "v<N> <change>", N up to 5 digits
 MAX_RULES = 8  # lines per rule key
 MAX_SWATCHES = 32
 MAX_CHANGES = (
@@ -88,6 +90,9 @@ NEAR_BLOCKS = 256  # blank mode looks for themes used within this distance (D315
 USES_FILE = Path("data", "build", "theme_uses.jsonl")
 _BAD_TEXT = re.compile(r"[<>\t]")
 _VERSION_NOTE = re.compile(r"(th-[a-z0-9-]+)--v([1-9][0-9]{0,4})\.md")
+_SAVE_LOCK = (
+    threading.Lock()
+)  # one save at a time in this process (two refinements at once)
 
 
 class ThemeError(ValueError):
@@ -132,14 +137,16 @@ class Theme:
 # --- the note ------------------------------------------------------------------------------
 
 
-def _text(value: object, what: str, *, empty: bool = False) -> str:
+def _text(
+    value: object, what: str, *, empty: bool = False, limit: int = MAX_TEXT
+) -> str:
     if not isinstance(value, str):
         raise ThemeError(f"{what} must be text")
     text = " ".join(value.split())
     if not text and not empty:
         raise ThemeError(f"{what} is empty")
-    if len(text) > MAX_TEXT:
-        raise ThemeError(f"{what} is over {MAX_TEXT} characters")
+    if len(text) > limit:
+        raise ThemeError(f"{what} is over {limit} characters")
     if _BAD_TEXT.search(text) or not text.isprintable():
         raise ThemeError(f"{what} has a <, > or a control character in it")
     return text
@@ -416,7 +423,41 @@ class Themes:
         refine one (a new version: ``change`` needed; fields left out keep their values, and
         the prompt stays the one it was made from).
         Every palette entry is checked against the block catalog first; any refusal and
-        nothing is written. The earlier version is kept in ``themes/versions/``."""
+        nothing is written. The earlier version is kept in ``themes/versions/``.
+        A new version is numbered above the current one and every kept one (a theme made
+        again after its note was deleted continues its old numbering), a kept version is
+        never overwritten with different text, and a save refuses when the theme changed
+        while it was being made."""
+        with _SAVE_LOCK:
+            return self._save(conn, fields, theme_id)
+
+    def _current_v(self, theme_id: str) -> int | None:
+        """The live vault's current version of ``theme_id`` as it is on disk now."""
+        path = self.vault.root / OWN / f"{theme_id}.md"
+        if not path.is_file():
+            return None
+        try:
+            return self._read(path, theme_id, "vault").v
+        except ThemeError:
+            return -1
+
+    def _kept_matches(self, theme_id: str, theme: Theme) -> bool | None:
+        """None: no kept note for ``theme``'s version; else whether it holds ``theme``."""
+        path = self.vault.root / _version_rel(theme_id, theme.v)
+        if not path.exists():
+            return None
+        try:
+            kept = self._read(path, theme_id, "vault")
+        except ThemeError:
+            return False
+        return replace(kept, source=theme.source) == theme
+
+    def _save(
+        self,
+        conn: sqlite3.Connection,
+        fields: Mapping[str, Any],
+        theme_id: str | None,
+    ) -> Saved:
         files = self._files()
         if theme_id is None:
             theme_id = slug(_text(fields.get("name"), "name"))
@@ -434,9 +475,11 @@ class Themes:
                 raise ThemeError(f"there is no theme {theme_id} to change yet")
             merged = dict(fields)
             merged["change"] = []
-            v = 1
+            v = max(self.versions(theme_id), default=0) + 1
         else:
-            change = _text(fields.get("change", ""), "change", empty=True)
+            change = _text(
+                fields.get("change", ""), "change", empty=True, limit=MAX_CHANGE
+            )
             if not change:
                 raise ThemeError(
                     f"{theme_id} exists: a refinement says what changes (change)"
@@ -450,7 +493,7 @@ class Themes:
                     if val is not None and k not in ("prompt", "change")
                 }
             )
-            v = current.v + 1
+            v = max([current.v, *self.versions(theme_id)]) + 1
             merged["change"] = [*current.change, f"v{v} {change}"]
         theme = build(merged, theme_id, v, "vault")
         checked = check(conn, theme)
@@ -465,10 +508,27 @@ class Themes:
                 )
             )
         archived = None
+        kept = None if current is None else self._kept_matches(theme_id, current)
+        if kept is False:
+            raise ThemeError(
+                f"{theme_id} not saved: {_version_rel(theme_id, current.v)} already holds a "
+                f"different version {current.v} (was v: changed by hand?); set v: in "
+                f"{OWN}/{theme_id}.md to {v - 1} or more"
+            )
+        on_disk = self._current_v(theme_id)
+        expected = (
+            current.v if current is not None and current.source == "vault" else None
+        )
+        if on_disk != expected:
+            raise ThemeError(
+                f"{theme_id} not saved: it changed while this version was being made; "
+                "nothing was written, try again"
+            )
         try:
             if current is not None:
                 archived = _version_rel(theme_id, current.v)
-                self.vault.write(archived, body(current), op=THEME)
+                if kept is None:
+                    self.vault.write(archived, body(current), op=THEME)
             path = self.vault.write(f"{OWN}/{theme_id}.md", body(theme), op=THEME)
         except VaultError as exc:
             raise ThemeError(f"{theme_id} not saved: {exc}") from None

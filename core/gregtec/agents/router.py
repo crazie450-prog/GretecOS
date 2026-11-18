@@ -185,9 +185,10 @@ DEEP_RULES = [
         r"\b(?:set up|build|automate)\b.*\b(?:line|setup|factory|plant)\b",
         r"\bpower (?:line|plant|setup|generation)\b",
         # making or refining a building theme (WO-10.6): theme_save is deep-lane only
-        r"\b(?:create|make|new|refine|change|tweak|update|edit|adjust|swap|rework|give)\b.*"
+        r"\b(?:create|make|refine|change|tweak|update|edit|adjust|swap|rework)\b.*"
         + r"\bthemes?\b",
-        r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust|instead)\b",
+        r"\bnew theme\b",
+        r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust)\b",
     )
 ]
 

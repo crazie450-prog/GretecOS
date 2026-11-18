@@ -22,7 +22,7 @@ With the core and the voice client running (runbook `voice_client.md`) and the k
 1. Hold the talk key and say: **"Make a new theme called copper works with dark concrete walls and big glass windows."** GOS says it handed that to the deep lane, then, when the task is done, something like **"Saved Copper Works as a new theme, version 1."**
 2. Say: **"Refine the copper works theme with reinforced glass windows."** Expect **"... version 2."**
 3. Say: **"Change the copper works theme to flat roofs."** Expect **"... version 3."**
-4. Say: **"Refine the copper works theme with chests as trim."** Expect a first sentence that names the chest and says it has a tile entity (shells hold plain blocks only), and no new version.
+4. Say: **"Refine the copper works theme with chests as trim."** Expect a first sentence that names the chest and says it has a tile entity (shells hold plain blocks only), and no new version unless you accept a substitute it offers (a real model may offer one, or save one with a plain block in its place; if it does, the list in step 5 shows one more version).
 5. Check the vault:
 
    ```powershell

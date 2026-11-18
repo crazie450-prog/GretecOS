@@ -344,6 +344,68 @@ def test_create_and_refine_need_their_fields(
         store.save(conn, {**BRASS, "change": "x"}, "th-nope")
 
 
+def test_a_kept_version_is_never_overwritten(
+    store: themes.Themes, conn: sqlite3.Connection, vault: VaultIO
+) -> None:
+    store.save(conn, BRASS)
+    store.save(conn, {"change": "flat roofs", "roof": ["flat roofs"]}, "th-brass-works")
+    v1 = (vault.root / "themes/versions/th-brass-works--v1.md").read_bytes()
+    # Clayton deletes the current note in Obsidian, then the theme is made again
+    (vault.root / "themes/th-brass-works.md").unlink()
+    again = store.save(conn, {**BRASS, "roof": ["domes"]})
+    assert again.theme.v == 2  # above every kept version (v1)
+    refined = store.save(
+        conn, {"change": "glass", "window": ["glass"]}, "th-brass-works"
+    )
+    assert refined.theme.v == 3
+    assert refined.archived == "themes/versions/th-brass-works--v2.md"
+    assert (vault.root / "themes/versions/th-brass-works--v1.md").read_bytes() == v1
+    assert store.versions("th-brass-works") == [1, 2]
+    assert store.get("th-brass-works", 2).roof == ("domes",)
+    # v: edited down by hand to a kept version: refused, nothing written
+    note = vault.root / "themes/th-brass-works.md"
+    note.write_text(
+        note.read_text(encoding="utf-8").replace("v: 3", "v: 1"), encoding="utf-8"
+    )
+    with pytest.raises(themes.ThemeError, match="already holds a different version 1"):
+        store.save(conn, {"change": "x", "roof": ["x"]}, "th-brass-works")
+    assert (vault.root / "themes/versions/th-brass-works--v1.md").read_bytes() == v1
+    assert store.versions("th-brass-works") == [1, 2]
+
+
+def test_a_theme_changed_during_a_save_is_refused(
+    store: themes.Themes,
+    conn: sqlite3.Connection,
+    vault: VaultIO,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store.save(conn, BRASS)
+    real_check = themes.check
+
+    def racing(c: sqlite3.Connection, theme: themes.Theme) -> themes.Check:
+        # another process (its own lock) saves v2 while this one is being checked
+        monkeypatch.setattr(themes, "check", real_check)
+        themes.Themes(vault)._save(
+            c, {"change": "other", "roof": ["other"]}, "th-brass-works"
+        )
+        return real_check(c, theme)
+
+    monkeypatch.setattr(themes, "check", racing)
+    with pytest.raises(themes.ThemeError, match="changed while this version"):
+        store.save(conn, {"change": "mine", "roof": ["mine"]}, "th-brass-works")
+    now = store.get("th-brass-works")
+    assert now.v == 2 and now.roof == ("other",)
+    assert store.versions("th-brass-works") == [1]
+
+
+def test_a_change_fits_its_line(store: themes.Themes, conn: sqlite3.Connection) -> None:
+    store.save(conn, BRASS)
+    with pytest.raises(themes.ThemeError, match=f"over {themes.MAX_CHANGE} characters"):
+        store.save(conn, {"change": "x" * (themes.MAX_CHANGE + 1)}, "th-brass-works")
+    saved = store.save(conn, {"change": "y" * themes.MAX_CHANGE}, "th-brass-works")
+    assert saved.theme.change[-1] == "v2 " + "y" * themes.MAX_CHANGE
+
+
 def test_refining_a_starter_makes_claytons_copy_and_never_touches_gos(
     store: themes.Themes, conn: sqlite3.Connection, vault: VaultIO, home: Path
 ) -> None:
@@ -443,7 +505,7 @@ def test_blank_mode_follows_the_themes_used_nearby(
         "b6",
         "b1",
     ]  # b2 is 316 blocks away
-    # smelting fits the foundry, but two builds nearby use the foundry: consistency first
+    # chemistry fits marble works, but two builds nearby use the foundry: consistency first
     brief = themes.select(found, line_type="chemistry", nearby=nearby)
     assert brief.theme is not None and brief.theme.id == "th-foundry"
     assert brief.why.startswith("used by 2 builds within 256 blocks")

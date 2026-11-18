@@ -101,6 +101,9 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
             None,
         ),
         ("what themes do I have", "fast", "general", None, None),
+        ("give me the list of themes", "fast", "general", None, None),
+        ("read me the marble works theme instead", "fast", "general", None, None),
+        ("I want a new theme for the reactor hall", "deep", "handoff", None, None),
     ],
 )
 def test_route(

@@ -85,7 +85,7 @@ THEME_SAVE_SCHEMA: dict[str, Any] = {
         },
         "change": {
             "type": "string",
-            "maxLength": theme_lib.MAX_TEXT,
+            "maxLength": theme_lib.MAX_CHANGE,
             "description": "a refinement: what changes, in a few words (needed to refine)",
         },
         "summary": {
