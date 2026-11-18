@@ -73,10 +73,16 @@ async function checkGuide(page: Page, g: Guide, size: { width: number; height: n
   // Hatch-slot markers with the kinds they take.
   expect(await scene.locator("polygon.hatch-slot").count()).toBeGreaterThan(0);
   for (const s of g.slots) await expect(page.getByTestId("guide-slots")).toContainText(s.kinds[0].replace(/([a-z])([A-Z])/g, "$1 $2"));
+  // Which way the controller faces (review M1): the arrow out of its front and the compass.
+  await expect(page.getByTestId("guide-compass")).toBeVisible();
+  await expect(page.getByTestId("guide-front-arrow")).toBeAttached();
+  const north = () => page.getByTestId("guide-compass").locator('[data-letter="N"]').getAttribute("x");
+  const northBefore = await north();
   // Turn and zoom.
   const yaw = await scene.getAttribute("data-yaw");
   await page.getByTestId("guide-turn-right").click();
   await expect(scene).not.toHaveAttribute("data-yaw", yaw ?? "");
+  expect(await north()).not.toBe(northBefore); // the compass turned with it
   await page.getByTestId("guide-zoom-in").click();
   await expect(scene).toHaveAttribute("data-zoom", "1.25");
   if (size.width >= 760) {
