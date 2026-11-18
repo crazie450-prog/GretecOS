@@ -14,7 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # ubuntu-24.04, not ubuntu-latest: the 26.04 image, which runners began to get on 2026-11-18,
+        # has no lua5.2 package (D340). Move on purpose, with the OC agent's Lua 5.2 tests in mind.
+        os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
     # A hung test must not hold a runner for hours (Windows runs take about 10 minutes).
     timeout-minutes: 30
@@ -55,7 +57,7 @@ jobs:
     # gos deploy runs it), then the end-to-end tests: Playwright's Chromium against a real core with
     # a fake fast lane, at 2560x1440 (monitor 2) and 390x844 (the phone). Screenshots are uploaded
     # as an artifact, never committed.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -98,7 +100,7 @@ jobs:
   mod:
     # WO-1.1: GregtecLink build, then the headless harness (dev server, scripted export, checks, exit),
     # then the client harness (dev client under Xvfb: autoexport world, export, NEI's dump, checks, exit).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # D340: 18-27 min on 4 xdist workers (44-60 min serially, which is why WO-10.4 had raised this to 90).
     timeout-minutes: 60
     defaults:
