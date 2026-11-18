@@ -31,7 +31,10 @@ import textwrap
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import ModuleType
 from typing import Any
+
+StrPath = str | os.PathLike[str]
 
 import pytest
 
@@ -395,7 +398,7 @@ def test_the_watchers_tails_are_old_or_new(tmp_path: Path, seed: int) -> None:
 
 
 def fsync_order(
-    monkeypatch: pytest.MonkeyPatch, module: Any, write: Callable[[], None]
+    monkeypatch: pytest.MonkeyPatch, module: ModuleType, write: Callable[[], None]
 ) -> list[str]:
     calls: list[str] = []
     real_fsync, real_replace = os.fsync, os.replace
@@ -404,7 +407,7 @@ def fsync_order(
         calls.append("fsync")
         real_fsync(fd)
 
-    def replace(src: Any, dst: Any) -> None:
+    def replace(src: StrPath, dst: StrPath) -> None:
         calls.append("replace")
         real_replace(src, dst)
 
@@ -422,7 +425,7 @@ def test_every_published_file_is_fsynced_before_its_rename(
     from gregtec.ops import backups
 
     desk = AlertDesk(None, NotifyPolicy(), state_file=tmp_path / "bot" / "alerts.json")  # type: ignore[arg-type]
-    cases: list[tuple[Any, Callable[[], None]]] = [
+    cases: list[tuple[ModuleType, Callable[[], None]]] = [
         (vault_io, lambda: vault_io.atomic_write(tmp_path / "n.md", b"x")),
         (
             watcher_files,
@@ -451,7 +454,7 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
-def wait_for(check: Callable[[], Any], timeout: float, step: float = 0.1) -> Any:
+def wait_for[T](check: Callable[[], T | None], timeout: float, step: float = 0.1) -> T:
     deadline = time.monotonic() + timeout
     while True:
         value = check()
