@@ -340,8 +340,39 @@ export interface LayoutCard {
   notes: Notes;
 }
 
-export type Card = RecipeCard | RouteComparisonCard | BomCard | FlowCard | QuestCard | OreListCard | PowerLedgerCard | ApprovalCard | AlertCard | HealthCard | ChoicesCard | TableCard | LayoutCard;
+/** One block state of a shell's palette manifest (WO-10.7): its role in the theme (or block, named directly), the registry name and meta (never a numeric id), the catalog's display name and how many cells hold it. */
+export interface ShellMaterial {
+  role: "wall" | "trim" | "pillar" | "floor" | "roof" | "window" | "light" | "accent" | "block";
+  block: string;
+  name: string | null;
+  count: number;
+}
+
+/** A decorative shell's preview (WO-10.7, plan 7.10, D316-D318): what made it (the architect's design or the procedural generator), accepted as designed or repaired, its theme, bounding size, block count, palette manifest, the preview mesh's faces and the Lab-only paste steps. A face is [d, x, y, z, a, b, c]: d the way it looks (0 east, 1 west, 2 up, 3 down, 4 south, 5 north), x y z its lowest cell in the shell, a and b its extent along the plane's axes (x faces z then y, y faces x then z, z faces x then y), c the palette entry it shows. The shell holds no tile entity and no GT machine block; ref cites the plan it houses. */
+export interface ShellCard {
+  type: "shell";
+  title: string;
+  ref: Ref | null;
+  build: string;
+  layout: string;
+  status: "accepted" | "repaired";
+  source: "architect" | "procedural";
+  theme: string | null;
+  size: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  blocks: number;
+  max_blocks: number;
+  palette: ShellMaterial[];
+  faces: number[][];
+  paste: Text[];
+  notes: Notes;
+}
+
+export type Card = RecipeCard | RouteComparisonCard | BomCard | FlowCard | QuestCard | OreListCard | PowerLedgerCard | ApprovalCard | AlertCard | HealthCard | ChoicesCard | TableCard | LayoutCard | ShellCard;
 
 export type CardType = Card["type"];
 
-export const CARD_TYPES: readonly CardType[] = ["recipe", "route_comparison", "bom", "flow", "quest", "ore_list", "power_ledger", "approval", "alert", "health", "choices", "table", "layout"] as const;
+export const CARD_TYPES: readonly CardType[] = ["recipe", "route_comparison", "bom", "flow", "quest", "ore_list", "power_ledger", "approval", "alert", "health", "choices", "table", "layout", "shell"] as const;
