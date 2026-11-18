@@ -165,5 +165,24 @@
     "span": "1-1 of 1",
     "total": 1,
     "notes": []
+  },
+  "layout": {
+    "type": "layout",
+    "title": "Floor plan · Steel line",
+    "ref": "plan:pl-0007",
+    "layout": "lo-0123456789ab",
+    "size": {"x": 14, "y": 5, "z": 13},
+    "rects": [
+      {"id": "c1", "kind": "corridor", "x": 0, "z": 5, "w": 3, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "c2", "kind": "corridor", "x": 3, "z": 5, "w": 11, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "h1", "kind": "chase", "x": 0, "z": 5, "w": 3, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "h2", "kind": "chase", "x": 3, "z": 5, "w": 11, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "e1", "kind": "entrance", "x": 0, "z": 5, "w": 1, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "m1", "kind": "machine", "x": 4, "z": 1, "w": 3, "l": 3, "label": "Electric Blast Furnace", "tier": "HV", "ref": "mte:1000", "facing": "south", "ok": true},
+      {"id": "m2", "kind": "machine", "x": 4, "z": 9, "w": 1, "l": 1, "label": "Electrolyzer", "tier": "MV", "ref": "mte:401", "facing": "north", "ok": true},
+      {"id": "k1", "kind": "keepout", "x": 3, "z": 0, "w": 5, "l": 5, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "k2", "kind": "keepout", "x": 3, "z": 8, "w": 3, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null}
+    ],
+    "notes": ["2 machines placed, 2 with the front and every hatch kind reached from the entrance; bounding volume 14 x 13 blocks, 5 high"]
   }
 }

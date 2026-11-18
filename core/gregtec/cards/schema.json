@@ -15,7 +15,8 @@
     {"$ref": "#/$defs/AlertCard"},
     {"$ref": "#/$defs/HealthCard"},
     {"$ref": "#/$defs/ChoicesCard"},
-    {"$ref": "#/$defs/TableCard"}
+    {"$ref": "#/$defs/TableCard"},
+    {"$ref": "#/$defs/LayoutCard"}
   ],
   "$defs": {
     "Ref": {
@@ -459,6 +460,49 @@
         },
         "span": {"type": ["string", "null"], "maxLength": 100},
         "total": {"type": ["integer", "null"]},
+        "notes": {"$ref": "#/$defs/Notes"}
+      }
+    },
+    "LayoutRect": {
+      "description": "One box of a line layout seen from above (WO-10.5): x and z its west and north edge, w and l its size along x and z, in blocks. A machine names its machine (ref mte:), tier, the way its front faces and whether every hatch kind and its front are reached from the entrance (ok); the rest have null there.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "x", "z", "w", "l", "label", "tier", "ref", "facing", "ok"],
+      "properties": {
+        "id": {"type": "string", "maxLength": 20},
+        "kind": {"type": "string", "enum": ["corridor", "chase", "keepout", "machine", "entrance"]},
+        "x": {"type": "integer", "minimum": 0},
+        "z": {"type": "integer", "minimum": 0},
+        "w": {"type": "integer", "minimum": 1},
+        "l": {"type": "integer", "minimum": 1},
+        "label": {"type": ["string", "null"], "maxLength": 300},
+        "tier": {"anyOf": [{"$ref": "#/$defs/Tier"}, {"type": "null"}]},
+        "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]},
+        "facing": {"type": ["string", "null"], "enum": ["north", "east", "south", "west", null]},
+        "ok": {"type": ["boolean", "null"]}
+      }
+    },
+    "LayoutCard": {
+      "description": "A line layout's top-down preview (WO-10.5, plan 7.10, D313): the bounding volume (x by z, y high), its corridors, chases, keep-outs, machines and entrance as boxes. Sizes come from the footprints, cited by the plan in ref and each machine's mte:.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "ref", "layout", "size", "rects", "notes"],
+      "properties": {
+        "type": {"const": "layout"},
+        "title": {"type": "string", "maxLength": 300},
+        "ref": {"$ref": "#/$defs/Ref"},
+        "layout": {"type": "string", "pattern": "^lo-[0-9a-f]{12}$"},
+        "size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "z"],
+          "properties": {
+            "x": {"type": "integer", "minimum": 1},
+            "y": {"type": "integer", "minimum": 1},
+            "z": {"type": "integer", "minimum": 1}
+          }
+        },
+        "rects": {"type": "array", "items": {"$ref": "#/$defs/LayoutRect"}, "maxItems": 1500},
         "notes": {"$ref": "#/$defs/Notes"}
       }
     }
