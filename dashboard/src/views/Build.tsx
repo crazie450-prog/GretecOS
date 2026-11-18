@@ -16,6 +16,7 @@ import { Card } from "../cards/Card";
 import type { Card as CardData } from "../cards/types.gen";
 import { Panel } from "../components/core";
 import { GLYPH } from "../state/states";
+import { useApp } from "../state/store";
 import { GuideView } from "./BuildGuide";
 
 const mb = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -172,6 +173,16 @@ function GuideFrame() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<string | null>(null);
   const expires = useRef<number | null>(null);
+  const renew = useRef<(() => void) | null>(null);
+  const socket = useApp((s) => s.socket);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    // The token's key lives only in the core's memory: after a restart (the socket drops and
+    // opens again) every token is refused, whatever its expiry, so ask for a new one (review L2).
+    if (socket !== "open") return;
+    if (wasOpen.current) renew.current?.();
+    wasOpen.current = true;
+  }, [socket]);
   useEffect(() => {
     let live = true;
     const load = (first: boolean) =>
@@ -187,12 +198,14 @@ function GuideFrame() {
         },
       );
     void load(true);
+    renew.current = () => void load(false);
     // The path token runs out (gregtec.build.guide.TOKEN_TTL_S): ask for a new one in time.
     const timer = window.setInterval(() => {
       if (expires.current !== null && expires.current - Date.now() / 1000 < REFRESH_BEFORE_S) void load(false);
     }, 5 * 60_000);
     return () => {
       live = false;
+      renew.current = null;
       window.clearInterval(timer);
     };
   }, []);

@@ -46,7 +46,9 @@ checklist (in its own DB). **You build by hand, in the Lab.** GOS never pastes m
 ## C. Build it (L6)
 
 1. Pick the front's facing in **Front faces** to match where the controller will look, and the coil
-   or glass tier in its picker if the multi has one.
+   or glass tier in its picker if the multi has one. The arrow in the drawing points out of the
+   controller's front, and the compass in its corner shows north however you turn it: stand in the
+   Lab facing the same way (F3 shows your facing) before you place the first block.
 2. Move the **Layer** slider to 1. The **Layer 1: materials** panel lists what that layer takes.
    Place it in the Lab, then tick **Layer 1** in the **Checklist**.
 3. Repeat for each layer. Cells outlined in the accent colour take a hatch (the **Hatch slots** panel

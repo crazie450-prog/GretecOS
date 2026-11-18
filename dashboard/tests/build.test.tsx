@@ -1,11 +1,12 @@
 // WO-10.1/WO-10.8: the Build view's frame address, the page it opens, the guide's address, and the
 // 3D build guide drawn from a fixture footprint (tests/fixtures/guide/furnace.json: what the core
 // sends for WO-1.8's made-up furnace; a pytest keeps it equal to the core's output).
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import furnaceJson from "../../tests/fixtures/guide/furnace.json";
 import { guideParams } from "../src/api/client";
 import type { BuildGuide } from "../src/api/types";
+import { store } from "../src/state/store";
 import { Build, firstPage, guideFor, guideFromHash, guideHash, guideSrc } from "../src/views/Build";
 import { GuideView, cellLabel } from "../src/views/BuildGuide";
 import { DEFAULT_VIEW, type GuideCell, compass, fallbackColour, hatchWords, project, shown, toView, zoomed } from "../src/views/guideMesh";
@@ -300,5 +301,26 @@ describe("Build", () => {
     expect(await screen.findByTestId("guide-frame-pc-only")).toBeTruthy(); // frame: null
     const choose = await screen.findByTestId("guide-choose");
     expect(within(choose).getByText("Fixture Furnace (mte:9001)")).toBeTruthy();
+  });
+
+  it("asks for a new frame token when the socket opens again after a core restart (review L2)", async () => {
+    let n = 0;
+    routes["GET /api/guide"] = () => {
+      n += 1;
+      const base = `http://guide-gos.localhost:8765/guide/1800000000-${String(n).padStart(32, "0")}/`;
+      return {
+        status: 200,
+        body: { present: true, pages: [{ path: "gos/a.html", title: "A", scenes: 1 }], files: 1, bytes: 1, frame: { base, expires: 1800000000 } },
+      };
+    };
+    act(() => store.set({ socket: "open" }));
+    render(<Build />);
+    const frame = await screen.findByTestId("guide-frame");
+    expect(frame.getAttribute("src")).toMatch(/0001\/gos\/a\.html$/);
+    act(() => store.set({ socket: "closed" }));
+    act(() => store.set({ socket: "open" }));
+    await waitFor(() => expect(screen.getByTestId("guide-frame").getAttribute("src")).toMatch(/0002\/gos\/a\.html$/));
+    expect(calls.filter((c) => c.url === "/api/guide")).toHaveLength(2);
+    act(() => store.set({ socket: "closed" }));
   });
 });
