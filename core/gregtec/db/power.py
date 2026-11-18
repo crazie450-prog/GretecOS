@@ -5,8 +5,10 @@ From a run's ``gt_power.json`` (:mod:`gregtec.ingest.power`): ``rotor_size``,
 run's recipes, after they are written: ``fuel``, one row per fuel of GT's fuel maps, decoded by
 its map's rule (:mod:`gregtec.planner.fuels`). From its ``storage`` (WO-4.5, D240): ``cable``,
 ``battery``, ``battery_buffer``, ``transformer`` and ``lsc_cell``. From its ``naquadah_reactors``
-and ``dynamos`` (WO-4.8, D326): ``reactor_boost`` and ``dynamo_hatch``. Like recipes, every table holds
-one set per export run, and pruning a run deletes its rows.
+and ``dynamos`` (WO-4.8, D326): ``reactor_boost`` and ``dynamo_hatch``. From its ``boiler_fuels``
+(D329): ``boiler_fuel``, which the solid large-boiler ``fuel`` rows take their exact furnace burn
+value from. Like recipes, every table holds one set per export run, and pruning a run deletes its
+rows.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ TABLES = (
     "generator",
     "generator_gt",
     "fuel_container",
+    "boiler_fuel",
     "fuel",
     "cable",
     "battery",
@@ -136,6 +139,13 @@ def _write_power(
         [
             (run_id, c.registry_name, c.meta, c.nbt_hash, c.fluid, c.mb)
             for c in data.containers
+        ],
+    )
+    conn.executemany(
+        "INSERT OR REPLACE INTO boiler_fuel VALUES (?,?,?,?,?,?)",
+        [
+            (run_id, f.registry_name, f.meta, f.nbt_hash, f.special, f.fuel_value)
+            for f in data.boiler_fuels
         ],
     )
     if data.storage is not None:
@@ -251,6 +261,13 @@ def _write_fuels(conn: sqlite3.Connection, run_id: int) -> int:
             (run_id,),
         )
     }
+    burn_values = {
+        (r[0], r[1], r[2]): int(r[3])
+        for r in conn.execute(
+            "SELECT registry_name, meta, nbt_hash, fuel_value FROM boiler_fuel WHERE run_id = ?",
+            (run_id,),
+        )
+    }
     out = []
     for rid, ref, map_name, duration, eut, value, fluid, reg, meta, nbt, hidden in rows:
         if value is None:
@@ -270,6 +287,7 @@ def _write_fuels(conn: sqlite3.Connection, run_id: int) -> int:
             duration=int(duration or 0),
             fluid=burns is not None,
             eut=int(eut or 0),
+            burn_value=burn_values.get((reg, meta, nbt or "")),
         )
         out.append(
             (

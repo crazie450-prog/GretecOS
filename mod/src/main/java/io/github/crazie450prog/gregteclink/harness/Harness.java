@@ -1468,6 +1468,35 @@ public final class Harness {
                     + " dynamo hatches, "
                     + lasers
                     + " of 256 A or more");
+            // D329: the large boilers' solid fuels with their exact furnace burn values. Charcoal burns 1600 like
+            // coal; the map's own special value is that burn value / 1600, rounded down.
+            int solids = 0;
+            int ratios = 0;
+            boolean charcoal = false;
+            for (JsonElement e : root.getAsJsonArray("boiler_fuels")) {
+                JsonObject f = e.getAsJsonObject();
+                if (f.has("error")) continue;
+                solids++;
+                int value = f.get("fuel_value")
+                    .getAsInt();
+                if (value / 1600 == f.get("special")
+                    .getAsInt()) ratios++;
+                JsonObject in = f.getAsJsonObject("input");
+                if ("minecraft:coal".equals(
+                    in.get("item")
+                        .getAsString())
+                    && in.get("meta")
+                        .getAsInt() == 1)
+                    charcoal = value == 1600;
+            }
+            check(
+                checks,
+                "boiler_solid_fuel_values",
+                solids >= 10 && ratios == solids && charcoal,
+                solids + " solid large-boiler fuels, "
+                    + ratios
+                    + " whose map value is the burn value / 1600, charcoal at 1600: "
+                    + charcoal);
             checkStorage(root.getAsJsonObject("storage"));
         }
 

@@ -22,7 +22,11 @@ GregtecLink's power pass writes what no recipe carries (docs/contracts/gregtecli
   Naquadah Reactor's own coolant and excited-fluid lists (fluid, litres a check, efficiency % or
   multiplier, in the reactor's order) and its liquid air a second, as the instance loaded
   GoodGenerator's config; ``dynamos``: every dynamo hatch (GT's, TecTech's multi-amp and laser
-  source hatches), its tier, voltage and amps out.
+  source hatches), its tier, voltage and amps out;
+- ``boiler_fuels`` (D329; absent from runs made before it): every solid fuel of
+  ``largeBoilerFakeFuels`` (an item input that holds no fluid) with its exact furnace burn value,
+  GT's ``GTModHandler.getFuelValue``, which the large boilers compute its burn time from (the
+  recipe keeps only that value / 1600, rounded down: ``special``).
 
 Floats were written as the double of GT's ``float``, so they read back to the bit. Read only from
 runs whose ``parts.power`` is ``ok``.
@@ -229,6 +233,17 @@ class Storage:
 
 
 @dataclass(frozen=True)
+class BoilerFuel:
+    """A solid large-boiler fuel and its furnace burn value (GT's ``getFuelValue``)."""
+
+    registry_name: str
+    meta: int
+    nbt_hash: str
+    special: int  # the fake-fuel recipe's: fuel_value / 1600, rounded down
+    fuel_value: int
+
+
+@dataclass(frozen=True)
 class Power:
     sizes: tuple[RotorSize, ...]
     materials: tuple[RotorMaterial, ...]
@@ -237,6 +252,7 @@ class Power:
     storage: Storage | None = None
     naquadah_reactors: tuple[NaquadahReactor, ...] = ()
     dynamos: tuple[Dynamo, ...] = ()
+    boiler_fuels: tuple[BoilerFuel, ...] = ()
 
 
 def status(manifest: Mapping[str, Any]) -> str:
@@ -287,6 +303,13 @@ def _fuel(d: Mapping[str, Any]) -> GtFuelValue:
 def _container(d: Mapping[str, Any]) -> Container:
     ref, _nbt = item_ref(d["input"])
     return Container(ref.name, ref.meta, ref.nbt_hash, str(d["fluid"]), _int(d, "mb"))
+
+
+def _boiler_fuel(d: Mapping[str, Any]) -> BoilerFuel:
+    ref, _nbt = item_ref(d["input"])
+    return BoilerFuel(
+        ref.name, ref.meta, ref.nbt_hash, _int(d, "special"), _int(d, "fuel_value")
+    )
 
 
 def _mode(d: Mapping[str, Any]) -> TransformerMode:
@@ -442,9 +465,21 @@ def parse(root: Mapping[str, Any]) -> Power:
             for d in root.get("dynamos", ())
             if "error" not in d
         )
+        boiler_fuels = tuple(
+            _boiler_fuel(f) for f in root.get("boiler_fuels", ()) if "error" not in f
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise FormatError(f"{FILE}: {type(exc).__name__}: {exc}") from None
-    return Power(sizes, materials, generators, containers, storage, reactors, dynamos)
+    return Power(
+        sizes,
+        materials,
+        generators,
+        containers,
+        storage,
+        reactors,
+        dynamos,
+        boiler_fuels,
+    )
 
 
 def read(run: Path) -> Power:

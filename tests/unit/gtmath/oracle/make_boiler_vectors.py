@@ -6,9 +6,13 @@ This script runs ``GtBoilerOracle.java`` with GT's jar and writes what GT comput
 ``../vectors/boiler.tsv``: per 2.9 boiler, its ``EUT_GENERATED``, whether it is superheated and
 ``runtimeBoost`` over a range of burn times; per boiler and programmed circuit (0-25), the throttled
 ``lEUt`` (``adjustEUtForConfig``), ``adjustBurnTimeForConfig`` summed over 1000 fuel loads, and
-``getWaterConsumptionForSteam`` / ``getSuperheatedSteam`` summed over 4800 ticks; and the tree
-farm's ``getTierMultiplier``, mode multipliers and tool constants. ``../test_boiler_vectors.py``
-replays every row through the ports. Run it again after a GT pin bump
+``getWaterConsumptionForSteam`` / ``getSuperheatedSteam`` summed over 4800 ticks; the tree
+farm's ``getTierMultiplier``, mode multipliers and tool constants; and for solid fuels (D329)
+``LargeBoilerFuelBackend.getBurntimeRatioTicks`` over a range of burn times and, per boiler,
+circuit and furnace burn value, the burn counters GT's own ``checkProcessing`` set for 160 items
+(or that it refused the item), with ``isAllowedFuel`` for a few items.
+``../test_boiler_vectors.py`` replays every row through the ports.
+Run it again after a GT pin bump
 (docs/runbooks/pack_update.md):
 
     uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py
@@ -44,7 +48,7 @@ def _gradle_classpath() -> str:
 
 
 def run_oracle(classpath: str, jdk: Path | None) -> str:
-    """GT's outputs, one line per boiler, throttle setting and the tree farm."""
+    """GT's outputs, one line per boiler, throttle setting, the tree farm and solid-fuel run."""
     javac = str(jdk / "bin" / "javac") if jdk else "javac"
     java = str(jdk / "bin" / "java") if jdk else "java"
     with tempfile.TemporaryDirectory(prefix="gtboiler-oracle-") as tmp:

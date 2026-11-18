@@ -50,6 +50,49 @@ def test_superheated_boilers_take_only_gts_allowed_fuels() -> None:
     assert boiler.steady(TUNGSTEN, fluid="ether", duration=6).burn_ticks == 1
 
 
+def test_burntime_ratio_stretches_long_burns() -> None:
+    # Up to 10 s (200 ticks) the ratio is 1: the ticks come back.
+    assert [boiler.burntime_ratio_ticks(t) for t in (1, 15, 20, 200)] == [
+        1,
+        15,
+        20,
+        200,
+    ]
+    # 1250 ticks = 62.5 s x (1 + ln(6.25) x 0.025) = 65.3634... -> 65.36 s -> 1307 ticks.
+    assert boiler.burntime_ratio_ticks(1250) == 1307
+
+
+def test_a_solid_fuel_burns_by_its_furnace_value() -> None:
+    # Charcoal, 1600: 1600 / 80 = 20 raw ticks; steel x 1, bronze x 2.
+    s = boiler.steady(STEEL, item="minecraft:coal@1", burn_value=1600)
+    assert s.burn_ticks == 20 and s.fuel == Fraction(1, 20)
+    assert s.steam == 2400 and s.water == Fraction(2400, 160)
+    assert boiler.solid_burn_ticks(BRONZE, 1600) == 40
+    # 1650 % 80 = 50 is carried: of every 80 items, 50 burn 21 raw ticks and 30 burn 20.
+    assert boiler.solid_burn_ticks(STEEL, 1650) == Fraction(30 * 20 + 50 * 21, 80)
+    # 100 000: 1250 raw ticks, stretched to 1307; titanium x 3 / 10.
+    assert boiler.solid_burn_ticks(STEEL, 100_000) == 1307
+    assert boiler.solid_burn_ticks(TITANIUM, 100_000) == 1307 * 3 // 10
+    # The throttle stretches the burn time: EU per item holds.
+    t = boiler.steady(STEEL, item="minecraft:coal@1", burn_value=1600, circuit=24)
+    assert t.steam == 1200 and t.fuel == Fraction(1, 40)
+
+
+def test_a_boiler_takes_a_solid_only_at_its_own_eut_or_more() -> None:
+    # GT's check: value / 80 > 0 and value x 2 / EUT_GENERATED > 1.
+    assert boiler.solid_burn_ticks(BRONZE, 480) == 12
+    for spec, value in ((BRONZE, 479), (STEEL, 1199), (BRONZE, 79)):
+        with pytest.raises(boiler.BoilerError):
+            boiler.solid_burn_ticks(spec, value)
+    # The superheated boilers take only GT's two allowed blocks.
+    with pytest.raises(boiler.BoilerError):
+        boiler.steady(TITANIUM, item="minecraft:coal@1", burn_value=100_000)
+    block = "gregtech:gt.blockreinforced@6"
+    assert boiler.steady(TITANIUM, item=block, burn_value=100_000).burn_ticks == 392
+    with pytest.raises(boiler.BoilerError):  # below the tungstensteel boiler's 19 200
+        boiler.steady(TUNGSTEN, item=block, burn_value=16_000)
+
+
 def test_tree_farm_multipliers() -> None:
     # 2 t^2 - 2 t + 5: LV 5, MV 9, HV 17, EV 29.
     assert [treefarm.tier_multiplier(t) for t in (1, 2, 3, 4)] == [5, 9, 17, 29]
