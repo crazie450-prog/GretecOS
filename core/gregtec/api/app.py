@@ -132,7 +132,9 @@ from gregtec.gamelink import link as gamelink
 from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
+from gregtec.ops.costs import CostWatch
 from gregtec.ores import view as ore_view
+from gregtec.packupdate import routes as addon_routes
 from gregtec.quests import view as quest_view
 from gregtec.remote import routes as remote_routes
 from gregtec.remote.jobs import JobQueue
@@ -667,7 +669,8 @@ def create_app(core: Core) -> FastAPI:
 
     @app.get("/api/usage")
     def usage(_: Anyone) -> dict[str, Any]:
-        return core.meter.cycle()
+        caps = CostWatch.of(core.store, core.cfg).caps()  # WO-11.2 (D334)
+        return {**core.meter.cycle(), "caps": caps}
 
     @app.post("/api/ask")
     async def ask(request: Request, who: Anyone) -> dict[str, Any]:
@@ -934,6 +937,7 @@ def create_app(core: Core) -> FastAPI:
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
+    addon_routes.add_routes(app, core, principal)  # the export question (WO-11.1)
     guide_routes.add_routes(app, core, principal)
     remote_routes.add_routes(app, core, principal, _json_body)
     alert_routes.add_routes(app, core, principal)

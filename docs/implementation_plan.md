@@ -241,6 +241,7 @@ GAMING PC (Windows)
   3. The core listening on the LAN with a token and a firewall rule: a documented exception to §4.6.
 
   Watchers then read the server's world folder, and the clients' `core_url` points at the spare PC. GregtecLink's listener module must then also be installed on the server.
+  - As documented (WO-11.2, D335): the procedure, the keys that change, the order and the rollback are `docs/runbooks/relocation.md`; `gos relocate check` reads the config and OC's rules and says what the move still needs. No server code before day one (D45).
 
 ### 4.3 On-disk layout
 ```
@@ -868,6 +869,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
 - **Pre-launch:** a fingerprint mismatch sets the stale flag and shows a voice/dashboard notice.
 - **Post-exit (D69):** ask; on yes, export under the instance lock, normalize, then write a signature diff per mod to `inbox/export-diff-YYYY-MM-DD.md` (recipes added, removed and changed, using the content hash; new machines). It also creates curation tasks for new controllers (`machine_fact` rows and structure capture).
 - **Affected plans** [QA:D9]: any accepted plan citing a recipe whose content changed, or that vanished, is marked "affected by update", on the plan and in the diff note, with a one-click re-solve.
+- As built (WO-11.1, D329-D331): `gregtec.packupdate.addons`. The question is asked on the dashboard, by voice and in the dialog at once (first answer wins); the note is `inbox/ib-YYYYMMDD-export-diff-YYYY-MM-DD.md`, the vault's inbox naming (D330); every plan is checked whatever its status, and the run that flagged one is kept until the flag clears (D331); a recorded export that couldn't be loaded keeps the stale flag up, and the next post-exit offers the load alone (`gos export run --load-only`, D329). The real jar swap in Lab is `docs/runbooks/addon_watcher.md`.
 - **Pack updates (WO-1.9, D44)** [QA:S3]: a release watcher checks the GTNH modpack releases daily. A new 2.9.x gets a summary (GT/NEI versions, mod changes) and an "adopt?" prompt. On yes, the playbook runs: Clayton updates Play in Prism → `check_tweaks` → export → GT pin bump with the ported unit tests re-run against the new GT source tag → golden recipes re-checked → affected plans flagged.
 
 ### 7.14 Dashboard (D24, D49–D55) [QA dashboard section]
@@ -1115,6 +1117,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 11.2 | Ops: full crash recovery, DB and world backups verified by a restore, cost alerts, **relocation procedure** (§4.2). The pack-update playbook moved to WO-1.9 and the supervisor to WO-2.1 | A restore from backup works; the relocation procedure is documented (no server work before day one, D45) |
 | 11.3 | Full Lab rehearsal: a 2-hour "fake day one" with everything running | §10 checklist all green |
 | **G11** | **Day one** | Clayton starts his survival 2.9 world |
+
+- As built (WO-11.2, D332-D335): the daily backup job writes a manifest beside each DB backup and a vault snapshot with its own; `gos backup restore --verify` restores the newest into a temporary folder and checks hashes, `integrity_check`, row counts and every vault file; `scripts/verify_world_backup.py` (Clayton's) checks a world backup in a scratch folder; hard-kill tests for every writer and the supervisor with the real core (the vault's cut-short temp files are swept at start, the watchers' and bot's state files fsynced); the cost watch's 50% heads-up, day cap and task cap through the alert routes and the Costs view's caps card; `docs/runbooks/ops.md` and `relocation.md`.
 
 ---
 
@@ -1408,6 +1412,8 @@ credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
 task_max_usd = 2.0            # set from `gos eval design-cost --apply-from` (WO-3.7, D253); on hit: pause and ask (D16)
 cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
+day_max_usd = 10.0            # a day's spend that raises an alert; nothing pauses (D334, pending Clayton)
+notice_pct = [50]             # heads-ups below the D48 alerts, no buttons (D334); [] for none
 
 [voice]
 primary_trigger = "wake"      # D57

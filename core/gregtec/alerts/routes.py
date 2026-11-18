@@ -24,9 +24,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from gregtec.alerts.router import AlertRouter
 from gregtec.api.security import Principal
+from gregtec.ops.costs import CostWatch
 from gregtec.remote.routes import alerts_state
 
 if TYPE_CHECKING:
+    from gregtec.agents.deep import DeepTask
     from gregtec.api.app import Core
     from gregtec.watchers.feed import GameFeed
 
@@ -92,6 +94,13 @@ def wire(core: "Core", router: AlertRouter) -> None:
         return True
 
     router.credits = credits
+
+    def deep_tasks() -> "list[DeepTask]":
+        return core.deep.tasks() if core.deep is not None else []
+
+    router.costs = CostWatch.of(
+        core.store, core.cfg, deep_tasks
+    ).alerts  # WO-11.2 (D334)
     router.paused = paused
     router.voice_up = voice_up
     router.game_up = game_up

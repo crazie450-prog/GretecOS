@@ -8,7 +8,7 @@ the test matrix drives it directly):
 | group    | kinds                                         | dashboard | voice     | in game  | Discord DM |
 |----------|-----------------------------------------------|-----------|-----------|----------|------------|
 | base     | telemetry rules (WO-7.5), notices (WO-6.5)    | always    | present   | game on  | away (D46) |
-| direct   | ``credits`` (D48), ``test``                   | always    | no        | no       | always     |
+| direct   | ``credits`` (D48), ``cost`` (D334), ``test``  | always    | no        | no       | always     |
 | away     | ``game_paused``, ``gos_offline`` (D76)        | always    | no        | no       | away       |
 
 - **Present / away** (D76): away is no keyboard or mouse input for 10 minutes
@@ -55,7 +55,7 @@ from gregtec.alerts.rules import RULES
 CHANNELS = ("dashboard", "voice", "in_game", "discord")
 LEVELS = ("info", "warn", "err")
 DISCORD_MODES = ("on", "off", "quiet")  # /alerts (D297)
-DIRECT = ("credits", "test")
+DIRECT = ("credits", "cost", "test")  # cost: WO-11.2's cost watch (D334)
 AWAY_ONLY = ("game_paused", "gos_offline")
 NOTICE_KINDS = ("power_deficit", "plan_buildable", "quest_opened")  # WO-6.5
 BASE = (*RULES, *NOTICE_KINDS)

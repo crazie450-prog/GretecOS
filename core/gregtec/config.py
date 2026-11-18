@@ -29,6 +29,8 @@
 | [budget] on_credits_out  | "no_ai", the only value (fixed by D48)   | credits flow (WO-2.8, D165) |
 | [budget] cycle_day       | 1 (credits reset on this day each month) | llm_usage meter (D118)      |
 | [budget] task_max_usd    | 2.0 (until `gos eval design-cost`, D253) | deep lane (WO-2.4, D156)    |
+| [budget] day_max_usd     | 10.0, pending Clayton (an alert, D334)   | cost watch (WO-11.2)        |
+| [budget] notice_pct      | [50]: a heads-up, no buttons (D334)      | cost watch (WO-11.2)        |
 | [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
 | [models] vision          | claude-sonnet-5-5 (plan 7.7)             | screen lane (WO-8.2, D289)  |
 | [models] use_heavy       | false (planner and architect on heavy)   | deep lane (D155)            |
@@ -202,6 +204,8 @@ class Config:
     task_max_usd: float = (
         2.0  # [budget]: one deep-lane task's cap before it asks (D156)
     )
+    day_max_usd: float = 10.0  # [budget]: a day's spend that raises an alert (D334)
+    notice_pct: tuple[int, ...] = (50,)  # [budget]: heads-up percentages (D334)
     # [models] (plan 4.4, Appendix C): the deep lane's orchestrator and subagents (D155)
     model_orchestrator: str = "claude-sonnet-5-5"
     model_planner: str = "claude-opus-5-5"
@@ -605,6 +609,13 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
             lambda: _usd(budget, "task_max_usd", defaults.task_max_usd),
             defaults.task_max_usd,
         ),
+        "day_max_usd": soft(
+            lambda: _usd(budget, "day_max_usd", defaults.day_max_usd),
+            defaults.day_max_usd,
+        ),
+        "notice_pct": soft(
+            lambda: _notice_pct(budget, defaults.notice_pct), defaults.notice_pct
+        ),
         **{
             f"model_{role}": soft(
                 lambda role=role: _model(
@@ -745,6 +756,20 @@ def _alerts(budget: Mapping[str, Any], default: tuple[int, ...]) -> tuple[int, .
             "gos.toml: [budget] credit_alerts_pct must be a list of whole percentages, e.g. [80, 100]"
         )
     return tuple(sorted(set(alerts)))
+
+
+def _notice_pct(budget: Mapping[str, Any], default: tuple[int, ...]) -> tuple[int, ...]:
+    """``[budget] notice_pct`` (D334): heads-up percentages of the cycle's included credits;
+    ``[]`` turns them off."""
+    raw = budget.get("notice_pct", list(default))
+    if not isinstance(raw, list) or not all(
+        isinstance(a, int) and not isinstance(a, bool) and 0 < a < 100 for a in raw
+    ):
+        raise ConfigError(
+            "gos.toml: [budget] notice_pct must be a list of whole percentages below 100, "
+            "e.g. [50] ([] for none)"
+        )
+    return tuple(sorted(set(raw)))
 
 
 def _notices(policy: Mapping[str, Any], default: tuple[str, ...]) -> tuple[str, ...]:

@@ -200,6 +200,21 @@ export interface UsageRow {
   cache_write: number;
 }
 
+// GET /api/usage caps (WO-11.2, D334): today against the day cap, tasks against the task cap.
+export interface CostTask {
+  task: string;
+  usd: number;
+  calls: number;
+  reached: boolean;
+}
+
+export interface CostCaps {
+  day: { start: string; spent_usd: number; calls: number; cap_usd: number; pct: number; reached: boolean };
+  task: { cap_usd: number; reached: number; top: CostTask[] };
+  notice_pct: number[];
+  crossed_notice: number[];
+}
+
 export interface Usage {
   cycle_start: string;
   cycle_end: string;
@@ -211,6 +226,7 @@ export interface Usage {
   calls: number;
   by_lane: UsageRow[];
   by_model: UsageRow[];
+  caps?: CostCaps; // absent from a core older than WO-11.2
 }
 
 // GET /api/guide (WO-10.1, D304): Clayton's GuideNH export in GOS_HOME/data/guide-site.
@@ -707,6 +723,8 @@ export interface DesignerRoute {
   pins: PlanPin[];
   nodes: DesignerNode[];
   warnings: string[];
+  /** "affected by update" (QA:D9, WO-11.1): the export run that flagged it and what it hit */
+  affected: { run: string; hits: { cite: string; why: string }[] } | null;
   /** the comparison metrics, by key (machines, eut_avg, ..., score) */
   metrics: Record<string, number>;
   /** the choices another route of the design makes differently: "name (r:...)" */
@@ -774,6 +792,7 @@ export interface SavedPlanRow {
   name: string;
   status: string;
   kind: string | null;
+  affected?: boolean; // flagged by an export (WO-11.1)
 }
 
 // --- The Activity view (WO-6.3, GET /api/activity, plan 7.5, 7.14) ------------------------------

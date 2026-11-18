@@ -47,6 +47,7 @@ from gregtec.discordbot import cli as discord_cli
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
+from gregtec.ops import cli as ops_cli
 from gregtec.packupdate import cli as pack_cli
 from gregtec.planner import (
     distributioncli,
@@ -167,6 +168,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--notify",
         action="store_true",
         help="show the result in a message box (Windows)",
+    )
+    run.add_argument(
+        "--load-only",
+        action="store_true",
+        help="collect and build the last recorded export if it isn't loaded (no new export)",
     )
     # Set by the post-exit hook, which waits until the export holding the lock shows it.
     run.add_argument("--ticket", default="", help=argparse.SUPPRESS)
@@ -630,6 +636,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     schematic_cli.add_parsers(commands)
     theme_cli.add_parsers(commands)
     footprints_cli.add_parsers(commands)
+    ops_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -706,6 +713,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return voicecli.run(args)
     if args.command in discord_cli.COMMANDS:
         return discord_cli.run(args)
+    if args.command in ops_cli.COMMANDS:
+        return ops_cli.run(args)
     if args.command in alerts_cli.COMMANDS:
         return alerts_cli.run(args)
     if args.command in tailnet.COMMANDS:
@@ -1037,6 +1046,7 @@ def _export(args: argparse.Namespace) -> int:
             notify=notify,
             ticket=args.ticket,
             config_path=args.config or config.default_path(),
+            load_only=args.load_only,
         )
     refs = args.runs
     if len(refs) not in (0, 2):
