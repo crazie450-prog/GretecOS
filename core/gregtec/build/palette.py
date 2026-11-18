@@ -96,7 +96,7 @@ class Verdict:
 @dataclass(frozen=True)
 class Report:
     run_key: str  # the export run whose catalog was used
-    world: str  # the world whose registry was used
+    world: str  # the world whose registry was used ("": none, a catalog-only check)
     verdicts: tuple[Verdict, ...]
     problems: tuple[str, ...] = field(default=())  # about the palette as a whole
     newer_run: str | None = (
@@ -117,10 +117,15 @@ class CatalogError(RuntimeError):
 
 
 def check(
-    conn: sqlite3.Connection, entries: Iterable[Entry], world: WorldRegistry
+    conn: sqlite3.Connection,
+    entries: Iterable[Entry],
+    world: WorldRegistry | None,
+    max_types: int | None = MAX_TYPES,
 ) -> Report:
     """Apply the palette rule to ``entries`` with the newest block catalog in ``conn`` and the
-    target world's registry."""
+    target world's registry (None: the catalog alone, as a theme's palette is checked, which
+    names no world; D314). ``max_types`` (None: no limit) caps the distinct entries; the
+    schematic writer (WO-10.4, D309) lifts it when it splits the shell or writes ``AddBlocks``."""
     found = block_db.catalog_run(conn)
     if found is None:
         raise CatalogError(
@@ -143,7 +148,7 @@ def check(
             refused.append("air is the schematic's 0, not a palette entry")
         elif e.block == GT_MACHINES:
             refused.append("GT's machine block: GOS never pastes machines (plan 7.10)")
-        if e.block not in world.blocks and e.block != AIR:
+        if world is not None and e.block not in world.blocks and e.block != AIR:
             refused.append(
                 f"not in the world {world.world!r}'s registry (level.dat FML ItemData): "
                 "that world has no such block"
@@ -179,14 +184,15 @@ def check(
             )
         verdicts.append(Verdict(e, name, tuple(refused), tuple(warnings)))
     problems: list[str] = []
-    if len(seen) > MAX_TYPES:
+    if max_types is not None and len(seen) > max_types:
         problems.append(
-            f"{len(seen)} block types: a schematic's palette holds at most {MAX_TYPES}; split "
+            f"{len(seen)} block types: a schematic's palette holds at most {max_types}; split "
             "the shell (plan 7.10)"
         )
     if not seen:
         problems.append("the palette is empty")
-    return Report(run_key, world.world, tuple(verdicts), tuple(problems), newer)
+    name = "" if world is None else world.world
+    return Report(run_key, name, tuple(verdicts), tuple(problems), newer)
 
 
 def render(report: Report) -> list[str]:

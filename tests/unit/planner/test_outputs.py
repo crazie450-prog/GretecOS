@@ -548,12 +548,12 @@ def test_only_plan_notes_hold_a_mermaid_fence_of_the_writers_lines(home: Path) -
         with pytest.raises(ValueError, match="flow diagram line"):
             vault_schema.parse(_note(f"```mermaid\nflowchart LR\n{line}\n```\n"))
     vio = VaultIO(home / "vault")
-    for rel, t, nid in (
-        ("quests/qs-test.md", "quest", "qs-test"),
-        ("themes/th-x.md", "theme", "th-x"),
+    for rel, t, nid, op in (
+        ("quests/qs-test.md", "quest", "qs-test", "write"),
+        ("themes/th-x.md", "theme", "th-x", "theme"),  # themes/: theme_save's op (D314)
     ):
         with pytest.raises(VaultError, match="only plan notes"):
-            vio.write(rel, fence)
+            vio.write(rel, fence, op=op)
         with pytest.raises(ValueError, match="only plan notes"):
             vault_schema.parse(_note(fence, t, nid))
     with pytest.raises(ValueError, match="cap is 40"):

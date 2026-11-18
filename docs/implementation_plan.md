@@ -817,10 +817,12 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
     - #24: EndlessIDs support for schematic save and load.
     - #28: chunk corruption when placing a meta value that doesn't exist. Validate every palette entry first.
   - worldedit-gtnh v0.0.10 isn't bundled in the pack; install it in Play and Lab yourself [F].
+  - **Built** (WO-10.4, D309-D311): `gregtec.build.schematic` writes this layout (block types numbered by registry name; above 255 the shell is split into parts, or `AddBlocks` on request) only through `write_shell`, which applies WO-10.3's palette rule to every state the shell uses (meta > 15 refused until #30 is resolved); its reader takes worldedit-gtnh `//copy` saves and Schematica saves, with or without mappings, nibble order detected or refused. `gos schematic sample|read|compare`. The dev-server schematic harness pastes and copies GOS shells with worldedit-gtnh (D310); the Lab round trip is runbook `schematic_roundtrip.md`.
 - **Themes (D36).** Each `themes/<id>.md` holds:
   - a palette (`registry@meta`, from Clayton's client palette), motifs, massing rules, roof/window/lighting rules, adaptations per line type, references to sample builds, and a version `v:`.
   - Themes are created from prompts and refined in conversation.
   - **Per build:** theme + optional prompt, prompt only, or blank. Blank means the architect proposes a concept from the line type (e.g., chemistry gets pipework and tanks; EBF gets heavy industrial), using themes already used nearby for consistency.
+  - **Built** (WO-10.6, D314-D315): `gregtec.build.themes` parses and validates themes (every palette entry a catalog state without a tile entity, meta ≤ 15); `theme_list`/`theme_get` (both lanes) and `theme_save` (deep lane, the architect's; each refinement a new version, earlier ones in `themes/versions/`; only `theme_save` writes `themes/`); the starter themes `th-foundry` and `th-marble-works` in `vault-template/_gos/themes/`; the `architect` skill; `themes.select` for the three modes (blank: line type's concept, the theme most used within 256 blocks, else one that fits); `gos theme list|check|select`. Runbook `themes.md`.
 - **Shell designer (img2schem merged, D74).**
   - The `architect` subagent designs shells, as the img2schem SOW intended. Input: bounding volume, keep-outs, entrances, theme, palette constraints, prompt, max blocks. Output: `.schematic`, palette manifest, preview mesh, notes.
   - The palette comes from Clayton's client export (WO-10.3), so modded blocks are available.
@@ -1258,7 +1260,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
 | V15 | GuideNH `exportsite` embeds in the dashboard. **Partly** (WO-10.1, D304): framed under `/guide/` with its own CSP (which limits loads but is not isolation: same origin, so WO-10.8 gives `/guide/` its own origin), proven with a stand-in export; the real Lab export run is Clayton's | Spike; Lab export (report WO-10.1) | 10.1 |
-| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
+| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta); and the paste offset `WEOffset` = `(-⌊W/2⌋, 0, 1)` in game | Lab paste (runbook `schematic_roundtrip.md`). The dev-server harness pastes and copies with worldedit-gtnh v0.0.10, ids < 4096 and meta ≤ 15 only (D310) | 10.4 |
 | V17 | **Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW | — | 10.0 |
 | V18 | Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open | Weekly; watcher reports | 11.1 |
 | V19 | Does Open to LAN avoid the pause freeze? | Lab: the OC agent's messages through 60 s in the Esc menu, without and with Open to LAN (`docs/runbooks/oc_agent.md` F) | 7.2 |
@@ -1336,7 +1338,7 @@ gregtec-os/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
-  vault-template/        _gos/{skills,agents,personas,schema.md}  personas/  me/(stubs)
+  vault-template/        _gos/{skills,agents,personas,themes,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
   tests/                 unit/  fixtures/{gt_oc_tests,plannh}/  golden/  evals/*.tsv  security/
