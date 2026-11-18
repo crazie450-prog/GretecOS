@@ -8,6 +8,7 @@ import type {
   ChoicesCard,
   FlowCard,
   HealthCard,
+  LayoutCard,
   PowerLedgerCard,
   RouteComparisonCard,
   TableCard,
@@ -235,6 +236,19 @@ export interface GuideSite {
   pages: { path: string; title: string; scenes: number }[];
   files: number;
   bytes: number;
+}
+
+// GET /api/shells (WO-10.7, D316): the saved decorative shells, newest first.
+export interface ShellSummary {
+  id: string;
+  status: "accepted" | "repaired";
+  source: "architect" | "procedural";
+  theme: string | null;
+  theme_name: string | null;
+  plans: string[];
+  layout: string;
+  size: [number, number, number];
+  blocks: number;
 }
 
 export interface Device {
@@ -775,6 +789,13 @@ export interface Alternatives {
   pinned: string | null;
   all: boolean;
   alternatives: Alternative[];
+}
+
+/** GET /api/plans/{id}/layout (WO-10.5, D312): the layout JSON (gos-layout v1, read by the shell
+ * designer and the build guide) and its top-down preview card. */
+export interface PlanLayout {
+  layout: { id: string; [key: string]: unknown };
+  card: LayoutCard;
 }
 
 export interface Accepted {

@@ -165,5 +165,119 @@
     "span": "1-1 of 1",
     "total": 1,
     "notes": []
+  },
+  "layout": {
+    "type": "layout",
+    "title": "Floor plan · Steel line",
+    "ref": "plan:pl-0007",
+    "layout": "lo-0123456789ab",
+    "size": {"x": 14, "y": 5, "z": 13},
+    "rects": [
+      {"id": "c1", "kind": "corridor", "x": 0, "z": 5, "w": 3, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "c2", "kind": "corridor", "x": 3, "z": 5, "w": 11, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "h1", "kind": "chase", "x": 0, "z": 5, "w": 3, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "h2", "kind": "chase", "x": 3, "z": 5, "w": 11, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "e1", "kind": "entrance", "x": 0, "z": 5, "w": 1, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "m1", "kind": "machine", "x": 4, "z": 1, "w": 3, "l": 3, "label": "Electric Blast Furnace", "tier": "HV", "ref": "mte:1000", "facing": "south", "ok": true},
+      {"id": "m2", "kind": "machine", "x": 4, "z": 9, "w": 1, "l": 1, "label": "Electrolyzer", "tier": "MV", "ref": "mte:401", "facing": "north", "ok": true},
+      {"id": "k1", "kind": "keepout", "x": 3, "z": 0, "w": 5, "l": 5, "label": null, "tier": null, "ref": null, "facing": null, "ok": null},
+      {"id": "k2", "kind": "keepout", "x": 3, "z": 8, "w": 3, "l": 3, "label": null, "tier": null, "ref": null, "facing": null, "ok": null}
+    ],
+    "notes": ["2 machines placed, 2 with the front and every hatch kind reached from the entrance; bounding volume 14 x 13 blocks, 5 high"]
+  },
+  "shell": {
+    "type": "shell",
+    "title": "Shell sh-0123456789ab (Foundry)",
+    "ref": "plan:pl-steel",
+    "build": "sh-0123456789ab",
+    "layout": "lo-0123456789ab",
+    "status": "accepted",
+    "source": "architect",
+    "theme": "th-foundry@v1",
+    "size": {
+      "x": 7,
+      "y": 5,
+      "z": 6
+    },
+    "blocks": 128,
+    "max_blocks": 20000,
+    "palette": [
+      {
+        "role": "wall",
+        "block": "gregtech:gt.blockconcretes@3",
+        "name": "Dark Concrete Bricks",
+        "count": 81
+      },
+      {
+        "role": "roof",
+        "block": "gregtech:gt.blockconcretes@7",
+        "name": "Smooth Dark Concrete",
+        "count": 41
+      },
+      {
+        "role": "window",
+        "block": "gregtech:gt.blockglass1@10",
+        "name": "Reinforced Glass",
+        "count": 5
+      },
+      {
+        "role": "light",
+        "block": "minecraft:glowstone@0",
+        "name": "Glowstone",
+        "count": 1
+      }
+    ],
+    "paste": [
+      "Lab only: never paste a shell in Play. Machines are built by you from the 3D guide; GOS never pastes machines.",
+      "Copy the .schematic file(s) into the Lab instance's config/worldedit/schematics/.",
+      "In the Lab world, stand in entrance e1, the hall corridor's way in on the layout's west edge: feet in its north-most floor-level cell (layout x 0, y 0, z 5), the corridor cell just inside where the shell's doorway will be. The layout's north is the world's north: the shell is pre-rotated, so never //rotate it.",
+      "Run //schem load <name> then //paste (with several parts, load and paste each one from the same block).",
+      "Check: select the pasted shell (the wand, or //hpos1 and //hpos2, on its bottom north-west and top south-east corner blocks), go back to the same block, //copy, //schem save <name>-check and `gos schematic compare` it with the file; then walk the doorway and every corridor."
+    ],
+    "notes": [
+      "theme Foundry (th-foundry@v1): theme mode, chosen"
+    ],
+    "faces": [
+        [0, 0, 0, 1, 1, 4, 0],
+        [0, 0, 0, 3, 2, 4, 0],
+        [0, 0, 2, 2, 1, 2, 0],
+        [0, 6, 0, 0, 6, 4, 0],
+        [0, 6, 4, 0, 6, 1, 1],
+        [1, 0, 0, 0, 2, 4, 0],
+        [1, 0, 0, 3, 3, 4, 0],
+        [1, 0, 2, 2, 1, 2, 0],
+        [1, 0, 4, 0, 6, 1, 1],
+        [1, 6, 0, 1, 4, 4, 0],
+        [2, 0, 4, 0, 7, 3, 1],
+        [2, 0, 4, 3, 3, 3, 1],
+        [2, 3, 4, 3, 1, 1, 3],
+        [2, 4, 4, 3, 3, 3, 1],
+        [2, 3, 4, 4, 1, 2, 1],
+        [3, 0, 0, 0, 7, 1, 0],
+        [3, 0, 0, 1, 1, 1, 0],
+        [3, 6, 0, 1, 1, 5, 0],
+        [3, 0, 0, 3, 1, 3, 0],
+        [3, 1, 0, 5, 5, 1, 0],
+        [3, 0, 2, 2, 1, 1, 0],
+        [3, 1, 4, 1, 5, 2, 1],
+        [3, 1, 4, 3, 2, 2, 1],
+        [3, 3, 4, 3, 1, 1, 3],
+        [3, 4, 4, 3, 2, 2, 1],
+        [3, 3, 4, 4, 1, 1, 1],
+        [4, 1, 0, 0, 5, 4, 0],
+        [4, 0, 0, 1, 1, 2, 0],
+        [4, 0, 0, 5, 7, 2, 0],
+        [4, 0, 2, 5, 1, 2, 0],
+        [4, 1, 2, 5, 5, 1, 2],
+        [4, 6, 2, 5, 1, 2, 0],
+        [4, 1, 3, 5, 5, 1, 0],
+        [4, 0, 4, 5, 7, 1, 1],
+        [5, 0, 0, 0, 7, 4, 0],
+        [5, 0, 4, 0, 7, 1, 1],
+        [5, 0, 0, 3, 1, 2, 0],
+        [5, 1, 0, 5, 5, 2, 0],
+        [5, 1, 2, 5, 5, 1, 2],
+        [5, 1, 3, 5, 5, 1, 0]
+    ]
   }
 }

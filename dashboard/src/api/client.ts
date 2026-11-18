@@ -19,6 +19,7 @@ import type {
   DeepTask,
   Device,
   GuideSite,
+  ShellSummary,
   Health,
   LiveBase,
   MyBase,
@@ -42,6 +43,7 @@ import type {
   Usage,
   Verify,
   WaypointProposal,
+  PlanLayout,
 } from "./types";
 
 export class ApiError extends Error {
@@ -88,6 +90,11 @@ export const api = {
   health: () => get<Health>("/api/health"),
   usage: () => get<Usage>("/api/usage"),
   guide: () => get<GuideSite>("/api/guide"),
+  // Decorative shells (WO-10.7, D316): designed and checked by the core; the card is data.
+  shells: () => get<{ shells: ShellSummary[] }>("/api/shells"),
+  shell: (id: string) => get<{ card: Card }>(`/api/shells/${encodeURIComponent(id)}`),
+  designShell: (plans: string[], theme?: string) =>
+    post<{ card: Card }>("/api/shells", theme ? { plans, theme } : { plans }),
   answers: () => get<Answer[]>("/api/answers"),
   deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
   ask: (text: string) => post<Reply>("/api/ask", { text }),
@@ -162,6 +169,8 @@ export const api = {
     post<Designed>(`/api/plans/${encodeURIComponent(id)}/pin`, { node, recipe }),
   resolve: (id: string) => post<Designed>(`/api/plans/${encodeURIComponent(id)}/resolve`),
   accept: (id: string) => post<Accepted>(`/api/plans/${encodeURIComponent(id)}/accept`),
+  // The line layout (WO-10.5, D312): the plan's floor plan, computed by the core.
+  layout: (id: string) => get<PlanLayout>(`/api/plans/${encodeURIComponent(id)}/layout`),
   rename: (id: string, name: string) =>
     post<{ view: DesignerView }>(`/api/plans/${encodeURIComponent(id)}/name`, { name }),
   // The Power view (WO-4.6): options ranked by the core's code; accepting is Clayton's.

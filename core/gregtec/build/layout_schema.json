@@ -1,0 +1,617 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/crazie450-prog/GretecOS/core/gregtec/build/layout_schema.json",
+ "title": "Gregtec OS line layout (WO-10.5, plan 7.10, D312), version 1",
+ "description": "Machine footprints placed on a block grid with keep-outs, corridors, chases and an entrance, from saved plans. Axes: x east, y up, z south; y 0 is the first layer above the floor; every box is lo/hi inclusive. Read by WO-10.7's shell designer (keep-outs, corridors, chases and entrances stay free of shell blocks) and WO-10.8's build guide (footprint key, controller, facing, hatch cells).",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "schema",
+  "v",
+  "id",
+  "plans",
+  "gt",
+  "run",
+  "axes",
+  "options",
+  "bounds",
+  "placements",
+  "keepouts",
+  "corridors",
+  "chases",
+  "entrances",
+  "services",
+  "unplaced",
+  "warnings"
+ ],
+ "properties": {
+  "schema": {
+   "const": "gos-layout"
+  },
+  "v": {
+   "const": 1
+  },
+  "id": {
+   "type": "string",
+   "pattern": "^lo-[0-9a-f]{12}$"
+  },
+  "plans": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "name",
+     "kind"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "kind": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    }
+   }
+  },
+  "gt": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "run": {
+   "type": [
+    "integer",
+    "string",
+    "null"
+   ],
+   "description": "the export run the plans were solved on, as the plan says"
+  },
+  "axes": {
+   "type": "string"
+  },
+  "options": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "corridor_width",
+    "corridor_height",
+    "clearance",
+    "clearance_top",
+    "chase_height",
+    "max_run"
+   ],
+   "properties": {
+    "corridor_width": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 8
+    },
+    "corridor_height": {
+     "type": "integer",
+     "minimum": 2,
+     "maximum": 8
+    },
+    "clearance": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 4
+    },
+    "clearance_top": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 4
+    },
+    "chase_height": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 4
+    },
+    "max_run": {
+     "type": "integer",
+     "minimum": 8,
+     "maximum": 512
+    }
+   }
+  },
+  "bounds": {
+   "description": "The bounding volume: every other box lies inside it; lo is [0, 0, 0].",
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "lo",
+    "hi",
+    "size"
+   ],
+   "properties": {
+    "lo": {
+     "$ref": "#/$defs/cell"
+    },
+    "hi": {
+     "$ref": "#/$defs/cell"
+    },
+    "size": {
+     "$ref": "#/$defs/cell"
+    }
+   }
+  },
+  "placements": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/placement"
+   }
+  },
+  "keepouts": {
+   "type": "array",
+   "items": {
+    "description": "A machine's box grown by clearance on each horizontal side and clearance_top above: no shell block goes here. Keep-outs never overlap each other, a corridor or a chase.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "of",
+     "lo",
+     "hi"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^k[1-9][0-9]*$"
+     },
+     "of": {
+      "type": "string",
+      "pattern": "^m[1-9][0-9]*$"
+     },
+     "lo": {
+      "$ref": "#/$defs/cell"
+     },
+     "hi": {
+      "$ref": "#/$defs/cell"
+     }
+    }
+   }
+  },
+  "corridors": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "description": "Walking space, corridor_height high, from the floor.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "kind",
+     "lo",
+     "hi"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^c[1-9][0-9]*$"
+     },
+     "kind": {
+      "enum": [
+       "hall",
+       "spine"
+      ]
+     },
+     "lo": {
+      "$ref": "#/$defs/cell"
+     },
+     "hi": {
+      "$ref": "#/$defs/cell"
+     }
+    }
+   }
+  },
+  "chases": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "description": "The pipe, conveyor and cable trunk above a corridor.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "over",
+     "lo",
+     "hi"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^h[1-9][0-9]*$"
+     },
+     "over": {
+      "type": "string",
+      "pattern": "^c[1-9][0-9]*$"
+     },
+     "lo": {
+      "$ref": "#/$defs/cell"
+     },
+     "hi": {
+      "$ref": "#/$defs/cell"
+     }
+    }
+   }
+  },
+  "entrances": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "description": "An opening the shell leaves in its wall: the corridor's cells on the bounding volume's face.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "side",
+     "corridor",
+     "lo",
+     "hi"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^e[1-9][0-9]*$"
+     },
+     "side": {
+      "enum": [
+       "north",
+       "east",
+       "south",
+       "west"
+      ]
+     },
+     "corridor": {
+      "type": "string",
+      "pattern": "^c[1-9][0-9]*$"
+     },
+     "lo": {
+      "$ref": "#/$defs/cell"
+     },
+     "hi": {
+      "$ref": "#/$defs/cell"
+     }
+    }
+   }
+  },
+  "services": {
+   "type": "array",
+   "items": {
+    "description": "What runs in the chases: a plan's flows between placed machines, its boundary at the entrance (e1), and EU per tier (from its generators of that tier, else the layout's generators of other tiers through a transformer step, else e1 for the base grid). rate_s is the plan's, per second; null for EU.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "kind",
+     "item",
+     "rate_s",
+     "from",
+     "to",
+     "ref"
+    ],
+    "if": {
+     "properties": {
+      "kind": {
+       "const": "eu"
+      }
+     }
+    },
+    "then": {
+     "required": [
+      "via_transformer"
+     ]
+    },
+    "else": {
+     "not": {
+      "required": [
+       "via_transformer"
+      ]
+     }
+    },
+    "properties": {
+     "kind": {
+      "enum": [
+       "item",
+       "fluid",
+       "eu"
+      ]
+     },
+     "item": {
+      "type": "string"
+     },
+     "rate_s": {
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "from": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "pattern": "^(m|e)[1-9][0-9]*$"
+      }
+     },
+     "to": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "pattern": "^(m|e)[1-9][0-9]*$"
+      }
+     },
+     "via_transformer": {
+      "type": "boolean",
+      "description": "EU only: true when no generator in the layout is at this tier, so 'from' is the layout's generators of other tiers and a transformer step is needed (WO-4.5's, not placed); false otherwise"
+     },
+     "ref": {
+      "type": "string",
+      "pattern": "^plan:\\S+$"
+     }
+    }
+   }
+  },
+  "unplaced": {
+   "type": "array",
+   "items": {
+    "description": "A node's machines with no footprint (they need a Lab capture): never placed with a guessed size.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "plan",
+     "node",
+     "mte",
+     "name",
+     "count",
+     "why"
+    ],
+    "properties": {
+     "plan": {
+      "type": "string"
+     },
+     "node": {
+      "type": "string"
+     },
+     "mte": {
+      "type": "integer"
+     },
+     "name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "why": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "warnings": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  }
+ },
+ "$defs": {
+  "cell": {
+   "type": "array",
+   "items": {
+    "type": "integer"
+   },
+   "minItems": 3,
+   "maxItems": 3,
+   "description": "[x, y, z] in blocks"
+  },
+  "placement": {
+   "description": "One machine: its footprint turned to face its spine, the controller's cell, the cell in front of it, its box, and its hatch cells with whether each is reached from the entrance.",
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "plan",
+    "node",
+    "role",
+    "mte",
+    "name",
+    "kind",
+    "tier",
+    "footprint",
+    "variant",
+    "source",
+    "facing",
+    "controller",
+    "front",
+    "lo",
+    "hi",
+    "keepout",
+    "corridor",
+    "chase",
+    "hatches",
+    "reach"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "pattern": "^m[1-9][0-9]*$"
+    },
+    "plan": {
+     "type": "string"
+    },
+    "node": {
+     "type": "string"
+    },
+    "role": {
+     "enum": [
+      "machine",
+      "generator"
+     ]
+    },
+    "mte": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "kind": {
+     "enum": [
+      "singleblock",
+      "multiblock",
+      "steam"
+     ]
+    },
+    "tier": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "footprint": {
+     "type": "string",
+     "description": "gregtec.build.footprints' key: <registry>@<meta>|<variant>[;<channel>=<value>...]|<facing>"
+    },
+    "variant": {
+     "type": "string",
+     "description": "the structure row's variant key the machine is placed at: a controller with several variants is placed at its largest by volume (D312), and a warning names them all"
+    },
+    "source": {
+     "enum": [
+      "gtnh-extractor",
+      "lab-capture",
+      "single block"
+     ]
+    },
+    "facing": {
+     "enum": [
+      "north",
+      "east",
+      "south",
+      "west"
+     ]
+    },
+    "controller": {
+     "$ref": "#/$defs/cell"
+    },
+    "front": {
+     "$ref": "#/$defs/cell"
+    },
+    "lo": {
+     "$ref": "#/$defs/cell"
+    },
+    "hi": {
+     "$ref": "#/$defs/cell"
+    },
+    "keepout": {
+     "type": "string",
+     "pattern": "^k[1-9][0-9]*$"
+    },
+    "corridor": {
+     "type": "string",
+     "pattern": "^c[1-9][0-9]*$"
+    },
+    "chase": {
+     "type": "string",
+     "pattern": "^h[1-9][0-9]*$"
+    },
+    "hatches": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "p",
+       "kinds",
+       "reached"
+      ],
+      "properties": {
+       "p": {
+        "$ref": "#/$defs/cell"
+       },
+       "kinds": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "reached": {
+        "type": "boolean"
+       }
+      }
+     }
+    },
+    "reach": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "ok",
+      "front",
+      "hatch_cells",
+      "reached",
+      "enclosed",
+      "kinds",
+      "unreached_kinds",
+      "maintenance"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "front": {
+       "type": "boolean"
+      },
+      "hatch_cells": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "reached": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "enclosed": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "kinds": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "unreached_kinds": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "maintenance": {
+       "type": [
+        "boolean",
+        "null"
+       ]
+      }
+     }
+    }
+   }
+  }
+ }
+}

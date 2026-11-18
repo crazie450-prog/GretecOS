@@ -12,7 +12,8 @@
   and "what's this?" (WO-8.1, D286: the item Clayton hovers over or the
   block he looks at, as GregtecLink's client module reports it, answered from the DB). These
   keep working with no API key or credits (plan 0.1 principle 9, 7.16).
-- **deep**: design, plans, comparisons, advice, making or refining a building theme (WO-10.6)
+- **deep**: design, plans, comparisons, advice, making or refining a building theme (WO-10.6),
+  designing a decorative shell (WO-10.7)
   and anything quantitative over a line ("how many ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
   asked about, so pre-retrieval (:mod:`gregtec.agents.prefetch`) can resolve it first.
@@ -189,6 +190,10 @@ DEEP_RULES = [
         + r"\bthemes?\b",
         r"\bnew theme\b",
         r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust)\b",
+        # designing a decorative shell around a line (WO-10.7): build_request is deep-lane only
+        # ("how do I make/craft a turtle shell" is a recipe question, not a building)
+        r"^(?!.*\bhow (?:do|can|to|would|should)\b(?: (?:i|you|we))? (?:make|craft|get)\b)"
+        + r".*\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b",
     )
 ]
 
