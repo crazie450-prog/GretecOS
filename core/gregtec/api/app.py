@@ -133,6 +133,7 @@ from gregtec.gamelink import link as gamelink
 from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
+from gregtec.ops.costs import CostWatch
 from gregtec.ores import view as ore_view
 from gregtec.packupdate import routes as addon_routes
 from gregtec.quests import view as quest_view
@@ -673,7 +674,8 @@ def create_app(core: Core) -> FastAPI:
 
     @app.get("/api/usage")
     def usage(_: Anyone) -> dict[str, Any]:
-        return core.meter.cycle()
+        caps = CostWatch.of(core.store, core.cfg).caps()  # WO-11.2 (D334)
+        return {**core.meter.cycle(), "caps": caps}
 
     @app.post("/api/ask")
     async def ask(request: Request, who: Anyone) -> dict[str, Any]:

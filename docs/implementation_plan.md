@@ -241,6 +241,7 @@ GAMING PC (Windows)
   3. The core listening on the LAN with a token and a firewall rule: a documented exception to §4.6.
 
   Watchers then read the server's world folder, and the clients' `core_url` points at the spare PC. GregtecLink's listener module must then also be installed on the server.
+  - As documented (WO-11.2, D335): the procedure, the keys that change, the order and the rollback are `docs/runbooks/relocation.md`; `gos relocate check` reads the config and OC's rules and says what the move still needs. No server code before day one (D45).
 
 ### 4.3 On-disk layout
 ```
@@ -1121,6 +1122,8 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 11.3 | Full Lab rehearsal: a 2-hour "fake day one" with everything running | §10 checklist all green |
 | **G11** | **Day one** | Clayton starts his survival 2.9 world |
 
+- As built (WO-11.2, D332-D335): the daily backup job writes a manifest beside each DB backup and a vault snapshot with its own; `gos backup restore --verify` restores the newest into a temporary folder and checks hashes, `integrity_check`, row counts and every vault file; `scripts/verify_world_backup.py` (Clayton's) checks a world backup in a scratch folder; hard-kill tests for every writer and the supervisor with the real core (the vault's cut-short temp files are swept at start, the watchers' and bot's state files fsynced); the cost watch's 50% heads-up, day cap and task cap through the alert routes and the Costs view's caps card; `docs/runbooks/ops.md` and `relocation.md`.
+
 ---
 
 ## 9. Testing and Lab validation
@@ -1413,6 +1416,8 @@ credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
 task_max_usd = 2.0            # set from `gos eval design-cost --apply-from` (WO-3.7, D253); on hit: pause and ask (D16)
 cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
+day_max_usd = 10.0            # a day's spend that raises an alert; nothing pauses (D334, pending Clayton)
+notice_pct = [50]             # heads-ups below the D48 alerts, no buttons (D334); [] for none
 
 [voice]
 primary_trigger = "wake"      # D57

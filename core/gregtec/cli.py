@@ -53,6 +53,7 @@ from gregtec.discordbot import cli as discord_cli
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
+from gregtec.ops import cli as ops_cli
 from gregtec.packupdate import cli as pack_cli
 from gregtec.planner import (
     distributioncli,
@@ -643,6 +644,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     footprints_cli.add_parsers(commands)
     layout_cli.add_parsers(commands)
     shell_cli.add_parsers(commands)
+    ops_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -719,6 +721,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return voicecli.run(args)
     if args.command in discord_cli.COMMANDS:
         return discord_cli.run(args)
+    if args.command in ops_cli.COMMANDS:
+        return ops_cli.run(args)
     if args.command in alerts_cli.COMMANDS:
         return alerts_cli.run(args)
     if args.command in tailnet.COMMANDS:

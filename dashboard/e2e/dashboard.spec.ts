@@ -225,6 +225,9 @@ test("Costs shows the cycle against the included credits", async () => {
   await expect(page.getByTestId("spent")).toHaveText("$0.00");
   await expect(page.getByTestId("credits")).toContainText("of $100.00 included");
   await expect(page.getByTestId("by-lane")).toBeVisible();
+  // WO-11.2 (D334): the caps card from the core's own cost watch
+  await expect(page.getByTestId("caps")).toContainText("of a $10.00 day cap");
+  await expect(page.getByTestId("task-cap")).toContainText("none reached today");
 });
 
 test("every view reads at WCAG contrast in every theme, on monitor 2 and on the phone", async () => {

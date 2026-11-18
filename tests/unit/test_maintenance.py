@@ -444,7 +444,12 @@ def test_session_end_backs_up_the_db_once_the_daily_run_is_2_days_late(
         stamp = target.stat().st_mtime_ns
         m.session_end()
         assert target.stat().st_mtime_ns == stamp
-        assert [p.name for p in cur.backups.iterdir()] == ["gos-20261106.sqlite"]
+        assert sorted(p.name for p in cur.backups.iterdir()) == [
+            "gos-20261106.sqlite",
+            "gos-20261106.sqlite.manifest.json",  # WO-11.2 (D332): manifests and
+            "vault-20261106.zip",  # the vault snapshot
+            "vault-20261106.zip.manifest.json",
+        ]
 
 
 def test_the_session_end_backup_needs_no_git_vault_and_never_raises(
@@ -461,7 +466,7 @@ def test_the_session_end_backup_needs_no_git_vault_and_never_raises(
     assert m.session_end() is None  # nothing to commit: no git
     assert (cur.backups / "gos-20261106.sqlite").exists()
 
-    def full(*args: object) -> JobResult:
+    def full(*args: object, **kwargs: object) -> JobResult:
         raise OSError("disk full")
 
     monkeypatch.setattr(scheduler, "backup", full)
