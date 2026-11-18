@@ -204,6 +204,36 @@ def test_conflicting_host_headers_are_rejected() -> None:
     assert security.refusal(security._headers(scope), allowed) is None
 
 
+def test_a_repeated_device_cookie_is_rejected(client: TestClient) -> None:
+    """D319: a second gos_device is one another page planted; Starlette would keep the last."""
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"cookie", b"a=1; gos_device=x.y"),
+            (b"cookie", b" gos_device =z.w; gos_device_old=1"),
+        ],
+    }
+    assert security.cookie_count(scope, security.COOKIE) == 2
+    for cookie in (
+        "gos_device=a.b; gos_device=c.d",
+        "x=1;gos_device=a.b;gos_device=a.b",
+    ):
+        r = client.get("/api/health", headers={"Cookie": cookie})
+        assert r.status_code == 403
+        assert r.json() == {"error": "repeated device cookie"}
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(WS, headers={"Cookie": "gos_device=a; gos_device=b"}),
+    ):
+        pass
+    assert caught.value.code == 1008
+    # One cookie (here not a paired one) is checked as before: not paired.
+    assert (
+        client.get("/api/health", headers={"Cookie": "gos_device=a.b"}).status_code
+        == 401
+    )
+
+
 def test_websocket_with_foreign_origin_or_host_is_rejected(client: TestClient) -> None:
     for headers, why in (
         (admin_headers(Origin="http://evil.example"), "origin not allowed"),

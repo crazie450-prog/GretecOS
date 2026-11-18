@@ -19,6 +19,9 @@ import type {
   DeepTask,
   Device,
   GuideSite,
+  BuildGuide,
+  GuideEntry,
+  GuideQuery,
   ShellSummary,
   Health,
   LiveBase,
@@ -82,6 +85,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 const get = <T,>(path: string): Promise<T> => request<T>("GET", path);
+
+/** The guide's query string: controller, variant, facing and each tier as `tier=<channel>=<value>`. */
+export function guideParams(q: GuideQuery): string {
+  const p = new URLSearchParams({ controller: q.controller });
+  if (q.variant) p.set("variant", q.variant);
+  if (q.facing) p.set("facing", q.facing);
+  for (const [ch, v] of Object.entries(q.tiers ?? {})) p.append("tier", `${ch}=${v}`);
+  return p.toString();
+}
+
+function guideBody(q: GuideQuery): Record<string, unknown> {
+  return {
+    controller: q.controller,
+    variant: q.variant ?? null,
+    facing: q.facing ?? null,
+    tiers: Object.entries(q.tiers ?? {}).map(([ch, v]) => `${ch}=${v}`),
+  };
+}
 const post = <T,>(path: string, body: unknown = {}): Promise<T> => request<T>("POST", path, body);
 
 export const api = {
@@ -90,6 +111,12 @@ export const api = {
   health: () => get<Health>("/api/health"),
   usage: () => get<Usage>("/api/usage"),
   guide: () => get<GuideSite>("/api/guide"),
+  // The 3D build guide's data (WO-10.8, D319, D320): footprints by position, never GuideNH's.
+  guides: () => get<{ guides: GuideEntry[] }>("/api/build/guides"),
+  buildGuide: (q: GuideQuery) => get<BuildGuide>(`/api/build/guide?${guideParams(q)}`),
+  guideCheck: (q: GuideQuery, item: string, done: boolean) =>
+    post<{ done: string[] }>("/api/build/guide/checklist", { ...guideBody(q), item, done }),
+  guideReset: (q: GuideQuery) => post<{ done: string[] }>("/api/build/guide/checklist", { ...guideBody(q), reset: true }),
   // Decorative shells (WO-10.7, D316): designed and checked by the core; the card is data.
   shells: () => get<{ shells: ShellSummary[] }>("/api/shells"),
   shell: (id: string) => get<{ card: Card }>(`/api/shells/${encodeURIComponent(id)}`),
