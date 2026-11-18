@@ -7,12 +7,16 @@
   ``<registry>@<meta>`` or ``mte:<id>``.
 - ``gos footprints coverage [--all] [--json]``: which multis in the accepted plans, My base and
   the machine catalog have a footprint and which need a Lab capture.
-- ``gos footprints capture FILE [--dry-run]``: reads a ``gos-capture`` file
-  (:mod:`gregtec.build.capture`) and loads it into ``GOS_HOME/data/gos.sqlite``.
-- ``gos footprints compare FILE``: a capture of a multi the library has against its footprint
-  (L1's "cells match structure"); exit 1 when a cell differs.
+- ``gos footprints capture FILE [--dry-run]``: reads a Lab capture (:mod:`gregtec.build.capture`):
+  a WorldEdit ``//schem save`` ``.schematic`` (WO-10.9, D350, D351; ``--controller x,y,z`` when the
+  DB's machine table doesn't single out its controller, ``--facing`` when the controller's NBT has
+  none, ``--trigger``/``--channel`` as built, ``--source-world`` for a file without a mapping) or a
+  ``gos-capture`` JSON file, told apart by content; and loads it into ``GOS_HOME/data/gos.sqlite``.
+- ``gos footprints compare FILE``: a capture (either kind) of a multi the library has against its
+  footprint (L1's "cells match structure"); exit 1 when a cell differs.
 
-Everything but ``capture`` only reads the DB. Nothing here reads or writes a world.
+Everything but ``capture`` only reads the DB. A capture file is read once through ``safe_open``
+and never written; nothing here reads a world (``--source-world`` reads only its ``level.dat``).
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from pathlib import Path
 from typing import TextIO
 
 from gregtec import config
-from gregtec.build import capture, coverage
+from gregtec.build import capture, coverage, worldreg
 from gregtec.build import footprints as fp
 from gregtec.db import access
 
@@ -67,7 +71,8 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     cov.add_argument("--json", action="store_true", help="the report as JSON")
     cap = sub.add_parser(
-        "capture", help="load a Lab capture (gos-capture JSON) into the DB"
+        "capture",
+        help="load a Lab capture (a //schem save .schematic, or gos-capture JSON) into the DB",
     )
     cap.add_argument("file", type=Path, help="the capture file")
     cap.add_argument(
@@ -78,6 +83,40 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="a Lab capture of a multi the library has, against its footprint",
     )
     cmp.add_argument("file", type=Path, help="the capture file")
+    for each in (cap, cmp):
+        each.add_argument(
+            "--controller",
+            default=None,
+            metavar="X,Y,Z",
+            help="a .schematic's controller cell (box coordinates, as `gos schematic read` "
+            "lists the tile entities), when the DB doesn't single it out",
+        )
+        each.add_argument(
+            "--facing",
+            default=None,
+            help="where the controller's front faced, when the .schematic saved none: "
+            + ", ".join(fp.FACINGS),
+        )
+        each.add_argument(
+            "--trigger",
+            type=int,
+            default=None,
+            metavar="N",
+            help="the projector's trigger stack size it was built with (default 1)",
+        )
+        each.add_argument(
+            "--channel",
+            action="append",
+            default=None,
+            metavar="CHANNEL=VALUE",
+            help="a StructureLib channel set with /sl_channel set; repeatable",
+        )
+        each.add_argument(
+            "--source-world",
+            type=Path,
+            default=None,
+            help="the Lab world a .schematic without a mapping was copied in (its level.dat)",
+        )
     for each in (ls, show, cov, cap, cmp):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
@@ -167,13 +206,50 @@ def _show(conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO) -> in
     return 0
 
 
+def _options(args: argparse.Namespace) -> capture.SchematicOptions:
+    """The ``.schematic`` options (FootprintError or WorldRegistryError when one is malformed)."""
+    at = None
+    if args.controller is not None:
+        parts = args.controller.replace(" ", "").split(",")
+        try:
+            x, y, z = (int(v) for v in parts)
+        except ValueError:
+            raise fp.FootprintError(
+                f"--controller {args.controller!r} is not x,y,z"
+            ) from None
+        at = (x, y, z)
+    return capture.SchematicOptions(
+        controller_at=at,
+        facing=None if args.facing is None else fp.parse_facing(args.facing),
+        trigger_stack_size=args.trigger,
+        channels=None if args.channel is None else fp.parse_tiers(args.channel),
+        source_ids=None
+        if args.source_world is None
+        else worldreg.read_block_ids(args.source_world),
+    )
+
+
+def _read(args: argparse.Namespace, conn: sqlite3.Connection | None) -> capture.Capture:
+    return capture.read_any(args.file, conn, _options(args))
+
+
 def _capture(db: Path, args: argparse.Namespace, out: TextIO) -> int:
+    ro = access.connect(db, readonly=True) if db.is_file() else None
     try:
-        cap = capture.read(args.file)
+        cap = _read(args, ro)
         f = fp.build(cap.row())
     except (capture.CaptureError, fp.FootprintError) as exc:
         print(f"Not a capture: {exc}", file=out)
         return 1
+    except worldreg.WorldRegistryError as exc:
+        print(f"Can't read the source world's ids: {exc}", file=out)
+        return 2
+    except sqlite3.Error as exc:
+        print(f"Can't read the DB: {exc}", file=out)
+        return 2
+    finally:
+        if ro is not None:
+            ro.close()
     size = "x".join(str(n) for n in f.size)
     print(
         f"{cap.controller} {cap.variant}: {size}, {len(f.cells)} cells, "
@@ -203,8 +279,12 @@ def _capture(db: Path, args: argparse.Namespace, out: TextIO) -> int:
 
 def _compare(conn: sqlite3.Connection, args: argparse.Namespace, out: TextIO) -> int:
     try:
-        result = capture.compare(capture.read(args.file), fp.library(conn))
-    except (capture.CaptureError, fp.FootprintError) as exc:
+        result = capture.compare(_read(args, conn), fp.library(conn))
+    except (
+        capture.CaptureError,
+        fp.FootprintError,
+        worldreg.WorldRegistryError,
+    ) as exc:
         print(f"Not compared: {exc}", file=out)
         return 2
     f = result.footprint

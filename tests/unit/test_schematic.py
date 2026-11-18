@@ -78,6 +78,7 @@ def worldedit_copy(
     mapping: dict[str, int] | None,
     offset: tuple[int, int, int] = (-3, 0, 1),
     tile_entities: Sequence[tuple[int, int, int]] = (),
+    tiles: Sequence[Sequence[Field]] = (),
 ) -> bytes:
     """A ``//copy`` + ``//schem save`` as worldedit-gtnh v0.0.10's SchematicWriter lays it out:
     the world's ids (low 8 bits in Blocks, bits 8-11 in AddBlocks and 12-15 in AddBlocks2, each
@@ -135,7 +136,8 @@ def worldedit_copy(
                         ("z", nbt.INT, z),
                     ]
                     for x, y, z in tile_entities
-                ],
+                ]
+                + [list(t) for t in tiles],
             ),
         ),
         ("Entities", nbt.LIST, (nbt.COMPOUND, [])),
@@ -163,6 +165,7 @@ def schematica_save(
     cells: Sequence[tuple[int, int]],
     mapping: dict[str, int] | None,
     extended: bool = False,
+    tiles: Sequence[Sequence[Field]] = (),
 ) -> bytes:
     """A Schematica-GTNH save as SchematicAlpha writes it: its classic format packs the bits above
     8 two cells a byte with the even cell in the **high** nibble (only when some id is above 255);
@@ -181,7 +184,7 @@ def schematica_save(
         ("Blocks", nbt.BYTE_ARRAY, blocks),
         ("Data", nbt.BYTE_ARRAY, data),
         ("Entities", nbt.LIST, (nbt.COMPOUND, [])),
-        ("TileEntities", nbt.LIST, (nbt.COMPOUND, [])),
+        ("TileEntities", nbt.LIST, (nbt.COMPOUND, [list(t) for t in tiles])),
     ]
     if extended:
         f.append(("AddBlocks", nbt.BYTE_ARRAY, bytes(extra)))
@@ -412,7 +415,7 @@ def test_reads_a_worldedit_copy_with_ids_above_4095() -> None:
     assert c.writer == "worldedit" and c.order == "low-first"
     assert [e for _, e in cells_of(c.schematic)] == expected_capture()
     assert c.schematic.offset == (-3, 0, 1) and c.origin == (120, 64, -40)
-    assert c.tile_entities == ((1, 0, 1),)
+    assert c.tile_entities == (schematic.TileEntity((1, 0, 1), "Chest", None, None),)
     assert any("tile entities" in n for n in c.notes)
 
 
