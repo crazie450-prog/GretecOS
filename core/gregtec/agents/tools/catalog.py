@@ -474,7 +474,9 @@ TOOLS = (
 LATER: dict[str, str] = {
     "timer_set": "WO-5.3 follow-up, not yet a plan 8 row (a timer has to ring by voice and "
     "needs a core-to-voice push, D205; the router's instant commands came with WO-2.3, D150)",
-    "export_diff": "WO-1.4 (fingerprint and diff report)",
+    "export_diff": "WO-11.1 follow-up, not yet a plan 8 row (WO-11.1 writes the signature "
+    "diff to the vault inbox and data/reports, which the agents' notes search finds; a model "
+    "tool over two runs comes with the addon-watcher agent, D330)",
     "structure_get": "WO-1.8 (structure table, D123; its data reached this base late, so the "
     "tool is a follow-up)",
     "machine_fact_get": "machine_info covers reading facts (WO-2.2); a fact-by-key tool comes with machine_fact_set",

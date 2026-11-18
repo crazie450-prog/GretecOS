@@ -35,8 +35,16 @@ the plans the change affects, with a one-click re-solve in the Designer.
    - flags: every plan citing a recipe (or crop) whose content changed or that vanished is
      marked "affected by update" (`plan.affected_run`). The Designer shows a banner on it with
      the recipes it hit and a **Re-solve** button; Saved plans marks it too. A plan flagged by
-     an earlier update keeps that flag; one that matches its own export again is cleared.
+     an earlier update keeps that flag (and the DB keeps that export while the flag stands);
+     one that matches its own export again is cleared.
 4. Nothing changed: nothing is asked and nothing runs.
+5. **The export worked but couldn't be loaded** (collect or build failed, e.g. the DB was busy):
+   the run stays recorded, and recipe data stays stale on purpose. The dashboard's stale card
+   says the export isn't loaded, the voice says so once, and the next quit asks
+   "Last export not loaded. Load it now?" (only while Play still matches that export). Yes
+   starts `gos export run --load-only`: collect, build, note and flags, without exporting again.
+   You can run that yourself too. If something fails after the build, the result says
+   "built ... but the diff note, curation tasks and plan flags weren't all written".
 
 The pack-update playbook (`gos pack update`, [pack_update.md](pack_update.md)) still loads its
 own runs and flags at its own `flag` step.
@@ -76,6 +84,10 @@ restarts GOS). `$gos` below is `GOS_APP`'s `gos.exe` as in the other runbooks.
      as no longer affected (`plans_cleared`).
 3. **Not now** works too: on another quit with a change, click **Not now** (or say cancel):
    nothing exports, recipe data stays stale, and you're asked again next quit.
+4. **The load-only retry** (optional): only if a post-exit export ever ends with "not loaded
+   into the DB", quit Play once more without changing it: the question is "Last export not
+   loaded. Load it now?"; confirm, and the result shows the diff and flags. By hand:
+   `& $gos export run --load-only`.
 
 If the core isn't running, only the dialog asks (as WO-1.4 did) and the rest of the chain is the
 same.
@@ -85,11 +97,14 @@ same.
 - `tests/unit/test_addon_watcher.py` (every CI run): the whole chain on fake Prism instances and
   tiny exports: the jar swap, pre-launch's notice, post-exit's question answered on the
   dashboard, the export under the lock, the note, the curation task, the flags, a round where
-  only a config changed (nothing new flagged) and a revert (flags cleared); the question, the
-  notices, the routes and the card on their own.
+  only a config changed (nothing new flagged), a third such round with the default
+  `keep_runs` (the flagging export is kept) and a revert (flags cleared); a build that fails
+  (stale kept, the load offered alone and done by `--load-only`) and a failure after the
+  build; the question (answers at once: only the first is taken), the notices, the routes and
+  the card on their own.
 - `tests/integration/test_addon_watcher_harness.py`: the same on two real client-harness
   exports (the second a "GoodGenerator 1.1" made from a copy of the first), with an accepted
   Designer line, its flag in the Designer view and its re-solve. About 4 minutes, so it runs on
-  request, not in CI's mod job:
+  request, not in CI's mod job, so its proof rests on local runs (the PR lists them):
   `GOS_REQUIRE_HARNESS_RUN=1 GOS_ADDON_WATCHER_HARNESS=1 uv run pytest tests/integration/test_addon_watcher_harness.py`
   after `cd mod && ./gradlew runClient25 -Pharness` (mod/README.md).
