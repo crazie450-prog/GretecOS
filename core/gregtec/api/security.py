@@ -122,6 +122,31 @@ def refusal(headers: dict[str, str], allowed: Iterable[str]) -> str | None:
     return None
 
 
+GUIDE_PATH = "/guide/"
+
+
+def guide_refusal(headers: dict[str, str], method: str, path: str) -> str | None:
+    """Why a request to the 3D guide's own host (``guide.<dashboard_host>:<port>``, WO-10.8,
+    D304, D319) is refused, or None. That host serves the guide export's files and nothing else:
+    GET or HEAD under ``/guide/``, no WebSocket (checked by the caller). An ``Origin`` must be
+    that host's own (the guide page's own fetches), and a cross-site request is refused; a
+    same-site one is the dashboard framing it (``gos.localhost`` and ``guide.gos.localhost`` are
+    one site). The credential is the path token (:mod:`gregtec.build.guide`), never a cookie."""
+    if FUNNEL_HEADER in headers:
+        return "funnel request"
+    if method not in ("GET", "HEAD") or not path.startswith(GUIDE_PATH):
+        return "the guide host serves the guide only"
+    origin = headers.get("origin")
+    if origin is not None and origin.lower() not in (
+        f"http://{headers.get('host', '').lower()}",
+        f"https://{headers.get('host', '').lower()}",
+    ):
+        return "origin not allowed"
+    if headers.get("sec-fetch-site") == "cross-site":
+        return "cross-site request"
+    return None
+
+
 def _headers(scope: Scope) -> dict[str, str]:
     # A repeated Host or Origin header is refused: the last one wins here, and a second Host is
     # never in allowed_hosts together with a bad one, but a bad one is never silently dropped.
@@ -139,15 +164,33 @@ def _headers(scope: Scope) -> dict[str, str]:
 class HostOriginGuard:
     """ASGI middleware: refuse HTTP requests and WebSocket handshakes that fail :func:`refusal`."""
 
-    def __init__(self, app: ASGIApp, allowed_hosts: Iterable[str]) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        allowed_hosts: Iterable[str],
+        guide_hosts: Iterable[str] = (),
+    ) -> None:
         self.app = app
         self.allowed = tuple(allowed_hosts)
+        # The 3D guide's own host names (WO-10.8, D319): never in ``allowed``, so an Origin from
+        # one is refused on every other route; requests to one take :func:`guide_refusal`.
+        self.guide = {h.lower() for h in guide_hosts}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        reason = refusal(_headers(scope), self.allowed)
+        headers = _headers(scope)
+        if (headers.get("host") or "").lower() in self.guide:
+            reason = (
+                "the guide host serves the guide only"
+                if scope["type"] == "websocket"
+                else guide_refusal(
+                    headers, str(scope.get("method", "")), str(scope.get("path", ""))
+                )
+            )
+        else:
+            reason = refusal(headers, self.allowed)
         if reason is None:
             await self.app(scope, receive, send)
             return

@@ -260,6 +260,14 @@ class Config:
         return tuple(dict.fromkeys([*base, *extra]))
 
     @property
+    def guide_host(self) -> str:
+        """The 3D guide's own origin's Host (``guide.<dashboard_host>:<port>``, WO-10.8, D319):
+        it serves the guide export's files and nothing else, and the dashboard's cookie (host-only
+        on ``dashboard_host``) never goes to it. Derived, not a setting; never in
+        :attr:`allowed_hosts`, so an Origin from it is refused on every other route."""
+        return f"guide.{self.dashboard_host}:{self.core_port}"
+
+    @property
     def tailnet_host(self) -> str | None:
         """The PC's tailnet name (``pc.tail1234.ts.net``) when ``[core] allowed_hosts`` has one:
         the phone dashboard's address behind Tailscale Serve (D53, WO-9.3); else None."""

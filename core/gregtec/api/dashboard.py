@@ -658,10 +658,16 @@ def add_routes(
         page = board.dist / "index.html"
         if not page.is_file():
             return HTMLResponse(NOT_BUILT, status_code=503, headers=NOT_BUILT_HEADERS)
+        # The Build view frames the 3D guide's export from its own origin (WO-10.8, D319).
+        csp = f"{CSP}; frame-src http://{core.cfg.guide_host}"
         return FileResponse(
             page,
             media_type=TYPES[".html"],
-            headers={**PAGE_HEADERS, "Cache-Control": "no-cache"},
+            headers={
+                **PAGE_HEADERS,
+                "Content-Security-Policy": csp,
+                "Cache-Control": "no-cache",
+            },
         )
 
     for top in FILE_ROOTS:
