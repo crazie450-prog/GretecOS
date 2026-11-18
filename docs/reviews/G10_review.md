@@ -18,7 +18,7 @@ Phase 10 PRs and where they landed on `main`:
 
 ## Verdict
 
-**G10 is ready for Clayton's sign-off at the deployment test, with fakes standing in for his Lab, his voice, the real model and his GuideNH export, and with one defect to fix first (defect 1: a Lab capture saved as a `.schematic` can't become a footprint).** All eight built work orders have their code merged or merge-ready, every acceptance criterion that can be checked without Clayton's Lab, his catalog and his voice is met here or on CI, and nothing is "not met" in code except defect 1, which is inside WO-10.2's acceptance. Every §8 acceptance in Phase 10 is a Lab or voice check, so each WO is **met with fakes** and the PC steps below are the acceptance.
+**G10 is not ready to sign until defect 1 is fixed (a Lab capture saved as a `.schematic` can't become a footprint, so WO-10.2's acceptance is not met for addon multis). Everything else is met, or met with fakes standing in for his Lab, his voice, the real model and his GuideNH export.** Defect 1 is a blocking item: the PM should open its follow-up WO now (`schematic.read` exposes `{pos: mID}` from the tile-entity NBT, and `gos footprints capture` accepts a `.schematic`), or PC step 0 can't start. All eight built work orders have their code merged or merge-ready, and every acceptance criterion that can be checked without Clayton's Lab, his catalog and his voice is met here or on CI. Every §8 acceptance in Phase 10 is a Lab or voice check, so each WO is **met with fakes** and the PC steps below are the acceptance.
 
 What the PC steps must show (D158 (2) batches them with the other gates):
 1. **WO-10.3:** the full pack's block catalog holds addon blocks, and tile-entity blocks are flagged (`palette_export.md`).
@@ -87,7 +87,7 @@ No DB, export, schematic, token or keyring entry from these runs is committed. T
 
 > **Acceptance:** "Updated Phase 10 WOs and hours approved by Clayton"
 
-**Verdict: not run.** `docs/img2schem_sow.md` is not in the repo, so there was nothing to re-scope from. Under D158 (6) every Phase 10 WO was built from plan 7.10 as written, and each PR lists what the SOW might change (questions 44 to 50 below). V17 ("img2schem merged, D74") stays resolved; the re-scope itself waits for Clayton to add the SOW. Nothing in G10 depends on it: plan R14's fallback, the procedural shell, is built.
+**Verdict: not run.** `docs/img2schem_sow.md` is not in the repo, so there was nothing to re-scope from. Under D158 (6) every Phase 10 WO was built from plan 7.10 as written, and each PR lists what the SOW might change (the WO-10.0 line at the end of the questions below, and questions 13 and 52). V17 ("img2schem merged, D74") stays resolved; the re-scope itself waits for Clayton to add the SOW. Nothing in G10 depends on it: plan R14's fallback, the procedural shell, is built.
 
 ### WO-10.1: GuideNH spike
 
@@ -160,7 +160,7 @@ Open: PR #109 Q7 (EndlessIDs in the dev runtime), Q9 (the mod job's 90-min limit
 
 | Part | Status | Evidence |
 |---|---|---|
-| **Two benchmark lines laid out** | **met with fakes; PC step** | `test_layout_harness.py::test_two_benchmark_lines_are_laid_out` (G3 steel, G4 benzene, and both together) [here]. Stand-in shape: risk 2; real sizes: step 3 |
+| **Two benchmark lines laid out** | **met with fakes; PC step** | `test_layout_harness.py::test_two_benchmark_lines_are_laid_out` (G3 steel, G4 benzene, and both together) [here]. Stand-in shape: risk 2; real sizes: step 4 |
 | **No overlaps** | met | the test's own overlap and bounds check from the JSON; `test_build_layout.py` (30, with a hypothesis test over random plans) [here] |
 | **Corridors reach every machine** | met | flood fill from the entrance to every front and hatch kind (`reached` per machine in the run above) [here] |
 | Multis with no footprint listed, never sized by guess | met | `unplaced`; the test asserts it empty on the benchmark lines [here] |
@@ -215,7 +215,7 @@ Open: PR #121's questions.
 | Controller front, arrow and compass (the PR review's M1) | met | vitest and e2e [PR, here] |
 | GuideNH frame on its own origin (closes D304's gap) | met with fakes; **PC step** | `guide-<dashboard_host>:<port>`, a sibling name, path token; `test_the_guide_host_serves_the_guide_only`, `test_a_repeated_device_cookie_is_rejected`; e2e plants a cookie from the frame and the dashboard stays paired [here]. Real: step 8 |
 | **Clayton builds one multi from the guide alone** | **PC step** | `build_guide_lab.md` C (step 7) |
-| Keyboard access to the 3D scene | not built | PR #124 L4, question 42 |
+| Keyboard access to the 3D scene | not built | PR #124 L4, question 50 |
 
 Open: PR #124's questions.
 
@@ -234,7 +234,7 @@ Open: PR #124's questions.
 | §10's G11 line "Build: footprints for the planned multis; 3D guide; ≥ 2 themes; a Claude-designed shell pasted in the Lab" | open until the PC steps | steps 3, 7 and 6; "footprints for the planned multis" also needs defect 1 fixed if any planned multi needs a capture |
 
 **Required before Clayton signs G10:**
-1. **Fix defect 1** (owner: the PM; a small WO-10.2/10.4 follow-up). Until then step 3's captures can't be loaded.
+1. **Fix defect 1** (blocking; owner: the PM, a follow-up WO to open now: `schematic.read` exposes `{pos: mID}` from the tile-entity NBT, and `gos footprints capture` accepts a `.schematic`). Until then PC step 0 can't start and step 3's captures can't be loaded.
 2. The PC steps below, with their paste-backs.
 3. His answers, or "keep as built", to the Phase 10 questions below. Under D158 the defaults stand and are reversible.
 4. `main` green on every CI job at the commit he deploys, with WO-10.8 merged. `6aa5d6f`'s Windows job is red on a WO-5.1 flake (risk 1).
@@ -244,6 +244,7 @@ Should do (not blocking):
 2. **Record the reviewers' verdicts on D305, D306 and D309-D320.** Their rows still open "Pending reviewer (PR questions)" while each PR says the advisor agreed. The log is append-only, so a later row records them (as G9's should-do 2).
 3. **Appendix B's `build/` line is stale.** It names `shells.py` and `shell_designer.py`; Phase 10 built `shell.py`, `shell_store.py`, `shell_cli.py`, `layout.py`, `capture.py`, `coverage.py`, `guide.py`, `guide_data.py` and `worldreg.py`. Docs only.
 4. **Keyboard access to the guide's 3D scene** (PR #124 L4): decide with the board.
+5. **`themes.md` and `shells_lab.md` write `uv run gos ...`** (the gos-dev form) while saying the commands run in Clayton's own account. They should use `& $gos ...`. Docs only; steps 6 and 7 below already use his account's form.
 
 ---
 
@@ -273,7 +274,7 @@ No defect was found in the QA lane's area (W5-W9) beyond risk 1, which is listed
 
 ## Open questions from Phase 10's PRs
 
-No later decision answers them: D304-D320 are the Phase 10 rows on `main` and on #124. The defaults stand, reversible, until Clayton answers (D158). The PR reviewers (advisors) agreed with each judgement call, as the PRs say; Clayton still decides. PR text is quoted here as data.
+Every question in the Questions sections of the Phase 10 PRs is listed, including those the PR marked as reviewer-agreed; questions 52 to 57 were added after this report's own review (numbers 1 to 51 are unchanged so the references below still hold). No later decision answers them: D304-D320 are the Phase 10 rows on `main` and on #124. The defaults stand, reversible, until Clayton answers (D158). The PR reviewers (advisors) agreed with each judgement call, as the PRs say; Clayton still decides. PR text is quoted here as data.
 
 **PR #110** (WO-10.1), https://github.com/crazie450-prog/GretecOS/pull/110
 1. D304 (pending Clayton): GuideNH export, framed, MrBruh as the fallback. Confirm after the Lab run (step 8).
@@ -291,6 +292,8 @@ No later decision answers them: D304-D320 are the Phase 10 rows on `main` and on
 11. D306: a capture of a controller the extractor has is refused; "needed" = counted plans plus My base. OK?
 12. **Should the planner prefer non-legacy controllers?** A G3 plan picked `mte:811` `MTEIndustrialMixerLegacy`. Gameplay preference.
 13. The SOW might change: footprints as files or ghosts; whether GuideNH region-wand exports must be read as well as `.schematic`.
+52. The SOW might change: shell keep-outs taken from footprints (PR Q4(b)).
+53. CI timing: the mod job ran 50-59 min against a 60-min limit when the PR was written; its test adds about 12 s (PR Q5; see also 28).
 
 **PR #104** (WO-10.3), https://github.com/crazie450-prog/GretecOS/pull/104
 14. D307: texture PNGs not copied (licence, size); only path, sha256, average colour. OK?
@@ -325,12 +328,16 @@ No later decision answers them: D304-D320 are the Phase 10 rows on `main` and on
 37. **D315: the six line types and the 256-block "nearby" radius are fixed in code.** Tune them (`[build]` in gos.toml)?
 38. **The starter designs are his taste:** Foundry uses GT machine casings as decoration (`gregtech:gt.blockcasings2@0`, `gregtech:gt.blockcasings@11`), which cost more than plain blocks. Casings, or plain blocks only?
 39. Concurrency: a save refuses if the theme changed under it; no vault lock file (Obsidian would show it). OK?
+54. D314: a theme check uses the catalog only; the world-registry check stays with the schematic writer (D309). OK? (PR Q3)
+55. D314: version mechanics: code sets `v`, a refinement needs `change`, a sent palette replaces the old one whole; `v` is the maximum of the current and every kept version, plus one, so a theme made again under a deleted theme's name continues its numbering. OK? (PR Q4)
+56. D315: theme uses are stored in `data/build/theme_uses.jsonl`, outside the vault. OK? (PR Q6)
 
 **PR #121** (WO-10.7), https://github.com/crazie450-prog/GretecOS/pull/121
 40. **D316: nothing inside the layout below the roof; walls only in the 1-block ring.** Inner partitions or mezzanines later?
 41. D317: the 25% repair share counts placed cells only. OK?
 42. D318: Clayton pastes from entrance e1's `lo` cell; the cost is an estimate bounded by `task_max_usd` (2.0). OK? Does the e2e core need a block catalog to show a successful Designer shell?
 43. `build_request`'s `save` defaults to true; the architect looks first with false. OK?
+57. The `layout_estimate` VERIFY row was reworded to name its WO, rather than adding a "not planned" category with a new decision row. OK?
 44. **Board approval** (D92): the Build view's Shells panel and the Designer's shell button.
 
 **PR #124** (WO-10.8), https://github.com/crazie450-prog/GretecOS/pull/124
@@ -348,11 +355,11 @@ No later decision answers them: D304-D320 are the Phase 10 rows on `main` and on
 
 ## Clayton's PC steps before signing G10
 
-These run after G2's PC steps 0 to 4 (`docs/reviews/G2_review.md`: Node.js and pnpm, `phase1_pc_checks.md` with the export, the DB build and step 8's **`gos structures extract` and `gos structures load`**, which the footprints need, the setup wizard with the API key, and the dashboard paired on monitor 2) and G5's voice steps (`docs/reviews/G5_review.md`: the voice client and talk key, which step 6 needs). They don't repeat those steps. The commands are the runbooks' own: `uv run gos ...` runs as **gos-dev** in its dev clone where the runbook says so; `$gos` is `C:\GregtecOS-app\current\.venv\Scripts\gos.exe` in his own account. PowerShell with `$ProgressPreference = 'SilentlyContinue'`. **Nothing here touches Play: every paste and build is in a Lab world, by his own hand. GOS never pastes.** Money: steps 6 and 7 spend a few deep-lane tasks (each capped at `[budget] task_max_usd`, 2.0). In all, about 3 h plus the multiblock build.
+These run after G2's PC steps 0 to 4 (`docs/reviews/G2_review.md`: Node.js and pnpm, `phase1_pc_checks.md` with the export, the DB build and step 8's **`gos structures extract` and `gos structures load`**, which the footprints need, the setup wizard with the API key, and the dashboard paired on monitor 2) and G5's voice steps (`docs/reviews/G5_review.md`: the voice client and talk key, which step 6 needs). They don't repeat those steps. `uv run gos ...` runs as **gos-dev** in its dev clone (steps 1's catalog check, 2 and 4, and `schematic compare`/`read`, which the runbooks place under gos-dev); every other `gos` command is `& $gos ...` in his own account, where his core, voice client and saved plans live. `themes.md` and `shells_lab.md` write `uv run gos` while saying "your account": the account wins here (should-do 5). `$gos` is `C:\GregtecOS-app\current\.venv\Scripts\gos.exe` in his own account. PowerShell with `$ProgressPreference = 'SilentlyContinue'`. **Nothing here touches Play: every paste and build is in a Lab world, by his own hand. GOS never pastes.** Money: steps 6 and 7 spend a few deep-lane tasks (each capped at `[budget] task_max_usd`, 2.0). In all, about 3 h plus the multiblock build.
 
 **0. Deploy a green `main`** with WO-10.8 (#124) and the fix for defect 1 merged, every CI job green on that commit (not `6aa5d6f`, risk 1). In the profile clone: `git pull`, `uv run gos deploy`. `& $gos status` shows the core `ok`. In the Lab instance's `mods`, `worldedit-gtnh-v0.0.10.jar` (as Play has, D88).
 
-**1. The block catalog** (`palette_export.md` A-C, WO-10.3's acceptance). Sync Export from GOS_APP (A.2), click **Launch** on GTNH-Export, then as gos-dev `uv run gos export collect` and `uv run gos db build`. **Pass:** `parts.palette: "ok"`, `palette_errors` 0; a `Block catalog:` line; in B, casings and glass `te` 0, `minecraft:chest@0` and `gregtech:gt.blockmachines@0` `te` 1, Chisel listed; in C, `5 of 8 entries accepted`, exit 1.
+**1. The block catalog** (`palette_export.md` A-C, WO-10.3's acceptance). Sync Export from GOS_APP (A.2), click **Launch** on GTNH-Export, then as gos-dev `uv run gos export collect` and `uv run gos db build` (B and C below also as gos-dev). Then **in his own account**, so his core has the catalog for steps 6 and 7 (his DB from G2 step 4b predates the palette pass): `& $gos export collect; & $gos db build`, as in `phase1_pc_checks.md` step 4b; **pass:** the same `Block catalog:` line. **Pass (gos-dev):** `parts.palette: "ok"`, `palette_errors` 0; a `Block catalog:` line; in B, casings and glass `te` 0, `minecraft:chest@0` and `gregtech:gt.blockmachines@0` `te` 1, Chisel listed; in C, `5 of 8 entries accepted`, exit 1.
 
 **2. The schematic round trip** (`schematic_roundtrip.md` A-D, WO-10.4's acceptance, V16). As gos-dev, a palette of blocks with Lab ids **above 4095** (F3+H), then:
 ```powershell
@@ -382,14 +389,14 @@ uv run pytest tests/integration/test_layout_harness.py -s
 
 **5. Boards** (D92, D158 (5)), at 2560x1440 and on the phone: the Designer's **Floor plan** panel and **Design a shell around it** button, the Build view's **Shells** panel and the **3D build guide** (and question 50, keyboard access). Approve or redline.
 
-**6. Themes by voice** (`themes.md` A-C, WO-10.6's acceptance). As gos-dev `uv run gos theme list` and `uv run gos theme check` (two `ok`, exit 0). With the core and voice client running, by voice: make "copper works" (v1), refine it twice (v2, v3), then ask for chests as trim (refused out loud, no new version unless he accepts a substitute). `uv run gos theme list` shows `th-copper-works v3 vault`; then the three `gos theme select` modes.
+**6. Themes by voice** (`themes.md` A-C, WO-10.6's acceptance). In his own account (the core, voice client and deep lane write his `GOS_HOME`): `& $gos theme list` and `& $gos theme check` (two `ok`, exit 0). With the core and voice client running, by voice: make "copper works" (v1), refine it twice (v2, v3), then ask for chests as trim (refused out loud, no new version unless he accepts a substitute). `& $gos theme list` shows `th-copper-works v3 vault`; then the three `& $gos theme select` modes.
 
 **7. L6: a Claude-designed shell and a multi from the guide** (`shells_lab.md` B-D and `build_guide_lab.md` A-C, WO-10.7's and WO-10.8's acceptances).
-- `uv run gos shell design <plan-id> --theme th-foundry --line-type smelting`, then `uv run gos shell show <sh-id>` (the procedural fallback).
-- Ask: "Design a foundry shell around my steel line with pillars every four blocks and a gable roof." `uv run gos shell list` shows it as `architect`.
-- `uv run gos shell export <sh-id>`; copy the `.schematic` (and any `-part-N`) into the Lab's `config\worldedit\schematics\`.
+- In his own account (his saved plans; the voice-designed shell lands in his `data/build/shells/`): `& $gos shell design <plan-id> --theme th-foundry --line-type smelting`, then `& $gos shell show <sh-id>` (the procedural fallback).
+- Ask: "Design a foundry shell around my steel line with pillars every four blocks and a gable roof." `& $gos shell list` shows it as `architect`.
+- `& $gos shell export <sh-id>`; copy the `.schematic` (and any `-part-N`) into the Lab's `config\worldedit\schematics\`.
 - In `lab-structures`: build or mark the layout, stand in the cell `gos shell show` names (entrance e1), `//schem load <sh-id>`, `//paste`, never `//rotate`.
-- **Pass (10.7):** `//count gregtech:gt.blockmachines` in the shell's region is 0, no block with a GUI appeared, every corridor and every machine's front, sides and top are open, the doorway is open; select it, `//copy` from the same block, `//schem save <sh-id>-copy`, and `uv run gos schematic compare` says `identical`.
+- **Pass (10.7):** `//count gregtech:gt.blockmachines` in the shell's region is 0, no block with a GUI appeared, every corridor and every machine's front, sides and top are open, the doorway is open; select it, `//copy` from the same block, `//schem save <sh-id>-copy`, and `uv run gos schematic compare` (as gos-dev, as in step 2; it only reads the two files) says `identical`.
 - In the Build view, open the guide for one multi in that line (a footprint from step 3), set **Front faces** to match, and build it layer by layer from the guide alone, ticking the checklist; reload once to see the ticks kept.
 - **Pass (10.8):** the controller forms (no structure error in its GUI or the Scanner).
 
@@ -422,4 +429,5 @@ uv run pytest tests/integration/test_layout_harness.py -s
 
 - Everything above ran green on `76dd152` (WO-10.8's merge-gate head, which contains `main` at `6aa5d6f`). No product code was changed: defect 1 is listed for the PM, not fixed here.
 - No decision row was added (D322 unused): this review makes no judgement call that needs one.
-- WO-10.8 (#124) was still open when this report was written (`origin/main` at `6aa5d6f`). This branch carries its head `76dd152`, so this PR shows WO-10.8 too until #124 merges; after that only this report remains in its diff.
+- WO-10.8 (#124) was still open when this report was written (`origin/main` at `6aa5d6f`), and still open when the review fixes were pushed (2026-11-18; #124's head then `3f0a160`, a no-file merge of `main` on top of `76dd152`). This branch carries `76dd152`, so this PR shows WO-10.8 too until #124 merges; after that only this report remains in its diff. **When #124 merges, the PM records its merge commit here or in this PR.**
+- Review applied (PR #126's review): H1 (PC steps 1, 6 and 7 now run in the right accounts, and step 1 builds his own DB's catalog), M1 (the verdict now says G10 is not ready to sign until defect 1 is fixed), L1 (step reference), L2 (questions 52 to 57 added), L3 (this note). Two further wrong references found while applying it were fixed (WO-10.0's question range; keyboard access is question 50).
