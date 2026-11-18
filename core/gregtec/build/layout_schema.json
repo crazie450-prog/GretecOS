@@ -290,7 +290,7 @@
   "services": {
    "type": "array",
    "items": {
-    "description": "What runs in the chases: a plan's flows between placed machines, its boundary at the entrance (e1), and EU per tier (from its generators, or e1 for the base grid). rate_s is the plan's, per second; null for EU.",
+    "description": "What runs in the chases: a plan's flows between placed machines, its boundary at the entrance (e1), and EU per tier (from its generators of that tier, else the layout's generators of other tiers through a transformer step, else e1 for the base grid). rate_s is the plan's, per second; null for EU.",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -301,6 +301,25 @@
      "to",
      "ref"
     ],
+    "if": {
+     "properties": {
+      "kind": {
+       "const": "eu"
+      }
+     }
+    },
+    "then": {
+     "required": [
+      "via_transformer"
+     ]
+    },
+    "else": {
+     "not": {
+      "required": [
+       "via_transformer"
+      ]
+     }
+    },
     "properties": {
      "kind": {
       "enum": [
@@ -331,6 +350,10 @@
        "type": "string",
        "pattern": "^(m|e)[1-9][0-9]*$"
       }
+     },
+     "via_transformer": {
+      "type": "boolean",
+      "description": "EU only: true when no generator in the layout is at this tier, so 'from' is the layout's generators of other tiers and a transformer step is needed (WO-4.5's, not placed); false otherwise"
      },
      "ref": {
       "type": "string",
@@ -410,6 +433,7 @@
     "kind",
     "tier",
     "footprint",
+    "variant",
     "source",
     "facing",
     "controller",
@@ -465,6 +489,10 @@
     "footprint": {
      "type": "string",
      "description": "gregtec.build.footprints' key: <registry>@<meta>|<variant>[;<channel>=<value>...]|<facing>"
+    },
+    "variant": {
+     "type": "string",
+     "description": "the structure row's variant key the machine is placed at: a controller with several variants is placed at its largest by volume (D312), and a warning names them all"
     },
     "source": {
      "enum": [

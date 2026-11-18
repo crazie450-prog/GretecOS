@@ -228,6 +228,34 @@ describe("the Designer view", () => {
     await screen.findByTestId("route-1-base");
   });
 
+  it("tries the floor plan again when its panel is reopened after a failed load", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: FIRST });
+    const url = `/api/plans/${FIRST.id}/layout`;
+    routes[`GET ${url}`] = () => ({ status: 500, body: { error: "the DB is busy" } });
+    render(<Designer />);
+    const panel = (await screen.findByTestId(`layout-${FIRST.id}`)) as HTMLDetailsElement;
+    // jsdom fires the details' toggle event itself, a task after open changes, as a browser does
+    const toggle = async (open: boolean) => {
+      await act(async () => {
+        panel.open = open;
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    };
+    await toggle(true);
+    expect(await within(panel).findByText(/the DB is busy/)).toBeTruthy();
+    const card = {
+      type: "layout", title: "Floor plan · Steel", ref: `plan:${FIRST.id}`, layout: "lo-0123456789ab",
+      size: { x: 4, y: 3, z: 3 }, rects: [], notes: ["0 machines placed"],
+    };
+    routes[`GET ${url}`] = () => ({ status: 200, body: { layout: { id: "lo-0123456789ab" }, card } });
+    await toggle(false);
+    await toggle(true);
+    expect(await within(panel).findByText(/Floor plan · Steel/)).toBeTruthy();
+    expect(within(panel).queryByText(/the DB is busy/)).toBeNull();
+    expect(calls.filter((c) => c.url === url)).toHaveLength(2);
+  });
+
   it("shows the core's refusal", async () => {
     routes["POST /api/designer/design"] = () => ({ status: 400, body: { error: "no route: no recipe makes the target" } });
     render(<Designer />);

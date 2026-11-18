@@ -7,8 +7,9 @@ result is a layout JSON (:data:`SCHEMA`, version :data:`VERSION`; ``layout_schem
 this file) that WO-10.7's shell designer and WO-10.8's build guide read.
 
 **Sizes.** A multiblock's footprint is :mod:`gregtec.build.footprints`'s (the structure table: the
-extractor's rows or a Lab capture), smallest variant by volume as WO-3.6 takes it (D200), looked
-up by ``gregtech:gt.blockmachines`` + its MTE id or the ``machine`` row a structure row is linked
+extractor's rows or a Lab capture) at the controller's *largest* variant by volume (D312: a
+keep-out must hold the machine as built, and which variant a recipe needs, a tower's height say,
+isn't in the DB; a warning names every variant so the size can be checked), looked up by ``gregtech:gt.blockmachines`` + its MTE id or the ``machine`` row a structure row is linked
 to; a single block is one block (a GT single block is one block by construction). A multiblock
 with no footprint is not placed and is listed under ``unplaced`` (it needs a Lab capture, D306):
 no size is ever estimated.
@@ -28,7 +29,8 @@ floor; every box is ``lo``/``hi`` inclusive.
   for hatches on the sides and back, and room above for hatches on top.
 - *Chases* run above every corridor (``corridor_height`` up, ``chase_height`` high): the trunk
   for pipes, conveyors and cables. A machine's ``chase`` is the one over its spine; its runs drop
-  through its keep-out ring to its hatches.
+  through its keep-out ring to its hatches. A machine lower than ``corridor_height`` has its
+  keep-out end below the chase, so its runs drop through corridor headroom (WO-10.7 decides how).
 
 **Reach.** Service space is the corridors plus every keep-out minus its machine's box. A flood
 fill (6-connected) from the entrance's cells marks what can be reached. A machine is ``ok`` when
@@ -36,12 +38,17 @@ the cell in front of its controller is reached and every hatch kind its footprin
 (``Maintenance`` included) has a reached cell: a hatch cell is reached when one of its faces
 opens onto reached service space. Hatch cells with no face out of the box (a bottom-centre cell
 under the hollow) are counted as ``enclosed``. Vertical movement inside service space (ladder,
-scaffold, flight) is Clayton's; the shell designer may not fill it.
+scaffold, flight) is Clayton's; the shell designer may not fill it. A multiblock whose footprint
+has no hatch cells is not checked for hatches, and a warning says so.
 
 **Services** (logistics and power): every flow between two placed nodes (the plan's ``edges``,
 items and fluids), the plan's boundary inputs and outputs at the entrance, and EU per tier from
-the power plan's generators (or the entrance, the base grid) to the consumers, each with the
-plan it comes from. Numbers in them are the plan's, copied.
+the power plan's generators of that tier to the consumers, each with the plan it comes from.
+A tier with no generator of its own is fed from the layout's generators of other tiers with
+``via_transformer`` set and a warning (the transformer step is WO-4.5's, not placed), or from the
+entrance, the base grid, when the layout holds no generator. A flow to or from a node that isn't
+placed is not routed, and a warning names it. Numbers in them are the plan's, copied. The id
+hashes the plans and the whole layout, so new footprint data gives a new id.
 
 Deterministic: the same plans and options give the same JSON (no clock, no randomness; the order
 is the plans', then each plan's flow from upstream to downstream, ties by node number). Nothing
@@ -217,6 +224,8 @@ class _Footprints:
         self.lib = fp.library(conn)
         self.linked = coverage._linked(conn, self.lib)
         self._cache: dict[tuple[int, str], fp.Footprint | None] = {}
+        # controller (registry@meta) -> its variants and sizes, when it has more than one
+        self.variants: dict[str, list[tuple[str, fp.Offset]]] = {}
 
     def get(self, mte: int, kind: str, name: str | None) -> fp.Footprint | None:
         key = (mte, kind)
@@ -231,10 +240,17 @@ class _Footprints:
         if not found:
             return None
         f = found[0]
-        try:  # the smallest variant by volume (D200), as built with its tiers
-            return self.lib.get(f.registry_name, f.meta)
+        every = self.lib.for_controller(f.registry_name, f.meta)
+        # the largest variant by volume (D312 "Sizes"): a keep-out must hold the machine as
+        # built, and which variant a recipe needs (a tower's height) isn't in the DB
+        pick = max(every, key=lambda v: (v.size[0] * v.size[1] * v.size[2], v.variant))
+        try:
+            built = self.lib.get(f.registry_name, f.meta, variant=pick.variant)
         except fp.FootprintError:
             return None
+        if len(every) > 1:
+            self.variants[built.controller] = [(v.variant, v.size) for v in every]
+        return built
 
 
 def _flow_order(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -369,9 +385,11 @@ def _pack(
 # --- the layout -----------------------------------------------------------------------------
 
 
-def _layout_id(plans: Sequence[Mapping[str, Any]], opts: Options) -> str:
+def _layout_id(body: Mapping[str, Any]) -> str:
+    """``lo-`` + 12 hex of the plans and the whole layout (options and every placed
+    footprint's geometry), so a new capture or dump that moves a box gives a new id."""
     text = json.dumps(
-        {"plans": list(plans), "options": asdict(opts)},
+        body,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -392,7 +410,8 @@ def plan_layout(
     ids = [str(p.get("id", "?")) for p in plans]
     if len(set(ids)) != len(ids):
         raise LayoutError("a plan is named twice")
-    items, unplaced = instances(plans, _Footprints(conn))
+    footprints = _Footprints(conn)
+    items, unplaced = instances(plans, footprints)
     c, ct, W, H = (
         opts.clearance,
         opts.clearance_top,
@@ -466,13 +485,19 @@ def plan_layout(
         for why in _reach_problems(p["reach"])
     ]
     warnings += [
+        f"{p['id']} {p['name'] or 'mte:' + str(p['mte'])}: no hatch data, "
+        "hatches not checked"
+        for p in placements
+        if p["kind"] == "multiblock" and not p["hatches"]
+    ]
+    warnings += _variant_warnings(placements, footprints.variants)
+    warnings += [
         f"{u['plan']} {u['node']}: {u['count']}x mte:{u['mte']} not placed: no footprint"
         for u in unplaced
     ]
-    return {
-        "schema": SCHEMA,
-        "v": VERSION,
-        "id": _layout_id(plans, opts),
+    flows, flow_warnings = services(plans, placements)
+    warnings += flow_warnings
+    body = {
         "plans": [
             {"id": pid, "name": p.get("name"), "kind": p.get("kind")}
             for pid, p in zip(ids, plans, strict=True)
@@ -487,10 +512,36 @@ def plan_layout(
         "corridors": corridors,
         "chases": chases,
         "entrances": entrances,
-        "services": services(plans, placements),
+        "services": flows,
         "unplaced": unplaced,
         "warnings": warnings,
     }
+    lid = _layout_id({"plans": list(plans), "layout": body})
+    return {"schema": SCHEMA, "v": VERSION, "id": lid, **body}
+
+
+def _variant_warnings(
+    placements: Sequence[Mapping[str, Any]],
+    variants: Mapping[str, Sequence[tuple[str, fp.Offset]]],
+) -> list[str]:
+    """One warning per machine type placed at its largest of several variants (D312)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in placements:
+        key = p["footprint"].split("|", 1)[0]
+        if key not in variants or key in seen:
+            continue
+        seen.add(key)
+        sizes = ", ".join(
+            f"{name or '(default)'} {x}x{y}x{z}" for name, (x, y, z) in variants[key]
+        )
+        ids = [q["id"] for q in placements if q["footprint"].split("|", 1)[0] == key]
+        out.append(
+            f"{p['name'] or 'mte:' + str(p['mte'])} ({', '.join(ids)}): placed at its "
+            f"largest variant {p['variant'] or '(default)'} of {len(variants[key])} ({sizes}); "
+            "the variant its recipe needs isn't in the DB, so check the size before building"
+        )
+    return out
 
 
 def _chase(hid: str, cid: str, under: Box, opts: Options) -> dict[str, Any]:
@@ -524,6 +575,7 @@ def _placement(
         "kind": inst.kind,
         "tier": inst.tier,
         "footprint": turned.key,
+        "variant": turned.variant,
         "source": turned.source,
         "facing": turned.facing,
         "controller": [ox, oy, oz],
@@ -665,11 +717,13 @@ def _kind(item: str) -> str:
 
 def services(
     plans: Sequence[Mapping[str, Any]], placements: Sequence[Mapping[str, Any]]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     """What runs in the chases: each plan's flows between placed nodes, its boundary at the
-    entrance, and EU per tier. Rates are the plan's."""
+    entrance, and EU per tier. Rates are the plan's. Also the warnings: a flow to or from a
+    node that isn't placed (not routed), and a tier fed from a generator of another tier."""
     by_node = _ids_by_node(placements)
     out: list[dict[str, Any]] = []
+    warnings: list[str] = []
     generators: dict[str, list[str]] = {}  # tier -> generator placement ids
     for p in plans:
         pid = str(p.get("id", "?"))
@@ -685,7 +739,7 @@ def services(
                 if x["plan"] == pid and x["role"] == "generator"
             ]
             if ids:
-                generators.setdefault(str(gen["tier"]), []).extend(ids)
+                generators.setdefault(str(gen["tier"]).upper(), []).extend(ids)
     for p in plans:
         pid = str(p.get("id", "?"))
         ref = f"plan:{pid}"
@@ -693,6 +747,11 @@ def services(
             a = by_node.get((pid, str(e.get("from"))), [])
             b = by_node.get((pid, str(e.get("to"))), [])
             if not a or not b:
+                gone = [str(e.get(k)) for k, ids in (("from", a), ("to", b)) if not ids]
+                warnings.append(
+                    f"{pid} {e.get('from')} -> {e.get('to')} {e.get('item')}: not routed, "
+                    f"{' and '.join(gone)} has no placement"
+                )
                 continue
             item = str(e.get("item"))
             out.append(
@@ -726,19 +785,38 @@ def services(
                     (n for n in p.get("nodes", []) if str(n.get("n")) == x["node"]), {}
                 )
                 if (node.get("eut") or 0) > 0 or (node.get("eut_avg") or 0) > 0:
-                    tiers.setdefault(str(x["tier"]), []).append(x["id"])
+                    tiers.setdefault(str(x["tier"]).upper(), []).append(x["id"])
         for tier in sorted(tiers):
+            # the base grid (e1) when the layout holds no generator; one of another tier
+            # feeds this one through a transformer step (WO-4.5's, not placed here)
+            other = bool(generators) and tier not in generators
+            source = (
+                [i for t in sorted(generators) for i in generators[t]]
+                if other
+                else generators.get(tier, ["e1"])
+            )
             out.append(
                 {
                     "kind": "eu",
                     "item": f"eu:{tier}",
                     "rate_s": None,
-                    "from": generators.get(tier, ["e1"]),
+                    "from": source,
                     "to": tiers[tier],
+                    "via_transformer": other,
                     "ref": ref,
                 }
             )
-    return out
+            if other:
+                at = ", ".join(
+                    f"{t} generator(s) {' '.join(generators[t])}"
+                    for t in sorted(generators)
+                )
+                src = next(iter(generators)) if len(generators) == 1 else "<tier>"
+                warnings.append(
+                    f"{pid} eu:{tier}: no {tier} generator in the layout, fed from {at}: "
+                    f"a transformer step (gos dist transformer --from {src} --to {tier})"
+                )
+    return out, warnings
 
 
 # --- the dashboard's preview card -----------------------------------------------------------

@@ -221,7 +221,11 @@ function FloorPlan({ planId }: { planId: string }) {
     <details
       className="designer-layout"
       data-testid={`layout-${planId}`}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) setError(null); // reopening tries a failed load again
+        setOpen(now);
+      }}
     >
       <summary className="gos-label">Floor plan</summary>
       {open && !got && !error && <p className="empty">{GLYPH.progress} Laying out the machines</p>}
