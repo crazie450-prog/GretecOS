@@ -12,8 +12,8 @@
   and "what's this?" (WO-8.1, D286: the item Clayton hovers over or the
   block he looks at, as GregtecLink's client module reports it, answered from the DB). These
   keep working with no API key or credits (plan 0.1 principle 9, 7.16).
-- **deep**: design, plans, comparisons, advice and anything quantitative over a line ("how many
-  ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
+- **deep**: design, plans, comparisons, advice, making or refining a building theme (WO-10.6)
+  and anything quantitative over a line ("how many ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
   asked about, so pre-retrieval (:mod:`gregtec.agents.prefetch`) can resolve it first.
 
@@ -184,6 +184,10 @@ DEEP_RULES = [
         r"\bratios?\b|\bcalculate\b|\bbudget\b|\boverclock",
         r"\b(?:set up|build|automate)\b.*\b(?:line|setup|factory|plant)\b",
         r"\bpower (?:line|plant|setup|generation)\b",
+        # making or refining a building theme (WO-10.6): theme_save is deep-lane only
+        r"\b(?:create|make|new|refine|change|tweak|update|edit|adjust|swap|rework|give)\b.*"
+        + r"\bthemes?\b",
+        r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust|instead)\b",
     )
 ]
 

@@ -34,7 +34,7 @@ from gregtec.advisor import cli as advisor_cli
 from gregtec.agents import design_cost_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.build import cli as palette_cli
-from gregtec.build import schematic_cli
+from gregtec.build import schematic_cli, theme_cli
 from gregtec.crops import cli as cropcli
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -624,6 +624,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     wiki_cli.add_parsers(commands)
     palette_cli.add_parsers(commands)
     schematic_cli.add_parsers(commands)
+    theme_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -708,6 +709,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return palette_cli.run(args)
     if args.command in schematic_cli.COMMANDS:
         return schematic_cli.run(args)
+    if args.command in theme_cli.COMMANDS:
+        return theme_cli.run(args)
     if args.command in wiki_cli.COMMANDS:
         return wiki_cli.run(args)
     if args.command == "doctor":
