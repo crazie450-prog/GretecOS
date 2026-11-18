@@ -167,7 +167,11 @@ def verify_zip(zip_path: Path, into: Path) -> Report:
     with zf:
         infos = zf.infolist()
         report.entries = len(infos)
-        bad = zf.testzip()  # reads every entry, checking its CRC
+        try:
+            bad = zf.testzip()  # reads every entry, checking its CRC
+        except (zipfile.BadZipFile, zlib.error, EOFError, OSError) as exc:
+            report.problems.append(f"an entry can't be read: {exc}")
+            return report
         if bad is not None:
             report.problems.append(f"entry {bad!r} fails its CRC")
             return report

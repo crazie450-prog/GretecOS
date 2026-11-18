@@ -37,6 +37,7 @@ import shutil
 import sqlite3
 import time
 import zipfile
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -421,7 +422,7 @@ def restore_vault(backup: Path, dest: Path) -> list[Check]:
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(data)
                 got[str(rel)] = (len(data), hashlib.sha256(data).hexdigest())
-    except (zipfile.BadZipFile, OSError, EOFError) as exc:
+    except (zipfile.BadZipFile, zlib.error, OSError, EOFError) as exc:
         return [*checks, Check("vault zip", False, f"{type(exc).__name__}: {exc}")]
     checks.append(
         Check("vault zip", not bad, "every entry read" if not bad else bad[0])
