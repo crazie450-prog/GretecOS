@@ -141,6 +141,23 @@ def load_crops(home: Path) -> None:
     module.write_db(access.db_path(home), into_latest=True)
 
 
+def load_guide(home: Path) -> None:
+    """WO-10.1's hand-made stand-in for a GuideNH export (tests/fixtures/guide_site/standin.py)
+    in ``home/data/guide-site``, so the Build view frames a scene page through the core."""
+    spec = importlib.util.spec_from_file_location(
+        "guide_standin", REPO / "tests" / "fixtures" / "guide_site" / "standin.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the guide stand-in")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["guide_standin"] = module
+    spec.loader.exec_module(module)
+    from gregtec.build import guide
+    from gregtec.config import Config
+
+    module.make(guide.site_root(Config(gos_home=home)))
+
+
 def load_events(home: Path) -> None:
     """WO-6.3's made-up sessions in ``home``'s event store, as the watchers would post them:
     Play two days ago (login, quests, machines, a death, chat, quit) and three hours ago (ending
@@ -322,6 +339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ores_lab = load_ores(home)
             load_crops(home)
             load_events(home)
+            load_guide(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
