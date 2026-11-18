@@ -10,7 +10,8 @@ the routes keep the order rank.py gives them.
   (``data/plans/designer.json``), which the view opens with when its address names none.
 - :func:`group`: a saved plan and its alternatives (the routes solved with it), in rank order.
 - :func:`view`: what the Designer shows for a group: each route's summary (nodes with their
-  item, machine, tier, count, pin and primary flags), the route comparison card with its
+  item, machine, tier, count, pin and primary flags; ``affected``, the export run that flagged
+  the plan "affected by update" and the cites it hit, QA:D9, WO-11.1), the route comparison card with its
   differences marked, and each route's flow and BOM cards.
 - :func:`alternatives`: a node's candidate recipes (D61's list, ``show_all`` for every one).
 - :func:`pin`: pin a node of a saved plan to a recipe (or free it, ``recipe=None``) and re-solve:
@@ -45,6 +46,7 @@ from gregtec.base.state import MyBase
 from gregtec.cards import checked
 from gregtec.cards.build import clip
 from gregtec.db import access
+from gregtec.packupdate import addons
 from gregtec.packupdate.plans import PLAN_ID
 from gregtec.planner import alternatives as alts
 from gregtec.planner import graph, ledger, plan, rank, solve
@@ -466,12 +468,15 @@ def view(home: Path, pid: str) -> dict[str, Any]:
     plans = group(home, pid)
     statuses = _statuses(home, [p["id"] for p in plans])
     books: dict[str, Book] = {}
+    flags: dict[str, dict[str, Any] | None] = {}
     with _conn(home, readonly=True) as conn:
         for p in plans:
             try:
                 books[p["id"]] = book_mod.read(conn, p)
             except LookupError as exc:
                 raise DesignerError(f"plan {p['id']}: {exc}") from None
+            # "affected by update" (QA:D9, WO-11.1): the run that flagged it and what it hit
+            flags[p["id"]] = addons.affected(conn, home, p["id"])
     prefs = rank.read_prefs(home / "vault")
     by_route = [_made_by(p) for p in plans]
     routes = []
@@ -499,6 +504,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "pins": p.get("pins") or [],
                 "nodes": [_node(n, b) for n in p.get("nodes") or ()],
                 "warnings": p.get("warnings") or [],
+                "affected": flags.get(p["id"]),
                 # every route's comparison metrics and differing choices, against all the
                 # design's routes (the card holds at most 3 of them)
                 "metrics": {key: _metric(p, key) for key, *_ in METRICS},
