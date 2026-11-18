@@ -386,6 +386,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
     core_app.KEY_CHECK_S = 1.0
+    # Every spec pairs its own page (and the phone spec pairs over the tailnet, WO-9.3), more
+    # than D117's 10 starts per 10 minutes in one run; the limit itself is tested in tests/security.
+    from gregtec.api import security
+
+    security.PAIR_RATE = (40, 600)
     dashboard.GAME_EVERY_S = 1.0
     dashboard.DATA_EVERY_S = 1.0
 

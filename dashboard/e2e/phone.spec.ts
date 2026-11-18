@@ -65,10 +65,16 @@ test.afterAll(async () => {
   serve?.kill();
 });
 
+async function phones(): Promise<number> {
+  const devices = await asAdmin<{ name: string; revoked: boolean }[]>("/api/devices");
+  return devices.filter((d) => d.name === "Phone" && !d.revoked).length;
+}
+
 test("a Discord plan link opens the plan once the phone has paired over the tailnet", async () => {
   // The link the bot sends: https://<pc>.<tailnet>.ts.net/#/designer/<id> (WO-9.1).
   await page.goto(`${ORIGIN}/#/designer/${plan}`);
   await expect(page.getByTestId("pairing")).toBeVisible();
+  const before = await phones();
   await page.getByTestId("pair-name").fill("Phone");
   await page.getByTestId("pair-start").click();
   await page.getByTestId("pair-code").fill(await pendingCode());
@@ -82,8 +88,7 @@ test("a Discord plan link opens the plan once the phone has paired over the tail
   await expect(page.locator(`.designer-route[data-route="${plan}"]`)).toBeVisible();
   await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("shell")).toHaveAttribute("data-socket", "open");
-  const devices = await asAdmin<{ name: string; revoked: boolean }[]>("/api/devices");
-  expect(devices.filter((d) => d.name === "Phone" && !d.revoked)).toHaveLength(1);
+  expect(await phones()).toBe(before + 1); // one device row for this phone
   await page.screenshot({ path: shot("phone-plan-link"), fullPage: true });
   // Paired once: a reload (or the next link) goes straight in.
   await page.reload();
