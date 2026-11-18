@@ -101,6 +101,10 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
             None,
         ),
         ("what themes do I have", "fast", "general", None, None),
+        # decorative shells (WO-10.7): designing one is the deep lane's build_request
+        ("make a building around my benzene line", "deep", "handoff", None, None),
+        ("design a foundry shell around the steel line", "deep", "handoff", None, None),
+        ("what is a shell", "fast", "item", "shell", None),
         ("give me the list of themes", "fast", "general", None, None),
         ("read me the marble works theme instead", "fast", "general", None, None),
         ("I want a new theme for the reactor hall", "deep", "handoff", None, None),

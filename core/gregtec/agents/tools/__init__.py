@@ -56,6 +56,7 @@ wiki_fetch(title, part)   deep   :mod:`.wiki` (WO-8.3; cache, else one polite re
 theme_list()              both   :mod:`.themes` (WO-10.6; starter and Clayton's themes)
 theme_get(id, v)          both   :mod:`.themes` (WO-10.6; a theme, any kept version)
 theme_save(...)           deep   :mod:`.themes` (WO-10.6; palette checked first, new version)
+build_request(plans,...)  deep   :mod:`.shells` (WO-10.7; a shell, code-checked, or refused)
 more(cursor)              both   :mod:`.registry` (the next page of any result)
 ========================  =====  ==================================================
 
@@ -64,7 +65,7 @@ with WO-5.3; export_diff with WO-1.4; structure_get after WO-1.8; machine_fact_s
 WO-1.9; crop_status with WO-7.6; layout_estimate with Phase 3; ledger_update and
 plan_set_status stay Clayton's (D238); speak with WO-5.3; persona_set after WO-5.6 (D208);
 screen_snapshot never (WO-8.2, D288: frames come only from the screen key); notify with
-WO-9.2; schematic_export and build_request with Phase 10.
+WO-9.2; schematic_export never (WO-10.7: `gos shell export`, Clayton's, reads the Lab world, D318).
 """
 
 from gregtec.agents.tools.catalog import LATER, TOOLS, build_registry, default_registry
