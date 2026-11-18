@@ -94,8 +94,10 @@ class Designed:
 
 def _db(home: Path) -> Path:
     db = access.db_path(home)
-    if not db.is_file():
-        raise DesignerError(f"{db} doesn't exist: run gos db build first")
+    if not access.is_built(db):  # the core's Store makes the file without these tables
+        raise DesignerError(
+            f"there is no recipe DB at {db} yet: run gos export collect, then gos db build"
+        )
     return db
 
 
@@ -206,7 +208,7 @@ def _solve(conn: sqlite3.Connection, home: Path, request: Request) -> plan.Desig
         return plan.design(conn, request, MyBase.from_db(conn), prefs=prefs)
     except solve.SolveError as exc:
         raise DesignerError(f"no route: {exc}") from None
-    except (graph.GraphError, LookupError, ValueError) as exc:
+    except (graph.GraphError, LookupError, ValueError, OverflowError) as exc:
         raise DesignerError(f"can't design it: {exc}") from None
 
 

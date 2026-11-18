@@ -371,6 +371,17 @@ def test_a_kept_version_is_never_overwritten(
         store.save(conn, {"change": "x", "roof": ["x"]}, "th-brass-works")
     assert (vault.root / "themes/versions/th-brass-works--v1.md").read_bytes() == v1
     assert store.versions("th-brass-works") == [1, 2]
+    # following the refusal's hint lets the save through (it used to name 2: a loop)
+    with pytest.raises(themes.ThemeError, match="to 3 or more"):
+        store.save(conn, {"change": "x", "roof": ["x"]}, "th-brass-works")
+    v2 = (vault.root / "themes/versions/th-brass-works--v2.md").read_bytes()
+    note.write_text(
+        note.read_text(encoding="utf-8").replace("v: 1", "v: 3"), encoding="utf-8"
+    )
+    saved = store.save(conn, {"change": "x", "roof": ["x"]}, "th-brass-works")
+    assert saved.theme.v == 4
+    assert (vault.root / "themes/versions/th-brass-works--v1.md").read_bytes() == v1
+    assert (vault.root / "themes/versions/th-brass-works--v2.md").read_bytes() == v2
 
 
 def test_a_theme_changed_during_a_save_is_refused(
