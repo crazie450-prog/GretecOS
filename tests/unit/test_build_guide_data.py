@@ -305,3 +305,18 @@ def _looks(home: Path, f: fp.Footprint) -> dict[str, guide_data.Look]:
         return guide_data.looks(conn, f.materials())
     finally:
         conn.close()
+
+
+def test_the_dashboards_fixture_is_what_the_core_sends() -> None:
+    """dashboard/tests draw tests/fixtures/guide/furnace.json: it must stay the core's shape
+    (regenerate with ``uv run python tests/fixtures/guide/make.py``)."""
+    import json
+
+    spec = importlib.util.spec_from_file_location(
+        "_wo108_guide_make", FIXTURES / "guide" / "make.py"
+    )
+    assert spec is not None and spec.loader is not None
+    make = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(make)
+    on_disk = json.loads((FIXTURES / "guide" / "furnace.json").read_text("utf-8"))
+    assert on_disk == json.loads(json.dumps(make.furnace()))

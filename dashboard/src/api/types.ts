@@ -220,6 +220,53 @@ export interface GuideSite {
   pages: { path: string; title: string; scenes: number }[];
   files: number;
   bytes: number;
+  // The frame's base on the guide's own origin with a path token (WO-10.8, D319); null on the
+  // tailnet name, which has no guide host.
+  frame: { base: string; expires: number } | null;
+}
+
+// GET /api/build/guides (WO-10.8): the controllers with a footprint.
+export interface GuideEntry {
+  controller: string; // registry_name@meta, never a numeric id
+  name: string | null;
+  mte: number | null;
+  source: string;
+  variants: string[];
+}
+
+export type Facing = "north" | "east" | "south" | "west";
+
+export interface GuideQuery {
+  controller: string;
+  variant?: string | null;
+  facing?: Facing | null;
+  tiers?: Record<string, number>;
+}
+
+// GET /api/build/guide (WO-10.8, gregtec.build.guide_data): one footprint laid out for building.
+export interface BuildGuide {
+  key: string;
+  checklist_key: string;
+  controller: string;
+  name: string | null;
+  ref: string | null; // mte:<id>
+  source: string;
+  variant: string;
+  variants: { variant: string; size: number[] }[];
+  facing: Facing;
+  front: number[];
+  tiers: Record<string, number>;
+  choices: Record<string, { value: number; block: string }[]>;
+  caveats: string[];
+  size: [number, number, number];
+  controller_at: [number, number, number];
+  palette: { block: string; name: string | null; top: string | null; side: string | null; count: number }[];
+  slots: { kinds: string[]; cells: number }[];
+  cells: [number, number, number, number, number][]; // x, y, z, palette index (-1 hatch-only), slot (-1 none)
+  layers: { y: number; blocks: number; hatch_cells: number; materials: Record<string, number> }[];
+  checklist: { id: string; label: string }[];
+  done: string[];
+  catalog: boolean;
 }
 
 // GET /api/shells (WO-10.7, D316): the saved decorative shells, newest first.
