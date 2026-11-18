@@ -140,6 +140,8 @@ def test_db_and_kv_keep_every_committed_transaction(tmp_path: Path, seed: int) -
         s.try_write(
             "INSERT INTO kv(key, value, upd) VALUES ('after', '1', 1)"
         )  # no lock
+        # the power-cut half: the WAL is fsynced at each commit (2 = FULL)
+        assert s.rows("PRAGMA synchronous")[0][0] == 2
     finally:
         s.close()
 
@@ -402,6 +404,31 @@ def test_the_watchers_tails_are_old_or_new(tmp_path: Path, seed: int) -> None:
     seen = run_and_kill(TAILS_CHILD, [str(path)], lines_for(seed, 5, 40), seed)
     tails = watcher_files.load_tails(path)
     assert tails["pad"] == "z" * 200_000 and tails["n"] >= int(seen[-1])
+
+
+BOT_CHILD = """
+    import os, sys
+    from pathlib import Path
+    from gregtec.alerts.policy import NotifyPolicy
+    from gregtec.discordbot.alerts import AlertDesk
+    desk = AlertDesk(None, NotifyPolicy(), state_file=Path(sys.argv[1]))
+    print("pid", os.getpid(), flush=True)
+    i = 0
+    while True:
+        i += 1
+        desk.state["alerts"] = {"n": i, "pad": "q" * 200_000}
+        desk._save()
+        print(i, flush=True)
+"""
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_the_bots_alert_state_is_old_or_new(tmp_path: Path, seed: int) -> None:
+    path = tmp_path / "bot" / "alerts.json"
+    seen = run_and_kill(BOT_CHILD, [str(path)], lines_for(seed, 5, 40), seed)
+    desk = AlertDesk(None, NotifyPolicy(), state_file=path)  # type: ignore[arg-type]
+    saved = desk.state["alerts"]
+    assert saved["pad"] == "q" * 200_000 and saved["n"] >= int(seen[-1])
 
 
 def fsync_order(

@@ -17,6 +17,10 @@ GOS_APP or `backups\world` is **Clayton's**, run from GOS_APP in his own account
 A backup gets its manifest before it gets its name, so a power cut never leaves a backup that
 looks whole. `gos vault maintain --job backup` makes today's backups now.
 
+Backups made before WO-11.2 had no manifest: the first backup run after deploying gives every
+DB backup still kept one (it vouches only that the file is unchanged from then on). Vault zips
+did not exist before WO-11.2, so every one has its manifest.
+
 ## 1. Check the DB and vault backups (Clayton or gos-dev; reads only)
 
 ```powershell
@@ -28,21 +32,29 @@ gos backup restore --verify
 checks the DB's hash, `PRAGMA integrity_check` and every table's row count against its manifest,
 extracts the vault and checks every file's hash (none missing, none extra), prints `ok` or
 `FAIL` per check, removes the folder and exits 0, or 1 with `RESTORE CHECK FAILED`. Use
-`--date YYYYMMDD` for another day. Pass: exit 0.
+`--date YYYYMMDD` for another day. Pass: exit 0. If the newest DB and vault backups are from
+different days (a vault snapshot cut short), it says so (`backup days`) and checks each.
 
 ## 2. Restore the DB or the vault (Clayton; manual, GOS stopped)
 
-1. `gos backup restore --to C:\Temp\gos-restore` (a new or empty folder, never inside GOS_HOME's
-   `data` or `vault`; the command refuses those). It verifies what it restored.
+1. `gos backup restore --to C:\Temp\gos-restore` (a new or empty folder; the command refuses
+   one in or around GOS_HOME's `data`, `vault` or `backups`, Prism or GOS_APP). It verifies
+   what it restored. It restores the DB and the vault as a pair from one day: if the newest of
+   each are from different days it fails `backup days`; add `--date YYYYMMDD`
+   (`gos backup list` shows the days).
 2. `gos stop --all` and close Obsidian.
 3. Move the live file aside, never delete it: rename `GOS_HOME\data\gos.sqlite` (and any
    `gos.sqlite-wal`, `gos.sqlite-shm` beside it) to `*.broken`, or `GOS_HOME\vault` to
    `vault.broken`.
 4. Copy `C:\Temp\gos-restore\data\gos.sqlite` to `GOS_HOME\data\`, or
    `C:\Temp\gos-restore\vault` to `GOS_HOME\vault`.
-5. Log off and on (the supervisor starts at login), or `gos serve`. Check the dashboard's
+5. If you replaced the vault: re-run `setup_gos_dev.ps1` (as in the PC runbook) so gos-dev can
+   read the vault again. Its read ACL was on the old folder (D82), and a copied-in folder does
+   not have it.
+6. Log off and on (the supervisor starts at login), or `gos serve`. Check the dashboard's
    health strip and `gos doctor`.
-6. Rollback: stop GOS again and put the `*.broken` copies back.
+7. Rollback: stop GOS again and put the `*.broken` copies back (and re-run
+   `setup_gos_dev.ps1` if it was the vault).
 
 The recipe DB tables come back with the core DB; `gos db build` can rebuild them from the newest
 collected export at any time.
@@ -56,8 +68,10 @@ collected export at any time.
 It copies the newest `backups\world\*.zip` (or `--zip FILE`) into a scratch folder in `%TEMP%`
 with share-delete reads, checks every entry's CRC, `level.dat` (gzip'd NBT) and every region
 file's chunks (inside the file, length and compression right, each inflating to NBT), then
-removes the scratch folder. It refuses a `--work` folder in or around a Prism instance or the
-backups folder, and never writes anywhere else. Pass: `ok   the world restores and reads`,
+removes the scratch folder. It refuses a `--work` folder in or around Prism, the backups
+folder, GOS_APP, the vault or `data`, and never writes anywhere else. It needs free space for
+the copy and twice the world's unpacked size; short of that, or if the zip can't be read
+(locked, access denied), it prints `FAIL` and exits 1 (`--work` on a bigger drive). Pass: `ok   the world restores and reads`,
 exit 0. `--keep --work C:\Temp\world-check` keeps the restored world to look at.
 
 ## 4. Restore Play's world from a backup (Clayton only; manual, never scripted)
@@ -75,7 +89,10 @@ Only after step 3 passed on the zip you mean to use.
 
 ## 5. Crash recovery: what to expect
 
-Tested by killing each writer hard at varied moments (`tests/unit/ops/test_crash_recovery.py`):
+Tested by killing each writer hard at varied moments (`tests/unit/ops/test_crash_recovery.py`).
+The core and the supervisor are killed as real processes; for the watchers, the Discord bot
+and voice, their state writers (the spool, tails, the bot's `alerts.json`, the confirm path)
+are killed in a child process, not the whole process:
 
 - **Core killed** (crash, `taskkill /F`, power cut): the supervisor restarts it (1 s, then
   back-off). On start a proposal still waiting is *expired* and a confirmed action not yet sent
@@ -88,8 +105,9 @@ Tested by killing each writer hard at varied moments (`tests/unit/ops/test_crash
 - **Discord bot killed**: a DM it posted but hadn't marked is posted again (at least once, D295);
   a button pressed twice finds the action or credit choice already answered.
 - **Voice killed**: nothing to recover; a "confirm" it sent counts once, a repeat is refused.
-- **Power cut mid-write**: the DB keeps every committed transaction (WAL, synchronous FULL); every
-  GOS file is fsynced before the rename that publishes it.
+- **Power cut mid-write**: the DB keeps every committed transaction (WAL with
+  `synchronous=FULL`, set on every connection and tested); every GOS file is fsynced before the
+  rename that publishes it (tested by the call order, not by cutting power).
 
 After a crash, check: `gos status`, the health strip, `gos backup restore --verify`.
 
@@ -102,7 +120,7 @@ After a crash, check: `gos status`, the health strip, `gos backup restore --veri
 | day cap | today's spend reaches `[budget] day_max_usd` ($10) | Costs "Caps" card, a DM (warn); nothing pauses |
 | task cap | a deep-lane task pauses at `[budget] task_max_usd` (or 2x, 3x after approvals) and asks (D156); clears when answered | Costs "Caps" card, a DM (warn) per pause |
 
-Each is sent once per cycle, day or task, a restart included. Quiet hours hold them (they are
+Each is sent once per cycle, day or task pause, a restart included. Quiet hours hold them (they are
 below `err`). Check the routing with `gos alerts routed` while one is active.
 
 ## Clayton's PC steps
