@@ -6,18 +6,24 @@ setup and off himself** (they change his real Tailscale node; as gos-dev they re
 
 - ``setup``: Tailscale must be running and logged in. It reads the serve config first and
   **refuses while Funnel is on for any port** (Funnel would put the dashboard on the public
-  internet, PM06), and refuses to replace another handler on the PC's HTTPS port 443. Then
+  internet, PM06), refuses a raw TCP forward to the core (Serve's HTTP handling, and so the
+  core's Funnel check, doesn't apply to one), and refuses to replace another handler on the PC's
+  HTTPS port 443. Then
   ``tailscale serve --bg --https=443 http://127.0.0.1:<[core] port>``, read back: the handler
   must proxy to the core and Funnel must still be off, else the handler is removed again.
   It prints the tailnet name for ``[core] allowed_hosts`` (it never writes gos.toml).
-- ``check``: Tailscale running, the handler in place, Funnel off, and the name in
-  ``[core] allowed_hosts``; exit 0 only when all hold.
-- ``off``: removes the handler (``tailscale serve --https=443 off``).
+- ``check``: Tailscale running, Funnel off, no raw TCP forward to the core, the handler in
+  place, and the name in ``[core] allowed_hosts``; exit 0 only when all hold.
+- ``off``: removes the handler (``tailscale serve --https=443 off``), only when it is GOS's
+  (it proxies to the core); something else on 443 is left alone.
 
 **Never Funnel.** No code path here passes ``funnel`` to the CLI (:meth:`Tailscale.run` refuses
-any such argument), ``--funnel`` is refused, and the core itself refuses every request that
-Tailscale marks as having come through Funnel (``Tailscale-Funnel-Request``,
-``gregtec.api.security.refusal``), so even a Funnel turned on by hand reaches nothing.
+any such argument), ``--funnel`` is refused, and ``setup`` and ``check`` catch a Funnel on any
+port. As a second layer the core refuses every request that Tailscale marks as having come
+through an **HTTP** Funnel (``Tailscale-Funnel-Request``, ``gregtec.api.security.refusal``).
+A **TCP** Funnel (``tailscale funnel --tcp`` / ``--tls-terminated-tcp``) passes bytes on
+unmarked, so the core can't tell it from the tailnet: only ``gos tailnet check`` (Funnel on, a
+raw TCP forward to the core) catches that one.
 
 What Tailscale does here, from its documentation and source (V28; [ts-serve] tailscale.com/kb/1312/serve,
 [ts-cli] tailscale.com/kb/1242/tailscale-serve, [ts-src] github.com/tailscale/tailscale
@@ -95,7 +101,17 @@ class Tailscale:
                 timeout=TIMEOUT_S,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            # The CLI waits when Serve or HTTPS isn't enabled for the tailnet, after printing
+            # the admin-console link that enables it: show what it said.
+            said = exc.stdout or b""
+            text = said.decode("utf-8", "replace") if isinstance(said, bytes) else said
+            tail = "\n".join(text.strip().splitlines()[-5:])
+            raise TailnetError(
+                f"tailscale {' '.join(args)} timed out after {TIMEOUT_S} s"
+                + (f"; it said:\n{tail}" if tail else "")
+            ) from None
+        except OSError as exc:
             raise TailnetError(f"tailscale {args[0]} didn't run: {exc}") from None
         if done.returncode != 0:
             said = (done.stderr or done.stdout).strip().splitlines()
@@ -157,6 +173,23 @@ def handler(serve: Mapping[str, Any], name: str) -> Mapping[str, Any] | None:
     return found if isinstance(found, dict) else None
 
 
+def tcp_forwards(serve: Mapping[str, Any], port: int) -> list[str]:
+    """Every port with a raw TCP forward to the core's port, foreground sessions included."""
+    found: list[str] = []
+    tcp = serve.get("TCP")
+    if isinstance(tcp, dict):
+        for listen, h in tcp.items():
+            fwd = h.get("TCPForward") if isinstance(h, dict) else None
+            if isinstance(fwd, str) and fwd.rpartition(":")[2] == str(port):
+                found.append(str(listen))
+    fore = serve.get("Foreground")
+    if isinstance(fore, dict):
+        for sub in fore.values():
+            if isinstance(sub, dict):
+                found += tcp_forwards(sub, port)
+    return sorted(found)
+
+
 def target(port: int) -> str:
     return f"http://{config.LOOPBACK}:{port}"
 
@@ -190,6 +223,13 @@ def setup(ts: Tailscale, port: int) -> str:
     name = node_name(ts.json("status", "--json"))
     before = ts.json("serve", "status", "--json")
     no_funnel(before)
+    raw = tcp_forwards(before, port)
+    if raw:
+        fixes = "; ".join(f"tailscale serve --tcp={p} off" for p in raw)
+        raise TailnetError(
+            f"a raw TCP forward on port {', '.join(raw)} already reaches the core, past Serve's "
+            f"HTTPS handling. Remove it first: {fixes}"
+        )
     found = handler(before, name)
     if found is not None and not proxies_to_core(found, port):
         raise TailnetError(
@@ -236,6 +276,16 @@ def check(ts: Tailscale, cfg: config.Config) -> Report:
     lines.append(
         (not on, "Funnel is off" if not on else f"Funnel is ON for {', '.join(on)}")
     )
+    raw = tcp_forwards(serve, cfg.core_port)
+    lines.append(
+        (
+            not raw,
+            "no raw TCP forward to the core"
+            if not raw
+            else f"a raw TCP forward on port {', '.join(raw)} reaches the core: "
+            + "; ".join(f"tailscale serve --tcp={p} off" for p in raw),
+        )
+    )
     lines.append(
         (
             proxies_to_core(handler(serve, name), cfg.core_port),
@@ -256,8 +306,19 @@ def check(ts: Tailscale, cfg: config.Config) -> Report:
     return Report(name, tuple(lines))
 
 
-def off(ts: Tailscale) -> None:
+def off(ts: Tailscale, port: int) -> bool:
+    """Remove GOS's handler; False when there was none. Refuses another service's handler."""
+    name = node_name(ts.json("status", "--json"))
+    found = handler(ts.json("serve", "status", "--json"), name)
+    if found is None:
+        return False
+    if not proxies_to_core(found, port):
+        raise TailnetError(
+            f"https://{name}/ isn't GOS's ({dict(found)}): left alone. "
+            f"Remove it yourself (tailscale serve --https={HTTPS_PORT} off) if you mean to"
+        )
     ts.run("serve", f"--https={HTTPS_PORT}", "off")
+    return True
 
 
 # --- CLI ----------------------------------------------------------------------------------------
@@ -335,8 +396,13 @@ def run(
                 )
             return 0
         if command == "off":
-            off(ts)
-            print("The dashboard is no longer served to the tailnet.", file=out)
+            removed = off(ts, cfg.core_port)
+            print(
+                "The dashboard is no longer served to the tailnet."
+                if removed
+                else "Nothing to remove: the dashboard wasn't served to the tailnet.",
+                file=out,
+            )
             return 0
         report = check(ts, cfg)
         for good, line in report.lines:

@@ -133,10 +133,10 @@ describe("the nav", () => {
     expect(viewForKey("8")?.id).toBe("costs");
     expect(viewForKey("0")).toBeNull();
     expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "designer", "power", "quests", "crops", "costs", "settings", "base", "activity", "ores", "build"]);
-    expect(PHONE_TABS).toEqual(["now", "chat", "search", "base", "settings"]);
+    expect(PHONE_TABS).toEqual(["now", "chat", "search", "costs", "settings"]);
   });
   it("reaches every view past the phone's five tabs through More (WO-9.3)", () => {
-    expect(MORE_VIEWS.map((v) => v.id)).toEqual(["designer", "power", "quests", "crops", "costs", "activity", "ores", "build"]);
+    expect(MORE_VIEWS.map((v) => v.id)).toEqual(["designer", "power", "quests", "crops", "base", "activity", "ores", "build"]);
     // Every view is a tab or in More, none in both.
     expect([...PHONE_TABS, ...MORE_VIEWS.map((v) => v.id)].sort()).toEqual(VIEWS.map((v) => v.id).sort());
     expect(viewFromHash("#/more")).toBe("more");
@@ -151,7 +151,7 @@ describe("the nav", () => {
     const open = vi.fn();
     render(<More open={open} />);
     expect(screen.getAllByRole("button").map((b) => b.dataset.testid)).toEqual(MORE_VIEWS.map((v) => `more-${v.id}`));
-    expect(screen.getByTestId("more-costs").textContent).toContain("Am I within credits?");
+    expect(screen.getByTestId("more-base").textContent).toContain("What's broken?");
     fireEvent.click(screen.getByTestId("more-ores"));
     expect(open).toHaveBeenCalledWith("ores");
   });

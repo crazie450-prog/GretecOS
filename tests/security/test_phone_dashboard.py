@@ -14,6 +14,7 @@ import argparse
 import io
 import json
 import logging
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -333,7 +334,8 @@ def test_setup_serves_the_core_to_the_tailnet_and_checks_funnel_is_off(
     assert sum(1 for c in calls(state) if "--bg" in c) == 1
     code, out = cli(tmp_path, ts, "check")
     assert code == 0, out
-    assert out.count("ok ") == 4
+    assert out.count("ok ") == 5
+    assert "ok  no raw TCP forward to the core" in out
 
 
 def test_funnel_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -403,6 +405,74 @@ def test_setup_wont_replace_another_handler(
     assert code == tailnet.EXIT_PROBLEM
     assert "already serves something else" in out
     assert not any("--bg" in c for c in calls(state))
+
+
+def test_a_raw_tcp_forward_to_the_core_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A TCP forward (what a TCP Funnel rides on) passes bytes on without Serve's headers, so the
+    # core can't refuse it as Funnel traffic: setup and check catch it instead (review M1).
+    raw = {"TCP": {"10000": {"TCPForward": "127.0.0.1:8765"}}}
+    state = fake_state(tmp_path, serve=raw)
+    ts = fake_cli(monkeypatch, state)
+    code, out = cli(tmp_path, ts, "setup")
+    assert code == tailnet.EXIT_PROBLEM
+    assert "tailscale serve --tcp=10000 off" in out
+    assert not any("--bg" in c for c in calls(state))
+    code, out = cli(tmp_path, ts, "check")
+    assert code == tailnet.EXIT_PROBLEM
+    assert "BAD a raw TCP forward on port 10000 reaches the core" in out
+    fore = {"Foreground": {"abc": {"TCP": {"443": {"TCPForward": "localhost:8765"}}}}}
+    assert tailnet.tcp_forwards(fore, 8765) == ["443"]
+    assert (
+        tailnet.tcp_forwards({"TCP": {"22": {"TCPForward": "127.0.0.1:22"}}}, 8765)
+        == []
+    )
+
+
+def test_off_leaves_another_handler_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = {
+        "Web": {
+            f"{TAILNET}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}
+        }
+    }
+    state = fake_state(tmp_path, serve=other)
+    ts = fake_cli(monkeypatch, state)
+    code, out = cli(tmp_path, ts, "off")
+    assert code == tailnet.EXIT_PROBLEM
+    assert "isn't GOS's" in out
+    assert not any(c[-1:] == ["off"] for c in calls(state))
+    serve = json.loads(state.read_text(encoding="utf-8"))["serve"]
+    assert serve == other
+
+
+def test_off_with_nothing_served_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = fake_state(tmp_path)
+    ts = fake_cli(monkeypatch, state)
+    code, out = cli(tmp_path, ts, "off")
+    assert code == 0
+    assert "Nothing to remove" in out
+    assert not any(c[-1:] == ["off"] for c in calls(state))
+
+
+def test_a_timeout_shows_what_the_cli_said() -> None:
+    # The real CLI prints an admin-console link and waits when Serve isn't enabled (review L1).
+    def stuck(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        said = (
+            "Serve is not enabled on your tailnet.\nTo enable, visit:\n"
+            "  https://login.tailscale.com/f/serve?node=abc\n"
+        )
+        raise subprocess.TimeoutExpired(cmd, 60, output=said)
+
+    ts = tailnet.Tailscale(["tailscale"], runner=stuck)
+    with pytest.raises(tailnet.TailnetError) as err:
+        ts.run("serve", "--bg", "--https=443", "http://127.0.0.1:8765")
+    assert "timed out" in str(err.value)
+    assert "https://login.tailscale.com/f/serve?node=abc" in str(err.value)
 
 
 def test_setup_needs_tailscale_running(

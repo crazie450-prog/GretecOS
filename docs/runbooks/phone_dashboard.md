@@ -2,7 +2,7 @@
 
 Clayton runs these on the gaming PC and his phone, after the WO-9.3 PR is merged and deployed (`gos deploy`), with the core running and the dashboard paired on monitor 2 (`docs/runbooks/dashboard.md` B). The plan-link step needs the Discord bot (`docs/runbooks/discord_bot.md` A–C). About 30 minutes. Decisions: D301 (Tailscale Serve, never Funnel, the tailnet name), D302 (the phone's tabs and More), D303 (the phone e2e and its fake Serve). Plan 4.6, 7.12 "Phone dashboard", §8 row 9.3, V28, L8. Nothing here costs money (Tailscale's Personal plan is free) and nothing touches Play.
 
-What it does: Tailscale Serve, on this PC, answers `https://<pc>.<tailnet>.ts.net/` for devices **in your tailnet only** and passes each request to the core on `127.0.0.1:8765`. The core still listens on loopback only. **Funnel is never turned on**: `gos tailnet` refuses it, refuses to set up while it is on, and the core refuses every request Tailscale marks as having come through Funnel.
+What it does: Tailscale Serve, on this PC, answers `https://<pc>.<tailnet>.ts.net/` for devices **in your tailnet only** and passes each request to the core on `127.0.0.1:8765`. The core still listens on loopback only. **Funnel is never turned on**: `gos tailnet` refuses it, refuses to set up while it is on (or while a raw TCP forward reaches the core), and `gos tailnet check` reports it. The core also refuses every request Tailscale marks as having come through an HTTP Funnel; a TCP Funnel passes bytes on unmarked, so for that one `gos tailnet check` is the guard.
 
 `gos` below means the release copy (D91):
 
@@ -33,6 +33,8 @@ $gos = 'C:\GregtecOS-app\current\.venv\Scripts\gos.exe'
    The first run may stop for a minute while Tailscale gets the certificate. It runs `tailscale serve --bg --https=443 http://127.0.0.1:8765`, which Tailscale keeps across reboots.
    - `Refused: Tailscale Funnel is on for ...`: something on this PC has Funnel on. Run the `tailscale funnel --https=<port> off` it prints (or `tailscale funnel reset` if nothing else of yours uses Serve), then run setup again.
    - `https://... already serves something else`: another of your services has port 443 on this PC. Setup won't replace it; remove it (`tailscale serve --https=443 off`) only if GOS should have it.
+   - `a raw TCP forward on port ... already reaches the core`: a `tailscale serve --tcp` forward to the core's port is on. Run the `tailscale serve --tcp=<port> off` it prints, then setup again.
+   - `tailscale serve ... timed out after 60 s; it said: ... https://login.tailscale.com/f/serve?...`: Serve or HTTPS isn't enabled for the tailnet yet. Open that link, enable it (A.2), run setup again.
    - `Tailscale isn't running and logged in`: step A.1.
 2. `%USERPROFILE%\GregtecOS\config\gos.toml`, `[core]`: add the name it printed (no `https://`, no port):
    ```toml
@@ -44,9 +46,9 @@ $gos = 'C:\GregtecOS-app\current\.venv\Scripts\gos.exe'
    ```powershell
    & $gos tailnet check
    ```
-   Four `ok` lines: Tailscale running (with the name), `Funnel is off`, the proxy to `127.0.0.1:8765`, the name in `[core] allowed_hosts`. Any `BAD` line says what to do. Run it again whenever you change Tailscale.
+   Five `ok` lines: Tailscale running (with the name), `Funnel is off`, `no raw TCP forward to the core`, the proxy to `127.0.0.1:8765`, the name in `[core] allowed_hosts`. Any `BAD` line says what to do. Run it again whenever you change Tailscale. It reads Tailscale's configuration only, so it can't tell whether GOS was restarted after B.2: step C.1 (the page loads on the phone) is the check of the whole path.
 
-To stop serving the dashboard to the phone: `& $gos tailnet off` (the core keeps running; the phone gets nothing).
+To stop serving the dashboard to the phone: `& $gos tailnet off` (the core keeps running; the phone gets nothing). It removes the handler on 443 only when it is GOS's (it proxies to the core); if something else of yours is on 443 it says so and leaves it alone.
 
 ## C. Pair the phone (once per phone)
 
@@ -58,7 +60,7 @@ To stop serving the dashboard to the phone: `& $gos tailnet off` (the core keeps
 
 ## D. The phone layout
 
-Tabs at the bottom: **Now, Chat, Search, Settings, Base, More**. More lists every other view (Designer, Power, Quests, Crops, Costs, Activity, Ores, Build); tapping one opens it with More lit. Approvals come first on Now (the phone has no right rail), with the same Confirm and Cancel buttons as monitor 2.
+Tabs at the bottom: **Now, Chat, Search, Costs, Settings** (the approved Phone board's five, D159) **and More**. More lists every other view (Designer, Power, Quests, Crops, Base, Activity, Ores, Build); tapping one opens it with More lit. Whether Base should be a tab instead of Costs is your call (D302). Approvals come first on Now (the phone has no right rail), with the same Confirm and Cancel buttons as monitor 2.
 
 ## E. The cellular check (L8, V28)
 
@@ -75,5 +77,5 @@ Write in the PR (or tell Claude) what each step showed. Then V28 and L8 are reso
 
 - The phone gets `{"error": "host not allowed"}`: the name isn't in `[core] allowed_hosts` (B.2), or you restarted before saving it.
 - `{"error": "not paired: pair this device first"}` from a bookmark of `/api/...`: open `/` instead and pair.
-- `{"error": "funnel request"}`: something turned Funnel on. Run `& $gos tailnet check`, then the `tailscale funnel ... off` command it names.
+- `{"error": "funnel request"}`: something turned an HTTP Funnel on. Run `& $gos tailnet check`, then the `tailscale funnel ... off` command it names. (A TCP Funnel shows no such error: only `check` finds it, so run it after any Tailscale change.)
 - The page loads on Wi-Fi but not cellular: Tailscale on the phone is off or "on demand" excludes cellular (Tailscale app → Settings).

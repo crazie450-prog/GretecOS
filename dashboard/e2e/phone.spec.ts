@@ -15,7 +15,7 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const PHONE = { width: 390, height: 844 };
 const ORIGIN = `https://${TAILNET}:${SERVE_PORT}`;
 const OTHER = "other-pc.tail-e2e.ts.net"; // another node of the tailnet, not configured
-const MORE = ["designer", "power", "quests", "crops", "costs", "activity", "ores", "build"];
+const MORE = ["designer", "power", "quests", "crops", "base", "activity", "ores", "build"];
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
 
 let serve: ChildProcess;
@@ -102,8 +102,8 @@ test("five tabs and More; every other view opens through More", async () => {
     "nav-now",
     "nav-chat",
     "nav-search",
+    "nav-costs",
     "nav-settings",
-    "nav-base",
     "nav-more",
   ]);
   await page.getByTestId("nav-more").click();

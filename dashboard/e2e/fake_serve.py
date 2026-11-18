@@ -18,6 +18,9 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+# Not a declared dependency: cryptography is in uv.lock only through keyring's SecretStorage on
+# Linux, which is where the e2e job runs. If keyring's dependencies change, this import is what
+# breaks (D303): declare it in the dev group then.
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec

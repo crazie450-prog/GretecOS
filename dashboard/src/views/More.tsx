@@ -8,7 +8,7 @@ const JOB: Partial<Record<ViewId, string>> = {
   power: "Am I in deficit, at which tier?",
   quests: "What can I do next?",
   crops: "What should I breed next, and how?",
-  costs: "Am I within credits?",
+  base: "What's broken? What do I have?",
   activity: "What happened this session?",
   ores: "Where's the nearest vein?",
   build: "How do I build this multi?",

@@ -293,7 +293,8 @@ export function App() {
   const last = answers.length ? answers[answers.length - 1] : null;
   const look = voiceLook(voice?.state ?? null, (core?.asking.length ?? 0) > 0);
   const motion = !themeCtl.prefs.pauseMotion;
-  const current = viewOf(view);
+  // More is the phone's tab; a phone link (#/more) opened on monitor 2 shows Now (WO-9.3).
+  const current = viewOf(view === MORE.id && !phone ? "now" : view);
 
   const body = (): React.ReactNode => {
     switch (current.id) {

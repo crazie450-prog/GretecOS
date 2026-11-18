@@ -106,9 +106,10 @@ def origin_allowed(origin: str, allowed: Iterable[str]) -> bool:
 def refusal(headers: dict[str, str], allowed: Iterable[str]) -> str | None:
     """Why a request with these (lower-case) headers is refused, or None."""
     allowed = tuple(allowed)
-    # Tailscale sets this on every request that came through Funnel, from the public internet,
-    # and strips any copy a client sends (ipn/ipnlocal/serve.go; WO-9.3, D301): the dashboard is
-    # for the tailnet only (D53, PM06), so a Funnel turned on by hand still reaches nothing.
+    # Tailscale sets this on every request that came through an HTTP Funnel, from the public
+    # internet, and strips any copy a client sends (ipn/ipnlocal/serve.go; WO-9.3, D301): the
+    # dashboard is for the tailnet only (D53, PM06). A TCP Funnel passes bytes on unmarked, so
+    # this can't see one: `gos tailnet check` catches it (Funnel on, a raw TCP forward).
     if FUNNEL_HEADER in headers:
         return "funnel request"
     if not host_allowed(headers.get("host"), allowed):

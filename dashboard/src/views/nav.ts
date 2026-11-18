@@ -40,8 +40,9 @@ export const VIEWS: readonly View[] = [
   { id: "build", label: "Build", key: null, later: null, board: false }, // WO-10.1 spike frame (WO-10.8 the viewer): needs Clayton's board approval
 ];
 
-// The phone's five tabs, then "More" for every other view (D53, D159, WO-9.3, D302).
-export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "base", "settings"];
+// The phone's five tabs from D159's approved Phone board, then "More" for every other view (D53,
+// D159, WO-9.3, D302).
+export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "costs", "settings"];
 
 /** The phone's sixth tab: a list of every view that isn't one of its five (WO-9.3). */
 export const MORE: View = { id: "more", label: "More", key: null, later: null, board: false };
