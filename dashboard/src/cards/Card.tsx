@@ -10,6 +10,7 @@ import {
   ChoicesCardView,
   FlowView,
   HealthView,
+  LayoutView,
   OreListView,
   PowerLedgerView,
   QuestCardView,
@@ -73,6 +74,8 @@ function Draw({ card, compact }: { card: CardData; compact: boolean }) {
       return <AlertView card={card} />;
     case "health":
       return <HealthView card={card} />;
+    case "layout":
+      return <LayoutView card={card} />;
   }
 }
 

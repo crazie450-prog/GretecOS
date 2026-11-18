@@ -8,6 +8,7 @@ import type {
   ChoicesCard,
   FlowCard,
   HealthCard,
+  LayoutCard,
   PowerLedgerCard,
   RouteComparisonCard,
   TableCard,
@@ -757,6 +758,13 @@ export interface Alternatives {
   pinned: string | null;
   all: boolean;
   alternatives: Alternative[];
+}
+
+/** GET /api/plans/{id}/layout (WO-10.5, D312): the layout JSON (gos-layout v1, read by the shell
+ * designer and the build guide) and its top-down preview card. */
+export interface PlanLayout {
+  layout: { id: string; [key: string]: unknown };
+  card: LayoutCard;
 }
 
 export interface Accepted {
