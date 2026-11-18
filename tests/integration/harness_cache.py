@@ -139,7 +139,10 @@ class HomeCache:
                 try:
                     self.builder(game, staging)
                 except BaseException:
-                    failed.write_text(traceback.format_exc(), encoding="utf-8")
+                    # Written aside then renamed: a waiter must never read it half written.
+                    partial = self.root / f"{key}.failed-partial"
+                    partial.write_text(traceback.format_exc(), encoding="utf-8")
+                    partial.replace(failed)
                     shutil.rmtree(staging, ignore_errors=True)
                     raise
                 staging.rename(done)
