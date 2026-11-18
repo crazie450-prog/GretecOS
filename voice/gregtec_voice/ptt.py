@@ -192,8 +192,10 @@ def _wait_hooked(listener: Any, timeout: float = HOOKED_WAIT_S) -> bool:  # noqa
     uv.lock pin) marks a listener ready *before* its ``SystemHook`` installs the hook, so a key
     pressed just after ``wait()`` returned was lost (QA 5-9). Bounded: if pynput's internals
     change, log it and go on; the watchdog still covers a hook that never comes up."""
-    from pynput._util.win32 import SystemHook  # Windows only (D180)
-
+    try:
+        from pynput._util.win32 import SystemHook  # Windows only (D180)
+    except ImportError:  # another pynput (or a test's fake): nothing to wait on
+        return True
     deadline = time.monotonic() + timeout
     while getattr(SystemHook._HOOKS.get(listener.ident), "_hook", None) is None:
         if time.monotonic() > deadline or not listener.is_alive():
