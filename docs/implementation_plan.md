@@ -631,6 +631,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
    - **Footprint:**
      - Phase 3: a bounding box per machine from `structure.size_*` plus clearance, summed into a floor-area and volume estimate. Addon multis without structure data are marked `footprint: unknown`.
      - WO-10.5 adds corridor-aware layout (floor plan and bounding volume), which feeds §7.10.
+     - As built (WO-10.5, D312, D313): `gregtec.build.layout`, `gos layout`, `GET /api/plans/{id}/layout`: the `gos-layout` v1 JSON (`core/gregtec/build/layout_schema.json`) and a `layout` card in the Designer's Floor plan panel. The plan's own `layout` stays the bounding-box estimate.
 10. **Persist:** `data/plans/<id>.json` (canonical), `plans/<id>.md` and a DB row.
     - Plans get a human name ("Steel line · 2/s · HV"), editable [QA:D13]. IDs stay for data.
     - Lifecycle: `proposed → accepted → building → running → retired`.
@@ -804,6 +805,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
 - **Shells (decorative only).**
   - **Never include `gregtech:gt.blockmachines` or any tile-entity block.** A pasted machine arrives free and working, and covers break because they're stored by numeric ID [G].
   - Shells get keep-out volumes around machine footprints, plus access corridors and pipe/cable chases.
+  - As built (WO-10.5, D312): the layout planner places each plan's footprints (machines and generators) facing spine corridors off a west hall with one entrance, keep-outs of the footprint plus clearance, chases over every corridor, and a flood-fill reach check of every front and hatch kind; multis with no footprint are listed, never sized by guess. Its JSON is what WO-10.7's shells must leave free.
 - **Schematic writer** (worldedit-gtnh ≥ 0.0.9) [G][E§5.1]:
   - root `Schematic`; `Materials="Alpha"`; `Width/Height/Length`; `Blocks`; `Data`; `TileEntities` and `Entities` as empty lists (`TileEntities` is required);
   - `WEOriginX/Y/Z` = 0 and `WEOffsetX/Y/Z` = the paste offset relative to the player, e.g. `(-⌊W/2⌋, 0, 1)` (**VERIFY** in game);

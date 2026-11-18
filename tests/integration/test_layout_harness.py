@@ -96,12 +96,16 @@ def lines(db: Path) -> list[dict[str, Any]]:
     conn = access.connect(db, readonly=True)
     try:
         key, tier = g3.LINES["steel (EBF)"]
-        d = plan.design(conn, Request(key, qty=1, tier_cap=tier), DefaultBaseInputs.from_db(conn))
+        d = plan.design(
+            conn, Request(key, qty=1, tier_cap=tier), DefaultBaseInputs.from_db(conn)
+        )
         assert d.plans, "the steel line didn't design"
         steel = dict(d.plans[0])
         steel.setdefault("id", "g3-steel")
         ln = g4.LINES["benzene"]
-        req = power.PowerRequest(mode=ln.mode, tier_cap=ln.tier, kinds=ln.kinds, fuels=ln.fuels)
+        req = power.PowerRequest(
+            mode=ln.mode, tier_cap=ln.tier, kinds=ln.kinds, fuels=ln.fuels
+        )
         pd = power.design(conn, req, DefaultBaseInputs(ln.tier))
         assert pd.options, (pd.notes, pd.rejected)
         benzene = dict(pd.options[0])
@@ -129,7 +133,9 @@ def _stand_ins(db: Path, mtes: set[int]) -> list[int]:
             ).fetchall()
             for r in rows:
                 values = dict(zip(cols, r, strict=True))
-                values.update(meta=mte, machine_id=None, name_en=f"stand-in for mte:{mte}")
+                values.update(
+                    meta=mte, machine_id=None, name_en=f"stand-in for mte:{mte}"
+                )
                 blocks = json.loads(values["blocks_json"])
                 for b in blocks:  # the controller cell becomes this multi's own
                     if b["block"] == fp.GT_MACHINES and b["meta"] == STAND_IN:
