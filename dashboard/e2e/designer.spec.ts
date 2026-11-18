@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page, expect, test } from "@playwright/test";
-import type { DesignerView } from "../src/api/types";
+import type { DesignerView, PlanLayout } from "../src/api/types";
 import { HOME, asAdmin, clipped, pair, themeMisses } from "./harness";
 
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
@@ -64,6 +64,28 @@ test("a typed request designs every route, in the core's rank order, differences
   await expect(page.locator(".designer-route .flow-canvas")).toHaveCount(3);
   await expect(page.locator(".designer-route .react-flow__node").first()).toBeVisible();
   await page.screenshot({ path: shot("designer-routes") });
+});
+
+test("a route's floor plan lays its machines out with corridors (WO-10.5)", async () => {
+  const pid = planInHash();
+  const core = await asAdmin<PlanLayout>(`/api/plans/${pid}/layout`);
+  expect(core.layout.id).toMatch(/^lo-[0-9a-f]{12}$/);
+  expect(core.card.type).toBe("layout");
+  const plan = page.getByTestId(`layout-${pid}`);
+  await plan.locator("summary").click();
+  const card = plan.locator('[data-card="layout"]');
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  // every box of the core's card is drawn; each machine is reached from the entrance
+  for (const r of core.card.rects) await expect(card.locator(`[data-rect="${r.id}"]`)).toHaveCount(1);
+  const machines = core.card.rects.filter((r) => r.kind === "machine");
+  expect(machines.length).toBeGreaterThan(0);
+  expect(machines.every((r) => r.ok === true)).toBe(true);
+  await expect(card.locator("g.layout-machine.bad")).toHaveCount(0);
+  await expect(card.locator("g.layout-entrance")).toHaveCount(1);
+  await expect(card).toContainText(`plan:${pid}`);
+  await card.scrollIntoViewIfNeeded();
+  await card.screenshot({ path: shot("designer-floor-plan") });
+  await plan.locator("summary").click();
 });
 
 test("a pin made in the Designer survives a reload and a re-solve", async () => {
@@ -141,6 +163,9 @@ test("every theme reads at WCAG contrast, and nothing is cut off on the phone", 
     }, pinnedPlan);
     await expect(page.getByTestId("view")).toHaveAttribute("data-view", "designer");
     await expect(page.locator(".designer-route .react-flow__node").first()).toBeVisible();
+    const floor = page.getByTestId(`layout-${pinnedPlan}`);
+    if (!(await floor.evaluate((d) => (d as HTMLDetailsElement).open))) await floor.locator("summary").click();
+    await expect(floor.locator('[data-card="layout"]')).toBeVisible({ timeout: 30_000 });
     for (const [slug, found] of Object.entries(await themeMisses(page))) misses[`${size.width}/designer/${slug}`] = found;
   }
   expect(misses).toEqual({});

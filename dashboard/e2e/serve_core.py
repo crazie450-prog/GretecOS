@@ -22,6 +22,9 @@ Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtur
 to the tool fixtures' export run, never as a newer run of its own: the recipe tools read only the
 newest run, so a crop-only run would hide the e2e world's recipes.
 
+Floor plan (WO-10.5, :func:`load_structures`): the structure fixture, its made-up furnace as
+the e2e export's EBF, so the Designer's floor plan places a multiblock.
+
 Activity (WO-6.3, :func:`load_events`): made-up Play and Lab sessions in the event store, the open
 age first seen three days ago and one OC power reading in it, for the Activity view and the
 tier-up recap.
@@ -304,6 +307,35 @@ def setup_fresh(root: Path) -> Path:
     return root / "GregtecOS"
 
 
+def load_structures(home: Path) -> None:
+    """WO-10.5's floor plan: WO-1.8's self-authored structure fixture (tests/fixtures/
+    gtnh-extractor), its made-up furnace (mte 9001) standing in for the e2e export's made-up
+    Electric Blast Furnace (mte 1000), so the Designer lays out a real multi. Test data only."""
+    import json
+
+    from gregtec.db import access
+    from gregtec.db import structures as structure_db
+
+    conn = access.connect(access.db_path(home))
+    try:
+        structure_db.load(conn, REPO / "tests" / "fixtures" / "gtnh-extractor")
+        rows = conn.execute(
+            "SELECT rowid, blocks_json FROM structure WHERE meta = 9001"
+        ).fetchall()
+        for rowid, text in rows:
+            blocks = json.loads(text)
+            for b in blocks:
+                if b["block"] == "gregtech:gt.blockmachines" and b["meta"] == 9001:
+                    b["meta"] = 1000
+            conn.execute(
+                "UPDATE structure SET meta = 1000, blocks_json = ? WHERE rowid = ?",
+                (json.dumps(blocks), rowid),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="serve_core.py")
     parser.add_argument(
@@ -340,6 +372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             load_crops(home)
             load_events(home)
             load_guide(home)
+            load_structures(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
