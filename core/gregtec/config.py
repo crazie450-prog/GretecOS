@@ -18,7 +18,8 @@
 | [core] port              | 8765                                     | core, clients               |
 | [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
 | [core] dashboard_host    | gos.localhost (pairing and the dashboard)| core (D117)                 |
-| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
+| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8); |
+|                          | + the tailnet name (gos tailnet, D301)   | the phone (WO-9.3)          |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
 | [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
 | [startup] voice_with_play | true (voice starts and stops with Play) | supervisor (WO-6.1, D259)   |
