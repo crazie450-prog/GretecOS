@@ -42,11 +42,26 @@ if (providers.gradleProperty("harness").isPresent) {
     // after each phase are left in run/server/gregteclink/listener-harness/ for tests/integration. It keeps the
     // export harness's runs in run/server/gregteclink/exports/, which the integration tests read too.
     val listener = providers.gradleProperty("harnessListener").isPresent
+    // WO-10.4: -PharnessSchematic runs the schematic harness instead (no module on): worldedit-gtnh v0.0.10 pastes
+    // the GOS-written shells in mod/harness/schematic/in/ into the throwaway world and copies them back to
+    // run/server/gregteclink/schematic-harness/out/ for tests/integration/test_schematic_harness.py. It keeps the
+    // export and listener harnesses' output.
+    val schematic = providers.gradleProperty("harnessSchematic").isPresent
+    if (schematic) {
+        dependencies { add("runtimeOnlyNonPublishable", "com.github.GTNewHorizons:worldedit-gtnh:v0.0.10:dev") }
+    }
 
     val cleanHarness = tasks.register<Delete>("cleanHarness") {
         description = "Deletes the harness world and earlier GregtecLink output from run/server."
         // Deleting the world also avoids FML's "/fml confirm" stall after a mod-set change.
-        if (listener) {
+        if (schematic) {
+            delete(
+                serverDir.dir("harness"),
+                serverDir.dir("gregteclink/schematic-harness"),
+                serverDir.file("gregteclink/harness-result.json"),
+                serverDir.dir("config/worldedit"),
+            )
+        } else if (listener) {
             delete(
                 serverDir.dir("harness"),
                 serverDir.dir("gregteclink/events"),
@@ -62,8 +77,13 @@ if (providers.gradleProperty("harness").isPresent) {
         description = "Copies harness/ (eula, server.properties, gregteclink.cfg) into run/server."
         dependsOn(cleanHarness)
         from(layout.projectDirectory.dir("harness")) {
-            exclude("client/**", "client-nei-fail/**", "listener/**")
-            if (listener) exclude("config/**")
+            exclude("client/**", "client-nei-fail/**", "listener/**", "schematic/**")
+            if (listener || schematic) exclude("config/**")
+        }
+        if (schematic) {
+            from(layout.projectDirectory.dir("harness/schematic/in")) {
+                into("gregteclink/schematic-harness/in")
+            }
         }
         if (listener) {
             from(layout.projectDirectory.file("harness/listener/gregteclink.cfg")) {
@@ -87,6 +107,7 @@ if (providers.gradleProperty("harness").isPresent) {
         dependsOn(prepareHarness)
         jvmArgs("-Dgregtec.harness=true", "-Xmx6G")
         if (listener) jvmArgs("-Dgregtec.harness.listener=true")
+        if (schematic) jvmArgs("-Dgregtec.harness.schematic=true")
         finalizedBy(checkHarness, removeHarnessConfig)
     }
 
