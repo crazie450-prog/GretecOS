@@ -533,8 +533,8 @@ LATER: dict[str, str] = {
     # POST /api/plans/{id}/status; D251, D238): no model moves a plan or writes the ledger.
     "plan_set_status": "WO-4.4 made lifecycle moves Clayton's (gos plan --status, the "
     "dashboard): not an agent tool (D238)",
-    "layout_estimate": "WO-10.7 (WO-10.5 built the corridor-aware layout: gos layout and "
-    "GET /api/plans/{id}/layout; the architect reads its JSON, D313)",
+    "layout_estimate": "not planned: build_request lays the plans out itself (WO-10.7) and "
+    "WO-10.5's layout is gos layout and GET /api/plans/{id}/layout (D313)",
     "ledger_update": "WO-4.4: the ledger follows Clayton's accepts and lifecycle moves; "
     "not an agent tool (D238)",
     "speak": "WO-5.3 follow-up, not yet a plan 8 row (WO-5.3 built the speaker; the "

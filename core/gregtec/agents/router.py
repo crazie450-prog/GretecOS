@@ -191,7 +191,9 @@ DEEP_RULES = [
         r"\bnew theme\b",
         r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust)\b",
         # designing a decorative shell around a line (WO-10.7): build_request is deep-lane only
-        r"\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b",
+        # ("how do I make/craft a turtle shell" is a recipe question, not a building)
+        r"^(?!.*\bhow (?:do|can|to|would|should)\b(?: (?:i|you|we))? (?:make|craft|get)\b)"
+        + r".*\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b",
     )
 ]
 

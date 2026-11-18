@@ -85,6 +85,18 @@ test("a route's floor plan lays its machines out with corridors (WO-10.5)", asyn
   await expect(card).toContainText(`plan:${pid}`);
   await card.scrollIntoViewIfNeeded();
   await card.screenshot({ path: shot("designer-floor-plan") });
+  // WO-10.7: "Design a shell around it" asks the core for the procedural shell (no AI) and draws
+  // the card it returns. (build_guide.spec.ts, which counts the shells, runs before this file.)
+  await plan.getByTestId(`shell-design-${pid}`).click();
+  const shellCard = plan.locator('[data-card="shell"]');
+  await expect(shellCard).toBeVisible({ timeout: 30_000 });
+  await expect(shellCard.getByTestId("shell-status")).toContainText("accepted as designed");
+  expect(Number(await shellCard.getByTestId("shell-preview").getAttribute("data-faces"))).toBeGreaterThan(10);
+  await expect(plan.getByTestId(`shell-design-${pid}`)).toHaveCount(0);
+  const listed = await asAdmin<{ shells: { plans: string[]; source: string }[] }>("/api/shells");
+  expect(listed.shells.some((s) => s.plans.includes(pid) && s.source === "procedural")).toBe(true);
+  await shellCard.scrollIntoViewIfNeeded();
+  await shellCard.screenshot({ path: shot("designer-shell") });
   await plan.locator("summary").click();
 });
 

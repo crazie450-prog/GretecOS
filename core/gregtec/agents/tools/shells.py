@@ -1,14 +1,15 @@
 """The shell tool (WO-10.7; plan 7.0 ``build_request(spec)``, 7.10 "Shell designer", D316-D318).
 
 ``build_request(plans, theme?, prompt?, line_type?, palette?, exclude?, max_blocks?, headroom?,
-design?, site?)``, deep lane only (the architect's and the orchestrator's): designs a decorative
+design?, save?, site?)``, deep lane only (the architect's and the orchestrator's): designs a decorative
 shell around the saved plans' layout. Without ``design`` GOS's procedural generator draws it from
 the theme; with ``design`` (a list of operations in the building vocabulary,
 :data:`gregtec.build.shell.OPS`) the model's own design is compiled to blocks by code. Either way
 code validates it (:func:`gregtec.build.shell.design`): a small breach of a keep-out, corridor,
 chase, doorway or the bounding volume is removed and said; a tile-entity block, GT's machine
 block, a state outside the palette, a malformed operation or more than ``max_blocks`` blocks is
-refused and **nothing is written**. A saved build is files under
+refused and **nothing is written**. With ``save`` false nothing is written either (the
+architect's first look at the procedural ops; review L3). A saved build is files under
 ``GOS_HOME/data/build/shells/`` (never the vault, never a world). The ``.schematic`` is written
 only by Clayton's ``gos shell export``, which reads the Lab world's registry; GOS never pastes.
 
@@ -29,7 +30,8 @@ from gregtec.packupdate.plans import PLAN_ID
 
 GATE = (
     "the shell gate (gregtec.build.shell.design: the palette rule on the catalog, nothing in a "
-    "keep-out, corridor, chase or doorway, inside the bounding volume, at most max_blocks; "
+    "keep-out, corridor, chase, doorway or the layout's interior, inside the bounding volume, at "
+    "most max_blocks; "
     "refused designs write nothing) and the build folder (GOS_HOME/data/build/shells/ only)"
 )
 COLUMNS = ("role", "block", "name", "count")
@@ -45,7 +47,7 @@ VOCABULARY = (
     "(air; lo, hi). Each but clear names a palette role (role, and n: that role's entry "
     "number) or one block (<registry name>@<meta> from the palette). Later operations overwrite "
     "earlier ones. Leave design out for GOS's procedural shell: its operations come back in the "
-    "result's ops note to start from."
+    "result's ops note to start from (with save false, nothing is saved)."
 )
 BUILD_REQUEST_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -102,6 +104,11 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             "type": "string",
             "maxLength": MAX_DESIGN_TEXT,
             "description": "your design: " + VOCABULARY,
+        },
+        "save": {
+            "type": "boolean",
+            "description": "false: design and check it but save nothing (a look at the "
+            "procedural shell's ops to start your own design from); default true",
         },
         "site": {
             "type": "object",
@@ -172,6 +179,7 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
             headroom=args.get("headroom"),
             ops=design,
             site=site,
+            save_it=args.get("save", True),
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         raise ToolError(f"no shell: {exc}") from None
@@ -200,25 +208,35 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
             "; ".join(f"{d['id']} lo {d['lo']} hi {d['hi']}" for d in rec["doorways"]),
         ),
         ("blocks", f"{rec['blocks']} of max {rec['max_blocks']}"),
-        ("saved", f"data/build/shells/{made.build}/"),
+        (
+            "saved",
+            f"data/build/shells/{made.build}/"
+            if made.saved is not None
+            else "no (save false: a preview, nothing written)",
+        ),
     ]
     head += [("repaired", r) for r in out.repairs]
     notes = [
-        "say: "
-        + (
-            f"The shell is designed: {rec['blocks']} blocks, {sx} by {sz}"
-            + (
-                ", with a few blocks removed from the machines' space."
-                if out.repairs
-                else "."
-            )
-        ),
-        (
-            "it shows on the dashboard's Build view; Clayton exports it with gos shell export "
-            f"{made.build} and pastes it in the Lab only"
-        ),
+        "not saved (save false): send your design, or call again without save for this one",
         "ops: " + json.dumps(list(made.ops), separators=(",", ":")),
     ]
+    if made.saved is not None:
+        notes = [
+            "say: "
+            + (
+                f"The shell is designed: {rec['blocks']} blocks, {sx} by {sz}"
+                + (
+                    ", with a few blocks removed from the machines' space."
+                    if out.repairs
+                    else "."
+                )
+            ),
+            (
+                "it shows on the dashboard's Build view; Clayton exports it with gos shell export "
+                f"{made.build} and pastes it in the Lab only"
+            ),
+            "ops: " + json.dumps(list(made.ops), separators=(",", ":")),
+        ]
     rows = [
         (m["role"], m["block"], m["name"] or "", m["count"]) for m in rec["materials"]
     ]

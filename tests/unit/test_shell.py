@@ -984,8 +984,14 @@ def ops_of(text: str) -> list[dict[str, Any]]:
 
 
 def test_build_request_designs_validates_and_refuses(reg: Any, home: Path) -> None:  # noqa: ANN401
+    # save false: a look at the procedural ops that writes nothing (review L3)
+    look = ask(reg, save=False)
+    assert not look.is_error and "status: accepted" in look.text, look.text
+    assert "not saved" in look.text and ops_of(look.text)[0]["op"] == "walls"
+    assert not (home / shell_store.ROOT).exists()
     base = ask(reg)
     assert not base.is_error, base.text
+    assert ops_of(base.text) == ops_of(look.text)
     assert "status: accepted" in base.text and "source: procedural" in base.text
     assert "wall\tgregtech:gt.blockconcretes@3" in base.text
     ops = ops_of(base.text)

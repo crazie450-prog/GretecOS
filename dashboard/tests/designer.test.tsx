@@ -4,6 +4,7 @@
 // which item when the target is unclear.
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import valid from "../../tests/fixtures/cards/valid.json";
 import type { DesignerRoute, DesignerView } from "../src/api/types";
 import { RouteComparisonView } from "../src/cards/renderers";
 import { Designer, planFromHash, routeLabel } from "../src/views/Designer";
@@ -254,6 +255,34 @@ describe("the Designer view", () => {
     expect(await within(panel).findByText(/Floor plan · Steel/)).toBeTruthy();
     expect(within(panel).queryByText(/the DB is busy/)).toBeNull();
     expect(calls.filter((c) => c.url === url)).toHaveLength(2);
+  });
+
+  it("designs a shell around the floor plan through the core, and shows its refusal", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: FIRST });
+    const card = {
+      type: "layout", title: "Floor plan · Steel", ref: `plan:${FIRST.id}`, layout: "lo-0123456789ab",
+      size: { x: 4, y: 3, z: 3 }, rects: [], notes: ["0 machines placed"],
+    };
+    routes[`GET /api/plans/${FIRST.id}/layout`] = () => ({ status: 200, body: { layout: { id: "lo-0123456789ab" }, card } });
+    routes["POST /api/shells"] = () => ({ status: 400, body: { error: "no theme for this build" } });
+    render(<Designer />);
+    const panel = (await screen.findByTestId(`layout-${FIRST.id}`)) as HTMLDetailsElement;
+    await act(async () => {
+      panel.open = true;
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const button = await within(panel).findByTestId(`shell-design-${FIRST.id}`);
+    fireEvent.click(button);
+    expect(await within(panel).findByText(/no theme for this build/)).toBeTruthy();
+    // the core designs it (the procedural shell); the view draws the card it returns
+    routes["POST /api/shells"] = () => ({ status: 200, body: { card: valid.shell } });
+    fireEvent.click(within(panel).getByTestId(`shell-design-${FIRST.id}`));
+    await within(panel).findByTestId("shell-preview");
+    expect(within(panel).queryByText(/no theme for this build/)).toBeNull();
+    expect(within(panel).queryByTestId(`shell-design-${FIRST.id}`)).toBeNull();
+    const posts = calls.filter((c) => c.method === "POST" && c.url === "/api/shells");
+    expect(posts.map((c) => c.body)).toEqual([{ plans: [FIRST.id] }, { plans: [FIRST.id] }]);
   });
 
   it("shows the core's refusal", async () => {

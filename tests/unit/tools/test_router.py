@@ -105,6 +105,10 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         ("make a building around my benzene line", "deep", "handoff", None, None),
         ("design a foundry shell around the steel line", "deep", "handoff", None, None),
         ("what is a shell", "fast", "item", "shell", None),
+        # a recipe question about a shell is not a building (review L4)
+        ("how do I make a turtle shell", "fast", "recipe", "turtle shell", None),
+        ("How can I craft a shell?", "fast", "recipe", "shell", None),
+        ("how do I design a shell around my line", "deep", "handoff", None, None),
         ("give me the list of themes", "fast", "general", None, None),
         ("read me the marble works theme instead", "fast", "general", None, None),
         ("I want a new theme for the reactor hall", "deep", "handoff", None, None),
