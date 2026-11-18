@@ -32,6 +32,9 @@ tier-up recap.
 ``--power`` (WO-4.6, :func:`setup_power`): WO-4.2's made-up power export instead of the tool
 fixtures', so the Power view designs, ranks and accepts real (made-up) power lines.
 
+``--tailnet <name>:<port>`` (WO-9.3): that Host is allowed too, as the phone's tailnet name is
+in ``[core] allowed_hosts``; ``e2e/fake_serve.py`` stands in for Tailscale Serve in front of it.
+
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
 """
@@ -356,6 +359,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="the Power view's core (WO-4.6): WO-4.2's power fixture; see setup_power",
     )
     parser.add_argument("--host-name", default=DASHBOARD_HOST)
+    parser.add_argument(
+        "--tailnet",
+        action="append",
+        default=[],
+        help="a tailnet Host to allow, as [core] allowed_hosts takes it (the phone, WO-9.3)",
+    )
     args = parser.parse_args(argv)
     root: Path = args.home.absolute()
     fresh_home(root)
@@ -410,6 +419,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
     core_app.KEY_CHECK_S = 1.0
+    # Every spec pairs its own page (and the phone spec pairs over the tailnet, WO-9.3), more
+    # than D117's 10 starts per 10 minutes in one run; the limit itself is tested in tests/security.
+    from gregtec.api import security
+
+    security.PAIR_RATE = (40, 600)
     dashboard.GAME_EVERY_S = 1.0
     dashboard.DATA_EVERY_S = 1.0
 
@@ -421,6 +435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         core_port=args.port,
         supervisor_port=args.port + 1,
         dashboard_host=args.host_name,
+        extra_allowed_hosts=tuple(args.tailnet),
         # WO-7.5: a low store alerts after 5 s, not 30, so oc_displays.spec.ts needn't wait.
         alerts=AlertRules(power_low_s=5),
     )

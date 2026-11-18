@@ -18,7 +18,8 @@
 | [core] port              | 8765                                     | core, clients               |
 | [core] supervisor_port   | 8766                                     | supervisor, gos stop/launch |
 | [core] dashboard_host    | gos.localhost (pairing and the dashboard)| core (D117)                 |
-| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8)  |
+| [core] allowed_hosts     | 127.0.0.1, localhost, dashboard_host     | Host/Origin checks (QA:A8); |
+|                          | + the tailnet name (gos tailnet, D301)   | the phone (WO-9.3)          |
 | [startup] core_at_login  | true                                     | supervisor --login (D77)    |
 | [startup] dashboard_window | true (the Chrome app window, D52)      | supervisor (WO-2.6, D163)   |
 | [startup] voice_with_play | true (voice starts and stops with Play) | supervisor (WO-6.1, D259)   |
@@ -249,7 +250,24 @@ class Config:
             f"localhost:{port}",
             f"{self.dashboard_host}:{port}",
         )
-        return tuple(dict.fromkeys([*base, *self.extra_allowed_hosts]))
+        # A browser leaves out the default port, so the tailnet name behind Tailscale Serve
+        # arrives as a bare Host; an entry written with :443 means that name too (WO-9.3, D301).
+        extra = [
+            h
+            for entry in self.extra_allowed_hosts
+            for h in (entry, *([entry[:-4]] if entry.endswith(":443") else []))
+        ]
+        return tuple(dict.fromkeys([*base, *extra]))
+
+    @property
+    def tailnet_host(self) -> str | None:
+        """The PC's tailnet name (``pc.tail1234.ts.net``) when ``[core] allowed_hosts`` has one:
+        the phone dashboard's address behind Tailscale Serve (D53, WO-9.3); else None."""
+        for host in self.extra_allowed_hosts:
+            name, _, port = host.partition(":")
+            if name.endswith(".ts.net") and port in ("", "443"):
+                return name
+        return None
 
     @property
     def data_dir(self) -> Path:

@@ -27,6 +27,7 @@ from gregtec import (
     personacli,
     playhooks,
     servicecli,
+    tailnet,
     voicecli,
 )
 from gregtec import deploy as app_deploy
@@ -35,7 +36,7 @@ from gregtec.agents import design_cost_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.alerts import cli as alerts_cli
 from gregtec.build import cli as palette_cli
-from gregtec.build import footprints_cli, layout_cli
+from gregtec.build import footprints_cli, layout_cli, schematic_cli
 from gregtec.crops import cli as cropcli
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -622,9 +623,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     personacli.add_parsers(commands)
     discord_cli.add_parsers(commands)
     alerts_cli.add_parsers(commands)
+    tailnet.add_parsers(commands)
     watch_cli.add_parsers(commands)
     wiki_cli.add_parsers(commands)
     palette_cli.add_parsers(commands)
+    schematic_cli.add_parsers(commands)
     footprints_cli.add_parsers(commands)
     layout_cli.add_parsers(commands)
     structures = commands.add_parser(
@@ -705,12 +708,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return discord_cli.run(args)
     if args.command in alerts_cli.COMMANDS:
         return alerts_cli.run(args)
+    if args.command in tailnet.COMMANDS:
+        return tailnet.run(args)
     if args.command in personacli.COMMANDS:
         return personacli.run(args)
     if args.command in watch_cli.COMMANDS:
         return watch_cli.run(args)
     if args.command in palette_cli.COMMANDS:
         return palette_cli.run(args)
+    if args.command in schematic_cli.COMMANDS:
+        return schematic_cli.run(args)
     if args.command in footprints_cli.COMMANDS:
         return footprints_cli.run(args)
     if args.command in layout_cli.COMMANDS:

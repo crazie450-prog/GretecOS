@@ -590,6 +590,15 @@ export function Power() {
   const [mode, setMode] = useState<PowerMode>("best");
   const [windowS, setWindowS] = useState(0);
   const shown = useRef<string | null>(null);
+  // A design that arrives after he left the view must not put its plan back in the address, or
+  // the phone's More tab (WO-9.3) would bounce back here.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const show = useCallback((v: PowerView) => {
     shown.current = v.id;
@@ -597,7 +606,7 @@ export function Power() {
     setLedger(v.ledger);
     setMode(v.mode);
     setError(null);
-    showPlan(v.id);
+    if (mounted.current) showPlan(v.id);
   }, []);
 
   const load = useCallback(
