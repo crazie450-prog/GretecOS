@@ -27,6 +27,7 @@ from gregtec import (
     personacli,
     playhooks,
     servicecli,
+    tailnet,
     voicecli,
 )
 from gregtec import deploy as app_deploy
@@ -621,6 +622,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     personacli.add_parsers(commands)
     discord_cli.add_parsers(commands)
     alerts_cli.add_parsers(commands)
+    tailnet.add_parsers(commands)
     watch_cli.add_parsers(commands)
     wiki_cli.add_parsers(commands)
     palette_cli.add_parsers(commands)
@@ -702,6 +704,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return discord_cli.run(args)
     if args.command in alerts_cli.COMMANDS:
         return alerts_cli.run(args)
+    if args.command in tailnet.COMMANDS:
+        return tailnet.run(args)
     if args.command in personacli.COMMANDS:
         return personacli.run(args)
     if args.command in watch_cli.COMMANDS:
