@@ -1,6 +1,6 @@
 # Gregtec OS: G9 gate review (Phase 9, Discord, alerts and phone)
 
-2026-11-18 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/main` at `7f0b4a1` (PR #119 merged). It covers the Phase 9 PRs #107 (WO-9.1, merged as `601c6ef`), #111 (WO-9.2, `42366b6`) and #119 (WO-9.3, `7f0b4a1`). `main` has since moved to `705c88a` (#109, WO-10.4), which touches no Phase 9 file.
+2026-11-18 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/main` at `7f0b4a1` (PR #119 merged). It covers the Phase 9 PRs #107 (WO-9.1, merged as `601c6ef`), #111 (WO-9.2, `42366b6`) and #119 (WO-9.3, `7f0b4a1`). `main` has since moved to `705c88a` (#109, WO-10.4) and then `ee7449c` (#118, WO-10.6, the current head). Neither touches a Phase 9 file (`ee7449c` changes the shared `cli.py`, `verify.tsv` and `decisions.md`, none of it Phase 9's); this review's branch merges `ee7449c` and everything was re-run on it (below).
 
 ## Verdict
 
@@ -19,7 +19,7 @@ Evidence tags, as in G0 to G8:
 
 ### This reviewer's runs [here]
 
-All runs are on `7f0b4a1`.
+The runs in this table are on `7f0b4a1`. The re-run on this branch's head after merging `ee7449c` (the PR reviewer's at `b18609e`, then this reviewer's on the final head) is at the end of the table.
 
 | Check | Result |
 |---|---|
@@ -119,7 +119,7 @@ Open: PR #111 Q1-Q9 (below). The `[notify]` defaults are pending Clayton.
 | **A Discord plan link opens** | **met with fakes; PC step** | `phone.spec.ts` "a Discord plan link opens the plan once the phone has paired over the tailnet" (fake TLS Serve on a tailnet name) [here]. Real: E.1 |
 | **A Lab action is confirmed** (as `phone`, D220) | **met with fakes; PC step** | `phone.spec.ts` "a Lab action proposed on the phone is confirmed on the phone" (`confirmed_via: phone`) [here]. Real: E.2 |
 | **Status updates live** | **met with fakes; PC step** | `phone.spec.ts` "status updates live on the phone" [here]. Real: E.3 |
-| **Outside the tailnet it is unreachable** | **met with fakes; PC step** | `phone.spec.ts` "outside the tailnet the dashboard is refused"; the Host tests above [here]. Real: E.4 (Tailscale off on the phone) |
+| **Outside the tailnet it is unreachable** | **met with fakes; PC step** | `phone.spec.ts` "outside the tailnet the dashboard is refused" proves only that a request under another tailnet *name* gets a 403; with the Host tests above it covers the core's side [here]. Real unreachability rests on the loopback bind (`test_the_core_listens_on_loopback_only`) and on Serve being tailnet-only (V28), and E.4 (Tailscale off on the phone) is the only real network-level check |
 
 Open: PR #119's D301-D303 questions (below).
 
@@ -241,10 +241,17 @@ Order: Tailscale (step 2) comes before the Discord checks (step 3), so the plan 
 
 **3. Discord from the phone, on cellular** (`discord_bot.md` C1-C11, the WO-9.1 acceptance, [QA:V4], [QA:V9]). Wi-Fi off. Time each with the phone's stopwatch: "thinking" at once and a message **within 10 s**.
 - C1-C7: `/ask` (fast and deep), `/plan target: steel ingot amount: 2/s` (queued at once; later the routes, `flow.png`, `bom.tsv` and the link, which opens the plan in the phone dashboard with More lit), `/power mode: best`, `/status`, `/alerts`, `/persona`.
-- C8: a Lab action's Confirm button within 60 s, then an expired one ("expired", nothing sent).
+- C8, with Lab running (`& $gos launch lab`), since the confirmed action is done in Lab: a Lab action's Confirm button within 60 s, then an expired one ("expired", nothing sent).
 - C9: a second account presses and types the same: Discord's own "This interaction failed"; nothing on the PC; `discord.log` says "ignored an interaction from another user". Remove its access after.
 - C10: restart the bot while a `/plan` is queued, and again while it is designing: the result arrives once, by DM.
-- C11 (no-AI mode): do it in the same sitting as G2's step 8, which already removes and restores the key: with the key out, `/ask` says what needs the AI, `/status` says "AI: offline", `/plan` still works.
+- C11 (no-AI mode), on its own here (or in G2 step 8's sitting if that hasn't run yet; G2's step 8 alone never checks Discord, since the bot only exists from step 1 above):
+  ```powershell
+  & $gos key delete anthropic
+  ```
+  Once monitor 2 shows "AI offline": `/ask` says what needs the AI and still answers lookups, `/status` says "AI: offline", `/plan` still works. Then put the key back:
+  ```powershell
+  & $gos key set anthropic
+  ```
 
 **4. Alert routing** (`alert_routing.md` §1-§7, the WO-9.2 acceptance, V35). Lab running, the watchers up (G6 step 1), the OC agent up for §4 (G7 steps 1-3):
 - §1 (V35): `& $gos alerts routed` right after typing shows `"presence": "present"`; `Start-Sleep -Seconds 660; & $gos alerts routed > $env:TEMP\routed.json`, hands off, shows `"away": true`.
@@ -270,7 +277,7 @@ Order: Tailscale (step 2) comes before the Discord checks (step 3), so the plan 
 **What to paste back for G9:**
 - step 1's `discord check` output;
 - step 2's `tailnet check` output;
-- step 3's time per command, and what C9 and C10 showed;
+- step 3's time per command, and what C9, C10 and C11 showed;
 - step 4's result per section, and V35's `routed.json` (`away`, `presence`);
 - step 5's four results;
 - step 6's `Select-String` output (empty is a pass);
