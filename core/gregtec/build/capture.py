@@ -7,7 +7,10 @@ GuideNH's region wand or with WorldEdit's ``//copy`` [G][E§5.5]. WO-10.4's ``.s
 is not on main yet, so this module reads GOS's own minimal capture format (``gos-capture``
 schema 1, a JSON file) and turns it into a structure row (``source = 'lab-capture'``) that the
 footprint library reads like the extractor's. Once WO-10.4 lands, its reader's cells go through
-:func:`from_cells` unchanged.
+:func:`from_cells` with the controller's position and each GT machine cell's tile-entity ``mID``
+(a world or ``.schematic`` meta of ``gregtech:gt.blockmachines`` is not the machine): WO-10.4's
+reader must expose the tile entities' ``mID``, and only a capture that kept its tile entities
+converts (WorldEdit ``//copy`` keeps them).
 
 A capture file::
 
@@ -20,8 +23,11 @@ A capture file::
      "hatches": [{"p": [x, y, z], "kinds": ["InputBus", ...]}, ...]}
 
 ``p`` is any frame the tool wrote (world or box coordinates); only the differences to the
-controller's cell matter. ``minecraft:air`` cells are dropped. Blocks are keyed by registry name
-+ meta; a numeric id anywhere is refused (EndlessIDs). A GT machine cell other than the
+controller's cell matter; the box is at most 64 a side. ``minecraft:air`` cells are dropped.
+Blocks are keyed by registry name + meta; a numeric id anywhere is refused (EndlessIDs). In this
+format a ``gregtech:gt.blockmachines`` cell's ``meta`` is its MTE id (the tile entity's
+``mID``), and the controller is the one cell holding the controller's block and meta (never
+``minecraft:air``). A GT machine cell other than the
 controller is a placed hatch: it becomes a hatch cell (its kinds from ``hatches`` at that
 position, else ``Captured``) and the hatch as placed is kept for reference. The file is read once
 through ``safe_open`` (copied to memory, never held) and is data, never instructions.
@@ -45,7 +51,8 @@ from gregtec.gamestate.safe_open import read_bytes
 FORMAT = "gos-capture"
 SCHEMA = 1
 MAX_BYTES = 32 << 20
-MAX_CELLS = 64**3  # a capture box of 64 x 64 x 64
+MAX_SIDE = 64  # a capture box is at most 64 a side ...
+MAX_CELLS = MAX_SIDE**3  # ... so at most 64^3 cells
 TOOLS = ("guidenh-region-wand", "worldedit-copy", "hand")
 CAPTURED = "Captured"  # the hatch kind of a placed hatch the capture didn't name
 
@@ -107,8 +114,9 @@ def _extent(cells: Sequence[fp.Offset]) -> fp.Offset:
 def from_cells(
     cells: Mapping[fp.Offset, tuple[str, int]],
     *,
-    controller: tuple[str, int],
+    controller_at: fp.Offset,
     facing: fp.Facing,
+    mte_ids: Mapping[fp.Offset, int] | None = None,
     hatch_kinds: Mapping[fp.Offset, Sequence[str]] | None = None,
     name: str | None = None,
     class_name: str | None = None,
@@ -116,19 +124,37 @@ def from_cells(
     channels: Mapping[str, int] | None = None,
     tool: str = "hand",
 ) -> Capture:
-    """A capture from cells in any frame (position -> registry name, meta), the controller's
-    block and meta, and where its front faced: offsets from the controller, turned to north."""
-    reg, meta = controller
-    fp.block_name(reg, "controller")
-    found = [p for p, (b, m) in cells.items() if (b, m) == (reg, meta)]
-    if len(found) != 1:
+    """A capture from cells in any frame (position -> registry name, meta, as the world or a
+    ``.schematic`` holds them), the controller's position and where its front faced: offsets
+    from the controller, turned to north.
+
+    A ``gregtech:gt.blockmachines`` cell's world meta is its tile entity's base type, not the
+    machine; the machine is the tile entity's ``mID``, which ``mte_ids`` gives by position
+    (WO-10.4's reader must expose it). Each GT machine cell takes its ``mID`` as its meta; a GT
+    machine cell without one is refused (capture with tile entities: ``//copy`` keeps them)."""
+    ids = dict(mte_ids or {})
+
+    def keyed(p: fp.Offset, block: str, m: int) -> tuple[str, int]:
+        fp.block_name(block)
+        fp.meta_value(m)
+        if block != GT_MACHINES:
+            return block, m
+        if p not in ids:
+            raise CaptureError(
+                f"the {GT_MACHINES} cell {list(p)} has no MTE id (its tile entity's mID); "
+                "capture it with its tile entities"
+            )
+        return block, fp.meta_value(ids[p])
+
+    held = {p: keyed(p, b, m) for p, (b, m) in cells.items()}
+    if controller_at not in held or held[controller_at][0] == AIR:
         raise CaptureError(
-            f"the capture holds {len(found)} cells of the controller {reg}@{meta}; it must "
-            "hold exactly one"
+            f"the capture holds no controller block at {list(controller_at)}"
         )
-    origin = found[0]
+    origin = controller_at
+    reg, meta = held[origin]
     kinds = dict(hatch_kinds or {})
-    unplaced = set(kinds) - set(cells)
+    unplaced = set(kinds) - set(held)
 
     def rel(p: fp.Offset) -> fp.Offset:
         return fp.unrotate(
@@ -137,9 +163,7 @@ def from_cells(
 
     blocks: list[tuple[fp.Offset, str, int]] = []
     hatches: list[tuple[fp.Offset, tuple[str, ...], str | None]] = []
-    for p, (block, m) in sorted(cells.items()):
-        fp.block_name(block)
-        fp.meta_value(m)
+    for p, (block, m) in sorted(held.items()):
         named = tuple(str(k) for k in kinds.get(p, ()))
         if block == AIR:
             if named:
@@ -155,6 +179,11 @@ def from_cells(
         named = tuple(str(k) for k in kinds[p])
         if named:
             hatches.append((rel(p), named, None))  # a hatch-only cell left air
+    size = _extent([d for d, _, _ in blocks] + [d for d, _, _ in hatches])
+    if max(size) > MAX_SIDE:
+        raise CaptureError(
+            f"the capture spans {size[0]} x {size[1]} x {size[2]}: at most {MAX_SIDE} a side"
+        )
     if trigger_stack_size < 1:
         raise CaptureError(f"trigger_stack_size {trigger_stack_size} is below 1")
     if tool not in TOOLS:
@@ -216,12 +245,22 @@ def parse(data: bytes) -> Capture:
         }
         name = c.get("name")
         class_name = c.get("class_name")
+        controller = (
+            fp.block_name(c.get("block"), "controller"),
+            fp.meta_value(c.get("meta")),
+        )
+        if controller[0] == AIR:
+            raise CaptureError(f"the controller is {AIR}")
+        found = [p for p, cell in cells.items() if cell == controller]
+        if len(found) != 1:
+            raise CaptureError(
+                f"the capture holds {len(found)} cells of the controller "
+                f"{controller[0]}@{controller[1]}; it must hold exactly one"
+            )
         return from_cells(
             cells,
-            controller=(
-                fp.block_name(c.get("block"), "controller"),
-                fp.meta_value(c.get("meta")),
-            ),
+            controller_at=found[0],
+            mte_ids={p: m for p, (b, m) in cells.items() if b == GT_MACHINES},
             facing=fp.parse_facing(str(doc.get("facing", ""))),
             hatch_kinds=kinds,
             name=name if isinstance(name, str) and name else None,
