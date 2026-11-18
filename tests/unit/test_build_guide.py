@@ -318,9 +318,12 @@ def test_the_guide_host_serves_the_guide_only(tmp_path: Path) -> None:
             refused = c.get("/api/state", headers={**admin, **guide_origin})
             assert refused.status_code == 403
             assert refused.json() == {"error": "origin not allowed"}
-            with pytest.raises(Exception):  # noqa: B017, PT011 - the handshake is refused
-                with c.websocket_connect("/ws", headers=on_guide):
-                    pass
+            # The handshake is refused.
+            with (
+                pytest.raises(Exception),  # noqa: B017
+                c.websocket_connect("/ws", headers=on_guide),
+            ):
+                pass
     finally:
         core.store.close()
 
