@@ -6,12 +6,13 @@
 // No approved board (D92): designed to the system, needs Clayton's board approval (D158).
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { BaseCandidate, BaseMachine, BaseSource, BaseStock, MyBase } from "../api/types";
+import type { BaseCandidate, BaseMachine, BaseSource, BaseStock, GuideEntry, MyBase } from "../api/types";
 import { useCardActions } from "../cards/context";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip, stageTier } from "../components/core";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
 import { BaseLivePanel } from "./BaseLive";
+import { guideFor, guideHash, useGuides } from "./Build";
 
 const SOURCE_WORD: Record<BaseSource, string> = {
   manual: "ticked",
@@ -205,14 +206,24 @@ function TierPanel(props: { base: MyBase; run: Run; busy: boolean }) {
   );
 }
 
-function MachineRow(props: { m: BaseMachine; run: Run; busy: boolean }) {
+function MachineRow(props: { m: BaseMachine; run: Run; busy: boolean; guides: GuideEntry[] }) {
   const { m } = props;
+  // WO-10.8: a multi with a footprint opens in the Build view's 3D guide.
+  const guide = guideFor(props.guides, m.mte_id);
   const others = (Object.keys(m.sources) as BaseSource[]).filter((s) => s !== m.source);
   return (
     <tr data-machine={m.mte_id}>
       <td>
         <span className="base-name">{m.name ?? `${GLYPH.failed} not in the current DB`}</span>{" "}
         <CitationChip cite={m.ref} />
+        {guide && (
+          <>
+            {" "}
+            <a className="gos-src" href={guideHash({ controller: guide })} data-testid={`guide-link-${m.mte_id}`}>
+              Build guide
+            </a>
+          </>
+        )}
       </td>
       <td className="num">
         <div className="base-stepper">
@@ -261,6 +272,7 @@ function MachineRow(props: { m: BaseMachine; run: Run; busy: boolean }) {
 
 function MachinesPanel(props: { base: MyBase; run: Run; busy: boolean }) {
   const { machines } = props.base;
+  const guides = useGuides();
   const owned = machines.filter((m) => m.count > 0).length;
   const add = (c: BaseCandidate): void => {
     if (c.mte_id === undefined) return;
@@ -294,7 +306,7 @@ function MachinesPanel(props: { base: MyBase; run: Run; busy: boolean }) {
             </thead>
             <tbody>
               {machines.map((m) => (
-                <MachineRow key={m.mte_id} m={m} run={props.run} busy={props.busy} />
+                <MachineRow key={m.mte_id} m={m} run={props.run} busy={props.busy} guides={guides} />
               ))}
             </tbody>
           </table>

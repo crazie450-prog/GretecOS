@@ -26,6 +26,7 @@ import type { Card as CardData, ChoicesCard } from "../cards/types.gen";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip } from "../components/core";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
+import { guideFor, guideHash, useGuides } from "./Build";
 
 const TIERS = ["", "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV"];
 const EXPORTS: [string, string][] = [
@@ -181,6 +182,8 @@ function SavedPlans(props: { plans: SavedPlanRow[] | null; current: string | nul
 
 function NodeRow(props: { route: DesignerRoute; node: DesignerNode; picked: boolean; onPick: () => void }) {
   const { node } = props;
+  // WO-10.8: a multi with a footprint opens in the Build view's 3D guide.
+  const guide = guideFor(useGuides(), node.mte ? Number(node.mte.slice(4)) : null);
   return (
     <li className={`designer-node${props.picked ? " picked" : ""}`} data-node={node.item ?? node.n}>
       <button type="button" className="result" onClick={props.onPick} aria-pressed={props.picked} data-testid={`swap-${props.route.id}-${node.n}`}>
@@ -196,6 +199,11 @@ function NodeRow(props: { route: DesignerRoute; node: DesignerNode; picked: bool
       <span className="designer-node-meta">
         {node.tier && <TierChip tier={node.tier} />}
         <Cite cite={node.recipe} />
+        {guide && (
+          <a className="gos-src" href={guideHash({ controller: guide })} data-testid={`guide-link-${props.route.id}-${node.n}`}>
+            Build guide
+          </a>
+        )}
       </span>
     </li>
   );

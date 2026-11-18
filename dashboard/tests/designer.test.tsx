@@ -76,6 +76,11 @@ beforeEach(() => {
   routes = {
     "GET /api/plans": () => ({ status: 200, body: { plans: [], problems: [] } }),
     "GET /api/designer": () => ({ status: 200, body: { ids: [] } }),
+    // WO-10.8: the EBF (mte 1000) has a footprint, the macerator isn't a multi.
+    "GET /api/build/guides": () => ({
+      status: 200,
+      body: { guides: [{ controller: "gregtech:gt.blockmachines@1000", name: "EBF", mte: 1000, source: "gtnh-extractor", variants: ["t1"] }] },
+    }),
   };
   // React Flow measures its canvas; jsdom has no ResizeObserver.
   vi.stubGlobal(
@@ -141,6 +146,10 @@ describe("the Designer view", () => {
     expect(screen.getByTestId("designer-compare").querySelector("li.differs")?.textContent).toContain("differs");
     expect(window.location.hash).toBe(`#/designer/${FIRST.id}`);
     expect(screen.getByTestId("designer-weights").textContent).toContain("balanced");
+    // A multi with a footprint opens in the Build view's 3D guide (WO-10.8); others have no link.
+    const link = await screen.findByTestId(`guide-link-${FIRST.routes[0].id}-n1`);
+    expect(link.getAttribute("href")).toBe("#/build?guide=gregtech%3Agt.blockmachines%401000");
+    expect(screen.queryByTestId(`guide-link-${FIRST.routes[0].id}-n2`)).toBeNull();
   });
 
   it("swaps a node: its alternatives, then a pin that the core solves again", async () => {

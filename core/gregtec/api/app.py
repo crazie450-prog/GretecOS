@@ -611,7 +611,11 @@ def create_app(core: Core) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
-    app.add_middleware(HostOriginGuard, allowed_hosts=core.cfg.allowed_hosts)
+    app.add_middleware(
+        HostOriginGuard,
+        allowed_hosts=core.cfg.allowed_hosts,
+        guide_hosts=(core.cfg.guide_host,),
+    )
 
     def principal(request: Request) -> Principal:
         found = core.auth.from_headers(
@@ -939,7 +943,7 @@ def create_app(core: Core) -> FastAPI:
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
     addon_routes.add_routes(app, core, principal)  # the export question (WO-11.1)
-    guide_routes.add_routes(app, core, principal)
+    guide_routes.add_routes(app, core, principal, trusted, _json_body)
     shell_routes.add_routes(app, core, principal, trusted, _json_body)
     remote_routes.add_routes(app, core, principal, _json_body)
     alert_routes.add_routes(app, core, principal)
