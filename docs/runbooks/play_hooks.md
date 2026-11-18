@@ -28,6 +28,9 @@ $hooks = "C:\GregtecOS-app\current\scripts\install_prism_hooks.py"
   starts `gos export run` and returns: sync Play to Export, `prismlauncher --launch GTNH-Export`
   (which exports and quits by itself, D100), wait for the new run and for Export to quit, record
   Play's fingerprint for that run, write the diff report, release the lock, show a message box.
+  Since WO-11.1 the question also shows on the dashboard and by voice (the first answer wins),
+  and the export is collected, built into the DB and diffed, with the plans it affects flagged:
+  see [addon_watcher.md](addon_watcher.md).
   Prism doesn't run post-exit after a crash: then nothing is asked, and you can run
   `& $gos export run` yourself with Play closed.
 - **An incomplete export** (NEI's part not `ok`, e.g. Export's NEI swap missing or NEI not ready
