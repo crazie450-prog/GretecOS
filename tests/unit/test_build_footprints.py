@@ -221,6 +221,29 @@ def test_an_ambiguous_tier_channel_is_refused_when_chosen() -> None:
         fp.build(row, tiers={"coil": 2})
 
 
+def test_a_block_two_channels_share_is_refused_when_both_swap() -> None:
+    row = fp.Row(
+        registry_name=GT,
+        meta=1,
+        variant="t1",
+        size=(2, 1, 1),
+        blocks=(((0, 0, 0), GT, 1), ((1, 0, 0), "m:casing", 0)),
+        hatches=(),
+        subs={
+            "a": (fp.Tier("a", 1, "m:casing", 0), fp.Tier("a", 2, "m:casing", 1)),
+            "b": (fp.Tier("b", 1, "m:casing", 0), fp.Tier("b", 2, "m:casing", 2)),
+        },
+        caveats=(),
+        name=None,
+        class_name=None,
+        source=fp.EXTRACTOR,
+        machine_id=None,
+    )
+    assert fp.build(row, tiers={"a": 2}).materials()["m:casing@1"] == 1
+    with pytest.raises(fp.FootprintError, match="tier block of two channels"):
+        fp.build(row, tiers={"a": 2, "b": 2})
+
+
 def test_variant_selection(conn: sqlite3.Connection) -> None:
     lib = fp.library(conn)
     assert lib.get(GT, 9003).variant == "t1"  # the smallest by volume
@@ -311,6 +334,94 @@ def test_the_hand_made_capture_reads_turned_to_north() -> None:
     assert {c.d: (c.block, c.meta) for c in east.blocks} == world
 
 
+def _world(
+    cells: dict[fp.Offset, tuple[str, int]],
+    controller: tuple[str, int],
+    *,
+    facing: fp.Facing,
+    trigger_stack_size: int = 1,
+    class_name: str | None = None,
+) -> capture.Capture:
+    """``cells`` (GT machine cells holding their MTE id) as a world or ``.schematic`` holds
+    them: a GT machine cell's meta is its tile entity's base type, the MTE id its ``mID``."""
+    (at,) = [p for p, c in cells.items() if c == controller]
+    world = {p: (b, 0) if b == GT else (b, m) for p, (b, m) in cells.items()}
+    ids = {p: m for p, (b, m) in cells.items() if b == GT}
+    return capture.from_cells(
+        world,
+        controller_at=at,
+        mte_ids=ids,
+        facing=facing,
+        trigger_stack_size=trigger_stack_size,
+        class_name=class_name,
+    )
+
+
+def test_from_cells_takes_the_mte_id_from_the_tile_entity() -> None:
+    cells = {
+        (5, 64, 5): (GT, 0),  # the controller: world meta 0, mID 9001
+        (5, 64, 6): (GT, 0),  # a placed bus: world meta 0, mID 70
+        (5, 64, 7): ("fixture:casing", 0),
+    }
+    cap = capture.from_cells(
+        cells,
+        controller_at=(5, 64, 5),
+        mte_ids={(5, 64, 5): 9001, (5, 64, 6): 70},
+        facing="north",
+    )
+    assert cap.controller == f"{GT}@9001"
+    assert cap.blocks == (((0, 0, 0), GT, 9001), ((0, 0, 2), "fixture:casing", 0))
+    assert cap.hatches == (((0, 0, 1), ("Captured",), f"{GT}@70"),)
+    with pytest.raises(capture.CaptureError, match="no MTE id"):
+        capture.from_cells(
+            cells, controller_at=(5, 64, 5), mte_ids={(5, 64, 5): 9001}, facing="north"
+        )
+    with pytest.raises(capture.CaptureError, match="no controller block"):
+        capture.from_cells(
+            {**cells, (0, 0, 0): ("minecraft:air", 0)},
+            controller_at=(0, 0, 0),
+            mte_ids={(5, 64, 5): 9001, (5, 64, 6): 70},
+            facing="north",
+        )
+    with pytest.raises(capture.CaptureError, match="no controller block"):
+        capture.from_cells(
+            cells,
+            controller_at=(1, 2, 3),
+            mte_ids={(5, 64, 5): 9001, (5, 64, 6): 70},
+            facing="north",
+        )
+
+
+def test_a_capture_is_at_most_64_a_side() -> None:
+    near = {(0, 0, 0): ("a:b", 0), (63, 0, 0): ("a:c", 0)}
+    assert capture.from_cells(
+        near, controller_at=(0, 0, 0), facing="north"
+    ).row().size == (
+        64,
+        1,
+        1,
+    )
+    far = {(0, 0, 0): ("a:b", 0), (1_000_000_000, 0, 0): ("a:c", 0)}
+    with pytest.raises(capture.CaptureError, match="at most 64 a side"):
+        capture.from_cells(far, controller_at=(0, 0, 0), facing="north")
+    with pytest.raises(capture.CaptureError, match="at most 64 a side"):
+        capture.from_cells(
+            {(0, 0, 0): ("a:b", 0)},
+            controller_at=(0, 0, 0),
+            facing="north",
+            hatch_kinds={(0, 100, 0): ["Maintenance"]},
+        )
+
+
+def test_names_and_metas_are_checked_alike() -> None:
+    with pytest.raises(fp.FootprintError, match="registry name"):
+        fp.block_name(" gregtech:x")
+    assert fp.parse_controller("mte:32767") == (GT, 32767)
+    for text in ("mte:40000", f"{GT}@40000"):
+        with pytest.raises(fp.FootprintError):
+            fp.parse_controller(text)
+
+
 def _doc(**change: object) -> bytes:
     doc = json.loads(CAPTURE.read_text(encoding="utf-8"))
     doc.update(change)
@@ -327,6 +438,7 @@ def _doc(**change: object) -> bytes:
         ({"trigger_stack_size": 0}, "below 1"),
         ({"controller": {"block": "fixtureaddon:nothing", "meta": 0}}, "exactly one"),
         ({"controller": {"block": "1234", "meta": 0}}, "registry name"),
+        ({"controller": {"block": "minecraft:air", "meta": 0}}, "controller is"),
         ({"cells": [{"p": [0, 0, 0], "block": "2:0", "meta": 0}]}, "registry name"),
         ({"cells": [{"p": [0, 0], "block": "a:b", "meta": 0}]}, "offset"),
         ({"cells": [{"p": [0, 0, 0], "block": "a:b", "meta": 70000}]}, "meta"),
@@ -380,7 +492,7 @@ def test_a_capture_of_an_extractor_controller_is_refused(
     conn: sqlite3.Connection,
 ) -> None:
     cells = {(0, 0, 0): (GT, 9001), (0, 0, 1): ("fixture:casing", 0)}
-    cap = capture.from_cells(cells, controller=(GT, 9001), facing="north")
+    cap = _world(cells, (GT, 9001), facing="north")
     with pytest.raises(capture.CaptureError, match="already holds"):
         capture.load(conn, cap, "x.json")
     assert conn.execute("SELECT count(*) FROM structure_run").fetchone()[0] == 1
@@ -464,9 +576,9 @@ def test_coverage_finds_a_capture_through_the_machine_link(
 ) -> None:
     _machines(conn)
     cells = {(0, 0, 0): ("fixtureaddon:turbine", 0), (0, 1, 0): ("fixture:casing", 0)}
-    cap = capture.from_cells(
+    cap = _world(
         cells,
-        controller=("fixtureaddon:turbine", 0),
+        ("fixtureaddon:turbine", 0),
         facing="north",
         class_name="fixtureaddon.MTEFixtureTurbineLegacy",
     )
@@ -600,28 +712,24 @@ def test_compare_a_capture_with_its_footprint(conn: sqlite3.Connection) -> None:
     lib = fp.library(conn)
     hot = lib.get(GT, 9001, facing="south", tiers={"coil": 2})
     cells = _as_captured(hot)
-    cap = capture.from_cells(cells, controller=(GT, 9001), facing="south")
+    cap = _world(cells, (GT, 9001), facing="south")
     result = capture.compare(cap, lib)
     assert result.differences == ()
     assert result.footprint.tiers == (("coil", 2),)  # the tier the capture holds
     wrong = next(p for p, b in cells.items() if b == ("fixture:casing", 0))
     cells[wrong] = ("fixture:casing", 9)
-    cells[(99, 99, 99)] = ("fixture:casing", 0)
-    cap = capture.from_cells(cells, controller=(GT, 9001), facing="south")
+    cells[(30, 80, 10)] = ("fixture:casing", 0)  # well outside the footprint
+    cap = _world(cells, (GT, 9001), facing="south")
     diffs = capture.compare(cap, lib).differences
     assert len(diffs) == 2
     assert any(
         "footprint fixture:casing@0, capture fixture:casing@9" in d for d in diffs
     )
     assert any("footprint air, capture fixture:casing@0" in d for d in diffs)
-    tall = capture.from_cells(
-        cells, controller=(GT, 9001), facing="south", trigger_stack_size=2
-    )
+    tall = _world(cells, (GT, 9001), facing="south", trigger_stack_size=2)
     with pytest.raises(capture.CaptureError, match="no variant 't2'"):
         capture.compare(tall, lib)
-    other = capture.from_cells(
-        {(0, 0, 0): ("a:b", 0)}, controller=("a:b", 0), facing="north"
-    )
+    other = _world({(0, 0, 0): ("a:b", 0)}, ("a:b", 0), facing="north")
     with pytest.raises(capture.CaptureError, match="no footprint"):
         capture.compare(other, lib)
 

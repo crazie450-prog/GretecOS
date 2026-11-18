@@ -245,6 +245,10 @@ class Footprint:
 
     def rotated(self, facing: Facing) -> Footprint:
         """This footprint with the controller's front facing ``facing``."""
+        # TODO(D305): metas are not rotated. GT casings, coils, glass and pipes carry no
+        # direction, but a directional block does (minecraft:anvil@1 in one base-pack multi at
+        # the pin, logs and stairs in addon captures): flag or refuse those once a rotation
+        # table exists.
         if facing == self.facing:
             return self
         back = [replace(c, d=unrotate(c.d, self.facing)) for c in self.cells]
@@ -372,6 +376,14 @@ def build(
             )
         effective[channel] = chosen.value
         if chosen != now:
+            # A swap is by block: every cell holding the built tier block takes the chosen
+            # one, so a non-channel cell of the same block would swap too (D305; none at the
+            # pin, and the harness test fails if two channels ever share a block).
+            if (now.block, now.meta) in swap:
+                raise FootprintError(
+                    f"{row.controller} {row.variant}: {now.key} is a tier block of two "
+                    "channels, so which cells each one owns is unknown"
+                )
             swap[(now.block, now.meta)] = (chosen.block, chosen.meta)
     slots = {d: (kinds, placed) for d, kinds, placed in row.hatches}
     cells: list[Cell] = []
@@ -593,16 +605,19 @@ def integer(value: object) -> int:
     return value
 
 
+MAX_META = 32767  # a short, as an item damage or MTE id is; the palette's limit too
+
+
 def meta_value(value: object) -> int:
     m = integer(value)
-    if not 0 <= m <= 0xFFFF:
-        raise FootprintError(f"meta {m} is outside 0..65535")
+    if not 0 <= m <= MAX_META:
+        raise FootprintError(f"meta {m} is outside 0..{MAX_META}")
     return m
 
 
 def block_name(value: object, what: str = "block") -> str:
     """A registry name (``mod:name``); a numeric id is refused (EndlessIDs)."""
-    if not isinstance(value, str):
+    if not isinstance(value, str) or value != value.strip():
         raise FootprintError(f"{what} is not a registry name: {value!r}")
     try:
         parse_entry(f"{value}@0")
