@@ -26,7 +26,7 @@ All runs are on `7f0b4a1`.
 | `uv run --locked ruff check .` | All checks passed |
 | `uv run --locked ruff format --check .` | 596 files already formatted |
 | Phase 9 unit and security tests (`tests/unit/alerts`, `tests/unit/discordbot`, `tests/unit/remote`, `tests/security/test_discord_foreign_users.py`, `tests/security/test_phone_dashboard.py`, `tests/unit/test_alert_imports.py`, `test_alert_rules.py`, `test_verify_list.py`) | **508 passed, 2 skipped** (the two skips are the Windows-only `GetLastInputInfo` tests, which ran green on CI's Windows job) |
-| full `pytest` (default groups, as CI) | see "After the review" |
+| full `pytest` (default groups, as CI) | **10751 passed, 329 skipped**, exit 0 (9 min 2 s) |
 | `./gradlew --no-daemon --max-workers=2 runServer -Pharness` (fresh, in this worktree) | `harness passed: 37 checks, run 20261118T160409Z` (2 min 15 s) |
 | `GOS_REQUIRE_HARNESS_RUN=1 pytest tests/integration/test_discord_harness.py` on that run | **1 passed** (2 min 19 s): a fake interaction from Clayton through the bot's door and its real HTTP client to a real core on the harness DB; `/plan` is queued at once, the result carries the routes in rank order with `plan:` ids, the PNG, the BOM and the phone link; after a core restart on the same DB the job is neither run nor delivered again |
 | `pnpm test` (vitest) | 20 files, **337 passed** |
@@ -289,5 +289,5 @@ Order: Tailscale (step 2) comes before the Discord checks (step 3), so the plan 
 
 ## After the review
 
-- Full `pytest` here: see the result line added at the end of this section.
+- The full `pytest` here (10751 passed, 329 skipped) and the Playwright suite (77 passed) finished green on `7f0b4a1`, as did CI's Ubuntu, Windows and `mod` jobs on it. Only its `dashboard` job is red, on the WO-3.7 flake (risk 1), so deploy `705c88a` or later once all its jobs are green (step 0).
 - No product code was changed, and no decision row was added (D321 unused).
