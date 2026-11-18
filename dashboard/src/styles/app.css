@@ -2751,3 +2751,110 @@ select.ask-input option {
   border-radius: var(--radius-control);
   background: var(--panel);
 }
+
+/* --- Shell card (WO-10.7, D316): the decorative shell's isometric preview -------------------- */
+
+.shell-view-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.shell-preview {
+  display: block;
+  flex: 1 1 320px;
+  min-width: 0;
+  width: 100%;
+  max-height: 560px;
+  margin: var(--space-2) 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.shell-face {
+  stroke: var(--bg);
+  stroke-width: 0.04;
+  stroke-linejoin: round;
+}
+
+.shell-face.side-a {
+  fill-opacity: 0.78;
+}
+
+.shell-face.side-b {
+  fill-opacity: 0.58;
+}
+
+.role-wall {
+  fill: var(--text-2);
+  background: var(--text-2);
+}
+
+.role-trim {
+  fill: var(--text-3);
+  background: var(--text-3);
+}
+
+.role-pillar {
+  fill: var(--text);
+  background: var(--text);
+}
+
+.role-floor {
+  fill: var(--track);
+  background: var(--track);
+}
+
+.role-roof {
+  fill: var(--rule);
+  background: var(--rule);
+}
+
+.role-window {
+  fill: var(--primary);
+  background: var(--primary);
+}
+
+.role-light {
+  fill: var(--warn);
+  background: var(--warn);
+}
+
+.role-accent {
+  fill: var(--accent);
+  background: var(--accent);
+}
+
+.role-block {
+  fill: var(--needs);
+  background: var(--needs);
+}
+
+.shell-palette .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+  border: 1px solid var(--border);
+}
+
+.shell-palette td.gos-src {
+  overflow-wrap: anywhere;
+}
+
+.shell-paste ol {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+.shell-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}

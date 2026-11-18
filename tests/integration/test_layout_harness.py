@@ -156,7 +156,7 @@ def _stand_ins(db: Path, mtes: set[int]) -> list[int]:
 @pytest.fixture(scope="module")
 def conn(db: Path, lines: list[dict[str, Any]]) -> Iterator[sqlite3.Connection]:
     multis = {
-        m
+        int(m["mte"])
         for p in lines
         for n in p["nodes"]
         for m in ([n["machine"]] if isinstance(n.get("machine"), dict) else [])

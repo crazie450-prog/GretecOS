@@ -19,6 +19,7 @@ import type {
   DeepTask,
   Device,
   GuideSite,
+  ShellSummary,
   Health,
   LiveBase,
   MyBase,
@@ -89,6 +90,11 @@ export const api = {
   health: () => get<Health>("/api/health"),
   usage: () => get<Usage>("/api/usage"),
   guide: () => get<GuideSite>("/api/guide"),
+  // Decorative shells (WO-10.7, D316): designed and checked by the core; the card is data.
+  shells: () => get<{ shells: ShellSummary[] }>("/api/shells"),
+  shell: (id: string) => get<{ card: Card }>(`/api/shells/${encodeURIComponent(id)}`),
+  designShell: (plans: string[], theme?: string) =>
+    post<{ card: Card }>("/api/shells", theme ? { plans, theme } : { plans }),
   answers: () => get<Answer[]>("/api/answers"),
   deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
   ask: (text: string) => post<Reply>("/api/ask", { text }),

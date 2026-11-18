@@ -222,6 +222,19 @@ export interface GuideSite {
   bytes: number;
 }
 
+// GET /api/shells (WO-10.7, D316): the saved decorative shells, newest first.
+export interface ShellSummary {
+  id: string;
+  status: "accepted" | "repaired";
+  source: "architect" | "procedural";
+  theme: string | null;
+  theme_name: string | null;
+  plans: string[];
+  layout: string;
+  size: [number, number, number];
+  blocks: number;
+}
+
 export interface Device {
   id: string;
   name: string;

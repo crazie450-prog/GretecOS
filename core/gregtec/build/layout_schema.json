@@ -74,6 +74,7 @@
   "run": {
    "type": [
     "integer",
+    "string",
     "null"
    ]
   },

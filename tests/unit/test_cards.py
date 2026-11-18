@@ -25,7 +25,7 @@ INVALID: list[dict[str, Any]] = json.loads(
 
 def test_the_catalog_is_plan_7_14s() -> None:
     """Rule 1's ten cards, plus the unsure-match question, the plain table and WO-10.5's
-    layout preview (D313)."""
+    layout preview (D313) and WO-10.7's shell preview (D316)."""
     assert list(cards.card_types()) == [
         "recipe",
         "route_comparison",
@@ -40,6 +40,7 @@ def test_the_catalog_is_plan_7_14s() -> None:
         "choices",
         "table",
         "layout",
+        "shell",
     ]
 
 

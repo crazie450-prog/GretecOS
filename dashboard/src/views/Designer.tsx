@@ -22,7 +22,7 @@ import { Card } from "../cards/Card";
 import { FlowDiagram } from "../cards/FlowDiagram";
 import { useCardActions } from "../cards/context";
 import { RouteComparisonView } from "../cards/renderers";
-import type { ChoicesCard } from "../cards/types.gen";
+import type { Card as CardData, ChoicesCard } from "../cards/types.gen";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip } from "../components/core";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
@@ -206,6 +206,10 @@ function FloorPlan({ planId }: { planId: string }) {
   const [open, setOpen] = useState(false);
   const [got, setGot] = useState<PlanLayout | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // WO-10.7 (D316): the procedural shell around this floor plan, no AI needed (No-AI mode).
+  const [shell, setShell] = useState<CardData | null>(null);
+  const [shellBusy, setShellBusy] = useState(false);
+  const [shellError, setShellError] = useState<string | null>(null);
   useEffect(() => {
     if (!open || got || error) return;
     let live = true;
@@ -217,6 +221,20 @@ function FloorPlan({ planId }: { planId: string }) {
       live = false;
     };
   }, [open, got, error, planId]);
+  const designShell = () => {
+    setShellBusy(true);
+    setShellError(null);
+    api.designShell([planId]).then(
+      (r) => {
+        setShell(r.card);
+        setShellBusy(false);
+      },
+      (e: unknown) => {
+        setShellError(message(e));
+        setShellBusy(false);
+      },
+    );
+  };
   return (
     <details
       className="designer-layout"
@@ -227,6 +245,13 @@ function FloorPlan({ planId }: { planId: string }) {
       {open && !got && !error && <p className="empty">{GLYPH.progress} Laying out the machines</p>}
       {error && <p className="empty">{GLYPH.warn} {error}</p>}
       {got && <Card card={got.card} />}
+      {got && !shell && (
+        <Button testId={`shell-design-${planId}`} disabled={shellBusy} onClick={designShell}>
+          {shellBusy ? `${GLYPH.progress} Designing a shell` : "Design a shell around it"}
+        </Button>
+      )}
+      {shellError && <p className="empty">{GLYPH.warn} {shellError}</p>}
+      {shell && <Card card={shell} />}
     </details>
   );
 }
