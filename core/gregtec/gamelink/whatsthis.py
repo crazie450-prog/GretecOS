@@ -95,11 +95,8 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
-def _plain_first(p: Parsed) -> dict[str, str] | None:
-    """The first row without a ``fake?`` or ``recycling`` flag, else the first (D172)."""
-    for row in p.rows:
-        if not {"fake?", "recycling"} & set(row.get("flags", "").split()):
-            return row
+def _first(p: Parsed) -> dict[str, str] | None:
+    """The first row: rows without a ``fake?`` or ``recycling`` flag are listed first (D341)."""
     return p.rows[0] if p.rows else None
 
 
@@ -142,7 +139,7 @@ def answer(
     made = _call(reg, "recipe_find", {"item": key})
     if not made.is_error:
         p = made.parsed
-        first = _plain_first(p)
+        first = _first(p)
         total = p.total if p.total is not None else len(p.rows)
         if first is None and "#" in key:
             # an NBT variant (a charged battery) is rarely made as such: say what makes the
@@ -151,7 +148,7 @@ def answer(
             base = None
             for other in keys[1:]:  # the plain item, then its wildcard row
                 plain = _call(reg, "recipe_find", {"item": other})
-                base = None if plain.is_error else _plain_first(plain.parsed)
+                base = None if plain.is_error else _first(plain.parsed)
                 if base is not None:
                     break
             if base is not None:
