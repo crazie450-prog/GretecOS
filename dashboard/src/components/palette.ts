@@ -1,5 +1,6 @@
 // The Ctrl+K command palette's entries (plan 7.14): views, settings, and items, recipes and
-// quests found through the core's lookup tools (WO-2.2); plans arrive with the Designer.
+// quests found through the core's lookup tools (WO-2.2), and saved plans (GET /api/plans).
+import type { SavedPlanRow } from "../api/types";
 import type { Card } from "../cards/types.gen";
 import { VIEWS, type ViewId } from "../views/nav";
 
@@ -10,6 +11,7 @@ export type Action =
   | { kind: "setting"; id: "theme" | "doctor" | "devices" | "motion" }
   | { kind: "item"; key: string; name: string; tool: "recipe_find" | "recipe_uses" }
   | { kind: "quest"; ref: string }
+  | { kind: "plan"; id: string }
   | { kind: "none" };
 
 export interface Entry {
@@ -82,13 +84,19 @@ export function questEntries(card: Card | null): Entry[] {
   }));
 }
 
-export const PLANS_LATER: Entry = {
-  id: "p-later",
-  group: "Plans",
-  label: "Plans arrive with the Designer (WO-3.7)",
-  hint: "",
-  action: { kind: "none" },
-};
+/** Saved plans whose name or id holds every word of the query (newest first, as the core
+ * lists them); each opens in the Designer, a power plan (pw-) in the Power view. */
+export function planEntries(rows: SavedPlanRow[], query: string): Entry[] {
+  return rows
+    .filter((r) => matches(`${r.name} ${r.id}`, query))
+    .slice(0, 6)
+    .map((r) => ({ id: `p-${r.id}`, group: "Plans", label: r.name, hint: `${r.status} · plan:${r.id}`, action: { kind: "plan", id: r.id } }));
+}
+
+/** The address that opens plan ``id``: the Designer, or the Power view for a power plan. */
+export function planHash(id: string): string {
+  return `/${id.startsWith("pw-") ? "power" : "designer"}/${encodeURIComponent(id)}`;
+}
 
 /** All entries in group order. */
 export function arrange(entries: Entry[]): Entry[] {

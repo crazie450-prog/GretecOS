@@ -1,8 +1,9 @@
 // Now, the home view (plan 7.14, D55): ranked by context. Alerts first when something is wrong,
 // the last answer right after a question, otherwise the next steps; then power and jobs. Data
 // that doesn't exist yet gets its designed empty state.
-import type { ReactNode } from "react";
-import type { Answer, CoreState } from "../api/types";
+import { type ReactNode, useEffect, useState } from "react";
+import { ApiError, api } from "../api/client";
+import type { Answer, CoreState, PowerLedgerSection } from "../api/types";
 import { Card } from "../cards/Card";
 import type { ApprovalCard, TableCard } from "../cards/types.gen";
 import { AlertView, CitationChip, Panel, StatusGlyph } from "../components/core";
@@ -10,6 +11,7 @@ import { Approvals, Jobs } from "../components/Rail";
 import { type Section, rankNow } from "../state/now";
 import { GLYPH } from "../state/states";
 import { useApp } from "../state/store";
+import { LedgerTiers } from "./Power";
 import { useTool } from "./useTool";
 
 export function AnswerBlock({ answer, asking, big }: { answer: Answer | null; asking: string | null; big?: boolean }) {
@@ -125,12 +127,35 @@ export function NextSteps({ compact }: { compact?: boolean }) {
   );
 }
 
-export function PowerEmpty() {
-  return (
-    <p className="empty" data-testid="power-empty">
-      {GLYPH.waiting} No power data yet. The EU ledger arrives with WO-4.4; live OC readings with WO-7.1.
-    </p>
-  );
+/** Net power per tier: the EU ledger of the accepted lines (WO-4.4), as the Power view draws it.
+ * The numbers are the core's (its ledger card); nothing is computed here. */
+export function NetPower() {
+  const [ledger, setLedger] = useState<PowerLedgerSection | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.powerLatest(0).then(
+      (r) => live && setLedger(r.ledger),
+      (e: unknown) => {
+        if (!live) return;
+        setLedger(null);
+        setError(e instanceof ApiError ? e.message : String(e));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (ledger === undefined) return <p className="empty">{GLYPH.progress} Loading the ledger</p>;
+  if (error) return <p className="empty">{GLYPH.warn} {error}</p>;
+  if (ledger === null || ledger.card.tiers.length === 0) {
+    return (
+      <p className="empty" data-testid="now-power-empty">
+        {GLYPH.waiting} No power data yet. Accept a power or production line in the Power view or the Designer; live OC readings appear once the OC bridge reports.
+      </p>
+    );
+  }
+  return <LedgerTiers card={ledger.card} entries={ledger.entries} />;
 }
 
 const TITLES: Record<Section, string> = {
@@ -186,7 +211,7 @@ export function Now(props: {
       case "steps":
         return <NextSteps compact={!first} />;
       case "power":
-        return <PowerEmpty />;
+        return <NetPower />;
       case "jobs":
         return <Jobs core={core} />;
     }

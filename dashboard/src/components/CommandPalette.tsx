@@ -1,9 +1,10 @@
-// Ctrl+K (workbench mode): one box over views, settings, items, recipes and quests. Needs
+// Ctrl+K (workbench mode): one box over views, settings, items, recipes, quests and plans. Needs
 // Clayton's board approval (no board yet, D92/D158).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import type { SavedPlanRow } from "../api/types";
 import type { Card } from "../cards/types.gen";
-import { type Action, type Entry, PLANS_LATER, arrange, itemEntries, move, questEntries, staticEntries } from "./palette";
+import { type Action, type Entry, arrange, itemEntries, move, planEntries, questEntries, staticEntries } from "./palette";
 
 const DEBOUNCE_MS = 200;
 
@@ -11,11 +12,20 @@ export function CommandPalette(props: { onRun: (action: Action) => void; onClose
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<Card | null>(null);
   const [quests, setQuests] = useState<Card | null>(null);
+  const [plans, setPlans] = useState<SavedPlanRow[]>([]);
   const [index, setIndex] = useState(0);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     input.current?.focus();
+    let live = true;
+    api.plans().then(
+      (r) => live && setPlans(r.plans),
+      () => live && setPlans([]),
+    );
+    return () => {
+      live = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -38,9 +48,9 @@ export function CommandPalette(props: { onRun: (action: Action) => void; onClose
 
   const entries = useMemo(() => {
     const found = [...staticEntries(query), ...itemEntries(items), ...questEntries(quests)];
-    if (query.trim().length >= 2 || /plan/i.test(query)) found.push(PLANS_LATER);
+    if (query.trim()) found.push(...planEntries(plans, /^plans?$/i.test(query.trim()) ? "" : query));
     return arrange(found);
-  }, [query, items, quests]);
+  }, [query, items, quests, plans]);
   const runnable = entries.filter((e) => e.action.kind !== "none");
   const selected = runnable[Math.min(index, runnable.length - 1)] as Entry | undefined;
 

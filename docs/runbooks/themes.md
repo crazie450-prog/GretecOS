@@ -27,7 +27,8 @@ With the core and the voice client running (runbook `voice_client.md`) and the k
 
    ```powershell
    uv run gos theme list
-   dir "$env:GOS_HOME\vault\themes", "$env:GOS_HOME\vault\themes\versions"
+   $h = if ($env:GOS_HOME) { $env:GOS_HOME } else { "$HOME\GregtecOS" }
+   dir "$h\vault\themes", "$h\vault\themes\versions"
    ```
 
    **Expect** `th-copper-works v3 vault`, `themes\th-copper-works.md`, and `versions\th-copper-works--v1.md` and `--v2.md`. Open the current one: `change: v2 ...` and `change: v3 ...` lines, the palette table with `<registry name>@<meta>` blocks only.
