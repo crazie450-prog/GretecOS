@@ -855,8 +855,9 @@ def _chain(
     skipped = []
     for p in net.procs:
         if not [k for k, _ in p.inputs if k != EU_KEY]:
-            # The export lists no input this recipe uses up (an input it couldn't key): a
-            # power line never counts on it (D233).
+            # The export lists no input this recipe uses up (GT's own recipe is like that in
+            # this instance; the export marks it "unkeyed", D332): a power line never counts
+            # on it (D233).
             skipped.append(p.id)
             continue
         s = sized.get(p.id)
