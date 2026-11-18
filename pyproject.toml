@@ -95,7 +95,12 @@ testpaths = ["tests"]
 # importlib mode lets tests/unit, tests/security, ... share file names without __init__.py files.
 addopts = ["--import-mode=importlib"]
 strict = true
-markers = ["slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)"]
+markers = [
+    "slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)",
+    # D340: CI's checks jobs run these in their own step, after the xdist step, with no other
+    # workers beside them (a plain `uv run pytest` runs everything serially anyway).
+    "serial: timing- or desktop-sensitive; CI runs it alone, never beside other xdist workers (D340)",
+]
 # A full run writes about 7 GB of per-test temp folders (DB copies). Keep only failed tests'
 # folders, and only from the last run, so runs side by side don't fill the disk.
 tmp_path_retention_policy = "failed"

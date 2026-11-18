@@ -38,7 +38,9 @@ run, and the slowest files start first (`SLOW_FIRST` in `tests/integration/harne
 if it takes more than about a minute). The fixtures' GOS_HOMEs are copies of one build per harness run
 (`built_home`, built once per run even across workers). Each worker
 writes only under its own pytest temp folder and reads `mod/run/` without changing it. A new integration test must
-keep that true: no fixed ports, no writes outside `tmp_path`, no dependence on another file's tests having run.
+keep that true: no fixed ports, no writes outside `tmp_path`, no dependence on another file's tests having run. (The
+`serial` marker is honoured only by the `checks` jobs, which run marked tests in a step of their own; the `mod` job
+runs every integration test on the workers, so none may need the machine to itself.)
 
 The jar to install is `build/libs/gregteclink-<version>.jar` (not `-dev` or `-sources`). Its name matches the
 `mods/gregteclink*` entry of Export's `sync_exclude`.

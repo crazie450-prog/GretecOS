@@ -2,13 +2,14 @@
 in lab-ops with no lost or half-read files; D218).
 
 :class:`LuaBox` is oc/mailbox.lua's ``send``/``receive``/``exchange`` step for step, on real files:
-``exists`` to poll, outbox.tmp opened "w", written, closed, then renamed to outbox.json only while
-there is none (a rename that fails is OC's ``false``, tried again 8 times); inbox.json's size
-checked, read in 2048-byte chunks, closed, then removed (a failed remove is OC's ``false``). Its
-writes to outbox.tmp go in several flushed pieces with a yield between them. That is a
-regression guard, not a proof: the core never opens outbox.tmp, and outbox.json only appears by
-an atomic rename, so a half-written outbox.json can't occur with this protocol; the pieces would
-catch a change that made the core read outbox.tmp, or OC write outbox.json in place (D218).
+``exists`` to poll, outbox.tmp opened "w" (an open that fails is OC's ``nil, reason``), written,
+closed, then renamed to outbox.json only while there is none (a rename that fails is OC's
+``false``, tried again 8 times); inbox.json's size checked, read in 2048-byte chunks, closed, then
+removed (a failed remove is OC's ``false``). Its writes to outbox.tmp go in several flushed pieces
+with a yield between them. That is a regression guard, not a proof: the core never reads
+outbox.tmp (it only renames outbox.json back to it), and outbox.json only appears by an atomic
+rename, so a half-written outbox.json can't occur with this protocol; the pieces would catch a
+change that made the core read outbox.tmp, or OC write outbox.json in place (D218).
 
 A real :class:`MailboxService` thread polls the folder while the writer runs in another thread,
 and the fake queue hands out commands as the action queue would (a returned command goes out
@@ -43,6 +44,9 @@ from gregtec.bridge.mailbox import Mailbox, MailboxService, Place
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "oc"
 DRIVE = "0f000000-0000-4000-8000-000000000003"
 SOAK_S = float(os.environ.get("GOS_MAILBOX_SOAK_S", "6"))
+# Wall-clock races between two threads: on a loaded Windows runner they need the machine to
+# themselves, so CI runs them in its serial step (D340).
+pytestmark = pytest.mark.serial
 
 # The real os functions, taken before any test patches os (the writer is "OC", not the core).
 _exists, _getsize, _rename, _remove = (
@@ -94,7 +98,15 @@ class LuaBox:
                 self.n["full"] += 1
                 return False, "the core hasn't taken the last message"
             self.sleep(self.POLL_S)
-        with open(self.tmp, "wb") as h:  # filesystem.open(tmp, "w"): truncates
+        try:
+            h = open(self.tmp, "wb")  # noqa: SIM115 (filesystem.open(tmp, "w"): truncates)
+        except OSError as exc:
+            # OC's open returns nil, reason (send gives up; the agent sends a new seq next
+            # cycle). On Windows the core's rename of outbox.json to outbox.tmp holds the file
+            # for an instant after outbox.json is gone, so this happens under load (D340).
+            self.n["open_failed"] += 1
+            return False, f"can't write outbox.tmp: {exc}"
+        with h:
             cut = sorted(self.rng.sample(range(1, len(body)), 2))
             for a, b in zip([0, *cut], [*cut, len(body)], strict=True):
                 h.write(body[a:b])
@@ -390,6 +402,7 @@ def numbers(r: Run) -> dict[str, Any]:
         "command_repeats_at_oc": r.agent.repeats,
         "waits_for_core": n["full"],
         "oc_rename_retries": n["rename_retries"],
+        "oc_open_failures": n["open_failed"],
         "core_permission_retries": s["permission_retries"],
         "repeats_read": s["repeats"],
         "half_read": s.get("refused_bad_payload", 0) + n["bad_replies"],

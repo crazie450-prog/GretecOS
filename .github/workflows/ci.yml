@@ -34,12 +34,19 @@ jobs:
       - run: uv run --locked ruff check --output-format=github .
       - run: uv run --locked ruff format --check .
       # D340: 4 workers, whole files each, as in the mod job (Windows took 29 of its 30 min serially).
-      - run: uv run --locked pytest -n 4 --dist loadfile
+      # The tests marked serial (wall-clock races, the real keyboard hook) run in the next step,
+      # alone: together the two steps run every test once, as a plain `uv run pytest` does.
+      - run: uv run --locked pytest -n 4 --dist loadfile -m "not serial"
         env:
           # WO-0.8: lets tests/security/test_gos_dev_setup.py create a user and change ACLs.
           # Only the ephemeral Windows runner sets it; never set it on a real PC.
           GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && runner.environment == 'github-hosted' && '1' || '' }}
           # WO-7.2: on Linux a missing Lua fails tests/oc instead of skipping it (Windows has none).
+          GOS_REQUIRE_LUA: ${{ runner.os == 'Linux' && '1' || '' }}
+      - run: uv run --locked pytest -m serial
+        if: ${{ !cancelled() }}
+        env:
+          GOS_ISOLATION_CI: ${{ runner.os == 'Windows' && runner.environment == 'github-hosted' && '1' || '' }}
           GOS_REQUIRE_LUA: ${{ runner.os == 'Linux' && '1' || '' }}
 
   dashboard:
