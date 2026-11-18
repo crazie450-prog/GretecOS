@@ -36,7 +36,7 @@ export const VIEWS: readonly View[] = [
   { id: "base", label: "Base", key: null, later: null, board: false }, // My base (WO-3.8); stalled machines WO-7.4
   { id: "activity", label: "Activity", key: null, later: null, board: false }, // WO-6.3: needs Clayton's board approval
   { id: "ores", label: "Ores", key: null, later: null, board: false }, // WO-6.6: needs Clayton's board approval
-  { id: "build", label: "Build", key: null, later: "Phase 10", board: false },
+  { id: "build", label: "Build", key: null, later: null, board: false }, // WO-10.1 spike frame (WO-10.8 the viewer): needs Clayton's board approval
 ];
 
 export const PHONE_TABS: readonly ViewId[] = ["now", "chat", "search", "base", "costs", "settings"];
