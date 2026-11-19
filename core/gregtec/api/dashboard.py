@@ -58,6 +58,7 @@ from gregtec.db import access
 from gregtec.db import quests as quest_db
 from gregtec.ingest import fingerprint
 from gregtec.ingest import quests as bq
+from gregtec.packupdate import routes as addon_routes
 from gregtec.quests import spoilers
 from gregtec.store import Store
 
@@ -238,7 +239,12 @@ class Board:
         last = fingerprint.last_export(home)
         stale = state.get("stale") if isinstance(state.get("stale"), bool) else None
         line = None
-        if stale:
+        if stale and last and last.get("loaded") is False:  # WO-11.1, D329
+            line = (
+                f"Export {last['run_id']} isn't loaded into the DB; load it after the next "
+                "quit or with gos export run --load-only."
+            )
+        elif stale:
             line = (
                 f"Play changed since export {last['run_id']}; export again to refresh it."
                 if last
@@ -357,6 +363,7 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
     approvals = _valid(
         [cards_build.deep_approval(t) for t in tasks if t["status"] == "needs_approval"]
         + action_cards(core)
+        + addon_routes.cards(core)  # the export question (WO-11.1, D69)
     )
     pairing = _valid(
         [
@@ -379,6 +386,20 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         for t in tasks
         if t["status"] in ("queued", "running", "needs_approval")
     ]
+    if core.design_jobs is not None:  # the dashboard's design jobs (WO-3.9, D353)
+        jobs += [
+            {
+                "id": j.id,
+                "kind": j.kind,
+                "title": j.title,
+                "status": j.status,
+                "detail": j.describe(),
+                "started": j.started,
+                "elapsed_s": round(time.time() - j.started, 1),
+                "cancel_asked": j.cancel_asked,
+            }
+            for j in core.design_jobs.running()
+        ]
     if board.export is not None:
         jobs.append(
             {
@@ -540,6 +561,8 @@ async def tick(core: "Core") -> None:
     if now >= board.next_data:
         board.next_data = now + DATA_EVERY_S
         await asyncio.to_thread(board.refresh_data)
+        # the stale notice and the export question, each said once (WO-11.1)
+        await asyncio.to_thread(addon_routes.tick, core)
     variants = await asyncio.to_thread(snapshots, core)
     signature = json.dumps(_steady(variants[True]), sort_keys=True)
     if signature != board.signature or now - board.last_push >= HEARTBEAT_S:
@@ -658,10 +681,16 @@ def add_routes(
         page = board.dist / "index.html"
         if not page.is_file():
             return HTMLResponse(NOT_BUILT, status_code=503, headers=NOT_BUILT_HEADERS)
+        # The Build view frames the 3D guide's export from its own origin (WO-10.8, D319).
+        csp = f"{CSP}; frame-src http://{core.cfg.guide_host}"
         return FileResponse(
             page,
             media_type=TYPES[".html"],
-            headers={**PAGE_HEADERS, "Cache-Control": "no-cache"},
+            headers={
+                **PAGE_HEADERS,
+                "Content-Security-Policy": csp,
+                "Cache-Control": "no-cache",
+            },
         )
 
     for top in FILE_ROOTS:

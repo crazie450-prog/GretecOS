@@ -2,7 +2,7 @@
 
 A local voice assistant and planning suite for **GT New Horizons 2.9**. It designs production and power lines from your own instance's recipe data, answers recipe, quest and wiki questions with cited numbers, watches the base live through OpenComputers, and shows everything on a second-monitor dashboard and a phone.
 
-**Status:** under construction. Phases 0–2 are merged. Phase 3 (GT math, machine model, graph builder, `gos plan`), Phase 5 (voice: push-to-talk, speech-to-text, text-to-speech, wake word) and Phase 7 (OC agent, M1 mailbox, OC bridge) have landed. The remaining work orders are in [docs/implementation_plan.md](docs/implementation_plan.md) §8.
+**Status:** under construction. Phases 0–9 are merged: the planner (Designer, ranking, plan outputs, My base), power (fuel and generator catalog, EU ledger, the Power view), voice (push-to-talk, speech-to-text, text-to-speech, wake word, personas), watching the base live (watchers, events and sessions, the quest guide, the advisor, ore intel, crop breeding), OC displays and alert rules, the GregtecLink client module and the wiki, and Discord with the phone dashboard. Phase 10 is in progress (10.1–10.4 and 10.6 have landed). The remaining work orders are in [docs/implementation_plan.md](docs/implementation_plan.md) §8.
 
 ## Docs
 
@@ -12,6 +12,8 @@ A local voice assistant and planning suite for **GT New Horizons 2.9**. It desig
 | [docs/decisions.md](docs/decisions.md) | Append-only log of decision changes after v1.1 (D78 onward). |
 | [docs/research/](docs/research/) | Research reports A–I. The plan cites them as `[A§5.4]`. |
 | [docs/reviews/QA_review_v1.0.md](docs/reviews/QA_review_v1.0.md) | QA review of plan v1.0, with Clayton's answers (became D41–D77). |
+| [docs/runbooks/](docs/runbooks/) | Every PC runbook: one per work order that needs steps on the PC. |
+| [docs/reviews/](docs/reviews/) | The phase gate reports (`G0_review.md` onward) with their PC steps, and per-WO review notes. |
 | [docs/design/README.md](docs/design/README.md) | The approved dashboard design (D92): which boards are approved, the design system copy in `docs/design/system/`, and the WO-2.6 handoff steps and kickoff prompt. |
 | [docs/design/age_themes.md](docs/design/age_themes.md) | Dashboard themes per voltage age (D81): which theme goes with each age, the rules every theme keeps, and the ship order. |
 | [docs/runbooks/core_service.md](docs/runbooks/core_service.md) | Starting the core service at login, and the WO-2.1 checks on the PC: restarts, Host/Origin, pairing, `gos launch` (V24). |

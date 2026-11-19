@@ -118,21 +118,61 @@ def test_every_suffix_an_export_holds_is_served() -> None:
 
 
 def test_frame_headers_keep_the_frame_inside_guide() -> None:
-    headers = guide.frame_headers("http://gos.localhost:8765")
+    headers = guide.frame_headers(
+        "http://guide-gos.localhost:8765", "http://gos.localhost:8765"
+    )
     csp = dict(
         part.strip().split(" ", 1)
         for part in headers["Content-Security-Policy"].split(";")
     )
-    here = "http://gos.localhost:8765/guide/"
+    here = "http://guide-gos.localhost:8765/guide/"
     assert csp["default-src"] == "'none'"
     for directive in ("script-src", "connect-src", "font-src", "media-src"):
         assert csp[directive] == here, directive
     assert csp["img-src"] == f"{here} data:"
     assert csp["style-src"] == f"{here} 'unsafe-inline'"
-    assert csp["frame-ancestors"] == "'self'" and csp["base-uri"] == "'self'"
+    # Only the dashboard frames it (another origin now, so no X-Frame-Options SAMEORIGIN).
+    assert csp["frame-ancestors"] == "http://gos.localhost:8765"
+    assert csp["base-uri"] == "'self'"
     assert "unsafe-eval" not in headers["Content-Security-Policy"]
-    assert headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert "X-Frame-Options" not in headers
     assert headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_tokens_expire_and_are_signed() -> None:
+    now = [1_800_000_000.0]
+    tokens = guide.Tokens(b"k" * 32, clock=lambda: now[0])
+    token, expires = tokens.issue()
+    assert expires == 1_800_000_000 + guide.TOKEN_TTL_S
+    assert tokens.valid(token)
+    exp, sig = token.split("-")
+    assert not tokens.valid(f"{int(exp) + 1}-{sig}")  # a later expiry isn't signed
+    assert not tokens.valid(f"{exp}-{'0' * 32}")
+    assert not guide.Tokens(b"x" * 32, clock=lambda: now[0]).valid(token)  # another key
+    for bad in ("", "abc", f"{exp}-{sig}x", f"{exp}-{sig.upper()}", f"{exp}/{sig}"):
+        assert not tokens.valid(bad), bad
+    now[0] = expires
+    assert not tokens.valid(token)  # run out
+
+
+def test_scan_cache_parses_only_changed_pages(site: Path) -> None:
+    cache = guide.ScanCache()
+    first = cache.scan(site)
+    assert first == guide.scan(site) and cache.parsed == 1
+    assert cache.scan(site) == first and cache.parsed == 1  # nothing re-parsed
+    extra = site / "standin" / "en_us" / "second.html"
+    extra.write_text(
+        "<title>Second</title><img class='game-scene' data-scene-src='a'>", "utf-8"
+    )
+    second = cache.scan(site)
+    assert [p.path for p in second.pages] == [standin.PAGE, "standin/en_us/second.html"]
+    assert cache.parsed == 2  # only the new page
+    extra.write_text("<title>Second</title><p>no scene now</p>", "utf-8")
+    assert [p.path for p in cache.scan(site).pages] == [standin.PAGE]
+    assert cache.parsed == 3
+    extra.unlink()
+    assert cache.scan(site) == guide.scan(site)
+    assert not cache.scan(site.parent / "gone").present
 
 
 # --- the API ------------------------------------------------------------------------------------
@@ -154,6 +194,12 @@ def _core(home: Path) -> Any:  # noqa: ANN401
     )
 
 
+def _frame_base(c: Any, headers: dict[str, str]) -> str:  # noqa: ANN401
+    frame = c.get("/api/guide", headers=headers).json()["frame"]
+    assert frame["base"].startswith("http://guide-gos.localhost:8765/guide/")
+    return str(frame["base"])[len("http://guide-gos.localhost:8765") :]
+
+
 def test_guide_api_and_files(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
@@ -162,28 +208,39 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
     home = tmp_path / "home"
     core = _core(home)
     admin = {"Authorization": f"Bearer {ADMIN}"}
+    on_guide = {"Host": "guide-gos.localhost:8765"}
     try:
         with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
             assert c.get("/api/guide").status_code == 401
-            assert c.get("/api/guide", headers=admin).json()["present"] is False
-            assert c.get(f"/guide/{standin.PAGE}", headers=admin).status_code == 404
+            listing = c.get("/api/guide", headers=admin).json()
+            assert listing["present"] is False
+            base = _frame_base(c, admin)
+            assert c.get(f"{base}{standin.PAGE}", headers=on_guide).status_code == 404
 
             standin.make(guide.site_root(core.cfg))
             listing = c.get("/api/guide", headers=admin).json()
             assert listing["present"] and listing["pages"][0]["path"] == standin.PAGE
 
-            assert c.get(f"/guide/{standin.PAGE}").status_code == 401
-            page = c.get(f"/guide/{standin.PAGE}", headers=admin)
+            page = c.get(f"{base}{standin.PAGE}", headers=on_guide)
             assert page.status_code == 200
             assert page.headers["content-type"] == "text/html; charset=utf-8"
+            csp = page.headers["content-security-policy"]
+            assert "connect-src http://guide-gos.localhost:8765/guide/;" in csp
+            assert csp.endswith("frame-ancestors http://gos.localhost:8765")
+            assert "x-frame-options" not in page.headers
+
+            # Not on the dashboard's host, with or without a credential; not without the token.
+            assert c.get(f"{base}{standin.PAGE}", headers=admin).status_code == 404
+            assert c.get(f"/guide/{standin.PAGE}", headers=on_guide).status_code == 403
             assert (
-                "connect-src http://gos.localhost:8765/guide/;"
-                in (page.headers["content-security-policy"])
+                c.get(
+                    f"/guide/{standin.PAGE}", headers={**on_guide, **admin}
+                ).status_code
+                == 403
             )
-            assert page.headers["x-frame-options"] == "SAMEORIGIN"
 
             scene = next((guide.site_root(core.cfg) / "_res" / "scenes").iterdir())
-            got = c.get(f"/guide/_res/scenes/{scene.name}", headers=admin)
+            got = c.get(f"{base}_res/scenes/{scene.name}", headers=on_guide)
             assert got.status_code == 200
             assert got.headers["content-type"] == "application/octet-stream"
             assert "content-encoding" not in got.headers
@@ -194,7 +251,7 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
             res.mkdir()
             for suffix in EXPORT_SUFFIXES:
                 (res / f"f{suffix}").write_bytes(b"x")
-                got = c.get(f"/guide/_res/misc/f{suffix}", headers=admin)
+                got = c.get(f"{base}_res/misc/f{suffix}", headers=on_guide)
                 assert got.status_code == 200, suffix
 
             (guide.site_root(core.cfg) / "tool.exe").write_bytes(b"MZ")
@@ -203,7 +260,6 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
                 (above / "secret.json").write_text("{}", "utf-8")
             for bad in (
                 "tool.exe",
-                "_site/../../secret.json",  # httpx folds this to /secret.json before sending
                 "_site/%2e%2e/%2e%2e/secret.json",  # these reach the route as `..` paths
                 "_site/..%2f..%2fsecret.json",
                 "..%2fsecret.json",
@@ -213,6 +269,112 @@ def test_guide_api_and_files(tmp_path: Path) -> None:
                 "_site/nope.js",
                 "_site/",
             ):
-                assert c.get(f"/guide/{bad}", headers=admin).status_code == 404, bad
+                assert c.get(f"{base}{bad}", headers=on_guide).status_code == 404, bad
+    finally:
+        core.store.close()
+
+
+def test_the_guide_host_serves_the_guide_only(tmp_path: Path) -> None:
+    """D304's gap closed: the guide's own origin reaches nothing but its files, and the
+    dashboard's routes refuse a request carrying the guide's Origin."""
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import create_app
+
+    home = tmp_path / "home"
+    core = _core(home)
+    admin = {"Authorization": f"Bearer {ADMIN}"}
+    on_guide = {"Host": "guide-gos.localhost:8765"}
+    guide_origin = {"Origin": "http://guide-gos.localhost:8765"}
+    try:
+        standin.make(guide.site_root(core.cfg))
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            base = _frame_base(c, admin)
+            for path in ("/api/state", "/api/guide", "/", "/health", "/assets/x.js"):
+                got = c.get(path, headers={**on_guide, **admin})
+                assert got.status_code == 403, path
+                assert got.json() == {"error": "the guide host serves the guide only"}
+            post = c.post(f"{base}{standin.PAGE}", headers=on_guide)
+            assert post.status_code == 403
+            # The guide page's own fetches pass; another site's are refused.
+            ok = c.get(f"{base}{standin.PAGE}", headers={**on_guide, **guide_origin})
+            assert ok.status_code == 200
+            # The dashboard framing it: a sibling host name, so another site (D319).
+            for site in ("cross-site", "same-site"):
+                framed = {
+                    "Sec-Fetch-Site": site,
+                    "Sec-Fetch-Dest": "iframe",
+                    "Sec-Fetch-Mode": "navigate",
+                }
+                got = c.get(f"{base}{standin.PAGE}", headers={**on_guide, **framed})
+                assert got.status_code == 200, site
+            for bad in (
+                {"Origin": "http://gos.localhost:8765"},
+                {"Origin": "http://evil.example"},
+                {"Sec-Fetch-Site": "cross-site"},
+                {"Sec-Fetch-Site": "same-site"},
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Dest": "script",
+                    "Sec-Fetch-Mode": "no-cors",
+                },
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                },
+                {"Tailscale-Funnel-Request": "?1"},
+            ):
+                got = c.get(f"{base}{standin.PAGE}", headers={**on_guide, **bad})
+                assert got.status_code == 403, bad
+            # On the dashboard's host, the guide's Origin is refused everywhere.
+            refused = c.get("/api/state", headers={**admin, **guide_origin})
+            assert refused.status_code == 403
+            assert refused.json() == {"error": "origin not allowed"}
+            # The handshake is refused.
+            with (
+                pytest.raises(Exception),  # noqa: B017
+                c.websocket_connect("/ws", headers=on_guide),
+            ):
+                pass
+    finally:
+        core.store.close()
+
+
+def test_the_frame_is_offered_on_the_pc_only(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import create_app
+
+    home = tmp_path / "home"
+    core = _core(home)
+    core.cfg = Config(gos_home=home, extra_allowed_hosts=("pc.tail1234.ts.net:443",))
+    admin = {"Authorization": f"Bearer {ADMIN}"}
+    try:
+        with TestClient(create_app(core), base_url="https://pc.tail1234.ts.net") as c:
+            assert c.get("/api/guide", headers=admin).json()["frame"] is None
+        with TestClient(create_app(core), base_url="http://127.0.0.1:8765") as c:
+            assert c.get("/api/guide", headers=admin).json()["frame"]["base"]
+    finally:
+        core.store.close()
+
+
+def test_the_dashboard_page_may_frame_the_guide_host_only(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec.api import dashboard
+    from gregtec.api.app import create_app
+
+    home = tmp_path / "home"
+    core = _core(home)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>t</title>", "utf-8")
+    dashboard.board_of(core).dist = dist
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            csp = c.get("/").headers["content-security-policy"]
+            assert csp.endswith("; frame-src http://guide-gos.localhost:8765")
+            assert "frame-ancestors 'none'" in csp
     finally:
         core.store.close()

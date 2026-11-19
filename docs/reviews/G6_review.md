@@ -224,7 +224,7 @@ Open: PR #86 Q1-Q6.
 | **V29** (a reliable "game paused" signal) | 6.1 (owner), 8.1 | Resolved from the log line (D258); WO-8.1 adds `status.paused` as a second source | Step 2 (`watchers.md` §2): the line's delay, 60 s still paused, unpause within about 45 s |
 | **V30** (CropsNH on crop sticks) | 6.7 | Partly resolved from source (D273) | Step 13 (`crop_guide.md` §2) |
 | **V32** (the Crop Breeder) | 6.7 | Partly resolved (D273): odds and tanks match CropsNH's tooltips in the harness export | Step 13 (`crop_guide.md` §3), at LV and MV |
-| **V34** (a GT multiblock's own shutdown reads `stopped`) | 6.5 (touches), 7.4/7.5 | Open, a Lab test | Step 12 (`advisor.md` C7). G7's steps 7 and 8 check it too; one paste of the EBF's `telemetry_get` row closes it for both |
+| **V34** (a GT multiblock's own shutdown reads `stopped`) | 6.5 (touches), 7.4/7.5 | Open, a Lab test | Step 12 (`advisor.md` C7). G7's steps 7 and 8 check it too; one paste of the EBF's `/api/base/live` machine row (`advisor.md` C7) closes it for both |
 
 No Phase 6 PR added a `verify.tsv` row. #83, #86, #87, #89 and #98 changed the text of V23, V26, V27, V29, V30, V32 and V34. `tests/unit/test_verify_list.py` keeps `verify.tsv` and plan §13.2 in step (it ran in the full run).
 
@@ -376,7 +376,7 @@ uv run pytest tests/integration/test_quest_guide_harness.py -k real_book
 ```
 **Pass:** `advisor: 3 of 3 scenarios pass`. Then he writes `yes` or `no` in the `useful` column of `data\reports\advisor-<date>.tsv` for early, trouble and stocked, with a few words on any `no`. **The acceptance is three `yes`.**
 
-**12. The notices in `lab-ops`** (`advisor.md` C, steps 5-10; the other half of WO-6.5, **V34**), after G7's steps 1 to 3 (the OC computer reporting as `oc-lab`). `[paths] lab_world = "lab-ops"`, `[policy] notices` left out, the dashboard open, the voice client running. C6 power deficit (the voice line and the Now alert within about 70 s); C7 machine stalled (**one** line and **one** card, Next steps updates without a reload both ways) and the EBF power cut (paste its `telemetry_get` row: V34; G7's steps 7-8 need no second paste); C8 buildable from stock; C9 "what should I do next?"; C10 the notice log lines.
+**12. The notices in `lab-ops`** (`advisor.md` C, steps 5-10; the other half of WO-6.5, **V34**), after G7's steps 1 to 3 (the OC computer reporting as `oc-lab`). `[paths] lab_world = "lab-ops"`, `[policy] notices` left out, the dashboard open, the voice client running. C6 power deficit (the voice line and the Now alert within about 70 s); C7 machine stalled (**one** line and **one** card, Next steps updates without a reload both ways) and the EBF power cut (paste its `/api/base/live` machine row: V34; G7's steps 7-8 need no second paste); C8 buildable from stock; C9 "what should I do next?"; C10 the notice log lines.
 
 **13. The crop guide** (`crop_guide.md` §0-§3, the WO-6.7 acceptance, **V30**, **V32**), **as gos-dev** in the dev clone (judgement 2), `uv run gos ...` as the runbook writes it. First he picks his **five target crops** (question 57; at least one needing a block under it and one needing the Crop Breeder), or keeps the PM's five. gos-dev has no quest progress and no dashboard up here, so `crop_guide.md` §1.1's "set your tier (My base)" becomes `--tier <n>` on every call: `<n>` is the GT tier he will be at in `lab-progress` (1 = LV, 2 = MV), the same in each. Then:
 ```powershell

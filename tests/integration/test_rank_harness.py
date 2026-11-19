@@ -21,14 +21,14 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner import effort, explain, graph, plan, rank, sizing, validate
 from gregtec.planner.request import DefaultBaseInputs, Request
@@ -57,15 +57,16 @@ TOL = 1e-3  # §8: within 0.1%
 
 
 @pytest.fixture(scope="module")
-def conn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connection]:
+def conn(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Iterator[sqlite3.Connection]:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("rank-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     c = access.connect(access.db_path(home), readonly=True)
     try:
         yield c
@@ -239,15 +240,16 @@ class Owned(DefaultBaseInputs):
 
 
 @pytest.fixture(scope="module")
-def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[sqlite3.Connection]:
+def client(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Iterator[sqlite3.Connection]:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("rank-client")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     c = access.connect(access.db_path(home), readonly=True)
     try:
         yield c

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -139,3 +141,47 @@ def test_the_supervisor_runs_the_bot_from_login(tmp_path: Path) -> None:
     assert spec.argv[-2:] == ("--config", str(tmp_path / "gos.toml"))
     assert "owner_id" in dict(spec.stay_stopped)[supervisor.EXIT_SETUP]
     assert supervisor.discord_spec(None).argv[-1] == "--supervised"
+
+
+DRIVER = """
+import sys
+from pathlib import Path
+
+import discord
+
+from gregtec import config
+from gregtec.discordbot import cli
+from gregtec.discordbot.adapter import GosClient
+from gregtec.discordbot.settings import BotSettings
+from gregtec.llm import keys
+
+
+async def refused(self, token):
+    raise discord.LoginFailure("Improper token has been passed.")
+
+
+GosClient.start = refused
+keys.get_key = lambda name: "not-a-real-token"
+cfg = config.Config(gos_home=Path(sys.argv[1]))
+sys.exit(cli._run_bot(cfg, BotSettings(owner_id=1), supervised=True))
+"""
+
+
+def test_a_refused_token_exits_setup_with_stdin_still_open(tmp_path: Path) -> None:
+    """QA 5-9: the stdin watcher held the BufferedReader's lock when the bot stopped on its own,
+    so the interpreter aborted at shutdown (-6) and the supervisor restarted it forever."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", DRIVER, str(tmp_path)],
+        stdin=subprocess.PIPE,  # as the supervisor starts it: never closed here
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdin is not None and proc.stderr is not None
+    try:
+        code = proc.wait(timeout=60)
+        err = proc.stderr.read().decode("utf-8", "replace")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.stdin.close()
+    assert code == discord_cli.EXIT_SETUP, err

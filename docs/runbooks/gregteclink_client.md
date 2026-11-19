@@ -4,13 +4,13 @@ Clayton's PC steps. Everything here runs as Clayton from `GOS_APP`; gos-dev neve
 touches Play until step C. What the module does: [mod/README.md](../../mod/README.md#client-module-wo-81); the
 protocol: [docs/contracts/gregteclink-client-v1.md](../contracts/gregteclink-client-v1.md).
 
-`$app` below is `C:\GregtecOS-app\current` (your GOS_APP's `current`).
+`$app` below is `C:\GregtecOS-app\current` (your GOS_APP's `current`). **`gos` in your own window** is GOS_APP's copy: paste `$gos = "C:\GregtecOS-app\current\.venv\Scripts\gos.exe"` once, then type `& $gos ...` wherever this page writes `gos ...` for you (nothing puts `gos.exe` on your PATH, and `uv run gos` in your clone would run the clone's code, not the deployed one).
 
 ## A. Deploy
 
 1. From your own clone, after the PR is merged: `uv run gos deploy`. It builds the jar into
    `$app\mod-dist\` (D98).
-2. Run `sync_instances.py` once as usual (`$app\.venv\Scripts\python.exe $app\scripts\sync_instances.py`). From this
+2. Run `sync_instances.py` once as usual (`& "$app\.venv\Scripts\python.exe" "$app\scripts\sync_instances.py"`). From this
    version on, Lab's default `[sync.lab] exclude` keeps `mods/gregteclink*` and `config/gregteclink*`, so Lab's
    GregtecLink is its own and never Play's.
 
@@ -73,3 +73,23 @@ Only after B passes:
 
 To remove it: delete `mods\gregteclink-*.jar` and `config\gregteclink.cfg` from the instance, and
 `gos token revoke gregteclink-play`.
+
+## D. The hover-item eval (plan 9's 10 cases; WO-8.4, D362)
+
+`tests/evals/hover_items.tsv` holds 10 hovered items exactly as the client module reports them (registry name, meta,
+NBT; never a numeric id) and the question said while pointing: "what's this?", "how do I make this?", "what is this
+used for?", "which tier is this?", an ambiguous name (IC2's Iron Plate), an item with NBT variants (a charged
+RE-Battery), a fluid cell with NBT (water in IC2's Universal Fluid Cell), an item in no recipe (the Debug Fluid Tank),
+an addon item (Good Generator's Field Restriction Casing) and a looked-at EBF. What a right answer must cite is read
+from the DB at run time, so the file runs on your DB as it does on the client harness's (CI runs `--fake` on all 10).
+
+1. **Free, any time after 3.1** (no key, no model): `& $gos eval hover --fake`. Pass: `passed: 10 of 10`,
+   `Result: PASS`. A line `not in this DB: ...` means your Export run lacks that item: say which in the paste.
+2. **Paid** (the fast lane, about $0.15 worst case; it prints the estimate first): `& $gos eval hover`, read the
+   `worst case $` line, type `yes` (through `Tee-Object` the prompt may not show until you press Enter; type it after
+   that line). It refuses while the AI is paused or off, or when today's spend plus the estimate would pass
+   `[budget] day_max_usd`: then raise it for the sitting (checklist 3.14.5) or run it another day. Pass: `passed: 10 of 10`, `Result: PASS`. Paste: the table (`Tee-Object` it into
+   `$gh\data\reports\hover-eval.txt`). A failing row says why (a wrong or missing citation, an uncited number, the
+   wrong variant, the hovered item ignored); report it as it is, don't edit the case to make it pass.
+
+This scores the core's answer to a reported hover; that the game reports the right item is B.5-B.6.

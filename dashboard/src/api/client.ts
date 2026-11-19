@@ -7,6 +7,9 @@ import type {
   AiState,
   Alternatives,
   DesignAnswer,
+  DesignJob,
+  DesignJobBody,
+  JobStart,
   Designed,
   DesignerView,
   DesignSpec,
@@ -19,6 +22,10 @@ import type {
   DeepTask,
   Device,
   GuideSite,
+  BuildGuide,
+  GuideEntry,
+  GuideQuery,
+  ShellSummary,
   Health,
   LiveBase,
   MyBase,
@@ -42,6 +49,7 @@ import type {
   Usage,
   Verify,
   WaypointProposal,
+  PlanLayout,
 } from "./types";
 
 export class ApiError extends Error {
@@ -80,6 +88,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 const get = <T,>(path: string): Promise<T> => request<T>("GET", path);
+
+/** The guide's query string: controller, variant, facing and each tier as `tier=<channel>=<value>`. */
+export function guideParams(q: GuideQuery): string {
+  const p = new URLSearchParams({ controller: q.controller });
+  if (q.variant) p.set("variant", q.variant);
+  if (q.facing) p.set("facing", q.facing);
+  for (const [ch, v] of Object.entries(q.tiers ?? {})) p.append("tier", `${ch}=${v}`);
+  return p.toString();
+}
+
+function guideBody(q: GuideQuery): Record<string, unknown> {
+  return {
+    controller: q.controller,
+    variant: q.variant ?? null,
+    facing: q.facing ?? null,
+    tiers: Object.entries(q.tiers ?? {}).map(([ch, v]) => `${ch}=${v}`),
+  };
+}
 const post = <T,>(path: string, body: unknown = {}): Promise<T> => request<T>("POST", path, body);
 
 export const api = {
@@ -88,6 +114,17 @@ export const api = {
   health: () => get<Health>("/api/health"),
   usage: () => get<Usage>("/api/usage"),
   guide: () => get<GuideSite>("/api/guide"),
+  // The 3D build guide's data (WO-10.8, D319, D320): footprints by position, never GuideNH's.
+  guides: () => get<{ guides: GuideEntry[] }>("/api/build/guides"),
+  buildGuide: (q: GuideQuery) => get<BuildGuide>(`/api/build/guide?${guideParams(q)}`),
+  guideCheck: (q: GuideQuery, item: string, done: boolean) =>
+    post<{ done: string[] }>("/api/build/guide/checklist", { ...guideBody(q), item, done }),
+  guideReset: (q: GuideQuery) => post<{ done: string[] }>("/api/build/guide/checklist", { ...guideBody(q), reset: true }),
+  // Decorative shells (WO-10.7, D316): designed and checked by the core; the card is data.
+  shells: () => get<{ shells: ShellSummary[] }>("/api/shells"),
+  shell: (id: string) => get<{ card: Card }>(`/api/shells/${encodeURIComponent(id)}`),
+  designShell: (plans: string[], theme?: string) =>
+    post<{ card: Card }>("/api/shells", theme ? { plans, theme } : { plans }),
   answers: () => get<Answer[]>("/api/answers"),
   deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
   ask: (text: string) => post<Reply>("/api/ask", { text }),
@@ -162,12 +199,19 @@ export const api = {
     post<Designed>(`/api/plans/${encodeURIComponent(id)}/pin`, { node, recipe }),
   resolve: (id: string) => post<Designed>(`/api/plans/${encodeURIComponent(id)}/resolve`),
   accept: (id: string) => post<Accepted>(`/api/plans/${encodeURIComponent(id)}/accept`),
+  // The line layout (WO-10.5, D312): the plan's floor plan, computed by the core.
+  layout: (id: string) => get<PlanLayout>(`/api/plans/${encodeURIComponent(id)}/layout`),
   rename: (id: string, name: string) =>
     post<{ view: DesignerView }>(`/api/plans/${encodeURIComponent(id)}/name`, { name }),
   // The Power view (WO-4.6): options ranked by the core's code; accepting is Clayton's.
   powerLatest: (windowS = 0) => get<PowerLatest>(`/api/power?window=${windowS}`),
   powerView: (id: string, windowS = 0) => get<PowerView>(`/api/power/${encodeURIComponent(id)}?window=${windowS}`),
   powerDesign: (spec: PowerSpec) => post<{ ids: string[]; view: PowerView }>("/api/power/design", spec),
+  // Design jobs (WO-3.9, D353): start at once, follow the stage, cancel; the result when done.
+  designJob: (body: DesignJobBody) => post<JobStart>("/api/designer/jobs", body),
+  powerJob: (spec: PowerSpec) => post<JobStart>("/api/power/jobs", spec),
+  job: (id: string) => get<{ job: DesignJob }>(`/api/design-jobs/${encodeURIComponent(id)}`),
+  cancelJob: (id: string) => post<{ job: DesignJob }>(`/api/design-jobs/${encodeURIComponent(id)}/cancel`),
   powerAccept: (id: string) =>
     post<{ id: string; status: string; problems: string[]; view: PowerView }>(
       `/api/power/${encodeURIComponent(id)}/accept`,
@@ -213,6 +257,12 @@ export async function act(card: ApprovalCard, action: string): Promise<void> {
   // old card can never confirm a newer one; the core sets confirmed_via from who asked.
   if (card.kind === "action" && kind === "action" && (action === "confirm" || action === "cancel")) {
     await post(`/api/actions/${id}/${action}`);
+    return;
+  }
+  // The export question after Play quits (D69, WO-11.1): by its id, so an old card can't answer
+  // a newer question; the core sets who answered from who asked.
+  if (card.kind === "export" && kind === "export" && (action === "confirm" || action === "cancel")) {
+    await post(`/api/export/question/${id}/${action}`);
     return;
   }
   throw new ApiError(400, `${action} isn't an action for this card`);

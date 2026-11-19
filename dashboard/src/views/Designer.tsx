@@ -6,24 +6,31 @@
 // design shown is in the address (#/designer/<plan id>), so a reload shows it again, pins and all;
 // with none, the latest design opens. The approved Designer board (D92) hasn't come through the
 // canvas handoff: built to the design system (D158 (5)), to be reconciled with the board.
+// Designs, re-solves and pins run as design jobs (WO-3.9, D353): the busy panel shows the stage,
+// the time and a Cancel; leaving the view leaves the job running to its saved result (D354).
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type {
   Alternatives,
-  DesignAnswer,
+  Designed,
   DesignerNode,
   DesignerRoute,
   DesignerView,
+  DesignJobBody,
   DesignSpec,
+  PlanLayout,
   SavedPlanRow,
 } from "../api/types";
+import { Card } from "../cards/Card";
 import { FlowDiagram } from "../cards/FlowDiagram";
 import { useCardActions } from "../cards/context";
 import { RouteComparisonView } from "../cards/renderers";
-import type { ChoicesCard } from "../cards/types.gen";
+import type { Card as CardData, ChoicesCard } from "../cards/types.gen";
+import { JobProgress, useDesignJob } from "../components/JobProgress";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip } from "../components/core";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
+import { guideFor, guideHash, useGuides } from "./Build";
 
 const TIERS = ["", "ULV", "LV", "MV", "HV", "EV", "IV", "LuV", "ZPM", "UV", "UHV"];
 const EXPORTS: [string, string][] = [
@@ -165,7 +172,8 @@ function SavedPlans(props: { plans: SavedPlanRow[] | null; current: string | nul
               >
                 <span>{p.name}</span>
                 <span className="gos-src">
-                  {p.status} · plan:{p.id}
+                  {p.status}
+                  {p.affected ? ` · ${GLYPH.warn} affected by update` : ""} · plan:{p.id}
                 </span>
               </button>
             </li>
@@ -178,6 +186,8 @@ function SavedPlans(props: { plans: SavedPlanRow[] | null; current: string | nul
 
 function NodeRow(props: { route: DesignerRoute; node: DesignerNode; picked: boolean; onPick: () => void }) {
   const { node } = props;
+  // WO-10.8: a multi with a footprint opens in the Build view's 3D guide.
+  const guide = guideFor(useGuides(), node.mte ? Number(node.mte.slice(4)) : null);
   return (
     <li className={`designer-node${props.picked ? " picked" : ""}`} data-node={node.item ?? node.n}>
       <button type="button" className="result" onClick={props.onPick} aria-pressed={props.picked} data-testid={`swap-${props.route.id}-${node.n}`}>
@@ -193,8 +203,73 @@ function NodeRow(props: { route: DesignerRoute; node: DesignerNode; picked: bool
       <span className="designer-node-meta">
         {node.tier && <TierChip tier={node.tier} />}
         <Cite cite={node.recipe} />
+        {guide && (
+          <a className="gos-src" href={guideHash({ controller: guide })} data-testid={`guide-link-${props.route.id}-${node.n}`}>
+            Build guide
+          </a>
+        )}
       </span>
     </li>
+  );
+}
+
+/** The route's floor plan (WO-10.5, D312, D313): the core lays the machines out on open, never
+ * here; the card draws it. Needs Clayton's board approval (D92, D158 (5)). */
+function FloorPlan({ planId }: { planId: string }) {
+  const [open, setOpen] = useState(false);
+  const [got, setGot] = useState<PlanLayout | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // WO-10.7 (D316): the procedural shell around this floor plan, no AI needed (No-AI mode).
+  const [shell, setShell] = useState<CardData | null>(null);
+  const [shellBusy, setShellBusy] = useState(false);
+  const [shellError, setShellError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || got || error) return;
+    let live = true;
+    api.layout(planId).then(
+      (r) => live && setGot(r),
+      (e: unknown) => live && setError(message(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, got, error, planId]);
+  const designShell = () => {
+    setShellBusy(true);
+    setShellError(null);
+    api.designShell([planId]).then(
+      (r) => {
+        setShell(r.card);
+        setShellBusy(false);
+      },
+      (e: unknown) => {
+        setShellError(message(e));
+        setShellBusy(false);
+      },
+    );
+  };
+  return (
+    <details
+      className="designer-layout"
+      data-testid={`layout-${planId}`}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) setError(null); // reopening tries a failed load again
+        setOpen(now);
+      }}
+    >
+      <summary className="gos-label">Floor plan</summary>
+      {open && !got && !error && <p className="empty">{GLYPH.progress} Laying out the machines</p>}
+      {error && <p className="empty">{GLYPH.warn} {error}</p>}
+      {got && <Card card={got.card} />}
+      {got && !shell && (
+        <Button testId={`shell-design-${planId}`} disabled={shellBusy} onClick={designShell}>
+          {shellBusy ? `${GLYPH.progress} Designing a shell` : "Design a shell around it"}
+        </Button>
+      )}
+      {shellError && <p className="empty">{GLYPH.warn} {shellError}</p>}
+      {shell && <Card card={shell} />}
+    </details>
   );
 }
 
@@ -207,6 +282,7 @@ function RouteColumn(props: {
   onUnpin: (node: string) => void;
   onAccept: () => void;
   onRename: (name: string) => void;
+  onResolve: () => void;
 }) {
   const r = props.route;
   const [confirming, setConfirming] = useState(false);
@@ -259,6 +335,29 @@ function RouteColumn(props: {
           {r.target.name} · {plain(r.target.rate_s)}/s · cap <TierChip tier={r.tier_cap} />
         </span>
       </div>
+      {r.affected && (
+        <div className="notice" role="status" data-testid={`affected-${r.id}`}>
+          <span className="gos-label">
+            {GLYPH.warn} Affected by update
+          </span>
+          <p className="gos-sub">
+            Export {r.affected.run} changed or removed what this plan cites. Re-solve it on the new data, then accept the
+            new route.
+          </p>
+          {r.affected.hits.length > 0 && (
+            <ul className="designer-pins">
+              {r.affected.hits.slice(0, 5).map((h) => (
+                <li key={h.cite}>
+                  <Cite cite={h.cite} /> <span className="gos-src">{h.why}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button variant="primary" disabled={props.busy} onClick={props.onResolve} testId={`affected-resolve-${r.id}`}>
+            Re-solve
+          </Button>
+        </div>
+      )}
       {r.pins.length > 0 && (
         <ul className="designer-pins" data-testid={`pins-${r.id}`}>
           {r.pins.map((p) => (
@@ -293,6 +392,7 @@ function RouteColumn(props: {
           <NodeRow key={n.n} route={r} node={n} picked={props.picked === n.n} onPick={() => props.onPick(n)} />
         ))}
       </ul>
+      <FloorPlan planId={r.id} />
       <div className="designer-exports">
         {EXPORTS.map(([fmt, label]) => (
           <a key={fmt} className="gos-src" href={`/api/plans/${r.id}/export/${fmt}`}>
@@ -427,6 +527,15 @@ export function Designer() {
   const [altsError, setAltsError] = useState<string | null>(null);
   const [all, setAll] = useState(false);
   const shown = useRef<string | null>(null);
+  // A design that arrives after he left the view must not put its plan back in the address, or
+  // the phone's More tab (WO-9.3) would bounce back here.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const altsRef = useRef<HTMLDivElement | null>(null);
 
   const refreshPlans = useCallback(() => {
@@ -440,7 +549,7 @@ export function Designer() {
     shown.current = v.id;
     setView(v);
     setError(null);
-    showPlan(v.id);
+    if (mounted.current) showPlan(v.id);
   }, []);
 
   const load = useCallback(
@@ -508,26 +617,41 @@ export function Designer() {
     }
   };
 
-  const design = (spec: DesignSpec): void => {
-    setBusy("Solving");
-    setClarify(null);
-    api.design(spec).then(
-      (out: DesignAnswer) => {
+  // A design job's result is what POST /api/designer/design answers (D353).
+  const designed = (result: unknown): void => {
+    const out = result as Designed;
+    show(out.view);
+    setNotice(out.problems.length ? out.problems.join("; ") : null);
+    refreshPlans();
+  };
+  const runner = useDesignJob(
+    "designer",
+    (result) => {
+      setPicked(null);
+      designed(result);
+    },
+    (text) => setNotice(text),
+  );
+  const working = busy !== null || runner.job !== null;
+
+  const startJob = (body: DesignJobBody, then?: (result: unknown) => void): void => {
+    setNotice(null);
+    setBusy("Starting the design"); // busy from the click on; the job's panel follows
+    runner.start(() => api.designJob(body), then).then(
+      (question) => {
         setBusy(null);
-        if ("clarify" in out) {
-          setClarify({ card: out.clarify, spec });
-          return;
-        }
-        setPicked(null);
-        show(out.view);
-        setNotice(out.problems.length ? out.problems.join("; ") : null);
-        refreshPlans();
+        if (question && "spec" in body) setClarify({ card: question, spec: body.spec });
       },
       (e: unknown) => {
         setBusy(null);
         setNotice(message(e));
       },
     );
+  };
+
+  const design = (spec: DesignSpec): void => {
+    setClarify(null);
+    startJob({ spec });
   };
 
   const pick = (route: string, node: DesignerNode): void => {
@@ -539,13 +663,13 @@ export function Designer() {
   const pin = (recipe: string | null): void => {
     if (!picked?.node.item) return;
     const item = picked.node.item;
-    void run("Solving with the pin", async () => {
-      const out = await api.pin(picked.route, item, recipe);
+    startJob({ pin: { plan: picked.route, node: item, recipe } }, (result) => {
+      const out = result as Designed;
       // Keep the same item picked, on the best-ranked route that makes it, so the swap shows.
       const holder = out.view.routes.find((r) => r.nodes.some((n) => n.item === item));
       const again = holder?.nodes.find((n) => n.item === item);
       setPicked(holder && again ? { route: holder.id, node: again } : null);
-      return out;
+      designed(out);
     });
   };
 
@@ -558,10 +682,11 @@ export function Designer() {
         <p className="lede">Compare 2-3 routes, then build one. Ranked by code; pick any machine to swap or pin it.</p>
       </div>
       <div className="designer-top">
-        <DesignForm busy={busy !== null} onDesign={design} />
+        <DesignForm busy={working} onDesign={design} />
         <SavedPlans plans={plans} current={view?.id ?? null} />
       </div>
-      {busy && (
+      {runner.job && <JobProgress job={runner.job} onCancel={runner.cancel} testId="designer-busy" prefix="designer" />}
+      {busy && !runner.job && (
         <div className="gos-panel" aria-busy="true" data-testid="designer-busy">
           <p className="empty">
             {GLYPH.progress} {busy}
@@ -609,7 +734,7 @@ export function Designer() {
             <span className="gos-src" data-testid="designer-weights">
               {view.weights}
             </span>
-            <Button disabled={busy !== null} onClick={() => void run("Solving again", () => api.resolve(view.id))} testId="designer-resolve">
+            <Button disabled={working} onClick={() => startJob({ resolve: view.id })} testId="designer-resolve">
               Re-solve
             </Button>
           </div>
@@ -622,12 +747,13 @@ export function Designer() {
                 key={r.id}
                 route={r}
                 names={names}
-                busy={busy !== null}
+                busy={working}
                 picked={picked?.route === r.id ? picked.node.n : null}
                 onPick={(n) => pick(r.id, n)}
-                onUnpin={(node) => void run("Solving without the pin", () => api.pin(r.id, node, null))}
+                onUnpin={(node) => startJob({ pin: { plan: r.id, node, recipe: null } })}
                 onAccept={() => void run("Accepting", () => api.accept(r.id))}
                 onRename={(name) => void run("Renaming", () => api.rename(r.id, name))}
+                onResolve={() => startJob({ resolve: r.id })}
               />
             ))}
           </div>
@@ -636,7 +762,7 @@ export function Designer() {
               <AlternativesPanel
                 alts={alts}
                 error={altsError}
-                busy={busy !== null}
+                busy={working}
                 all={all}
                 setAll={setAll}
                 onPin={(recipe) => pin(recipe)}

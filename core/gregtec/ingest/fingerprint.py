@@ -26,7 +26,9 @@ State, all in ``GOS_HOME/data/fingerprint/`` (written atomically, by Clayton's p
   fingerprint), computed before sync. The newest 20 are kept, and always the last export.
 - ``play.tsv``: Play's listing at the last check (pre-launch, post-exit or an export).
 - ``state.json``: the exports recorded (newest last), the last check and the **stale flag**:
-  stale when Play's fingerprint differs from the last export's, or no export is recorded yet.
+  stale when Play's fingerprint differs from the last export's, or no export is recorded yet,
+  or the last export is recorded but couldn't be loaded into the DB (``"loaded": false`` on its
+  entry, :func:`mark_loaded`; WO-11.1, D329).
 
 WO-1.3's ``export_run.fingerprint`` takes the same value once the export pipeline loads its runs
 into the DB.
@@ -405,6 +407,12 @@ class Status:
     export_run: str | None = None
     export_fingerprint: str | None = None
     changes: Changes = field(default_factory=Changes)
+    unloaded: bool = False  # the last export is recorded but not in the DB (D329)
+
+    @property
+    def only_unloaded(self) -> bool:
+        """Play matches the last export, which only needs loading (no new export)."""
+        return self.unloaded and self.export_fingerprint == self.play.digest
 
     def line(self) -> str:
         fp = self.play.digest[:12]
@@ -412,6 +420,11 @@ class Status:
             return (
                 "recipe data is stale: no export is recorded yet "
                 f"(Play's fingerprint {fp})"
+            )
+        if self.only_unloaded:
+            return (
+                f"recipe data is stale: export {self.export_run} matches Play but isn't "
+                "loaded into the DB (gos export run --load-only)"
             )
         if self.stale:
             what = self.changes.summary() if self.changes else "its listing isn't kept"
@@ -430,12 +443,14 @@ def status(home: Path, play: Fingerprint) -> Status:
         return Status(stale=True, play=play)
     run_id, digest = last["run_id"], last["fingerprint"]
     old = run_entries(home, run_id)
+    unloaded = last.get("loaded") is False
     return Status(
-        stale=digest != play.digest,
+        stale=digest != play.digest or unloaded,
         play=play,
         export_run=run_id,
         export_fingerprint=digest,
         changes=changes(old, play.entries) if old is not None else Changes(),
+        unloaded=unloaded,
     )
 
 
@@ -467,6 +482,29 @@ def record_export(
     _save_state(home, state)
     _prune_runs(home, {e["run_id"] for e in state["exports"]})
     return check(home, play_now, "export")
+
+
+def mark_loaded(home: Path, run_id: str, loaded: bool) -> bool:
+    """Record whether recorded export ``run_id`` is loaded into the DB (D329); the stale flag
+    follows when it is the last export. False when ``run_id`` isn't recorded."""
+    state = load_state(home)
+    found = False
+    for e in state["exports"]:
+        if e["run_id"] == run_id:
+            found = True
+            if loaded:
+                e.pop("loaded", None)
+            else:
+                e["loaded"] = False
+    if not found:
+        return False
+    last = state["exports"][-1]
+    play = state.get("play") if isinstance(state.get("play"), dict) else {}
+    state["stale"] = (
+        last.get("loaded") is False or play.get("fingerprint") != last["fingerprint"]
+    )
+    _save_state(home, state)
+    return True
 
 
 def _prune_runs(home: Path, keep: set[str]) -> None:

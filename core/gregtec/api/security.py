@@ -2,7 +2,9 @@
 
 **Host and Origin.** Every HTTP request and WebSocket handshake must carry a ``Host`` from
 ``[core] allowed_hosts`` (``127.0.0.1:<port>``, ``localhost:<port>``, the dashboard's
-``gos.localhost:<port>``, later the PC's tailnet name), which stops DNS rebinding. A request with an ``Origin`` must come from one of those hosts over
+``gos.localhost:<port>``, and the PC's tailnet name once it is configured there, WO-9.3), which
+stops DNS rebinding. A request Tailscale marks as having come through Funnel is refused whatever
+its Host (D301). A request with an ``Origin`` must come from one of those hosts over
 http or https, and one a browser marks ``Sec-Fetch-Site: cross-site`` or ``same-site`` is refused,
 which stops other web pages, other localhost ports included. Requests without ``Origin`` (local
 clients, same-origin GETs) pass this check and still need a credential.
@@ -30,10 +32,14 @@ clients, same-origin GETs) pass this check and still need a credential.
 Typing it on the new device (``POST /api/pair/complete``) sets the cookie. A request expires after
 5 minutes or 5 wrong codes; at most 3 are pending and 10 may start per 10 minutes. Codes and
 tokens are never logged, written to disk or returned to the device that asked.
+
+**Refusals read the body first** (:class:`ReadBodyFirst`, D355, as the supervisor does, D340).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -48,13 +54,14 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from gregtec.store import Store
 
 log = logging.getLogger("gregtec.api")
 
 COOKIE = "gos_device"
+READ_FIRST_S = 2.0  # how long an answer waits for the rest of a request's body (D355)
 COOKIE_MAX_AGE = 400 * 86400  # Chrome's cap on cookie lifetime
 PAIR_CODE_DIGITS = 8
 PAIR_TTL_S = 300
@@ -69,6 +76,7 @@ OC_TOKEN = re.compile(r"^oc-(play|lab)(-[a-z0-9]+)*$")
 LINK_TOKEN = re.compile(r"^gregteclink-(play|lab)$")
 _DEVICE_ID = re.compile(r"^[0-9a-f]{16}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+FUNNEL_HEADER = "tailscale-funnel-request"
 
 
 def sha256(secret: str) -> str:
@@ -103,6 +111,12 @@ def origin_allowed(origin: str, allowed: Iterable[str]) -> bool:
 def refusal(headers: dict[str, str], allowed: Iterable[str]) -> str | None:
     """Why a request with these (lower-case) headers is refused, or None."""
     allowed = tuple(allowed)
+    # Tailscale sets this on every request that came through an HTTP Funnel, from the public
+    # internet, and strips any copy a client sends (ipn/ipnlocal/serve.go; WO-9.3, D301): the
+    # dashboard is for the tailnet only (D53, PM06). A TCP Funnel passes bytes on unmarked, so
+    # this can't see one: `gos tailnet check` catches it (Funnel on, a raw TCP forward).
+    if FUNNEL_HEADER in headers:
+        return "funnel request"
     if not host_allowed(headers.get("host"), allowed):
         return "host not allowed"
     origin = headers.get("origin")
@@ -111,6 +125,48 @@ def refusal(headers: dict[str, str], allowed: Iterable[str]) -> str | None:
     if headers.get("sec-fetch-site") in ("cross-site", "same-site"):
         return "cross-site request"
     return None
+
+
+GUIDE_PATH = "/guide/"
+
+
+def guide_refusal(headers: dict[str, str], method: str, path: str) -> str | None:
+    """Why a request to the 3D guide's own host (``guide-<dashboard_host>:<port>``, WO-10.8,
+    D304, D319) is refused, or None. That host serves the guide export's files and nothing else:
+    GET or HEAD under ``/guide/``, no WebSocket (checked by the caller). An ``Origin`` must be
+    that host's own (the guide page's own fetches). A request from another site is refused
+    unless it is a frame's navigation: the dashboard (a sibling host name, so another site)
+    framing the guide. The credential is the path token (:mod:`gregtec.build.guide`), never a
+    cookie."""
+    if FUNNEL_HEADER in headers:
+        return "funnel request"
+    if method not in ("GET", "HEAD") or not path.startswith(GUIDE_PATH):
+        return "the guide host serves the guide only"
+    origin = headers.get("origin")
+    if origin is not None and origin.lower() not in (
+        f"http://{headers.get('host', '').lower()}",
+        f"https://{headers.get('host', '').lower()}",
+    ):
+        return "origin not allowed"
+    framed = (
+        headers.get("sec-fetch-dest") in ("iframe", "frame")
+        and headers.get("sec-fetch-mode") == "navigate"
+    )
+    if headers.get("sec-fetch-site") in ("cross-site", "same-site") and not framed:
+        return "cross-site request"
+    return None
+
+
+def cookie_count(scope: Scope, name: str) -> int:
+    """How many cookies called ``name`` the request carries, over every ``Cookie`` header."""
+    count = 0
+    for raw_key, raw_value in scope.get("headers", []):
+        if raw_key.lower() != b"cookie":
+            continue
+        for chunk in raw_value.decode("latin-1").split(";"):
+            if chunk.partition("=")[0].strip() == name:
+                count += 1
+    return count
 
 
 def _headers(scope: Scope) -> dict[str, str]:
@@ -130,15 +186,37 @@ def _headers(scope: Scope) -> dict[str, str]:
 class HostOriginGuard:
     """ASGI middleware: refuse HTTP requests and WebSocket handshakes that fail :func:`refusal`."""
 
-    def __init__(self, app: ASGIApp, allowed_hosts: Iterable[str]) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        allowed_hosts: Iterable[str],
+        guide_hosts: Iterable[str] = (),
+    ) -> None:
         self.app = app
         self.allowed = tuple(allowed_hosts)
+        # The 3D guide's own host names (WO-10.8, D319): never in ``allowed``, so an Origin from
+        # one is refused on every other route; requests to one take :func:`guide_refusal`.
+        self.guide = {h.lower() for h in guide_hosts}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        reason = refusal(_headers(scope), self.allowed)
+        headers = _headers(scope)
+        if (headers.get("host") or "").lower() in self.guide:
+            reason = (
+                "the guide host serves the guide only"
+                if scope["type"] == "websocket"
+                else guide_refusal(
+                    headers, str(scope.get("method", "")), str(scope.get("path", ""))
+                )
+            )
+        else:
+            reason = refusal(headers, self.allowed)
+            # Two gos_device cookies mean some other page planted one (a parent-domain cookie,
+            # D319): Starlette keeps the last copy, so never guess which one is Clayton's.
+            if reason is None and cookie_count(scope, COOKIE) > 1:
+                reason = "repeated device cookie"
         if reason is None:
             await self.app(scope, receive, send)
             return
@@ -166,6 +244,66 @@ class HostOriginGuard:
             }
         )
         await send({"type": "http.response.body", "body": body})
+
+
+class ReadBodyFirst:
+    """ASGI middleware: before an HTTP answer starts, read what is left of the request's body.
+
+    urllib sends a POST's head and body apart. A refusal (Host/Origin, credential, size, route)
+    answered and closed with the body unread, or still on its way, makes the OS reset the
+    connection, and a Windows client then loses the answer: WinError 10053/10054, "no answer",
+    instead of the 401 (D355; the supervisor's D340). The rest is read and dropped, never parsed
+    or logged: at most ``limit`` bytes (the largest body a route takes) and for at most
+    :data:`READ_FIRST_S`. A declared length over ``limit`` is not read at all, nor a body the
+    client waits to send (``Expect: 100-continue``); the answer itself never changes.
+    """
+
+    def __init__(self, app: ASGIApp, limit: int) -> None:
+        self.app = app
+        self.limit = limit
+
+    def _has_body(self, scope: Scope) -> bool:
+        headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        if headers.get(b"expect", b"").lower() == b"100-continue":
+            return False
+        if headers.get(b"transfer-encoding", b"").lower() == b"chunked":
+            return True
+        length = headers.get(b"content-length", b"0")
+        return length.isdigit() and 0 < int(length) <= self.limit
+
+    async def _read_rest(self, receive: Receive) -> None:
+        read = 0
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(READ_FIRST_S):
+                while read <= self.limit:
+                    message = await receive()
+                    if message["type"] != "http.request":
+                        return  # the client went away
+                    read += len(message.get("body", b""))
+                    if not message.get("more_body", False):
+                        return
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self._has_body(scope):
+            await self.app(scope, receive, send)
+            return
+        ended = False
+
+        async def tracked() -> Message:
+            nonlocal ended
+            message = await receive()
+            if message["type"] != "http.request" or not message.get("more_body", False):
+                ended = True
+            return message
+
+        async def answer(message: Message) -> None:
+            nonlocal ended
+            if message["type"] == "http.response.start" and not ended:
+                ended = True
+                await self._read_rest(receive)
+            await send(message)
+
+        await self.app(scope, tracked, answer)
 
 
 # --- credentials --------------------------------------------------------------------------------

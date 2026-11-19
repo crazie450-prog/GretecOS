@@ -37,14 +37,15 @@ table card and the CLIs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from gregtec.planner import chains, graph, sizing, solve
+from gregtec.planner import cache, chains, graph, machines, progress, sizing, solve
 from gregtec.planner.graph import Graph
 from gregtec.planner.request import BaseInputs, Request, RequestError, is_stable_key
 
@@ -270,7 +271,8 @@ class _Solved:
 
 
 class Effort:
-    """The effort of one design's routes; each component is solved once."""
+    """The effort of one design's routes; each component is solved once per design, and
+    once per DB run across designs (:mod:`.cache`, D352)."""
 
     def __init__(
         self,
@@ -296,27 +298,82 @@ class Effort:
         for mte, maps in maps_of(conn, list(self.owned)).items():
             for name in maps:
                 self.on_map[name] = self.on_map.get(name, 0) + self.owned[mte]
+        self._shared = self._shared_key()
+
+    def _shared_key(self) -> tuple[Hashable, ...] | None:
+        """What every component solve of this design reads besides its key, for the process
+        cache (D352); None when the cache is off or the DB has no file. The solve reads the DB
+        run (the scope's path and generation, and the run id), the component request's tier,
+        machines, boundary and constraints (the request digest, per key), My base (its tier and
+        which owned machines, stock and line outputs are positive: the graph boundaries and the
+        machine check read nothing more), the
+        chain templates and the raw inputs list (repo files the graph reads)."""
+        where = cache.scope(self.conn)
+        if where is None:
+            return None
+        run = machines.current_run(self.conn) if self.run_id is None else self.run_id
+        b = self.base
+
+        def positive(m: Mapping[Any, float]) -> tuple[Any, ...]:
+            # The graph and the machine check read only which entries are positive (graph.py
+            # boundaries, graph.player): a changed quantity must not miss every later design.
+            return tuple(sorted(k for k, v in m.items() if v > 0))
+
+        mine = (
+            b.tier_cap(),
+            positive(b.owned_machines()),
+            positive(b.stock()),
+            positive(b.line_outputs()),
+        )
+        tpl = chains.load() if self.templates is None else self.templates
+        files = hashlib.sha256(
+            repr((tpl.rows, graph.raw_inputs())).encode("utf-8")
+        ).hexdigest()
+        return (*where, run, mine, files)
+
+    def _request(self, key: str) -> Request:
+        r = self.request
+        return Request(
+            key,
+            mode="batch",
+            qty=1.0,
+            tier_cap=self.tier_cap,
+            machines=r.machines,
+            boundary=r.boundary,
+            constraints=r.constraints,
+            routes=1,
+        )
 
     def _solve(self, key: str) -> _Solved | None:
         """One ``key``'s graph, machines and solved flow (cached); None when it has no
         recipe at the tier or no route."""
         if key in self._solved:
             return self._solved[key]
+        progress.check()  # a design job's cancel (D353)
+        ckey: tuple[Hashable, ...] | None = None
+        if self._shared is not None:
+            try:
+                ckey = (*self._shared, key, self._request(key).digest())
+            except RequestError:
+                ckey = None
+            if ckey is not None:
+                hit = cache.effort_get(ckey)
+                if hit is not cache.MISS:
+                    self._solved[key] = hit
+                    return hit  # type: ignore[no-any-return]
+        out = self._compute(key)
+        self._solved[key] = out
+        if ckey is not None:
+            cache.effort_put(ckey, out)
+        return out
+
+    def _compute(self, key: str) -> _Solved | None:
         from gregtec.planner import plan  # plan imports this module
 
         r = self.request
         out: _Solved | None = None
         try:
-            req = Request(
-                key,
-                mode="batch",
-                qty=1.0,
-                tier_cap=self.tier_cap,
-                machines=r.machines,
-                boundary=r.boundary,
-                constraints=r.constraints,
-                routes=1,
-            )
+            req = self._request(key)
             g = graph.build(
                 self.conn, req, self.base, templates=self.templates, run_id=self.run_id
             )
@@ -344,7 +401,6 @@ class Effort:
                 out = _Solved(g, sized, crafts, gated)
         except (graph.GraphError, RequestError, LookupError, solve.SolveError):
             out = None
-        self._solved[key] = out
         return out
 
     def make(self, key: str, qty: float, within: tuple[str, ...] = ()) -> Need:
@@ -407,7 +463,8 @@ class Effort:
         parts = [*parts, *extra]
         notes = [*notes, *extra_notes]
         need = Need()
-        for c in parts:
+        for k, c in enumerate(parts, 1):
+            progress.stage("effort", k, len(parts))
             need.add(self.make(c.key, c.qty))
         build = need.walk()
         unlocks: list[int] = []

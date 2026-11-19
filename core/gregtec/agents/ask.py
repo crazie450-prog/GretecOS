@@ -126,6 +126,22 @@ _ORDINALS = {
     "3": 2, "three": 2, "third": 2, "the third": 2, "the third one": 2, "number three": 2,
 }  # fmt: skip
 _YES = frozenset({"yes", "yeah", "yep", "that one", "it", "that"})
+# A subject that means what Clayton points at in game (WO-8.4, D362): "this", "that one", ...
+_DEICTIC = re.compile(r"(?:this|that|it)(?: (?:one|item|block|thing|here|stuff))?")
+# A question naming no item that ends on the pointed-at thing ("which tier is this", "what
+# tier is that one"); "is this a good time to build a base" does not end on it
+_POINTING = re.compile(r"\b(?:this|that)(?: (?:one|item|block|thing))?$")
+# The routes whose subject is an item: their pre-retrieval looks the pointed-at item up
+_POINTABLE = frozenset(
+    {
+        router.RECIPE,
+        router.RECIPES,
+        router.USES,
+        router.ITEM,
+        router.GENERAL,
+        router.QUEST_ITEM,
+    }
+)
 
 
 @dataclass
@@ -310,7 +326,8 @@ class Asker:
         if route.intent == router.REPEAT and pending is not None:
             with self._lock:  # the repeated question can still be answered
                 self._pending = pending
-        reply = self._reply(route, started, task, via)
+        route, pointed = self._pointed(route)
+        reply = pointed or self._reply(route, started, task, via)
         if route.intent != router.SPOIL and spoilers.mentions(text):
             reply.text = f"{reply.text} {spoilers.HOW_TO_ASK}"
         if self.personas is not None and reply.persona is None:
@@ -324,6 +341,32 @@ class Asker:
             with self._lock:
                 self._last = reply
         return reply
+
+    def _pointed(self, route: router.Route) -> tuple[router.Route, Reply | None]:
+        """A question about "this" while a game is linked (WO-8.4, D362): the item Clayton
+        hovers over or the block he looks at, asked of the game as "what's this?" is (D286)
+        and resolved by the DB, becomes the route's subject, so pre-retrieval looks up that
+        exact item (its NBT variant included). "How do I make this" with nothing pointed at
+        (or an item the DB lacks) is answered with what "what's this?" would say; a question
+        that names no item probes the game only when it ends on "this"/"that" ("which tier
+        is this"), not when "this" is just a word in it ("is this a good time ...")."""
+        if self.game is None or route.intent not in _POINTABLE:
+            return route, None
+        said = router.normalise(route.subject or "")
+        deictic = bool(said) and _DEICTIC.fullmatch(said) is not None
+        if not deictic and not (
+            route.subject is None
+            and route.intent in (router.ITEM, router.GENERAL)
+            and _POINTING.search(router.normalise(route.text))
+        ):
+            return route, None
+        target, linked = self.game.current_target()
+        found = whatsthis.resolve(self.registry, target, linked=linked)
+        if found.found and found.key:
+            return replace(route, subject=found.key), None
+        if not deictic:
+            return route, None
+        return route, Reply(found.text, router.INSTANT, route.intent)
 
     def _picked(self, pending: _Pending | None, text: str) -> router.Route | None:
         """The pending request re-run on the candidate ``text`` picks, if it picks one."""
@@ -682,7 +725,7 @@ class Asker:
         """The instant "confirm" or "cancel" (D59): the pending action, whichever it is."""
         desk = self.actions
         if desk is None or desk.pending() is None:
-            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+            return self._export_answer(intent, via)
         if intent == router.CONFIRM:
             if via not in VIAS:
                 return Reply(CONFIRM_ELSEWHERE, router.INSTANT, intent, pending=True)
@@ -698,6 +741,29 @@ class Asker:
             pending=True,
             refs=[f"action:{out.action.id}"],
         )
+
+    def _export_answer(self, intent: str, via: str | None) -> Reply:
+        """With no world action waiting, "confirm" or "cancel" answers the open export question
+        after Play quit (D69, WO-11.1): yes, export now; or no."""
+        from gregtec.packupdate import addons  # lazy: only when nothing else waits
+
+        q = addons.current(self.home) if self.home is not None else None
+        if q is None:
+            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+        yes = intent == router.CONFIRM
+        if yes and via not in VIAS:
+            return Reply(CONFIRM_ELSEWHERE, router.INSTANT, intent, pending=True)
+        # A cancel from a way in that can't confirm (admin, the OC client, in-game chat: the
+        # asker can't tell which) is recorded as "other", never as one it isn't.
+        done = addons.answer(self.home, q.id, yes, via if via in VIAS else "other")
+        if done is None:
+            return Reply(NOTHING_PENDING, router.INSTANT, intent, pending=False)
+        text = (
+            "Yes: starting it now. Play can't start until it's done."
+            if yes
+            else "Not now. Recipe data stays stale; I'll ask next time you quit."
+        )
+        return Reply(text, router.INSTANT, intent, pending=True, refs=[])
 
     def _plans(
         self, route: router.Route, *, fall_through: bool = False

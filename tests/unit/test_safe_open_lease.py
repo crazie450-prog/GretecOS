@@ -1,0 +1,471 @@
+"""safe_open's give-way logic (WO-6.8, D357) on a fake handle, so it runs on every OS.
+
+:class:`FakeHandle` stands for the Win32 handle: :meth:`FakeHandle.game_wants_it` is the game's
+replace (or delete, rename, conflicting open) breaking the oplock and then waiting until the handle
+is closed, as Windows makes it wait. The real Win32 path runs on Windows CI
+(``test_save_collision.py`` and the soak).
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from types import ModuleType
+from typing import BinaryIO
+
+import pytest
+
+from gregtec.gamestate import safe_open as so
+
+REAL_SLEEP = time.sleep  # the tests patch time.sleep to count safe_open's backoff
+
+
+class FakeHandle:
+    def __init__(self, data: bytes, leased: bool = True, read_s: float = 0.0) -> None:
+        self.data = data
+        self.leased = leased
+        self.read_s = read_s
+        self._broken = threading.Event()
+        self._wake = threading.Event()
+        self.closed = threading.Event()
+        self.close_calls = 0
+        self.disposed = False
+        self.reads: list[tuple[int, int]] = []
+        self.reading = False
+        self.closed_mid_read = False
+        self.on_read: Callable[[int], None] | None = None
+
+    def size(self) -> int:
+        return len(self.data)
+
+    def read_at(self, offset: int, size: int) -> bytes:
+        assert not self.closed.is_set(), "read after close"
+        self.reading = True
+        try:
+            self.reads.append((offset, size))
+            if self.on_read is not None:
+                self.on_read(len(self.reads))
+            if self.read_s:
+                REAL_SLEEP(self.read_s)
+            return self.data[offset : offset + size]
+        finally:
+            self.reading = False
+
+    def broken(self) -> bool:
+        return self._broken.is_set()
+
+    def wait_break(self) -> bool:
+        self._wake.wait()
+        return self._broken.is_set()
+
+    def release(self) -> None:
+        self._wake.set()
+
+    def close(self) -> None:
+        self.closed_mid_read = self.closed_mid_read or self.reading
+        self.close_calls += 1
+        self.closed.set()
+
+    def dispose(self) -> None:
+        assert self.closed.is_set()
+        self.disposed = True
+
+    def game_wants_it(self, timeout: float = 5.0) -> float:
+        """The game's replace: break the oplock, then wait for the handle to close. Returns how
+        long the game waited."""
+        start = time.perf_counter()
+        self._broken.set()
+        self._wake.set()
+        assert self.closed.wait(timeout), "the game waited for ever"
+        return time.perf_counter() - start
+
+
+def test_a_whole_read_in_chunks_then_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(so, "CHUNK", 4)
+    h = FakeHandle(b"0123456789")
+    with so.leased(h) as f:
+        assert so.is_leased(f)
+        assert f.read() == b"0123456789"
+        so.check_whole(f)
+        assert not so.interrupted(f)
+    assert h.close_calls == 1 and h.disposed
+    assert all(n <= 4 for _, n in h.reads)
+
+
+def test_seek_tell_and_ranges() -> None:
+    h = FakeHandle(b"abcdefghij")
+    with so.leased(h) as f:
+        f.seek(3)
+        assert f.read(4) == b"defg"
+        assert f.tell() == 7
+        f.seek(-2, 2)
+        assert f.read() == b"ij"
+
+
+def test_the_game_breaking_in_mid_read_closes_the_handle_between_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(so, "CHUNK", 2)
+    h = FakeHandle(b"0123456789", read_s=0.05)
+    waited: list[float] = []
+
+    def on_read(n: int) -> None:
+        if n == 2:  # the game replaces the file during the second chunk
+            t = threading.Thread(target=lambda: waited.append(h.game_wants_it()))
+            t.start()
+
+    h.on_read = on_read
+    with so.leased(h) as f, pytest.raises(so.ReadInterrupted):
+        f.read()
+    assert (
+        h.close_calls == 1 and not h.closed_mid_read
+    )  # closed after a chunk, never during
+    assert len(h.reads) == 2  # nothing read after the break
+    REAL_SLEEP(0.2)
+    assert waited and waited[0] < 1.0
+
+
+def test_an_idle_reader_still_gives_way_at_once() -> None:
+    """A caller that holds the file and does nothing (a slow parse, a stuck thread) doesn't
+    keep the game waiting: the oplock watcher closes the handle itself."""
+    h = FakeHandle(b"data")
+    with so.leased(h) as f:
+        assert f.read(2) == b"da"
+        waited = h.game_wants_it()
+        assert waited < 1.0
+        assert so.interrupted(f)
+        with pytest.raises(so.ReadInterrupted):
+            f.read()
+        with pytest.raises(so.ReadInterrupted):
+            so.check_whole(f)
+    assert h.close_calls == 1
+
+
+def test_a_break_after_the_last_chunk_still_drops_the_read() -> None:
+    """The break came after the bytes were read but before the caller checked: the data may be
+    from a file being rewritten in place, so it is not returned (retried instead)."""
+    h = FakeHandle(b"data")
+    with so.leased(h) as f:
+        assert f.read() == b"data"
+        h.game_wants_it()
+        with pytest.raises(so.ReadInterrupted):
+            so.check_whole(f)
+
+
+def test_without_an_oplock_it_is_a_plain_read() -> None:
+    h = FakeHandle(b"log line\n", leased=False)
+    with so.leased(h) as f:
+        assert not so.is_leased(f)
+        assert f.read() == b"log line\n"
+        so.check_whole(f)
+    assert h.close_calls == 1
+
+
+@contextmanager
+def _opens(handles: list[FakeHandle]) -> Iterator[Callable[[so.StrPath], object]]:
+    it = iter(handles)
+
+    @contextmanager
+    def fake_safe_open(_path: so.StrPath) -> Iterator[BinaryIO]:
+        with so.leased(next(it)) as f:
+            yield f
+
+    yield fake_safe_open
+
+
+def test_read_bytes_retries_a_read_the_game_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(so.time, "sleep", sleeps.append)
+    first = FakeHandle(b'{"old": tr')
+    first.on_read = lambda n: threading.Thread(target=first.game_wants_it).start()
+    second = FakeHandle(b'{"new": true}')
+    with _opens([first, second]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        # A short real wait so the break lands before read_bytes checks.
+        first.read_s = 0.05
+        assert so.read_bytes(tmp_path / "QuestProgress.json") == b'{"new": true}'
+    assert sleeps == [so.BACKOFF_S]
+    assert first.close_calls == 1 and second.close_calls == 1
+
+
+def test_read_bytes_gives_up_after_three_interrupted_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(so.time, "sleep", sleeps.append)
+    handles = [FakeHandle(b"x", read_s=0.05) for _ in range(so.RETRIES)]
+    for h in handles:
+        h.on_read = lambda n, h=h: threading.Thread(target=h.game_wants_it).start()
+    with _opens(handles) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        with pytest.raises(so.ReadInterrupted):
+            so.read_bytes(tmp_path / "level.dat")
+    assert sleeps == [so.BACKOFF_S, so.BACKOFF_S * 2]
+    assert all(h.close_calls == 1 for h in handles)
+
+
+def test_read_range_keeps_a_range_read_before_the_break_and_sha256_drops_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D357: an append breaks the oplock while a log range is read; ``read_range`` keeps that
+    range (the first handle's bytes, the second never read), ``sha256_file`` reads again."""
+    import hashlib
+
+    monkeypatch.setattr(so.time, "sleep", lambda _s: None)
+    a = FakeHandle(b"0123456789", read_s=0.05)
+    a.on_read = lambda n: threading.Thread(target=a.game_wants_it).start()
+    b = FakeHandle(b"abcdefghij")
+    with _opens([a, b]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        assert so.read_range(tmp_path / "r.0.0.mca", 2, 3) == b"234"
+    assert a.close_calls == 1 and not a.closed_mid_read and b.reads == []
+    c = FakeHandle(b"jar", read_s=0.05)
+    c.on_read = lambda n: threading.Thread(target=c.game_wants_it).start()
+    d = FakeHandle(b"JAR")
+    with _opens([c, d]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        assert so.sha256_file(tmp_path / "x.jar") == hashlib.sha256(b"JAR").hexdigest()
+    assert c.reads and d.reads
+
+
+def test_read_range_drops_a_handle_closed_before_its_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The game took the file back before the range was read: ``read_range`` reads it again
+    through a new handle."""
+    monkeypatch.setattr(so.time, "sleep", lambda _s: None)
+    a = FakeHandle(b"0123456789")
+    a._broken.set()  # the game's break, before any read
+    a._wake.set()
+    b = FakeHandle(b"abcdefghij")
+    with _opens([a, b]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        assert so.read_range(tmp_path / "latest.log", 2, 3) == b"cde"
+    assert a.reads == [] and a.close_calls == 1
+
+
+class _Reported:
+    def __init__(self, leased: bool, atomic: bool, oplock_error: int = 0) -> None:
+        self.leased, self.atomic, self.oplock_error = leased, atomic, oplock_error
+
+
+def test_report_logs_a_granted_oplock_once_and_each_file_without_one_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review M2: a read without the oplock (or with one taken after the open) is the read that
+    can make a save fail, so it is a WARNING naming the file, once per file; a granted one is
+    one INFO line per process, which the Lab check looks for (watchers.md 4.1)."""
+    import logging
+
+    monkeypatch.setattr(so, "_reported_pairs", set())
+    caplog.set_level(logging.INFO, logger="gregtec.gamestate")
+    quest, level = tmp_path / "QuestProgress.json", tmp_path / "level.dat"
+    for _ in range(2):
+        so.report(quest, _Reported(True, True))
+        so.report(level, _Reported(True, True))
+        so.report(quest, _Reported(False, False, 1))
+        so.report(level, _Reported(False, False, 1))
+        so.report(level, _Reported(True, False, 87))
+    got = [
+        (r.levelname, r.getMessage(), getattr(r, "path", "")) for r in caplog.records
+    ]
+    assert got == [
+        ("INFO", so.GRANTED, str(quest)),
+        ("WARNING", so.NOT_GRANTED, str(quest)),
+        ("WARNING", so.NOT_GRANTED, str(level)),
+        ("WARNING", so.NOT_ATOMIC, str(level)),
+    ]
+    assert [getattr(r, "winerror", None) for r in caplog.records] == [0, 1, 1, 87]
+
+
+def test_copy_to_raises_when_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+
+    a = FakeHandle(b"region", read_s=0.05)
+    a.on_read = lambda n: threading.Thread(target=a.game_wants_it).start()
+    with _opens([a]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        with pytest.raises(so.ReadInterrupted):
+            so.copy_to(tmp_path / "x", io.BytesIO())
+
+
+def test_copy_to_drops_a_copy_the_game_broke_into_on_its_last_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The break lands during the last (end-of-file) read, so no later read notices it: only
+    ``copy_to``'s ``check_whole`` does. The world backup's ``copy_in`` then copies again and
+    keeps the second read, never the torn one."""
+    import io
+
+    from gregtec.ops.worldbackup import copy_in
+
+    probe = FakeHandle(b"r.0.0 old+new")
+    with _opens([probe]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        so.copy_to(tmp_path / "probe", io.BytesIO())
+    last = len(probe.reads)  # copy_to's raw reads, the last one at end of file
+
+    def breaks_on_the_last_read(h: FakeHandle) -> None:
+        def on_read(n: int) -> None:
+            if n == last:  # the game's replace starts as the last read runs
+                threading.Thread(target=h.game_wants_it).start()
+                assert h._broken.wait(5.0)
+
+        h.on_read = on_read
+
+    torn = FakeHandle(b"r.0.0 old+new")
+    breaks_on_the_last_read(torn)
+    with _opens([torn]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        out = io.BytesIO()
+        with pytest.raises(so.ReadInterrupted):
+            so.copy_to(tmp_path / "r.0.0.mca", out)
+    assert len(torn.reads) == last and torn.closed.wait(5.0)
+
+    again = FakeHandle(b"r.0.0 old+new")
+    breaks_on_the_last_read(again)
+    whole = FakeHandle(b"r.0.0 new")
+    dest = tmp_path / "copy.mca"
+    with _opens([again, whole]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        copy_in(tmp_path / "r.0.0.mca", dest)
+    assert dest.read_bytes() == b"r.0.0 new"
+    assert again.closed.wait(5.0) and whole.close_calls == 1
+
+
+def test_read_bytes_with_a_limit_drops_a_read_the_game_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``read_bytes(limit=)`` (the mailbox's MAX_BODY) reads no further chunk once it has
+    ``limit`` bytes, so the only guard against a break that came during that read is
+    ``check_whole``: the torn bytes are dropped and the file read again."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(so.time, "sleep", sleeps.append)
+    first = FakeHandle(b'{"old": tr' + b"x" * 20, read_s=0.05)
+    first.on_read = lambda n: threading.Thread(target=first.game_wants_it).start()
+    second = FakeHandle(b'{"new": true}' + b"y" * 20)
+    with _opens([first, second]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        assert so.read_bytes(tmp_path / "inbox.json", limit=10) == b'{"new": tr'
+    assert (
+        len(first.reads) == 1
+    )  # one read had the limit: no later chunk to notice the break
+    assert sleeps == [so.BACKOFF_S]
+
+
+def _win32_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """``gregtec.gamestate._win32``: the real one on Windows; elsewhere a private copy loaded
+    over a stand-in ``ctypes.WinDLL`` (the tests replace every Win32 call they reach)."""
+    import ctypes
+    import importlib.util
+    import sys
+
+    if sys.platform == "win32":
+        from gregtec.gamestate import _win32
+
+        return _win32
+
+    class _Fn:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, *args: object) -> object:
+            raise AssertionError("an unpatched Win32 call")
+
+    class _Dll:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __getattr__(self, name: str) -> _Fn:
+            return _Fn()
+
+    monkeypatch.setattr(ctypes, "WinDLL", _Dll, raising=False)
+    spec = importlib.util.spec_from_file_location(
+        "_win32_under_test", Path(so.__file__).with_name("_win32.py")
+    )
+    assert spec is not None and spec.loader is not None
+    mod = ModuleType(spec.name)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_dispose_keeps_the_oplock_buffers_until_the_kernel_is_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WO-6.8 gate low (4): an oplock request still pending DISPOSE_WAIT_MS after the handle
+    was closed must not have its OVERLAPPED or output buffer freed (the kernel writes to them
+    when it completes): dispose keeps them alive until the request's event says it completed."""
+    import ctypes
+    import gc
+    import weakref
+
+    m = _win32_module(monkeypatch)
+    events = iter(range(1000, 2000))
+    closed: list[int] = []
+    completed = {"done": False}
+    seen: dict[str, weakref.ref[object]] = {}
+
+    def device_io_control(*args: object) -> int:
+        seen["out"] = weakref.ref(args[4]._obj)  # type: ignore[attr-defined]
+        seen["ov"] = weakref.ref(args[7]._obj)  # type: ignore[attr-defined]
+        return 0  # pending: ERROR_IO_PENDING below
+
+    def wait(handle: int, ms: int) -> int:
+        if handle == brk[0]:
+            return m.WAIT_OBJECT_0 if completed["done"] else m.WAIT_TIMEOUT
+        return m.WAIT_OBJECT_0
+
+    brk: list[int] = []
+    monkeypatch.setattr(m, "CreateEventW", lambda *a: next(events))
+    monkeypatch.setattr(m, "_open_atomic", lambda path: (7, 0))
+    monkeypatch.setattr(m, "DeviceIoControl", device_io_control)
+    monkeypatch.setattr(
+        ctypes, "get_last_error", lambda: m.ERROR_IO_PENDING, raising=False
+    )
+    monkeypatch.setattr(m, "CloseHandle", lambda h: closed.append(h) or 1)
+    monkeypatch.setattr(m, "WaitForSingleObject", wait)
+    monkeypatch.setattr(m, "_pending", [])
+
+    h = m.Win32Handle(tmp_path / "QuestProgress.json")
+    assert h.leased and h.atomic
+    brk.append(h._break)
+    h.close()
+    h.dispose()  # the request is still pending after the wait
+    del h
+    gc.collect()
+    assert seen["ov"]() is not None and seen["out"]() is not None
+    assert brk[0] not in closed  # its event is kept to see the completion
+    assert len(m._pending) == 1
+
+    completed["done"] = True  # the kernel completes the request
+    m._reap()
+    gc.collect()
+    assert m._pending == []
+    assert seen["ov"]() is None and seen["out"]() is None
+    assert brk[0] in closed
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="Windows' oplocks")
+def test_dispose_of_a_real_handle_frees_everything_at_once(tmp_path: Path) -> None:
+    """The real path: closing the handle completes the oplock request, so dispose frees its
+    buffers at once and nothing is kept back."""
+    from gregtec.gamestate import _win32
+
+    p = tmp_path / "QuestProgress.json"
+    p.write_bytes(b"{}")
+    before = len(_win32._pending)
+    h = _win32.open_handle(p)
+    assert h.leased
+    assert h.read_at(0, 2) == b"{}"
+    h.release()
+    h.close()
+    h.dispose()
+    assert len(_win32._pending) == before
+    assert h._events == []

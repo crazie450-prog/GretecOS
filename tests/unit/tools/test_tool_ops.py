@@ -43,11 +43,15 @@ def reg(tmp_path: Path, ops: bridge_ops.Ops) -> Registry:
     return build_registry(tmp_path / "no.sqlite", ops=ops)
 
 
-def feed(bridge: Bridge, seq: int = 1) -> None:
+def feed(bridge: Bridge, seq: int = 1, now: float | None = None) -> None:
     doc = copy.deepcopy(FIRST)
     doc["seq"] = seq
     assert bridge.receive(
-        json.dumps(doc).encode(), transport="mailbox", source="t", binding="lab"
+        json.dumps(doc).encode(),
+        transport="mailbox",
+        source="t",
+        binding="lab",
+        now=now,
     ).ok
 
 
@@ -63,7 +67,12 @@ def test_lanes(reg: Registry) -> None:
 def test_telemetry_get(reg: Registry, ops: bridge_ops.Ops) -> None:
     empty = reg.call("telemetry_get", {"scope": "all"}, lane=FAST)
     assert "no OC agent has reported" in empty.text
-    feed(ops.bridge)
+    # Read at the moment the message came (WO-11.4): a machine's age counts from the whole
+    # second it was stored in, so on the wall clock a read 10 ms later could already say 1 s
+    # (Windows CI: the row's age column was not 0).
+    now = int(time.time()) + 0.9
+    ops.telemetry.clock = lambda: now
+    feed(ops.bridge, now=now)
     out = reg.call("telemetry_get", {"scope": "all", "instance": "lab"}, lane=FAST)
     assert not out.is_error
     assert f"tel:lab/{FIRST['computer']['address']}\tcomputer" in out.text

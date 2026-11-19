@@ -72,7 +72,7 @@ def latest(home: Path, window_s: float) -> dict[str, Any]:
     try:
         ledger = powerview.ledger_view(home, window_s)
     except designer.DesignerError as exc:
-        if "doesn't exist" not in str(exc):
+        if "no recipe DB" not in str(exc):
             raise
         ledger = None  # no DB yet: the view's empty state says so
     return {"ids": powerview.latest(home), "ledger": ledger}

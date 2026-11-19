@@ -21,11 +21,12 @@ Discord with `GET /api/plans/<id>/cards` and `GET /api/plans/<id>/export/<format
 1. **gtnhplanner.com import** (checked from the cloud container on 2026-11-12 for three G3 lines;
    repeat once on the PC): open https://gtnhplanner.com, close the "now in the game" and tour
    pop-ups, open the plan menu ("Plan menu: share, import, export") → **Import a plan...**, pick
-   `%GOS_HOME%\data\plans\<id>\gtnhplanner.json`. A new tab named like the plan opens; the
+   `%USERPROFILE%\GregtecOS\data\plans\<id>\gtnhplanner.json` (`%GOS_HOME%\...` only if GOS_HOME
+   is set). A new tab named like the plan opens; the
    overview lists the plan's inputs and outputs, and each card shows GOS's machine count in its
    `≤` box. The site sizes machines with its own overclock math, so its MACHINES total may differ
    from GOS's (D202). Or, from a clone with the dashboard installed:
-   `cd dashboard; node e2e/gtnhplanner-import.cjs "$env:GOS_HOME\data\plans\<id>\gtnhplanner.json"`.
+   `$h = if ($env:GOS_HOME) { $env:GOS_HOME } else { "$HOME\GregtecOS" }; cd dashboard; node e2e/gtnhplanner-import.cjs "$h\data\plans\<id>\gtnhplanner.json"`.
 2. **gtnh-flow render** (not run in the cloud container, D202). In PowerShell, in a scratch folder
    outside the repo and outside every Minecraft folder:
 
@@ -36,7 +37,8 @@ Discord with `GET /api/plans/<id>/cards` and `GET /api/plans/<id>/export/<format
    cd gtnh-flow
    py -3.12 -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt
    mkdir projects\gos
-   copy "$env:GOS_HOME\data\plans\<id>\gtnh-flow.yaml" projects\gos\<id>.yaml
+   $h = if ($env:GOS_HOME) { $env:GOS_HOME } else { "$HOME\GregtecOS" }
+   copy "$h\data\plans\<id>\gtnh-flow.yaml" projects\gos\<id>.yaml
    .\.venv\Scripts\python factory_graph.py --no_view_on_completion gos/<id>.yaml
    ```
 

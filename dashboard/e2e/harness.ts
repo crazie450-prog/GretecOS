@@ -12,6 +12,10 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 export const PORT = Number(process.env.GOS_E2E_PORT ?? 8795);
 export const HOST = "gos-e2e.localhost";
 export const BASE = `http://${HOST}:${PORT}`;
+// The phone over the tailnet (WO-9.3): the harness core allows this name, and e2e/fake_serve.py
+// stands in for Tailscale Serve on SERVE_PORT (a browser sends Host <name>:<port> there).
+export const TAILNET = "phone-pc.tail-e2e.ts.net";
+export const SERVE_PORT = Number(process.env.GOS_E2E_SERVE_PORT ?? 8803);
 export const HOME = process.env.GOS_E2E_HOME ?? join(tmpdir(), `gos-e2e-home-${PORT}`);
 
 function adminToken(): string {
@@ -38,7 +42,7 @@ export async function pendingCode(): Promise<string> {
 }
 
 /** Write one of the harness's desktop controls (foreground, running, key). */
-export function control(name: "foreground" | "running" | "key", value: string): void {
+export function control(name: "foreground" | "running" | "key" | "design_delay", value: string): void {
   mkdirSync(join(HOME, "e2e"), { recursive: true });
   writeFileSync(join(HOME, "e2e", name), value, "utf-8");
 }

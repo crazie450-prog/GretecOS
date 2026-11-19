@@ -10,6 +10,12 @@ renames), BetterQuesting's files by replace, stats, VisualProspecting and Journe
 - **no write is blocked**: the game records every write, rename or replace the OS refused; there
   must be none (on Windows a handle without share-delete, or held across a replace, refuses
   them: the Windows-only control below shows the soak would see that);
+- **the forced long read** (WO-6.8, G11 finding 1): the first read of BetterQuesting's progress
+  file and of level.dat (the files the game replaces) holds its handle until the game has run two
+  whole save cycles, or until ``safe_open`` gives the file up to the game. A save of that file
+  therefore always lands while GOS has it open: before WO-6.8 (no oplock) Windows refused it
+  (``WinError 5``, deterministically); since, the game's replace breaks the oplock, the handle is
+  closed at once and the save goes on, and the read is retried;
 - **no handle is ever held**: every game-file open goes through ``safe_open`` (an open of a game
   file any other way fails the test), none is open when a poll returns, none lasts long; on
   Linux ``/proc/self/fd`` is also checked after every poll (and the control shows that check
@@ -44,6 +50,11 @@ FAKEGAME = Path(__file__).with_name("fakegame.py")
 SECONDS = 8.0
 INTERVAL = 0.5  # one save cycle (the game's is 45 s)
 POLL_S = 0.1
+FORCED = (
+    "QuestProgress",
+    "level.dat",
+)  # the replaced files whose first read is held long
+FORCED_MAX_S = 4.0  # the forced hold's cap (two save cycles take about 1.1 s)
 
 
 def held_fds(root: Path) -> list[str]:
@@ -63,13 +74,46 @@ def held_fds(root: Path) -> list[str]:
 class Guard:
     """Counts safe_open's handles and catches any other open of a game file."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, log: Path) -> None:
         self.root = str(root)
+        self.log = log
         self.open = 0
         self.opens = 0
         self.longest = 0.0
         self.violations: list[str] = []
         self.inside = threading.local()
+        self.to_force = set(FORCED)
+        self.forced: list[
+            tuple[str, float, bool, int]
+        ] = []  # name, held, given up, cycles
+
+    def hold(self, path: Any, f: BinaryIO) -> None:  # noqa: ANN401 - StrPath
+        """The forced long read: keep ``f`` open until the game ran two whole save cycles (its
+        log grew twice) or safe_open gave the file up to it."""
+        name = os.path.basename(os.fspath(path))
+        key = next((k for k in self.to_force if k in os.fspath(path)), None)
+        if key is None:
+            return
+        self.to_force.discard(key)
+        start = time.perf_counter()
+        last, cycles = self._log_stamp(), 0
+        while cycles < 2 and not safe_open.interrupted(f):
+            if time.perf_counter() - start > FORCED_MAX_S:
+                break
+            time.sleep(0.005)
+            now = self._log_stamp()
+            if now != last:
+                last, cycles = now, cycles + 1
+        self.forced.append(
+            (name, time.perf_counter() - start, safe_open.interrupted(f), cycles)
+        )
+
+    def _log_stamp(self) -> tuple[int, int] | None:
+        try:
+            st = os.stat(self.log)
+        except OSError:
+            return None
+        return (st.st_size, st.st_mtime_ns)
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         real_safe = safe_open.safe_open
@@ -82,14 +126,19 @@ class Guard:
             guard.opens += 1
             guard.inside.on = True
             start = time.perf_counter()
+            forced = len(guard.forced)
             try:
                 with real_safe(path) as f:
                     guard.inside.on = False
+                    guard.hold(path, f)
                     yield f
             finally:
                 guard.inside.on = False
                 guard.open -= 1
-                guard.longest = max(guard.longest, time.perf_counter() - start)
+                if (
+                    len(guard.forced) == forced
+                ):  # the forced holds are the test's, not GOS's
+                    guard.longest = max(guard.longest, time.perf_counter() - start)
 
         def checked_open(file: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             if (
@@ -112,7 +161,7 @@ def test_soak_no_handle_held_no_write_blocked(
     tree = fg.Tree(root)
     home = tmp_path / "home"
     result = tmp_path / "game.json"
-    guard = Guard(root)
+    guard = Guard(root, tree.game / "logs" / "latest.log")
     game = subprocess.Popen(
         [
             sys.executable,
@@ -151,6 +200,16 @@ def test_soak_no_handle_held_no_write_blocked(
     assert fd_problems == []
     assert guard.opens > 50 and guard.open == 0
     assert guard.longest < 1.0, f"a game file was held {guard.longest:.2f} s"
+    # Every forced hold met a save of its file: given up to the game (Windows, D357) or held
+    # through two save cycles (Linux, which never refuses one).
+    assert sorted(f[0] for f in guard.forced) == sorted(
+        [f"{fg.PLAYER_UUID}.json", "level.dat"]
+    ), guard.forced
+    for name, held, given_up, cycles in guard.forced:
+        if sys.platform == "win32":
+            assert given_up and held < 2.0, (name, held, given_up, cycles)
+        else:
+            assert cycles >= 2, (name, held, given_up, cycles)
     seen = {e.kind for e in events}
     expected = {
         "location",
@@ -183,12 +242,18 @@ def test_windows_a_held_plain_handle_blocks_a_save_and_safe_open_does_not(
     tmp_path: Path,
 ) -> None:
     """The control: a plain ``open`` (no share-delete) blocks vanilla's rename save, so the soak
-    would see a reader that held one; ``safe_open`` lets the rename through (V27)."""
+    would see a reader that held one; ``safe_open`` lets the rename through (V27), and since
+    WO-6.8 gives the file up as it does (D357)."""
     target = tmp_path / "level.dat"
     target.write_bytes(b"old")
     with open(target, "rb"), pytest.raises(PermissionError):
         os.rename(target, tmp_path / "level.dat_old")
     with safe_open.safe_open(target) as f:
-        os.rename(target, tmp_path / "level.dat_old")  # vanilla's save renames it away
         assert f.read() == b"old"
+        os.rename(target, tmp_path / "level.dat_old")  # vanilla's save renames it away
+        assert safe_open.interrupted(
+            f
+        )  # the rename broke the oplock: GOS gave the file up
+        with pytest.raises(safe_open.ReadInterrupted):
+            f.read()
     assert (tmp_path / "level.dat_old").read_bytes() == b"old"

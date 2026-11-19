@@ -56,10 +56,10 @@ PowerShell window (not "Run as administrator"). Nothing here touches Play.
    $oc = 'C:\Games\PrismLauncher\instances\GTNH-Lab\.minecraft\saves\lab-ops\opencomputers'
    $drive = Get-ChildItem $oc -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'home\gos\where-am-i.txt') }
    $drive.FullName          # exactly one folder
-   $gos = Join-Path $drive.FullName 'home\gos'
-   Copy-Item C:\GregtecOS-app\current\oc\gos-agent.lua, C:\GregtecOS-app\current\oc\json.lua $gos
-   Copy-Item C:\GregtecOS-app\current\oc\gos-agent.cfg.example (Join-Path $gos 'gos-agent.cfg')
-   notepad (Join-Path $gos 'gos-agent.cfg')
+   $ocHome = Join-Path $drive.FullName 'home\gos'
+   Copy-Item C:\GregtecOS-app\current\oc\gos-agent.lua, C:\GregtecOS-app\current\oc\json.lua $ocHome
+   Copy-Item C:\GregtecOS-app\current\oc\gos-agent.cfg.example (Join-Path $ocHome 'gos-agent.cfg')
+   notepad (Join-Path $ocHome 'gos-agent.cfg')
    ```
    In Notepad, replace `paste the OC agent token here` with the token from step 3, add a watchlist of 3 to 5 items
    the ME system holds (registry name and damage, as NEI shows them with advanced tooltips, F3+H), save. Keep the
@@ -143,9 +143,9 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
 (`inbox.tmp`, `inbox.json`, and the rename of `outbox.json` back to `outbox.tmp`); nothing here touches Play.
 
 22. With WO-7.3 deployed (step 1), copy the mailbox transport next to the agent. If the step-6 window is closed, run
-    its first three lines again to set `$oc`, `$drive` and `$gos`:
+    its first five lines again to set `$oc`, `$drive` and `$ocHome`:
     ```powershell
-    Copy-Item C:\GregtecOS-app\current\oc\mailbox.lua $gos
+    Copy-Item C:\GregtecOS-app\current\oc\mailbox.lua $ocHome
     $drive.Name              # the drive's address, for step 24
     ```
 23. In `gos-agent.cfg` (step 6), change `transport = "auto",` to `transport = "mailbox",` and save.
@@ -191,9 +191,9 @@ agent switched to the mailbox; the internet card can stay in. Contract: "M1" in
        ```
     3. Read both lines and the folder:
        ```powershell
-       Select-String -Path (Join-Path $gos 'gos-agent.log') -Pattern 'stopped' | Select-Object -Last 1
+       Select-String -Path (Join-Path $ocHome 'gos-agent.log') -Pattern 'stopped' | Select-Object -Last 1
        Select-String -Path $env:USERPROFILE\GregtecOS\logs\core.log -Pattern 'OC mailbox stats' | Select-Object -Last 1
-       Get-ChildItem (Join-Path $gos 'mailbox') | Select-Object Name, Length, LastWriteTime
+       Get-ChildItem (Join-Path $ocHome 'mailbox') | Select-Object Name, Length, LastWriteTime
        ```
     The pass, from those two lines: the agent's `failed` 0, `written` about 720 (one per 5 s) and `removes failed` 0;
     the core's `refused_bad_payload` absent or 0 (a half-read `outbox.json`), `accepted` equal to the agent's
@@ -217,7 +217,7 @@ Displays need no confirmation (plan 7.9); nothing here acts on the world except 
 29. Copy `display.lua` next to the agent (it is optional: without it the agent runs with no displays and says why):
     ```powershell
     $ProgressPreference = 'SilentlyContinue'
-    Copy-Item C:\GregtecOS-app\current\oc\display.lua $gos
+    Copy-Item C:\GregtecOS-app\current\oc\display.lua $ocHome
     ```
     Leave `display` out of `gos-agent.cfg` (all displays on), or set e.g. `display = { hud = false }`.
 30. **The board.** The computer's screen (any tier, one block or a multiblock of 2x2 or more) must show

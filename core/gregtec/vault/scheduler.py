@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gregtec import config, locks, playhooks, prism
+from gregtec.ops.backups import BackupError
 from gregtec.store import Store
 from gregtec.vault.curator import (
     FAILED,
@@ -260,9 +261,14 @@ class Maintenance:
         cur = self.curator
         try:
             result = backup(
-                cur.db, cur.backups, self.now().date(), cur.keep_backups, deadline
+                cur.db,
+                cur.backups,
+                self.now().date(),
+                cur.keep_backups,
+                deadline,
+                vault=cur.vault,
             )
-        except (OSError, sqlite3.Error) as exc:
+        except (OSError, sqlite3.Error, BackupError) as exc:
             result = JobResult("backup", FAILED, f"{type(exc).__name__}: {exc}")
         log.info(
             "session-end backup",
