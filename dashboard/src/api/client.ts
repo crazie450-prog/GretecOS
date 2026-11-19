@@ -7,6 +7,9 @@ import type {
   AiState,
   Alternatives,
   DesignAnswer,
+  DesignJob,
+  DesignJobBody,
+  JobStart,
   Designed,
   DesignerView,
   DesignSpec,
@@ -204,6 +207,11 @@ export const api = {
   powerLatest: (windowS = 0) => get<PowerLatest>(`/api/power?window=${windowS}`),
   powerView: (id: string, windowS = 0) => get<PowerView>(`/api/power/${encodeURIComponent(id)}?window=${windowS}`),
   powerDesign: (spec: PowerSpec) => post<{ ids: string[]; view: PowerView }>("/api/power/design", spec),
+  // Design jobs (WO-3.9, D353): start at once, follow the stage, cancel; the result when done.
+  designJob: (body: DesignJobBody) => post<JobStart>("/api/designer/jobs", body),
+  powerJob: (spec: PowerSpec) => post<JobStart>("/api/power/jobs", spec),
+  job: (id: string) => get<{ job: DesignJob }>(`/api/design-jobs/${encodeURIComponent(id)}`),
+  cancelJob: (id: string) => post<{ job: DesignJob }>(`/api/design-jobs/${encodeURIComponent(id)}/cancel`),
   powerAccept: (id: string) =>
     post<{ id: string; status: string; problems: string[]; view: PowerView }>(
       `/api/power/${encodeURIComponent(id)}/accept`,

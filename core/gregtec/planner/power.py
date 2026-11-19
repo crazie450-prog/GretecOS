@@ -80,6 +80,7 @@ from gregtec.planner import (
     machines,
     metrics,
     plan,
+    progress,
     rank,
     sizing,
     solve,
@@ -1092,13 +1093,21 @@ class Option:
 
 def _fills(conn: sqlite3.Connection, run_id: int, container: str, fluid: str) -> bool:
     """Whether a recipe of the run fills ``container`` (an item key) with ``fluid``: what makes
-    an item a container of the fluid (a cell, a capsule)."""
+    an item a container of the fluid (a cell, a capsule). The keys are resolved to their DB ids
+    first (the same items and fluid as comparing the keys row by row), so the query runs on the
+    output and input indexes instead of scanning every recipe of the run (WO-3.9)."""
+    items, _ = chains._item_ids(conn, container)
+    _, fluids = (
+        chains._item_ids(conn, fluid) if fluid.startswith("fluid:") else ([], [])
+    )
+    if not items or not fluids:
+        return False
     row = conn.execute(
-        "SELECT 1 FROM recipe AS r JOIN recipe_output AS ro ON ro.recipe_id = r.id"
-        " JOIN item AS i ON i.id = ro.item_id JOIN recipe_input AS ri ON ri.recipe_id = r.id"
-        f" JOIN fluid AS f ON f.id = ri.fluid_id WHERE r.run_id = ? AND {graph._ITEM_KEY_SQL} = ?"
-        " AND 'fluid:' || f.name = ? LIMIT 1",
-        (run_id, container, fluid),
+        "SELECT 1 FROM json_each(?) AS j CROSS JOIN recipe_output AS ro ON ro.item_id = j.value"
+        " CROSS JOIN recipe AS r ON r.id = ro.recipe_id"
+        " CROSS JOIN recipe_input AS ri ON ri.recipe_id = r.id"
+        " WHERE r.run_id = ? AND ri.fluid_id IN (SELECT value FROM json_each(?)) LIMIT 1",
+        (json.dumps(sorted(items)), run_id, json.dumps(sorted(fluids))),
     ).fetchone()
     return row is not None
 
@@ -1561,6 +1570,7 @@ def design(
     farms_path: Path = farms.FARMS,
 ) -> PowerDesign:
     """The ranked power-line options for ``req`` (see the module docstring)."""
+    progress.stage("candidates")  # a design job's stages (D353)
     run = graph.machines.current_run(conn) if run_id is None else run_id
     run_key = plan._run_key(conn, run)
     tier = req.tier_cap if req.tier_cap is not None else base.tier_cap()
@@ -1601,7 +1611,8 @@ def design(
     chains_by_fuel: dict[str, tuple[list[Chain], list[str]]] = {}
     side_chains: dict[str, Chain | None] = {}
     options: list[Option] = []
-    for gen in pool:
+    for k, gen in enumerate(pool, 1):
+        progress.stage("chains", k, len(pool))
         if gen.fuel not in chains_by_fuel:
             chains_by_fuel[gen.fuel] = fuel_chains(
                 conn, gen.fuel, req, base, tier, run, templates, levels
@@ -1669,6 +1680,7 @@ def design(
     )
     table = metrics.load_scarcity()
     sized: list[tuple[int, Option, dict[str, Any], float | None, str]] = []
+    progress.stage("lines")
     for n, opt in enumerate(options, 1):
         p = build_plan(conn, run_key, req, opt, farm_map, n)
         net_unit = float(p["power"]["net_eut"])
@@ -1699,7 +1711,8 @@ def design(
             else (n, opt, p, u, why)
             for n, opt, p, u, why in sized
         ]
-    for n, opt, p, units, why in sized:
+    for k, (n, opt, p, units, why) in enumerate(sized, 1):
+        progress.stage("metrics", k, len(sized))
         if units is None:
             rejected.append((opt.gen.id, why))
             continue
@@ -1758,6 +1771,7 @@ def design(
             f"{len({p['id'] for p in built}) - len(unique)} duplicate line(s) left out: the "
             "same generator, fuel and recipes at the same rates as a line kept"
         )
+    progress.stage("ranking")
     ranked = rank.order_power(unique, req.mode, prefs)
     top = ranked[: req.options]
     ids = [p["id"] for p in top]

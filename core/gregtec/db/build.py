@@ -834,6 +834,12 @@ def write(
         block_db.write(conn, run_id, loaded.palette)
         pruned = prune(conn, keep, run_id)
         _names(conn)
+        # A build counter: the planner's process caches drop what they kept on a rebuild, and
+        # two fresh builds of the same exports stay row-identical (D352; the D340 harness cache).
+        conn.execute(
+            "INSERT INTO kv(key, value, upd) VALUES ('db.build', '1', 0) ON CONFLICT(key)"
+            " DO UPDATE SET value = CAST(coalesce(CAST(kv.value AS INTEGER), 0) + 1 AS TEXT)"
+        )
         conn.execute("COMMIT")
     except BaseException:
         # SQLite rolls back by itself on SQLITE_FULL/IOERR/NOMEM; a second ROLLBACK would hide

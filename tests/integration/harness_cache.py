@@ -37,6 +37,7 @@ Builder = Callable[[Path, Path], None]  # (game folder, empty GOS_HOME) -> None
 SLOW_FIRST: dict[str, float] = {
     "test_rank_harness.py": 442,
     "test_power_view_harness.py": 340,
+    "test_design_cache_harness.py": 300,  # WO-3.9: every G3 and G4 line three times
     "test_power_objectives_harness.py": 259,
     "test_db_harness.py": 200,
     "test_plan_harness.py": 178,

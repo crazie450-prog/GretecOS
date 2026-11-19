@@ -9,8 +9,10 @@ real Host/Origin checks, cookie and pairing.
 
 What the dashboard reads from the desktop comes from files the tests write in ``<tmp>/e2e/``:
 ``foreground`` (the program in front, e.g. ``javaw.exe``: the core's focus signal), ``running``
-(a JSON list of running GTNH roles, default none) and ``key`` (``missing``: no Anthropic key, so
-"AI offline"); the core polls them every second. Test-only: production code never reads these
+(a JSON list of running GTNH roles, default none), ``key`` (``missing``: no Anthropic key, so
+"AI offline") and ``design_delay`` (seconds each design stage waits before it goes on, so the
+design-job tests (WO-3.9) can watch the stages and cancel on these small made-up exports, which
+design in well under a second); the core polls them every second. Test-only: production code never reads these
 files. Its gos.toml marks setup done, so the shell shows.
 
 Ores (WO-6.6, :func:`load_ores`): WO-1.6's made-up ore mixes and Lab world (tests/unit/test_ores.py)
@@ -48,6 +50,7 @@ import importlib.util
 import json
 import shutil
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -453,6 +456,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     desktop.foreground_program = foreground
     prism.running_clients = running
+    from gregtec.planner import progress
+
+    real_stage = progress.stage
+
+    def slow_stage(name: str, k: int | None = None, n: int | None = None) -> None:
+        delay = float(_read(controls / "design_delay") or 0)
+        if delay > 0 and name != "effort":
+            real_stage(
+                name, k, n
+            )  # report it, then wait, then check again for a cancel
+            time.sleep(delay)
+        real_stage(name, k, n)
+
+    progress.stage = slow_stage
     if not args.fresh:  # --fresh: the real check, against the file keyring
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
