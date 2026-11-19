@@ -498,6 +498,35 @@ def test_a_rebuild_without_a_recipe_never_reads_it_from_the_old_reader(
     assert gone not in off and on == off
 
 
+def test_a_reader_opened_across_a_rebuild_is_not_reused(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The race the reader's key guards: a build reads generation g1, then, before it stores
+    its reader, another caller sees a rebuild (g2) and drops the path's readers. The reader is
+    stored under g1, so a later build at g2 reads afresh and never reuses what may hold g1
+    recipes (the reader key carries the generation, D352)."""
+    real = cache.scope
+
+    def racing(c: sqlite3.Connection) -> tuple[str, str] | None:
+        old = real(c)
+        c.execute(
+            "INSERT INTO kv(key, value, upd) VALUES ('db.build', 'rebuilt', 2)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        real(c)  # the other caller: sees g2, drops g1's readers
+        return old
+
+    with monkeypatch.context() as m:
+        m.setattr(cache, "scope", racing)
+        graph.build(conn, REQS[0], tg.Base())
+    assert cache.stats.reader_misses == 1 and cache.stats.dropped == 1
+    misses = cache.stats.reader_misses
+    on = design(conn, REQS[0])
+    assert cache.stats.reader_misses == misses + 1  # read afresh at g2
+    with cache.disabled():
+        assert design(conn, REQS[0]) == on
+
+
 def test_a_replaced_file_at_the_same_path_is_a_new_generation(
     db: Path, tmp_path: Path
 ) -> None:
