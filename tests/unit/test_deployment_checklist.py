@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from gregtec.doctor import load_verify_list
+from gregtec.doctor import load_verify_list, verify_status
 
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
@@ -23,7 +23,9 @@ SECTIONS = (
     "## 6. Gate sign-offs G1 to G11",
     "## 7. Known gaps and flakes",
 )
-# A VERIFY row is open unless it starts with one of these: gos doctor's rule (verify_status).
+# A VERIFY row is open unless it starts with one of these: gos doctor's rule
+# (gregtec/doctor.py verify_status, which also special-cases V01 and V02 with live Prism roots).
+# test_the_open_rule_matches_gos_doctor keeps the two in step.
 CLOSED = ("**Closed**", "**Dropped**", "**Resolved**")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
@@ -83,7 +85,21 @@ def test_every_open_verify_item_is_in_the_checklist_and_its_table() -> None:
     assert sorted(rows & closed) == []  # the table lists open items only
 
 
+def test_the_open_rule_matches_gos_doctor() -> None:
+    for item in load_verify_list():
+        if item.id in ("V01", "V02"):  # doctor reads these from the live Prism roots
+            continue
+        is_open = verify_status(item, []).startswith("open")
+        assert is_open == (not item.item.startswith(CLOSED)), item.id
+
+
 def test_every_decision_pending_clayton_is_in_the_checklist() -> None:
+    """Every row whose text says "pending Clayton" is named by its own D-number.
+
+    A range such as "D290-D292" doesn't count as naming D291, and rows that leave Clayton's
+    review open in other words (for example "Clayton's review open") aren't matched, so those
+    are covered only by the checklist's prose ranges, not by this test.
+    """
     text = _text()
     pending = []
     for line in (DOCS / "decisions.md").read_text(encoding="utf-8").splitlines():
