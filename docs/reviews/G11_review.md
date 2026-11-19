@@ -20,6 +20,8 @@ Evidence tags, as in G0-G10: **[repo]** the repo, the git history or GitHub's CI
 
 And one new **should-do before Play's watchers go on** (finding 1 below): on Windows CI, the read-safety soak twice saw a BetterQuesting quest-progress save refused (`WinError 5`) while a watcher read the file. It is rare, needs a slow machine to show, and is exactly what open VERIFY V27 and checklist 3.10.3's 2-hour session test, but the PC session is the only thing between it and Play.
 
+> Since this report (see the addendum): the hover-item eval exists (WO-8.4, #135, D362); the wiki eval's runner exists but its 15 cases do not, so line 5 stays not met. Finding 1 is fixed in code by WO-6.8 (#134, D357); what remains is the Lab check, checklist 3.10.3.
+
 **What stands between `main` and day one, in order:**
 
 1. **Merge this report** (WO-11.3 #128 and the checklist #131 are on `main` since `2a961ed` and `1127ee9`); deploy only a commit whose CI is all green (checklist 2.2).
@@ -28,6 +30,8 @@ And one new **should-do before Play's watchers go on** (finding 1 below): on Win
 4. **The PC sitting**: checklist sections 2 and 3 (deploy, the wizard, every gate's Lab and PC checks, the paid evals: about 30-35 hours over several days, up to about $80 of API spend), then section 4, the 2-hour fake day one in the Lab (§10's last line).
 5. **His decisions** (checklist section 5, over 130 rows, each with its default in force, and 14 board approvals, 5.10) and **the gate sign-offs G1-G10** (checklist section 6), in the same sitting (D158 (2)).
 6. **Then** the steps that touch Play (checklist 3.15, his scripts from GOS_APP), and he starts the survival world.
+
+> Updated list in the addendum: items 1 and 3 are done; the sitting is now up to about $130 at a $2 task cap (checklist section 1).
 
 ### This reviewer's runs [here]
 
@@ -65,6 +69,8 @@ No DB, export, token or keyring entry from these runs is committed; they stay in
 
 **Is `main` green? Yes at its head** (`bb27a1b`, #132 merged: all four jobs, run 44485084155; before it `1127ee9` (#131) run 44479240411 and `8d1aee6` (#130) run 44475783181, all green; `2a961ed` (#128): all four jobs, run 44474143125). `49c9e70` had all five jobs green; `fe3641b`, whose tree `2a961ed` is, had all four of its jobs green. But `checks (windows-latest)` failed on 4 of the last 9 pushes to `main`, each time on a different single test (none failed twice): `test_soak_no_handle_held_no_write_blocked` (`e61c437`, finding 1), `test_ask_errors_say_whether_the_core_answered` (`6aa5d6f`, `WinError 10053`), `test_the_real_hook_sees_an_injected_key` (`c2624a6`), `test_saying_confirm` (`fa2f8ff`, `tests/security/test_oc_bridge_api.py`). A scan of the last 150 failed CI runs on any branch adds these repeat offenders: `tests/unit/watchers/test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows, `2000 == 2003`, twice), `tests/unit/alerts/test_core_routing.py::test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu, twice), `tests/unit/discordbot/test_core_api.py::test_errors_carry_the_core_s_status_and_reason` (Windows), `tests/unit/test_extractor.py::test_run_tree_stops_what_the_command_started` (Ubuntu, twice), `tests/unit/test_appwindow.py::test_the_foreground_program_on_windows` (Windows). Checklist 7.3 now lists all of them (should-do 3, done in this PR). Checklist 2.2's rule stands: a red job is re-run until green, never deployed over.
 
+> `main` is green at `2b8efe2` (run 44579913406); WO-11.4 fixed the repeat offenders below at their cause. See the addendum.
+
 ---
 
 ## Plan §10, line by line
@@ -87,6 +93,8 @@ The fake day one's report (C1-C12) gives each line's automated items green and t
 | 12 | A 2-hour "fake day one" in the Lab with everything on | automated: **met with fakes**; the 2-hour session: PC | the automated rehearsal GREEN on CI (`1584f1e`, run 44458253790, artifact `fake-day-one`; `fe3641b`, run 44460564006) and here (823.7 s); WO-11.3 (PR #128) merged as `2a961ed` | checklist section 4 ([`fake_day_one.md`](../runbooks/fake_day_one.md) A-J) |
 
 Plan §9's Lab scenarios, from the same report: L2-L6 and L8-L10 are green in the rehearsal (their real runs are PC); L1 (projector builds and captures) and L7 (performance with everything on) are PC only (checklist 3.13.2, 3.8.11).
+
+> Since this report: line 5's hover-item eval exists (D362) but its wiki cases do not, so line 5 stays not met; line 6's finding 1 is fixed in code (D357) and its Lab check is checklist 3.10.3. See the addendum.
 
 ## Phase 11 work orders
 
@@ -161,6 +169,8 @@ Counted here (data rows, comment and header lines left out).
 
 Also there, beyond §9: `fast_lane_questions.tsv` (60), `power_modes.tsv` (12, WO-4.6), `tts_phrases.tsv` (40), `wake_phrases.tsv` (8), `wake_chatter.txt`, `advisor_scenarios.py` (3), `design_tokens.tsv`. **Every model-scored eval has run only against fakes**: no real-model result exists on his key (checklist 7.1 item 7; 5.3.1 lists the paid runs). §9's rule that `gos eval` runs for every PR touching agents, prompts or skills could not be followed by any cloud PR (no key, D158): checklist 3.5 is the first real run.
 
+> Hover-item: 10 cases in `tests/evals/hover_items.tsv` since WO-8.4 (D362). Wiki: runner and fixtures only; its 15 cases come from his crawl (D363). See the addendum.
+
 ## Every gate report's "not met" items, and what closed them
 
 | Gate | Not met (or blocking) in its report | Closed since? |
@@ -180,6 +190,8 @@ Also there, beyond §9: `fast_lane_questions.tsv` (60), `power_modes.tsv` (12, W
 2. **Should-do: §10 line 5 can't be green without the two eval files** (above). Writing them needs real ids from the DB (`w:` revids from his wiki crawl, which is itself gated on the licence, checklist 3.9.6), so the wiki one can only be finished after 3.9.6; the hover one can be written against the harness DB now.
 3. **Should-do, done in this PR: the flake list in checklist 7.3 was short of what CI shows.** Added `test_soak` (Windows, finding 1), `test_saying_confirm` (Windows), `test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows), `test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu), `test_errors_carry_the_core_s_status_and_reason` (Windows), `test_run_tree_stops_what_the_command_started` (Ubuntu), `test_the_foreground_program_on_windows` (Windows), and, new with WO-3.9, `tests/unit/planner/test_design_job_api.py::test_the_designer_job_api` (Windows: the core's slowest health-plus-status pair while a design job's busy loop runs took 1.032 s, then 1.125 s, then 1.015 s on three pushes in a row, against the test's 1.0 s bound; runs 44490420135, 44493853838 (first attempt) and 44498321042 on this report's PR, with no product code changed between them and the run before, 44487516906, green; `main` at `bb27a1b` green. It failed on three pushes in a row, so it is more than a rare flake: a timing bound that a loaded Windows runner with 4 xdist workers can miss. Recommend a short WO-3.9 follow-up that measures this in a `serial` test or widens the bound, rather than re-running it.). Also new on this PR: `tests/unit/tools/test_tool_ops.py::test_telemetry_get` (Windows, the re-run of run 44493853838: the telemetry reading's expected `\t0\t0\t` age and stale columns were not there on a slow runner; it passed on every other run). `test_run_tree_stops_what_the_command_started` failed again on Ubuntu (run 44498321042). Each passed on re-run; none is in a §10 acceptance path except finding 1. `test_ask_errors_say_whether_the_core_answered` (`WinError 10053`, then `10054` on #128's head `fe3641b`) was fixed by PR #132 (D355, the core reads a refused request's body before it answers), merged as `bb27a1b`; its checklist row says so.
 4. **Noted, not a defect:** WO-11.3 (#128) and the checklist (#131) are both on `main` now (`2a961ed`, `1127ee9`), so `main` has `tests/rehearsal/`, the `fake-day-one` artifact and `docs/deployment_checklist.md`; this branch adds only the report, its guard test, D339 and the checklist's G11 row link.
+
+> Finding 1 is fixed in code by WO-6.8 (#134, D357); what remains is the Lab check, checklist 3.10.3. Finding 2 is half closed by WO-8.4 (#135, D362-D363). Finding 3's design-job test is now bounded by the median of five request pairs (WO-11.4, #136). See the addendum.
 
 No product code was changed by this review. The report's judgement calls are D339; its guard test is `tests/unit/test_g11_review.py`, and the checklist's G11 row now links it.
 
@@ -202,9 +214,13 @@ Each item the PM listed (note 6) that is still true on `main`, and where it is a
 | The usage and pace question (credit reset day, $10 day cap, 50% heads-up, D334) | yes, defaults in force | checklist 5.3.3 |
 | Unverified gate lows (followups list) | each still-true one re-checked by the checklist's author | checklist 7.2 (**checked** rows), 7.3 |
 
+> The paid runs: now up to about $130 at a $2 task cap, with the hover-item and wiki evals added. See the addendum.
+
 ## VERIFY items G11 touched
 
 None closed here; every open item is a PC result. The 26 open items (V03-V07, V13-V16, V18-V20, V22-V35) and the checklist step that closes each are checklist 3.16; `gos doctor` [here] lists the same 26. V27 gains finding 1 as Windows CI evidence that the risk is real, not just theoretical.
+
+> V27 now also covers save-by-replace (D357) and stays open until checklist 3.10.3. See the addendum.
 
 ## Open questions for Clayton
 
@@ -213,6 +229,8 @@ Every question still pending is in checklist section 5 (with its default) and se
 1. **(5.5.1, sharpened)** The wiki (15) and hover-item (10) evals: have them written (the hover one now, the wiki one after your crawl), or accept `whats_this_10_items` plus `gregteclink_client.md` B.5 and the wiki answer of 3.9.7 in their place?
 2. **(finding 1, checklist 5.2.11)** Open the Windows save-collision WO before Play's watchers go on (3.15.4; the default), or accept it on the 2-hour Lab session's evidence?
 3. **(5.7.1, unchanged)** Sign G4 with the MkI chain as a known late-game gap, or hold it for a fusion-sizing WO?
+
+> Question 1 is half answered (the hover-item eval exists, WO-8.4) and question 2 was settled by taking the default (WO-6.8 merged); the addendum's questions replace them.
 
 ## Clayton's PC steps
 
@@ -225,8 +243,93 @@ All of them are [`docs/deployment_checklist.md`](../deployment_checklist.md): se
 3. **The sitting is long** (about 30-35 h over several days, up to about $80, checklist 1): a redeploy mid-way means the fake day one's reuse rule (checklist 4) no longer holds for what changed.
 4. **Unmerged work at review time:** other sessions' #114, #115, #117 may change things before they land; re-check CI on the commit he deploys.
 
+> Risk 1's finding is fixed in code (WO-6.8); risk 3's spend is now up to about $130 at a $2 task cap, and the time 35 hours or more (checklist section 1). See the addendum.
+
 ## After the review
 
 - On this branch with `origin/main` (`2a961ed`) merged in [here]: `ruff check .` all checks passed; `ruff format --check .` 669 files already formatted; `pytest -n 2 -m "not serial"` **11137 passed, 346 skipped** (7 min 52 s); `pytest -m serial` **7 passed, 4 skipped** (2 min 9 s). `tests/unit/test_g11_review.py` and `tests/unit/test_deployment_checklist.py`: 12 passed.
 - Again after `origin/main` at `bb27a1b` (#131, #132) was merged in [here]: ruff clean; 670 files already formatted; `pytest -n 2 -m "not serial"` **11179 passed, 346 skipped**; `pytest -m serial` **7 passed, 4 skipped**.
 - After the review of PR #133 (finding 1 carried into the checklist, 7.3 completed, the status check made exact) [here]: ruff clean; 670 files already formatted; `pytest -n 2 -m "not serial"` **11179 passed, 346 skipped**; `pytest -m serial` **7 passed, 4 skipped**.
+
+## Addendum, 2026-11-19: after WO-6.8, WO-8.4 and WO-11.4
+
+The body above is the record at `bb27a1b` and stays as written; the one-line pointers in it lead here. After it, `main` moved to `2b8efe2`. Three PM follow-up work orders under D158, all pending Clayton, merged since:
+
+- WO-8.4 ([#135](https://github.com/crazie450-prog/GretecOS/pull/135), merged as `f8ff47f`, D362-D363).
+- WO-11.4 ([#136](https://github.com/crazie450-prog/GretecOS/pull/136), `6ee1526`, tests only). Its title names D359-D361, but those rows were never written: the decision log goes from D358 to D362 (the log is append-only; nothing needs editing).
+- WO-6.8 ([#134](https://github.com/crazie450-prog/GretecOS/pull/134), `2b8efe2`, D356-D358).
+
+Everything below was checked on `2b8efe2`. The verdict does not change.
+
+**Verdict: not met.** G11 is not met yet, and it is Clayton's to meet.
+
+### What each follow-up closed
+
+- **Finding 1 (WO-6.8): fixed in code; the Lab check is still to do.**
+  - Why saves were refused: BetterQuesting and Hodgepodge save with `MoveFileExW(REPLACE_EXISTING)`, and BetterQuesting doesn't retry (D356).
+  - The fix: on Windows, `safe_open` now opens through `NtCreateFile` with `FILE_OPEN_REQUIRING_OPLOCK` and a read-handle oplock. When the game wants the file, GOS closes its handle and the read is retried (D357; `core/gregtec/gamestate/_win32.py`, `safe_open.py`). The game's call waits a few milliseconds: 5-24 ms measured on CI, against the tests' bound of 0.5 s (D357 and D358 each quote one run's figure).
+  - Tests: `tests/unit/test_save_collision.py` (the pattern-by-reader table on Windows, `test_the_open_and_the_oplock_are_one_step`, `test_safe_open_takes_the_oplock_with_the_open_and_says_so`), `tests/unit/test_safe_open_lease.py`, and `tests/unit/watchers/test_soak.py`, which now forces the collision on every run.
+  - Windows CI on `2b8efe2` (run 44579913406): green.
+  - Still to do: checklist 3.10.3, the 2-hour Lab session plus [`watchers.md`](../runbooks/watchers.md) §4.1's checks, before 3.15.4. V27 stays open until then (D358). Checklist [5.2.11](../deployment_checklist.md#52-anything-touching-play) carries WO-6.8's questions.
+- **Finding 2 (WO-8.4): half closed.**
+  - The hover-item eval is complete: `tests/evals/hover_items.tsv` has 10 cases, run with `gos eval hover` (D362). Tests: `tests/unit/tools/test_hover_eval.py` and `tests/integration/test_hover_eval_harness.py` (all ten resolve on the harness DB; `--fake` passes all ten). Fakes only until checklist 3.9.9.
+  - The wiki eval has its runner, scorer and `--make-cases` (`core/gregtec/wiki/evals.py`, `gos eval wiki`), tested on three fixture cases (`tests/unit/wiki/fixture_cases.tsv`, `test_wiki_evals.py`).
+  - Its 15 cases don't exist. They are written on his PC from his own crawl, into `$GOS_HOME/data/evals/wiki_questions.tsv` (checklist 3.9.6, then 3.9.10; D363).
+  - The `--fake` run skips the researcher hand-off, so only the paid run proves it (D363 (5)).
+- **Finding 3 (WO-11.4): closed at the cause.**
+  - The repeat offenders of a scan of 180 failed runs were examined; the test races were fixed so they can't recur (census, the paused-game feed, `test_saying_confirm`, `test_telemetry_get`, the foreground program, the playhooks age, the watch-run spool).
+  - The design-job test now bounds the median of five request pairs at 2.0 s. A real design was measured not to starve the core (median 8 ms).
+  - No product code changed, and no test was skipped or given a retry.
+  - Still a known flake, now instrumented: `test_extractor.py::test_run_tree_stops_what_the_command_started`. WO-11.4's scan found it failed **three times** on Ubuntu (runs 43440121022, 44399865242, 44498321042), not twice as the body's CI section says; checklist 7.3 gives the three.
+
+### §10 lines now
+
+Only the lines this changes. Every other line is as the body gives it.
+
+| # | §10 line | Status | Why |
+|---|---|---|---|
+| 3 | Power | **not met** (one part); the rest met with fakes | Unchanged. A designed naquadah MkI chain at IV still needs fusion sizing (D176, D328). Clayton's answer 5.7.1 |
+| 5 | Q&A | **not met** (the wiki eval's 15 cases); the rest met with fakes | The hover-item eval exists (D362), fakes only until 3.9.9. The wiki eval's cases don't exist until 3.9.10, and no paid eval has run (5.3.1). It can be met only on his PC, by 3.9.10 passing or by his acceptance of 3.9.7's answer in its place (5.5.1) |
+| 6 | Context | **met with fakes** | Finding 1 is fixed in code (D357) and green on Windows CI; the real check is 3.10.3. Still open: D337 F1 and D259 L7 |
+
+### §9 evals now
+
+| §9 eval | Size asked | Where it is | Size there | Status |
+|---|---|---|---|---|
+| hover-item | 10 | `tests/evals/hover_items.tsv` (`gos eval hover`) | 10 | exists (fakes only until 3.9.9) |
+| wiki | 15 | runner `core/gregtec/wiki/evals.py` (`gos eval wiki`); cases in `$GOS_HOME/data/evals/wiki_questions.tsv` on his PC | 0 | **gap** until 3.9.10 (D363) |
+
+### CI on `main` since the report
+
+| Commit | Run | Result |
+|---|---|---|
+| `f8ff47f` (#135) | 44531039216 | ubuntu red: the census repeat offender, fixed by #136 one merge later; the other three jobs green; not re-run |
+| `6ee1526` (#136) | 44552642618 | dashboard red: the runner's apt failed in `playwright install --with-deps` before any test; the other three jobs green; not re-run |
+| `2b8efe2` (#134) | 44579913406 | **all four jobs green** |
+
+PR heads, all green: #135 run 44526993149; #136 run 44545946453; #134 run 44563451386, green on attempt 2 (attempt 1's Windows job failed on `test_supervisor.py::test_command_lines_lists_real_processes`, now in checklist 7.3 as a known flake).
+
+### Still open
+
+- The wiki cases (above), the MkI chain (line 3), D337 F1 and D259 L7.
+- Every paid eval. The checklist's worst case for the whole sitting is now **about $130 at a $2 task cap**, a formula of `[budget] task_max_usd` once 3.6.3 sets it (checklist section 1, which also names the D48 credit pause at $100 and the Console's $150 backstop). Both new paid evals refuse to start past `[budget] day_max_usd`, so it is raised first (checklist 3.5's first paragraph).
+- WO-6.8's gate lows: (3) a test of `check_whole` after `read_bytes(limit=)` and (4) `Win32Handle.dispose` freeing the oplock buffers after its 5 s wait are fixed by the final follow-up PR; (5) trailing dots or spaces in a name are not stripped (theory only; checklist 7.2).
+- WO-8.4's lows: `--make-cases --cases` writes to any path; the atomic write is untested (checklist 7.2).
+- D298-D301 and D303, and D338 and D339 (this report's own row), are still "Pending reviewer" (checklist 7.4).
+
+### What stands between `main` and day one, now
+
+1. Deploy a commit at or after `2b8efe2` whose CI is all green (checklist 2.2); `2b8efe2` itself is (run 44579913406).
+2. Line 3: Clayton's 5.7.1.
+3. Line 5, in the sitting: raise `day_max_usd` for the sitting (3.5); run 3.9.9 (hover); do the 3.9.6 licence check and crawl, then 3.9.10 (15 wiki cases, `--fake`, then the paid run), or accept 3.9.7 in their place (5.5.1).
+4. Line 6: 3.10.3 and §4.1's checks, before 3.15.4.
+5. The rest of sections 2-3 (35 hours or more, checklist section 1), then section 4 (the 2-hour fake day one).
+6. His decisions (section 5, with 14 board approvals) and the sign-offs G1-G10.
+7. Then 3.15 (Play), and he starts the survival world.
+
+### Questions, new or changed
+
+1. **(5.5.1, changed)** Hover: accept D362's 10 items, and "this" in a question meaning the pointed-at item? Wiki: write the 15 cases from your crawl, or accept 3.9.7's answer in their place? D363: each wiki case capped at `task_max_usd`; the cases kept in `$gh\data\evals`.
+2. **(5.2.11, replaced: the default was taken, WO-6.8 merged)** Should `gos doctor` also check that the oplock is granted? A read without an oplock is logged, not refused: is that right? A stalled GOS stalls the game's save for as long as it holds the handle (D358 (4)(d)): watch for it in the Lab.
+3. **(5.7.1, unchanged)** Sign G4 with the MkI chain as a known late-game gap, or hold it for a fusion-sizing WO?
+4. **(new, D362/D363 against D334)** Both paid evals refuse to start past the day cap, while D334's cap only alerts. Keep that?
