@@ -109,9 +109,10 @@ Until WO-6.8 a watcher's read could make Windows refuse one of the game's saves:
 and Hodgepodge save by writing a temp file and moving it onto the real one
 (`Files.move(..., ATOMIC_MOVE)`, which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`), and Windows
 refuses that move while any program has the real file open. Since WO-6.8 `safe_open` holds a
-read-handle oplock on every file it reads: the game's move breaks it, GOS closes the file at once
-and the move goes on (the game waits a few milliseconds at most), and GOS reads the file again.
-So the check below should find nothing; if it finds a line, the fix didn't hold on your PC.
+read-handle oplock on every file it reads, taken in the same step as the open: the game's move
+breaks it, GOS closes the file at once and the move goes on (the game waits a few milliseconds at
+most), and GOS reads the file again. So the check below should find nothing; if it finds a line,
+the fix didn't hold on your PC.
 
 The lines each mod writes when a save is refused (from their source at the versions GTNH 2.9.0
 pins; in `fml-client-latest.log`, and the ERROR ones also in `latest.log`):
@@ -133,6 +134,18 @@ Select-String -Path "$lab\logs\latest.log","$lab\logs\fml-client-latest.log" -Pa
 **Pass:** no lines. A `(Temp copy)` line with `AccessDeniedException` naming a `QuestProgress`
 file is the collision itself: paste it, with the minute it happened, into the PR or the checklist
 row (3.10.3), and leave Play's watchers off (3.15.4).
+
+Then check that the oplock was really there on your PC (an antivirus or backup filter, or a
+volume that isn't NTFS, can refuse it; GOS then reads as before WO-6.8 and says so):
+
+```powershell
+Select-String -Path "$home_\logs\watchers.log" -Pattern 'oplock'
+```
+
+**Pass:** a line with `safe_open: Windows grants read-handle oplocks with the open` (logged once
+per watchers start), and no line with `safe_open: no oplock on this file` or
+`safe_open: the oplock came after the open` (each names the file in its `path` field). If one of
+those two is there, paste it into the checklist row (3.10.3) and leave Play's watchers off.
 
 ## 5. Crash fallback (D259)
 

@@ -534,8 +534,9 @@ def run_gap(folder: Path, atomic: bool, pattern: str) -> str:
 def test_the_open_and_the_oplock_are_one_step(tmp_path: Path) -> None:
     """Review M1. With ``CreateFileW`` and then the request (``atomic=False``), a replace made
     between the two is refused, as for the old reader. With ``FILE_OPEN_REQUIRING_OPLOCK``
-    (safe_open's open), every call made in that moment waits until the oplock is requested,
-    then breaks it and goes on: there is no moment when a save can be refused."""
+    (safe_open's open), every replace, rename or delete made in that moment waits until the
+    oplock is requested, then breaks it and goes on, and an in-place write goes on at once:
+    there is no moment when a save can be refused (:data:`EXPECTED_GAP`)."""
     import warnings
 
     got = {
@@ -544,12 +545,23 @@ def test_the_open_and_the_oplock_are_one_step(tmp_path: Path) -> None:
         }
         for mode in ("createfile", "atomic")
     }
-    table = _table(got)
+    table = "\n".join(
+        f"{m:10} {p:16} {c}" for m, row in got.items() for p, c in row.items()
+    )
     warnings.warn(f"open-then-oplock table:\n{table}", stacklevel=1)
     for p in REPLACES:
-        assert got["createfile"][p].startswith("refused:5/refused:5/old/"), table
-    for p in GAP_PATTERNS:
-        assert got["atomic"][p] == "waiting/ok/new/dropped+lease+atomic", table
+        assert got["createfile"][p] == "refused:5/refused:5/old/whole+lease", table
+    assert got["atomic"] == EXPECTED_GAP, table
+
+
+# What Windows CI measured (D357; run 44545311387, job 135634178974). Every call that needs the
+# file gone waits for the request, then breaks the oplock. An in-place write (an open to write
+# that shares with ours) isn't held: it is done before the request, and the oplock then covers
+# the new bytes (a later write through that handle breaks it, as an append does).
+EXPECTED_GAP = {
+    **dict.fromkeys(GAP_PATTERNS, "waiting/ok/new/dropped+lease+atomic"),
+    "in_place": "ok/ok/new/whole+lease+atomic",
+}
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' oplocks")
