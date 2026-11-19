@@ -278,3 +278,337 @@ Open per `gos doctor` (a row not marked **Resolved**, **Closed** or **Dropped**)
 
 Resolved, closed or dropped, nothing to do: V01, V02, V08, V09 (dev container; 3.3.5 makes your own dump), V10, V11, V12, V17, V21.
 
+---
+
+## 4. The 2-hour fake day one
+
+The last check before G11 (WO-11.3, plan §10's last line): [`fake_day_one.md`](runbooks/fake_day_one.md), steps A to J, about 3 hours in all (30 minutes of setup, 2 hours with the game running, 30 minutes after). Every step is yours, in your own account, on GOS as deployed, in **GTNH-Lab** only.
+
+**Before it:** sections 2 and 3.1 to 3.14 done (it leans on them: GregtecLink's listener in Lab, OC in `lab-ops`, the breeding station built, the phone paired, Discord set up, `[startup] watchers_with_play = "lab"`). Download the `fake-day-one` artifact from the CI run of the commit you deployed (the `mod` job uploads it, green or red) and keep it beside you for step J.
+
+| Block | Minutes | What it covers | §10 lines |
+|---|---|---|---|
+| A | before launch | `gos doctor`, `gos pack watch --force`, the Health card's fingerprint, `gos backup restore --verify`, `verify_world_backup.py`, the isolation re-test, a reboot (login start), `gos status` | addons and Play, Ops |
+| B | 0-5 | `gos launch lab` (watchers and voice start), Esc (pause chip within 5 s), telemetry fresh | Ops, Context |
+| C | 5-25 | wake word and talk key, quests, hover, screen, wiki, an ambiguous item, personas; the 2-hour open-mic recording | Voice, Q&A |
+| D | 25-55 | a steel line designed, pinned, accepted, exported to gtnhplanner.com, batch, My base; the Power view's 4 modes; an EBF built from the guide; a Claude-designed shell pasted | Designer, Power, Build |
+| E | 55-85 | a craft read back and confirmed, one pending, 60 s expiry, pause and resume; the LSC drained while AFK (voice present, DM away); machines placed and broken; the journal; "what should I do next?" | OC bridge, Context, Discord |
+| F | 85-100 | the 5 crop guides; "next crop step"; the breeding station unattended | Crops |
+| G | 100-110 | phone on cellular, Discord commands, a craft confirmed from the phone, unreachable outside the tailnet, the credit DM buttons | Discord and phone |
+| H | 110-120 | kill the core, watchers, voice client and bot in turn; **H3** delete the key; **H3b** a wrong key (the revoke, an authentication reason; costs nothing); "GOS offline" while away; FPS/TPS/VRAM against the baseline | Ops, Q&A no-AI (L9), L7 |
+| I | after | `watchers.log` for 2 h; Costs; the paid evals; the Lab dry run of a 2.9.x update; `/bq_admin` LV/HV/IV in `lab-progress`; the projector captures; `gos voice eval`; `gos voice wake-eval` on C8's recording; `gos voice say --phrases`; the default notices | every line, L1-L10 |
+| J | after | tick §10 line by line with the CI report: a line is done when the CI report has it green **and** every PC-only step above passed | all |
+
+Many of these repeat a section 3 step on purpose: the fake day one is the same checks with everything running at once. Where a section 3 step already passed and nothing was redeployed, the paid evals in I3 and the long recordings (I7, I8) may reuse section 3's results; say so in the paste.
+
+**Known red line before you start:** §10's Q&A line asks for wiki (15) and hover-item (10) evals, and **neither has a case file** (D337 F3, G8 should-do 1). Unless one lands first, write "no eval: open" for them in the G11 report, or accept `whats_this_10_items` plus [`gregteclink_client.md`](runbooks/gregteclink_client.md) B.5 and the wiki answer of 3.9.7 in their place (decision 5.5.1).
+
+**Paste:** everything each block's **Paste** line asks for, in step order, into the G11 report.
+
+---
+
+## 5. Decisions waiting for you
+
+Every question still pending you, from the decision rows marked "pending Clayton", the gate reports' open-question lists and the PRs' Questions sections. Until you answer, the **default now in force** stands: it is reversible, it never reaches Play and it spends nothing (D158). Gameplay preferences, anything touching Play and spending come first; the rest are grouped by topic. Where a whole PR's questions are "keep as built?" with an agreed default, they share one row; the gate report named in the row has each question's exact wording ("G6 Q57" = question 57 in `docs/reviews/G6_review.md`, "Open questions"). Answer "keep" or your change per row; a changed answer becomes a decision row and, where code changes, a small follow-up WO.
+
+### 5.1 Gameplay preferences
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.1.1 | What does the "light-fuel loop" benchmark mean? | Reading A: one gated import at MV passes (option 1 is light fuel bought; then toluene or hydrocracked heavy fuel distilled 1:1) | Reading B, self-fed: no such line exists at MV; the benchmark moves to HV (Turbo Combustion Generator, net 23.55 of 512 EU/t) | D324, Q-G4-4, [#101](https://github.com/crazie450-prog/GretecOS/pull/101) Q2 |
+| 5.1.2 | Imported late-game fuels at LV-IV (Infinity Plate, Bismuth Plasma; multiblock turbines offered at LV) | listed and ranked like any fuel | exclude fuels above the tier cap, or score them as scarce (a rank.py change, re-run of the 12 power-mode cases) | D235, Q-G4-3, [#96](https://github.com/crazie450-prog/GretecOS/pull/96) Q7 |
+| 5.1.3 | Option 1 of a fuel line is "buy the fuel" (the direct-import line); chains still import a near-fuel where that costs least EU; the gate count comes before EU | as built (D323 option (a)); equal-number options from different chains both shown | (b) price each gated import at its fuel value; dedupe equal options by their numbers; put EU before the gate count | D323, D325, [#101](https://github.com/crazie450-prog/GretecOS/pull/101) Q1, Q3, Q4 |
+| 5.1.4 | **Your five target crops** (part of WO-6.7's acceptance) | the PM's picks: Sticky Cane, Ferrofern, Coppon, Bauxia, Fertilia | your five; guides are made for them in 3.10.13 | D275, G6 Q57, [#86](https://github.com/crazie450-prog/GretecOS/pull/86) Q4 |
+| 5.1.5 | Spoilers: "spoil it" must be its own utterance from a closed set; the deep lane never spoils; `db_sql` refuses quest text below the full level (changes D133); at level 0 a locked quest named by your words is pointed at by id; yes-fillers ("yeah spoil it") keep the level; several quests with one name ask back; "now" is a leading filler (STT may hear "no" as "now"); a locked quest's name counts as named when its words appear anywhere in your request | as built: fails safe (about 130 attack phrasings raised nothing) | add phrasings to the closed set ("spoil it bro", "spoil everything", "yeah spoil it"); let the deep lane spoil; drop "now" from the fillers; require a locked name as consecutive words (hardening the gate's attacker suggested); pick the quest nearest the frontier | D268, D269, D270, G6 Q22-Q35, [#82](https://github.com/crazie450-prog/GretecOS/pull/82) |
+| 5.1.6 | Proactive notices: which kinds are on, the 60 s holds, repeat while a problem lasts? | both default notices on, said once per problem, 60 s holds | turn kinds off in `[policy] notices`, change holds, repeat | D267, G6 Q42, [#98](https://github.com/crazie450-prog/GretecOS/pull/98) Q7 |
+| 5.1.7 | Telemetry alert thresholds (`[alerts]`: power low at 20% with a +10 point clear, stall and maintenance holds) | as D280 lists | your values in `gos.toml` | D280, G7 Q30, [#99](https://github.com/crazie450-prog/GretecOS/pull/99) |
+| 5.1.8 | Where alerts reach you (`[notify]`): no quiet hours, `quiet_min_level` err, `discord_min_level` warn, `cooldown_s` 1800, `offline_after_s` 60; `/alerts off` also stops credit DMs; the "GOS is back" DM | as listed; credit DMs stop with `/alerts off`; "back" DM kept | quiet hours; credit DMs ignore `/alerts off`; no "back" DM | D298, D300, G9 Q11, Q13, Q14, [#111](https://github.com/crazie450-prog/GretecOS/pull/111) |
+| 5.1.9 | Which machines the planner sizes with: 1 and 2 plain energy hatches per tier, coils, batch off, worst running state, cleanroom on | as D177 (conservative: over-builds rather than under) | other hatch layouts or coils; steady state; 3.6.7's Lab readings may argue for it | D177, G3 PR #59 Q3-Q4 |
+| 5.1.10 | The replicator (UU matter) in routes: the naquadah benchmark's best route uses it | listed and pinnable like other side routes | rank it last everywhere (the gate reviewer's recommendation) or exclude it | D189, D190, D198, Q-G3-3, [#63](https://github.com/crazie450-prog/GretecOS/pull/63) Q5 |
+| 5.1.11 | Component making sometimes picks fish pond or bacterial vat paths; the 26 scarcity rows are PM defaults; a machine is "new" when nothing owned runs its map | as built | prefer maps the route or My base already uses; edit `data/curated/scarcity.tsv` | D196, D197, D198, [#72](https://github.com/crazie450-prog/GretecOS/pull/72) |
+| 5.1.12 | Prefer non-legacy controllers? (a G3 plan picked `MTEIndustrialMixerLegacy`) | no preference | rank or exclude legacy controllers | G10 Q12, [#116](https://github.com/crazie450-prog/GretecOS/pull/116) |
+| 5.1.13 | Power-line defaults: Steel large rotor; the tree farm on an LV Tree Growth Simulator with a buzzsaw; chain machines picked for least EU per craft; top 4 fuels per generator; starter fuel an upper bound; RTG fuel counted as EU per pellet as GT++'s RTG makes it (not NEI's x 365 "days"); plasma on a 20-tick cycle | as built | other rotor or farm; other pruning; other RTG reading | D230, D231, D233, G4 PR #77 and PR #81 Q1-Q12 |
+| 5.1.14 | Buffers: battery buffers up to 4 (`MAX_BUFFERS`), then an LSC; the smallest battery that fits; a ledger shortfall shared in proportion | as built | another switch point or pick | D241, D242, G4 PR #91 Q1-Q4 |
+| 5.1.15 | Crop guide times: best case for water and fertilizer, worst for the biome; the faster-pool note at half the guide's time; chances shown as lower bounds | as built | other cases or threshold | D273, D274, G6 Q54-Q59 |
+| 5.1.16 | The building look: starter Foundry uses GT casings as decoration; no doors or beds (no item of their own); every orientation meta refused (no stairs facing, sideways logs); meta > 15 refused until worldedit #30 is shown fixed; the six line types and the 256-block "nearby" radius fixed in code | as built | plain blocks only; add doors by their placing item; orientation families (a WO); a warning instead of refusing meta > 15 after 3.13.1; `[build]` keys | D307, D308, D314, D315, G10 Q16, Q17, Q20, Q37, Q38 |
+| 5.1.17 | Shells: nothing inside the layout below the roof, walls only in the 1-block ring; one checklist per multi type, per layer; a multi with several variants placed at its largest | as built | inner partitions or mezzanines; a per-machine checklist; pick the variant a recipe needs | D312, D316, D320, G10 Q29, Q40, Q49 |
+| 5.1.18 | Ores: veins of an unknown mix at the end of every search? | not listed | listed last | G1 PR #42 Q1 |
+| 5.1.19 | The quest goals feature shows at level 0 that a locked quest n steps away asks for an item with your goal's words | as built (from your own goals note) | hide goal distances to locked quests | D269, G6 Q30 |
+
+### 5.2 Anything touching Play
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.2.1 | **The Play-safety threat model**: the guards hold against any sequence of wizard and API calls and against hand edits of `gos.toml` the runbooks suggest, not against arbitrary edits; Play never moves by a click; former Plays recorded in two places, cleared by hand; an unreadable `former_plays.txt` refuses the save; relative `[paths]`; case-folded compare; the WARN/ERROR list; the GTNH binding row reads Play's `options.txt` | as built, every refusal fails safe | a guarded "move Play" flow; refuse relative paths; move an unreadable record aside; add `world_backups` to the gate | D223, D167, G2 Q40-Q52, [#60](https://github.com/crazie450-prog/GretecOS/pull/60) |
+| 5.2.2 | Pack updates on Play: `update_play.py` mirrors Lab's whole `config/` into Play (backed up first); the GT pin bumps before `adopt yes`; a rollback doesn't restore the previous adopted record; a Play world backup from the last 24 h counts; a Lab export leaves Export holding Lab's mods until the next export | as built, never run on Play until you adopt a real update | mirror only changed configs; bump after adopt; restore the record on rollback; another backup window | D146-D149, G1 PR #47 Q3-Q7 |
+| 5.2.3 | **May Play's OC agent use M2 (HTTP)?** A program that binds the core's port while the core is down could have the agent run an allowed command unconfirmed | **no M2 on Play**: Play stays on M1 (gos-dev can't write its `inbox.json`); Lab keeps M2 | allow M2 on Play, or have the core sign each command (a contract `v` bump, a WO) | D214, G7 Q5, [#55](https://github.com/crazie450-prog/GretecOS/pull/55) Q5, [#64](https://github.com/crazie450-prog/GretecOS/pull/64) Q11 |
+| 5.2.4 | GregtecLink in Play: the install switches the listener on in Play; Lab's default exclude gains `gregteclink*` | as built (3.15.3 is yours to run) | listener off in Play (My base then counts by hand and census only) | D287, G8 PR #90 Q7 |
+| 5.2.5 | Only Play's watchers feed My base; a census count of 0 kept, an event 0 deleted (My base up to ~45 s stale) | as built | newer-event-wins (a D211 change) | D261, G6 Q8-Q9 |
+| 5.2.6 | Play's fingerprint: which config files count (the whitelist is the implementer's default; `mmc-pack.json` only warns, D142 (7)) | as D120 | add or drop files | D120 |
+| 5.2.7 | After Play quits, an export that fails to load stays recorded and the stale card stays; collect and build run under the instance lock, so Play can't start for about a minute; the ask goes through a file in `GOS_HOME\run` | as built | no load offer; load outside the lock | D329, [#112](https://github.com/crazie450-prog/GretecOS/pull/112) Q3-Q5, Q7 |
+| 5.2.8 | Adding GT-Not-Leisure to Play (D02's world gate): a versioned GTNL release with commit `28007498`, GTNL #575 rechecked, the Programmable Hatches #323 re-test | GTNL stays out of Play | add it after the gate passes, before the survival world starts (a world gate: it can't be added later without a new world) | D02, D88, D93, G0 carry-overs |
+| 5.2.9 | `!gos` on a LAN world with cheats on can be spoofed with `/tellraw` (read-only answers that spend credits; actions refused); a server is out of scope | as built (single player and LAN host only) | turn `!gos` off when a LAN is open; the server case later | D286, [QA:V6], G8 Q4, risk 8 |
+| 5.2.10 | The screen key's F2 fallback reads screenshots you took in Play's or Lab's folder (GOS never presses F2) | as built | Lab only | D288, G8 Q11 |
+
+### 5.3 Spending
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.3.1 | **The paid PC runs** (section 1's list): recipe-lookup eval (under $10), deep-lane eval (up to $20), the design-cost run that sets `task_max_usd`, quest, advisor, screen and wiki checks; the paid eval writes into the live vault | not run until you run them; `task_max_usd` stays **2.0**; the cap rule is worst x 1.5 rounded up to $0.25, at least $0.50 | skip any (its gate item then stays "met with fakes"); run the deep-lane eval on a copy of the vault | D253, D170, G2 Q16, Q31, G3 PR #80, [#54](https://github.com/crazie450-prog/GretecOS/pull/54) Q7 |
+| 5.3.2 | **The agent models** (`[models]`): fast lane Haiku 5.5; orchestrator and researcher Sonnet 5.5; planner and architect Opus 5.5 at high effort; analyst and vault-curator Haiku 5.5; vision Sonnet 5.5; `use_heavy = false` | as D155 | cheaper planner/architect (Sonnet) for cost, or `use_heavy = true` for quality; every model must be one `gregtec.llm.prices` prices | D155, D289 |
+| 5.3.3 | **Usage and pace:** the day your included credits reset (the meter's cycle); a 50% heads-up as info only; a **$10 day cap** that only alerts; the 80%/100% DMs and the no-AI pause at 100% (D48); log compaction stops at the first credit alert | cycle from D118's default; $10/day; 50% info | your reset day; another day cap or none; pause at the cap (D16 forbids a silent downgrade) | D118, D165, D334, [#123](https://github.com/crazie450-prog/GretecOS/pull/123) |
+| 5.3.4 | Deep-lane budgets: a paused task stops by itself after 30 min; `plan_explain`'s planner-model calls are metered but outside the per-task cap; no cap approval from Discord | as built | another wait; count explanations inside the cap; allow approval from Discord | D156, D251, D297, G2 Q14, [#107](https://github.com/crazie450-prog/GretecOS/pull/107) Q5 |
+| 5.3.5 | No built-in web tools for the deep lane (the researcher works from the DB, the vault and the wiki cache) | none | give the researcher WebSearch/WebFetch (they could carry vault text to any URL) | D154, G2 Q17 |
+| 5.3.6 | No-AI mode: deep-lane tasks stop and compaction waits while the AI is off; a plain 429 or other 4xx doesn't switch; Stop leaves the core stopped (exit 5); `on_credits_out` other than `"no_ai"` stops the core from starting | as built | per G2 Q32-Q39 | D164, D165, G2 Q32-Q39, [#58](https://github.com/crazie450-prog/GretecOS/pull/58) |
+| 5.3.7 | `!gos` and the mod token can spend credits; the mod token is its own kind kept in `GOS_HOME\config\` | as built | `!gos` off | D285, G8 Q1 |
+| 5.3.8 | ElevenLabs (paid, optional): voice Adam until you pick one | not used | your voice id | D203, G5 Q18 |
+| 5.3.9 | The wizard's key test is one metered call, only on Test, refused while the AI is off | as built | | D168, G2 Q53 |
+
+### 5.4 Voice, keys and personas
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.4.1 | **The wake phrase** | `hey archivist` (34/40 on synthetic speech; your run decides) | `hello quartermaster` or your own; threshold per [`wake.md`](runbooks/wake.md) D7 | D186, D187, G5 Q21 |
+| 5.4.2 | Keys: talk F13 (hold), confirm F14, cancel F15, next card F16, screen F17; only F13-F24, Pause, Scroll Lock; no mouse buttons directly; nothing suppressed (keys must stay unbound in GTNH and Discord) | as built | other keys under `[voice]`; toggle mode | D180, D169, G5 Q1-Q4, G8 Q9 |
+| 5.4.3 | Speech-to-text: `auto` falls back to Parakeet if the GPU path fails; cuBLAS a pinned PC step, not a locked dependency; Parakeet (NVIDIA licence, ~900 MB) not locked; GOS_APP grows ~400 MB a release; no STT timeout | as built | fall back to `whisper-cpu small.en` (decide from 3.8.3's runs); an STT timeout | D182, D184, G5 Q8-Q14 |
+| 5.4.4 | Text-to-speech: the default engine; the speech filter's readings ("12:30", "m"); an engine dropped for the session after 3 failures; which WO takes `speak` and `timer_set` | Kokoro on the CPU (missed 400 ms by ~10x in the container; Piper met it) | Piper or Kokoro on the GPU per 3.8.4's bench | D203-D205, G5 Q15-Q20 |
+| 5.4.5 | **GPL runtime dependencies**: phonemizer and espeak-ng (GPL-3.0) are installed from PyPI at runtime, never vendored into core | accepted as installed-only | a follow-up WO for an Apache-2.0 grapheme-to-phoneme step | D203, G5 Q15, risk 4, [#65](https://github.com/crazie450-prog/GretecOS/pull/65) Q1 |
+| 5.4.6 | Wake behaviour: the chime after stage 2; a stage-1 look-alike stops GOS speaking; barge-in after 0.3 s of talk; the cancel window 1.5 s (a pause of 1.3 s or more after the phrase loses the question); 0.1 s onset; openWakeWord's pipeline re-implemented (Apache-2.0) | as built | a longer window (~3 s was suggested); other timings | D185, G5 Q22-Q26 |
+| 5.4.7 | Voice client: deep results spoken only for tasks asked by voice; "Core offline." once per outage after 15 s; the cancel hotkey's behaviour | as built | speak deep results asked from Discord or the dashboard too | D179, G5 Q5-Q7 |
+| 5.4.8 | Discord coexistence: warn only about Pause and Scroll Lock bound in Discord; binding talk to Push To Mute not recommended; ducking at 3; the chime on the Chat endpoint | as built | other keys to warn about | D246, D247, G5 Q27-Q32 |
+| 5.4.9 | Personas: shipped packs in `_gos/personas/`, yours in `personas/`, agents only in `personas/drafts/`; the voices per pack; a name of more than 3 words isn't a switch; `persona_set` and the `persona` subagent unassigned | as built; `gt-veteran` default | a "promote draft" button; other voices | D206-D208, G5 Q33-Q37 |
+| 5.4.10 | Benchmarks: the "cut by the filter" share gated at ≤ 5%; words counted as heard (D23); "no TPS impact" = mean drop ≤ 0.1 TPS; the Play pre-launch hook moved to WO-6.1 | as built | info only; another reading | D248, D249, G5 Q38-Q41 |
+| 5.4.11 | The fast lane's gate: P50 time to first token (§8) or P50 total time, since only checked text is spoken | TTFT as §8 says; PM14's `total_ms` measured in 3.8.11 | gate on `total_ms` | D152, D204, G2 Q11, G5 risk 7 |
+| 5.4.12 | Plural item names can resolve to the wrong item with no ambiguity flag ("sticks" gives Crop Sticks) | open; watch 3.8.3's `MISS` lines | a plural-aware resolver (a WO) | G2 Q30, [#54](https://github.com/crazie450-prog/GretecOS/pull/54) Q6 |
+| 5.4.13 | Mic gating while GOS speaks: the spoken "Say spoil it on its own..." hint could come back through the mic | the headset keeps speakers off the mic | gate the mic while speaking | D268 (attacker low) |
+
+### 5.5 Q&A, agents and the vault
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.5.1 | Plan §9's wiki (15) and hover-item (10) evals have no case files | the G11 report says "no eval: open" | accept `whats_this_10_items` plus [`gregteclink_client.md`](runbooks/gregteclink_client.md) B.5 and 3.9.7 in their place, or have them written (they must cite real `w:`/`r:` ids) | D337 F3, G8 should-do 1, [#128](https://github.com/crazie450-prog/GretecOS/pull/128) |
+| 5.5.2 | The recipe-lookup skill (~1.4k tokens) is in every fast-lane request's cached prompt; instant replies skip flagged rows; "simplest" follows the tier rule (bronze resolves to Long Bronze Rod); tier wants are strict; two kinds of wrong answer still pass the scorer | as built (open PR #117 sorts `fake?` rows last) | per G2 Q25-Q30 | D170, D172, [#54](https://github.com/crazie450-prog/GretecOS/pull/54) Q1-Q6 |
+| 5.5.3 | The fast lane: "how many X does the EBF need" and "what does the plan say" go to the fast lane with no pre-retrieval; the wording when a number check fails twice; the cached prompt leaves out the index's rows that point into `me/` | as built | pre-retrieval for those; other wording | D152, G2 Q12-Q13 |
+| 5.5.4 | The deep lane's numbers aren't checked (answers marked "numbers not checked") | as built | add D152's number check to the deep lane | G2 Q23, G2 risk 3 |
+| 5.5.5 | Skills come only from `vault-template/_gos/` (edits in the live vault are ignored) | as built | | G2 Q15, [#49](https://github.com/crazie450-prog/GretecOS/pull/49) Q2 |
+| 5.5.6 | Vault maintenance: the session-end backup may be cut short on a large DB; "missed" = 2 days; every daily-log fact key counts as an event kind; a summariser count outside the computed `n_` lines | as built | run an overdue backup at the next core start; 3 days; a fixed kind list; refuse such summaries | D143, G2 Q4-Q8 |
+| 5.5.7 | `db_sql`'s 64 KiB value cap makes `SELECT *` on `export_run` fail with a message saying so | as built | | G2 Q3, [#36](https://github.com/crazie450-prog/GretecOS/pull/36) Q6 |
+| 5.5.8 | Are any of the five WO-2.0 "Feature concepts" in scope (What's this?, Shopping list, Hazard watch, Tier ladder, Boots like a multiblock)? | not in scope (What's this? was built as WO-8.1) | name the ones you want as WOs | D92, G2 Q1, [#17](https://github.com/crazie450-prog/GretecOS/pull/17) |
+| 5.5.9 | What's this?: only container GUIs and NEI's overlay are read; answers are deterministic (item tooltips are a gap); an NBT variant with no recipe falls back to the plain item | as built | read the quest book too; a curated alias for discharged IC2 batteries | D285, D286, G8 Q2-Q6 |
+| 5.5.10 | Screen reading: capture in the voice client only; the window found by title and class; dxcam and comtypes (MIT) not vendored, comtypes held below 1.5; numbers only from DB tools; adaptive thinking at effort low; the table card reused; eval frames in a temp folder; with Play and Lab both connected the pointer is dropped | as built | per G8 Q10-Q19 | D288, D289, [#94](https://github.com/crazie450-prog/GretecOS/pull/94) |
+| 5.5.11 | Wiki: a query holds the wiki turn for its retry loop (5 s for an agent); redirects stored with their own revid; missing titles remembered 15 min; the User-Agent and y/N prompt; the read-only researcher | as built | per G8 Q20-Q24 | D290-D292, [#97](https://github.com/crazie450-prog/GretecOS/pull/97) |
+| 5.5.12 | The router's anchored "can I do next" rule | as built | | D337 F2, [#128](https://github.com/crazie450-prog/GretecOS/pull/128) |
+| 5.5.13 | Persona switch by `POST /api/ask "persona X"` from any client, while `POST /api/persona` refuses clients other than Discord | as built (gate low) | refuse the ask route too | D206, [#67](https://github.com/crazie450-prog/GretecOS/pull/67) gate low |
+
+### 5.6 The production planner
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.6.1 | The 14 benchmark lines (PM draft, D65) and the circuit lines' tiers (nanocircuits IV, wetware LuV) | as in G3 step 3 | edit the list or the tiers (Q-G3-1, Q-G3-2) | D65, D254, Q-G3-1, Q-G3-2 |
+| 5.6.2 | How G3's references are read: base recipe = NEI; OC inputs Lab-only; line totals against gtnhplanner.com | as D254 (reviewer agreed with changes) | | D254, Q-G3-4 |
+| 5.6.3 | Fixed- and custom-power machines (steam multis, Windmill, fusion, Precise Assembler, EIC) need `voltage`/`amps` facts; `processing custom` machines with a map (the Assembly Line) on GT's generic rules, badged | a follow-up WO not opened; badged `custom` + `low_confidence` | open the facts WO; curate each | D176, G3 PR #59 Q1-Q2, Q6 |
+| 5.6.4 | Graph rules: side routes listed and pinnable; the reverse-use rule; template loop items met off the route; one fluid in several slots refused | as built | per G3 PR #63 Q1-Q4, Q6 | D189-D191, [#63](https://github.com/crazie450-prog/GretecOS/pull/63) |
+| 5.6.5 | The MILP, sizing, the plan JSON and routes: when one route runs every machine, idling routes are dropped | as built (reviewer agreed) | | D192-D195, [#66](https://github.com/crazie450-prog/GretecOS/pull/66) |
+| 5.6.6 | Explanations: `explain.explain()` in rank order; numbers in words aren't read; irregular plurals not masked | as built | | D199, [#72](https://github.com/crazie450-prog/GretecOS/pull/72) |
+| 5.6.7 | Outputs: clearance 1 block each side + 1 above; Pillow for the PNG, elkjs layout, Mermaid only in plan notes; gtnhplanner format with GOS sizing in `metadata.gos`; lifecycle one step at a time; boundary rates in the flow card's text | as built | amend §6.1 for diagrams in notes; a `rate` field; reject/undo accept | D200-D202, G3 PR #78 Q1-Q5 |
+| 5.6.8 | My base: in the core's tables keyed by stable keys; manual first, then census, then events; devices and admin edit, client tokens read, agents never write; stock also blocks the request's own target | as built | let stock skip the request's own target, as running lines now do | D210, D211, D212, G3 PR #68 Q1-Q3, G4 PR #88 Q2 |
+| 5.6.9 | Which WO generates `base/tier.md`, `machines.md` and `storage.md` (plan 6.1)? | none yet (WO-4.4 nearest) | name one | G3 PR #68 Q4 |
+| 5.6.10 | Design jobs and the cache: 512 cached component solves (~0.5 MB each); a key's ids sorted by id; accept and rename stay quick calls; a job keeps running when its page closes; a restart marks it interrupted | as built | another bound; re-run on restart | D352-D354, [#129](https://github.com/crazie450-prog/GretecOS/pull/129) Q1-Q5 |
+| 5.6.11 | Which plans an update flags: every plan, any status (plan 7.13 says accepted); an earlier flag keeps its run; a plan fine again is cleared; the inbox note's name `ib-YYYYMMDD-export-diff-...` | as built | accepted plans only | D147, D330, D331, G1 PR #47 Q1, [#112](https://github.com/crazie450-prog/GretecOS/pull/112) Q1, Q2, Q6 |
+
+### 5.7 Power
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.7.1 | The naquadah benchmark: kept at IV with fusion deferred (MkI is decanted from imported cells; its only recipe is LuV fusion, which isn't sized). Move it to LuV once a later WO sizes fusion? | IV; **a designed MkI chain is not met** (G4 stays "not met" on it) | open a fusion-sizing WO and move the line to LuV | D328, D176, Q-G4-1, [#105](https://github.com/crazie450-prog/GretecOS/pull/105) Q6-Q7 |
+| 5.7.2 | The Large Naquadah Reactor: export lists and liquid air from the export; unboosted only; the dynamo choice (buffered dynamo excluded); liquid air by its own chain; the netted-boundary post-step | as built (reviewer agreed; (d) kept as a post-step) | boosted runs; an LP constraint | D326, D327, [#105](https://github.com/crazie450-prog/GretecOS/pull/105) Q1-Q5 |
+| 5.7.3 | What WO-4.1 sizes: single blocks only on maps read as EU; XL turbines, LCE/ECE and others `not_modelled`; legacy controllers separate | as built | model more (each is a WO) | D232, G4 PR #77 |
+| 5.7.4 | Effort for power: incomplete efforts rank after complete ones in `output_per_effort` only; hatches, pipes, circuits and cables not counted; `unlock_h` 0 with an empty My base | as built | penalise `uncounted` in `best` and `self_sustaining` too | D236, D237, G4 PR #85 Q1-Q4, Q6 |
+| 5.7.5 | The EU ledger: status joined; supersede in one step; base-wide deficit; tier mismatch; amp overload; line outputs exclude the request's own target; rates shown unrounded | as built (reviewer agreed with changes) | | D238, D239, G4 PR #88 Q1, Q4, Q5 |
+| 5.7.6 | A read-only `distribution_check` agent tool and a ledger card section | not built | a follow-up WO | D242, G4 PR #91 Q3 |
+| 5.7.7 | The Power view: options saved as proposed plans at design time (they pile up until a cleanup); buffers only once a peak window is given; `bound` a string, one `kind`/`fuel` each; HiGHS presolve off; the generator label embeds the raw fuel key | as built | a cleanup job; multi-value kinds | D243-D245, G4 PR #96 Q1-Q6, Q8 |
+| 5.7.8 | Tied options swap when the export run changes (rank.py's last tie-break hashes the run) | as built | a run-independent tie-break in rank.py (a small WO) | [#105](https://github.com/crazie450-prog/GretecOS/pull/105) Q8 |
+| 5.7.9 | The four D65 lines' requests (modes, tiers, kinds, fuels) | as D255 | | D255, Q-G4-1 |
+
+### 5.8 Context, quests, ores and crops
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.8.1 | Watchers: per-file dedupe; a save read after 1 s still; the ticking-line allow-list for unpausing (else the 45 s autosave); `watchers_with_play` `"lab"` until 3.15.4; a running client isn't adopted at supervisor start | as built | per G6 Q1-Q5 | D257-D259, [#87](https://github.com/crazie450-prog/GretecOS/pull/87) |
+| 5.8.2 | Machine events through a file the watchers tail; cables and pipes not counted; oversized chunks as `append` census events; readers wait at 1,000 queued; chunk slots not kept across starts | as built | save chunk slots if 3.10.3 shows the cost | D260-D262, G6 Q6-Q13 |
+| 5.8.3 | Sessions: an override above the detected tier opens a provisional age; idle close waits for the first post or 15 min; a bad event is skipped and logged; a chat line seen by the log and by GregtecLink is stored twice (chat counts read double) | as built | drop the link's chat copy; Activity a number key or phone tab | D263-D265, G6 Q16-Q21 |
+| 5.8.4 | The advisor reads the alert engine's rows; `[alerts] rules` controls the stall notice; a drain notice and `power_low` can both speak about one LSC; stall steps read every binding, Lab included; a failed clearing write keeps a stale stall | as built | skip the drain notice while `power_low` fires; filter to Play; retry the clearing write | D266, D267, D281, G6 Q36-Q41 |
+| 5.8.5 | Ore intel: position from `level.dat` at the last save; citations `vein:` and `pos:`; the waypoint tool deep lane only; waypoint y the middle of the mix; waypoints only into the world the veins came from; `ore-intel` in the cached prompt; paired browsers may propose waypoints | as built | per G6 Q44-Q52 | D271, D272, [#83](https://github.com/crazie450-prog/GretecOS/pull/83) |
+| 5.8.6 | The crop data assumes GTNH-Export runs in English | English | match another language (Export's own `options.txt`) | D137 |
+| 5.8.7 | A crop dumper file cut short in the wrong place could pass the line check | as built | a stricter check | G1 PR #37 |
+| 5.8.8 | The breeding station: a starter parked only while `keep`+1 are in the chest; every copier paused each wind-down step; `copy_fert`/`cat_left` optional contract fields; the tank read by level, not fluid name | as built | a `cat_left` line in the station panel (board); read fluid names after the Lab run | D282-D284, G7 Q31-Q34 |
+| 5.8.9 | Lab journal: plan §9 L3 asks for a journal Lab never writes (D263 (2)) | Play's first session is the journal check (3.15.4) | align L3's wording | G6 finding 2 |
+
+### 5.9 OC bridge, Discord, alerts and the phone
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.9.1 | The OC agent: one exact `getItemInNetwork` per watched entry (NBT stacks are other items); `max_watch` ≤ 64; messages under 96 KB; a lost craft is `failed` "may still run"; `--once` runs on ≤ 30 s; Lua 5.3 and the other agreed calls | as built | per G7 Q1-Q4, Q6, Q7 | D213-D215, [#55](https://github.com/crazie450-prog/GretecOS/pull/55) |
+| 5.9.2 | M1 mailbox: an agent is (binding, address); a folder swap caught after the step; a 2 s quiet period; the 30 s reply TTL and ack rules; the core restarted before the Lab hour | as built | per G7 Q8-Q13 | D216-D218, [#62](https://github.com/crazie450-prog/GretecOS/pull/62) |
+| 5.9.3 | Confirm flow: a plain "confirm" within 3 s of a proposal is read back again (rounded to whole seconds); at most 16 OC computers per instance until a restart; an unauthenticated POST costs one token read | as built | another delay or cap | D219-D221, G7 Q14-Q18 |
+| 5.9.4 | Displays: contract `v` 1; 50 x 16 displays; HUD on M2 only; `poll_s` 2 while an action waits; notices as fixed templates; with no runner chat box and 2+ chat-box computers, all say the notice; `stopped` a warn (a soft-mallet stop shows too) | as built | refuse `cycle_s` 10 with displays; `stopped` as info | D277-D279, G7 Q19-Q23 |
+| 5.9.5 | Alert rules: holds on message time; rows left firing by an old engine become `lost`; one combined voice line per tick; `power_low_pct` alone moves the clear end; stopped counts as stalled | as built | per G7 Q24-Q29 | D280, D281, [#99](https://github.com/crazie450-prog/GretecOS/pull/99) |
+| 5.9.6 | The Discord bot: package `discordbot/`; jobs in the core, an interrupted job re-run once; the `discord` client may queue designs (proposed plans only); others get no response; route 1's PNG and BOM; "/" means a rate; a result that can't be posted is tried 3 times then left on the dashboard until a bot restart (in memory only); replies not ephemeral (use a private server) | as built | per G9 Q1-Q10 | D295-D297, [#107](https://github.com/crazie450-prog/GretecOS/pull/107) |
+| 5.9.7 | Routing: voice and DM exclusive per occurrence; unknown presence counts as present; Stop asks twice; a dropped DM isn't counted as sent; stale DMs dropped after a restart; two `GetLastInputInfo` callers | as built | per G9 Q12, Q15-Q19 | D298-D300, [#111](https://github.com/crazie450-prog/GretecOS/pull/111) |
+| 5.9.8 | The phone: `gos tailnet setup` never writes `gos.toml`; Funnel on any port blocks setup; the core refuses HTTP Funnel requests only (`check` catches TCP Funnel); Tailscale identity headers not checked (the pairing cookie is the credential); a `<name>:443` entry allows the bare name | as built | per G9 Q20-Q24 | D301, D303, [#119](https://github.com/crazie450-prog/GretecOS/pull/119) |
+
+### 5.10 Board approvals (D92, D158 (5))
+
+Views built to the design system without an approved board, each marked "needs Clayton's board approval". Approve, redline, or say what to change. Approved boards (D92): Now, Glance, Designer, Power, Quests, Settings + Health, Crops, first-run setup, States, the two phone boards, the ten age themes and both comfort modes; even those were built without the canvas handoff, so compare them too.
+
+| # | View or panel | Where to look | D / PR |
+|---|---|---|---|
+| 5.10.1 | Chat, the Ctrl+K palette, Costs | 3.5.1 | D159, G2 Q18 |
+| 5.10.2 | The AI offline and credit banners; the wizard against its approved board | 3.5.5, 2.10 | D164, D165, D167 |
+| 5.10.3 | Themes per device (monitor 2 and the phone can differ) or one setting in the core; glance timings | 2.11 | D162, G2 Q19, Q21 |
+| 5.10.4 | Base view, its Running lines panel and its Alerts list | 3.6.1, 3.11.10 | D212, D239, D279, D281, G4 PR #88 Q3 |
+| 5.10.5 | Designer view; the Floor plan panel and **Design a shell around it** button; the "Affected by update" banner; the job panel and right-rail job rows | 3.6.2, 3.13.4 | G3 PR #80, D313, D331, D353, G10 Q33, Q44 |
+| 5.10.6 | Power view, including where the effort table card sits | 3.7.6 | D237, D243 (2), G4 PR #85 Q5 |
+| 5.10.7 | Activity view and the tier-up recap panel (and whether Activity gets a number key) | 3.10.14 | G6 Q15, Q20 |
+| 5.10.8 | Ores view; Now's Next steps | 3.10.14 | D266, G6 Q50 |
+| 5.10.9 | Quests and Crops views against their approved boards; the Crops station panel | 3.10.14, 3.11.10 | D270, G6 Q31, G7 Q33 |
+| 5.10.10 | The action approval card (WO-2.6's ApprovalCard) | 3.11.10 | G7 boards |
+| 5.10.11 | Settings persona panel | 3.8.8 | G5 Q37 |
+| 5.10.12 | Phone tabs: D159's five (Now, Chat, Search, Costs, Settings) plus More, Base inside More; or Base replaces Costs; the More view | 3.12.7 | D302, G9 Q25 |
+| 5.10.13 | Build view's Shells panel; the 3D build guide and keyboard access to its scene | 3.13.4 | D319, G10 Q44, Q50, Q51 |
+| 5.10.14 | Costs' caps card | 3.14.5 | D334, [#123](https://github.com/crazie450-prog/GretecOS/pull/123) |
+
+### 5.11 Building design
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.11.1 | The 3D build guide: GuideNH's export framed on its own origin, MrBruh's previewer as the fallback; a fixed folder `data/guide-site`; GOS's own SVG viewer beside it; the frame PC only; 6 h path tokens | as built; D304 confirmed by 3.13.7 | MrBruh's previewer; three.js | D304, D319, G10 Q1-Q7, Q45-Q48 |
+| 5.11.2 | Footprints: none stored as files; metas not rotated; "legacy" by class name; the default variant smallest by volume; a capture of a controller the extractor has is refused | as built | per G10 Q8-Q11 | D305, D306 |
+| 5.11.3 | Captures from a `.schematic`: the one GT multiblock tile entity is the controller (else `--controller`); a rotated or flipped controller refused, not transformed; hatch kinds only from 8 single-base-class elements; GT pipes, cables and tile entities without coordinates refused | as built | un-rotate captures; record each class's hatch kinds in a later export | D350, D351, [#127](https://github.com/crazie450-prog/GretecOS/pull/127) Q1-Q4 |
+| 5.11.4 | Block catalog and palettes: texture PNGs not copied; `block_find` deep lane only; at most 255 block types per palette; `gos palette check` defaults to the Lab world; the newest run with a catalog | as built | per G10 Q14-Q21 | D307, D308, [#104](https://github.com/crazie450-prog/GretecOS/pull/104) |
+| 5.11.5 | Schematics: one id per registry name; split by layer above 255 types; `write_shell` the only path; GOS never pastes; the harness covers ids < 4096 and meta ≤ 15 (add EndlessIDs to the dev runtime later?) | as built | per G10 Q22-Q28 | D309-D311, [#109](https://github.com/crazie450-prog/GretecOS/pull/109) |
+| 5.11.6 | Layout: a tier with no generator fed through a transformer with no reserved cell; pipe drops through corridor headroom; corridors 3x3, clearance 1, chases 2 high, rows ≤ 64 | as built | reserve a transformer cell; handle drops in a shell WO | D312, G10 Q30-Q32 |
+| 5.11.7 | Themes: written only through `theme_save`; the fixed role list; refining a starter writes your copy, which then replaces it; theme uses in `data/build/theme_uses.jsonl`; version numbering | as built | per G10 Q34-Q36, Q39, Q54-Q56 | D314, D315, [#118](https://github.com/crazie450-prog/GretecOS/pull/118) |
+| 5.11.8 | Shells: the 25% repair share counts placed cells; you paste from entrance e1's `lo` cell; `build_request` saves by default | as built | per G10 Q41-Q43, Q57 | D317, D318, [#121](https://github.com/crazie450-prog/GretecOS/pull/121) |
+| 5.11.9 | **WO-10.0 was never run**: will you add the Sept 2026 img2schem SOW as `docs/img2schem_sow.md`? Every Phase 10 PR lists what it might change (reference-image input, formats, viewer, roofs, interiors) | Phase 10 as built from plan 7.10 (D158) | the PM re-scopes Phase 10 from the SOW | D74, D158, G10 Q13, Q52 |
+
+### 5.12 Data, exports, ops and process
+
+| # | Question | Default now | If you pick otherwise | D / PR |
+|---|---|---|---|---|
+| 5.12.1 | Oredict keys: only NEI-only slots keyed `ore:<name>`; GT's and the Crop Breeder's slots keyed by their displayed item; two names with the same members: first alphabetically; a run whose oredict part failed | as built | key every oredict slot (a one-time key change); a preferred-name list; refuse such runs | D104, D145, G1 PR #44 Q1-Q3 |
+| 5.12.2 | Non-recipe NEI handlers left out (the full pack may have more) | five left out | review the full pack's report | D105, G1 PR #27 Q3 |
+| 5.12.3 | The DB keeps the newest 2 export runs (`[db] keep_runs`) plus any run a plan or flag needs | 2 | more | D107 |
+| 5.12.4 | GOS doesn't schedule `gos pack watch` itself (an optional daily Windows task in the runbook) | not scheduled | the core's idle maintenance runs it daily | D146, G1 PR #47 Q2 |
+| 5.12.5 | Draft an upstream GT5-Unofficial issue about the NEI handler race (nothing posted without your OK); NEI's fuel search runs in parallel during the dump; serial handler load (`nei_serial_load`) | not drafted; as D188 | draft it | D188, G1 PR #52 Q1-Q4 |
+| 5.12.6 | Backups and restore: `restore --verify` with no quiet fallback to an older day; the vault snapshot includes `me/` and `.git`; restore and swap-in manual; at restart a confirmed but unsent action is failed, not sent late; DMs at least once | as built | per [#123](https://github.com/crazie450-prog/GretecOS/pull/123) | D332, D333 |
+| 5.12.7 | Relocation is documentation plus a read-only check, no LAN server code before day one | as built | | D335, D45 |
+| 5.12.8 | The fake day one is an automated pytest, not `gos rehearse`, with no fake clock; F1 (lines logged while the watchers are down are lost if the log rotates then) left as a known gap | as built | a `gos rehearse` command; fix F1 (read a rotated file from its start) | D336, D337, [#128](https://github.com/crazie450-prog/GretecOS/pull/128) |
+| 5.12.9 | CI: wall-clock tests carry a `serial` marker and run in a second step; the supervisor reads every POST body (≤ 4 KiB) before refusing | as built | a single serial Windows run | D340, [#113](https://github.com/crazie450-prog/GretecOS/pull/113) Q1-Q3 |
+| 5.12.10 | The wizard's "Recipe DB and GT pin" row before the first `gos db build` | ok, with the "no DB yet" text | warn | [#125](https://github.com/crazie450-prog/GretecOS/pull/125) Q1 |
+| 5.12.11 | The same stdin watcher in `api/server.py`, `watchers/runner.py` and `gregtec_voice/cli.py` as the one #125 fixed in the bot | left alone (no abort reproduced) | the same `os.read` change | [#125](https://github.com/crazie450-prog/GretecOS/pull/125) Q3 |
+| 5.12.12 | Open WOs claim their schema version (and decision numbers) when they start | the PM assigns them in each work order | a row in `docs/decisions.md` per claim | [#105](https://github.com/crazie450-prog/GretecOS/pull/105) Q10, [#127](https://github.com/crazie450-prog/GretecOS/pull/127) Q5 |
+| 5.12.13 | The decision rule itself: build to G11 without interrupting you, self-merge on green CI and an independent review, every default reversible and marked pending you | in force until you sign G11 | | D158 |
+| 5.12.14 | Commit trailers differ between rounds on some branches (no action possible without a force push) | noted | | G3 PR #72, #78, G6 Q43, Q53, [#128](https://github.com/crazie450-prog/GretecOS/pull/128) |
+
+### 5.13 Already answered: nothing to do
+
+These rows say "pending Clayton" in their text, but a later row of yours settled them (the log is append-only, so the old text stays).
+
+| Row | Settled by |
+|---|---|
+| D91 (tagged commits only?) | D93 (1): any commit merged to `main` from a clean tree |
+| D95 (WO-1.1's split) | D98, D100 |
+| D102 (collected runs kept) | D142 (8): 5 |
+| D111 (flagged machines) | D142 (a), (b) |
+| D114 ("at tier X") | D142 (3): started (its hull made) |
+| D117 (cookie, pairing limits, approve step) | D142 (12): the core's defaults stand, no approve step |
+| D121 (an export whose NEI part failed) | D142 (6): doesn't count; quitting keeps asking |
+| D125 (who runs the extractor) | D142 (11): gos-dev runs it, you load it |
+| D129 (`ore_find` order) | D142 (c): by layer, then distance |
+| D141 (note formats, `me/` in the measurement) | D142 (d), D143: `me/` never sent; the measure itself is 3.2.4 |
+
+---
+
+## 6. Gate sign-offs G1 to G11
+
+G0 is signed (D99, 2026-11-06). Under D158 (2) every later gate is signed at this deployment test, in one sitting with the others. Each report's own "Required before Clayton signs" list is the authority; this table says what each report finds **not met** and what has changed on `main` since.
+
+| Gate | Report | What the report says is not met or open | Changed since the report | Sign after |
+|---|---|---|---|---|
+| G1 Recipe data | [`G1_review.md`](reviews/G1_review.md) | Cloud half met; the Lab and full-pack half is PC work. WO-1.8 "≥ 250 base controllers" never ran (V09); PR #32 Q4 unanswered | V09 resolved in the dev container (WO-10.2: 297 controllers, 455 variants); your own dump is still 3.3.5. The report's "Result" section still cites the 2026-11-11 runs made with the looser match | 3.1, 3.2.1-3.2.3, 3.3, 3.4.1 |
+| G2 Text Q&A | [`G2_review.md`](reviews/G2_review.md) | Nothing not met in code. Open: the real-model numbers (all paid PC runs) and the board approvals | the Windows CI hang risk fixed (#76: `timeout-minutes: 30`; #125: the `test_stt_cli` race) | 2, 3.2.4, 3.5, 5.10.1-5.10.3 |
+| G3 Planner | [`G3_review.md`](reviews/G3_review.md) | Nothing not met in code. Open: `task_max_usd` (your paid run); 3 lines differ from gtnhplanner.com by more than 2% (polyethylene, silicon, platline: the Lab decides); footprints unproven on real data; full-pack design time (finding 5) | WO-3.9 (#129) added the planner cache and design jobs with stage and Cancel (QA's slow-design defect); footprints now have the extractor dump | 3.6, 5.1.10, 5.6 |
+| G4 Power | [`G4_review.md`](reviews/G4_review.md) and its three addenda | **Not met:** finding 1 (EU not costed) is fixed by WO-4.7 (D323); finding 2 is fixed as far as the reactor goes by WO-4.8, but **a designed naquadah MkI chain at IV is not met**: MkI's only recipe is LuV fusion, and fusion isn't sized (D176, D328). WO-4.8's acceptance item 2 is not met for the same reason | 12 of 12 power-mode cases pass after 4.7 and 4.8; the light-fuel loop passes only under D324's default reading | 3.7, 5.1.1-5.1.3, 5.7.1. Sign G4 knowing the MkI chain is a late-game gap (not needed on day one), or hold it for a fusion-sizing WO |
+| G5 Voice | [`G5_review.md`](reviews/G5_review.md) | Nothing not met in code; every acceptance is a measurement on your PC. Risks: the wake word reached 34/40 on synthetic speech (target 38/40); STT on the CPU falls short of 95%; Kokoro on the CPU misses 400 ms | voice starts with Play since WO-6.1 (D259), once 3.15.4 is done | 3.8, 5.4 |
+| G6 Context | [`G6_review.md`](reviews/G6_review.md) | Nothing not met in code; every row met with fakes. Open: your five crops (Q57), the Lab checks | the `!gos`/screen runbook clash and `lab_world` wording fixed in the report's branch | 3.10, 3.15.4, 5.1.4-5.1.6, 5.8 |
+| G7 OC bridge | [`G7_review.md`](reviews/G7_review.md) | WO-7.1 met; 7.2-7.6 met with fakes. Open: question 5 (M2 on Play; default no) | the deep-lane import cycle (should-do 3) fixed by #125 | 3.11, 5.2.3, 5.9.1-5.9.5 |
+| G8 Client, screen, wiki | [`G8_review.md`](reviews/G8_review.md) | Nothing not met in code. Open: V13, V14; the wiki may refuse scripted access (then WO-8.3 stays dormant); item tooltips are a gap; **the hover-item and wiki eval files of plan §9 don't exist** (should-do 1) | the WO-7.3 stress-test floor fixed in G7's branch | 3.9, 3.15.3, 5.5.1, 5.5.9-5.5.11 |
+| G9 Discord, alerts, phone | [`G9_review.md`](reviews/G9_review.md) | Nothing not met in code. Open: V28, V35, L8; D298-D301 and D303 still read "Pending reviewer" | `gos tailnet off` now removes only GOS's mount (#125) | 3.12, 5.1.8, 5.9.6-5.9.8, 5.10.12 |
+| G10 Building design | [`G10_review.md`](reviews/G10_review.md) | **Defect 1** (a `.schematic` capture couldn't become a footprint) blocked sign-off; WO-10.0 never ran | defect 1 fixed by WO-10.9 (#127, D350-D351): `gos footprints capture` takes a `.schematic`. WO-10.0 still never ran (5.11.9) | 3.13, 5.1.16-5.1.17, 5.11 |
+| G11 Day one | the G11 report (to be written from this checklist and section 4's pastes) | §10's lines: each is done when the fake day one's CI report has it green **and** its PC steps passed. **Known red before the sitting:** the wiki and hover evals have no case files (Q&A line, 5.5.1); a designed MkI chain (Power line, through G4); D337 F1 (watcher lines lost if a log rotates while they are down) | WO-11.1, 11.2, 11.3 merged or in review; the fake day one runs in CI | section 4, then you start the survival world |
+
+---
+
+## 7. Known gaps and flakes
+
+What is known to be missing or fragile on `main` at `49c9e70`, so a failure that matches one of these isn't a new defect. Items marked **checked** were re-read in the code on 2026-11-19; the rest come from the merge gates' and gate reports' notes.
+
+### 7.1 Gaps in what the product does
+
+1. **Naquadah MkI is not designed from naquadah** at any tier: fusion reactors aren't sized (D176, D328); the IV line decants imported MkI cells (5.7.1).
+2. **No wiki (15) or hover-item (10) eval files** (`tests/evals` holds neither, **checked**; D337 F3).
+3. **Watcher lines are lost if a log rotates while the watchers are down** (D337 F1). The suggested follow-up: read a rotated file from its start, with the pause tracker ignoring replayed lines older than the restart.
+4. **A supervisor restart mid-session leaves the watchers stopped** until the next launch (D259, L7).
+5. **My base's automatic counts come from Play only** (D261): Lab checks use the census by hand.
+6. **Item tooltips aren't read** by What's this? (machine facts only, D286).
+7. **Every quality number so far is from fakes**: no real model has answered an eval on your key yet (G2 risk 2, G3 risk 3).
+8. **WO-10.0 never ran** (its SOW isn't in the repo); Phase 10 was built from plan 7.10 as written (D158).
+9. **The `.schematic` capture refuses rotated or flipped controllers** and gives hatch kinds only for 8 element classes (D350-D351).
+10. **A Discord result that can't be posted is retried 3 times, then waits for a bot restart** (in memory only; a 90 s Discord outage can leave it on the dashboard only) (D295).
+11. **Designs are slow on a cold cache** (1.5-4 min on the client DB before WO-3.9; the cache makes repeats fast; first designs on your pack are measured in 3.6.2).
+12. **No step in the product schedules `gos pack watch`** (5.12.4); V18 stays a weekly watch.
+
+### 7.2 Small defects still on `main` (none blocks day one)
+
+- **checked** `core/gregtec/build/layout.py` line 817: the transformer warning suggests `gos dist transformer --from <src> --to <tier>` without the required `--amps`, so pasting it fails.
+- **checked** `core/gregtec/build/shell.py` line 838: the second line of a refusal isn't an f-string, so it shows `{round(REPAIR_SHARE * 100)}%` literally.
+- **checked** `core/gregtec/build/guide.py` line 94: the docstring still says `guide.<host>`; the host is `guide-<host>`.
+- **checked** `voice/gregtec_voice/wake.py` `fetch()`: a download cut off by a network error leaves its `.part` file (a hash mismatch removes it).
+- **checked** `core/gregtec/vault/curator.py`: the manifest backfill for pre-WO-11.2 backups ignores the job's deadline and catches only `sqlite3.DatabaseError`, so an `OSError` there aborts the job before today's backup.
+- **checked** `export_diff` is still in the catalog's LATER list, not a registered tool.
+- **checked** `core/gregtec/db/queries/quest_search.sql`: locked shown quests sort after quests in reach, but among themselves by bm25 over name and description, so their order can reveal a little about a locked description at level 0.
+- **checked** `core/gregtec/quests/spoilers.py`: "now" is a leading filler (5.1.5).
+- **checked** `tests/integration/harness_cache.py`: waits up to 1800 s on a lock a killed worker left.
+- **checked** `core/gregtec/bridge/ingest.py`: `MAX_AGENTS = 64` agents remembered across all bindings (a busy Lab could evict Play's dedupe entry; D217 accepts it).
+- From the gates, not re-checked: `remote/routes.py` `check_spec` lets zero amounts through (the designer rejects them later) and doesn't validate a power job's tier before queueing; `gos palette blocks ... | head` ends in a `BrokenPipeError` traceback (PowerShell's `Select-Object -First` doesn't); `ops/costs.py`'s task-cap alert shows the deep lane's estimate, not the meter; the `PRAGMA synchronous=FULL` test passes without the line; the 6.3 age override stepped up twice can leave a closed row provisional; a paired page reads the pairing expiry up to ~2 s early.
+
+### 7.3 Flakes (re-run, don't deploy over a red job)
+
+- `tests/unit/test_supervisor.py::test_core_exits_3_when_its_port_is_taken`: two `free_port()` calls can return the same port (open PR [#115](https://github.com/crazie450-prog/GretecOS/pull/115) addresses it).
+- `tests/unit/watchers/test_with_play.py::test_gos_watch_run_spools_events` (IndexError, seen once).
+- `tests/unit/test_playhooks.py::test_export_waits_for_a_launch_to_start_its_client` (wall clock under load).
+- `tests/unit/alerts/test_core_routing.py::test_without_a_router_the_engines_push_speaks_as_before` under xdist load (#125 made it wait for the alert message; watch for it).
+- Windows: `test_ask_errors_say_whether_the_core_answered` (`WinError 10053`, seen once); the WO-7.3 mailbox stress tests on a slow runner (floor scaled in G7's branch).
+- The `mod` job's critical path is `test_power_view_harness.py` (about 12.5 min alone; the job took 17-27 min of its 60 since D340).
+- CI runner apt DNS failures (archive.ubuntu.com): a re-run, not a code problem.
+
+### 7.4 Docs and records that lag the code
+
+- `core/gregtec/verify.tsv` V04 still reads as open, though D85 resolved the key (3.2.2 closes the Lab half).
+- Plan §6 (the skills table, line 535) lists `ledger_*` and `plan_set_status` among base-keeper's tools, contradicting D238 (**checked**).
+- Plan Appendix B's `build/` line names `shells.py` and `shell_designer.py`; Phase 10 built `shell.py`, `shell_store.py`, `shell_cli.py`, `layout.py`, `capture.py`, `coverage.py`, `guide.py`, `guide_data.py`, `worldreg.py` (**checked**).
+- `core/gregtec/api/app.py`'s route table lacks `GET /api/game` and `WS /mod/ws` (**checked**).
+- [`crop_guide.md`](runbooks/crop_guide.md) doesn't say which account runs `uv run gos crops ...` (3.10.13 says gos-dev); [`themes.md`](runbooks/themes.md) and [`shells_lab.md`](runbooks/shells_lab.md) write `uv run gos` while saying "your account" (use `& $gos`) (**checked**).
+- `G7_review.md` step 10 should read "`ore_intel_check.md` A then B (gos-dev, `lab_world = lab-ores`)": B depends on A (3.10.10 says so).
+- Decision rows whose PR reviewer gave a verdict still open "Pending reviewer": D189-D202, D232-D237, D243-D245, D257-D262, D266, D274, D277-D281, D298-D301, D303, D305-D306, D309-D320, D326-D327, D332-D333, D335, D350-D354. The log is append-only: a later PM row should record the verdicts.
+- Plan §9 L3 asks for a journal that Lab never writes (D263 (2)); G9's L8 says "craft" where the phone runbook also allows a waypoint.
+
+### 7.5 Open pull requests
+
+- [#114](https://github.com/crazie450-prog/GretecOS/pull/114): a deep-lane handoff is snapshotted before the worker gets it (WO-2.4 fix).
+- [#115](https://github.com/crazie450-prog/GretecOS/pull/115): `write_config` and `make_cfg` take two distinct free ports (the supervisor flake).
+- [#117](https://github.com/crazie450-prog/GretecOS/pull/117): recipe cards sort `fake?` rows after the recipes whose status is known (PR #54 Q2's root fix).
+- [#128](https://github.com/crazie450-prog/GretecOS/pull/128): WO-11.3, the fake day one (this checklist builds on it).
+
+Each belongs to its own session; whether they land before your deploy decides only whether their fix is in it.
