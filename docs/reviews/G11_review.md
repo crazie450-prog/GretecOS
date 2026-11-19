@@ -1,6 +1,6 @@
 # Gregtec OS: G11 gate review (day one)
 
-2026-11-19 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/main` at `49c9e70` (PR #129 merged; every work order of Phases 0-10, WO-10.9, WO-3.9, WO-11.1 and WO-11.2 on it), plus the two open PRs this branch stacks on: WO-11.3 (PR [#128](https://github.com/crazie450-prog/GretecOS/pull/128), head `fe3641b`, its merge gate passed at `fd12d2d`) and the deployment checklist (PR [#131](https://github.com/crazie450-prog/GretecOS/pull/131), head `1584f1e`, which holds #128's tree). This branch (`review/g11`) is based on `1584f1e`. The format follows G0-G10.
+2026-11-19 · independent gate reviewer (D41, D158 (2)) · reviewed: `origin/main` at `2a961ed` (PR [#128](https://github.com/crazie450-prog/GretecOS/pull/128), WO-11.3, merged at 06:42 UTC; every work order of Phases 0-11, WO-10.9 and WO-3.9 on it; first written at `49c9e70` while #128 was open, and brought up to date after it merged), plus the open PR this branch stacks on: the deployment checklist (PR [#131](https://github.com/crazie450-prog/GretecOS/pull/131), head `1584f1e`). This branch (`review/g11`) is `1584f1e` plus this report, with `origin/main` merged in. Open beside it, from other sessions and not reviewed as merged: #114, #115, #117, #130 (WO-3.9's cache-key tests, tests only) and #132 (the core reads a refused request's body first, a Windows fix, D355). The format follows G0-G10.
 
 G11 in plan §8 is **"Day one: Clayton starts his survival 2.9 world"**, and WO-11.3's acceptance is "§10 checklist all green". This report gives, for every §10 line and every Phase 11 row, the evidence and one status:
 
@@ -13,7 +13,7 @@ Evidence tags, as in G0-G10: **[repo]** the repo, the git history or GitHub's CI
 
 ## Verdict
 
-**G11 is not met yet, and it can't be met in the cloud: day one is Clayton starting his survival world, after the PC sitting.** What the build can deliver is delivered: `main` is green, every Phase 0-11 work order is built, the automated fake day one is **GREEN** (in CI on #131's head and here), and every §10 line is met with fakes **except two that are not met in code**:
+**G11 is not met yet, and it can't be met in the cloud: day one is Clayton starting his survival world, after the PC sitting.** What the build can deliver is delivered: `main` is green, every Phase 0-11 work order is merged, the automated fake day one is **GREEN** (in CI on #128's and #131's heads, and here), and every §10 line is met with fakes **except two that are not met in code**:
 
 1. **Q&A (§10 line 5): plan §9's wiki (15) and hover-item (10) evals don't exist** (`tests/evals` holds neither; D337 F3, G8 should-do 1). Either they are written (each case citing real `w:`/`r:` ids), or Clayton accepts the substitutes in checklist 5.5.1.
 2. **Power (§10 line 3): a designed naquadah MkI chain at IV is not met** (G4, WO-4.8 acceptance item 2): MkI's only recipe is LuV fusion, and fusion isn't sized (D176, D328). Not needed on day one (late game); Clayton signs G4 knowing it, or holds it for a fusion-sizing WO (checklist 5.7.1).
@@ -22,7 +22,7 @@ And one new **should-do before Play's watchers go on** (finding 1 below): on Win
 
 **What stands between `main` and day one, in order:**
 
-1. **Merge #128 (WO-11.3) and #131 (the checklist)**, then this report; deploy only a commit whose CI is all green (checklist 2.2). Until #128 is on `main`, `main` has no fake day one at all.
+1. **Merge #131 (the checklist)**, then this report (#128, WO-11.3, is on `main` since `2a961ed`); deploy only a commit whose CI is all green (checklist 2.2). Until #131 is on `main`, `main` has no `docs/deployment_checklist.md`, which every PC step below refers to.
 2. **Close or accept the two red lines above** (Clayton's answers 5.5.1 and 5.7.1, or two small WOs).
 3. **Decide finding 1** (a short follow-up WO, or accept it on the strength of checklist 3.10.3's 2-hour session and V27).
 4. **The PC sitting**: checklist sections 2 and 3 (deploy, the wizard, every gate's Lab and PC checks, the paid evals: about 30-35 hours over several days, up to about $80 of API spend), then section 4, the 2-hour fake day one in the Lab (§10's last line).
@@ -31,7 +31,7 @@ And one new **should-do before Play's watchers go on** (finding 1 below): on Win
 
 ### This reviewer's runs [here]
 
-All on this branch (`1584f1e` plus this report and its guard test).
+All on this branch (`1584f1e` plus this report and its guard test). #128 merged into `main` without changing its tree since `fe3641b`, the head these runs held; ruff and the full pytest were run again after `origin/main` (`2a961ed`) was merged in ("After the review").
 
 | Check | Result |
 |---|---|
@@ -59,9 +59,10 @@ No DB, export, token or keyring entry from these runs is committed; they stay in
 | `e61c437` #123 merged | 44401892676, 44401892712 | success | **failure** (`test_soak`, finding 1) | success | success | success |
 | `49c9e70` **`main`'s head** | 44450704739, 44450704650 | **success** | **success** | **success** | **success** | **success** |
 | `1584f1e` PR #131 head (holds #128) | 44458253790, 44458253784 | success | success | success (the fake day one ran in it; artifact `fake-day-one`: `Rehearsal: GREEN`) | success | success |
-| `fe3641b` PR #128 head | 44460564006 | success | in progress at writing | in progress at writing | success | |
+| `fe3641b` PR #128 head | 44460564006 | success | success | success (24 min) | success | |
+| `2a961ed` **`main`'s head**, #128 merged (same tree as `fe3641b`) | 44474143125 | MAIN_UBUNTU | MAIN_WINDOWS | MAIN_MOD | MAIN_DASH | |
 
-**Is `main` green? Yes at its head** (`49c9e70`: all five jobs). But `checks (windows-latest)` failed on 4 of the last 9 pushes to `main`, each time on a different single test (none failed twice): `test_soak_no_handle_held_no_write_blocked` (`e61c437`, finding 1), `test_ask_errors_say_whether_the_core_answered` (`6aa5d6f`, `WinError 10053`), `test_the_real_hook_sees_an_injected_key` (`c2624a6`), `test_saying_confirm` (`fa2f8ff`, `tests/security/test_oc_bridge_api.py`). A scan of the last 150 failed CI runs on any branch adds these repeat offenders: `tests/unit/watchers/test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows, `2000 == 2003`, twice), `tests/unit/alerts/test_core_routing.py::test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu, twice), `tests/unit/discordbot/test_core_api.py::test_errors_carry_the_core_s_status_and_reason` (Windows), `tests/unit/test_extractor.py::test_run_tree_stops_what_the_command_started` (Ubuntu, twice), `tests/unit/test_appwindow.py::test_the_foreground_program_on_windows` (Windows). Checklist 7.3 lists some of these; the rest are new to it (should-do 3). Checklist 2.2's rule stands: a red job is re-run until green, never deployed over.
+**Is `main` green? MAIN_GREEN** `49c9e70` had all five jobs green; `fe3641b`, whose tree `2a961ed` is, had all four of its jobs green. But `checks (windows-latest)` failed on 4 of the last 9 pushes to `main`, each time on a different single test (none failed twice): `test_soak_no_handle_held_no_write_blocked` (`e61c437`, finding 1), `test_ask_errors_say_whether_the_core_answered` (`6aa5d6f`, `WinError 10053`), `test_the_real_hook_sees_an_injected_key` (`c2624a6`), `test_saying_confirm` (`fa2f8ff`, `tests/security/test_oc_bridge_api.py`). A scan of the last 150 failed CI runs on any branch adds these repeat offenders: `tests/unit/watchers/test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows, `2000 == 2003`, twice), `tests/unit/alerts/test_core_routing.py::test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu, twice), `tests/unit/discordbot/test_core_api.py::test_errors_carry_the_core_s_status_and_reason` (Windows), `tests/unit/test_extractor.py::test_run_tree_stops_what_the_command_started` (Ubuntu, twice), `tests/unit/test_appwindow.py::test_the_foreground_program_on_windows` (Windows). Checklist 7.3 lists some of these; the rest are new to it (should-do 3). Checklist 2.2's rule stands: a red job is re-run until green, never deployed over.
 
 ---
 
@@ -82,7 +83,7 @@ The fake day one's report (C1-C12) gives each line's automated items green and t
 | 9 | Discord and phone: commands, alerts, credit DMs and away-only offline DMs from his phone; phone dashboard over Tailscale (L8) | **met with fakes** | `discord_commands`, `phone` green; G9 report | checklist 3.12, 4.G, 4.H |
 | 10 | Build: footprints for the planned multis; 3D guide; ≥ 2 themes; a Claude-designed shell pasted in the Lab | **met with fakes** | `build_guide` green; G10 report; **G10's defect 1 is fixed on `main`** by WO-10.9 (#127, `fa2f8ff`, D350-D351): `gos footprints capture` takes a worldedit `.schematic` (`core/gregtec/build/capture.py` `from_schematic`). Two starter themes ship (`th-foundry`, `th-marble-works`) | checklist 3.13, 4.D, 4.I |
 | 11 | Ops: supervisor with login start and Play-linked voice and watchers; DB and off-instance world backups restored once; Claude Code isolation re-tested; cost dashboard | **met with fakes** | `processes_up`, `play_linked`, `session`, `crash_core`, `crash_watchers`, `crash_voice`, `crash_discord`, `suite_supervisor_crash`, `backup_restore`, `costs`, `play_untouched` green; WO-11.2 (#123) | checklist 3.14.1-3.14.6, 4.A |
-| 12 | A 2-hour "fake day one" in the Lab with everything on | automated: **met with fakes, not merged**; the 2-hour session: PC | the automated rehearsal GREEN on CI (`1584f1e`, run 44458253790, artifact `fake-day-one`) and here (823.7 s); WO-11.3 is PR #128, **not on `main`** | checklist section 4 ([`fake_day_one.md`](../runbooks/fake_day_one.md) A-J) |
+| 12 | A 2-hour "fake day one" in the Lab with everything on | automated: **met with fakes**; the 2-hour session: PC | the automated rehearsal GREEN on CI (`1584f1e`, run 44458253790, artifact `fake-day-one`; `fe3641b`, run 44460564006) and here (823.7 s); WO-11.3 (PR #128) merged as `2a961ed` | checklist section 4 ([`fake_day_one.md`](../runbooks/fake_day_one.md) A-J) |
 
 Plan §9's Lab scenarios, from the same report: L2-L6 and L8-L10 are green in the rehearsal (their real runs are PC); L1 (projector builds and captures) and L7 (performance with everything on) are PC only (checklist 3.13.2, 3.8.11).
 
@@ -122,11 +123,11 @@ Gate lows still true on `main`: the curator's manifest backfill ignores the dead
 
 > **Acceptance:** "§10 checklist all green"
 
-**Verdict: built and green, not merged; "§10 all green" is not met** (two lines not met in code, above; every PC item still to come). PR #128, head `fe3641b` (gate passed at `fd12d2d`). Decisions D336-D337. Runbook [`fake_day_one.md`](../runbooks/fake_day_one.md).
+**Verdict: the rehearsal is met with fakes and merged; "§10 all green" is not met** (two lines not met in code, above; every PC item still to come). PR #128, head `fe3641b` (gate passed at `fd12d2d`), merged as `2a961ed`. Decisions D336-D337. Runbook [`fake_day_one.md`](../runbooks/fake_day_one.md).
 
 | Part | Status | Evidence |
 |---|---|---|
-| The automated fake day one (`tests/rehearsal/day_one.py`, `tests/integration/test_fake_day_one.py`, 10-minute soak in the `mod` job) | **met with fakes; not merged** | `Rehearsal: GREEN` on CI (`1584f1e`) and here; the smoke on Ubuntu and Windows (`tests/unit/test_fake_day_one_smoke.py`, `test_fake_day_one_parts.py`) green on `1584f1e` [repo] |
+| The automated fake day one (`tests/rehearsal/day_one.py`, `tests/integration/test_fake_day_one.py`, 10-minute soak in the `mod` job) | **met with fakes** (merged) | `Rehearsal: GREEN` on CI (`1584f1e`, `fe3641b`) and here; the smoke on Ubuntu and Windows (`tests/unit/test_fake_day_one_smoke.py`, `test_fake_day_one_parts.py`) green on `1584f1e` [repo] |
 | Its report gives each §10 line as green, red or PC only | met | the `fake-day-one` artifact; reproduced here identically |
 | The real 2-hour Lab rehearsal | **PC** | checklist section 4 |
 | §10 all green | **not met** | §10 lines 3 and 5 above; D337 F1 and F3 |
@@ -176,8 +177,8 @@ Also there, beyond §9: `fast_lane_questions.tsv` (60), `power_modes.tsv` (12, W
 
 1. **Should-do (before checklist 3.15.4 turns Play's watchers on): on Windows a watcher read can refuse a game save.** `tests/unit/watchers/test_soak.py::test_soak_no_handle_held_no_write_blocked` failed on Windows CI twice within 20 minutes (run 44399148587 on `wo/10.8-build-guide`, two errors; run 44401892676 on `main` at `e61c437`, one), both times `quests: PermissionError [WinError 5] Access is denied` when the fake game replaced `betterquesting\QuestProgress\<uuid>.json`. `safe_open` opens with read, write and delete sharing (`core/gregtec/gamestate/safe_open.py`), which lets the game rename the file being read, but Windows still refuses a replace **onto** a file someone has open; the soak's docstring names this case. A read only collides with a save that starts while it is open (milliseconds, after the file held still for 1 s, D257), which is why it shows only on a loaded runner, and BetterQuesting saves again at the next autosave. But a refused save on Play is a lost write, and V27 ("`safe_open` lets save-by-rename succeed while GOS reads") is open. Not fixed here: it isn't a small defect inside one acceptance, and the fix is a design choice (for example, for the files games replace, read only when the parent folder's newest change is old enough and retry the read rather than holding it; or a copy through a backup-semantics handle). Recommend: a short follow-up WO that reproduces it on Windows (the soak with a forced long read) and picks the fix, before 3.15.4; until then checklist 3.10.3's 2-hour Lab session plus a check of Lab's `fml-client-latest.log` for BetterQuesting save errors is the evidence.
 2. **Should-do: §10 line 5 can't be green without the two eval files** (above). Writing them needs real ids from the DB (`w:` revids from his wiki crawl, which is itself gated on the licence, checklist 3.9.6), so the wiki one can only be finished after 3.9.6; the hover one can be written against the harness DB now.
-3. **Should-do: the flake list in checklist 7.3 is short of what CI shows.** Add `test_soak` (Windows, finding 1), `test_saying_confirm` (Windows), `test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows), `test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu), `test_errors_carry_the_core_s_status_and_reason` (Windows), `test_run_tree_stops_what_the_command_started` (Ubuntu), `test_the_foreground_program_on_windows` (Windows). Each passed on re-run; none is in a §10 acceptance path except finding 1.
-4. **Noted, not a defect:** WO-11.3 and the checklist being unmerged means `main` today has no `tests/rehearsal/`, no `fake-day-one` artifact and no `docs/deployment_checklist.md`. Merge order: #128, then #131, then this branch (each contains the one before).
+3. **Should-do: the flake list in checklist 7.3 is short of what CI shows.** Add `test_soak` (Windows, finding 1), `test_saying_confirm` (Windows), `test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows), `test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu), `test_errors_carry_the_core_s_status_and_reason` (Windows), `test_run_tree_stops_what_the_command_started` (Ubuntu), `test_the_foreground_program_on_windows` (Windows). Each passed on re-run; none is in a §10 acceptance path except finding 1. `test_ask_errors_say_whether_the_core_answered` (`WinError 10053`, then `10054` on #128's head `fe3641b`) has a fix open in PR #132 (D355, the core reads a refused request's body before it answers); once #132 merges it drops off the list.
+4. **Noted, not a defect:** the checklist being unmerged means `main` today has no `docs/deployment_checklist.md`, which this report and the fake day one's runbook cite. WO-11.3 (#128) merged at `2a961ed`, so `main` has `tests/rehearsal/` and the `fake-day-one` artifact. Merge order: #131, then this branch (it contains #131).
 
 No product code was changed by this review. The report's judgement calls are D339; its guard test is `tests/unit/test_g11_review.py`, and the checklist's G11 row now links it.
 
@@ -221,7 +222,7 @@ All of them are [`docs/deployment_checklist.md`](../deployment_checklist.md): se
 1. **Windows-only behaviour is checked only by CI's Windows runner** (no Windows machine here): finding 1 and the Windows flakes are where it shows. The PC sitting is the first long Windows run.
 2. **Every quality number is from fakes** (G2 risk 2): the first real-model runs are in the sitting, and a regression there blocks only the line it belongs to.
 3. **The sitting is long** (about 30-35 h over several days, up to about $80, checklist 1): a redeploy mid-way means the fake day one's reuse rule (checklist 4) no longer holds for what changed.
-4. **Unmerged work at review time:** #128 and #131 (and other sessions' #114, #115, #117, #130) may change before they land; re-check CI on the commit he deploys.
+4. **Unmerged work at review time:** #131 (and other sessions' #114, #115, #117, #130, #132) may change before they land; re-check CI on the commit he deploys.
 
 ## After the review
 
