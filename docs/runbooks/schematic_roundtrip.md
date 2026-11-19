@@ -55,3 +55,5 @@ GOS keeps meta > 15 blocks out of shells (`gos palette check` and `gos schematic
 3. **Expect** (to record, not to pass): either `//set` errors as #30 reports, or it works; and `read` lists `gregtech:gt.blockframes@<meta above 15>` when WorldEdit saved the meta (its `AddData`). Send both outputs back; the reviewer records the behaviour in V16 and decides whether D309's meta rule can be relaxed.
 
 Send back the `compare` and `read` outputs, what you saw for the offset, and section D's two outputs.
+
+**Captures of multiblocks** use the same `//copy` + `//schem save`, with the tile entities: a saved GT multi becomes a footprint through `gos footprints capture <file.schematic>` (WO-10.9), runbook `footprints_lab.md` C. `gos schematic read` lists such a file's GT tile entities (cell, `mID`, `mFacing`), the cells `--controller` can name.

@@ -37,8 +37,8 @@ Either way the box is at most 64 a side, ``minecraft:air`` cells are dropped, bl
 by registry name + meta and a numeric id anywhere is refused (EndlessIDs). A GT machine cell
 other than the controller is a placed hatch: it becomes a hatch cell (its kinds from ``hatches``
 at that position, else ``Captured``; in a ``.schematic``, the kind of its MTE class in GT's
-``HatchElement``, e.g. ``InputBus``, from the DB's ``machine`` row, else ``Captured``) and the hatch as placed is kept
-for reference. The file is read once through ``safe_open`` (copied to memory, 3 tries, never held
+``HatchElement``, e.g. ``InputBus``, from the DB's ``machine`` row, else ``Captured``) and the
+hatch as placed is kept for reference. The file is read once through ``safe_open`` (copied to memory, 3 tries, never held
 and never written) and is data, never instructions.
 """
 
@@ -147,7 +147,7 @@ def from_cells(
 
     A ``gregtech:gt.blockmachines`` cell's world meta is its tile entity's base type, not the
     machine; the machine is the tile entity's ``mID``, which ``mte_ids`` gives by position
-    (WO-10.4's reader must expose it). Each GT machine cell takes its ``mID`` as its meta; a GT
+    (:func:`gregtec.build.schematic.read` keeps it, WO-10.9). Each GT machine cell takes its ``mID`` as its meta; a GT
     machine cell without one is refused (capture with tile entities: ``//copy`` keeps them)."""
     ids = dict(mte_ids or {})
 
