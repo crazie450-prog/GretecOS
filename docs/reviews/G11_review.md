@@ -228,3 +228,4 @@ All of them are [`docs/deployment_checklist.md`](../deployment_checklist.md): se
 ## After the review
 
 - On this branch with `origin/main` (`2a961ed`) merged in [here]: `ruff check .` all checks passed; `ruff format --check .` 669 files already formatted; `pytest -n 2 -m "not serial"` **11137 passed, 346 skipped** (7 min 52 s); `pytest -m serial` **7 passed, 4 skipped** (2 min 9 s). `tests/unit/test_g11_review.py` and `tests/unit/test_deployment_checklist.py`: 12 passed.
+- Again after `origin/main` at `bb27a1b` (#131, #132) was merged in [here]: ruff clean; 670 files already formatted; `pytest -n 2 -m "not serial"` **11179 passed, 346 skipped**; `pytest -m serial` **7 passed, 4 skipped**.
