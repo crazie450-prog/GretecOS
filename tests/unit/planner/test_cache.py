@@ -71,8 +71,13 @@ def conn(db: Path) -> Iterator[sqlite3.Connection]:
         c.close()
 
 
-def design(c: sqlite3.Connection, req: Request, base: object | None = None) -> str:
-    d = plan.design(c, req, base or tg.Base(), templates=chains.EMPTY)  # type: ignore[arg-type]
+def design(
+    c: sqlite3.Connection,
+    req: Request,
+    base: object | None = None,
+    templates: chains.Templates = chains.EMPTY,
+) -> str:
+    d = plan.design(c, req, base or tg.Base(), templates=templates)  # type: ignore[arg-type]
     return "\n".join(plan.dumps(p) for p in d.plans)
 
 
@@ -137,7 +142,7 @@ def test_gos_db_build_stamps_every_build(plan_src: Path, tmp_path: Path) -> None
         after = c.execute("SELECT value FROM kv WHERE key = 'db.build'").fetchone()[0]
     finally:
         c.close()
-    assert before and after and after != before
+    assert int(after) == int(before) + 1  # a counter, not a random stamp (D352)
 
 
 # --- the differential check ----------------------------------------------------------------------
@@ -186,25 +191,56 @@ def test_power_designs_are_byte_equal_with_the_cache_off_and_on(
 
 
 def test_every_input_of_a_component_solve_is_in_its_key(
-    conn: sqlite3.Connection,
+    conn: sqlite3.Connection, tmp_path: Path
 ) -> None:
     """A design whose tier, machines, constraints, My base or templates differ never reuses
     another's component solves: each equals the same design with the cache off."""
+    (tmp_path / "test.tsv").write_text(
+        "\t".join(chains.HEADER)
+        + f"\n{tp.GAS}\t{tg.ref_of(conn, 'electrolyzer', 1)}\t\tthe gas this way\n",
+        encoding="utf-8",
+    )
+    tpl = chains.load(tmp_path)
+    assert tpl.rows
     req = Request(tp.WIDGET, qty=2, tier_cap="MV")
-    variants: list[tuple[Request, object]] = [
-        (req, tg.Base()),
-        (Request(tp.WIDGET, qty=2, tier_cap="LV"), tg.Base()),
-        (Request(tp.WIDGET, qty=2, tier_cap="MV", machines="base+addons"), tg.Base()),
-        (Request(tp.WIDGET, qty=2, tier_cap="MV", boundary=(tp.GAS,)), tg.Base()),
-        (req, tg.Base(stocked={tp.SALT: 64.0})),
-        (req, tg.Base(lines={tp.GAS: 1.0})),
-        (req, tg.Base(owned={101: 1, 102: 2})),  # the fixture's mixer and reactor
+    variants: list[tuple[Request, object, chains.Templates]] = [
+        (req, tg.Base(), chains.EMPTY),
+        (Request(tp.WIDGET, qty=2, tier_cap="LV"), tg.Base(), chains.EMPTY),
+        (
+            Request(tp.WIDGET, qty=2, tier_cap="MV", machines="base+addons"),
+            tg.Base(),
+            chains.EMPTY,
+        ),
+        (
+            Request(tp.WIDGET, qty=2, tier_cap="MV", boundary=(tp.GAS,)),
+            tg.Base(),
+            chains.EMPTY,
+        ),
+        (req, tg.Base(stocked={tp.SALT: 64.0}), chains.EMPTY),
+        (req, tg.Base(lines={tp.GAS: 1.0}), chains.EMPTY),
+        (req, tg.Base(owned={101: 1, 102: 2}), chains.EMPTY),  # its mixer and reactor
+        (req, tg.Base(), tpl),
     ]
     with cache.disabled():
-        off = [design(conn, r, b) for r, b in variants]
-    on = [design(conn, r, b) for r, b in variants]
+        off = [design(conn, r, b, t) for r, b, t in variants]
+    on = [design(conn, r, b, t) for r, b, t in variants]
     assert on == off
     assert cache.stats.effort_misses > 0
+
+
+def test_a_changed_quantity_in_my_base_reuses_the_solves(
+    conn: sqlite3.Connection,
+) -> None:
+    """The component solves read only which stock, line outputs and owned machines are
+    positive, so editing a quantity hits the cache and still equals a design with it off."""
+    req = Request(tp.WIDGET, qty=2, tier_cap="MV")
+    design(conn, req, tg.Base(stocked={tp.SALT: 64.0}, owned={101: 1}))
+    misses = cache.stats.effort_misses
+    edited = tg.Base(stocked={tp.SALT: 3.0}, owned={101: 4})
+    on = design(conn, req, edited)
+    assert cache.stats.effort_misses == misses and cache.stats.effort_hits > 0
+    with cache.disabled():
+        assert design(conn, req, edited) == on
 
 
 # --- invalidation and bounds ---------------------------------------------------------------------

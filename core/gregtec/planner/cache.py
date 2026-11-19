@@ -40,7 +40,9 @@ from typing import Any
 
 from gregtec.planner import progress
 
-EFFORT_MAX = 4096  # component solves kept (a power design walks about 140)
+EFFORT_MAX = (
+    512  # component solves kept, about 0.5 MB each (a power design walks about 140)
+)
 READERS_MAX = 4  # (DB file, generation, run) readers kept
 READER_MAX_RECIPES = (
     250_000  # a reader past this many recipes is dropped after its build

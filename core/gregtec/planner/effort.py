@@ -304,19 +304,26 @@ class Effort:
         """What every component solve of this design reads besides its key, for the process
         cache (D352); None when the cache is off or the DB has no file. The solve reads the DB
         run (the scope's path and generation, and the run id), the component request's tier,
-        machines, boundary and constraints (the request digest, per key), My base (its tier,
-        owned machines, stock and line outputs: graph boundaries and the machine check), the
+        machines, boundary and constraints (the request digest, per key), My base (its tier and
+        which owned machines, stock and line outputs are positive: the graph boundaries and the
+        machine check read nothing more), the
         chain templates and the raw inputs list (repo files the graph reads)."""
         where = cache.scope(self.conn)
         if where is None:
             return None
         run = machines.current_run(self.conn) if self.run_id is None else self.run_id
         b = self.base
+
+        def positive(m: Mapping[Any, float]) -> tuple[Any, ...]:
+            # The graph and the machine check read only which entries are positive (graph.py
+            # boundaries, graph.player): a changed quantity must not miss every later design.
+            return tuple(sorted(k for k, v in m.items() if v > 0))
+
         mine = (
             b.tier_cap(),
-            tuple(sorted(b.owned_machines().items())),
-            tuple(sorted(b.stock().items())),
-            tuple(sorted(b.line_outputs().items())),
+            positive(b.owned_machines()),
+            positive(b.stock()),
+            positive(b.line_outputs()),
         )
         tpl = chains.load() if self.templates is None else self.templates
         files = hashlib.sha256(
