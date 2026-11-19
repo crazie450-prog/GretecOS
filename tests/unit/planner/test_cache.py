@@ -469,6 +469,63 @@ def test_a_rebuild_drops_what_the_cache_kept(conn: sqlite3.Connection) -> None:
     assert cache.sizes()["readers"] == 1  # the old generation's reader is gone
 
 
+def test_a_rebuild_without_a_recipe_never_reads_it_from_the_old_reader(
+    conn: sqlite3.Connection,
+) -> None:
+    """A rebuild in place (same path, same run) that drops a recipe: the shared graph reader of
+    the old generation (which already listed chemicalreactor/5 as a Widget maker) is not
+    reused, so no plan still offers the recipe."""
+    req = REQS[0]
+    first = design(conn, req)
+    gone = tp.ref_of(conn, "chemicalreactor", 5)
+    assert gone in first
+    conn.execute("UPDATE recipe SET enabled = 0 WHERE ref = ?", (gone,))
+    conn.execute(
+        "INSERT INTO kv(key, value, upd) VALUES ('db.build', 'rebuilt', 2)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+    on = design(conn, req)
+    with cache.disabled():
+        off = design(conn, req)
+    assert gone not in off and on == off
+
+
+def test_a_replaced_file_at_the_same_path_is_a_new_generation(
+    db: Path, tmp_path: Path
+) -> None:
+    """A DB file replaced (or restored) at the same path with the same export runs, build
+    counter and structure counts is still a new generation (its file identity, D352): nothing
+    read from the old file is reused."""
+    c = access.connect(db)
+    try:
+        first = design(c, REQS[0])
+        path = cache.db_file(c)
+        assert path is not None
+        gen = cache.generation(c, path)
+        gone = tp.ref_of(c, "chemicalreactor", 5)
+    finally:
+        c.close()
+    assert gone in first
+    other = _copy(db, tmp_path / "restored" / "plan.sqlite")
+    b = sqlite3.connect(other)
+    try:
+        b.execute("UPDATE recipe SET enabled = 0 WHERE ref = ?", (gone,))
+        b.commit()
+    finally:
+        b.close()
+    # A new file at the old path; kv, export_run and structure unchanged.
+    other.replace(db)
+    c = access.connect(db)
+    try:
+        assert cache.generation(c, path) != gen
+        on = design(c, REQS[0])
+        with cache.disabled():
+            off = design(c, REQS[0])
+    finally:
+        c.close()
+    assert gone not in off and on == off
+
+
 def test_two_db_files_never_share(db: Path, tmp_path: Path) -> None:
     other = _copy(db, tmp_path / "other.sqlite")
     for path in (db, other):
