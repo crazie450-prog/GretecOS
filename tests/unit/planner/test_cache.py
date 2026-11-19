@@ -5,19 +5,30 @@ the caches on give byte-equal plans, rankings and citations to designs with them
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
+import json
 import shutil
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
 from gregtec.db import access, build
-from gregtec.planner import cache, chains, plan, power
-from gregtec.planner.request import Request
+from gregtec.planner import (
+    cache,
+    chains,
+    effort,
+    graph,
+    machines,
+    plan,
+    power,
+    progress,
+)
+from gregtec.planner.request import Constraints, Request
 
 
 def _fixture(name: str, alias: str) -> ModuleType:
@@ -226,6 +237,177 @@ def test_every_input_of_a_component_solve_is_in_its_key(
     on = [design(conn, r, b, t) for r, b, t in variants]
     assert on == off
     assert cache.stats.effort_misses > 0
+
+
+def _solve(
+    conn: sqlite3.Connection,
+    req: Request,
+    base: object,
+    templates: chains.Templates = chains.EMPTY,
+    run_id: int | None = None,
+    key: str = tp.WIDGET,
+) -> str:
+    """One component's own solve (``Effort.make``, what a route's effort sums), as JSON."""
+    assert req.tier_cap is not None
+    e = effort.Effort(
+        conn,
+        req,
+        base,  # type: ignore[arg-type]
+        req.tier_cap,
+        templates=templates,
+        run_id=run_id,
+    )
+    return json.dumps(dataclasses.asdict(e.make(key, 2)), sort_keys=True)
+
+
+@pytest.fixture(scope="module")
+def two_runs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The plan fixture DB with a second, newer export run without chemicalreactor/5 (Plate
+    A to Widget, the Widget's own last step); the DB keeps both runs."""
+    home = tmp_path_factory.mktemp("cache-two-runs")
+    path = Path(tp.make_home(home))
+    recipes, run = tg.recipes, tg.RUN
+
+    def fewer() -> list[dict[str, object]]:
+        return [
+            x
+            for x in recipes()
+            if (x["map"], x["idx"]) != ("gt.recipe.chemicalreactor", 5)
+        ]
+
+    tg.recipes, tg.RUN = fewer, "20261112T120000Z"
+    try:
+        tp.make_home(home)
+    finally:
+        tg.recipes, tg.RUN = recipes, run
+    return path
+
+
+MV = Request(tp.WIDGET, qty=2, tier_cap="MV")
+OWNED_ONLY = Request(
+    tp.WIDGET, qty=2, tier_cap="MV", constraints=Constraints(require_owned=True)
+)
+SOLVE_INPUTS = [
+    "tier",
+    "machines",
+    "boundary",
+    "constraints",
+    "owned",
+    "stock",
+    "lines",
+    "templates",
+    "raw_inputs",
+    "run",
+    "generation",
+]
+
+
+@pytest.mark.parametrize("what", SOLVE_INPUTS)
+def test_each_input_of_a_component_solve_is_in_its_key(
+    what: str,
+    conn: sqlite3.Connection,
+    two_runs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """For each input a cached component solve reads (Effort._shared_key, the request digest,
+    the graph reader's run), a change that changes the component's own solve: the unchanged
+    solve is a cache hit, and the changed one equals the same solve with the cache off. Taking
+    the input out of the key makes the changed solve reuse the unchanged one's answer.
+    My base's tier is in the key too but no solve reads it: the component request always
+    carries the design's tier (effort.py Effort._request), which graph.player takes first."""
+    c = conn
+    before: Callable[[], str]
+    after: Callable[[], str]
+    if what == "tier":  # salt needs the MV electrolyzer
+        before = lambda: _solve(c, MV, tg.Base(), key=tp.SALT)
+        lv = Request(tp.WIDGET, qty=2, tier_cap="LV")
+        after = lambda: _solve(c, lv, tg.Base(), key=tp.SALT)
+    elif what == "machines":  # the addon mixer is faster
+        before = lambda: _solve(c, MV, tg.Base())
+        addons = Request(tp.WIDGET, qty=2, tier_cap="MV", machines="base+addons")
+        after = lambda: _solve(c, addons, tg.Base())
+    elif what == "boundary":
+        before = lambda: _solve(c, MV, tg.Base())
+        bound = Request(tp.WIDGET, qty=2, tier_cap="MV", boundary=(tg.PLATE,))
+        after = lambda: _solve(c, bound, tg.Base())
+    elif what == "constraints":
+        before = lambda: _solve(c, MV, tg.Base(owned={101: 1}))
+        after = lambda: _solve(c, OWNED_ONLY, tg.Base(owned={101: 1}))
+    elif what == "owned":  # owned machines only: the mixer's route or the reactor's
+        before = lambda: _solve(c, OWNED_ONLY, tg.Base(owned={101: 1}))
+        after = lambda: _solve(c, OWNED_ONLY, tg.Base(owned={102: 1}))
+    elif what == "stock":
+        before = lambda: _solve(c, MV, tg.Base())
+        after = lambda: _solve(c, MV, tg.Base(stocked={tg.PLATE: 1.0}))
+    elif what == "lines":
+        before = lambda: _solve(c, MV, tg.Base())
+        after = lambda: _solve(c, MV, tg.Base(lines={tg.PLATE: 1.0}))
+    elif what == "templates":  # the Widget from the mixer instead of the reactor
+        (tmp_path / "test.tsv").write_text(
+            "\t".join(chains.HEADER)
+            + f"\n{tp.WIDGET}\t{tp.ref_of(c, 'mixer', 0)}\t\tthe widget this way\n",
+            encoding="utf-8",
+        )
+        tpl = chains.load(tmp_path)
+        before = lambda: _solve(c, MV, tg.Base())
+        after = lambda: _solve(c, MV, tg.Base(), tpl)
+    elif what == "raw_inputs":  # data/curated/raw_inputs.tsv, a repo file
+
+        def after() -> str:
+            with monkeypatch.context() as m:
+                m.setattr(graph, "raw_inputs", lambda: (*raw(), tg.PLATE))
+                return _solve(c, MV, tg.Base())
+
+        raw = graph.raw_inputs
+        before = lambda: _solve(c, MV, tg.Base())
+    elif what == "run":  # an older run of the same DB (same generation)
+        c = access.connect(two_runs, readonly=True)
+        old = int(c.execute("SELECT min(id) FROM export_run").fetchone()[0])
+        assert machines.current_run(c) != old
+        before = lambda: _solve(c, MV, tg.Base(), run_id=old)
+        after = lambda: _solve(c, MV, tg.Base())
+    else:  # the DB generation: a rebuild that changed a recipe's time
+        slow = tp.ref_of(c, "chemicalreactor", 5)
+
+        def after() -> str:
+            c.execute("UPDATE recipe SET duration_ticks = 80 WHERE ref = ?", (slow,))
+            c.execute(
+                "INSERT INTO kv(key, value, upd) VALUES ('db.build', 'rebuilt', 2)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+            return _solve(c, MV, tg.Base())
+
+        before = lambda: _solve(c, MV, tg.Base())
+    try:
+        first = before()
+        hits = cache.stats.effort_hits
+        # The unchanged case is served by the cache.
+        assert before() == first and cache.stats.effort_hits > hits
+        on = after()
+        with cache.disabled():
+            off = after()
+    finally:
+        if c is not conn:
+            c.close()
+    assert off != first  # the input changes the component's own solve
+    assert on == off
+
+
+def test_solve_progress_never_counts_past_n(conn: sqlite3.Connection) -> None:
+    """Review LOW-2: the route search explores past the n routes asked for, and its progress
+    still reads k of n with k never past n."""
+    seen: list[tuple[int | None, int | None]] = []
+
+    def report(stage: str | None, k: int | None, n: int | None) -> None:
+        if stage == "solve":
+            seen.append((k, n))
+
+    with progress.reporting(report):
+        design(conn, Request(tp.WIDGET, qty=2, tier_cap="MV", routes=1))
+    assert len(seen) > 1  # it searched past the one route asked for
+    assert all(k is not None and n is not None and 1 <= k <= n for k, n in seen)
+    assert seen[-1] == (1, 1)
 
 
 def test_a_changed_quantity_in_my_base_reuses_the_solves(
