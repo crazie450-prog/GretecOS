@@ -107,7 +107,7 @@ beforeEach(() => {
   calls = [];
   vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
     calls.push({ method: init.method ?? "GET", url });
-    if (url.startsWith("/api/jobs/")) {
+    if (url.startsWith("/api/design-jobs/")) {
       const running = job({ kind: "power", stage: "chains", k: 2, n: 5, started: Date.now() / 1000 - 3 });
       return new Response(JSON.stringify({ job: url.endsWith("/cancel") ? { ...running, cancel_asked: true } : running }));
     }
@@ -135,7 +135,7 @@ describe("the right rail", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("job-cancel-job-0123456789ab"));
     });
-    expect(calls).toEqual([{ method: "POST", url: "/api/jobs/job-0123456789ab/cancel" }]);
+    expect(calls).toEqual([{ method: "POST", url: "/api/design-jobs/job-0123456789ab/cancel" }]);
   });
   it("has no Cancel for a client token's view", () => {
     store.set({ session: { role: "client", name: "voice", device_id: null } });

@@ -4,9 +4,9 @@
 |-----------------------------|-----------------------|------------------------------------------|
 | POST /api/designer/jobs     | admin, device         | ``{"spec": {...}}``, ``{"resolve": id}`` or ``{"pin": {"plan", "node", "recipe"}}``: the job at once (``{"job"}``), or ``{"clarify": card}`` when the target is unclear (no job) |
 | POST /api/power/jobs        | admin, device         | a power spec (``powerview.request_from_spec``): the job at once |
-| GET  /api/jobs              | admin, client, device | ``{"running": [...], "latest": {kind: job}}`` (a view opened again finds its job) |
-| GET  /api/jobs/{id}         | admin, client, device | the job; once ``done``, its ``result`` is what ``POST /api/designer/design`` (or ``/api/power/design``) answers |
-| POST /api/jobs/{id}/cancel  | admin, device         | stop it at its next checkpoint; nothing is saved |
+| GET  /api/design-jobs              | admin, client, device | ``{"running": [...], "latest": {kind: job}}`` (a view opened again finds its job) |
+| GET  /api/design-jobs/{id}         | admin, client, device | the job; once ``done``, its ``result`` is what ``POST /api/designer/design`` (or ``/api/power/design``) answers |
+| POST /api/design-jobs/{id}/cancel  | admin, device         | stop it at its next checkpoint; nothing is saved |
 
 The spec, the plan id or the pin is checked before the job starts, so a bad request is a 400 and
 an unclear target is the question, as before. A second job of a kind while one runs is a 409 that
@@ -172,7 +172,7 @@ def add_routes(
         made = await asyncio.to_thread(checked, lambda: power_work(home(), body))
         return start("power", made)
 
-    @app.get("/api/jobs")
+    @app.get("/api/design-jobs")
     def jobs_list(who: Anyone) -> dict[str, Any]:
         reg = registry(core)
         latest = {k: reg.latest(k) for k in KINDS}
@@ -183,11 +183,11 @@ def add_routes(
             },
         }
 
-    @app.get("/api/jobs/{job_id}")
+    @app.get("/api/design-jobs/{job_id}")
     def job_get(job_id: str, who: Anyone) -> dict[str, Any]:
         return {"job": found(job_id).as_dict()}
 
-    @app.post("/api/jobs/{job_id}/cancel")
+    @app.post("/api/design-jobs/{job_id}/cancel")
     def job_cancel(job_id: str, who: Trusted) -> dict[str, Any]:
         found(job_id)
         return {"job": registry(core).cancel(job_id).as_dict(result=False)}

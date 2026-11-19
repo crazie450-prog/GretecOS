@@ -210,8 +210,8 @@ export const api = {
   // Design jobs (WO-3.9, D353): start at once, follow the stage, cancel; the result when done.
   designJob: (body: DesignJobBody) => post<JobStart>("/api/designer/jobs", body),
   powerJob: (spec: PowerSpec) => post<JobStart>("/api/power/jobs", spec),
-  job: (id: string) => get<{ job: DesignJob }>(`/api/jobs/${encodeURIComponent(id)}`),
-  cancelJob: (id: string) => post<{ job: DesignJob }>(`/api/jobs/${encodeURIComponent(id)}/cancel`),
+  job: (id: string) => get<{ job: DesignJob }>(`/api/design-jobs/${encodeURIComponent(id)}`),
+  cancelJob: (id: string) => post<{ job: DesignJob }>(`/api/design-jobs/${encodeURIComponent(id)}/cancel`),
   powerAccept: (id: string) =>
     post<{ id: string; status: string; problems: string[]; view: PowerView }>(
       `/api/power/${encodeURIComponent(id)}/accept`,

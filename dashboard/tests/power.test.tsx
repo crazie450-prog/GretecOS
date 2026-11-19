@@ -234,7 +234,7 @@ describe("Power view", () => {
     await screen.findByTestId("option-2");
     expect(methods[1]).toBe("POST");
     expect(urls[1]).toBe("/api/power/jobs");
-    expect(urls[2]).toBe("/api/jobs/job-0123456789ab");
+    expect(urls[2]).toBe("/api/design-jobs/job-0123456789ab");
     expect(bodies[1]).toEqual({ mode: "max_output", tier: "MV", scale: "eut_cap", bound: 500, options: 3 });
     const cards = document.querySelectorAll(".power-option");
     expect([...cards].map((c) => c.getAttribute("data-option"))).toEqual(["pw-one", "pw-two"]); // not re-sorted

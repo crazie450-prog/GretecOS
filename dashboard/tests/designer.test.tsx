@@ -77,7 +77,7 @@ function job(over: Record<string, unknown> = {}) {
 }
 function jobAnswers(result: unknown): void {
   routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job() } });
-  routes[`GET /api/jobs/${JOB}`] = () => ({ status: 200, body: { job: job({ status: "done", result }) } });
+  routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: job({ status: "done", result }) } });
 }
 
 type Call = { method: string; url: string; body: unknown };
@@ -357,8 +357,8 @@ describe("the Designer view", () => {
   it("runs a design as a job: its stage and time at once, then a Cancel that saves nothing", async () => {
     let polled = job({ stage: "solve", k: 2, n: 3, started: Date.now() / 1000 - 65 });
     routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job({ started: Date.now() / 1000 - 65 }) } });
-    routes[`GET /api/jobs/${JOB}`] = () => ({ status: 200, body: { job: polled } });
-    routes[`POST /api/jobs/${JOB}/cancel`] = () => {
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: polled } });
+    routes[`POST /api/design-jobs/${JOB}/cancel`] = () => {
       polled = { ...polled, cancel_asked: true };
       return { status: 200, body: { job: polled } };
     };
@@ -375,7 +375,7 @@ describe("the Designer view", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("designer-cancel"));
     });
-    expect(calls.some((c) => c.method === "POST" && c.url === `/api/jobs/${JOB}/cancel`)).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.url === `/api/design-jobs/${JOB}/cancel`)).toBe(true);
     expect((await screen.findByTestId("designer-cancel")).textContent).toContain("Cancelling");
     polled = { ...polled, status: "cancelled", cancel_asked: true };
     expect((await screen.findByTestId("designer-notice", {}, { timeout: 3000 })).textContent).toContain(
@@ -387,7 +387,7 @@ describe("the Designer view", () => {
 
   it("shows a failed job's refusal, and a job the core lost to a restart", async () => {
     routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job() } });
-    routes[`GET /api/jobs/${JOB}`] = () => ({
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({
       status: 200,
       body: { job: job({ status: "failed", error: "no route: nothing makes it at LV" }) },
     });
@@ -397,7 +397,7 @@ describe("the Designer view", () => {
       fireEvent.click(screen.getByTestId("designer-go"));
     });
     expect((await screen.findByTestId("designer-notice")).textContent).toContain("nothing makes it at LV");
-    routes[`GET /api/jobs/${JOB}`] = () => ({ status: 404, body: { error: "no job" } });
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 404, body: { error: "no job" } });
     await act(async () => {
       fireEvent.click(screen.getByTestId("designer-go"));
     });

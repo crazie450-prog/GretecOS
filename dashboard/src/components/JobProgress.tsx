@@ -1,5 +1,5 @@
 // A design job in a view (WO-3.9, D353, D354): start it, follow its stage (the core's `job`
-// pushes, and a poll of GET /api/jobs/{id} each second so a dropped socket never strands it),
+// pushes, and a poll of GET /api/design-jobs/{id} each second so a dropped socket never strands it),
 // show the stage, the time it has run and a Cancel, and hand the result to the view when it is
 // done. Leaving the view stops following, not the job: the core finishes and saves it, and the
 // view follows it again when it opens while the job runs (the state's running jobs). Built from

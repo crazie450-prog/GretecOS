@@ -83,7 +83,7 @@ ADMIN_H = {"Authorization": f"Bearer {ADMIN}"}
 
 def _ended(c: Any, job_id: str) -> dict[str, Any]:  # noqa: ANN401
     for _ in range(1200):
-        job = c.get(f"/api/jobs/{job_id}", headers=ADMIN_H).json()["job"]
+        job = c.get(f"/api/design-jobs/{job_id}", headers=ADMIN_H).json()["job"]
         if job["status"] != dj.RUNNING:
             return dict(job)
         time.sleep(0.05)
@@ -138,7 +138,7 @@ def test_the_designer_job_api(
                 "/api/designer/jobs", json={"resolve": ids[0]}, headers=ADMIN_H
             )
             assert _ended(c, again.json()["job"]["id"])["result"]["ids"] == ids
-            listed = c.get("/api/jobs", headers=voice).json()
+            listed = c.get("/api/design-jobs", headers=voice).json()
             assert listed["running"] == []
             latest = listed["latest"]["designer"]
             assert latest["status"] == dj.DONE and "result" not in latest
@@ -163,11 +163,14 @@ def test_the_designer_job_api(
             assert (
                 rail and rail[0]["kind"] == "designer" and rail[0]["detail"] == "graph"
             )
-            assert c.post(f"/api/jobs/{jid}/cancel", headers=voice).status_code == 403
-            nope = c.post("/api/jobs/job-000000000000/cancel", headers=ADMIN_H)
+            assert (
+                c.post(f"/api/design-jobs/{jid}/cancel", headers=voice).status_code
+                == 403
+            )
+            nope = c.post("/api/design-jobs/job-000000000000/cancel", headers=ADMIN_H)
             assert nope.status_code == 404
-            assert c.get("/api/jobs/nope", headers=ADMIN_H).status_code == 404
-            asked = c.post(f"/api/jobs/{jid}/cancel", headers=ADMIN_H)
+            assert c.get("/api/design-jobs/nope", headers=ADMIN_H).status_code == 404
+            asked = c.post(f"/api/design-jobs/{jid}/cancel", headers=ADMIN_H)
             assert asked.json()["job"]["cancel_asked"] is True
             hold.set()
             assert _ended(c, jid)["status"] == dj.CANCELLED
@@ -191,7 +194,9 @@ def test_the_designer_job_api(
             for _ in range(5):
                 t = time.monotonic()
                 assert c.get("/api/health", headers=ADMIN_H).status_code == 200
-                assert c.get(f"/api/jobs/{jid}", headers=ADMIN_H).status_code == 200
+                assert (
+                    c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H).status_code == 200
+                )
                 slowest = max(slowest, time.monotonic() - t)
                 time.sleep(0.2)
             assert slowest < 1.0, slowest

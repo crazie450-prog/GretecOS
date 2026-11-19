@@ -59,7 +59,7 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       await expect(stage).toContainText(/Building the recipe graph|Solving route|Waiting/);
       await expect(page.getByTestId("designer-job-elapsed")).toHaveText(/^\d+:\d\d$/);
       await expect(page.getByTestId("designer-go")).toBeDisabled();
-      const jobs = await asAdmin<Jobs>("/api/jobs");
+      const jobs = await asAdmin<Jobs>("/api/design-jobs");
       expect(jobs.running).toHaveLength(1);
       const id = jobs.running[0].id;
       if (size === "monitor") {
@@ -76,7 +76,7 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       await expect(page.getByTestId("designer-notice")).toContainText("Cancelled: nothing was saved.", { timeout: 5000 });
       expect(Date.now() - asked).toBeLessThan(5000); // within a few seconds
       await expect(page.getByTestId("designer-busy")).toHaveCount(0);
-      const after = await asAdmin<Jobs>("/api/jobs");
+      const after = await asAdmin<Jobs>("/api/design-jobs");
       expect(after.running).toEqual([]);
       expect(after.latest.designer).toMatchObject({ id, status: "cancelled" });
       expect((await asAdmin<{ plans: unknown[] }>("/api/plans")).plans.length).toBe(before);
@@ -90,7 +90,7 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       await expect(page.getByTestId("route-1-base")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("designer-busy")).toHaveCount(0);
       expect(page.url()).toMatch(/#\/designer\/pl-[a-z0-9]+$/);
-      const latest = (await asAdmin<Jobs>("/api/jobs")).latest.designer;
+      const latest = (await asAdmin<Jobs>("/api/design-jobs")).latest.designer;
       expect(latest.status).toBe("done");
       if (size === "phone") expect(await clipped(page)).toEqual([]);
       await page.screenshot({ path: shot(`designer-job-done-${size}`), fullPage: true });
@@ -133,14 +133,14 @@ test.describe("the Power view's design job", () => {
       await page.screenshot({ path: shot(`power-job-${size}`), fullPage: true });
       await page.getByTestId("power-cancel").click();
       await expect(page.getByTestId("power-notice")).toContainText("Cancelled: nothing was saved.", { timeout: 5000 });
-      const jobs = await powerAdmin<Jobs>("/api/jobs");
+      const jobs = await powerAdmin<Jobs>("/api/design-jobs");
       expect(jobs.latest.power.status).toBe("cancelled");
       powerDelay("0.2");
       await page.getByTestId("power-go").click();
       await expect(page.getByTestId("power-job-stage")).toBeVisible({ timeout: 1000 });
       await expect(page.getByTestId("option-1")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("power-busy")).toHaveCount(0);
-      expect((await powerAdmin<Jobs>("/api/jobs")).latest.power.status).toBe("done");
+      expect((await powerAdmin<Jobs>("/api/design-jobs")).latest.power.status).toBe("done");
     });
   }
 });

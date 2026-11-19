@@ -22,7 +22,7 @@ Every change goes to ``on_change`` (the core pushes it over the WebSocket), at m
   cancel is refused (the design is about to be there) and the job finishes as ``done``.
 - **The page closes** (D354): the job keeps running to its result. It is saved as every design
   is (the Designer's and the Power view's latest design), so the view shows it when it opens
-  again, and ``GET /api/jobs/{id}`` gives its result while the core runs.
+  again, and ``GET /api/design-jobs/{id}`` gives its result while the core runs.
 - **The core stops** with a job running: the job's record (``data/jobs/<kind>.json``, written
   when it starts and ends) still says ``running`` when the core starts again, and is then marked
   ``interrupted``: nothing was saved, start it again. Designs are not resumed; a design is
@@ -58,7 +58,7 @@ ENDED = (DONE, FAILED, CANCELLED, INTERRUPTED)
 PUSH_S = 0.25  # at most one push per job this often while it runs
 WAIT_S = 0.25  # how often a job waiting for the planner's lock checks for a cancel
 RECORDS = Path("data", "jobs")  # in GOS_HOME
-KEEP = 20  # finished jobs kept in memory for GET /api/jobs/{id}
+KEEP = 20  # finished jobs kept in memory for GET /api/design-jobs/{id}
 ERROR_MAX = 500
 SAVING = "saving"
 
