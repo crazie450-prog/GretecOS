@@ -103,6 +103,50 @@ $ProgressPreference = 'SilentlyContinue'
 3. Play's first real session repeats this check, after §6 (the watchers start with Play's own
    hook; nothing else changes).
 
+### 4.1 What a refused save looks like (WO-6.8, checklist 3.10.3, D356-D358)
+
+Until WO-6.8 a watcher's read could make Windows refuse one of the game's saves: BetterQuesting
+and Hodgepodge save by writing a temp file and moving it onto the real one
+(`Files.move(..., ATOMIC_MOVE)`, which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`), and Windows
+refuses that move while any program has the real file open. Since WO-6.8 `safe_open` holds a
+read-handle oplock on every file it reads, taken in the same step as the open: the game's move
+breaks it, GOS closes the file at once and the move goes on (the game waits a few milliseconds at
+most), and GOS reads the file again. So the check below should find nothing; if it finds a line,
+the fix didn't hold on your PC.
+
+The lines each mod writes when a save is refused (from their source at the versions GTNH 2.9.0
+pins; in `fml-client-latest.log`, and the ERROR ones also in `latest.log`):
+
+| Mod, file | The log line (the message part) | What a refused save costs |
+|---|---|---|
+| BetterQuesting 3.8.92-GTNH: `betterquesting\QuestProgress\<uuid>.json`, `NameCache.json`, `QuestingParties.json`, `LifeDatabase.json`, `QuestDatabase.json` | `[betterquesting]: An error occurred while saving JSON to file (Temp copy):` and on the next line `java.nio.file.AccessDeniedException: ...\<file>.json.tmp -> ...\<file>.json` | That save is lost and not retried; a player's progress file is written again only when that player's progress changes again |
+| Hodgepodge 2.7.221: `level.dat` (and `level.dat_old`) | `[HodgepodgeWorldDataSaver]: Failed to write data to file ...\level.dat` | Retried at the next save; at world close `Closing world with unsaved data; these writes will not be replayed in another session` |
+| Minecraft 1.7.10: `playerdata\<uuid>.dat` | `Failed to save player data for <name>` | That save is lost; the next save tries again |
+| Minecraft 1.7.10: `stats\<uuid>.json` | `Couldn't save stats` | Written in place, which no GOS read blocks |
+| VisualProspecting 1.5.42: its `DIM<n>.dat` caches | `Failed to write NBT to file: ...` | Written in place, which no GOS read blocks |
+
+The check (with Lab closed, after 3.10.3's 2-hour session):
+
+```powershell
+Select-String -Path "$lab\logs\latest.log","$lab\logs\fml-client-latest.log" -Pattern 'An error occurred while saving JSON to file','Failed to write data to file','Closing world with unsaved data','Failed to save player data','Couldn''t save stats','Failed to write NBT to file','AccessDeniedException','being used by another process'
+```
+
+**Pass:** no lines. A `(Temp copy)` line with `AccessDeniedException` naming a `QuestProgress`
+file is the collision itself: paste it, with the minute it happened, into the PR or the checklist
+row (3.10.3), and leave Play's watchers off (3.15.4).
+
+Then check that the oplock was really there on your PC (an antivirus or backup filter, or a
+volume that isn't NTFS, can refuse it; GOS then reads as before WO-6.8 and says so):
+
+```powershell
+Select-String -Path "$home_\logs\watchers.log" -Pattern 'oplock'
+```
+
+**Pass:** a line with `safe_open: Windows grants read-handle oplocks with the open` (logged once
+per watchers start), and no line with `safe_open: no oplock on this file` or
+`safe_open: the oplock came after the open` (each names the file in its `path` field). If one of
+those two is there, paste it into the checklist row (3.10.3) and leave Play's watchers off.
+
 ## 5. Crash fallback (D259)
 
 1. Launch Lab, load the world, then end its `javaw.exe` in Task Manager (a crash: Prism runs no

@@ -41,7 +41,7 @@ from pathlib import Path, PurePosixPath
 from typing import TextIO
 
 from gregtec import config
-from gregtec.gamestate.safe_open import safe_open
+from gregtec.gamestate.safe_open import copy_to
 
 SECTOR = 4096
 TAG_COMPOUND = 10
@@ -72,8 +72,8 @@ def copy_in(src: Path, dest: Path, tries: int = 3) -> None:
     last: OSError | None = None
     for _ in range(tries):
         try:
-            with safe_open(src) as f, open(dest, "wb") as out:
-                shutil.copyfileobj(f, out, 1 << 20)
+            with open(dest, "wb") as out:
+                copy_to(src, out)
             return
         except OSError as exc:
             last = exc
