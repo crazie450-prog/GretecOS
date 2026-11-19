@@ -7,9 +7,9 @@
 // line pans). As a card it is read-only: pan and zoom with the controls. The Designer (WO-3.7)
 // passes onSelect: a click on a machine box picks that node to swap or pin, and the picked box
 // is outlined (the Designer lists the same nodes as buttons too, for the keyboard).
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
+import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useNodesState, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
 import type { FlowCard } from "./types.gen";
@@ -127,33 +127,57 @@ function Drawn({
   onSelect?: (id: string) => void;
   selected: string | null;
 }) {
-  const at = new Map(placed.map((b) => [b.id, b]));
-  const nodes: Node<FlowNodeData>[] = card.nodes.map((n) => ({
-    id: n.id,
-    type: "machine",
-    position: { x: at.get(n.id)?.x ?? 0, y: at.get(n.id)?.y ?? 0 },
-    data: { label: n.label, sub: nodeSub(n), tier: n.tier, picked: n.id === selected },
-    draggable: false,
-    connectable: false,
-  }));
-  const known = new Set(card.nodes.map((n) => n.id));
-  const edges: Edge[] = card.edges
-    .filter((e) => known.has(e.from) && known.has(e.to))
-    .map((e, i) => ({
-      id: `e${i}`,
-      source: e.from,
-      target: e.to,
-      label: edgeLabel(e),
-      type: "smoothstep",
-      markerEnd: { type: MarkerType.ArrowClosed },
-      className: "flow-edge",
+  // Built once per card and layout, and kept in React Flow's own node state: a new node object
+  // makes xyflow drop its measured size (visibility: hidden until re-measured), and a re-render
+  // storm could leave every box hidden for good (QA 5-9). A pick only changes data.picked on the
+  // nodes it touches, which keep their measured size.
+  const built = useMemo((): Node<FlowNodeData>[] => {
+    const at = new Map(placed.map((b) => [b.id, b]));
+    return card.nodes.map((n) => ({
+      id: n.id,
+      type: "machine",
+      position: { x: at.get(n.id)?.x ?? 0, y: at.get(n.id)?.y ?? 0 },
+      data: { label: n.label, sub: nodeSub(n), tier: n.tier, picked: false },
+      draggable: false,
+      connectable: false,
     }));
+  }, [card, placed]);
+  const [state, setState, onNodesChange] = useNodesState(built);
+  const shownFor = useRef(built);
+  useEffect(() => {
+    if (shownFor.current === built) return;
+    shownFor.current = built;
+    setState(built);
+  }, [built, setState]);
+  const nodes = useMemo(
+    () =>
+      state.map((n) => {
+        const picked = n.id === selected;
+        return n.data.picked === picked ? n : { ...n, data: { ...n.data, picked } };
+      }),
+    [state, selected],
+  );
+  const edges = useMemo((): Edge[] => {
+    const known = new Set(card.nodes.map((n) => n.id));
+    return card.edges
+      .filter((e) => known.has(e.from) && known.has(e.to))
+      .map((e, i) => ({
+        id: `e${i}`,
+        source: e.from,
+        target: e.to,
+        label: edgeLabel(e),
+        type: "smoothstep",
+        markerEnd: { type: MarkerType.ArrowClosed },
+        className: "flow-edge",
+      }));
+  }, [card]);
   const height = Math.max(240, Math.min(640, Math.max(0, ...placed.map((b) => b.y)) + NODE_H + 64));
   return (
     <div className="flow-canvas" style={{ height }} role="img" aria-label={card.title}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onNodesChange={onNodesChange}
         nodeTypes={NODE_TYPES}
         fitView
         fitViewOptions={{ padding: 0.1, minZoom: MIN_READABLE }}

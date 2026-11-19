@@ -5,7 +5,7 @@ import { Card } from "../cards/Card";
 import { itemEntries, questEntries } from "../components/palette";
 import { Button } from "../components/core";
 import { GLYPH } from "../state/states";
-import { useTool } from "./useTool";
+import { type ToolResult, useTool } from "./useTool";
 
 export type SearchTarget =
   | { kind: "item"; key: string; name: string; tool: "recipe_find" | "recipe_uses" | "quest_for_item" }
@@ -16,6 +16,11 @@ const TABS = [
   { tool: "recipe_uses", label: "Uses" },
   { tool: "quest_for_item", label: "Quests" },
 ] as const;
+
+// A lookup that failed (no DB yet, a bad call) says why, never "no matches" (QA 5-9).
+function failed(r: ToolResult): string | null {
+  return r.error ?? (r.card && "error" in r.card ? r.card.error : null);
+}
 
 export function Search(props: { target: SearchTarget | null; setTarget: (t: SearchTarget | null) => void }) {
   const [text, setText] = useState("");
@@ -38,6 +43,8 @@ export function Search(props: { target: SearchTarget | null; setTarget: (t: Sear
   };
   const itemList = itemEntries(items.card).filter((e) => e.group === "Items");
   const questList = questEntries(quests.card);
+  const itemsError = failed(items);
+  const questsError = failed(quests);
 
   return (
     <div className="view-search" data-testid="view-search">
@@ -63,7 +70,12 @@ export function Search(props: { target: SearchTarget | null; setTarget: (t: Sear
           <span className="gos-label">Items</span>
           {!query && <p className="empty">{GLYPH.todo} Type a name and press Search.</p>}
           {query && items.loading && <p className="empty">{GLYPH.progress} Looking up</p>}
-          {query && !items.loading && itemList.length === 0 && <p className="empty">{GLYPH.todo} No item matches.</p>}
+          {query && !items.loading && itemsError && (
+            <p className="empty" data-testid="search-items-error">
+              {GLYPH.warn} {itemsError}
+            </p>
+          )}
+          {query && !items.loading && !itemsError && itemList.length === 0 && <p className="empty">{GLYPH.todo} No item matches.</p>}
           <ul className="result-list">
             {itemList.map((e) =>
               e.action.kind === "item" ? (
@@ -82,7 +94,8 @@ export function Search(props: { target: SearchTarget | null; setTarget: (t: Sear
             )}
           </ul>
           <span className="gos-label">Quests</span>
-          {query && !quests.loading && questList.length === 0 && <p className="empty">{GLYPH.todo} No quest matches.</p>}
+          {query && !quests.loading && questsError && <p className="empty">{GLYPH.warn} {questsError}</p>}
+          {query && !quests.loading && !questsError && questList.length === 0 && <p className="empty">{GLYPH.todo} No quest matches.</p>}
           <ul className="result-list">
             {questList.map((e) =>
               e.action.kind === "quest" ? (

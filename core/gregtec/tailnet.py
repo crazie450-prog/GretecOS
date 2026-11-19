@@ -14,8 +14,8 @@ setup and off himself** (they change his real Tailscale node; as gos-dev they re
   It prints the tailnet name for ``[core] allowed_hosts`` (it never writes gos.toml).
 - ``check``: Tailscale running, Funnel off, no raw TCP forward to the core, the handler in
   place, and the name in ``[core] allowed_hosts``; exit 0 only when all hold.
-- ``off``: removes the handler (``tailscale serve --https=443 off``), only when it is GOS's
-  (it proxies to the core); something else on 443 is left alone.
+- ``off``: removes the handler (``tailscale serve --https=443 --set-path=/ off``), only when it
+  is GOS's (it proxies to the core); something else on 443, or another path there, is left alone.
 
 **Never Funnel.** No code path here passes ``funnel`` to the CLI (:meth:`Tailscale.run` refuses
 any such argument), ``--funnel`` is refused, and ``setup`` and ``check`` catch a Funnel on any
@@ -94,6 +94,7 @@ class Tailscale:
         try:
             done = self.runner(
                 [*self.argv, *args],
+                stdin=subprocess.DEVNULL,  # a CLI prompt answers no, never waits unseen
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -242,7 +243,7 @@ def setup(ts: Tailscale, port: int) -> str:
     try:
         no_funnel(after)
     except FunnelRefused:
-        ts.run("serve", f"--https={HTTPS_PORT}", "off")
+        _remove_root(ts)
         raise
     if not proxies_to_core(handler(after, name), port):
         raise TailnetError(
@@ -317,8 +318,18 @@ def off(ts: Tailscale, port: int) -> bool:
             f"https://{name}/ isn't GOS's ({dict(found)}): left alone. "
             f"Remove it yourself (tailscale serve --https={HTTPS_PORT} off) if you mean to"
         )
-    ts.run("serve", f"--https={HTTPS_PORT}", "off")
+    _remove_root(ts)
+    if proxies_to_core(handler(ts.json("serve", "status", "--json"), name), port):
+        raise TailnetError(
+            f"tailscale serve off didn't take: https://{name}/ still proxies to {target(port)}"
+        )
     return True
+
+
+def _remove_root(ts: Tailscale) -> None:
+    """Remove only the ``/`` mount on 443 (GOS's). Without ``--set-path`` the CLI removes every
+    path on the port, and with more than one it asks first (QA 5-9)."""
+    ts.run("serve", f"--https={HTTPS_PORT}", "--set-path=/", "off")
 
 
 # --- CLI ----------------------------------------------------------------------------------------

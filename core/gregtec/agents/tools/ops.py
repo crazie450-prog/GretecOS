@@ -103,7 +103,8 @@ def _ops(call: Call) -> Ops:
     ops = call.env.ops
     if ops is None:
         raise ToolError(
-            "the OC bridge isn't running in this process (it runs in the core)"
+            "the OC bridge isn't running in this process (it runs in the core): ask the "
+            "core instead, GET /api/base/live (docs/runbooks/advisor.md C7)"
         )
     return ops
 

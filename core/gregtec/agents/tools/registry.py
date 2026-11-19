@@ -359,11 +359,12 @@ class Registry:
     @contextmanager
     def _connect(self, tool: Tool) -> Iterator[tuple[sqlite3.Connection, float]]:
         path = self.env.db
+        no_db = (
+            f"there is no DB at {path} yet: run `gos db build` (recipes) or "
+            "`gos quests load` (quests)"
+        )
         if not path.is_file():
-            raise ToolError(
-                f"there is no DB at {path} yet: run `gos db build` (recipes) or "
-                "`gos quests load` (quests)"
-            )
+            raise ToolError(no_db)
         try:
             conn = access.connect(path, readonly=True)
         except (access.SchemaError, sqlite3.Error) as exc:
@@ -375,6 +376,9 @@ class Registry:
                 raise ToolError(
                     f"{tool.name} ran past its {tool.deadline_s:g} s limit and was stopped"
                 ) from None
+            if str(exc).startswith("no such table") and not access.is_built(path):
+                # The core's Store made the file with only its own tables: nothing built yet.
+                raise ToolError(no_db) from None
             raise ToolError(f"database error: {exc}") from None
         except sqlite3.Error as exc:
             raise ToolError(f"database error: {exc}") from None
