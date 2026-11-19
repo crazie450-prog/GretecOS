@@ -1,9 +1,14 @@
 """Win32 file handles for :mod:`gregtec.gamestate.safe_open` (Windows only; D357).
 
-``CreateFileW`` (read, sharing read, write and delete, overlapped), then ``FSCTL_REQUEST_OPLOCK``
-for a read-handle oplock (``OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE``). The request
-stays pending while the oplock holds; its completion (an event) is the break. Reads are
+``NtCreateFile`` (read, sharing read, write and delete, asynchronous) with
+``FILE_OPEN_REQUIRING_OPLOCK``, then at once ``FSCTL_REQUEST_OPLOCK`` for a read-handle oplock
+(``OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE``). The flag makes the open and the
+oplock one step: until the request is made, a call of the game's that would break the oplock
+waits instead of being refused, so the handle is never open without the oplock (D357). The
+request stays pending while the oplock holds; its completion (an event) is the break. Reads are
 overlapped ``ReadFile`` calls at an offset. Closing the handle is what acknowledges a break.
+Where the volume takes neither the flag nor the oplock, the handle is a plain ``CreateFileW``
+one (sharing all three) and :attr:`Win32Handle.oplock_error` says why (``safe_open`` logs it).
 Re-implemented from Microsoft's documentation of the calls; nothing vendored.
 """
 
@@ -25,11 +30,26 @@ REQUEST_OPLOCK_INPUT_FLAG_REQUEST = 0x1
 REQUEST_OPLOCK_CURRENT_VERSION = 1
 ERROR_HANDLE_EOF = 38
 ERROR_IO_PENDING = 997
+ERROR_OPLOCK_COMPLETED = -1  # ours: the request completed at once, so no oplock is held
 WAIT_OBJECT_0 = 0
 INFINITE = 0xFFFFFFFF
 DISPOSE_WAIT_MS = 5000
 
 INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+# NtCreateFile (ntifs.h)
+FILE_GENERIC_READ = 0x00120089  # what GENERIC_READ maps to for a file
+FILE_OPEN = 1
+FILE_NON_DIRECTORY_FILE = 0x00000040
+FILE_OPEN_REQUIRING_OPLOCK = 0x00010000
+OBJ_CASE_INSENSITIVE = 0x00000040
+# The volume can't take FILE_OPEN_REQUIRING_OPLOCK: open without it (a plain read, logged).
+NO_ATOMIC_OPEN = {
+    0xC000000D,  # STATUS_INVALID_PARAMETER
+    0xC0000010,  # STATUS_INVALID_DEVICE_REQUEST
+    0xC00000BB,  # STATUS_NOT_SUPPORTED
+    0xC00000E2,  # STATUS_OPLOCK_NOT_GRANTED (Windows 7, when other handles are open)
+}
 
 
 class OVERLAPPED(ctypes.Structure):
@@ -63,8 +83,50 @@ class REQUEST_OPLOCK_OUTPUT_BUFFER(ctypes.Structure):
     ]
 
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+class UNICODE_STRING(ctypes.Structure):
+    _fields_ = [
+        ("Length", wintypes.USHORT),
+        ("MaximumLength", wintypes.USHORT),
+        ("Buffer", ctypes.c_void_p),
+    ]
 
+
+class OBJECT_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [
+        ("Length", wintypes.ULONG),
+        ("RootDirectory", wintypes.HANDLE),
+        ("ObjectName", ctypes.POINTER(UNICODE_STRING)),
+        ("Attributes", wintypes.ULONG),
+        ("SecurityDescriptor", ctypes.c_void_p),
+        ("SecurityQualityOfService", ctypes.c_void_p),
+    ]
+
+
+class IO_STATUS_BLOCK(ctypes.Structure):
+    _fields_ = [("Status", ctypes.c_void_p), ("Information", ctypes.c_size_t)]
+
+
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+ntdll = ctypes.WinDLL("ntdll")  # type: ignore[attr-defined]
+
+NtCreateFile = ntdll.NtCreateFile
+NtCreateFile.argtypes = [
+    ctypes.POINTER(wintypes.HANDLE),
+    wintypes.DWORD,
+    ctypes.POINTER(OBJECT_ATTRIBUTES),
+    ctypes.POINTER(IO_STATUS_BLOCK),
+    ctypes.c_void_p,
+    wintypes.ULONG,
+    wintypes.ULONG,
+    wintypes.ULONG,
+    wintypes.ULONG,
+    ctypes.c_void_p,
+    wintypes.ULONG,
+]
+NtCreateFile.restype = ctypes.c_long
+RtlNtStatusToDosError = ntdll.RtlNtStatusToDosError
+RtlNtStatusToDosError.argtypes = [ctypes.c_long]
+RtlNtStatusToDosError.restype = wintypes.ULONG
 CreateFileW = kernel32.CreateFileW
 CreateFileW.argtypes = [
     wintypes.LPCWSTR,
@@ -147,41 +209,123 @@ def _event() -> int:
     return int(ev)
 
 
-class Win32Handle:
-    """A :class:`gregtec.gamestate.safe_open.Handle` over a real file (module docstring)."""
+def nt_path(path: str | os.PathLike[str]) -> str:
+    """``path`` made absolute, as an NT path: ``\\??\\C:\\...``, ``\\??\\UNC\\server\\...``."""
+    p = os.path.abspath(os.fspath(path))
+    if p.startswith(("\\\\?\\", "\\\\.\\")):
+        return "\\??\\" + p[4:]
+    if p.startswith("\\\\"):
+        return "\\??\\UNC\\" + p[2:]
+    return "\\??\\" + p
 
-    def __init__(self, path: str | os.PathLike[str], oplock: bool = True) -> None:
-        handle = CreateFileW(
-            os.fspath(path),
-            GENERIC_READ,
-            SHARE_ALL,
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
-            None,
-        )
-        if handle is None or handle == INVALID_HANDLE:
-            raise _error()
-        self.handle = int(handle)
+
+def _open_plain(path: str | os.PathLike[str]) -> int:
+    handle = CreateFileW(
+        os.fspath(path),
+        GENERIC_READ,
+        SHARE_ALL,
+        None,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+        None,
+    )
+    if handle is None or handle == INVALID_HANDLE:
+        raise _error()
+    return int(handle)
+
+
+def _open_atomic(path: str | os.PathLike[str]) -> tuple[int | None, int]:
+    """``NtCreateFile`` with ``FILE_OPEN_REQUIRING_OPLOCK``: ``(handle, 0)``, or ``(None, the
+    Windows error)`` when the volume can't take the flag. Any other failure raises as ``open()``
+    would: a missing file is ``FileNotFoundError``, and ``STATUS_CANNOT_BREAK_OPLOCK`` (another
+    program's oplock our open would break) an ``OSError`` that the readers retry."""
+    name = nt_path(path)
+    units = len(name.encode("utf-16-le")) // 2
+    buf = ctypes.create_unicode_buffer(name, units + 1)
+    us = UNICODE_STRING(units * 2, (units + 1) * 2, ctypes.cast(buf, ctypes.c_void_p))
+    oa = OBJECT_ATTRIBUTES(
+        ctypes.sizeof(OBJECT_ATTRIBUTES),
+        None,
+        ctypes.pointer(us),
+        OBJ_CASE_INSENSITIVE,
+        None,
+        None,
+    )
+    iosb = IO_STATUS_BLOCK()
+    handle = wintypes.HANDLE()
+    status = NtCreateFile(
+        ctypes.byref(handle),
+        FILE_GENERIC_READ,
+        ctypes.byref(oa),
+        ctypes.byref(iosb),
+        None,
+        FILE_ATTRIBUTE_NORMAL,
+        SHARE_ALL,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REQUIRING_OPLOCK,
+        None,
+        0,
+    )
+    if status >= 0:  # NT_SUCCESS
+        return int(handle.value or 0), 0
+    err = int(RtlNtStatusToDosError(status))
+    if status & 0xFFFFFFFF in NO_ATOMIC_OPEN:
+        return None, err
+    raise ctypes.WinError(err)  # type: ignore[attr-defined]
+
+
+class Win32Handle:
+    """A :class:`gregtec.gamestate.safe_open.Handle` over a real file (module docstring).
+
+    ``oplock=False`` is the plain shared handle (safe_open before WO-6.8). ``atomic=False`` opens
+    with ``CreateFileW`` and requests the oplock afterwards, which leaves a moment when the handle
+    is open without it: only the tests do that, to measure the moment (D357).
+    """
+
+    def __init__(
+        self, path: str | os.PathLike[str], oplock: bool = True, atomic: bool = True
+    ) -> None:
         self.leased = False
+        self.atomic = False  # the open and the oplock were one step
         self.oplock_error = (
-            0  # the request's error when it wasn't granted (diagnostics)
+            0  # why there is no oplock, when oplock=True (safe_open logs it)
         )
         self._events: list[int] = []
         try:
-            self._read_event = _event()
-            self._events.append(self._read_event)
-            self._stop = _event()
-            self._events.append(self._stop)
-            self._break = _event()
-            self._events.append(self._break)
-            if oplock:
-                self._request()
+            for _ in range(3):
+                self._events.append(_event())
+            self._read_event, self._stop, self._break = self._events
+            handle: int | None = None
+            if oplock and atomic:
+                handle, self.oplock_error = _open_atomic(path)
+                self.atomic = handle is not None
+            if handle is None:
+                handle = _open_plain(path)
         except BaseException:
-            CloseHandle(self.handle)
-            for ev in self._events:
-                CloseHandle(ev)
+            self._free_events()
             raise
+        self.handle = handle
+        try:
+            if oplock:
+                # Nothing touches the file between the open and the request (Microsoft's rule
+                # for FILE_OPEN_REQUIRING_OPLOCK).
+                self._request()
+                if not self.leased and self.atomic:
+                    # Microsoft: when the request fails, close the handle the flag opened.
+                    CloseHandle(self.handle)
+                    self.atomic = False
+                    self.handle = 0
+                    self.handle = _open_plain(path)
+        except BaseException:
+            if self.handle:
+                CloseHandle(self.handle)
+            self._free_events()
+            raise
+
+    def _free_events(self) -> None:
+        for ev in self._events:
+            CloseHandle(ev)
+        self._events = []
 
     def _request(self) -> None:
         self._in = REQUEST_OPLOCK_INPUT_BUFFER(
@@ -210,13 +354,8 @@ class Win32Handle:
             self.leased = True  # granted: the request completes when the oplock breaks
         else:
             # Not granted (ERROR_OPLOCK_NOT_GRANTED; a file system without oplocks), or
-            # completed at once: a plain shared read, as before D357.
-            self.oplock_error = 0 if ok else err
-
-    @property
-    def new_level(self) -> int:
-        """The oplock level a break left (after a break; diagnostics)."""
-        return int(self._out.NewOplockLevel) if self.leased else 0
+            # completed at once: a plain shared read, as before D357, which safe_open logs.
+            self.oplock_error = ERROR_OPLOCK_COMPLETED if ok else err
 
     def size(self) -> int:
         n = ctypes.c_longlong()
@@ -265,10 +404,10 @@ class Win32Handle:
             # Closing the handle completes the pending request; wait for it, so the kernel is
             # done with the buffers before they are freed.
             WaitForSingleObject(self._break, DISPOSE_WAIT_MS)
-        for ev in self._events:
-            CloseHandle(ev)
-        self._events = []
+        self._free_events()
 
 
-def open_handle(path: str | os.PathLike[str], oplock: bool = True) -> Win32Handle:
-    return Win32Handle(path, oplock)
+def open_handle(
+    path: str | os.PathLike[str], oplock: bool = True, atomic: bool = True
+) -> Win32Handle:
+    return Win32Handle(path, oplock, atomic)

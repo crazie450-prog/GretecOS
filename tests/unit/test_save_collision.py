@@ -39,6 +39,9 @@ Pattern = Callable[[Path, Path], None]  # (target, its temp file with NEW in it)
 WAITS: dict[
     tuple[str, str], float
 ] = {}  # how long each writer call that went through took
+READS: dict[
+    tuple[str, str], str
+] = {}  # what each held reader saw (:func:`_reader_outcome`)
 
 
 # --- the writers: the Win32 calls Java and the game make (D356) --------------------------------
@@ -240,7 +243,9 @@ def _hold_win32(
 ) -> None:
     from gregtec.gamestate import _win32
 
-    with so.leased(_win32.open_handle(path, oplock=oplock)) as f:
+    handle = _win32.open_handle(path, oplock=oplock)
+    out["atomic"] = handle.atomic
+    with so.leased(handle) as f:
         out["leased"] = so.is_leased(f)
         opened.set()
         end = time.monotonic() + HOLD_S
@@ -261,6 +266,25 @@ READERS: dict[
     "shared": lambda p, e, o: _hold_win32(p, e, o, oplock=False),
     "oplock": lambda p, e, o: _hold_win32(p, e, o, oplock=True),
 }
+
+
+def _reader_outcome(out: dict[str, object]) -> str:
+    """``dropped`` when the reader was told the game changed the file and its read raised
+    :class:`ReadInterrupted` (never a torn file), ``whole`` when it read on undisturbed; with
+    ``+lease`` / ``+atomic`` when the handle held the oplock / took it with the open."""
+    if "read" not in out:
+        return "-"
+    if out.get("interrupted") and out["read"] == "interrupted":
+        seen = "dropped"
+    elif not out.get("interrupted") and out["read"] != "interrupted":
+        seen = "whole"
+    else:
+        seen = f"odd:{out.get('interrupted')}"
+    return (
+        seen
+        + ("+lease" if out.get("leased") else "")
+        + ("+atomic" if out.get("atomic") else "")
+    )
 
 
 def run_cell(folder: Path, reader: str, pattern: str) -> str:
@@ -287,6 +311,7 @@ def run_cell(folder: Path, reader: str, pattern: str) -> str:
     if t is not None:
         t.join(HOLD_S + 5)
         assert not t.is_alive(), "the reader hung"
+        READS[(reader, pattern)] = _reader_outcome(out)
     after = target.read_bytes() if target.exists() else None
     state = {None: "gone", OLD: "old", NEW: "new"}.get(after, "other")
     if pattern == "append" and after is not None:
@@ -351,11 +376,21 @@ def test_each_write_pattern_against_each_reader_on_windows(tmp_path: Path) -> No
     waits = {
         p: round(WAITS[("oplock", p)], 3) for p in PATTERNS if ("oplock", p) in WAITS
     }
+    reads = {
+        r: {p: READS.get((r, p), "-") for p in PATTERNS} for r in ("shared", "oplock")
+    }
     warnings.warn(
-        f"save collision table:\n{_table(got)}\noplock waits (s): {waits}", stacklevel=1
+        f"save collision table:\n{_table(got)}\noplock waits (s): {waits}\n"
+        f"what the held reader saw:\n{_table(reads)}",
+        stacklevel=1,
     )
     assert got == EXPECTED, f"measured:\n{_table(got)}\nexpected:\n{_table(EXPECTED)}"
     assert max(waits.values()) < WAIT_MAX_S, waits
+    # Review L3: under the oplock every write pattern, in place and appends included, reaches
+    # the reader as a dropped read, never as bytes the game changed under it.
+    assert reads["oplock"] == dict.fromkeys(PATTERNS, "dropped+lease+atomic"), _table(
+        reads
+    )
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the Linux half of the table")
@@ -420,3 +455,119 @@ def test_a_replace_from_the_reading_thread_itself_does_not_deadlock(
         with pytest.raises(so.ReadInterrupted):
             f.read()
     assert target.read_bytes() == NEW
+
+
+# --- the moment between the open and the oplock (review M1) -------------------------------------
+
+GAP_S = 0.3  # how long the reader is held between its open and its oplock request
+GAP_PATTERNS = (
+    "replace",
+    "replace_through",
+    "os_replace",
+    "delete_move",
+    "rename_away",
+    "in_place",
+)
+REPLACES = ("replace", "replace_through", "os_replace")
+
+
+def run_gap(folder: Path, atomic: bool, pattern: str) -> str:
+    """A reader stopped between its open and its oplock request for :data:`GAP_S`, and the
+    game's call made in that moment: ``<the call after GAP_S>/<its end>/<target>/<reader>``,
+    where the call is ``waiting``, ``ok`` or ``refused:<winerror>``."""
+    from gregtec.gamestate import _win32
+
+    folder.mkdir(parents=True)
+    target, tmp = folder / "QuestProgress.json", folder / "QuestProgress.json.tmp"
+    target.write_bytes(OLD)
+    tmp.write_bytes(NEW)
+    in_gap, go_on = threading.Event(), threading.Event()
+
+    class Paused(_win32.Win32Handle):
+        def _request(self) -> None:
+            in_gap.set()
+            go_on.wait(5)
+            super()._request()
+
+    out: dict[str, object] = {}
+
+    def reader() -> None:
+        handle = Paused(target, oplock=True, atomic=atomic)
+        out["atomic"] = handle.atomic
+        with so.leased(handle) as f:
+            out["leased"] = so.is_leased(f)
+            end = time.monotonic() + HOLD_S
+            while time.monotonic() < end and not so.interrupted(f):
+                time.sleep(0.005)
+            out["interrupted"] = so.interrupted(f)
+            try:
+                out["read"] = f.read()
+            except so.ReadInterrupted:
+                out["read"] = "interrupted"
+
+    wrote: dict[str, str] = {}
+
+    def writer() -> None:
+        try:
+            PATTERNS[pattern](target, tmp)
+            wrote["call"] = "ok"
+        except OSError as exc:
+            wrote["call"] = f"refused:{getattr(exc, 'winerror', None) or exc.errno}"
+
+    rt = threading.Thread(target=reader, daemon=True)
+    rt.start()
+    assert in_gap.wait(5), "the reader didn't open"
+    wt = threading.Thread(target=writer, daemon=True)
+    wt.start()
+    wt.join(GAP_S)
+    during = wrote.get("call", "waiting")
+    go_on.set()
+    wt.join(HOLD_S + 5)
+    rt.join(HOLD_S + 5)
+    assert not wt.is_alive() and not rt.is_alive(), "hung"
+    after = target.read_bytes() if target.exists() else None
+    state = {None: "gone", OLD: "old", NEW: "new"}.get(after, "other")
+    return f"{during}/{wrote['call']}/{state}/{_reader_outcome(out)}"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' oplocks")
+def test_the_open_and_the_oplock_are_one_step(tmp_path: Path) -> None:
+    """Review M1. With ``CreateFileW`` and then the request (``atomic=False``), a replace made
+    between the two is refused, as for the old reader. With ``FILE_OPEN_REQUIRING_OPLOCK``
+    (safe_open's open), every call made in that moment waits until the oplock is requested,
+    then breaks it and goes on: there is no moment when a save can be refused."""
+    import warnings
+
+    got = {
+        mode: {
+            p: run_gap(tmp_path / mode / p, mode == "atomic", p) for p in GAP_PATTERNS
+        }
+        for mode in ("createfile", "atomic")
+    }
+    table = _table(got)
+    warnings.warn(f"open-then-oplock table:\n{table}", stacklevel=1)
+    for p in REPLACES:
+        assert got["createfile"][p].startswith("refused:5/refused:5/old/"), table
+    for p in GAP_PATTERNS:
+        assert got["atomic"][p] == "waiting/ok/new/dropped+lease+atomic", table
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' oplocks")
+def test_safe_open_takes_the_oplock_with_the_open_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review M2: safe_open's handle is the atomic one, and the process log says so once (the
+    line the Lab check looks for in watchers.log)."""
+    import logging
+
+    monkeypatch.setattr(so, "_reported_pairs", set())
+    caplog.set_level(logging.INFO, logger="gregtec.gamestate")
+    target = tmp_path / "level.dat"
+    target.write_bytes(OLD)
+    for _ in range(2):
+        with so.safe_open(target) as f:
+            assert so.is_leased(f)
+            assert f.read() == OLD
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ("INFO", so.GRANTED)
+    ]

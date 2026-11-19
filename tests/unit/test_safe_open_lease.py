@@ -208,24 +208,78 @@ def test_read_bytes_gives_up_after_three_interrupted_reads(
     assert all(h.close_calls == 1 for h in handles)
 
 
-def test_read_range_and_sha256_drop_interrupted_reads(
+def test_read_range_keeps_a_range_read_before_the_break_and_sha256_drops_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """D357: an append breaks the oplock while a log range is read; ``read_range`` keeps that
+    range (the first handle's bytes, the second never read), ``sha256_file`` reads again."""
+    import hashlib
+
     monkeypatch.setattr(so.time, "sleep", lambda _s: None)
     a = FakeHandle(b"0123456789", read_s=0.05)
     a.on_read = lambda n: threading.Thread(target=a.game_wants_it).start()
-    b = FakeHandle(b"0123456789")
+    b = FakeHandle(b"abcdefghij")
     with _opens([a, b]) as fake:
         monkeypatch.setattr(so, "safe_open", fake)
         assert so.read_range(tmp_path / "r.0.0.mca", 2, 3) == b"234"
+    assert a.close_calls == 1 and not a.closed_mid_read and b.reads == []
     c = FakeHandle(b"jar", read_s=0.05)
     c.on_read = lambda n: threading.Thread(target=c.game_wants_it).start()
-    d = FakeHandle(b"jar")
+    d = FakeHandle(b"JAR")
     with _opens([c, d]) as fake:
         monkeypatch.setattr(so, "safe_open", fake)
-        import hashlib
+        assert so.sha256_file(tmp_path / "x.jar") == hashlib.sha256(b"JAR").hexdigest()
+    assert c.reads and d.reads
 
-        assert so.sha256_file(tmp_path / "x.jar") == hashlib.sha256(b"jar").hexdigest()
+
+def test_read_range_drops_a_handle_closed_before_its_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The game took the file back before the range was read: ``read_range`` reads it again
+    through a new handle."""
+    monkeypatch.setattr(so.time, "sleep", lambda _s: None)
+    a = FakeHandle(b"0123456789")
+    a._broken.set()  # the game's break, before any read
+    a._wake.set()
+    b = FakeHandle(b"abcdefghij")
+    with _opens([a, b]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        assert so.read_range(tmp_path / "latest.log", 2, 3) == b"cde"
+    assert a.reads == [] and a.close_calls == 1
+
+
+class _Reported:
+    def __init__(self, leased: bool, atomic: bool, oplock_error: int = 0) -> None:
+        self.leased, self.atomic, self.oplock_error = leased, atomic, oplock_error
+
+
+def test_report_logs_a_granted_oplock_once_and_each_file_without_one_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review M2: a read without the oplock (or with one taken after the open) is the read that
+    can make a save fail, so it is a WARNING naming the file, once per file; a granted one is
+    one INFO line per process, which the Lab check looks for (watchers.md 4.1)."""
+    import logging
+
+    monkeypatch.setattr(so, "_reported_pairs", set())
+    caplog.set_level(logging.INFO, logger="gregtec.gamestate")
+    quest, level = tmp_path / "QuestProgress.json", tmp_path / "level.dat"
+    for _ in range(2):
+        so.report(quest, _Reported(True, True))
+        so.report(level, _Reported(True, True))
+        so.report(quest, _Reported(False, False, 1))
+        so.report(level, _Reported(False, False, 1))
+        so.report(level, _Reported(True, False, 87))
+    got = [
+        (r.levelname, r.getMessage(), getattr(r, "path", "")) for r in caplog.records
+    ]
+    assert got == [
+        ("INFO", so.GRANTED, str(quest)),
+        ("WARNING", so.NOT_GRANTED, str(quest)),
+        ("WARNING", so.NOT_GRANTED, str(level)),
+        ("WARNING", so.NOT_ATOMIC, str(level)),
+    ]
+    assert [getattr(r, "winerror", None) for r in caplog.records] == [0, 1, 1, 87]
 
 
 def test_copy_to_raises_when_interrupted(

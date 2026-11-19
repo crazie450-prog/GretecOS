@@ -251,4 +251,9 @@ def test_windows_a_held_plain_handle_blocks_a_save_and_safe_open_does_not(
     with safe_open.safe_open(target) as f:
         assert f.read() == b"old"
         os.rename(target, tmp_path / "level.dat_old")  # vanilla's save renames it away
+        assert safe_open.interrupted(
+            f
+        )  # the rename broke the oplock: GOS gave the file up
+        with pytest.raises(safe_open.ReadInterrupted):
+            f.read()
     assert (tmp_path / "level.dat_old").read_bytes() == b"old"

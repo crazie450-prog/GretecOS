@@ -10,7 +10,8 @@ Sharing alone does not let the game replace a file GOS holds. GTNH 2.9.0 saves l
 ``MoveFileExW(MOVEFILE_REPLACE_EXISTING)``: Windows refuses that while any handle to the target
 is open, whatever its sharing, and BetterQuesting logs the error and does not retry (D356). So on
 Windows every handle also asks for a **read-handle oplock** (``FSCTL_REQUEST_OPLOCK``, level
-read + handle caching, D357). A game that replaces, renames or deletes the file, or opens it in a
+read + handle caching, D357), in the same step as the open (``FILE_OPEN_REQUIRING_OPLOCK``), so
+the handle is never open without it. A game that replaces, renames or deletes the file, or opens it in a
 way that would conflict, breaks the oplock and waits; a thread of ours that waits for exactly that
 closes the handle at once (between two chunk reads, never during one), and the game's call goes
 on. A game that opens the file to write it in place breaks the oplock too. Either way the read is
@@ -21,7 +22,7 @@ log) breaks the oplock too: :func:`read_range`, which reads logs and region head
 patched in place, never replaced), keeps what it read, since its callers read a range they
 measured first and check what they read, as before (D357); the whole-file readers drop it.
 When the oplock isn't granted (a file system without oplocks) the read is a plain shared read,
-as before.
+as before, and :func:`report` logs a warning for that file.
 
 The rule this keeps (CLAUDE.md, ``gamestate.safe_open``): share-delete (the oplock is on top of
 it), copy then parse (read whole into memory, close, then parse), retry x3 (an interrupted read
@@ -34,6 +35,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import logging
 import os
 import sys
 import threading
@@ -48,6 +50,20 @@ CHUNK = (
 )  # one ReadFile at most: the longest the game can wait for a handle to close
 
 StrPath = str | os.PathLike[str]
+
+log = logging.getLogger("gregtec.gamestate")
+GRANTED = (
+    "safe_open: Windows grants read-handle oplocks with the open: a game save waits for a "
+    "GOS read instead of failing (D357)"
+)
+NOT_GRANTED = (
+    "safe_open: no oplock on this file: a game save onto it can be refused while GOS reads "
+    "it (D357)"
+)
+NOT_ATOMIC = (
+    "safe_open: the oplock came after the open here (no FILE_OPEN_REQUIRING_OPLOCK): a game "
+    "save in that moment can be refused (D357)"
+)
 
 
 class ReadInterrupted(OSError):
@@ -233,8 +249,36 @@ def safe_open(path: StrPath) -> Iterator[BinaryIO]:
 
     from gregtec.gamestate import _win32
 
-    with leased(_win32.open_handle(path)) as f:
+    handle = _win32.open_handle(path)
+    report(path, handle)
+    with leased(handle) as f:
         yield f
+
+
+_reported_pairs: set[tuple[str, str]] = (
+    set()
+)  # what report() has logged in this process
+_report_lock = threading.Lock()
+
+
+def report(path: StrPath, handle: object) -> None:
+    """Say in the process's log (``watchers.log`` for the watchers) whether the oplock is there:
+    once per process when Windows grants one with the open (``GRANTED``), and once per file when
+    a read goes without it (``NOT_GRANTED``) or took it after the open (``NOT_ATOMIC``), the
+    two cases where a game save can still be refused (D357). The Lab check reads these lines."""
+    granted = bool(getattr(handle, "leased", False))
+    atomic = bool(getattr(handle, "atomic", False))
+    error = int(getattr(handle, "oplock_error", 0) or 0)
+    if granted and atomic:
+        key, level, message = "", logging.INFO, GRANTED
+    else:
+        key = os.fspath(path)
+        level, message = logging.WARNING, NOT_ATOMIC if granted else NOT_GRANTED
+    with _report_lock:
+        if (key, message) in _reported_pairs:
+            return
+        _reported_pairs.add((key, message))
+    log.log(level, message, extra={"path": os.fspath(path), "winerror": error})
 
 
 def _retried[T](read: Callable[[], T], also: tuple[type[Exception], ...] = ()) -> T:
