@@ -22,6 +22,20 @@ from gregtec.db import access
 from gregtec.ingest import collect
 
 REPO = Path(__file__).resolve().parents[2]
+# The item each case names, as the DB names it and its mod (review L4): a changed meta then
+# fails here loudly instead of quietly scoring another item. Names, not numbers.
+NAMED = {
+    "h01": ("Steel Ingot", "gregtech"),
+    "h02": ("Electric Motor (LV)", "gregtech"),
+    "h03": ("Iron Ingot", "minecraft"),
+    "h04": ("Hot Arcanite Ingot", "miscutils"),
+    "h05": ("Iron Plate", "IC2"),
+    "h06": ("RE-Battery", "IC2"),
+    "h07": ("Universal Fluid Cell", "IC2"),
+    "h08": ("Debug Fluid Tank", "gregtech"),
+    "h09": ("Field Restriction Casing", "GoodGenerator"),
+    "h10": ("Electric Blast Furnace", "gregtech"),
+}
 
 
 @pytest.fixture(scope="module")
@@ -51,11 +65,12 @@ def ground(toml: Path) -> Iterator[Ground]:
 
 def test_all_ten_cases_resolve_on_the_harness_db(ground: Ground) -> None:
     cases = hover_eval.load()
-    assert len(cases) == 10
+    assert len(cases) == 10 and {c.id for c in cases} == set(NAMED)
     assert hover_eval.unresolved(ground, cases) == {}
     for case in cases:
         item = hover_eval.resolve(ground, case)
         assert isinstance(item, hover_eval.Resolved)
+        assert (item.name, item.mod) == NAMED[case.id], case.id
         assert ("#" in item.key) == ("nbt" in case.item)  # the variant itself
         held = hover_eval.rows(ground, item)
         if case.expect in ("make", "tier"):
