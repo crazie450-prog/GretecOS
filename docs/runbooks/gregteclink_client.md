@@ -73,3 +73,22 @@ Only after B passes:
 
 To remove it: delete `mods\gregteclink-*.jar` and `config\gregteclink.cfg` from the instance, and
 `gos token revoke gregteclink-play`.
+
+## D. The hover-item eval (plan 9's 10 cases; WO-8.4, D362)
+
+`tests/evals/hover_items.tsv` holds 10 hovered items exactly as the client module reports them (registry name, meta,
+NBT; never a numeric id) and the question said while pointing: "what's this?", "how do I make this?", "what is this
+used for?", "which tier is this?", an ambiguous name (IC2's Iron Plate), an item with NBT variants (a charged
+RE-Battery), a fluid cell with NBT (water in IC2's Universal Fluid Cell), an item in no recipe (the Debug Fluid Tank),
+an addon item (Good Generator's Field Restriction Casing) and a looked-at EBF. What a right answer must cite is read
+from the DB at run time, so the file runs on your DB as it does on the client harness's (CI runs `--fake` on all 10).
+
+1. **Free, any time after 3.1** (no key, no model): `& $gos eval hover --fake`. Pass: `passed: 10 of 10`,
+   `Result: PASS`. A line `not in this DB: ...` means your Export run lacks that item: say which in the paste.
+2. **Paid** (the fast lane, about $0.15 worst case; it prints the estimate first): `& $gos eval hover`, read the
+   `worst case $` line, type `yes`. It refuses while the AI is paused or off, or when today's spend plus the estimate
+   would pass `[budget] day_max_usd`. Pass: `passed: 10 of 10`, `Result: PASS`. Paste: the table (`Tee-Object` it into
+   `$gh\data\reports\hover-eval.txt`). A failing row says why (a wrong or missing citation, an uncited number, the
+   wrong variant, the hovered item ignored); report it as it is, don't edit the case to make it pass.
+
+This scores the core's answer to a reported hover; that the game reports the right item is B.5-B.6.

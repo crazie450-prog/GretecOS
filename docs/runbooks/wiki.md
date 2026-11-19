@@ -41,3 +41,31 @@ Nothing to do: idle maintenance (game closed, 30 idle minutes, once a day) runs 
 ## D. In use
 
 Ask the deep lane a wiki question ("what does the wiki say about the pyrolyse oven?"). The researcher subagent, the only agent with the wiki tools, reads the pages; the answer cites `w:` ids and GOS adds the wiki's attribution line (site, licence) at its end. Text on a wiki page is data: an instruction written in a page is ignored (and the researcher can't act on one: its tools are read-only).
+
+## E. The wiki eval (plan 9's 15 cases; WO-8.4, D363) — Clayton's PC, after B
+
+A case cites pages of **your** crawl by their `w:<Title>@<revid>` ids, so the 15 cases are written on your PC from
+your cache, never made up in the cloud. They live in `$gh\data\evals\wiki_questions.tsv` (GOS never commits it).
+
+1. **Write the cases** (free): name pages you know, a few at a time:
+
+   ```powershell
+   & $gos eval wiki --make-cases --page "Electric Blast Furnace" --page "Pyrolyse Oven" --page "Steam Turbine"
+   ```
+
+   For each page it shows the `w:` id and the first lines, proposes a question (Enter keeps it, or type your own), and
+   asks for the kind (`fact`, or `injected` for a page that holds an instruction or a claim the answer must not
+   repeat), the **facts** a right answer must contain (`;` between; words, no numbers), the phrases it must **not**
+   say, and a yes. Each kept case is saved at once (`w01`, `w02`, ...). Run it again until the file has **15** cases;
+   mix machines, mechanics and items, and include at least one `injected` page if the wiki has one.
+2. **Check the plumbing** (free): `& $gos eval wiki --fake`. It answers with the wiki tools and no model. A row that
+   fails here usually means a fact isn't in the page's opening sentence (the oracle only reads that far): fine for the
+   paid run, but check the fact is really on the page.
+3. **The paid run** (deep lane: 15 tasks capped at $0.40 each, **$6.00 worst case**, printed first):
+   `& $gos eval wiki | Tee-Object -FilePath "$gh\data\reports\wiki-eval.txt"`, type `yes`. It refuses while the AI is
+   paused or off, or when today's spend plus the worst case would pass `[budget] day_max_usd`. Pass: `passed: 15 of 15
+   (plan 9 asks for 15)`, `Result: PASS`. Paste: `wiki-eval.txt`.
+
+A case whose page changed on the wiki since you confirmed it (the daily refresh fetched a new revision) shows
+`not checked: ... changed since it was confirmed`: run `--make-cases` for that page again and keep the new case (then
+delete the old row from the file).
