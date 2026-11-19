@@ -663,7 +663,14 @@ export function Power() {
 
   const design = (spec: PowerSpec): void => {
     setNotice(null);
-    runner.start(() => api.powerJob(spec)).catch((e: unknown) => setNotice(message(e)));
+    setBusy("Starting the design"); // busy from the click on; the job's panel follows
+    runner.start(() => api.powerJob(spec)).then(
+      () => setBusy(null),
+      (e: unknown) => {
+        setBusy(null);
+        setNotice(message(e));
+      },
+    );
   };
 
   const accept = (id: string): void => {

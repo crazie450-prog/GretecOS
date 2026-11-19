@@ -1093,13 +1093,19 @@ class Option:
 
 def _fills(conn: sqlite3.Connection, run_id: int, container: str, fluid: str) -> bool:
     """Whether a recipe of the run fills ``container`` (an item key) with ``fluid``: what makes
-    an item a container of the fluid (a cell, a capsule)."""
+    an item a container of the fluid (a cell, a capsule). The keys are resolved to their DB ids
+    first (the same items and fluid as comparing the keys row by row), so the query runs on the
+    output and input indexes instead of scanning every recipe of the run (WO-3.9)."""
+    items, _ = chains._item_ids(conn, container)
+    _, fluids = chains._item_ids(conn, fluid) if fluid.startswith("fluid:") else ([], [])
+    if not items or not fluids:
+        return False
     row = conn.execute(
-        "SELECT 1 FROM recipe AS r JOIN recipe_output AS ro ON ro.recipe_id = r.id"
-        " JOIN item AS i ON i.id = ro.item_id JOIN recipe_input AS ri ON ri.recipe_id = r.id"
-        f" JOIN fluid AS f ON f.id = ri.fluid_id WHERE r.run_id = ? AND {graph._ITEM_KEY_SQL} = ?"
-        " AND 'fluid:' || f.name = ? LIMIT 1",
-        (run_id, container, fluid),
+        "SELECT 1 FROM json_each(?) AS j CROSS JOIN recipe_output AS ro ON ro.item_id = j.value"
+        " CROSS JOIN recipe AS r ON r.id = ro.recipe_id"
+        " CROSS JOIN recipe_input AS ri ON ri.recipe_id = r.id"
+        " WHERE r.run_id = ? AND ri.fluid_id IN (SELECT value FROM json_each(?)) LIMIT 1",
+        (json.dumps(sorted(items)), run_id, json.dumps(sorted(fluids))),
     ).fetchone()
     return row is not None
 

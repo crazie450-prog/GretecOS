@@ -5,6 +5,8 @@
 // Power view. The made-up exports design in well under a second, so each stage waits
 // (`design_delay`, a harness control) long enough to watch it. Needs Clayton's board approval
 // (D92): the job panel is built to the design system's busy state.
+// Named to run after power.spec.ts (files run in name order): its power designs leave a latest
+// design on the power core, whose empty ledger power.spec.ts checks first.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page, expect, test } from "@playwright/test";

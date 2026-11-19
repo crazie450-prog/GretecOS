@@ -174,6 +174,28 @@ def test_the_designer_job_api(
             assert not [
                 j for j in dashboard.state(core, True)["jobs"] if j["id"] == jid
             ]
+            # The core answers while a design computes (a busy Python loop, as the planner is).
+
+            def busy(h: Path, req: Request) -> Any:  # noqa: ANN401
+                end = time.monotonic() + 3.0
+                while time.monotonic() < end:
+                    sum(i * i for i in range(2000))
+                    progress.check()
+                return real(h, req)
+
+            monkeypatch.setattr(designer, "design", busy)
+            jid = c.post("/api/designer/jobs", json=body, headers=ADMIN_H).json()[
+                "job"
+            ]["id"]
+            slowest = 0.0
+            for _ in range(5):
+                t = time.monotonic()
+                assert c.get("/api/health", headers=ADMIN_H).status_code == 200
+                assert c.get(f"/api/jobs/{jid}", headers=ADMIN_H).status_code == 200
+                slowest = max(slowest, time.monotonic() - t)
+                time.sleep(0.2)
+            assert slowest < 1.0, slowest
+            assert _ended(c, jid)["status"] == dj.DONE
     finally:
         core.store.close()
 

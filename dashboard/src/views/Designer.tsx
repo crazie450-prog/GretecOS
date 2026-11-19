@@ -636,11 +636,16 @@ export function Designer() {
 
   const startJob = (body: DesignJobBody, then?: (result: unknown) => void): void => {
     setNotice(null);
+    setBusy("Starting the design"); // busy from the click on; the job's panel follows
     runner.start(() => api.designJob(body), then).then(
       (question) => {
+        setBusy(null);
         if (question && "spec" in body) setClarify({ card: question, spec: body.spec });
       },
-      (e: unknown) => setNotice(message(e)),
+      (e: unknown) => {
+        setBusy(null);
+        setNotice(message(e));
+      },
     );
   };
 
