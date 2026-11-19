@@ -69,6 +69,7 @@ from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 from gregtec.watchers import cli as watch_cli
 from gregtec.wiki import cli as wiki_cli
+from gregtec.wiki import evals_cli as wiki_evals_cli
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -515,6 +516,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     quest_cli.add_parsers(quest_cmds, eval_cmds)
     advisor_cli.add_parsers(eval_cmds)
     hover_eval_cli.add_parsers(eval_cmds)
+    wiki_evals_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -836,6 +838,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return recipe_eval_cli.run(args, sys.stdout)
         if args.eval_command == hover_eval_cli.COMMAND:
             return hover_eval_cli.run(args, sys.stdout)
+        if args.eval_command == wiki_evals_cli.COMMAND:
+            return wiki_evals_cli.run(args, sys.stdout)
         if args.eval_command == screen_eval_cli.COMMAND:
             return screen_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:
