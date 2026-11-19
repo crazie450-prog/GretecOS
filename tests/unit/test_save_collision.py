@@ -375,8 +375,8 @@ def test_a_log_the_game_holds_open_is_read_and_its_appends_go_on(
     tmp_path: Path,
 ) -> None:
     """log4j holds its logs open and appends through that handle. Windows grants the oplock
-    beside it (CI showed it), and a write through a handle opened before ours breaks nothing:
-    the appends go on while GOS reads, and GOS reads a range it measured first (``LogTail``)."""
+    beside it, and an append through that handle breaks it (both measured on CI, D357). The
+    appends go on while GOS reads, and ``read_range`` (``LogTail``) keeps a range it read."""
     from gregtec.gamestate import _win32
 
     quiet = tmp_path / "QuestProgress.json"
@@ -392,8 +392,10 @@ def test_a_log_the_game_holds_open_is_read_and_its_appends_go_on(
             assert f.read(2) == b"x\n"
             held.write(b"y\n")
             held.flush()
-            assert not so.interrupted(f)
-    assert log.read_bytes() == b"x\ny\n"
+        assert so.read_range(log, 0, 4) == b"x\ny\n"
+        held.write(b"z\n")
+        held.flush()
+    assert log.read_bytes() == b"x\ny\nz\n"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' oplocks")

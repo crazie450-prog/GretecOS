@@ -16,9 +16,10 @@ closes the handle at once (between two chunk reads, never during one), and the g
 on. A game that opens the file to write it in place breaks the oplock too. Either way the read is
 marked :attr:`LeasedFile.interrupted`, and the whole-file readers here raise
 :class:`ReadInterrupted` (an ``OSError``) and retry, so a read never returns a file the game
-changed under it. A write through a handle the game opened *before* ours (log4j's logs, a region
-file the game keeps open) breaks nothing: those files are appended or patched in place, never
-replaced, and their readers read a range they measured first or check what they read (D357).
+changed under it. A write through a handle the game opened *before* ours (log4j appending to its
+log) breaks the oplock too: :func:`read_range`, which reads logs and region headers (appended or
+patched in place, never replaced), keeps what it read, since its callers read a range they
+measured first and check what they read, as before (D357); the whole-file readers drop it.
 When the oplock isn't granted (a file system without oplocks) the read is a plain shared read,
 as before.
 
@@ -157,7 +158,6 @@ class LeasedFile(io.RawIOBase):
         with self._lock:
             self._check()
             data = self._h.read_at(self._pos, min(len(view), CHUNK))
-            self._check()  # broken during the read: drop it (an in-place write may tear it)
         n = len(data)
         view[:n] = data
         self._pos += n
@@ -278,14 +278,17 @@ def read_bytes(
 
 
 def read_range(path: StrPath, offset: int, size: int) -> bytes:
-    """``size`` bytes of ``path`` from ``offset``: one open, seek, read and close per try."""
+    """``size`` bytes of ``path`` from ``offset``: one open, seek, read and close per try.
+
+    For files the game appends to or patches in place (logs, region files): a break that came
+    while the range was read doesn't drop it (an append breaks the oplock, and the caller read a
+    range it measured first and checks what it read); a handle the game took back mid-read does.
+    """
 
     def once() -> bytes:
         with safe_open(path) as f:
             f.seek(offset)
-            data = f.read(size)
-            check_whole(f)
-        return data
+            return f.read(size)
 
     return _retried(once)
 
