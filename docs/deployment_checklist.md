@@ -510,6 +510,7 @@ Views built to the design system without an approved board, each marked "needs C
 | 5.12.12 | Open WOs claim their schema version (and decision numbers) when they start | the PM assigns them in each work order | a row in `docs/decisions.md` per claim | [#105](https://github.com/crazie450-prog/GretecOS/pull/105) Q10, [#127](https://github.com/crazie450-prog/GretecOS/pull/127) Q5 |
 | 5.12.13 | The decision rule itself: build to G11 without interrupting you, self-merge on green CI and an independent review, every default reversible and marked pending you | in force until you sign G11 | | D158 |
 | 5.12.14 | Commit trailers differ between rounds on some branches (no action possible without a force push) | noted | | G3 PR #72, #78, G6 Q43, Q53, [#128](https://github.com/crazie450-prog/GretecOS/pull/128) |
+| 5.12.15 | The core reads what is left of a request's body (at most 12 MiB, for at most 2 s) before it answers, refusals included, so Windows no longer resets the connection and a wrong token reads as "refused", not "Core offline" | as built | other bounds | D355, [#132](https://github.com/crazie450-prog/GretecOS/pull/132) Q1 |
 
 ### 5.13 Already answered: nothing to do
 
@@ -589,7 +590,7 @@ What is known to be missing or fragile on `main` at `49c9e70`, so a failure that
 - `tests/unit/watchers/test_with_play.py::test_gos_watch_run_spools_events` (IndexError, seen once).
 - `tests/unit/test_playhooks.py::test_export_waits_for_a_launch_to_start_its_client` (wall clock under load).
 - `tests/unit/alerts/test_core_routing.py::test_without_a_router_the_engines_push_speaks_as_before` under xdist load (#125 made it wait for the alert message; watch for it).
-- Windows: `test_ask_errors_say_whether_the_core_answered` (`WinError 10053`, seen once); the WO-7.3 mailbox stress tests on a slow runner (floor scaled in G7's branch).
+- Windows: the WO-7.3 mailbox stress tests on a slow runner (floor scaled in G7's branch). `test_ask_errors_say_whether_the_core_answered` (`WinError 10053`/`10054`, seen twice) had a real cause, fixed by #132 (D355): if it fails again, it is a defect, not a flake.
 - The `mod` job's critical path is `test_power_view_harness.py` (about 12.5 min alone; the job took 17-27 min of its 60 since D340).
 - CI runner apt DNS failures (archive.ubuntu.com): a re-run, not a code problem.
 
