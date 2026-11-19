@@ -1,19 +1,24 @@
-"""Lab captures of addon multiblocks (WO-10.2, plan 7.10 "Footprint library", L1, D306).
+"""Lab captures of addon multiblocks (WO-10.2, WO-10.9, plan 7.10 "Footprint library", L1, D306,
+D350, D351).
 
 gtnh-extractor builds the base pack's controllers only (GT5-Unofficial and its hard
 dependencies, D124); an addon multi's footprint comes from the Lab: Clayton builds it there (the
-StructureLib projector at the tier set with ``/sl_channel set``) and captures the blocks, with
-GuideNH's region wand or with WorldEdit's ``//copy`` [G][E§5.5]. This module reads GOS's own
-minimal capture format (``gos-capture`` schema 1, a JSON file) and turns it into a structure row
-(``source = 'lab-capture'``) that the footprint library reads like the extractor's. WO-10.4's
-``.schematic`` reader is on main, but it lists tile entities by position only (D311), so a
-``.schematic`` doesn't convert yet: its cells must go through :func:`from_cells` with the
-controller's position and each GT machine cell's tile-entity ``mID`` (a world or ``.schematic``
-meta of ``gregtech:gt.blockmachines`` is not the machine). That hand-off is still open: the reader
-must expose the tile entities' ``mID``, and only a capture that kept its tile entities converts
-(WorldEdit ``//copy`` keeps them).
+StructureLib projector at the tier set with ``/sl_channel set``) and captures the blocks with
+WorldEdit's ``//copy`` + ``//schem save`` [G][E§5.5] (runbook ``footprints_lab.md`` C). This
+module turns a capture into a structure row (``source = 'lab-capture'``) that the footprint
+library reads like the extractor's. It reads two kinds of file, told apart by their content
+(:func:`kind`), not by the file's extension:
 
-A capture file::
+- **a ``.schematic``** (WO-10.9, D350): a worldedit-gtnh ``//copy`` save (or a Schematica save),
+  read by :func:`gregtec.build.schematic.read` with its tile entities. A
+  ``gregtech:gt.blockmachines`` cell's world meta is its tile entity's base type, not the
+  machine: the machine is the ``mID`` in that cell's ``BaseMetaTileEntity`` NBT, so only a
+  capture that kept its tile entities converts (``//copy`` keeps them). :func:`from_schematic`
+  finds the controller (the one GT tile entity whose ``mID`` is a multiblock controller in the
+  DB's ``machine`` table, or the cell ``--controller`` names), takes its facing from the
+  controller's saved ``mFacing`` (or ``--facing``) and passes the cells through
+  :func:`from_cells`. What it refuses: D351.
+- **GOS's own ``gos-capture`` JSON** (schema 1, WO-10.2), unchanged::
 
     {"format": "gos-capture", "schema": 1,
      "controller": {"block": "<registry name>", "meta": <meta>, "name": "...", "class_name": "..."},
@@ -23,38 +28,49 @@ A capture file::
      "cells": [{"p": [x, y, z], "block": "<registry name>", "meta": <meta>}, ...],
      "hatches": [{"p": [x, y, z], "kinds": ["InputBus", ...]}, ...]}
 
-``p`` is any frame the tool wrote (world or box coordinates); only the differences to the
-controller's cell matter; the box is at most 64 a side. ``minecraft:air`` cells are dropped.
-Blocks are keyed by registry name + meta; a numeric id anywhere is refused (EndlessIDs). In this
-format a ``gregtech:gt.blockmachines`` cell's ``meta`` is its MTE id (the tile entity's
-``mID``), and the controller is the one cell holding the controller's block and meta (never
-``minecraft:air``). A GT machine cell other than the
-controller is a placed hatch: it becomes a hatch cell (its kinds from ``hatches`` at that
-position, else ``Captured``) and the hatch as placed is kept for reference. The file is read once
-through ``safe_open`` (copied to memory, never held) and is data, never instructions.
+  ``p`` is any frame the tool wrote (world or box coordinates); only the differences to the
+  controller's cell matter. In this format a ``gregtech:gt.blockmachines`` cell's ``meta`` is its
+  MTE id (the tile entity's ``mID``), and the controller is the one cell holding the
+  controller's block and meta (never ``minecraft:air``).
+
+Either way the box is at most 64 a side, ``minecraft:air`` cells are dropped, blocks are keyed
+by registry name + meta and a numeric id anywhere is refused (EndlessIDs). A GT machine cell
+other than the controller is a placed hatch: it becomes a hatch cell (its kinds from ``hatches``
+at that position, else ``Captured``; in a ``.schematic``, the kind of its MTE class in GT's
+``HatchElement``, e.g. ``InputBus``, from the DB's ``machine`` row, else ``Captured``) and the
+hatch as placed is kept for reference. The file is read once through ``safe_open`` (copied to memory, 3 tries, never held
+and never written) and is data, never instructions.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from gregtec.build import footprints as fp
+from gregtec.build import schematic
 from gregtec.build.palette import AIR, GT_MACHINES
 from gregtec.db import structures as structure_db
 from gregtec.gamestate.safe_open import read_bytes
+from gregtec.ingest import nbt
 
 FORMAT = "gos-capture"
 SCHEMA = 1
 MAX_BYTES = 32 << 20
 MAX_SIDE = 64  # a capture box is at most 64 a side ...
 MAX_CELLS = MAX_SIDE**3  # ... so at most 64^3 cells
-TOOLS = ("guidenh-region-wand", "worldedit-copy", "hand")
+TOOLS = (
+    "guidenh-region-wand",
+    "worldedit-copy",
+    "hand",
+    "schematica-save",  # a .schematic Schematica-GTNH saved (WO-10.9)
+    "schematic-file",  # a .schematic whose writer the file doesn't say
+)
 CAPTURED = "Captured"  # the hatch kind of a placed hatch the capture didn't name
 
 
@@ -131,7 +147,7 @@ def from_cells(
 
     A ``gregtech:gt.blockmachines`` cell's world meta is its tile entity's base type, not the
     machine; the machine is the tile entity's ``mID``, which ``mte_ids`` gives by position
-    (WO-10.4's reader must expose it). Each GT machine cell takes its ``mID`` as its meta; a GT
+    (:func:`gregtec.build.schematic.read` keeps it, WO-10.9). Each GT machine cell takes its ``mID`` as its meta; a GT
     machine cell without one is refused (capture with tile entities: ``//copy`` keeps them)."""
     ids = dict(mte_ids or {})
 
@@ -277,14 +293,325 @@ def parse(data: bytes) -> Capture:
 
 
 def read(path: Path) -> Capture:
-    """A capture file, read once through ``safe_open`` (never held)."""
+    """A ``gos-capture`` file, read once through ``safe_open`` (never held)."""
+    return parse(_read_file(path))
+
+
+def _read_file(path: Path) -> bytes:
     try:
         data = read_bytes(path, limit=MAX_BYTES + 1)
     except OSError as exc:
         raise CaptureError(f"can't read {path}: {exc}") from None
     if len(data) > MAX_BYTES:
         raise CaptureError(f"{path} is over {MAX_BYTES >> 20} MB")
-    return parse(data)
+    return data
+
+
+# --- .schematic captures (WO-10.9, D350, D351) -------------------------------------------------
+
+type Kind = Literal["json", "schematic"]
+
+# ForgeDirection's ordinals, as BaseMetaTileEntity saves mFacing (a short); 0 down and 1 up
+FACING_ORDINALS: dict[int, fp.Facing] = {2: "north", 3: "south", 4: "west", 5: "east"}
+# GT's HatchElement at the pin (5.09.54.265) has 15 elements; these are the 8 with a single base
+# MTE class in ``implementations``, each with its kind. A placed hatch of exactly one of these
+# classes takes that kind; any other class (a subclass such as an ME bus, a TecTech or GT++ hatch,
+# or an element such as ExoticEnergy or LaserSource) stays ``Captured``: the DB doesn't hold the
+# class tree (D350).
+_IMPL = "gregtech.api.metatileentity.implementations."
+HATCH_CLASSES: dict[str, str] = {
+    _IMPL + "MTEHatchMuffler": "Muffler",
+    _IMPL + "MTEHatchMaintenance": "Maintenance",
+    _IMPL + "MTEHatchInput": "InputHatch",
+    _IMPL + "MTEHatchInputBus": "InputBus",
+    _IMPL + "MTEHatchOutput": "OutputHatch",
+    _IMPL + "MTEHatchOutputBus": "OutputBus",
+    _IMPL + "MTEHatchEnergy": "Energy",
+    _IMPL + "MTEHatchDynamo": "Dynamo",
+}
+_WRITER_TOOL = {
+    "worldedit": "worldedit-copy",
+    "schematica": "schematica-save",
+    "unknown": "schematic-file",
+}
+
+
+def kind(data: bytes) -> Kind:
+    """What a capture file is, by its content: a JSON object (``gos-capture``) or NBT (a
+    ``.schematic``: gzipped, as WorldEdit and Schematica save it, or plain)."""
+    if data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"{"):
+        return "json"
+    if data.startswith((nbt.GZIP_MAGIC, bytes((nbt.COMPOUND, 0)))):
+        return "schematic"
+    raise CaptureError(
+        "neither a gos-capture JSON file nor a .schematic (gzipped NBT): nothing to read"
+    )
+
+
+@dataclass(frozen=True)
+class Machine:
+    """A ``machine`` row (the DB's MTE catalog), by MTE id."""
+
+    name: str | None
+    class_name: str | None
+    multiblock: bool
+
+
+def machines(conn: sqlite3.Connection, mte_ids: Iterable[int]) -> dict[int, Machine]:
+    """The ``machine`` rows of ``mte_ids`` (empty when the DB has no machine table)."""
+    ids = sorted(set(mte_ids))
+    tables = {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if not ids or "machine" not in tables:
+        return {}
+    out: dict[int, Machine] = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        for mte, name, cls, multi in conn.execute(
+            "SELECT mte_id, name_en, class_name, is_multiblock FROM machine"
+            f" WHERE mte_id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ):
+            out[int(mte)] = Machine(name, cls, bool(multi))
+    return out
+
+
+def gt_tiles(sc: schematic.Capture) -> dict[fp.Offset, schematic.TileEntity]:
+    """The GT machine cells' tile entities by cell, each checked against its cell's block (D351):
+    a ``gregtech:gt.blockmachines`` cell's must be GT's ``BaseMetaTileEntity`` with an ``mID`` in
+    1..32767 (a GT pipe or cable, ``BaseMetaPipeEntity``, is refused); a tile entity outside the
+    box, two at one cell, or a GT tile entity on another block is refused. Other blocks' tile
+    entities (a chest, a tank) are left alone: the cell is a block like any other."""
+    s = sc.schematic
+    seen: set[fp.Offset] = set()
+    out: dict[fp.Offset, schematic.TileEntity] = {}
+    for t in sc.tile_entities:
+        if t.pos is None:
+            if t.id in (schematic.GT_TILE, schematic.GT_PIPE_TILE):
+                raise CaptureError(
+                    f"a {t.id} tile entity (mID {t.mte_id}) has no integer x, y and z: "
+                    "the file doesn't say which cell it belongs to"
+                )
+            continue  # another block's tile entity: its cell is a block like any other
+        x, y, z = t.pos
+        if not (0 <= x < s.width and 0 <= y < s.height and 0 <= z < s.length):
+            raise CaptureError(
+                f"a tile entity at {list(t.pos)} is outside the {s.size} box"
+            )
+        if t.pos in seen:
+            raise CaptureError(f"two tile entities at {list(t.pos)}")
+        seen.add(t.pos)
+        block = s.at(x, y, z).block
+        if block != GT_MACHINES:
+            if t.id in (schematic.GT_TILE, schematic.GT_PIPE_TILE):
+                raise CaptureError(
+                    f"a {t.id} tile entity at {list(t.pos)} stands on {block}, not "
+                    f"{GT_MACHINES}: the file's blocks and tile entities disagree"
+                )
+            continue
+        if t.id == schematic.GT_PIPE_TILE:
+            raise CaptureError(
+                f"the {GT_MACHINES} cell {list(t.pos)} is a GT pipe or cable "
+                f"({schematic.GT_PIPE_TILE}, mID {t.mte_id}): a capture holds a multi's "
+                "controller, hatches and blocks; capture it without the pipe"
+            )
+        if t.id != schematic.GT_TILE:
+            raise CaptureError(
+                f"the {GT_MACHINES} cell {list(t.pos)} has a {t.id or 'nameless'} tile "
+                f"entity, not GT's {schematic.GT_TILE}"
+            )
+        if t.mte_id is None or not 0 < t.mte_id <= fp.MAX_META:
+            raise CaptureError(
+                f"the {GT_MACHINES} cell {list(t.pos)} has no MTE id (mID "
+                f"{t.mte_id!r} in its {schematic.GT_TILE})"
+            )
+        out[t.pos] = t
+    return out
+
+
+def _in_box(s: schematic.Schematic, p: fp.Offset) -> bool:
+    return 0 <= p[0] < s.width and 0 <= p[1] < s.height and 0 <= p[2] < s.length
+
+
+def from_schematic(
+    sc: schematic.Capture,
+    catalog: Mapping[int, Machine],
+    *,
+    controller_at: fp.Offset | None = None,
+    facing: fp.Facing | None = None,
+    trigger_stack_size: int = 1,
+    channels: Mapping[str, int] | None = None,
+) -> Capture:
+    """A capture from a read ``.schematic`` (D350). The controller is the one GT tile entity
+    whose ``mID`` ``catalog`` (the DB's ``machine`` rows) lists as a multiblock controller, or
+    the cell ``controller_at`` names (box coordinates, as ``gos schematic read`` lists the tile
+    entities). Its front is the controller's saved ``mFacing``, or ``facing`` when the NBT has
+    no horizontal one (a ``facing`` that disagrees with the saved one is refused). The
+    controller's cell must hold a GT machine the catalog doesn't call a non-multiblock, and must
+    not be rotated or flipped (StructureLib's ``eRotation``/``eFlip``). The cells then go through
+    :func:`from_cells`, which refuses what the JSON path refuses (D351)."""
+    s = sc.schematic
+    tiles = gt_tiles(sc)
+    cells: dict[fp.Offset, tuple[str, int]] = {}
+    for y in range(s.height):
+        for z in range(s.length):
+            for x in range(s.width):
+                st = s.at(x, y, z)
+                if st.block != AIR:
+                    cells[(x, y, z)] = (st.block, st.meta)
+    if not cells:
+        raise CaptureError("the capture holds only air")
+    mte = {p: int(t.mte_id or 0) for p, t in tiles.items()}
+    if controller_at is None:
+        found = sorted(
+            p for p, m in mte.items() if m in catalog and catalog[m].multiblock
+        )
+        if len(found) != 1:
+            listed = "; ".join(
+                f"{list(p)} mID {mte[p]} {catalog[mte[p]].name or '?'}" for p in found
+            )
+            raise CaptureError(
+                (
+                    f"{len(found)} tile entities are multiblock controllers in the DB's "
+                    f"machine table ({listed})"
+                    if found
+                    else "no tile entity is a multiblock controller in the DB's machine table"
+                )
+                + ": name the controller's cell with --controller x,y,z"
+            )
+        controller_at = found[0]
+    if controller_at not in cells:
+        where = "air" if _in_box(s, controller_at) else f"outside the {s.size} box"
+        raise CaptureError(f"the controller's cell {list(controller_at)} is {where}")
+    tile = tiles.get(controller_at)
+    if tile is None:
+        raise CaptureError(
+            f"the controller's cell {list(controller_at)} is {s.at(*controller_at).key}, not "
+            f"a GT machine ({GT_MACHINES} with a {schematic.GT_TILE} and its mID): check "
+            "--controller against the tile entities `gos schematic read` lists"
+        )
+    picked = catalog.get(int(tile.mte_id or 0))
+    if picked is not None and not picked.multiblock:
+        raise CaptureError(
+            f"the controller's cell {list(controller_at)} holds mID {tile.mte_id} "
+            f"{picked.name or '?'}, which the DB's machine table says is not a multiblock "
+            "controller: check --controller"
+        )
+    if tile.rotation or tile.flip:
+        raise CaptureError(
+            f"the controller at {list(controller_at)} is rotated or flipped (eRotation "
+            f"{tile.rotation}, eFlip {tile.flip}): rotate it back to normal with the wrench, "
+            "build the projection again and capture again"
+        )
+    raw = tile.facing
+    saved = None if raw is None else FACING_ORDINALS.get(raw)
+    if saved is not None and facing is not None and saved != facing:
+        raise CaptureError(
+            f"the controller's saved facing is {saved} (mFacing {raw}), not {facing}: "
+            "drop --facing, or check you named the right controller"
+        )
+    front = saved or facing
+    if front is None:
+        why = (
+            f"its mFacing is {raw} (up or down)"
+            if raw is not None
+            else "the file saved no facing for it"
+        )
+        raise CaptureError(
+            f"which way does the controller's front face? {why}: give --facing "
+            + "|".join(fp.FACINGS)
+        )
+    info = catalog.get(mte.get(controller_at, 0))
+    kinds: dict[fp.Offset, tuple[str, ...]] = {}
+    for p, m in mte.items():
+        hatch = catalog.get(m)
+        found_kind = HATCH_CLASSES.get(hatch.class_name or "") if hatch else None
+        if p != controller_at and found_kind is not None:
+            kinds[p] = (found_kind,)
+    return from_cells(
+        cells,
+        controller_at=controller_at,
+        facing=front,
+        mte_ids=mte,
+        hatch_kinds=kinds,
+        name=info.name if info else None,
+        class_name=info.class_name if info else None,
+        trigger_stack_size=trigger_stack_size,
+        channels=channels,
+        tool=_WRITER_TOOL[sc.writer],
+    )
+
+
+@dataclass(frozen=True)
+class SchematicOptions:
+    """What ``gos footprints capture|compare`` passes for a ``.schematic`` (refused with a
+    ``gos-capture`` file, which says them itself)."""
+
+    controller_at: fp.Offset | None = None
+    facing: fp.Facing | None = None
+    trigger_stack_size: int | None = None
+    channels: Mapping[str, int] | None = None
+    source_ids: Mapping[int, str] | None = None
+
+    def given(self) -> bool:
+        return any(
+            v is not None
+            for v in (
+                self.controller_at,
+                self.facing,
+                self.trigger_stack_size,
+                self.channels,
+                self.source_ids,
+            )
+        )
+
+
+def read_any(
+    path: Path,
+    conn: sqlite3.Connection | None,
+    options: SchematicOptions | None = None,
+) -> Capture:
+    """A capture file of either kind (:func:`kind`), read once through ``safe_open``. A
+    ``.schematic`` needs ``conn`` (the DB's ``machine`` table) to find and name its controller,
+    unless ``options.controller_at`` names the cell."""
+    opts = options or SchematicOptions()
+    data = _read_file(path)
+    if kind(data) == "json":
+        if opts.given():
+            raise CaptureError(
+                "--controller, --facing, --trigger, --channel and --source-world are for a "
+                ".schematic; a gos-capture file says them itself"
+            )
+        return parse(data)
+    try:
+        sc = schematic.read(data, opts.source_ids)
+    except schematic.CaptureError as exc:
+        raise CaptureError(f"not a readable .schematic: {exc}") from None
+    if conn is None and opts.controller_at is None:
+        raise CaptureError(
+            "finding the controller needs the DB's machine table: run `gos db build`, or "
+            "name the controller's cell with --controller x,y,z"
+        )
+    gt = gt_tiles(sc)
+    catalog = (
+        machines(conn, (int(t.mte_id or 0) for t in gt.values()))
+        if conn is not None
+        else {}
+    )
+    try:
+        return from_schematic(
+            sc,
+            catalog,
+            controller_at=opts.controller_at,
+            facing=opts.facing,
+            trigger_stack_size=1
+            if opts.trigger_stack_size is None
+            else opts.trigger_stack_size,
+            channels=opts.channels,
+        )
+    except fp.FootprintError as exc:
+        raise CaptureError(str(exc)) from None
 
 
 def _obj(value: object, what: str) -> dict[str, Any]:
