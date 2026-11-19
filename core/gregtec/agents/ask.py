@@ -128,8 +128,9 @@ _ORDINALS = {
 _YES = frozenset({"yes", "yeah", "yep", "that one", "it", "that"})
 # A subject that means what Clayton points at in game (WO-8.4, D362): "this", "that one", ...
 _DEICTIC = re.compile(r"(?:this|that|it)(?: (?:one|item|block|thing|here|stuff))?")
-# A question naming no item that is about the pointed-at thing ("which tier is this")
-_POINTING = re.compile(r"\b(?:this|that)\b")
+# A question naming no item that ends on the pointed-at thing ("which tier is this", "what
+# tier is that one"); "is this a good time to build a base" does not end on it
+_POINTING = re.compile(r"\b(?:this|that)(?: (?:one|item|block|thing))?$")
 # The routes whose subject is an item: their pre-retrieval looks the pointed-at item up
 _POINTABLE = frozenset(
     {
@@ -357,7 +358,8 @@ class Asker:
         and resolved by the DB, becomes the route's subject, so pre-retrieval looks up that
         exact item (its NBT variant included). "How do I make this" with nothing pointed at
         (or an item the DB lacks) is answered with what "what's this?" would say; a question
-        that only mentions "this" and names no item is left as it was."""
+        that names no item probes the game only when it ends on "this"/"that" ("which tier
+        is this"), not when "this" is just a word in it ("is this a good time ...")."""
         if self.game is None or route.intent not in _POINTABLE:
             return route, None
         said = router.normalise(route.subject or "")

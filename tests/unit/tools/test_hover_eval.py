@@ -419,6 +419,15 @@ def test_this_with_nothing_pointed_at_says_so_and_other_questions_are_unchanged(
     game.target = None
     reply = asker.ask("is that the tier of my base")
     assert reply.text != whatsthis.NOTHING
+    # with something pointed at, "this" inside a general question doesn't take it over
+    # (review M1): only a question ending on "this"/"that" probes the game
+    game.target = {"kind": "item", "item": {"item": GT, "meta": 11305}}
+    asked = game.asked
+    reply = asker.ask("is this a good time to build a base?")
+    assert game.asked == asked and (reply.target or {}).get("key") != STEEL
+    assert "Steel Ingot" not in reply.text
+    reply = asker.ask("what tier is that one?")
+    assert game.asked == asked + 1 and (reply.target or {}).get("key") == STEEL
     # no game link at all (gos ask, the CLI): the router's subject is kept, as before
     asker.game = None
     assert asker.ask("how do I make this?").text != whatsthis.NOTHING
