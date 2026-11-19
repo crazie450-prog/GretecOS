@@ -1126,6 +1126,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | **G11** | **Day one** | Clayton starts his survival 2.9 world |
 
 - As built (WO-11.2, D332-D335): the daily backup job writes a manifest beside each DB backup and a vault snapshot with its own; `gos backup restore --verify` restores the newest into a temporary folder and checks hashes, `integrity_check`, row counts and every vault file; `scripts/verify_world_backup.py` (Clayton's) checks a world backup in a scratch folder; hard-kill tests for every writer and the supervisor with the real core (the vault's cut-short temp files are swept at start, the watchers' and bot's state files fsynced); the cost watch's 50% heads-up, day cap and task cap through the alert routes and the Costs view's caps card; `docs/runbooks/ops.md` and `relocation.md`.
+- As built (WO-11.3, D336-D337): the automated fake day one, `tests/rehearsal/day_one.py` (the real supervisor, core, watchers, voice client and Discord bot on a fake Prism tree, with fakes for the model, mic, Discord's gateway and the game), run on a client-harness DB with a 10-minute soak in CI's mod job (`tests/integration/test_fake_day_one.py`) and as a short smoke on Ubuntu and Windows; its report gives each §10 line as green, red or PC only. The real 2-hour Lab rehearsal is Clayton's: `docs/runbooks/fake_day_one.md`.
 
 ---
 
