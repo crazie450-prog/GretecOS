@@ -13,7 +13,7 @@ Two things are kept between designs, never anything a design returns as such:
 
 **DB generation** (:func:`scope`): a digest of the file's identity (device and inode, so a
 restored or replaced file is a new DB), every ``export_run`` row (id, run key, created, Play
-fingerprint, its sources), the build stamp ``gos db build`` writes in ``kv`` (``db.build``, so a
+fingerprint, its sources), the build counter ``gos db build`` increments in ``kv`` (``db.build``, so a
 rebuild of the same run is a new generation) and the ``structure`` and ``structure_run`` row
 counts and largest rowids (WO-1.8's loader and WO-10.9's captures change footprints without a
 build). Every entry is keyed by the DB file's path and generation, so nothing is shared across
@@ -47,7 +47,7 @@ READERS_MAX = 4  # (DB file, generation, run) readers kept
 READER_MAX_RECIPES = (
     250_000  # a reader past this many recipes is dropped after its build
 )
-BUILD_KEY = "db.build"  # the kv row gos db build stamps (D352)
+BUILD_KEY = "db.build"  # the kv counter gos db build increments (D352)
 
 MISS = object()
 
