@@ -34,8 +34,8 @@ the WO-11.3 follow-up issue or the G11 report, in step order.
 | A3 | Dashboard Health card (and `gos doctor`) | Play's last export fingerprint = the DB's; no "recipe data is stale" | C1 Play fingerprint | phase1_pc_checks.md 3-4 |
 | A4 | `gos backup restore --verify` | exit 0, `ok   db row counts`, `ok   vault file hashes` | C11 backups | ops.md 1 |
 | A5 | `& $py scripts\verify_world_backup.py` (as in ops.md 3) | the newest world backup opens and checks in a scratch folder | C11 world backup | ops.md 3 |
-| A6 | The isolation re-test, as gos-dev (ops.md 5) | every write to Play, GOS_APP and `backups\world` refused | C11 isolation | ops.md 5, phase1_pc_checks.md |
-| A7 | Reboot, log in, wait 1 minute | the supervisor, core and bot started at login; monitor 2 shows the dashboard in glance mode | C11 login start | core_service.md B |
+| A6 | The isolation re-test, as gos-dev (`$env:GOS_LIVE_ISOLATION = '1'`, `$env:GOS_CLAYTON_HOME`, `uv run pytest tests/security/test_isolation_live.py -v`, as ops.md's PC step 4 gives it) | every write to Play, GOS_APP and `backups\world` refused | C11 isolation | ops.md (Clayton's PC steps 4), phase1_pc_checks.md |
+| A7 | Reboot, log in, wait 1 minute | the supervisor, core and bot started at login; monitor 2 shows the dashboard in glance mode | C11 login start | core_service.md A-B, phase1_pc_checks.md 13 |
 | A8 | `gos status` | core and discord `running`; watchers and voice `starts when Play launches` | C11 | core_service.md B |
 
 **Paste:** `gos doctor`, `gos status`, the last 10 lines of `gos backup restore --verify`, the
@@ -60,9 +60,9 @@ world backup check's verdict and the isolation re-test's summary.
 | C5 | Ask a wiki question ("what does the wiki say about the EBF coils") | `w:` citation | C5 wiki | wiki.md |
 | C6 | Ask about an ambiguous item ("how do I make a circuit") | GOS asks which one | C5 ambiguous | recipe_lookup.md |
 | C7 | "Switch persona to ship AI", then "switch back to GT veteran" | the voice changes and back; gt-veteran is the default after a restart | C4 personas | voice_client.md |
-| C8 | Throughout: count false wakes (open mic, Discord on) | ≤ 1 per hour of play | C4 wake, L5 | wake.md D |
+| C8 | Throughout: record the session's open mic, `gos voice capture "$env:USERPROFILE\GregtecOS\data\evals\wake\play\day-one.wav" --minutes 120` in a second window (Discord on, as in play) | the recording for I8; it is your voice: it stays in GOS_HOME, never committed or sent | C4 wake, L5 | wake.md C |
 
-**Paste:** `gos voice bench --last 20` (latency per PM14, C4) and the false-wake count.
+**Paste:** `gos voice benchmark --last 20` (latency per PM14, C4; `bench` is its alias).
 
 ## D. Design and build (minutes 25-55)
 
@@ -119,8 +119,8 @@ controller and D9's shell.
 
 | # | Do | Expect | §10 / L | From |
 |---|---|---|---|---|
-| H1 | Task Manager: end the core's python.exe | restarted within 5 s; voice quiet (a short outage); the next question answered | C11 crash | ops.md 4, core_service.md B |
-| H2 | End the watchers', the voice client's and the bot's processes in turn | each back within its back-off; no event twice in the feed | C11 crash | ops.md 4 |
+| H1 | Task Manager: end the core's python.exe | restarted within 5 s; voice quiet (a short outage); the next question answered | C11 crash | ops.md 5, core_service.md B |
+| H2 | End the watchers', the voice client's and the bot's processes in turn | each back within its back-off; no event twice in the feed | C11 crash | ops.md 5 |
 | H3 | `gos key delete anthropic` mid-question, ask "how do I make steel", then `gos key set anthropic` | "AI offline" on monitor 2; the lookup still answered; AI back within 30 s | C5 no-AI, L9 | fast_lane.md, setup_wizard.md |
 | H4 | Walk away, `gos stop` (core only) for 2 minutes | the bot's "GOS offline" DM once; nothing while you are present | C9 offline DMs | alert_routing.md 6 |
 | H5 | Throughout: Task Manager's GPU and RAM, F3's FPS, vs the baseline | FPS drop ≤ 10 %, TPS unaffected, VRAM headroom ≥ 1 GB | L7 | voice_benchmarks.md B-C |
@@ -135,10 +135,14 @@ Then quit the game normally. `gos status`: watchers and voice stopped with Lab.
 |---|---|---|---|---|
 | I1 | `logs\watchers.log` for the 2 hours | no save errors, no blocked write | C6 2 h | watchers.md 4 |
 | I2 | Costs view | the session's spend under the day cap; caps card filled | C11 costs | ops.md 6 |
-| I3 | `gos eval` (paid; spends about the amount the eval runbooks name) | recipe, quest, wiki, screen, hover and ambiguous-item evals pass | C5 evals | fast_lane.md C, quest_guide.md B |
-| I4 | The Lab dry run of a 2.9.x update | prompt, checklist and plan flags correct | C1, L10 | pack_update.md 2 |
-| I5 | `/bq_admin complete` the LV, HV and IV sequences in `lab-progress` | frontier and tier match the book | L2 | quests_check.md |
+| I3 | The paid evals, each as its runbook runs it: `gos eval fast-lane` (60 rows, the 10 ambiguous-item ones included), `gos eval recipe-lookup --out ...`, `gos eval quest-guide`, `gos eval screen --images "$env:USERPROFILE\GregtecOS\data\evals\screen"` (each costs cents; the runbooks give the estimate) | `passed: 60 of 60`; `correct: 50 of 50` and `uncited numbers: 0`; `passed: 20 of 20` and `spoiled: 0`; the screen cases pass. **The wiki (15) and hover-item (10) evals of plan §9 have no case file** (G8 review should-do 1): write "no eval: open" for them in the G11 report unless one has landed by then | C5 evals | fast_lane.md 7, recipe_lookup.md, quest_guide.md, screen_reading.md |
+| I4 | The Lab dry run of a 2.9.x update | prompt, checklist and plan flags correct | C1, L10 | pack_update.md ("The checklist", Clayton's PC steps) |
+| I5 | `/bq_admin complete` the LV, HV and IV sequences in `lab-progress` | frontier and tier match the book | L2 | quests_check.md, phase1_pc_checks.md 5 |
 | I6 | The projector: build every tracked multi, capture the addon multis | cells match; captures stored | L1 | footprints_lab.md |
+| I7 | `gos voice eval` (the 50 recorded questions, stt.md B-C, if not recorded yet) | `entity accuracy: ... target >= 95%`, `verdict: met` | C4 entity accuracy | stt.md D 8 |
+| I8 | `gos voice wake-eval --audio "$env:USERPROFILE\GregtecOS\data\evals\wake"` with C8's recording in `play\` (and the 40 attempts of wake.md B) | `asked` ≥ 38/40 and `per h` ≤ 1.0 over ≥ 120 minutes, exit code 0 | C4 wake, L5 | wake.md D 6 |
+| I9 | `gos voice say --phrases` and listen | each of the 40 terms and phrases said the way you say it; nothing the speech filter should drop is spoken | C4 pronunciation and filter | tts.md D 7 |
+| I10 | The two default notices in `lab-ops` (power deficit, machine stalled) and a plan buildable from stock | each fires once, in GOS's order | C6 default notices, L2 | advisor.md C 5-10 |
 
 ## J. Tick the checklist
 
@@ -151,14 +155,18 @@ passed. Lines with a red item block G11; write each in the G11 report with its s
 | Addons, Play, pack update | A1-A3, I4 |
 | Designer | D1-D6 |
 | Power | D7 |
-| Voice | C1, C7, C8, the bench |
-| Q&A | C1-C6, H3, I3 |
-| Context | B2, E7-E9, I1 |
+| Voice | C1, C2 (talk key), C7, C8, I7-I9, the benchmark |
+| Q&A | C1-C6, H3, I3 (wiki and hover: no eval yet) |
+| Context | B2, E7-E9, I1, I10 |
 | Crops | F1-F3 |
 | OC bridge | E1-E6 |
 | Discord and phone | E6, G1-G5, H4 |
 | Build | D8-D9 |
 | Ops | A4-A8, B1, H1-H2, I2 |
+| Lab scenarios L1-L10 | L1 I6; L2 C2, E9, I5, I10; L3 E7-E8; L4 E1-E6; L5 C8, I8, H5; L6 D8-D9; L7 H5; L8 G1-G4; L9 H3; L10 I4 |
 | Fake day one | this runbook |
+
+§10's OC line ends "In survival, M1 switches on at MV and M2 at HV/EV": that is how Play's base
+grows, not a Lab check; nothing here ticks it.
 
 **Paste:** for each line: done, or the step that failed and what it showed.

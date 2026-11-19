@@ -52,6 +52,13 @@ TAILNET = "pc.tail1.ts.net"
 STEEL = "gregtech:gt.metaitem.01@11305"
 WORLD = "lab-world"
 PC_LINES = ("Play", "Export", "Lab")
+# What the children import (the core, watchers, voice client and bot), compiled before the start.
+WARM = (
+    "run_core",
+    "run_voice",
+    "run_discord",
+    "gregtec.watchers.runner",
+)
 
 
 class StepFailed(AssertionError):
@@ -356,6 +363,15 @@ class Rehearsal:
             clients=lambda c: [
                 str(r) for r in rfakes.read_json(self.control / "running", [])
             ],
+        )
+        # A fresh venv has no .pyc yet: compile what the children import once, here, so the core's
+        # first start on a busy machine isn't killed by the supervisor's 30 s start grace (seen
+        # on the first run in a new worktree: three cores killed before /health answered).
+        subprocess.run(
+            [python_exe(), "-c", f"import {', '.join(WARM)}"],
+            env={**os.environ, **dict(self.env())},
+            timeout=600,
+            check=True,
         )
         self.sup.bind()
         self._sup_thread = threading.Thread(target=self.sup.serve, daemon=True)
