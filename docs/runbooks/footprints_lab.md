@@ -41,14 +41,18 @@ For each `needs capture` line:
 2. Capture the region around it:
    - **WorldEdit:** `//pos1`, `//pos2` around the whole structure, `//copy`, `//schem save <name>`.
    - **GuideNH region wand:** select the same box and export it.
-3. Until WO-10.4's `.schematic` reader is merged, GOS reads only its own `gos-capture` JSON
-   (format in `core/gregtec/build/capture.py`), and no tool writes that format yet. Keep the
-   files from step 2 in `GOS_HOME\data\schematics\captures\`. They convert after WO-10.4 only
-   if they kept their tile entities: a GT machine block's world meta is not the machine, which
-   is in its tile entity's `mID`. WorldEdit's `//copy` + `//schem save` keeps them; check the
-   GuideNH export does too before relying on it, else re-capture with WorldEdit.
-4. **After WO-10.4** (blocked until then: nothing writes a `gos-capture` file today). Load a
-   capture and check it:
+3. `gos footprints capture` and `compare` read only GOS's own `gos-capture` JSON (format in
+   `core/gregtec/build/capture.py`), and no tool writes that format yet. WO-10.4's `.schematic`
+   reader is merged, but it lists tile entities by position only (D311), without each GT
+   machine's `mID`, and a GT machine block's world meta is not the machine: so a WorldEdit
+   `.schematic` can't be turned into a capture yet (`Not a capture: not a JSON capture`). Keep
+   the files from step 2 in `GOS_HOME\data\schematics\captures\`. They will convert once a
+   work order exposes the `mID` in `schematic.read` and feeds its cells to
+   `capture.from_cells`, and only if they kept their tile entities: WorldEdit's `//copy` +
+   `//schem save` keeps them; check the GuideNH export does too before relying on it, else
+   re-capture with WorldEdit.
+4. **Blocked** until that work order: nothing writes a `gos-capture` file today. Once it has
+   landed, load a capture and check it:
 
 ```powershell
 gos footprints capture C:\path\to\capture.json --dry-run   # reads and prints the size, cells, hatch cells
@@ -60,7 +64,7 @@ A capture of a multi the extractor already has is refused (its footprint comes f
 
 ## D. Check base footprints against the game (L1 "cells match structure")
 
-**After WO-10.4**, like C.4: it needs a capture file GOS can read.
+**Blocked**, like C.4: it needs a capture file GOS can read (WO-10.4's reader alone isn't enough, see C.3).
 
 Build a base multi in the Lab with the projector, capture it as in C, then:
 

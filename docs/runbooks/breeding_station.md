@@ -52,12 +52,12 @@ also keeps up to one copy's worth of catalyst after a stop (the stop note and `c
 
 ## C. Install and check (V31)
 
-6. With the PowerShell window of oc_agent.md step 6 (`$gos` set), copy the station and edit the config:
+6. With the PowerShell window of oc_agent.md step 6 (`$ocHome` set), copy the station and edit the config:
    ```powershell
    $ProgressPreference = 'SilentlyContinue'
-   New-Item -ItemType Directory -Force (Join-Path $gos 'crop') | Out-Null
-   Copy-Item C:\GregtecOS-app\current\oc\crop\station.lua (Join-Path $gos 'crop\station.lua')
-   notepad (Join-Path $gos 'gos-agent.cfg')
+   New-Item -ItemType Directory -Force (Join-Path $ocHome 'crop') | Out-Null
+   Copy-Item C:\GregtecOS-app\current\oc\crop\station.lua (Join-Path $ocHome 'crop\station.lua')
+   notepad (Join-Path $ocHome 'gos-agent.cfg')
    ```
    Add before the last `}` (your sides from step 4; with several generators, each one's adapter address prefix, as
    `gos-agent --list` prints it):

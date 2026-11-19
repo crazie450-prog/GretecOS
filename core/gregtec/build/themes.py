@@ -513,7 +513,7 @@ class Themes:
             raise ThemeError(
                 f"{theme_id} not saved: {_version_rel(theme_id, current.v)} already holds a "
                 f"different version {current.v} (was v: changed by hand?); set v: in "
-                f"{OWN}/{theme_id}.md to {v - 1} or more"
+                f"{OWN}/{theme_id}.md to {v} or more"
             )
         on_disk = self._current_v(theme_id)
         expected = (

@@ -84,6 +84,10 @@ class PauseTracker:
         at = log_seconds(stamp)
         if at is not None and self._pause_stamp is not None:
             elapsed = float((at - self._pause_stamp) % DAY_S)  # past midnight too
+            if elapsed > DAY_S / 2:
+                # Stamped before the pause line: read late from the other log in the same
+                # poll. A pause longer than 12 h still ends at the next autosave.
+                return None
         else:
             elapsed = self.clock() - self.since
         if elapsed < LINE_GRACE_S:

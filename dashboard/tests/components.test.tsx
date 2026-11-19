@@ -6,7 +6,7 @@ import type { CoreState } from "../src/api/types";
 import type { ApprovalCard, Card } from "../src/cards/types.gen";
 import { ApprovalView, CitationChip, NavItem, StatusGlyph, TierChip, stageTier } from "../src/components/core";
 import { Header } from "../src/components/Header";
-import { PLANS_LATER, arrange, itemEntries, move, questEntries, staticEntries } from "../src/components/palette";
+import { arrange, itemEntries, move, planEntries, planHash, questEntries, staticEntries } from "../src/components/palette";
 import { Rail } from "../src/components/Rail";
 import { voiceLook } from "../src/components/VoiceStrip";
 import { stateChips } from "../src/state/states";
@@ -196,8 +196,22 @@ describe("the palette", () => {
     expect(questEntries(quests)[0].label).toBe("A quest past your frontier"); // nudge-first (D26)
     expect(itemEntries({ ...items, error: "no DB" } as Card)).toEqual([]);
   });
+  it("lists saved plans by name or id, each opening its view (QA 5-9)", () => {
+    const rows = [
+      { id: "pl-aaaaaaaaaa", name: "Steel works", status: "accepted", kind: "production" },
+      { id: "pw-bbbbbbbbbb", name: "Steam boilers", status: "proposed", kind: "power" },
+      { id: "pl-cccccccccc", name: "Nitric acid", status: "proposed", kind: "production" },
+    ];
+    const found = planEntries(rows, "ste");
+    expect(found.map((e) => e.label)).toEqual(["Steel works", "Steam boilers"]);
+    expect(found[0]).toMatchObject({ group: "Plans", hint: "accepted · plan:pl-aaaaaaaaaa", action: { kind: "plan", id: "pl-aaaaaaaaaa" } });
+    expect(planEntries(rows, "pl-ccc").map((e) => e.label)).toEqual(["Nitric acid"]);
+    expect(planHash("pl-aaaaaaaaaa")).toBe("/designer/pl-aaaaaaaaaa");
+    expect(planHash("pw-bbbbbbbbbb")).toBe("/power/pw-bbbbbbbbbb");
+  });
   it("orders groups and wraps the arrow keys", () => {
-    const order = arrange([PLANS_LATER, ...staticEntries("now")]).map((e) => e.group);
+    const plan = planEntries([{ id: "pl-aaaaaaaaaa", name: "Now line", status: "accepted", kind: null }], "now");
+    const order = arrange([...plan, ...staticEntries("now")]).map((e) => e.group);
     expect(order).toEqual(["Views", "Plans"]);
     expect(move(0, -1, 3)).toBe(2);
     expect(move(2, 1, 3)).toBe(0);

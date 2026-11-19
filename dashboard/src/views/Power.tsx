@@ -109,7 +109,7 @@ function Warnings({ warnings, testId }: { warnings: LedgerWarning[]; testId: str
   );
 }
 
-function LedgerTiers(props: { card: PowerLedgerCard; entries: LedgerEntry[] }) {
+export function LedgerTiers(props: { card: PowerLedgerCard; entries: LedgerEntry[] }) {
   const { stale } = useCardActions();
   const [open, setOpen] = useState<string | null>(null);
   const tiers = props.card.tiers;

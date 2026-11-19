@@ -269,6 +269,25 @@ def test_no_vault_is_a_problem_and_the_block_waits(
     assert conn.execute("SELECT journal_done FROM session").fetchone()[0] == 0
 
 
+def test_a_log_that_isnt_utf8_is_a_problem_and_the_block_waits(
+    conn: sqlite3.Connection, vault: io.VaultIO
+) -> None:
+    """QA 5-9: one ANSI byte (PowerShell 5.1's Add-Content) raised UnicodeDecodeError past the
+    scribe's handling, so every events tick failed and nothing said why."""
+    vault.append(LOG, "decision: first")
+    p = vault.root / LOG
+    p.write_bytes(p.read_bytes() + "note: café\r\n".encode("cp1252"))
+    before = p.read_bytes()
+    end_session(conn)
+    scribe = journal.Scribe(vault)
+    assert scribe.run(conn, T0 + 800) == []
+    assert scribe.problems and f"{LOG} isn't UTF-8" in scribe.problems[0]
+    assert conn.execute("SELECT journal_done FROM session").fetchone()[0] == 0
+    assert p.read_bytes() == before  # Clayton's byte is left as it is
+    with pytest.raises(io.VaultError, match="isn't UTF-8"):
+        vault.append(LOG, "decision: second")
+
+
 def test_agents_never_write_count_lines(vault: io.VaultIO) -> None:
     with pytest.raises(io.VaultError, match="computed counts"):
         vault.append(LOG, "n_quest: 3")

@@ -369,7 +369,7 @@ export function Settings(props: {
             </Panel>
           )}
           <Panel label="me/ settings">
-            <p className="gos-src">Your ranking weights (vault/me/prefs.md) arrive with the Designer (WO-3.5).</p>
+            <p className="gos-src">Your ranking weights are read from vault/me/prefs.md; the Designer shows the ones in use under each design.</p>
           </Panel>
         </div>
       </div>

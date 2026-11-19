@@ -11,7 +11,7 @@ import type { ApprovalCard, Card as CardData } from "./cards/types.gen";
 import { Banners } from "./components/Banners";
 import { CommandPalette } from "./components/CommandPalette";
 import { Header } from "./components/Header";
-import type { Action } from "./components/palette";
+import { type Action, planHash } from "./components/palette";
 import { NavItem } from "./components/core";
 import { Rail } from "./components/Rail";
 import { VoiceStrip, voiceLook } from "./components/VoiceStrip";
@@ -264,6 +264,8 @@ export function App() {
     } else if (a.kind === "quest") {
       setSearchTarget({ kind: "quest", ref: a.ref, spoil: 0 });
       setView("search");
+    } else if (a.kind === "plan") {
+      window.location.hash = planHash(a.id);
     } else if (a.kind === "setting") {
       if (a.id === "motion") themeCtl.setPrefs({ pauseMotion: !themeCtl.prefs.pauseMotion });
       else {
