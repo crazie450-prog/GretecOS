@@ -427,6 +427,7 @@ _pending_lock = threading.Lock()
 
 def _reap() -> None:
     """Free the handles in :data:`_pending` whose request has completed since."""
+    # A parked handle is freed at the next dispose: bounded, by design (dispose calls _reap).
     with _pending_lock:
         done = [
             h for h in _pending if WaitForSingleObject(h._break, 0) == WAIT_OBJECT_0

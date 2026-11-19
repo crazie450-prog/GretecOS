@@ -267,7 +267,7 @@ Everything below was checked on `2b8efe2`. The verdict does not change.
 
 - **Finding 1 (WO-6.8): fixed in code; the Lab check is still to do.**
   - Why saves were refused: BetterQuesting and Hodgepodge save with `MoveFileExW(REPLACE_EXISTING)`, and BetterQuesting doesn't retry (D356).
-  - The fix: on Windows, `safe_open` now opens through `NtCreateFile` with `FILE_OPEN_REQUIRING_OPLOCK` and a read-handle oplock. When the game wants the file, GOS closes its handle and the read is retried (D357; `core/gregtec/gamestate/_win32.py`, `safe_open.py`). The game's call waits a few milliseconds: 5-24 ms measured on CI, against the tests' bound of 0.5 s (D357 and D358 each quote one run's figure).
+  - The fix: on Windows, `safe_open` now opens through `NtCreateFile` with `FILE_OPEN_REQUIRING_OPLOCK` and a read-handle oplock. When the game wants the file, GOS closes its handle and the read is retried (D357; `core/gregtec/gamestate/_win32.py`, `safe_open.py`). The game's call waits a few milliseconds: up to 24 ms measured on CI (the test bounds it at 0.5 s; D357 and D358 each quote one run's figure).
   - Tests: `tests/unit/test_save_collision.py` (the pattern-by-reader table on Windows, `test_the_open_and_the_oplock_are_one_step`, `test_safe_open_takes_the_oplock_with_the_open_and_says_so`), `tests/unit/test_safe_open_lease.py`, and `tests/unit/watchers/test_soak.py`, which now forces the collision on every run.
   - Windows CI on `2b8efe2` (run 44579913406): green.
   - Still to do: checklist 3.10.3, the 2-hour Lab session plus [`watchers.md`](../runbooks/watchers.md) §4.1's checks, before 3.15.4. V27 stays open until then (D358). Checklist [5.2.11](../deployment_checklist.md#52-anything-touching-play) carries WO-6.8's questions.
