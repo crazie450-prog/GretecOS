@@ -658,18 +658,15 @@ def main(
             return 2
         agents = setup(cfg, deep_lane=False)
         try:
-            lane = agents.lane()
-            if lane is None:
-                print(
-                    "Not run: no Anthropic key is stored in this account (uv run gos key "
-                    "set anthropic), or use --fake.",
-                    file=out,
-                )
-                return 1
-            worst = worst_case_usd(lane.model, lane, len(cases))
+            # the estimate from the prompt the real lane sends (same rules, tools, persona)
+            sized = FastLane(HoverOracle(), agents.registry, vault=agents.vault)
+            if agents.personas is not None:
+                sized.persona = agents.personas.block
+            worst = worst_case_usd(sized.model, sized, len(cases))
             print(
-                f"# {len(cases)} cases on {lane.model}: worst case ${worst:.2f}, an estimate "
-                "(every call, no cache, the most output); the run stops if it gets there.",
+                f"# {len(cases)} cases on {sized.model}: worst case ${worst:.2f}, an "
+                "estimate (every call, no cache, the most output); the run stops if it "
+                "gets there.",
                 file=out,
             )
             if why := _caps(cfg, agents, worst):
@@ -680,6 +677,14 @@ def main(
                 if answer_in().strip().casefold() != "yes":
                     print("Not run.", file=out)
                     return 1
+            lane = agents.lane()
+            if lane is None:
+                print(
+                    "Not run: no Anthropic key is stored in this account (uv run gos key "
+                    "set anthropic), or use --fake.",
+                    file=out,
+                )
+                return 1
             return run(
                 lambda: Asker(agents.registry, agents.deep, lane),
                 cases,
