@@ -4,15 +4,17 @@ Plan 7.10 "Footprint library", D305, D306, D350, D351. Everything here runs agai
 or in the **Lab**. Nothing touches Play, and GOS never pastes a machine: footprints are what you
 build by hand from the 3D guide (D35).
 
+**`gos` in your own window** is GOS_APP's copy: paste `$gos = "C:\GregtecOS-app\current\.venv\Scripts\gos.exe"` once, then type `& $gos ...` wherever this page writes `gos ...` for you (nothing puts `gos.exe` on your PATH, and `uv run gos` in your clone would run the clone's code, not the deployed one).
+
 ## A. Load the base pack's structures (once per pack version)
 
 From gos-dev's clone (D125), then load the folder it wrote into your own DB from `GOS_APP`:
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-uv run gos structures extract --out C:\GregtecOS-dev\data\structures\2.9.0-new   # gos-dev; downloads several GB the first time
-gos structures load C:\GregtecOS-dev\data\structures\2.9.0-new                   # Clayton, from GOS_APP
-gos footprints list | Select-Object -Last 3
+uv run gos structures extract --out C:\GregtecOS-dev\structures\2.9.0-pc1   # gos-dev, as phase1_pc_checks.md 8a; skip it if 8a already ran (several GB the first time)
+& $gos structures load C:\GregtecOS-dev\structures\2.9.0-pc1                # Clayton, as phase1_pc_checks.md 8b
+& $gos footprints list | Select-Object -Last 3
 ```
 
 `list` ends with `N footprints (x4 facings)` and any structure rows that make none (should be none).
@@ -20,8 +22,8 @@ gos footprints list | Select-Object -Last 3
 ## B. Coverage: which multis need a Lab capture
 
 ```powershell
-gos footprints coverage          # accepted/building/running plans and My base, then the catalog totals
-gos footprints coverage --all    # also every catalog multi without a footprint
+& $gos footprints coverage          # accepted/building/running plans and My base, then the catalog totals
+& $gos footprints coverage --all    # also every catalog multi without a footprint
 ```
 
 Each needed multi is `footprint` (the extractor's), `capture` (yours) or `needs capture`.
