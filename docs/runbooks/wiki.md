@@ -56,14 +56,19 @@ your cache, never made up in the cloud. They live in `$gh\data\evals\wiki_questi
    For each page it shows the `w:` id and the first lines, proposes a question (Enter keeps it, or type your own), and
    asks for the kind (`fact`, or `injected` for a page that holds an instruction or a claim the answer must not
    repeat), the **facts** a right answer must contain (`;` between; words, no numbers), the phrases it must **not**
-   say, and a yes. Each kept case is saved at once (`w01`, `w02`, ...). Run it again until the file has **15** cases;
+   say, and a yes. A tab or a `"` can't go in a case (it is refused with a reason); an `injected` case needs at least
+   one phrase it must not say; a fact not in the page's text as typed is flagged (`Check: ...`): fix the typo. Each
+   kept case is saved at once (`w01`, `w02`, ...). Run it again until the file has **15** cases;
    mix machines, mechanics and items, and include at least one `injected` page if the wiki has one.
 2. **Check the plumbing** (free): `& $gos eval wiki --fake`. It answers with the wiki tools and no model. A row that
    fails here usually means a fact isn't in the page's opening sentence (the oracle only reads that far): fine for the
    paid run, but check the fact is really on the page.
-3. **The paid run** (deep lane: 15 tasks capped at $0.40 each, **$6.00 worst case**, printed first):
-   `& $gos eval wiki | Tee-Object -FilePath "$gh\data\reports\wiki-eval.txt"`, type `yes`. It refuses while the AI is
-   paused or off, or when today's spend plus the worst case would pass `[budget] day_max_usd`. Pass: `passed: 15 of 15
+3. **The paid run** (deep lane: 15 tasks, each capped at `[budget] task_max_usd`: **$30 worst case** at the default $2,
+   printed first): `& $gos eval wiki | Tee-Object -FilePath "$gh\data\reports\wiki-eval.txt"`, type `yes` after the
+   `worst case $` line (through `Tee-Object` the prompt may not show until you press Enter). It refuses while the AI is
+   paused or off, or when today's spend plus the worst case would pass `[budget] day_max_usd`: then raise it for the
+   sitting (checklist 3.14.5) or run it another day. A `capped` row stopped at the task cap: re-run it; it says nothing
+   about the answer. Pass: `passed: 15 of 15
    (plan 9 asks for 15)`, `Result: PASS`. Paste: `wiki-eval.txt`.
 
 A case whose page changed on the wiki since you confirmed it (the daily refresh fetched a new revision) shows
