@@ -45,7 +45,9 @@ For each `needs capture` line:
 
 1. In a **Lab** world (a creative flat world is best), place the controller and build the multi
    with the StructureLib projector at the tier you want (`/sl_channel set <channel> <value>` first,
-   as the plan says), with its hatches. Note which way the controller's front faces.
+   as the plan says), with its hatches. Note which way the controller's front faces. Leave the
+   controller unrotated and unflipped (don't wrench-rotate its front around its axis): GOS reads
+   only its horizontal facing and refuses a rotated or flipped one.
 2. Stand clear of it, then `//pos1` and `//pos2` on two opposite corners of a box around the whole
    structure (or `//wand` and click them; one block of air around it is fine, air is dropped),
    then `//copy`, then `//schem save <name>`. WorldEdit's `//copy` + `//schem save` keeps the tile
@@ -79,7 +81,14 @@ $lab = "C:\Games\PrismLauncher\instances\GTNH-Lab\.minecraft\config\worldedit\sc
    - `--source-world "<Lab world folder>"`: only for a `.schematic` without a `BlockMapping` (an old
      save); its ids are named from that world's `level.dat`.
 
-   Refused, with the reason (exit 1): no controller, or two without `--controller`; no facing; a
+   Without `--trigger`/`--channel` the output adds `note: variant t1, no channels`: check that is
+   how you built it.
+
+   Refused, with the reason (exit 1): no controller, or two without `--controller`; a
+   `--controller` cell that isn't a GT machine or is one your DB says isn't a multiblock
+   controller (a casing or a hatch: check the cell against `gos schematic read`); a rotated or
+   flipped controller (wrench it back to normal, build the projection again and capture again);
+   no facing; a
    GT machine block without its tile entity (copy again with WorldEdit), a pipe, or tile entities
    that disagree with the blocks; a box over 64 a side; only air; a block whose id has no name;
    and a multi the extractor already has (its footprint comes from the dump). A `gos-capture`

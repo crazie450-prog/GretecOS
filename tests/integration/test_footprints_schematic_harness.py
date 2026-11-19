@@ -154,7 +154,8 @@ def test_the_saved_schematic_becomes_the_placed_footprint(
     assert {c.d: (c.hatches, c.placed) for c in f.hatch_cells} == want_hatches
     casing = str(placed["casing"])
     assert {f"{c.block}@{c.meta}" for c in f.blocks if c.d != (0, 0, 0)} == {casing}
-    # the bounding box: the casing block, three wide in x, two high, three deep
+    # the bounding box: the casing block, four wide in x, two high, three deep (so the
+    # turn to north visibly swaps x and z)
     assert sorted(f.size) == sorted((w - 1, h, ln))
     assert north.size == tuple(row[2:5]) == (ln, h, w - 1)  # turned to north
 

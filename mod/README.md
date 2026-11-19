@@ -311,7 +311,7 @@ world cell by cell (registry name + meta against WorldEdit's reading) in the box
 same block state in every cell and the same offset (D310). The dev runtime has no EndlessIDs: ids above 4095 and metas
 above 15 are the Lab round trip (`docs/runbooks/schematic_roundtrip.md`). CI runs it after the listener harness.
 
-Then (WO-10.9, D350) it builds one GT multiblock as Clayton does in the Lab for an addon multi: a 3 x 2 x 3 block of
+Then (WO-10.9, D350) it builds one GT multiblock as Clayton does in the Lab for an addon multi: a 4 x 2 x 3 block of
 heat proof casings with the EBF's controller in its east face (turned east), an input bus, an output bus and an energy
 hatch, each machine placed as a player places it (the item's use by a fake player, so GT writes its tile entity), then
 `//copy` with one air column and `//schem save` through WorldEdit's classes, with the tile entities, to

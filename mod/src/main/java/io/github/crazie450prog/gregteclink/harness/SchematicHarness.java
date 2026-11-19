@@ -263,7 +263,7 @@ final class SchematicHarness {
 
     /**
      * WO-10.9 (D350): what Clayton does in the Lab for an addon multi, with a GT multiblock controller the dev runtime
-     * has (the EBF stands in for an addon multi: the dev runtime holds GT5-Unofficial only). A 3 x 2 x 3 block of
+     * has (the EBF stands in for an addon multi: the dev runtime holds GT5-Unofficial only). A 4 x 2 x 3 block of
      * heat proof casings with the controller in its east face (its front turned east, so the capture is not in the
      * extractor's north), an input bus, an output bus and an energy hatch, each machine placed as a player does (the
      * item's use, so GT writes its tile entity) next to a casing; then {@code //copy} with one air column to the west
@@ -280,15 +280,15 @@ final class SchematicHarness {
         int outBus = firstOf(all, MTEHatchOutputBus.class);
         int energy = firstOf(all, MTEHatchEnergy.class);
         // box coordinates of the copy (x 0 is the air column), and the MTE id at each machine cell
-        int[][] machines = { { 3, 0, 1, controller }, { 1, 0, 0, inBus }, { 1, 0, 2, outBus }, { 2, 1, 1, energy } };
+        int[][] machines = { { 4, 0, 1, controller }, { 1, 0, 0, inBus }, { 1, 0, 2, outBus }, { 2, 1, 1, energy } };
         Vector min = base;
-        Vector max = base.add(3, 1, 2);
+        Vector max = base.add(4, 1, 2);
         for (int cx = (min.getBlockX() - 1) >> 4; cx <= (max.getBlockX() + 1) >> 4; cx++) {
             for (int cz = (min.getBlockZ() - 1) >> 4; cz <= (max.getBlockZ() + 1) >> 4; cz++) {
                 mc.theChunkProviderServer.loadChunk(cx, cz);
             }
         }
-        for (int x = 1; x <= 3; x++) {
+        for (int x = 1; x <= 4; x++) {
             for (int y = 0; y <= 1; y++) {
                 for (int z = 0; z <= 2; z++) {
                     mc.setBlock(
@@ -307,7 +307,7 @@ final class SchematicHarness {
         for (int[] m : machines) {
             int x = min.getBlockX() + m[0], y = min.getBlockY() + m[1], z = min.getBlockZ() + m[2];
             mc.setBlockToAir(x, y, z);
-            // click the casing below (y 1) or west of it (y 0, x 1..3: the casing at x - 1 or x + 1), on the face
+            // click the casing below (y 1) or west of it (y 0, x 1..4: the casing at x - 1 or x + 1), on the face
             // toward the cell, as a player placing it does
             int[] from = m[1] == 1 ? new int[] { x, y - 1, z, 1 }
                 : m[0] > 1 ? new int[] { x - 1, y, z, 5 } : new int[] { x + 1, y, z, 4 };
@@ -321,7 +321,7 @@ final class SchematicHarness {
                 wrong = "; MTE " + m[3] + " not placed at box (" + m[0] + ", " + m[1] + ", " + m[2] + ")";
             }
         }
-        TileEntity ct = mc.getTileEntity(min.getBlockX() + 3, min.getBlockY(), min.getBlockZ() + 1);
+        TileEntity ct = mc.getTileEntity(min.getBlockX() + 4, min.getBlockY(), min.getBlockZ() + 1);
         boolean east = false;
         if (ct instanceof IGregTechTileEntity) {
             ((IGregTechTileEntity) ct).setFrontFacing(ForgeDirection.EAST);
@@ -384,7 +384,7 @@ final class SchematicHarness {
 
         JsonObject doc = new JsonObject();
         doc.addProperty("file", CAPTURE);
-        doc.addProperty("size", "4x2x3");
+        doc.addProperty("size", "5x2x3");
         doc.addProperty("casing", Block.blockRegistry.getNameForObject(GregTechAPI.sBlockCasings1) + "@" + CASING_META);
         doc.addProperty("facing", "east");
         JsonArray list = new JsonArray();
@@ -394,7 +394,7 @@ final class SchematicHarness {
             for (int i = 0; i < 3; i++) p.add(new JsonPrimitive(m[i]));
             o.add("p", p);
             o.addProperty("mte", m[3]);
-            o.addProperty("controller", m[3] == controller && m[0] == 3);
+            o.addProperty("controller", m[3] == controller && m[0] == 4);
             list.add(o);
         }
         doc.add("machines", list);
