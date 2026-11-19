@@ -75,8 +75,8 @@ The supervisor restarts a crashed core in about 2 seconds, so a plain kill isn't
 
 ## 7. Quiet hours and /alerts
 
-1. In Discord, `/alerts quiet 1`. Repeat §3 (Esc, walk away): no DM for an hour (a `warn` waits). `/alerts on` from your phone: the DM comes within seconds if the game is still paused and you're still away.
-2. `/alerts off`, repeat §2's `gos alerts test`: no DM. `/alerts on`.
+1. In Discord, `/alerts mode: quiet hours: 1` (slash commands take named options). Repeat §3 (Esc, walk away): no DM for an hour (a `warn` waits). `/alerts mode: on` from your phone: the DM comes within seconds if the game is still paused and you're still away.
+2. `/alerts mode: off`, repeat §2's `& $gos alerts test`: no DM. `/alerts mode: on`.
 3. Quiet hours (optional): `[notify] quiet_hours = "HH:MM-HH:MM"` around the next half hour, restart (`& $gos stop; & $gos serve`), repeat §3 inside it: no DM until it ends, then one.
 
 ## Report

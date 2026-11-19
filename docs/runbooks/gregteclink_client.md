@@ -4,13 +4,13 @@ Clayton's PC steps. Everything here runs as Clayton from `GOS_APP`; gos-dev neve
 touches Play until step C. What the module does: [mod/README.md](../../mod/README.md#client-module-wo-81); the
 protocol: [docs/contracts/gregteclink-client-v1.md](../contracts/gregteclink-client-v1.md).
 
-`$app` below is `C:\GregtecOS-app\current` (your GOS_APP's `current`).
+`$app` below is `C:\GregtecOS-app\current` (your GOS_APP's `current`). **`gos` in your own window** is GOS_APP's copy: paste `$gos = "C:\GregtecOS-app\current\.venv\Scripts\gos.exe"` once, then type `& $gos ...` wherever this page writes `gos ...` for you (nothing puts `gos.exe` on your PATH, and `uv run gos` in your clone would run the clone's code, not the deployed one).
 
 ## A. Deploy
 
 1. From your own clone, after the PR is merged: `uv run gos deploy`. It builds the jar into
    `$app\mod-dist\` (D98).
-2. Run `sync_instances.py` once as usual (`$app\.venv\Scripts\python.exe $app\scripts\sync_instances.py`). From this
+2. Run `sync_instances.py` once as usual (`& "$app\.venv\Scripts\python.exe" "$app\scripts\sync_instances.py"`). From this
    version on, Lab's default `[sync.lab] exclude` keeps `mods/gregteclink*` and `config/gregteclink*`, so Lab's
    GregtecLink is its own and never Play's.
 

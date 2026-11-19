@@ -20,11 +20,11 @@ WO-10.4's acceptance, on Clayton's PC: **paste → `//copy` → identical blocks
    bartworks:BW_GlasBlocks@0
    GoodGenerator:MAR_Casing@0
    "@ | Set-Content -Encoding ascii "$env:TEMP\roundtrip.txt"
-   uv run gos schematic sample "$env:TEMP\roundtrip.txt" --out "$env:TEMP\gos_roundtrip.schematic"
+   uv run gos schematic sample "$env:TEMP\roundtrip.txt" --out C:\GregtecOS-dev\gos_roundtrip.schematic
    ```
 
 2. **Expect** `wrote ...\gos_roundtrip.schematic (3x1x3, WEOffset (-1, 0, 1))`, then the notes (`8 block types: ids 1..8 in BlockMapping and SchematicaMapping, no AddBlocks`, `pre-rotated: paste as is, without //rotate`). Exit code 1 with `REFUSED` lines: a block the Lab world doesn't have, isn't in the catalog, has a tile entity or a meta above 15; change it and run again.
-3. Copy `%TEMP%\gos_roundtrip.schematic` into `C:\Games\PrismLauncher\instances\GTNH-Lab\.minecraft\config\worldedit\schematics\` yourself (Explorer; without `--out`, `sample` writes to gos-dev's `GOS_HOME\data\schematics\shells\`).
+3. In your own window, copy it into the Lab yourself: `Copy-Item C:\GregtecOS-dev\gos_roundtrip.schematic "C:\Games\PrismLauncher\instances\GTNH-Lab\.minecraft\config\worldedit\schematics\"` (`C:\GregtecOS-dev` is readable from both accounts; gos-dev's `%TEMP%` is not yours to read; without `--out`, `sample` writes to gos-dev's `GOS_HOME\data\schematics\shells\`).
 
 ## B. Paste, check the offset, copy
 
@@ -39,7 +39,7 @@ WO-10.4's acceptance, on Clayton's PC: **paste → `//copy` → identical blocks
 
    ```powershell
    $lab = "C:\Games\PrismLauncher\instances\GTNH-Lab\.minecraft\config\worldedit\schematics"
-   uv run gos schematic compare "$env:TEMP\gos_roundtrip.schematic" "$lab\gos_roundtrip_copy.schematic"
+   uv run gos schematic compare C:\GregtecOS-dev\gos_roundtrip.schematic "$lab\gos_roundtrip_copy.schematic"
    uv run gos schematic read "$lab\gos_roundtrip_copy.schematic"
    ```
 

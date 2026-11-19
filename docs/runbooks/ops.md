@@ -3,7 +3,7 @@
 Backups verified by a restore, the world restore, crash recovery, the cost alerts and the Claude
 Code isolation re-test (plan §4.6, §10 "Ops"; D75, D332-D334). Every step that touches Play,
 GOS_APP or `backups\world` is **Clayton's**, run from GOS_APP in his own account. Claude Code
-(gos-dev) never runs them. Moving the core to another PC is a separate runbook:
+(gos-dev) never runs them. **`gos` in your own window** is GOS_APP's copy: paste `$gos = "C:\GregtecOS-app\current\.venv\Scripts\gos.exe"` once, then type `& $gos ...` wherever this page writes `gos ...` for you (nothing puts `gos.exe` on your PATH, and `uv run gos` in your clone would run the clone's code, not the deployed one). Moving the core to another PC is a separate runbook:
 [relocation.md](relocation.md).
 
 ## What is backed up, when and where
@@ -62,7 +62,7 @@ collected export at any time.
 ## 3. Check a world backup (Clayton; `backups\world` is closed to gos-dev, D75)
 
 ```powershell
-& "$env:GOS_APP\current\.venv\Scripts\python.exe" "$env:GOS_APP\current\scripts\verify_world_backup.py"
+& "C:\GregtecOS-app\current\.venv\Scripts\python.exe" "C:\GregtecOS-app\current\scripts\verify_world_backup.py"
 ```
 
 It copies the newest `backups\world\*.zip` (or `--zip FILE`) into a scratch folder in `%TEMP%`

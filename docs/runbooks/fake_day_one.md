@@ -17,6 +17,7 @@ the WO-11.3 follow-up issue or the G11 report, in step order.
 
 **Before you start**
 
+- **`gos` in your own window** is GOS_APP's copy: paste `$gos = "C:\GregtecOS-app\current\.venv\Scripts\gos.exe"` once, then type `& $gos ...` wherever this page writes `gos ...` for you (nothing puts `gos.exe` on your PATH, and `uv run gos` in your clone would run the clone's code, not the deployed one). Also `$py = "C:\GregtecOS-app\current\.venv\Scripts\python.exe"` and `$app = "C:\GregtecOS-app\current"`.
 - `main` deployed (`uv run gos deploy` from your clone, [core_service.md](core_service.md) D);
   `gos status` shows the supervisor, core and Discord bot running.
 - The Lab instance has GregtecLink's listener (machine_events.md 1), OC in `lab-ops`
@@ -30,10 +31,10 @@ the WO-11.3 follow-up issue or the G11 report, in step order.
 | # | Do | Expect | §10 / L | From |
 |---|---|---|---|---|
 | A1 | `gos doctor` | every line `ok` or an explained `warn`; the addon versions printed | C1 addons | addon_watcher.md |
-| A2 | `gos pack watch --force` | "no new 2.9.x release" or the new version's checklist; every addon on a 2.9-compatible release | C1 | addon_watcher.md, pack_update.md |
+| A2 | `gos pack watch --force` | `No stable release newer than 2.9.0 on its line.` or the new version's checklist; every addon on a 2.9-compatible release | C1 | addon_watcher.md, pack_update.md |
 | A3 | Dashboard Health card (and `gos doctor`) | Play's last export fingerprint = the DB's; no "recipe data is stale" | C1 Play fingerprint | phase1_pc_checks.md 3-4 |
 | A4 | `gos backup restore --verify` | exit 0, `ok   db row counts`, `ok   vault file hashes` | C11 backups | ops.md 1 |
-| A5 | `& $py scripts\verify_world_backup.py` (as in ops.md 3) | the newest world backup opens and checks in a scratch folder | C11 world backup | ops.md 3 |
+| A5 | `& $py "$app\scripts\verify_world_backup.py"` (as in ops.md 3) | the newest world backup opens and checks in a scratch folder | C11 world backup | ops.md 3 |
 | A6 | The isolation re-test, as gos-dev (`$env:GOS_LIVE_ISOLATION = '1'`, `$env:GOS_CLAYTON_HOME`, `uv run pytest tests/security/test_isolation_live.py -v`, as ops.md's PC step 4 gives it) | every write to Play, GOS_APP and `backups\world` refused | C11 isolation | ops.md (Clayton's PC steps 4), phase1_pc_checks.md |
 | A7 | Reboot, log in, wait 1 minute | the supervisor, core and bot started at login; monitor 2 shows the dashboard in glance mode | C11 login start | core_service.md A-B, phase1_pc_checks.md 13 |
 | A8 | `gos status` | core and discord `running`; watchers and voice `starts when Play launches` | C11 | core_service.md B |
@@ -87,15 +88,15 @@ controller and D9's shell.
 |---|---|---|---|---|
 | E1 | "Craft 64 steel ingots" | read back "Craft 64 Steel Ingot in Lab. Say confirm."; one pending | C8 | oc_agent.md I |
 | E2 | Ask for a second action before confirming | the first is cancelled and said so | C8 one pending | oc_agent.md I |
-| E3 | Say "confirm" | the craft starts in AE2; the journal has it | C8 | oc_agent.md I |
+| E3 | Say "confirm" | the craft starts in AE2; the action shows in the Activity view | C8 | oc_agent.md I |
 | E4 | Propose one more, say nothing for 60 s | it expires | C8 60 s | oc_agent.md I |
 | E5 | Pause a machine and resume it by voice (confirmed) | the machine stops and runs again | L4 | oc_agent.md I |
 | E6 | Drain the LSC below 20 % (creative), tab out of the game without Esc, leave the keyboard 10 min | power-low alert: voice while present, Discord DM once away; the game was not paused | C8 AFK, C9 alerts, L4 | alert_routing.md 4, oc_agent.md J |
 | E7 | Place 3 GT machines, break 1 | the event feed shows them; `gos watch census --instance lab` agrees | C6 listener/census, L3 | machine_events.md 2 |
-| E8 | Die once, find a vein, chat a line, visit the Nether | each in the journal (`vault\log\<today>.md`) | C6 journal, L3 | event_store.md |
+| E8 | Die once, find a vein, chat a line, visit the Nether | each in the Activity view and in `gos tool events_recent '{\"window\": \"session\"}'` (Lab writes no vault journal: only Play's sessions go to `vault\log\<date>.md`, D263 (2)) | C6 journal, L3 | event_store.md |
 | E9 | "What should I do next?" | a sensible next step for lab-progress's state | C6 advisor, L2 | advisor.md B |
 
-**Paste:** the DM's text, `gos watch census --instance lab` and today's journal note.
+**Paste:** the DM's text, `gos watch census --instance lab` and `gos tool session_summary`.
 
 ## F. Crops (minutes 85-100)
 
@@ -110,7 +111,7 @@ controller and D9's shell.
 | # | Do | Expect | §10 / L | From |
 |---|---|---|---|---|
 | G1 | Phone on cellular (Wi-Fi off): open the dashboard's tailnet name | the phone layout; the plan from D3 opens from a Discord link | C9, L8 | phone_dashboard.md D-E |
-| G2 | From Discord: `/ask how do I make steel`, `/status`, `/plan steel 1/s` | answers within 10 s; `/plan` queued, PNG + BOM later | C9 | discord_bot.md C |
+| G2 | From Discord: `/ask text: how do I make steel`, `/status`, `/plan target: steel ingot amount: 1/s` (slash commands take named options) | answers within 10 s; `/plan` queued, PNG + BOM later | C9 | discord_bot.md C |
 | G3 | Confirm a proposed craft from the phone | confirmed via phone | C9, L8 | phone_dashboard.md E |
 | G4 | The tailnet name from a device outside the tailnet | unreachable | L8 | phone_dashboard.md E |
 | G5 | Credit DM buttons, as alert_routing.md 5 sends them | the buttons answer | C9 credit DMs | alert_routing.md 5 |
@@ -123,7 +124,7 @@ controller and D9's shell.
 | H2 | End the watchers', the voice client's and the bot's processes in turn | each back within its back-off; no event twice in the feed | C11 crash | ops.md 5 |
 | H3 | `gos key delete anthropic` mid-question, ask "how do I make steel", then `gos key set anthropic` | "AI offline" on monitor 2; the lookup still answered; AI back within 30 s | C5 no-AI, L9 | fast_lane.md, setup_wizard.md |
 | H3b | The revoke itself (a stored key the API refuses, plan 9 L9): `gos key set anthropic` with a wrong value (e.g. your key with its last character changed), ask "how do I make steel", then `gos key set anthropic` with the real key | "AI offline" on monitor 2 with an authentication reason (not "no key"); the lookup still answered; AI back within 30 s of the real key. A 401 costs nothing | C5 no-AI, L9 | fast_lane.md, setup_wizard.md |
-| H4 | Walk away, `gos stop` (core only) for 2 minutes | the bot's "GOS offline" DM once; nothing while you are present | C9 offline DMs | alert_routing.md 6 |
+| H4 | Make the core fail to start and walk away, as alert_routing.md 6 does (`gos stop` would stop the bot too, and a stop you asked for sends no DM): in `gos.toml` under `[core]` set `host = "0.0.0.0"`, then `Get-CimInstance Win32_Process \| Where-Object CommandLine -like '*gregtec.api*' \| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`; leave the keyboard for 11 minutes; then remove the `host` line and run `gos serve` | one "GOS offline: ..." DM about 10 minutes after your last input; nothing while you are present (this step runs about 15 minutes, past minute 120) | C9 offline DMs | alert_routing.md 6 |
 | H5 | Throughout: Task Manager's GPU and RAM, F3's FPS, vs the baseline | FPS drop ≤ 10 %, TPS unaffected, VRAM headroom ≥ 1 GB | L7 | voice_benchmarks.md B-C |
 
 Then quit the game normally. `gos status`: watchers and voice stopped with Lab.
@@ -136,7 +137,7 @@ Then quit the game normally. `gos status`: watchers and voice stopped with Lab.
 |---|---|---|---|---|
 | I1 | `logs\watchers.log` for the 2 hours | no save errors, no blocked write | C6 2 h | watchers.md 4 |
 | I2 | Costs view | the session's spend under the day cap; caps card filled | C11 costs | ops.md 6 |
-| I3 | The paid evals, each as its runbook runs it: `gos eval fast-lane` (60 rows, the 10 ambiguous-item ones included), `gos eval recipe-lookup --out ...`, `gos eval quest-guide`, `gos eval screen --images "$env:USERPROFILE\GregtecOS\data\evals\screen"` (each costs cents; the runbooks give the estimate) | `passed: 60 of 60`; `correct: 50 of 50` and `uncited numbers: 0`; `passed: 20 of 20` and `spoiled: 0`; the screen cases pass. **The wiki (15) and hover-item (10) evals of plan §9 have no case file** (G8 review should-do 1): write "no eval: open" for them in the G11 report unless one has landed by then | C5 evals | fast_lane.md 7, recipe_lookup.md, quest_guide.md, screen_reading.md |
+| I3 | The paid evals, each as its runbook runs it: `gos eval fast-lane` (60 rows, the 10 ambiguous-item ones included), `gos eval recipe-lookup --out ...`, `gos eval quest-guide`, `gos eval screen --images "$env:USERPROFILE\GregtecOS\data\evals\screen"` , `gos eval hover` and `gos eval wiki` (as checklist 3.9.9 and 3.9.10 run them: each prints its worst case first; the wiki eval is up to 15 deep-lane tasks at `task_max_usd`, so reuse 3.9.10's result unless you redeployed) | `passed: 60 of 60`; `correct: >= 48 of 50` (plan §8 and recipe_lookup.md: at least 95%) and `uncited numbers: 0`; `passed: 20 of 20` and `spoiled: 0`; the screen cases pass; hover `passed: 10 of 10`; wiki `passed: 15 of 15`, or "wiki eval: not run (no crawl)" if the wiki refused scripted access (wiki.md A) | C5 evals | fast_lane.md 7, recipe_lookup.md, quest_guide.md, screen_reading.md |
 | I4 | The Lab dry run of a 2.9.x update | prompt, checklist and plan flags correct | C1, L10 | pack_update.md ("The checklist", Clayton's PC steps) |
 | I5 | `/bq_admin complete` the LV, HV and IV sequences in `lab-progress` | frontier and tier match the book | L2 | quests_check.md, phase1_pc_checks.md 5 |
 | I6 | The projector: build every tracked multi, capture the addon multis | cells match; captures stored | L1 | footprints_lab.md |
@@ -158,7 +159,7 @@ passed. Lines with a red item block G11; write each in the G11 report with its s
 | Designer | D1-D6 |
 | Power | D7 |
 | Voice | C1, C2 (talk key), C7, C8, I7-I9, the benchmark |
-| Q&A | C1-C6, H3, H3b, I3 (wiki and hover: no eval yet) |
+| Q&A | C1-C6, H3, H3b, I3 (hover 10, wiki 15) |
 | Context | B2, E7-E9, I1, I10 |
 | Crops | F1-F3 |
 | OC bridge | E1-E6 |

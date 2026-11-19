@@ -6,11 +6,11 @@ How GOS talks to the wiki (all in code, `gregtec.wiki.api`): one request at a ti
 
 ## A. Licence check (V14) — Clayton's PC
 
-From your own clone, after this PR is merged and deployed (`uv run gos deploy`):
+In your own normal window, after this PR is merged and deployed (`uv run gos deploy`). **`gos` in your own window** is GOS_APP's copy: paste `$gos = "C:\GregtecOS-app\current\.venv\Scripts\gos.exe"` once, then type `& $gos ...` wherever this page writes `gos ...` for you (nothing puts `gos.exe` on your PATH, and `uv run gos` in your clone would run the clone's code, not the deployed one).
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-gos wiki licence
+& $gos wiki licence
 ```
 
 It runs `api.php?action=query&meta=siteinfo&siprop=general|rightsinfo&format=json` and prints the wiki's name, licence and terms URL, then asks `Record it and allow the cache? [y/N]`.
@@ -22,7 +22,7 @@ It runs `api.php?action=query&meta=siteinfo&siprop=general|rightsinfo&format=jso
 ## B. First crawl — Clayton's PC
 
 ```powershell
-gos wiki crawl
+& $gos wiki crawl
 ```
 
 One request a second, 50 pages each: a wiki of a few thousand pages takes a few minutes; it prints progress after each batch. Ctrl+C stops it after the current batch; run it again to go on. `gos wiki crawl --again` starts over (needed only if the daily refresh hasn't run for over 30 days, which `gos wiki status` and the maintenance log say).
@@ -30,8 +30,8 @@ One request a second, 50 pages each: a wiki of a few thousand pages takes a few 
 Check:
 
 ```powershell
-gos wiki status                    # licence, pages, crawl finished, refresh point
-gos wiki show "Electric Blast Furnace"   # its w: id, the attribution line, the first lines
+& $gos wiki status                    # licence, pages, crawl finished, refresh point
+& $gos wiki show "Electric Blast Furnace"   # its w: id, the attribution line, the first lines
 ```
 
 ## C. Daily refresh

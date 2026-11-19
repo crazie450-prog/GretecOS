@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import threading
 from ctypes import wintypes
 
 GENERIC_READ = 0x80000000
@@ -32,6 +33,7 @@ ERROR_HANDLE_EOF = 38
 ERROR_IO_PENDING = 997
 ERROR_OPLOCK_COMPLETED = -1  # ours: the request completed at once, so no oplock is held
 WAIT_OBJECT_0 = 0
+WAIT_TIMEOUT = 0x102
 INFINITE = 0xFFFFFFFF
 DISPOSE_WAIT_MS = 5000
 
@@ -400,11 +402,38 @@ class Win32Handle:
         CloseHandle(self.handle)
 
     def dispose(self) -> None:
-        if self.leased:
-            # Closing the handle completes the pending request; wait for it, so the kernel is
-            # done with the buffers before they are freed.
-            WaitForSingleObject(self._break, DISPOSE_WAIT_MS)
+        if (
+            self.leased
+            and WaitForSingleObject(self._break, DISPOSE_WAIT_MS) != WAIT_OBJECT_0
+        ):
+            # Closing the handle completes the pending request, normally at once. Microsoft
+            # ("Synchronous and Asynchronous I/O"; DeviceIoControl, lpOverlapped): the OVERLAPPED
+            # structure and the buffers of an overlapped call must stay valid until the call has
+            # completed, since the kernel writes to them then. This one hasn't yet, and the
+            # handle it was made on is closed (so it can't be cancelled or waited on through
+            # it): keep this object, and with it _ov, _in, _out and the event, until its event
+            # says it completed (_reap).
+            with _pending_lock:
+                _pending.append(self)
+            return
         self._free_events()
+        _reap()
+
+
+# Handles whose oplock request had not completed when they were disposed (dispose).
+_pending: list[Win32Handle] = []
+_pending_lock = threading.Lock()
+
+
+def _reap() -> None:
+    """Free the handles in :data:`_pending` whose request has completed since."""
+    with _pending_lock:
+        done = [
+            h for h in _pending if WaitForSingleObject(h._break, 0) == WAIT_OBJECT_0
+        ]
+        _pending[:] = [h for h in _pending if h not in done]
+    for h in done:
+        h._free_events()
 
 
 def open_handle(

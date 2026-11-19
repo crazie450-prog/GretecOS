@@ -70,6 +70,12 @@ def test_every_plan_9_eval_is_listed_and_the_sizes_are_the_files() -> None:
     table = _section(_text(), "## Plan §9's eval list", "## Every gate report")
     for size, _ in asked:
         assert re.search(rf"^\| [^|]+ \| {size} \|", table, re.MULTILINE), size
+    assert _check_sizes(table) >= 6
+
+
+def _check_sizes(table: str) -> int:
+    """Each row whose 'where' cell starts with a `tests/evals/*.tsv` file gives that file's
+    real size; returns how many rows were checked."""
     checked = 0
     for where, rows in re.findall(
         r"^\| [^|]+ \| \d+ \| ([^|]+) \| (\d+) \|", table, re.MULTILINE
@@ -89,7 +95,7 @@ def test_every_plan_9_eval_is_listed_and_the_sizes_are_the_files() -> None:
             got = _rows(text)
         assert got == int(rows), where
         checked += 1
-    assert checked >= 6
+    return checked
 
 
 def test_every_relative_link_resolves() -> None:
@@ -100,3 +106,57 @@ def test_every_relative_link_resolves() -> None:
         if not (REPORT.parent / target.partition("#")[0]).exists():
             broken.append(target)
     assert broken == []
+
+
+ADDENDUM = re.compile(r"^## Addendum, \d{4}-\d{2}-\d{2}: .+$", re.MULTILINE)
+
+
+def _addendum() -> str:
+    text = _text()
+    head = ADDENDUM.search(text)
+    assert head, "the addendum after WO-6.8, WO-8.4 and WO-11.4"
+    return text[head.start() :]
+
+
+def test_the_addendum_comes_last_and_keeps_the_verdict() -> None:
+    """The addendum is appended after the body (which stays the record of its date) and
+    repeats the verdict; it reuses none of the body's section headings, which the checks
+    above find by their first occurrence."""
+    text, add = _text(), _addendum()
+    assert text.index("## After the review") < text.index(add)
+    for heading in (
+        "## Plan §10, line by line",
+        "## Phase 11 work orders",
+        "## Plan §9's eval list",
+        "## Every gate report",
+        "### WO-11.",
+        "### G11:",
+    ):
+        assert heading not in add, heading
+    verdict = VERDICT.search(add)
+    assert verdict and verdict.group(1) in STATUSES
+
+
+def test_the_addendum_s_section_10_rows_have_statuses_and_stay_red() -> None:
+    """Every row of the addendum's §10 table has an agreed status; lines 3 and 5 stay
+    **not met** until a reviewed edit of this test says otherwise."""
+    table = _section(_addendum(), "### §10 lines now", "\n### ")
+    rows = dict(re.findall(r"^\| (\d+) \| [^|]+ \| ([^|]+) \|", table, re.MULTILINE))
+    assert rows, "no §10 rows in the addendum"
+    for n, status in rows.items():
+        assert STATUS.match(status), (n, status)
+    for n in ("3", "5"):
+        assert rows[n].startswith("**not met**"), (n, rows[n])
+
+
+def test_the_addendum_s_eval_sizes_are_the_files() -> None:
+    """The addendum's §9 rows give the real sizes of their files, and no row says an eval
+    has no file ('none') when `tests/evals` has one for it."""
+    table = _section(_addendum(), "### §9 evals now", "\n### ")
+    assert _check_sizes(table) >= 1  # the hover-item row
+    for name, where in re.findall(
+        r"^\| ([^|]+) \| \d+ \| ([^|]+) \|", table, re.MULTILINE
+    ):
+        if where.strip().lower().startswith("none"):
+            stem = name.strip().replace("-", "_").split()[0]
+            assert not list(EVALS.glob(f"{stem}*.tsv")), name
