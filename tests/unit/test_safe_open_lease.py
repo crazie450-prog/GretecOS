@@ -296,6 +296,26 @@ def test_copy_to_raises_when_interrupted(
             so.copy_to(tmp_path / "x", io.BytesIO())
 
 
+def test_read_bytes_with_a_limit_drops_a_read_the_game_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``read_bytes(limit=)`` (the mailbox's MAX_BODY) reads no further chunk once it has
+    ``limit`` bytes, so the only guard against a break that came during that read is
+    ``check_whole``: the torn bytes are dropped and the file read again."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(so.time, "sleep", sleeps.append)
+    first = FakeHandle(b'{"old": tr' + b"x" * 20, read_s=0.05)
+    first.on_read = lambda n: threading.Thread(target=first.game_wants_it).start()
+    second = FakeHandle(b'{"new": true}' + b"y" * 20)
+    with _opens([first, second]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        assert so.read_bytes(tmp_path / "inbox.json", limit=10) == b'{"new": tr'
+    assert (
+        len(first.reads) == 1
+    )  # one read had the limit: no later chunk to notice the break
+    assert sleeps == [so.BACKOFF_S]
+
+
 def _win32_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """``gregtec.gamestate._win32``: the real one on Windows; elsewhere a private copy loaded
     over a stand-in ``ctypes.WinDLL`` (the tests replace every Win32 call they reach)."""
