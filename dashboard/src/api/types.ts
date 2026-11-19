@@ -64,11 +64,32 @@ export interface TierState {
 
 export interface Job {
   id: string;
-  kind: "deep" | "export";
+  kind: "deep" | "export" | "designer" | "power";
   title: string;
   status: string;
   detail: string | null;
   started: number | null;
+  cancel_asked?: boolean; // design jobs (WO-3.9)
+}
+
+/** A design job (WO-3.9, D353): its stage as the planner reports it, and once done its result
+ * (what POST /api/designer/design or /api/power/design answers). */
+export interface DesignJob {
+  id: string;
+  kind: "designer" | "power";
+  title: string;
+  status: "running" | "done" | "failed" | "cancelled" | "interrupted";
+  stage: string;
+  k: number | null;
+  n: number | null;
+  sub: [number, number] | null;
+  detail: string | null;
+  started: number; // epoch seconds
+  finished: number | null;
+  elapsed_s: number;
+  error: string | null;
+  cancel_asked: boolean;
+  result?: unknown;
 }
 
 export interface Asking {
@@ -809,6 +830,15 @@ export interface Designed {
 
 /** POST /api/designer/design: the new design, or the one question when the target is unclear. */
 export type DesignAnswer = Designed | { clarify: ChoicesCard };
+
+/** POST /api/designer/jobs and /api/power/jobs: the job at once, or the question (no job). */
+export type JobStart = { job: DesignJob } | { clarify: ChoicesCard };
+
+/** What a Designer job is asked to do: a new design, a re-solve, or a pin (null frees it). */
+export type DesignJobBody =
+  | { spec: DesignSpec }
+  | { resolve: string }
+  | { pin: { plan: string; node: string; recipe: string | null } };
 
 export interface DesignSpec {
   target: string;

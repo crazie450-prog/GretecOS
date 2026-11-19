@@ -221,11 +221,20 @@ describe("Power view", () => {
     fireEvent.change(screen.getByTestId("power-tier"), { target: { value: "MV" } });
     expect((screen.getByTestId("power-go") as HTMLButtonElement).disabled).toBe(true); // no bound yet
     fireEvent.change(screen.getByTestId("power-bound"), { target: { value: "500" } });
-    queue.push({ status: 200, body: { ids: ["pw-one", "pw-two"], view: view({ mode: "max_output", mode_label: "Max output" }) } });
+    // A design job (WO-3.9): started at once, then polled until done with its result.
+    const job = {
+      id: "job-0123456789ab", kind: "power", title: "Power: Max output · MV", status: "running", stage: "candidates",
+      k: null, n: null, sub: null, detail: "candidates", started: Date.now() / 1000, finished: null, elapsed_s: 0,
+      error: null, cancel_asked: false,
+    };
+    queue.push({ status: 200, body: { job } });
+    const result = { ids: ["pw-one", "pw-two"], view: view({ mode: "max_output", mode_label: "Max output" }) };
+    queue.push({ status: 200, body: { job: { ...job, status: "done", result } } });
     fireEvent.click(screen.getByTestId("power-go"));
     await screen.findByTestId("option-2");
     expect(methods[1]).toBe("POST");
-    expect(urls[1]).toBe("/api/power/design");
+    expect(urls[1]).toBe("/api/power/jobs");
+    expect(urls[2]).toBe("/api/jobs/job-0123456789ab");
     expect(bodies[1]).toEqual({ mode: "max_output", tier: "MV", scale: "eut_cap", bound: 500, options: 3 });
     const cards = document.querySelectorAll(".power-option");
     expect([...cards].map((c) => c.getAttribute("data-option"))).toEqual(["pw-one", "pw-two"]); // not re-sorted

@@ -6,14 +6,17 @@
 // design shown is in the address (#/designer/<plan id>), so a reload shows it again, pins and all;
 // with none, the latest design opens. The approved Designer board (D92) hasn't come through the
 // canvas handoff: built to the design system (D158 (5)), to be reconciled with the board.
+// Designs, re-solves and pins run as design jobs (WO-3.9, D353): the busy panel shows the stage,
+// the time and a Cancel; leaving the view leaves the job running to its saved result (D354).
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type {
   Alternatives,
-  DesignAnswer,
+  Designed,
   DesignerNode,
   DesignerRoute,
   DesignerView,
+  DesignJobBody,
   DesignSpec,
   PlanLayout,
   SavedPlanRow,
@@ -23,6 +26,7 @@ import { FlowDiagram } from "../cards/FlowDiagram";
 import { useCardActions } from "../cards/context";
 import { RouteComparisonView } from "../cards/renderers";
 import type { Card as CardData, ChoicesCard } from "../cards/types.gen";
+import { JobProgress, useDesignJob } from "../components/JobProgress";
 import { Button, CitationChip, Panel, StatusGlyph, TierChip } from "../components/core";
 import { plain } from "../state/format";
 import { GLYPH } from "../state/states";
@@ -613,26 +617,36 @@ export function Designer() {
     }
   };
 
-  const design = (spec: DesignSpec): void => {
-    setBusy("Solving");
-    setClarify(null);
-    api.design(spec).then(
-      (out: DesignAnswer) => {
-        setBusy(null);
-        if ("clarify" in out) {
-          setClarify({ card: out.clarify, spec });
-          return;
-        }
-        setPicked(null);
-        show(out.view);
-        setNotice(out.problems.length ? out.problems.join("; ") : null);
-        refreshPlans();
+  // A design job's result is what POST /api/designer/design answers (D353).
+  const designed = (result: unknown): void => {
+    const out = result as Designed;
+    show(out.view);
+    setNotice(out.problems.length ? out.problems.join("; ") : null);
+    refreshPlans();
+  };
+  const runner = useDesignJob(
+    "designer",
+    (result) => {
+      setPicked(null);
+      designed(result);
+    },
+    (text) => setNotice(text),
+  );
+  const working = busy !== null || runner.job !== null;
+
+  const startJob = (body: DesignJobBody, then?: (result: unknown) => void): void => {
+    setNotice(null);
+    runner.start(() => api.designJob(body), then).then(
+      (question) => {
+        if (question && "spec" in body) setClarify({ card: question, spec: body.spec });
       },
-      (e: unknown) => {
-        setBusy(null);
-        setNotice(message(e));
-      },
+      (e: unknown) => setNotice(message(e)),
     );
+  };
+
+  const design = (spec: DesignSpec): void => {
+    setClarify(null);
+    startJob({ spec });
   };
 
   const pick = (route: string, node: DesignerNode): void => {
@@ -644,13 +658,13 @@ export function Designer() {
   const pin = (recipe: string | null): void => {
     if (!picked?.node.item) return;
     const item = picked.node.item;
-    void run("Solving with the pin", async () => {
-      const out = await api.pin(picked.route, item, recipe);
+    startJob({ pin: { plan: picked.route, node: item, recipe } }, (result) => {
+      const out = result as Designed;
       // Keep the same item picked, on the best-ranked route that makes it, so the swap shows.
       const holder = out.view.routes.find((r) => r.nodes.some((n) => n.item === item));
       const again = holder?.nodes.find((n) => n.item === item);
       setPicked(holder && again ? { route: holder.id, node: again } : null);
-      return out;
+      designed(out);
     });
   };
 
@@ -663,10 +677,11 @@ export function Designer() {
         <p className="lede">Compare 2-3 routes, then build one. Ranked by code; pick any machine to swap or pin it.</p>
       </div>
       <div className="designer-top">
-        <DesignForm busy={busy !== null} onDesign={design} />
+        <DesignForm busy={working} onDesign={design} />
         <SavedPlans plans={plans} current={view?.id ?? null} />
       </div>
-      {busy && (
+      {runner.job && <JobProgress job={runner.job} onCancel={runner.cancel} testId="designer-busy" prefix="designer" />}
+      {busy && !runner.job && (
         <div className="gos-panel" aria-busy="true" data-testid="designer-busy">
           <p className="empty">
             {GLYPH.progress} {busy}
@@ -714,7 +729,7 @@ export function Designer() {
             <span className="gos-src" data-testid="designer-weights">
               {view.weights}
             </span>
-            <Button disabled={busy !== null} onClick={() => void run("Solving again", () => api.resolve(view.id))} testId="designer-resolve">
+            <Button disabled={working} onClick={() => startJob({ resolve: view.id })} testId="designer-resolve">
               Re-solve
             </Button>
           </div>
@@ -727,13 +742,13 @@ export function Designer() {
                 key={r.id}
                 route={r}
                 names={names}
-                busy={busy !== null}
+                busy={working}
                 picked={picked?.route === r.id ? picked.node.n : null}
                 onPick={(n) => pick(r.id, n)}
-                onUnpin={(node) => void run("Solving without the pin", () => api.pin(r.id, node, null))}
+                onUnpin={(node) => startJob({ pin: { plan: r.id, node, recipe: null } })}
                 onAccept={() => void run("Accepting", () => api.accept(r.id))}
                 onRename={(name) => void run("Renaming", () => api.rename(r.id, name))}
-                onResolve={() => void run("Solving again on the new export", () => api.resolve(r.id))}
+                onResolve={() => startJob({ resolve: r.id })}
               />
             ))}
           </div>
@@ -742,7 +757,7 @@ export function Designer() {
               <AlternativesPanel
                 alts={alts}
                 error={altsError}
-                busy={busy !== null}
+                busy={working}
                 all={all}
                 setAll={setAll}
                 onPin={(recipe) => pin(recipe)}

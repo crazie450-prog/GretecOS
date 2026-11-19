@@ -9,6 +9,8 @@
 // number is the core's, with its citation chip. The design shown is in the address
 // (#/power/<plan id>). Power has an approved board (D92) whose canvas handoff isn't in the repo:
 // built to the design system (D158 (5)), to be reconciled with the board.
+// A design runs as a design job (WO-3.9, D353): the busy panel shows the stage, the time and a
+// Cancel; leaving the view leaves the job running to its saved result (D354).
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type {
@@ -24,6 +26,7 @@ import type {
 import { Card } from "../cards/Card";
 import { useCardActions } from "../cards/context";
 import type { PowerLedgerCard } from "../cards/types.gen";
+import { JobProgress, useDesignJob } from "../components/JobProgress";
 import { Button, CitationChip, Panel, PowerRow, StatusGlyph, TierChip } from "../components/core";
 import { plain, signed } from "../state/format";
 import { GLYPH } from "../state/states";
@@ -650,19 +653,17 @@ export function Power() {
       );
   };
 
+  // A design job's result is what POST /api/power/design answers (D353).
+  const runner = useDesignJob(
+    "power",
+    (result) => show((result as { view: PowerView }).view),
+    (text) => setNotice(text),
+  );
+  const working = busy !== null || runner.job !== null;
+
   const design = (spec: PowerSpec): void => {
-    setBusy("Sizing generators and fuel chains");
     setNotice(null);
-    api.powerDesign(spec).then(
-      (out) => {
-        setBusy(null);
-        show(out.view);
-      },
-      (e: unknown) => {
-        setBusy(null);
-        setNotice(message(e));
-      },
-    );
+    runner.start(() => api.powerJob(spec)).catch((e: unknown) => setNotice(message(e)));
   };
 
   const accept = (id: string): void => {
@@ -688,8 +689,9 @@ export function Power() {
         <p className="lede">Am I in deficit, at which tier? Then 2-3 ranked lines for any of four goals; ranked by code.</p>
       </div>
       <LedgerPanel ledger={ledger} error={ledgerError} windowS={windowS} setWindow={changeWindow} />
-      <DesignForm busy={busy !== null} mode={mode} setMode={setMode} onDesign={design} />
-      {busy && (
+      <DesignForm busy={working} mode={mode} setMode={setMode} onDesign={design} />
+      {runner.job && <JobProgress job={runner.job} onCancel={runner.cancel} testId="power-busy" prefix="power" />}
+      {busy && !runner.job && (
         <div className="gos-panel" aria-busy="true" data-testid="power-busy">
           <p className="empty">
             {GLYPH.progress} {busy}
@@ -737,7 +739,7 @@ export function Power() {
           </div>
           <div className="designer-routes" style={{ gridTemplateColumns: `repeat(${Math.max(1, options.length)}, minmax(0, 1fr))` }}>
             {options.map((o) => (
-              <OptionCard key={o.id} o={o} busy={busy !== null} onAccept={() => accept(o.id)} />
+              <OptionCard key={o.id} o={o} busy={working} onAccept={() => accept(o.id)} />
             ))}
           </div>
           {(view.notes.length > 0 || view.rejected.length > 0) && (
