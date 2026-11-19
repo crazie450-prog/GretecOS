@@ -113,15 +113,22 @@ def test_plain_open_would_block_the_save(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows sharing semantics")
-def test_replace_onto_the_held_file_is_refused(tmp_path: Path) -> None:
-    # GTNH 2.9.0 (Hodgepodge): temp file, then Files.move(ATOMIC_MOVE, REPLACE_EXISTING) onto
-    # level.dat. os.replace is the same MoveFileExW(MOVEFILE_REPLACE_EXISTING) call.
+def test_replace_onto_the_held_file_goes_on_and_the_read_is_dropped(
+    tmp_path: Path,
+) -> None:
+    # GTNH 2.9.0 (Hodgepodge, BetterQuesting): temp file, then Files.move(ATOMIC_MOVE,
+    # REPLACE_EXISTING) onto the file. os.replace is the same MoveFileExW(MOVEFILE_REPLACE_EXISTING)
+    # call. Before WO-6.8 Windows refused it while safe_open held the file (WinError 5, the G11
+    # finding); now the replace breaks safe_open's oplock, the handle is closed and the replace
+    # goes on (D357), and what safe_open read is marked interrupted, so readers retry.
     level = tmp_path / "level.dat"
     level.write_bytes(b"old")
     tmp = tmp_path / ".level.dat-1.tmp"
     tmp.write_bytes(b"new")
     with so.safe_open(level) as f:
         assert f.read() == b"old"
-        with pytest.raises(PermissionError):
-            os.replace(tmp, level)
-    assert level.read_bytes() == b"old"
+        os.replace(tmp, level)
+        assert so.interrupted(f)
+        with pytest.raises(so.ReadInterrupted):
+            so.check_whole(f)
+    assert level.read_bytes() == b"new"

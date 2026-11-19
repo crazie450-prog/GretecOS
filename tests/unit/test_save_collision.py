@@ -33,10 +33,12 @@ from gregtec.gamestate import safe_open as so
 pytestmark = pytest.mark.serial
 
 HOLD_S = 1.0  # the forced long read: far longer than any real read
-WAITED_S = 0.15  # a writer call that took longer than this waited for the reader
 OLD, NEW = b"old" * 100, b"new" * 100
 
 Pattern = Callable[[Path, Path], None]  # (target, its temp file with NEW in it)
+WAITS: dict[
+    tuple[str, str], float
+] = {}  # how long each writer call that went through took
 
 
 # --- the writers: the Win32 calls Java and the game make (D356) --------------------------------
@@ -262,7 +264,7 @@ READERS: dict[
 
 
 def run_cell(folder: Path, reader: str, pattern: str) -> str:
-    """One reader against one pattern: ``refused:<winerror>``, ``ok`` or ``waited``, then
+    """One reader against one pattern: ``refused:<winerror>`` or ``ok``, then
     ``/`` what the target holds after (``new``, ``old``, ``gone``)."""
     folder.mkdir(parents=True)
     target, tmp = folder / "QuestProgress.json", folder / "QuestProgress.json.tmp"
@@ -278,8 +280,8 @@ def run_cell(folder: Path, reader: str, pattern: str) -> str:
     start = time.perf_counter()
     try:
         PATTERNS[pattern](target, tmp)
-        took = time.perf_counter() - start
-        outcome = "waited" if took > WAITED_S else "ok"
+        WAITS[(reader, pattern)] = time.perf_counter() - start
+        outcome = "ok"
     except OSError as exc:
         outcome = f"refused:{getattr(exc, 'winerror', None) or exc.errno}"
     if t is not None:
@@ -294,19 +296,21 @@ def run_cell(folder: Path, reader: str, pattern: str) -> str:
     return f"{outcome}/{state}"
 
 
-# What Windows CI measured (D357). "waited" = the writer's call went on once the reader's oplock
-# watcher closed the handle.
+# What Windows CI measured (D357; run 44516182476, job 135532648226, on the commit before the fix
+# was wired in, where ``safe_open`` was the ``shared`` reader). Under the oplock no writer was
+# refused; the longest any writer call waited is checked separately (:data:`WAIT_MAX_S`).
 REFUSED = "refused:5/old"
+SHARING = "refused:32/old"
 EXPECTED: dict[str, dict[str, str]] = {
     "none": dict.fromkeys(PATTERNS, "ok/new"),
     "plain": {
         "replace": REFUSED,
         "replace_through": REFUSED,
         "os_replace": REFUSED,
-        "delete_move": "refused:32/old",
-        "rename_away": "refused:32/old",
-        "replacefile": "refused:32/old",
-        "posix_rename": REFUSED,
+        "delete_move": SHARING,
+        "rename_away": SHARING,
+        "replacefile": SHARING,
+        "posix_rename": SHARING,
         "in_place": "ok/new",
         "append": "ok/new",
     },
@@ -316,23 +320,14 @@ EXPECTED: dict[str, dict[str, str]] = {
         "os_replace": REFUSED,
         "delete_move": "ok/new",
         "rename_away": "ok/new",
-        "replacefile": REFUSED,
+        "replacefile": "ok/new",
         "posix_rename": "ok/new",
         "in_place": "ok/new",
         "append": "ok/new",
     },
-    "oplock": {
-        "replace": "waited/new",
-        "replace_through": "waited/new",
-        "os_replace": "waited/new",
-        "delete_move": "waited/new",
-        "rename_away": "waited/new",
-        "replacefile": "waited/new",
-        "posix_rename": "ok/new",
-        "in_place": "ok/new",
-        "append": "ok/new",
-    },
+    "oplock": dict.fromkeys(PATTERNS, "ok/new"),
 }
+WAIT_MAX_S = 0.5  # the longest a writer may wait for an oplocked reader to give way
 
 
 def _table(got: dict[str, dict[str, str]]) -> str:
@@ -353,8 +348,14 @@ def test_each_write_pattern_against_each_reader_on_windows(tmp_path: Path) -> No
             )
     import warnings
 
-    warnings.warn(f"save collision table:\n{_table(got)}", stacklevel=1)
+    waits = {
+        p: round(WAITS[("oplock", p)], 3) for p in PATTERNS if ("oplock", p) in WAITS
+    }
+    warnings.warn(
+        f"save collision table:\n{_table(got)}\noplock waits (s): {waits}", stacklevel=1
+    )
     assert got == EXPECTED, f"measured:\n{_table(got)}\nexpected:\n{_table(EXPECTED)}"
+    assert max(waits.values()) < WAIT_MAX_S, waits
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the Linux half of the table")
@@ -370,11 +371,12 @@ def test_no_pattern_is_refused_on_linux(tmp_path: Path, pattern: str) -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' oplocks")
-def test_oplock_granted_on_a_quiet_file_not_on_one_open_to_write(
+def test_a_log_the_game_holds_open_is_read_and_its_appends_go_on(
     tmp_path: Path,
 ) -> None:
-    """The oplock is the guard for the files the game replaces (quiet between saves); a log the
-    game holds open to write gets none and is read plainly (nobody replaces a log)."""
+    """log4j holds its logs open and appends through that handle. Windows grants the oplock
+    beside it (CI showed it), and a write through a handle opened before ours breaks nothing:
+    the appends go on while GOS reads, and GOS reads a range it measured first (``LogTail``)."""
     from gregtec.gamestate import _win32
 
     quiet = tmp_path / "QuestProgress.json"
@@ -387,8 +389,11 @@ def test_oplock_granted_on_a_quiet_file_not_on_one_open_to_write(
         held.write(b"x\n")
         held.flush()
         with so.leased(_win32.open_handle(log)) as f:
-            assert not so.is_leased(f)
-            assert f.read() == b"x\n"
+            assert f.read(2) == b"x\n"
+            held.write(b"y\n")
+            held.flush()
+            assert not so.interrupted(f)
+    assert log.read_bytes() == b"x\ny\n"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' oplocks")

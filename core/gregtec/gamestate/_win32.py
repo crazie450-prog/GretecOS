@@ -209,8 +209,8 @@ class Win32Handle:
         if not ok and err == ERROR_IO_PENDING:
             self.leased = True  # granted: the request completes when the oplock breaks
         else:
-            # Not granted (ERROR_OPLOCK_NOT_GRANTED: another handle has it open to write, as
-            # log4j holds a log), or completed at once: a plain shared read, as before D357.
+            # Not granted (ERROR_OPLOCK_NOT_GRANTED; a file system without oplocks), or
+            # completed at once: a plain shared read, as before D357.
             self.oplock_error = 0 if ok else err
 
     @property

@@ -242,12 +242,13 @@ def test_windows_a_held_plain_handle_blocks_a_save_and_safe_open_does_not(
     tmp_path: Path,
 ) -> None:
     """The control: a plain ``open`` (no share-delete) blocks vanilla's rename save, so the soak
-    would see a reader that held one; ``safe_open`` lets the rename through (V27)."""
+    would see a reader that held one; ``safe_open`` lets the rename through (V27), and since
+    WO-6.8 gives the file up as it does (D357)."""
     target = tmp_path / "level.dat"
     target.write_bytes(b"old")
     with open(target, "rb"), pytest.raises(PermissionError):
         os.rename(target, tmp_path / "level.dat_old")
     with safe_open.safe_open(target) as f:
-        os.rename(target, tmp_path / "level.dat_old")  # vanilla's save renames it away
         assert f.read() == b"old"
+        os.rename(target, tmp_path / "level.dat_old")  # vanilla's save renames it away
     assert (tmp_path / "level.dat_old").read_bytes() == b"old"

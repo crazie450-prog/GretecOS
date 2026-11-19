@@ -16,8 +16,11 @@ closes the handle at once (between two chunk reads, never during one), and the g
 on. A game that opens the file to write it in place breaks the oplock too. Either way the read is
 marked :attr:`LeasedFile.interrupted`, and the whole-file readers here raise
 :class:`ReadInterrupted` (an ``OSError``) and retry, so a read never returns a file the game
-changed under it. When the oplock isn't granted (a log the game holds open for writing; a file
-system without oplocks) the read is a plain shared read, as before.
+changed under it. A write through a handle the game opened *before* ours (log4j's logs, a region
+file the game keeps open) breaks nothing: those files are appended or patched in place, never
+replaced, and their readers read a range they measured first or check what they read (D357).
+When the oplock isn't granted (a file system without oplocks) the read is a plain shared read,
+as before.
 
 The rule this keeps (CLAUDE.md, ``gamestate.safe_open``): share-delete (the oplock is on top of
 it), copy then parse (read whole into memory, close, then parse), retry x3 (an interrupted read
@@ -230,7 +233,7 @@ def safe_open(path: StrPath) -> Iterator[BinaryIO]:
 
     from gregtec.gamestate import _win32
 
-    with leased(_win32.open_handle(path, oplock=False)) as f:
+    with leased(_win32.open_handle(path)) as f:
         yield f
 
 
