@@ -581,7 +581,9 @@ class Rehearsal:
             f"lane {r.get('lane')}: {r.get('text')}",
         )
         check(r.get("text"), "no answer")
-        return f"lane {r['lane']}, intent {r.get('intent')}"
+        check(r.get("intent") == "frontier", f"intent {r.get('intent')}: {r['text']}")
+        check("no quests loaded" not in r["text"], f"no quest book: {r['text']}")
+        return f"lane {r['lane']}, intent {r.get('intent')}: {r['text'][:80]!r}"
 
     def ask_deep(self) -> str:
         r = self.ask(f"design a {self.item_name()} line at 2 per second")
@@ -707,6 +709,7 @@ class Rehearsal:
         t0 = time.time()
         self.voice_box.send({"op": "wake", "text": "what tier am I"})
         said = self.said_after(t0)
+        check("no quests loaded" not in said, f"no quest book: {said}")
         return f"wake -> said {said[:80]!r}"
 
     def persona_switch(self) -> str:
@@ -1013,7 +1016,7 @@ class Rehearsal:
         crops = self.api("GET", "/api/crops")
         found = json.dumps(crops)
         check("crop:" in found or crops.get("crops"), f"no crops: {found[:200]}")
-        ids = [c.get("id") for c in crops.get("crops", []) if c.get("id")]
+        ids = [c["crop"] for c in crops.get("crops", []) if c.get("crop")]
         check(ids, "no crop ids")
         self.api("POST", "/api/crops/target", {"crop": ids[0]})
         r = self.ask("next crop step")
@@ -1244,18 +1247,24 @@ def harness_home(
     game: Path, built_home: Callable[[Path, Path], Path]
 ) -> Callable[[Path], None]:
     """The full run's GOS_HOME: a real harness export (collect + db build), WO-1.8's structure
-    fixture for the footprints, and the vault from the template."""
+    fixture for the footprints, the quest eval's self-authored book (the harness has no quest
+    book; its items link to the export by registry name + meta) and the vault from the
+    template."""
 
     def build(home: Path) -> None:
+        from gregtec.db import quests as quest_db
         from gregtec.db import structures as structure_db
+        from gregtec.quests import questeval
         from gregtec.store import Store
         from gregtec.vault import deploy as vault_deploy
 
         home.mkdir(parents=True, exist_ok=True)
         built_home(game, home)
+        book = quest_db.read(questeval.pack().write_world(home / "quest-world"), None)
         conn = access.connect(access.db_path(home))
         try:
             structure_db.load(conn, REPO / "tests" / "fixtures" / "gtnh-extractor")
+            quest_db.write(conn, book)
         finally:
             conn.close()
         Store(access.db_path(home)).close()

@@ -202,7 +202,7 @@ FAST_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
         FRONTIER,
         _rx(
             r"(?:what|which) quests? (?:can i do|are (?:open|available)|is next|next)"
-            r"(?: now)?",
+            r"(?: now| next)?",  # "... can I do next": found by the fake day one (D337)
             r"(?:what are |show |list )?(?:me )?(?:my )?(?:next|open|available) quests?",
             r"quest frontier|what quests? (?:now|next)",
         ),
