@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import sqlite3
+import time
 from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -834,6 +836,12 @@ def write(
         block_db.write(conn, run_id, loaded.palette)
         pruned = prune(conn, keep, run_id)
         _names(conn)
+        # A new stamp per build: the planner's process caches drop what they kept (D352).
+        conn.execute(
+            "INSERT INTO kv(key, value, upd) VALUES ('db.build', ?, ?) ON CONFLICT(key)"
+            " DO UPDATE SET value = excluded.value, upd = excluded.upd",
+            (secrets.token_hex(8), int(time.time())),
+        )
         conn.execute("COMMIT")
     except BaseException:
         # SQLite rolls back by itself on SQLITE_FULL/IOERR/NOMEM; a second ROLLBACK would hide

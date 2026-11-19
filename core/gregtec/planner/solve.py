@@ -782,6 +782,7 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
         ),
     )
     if not open_choices:
+        progress.stage("solve", 1, 1)
         return [solve_route(narrowed)]
     procs = [p for p in narrowed.procs if p.id not in _excluded(narrowed, pins)]
     cuts: list[dict[str, str]] = []

@@ -386,6 +386,19 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
         for t in tasks
         if t["status"] in ("queued", "running", "needs_approval")
     ]
+    if core.design_jobs is not None:  # the dashboard's design jobs (WO-3.9, D353)
+        jobs += [
+            {
+                "id": j.id,
+                "kind": j.kind,
+                "title": j.title,
+                "status": j.status,
+                "detail": j.describe(),
+                "started": j.started,
+                "cancel_asked": j.cancel_asked,
+            }
+            for j in core.design_jobs.running()
+        ]
     if board.export is not None:
         jobs.append(
             {

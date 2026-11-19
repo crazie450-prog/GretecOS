@@ -103,6 +103,7 @@ from gregtec.api import (
     ai_routes,
     dashboard,
     guide_routes,
+    job_routes,
     persona_routes,
     plan_routes,
     power_routes,
@@ -136,6 +137,7 @@ from gregtec.llm.usage import UsageMeter
 from gregtec.ops.costs import CostWatch
 from gregtec.ores import view as ore_view
 from gregtec.packupdate import routes as addon_routes
+from gregtec.planner.design_jobs import DesignJobs
 from gregtec.quests import view as quest_view
 from gregtec.remote import routes as remote_routes
 from gregtec.remote.jobs import JobQueue
@@ -241,6 +243,7 @@ class Core:
     _alert_state_due: bool = False  # a state push for alert events is queued (WO-7.5)
     events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
     jobs: JobQueue | None = None  # the durable design-job queue for Discord (WO-9.1)
+    design_jobs: DesignJobs | None = None  # the dashboard's design jobs (WO-3.9)
     journal: Callable[[list[str]], None] | None = None  # the day's journal (WO-9.1)
     notices: Notices | None = None  # the proactive notices (WO-6.5, D71)
     router: AlertRouter | None = None  # the alert router (WO-9.2, D298)
@@ -934,6 +937,7 @@ def create_app(core: Core) -> FastAPI:
     persona_routes.add_routes(app, core, principal, _json_body)
     plan_routes.add_routes(app, core, principal, trusted, _json_body)
     power_routes.add_routes(app, core, principal, trusted, _json_body)
+    job_routes.add_routes(app, core, principal, trusted, _json_body)
     quest_view.add_routes(app, core, principal)
     ore_view.add_routes(app, core, principal, _json_body)
     crop_view.add_routes(app, core, principal, trusted, _json_body)

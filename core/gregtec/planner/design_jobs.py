@@ -259,9 +259,10 @@ class DesignJobs:
             job.result = result
             job.error = error[:ERROR_MAX] if error else None
             job.sub = None
-            self._threads.pop(job.id, None)
         self._write_record(job)
         self._push(job, force=True)
+        with self._lock:
+            self._threads.pop(job.id, None)  # wait() returns once the end was pushed
 
     def _push(self, job: Job, *, force: bool = False) -> None:
         if self.on_change is None:
