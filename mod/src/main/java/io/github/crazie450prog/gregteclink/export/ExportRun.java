@@ -387,6 +387,7 @@ public final class ExportRun {
         counts.put("recipe_map_errors", gt.mapErrors);
         counts.put("recipes", gt.recipes);
         counts.put("recipe_errors", gt.recipeErrors);
+        counts.put("recipes_unkeyed", gt.recipesUnkeyed);
 
         t = System.currentTimeMillis();
         ModSources mods = new ModSources();

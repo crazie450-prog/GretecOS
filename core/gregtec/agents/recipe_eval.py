@@ -580,7 +580,7 @@ class Ground:
             row.slots.append(self._slot(row, s, alts.get(s["slot"], [])))
         for m in self.conn.execute(
             "SELECT key, value_num, value_text FROM recipe_meta WHERE recipe_id = ? "
-            "AND key NOT IN ('nei_desc', 'can_be_buffered')",
+            "AND key NOT IN ('nei_desc', 'can_be_buffered', 'unkeyed')",
             (r["id"],),
         ):
             got = m["value_text"] if m["value_num"] is None else m["value_num"]
