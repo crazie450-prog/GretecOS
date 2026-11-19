@@ -32,7 +32,7 @@ from gregtec import (
 )
 from gregtec import deploy as app_deploy
 from gregtec.advisor import cli as advisor_cli
-from gregtec.agents import design_cost_cli, recipe_eval_cli
+from gregtec.agents import design_cost_cli, hover_eval_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
 from gregtec.alerts import cli as alerts_cli
 from gregtec.build import cli as palette_cli
@@ -514,6 +514,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     powereval.add_parsers(eval_cmds)
     quest_cli.add_parsers(quest_cmds, eval_cmds)
     advisor_cli.add_parsers(eval_cmds)
+    hover_eval_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -833,6 +834,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--limit must be at least 1")
         if args.eval_command == recipe_eval_cli.COMMAND:
             return recipe_eval_cli.run(args, sys.stdout)
+        if args.eval_command == hover_eval_cli.COMMAND:
+            return hover_eval_cli.run(args, sys.stdout)
         if args.eval_command == screen_eval_cli.COMMAND:
             return screen_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:

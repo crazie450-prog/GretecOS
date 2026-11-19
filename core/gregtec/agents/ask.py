@@ -126,6 +126,21 @@ _ORDINALS = {
     "3": 2, "three": 2, "third": 2, "the third": 2, "the third one": 2, "number three": 2,
 }  # fmt: skip
 _YES = frozenset({"yes", "yeah", "yep", "that one", "it", "that"})
+# A subject that means what Clayton points at in game (WO-8.4, D362): "this", "that one", ...
+_DEICTIC = re.compile(r"(?:this|that|it)(?: (?:one|item|block|thing|here|stuff))?")
+# A question naming no item that is about the pointed-at thing ("which tier is this")
+_POINTING = re.compile(r"\b(?:this|that)\b")
+# The routes whose subject is an item: their pre-retrieval looks the pointed-at item up
+_POINTABLE = frozenset(
+    {
+        router.RECIPE,
+        router.RECIPES,
+        router.USES,
+        router.ITEM,
+        router.GENERAL,
+        router.QUEST_ITEM,
+    }
+)
 
 
 @dataclass
@@ -320,7 +335,8 @@ class Asker:
         if route.intent == router.REPEAT and pending is not None:
             with self._lock:  # the repeated question can still be answered
                 self._pending = pending
-        reply = self._reply(route, started, task, via)
+        route, pointed = self._pointed(route)
+        reply = pointed or self._reply(route, started, task, via)
         if route.intent != router.SPOIL and spoilers.mentions(text):
             reply.text = f"{reply.text} {spoilers.HOW_TO_ASK}"
         if self.personas is not None and reply.persona is None:
@@ -334,6 +350,31 @@ class Asker:
             with self._lock:
                 self._last = reply
         return reply
+
+    def _pointed(self, route: router.Route) -> tuple[router.Route, Reply | None]:
+        """A question about "this" while a game is linked (WO-8.4, D362): the item Clayton
+        hovers over or the block he looks at, asked of the game as "what's this?" is (D286)
+        and resolved by the DB, becomes the route's subject, so pre-retrieval looks up that
+        exact item (its NBT variant included). "How do I make this" with nothing pointed at
+        (or an item the DB lacks) is answered with what "what's this?" would say; a question
+        that only mentions "this" and names no item is left as it was."""
+        if self.game is None or route.intent not in _POINTABLE:
+            return route, None
+        said = router.normalise(route.subject or "")
+        deictic = bool(said) and _DEICTIC.fullmatch(said) is not None
+        if not deictic and not (
+            route.subject is None
+            and route.intent in (router.ITEM, router.GENERAL)
+            and _POINTING.search(router.normalise(route.text))
+        ):
+            return route, None
+        target, linked = self.game.current_target()
+        found = whatsthis.resolve(self.registry, target, linked=linked)
+        if found.found and found.key:
+            return replace(route, subject=found.key), None
+        if not deictic:
+            return route, None
+        return route, Reply(found.text, router.INSTANT, route.intent)
 
     def _picked(self, pending: _Pending | None, text: str) -> router.Route | None:
         """The pending request re-run on the candidate ``text`` picks, if it picks one."""

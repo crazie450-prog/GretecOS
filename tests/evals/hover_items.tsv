@@ -1,0 +1,11 @@
+id	kind	target	item	meta	nbt	question	expect	lab
+h01	whats_this	item	gregtech:gt.metaitem.01	11305		What's this?	name	In Lab, open your inventory with a stack of GregTech Steel Ingots, hover over them and say "what's this?".
+h02	make	item	gregtech:gt.metaitem.01	32600		How do I make this?	make	In Lab, hover over an LV Motor in NEI's item list and say "how do I make this?".
+h03	uses	item	minecraft:iron_ingot	0		What is this used for?	use	In Lab, hover over an Iron Ingot in your inventory and say "what is this used for?".
+h04	tier	item	miscutils:itemHotIngotArcanite	0		Which tier is this?	tier	In Lab, hover over GT++'s Hot Arcanite Ingot in NEI's item list and say "which tier is this?".
+h05	ambiguous	item	IC2:itemPlates	4		How do I make this one?	make	In Lab, type "iron plate" into NEI's search, hover over IC2's Iron Plate (not GregTech's, which has the same name) and say "how do I make this one?".
+h06	nbt_variant	item	IC2:itemBatRE	1	{"charge":"10000.0D"}	What's this?	name	In Lab, hover over a fully charged RE-Battery in NEI's item list (the charged one, not the empty one) and say "what's this?".
+h07	nbt_cell	item	IC2:itemFluidCell	0	{"Fluid":{"Amount":1000,"FluidName":"water"}}	What is this used for?	use	In Lab, hover over IC2's Universal Fluid Cell filled with water in NEI's item list and say "what is this used for?".
+h08	none	item	gregtech:gt.blockmachines	238		How do I make this?	none	In Lab, hover over the Debug Fluid Tank in NEI's item list (it has no recipe) and say "how do I make this?".
+h09	addon	item	GoodGenerator:MAR_Casing	0		How do I make this?	make	In Lab, hover over Good Generator's Field Restriction Casing in NEI's item list and say "how do I make this?".
+h10	block	block	gregtech:gt.blockmachines	1000		What am I looking at?	machine	In Lab, look at a placed Electric Blast Furnace controller (no GUI open) and say "what am I looking at?".
