@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import ModuleType
 from typing import BinaryIO
 
 import pytest
@@ -293,3 +294,114 @@ def test_copy_to_raises_when_interrupted(
         monkeypatch.setattr(so, "safe_open", fake)
         with pytest.raises(so.ReadInterrupted):
             so.copy_to(tmp_path / "x", io.BytesIO())
+
+
+def _win32_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """``gregtec.gamestate._win32``: the real one on Windows; elsewhere a private copy loaded
+    over a stand-in ``ctypes.WinDLL`` (the tests replace every Win32 call they reach)."""
+    import ctypes
+    import importlib.util
+    import sys
+
+    if sys.platform == "win32":
+        from gregtec.gamestate import _win32
+
+        return _win32
+
+    class _Fn:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, *args: object) -> object:
+            raise AssertionError("an unpatched Win32 call")
+
+    class _Dll:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __getattr__(self, name: str) -> _Fn:
+            return _Fn()
+
+    monkeypatch.setattr(ctypes, "WinDLL", _Dll, raising=False)
+    spec = importlib.util.spec_from_file_location(
+        "_win32_under_test", Path(so.__file__).with_name("_win32.py")
+    )
+    assert spec is not None and spec.loader is not None
+    mod = ModuleType(spec.name)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_dispose_keeps_the_oplock_buffers_until_the_kernel_is_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WO-6.8 gate low (4): an oplock request still pending DISPOSE_WAIT_MS after the handle
+    was closed must not have its OVERLAPPED or output buffer freed (the kernel writes to them
+    when it completes): dispose keeps them alive until the request's event says it completed."""
+    import ctypes
+    import gc
+    import weakref
+
+    m = _win32_module(monkeypatch)
+    events = iter(range(1000, 2000))
+    closed: list[int] = []
+    completed = {"done": False}
+    seen: dict[str, weakref.ref[object]] = {}
+
+    def device_io_control(*args: object) -> int:
+        seen["out"] = weakref.ref(args[4]._obj)  # type: ignore[attr-defined]
+        seen["ov"] = weakref.ref(args[7]._obj)  # type: ignore[attr-defined]
+        return 0  # pending: ERROR_IO_PENDING below
+
+    def wait(handle: int, ms: int) -> int:
+        if handle == brk[0]:
+            return m.WAIT_OBJECT_0 if completed["done"] else m.WAIT_TIMEOUT
+        return m.WAIT_OBJECT_0
+
+    brk: list[int] = []
+    monkeypatch.setattr(m, "CreateEventW", lambda *a: next(events))
+    monkeypatch.setattr(m, "_open_atomic", lambda path: (7, 0))
+    monkeypatch.setattr(m, "DeviceIoControl", device_io_control)
+    monkeypatch.setattr(
+        ctypes, "get_last_error", lambda: m.ERROR_IO_PENDING, raising=False
+    )
+    monkeypatch.setattr(m, "CloseHandle", lambda h: closed.append(h) or 1)
+    monkeypatch.setattr(m, "WaitForSingleObject", wait)
+    monkeypatch.setattr(m, "_pending", [])
+
+    h = m.Win32Handle(tmp_path / "QuestProgress.json")
+    assert h.leased and h.atomic
+    brk.append(h._break)
+    h.close()
+    h.dispose()  # the request is still pending after the wait
+    del h
+    gc.collect()
+    assert seen["ov"]() is not None and seen["out"]() is not None
+    assert brk[0] not in closed  # its event is kept to see the completion
+    assert len(m._pending) == 1
+
+    completed["done"] = True  # the kernel completes the request
+    m._reap()
+    gc.collect()
+    assert m._pending == []
+    assert seen["ov"]() is None and seen["out"]() is None
+    assert brk[0] in closed
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="Windows' oplocks")
+def test_dispose_of_a_real_handle_frees_everything_at_once(tmp_path: Path) -> None:
+    """The real path: closing the handle completes the oplock request, so dispose frees its
+    buffers at once and nothing is kept back."""
+    from gregtec.gamestate import _win32
+
+    p = tmp_path / "QuestProgress.json"
+    p.write_bytes(b"{}")
+    before = len(_win32._pending)
+    h = _win32.open_handle(p)
+    assert h.leased
+    assert h.read_at(0, 2) == b"{}"
+    h.release()
+    h.close()
+    h.dispose()
+    assert len(_win32._pending) == before
+    assert h._events == []
