@@ -26,7 +26,8 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
   output, up to the tier cap (``generators.dynamo``).
 
 For each generator the fuels are pruned to the top :data:`TOP_FUELS` by EU per unit of fuel
-(the request's ``candidates``; ``self_sustaining`` keeps only fuels a forward closure over the
+(the request's ``candidates``; a boiler's solid fuels apart from its fluid ones, since an item
+is not a litre, D329; ``self_sustaining`` keeps only fuels a forward closure over the
 DB's recipes reaches from the free set and the farms first, :func:`reachable`).
 
 **EU** (WO-4.7, D323): the chain pays for its EU out of the generator's output, so the network
@@ -531,7 +532,9 @@ def candidates(
                             f"{count} x {b.name} on {f.fluid or f.input} -> {t.name}, "
                             f"{r.material} {r.size} rotor"
                         ),
-                        slot=f"{b.ref}+{t.ref}",
+                        # Solids are pruned apart from fluids: an item holds far more EU
+                        # than a litre, so in one slot they would crowd every fluid out.
+                        slot=f"{b.ref}+{t.ref}" + ("" if f.fluid else "/solid"),
                         fuel=key,
                         fuel_ref=f.ref,
                         fuel_per_s=float(count * st.fuel * 20),

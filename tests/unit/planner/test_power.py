@@ -643,6 +643,16 @@ def test_a_large_boiler_burns_a_solid_by_its_exported_burn_value(
         req = power.PowerRequest(free=FREE, kinds=("boiler_steam",))
         gens, notes = power.candidates(c, 1, req, 2)
         [g] = gens
+        # A fluid fuel of the same boiler is pruned in a slot of its own: an item's EU per
+        # unit is not a litre's, and must not crowd the fluids out.
+        c.execute(
+            "INSERT INTO fuel VALUES (1, 902, ?, ?, 'largeBoilerFakeFuels', 'testacid',"
+            " 'testacid', 1, 0, 8, 'steel boiler ticks per 1000 L', 16.0)",
+            (f"r:{fake}/cccccccccccc", fake),
+        )
+        both, _ = power.candidates(c, 1, req, 2)
+        assert {x.fuel for x in power.prune(both, 1)} == {coal, ACID}
+        c.execute("DELETE FROM fuel WHERE recipe_id = 902")
         assert g.fuel == coal and g.kind == "boiler_steam" and g.eut == 128
         # The turbine takes 900 L/t; one boiler at circuit 1 gives (480 - 25) x 2 = 910.
         assert dict(g.spec)["boilers"] == 1 and dict(g.spec)["circuit"] == 1
