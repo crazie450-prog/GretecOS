@@ -587,21 +587,24 @@ What is known to be missing or fragile on `main` at `49c9e70`, so a failure that
 
 ### 7.3 Flakes (re-run, don't deploy over a red job)
 
-- `tests/unit/test_supervisor.py::test_core_exits_3_when_its_port_is_taken`: two `free_port()` calls can return the same port (open PR [#115](https://github.com/crazie450-prog/GretecOS/pull/115) addresses it).
-- `tests/unit/watchers/test_with_play.py::test_gos_watch_run_spools_events` (IndexError, seen once).
-- `tests/unit/test_playhooks.py::test_export_waits_for_a_launch_to_start_its_client` (wall clock under load).
-- `tests/unit/alerts/test_core_routing.py::test_without_a_router_the_engines_push_speaks_as_before` under xdist load (#125 made it wait for the alert message; watch for it).
-- Windows: the WO-7.3 mailbox stress tests on a slow runner (floor scaled in G7's branch). `test_ask_errors_say_whether_the_core_answered` (`WinError 10053`/`10054`, seen twice) had a real cause, fixed by #132 (D355): if it fails again, it is a defect, not a flake.
+WO-11.4 ([PR](https://github.com/crazie450-prog/GretecOS/pulls?q=head%3Awo%2F11.4-ci-repeat-offenders)) found each repeat offender's cause; each fix was checked 50 times under load here and, for the Windows ones, 50 times on Windows CI under 4 workers and two busy loops (run 44520869462: the fixed tests 550 of 550; the tests as they were on `main` 7 failures). None was a product defect still open; no test was skipped, loosened or given a retry. A red one marked fixed is now news, not a flake:
+
+- `tests/unit/test_supervisor.py::test_core_exits_3_when_its_port_is_taken`: two `free_port()` calls can return the same port (open PR [#115](https://github.com/crazie450-prog/GretecOS/pull/115) addresses it; not WO-11.4's).
+- `tests/unit/planner/test_design_job_api.py::test_the_designer_job_api`: **fixed by WO-11.4** (the test bounded the runner's speed: a 1.0 s bound on a request pair while a busy job ran). Measured on the client harness DB with a real power design on a real core: the core is not starved (pair median 8 ms against 6 ms idle; worst 0.4 s, every stall over 60 ms one of CPython's full garbage collections, which pausing the collector during a job did not shorten). The test now checks that every answer came while the job still ran.
+- `tests/unit/watchers/test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (`2000 == 2003`): **fixed by WO-11.4**: a poll reads for at most 0.5 s of wall clock and the slow runner left the last chunk for the next poll; the tests of one poll's reads now pass a timer that stands still.
+- `tests/unit/alerts/test_core_routing.py::test_the_paused_game_comes_from_the_watchers_feed`: **fixed by WO-11.4**: the core's own first look at the running clients (none on CI) could land before the tick and hide the pause; the test says the Lab runs. `::test_without_a_router_the_engines_push_speaks_as_before` was fixed by [#125](https://github.com/crazie450-prog/GretecOS/pull/125) (it waits for the alert message); not seen since.
+- `tests/unit/test_extractor.py::test_run_tree_stops_what_the_command_started` (Ubuntu, three times): **still a known flake**. Not reproduced in 600 runs under load (here and on CI) nor by killing the group at 150 points of the command's start; no survivor of the stop was found. Its failure message now carries the leftover process's `/proc` state, parent, group and wait channel: read it before re-running.
+- `tests/security/test_oc_bridge_api.py::test_saying_confirm`: **fixed by WO-11.4**: the desk compares whole seconds of the wall clock with the 3 s settle time, and the slow runner passed it before the voice "confirm"; the test's desk clock stands still.
+- `tests/unit/discordbot/test_core_api.py::test_errors_carry_the_core_s_status_and_reason` (`WinError 10054`): **fixed by [#132](https://github.com/crazie450-prog/GretecOS/pull/132)** (D355): without its middleware the core answers this 401 before the body is sent, the Windows reset; with it, not. Like `test_ask_errors_say_whether_the_core_answered`: if either fails again, it is a defect, not a flake.
+- `tests/unit/tools/test_tool_ops.py::test_telemetry_get`: **fixed by WO-11.4**: a machine's age counts from the whole second its message was stored in, so a read a few ms later could say 1 s (6 of 50 on Windows CI); the test reads at the moment the message came.
+- `tests/unit/test_appwindow.py::test_the_foreground_program_on_windows`: **fixed by WO-11.4**: the program in front on the runner can be a file without `.exe` (`hosted-compute-agent`); the test checks a lower-case bare file name.
+- `tests/unit/test_playhooks.py::test_export_waits_for_a_launch_to_start_its_client` ("launched 1 s ago"): **fixed by WO-11.4**: the age is bounded by the time the test took, not an exact 0.
+- `tests/unit/watchers/test_with_play.py::test_gos_watch_run_spools_events` (IndexError): **fixed by WO-11.4**: a watcher's first look starts at the log's end, and a slow start-up came after the fake game's line; the game now writes after the first look and the stop waits for the spool.
+- The WO-7.3 mailbox stress tests: fixed by G7's [#106](https://github.com/crazie450-prog/GretecOS/pull/106) (runs on until 21 exchanges) and D340's [#113](https://github.com/crazie450-prog/GretecOS/pull/113) (`serial`, the Lua-faithful writer); not seen since, 100 of 100 on Windows CI.
+- `tests/unit/voice/test_ptt.py::test_the_real_hook_sees_an_injected_key`: fixed by [#125](https://github.com/crazie450-prog/GretecOS/pull/125) (the hook install waits for pynput's handle: a real defect); no failure in the 39 CI runs since, 50 of 50 on Windows CI.
+- `tests/unit/voice/test_tts.py::test_a_new_utterance_stops_the_last` (Ubuntu, 7 times on 2026-11-11): fixed that day (`71e09a2`, it waits for the first utterance to play); not seen since.
 - The `mod` job's critical path is `test_power_view_harness.py` (about 12.5 min alone; the job took 17-27 min of its 60 since D340).
 - `tests/unit/watchers/test_soak.py::test_soak_no_handle_held_no_write_blocked` (Windows, `WinError 5`): **not a flake**: G11 finding 1 (5.2.11). A red here is the real risk showing; re-run to deploy, but don't turn Play's watchers on until 5.2.11 is answered.
-- `tests/unit/planner/test_design_job_api.py::test_the_designer_job_api` (Windows, the health-plus-status pair at 1.015-1.125 s against a 1.0 s bound while a design job runs): **systematic on a loaded Windows runner** (3 pushes in a row on PR #133); follow-up WO-3.9 (a `serial` measurement or a wider bound). Re-run until green.
-- `tests/security/test_oc_bridge_api.py::test_saying_confirm` (Windows).
-- `tests/unit/watchers/test_census.py::test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base` (Windows, `2000 == 2003`, twice).
-- `tests/unit/alerts/test_core_routing.py::test_the_paused_game_comes_from_the_watchers_feed` (Ubuntu, twice).
-- `tests/unit/discordbot/test_core_api.py::test_errors_carry_the_core_s_status_and_reason` (Windows).
-- `tests/unit/test_extractor.py::test_run_tree_stops_what_the_command_started` (Ubuntu, three times).
-- `tests/unit/test_appwindow.py::test_the_foreground_program_on_windows` (Windows).
-- `tests/unit/tools/test_tool_ops.py::test_telemetry_get` (Windows, once: the age and stale columns missing on a slow runner).
 - CI runner apt DNS failures (archive.ubuntu.com): a re-run, not a code problem.
 
 ### 7.4 Docs and records that lag the code
