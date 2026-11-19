@@ -496,15 +496,37 @@ class CaptureError(ValueError):
     """Why a schematic file can't be read (shown as is)."""
 
 
+GT_TILE = "BaseMetaTileEntity"  # GT's machine tile entity id (census.MACHINE_TE)
+GT_PIPE_TILE = "BaseMetaPipeEntity"  # GT's pipe and cable tile entity id
+
+
+@dataclass(frozen=True)
+class TileEntity:
+    """What a capture needs of one of the file's tile entities (WO-10.9): its cell (box
+    coordinates, the ``x``/``y``/``z`` the writer gave it), its registry id string (``id``, e.g.
+    ``BaseMetaTileEntity``) and, for a GT machine or pipe, the MetaTileEntity id ``mID`` (GT
+    5.09.54.265's ``BaseMetaTileEntity.writeToNBT`` writes it as an int, ``readFromNBT`` reads any
+    integer tag) and the front facing ``mFacing`` (a short: ForgeDirection's ordinal, 0 down, 1 up,
+    2 north, 3 south, 4 west, 5 east). An enhanced multi's controller also saves StructureLib's
+    ``eRotation`` and ``eFlip`` (bytes, ``MTEEnhancedMultiBlockBase.saveNBTData``) in the same
+    compound; a capture refuses a non-zero one (D351). ``pos`` is None when the tag lacks an
+    integer ``x``, ``y`` or ``z``. Anything else in the tag is dropped."""
+
+    pos: Pos | None
+    id: str | None
+    mte_id: int | None
+    facing: int | None
+    rotation: int | None = None
+    flip: int | None = None
+
+
 @dataclass(frozen=True)
 class Capture:
     schematic: Schematic  # its offset is the file's WEOffset (0, 0, 0 when it has none)
     writer: Literal["worldedit", "schematica", "unknown"]  # from the file's tags
     order: Order | None  # how the ids above 255 were stored; None: no AddBlocks
     origin: Pos  # WEOrigin
-    tile_entities: tuple[
-        Pos, ...
-    ]  # positions of the file's tile entities (not read further)
+    tile_entities: tuple[TileEntity, ...]  # in the file's order
     entities: int
     notes: tuple[str, ...]
 
@@ -599,7 +621,7 @@ def read(data: bytes, source_ids: Mapping[int, str] | None = None) -> Capture:
         notes.append(
             "no TileEntities list (worldedit-gtnh refuses to load such a file)"
         )
-    tile_entities = tuple(_te_pos(t) for t in tes or [] if isinstance(t, dict))
+    tile_entities = tuple(_tile(t) for t in tes or [] if isinstance(t, dict))
     if tile_entities:
         notes.append(
             f"{len(tile_entities)} tile entities in the file (a capture, never a shell)"
@@ -642,9 +664,27 @@ def _triple(root: Mapping[str, object], prefix: str) -> Pos | None:
     return None
 
 
-def _te_pos(t: Mapping[str, object]) -> Pos:
+def _te_pos(t: Mapping[str, object]) -> Pos | None:
     vals = [t.get(a) for a in "xyz"]
-    return tuple(v if isinstance(v, int) else 0 for v in vals)  # type: ignore[return-value]
+    if all(isinstance(v, int) for v in vals):
+        return (vals[0], vals[1], vals[2])  # type: ignore[return-value]
+    return None
+
+
+def _tile(t: Mapping[str, object]) -> TileEntity:
+    def whole(key: str) -> int | None:
+        v = t.get(key)
+        return v if isinstance(v, int) else None
+
+    te_id = t.get("id")
+    return TileEntity(
+        _te_pos(t),
+        te_id if isinstance(te_id, str) else None,
+        whole("mID"),
+        whole("mFacing"),
+        whole("eRotation"),
+        whole("eFlip"),
+    )
 
 
 def _mappings(root: Mapping[str, object]) -> dict[int, str]:
@@ -784,6 +824,14 @@ def summary(c: Capture, top: int = 40) -> list[str]:
         ),
     ]
     out.extend(f"note: {note}" for note in c.notes)
+    gt = [t for t in c.tile_entities if t.mte_id is not None]
+    for t in gt[:top]:  # the cells `gos footprints capture --controller` can name
+        out.append(
+            f"tile entity {t.pos}: {t.id or '?'} mID {t.mte_id}"
+            + (f", mFacing {t.facing}" if t.facing is not None else "")
+        )
+    if len(gt) > top:
+        out.append(f"... {len(gt) - top} more GT tile entities")
     for state, count in sorted(used.items(), key=lambda kv: (-kv[1], _sort_key(kv[0])))[
         :top
     ]:
