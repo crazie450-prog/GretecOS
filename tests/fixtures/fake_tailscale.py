@@ -3,7 +3,8 @@ JSON state file (``FAKE_TAILSCALE_STATE``). Every call is appended to the state'
 
 State keys: ``status`` (what ``status --json`` prints), ``serve`` (the ServeConfig ``serve status
 --json`` prints; ``{}`` prints nothing, as the real CLI does with no config), ``funnel_on_serve``
-(the next ``serve`` also turns Funnel on: a CLI that misbehaves), ``fail`` (a subcommand that exits 1).
+(the next ``serve`` also turns Funnel on: a CLI that misbehaves), ``fail`` (a subcommand that exits 1),
+``ignore_off`` (``serve ... off`` changes nothing: a CLI that misbehaves).
 """
 
 from __future__ import annotations
@@ -41,11 +42,33 @@ def run(state: dict, argv: list[str]) -> int:
         hp = f"{name}:443"
         serve.setdefault("AllowFunnel", {})[hp] = True
         return 0
+    if argv[:1] == ["serve"] and argv[-1] == "off" and state.get("ignore_off"):
+        return 0
     if argv[:1] == ["serve"] and argv[-1] == "off":
+        # As Tailscale v1.80's removeWebServe: --set-path=P removes that mount only; without it
+        # every mount on the port, asking first (on stdin) when there is more than one.
         port = next(a.split("=")[1] for a in argv if a.startswith("--https="))
-        serve.get("Web", {}).pop(f"{name}:{port}", None)
-        serve.get("TCP", {}).pop(port, None)
-        serve.get("AllowFunnel", {}).pop(f"{name}:{port}", None)
+        hp = f"{name}:{port}"
+        handlers = serve.get("Web", {}).get(hp, {}).get("Handlers", {})
+        path = next(
+            (a.split("=", 1)[1] for a in argv if a.startswith("--set-path=")), None
+        )
+        if path is not None:
+            handlers.pop(path, None)
+        elif len(handlers) > 1 and "--yes" not in argv:
+            print(
+                f"Are you sure you want to delete {len(handlers)} handlers under port {port}?"
+            )
+            answer = sys.stdin.readline().strip().lower()
+            if answer not in ("y", "yes", "sure"):
+                return 0  # the real CLI exits 0 and changes nothing
+            handlers.clear()
+        else:
+            handlers.clear()
+        if not handlers:
+            serve.get("Web", {}).pop(hp, None)
+            serve.get("TCP", {}).pop(port, None)
+            serve.get("AllowFunnel", {}).pop(hp, None)
         return 0
     if argv[:1] == ["serve"] and "--bg" in argv:
         port = next(a.split("=")[1] for a in argv if a.startswith("--https="))

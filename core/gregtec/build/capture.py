@@ -3,14 +3,15 @@
 gtnh-extractor builds the base pack's controllers only (GT5-Unofficial and its hard
 dependencies, D124); an addon multi's footprint comes from the Lab: Clayton builds it there (the
 StructureLib projector at the tier set with ``/sl_channel set``) and captures the blocks, with
-GuideNH's region wand or with WorldEdit's ``//copy`` [G][E§5.5]. WO-10.4's ``.schematic`` reader
-is not on main yet, so this module reads GOS's own minimal capture format (``gos-capture``
-schema 1, a JSON file) and turns it into a structure row (``source = 'lab-capture'``) that the
-footprint library reads like the extractor's. Once WO-10.4 lands, its reader's cells go through
-:func:`from_cells` with the controller's position and each GT machine cell's tile-entity ``mID``
-(a world or ``.schematic`` meta of ``gregtech:gt.blockmachines`` is not the machine): WO-10.4's
-reader must expose the tile entities' ``mID``, and only a capture that kept its tile entities
-converts (WorldEdit ``//copy`` keeps them).
+GuideNH's region wand or with WorldEdit's ``//copy`` [G][E§5.5]. This module reads GOS's own
+minimal capture format (``gos-capture`` schema 1, a JSON file) and turns it into a structure row
+(``source = 'lab-capture'``) that the footprint library reads like the extractor's. WO-10.4's
+``.schematic`` reader is on main, but it lists tile entities by position only (D311), so a
+``.schematic`` doesn't convert yet: its cells must go through :func:`from_cells` with the
+controller's position and each GT machine cell's tile-entity ``mID`` (a world or ``.schematic``
+meta of ``gregtech:gt.blockmachines`` is not the machine). That hand-off is still open: the reader
+must expose the tile entities' ``mID``, and only a capture that kept its tile entities converts
+(WorldEdit ``//copy`` keeps them).
 
 A capture file::
 

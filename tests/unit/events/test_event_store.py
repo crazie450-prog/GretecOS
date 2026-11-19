@@ -236,6 +236,17 @@ def test_a_post_out_of_order_is_sorted_by_time(conn: sqlite3.Connection) -> None
     assert s["start_why"] == "login" and s["start_ts"] == T0
 
 
+def test_a_huge_int_skips_its_event_or_field_never_the_post(
+    conn: sqlite3.Connection,
+) -> None:
+    """QA 5-9: ints past a float or SQLite's INTEGER raised OverflowError and lost the batch."""
+    got = events.record(conn, "play", [login(T0), ev("death", 10**400)])
+    assert got.stored == 1 and got.skipped == 1
+    got = events.record(conn, "play", [ev("quest", T0 + 1, x=10**30)])
+    assert got.stored == 1 and got.skipped == 0
+    assert conn.execute("SELECT count(*) FROM event").fetchone()[0] == 2
+
+
 def test_an_unknown_instance_is_stored_without_a_session(
     conn: sqlite3.Connection,
 ) -> None:

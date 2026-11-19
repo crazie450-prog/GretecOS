@@ -197,8 +197,10 @@ def test_without_a_router_the_engines_push_speaks_as_before(tmp_path: Path) -> N
     c.sockets.add(voice)  # type: ignore[arg-type]
     with TestClient(create_app(c), base_url=BASE):
         c.alert_changed(stalled(time.time()))
-        wait_for(lambda: bool(voice.got))
-    assert voice.got[0]["data"]["say"] == "Lab: EBF has stalled."
+        # The core's health loop can push first: wait for the alert itself (QA 5-9).
+        wait_for(lambda: any(m["type"] == "alert" for m in voice.got))
+    alert = next(m for m in voice.got if m["type"] == "alert")
+    assert alert["data"]["say"] == "Lab: EBF has stalled."
     store.close()
 
 

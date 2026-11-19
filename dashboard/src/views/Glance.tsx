@@ -7,7 +7,7 @@ import { CoreArt, type VoiceLook } from "../components/CoreArt";
 import { GLYPH } from "../state/states";
 import type { Slug } from "../theme/themes";
 import type { ViewId } from "./nav";
-import { AnswerBlock, NextSteps, PowerEmpty } from "./Now";
+import { AnswerBlock, NetPower, NextSteps } from "./Now";
 
 function Block(props: { label: string; onOpen: () => void; children: React.ReactNode; testId: string; className?: string }) {
   return (
@@ -61,7 +61,7 @@ export function Glance(props: {
           )}
         </Block>
         <Block label="Net power · per tier" onOpen={() => props.open("power")} testId="glance-power">
-          <PowerEmpty />
+          <NetPower />
         </Block>
         <Block label="Goal · next step" onOpen={() => props.open("quests")} testId="glance-goal">
           <NextSteps compact />

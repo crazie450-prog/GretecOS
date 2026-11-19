@@ -597,3 +597,60 @@ def wait(cond: Callable[[], bool], timeout: float = 2.0) -> bool:
             return False
         time.sleep(0.01)
     return True
+
+
+def test_install_returns_only_once_the_hook_is_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA 5-9: pynput 1.8.2 marks its listener ready before SetWindowsHookEx runs, so a key
+    pressed as install() returned was lost (CI: test_the_real_hook_sees_an_injected_key saw
+    only the key-up). Faked pynput: its hook handle comes 0.1 s after ``wait()`` returns."""
+    import threading
+    import types
+    from typing import ClassVar
+
+    class SystemHook:
+        _HOOKS: ClassVar[dict[int, object]] = {}
+
+    hooked_at: list[float] = []
+
+    class Listener:
+        def __init__(self, **kwargs: object) -> None:
+            self.ident = 4242
+            self.native_id = 4242
+
+        def start(self) -> None:
+            entry = types.SimpleNamespace(_hook=None)
+            SystemHook._HOOKS[self.ident] = entry
+
+            def later() -> None:
+                time.sleep(0.1)
+                hooked_at.append(time.monotonic())
+                entry._hook = 1  # SetWindowsHookExW returned
+
+            threading.Thread(target=later, daemon=True).start()
+
+        def wait(self) -> None:
+            pass  # ready already: pynput's _mark_ready() comes first
+
+        def is_alive(self) -> bool:
+            return True
+
+    pynput = types.ModuleType("pynput")
+    keyboard = types.ModuleType("pynput.keyboard")
+    keyboard.Listener = Listener  # type: ignore[attr-defined]
+    win32 = types.ModuleType("pynput._util.win32")
+    win32.SystemHook = SystemHook  # type: ignore[attr-defined]
+    pynput.keyboard = keyboard  # type: ignore[attr-defined]
+    for name, module in (
+        ("pynput", pynput),
+        ("pynput.keyboard", keyboard),
+        ("pynput._util", types.ModuleType("pynput._util")),
+        ("pynput._util.win32", win32),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(ptt, "raise_priority", lambda native_id: True)
+    hook = ptt.WindowsHook(KeyFilter({F24}, lambda event: None))
+    hook.install()
+    assert hooked_at and time.monotonic() >= hooked_at[0]
+    assert SystemHook._HOOKS[4242]._hook == 1  # type: ignore[attr-defined]
