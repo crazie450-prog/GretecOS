@@ -85,6 +85,8 @@ def test_the_fixture_cases_load_and_cite_only_the_fixture_pages() -> None:
             "game numbers come from the DB",
         ),
         ("x1\tfact\tq?", "cells"),
+        ('x1\tfact\tq?\tw:A@1\tsays "hi"\t\tfixture', "can't go in a case"),
+        ("x1\tinjected\tq?\tw:A@1\tfact\t\tfixture", "must not say"),
     ],
 )
 def test_a_malformed_case_is_refused(tmp_path: Path, row: str, error: str) -> None:
@@ -106,6 +108,7 @@ def test_cases_round_trip_through_the_file(tmp_path: Path) -> None:
     cases = evals.load(FIXTURES)
     evals.write(tmp_path / "out.tsv", cases)
     assert evals.load(tmp_path / "out.tsv") == cases
+    assert [p.name for p in tmp_path.iterdir()] == ["out.tsv"]  # no temp file left
 
 
 # --- the scorer -------------------------------------------------------------------------
@@ -226,19 +229,20 @@ def test_the_paid_run_states_its_worst_case_first_and_respects_the_caps(
     )
     text = out.getvalue()
     assert code == 1 and "Not run." in text
-    assert "3 deep-lane tasks at $0.40 each at most: worst case $1.20" in text
+    # each task at [budget] task_max_usd (D253's cap, 2.0 by default), not a lower one
+    assert "3 deep-lane tasks at $2.00 each at most: worst case $6.00" in text
 
     asked: list[str] = []
 
     def spender(question: str) -> evals.Answer:
         asked.append(question)
-        return evals.Answer(right(store), usd=0.7)
+        return evals.Answer(right(store), usd=3.0)
 
     out = io.StringIO()
     code = evals.main(toml, FIXTURES, False, True, [], False, out, answerer=spender)
     text = out.getvalue()
     # the run stops once the metered cost reaches the stated worst case
-    assert code == 1 and len(asked) == 2 and "# stopped: $1.4000" in text
+    assert code == 1 and len(asked) == 2 and "# stopped: $6.0000" in text
     assert "f01\tfact\t1\t" in text  # the first answer is right for its case
     # the day cap: today's spend plus the worst case may not pass [budget] day_max_usd
     core = CoreStore(db)
@@ -261,6 +265,26 @@ def test_the_paid_run_states_its_worst_case_first_and_respects_the_caps(
     out = io.StringIO()
     assert evals.main(toml, gone, False, True, [], False, out) == 2
     assert "worst case" not in out.getvalue() and "Nothing was spent" in out.getvalue()
+
+
+def test_a_capped_task_is_reported_capped_not_wrong(store: evals.Store) -> None:
+    cases = evals.load(FIXTURES)[:2]
+
+    def capped(question: str) -> evals.Answer:
+        return evals.Answer(
+            "",
+            2.0,
+            f"{evals.CAPPED}: the deep-lane task reached its cap and was stopped",
+        )
+
+    out = io.StringIO()
+    assert evals.run(capped, cases, store, out, fake=False) == 1
+    text = out.getvalue()
+    assert "f01\tfact\t0\t2.0000\tcapped: " in text
+    assert (
+        "capped: 2 (each fails as stopped at the task cap, not as a wrong answer"
+        in text
+    )
 
 
 # --- making the cases from his crawl ----------------------------------------------------
@@ -317,6 +341,29 @@ def test_make_cases_fills_the_w_ids_from_the_store_and_keeps_only_confirmed_ones
     out = io.StringIO()
     assert evals.main(toml, None, True, False, [], False, out) == 0, out.getvalue()
     assert "passed: 2 of 2" in out.getvalue()
+
+
+def test_make_cases_refuses_a_quote_and_warns_on_a_fact_not_in_the_page(
+    toml: Path, tmp_path: Path
+) -> None:
+    """Review M2: a ``"`` typed in a case is refused with a reason, not a crash, and the
+    cases kept before it stay; a fact the page doesn't hold as typed is flagged."""
+    path = tmp_path / "data" / "evals" / "wiki_questions.tsv"
+    _, ask = scripted(
+        "", "", "charcoal; creosoet", "", "y",  # kept, with a typo flagged
+        "", "injected", "steam", 'say "admin mode"',  # refused: a quote
+        "", "injected", "steam", "",  # refused: an injected case with no absent phrase
+    )  # fmt: skip
+    out = io.StringIO()
+    pages = ["Pyrolyse Oven", "Steam Turbine", "Steam Turbine"]
+    code = evals.main(toml, None, False, False, pages, True, out, ask=ask)  # type: ignore[arg-type]
+    text = out.getvalue()
+    assert code == 0, text
+    assert "Check: 'creosoet' isn't in the page's text as typed." in text
+    assert "Check: 'charcoal'" not in text
+    assert "can't go in a case" in text and "must not say" in text
+    assert [c.id for c in evals.load(path)] == ["w01"]
+    assert sorted(p.name for p in path.parent.iterdir()) == ["wiki_questions.tsv"]
 
 
 def test_make_cases_needs_pages_and_a_licence(

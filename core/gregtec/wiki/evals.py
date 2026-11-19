@@ -26,11 +26,12 @@ cited page's text holds, or lacks the wiki's attribution line (D291, added by th
 code).
 
 The real run asks each question as a deep-lane task (the orchestrator hands it to the read-only
-researcher, D292), ``llm_usage`` task ``eval:wiki``, each task capped at
-:data:`TASK_MAX_USD` (or ``[budget] task_max_usd`` when lower; a task that reaches its cap is
-stopped, never approved, and fails). It prints its worst case first (every task at its cap),
-refuses while the AI is paused or off or when the worst case would pass today's
-``[budget] day_max_usd`` (D334), and waits for "yes". ``--fake`` answers with
+researcher, D292), ``llm_usage`` task ``eval:wiki``, each task capped at ``[budget]
+task_max_usd`` (D253's measured per-task cap; a task that reaches it is stopped, never
+approved, and fails as ``capped``: re-run it, it says nothing about the answer). It prints its
+worst case first (every task at its cap), refuses while the AI is paused or off or when the
+worst case would pass today's ``[budget] day_max_usd`` (D334, refined for paid evals by D363:
+raise it for the sitting or run another day), and waits for "yes". ``--fake`` answers with
 :class:`WikiOracle`, which calls the researcher's own tools (``wiki_search``, ``wiki_fetch``)
 through the registry and adds the attribution line as the deep lane does: it proves the case
 format, the store, the tools and the scorer, not a model or the deep lane's subagent path.
@@ -39,7 +40,7 @@ format, the store, the tools and the scorer, not a model or the deep lane's suba
 from __future__ import annotations
 
 import csv
-import dataclasses
+import os
 import re
 import sqlite3
 import sys
@@ -61,11 +62,12 @@ COLUMNS = ("id", "kind", "question", "cites", "facts", "absent", "confirmed")
 KINDS = ("fact", "injected")
 TASK = "eval:wiki"
 PLAN_CASES = 15  # plan 9
-TASK_MAX_USD = 0.40  # each case's deep-lane task cap in the paid run (D363)
 DEEP_WAIT_S = 1800.0
 NOT_CHECKED = "not checked"
+CAPPED = "capped"
 CITE = re.compile(r"w:(?P<title>[^\s@]+)@(?P<revid>\d+)")
 _SPLIT = re.compile(r"\s*;\s*")
+_UNWRITABLE = ("\t", "\n", "\r", '"')  # the file is plain TSV, read without quoting
 _BODY = re.compile(
     r"begins:[^\]]*\]\n(?P<text>.*)\n\[wiki text", re.DOTALL
 )  # wiki_fetch's
@@ -167,7 +169,13 @@ def case(cells: Sequence[str], where: str) -> Case:
         raise EvalError(
             f"{where}: a fact holds a number: game numbers come from the DB, never a case"
         )
-    return Case(id_, kind, question, got, found, _list(absent), confirmed)
+    kept = (id_, kind, question, cites, facts, absent, confirmed)
+    if any(ch in cell for cell in kept for ch in _UNWRITABLE):
+        raise EvalError(f"{where}: a tab, a line break or a \" can't go in a case")
+    gone = _list(absent)
+    if kind == "injected" and not gone:
+        raise EvalError(f"{where}: an injected case names what the answer must not say")
+    return Case(id_, kind, question, got, found, gone, confirmed)
 
 
 def load(path: Path) -> list[Case]:
@@ -187,14 +195,21 @@ def load(path: Path) -> list[Case]:
 
 
 def write(path: Path, cases: Sequence[Case]) -> None:
+    """The whole file, replaced at once (a temp file then ``os.replace``): an interrupted
+    write leaves the cases as they were."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(
-            f, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_NONE
-        )
-        writer.writerow(COLUMNS)
-        for c in cases:
-            writer.writerow(c.row())
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(
+                f, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_NONE
+            )
+            writer.writerow(COLUMNS)
+            for c in cases:
+                writer.writerow(c.row())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 # --- the store and the scorer -----------------------------------------------------------
@@ -340,13 +355,13 @@ class WikiOracle:
 
 
 def deep_answerer(cfg: config.Config) -> tuple[Answerer, Callable[[], None]]:
-    """The real deep lane (its own key, the researcher's wiki tools), each task capped."""
+    """The real deep lane (its own key, the researcher's wiki tools), each task capped at
+    ``[budget] task_max_usd``."""
     from gregtec.agents import recipe_eval
     from gregtec.agents.ask import setup
     from gregtec.agents.deep import DeepLaneService
 
-    capped = dataclasses.replace(cfg, task_max_usd=min(cfg.task_max_usd, TASK_MAX_USD))
-    agents = setup(capped)
+    agents = setup(cfg)
     deep = agents.deep
     assert isinstance(deep, DeepLaneService)  # setup() without fake gives the real one
     deep.task_label = TASK
@@ -355,6 +370,8 @@ def deep_answerer(cfg: config.Config) -> tuple[Answerer, Callable[[], None]]:
         before = {t.id for t in deep.tasks()}
         deep.handoff(question, question, "eval")
         text, cost, why = recipe_eval._deep_answer(deep, before, DEEP_WAIT_S)
+        if why and "reached its cap" in why:  # says nothing about the answer: re-run it
+            return Answer(text, cost, f"{CAPPED}: {why}")
         return Answer(text, cost, why if not text else None)
 
     return answer, agents.close
@@ -373,7 +390,7 @@ def run(
     stop_usd: float | None = None,
 ) -> int:
     print("id\tkind\tpass\tusd\twhy\ttext", file=out)
-    passed, unchecked, spent = 0, 0, 0.0
+    passed, unchecked, capped, spent = 0, 0, 0, 0.0
     for n, c in enumerate(cases):
         if stop_usd is not None and spent >= stop_usd:
             print(
@@ -389,6 +406,7 @@ def run(
             got = answer(c.question)
             spent += got.usd
             why = [got.why] if got.why else score(c, got.text, store)
+            capped += bool(got.why and got.why.startswith(CAPPED))
         passed += not why
         text = " ".join(got.text.split())[:200]
         print(
@@ -399,6 +417,12 @@ def run(
     print(f"passed: {passed} of {len(cases)} (plan 9 asks for {PLAN_CASES})", file=out)
     if unchecked:
         print(f"{NOT_CHECKED}: {unchecked} (each fails; re-confirm them)", file=out)
+    if capped:
+        print(
+            f"{CAPPED}: {capped} (each fails as stopped at the task cap, not as a wrong "
+            "answer: re-run them)",
+            file=out,
+        )
     print(f"cost: ${spent:.4f}{' (no model: the oracle)' if fake else ''}", file=out)
     ok = bool(cases) and passed == len(cases)
     print("Result: " + ("PASS" if ok else "FAIL"), file=out)
@@ -409,7 +433,7 @@ def worst_case_usd(cfg: config.Config, cases: int) -> float:
     """Every case's task stopped at its cap: the most the paid run can spend (the cap is
     checked as the session goes, so a task can pass it by one model call; reported here as
     the cap, the deep lane meters the rest)."""
-    return min(cfg.task_max_usd, TASK_MAX_USD) * cases
+    return cfg.task_max_usd * cases
 
 
 def _refusal(cfg: config.Config, worst: float) -> str | None:
@@ -494,6 +518,10 @@ def make_cases(
         except EvalError as exc:
             print(f"Not kept: {exc}", file=out)
             continue
+        text = page.text.casefold()
+        for fact in new.facts:
+            if fact.casefold() not in text:  # a typo makes a case no answer can pass
+                print(f"Check: {fact!r} isn't in the page's text as typed.", file=out)
         if ask(f"Keep {new.id} ({new.question})? [y/N]: ").strip().casefold() not in (
             "y",
             "yes",
@@ -589,7 +617,7 @@ def main(
             return 2
         worst = worst_case_usd(cfg, len(cases))
         print(
-            f"# {len(cases)} deep-lane tasks at ${min(cfg.task_max_usd, TASK_MAX_USD):.2f} "
+            f"# {len(cases)} deep-lane tasks at ${cfg.task_max_usd:.2f} "
             f"each at most: worst case ${worst:.2f}; the run stops if it gets there.",
             file=out,
         )
