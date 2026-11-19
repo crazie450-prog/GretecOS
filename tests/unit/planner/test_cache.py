@@ -294,7 +294,9 @@ SOLVE_INPUTS = [
     "constraints",
     "owned",
     "stock",
+    "stock_fraction",
     "lines",
+    "lines_fraction",
     "templates",
     "raw_inputs",
     "run",
@@ -337,12 +339,18 @@ def test_each_input_of_a_component_solve_is_in_its_key(
     elif what == "owned":  # owned machines only: the mixer's route or the reactor's
         before = lambda: _solve(c, OWNED_ONLY, tg.Base(owned={101: 1}))
         after = lambda: _solve(c, OWNED_ONLY, tg.Base(owned={102: 1}))
-    elif what == "stock":
-        before = lambda: _solve(c, MV, tg.Base())
+    elif what == "stock":  # which items, not how many: one stocked item either way
+        before = lambda: _solve(c, MV, tg.Base(stocked={tp.SALT: 1.0}))
         after = lambda: _solve(c, MV, tg.Base(stocked={tg.PLATE: 1.0}))
-    elif what == "lines":
+    elif what == "stock_fraction":  # any positive amount counts (graph.py reads v > 0)
         before = lambda: _solve(c, MV, tg.Base())
+        after = lambda: _solve(c, MV, tg.Base(stocked={tg.PLATE: 0.5}))
+    elif what == "lines":  # which outputs, not how many: one line output either way
+        before = lambda: _solve(c, MV, tg.Base(lines={tp.SALT: 1.0}))
         after = lambda: _solve(c, MV, tg.Base(lines={tg.PLATE: 1.0}))
+    elif what == "lines_fraction":  # a line making half an item a second still counts
+        before = lambda: _solve(c, MV, tg.Base())
+        after = lambda: _solve(c, MV, tg.Base(lines={tg.PLATE: 0.5}))
     elif what == "templates":  # the Widget from the mixer instead of the reactor
         (tmp_path / "test.tsv").write_text(
             "\t".join(chains.HEADER)
@@ -536,6 +544,46 @@ def test_two_db_files_never_share(db: Path, tmp_path: Path) -> None:
             c.close()
     assert cache.sizes()["readers"] == 2 and cache.stats.reader_hits > 0
     assert len({k[0] for k in cache._readers}) == 2
+
+
+def test_a_build_that_fails_part_way_drops_its_reader(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A build that raises after its reader loaded some recipes leaves no half-loaded reader
+    for later builds; the next design reads afresh and equals one with the cache off."""
+    load = graph._Reader.load_recipes
+
+    def broken(self: graph._Reader, ids: object) -> None:
+        load(self, ids)  # type: ignore[arg-type]
+        raise RuntimeError("part way")
+
+    with monkeypatch.context() as m:
+        m.setattr(graph._Reader, "load_recipes", broken)
+        with pytest.raises(RuntimeError, match="part way"):
+            graph.build(conn, REQS[0], tg.Base())
+    assert cache.stats.reader_misses == 1
+    assert cache.sizes()["readers"] == 0
+    on = design(conn, REQS[0])
+    with cache.disabled():
+        assert design(conn, REQS[0]) == on
+
+
+def test_the_readers_are_bounded(
+    db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At most READERS_MAX readers are kept; the least recently used goes first."""
+    monkeypatch.setattr(cache, "READERS_MAX", 1)
+    other = _copy(db, tmp_path / "other.sqlite")
+    for path in (db, other):
+        c = access.connect(path, readonly=True)
+        try:
+            design(c, REQS[0])
+        finally:
+            c.close()
+    assert cache.sizes()["readers"] == 1
+    assert [Path(k[0]).name for k in cache._readers] == [
+        "other.sqlite"
+    ]  # the newer one
 
 
 def test_the_caches_are_bounded(
