@@ -152,6 +152,12 @@ def test_away_it_becomes_a_dm_in_the_outbox(
 def test_the_paused_game_comes_from_the_watchers_feed(
     core: Core, client: TestClient, idle: FakeIdle
 ) -> None:
+    from gregtec.api import dashboard
+
+    # The pause counts only while the Lab's client runs (D258). The core's own loop lists the
+    # running clients in the background (on CI: none), so the test says the Lab runs rather
+    # than racing that first look (WO-11.4: 0 DMs when it landed before the tick).
+    core.board = dashboard.Board(core.cfg, store=core.store, clients=lambda _: ["lab"])
     core.game = GameFeed()
     since = time.time() - 30
     core.game.receive(

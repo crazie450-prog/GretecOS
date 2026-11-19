@@ -11,6 +11,7 @@ import dataclasses
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -261,11 +262,17 @@ def test_run_problems() -> None:
 def test_export_waits_for_a_launch_to_start_its_client(env: Env) -> None:
     """Prism starts Play's Java a while after pre-launch passed: an export started meanwhile
     would run beside it, so it refuses until post-exit or LAUNCH_GRACE_S."""
+    started = time.time()
     assert env.pre_launch()[0] == 0
     code, text = env.run_export()
-    assert (
-        code == 1 and "GTNH-Play was launched 0 s ago and may still be starting" in text
+    took = time.time() - started
+    # How long ago, as the wall clock says: at most what the test itself took (WO-11.4: a
+    # slow runner's "1 s ago" against an exact "0 s ago").
+    said = re.search(
+        r"GTNH-Play was launched (\d+) s ago and may still be starting", text
     )
+    assert code == 1 and said is not None, text
+    assert int(said[1]) <= took + 0.5
     assert env.launched == []
     assert post_exit(env, Asker(False))[0] == 0  # Play quit: the mark goes
     assert playhooks.launching(env.home) is None

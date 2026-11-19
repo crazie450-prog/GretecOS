@@ -294,7 +294,21 @@ def test_run_tree_stops_what_the_command_started(tmp_path: Path) -> None:
     deadline = time.monotonic() + 10
     while _alive(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
-    assert not _alive(pid)
+    assert not _alive(pid), _proc(pid)
+
+
+def _proc(pid: int) -> str:
+    """What Linux says of a process that should be gone (WO-11.4: this test failed three times
+    on Ubuntu CI and never in 600 repeats under load here or on CI; the state, parent, group
+    and kernel wait channel tell the next failure's cause)."""
+    out = []
+    for name in ("stat", "status", "wchan", "cmdline"):
+        try:
+            text = Path(f"/proc/{pid}/{name}").read_bytes()[:1500]
+        except OSError as exc:
+            text = str(exc).encode()
+        out.append(f"{name}: {text!r}")
+    return f"pid {pid} still there 10 s after the stop; " + "; ".join(out)
 
 
 def test_kill_tree_on_windows_uses_taskkill(monkeypatch: pytest.MonkeyPatch) -> None:
