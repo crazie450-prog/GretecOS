@@ -294,6 +294,17 @@ def test_run_tree_stops_what_the_command_started(tmp_path: Path) -> None:
     deadline = time.monotonic() + 10
     while _alive(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
+    if _alive(pid):  # WO-11.4 TEMPORARY diagnostics, removed before the PR
+        import subprocess as sp
+
+        for name in ("stat", "status", "cmdline", "wchan", "cgroup"):
+            try:
+                print(name, Path(f"/proc/{pid}/{name}").read_bytes()[:2000])
+            except OSError as exc:
+                print(name, exc)
+        print("self pid", os.getpid(), "pgid", os.getpgid(0))
+        print(sp.run(["ps", "-eo", "pid,ppid,pgid,sid,stat,etimes,cmd", "--forest"],
+                     capture_output=True, text=True).stdout[-20000:])
     assert not _alive(pid)
 
 
