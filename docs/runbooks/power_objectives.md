@@ -24,6 +24,19 @@ rotor and dynamo, throttle circuit, starter fuel as an upper bound) and its sink
 makes more of than it uses, which need a void or storage. The notes say how many generator x fuel
 candidates and farms were pruned before solving.
 
+## Design jobs on the dashboard (WO-3.9, D352–D354)
+
+The Power view's **Design** runs as a job: the busy panel shows the stage ("Finding generators and
+fuels", "Fuel chain 4 of 9", "Sizing the lines", "Measuring route 2 of 6 · effort 12 of 40",
+"Ranking", "Saving"), how long it has run and **Cancel** (nothing is saved); the right rail's Jobs
+shows it too. One power design at a time: a second gets "already running". It shares the
+planner with the Designer, so one started during a Designer job shows "Waiting for the other
+design to finish" and can be cancelled while it waits. `gos power design` and the
+`design_power` tool are unchanged (they wait for the answer). The planner keeps what it worked out
+for this DB (component solves, recipe reads) until the next `gos db build`, so a second design at
+the same tier is faster with the same options; `scripts/design_timing.py` times it
+(docs/runbooks/designer.md, step 12).
+
 ## The effort breakdown (WO-4.3)
 
 Each line (and each `gos plan` route) prints its effort and the breakdown table under its score

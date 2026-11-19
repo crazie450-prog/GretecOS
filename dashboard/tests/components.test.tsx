@@ -6,12 +6,13 @@ import type { CoreState } from "../src/api/types";
 import type { ApprovalCard, Card } from "../src/cards/types.gen";
 import { ApprovalView, CitationChip, NavItem, StatusGlyph, TierChip, stageTier } from "../src/components/core";
 import { Header } from "../src/components/Header";
-import { PLANS_LATER, arrange, itemEntries, move, questEntries, staticEntries } from "../src/components/palette";
+import { arrange, itemEntries, move, planEntries, planHash, questEntries, staticEntries } from "../src/components/palette";
 import { Rail } from "../src/components/Rail";
 import { voiceLook } from "../src/components/VoiceStrip";
 import { stateChips } from "../src/state/states";
 import { creditLevel } from "../src/views/Costs";
-import { PHONE_TABS, VIEWS, viewForKey, viewFromHash } from "../src/views/nav";
+import { More } from "../src/views/More";
+import { MORE, MORE_VIEWS, PHONE_TABS, VIEWS, viewForKey, viewFromHash, viewOf } from "../src/views/nav";
 
 afterEach(cleanup);
 
@@ -132,10 +133,27 @@ describe("the nav", () => {
     expect(viewForKey("8")?.id).toBe("costs");
     expect(viewForKey("0")).toBeNull();
     expect(VIEWS.filter((v) => !v.later).map((v) => v.id)).toEqual(["now", "chat", "search", "designer", "power", "quests", "crops", "costs", "settings", "base", "activity", "ores", "build"]);
-    expect(PHONE_TABS).toEqual(["now", "chat", "search", "base", "costs", "settings"]);
+    expect(PHONE_TABS).toEqual(["now", "chat", "search", "costs", "settings"]);
+  });
+  it("reaches every view past the phone's five tabs through More (WO-9.3)", () => {
+    expect(MORE_VIEWS.map((v) => v.id)).toEqual(["designer", "power", "quests", "crops", "base", "activity", "ores", "build"]);
+    // Every view is a tab or in More, none in both.
+    expect([...PHONE_TABS, ...MORE_VIEWS.map((v) => v.id)].sort()).toEqual(VIEWS.map((v) => v.id).sort());
+    expect(viewFromHash("#/more")).toBe("more");
+    expect(viewOf("more")).toBe(MORE);
+    expect(VIEWS.some((v) => v.id === "more")).toBe(false); // not in monitor 2's nav
+    expect(viewFromHash("#/designer/pl-abc")).toBe("designer"); // a Discord plan link
   });
   it("marks the views with no approved board (D92)", () => {
     expect(VIEWS.filter((v) => !v.later && !v.board).map((v) => v.id)).toEqual(["chat", "search", "costs", "base", "activity", "ores", "build"]);
+  });
+  it("lists More's views and opens the one tapped", () => {
+    const open = vi.fn();
+    render(<More open={open} />);
+    expect(screen.getAllByRole("button").map((b) => b.dataset.testid)).toEqual(MORE_VIEWS.map((v) => `more-${v.id}`));
+    expect(screen.getByTestId("more-base").textContent).toContain("What's broken?");
+    fireEvent.click(screen.getByTestId("more-ores"));
+    expect(open).toHaveBeenCalledWith("ores");
   });
   it("reads the view from the hash", () => {
     expect(viewFromHash("#/chat")).toBe("chat");
@@ -178,8 +196,22 @@ describe("the palette", () => {
     expect(questEntries(quests)[0].label).toBe("A quest past your frontier"); // nudge-first (D26)
     expect(itemEntries({ ...items, error: "no DB" } as Card)).toEqual([]);
   });
+  it("lists saved plans by name or id, each opening its view (QA 5-9)", () => {
+    const rows = [
+      { id: "pl-aaaaaaaaaa", name: "Steel works", status: "accepted", kind: "production" },
+      { id: "pw-bbbbbbbbbb", name: "Steam boilers", status: "proposed", kind: "power" },
+      { id: "pl-cccccccccc", name: "Nitric acid", status: "proposed", kind: "production" },
+    ];
+    const found = planEntries(rows, "ste");
+    expect(found.map((e) => e.label)).toEqual(["Steel works", "Steam boilers"]);
+    expect(found[0]).toMatchObject({ group: "Plans", hint: "accepted · plan:pl-aaaaaaaaaa", action: { kind: "plan", id: "pl-aaaaaaaaaa" } });
+    expect(planEntries(rows, "pl-ccc").map((e) => e.label)).toEqual(["Nitric acid"]);
+    expect(planHash("pl-aaaaaaaaaa")).toBe("/designer/pl-aaaaaaaaaa");
+    expect(planHash("pw-bbbbbbbbbb")).toBe("/power/pw-bbbbbbbbbb");
+  });
   it("orders groups and wraps the arrow keys", () => {
-    const order = arrange([PLANS_LATER, ...staticEntries("now")]).map((e) => e.group);
+    const plan = planEntries([{ id: "pl-aaaaaaaaaa", name: "Now line", status: "accepted", kind: null }], "now");
+    const order = arrange([...plan, ...staticEntries("now")]).map((e) => e.group);
     expect(order).toEqual(["Views", "Plans"]);
     expect(move(0, -1, 3)).toBe(2);
     expect(move(2, 1, 3)).toBe(0);

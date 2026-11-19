@@ -1,7 +1,7 @@
 ---
 id: gos-schema
 t: schema
-upd: 2026-11-12
+upd: 2026-11-18
 ---
 version: 0
 summary: note types and allowed keys
@@ -21,6 +21,7 @@ log_counts: n_<kind>: N lines are computed counts: the curator's in log/wk/ and 
 note: keys * means any key until the WO that owns the type defines them
 note: quest notes (WO-6.4): quests/qs-<line>.md are questline summaries made by code (gos quests summaries), at most 60 lines; agents add quest decisions as decision: lines in other qs-* notes
 note: persona packs (WO-5.6): the shipped ones are in _gos/personas/ (the repo's), Clayton's in personas/pe-<name>.md
+note: themes (WO-10.6, D314): the starter themes are in _gos/themes/ (the repo's); themes/th-<name>.md is a theme's current version, themes/versions/th-<name>--v<N>.md its earlier ones; only theme_save writes themes/ (palette rows in a tsv table: role, block, note)
 
 ```tsv
 t	id	path	writer	keys
@@ -36,7 +37,7 @@ places	base-places	base/places.md	agents	*
 line	ln-*	base/lines/	agents	st, tgt, tgt_rate_s, plan, eut, tier, deps, note
 plan	pl-*	plans/	agents	title, st, plan, json, run, tgt, tgt_rate_s, tier, machines, eut_avg, eut_peak, eff_h, scarcity, area, volume, footprint_unknown, rank, alts, exports, note
 quest	qs-*	quests/	agents	summary, line, done, available, locked, total, main_left, src, decision, note
-theme	th-*	themes/	agents	*
+theme	th-*	themes/	agents	name, v, summary, fits, prompt, change, motif, massing, roof, window, lighting, adapt, sample, note
 persona	pe-*	personas/	both	name, voice, verbosity, humour, address, style, lexicon, sample, note
 log	log-*	log/	agents	*
 inbox	ib-*	inbox/	agents	*

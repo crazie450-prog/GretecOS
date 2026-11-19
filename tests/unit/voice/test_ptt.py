@@ -370,6 +370,9 @@ def test_the_watchdog_thread_runs_and_stops() -> None:
 # --- Windows: the real hook -----------------------------------------------------------------
 
 windows = pytest.mark.skipif(sys.platform != "win32", reason="the hook is Windows only")
+# The real hook is one per desktop and SendInput reaches every hook on it, and Windows drops a
+# low-level hook that answers slowly: CI runs these alone, in its serial step (D340).
+serial = pytest.mark.serial
 # SendInput types into whatever window has focus: on the gaming PC (gos-dev shares Clayton's
 # desktop, D82) that could be Play. Injection runs only on GitHub's own Windows runners, or
 # where someone opted in with GOS_TEST_SENDINPUT=1 on a PC with no game open.
@@ -465,6 +468,7 @@ def thread_priority(native_id: int) -> int:
 
 
 @windows
+@serial
 def test_the_real_hook_runs_at_high_priority() -> None:
     """Installs the real hook (it only watches F24 and injects nothing)."""
     hook = ptt.WindowsHook(KeyFilter({F24}, lambda event: None))
@@ -478,6 +482,7 @@ def test_the_real_hook_runs_at_high_priority() -> None:
 
 
 @injects
+@serial
 def test_the_real_hook_sees_an_injected_key() -> None:
     got: queue.Queue[KeyEvent] = queue.Queue()
     tick = ptt.tick_count()
@@ -496,6 +501,7 @@ def test_the_real_hook_sees_an_injected_key() -> None:
 
 
 @injects
+@serial
 def test_the_watchdog_catches_a_removed_hook_with_the_real_key_state() -> None:
     """The hook's thread gone: GetAsyncKeyState still sees the injected F24, so the watchdog
     re-installs the hook and passes the press on."""
@@ -552,6 +558,7 @@ def unhook(hook: ptt.WindowsHook) -> None:
 
 
 @injects
+@serial
 def test_the_watchdog_catches_a_silently_removed_hook() -> None:
     """The hook removed but its thread alive (the review's case): a 150 ms tap of F24 is
     passed on within two polls and the hook re-installed; the new hook sees the next key."""
@@ -590,3 +597,60 @@ def wait(cond: Callable[[], bool], timeout: float = 2.0) -> bool:
             return False
         time.sleep(0.01)
     return True
+
+
+def test_install_returns_only_once_the_hook_is_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA 5-9: pynput 1.8.2 marks its listener ready before SetWindowsHookEx runs, so a key
+    pressed as install() returned was lost (CI: test_the_real_hook_sees_an_injected_key saw
+    only the key-up). Faked pynput: its hook handle comes 0.1 s after ``wait()`` returns."""
+    import threading
+    import types
+    from typing import ClassVar
+
+    class SystemHook:
+        _HOOKS: ClassVar[dict[int, object]] = {}
+
+    hooked_at: list[float] = []
+
+    class Listener:
+        def __init__(self, **kwargs: object) -> None:
+            self.ident = 4242
+            self.native_id = 4242
+
+        def start(self) -> None:
+            entry = types.SimpleNamespace(_hook=None)
+            SystemHook._HOOKS[self.ident] = entry
+
+            def later() -> None:
+                time.sleep(0.1)
+                hooked_at.append(time.monotonic())
+                entry._hook = 1  # SetWindowsHookExW returned
+
+            threading.Thread(target=later, daemon=True).start()
+
+        def wait(self) -> None:
+            pass  # ready already: pynput's _mark_ready() comes first
+
+        def is_alive(self) -> bool:
+            return True
+
+    pynput = types.ModuleType("pynput")
+    keyboard = types.ModuleType("pynput.keyboard")
+    keyboard.Listener = Listener  # type: ignore[attr-defined]
+    win32 = types.ModuleType("pynput._util.win32")
+    win32.SystemHook = SystemHook  # type: ignore[attr-defined]
+    pynput.keyboard = keyboard  # type: ignore[attr-defined]
+    for name, module in (
+        ("pynput", pynput),
+        ("pynput.keyboard", keyboard),
+        ("pynput._util", types.ModuleType("pynput._util")),
+        ("pynput._util.win32", win32),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(ptt, "raise_priority", lambda native_id: True)
+    hook = ptt.WindowsHook(KeyFilter({F24}, lambda event: None))
+    hook.install()
+    assert hooked_at and time.monotonic() >= hooked_at[0]
+    assert SystemHook._HOOKS[4242]._hook == 1  # type: ignore[attr-defined]

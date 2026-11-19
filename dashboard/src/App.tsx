@@ -11,7 +11,7 @@ import type { ApprovalCard, Card as CardData } from "./cards/types.gen";
 import { Banners } from "./components/Banners";
 import { CommandPalette } from "./components/CommandPalette";
 import { Header } from "./components/Header";
-import type { Action } from "./components/palette";
+import { type Action, planHash } from "./components/palette";
 import { NavItem } from "./components/core";
 import { Rail } from "./components/Rail";
 import { VoiceStrip, voiceLook } from "./components/VoiceStrip";
@@ -29,7 +29,8 @@ import { Costs } from "./views/Costs";
 import { Glance } from "./views/Glance";
 import { Designer } from "./views/Designer";
 import { Later } from "./views/Later";
-import { PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
+import { More } from "./views/More";
+import { MORE, PHONE_TABS, VIEWS, type ViewId, viewForKey, viewFromHash, viewOf } from "./views/nav";
 import { Now } from "./views/Now";
 import { Pairing } from "./views/Pairing";
 import { Crops } from "./views/Crops";
@@ -263,6 +264,8 @@ export function App() {
     } else if (a.kind === "quest") {
       setSearchTarget({ kind: "quest", ref: a.ref, spoil: 0 });
       setView("search");
+    } else if (a.kind === "plan") {
+      window.location.hash = planHash(a.id);
     } else if (a.kind === "setting") {
       if (a.id === "motion") themeCtl.setPrefs({ pauseMotion: !themeCtl.prefs.pauseMotion });
       else {
@@ -292,7 +295,8 @@ export function App() {
   const last = answers.length ? answers[answers.length - 1] : null;
   const look = voiceLook(voice?.state ?? null, (core?.asking.length ?? 0) > 0);
   const motion = !themeCtl.prefs.pauseMotion;
-  const current = viewOf(view);
+  // More is the phone's tab; a phone link (#/more) opened on monitor 2 shows Now (WO-9.3).
+  const current = viewOf(view === MORE.id && !phone ? "now" : view);
 
   const body = (): React.ReactNode => {
     switch (current.id) {
@@ -328,6 +332,8 @@ export function App() {
         return <Activity />;
       case "build":
         return <Build />;
+      case "more":
+        return <More open={setView} />;
       case "settings":
         return (
           <Settings
@@ -353,12 +359,13 @@ export function App() {
         <Header chips={chips} core={core} glance={glance} held={held} onLeave={() => setPin("auto")} onSearch={() => setPalette(true)} />
         {!glance && (
           <nav className="gos-shell shell-nav" data-testid="nav" aria-label="Views">
-            {(phone ? VIEWS.filter((v) => PHONE_TABS.includes(v.id)) : VIEWS).map((v) => (
+            {(phone ? [...VIEWS.filter((v) => PHONE_TABS.includes(v.id)), MORE] : VIEWS).map((v) => (
               <NavItem
                 key={v.id}
                 label={v.label}
                 keyHint={v.key}
-                active={v.id === current.id}
+                // On the phone, More stays lit while one of its views is open (WO-9.3).
+                active={v.id === current.id || (phone && v.id === MORE.id && !PHONE_TABS.includes(current.id))}
                 badge={v.later ? "later" : null}
                 onClick={() => setView(v.id)}
                 testId={`nav-${v.id}`}

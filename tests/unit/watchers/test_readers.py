@@ -234,6 +234,12 @@ def test_pause_grace_is_measured_by_the_logs_own_stamps(clock: FakeClock) -> Non
     t.pause_line("23:59:59")
     assert t.server_line("00:00:01") is None  # past midnight: 2 s later
     assert t.server_line("00:00:05") is not None
+    # QA 5-9: a ticking line stamped before the pause (latest.log read after the FML log in
+    # the same poll) leaves the game paused; it isn't a day's wrap
+    t.pause_line("12:00:05")
+    clock.advance(2)
+    assert t.server_line("12:00:03") is None and t.paused is True
+    assert t.server_line("12:00:09") is not None
 
 
 def test_a_pause_stays_paused_through_its_slow_save(

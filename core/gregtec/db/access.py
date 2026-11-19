@@ -36,6 +36,26 @@ def db_path(gos_home: Path) -> Path:
     return gos_home / DB_FILE
 
 
+def is_built(path: Path) -> bool:
+    """Whether ``path`` holds GOS's recipe schema (``gos db build`` or ``gos quests load`` made
+    it). The file alone says nothing: the core's own Store makes ``gos.sqlite`` with only its
+    tables at startup, before any export was loaded. Opened read only (not immutable: a build
+    may still be in the WAL); any SQLite error reads as not built."""
+    if not path.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'export_run'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
 def connect(
     path: Path, *, readonly: bool = False, immutable: bool = False
 ) -> sqlite3.Connection:

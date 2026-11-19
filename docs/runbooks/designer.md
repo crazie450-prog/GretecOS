@@ -34,8 +34,26 @@ Clayton runs these on the gaming PC at the deployment test (D158): about 30 minu
    ```
    The core reads it after a restart (docs/runbooks/core_service.md). (`--apply` on step 7's command does the same in one go.)
 
+## D. Design jobs and design time (WO-3.9, D352–D354)
+
+A design from the dashboard runs as a job: the busy panel shows its stage ("Building the recipe graph", "Solving route 2 of 3", "Measuring route 1 of 3 · effort 12 of 40", "Ranking", "Saving"), how long it has run and **Cancel**; the right rail's **Jobs** shows the same with its own Cancel. Re-solve, pin and unpin run the same way.
+
+9. Design `steel ingot` at HV. The stage appears within a second. Press **Cancel** while it says "Building", "Solving" or "Measuring": within a few seconds it says "Cancelled: nothing was saved", and **Saved plans** has no new row. (Once it says "Saving" the button is off: the plans are being written.)
+10. Design it again and let it finish. Then design it a third time: the same routes and ids, much faster (the planner keeps what it worked out for this DB until the next `gos db build`).
+11. Start a design, close the dashboard window, open it again (Chrome app shortcut) and press **4**: the panel follows the running job, or, if it finished, the design is open. (A job keeps running when the page closes; a core restart while it runs reads "interrupted": start it again.)
+12. Time the three slow designs on a **copy** of the DB (never the live one; the script saves its plans where it runs), cold and warm:
+    ```powershell
+    $t = "$env:TEMP\gos-timing"; Remove-Item -Recurse -Force $t -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory "$t\data" | Out-Null
+    & C:\GregtecOS-app\current\.venv\Scripts\python.exe -c "import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b)" "$env:USERPROFILE\GregtecOS\data\gos.sqlite" "$t\data\gos.sqlite"
+    Copy-Item -Recurse "$env:USERPROFILE\GregtecOS\vault" "$t\vault"
+    & C:\GregtecOS-app\current\.venv\Scripts\python.exe C:\GregtecOS-app\current\scripts\design_timing.py $t --repeat 1
+    ```
+    It prints one line per design (cold, then warm) and a JSON summary. Delete `$t` afterwards.
+
 ## What to send back
 
 - Step 3's and 4's screenshots, and anything in step 5 that differs from the board.
 - Step 6's answer text and wall time.
+- Step 12's output (the three designs' cold and warm times on the full pack), and whether steps 9 to 11 behaved as written.
 - If step C ran: `data\reports\design-cost.txt` and `data\reports\design-costs.tsv`, and whether step 8 applied the value.

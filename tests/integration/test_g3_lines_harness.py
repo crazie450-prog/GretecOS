@@ -33,7 +33,7 @@ import math
 import os
 import sqlite3
 import sys
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -42,7 +42,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner import plan, solve
 from gregtec.planner.request import DefaultBaseInputs, Request
@@ -166,7 +166,7 @@ def rows(
 # --- on the harness runs -----------------------------------------------------------------
 
 
-def _home(tmp: Path, side: str) -> Path:
+def _home(tmp: Path, side: str, built_home: Callable[[Path, Path], Path]) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running both harnesses")
     game = REPO / "mod" / "run" / side
@@ -174,8 +174,7 @@ def _home(tmp: Path, side: str) -> Path:
         pytest.fail(
             f"no {side} harness run in {game / collect.EXPORTS} (mod/README.md)"
         )
-    collect.collect(game, tmp, 1, allow_harness=True)
-    build.build(tmp, allow_harness=True)
+    built_home(game, tmp)
     return tmp
 
 
@@ -244,10 +243,12 @@ _CURRENT = solve._lexicographic
 
 
 @pytest.fixture(scope="module")
-def plans(tmp_path_factory: pytest.TempPathFactory) -> list[dict[str, Any]]:
+def plans(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> list[dict[str, Any]]:
     """The lines' best routes, designed with the differential check on every stage call
     (``test_production_lines_solve_exactly_as_before_the_eu_stage``)."""
-    home = _home(tmp_path_factory.mktemp("g3-server"), "server")
+    home = _home(tmp_path_factory.mktemp("g3-server"), "server", built_home)
     conn = access.connect(access.db_path(home), readonly=True)
     try:
         base = DefaultBaseInputs.from_db(conn)
@@ -275,8 +276,10 @@ def test_production_lines_solve_exactly_as_before_the_eu_stage(
 
 
 @pytest.fixture(scope="module")
-def client(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return _home(tmp_path_factory.mktemp("g3-client"), "client")
+def client(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
+    return _home(tmp_path_factory.mktemp("g3-client"), "client", built_home)
 
 
 def test_every_g3_line_recipe_matches_its_nei_line(

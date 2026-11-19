@@ -231,11 +231,11 @@ export interface Action {
   primary: boolean;
 }
 
-/** Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1). */
+/** Something waiting for Clayton: reads back exactly what will happen (D59). Kinds: a deep-lane task paused at its cap (D156), a device asking to pair (D117), a world action (WO-7.1), the export question after Play quits (D69, WO-11.1). */
 export interface ApprovalCard {
   type: "approval";
   id: string;
-  kind: "deep_budget" | "pairing" | "action";
+  kind: "deep_budget" | "pairing" | "action" | "export";
   title: string;
   readback: string;
   detail: string | null;
@@ -310,8 +310,69 @@ export interface TableCard {
   notes: Notes;
 }
 
-export type Card = RecipeCard | RouteComparisonCard | BomCard | FlowCard | QuestCard | OreListCard | PowerLedgerCard | ApprovalCard | AlertCard | HealthCard | ChoicesCard | TableCard;
+/** One box of a line layout seen from above (WO-10.5): x and z its west and north edge, w and l its size along x and z, in blocks. A machine names its machine (ref mte:), tier, the way its front faces and whether every hatch kind and its front are reached from the entrance (ok); the rest have null there. */
+export interface LayoutRect {
+  id: string;
+  kind: "corridor" | "chase" | "keepout" | "machine" | "entrance";
+  x: number;
+  z: number;
+  w: number;
+  l: number;
+  label: string | null;
+  tier: Tier | null;
+  ref: Ref | null;
+  facing: "north" | "east" | "south" | "west" | null;
+  ok: boolean | null;
+}
+
+/** A line layout's top-down preview (WO-10.5, plan 7.10, D313): the bounding volume (x by z, y high), its corridors, chases, keep-outs, machines and entrance as boxes. Sizes come from the footprints, cited by the plan in ref and each machine's mte:. */
+export interface LayoutCard {
+  type: "layout";
+  title: string;
+  ref: Ref;
+  layout: string;
+  size: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  rects: LayoutRect[];
+  notes: Notes;
+}
+
+/** One block state of a shell's palette manifest (WO-10.7): its role in the theme (or block, named directly), the registry name and meta (never a numeric id), the catalog's display name and how many cells hold it. */
+export interface ShellMaterial {
+  role: "wall" | "trim" | "pillar" | "floor" | "roof" | "window" | "light" | "accent" | "block";
+  block: string;
+  name: string | null;
+  count: number;
+}
+
+/** A decorative shell's preview (WO-10.7, plan 7.10, D316-D318): what made it (the architect's design or the procedural generator), accepted as designed or repaired, its theme, bounding size, block count, palette manifest, the preview mesh's faces and the Lab-only paste steps. A face is [d, x, y, z, a, b, c]: d the way it looks (0 east, 1 west, 2 up, 3 down, 4 south, 5 north), x y z its lowest cell in the shell, a and b its extent along the plane's axes (x faces z then y, y faces x then z, z faces x then y), c the palette entry it shows. The shell holds no tile entity and no GT machine block; ref cites the plan it houses. */
+export interface ShellCard {
+  type: "shell";
+  title: string;
+  ref: Ref | null;
+  build: string;
+  layout: string;
+  status: "accepted" | "repaired";
+  source: "architect" | "procedural";
+  theme: string | null;
+  size: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  blocks: number;
+  max_blocks: number;
+  palette: ShellMaterial[];
+  faces: number[][];
+  paste: Text[];
+  notes: Notes;
+}
+
+export type Card = RecipeCard | RouteComparisonCard | BomCard | FlowCard | QuestCard | OreListCard | PowerLedgerCard | ApprovalCard | AlertCard | HealthCard | ChoicesCard | TableCard | LayoutCard | ShellCard;
 
 export type CardType = Card["type"];
 
-export const CARD_TYPES: readonly CardType[] = ["recipe", "route_comparison", "bom", "flow", "quest", "ore_list", "power_ledger", "approval", "alert", "health", "choices", "table"] as const;
+export const CARD_TYPES: readonly CardType[] = ["recipe", "route_comparison", "bom", "flow", "quest", "ore_list", "power_ledger", "approval", "alert", "health", "choices", "table", "layout", "shell"] as const;

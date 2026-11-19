@@ -71,11 +71,7 @@ def _snowflake(table: Mapping[str, Any], key: str, *, required: bool) -> int | N
 def _dashboard_url(table: Mapping[str, Any], cfg: Config) -> str | None:
     value = table.get("dashboard_url")
     if value is None:
-        for host in cfg.extra_allowed_hosts:
-            name, _, port = host.partition(":")
-            if name.endswith(".ts.net") and port in ("", "443"):
-                return f"https://{name}"
-        return None
+        return f"https://{cfg.tailnet_host}" if cfg.tailnet_host else None
     if not isinstance(value, str):
         raise SettingsError("gos.toml: [discord] dashboard_url must be text")
     parts = urlsplit(value.strip())

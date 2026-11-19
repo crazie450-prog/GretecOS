@@ -7,13 +7,13 @@ the client harness; nothing is written outside tmp_path."""
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from gregtec import voicebench as vb
 from gregtec.config import Config
-from gregtec.db import build
 from gregtec.ingest import collect
 from gregtec_voice import tts
 from gregtec_voice.settings import VoiceSettings
@@ -22,15 +22,16 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the client harness")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("bench-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     return home
 
 

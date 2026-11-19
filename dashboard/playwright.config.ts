@@ -4,7 +4,7 @@
 // (WO-2.9, e2e/setup.spec.ts) run against a second core with an empty GOS_HOME (--fresh).
 import { defineConfig } from "@playwright/test";
 import { FRESH_HOST, FRESH_PORT, FRESH_ROOT } from "./e2e/fresh";
-import { BASE, HOME, PORT } from "./e2e/harness";
+import { BASE, HOME, PORT, SERVE_PORT, TAILNET } from "./e2e/harness";
 import { POWER_HOME, POWER_HOST, POWER_PORT } from "./e2e/power";
 
 export default defineConfig({
@@ -23,7 +23,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `uv run python dashboard/e2e/serve_core.py --home "${HOME}" --port ${PORT}`,
+      command: `uv run python dashboard/e2e/serve_core.py --home "${HOME}" --port ${PORT} --tailnet ${TAILNET}:${SERVE_PORT}`,
       cwd: "..",
       url: `http://127.0.0.1:${PORT}/health`,
       timeout: 120_000,

@@ -13,13 +13,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
-from gregtec import applog
+from gregtec import applog, config
 from gregtec.discordbot import settings as bot_settings
 from gregtec.llm import keys
 
@@ -77,26 +78,27 @@ def run(args: argparse.Namespace, out: TextIO | None = None) -> int:
         for p in missing:
             log.error("can't start", extra={"why": p})
         return EXIT_SETUP
-    return _run_bot(cfg.core_port, s, supervised=args.supervised)
+    return _run_bot(cfg, s, supervised=args.supervised)
 
 
 def _log_setup_problem(config_path: Path | None, why: str) -> None:
     try:
-        from gregtec import config
-
         applog.setup("discord", config.load(config_path).logs_dir)
         log.error("can't start", extra={"why": why[:300]})
     except (OSError, ValueError):
         pass
 
 
-def _run_bot(port: int, s: bot_settings.BotSettings, *, supervised: bool) -> int:
+def _run_bot(
+    cfg: config.Config, s: bot_settings.BotSettings, *, supervised: bool
+) -> int:
     import discord
 
     from gregtec.discordbot.adapter import GosClient
     from gregtec.discordbot.core_api import HttpCore
 
-    client = GosClient(s, HttpCore(port, keys.get_key(bot_settings.CORE_TOKEN_KEY)))
+    token = keys.get_key(bot_settings.CORE_TOKEN_KEY)
+    client = GosClient(s, HttpCore(cfg.core_port, token), cfg)
 
     async def main() -> int:
         if supervised:
@@ -121,9 +123,15 @@ def _close(client: object) -> None:
 
 def _watch_stdin(stop: Callable[[], object]) -> None:
     def watch() -> None:
+        # os.read, not sys.stdin.buffer: a daemon thread blocked inside the BufferedReader
+        # holds its lock, and an exit not started here (Discord refused the token) then aborts
+        # at interpreter shutdown (exit -6), which the supervisor restarts forever (QA 5-9).
         try:
-            for line in sys.stdin.buffer:
-                if line.strip() == b"stop":
+            fd = sys.stdin.fileno()
+            pending = b""
+            while chunk := os.read(fd, 4096):
+                *lines, pending = (pending + chunk).split(b"\n")
+                if any(line.strip() == b"stop" for line in lines):
                     break
         except (OSError, ValueError, AttributeError):
             pass

@@ -83,6 +83,8 @@ DB_SQL = "db_sql"  # the db-analyst's tool (D130)
 NOTE_TOOLS = ("note_read", "vault_search", "note_write", "note_append", "inbox_propose")
 # Wiki text reaches only the researcher, whose tools are all read-only (WO-8.3, D290).
 WIKI_TOOLS = frozenset({"wiki_search", "wiki_fetch"})
+THEME_SAVE = "theme_save"  # the architect's writing tools: themes (WO-10.6, D314)
+BUILD_REQUEST = "build_request"  # and shells (WO-10.7, D316)
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,8 @@ class Subagent:
     role: str  # which [models] key: planner, architect, orchestrator or analyst
     effort: str
     tools: str  # "read" (read-only, no db_sql or wiki), "research" (read + the wiki tools),
-    # "sql" (read-only with db_sql) or "notes"
+    # "sql" (read-only with db_sql), "notes" or "architect" (read + theme_save, WO-10.6, and
+    # build_request, WO-10.7)
 
 
 _DATA = (
@@ -115,13 +118,15 @@ SUBAGENTS = (
     ),
     Subagent(
         "architect",
-        "Building themes, decorative shells around lines and build guides.",
+        "Building themes (creates and refines them with theme_save), decorative shells "
+        "around lines (designs them with build_request) and build guides.",
         "You design themed buildings around GregTech lines: shells are decoration, machinery "
-        "is built legitimately. Work from the structures and notes the tools return."
-        + _DATA,
+        "is built legitimately. Work from the structures, themes and notes the tools return; "
+        "a theme's palette holds only block_find states without a tile entity; a shell is "
+        "designed only through build_request, whose code checks it." + _DATA,
         "architect",
         "high",
-        "read",
+        "architect",
     ),
     Subagent(
         "researcher",
@@ -189,7 +194,9 @@ def tool_sets(registry: Registry) -> tuple[frozenset[str], dict[str, frozenset[s
     """(the orchestrator's tools, each subagent's), as qualified ``mcp__gos__*`` names: the
     orchestrator gets every deep-lane tool but db_sql and the wiki tools, the researcher the
     read-only ones with the wiki tools (D290), the db-analyst the read-only ones with db_sql, the
-    vault-curator the note tools, the others the read-only ones but db_sql and the wiki."""
+    vault-curator the note tools, the architect the read-only ones, theme_save (D314) and
+    build_request (D316), the
+    others the read-only ones but db_sql and the wiki."""
     deep = mcp.tools(registry)
     every = {t.name for t in deep}
     read = {t.name for t in deep if t.read_only and t.name != DB_SQL} - WIKI_TOOLS
@@ -198,6 +205,7 @@ def tool_sets(registry: Registry) -> tuple[frozenset[str], dict[str, frozenset[s
         "research": read | (WIKI_TOOLS & every),
         "sql": read | ({DB_SQL} & every),
         "notes": (set(NOTE_TOOLS) | {"more"}) & every,
+        "architect": read | ({THEME_SAVE, BUILD_REQUEST} & every),
     }
     main = frozenset(mcp.qualified(n) for n in every - {DB_SQL} - WIKI_TOOLS)
     agents = {

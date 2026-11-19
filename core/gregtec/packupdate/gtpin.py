@@ -17,6 +17,8 @@ from gregtec import config
 from gregtec.db import access
 
 RUNBOOK = "docs/runbooks/pack_update.md (GT pin bump)"
+NO_RECIPES = "no DB yet, so no recipes"
+BUILD_IT = "run gos export collect, then gos db build"
 
 
 def problem(gt_version: object, pin: str | None = None) -> str | None:
@@ -38,11 +40,16 @@ def check_db(home: Path) -> tuple[bool, str]:
     db = access.db_path(home)
     head = f"GT pin {config.GT_PIN}"
     if not db.is_file():
-        return True, f"{head}: no DB yet ({db})"
+        return True, f"{head}: {NO_RECIPES} ({db}): {BUILD_IT}"
     try:
         # Immutable: SQLite makes no -wal or -shm file beside the DB (D223).
         conn = access.connect(db, readonly=True, immutable=True)
         try:
+            built = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'export_run'"
+            ).fetchone()
+            if built is None:  # the core's Store made it, with only its own tables
+                return True, f"{head}: {NO_RECIPES} ({db}): {BUILD_IT}"
             row = conn.execute(
                 "SELECT run_key, gt_version FROM export_run"
                 " ORDER BY created_at DESC, run_key DESC LIMIT 1"

@@ -779,14 +779,16 @@ def _names(conn: sqlite3.Connection) -> None:
 
 
 def prune(conn: sqlite3.Connection, keep: int, current: int) -> list[str]:
-    """Delete runs past the newest ``keep``, except ``current`` and runs plans reference."""
+    """Delete runs past the newest ``keep``, except ``current`` and runs plans reference: their
+    own run, and the run that flagged them affected by an update (D331)."""
     runs = conn.execute(
         "SELECT id, run_key FROM export_run ORDER BY created_at DESC, run_key DESC"
     ).fetchall()
     pinned = {
         row[0]
         for row in conn.execute(
-            "SELECT DISTINCT run_id FROM plan WHERE run_id IS NOT NULL"
+            "SELECT run_id FROM plan WHERE run_id IS NOT NULL"
+            " UNION SELECT affected_run FROM plan WHERE affected_run IS NOT NULL"
         )
     }
     doomed = [r for r in runs[keep:] if r[0] != current and r[0] not in pinned]
@@ -832,6 +834,12 @@ def write(
         block_db.write(conn, run_id, loaded.palette)
         pruned = prune(conn, keep, run_id)
         _names(conn)
+        # A build counter: the planner's process caches drop what they kept on a rebuild, and
+        # two fresh builds of the same exports stay row-identical (D352; the D340 harness cache).
+        conn.execute(
+            "INSERT INTO kv(key, value, upd) VALUES ('db.build', '1', 0) ON CONFLICT(key)"
+            " DO UPDATE SET value = CAST(coalesce(CAST(kv.value AS INTEGER), 0) + 1 AS TEXT)"
+        )
         conn.execute("COMMIT")
     except BaseException:
         # SQLite rolls back by itself on SQLITE_FULL/IOERR/NOMEM; a second ROLLBACK would hide

@@ -1,0 +1,325 @@
+{
+ "key": "gregtech:gt.blockmachines@9001|t1;coil=1|north",
+ "checklist_key": "gregtech:gt.blockmachines@9001|t1;coil=1",
+ "controller": "gregtech:gt.blockmachines@9001",
+ "name": "Fixture Furnace",
+ "ref": "mte:9001",
+ "source": "gtnh-extractor",
+ "variant": "t1",
+ "variants": [
+  {
+   "variant": "t1",
+   "size": [
+    3,
+    3,
+    3
+   ]
+  }
+ ],
+ "facing": "north",
+ "front": [
+  0,
+  0,
+  -1
+ ],
+ "tiers": {
+  "coil": 1
+ },
+ "choices": {
+  "coil": [
+   {
+    "value": 1,
+    "block": "fixture:coil@0"
+   },
+   {
+    "value": 2,
+    "block": "fixture:coil@1"
+   },
+   {
+    "value": 3,
+    "block": "fixture:coil@2"
+   }
+  ]
+ },
+ "caveats": [],
+ "size": [
+  3,
+  3,
+  3
+ ],
+ "controller_at": [
+  1,
+  0,
+  0
+ ],
+ "palette": [
+  {
+   "block": "fixture:casing@0",
+   "name": "Fixture Casing",
+   "top": "#a0b0c0",
+   "side": "#405060",
+   "count": 16
+  },
+  {
+   "block": "fixture:coil@0",
+   "name": "Fixture Coil",
+   "top": null,
+   "side": null,
+   "count": 8
+  },
+  {
+   "block": "gregtech:gt.blockmachines@9001",
+   "name": null,
+   "top": null,
+   "side": null,
+   "count": 1
+  }
+ ],
+ "slots": [
+  {
+   "kinds": [
+    "Energy",
+    "InputBus",
+    "Maintenance",
+    "OutputBus"
+   ],
+   "cells": 8
+  },
+  {
+   "kinds": [
+    "Muffler"
+   ],
+   "cells": 1
+  }
+ ],
+ "cells": [
+  [
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   1,
+   0,
+   0,
+   2,
+   -1
+  ],
+  [
+   2,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   1,
+   0,
+   0
+  ],
+  [
+   1,
+   0,
+   1,
+   0,
+   0
+  ],
+  [
+   2,
+   0,
+   1,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   2,
+   0,
+   0
+  ],
+  [
+   1,
+   0,
+   2,
+   0,
+   0
+  ],
+  [
+   2,
+   0,
+   2,
+   0,
+   0
+  ],
+  [
+   0,
+   1,
+   0,
+   1,
+   -1
+  ],
+  [
+   1,
+   1,
+   0,
+   1,
+   -1
+  ],
+  [
+   2,
+   1,
+   0,
+   1,
+   -1
+  ],
+  [
+   0,
+   1,
+   1,
+   1,
+   -1
+  ],
+  [
+   2,
+   1,
+   1,
+   1,
+   -1
+  ],
+  [
+   0,
+   1,
+   2,
+   1,
+   -1
+  ],
+  [
+   1,
+   1,
+   2,
+   1,
+   -1
+  ],
+  [
+   2,
+   1,
+   2,
+   1,
+   -1
+  ],
+  [
+   0,
+   2,
+   0,
+   0,
+   -1
+  ],
+  [
+   1,
+   2,
+   0,
+   0,
+   -1
+  ],
+  [
+   2,
+   2,
+   0,
+   0,
+   -1
+  ],
+  [
+   0,
+   2,
+   1,
+   0,
+   -1
+  ],
+  [
+   1,
+   2,
+   1,
+   -1,
+   1
+  ],
+  [
+   2,
+   2,
+   1,
+   0,
+   -1
+  ],
+  [
+   0,
+   2,
+   2,
+   0,
+   -1
+  ],
+  [
+   1,
+   2,
+   2,
+   0,
+   -1
+  ],
+  [
+   2,
+   2,
+   2,
+   0,
+   -1
+  ]
+ ],
+ "layers": [
+  {
+   "y": 0,
+   "blocks": 9,
+   "hatch_slots": 8,
+   "hatch_only": 0,
+   "materials": {
+    "fixture:casing@0": 8,
+    "gregtech:gt.blockmachines@9001": 1
+   }
+  },
+  {
+   "y": 1,
+   "blocks": 8,
+   "hatch_slots": 0,
+   "hatch_only": 0,
+   "materials": {
+    "fixture:coil@0": 8
+   }
+  },
+  {
+   "y": 2,
+   "blocks": 8,
+   "hatch_slots": 1,
+   "hatch_only": 1,
+   "materials": {
+    "fixture:casing@0": 8
+   }
+  }
+ ],
+ "checklist": [
+  {
+   "id": "layer:0",
+   "label": "Layer 1: 9 blocks"
+  },
+  {
+   "id": "layer:1",
+   "label": "Layer 2: 8 blocks"
+  },
+  {
+   "id": "layer:2",
+   "label": "Layer 3: 8 blocks, 1 hatch-only cell"
+  }
+ ],
+ "done": [],
+ "catalog": true
+}

@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from gregtec.agents.deep_lane import HandoffRecorder
 from gregtec.agents.fast_lane import FastLane
 from gregtec.agents.tools import build_registry
 from gregtec.agents.tools.glossary import Glossary
-from gregtec.db import access, build
+from gregtec.db import access
 from gregtec.db import quests as quest_db
 from gregtec.ingest import collect
 from gregtec.ingest import quests as bq
@@ -38,15 +39,16 @@ PLAYER = "11111111-2222-4333-8444-555555555555"
 
 
 @pytest.fixture(scope="module")
-def db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def db(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the client harness")
     game = REPO / "mod" / "run" / "client"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("fast-lane-harness")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     path = access.db_path(home)
     if pack := os.environ.get("GOS_QUESTS_PACK"):
         world = home / "world"

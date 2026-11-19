@@ -31,6 +31,12 @@ beforeEach(() => {
     // The live half (WO-7.4) polls on its own: answered here, outside My base's queue.
     if (url.includes("/api/base/live")) return new Response(JSON.stringify({ ts: 0, stale_s: 30, bindings: [] }), { status: 200 });
     if (url.includes("/api/actions")) return new Response(JSON.stringify({ pending: null, recent: [] }), { status: 200 });
+    // The Build guide links (WO-10.8): the furnace (mte 1000 here) has a footprint.
+    if (url.includes("/api/build/guides"))
+      return new Response(
+        JSON.stringify({ guides: [{ controller: "gregtech:gt.blockmachines@1000", name: "EBF", mte: 1000, source: "gtnh-extractor", variants: ["t1"] }] }),
+        { status: 200 },
+      );
     calls.push({ method: init.method ?? "GET", url, body: init.body ? JSON.parse(String(init.body)) : undefined });
     const next = answers.shift() ?? { status: 500, body: { error: "no answer queued" } };
     return new Response(JSON.stringify(next.body), { status: next.status });
@@ -104,6 +110,10 @@ describe("the Base view", () => {
     expect(row.textContent).toContain("ticked");
     expect(row.textContent).toContain("census 3");
     expect(row.querySelector('[data-cite="mte:1000"]')).not.toBeNull();
+    // A multi with a footprint opens in the Build view's 3D guide (WO-10.8).
+    expect((await screen.findByTestId("guide-link-1000")).getAttribute("href")).toBe(
+      "#/build?guide=gregtech%3Agt.blockmachines%401000",
+    );
     answers.push({ status: 200, body: base({ machines: [{ ...ebf, count: 3, sources: { manual: 3, census: 3 } }] }) });
     await act(async () => {
       fireEvent.click(screen.getByTestId("machine-more-1000"));

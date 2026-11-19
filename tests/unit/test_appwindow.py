@@ -215,9 +215,15 @@ def test_game_focus_is_gtnhs_java_in_front() -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Win32 calls")
 def test_the_foreground_program_on_windows() -> None:
-    """On a runner with no desktop it may be None; when known it is a lower-case file name."""
+    """On a runner with no desktop it may be None; when known it is a lower-case file name.
+    Not always an ``.exe``: whatever is in front on the runner (WO-11.4: once its
+    ``hosted-compute-agent``); the game check only asks whether it is Java's."""
     program = desktop.foreground_program()
-    assert program is None or (program == program.lower() and program.endswith(".exe"))
+    assert program is None or (
+        program == program.lower()
+        and program.strip() == program != ""
+        and not any(c in program for c in "\\/:")
+    )
     monitors = appwindow.monitors()
     assert all(m.width > 0 and m.height > 0 for m in monitors)
     # The whole size is in physical pixels (read per-monitor DPI aware): never below the work

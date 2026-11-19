@@ -241,6 +241,7 @@ GAMING PC (Windows)
   3. The core listening on the LAN with a token and a firewall rule: a documented exception to §4.6.
 
   Watchers then read the server's world folder, and the clients' `core_url` points at the spare PC. GregtecLink's listener module must then also be installed on the server.
+  - As documented (WO-11.2, D335): the procedure, the keys that change, the order and the rollback are `docs/runbooks/relocation.md`; `gos relocate check` reads the config and OC's rules and says what the move still needs. No server code before day one (D45).
 
 ### 4.3 On-disk layout
 ```
@@ -416,7 +417,7 @@ C:\Games\PrismLauncher\           portable Prism (V24)
 | Consistent snapshots | ServerUtilities backups `MC\backups\*.zip` (every 30 min) | For bulk truth | [B§3.5] |
 
 ### 5.5 Read-safety protocol [B§6]
-- **`safe_open()` for every game-file read** (PM13) [QA:D7]: `CreateFileW` with `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` through ctypes, wrapped as a Python file object. A plain `open()` on Windows lacks share-delete, which blocks the game's save-by-rename [B§6.3]. VERIFY with a Lab save loop (V27).
+- **`safe_open()` for every game-file read** (PM13) [QA:D7]: `CreateFileW` with `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` through ctypes, wrapped as a Python file object. A plain `open()` on Windows lacks share-delete, which blocks the game's save-by-rename [B§6.3]. Since WO-6.8 each handle also holds a read-handle oplock, so a save that replaces the file (BetterQuesting, Hodgepodge) makes GOS close it instead of being refused (D357). VERIFY with a Lab save loop (V27).
 - Still open, read and close immediately, and never hold handles.
 - Copy to temp, then parse. Validate, and retry up to 3 times with backoff on partial or corrupt reads.
 - Region scans: use the timestamp tables to pick changed chunks first; validate length, zlib and NBT.
@@ -631,6 +632,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
    - **Footprint:**
      - Phase 3: a bounding box per machine from `structure.size_*` plus clearance, summed into a floor-area and volume estimate. Addon multis without structure data are marked `footprint: unknown`.
      - WO-10.5 adds corridor-aware layout (floor plan and bounding volume), which feeds §7.10.
+     - As built (WO-10.5, D312, D313): `gregtec.build.layout`, `gos layout`, `GET /api/plans/{id}/layout`: the `gos-layout` v1 JSON (`core/gregtec/build/layout_schema.json`) and a `layout` card in the Designer's Floor plan panel. The plan's own `layout` stays the bounding-box estimate.
 10. **Persist:** `data/plans/<id>.json` (canonical), `plans/<id>.md` and a DB row.
     - Plans get a human name ("Steel line · 2/s · HV"), editable [QA:D13]. IDs stay for data.
     - Lifecycle: `proposed → accepted → building → running → retired`.
@@ -652,6 +654,8 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
  "rank":{"score":0.71,"weights":"balanced"},
  "alternatives":["pl-0008","pl-0009"],"layout":{"w":21,"l":14,"h":9}}
 ```
+
+**As built: speed and design jobs (WO-3.9, D352–D354).** What is pure per DB run is kept between designs, in the core's process: the graph builder's batch reader (one per DB file, DB generation and export run) and the effort model's component solves (keyed by the DB file, its generation, the run, the component's request digest, which My base entries are positive and the chain templates and raw-inputs list). The generation is a digest of the file's identity, every `export_run` row, the build counter `gos db build` increments (`kv` `db.build`) and the structure tables, so a rebuild, a pack update or an addon export drops it all; nothing is shared across DB files; both are bounded. Results never change: a differential test designs with the cache off and on and compares the plans byte for byte, and rank.py's order is untouched. On the client harness DB, steel ingot at HV went from 74 s to 27 s cold and 1.5 s warm, power `best` at LV from 97 s to 31 s / 9.5 s, `self_sustaining` at LV from 220 s to 37 s / 21 s. The dashboard runs designs as jobs (`POST /api/designer/jobs`, `/api/power/jobs`): the stage (graph, solve k of n, metrics k of n, ranking, saving), the time and a Cancel, checked between stages, solver calls, graph items and effort components; a cancelled job saves nothing, a closed page leaves the job running to its saved result. `POST /api/designer/design` and `/api/power/design` still answer when done, for the callers that wait.
 
 ### 7.2 Power designer
 - **Catalog.** Fuels come from GT's fuel maps. `FUEL_VALUE` is EU per litre for liquid engines and turbines [E§4.1]; decode and test every other map (naquadah, RTG, magic, boiler) one by one:
@@ -684,7 +688,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
   - Buffer/LSC sizing for deficit windows: (peak − generation) × duration, with a battery-buffer vs LSC recommendation per tier.
   - Cable segment checks (amps, loss) and transformer placement. Cable stats come from export tooltips or material data (**VERIFY** in WO-4.5); curated table as fallback.
   - As built (WO-4.5, D240-D242): `gregtec.planner.distribution`, `gos dist buffer|cable|transformer|ledger`; cable stats from GT's own cable fields, exported (V10 resolved, the en_US tooltip only as a checked fallback for older runs, no curated table); cables, batteries, buffers, transformers (both modes) and LSC cells exported in `gt_power.json`'s `storage` (schema 5); battery buffers (with the smallest battery that fits) while a window fits in 4 of them, the LSC beyond; transformer chains counted from the lines back with the DB's units; the ledger view shares the base's shortfall out across the short tiers and chains each tier mismatch from the nearest sourced tier.
-- **As built (WO-4.6, D243-D245):** the Power view (`dashboard/src/views/Power.tsx`, key 5; `gregtec.planner.powerview`, `/api/power...`): the ledger per tier (a tier opens its draws), its warnings and storage/distribution checks (buffers once Clayton gives a peak window), the four modes, 2-3 option cards in rank.py's order with the weights printed, each with net = gross - chain, effort card, validator verdict, kit, cables and the ledger as it would be with it accepted; accepting after a confirm. The `power-designer` skill with `design_power`, `effort_estimate` and `plan_explain` on power designs (the model's text is refused if it reorders the options). `gos eval power-modes` runs the 12 acceptance cases on a copy of the DB; the solver runs without HiGHS presolve (SciPy 1.17-1.18 crash, D245). **Follow-up (not built, D243 (3)):** Now and Glance still show WO-2.6's "no power data" block; they should draw the EU ledger card (`ledger.card`) the Power view shows.
+- **As built (WO-4.6, D243-D245):** the Power view (`dashboard/src/views/Power.tsx`, key 5; `gregtec.planner.powerview`, `/api/power...`): the ledger per tier (a tier opens its draws), its warnings and storage/distribution checks (buffers once Clayton gives a peak window), the four modes, 2-3 option cards in rank.py's order with the weights printed, each with net = gross - chain, effort card, validator verdict, kit, cables and the ledger as it would be with it accepted; accepting after a confirm. The `power-designer` skill with `design_power`, `effort_estimate` and `plan_explain` on power designs (the model's text is refused if it reorders the options). `gos eval power-modes` runs the 12 acceptance cases on a copy of the DB; the solver runs without HiGHS presolve (SciPy 1.17-1.18 crash, D245). **Follow-up D243 (3), built in QA 5-9:** Now and Glance draw the EU ledger card (`ledger.card`, `NetPower` in `Now.tsx`) the Power view shows; the "no power data" text is left only for no accepted lines.
 
 ### 7.3 Recipe and item Q&A
 - Runs in the fast lane: 1–2 spoken sentences plus a dashboard **recipe card**: inputs and outputs with chances, EU/t, time, machine, tier, special conditions, `r:` id, and how many alternatives exist.
@@ -793,6 +797,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - Base-pack multiblocks: MrBruh's `gtnh-extractor` (Apache-2.0) records every cell's `registry@meta`, which hatch types each cell accepts, and coil/glass/pipe tier tables [G][A§4.2]. It's pinned to 2.9.0-beta-3, so **re-pin it to 2.9.0** (needs JDK 25; the bump is documented but untested).
   - Addon multiblocks: capture in the Lab with GuideNH's region wand (block + meta per position), or with the projector plus WorldEdit `//copy`. Set tiers with StructureLib `/sl_channel set` [G][E§5.5].
   - Keep one footprint per (controller, tier channels, facing). Track 2.9's legacy and new turbine/LCE/boiler variants separately.
+  - As built (WO-10.2, D305, D306): `gregtec.build.footprints` computes every footprint from the `structure` table (no files); `gos footprints list|show|coverage|capture|compare`. Addon captures: a WorldEdit `//copy` + `//schem save` `.schematic` (WO-10.9, D350, D351: `schematic.read` keeps each tile entity's id string and GT's `mID`/`mFacing` by position; the controller is the one GT tile entity the DB's `machine` table calls a multiblock, or `--controller x,y,z`; its facing is the saved `mFacing`, or `--facing`; hatches take their GT `HatchElement` kind by class), or GOS's minimal `gos-capture` JSON, told apart by content. The schematic harness places a GT multi with hatches, copies and saves it, and CI turns the save into its footprint (`test_footprints_schematic_harness.py`). Runbook: `docs/runbooks/footprints_lab.md` (L1).
 - **3D build guide** for machinery, which is built legitimately (D35).
   - **Primary:** GuideNH 1.3.55 ships in 2.9.0. `/guidenhc exportsite` records what the client actually draws (GT overlays, tints, glow, active textures) plus the texture atlas. It ships a **three.js viewer with hover and layer controls**, and `<ImportStructureLib controller=… tier=…>` pulls in any multiblock at any tier [G].
   - Embedding it in the dashboard is a 1–2 h **spike** (WO-10.1, **VERIFY**).
@@ -800,9 +805,11 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - **Fallbacks:** MrBruh's previewer (Apache-2.0; three.js, layer slider, hover labels) with his texture manifest; then NEI item-panel icons with average colours.
   - Exports must run in a client with a game window, because a dedicated server lacks textures for 208 of 296 multiblocks [G].
 - **Viewer features:** rotate/zoom; hover shows block name and registry ID; layer slider; materials for the current layer; build checklist; hatch-slot markers with allowed hatch types; BOM per structure.
+  - As built (WO-10.8, D319, D320): the Build view's guide is GOS's own SVG drawing of a footprint (`gregtec.build.guide_data`: positions from WO-10.2's footprints, names and average face colours from WO-10.3's catalog; no new dependency): turn and tilt (drag, buttons), zoom (wheel, buttons), a compass that turns with it and the controller's front face marked, hover or tap for name + `registry@meta` + layer + offset from the controller + the hatch kinds a cell takes, layer slider with that layer's materials, hatch-slot markers, the BOM, and a per-layer checklist kept in the core's `kv` table. Opened from the Build view's picker, the Designer's machine nodes and My base (`#/build?guide=<registry>@<meta>`). GuideNH's export is framed beside it **from its own origin** (`guide-<dashboard_host>:<port>`, a sibling name so it can't set the dashboard's cookie, a signed path token, never the dashboard cookie; PC only, the phone has no guide host), so its scripts can't reach the dashboard (D304 closed). The Lab build from the guide (L6) is runbook `build_guide_lab.md`.
 - **Shells (decorative only).**
   - **Never include `gregtech:gt.blockmachines` or any tile-entity block.** A pasted machine arrives free and working, and covers break because they're stored by numeric ID [G].
   - Shells get keep-out volumes around machine footprints, plus access corridors and pipe/cable chases.
+  - As built (WO-10.5, D312): the layout planner places each plan's footprints (machines and generators, a multi at its largest variant, warned) facing spine corridors off a west hall with one entrance, keep-outs of the footprint plus clearance, chases over every corridor, and a flood-fill reach check of every front and hatch kind; multis with no footprint are listed, never sized by guess. Its JSON is what WO-10.7's shells must leave free.
 - **Schematic writer** (worldedit-gtnh ≥ 0.0.9) [G][E§5.1]:
   - root `Schematic`; `Materials="Alpha"`; `Width/Height/Length`; `Blocks`; `Data`; `TileEntities` and `Entities` as empty lists (`TileEntities` is required);
   - `WEOriginX/Y/Z` = 0 and `WEOffsetX/Y/Z` = the paste offset relative to the player, e.g. `(-⌊W/2⌋, 0, 1)` (**VERIFY** in game);
@@ -816,16 +823,19 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
     - #24: EndlessIDs support for schematic save and load.
     - #28: chunk corruption when placing a meta value that doesn't exist. Validate every palette entry first.
   - worldedit-gtnh v0.0.10 isn't bundled in the pack; install it in Play and Lab yourself [F].
+  - **Built** (WO-10.4, D309-D311): `gregtec.build.schematic` writes this layout (block types numbered by registry name; above 255 the shell is split into parts, or `AddBlocks` on request) only through `write_shell`, which applies WO-10.3's palette rule to every state the shell uses (meta > 15 refused until #30 is resolved); its reader takes worldedit-gtnh `//copy` saves and Schematica saves, with or without mappings, nibble order detected or refused. `gos schematic sample|read|compare`. The dev-server schematic harness pastes and copies GOS shells with worldedit-gtnh (D310); the Lab round trip is runbook `schematic_roundtrip.md`.
 - **Themes (D36).** Each `themes/<id>.md` holds:
   - a palette (`registry@meta`, from Clayton's client palette), motifs, massing rules, roof/window/lighting rules, adaptations per line type, references to sample builds, and a version `v:`.
   - Themes are created from prompts and refined in conversation.
   - **Per build:** theme + optional prompt, prompt only, or blank. Blank means the architect proposes a concept from the line type (e.g., chemistry gets pipework and tanks; EBF gets heavy industrial), using themes already used nearby for consistency.
+  - **Built** (WO-10.6, D314-D315): `gregtec.build.themes` parses and validates themes (every palette entry a catalog state without a tile entity, meta ≤ 15); `theme_list`/`theme_get` (both lanes) and `theme_save` (deep lane, the architect's; each refinement a new version, earlier ones in `themes/versions/`; only `theme_save` writes `themes/`); the starter themes `th-foundry` and `th-marble-works` in `vault-template/_gos/themes/`; the `architect` skill; `themes.select` for the three modes (blank: line type's concept, the theme most used within 256 blocks, else one that fits); `gos theme list|check|select`. Runbook `themes.md`.
 - **Shell designer (img2schem merged, D74).**
   - The `architect` subagent designs shells, as the img2schem SOW intended. Input: bounding volume, keep-outs, entrances, theme, palette constraints, prompt, max blocks. Output: `.schematic`, palette manifest, preview mesh, notes.
   - The palette comes from Clayton's client export (WO-10.3), so modded blocks are available.
   - The procedural generator (walls, roof, windows from theme rules) stays as the fallback and the test baseline.
   - All schematic and palette code lives in `core/gregtec/build/`; there is no separate img2schem repo.
   - WO-10.0 imports the img2schem SOW and re-scopes Phase 10 from it, including any reference-image input.
+  - **Built** (WO-10.7, D316-D318; from 7.10 as written, the SOW not yet in the repo): `gregtec.build.shell` takes a WO-10.5 layout (bounds grown by a 1-block wall ring and roof headroom; keep-outs, corridors, chases, a doorway per entrance and the rest of the layout's interior below the roof left empty, so walls stand in the ring only), the theme's palette (WO-10.6's three modes), prompt and `max_blocks`. The architect designs through `build_request` in a building vocabulary (walls, pillars, windows, roof, lights, fill, frame, clear) that code turns into blocks; every design (the model's or the procedural generator's, which is the fallback, the No-AI path and the test baseline) passes one gate: small breaches removed and said, anything else (a block outside the palette, so any tile entity or machine block; too many blocks; a malformed design) refused with nothing written. Builds are files in `GOS_HOME/data/build/shells/` with a palette manifest, a preview mesh (the dashboard's shell card in the Build view) and notes; `gos shell design|list|show|export`; the `.schematic` is Clayton's `gos shell export` (WO-10.4's writer, the Lab world's registry; refused when the plans' layout changed since the design), pasted from the first entrance's corridor cell. The Lab paste (L6) is runbook `shells_lab.md`.
 - **Placement.**
   - Shells are pasted with WorldEdit (free, D35).
   - Machinery is built by Clayton from the 3D guide. Optional helpers:
@@ -856,13 +866,16 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - credit warnings with buttons (D48);
   - "GOS offline" and "game paused" **only while he's away** (D76), meaning no keyboard or mouse input on the PC for 10 minutes. Each is sent once, when both conditions are true, whichever comes second.
 - Results are also saved to the vault.
+- As built (WO-9.2, D298–D300): one router in the core (`gregtec.alerts.router`) takes the alert engine's events (WO-7.5), the proactive notices (WO-6.5), the D48 credit alert (WO-2.8) and the paused game (WO-6.1); every alert has a level and a key, and `gregtec.alerts.policy.decide` (one table, `[notify]` in gos.toml, defaults pending Clayton) sends it to the dashboard (always: its cards, banners and pause chip), voice (base alerts while he is present), in game (GregtecLink chat lines) and a Discord DM (base alerts while away, D46; credit DMs whatever his presence, D48; "game paused" only while away, D76), each once per occurrence (the `alert_route` table, so not again after a restart), never both by voice and DM, with a per-key cooldown, quiet hours and `/alerts off|quiet` holding them until they end. Away is no keyboard or mouse input for 10 minutes (`gregtec.presence`: `GetLastInputInfo` on Windows, unknown elsewhere, V35). Being level-triggered, the paused DM goes once per pause on the first tick that finds the game paused and him away, in either order. DMs go through an outbox (`alert_dm`) the bot posts and marks, queued only while the bot reads it (else voice still carries a base alert); the credit DM's buttons (Open billing, No-AI mode or Resume AI, Stop with a second press) reach the bot's one door and the core's own `POST /api/credits/decision`. "GOS offline" is the bot's (it outlives the core): the core silent for `offline_after_s` while he is away, not when the supervisor says it was stopped on purpose, once per outage, then "GOS is back" under the same rules. `gos alerts routed|test`. Runbook: `docs/runbooks/alert_routing.md`.
 - As built (WO-9.1, D295–D297): `gregtec.discordbot` is its own process (`python -m gregtec.discordbot run --supervised`, started by the supervisor at login with the core, left stopped until `[discord] owner_id` and its two keyring secrets exist). Every command and interaction goes through one door that drops anyone but `owner_id` with no response and no core call; no gateway intents, so it reads no messages. `/plan` and `/power` are jobs in the core's durable queue (`remote_job` in gos.sqlite, keyed by the interaction id; never completes twice, re-run once after a crash mid-run), acknowledged at once; results come as a follow-up (or a DM after 14 min or a bot restart) with the PNG and BOM of route 1 and its `#/designer/<id>` (or `#/power/<id>`) phone link. Confirm buttons post the pending action's read-back and confirm through the action desk as `discord`. Answers go to the day's journal through the core; `/alerts` sets `kv` `discord.alerts` for WO-9.2. Runbook: `docs/runbooks/discord_bot.md`.
+- As built (WO-9.3, D301–D303): `gos tailnet setup` (Clayton runs it; `gregtec.tailnet`) runs `tailscale serve --bg --https=443 http://127.0.0.1:<port>` after checking Tailscale is logged in, Funnel is off for every port, no raw TCP forward reaches the core and nothing else holds 443, reads it back (Funnel still off, else it undoes the handler), and prints the tailnet name for `[core] allowed_hosts`, which it never writes; `gos tailnet check` reads, `gos tailnet off` removes the handler only when it is GOS's; `setup`/`off` refuse as gos-dev and nothing in GOS passes `funnel` to the CLI. The core refuses any request Tailscale marks as from an HTTP Funnel (`Tailscale-Funnel-Request`; a TCP Funnel is unmarked, so `check` is its guard), and accepts the tailnet name only once it is in `[core] allowed_hosts` (a `<name>:443` entry also allows the bare name browsers send). The phone pairs once on that name (D117, cookie `Secure`) and is revoked from Settings. Its tabs are D159's approved Now, Chat, Search, Costs, Settings and **More**, which lists every other view (Base among them, D302; needs Clayton's board approval); a Discord plan link opens the plan with More lit; approvals come first on Now with the same buttons (confirmed as `phone`, D220). Tests: `tests/security/test_phone_dashboard.py` (fake tailscale CLI) and `dashboard/e2e/phone.spec.ts` (a fake Serve on a tailnet name, 390x844). Runbook: `docs/runbooks/phone_dashboard.md`.
 - **Limitation:** everything off-PC needs the PC on and awake. GOS starts at login (D77), so a reboot doesn't need a game launch to bring phone access back.
 
 ### 7.13 Addon watcher and pack updates
 - **Pre-launch:** a fingerprint mismatch sets the stale flag and shows a voice/dashboard notice.
 - **Post-exit (D69):** ask; on yes, export under the instance lock, normalize, then write a signature diff per mod to `inbox/export-diff-YYYY-MM-DD.md` (recipes added, removed and changed, using the content hash; new machines). It also creates curation tasks for new controllers (`machine_fact` rows and structure capture).
 - **Affected plans** [QA:D9]: any accepted plan citing a recipe whose content changed, or that vanished, is marked "affected by update", on the plan and in the diff note, with a one-click re-solve.
+- As built (WO-11.1, D329-D331): `gregtec.packupdate.addons`. The question is asked on the dashboard, by voice and in the dialog at once (first answer wins); the note is `inbox/ib-YYYYMMDD-export-diff-YYYY-MM-DD.md`, the vault's inbox naming (D330); every plan is checked whatever its status, and the run that flagged one is kept until the flag clears (D331); a recorded export that couldn't be loaded keeps the stale flag up, and the next post-exit offers the load alone (`gos export run --load-only`, D329). The real jar swap in Lab is `docs/runbooks/addon_watcher.md`.
 - **Pack updates (WO-1.9, D44)** [QA:S3]: a release watcher checks the GTNH modpack releases daily. A new 2.9.x gets a summary (GT/NEI versions, mod changes) and an "adopt?" prompt. On yes, the playbook runs: Clayton updates Play in Prism → `check_tweaks` → export → GT pin bump with the ported unit tests re-run against the new GT source tag → golden recipes re-checked → affected plans flagged.
 
 ### 7.14 Dashboard (D24, D49–D55) [QA dashboard section]
@@ -874,6 +887,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | **Workbench** | Mouse on monitor 2, game paused, or game closed | The full shell: views, Designer, tables, 3D viewer, settings |
 
 - **Shell:** left navigation with number-key shortcuts; a right rail that is always visible, showing what the agent is doing, running jobs and anything waiting for approval; a voice strip with a standby ring; a Ctrl+K command palette (items, recipes, quests, plans, settings) in workbench mode.
+  - As built (WO-3.9, D353): the rail's jobs include the Designer's and the Power view's design jobs, each with its stage, the time it has run and a Cancel on Clayton's paired dashboards.
 - **In-game control:** voice ("show route 2", "open BOM") and global hotkeys (confirm, cancel, next card) from WO-5.1.
 - **Targets:** 2560×1440 landscape (D50), plus a phone layout of the same views for Tailscale (D53).
 - **Build rules:**
@@ -1111,6 +1125,9 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 11.3 | Full Lab rehearsal: a 2-hour "fake day one" with everything running | §10 checklist all green |
 | **G11** | **Day one** | Clayton starts his survival 2.9 world |
 
+- As built (WO-11.2, D332-D335): the daily backup job writes a manifest beside each DB backup and a vault snapshot with its own; `gos backup restore --verify` restores the newest into a temporary folder and checks hashes, `integrity_check`, row counts and every vault file; `scripts/verify_world_backup.py` (Clayton's) checks a world backup in a scratch folder; hard-kill tests for every writer and the supervisor with the real core (the vault's cut-short temp files are swept at start, the watchers' and bot's state files fsynced); the cost watch's 50% heads-up, day cap and task cap through the alert routes and the Costs view's caps card; `docs/runbooks/ops.md` and `relocation.md`.
+- As built (WO-11.3, D336-D337): the automated fake day one, `tests/rehearsal/day_one.py` (the real supervisor, core, watchers, voice client and Discord bot on a fake Prism tree, with fakes for the model, mic, Discord's gateway and the game), run on a client-harness DB with a 10-minute soak in CI's mod job (`tests/integration/test_fake_day_one.py`) and as a short smoke on Ubuntu and Windows; its report gives each §10 line as green, red or PC only. The real 2-hour Lab rehearsal is Clayton's: `docs/runbooks/fake_day_one.md`.
+
 ---
 
 ## 9. Testing and Lab validation
@@ -1124,7 +1141,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 
 | ID | World | Scenario | Pass condition |
 |---|---|---|---|
-| L1 | lab-structures | Build every tracked multi with the projector; capture addon multis | Cells match `structure`; captures stored |
+| L1 | lab-structures | Build every tracked multi with the projector; capture addon multis (`//copy` + `//schem save`, then `gos footprints capture <file.schematic>`; base multis through `gos footprints compare`, WO-10.9, runbook `footprints_lab.md` C-D) | Cells match `structure`; captures stored |
 | L2 | lab-progress | `/bq_admin complete` sequences for early (LV), mid (HV) and late (IV) states | Frontier and tier match the book; advisor sensible |
 | L3 | lab-progress (**survival mode**: ServerUtilities skips creative placements) | Scripted 30 min session: place 5 machines, craft, visit the Nether and Twilight Forest, die once, find a vein, chat | ≥ 95% event recall; listener IDs correct; journal accurate |
 | L4 | lab-ops | OC computer, LSC, AE2, 5 multis; 1 h of telemetry with the game unfocused and no menu open (AFK); confirmed craft and pause; HUD and screens | Stable; actions only after confirmation; alerts reach Discord |
@@ -1248,14 +1265,14 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V06 | ServerUtilities world-logging config keys and the single-player `world.log` path. **Keys confirmed** (PR #6); the path moves to WO-6.1 (D97), which watches `MC\logs\world.log` (D257); the Lab session confirms it and the wording for broken blocks | Lab session | 6.1 |
 | V07 | **Partly resolved** (D127, WO-1.6): from VisualProspecting 1.5.42's source and a cache it wrote in the dev runtime, both caches are in the game folder (`visualprospecting\server\<world id>\`, `visualprospecting\client\<uuid>\<world id>\`), format v3. Still open: the Lab check (`docs/runbooks/ores_check.md`) | Lab | 1.6 |
 | V08 | **Resolved** (D126, WO-1.6): GT's worldgen registry, exported by GregtecLink as `gt_ore_mixes.json`; NEI's vein pages have no mix name, heights, weight, density or size | — | 1.6 |
-| V09 | gtnh-extractor re-pinned to 2.9.0 builds and runs | Build | 1.8 |
+| V09 | **Resolved** (WO-10.2, 2026-11-14): `gos structures extract` built and ran in the dev container; the dev server loaded GT5-Unofficial 5.09.54.265, StructureLib 1.4.47, CropsNH 2.0.140; 297 controllers (455 variants) dumped, 2 not (client-only classes), all 297 linked to the harness DB's machine rows (D305) | Build | 1.8 |
 | V10 | **Resolved** (D240, WO-4.5): exported fields. GregtecLink's power pass writes every GT and GT++ cable's `mVoltage`, `mAmperage` and `mCableLossPerMeter` (`gt_power.json` `storage.cables`, table `cable`), so no game language or number locale matters; the en_US tooltip (`machine.tooltip`, any digit grouping, checked against GT's voltages and the tier it names) is only the fallback for older runs, and reads the same numbers for all 588 cables of the harness run; no curated table. Batteries, buffers, transformers and LSC cells were added to `gt_power.json` (`storage`) too | — | 4.5 |
 | V11 | **Closed** (D56): Arctis Nova Elite; TTS on the Chat endpoint | — | 5.3 |
 | V12 | **Dropped** (D58): no Discord auto-mute, so Push To Mute isn't needed | — | — |
 | V13 | **Partly resolved** (D288, WO-8.2): a frame whose brightest pixel is near black is refused and the newest F2 screenshot read instead, so a black frame is never sent. Still open: that lwjgl3ify `borderless` capture has no black frames (`docs/runbooks/screen_reading.md` B) | Test | 8.2 |
 | V14 | Wiki API and licence (`api.php?action=query&meta=siteinfo&siprop=general\|rightsinfo&format=json`) | From Clayton's PC | 8.3 |
-| V15 | GuideNH `exportsite` embeds in the dashboard. **Partly** (WO-10.1, D304): framed under `/guide/` with its own CSP (which limits loads but is not isolation: same origin, so WO-10.8 gives `/guide/` its own origin), proven with a stand-in export; the real Lab export run is Clayton's | Spike; Lab export (report WO-10.1) | 10.1 |
-| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta) | Lab paste | 10.4 |
+| V15 | GuideNH `exportsite` embeds in the dashboard. **Partly** (WO-10.1, D304; WO-10.8, D319): framed under `/guide/` on its own origin (`guide-<dashboard_host>:<port>`, a sibling host name so it cannot set a cookie for the dashboard's name; a path token, never the dashboard cookie), so isolated from the dashboard, proven with a stand-in export; the real Lab export run is Clayton's | Spike; Lab export (report WO-10.1) | 10.1 |
+| V16 | worldedit-gtnh open issues on 2.9.0: #30 (meta > 15), #24 (EndlessIDs schematic save/load), #28 (chunk corruption on non-existent meta); and the paste offset `WEOffset` = `(-⌊W/2⌋, 0, 1)` in game | Lab paste (runbook `schematic_roundtrip.md`). The dev-server harness pastes and copies with worldedit-gtnh v0.0.10, ids < 4096 and meta ≤ 15 only (D310) | 10.4 |
 | V17 | **Resolved** (D74): img2schem is merged into GOS; WO-10.0 re-scopes Phase 10 from its SOW | — | 10.0 |
 | V18 | Addon releases on 2.9.0 stable (§13.1). The watcher is built: `gos pack watch` (D146, WO-1.9) reads their release feeds when run (each URL at most once a day; nothing schedules it yet: the runbook has an optional daily Windows task); the stable check itself stays open | Weekly; watcher reports | 11.1 |
 | V19 | Does Open to LAN avoid the pause freeze? | Lab: the OC agent's messages through 60 s in the Esc menu, without and with Open to LAN (`docs/runbooks/oc_agent.md` F) | 7.2 |
@@ -1266,14 +1283,15 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | V24 | **Partly resolved** (PR #13; WO-0.8 tests, 2026-11-05): 8/8 live isolation tests pass as `gos-dev`; Claude Code and the toolchain run as `gos-dev`, and inheritance leaks no write access. Still open: `gos launch` starts Lab and Export | `gos launch` test | 2.1 |
 | V25 | **Resolved from source** (D121; Prism 11.1.1): a pre-launch command that exits non-zero, crashes or can't start fails the launch before the game starts. The Lab check in `docs/runbooks/play_hooks.md` (step 3) confirms it on the PC | Lab test | 1.4 |
 | V26 | GregtecLink's server-side place/break listener sees GT machine placements with `mID` in single-player. **Passes in the listener harness** (D260, D262: 10 kinds placed and 4 broken by a fake player through Forge's events, ids from `mID`, registry name + meta); the Lab check (runbook `machine_events.md`) confirms it in the real pack | Lab test | 6.2 |
-| V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename succeed while GOS reads. Soak-tested on a fake game on Linux and Windows CI (D257); the Lab save loop confirms it on the game | Lab save loop | 6.1 |
-| V28 | Tailscale Serve proxies the PC's tailnet name to `127.0.0.1:8765` over HTTPS, and works from the phone on cellular | Test | 9.3 |
+| V27 | `safe_open()` lets 1.7.10's `level.dat` save-by-rename and GTNH's save-by-replace (BetterQuesting, Hodgepodge: `MoveFileExW(REPLACE_EXISTING)`) succeed while GOS reads. Soak-tested on a fake game on Linux and Windows CI (D257); since WO-6.8 a read-handle oplock gives the file up to the game, each write pattern measured on Windows CI and the soak forces the collision (D356-D358); the Lab save loop confirms it on the game | Lab save loop | 6.1 |
+| V28 | **Partly resolved from Tailscale's docs and source** (D301, WO-9.3; read 2026-11-18): Serve shares a local service within the tailnet only and Funnel is a separate command (tailscale.com/kb/1242/tailscale-serve); Serve needs HTTPS certificates enabled for the tailnet (tailscale.com/kb/1312/serve); the proxied request keeps the browser's Host (`<pc>.<tailnet>.ts.net`) and Funnel traffic carries `Tailscale-Funnel-Request`, which Tailscale strips from what clients send (`ipn/ipnlocal/serve.go`), so the core allows the name only once it is in `[core] allowed_hosts` and refuses Funnel requests. `gos tailnet setup` sets Serve up and refuses Funnel. Still open: the phone on cellular (L8, `docs/runbooks/phone_dashboard.md` E) | Test | 9.3 |
 | V29 | A reliable "game paused" signal (log line or GregtecLink). Resolved from what the game writes (D258): the `Saving and pausing game...` line, unpaused by the server's next own line or autosave; the Lab test measures the line's delay | Lab test | 6.1 |
 | V30 | **Partly resolved from source** (D273, WO-6.7; CropsNH 2.0.140): weeds spread above each crop's own `weeds_above` (24 for most crops, 8 for Necrobloom; the quest's 23 is wrong) and only while Resistance is below Growth; an extra neighbour can block a parent-combination recipe (recipes match the first distinct breedable neighbours in registration order), so guides keep the other sides clear; two identical seeds can pool-mutate (pool matching counts duplicates) but never make a recipe (it needs two distinct parents); a Crop Manager tops sticks to 200 fertilizer once fertilizing is switched on in its GUI (it starts off); a stick uses 1 water and 1 fertilizer every growth tick, so the guide's times are the topped-up best case and it shows the dry nutrients. Still open: the Lab check of each (`docs/runbooks/crop_guide.md`) [I§2] | Lab test | 6.7 |
 | V31 | **Partly resolved from source** (D284, WO-7.6; CropsNH 2.0.140, GT 5.09.54.265, OC 1.12.68): a transposer shows a seed as `cropsnh:genericSeed`, damage 0, label `<crop name> Seeds` once analysed (`Unknown Seeds` before), so the station identifies seeds by label; stats are NOT readable (OC's `tag` is gzip, the data card inflates zlib), so it tracks them from the breeding maths; the Crop Breeder is a GT basic machine whose progress OC reads like the others (`hasWork`) and whose tank the transposer reads; automation takes items only from a GT machine's output (D282); the transposer is an MV Assembler recipe, the other parts are checked from the recipe DB by `gos crops station --parts` (partial: the part's own recipe, `MV unknown` for a recipe without a tier). Still open: the full parts answer from Clayton's export and the Lab check (`docs/runbooks/breeding_station.md`) [I§3, I§6] | Lab test | 7.6 |
 | V32 | **Partly resolved** (D273, WO-6.7): odds per tier (40% at LV, +10% a tier, 100% from ZPM) and the tanks match CropsNH's own tooltips in the harness export (tests/integration/test_crop_guide_harness.py); the LV/MV "high-stat" cap is the tank: one run's fertilizer (144 mB x child tier + 72 mB x stat points) has to fit 3,200 mB at LV and 6,400 mB at MV; catalysts come from the export's Crop Breeder recipes; Crop Breeder-only recipes are the export's `machine_only` ones. Still open: a run in the Lab at LV and MV (`docs/runbooks/crop_guide.md`) [I§2, I§6] | NEI + Lab | 6.7 |
 | V33 | **Partly resolved** (D134, WO-1.10): in the dev runtime the client export runs all 11 CropsNH dumpers (crops, breeding recipes, mutation pools, soils and more) and every crop NEI's CropsNH tabs show is in the crop dump (131 crops; Crop Breeding 91 recipes, 104 crops). Still open: a full-pack Export run (`docs/runbooks/crops_check.md`) [I§2] | Export test | 1.10 |
 | V34 | When a GT multiblock shuts down on its own (power loss, a maintenance problem), OC's `isWorkAllowed` reads false; if so, it reads as WO-7.4's `stopped` (D279), which WO-7.5's `machine_stalled` alert counts (`[alerts] stalled_stopped`, D280) and the advisor follows (D267, D281); the Lab test checks it does | Lab test | 6.5 |
+| V35 | GOS's processes (the core and the Discord bot, started windowless by the supervisor in Clayton's logon session, D116) read his real keyboard and mouse input through `GetLastInputInfo`, so D76's "away" (10 minutes without input) is right: `gos alerts routed` shows `away` false while he types and true after 10 idle minutes (D298) | PC step (runbook `alert_routing.md`) | 9.2 |
 
 ---
 
@@ -1320,8 +1338,11 @@ gregtec-os/
     bridge/    oc_api.py  mailbox.py  actions.py  parsers_29.py  mod_ws.py
     vault/     io.py  index.py  curator.py  schema.py
     build/     schematic.py  palette.py  footprints.py  themes.py  shells.py  shell_designer.py
-    alerts/  wiki/  api/ (security.py: Host/Origin, cookies, pairing)
+    alerts/    rules.py  engine.py (WO-7.5)  policy.py  router.py  routes.py (alert routing, WO-9.2)
+    presence.py (input idle, D76)  tailnet.py (gos tailnet: Tailscale Serve, never Funnel, WO-9.3)
+    wiki/  api/ (security.py: Host/Origin, cookies, pairing)
     discordbot/ handlers.py  adapter.py (only importer of discord.py)  core_api.py  texts.py  settings.py  cli.py
+               alerts.py (alert DMs, credit buttons, "GOS offline", WO-9.2)
     remote/    jobs.py (durable design-job queue, D295)  routes.py (/api/jobs, /api/discord/*)
     crops/     data.py  planner.py  odds.py (§7.17)
   voice/gregtec_voice/   audio.py  ptt.py  wake.py  stt.py  tts.py  lexicon.py  speech_filter.py  client.py
@@ -1329,7 +1350,7 @@ gregtec-os/
   dashboard/             React + Vite + TS (react-three-fiber, React Flow + elkjs); design/ (tokens, catalog)
   mod/                   GregtecLink: export, listener and client modules (GTNH ExampleMod template, Java 8 target)
   oc/                    gos-agent.lua  json.lua  mailbox.lua  crop/ (breeding station, WO-7.6)
-  vault-template/        _gos/{skills,agents,personas,schema.md}  personas/  me/(stubs)
+  vault-template/        _gos/{skills,agents,personas,themes,schema.md}  personas/  me/(stubs)
   scripts/               prism_prelaunch.ps1  prism_postexit.ps1  sync_instances.py  check_tweaks.py
                          setup_gos_dev.ps1  backup_world.ps1
   tests/                 unit/  fixtures/{gt_oc_tests,plannh}/  golden/  evals/*.tsv  security/
@@ -1374,7 +1395,7 @@ host = "127.0.0.1"
 port = 8765
 supervisor_port = 8766        # D115; gos-dev sets its own port, port and dashboard_host (D115, D117)
 dashboard_host = "gos.localhost"   # pairing and the dashboard (D117)
-allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]   # QA:A8, D53
+allowed_hosts = ["127.0.0.1:8765", "localhost:8765", "<pc>.<tailnet>.ts.net"]   # QA:A8, D53; the name gos tailnet setup prints (D301)
 
 [startup]
 core_at_login = true          # D77
@@ -1399,6 +1420,8 @@ credit_alerts_pct = [80, 100] # D48
 on_credits_out = "no_ai"      # fixed by D48 (D165): the only value; the answer is asked per alert
 task_max_usd = 2.0            # set from `gos eval design-cost --apply-from` (WO-3.7, D253); on hit: pause and ask (D16)
 cycle_day = 1                 # 1-28: the day each month the included credits reset (D118)
+day_max_usd = 10.0            # a day's spend that raises an alert; nothing pauses (D334, pending Clayton)
+notice_pct = [50]             # heads-ups below the D48 alerts, no buttons (D334); [] for none
 
 [voice]
 primary_trigger = "wake"      # D57
@@ -1470,6 +1493,14 @@ keep_backups = 7              # daily DB backups kept (D139)
 # clear_s = 30
 # cooldown_s = 600            # plan 7.5's 10 minutes
 # done_show_s = 300
+
+# Alert routing (WO-9.2, D298): every key optional; the defaults, pending Clayton, are below.
+# [notify]
+# quiet_hours = ""            # e.g. "23:00-07:00" (local; may wrap midnight); "" for none
+# quiet_min_level = "err"     # what still goes out in quiet hours and with /alerts quiet
+# discord_min_level = "warn"  # the lowest base alert DMed while he is away
+# cooldown_s = 1800           # a base alert's key, per channel, after it went there
+# offline_after_s = 60        # the core silent this long is "GOS offline" (the bot's DM)
 
 # The Discord bot (WO-9.1, D296). Ids are Discord snowflakes (Developer Mode > Copy ID); the bot
 # token is in the keyring (gos key set discord), the bot's core token too (gos token new discord).
@@ -1582,6 +1613,11 @@ CREATE TABLE device(id TEXT PRIMARY KEY, name TEXT, paired INT, last_seen INT, r
 CREATE TABLE alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, level TEXT, msg TEXT, ref TEXT,
   state TEXT, acked_ts INT);
 CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
+-- alert routing (WO-9.2, D299): what went to which channel, and the Discord DM outbox
+CREATE TABLE alert_route(channel TEXT NOT NULL, key TEXT NOT NULL, occ TEXT NOT NULL, ts INT NOT NULL,
+  PRIMARY KEY(channel, key, occ));
+CREATE TABLE alert_dm(id INTEGER PRIMARY KEY, created INT NOT NULL, level TEXT NOT NULL, text TEXT NOT NULL,
+  buttons TEXT, keys TEXT, delivered INT, dropped INT);
 ```
 
 ## Appendix E. Research index and key sources

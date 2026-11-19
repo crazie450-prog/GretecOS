@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,20 +83,7 @@ class Settle:
 
 def read_range(path: Path, offset: int, size: int) -> bytes:
     """``size`` bytes of ``path`` from ``offset``: one open, seek, read and close per try."""
-    error: OSError | None = None
-    for attempt in range(safe_open.RETRIES):
-        try:
-            with safe_open.safe_open(path) as f:
-                f.seek(offset)
-                return f.read(size)
-        except FileNotFoundError:
-            raise
-        except OSError as exc:
-            error = exc
-            if attempt < safe_open.RETRIES - 1:
-                time.sleep(safe_open.BACKOFF_S * 2**attempt)
-    assert error is not None
-    raise error
+    return safe_open.read_range(path, offset, size)
 
 
 class LogTail:
@@ -179,8 +165,12 @@ def load_tails(path: Path) -> dict[str, Any]:
 
 
 def save_tails(path: Path, tails: dict[str, Any]) -> None:
-    """GOS's own file (never a game file): a temp file, then a rename."""
+    """GOS's own file (never a game file): a temp file, fsynced, then a rename, so a power
+    loss leaves the old tails or the new ones, never an empty file (WO-11.2, D333)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(tails), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(tails))
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)

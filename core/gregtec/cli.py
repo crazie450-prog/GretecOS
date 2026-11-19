@@ -27,13 +27,22 @@ from gregtec import (
     personacli,
     playhooks,
     servicecli,
+    tailnet,
     voicecli,
 )
 from gregtec import deploy as app_deploy
 from gregtec.advisor import cli as advisor_cli
-from gregtec.agents import design_cost_cli, recipe_eval_cli
+from gregtec.agents import design_cost_cli, hover_eval_cli, recipe_eval_cli
 from gregtec.agents.tools import command as tool_command
+from gregtec.alerts import cli as alerts_cli
 from gregtec.build import cli as palette_cli
+from gregtec.build import (
+    footprints_cli,
+    layout_cli,
+    schematic_cli,
+    shell_cli,
+    theme_cli,
+)
 from gregtec.crops import cli as cropcli
 from gregtec.db import build as recipe_db
 from gregtec.db import crops as crop_db
@@ -44,6 +53,7 @@ from gregtec.discordbot import cli as discord_cli
 from gregtec.ingest import collect as export_collect
 from gregtec.ingest import extractor, fingerprint, rundiff
 from gregtec.llm import keys
+from gregtec.ops import cli as ops_cli
 from gregtec.packupdate import cli as pack_cli
 from gregtec.planner import (
     distributioncli,
@@ -59,6 +69,7 @@ from gregtec.vault import curator as vault_curator
 from gregtec.vault import deploy as vault_deploy
 from gregtec.watchers import cli as watch_cli
 from gregtec.wiki import cli as wiki_cli
+from gregtec.wiki import evals_cli as wiki_evals_cli
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -164,6 +175,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--notify",
         action="store_true",
         help="show the result in a message box (Windows)",
+    )
+    run.add_argument(
+        "--load-only",
+        action="store_true",
+        help="collect and build the last recorded export if it isn't loaded (no new export)",
     )
     # Set by the post-exit hook, which waits until the export holding the lock shows it.
     run.add_argument("--ticket", default="", help=argparse.SUPPRESS)
@@ -499,6 +515,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     powereval.add_parsers(eval_cmds)
     quest_cli.add_parsers(quest_cmds, eval_cmds)
     advisor_cli.add_parsers(eval_cmds)
+    hover_eval_cli.add_parsers(eval_cmds)
+    wiki_evals_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -619,9 +637,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     voicecli.add_parsers(commands)
     personacli.add_parsers(commands)
     discord_cli.add_parsers(commands)
+    alerts_cli.add_parsers(commands)
+    tailnet.add_parsers(commands)
     watch_cli.add_parsers(commands)
     wiki_cli.add_parsers(commands)
     palette_cli.add_parsers(commands)
+    schematic_cli.add_parsers(commands)
+    theme_cli.add_parsers(commands)
+    footprints_cli.add_parsers(commands)
+    layout_cli.add_parsers(commands)
+    shell_cli.add_parsers(commands)
+    ops_cli.add_parsers(commands)
     structures = commands.add_parser(
         "structures", help="multiblock footprints from gtnh-extractor (WO-1.8)"
     )
@@ -698,12 +724,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         return voicecli.run(args)
     if args.command in discord_cli.COMMANDS:
         return discord_cli.run(args)
+    if args.command in ops_cli.COMMANDS:
+        return ops_cli.run(args)
+    if args.command in alerts_cli.COMMANDS:
+        return alerts_cli.run(args)
+    if args.command in tailnet.COMMANDS:
+        return tailnet.run(args)
     if args.command in personacli.COMMANDS:
         return personacli.run(args)
     if args.command in watch_cli.COMMANDS:
         return watch_cli.run(args)
     if args.command in palette_cli.COMMANDS:
         return palette_cli.run(args)
+    if args.command in schematic_cli.COMMANDS:
+        return schematic_cli.run(args)
+    if args.command in theme_cli.COMMANDS:
+        return theme_cli.run(args)
+    if args.command in footprints_cli.COMMANDS:
+        return footprints_cli.run(args)
+    if args.command in layout_cli.COMMANDS:
+        return layout_cli.run(args)
+    if args.command in shell_cli.COMMANDS:
+        return shell_cli.run(args)
     if args.command in wiki_cli.COMMANDS:
         return wiki_cli.run(args)
     if args.command == "doctor":
@@ -794,6 +836,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--limit must be at least 1")
         if args.eval_command == recipe_eval_cli.COMMAND:
             return recipe_eval_cli.run(args, sys.stdout)
+        if args.eval_command == hover_eval_cli.COMMAND:
+            return hover_eval_cli.run(args, sys.stdout)
+        if args.eval_command == wiki_evals_cli.COMMAND:
+            return wiki_evals_cli.run(args, sys.stdout)
         if args.eval_command == screen_eval_cli.COMMAND:
             return screen_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:
@@ -1019,6 +1065,7 @@ def _export(args: argparse.Namespace) -> int:
             notify=notify,
             ticket=args.ticket,
             config_path=args.config or config.default_path(),
+            load_only=args.load_only,
         )
     refs = args.runs
     if len(refs) not in (0, 2):
