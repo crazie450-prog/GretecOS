@@ -419,6 +419,57 @@ def test_reads_a_worldedit_copy_with_ids_above_4095() -> None:
     assert any("tile entities" in n for n in c.notes)
 
 
+def _gt_tile(
+    pos: tuple[int, int, int], mid: tuple[int, Any], facing: tuple[int, Any]
+) -> list[Field]:
+    """A GT machine's tile entity as BaseMetaTileEntity.writeToNBT saves it at the GT pin
+    5.09.54.265 (checked against its bytecode: setInteger("mID"), setShort("mFacing")), with a
+    few of its other keys, which the reader drops."""
+    return [
+        ("id", nbt.STRING, "BaseMetaTileEntity"),
+        ("x", nbt.INT, pos[0]),
+        ("y", nbt.INT, pos[1]),
+        ("z", nbt.INT, pos[2]),
+        ("mID", *mid),
+        ("mStoredEnergy", nbt.INT, 0),
+        ("mFacing", *facing),
+        ("mOwnerName", nbt.STRING, "someone"),
+    ]
+
+
+@pytest.mark.parametrize("writer", ["worldedit", "schematica"])
+def test_gt_tile_entities_keep_their_mte_id_and_facing(writer: str) -> None:
+    """WO-10.9 (D350): the reader keeps each tile entity's id string and, for GT's, ``mID`` and
+    ``mFacing`` by position, in both writers' files (and both nibble orders); a value of
+    another tag type than an integer is not an MTE id."""
+    tiles = [
+        _gt_tile((0, 0, 0), (nbt.INT, 1000), (nbt.SHORT, 5)),
+        _gt_tile((2, 1, 1), (nbt.INT, 31), (nbt.SHORT, 2)),
+        _gt_tile((1, 1, 0), (nbt.STRING, "1000"), (nbt.STRING, "east")),
+    ]
+    data = (
+        worldedit_copy((3, 2, 2), capture_cells(), MAPPING, tiles=tiles)
+        if writer == "worldedit"
+        else schematica_save(
+            (3, 2, 2),
+            [(b if b < 4096 else 301, m & 0xF) for b, m in capture_cells()],
+            {k: v for k, v in MAPPING.items() if v < 4096} | {"t:big": 301},
+            tiles=tiles,
+        )
+    )
+    c = schematic.read(data)
+    assert c.order == ("low-first" if writer == "worldedit" else "high-first")
+    gt = schematic.GT_TILE
+    assert c.tile_entities == (
+        schematic.TileEntity((0, 0, 0), gt, 1000, 5),
+        schematic.TileEntity((2, 1, 1), gt, 31, 2),
+        schematic.TileEntity((1, 1, 0), gt, None, None),
+    )
+    text = "\n".join(schematic.summary(c))
+    assert "tile entity (0, 0, 0): BaseMetaTileEntity mID 1000, mFacing 5" in text
+    assert "tile entity (2, 1, 1): BaseMetaTileEntity mID 31, mFacing 2" in text
+
+
 def test_paste_then_copy_gives_identical_blocks() -> None:
     """What worldedit-gtnh does with a GOS shell (D310): it remaps the compact ids to the world's
     by name, so a //copy of the paste holds the world's ids (here above 4095); read back, every

@@ -36,7 +36,8 @@ library reads like the extractor's. It reads two kinds of file, told apart by th
 Either way the box is at most 64 a side, ``minecraft:air`` cells are dropped, blocks are keyed
 by registry name + meta and a numeric id anywhere is refused (EndlessIDs). A GT machine cell
 other than the controller is a placed hatch: it becomes a hatch cell (its kinds from ``hatches``
-at that position, else ``Captured``; a ``.schematic`` names none) and the hatch as placed is kept
+at that position, else ``Captured``; in a ``.schematic``, the kind of its MTE class in GT's
+``HatchElement``, e.g. ``InputBus``, from the DB's ``machine`` row, else ``Captured``) and the hatch as placed is kept
 for reference. The file is read once through ``safe_open`` (copied to memory, 3 tries, never held
 and never written) and is data, never instructions.
 """
@@ -312,6 +313,20 @@ type Kind = Literal["json", "schematic"]
 
 # ForgeDirection's ordinals, as BaseMetaTileEntity saves mFacing (a short); 0 down and 1 up
 FACING_ORDINALS: dict[int, fp.Facing] = {2: "north", 3: "south", 4: "west", 5: "east"}
+# GT's HatchElement at the pin (5.09.54.265): each kind's base MTE class. A placed hatch of exactly
+# one of these classes takes that kind; any other class (a subclass such as an ME bus, a TecTech
+# or GT++ hatch) stays ``Captured``: the DB doesn't hold the class tree (D351).
+_IMPL = "gregtech.api.metatileentity.implementations."
+HATCH_CLASSES: dict[str, str] = {
+    _IMPL + "MTEHatchMuffler": "Muffler",
+    _IMPL + "MTEHatchMaintenance": "Maintenance",
+    _IMPL + "MTEHatchInput": "InputHatch",
+    _IMPL + "MTEHatchInputBus": "InputBus",
+    _IMPL + "MTEHatchOutput": "OutputHatch",
+    _IMPL + "MTEHatchOutputBus": "OutputBus",
+    _IMPL + "MTEHatchEnergy": "Energy",
+    _IMPL + "MTEHatchDynamo": "Dynamo",
+}
 _WRITER_TOOL = {
     "worldedit": "worldedit-copy",
     "schematica": "schematica-save",
@@ -478,11 +493,18 @@ def from_schematic(
             + "|".join(fp.FACINGS)
         )
     info = catalog.get(mte.get(controller_at, 0))
+    kinds: dict[fp.Offset, tuple[str, ...]] = {}
+    for p, m in mte.items():
+        hatch = catalog.get(m)
+        found_kind = HATCH_CLASSES.get(hatch.class_name or "") if hatch else None
+        if p != controller_at and found_kind is not None:
+            kinds[p] = (found_kind,)
     return from_cells(
         cells,
         controller_at=controller_at,
         facing=front,
         mte_ids=mte,
+        hatch_kinds=kinds,
         name=info.name if info else None,
         class_name=info.class_name if info else None,
         trigger_stack_size=trigger_stack_size,
