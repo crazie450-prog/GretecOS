@@ -1097,7 +1097,9 @@ def _fills(conn: sqlite3.Connection, run_id: int, container: str, fluid: str) ->
     first (the same items and fluid as comparing the keys row by row), so the query runs on the
     output and input indexes instead of scanning every recipe of the run (WO-3.9)."""
     items, _ = chains._item_ids(conn, container)
-    _, fluids = chains._item_ids(conn, fluid) if fluid.startswith("fluid:") else ([], [])
+    _, fluids = (
+        chains._item_ids(conn, fluid) if fluid.startswith("fluid:") else ([], [])
+    )
     if not items or not fluids:
         return False
     row = conn.execute(
