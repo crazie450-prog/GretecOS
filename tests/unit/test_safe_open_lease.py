@@ -296,6 +296,50 @@ def test_copy_to_raises_when_interrupted(
             so.copy_to(tmp_path / "x", io.BytesIO())
 
 
+def test_copy_to_drops_a_copy_the_game_broke_into_on_its_last_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The break lands during the last (end-of-file) read, so no later read notices it: only
+    ``copy_to``'s ``check_whole`` does. The world backup's ``copy_in`` then copies again and
+    keeps the second read, never the torn one."""
+    import io
+
+    from gregtec.ops.worldbackup import copy_in
+
+    probe = FakeHandle(b"r.0.0 old+new")
+    with _opens([probe]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        so.copy_to(tmp_path / "probe", io.BytesIO())
+    last = len(probe.reads)  # copy_to's raw reads, the last one at end of file
+
+    def breaks_on_the_last_read(h: FakeHandle) -> None:
+        def on_read(n: int) -> None:
+            if n == last:  # the game's replace starts as the last read runs
+                threading.Thread(target=h.game_wants_it).start()
+                assert h._broken.wait(5.0)
+
+        h.on_read = on_read
+
+    torn = FakeHandle(b"r.0.0 old+new")
+    breaks_on_the_last_read(torn)
+    with _opens([torn]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        out = io.BytesIO()
+        with pytest.raises(so.ReadInterrupted):
+            so.copy_to(tmp_path / "r.0.0.mca", out)
+    assert len(torn.reads) == last and torn.closed.wait(5.0)
+
+    again = FakeHandle(b"r.0.0 old+new")
+    breaks_on_the_last_read(again)
+    whole = FakeHandle(b"r.0.0 new")
+    dest = tmp_path / "copy.mca"
+    with _opens([again, whole]) as fake:
+        monkeypatch.setattr(so, "safe_open", fake)
+        copy_in(tmp_path / "r.0.0.mca", dest)
+    assert dest.read_bytes() == b"r.0.0 new"
+    assert again.closed.wait(5.0) and whole.close_calls == 1
+
+
 def test_read_bytes_with_a_limit_drops_a_read_the_game_interrupted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

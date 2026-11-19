@@ -110,9 +110,9 @@ and Hodgepodge save by writing a temp file and moving it onto the real one
 (`Files.move(..., ATOMIC_MOVE)`, which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`), and Windows
 refuses that move while any program has the real file open. Since WO-6.8 `safe_open` holds a
 read-handle oplock on every file it reads, taken in the same step as the open: the game's move
-breaks it, GOS closes the file at once and the move goes on (the game waits a few milliseconds at
-most), and GOS reads the file again. So the check below should find nothing; if it finds a line,
-the fix didn't hold on your PC.
+breaks it, GOS closes the file at once and the move goes on (the game waits a few milliseconds,
+up to 24 ms measured on CI (the test bounds it at 0.5 s)), and GOS reads the file again. So the
+check below should find nothing; if it finds a line, the fix didn't hold on your PC.
 
 The lines each mod writes when a save is refused (from their source at the versions GTNH 2.9.0
 pins; in `fml-client-latest.log`, and the ERROR ones also in `latest.log`):
