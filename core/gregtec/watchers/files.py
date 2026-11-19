@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,20 +83,7 @@ class Settle:
 
 def read_range(path: Path, offset: int, size: int) -> bytes:
     """``size`` bytes of ``path`` from ``offset``: one open, seek, read and close per try."""
-    error: OSError | None = None
-    for attempt in range(safe_open.RETRIES):
-        try:
-            with safe_open.safe_open(path) as f:
-                f.seek(offset)
-                return f.read(size)
-        except FileNotFoundError:
-            raise
-        except OSError as exc:
-            error = exc
-            if attempt < safe_open.RETRIES - 1:
-                time.sleep(safe_open.BACKOFF_S * 2**attempt)
-    assert error is not None
-    raise error
+    return safe_open.read_range(path, offset, size)
 
 
 class LogTail:
