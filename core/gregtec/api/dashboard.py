@@ -395,6 +395,7 @@ def snapshots(core: "Core") -> dict[bool, dict[str, Any]]:
                 "status": j.status,
                 "detail": j.describe(),
                 "started": j.started,
+                "elapsed_s": round(time.time() - j.started, 1),
                 "cancel_asked": j.cancel_asked,
             }
             for j in core.design_jobs.running()

@@ -3,7 +3,7 @@
 The planner calls :func:`stage` where a design moves on (the graph, each solver call, each
 route's metrics, the ranking) and :func:`check` between smaller steps (each item the graph
 builder expands, each component the effort walk makes). Both do nothing unless a design job
-(:mod:`gregtec.planner.jobs`) runs the code under :func:`reporting`: then a stage is reported to
+(:mod:`gregtec.planner.design_jobs`) runs the code under :func:`reporting`: then a stage is reported to
 the job, and either raises :class:`Cancelled` once the job is cancelled. Nothing is written
 before the last checkpoint of a design (saving comes after it), so a cancelled design leaves no
 plan, vault note or ledger line behind.

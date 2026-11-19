@@ -310,6 +310,7 @@ class _Reader:
         self.ores: dict[int, str] = {}
         self.recipes: dict[int, _Recipe] = {}
         self.ids: dict[str, tuple[list[int], list[int]]] = {}  # key -> item, fluid ids
+        self.resolved: set[str] = set()  # keys key_ids looked up in full
         self.makers: dict[
             str, list[tuple[int, int, int]]
         ] = {}  # key -> recipe, amount, chance
@@ -348,13 +349,21 @@ class _Reader:
             self.ids.setdefault(info.key, ([], []))[1].append(int(r[0]))
 
     def key_ids(self, key: str) -> tuple[list[int], list[int]]:
-        """The DB ids of a stable key (an NBT key's prefix matches its full hash)."""
-        if key in self.ids:
-            return self.ids[key]
-        items, fluids = chains._item_ids(self.conn, key)
-        self.load_items(items)
-        self.load_fluids(fluids)
-        return self.ids.setdefault(key, ([], []))
+        """The DB ids of a stable key (an NBT key's prefix matches its full hash). Resolved in
+        full once per reader, never from the ids earlier reads happened to load: the reader is
+        shared between designs (D352), so a key two items share must not depend on which of
+        them an earlier design read (review LOW-6)."""
+        if key not in self.resolved:
+            items, fluids = chains._item_ids(self.conn, key)
+            self.load_items(items)
+            self.load_fluids(fluids)
+            got = self.ids.get(key, ([], []))
+            self.ids[key] = (
+                sorted(got[0]),
+                sorted(got[1]),
+            )  # in id order, whoever read first
+            self.resolved.add(key)
+        return self.ids[key]
 
     def info(self, key: str) -> _Info | None:
         items, fluids = self.key_ids(key)

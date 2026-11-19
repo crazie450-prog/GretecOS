@@ -793,7 +793,8 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
         sum(f.all_run for f in out) < n + EXPLORE
         and len(cuts) < (n + EXPLORE) * MAX_TRIES
     ):
-        progress.stage("solve", len(out) + 1, n)
+        # Clamped: the loop explores up to EXPLORE routes past n (review LOW-2).
+        progress.stage("solve", min(len(out) + 1, n), n)
         found = _run(narrowed, procs, cuts=cuts, strict=False)
         if found is None:
             break

@@ -5,7 +5,7 @@
 // view follows it again when it opens while the job runs (the state's running jobs). Built from
 // the design system's busy panel, StatusGlyph glyph and Button; needs Clayton's board approval
 // (D92).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { DesignJob, JobStart } from "../api/types";
 import type { ChoicesCard } from "../cards/types.gen";
@@ -127,10 +127,18 @@ export function useDesignJob(
   return { job, start, cancel };
 }
 
+/** A running job's time, from the core's `elapsed_s` and when this device received it. */
+export function useElapsed(id: string, elapsedS: number): string {
+  const now = useNow(1000, true);
+  // A new reading (another job, or a new elapsed_s from a push or a poll) resets the base.
+  const at = useMemo(() => Date.now(), [id, elapsedS]);
+  return elapsed(elapsedS, at, Math.max(now, at));
+}
+
 /** The busy panel with the job's stage, its time and Cancel (the view's own busy state). */
 export function JobProgress(props: { job: DesignJob; onCancel: () => void; testId: string; prefix: string }) {
-  const now = useNow(1000, true);
   const j = props.job;
+  const time = useElapsed(j.id, j.elapsed_s);
   const saving = j.stage === "saving";
   const box = useRef<HTMLDivElement | null>(null);
   // On the phone the panel is below the form: bring it into view when the job starts.
@@ -144,7 +152,7 @@ export function JobProgress(props: { job: DesignJob; onCancel: () => void; testI
           {GLYPH.progress} {stageText(j)}
         </span>
         <span className="gos-src num" data-testid={`${props.prefix}-job-elapsed`} title="Time since the design started">
-          {elapsed(j.started, now)}
+          {time}
         </span>
         <Button
           onClick={props.onCancel}

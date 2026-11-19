@@ -70,6 +70,7 @@ export interface Job {
   detail: string | null;
   started: number | null;
   cancel_asked?: boolean; // design jobs (WO-3.9)
+  elapsed_s?: number; // design jobs: the core's own count, never the device's clock
 }
 
 /** A design job (WO-3.9, D353): its stage as the planner reports it, and once done its result

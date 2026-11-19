@@ -56,11 +56,11 @@ describe("how a job reads", () => {
     expect(stageText(job({ stage: "waiting" }))).toBe("Waiting for the other design to finish");
     expect(stageText(job({ stage: "something new" }))).toBe("something new");
   });
-  it("counts the time from the start", () => {
-    expect(elapsed(100, 100_000)).toBe("0:00");
-    expect(elapsed(100, 165_400)).toBe("1:05");
-    expect(elapsed(0, 3_725_000)).toBe("1:02:05");
-    expect(elapsed(200, 100_000)).toBe("0:00"); // a clock behind the core's never shows minus
+  it("counts the core's time, plus the time since it was received", () => {
+    expect(elapsed(0, 100_000, 100_000)).toBe("0:00");
+    expect(elapsed(60, 100_000, 105_400)).toBe("1:05");
+    expect(elapsed(3_725, 5, 5)).toBe("1:02:05");
+    expect(elapsed(0, 100_000, 99_000)).toBe("0:00"); // never minus
   });
   it("says why an ended job has no result", () => {
     expect(endedText(job({ status: "cancelled" }))).toBe("Cancelled: nothing was saved.");
@@ -124,7 +124,7 @@ afterEach(() => {
 
 describe("the right rail", () => {
   const running = core([
-    { id: "job-0123456789ab", kind: "designer", title: "Designer: steel ingot · HV", status: "running", detail: "solve 2 of 3", started: Date.now() / 1000 - 75 },
+    { id: "job-0123456789ab", kind: "designer", title: "Designer: steel ingot · HV", status: "running", detail: "solve 2 of 3", started: 1, elapsed_s: 75 }, // a device clock far off: still 1:15
   ]);
   it("shows a design job's stage, its time and a Cancel for a paired dashboard", async () => {
     store.set({ session: { role: "device", name: "monitor", device_id: "d1" } });

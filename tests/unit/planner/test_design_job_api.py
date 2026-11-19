@@ -164,6 +164,9 @@ def test_the_designer_job_api(
                 rail and rail[0]["kind"] == "designer" and rail[0]["detail"] == "graph"
             )
             assert (
+                rail[0]["elapsed_s"] >= 0
+            )  # the core's count: the rail's time (LOW-3)
+            assert (
                 c.post(f"/api/design-jobs/{jid}/cancel", headers=voice).status_code
                 == 403
             )

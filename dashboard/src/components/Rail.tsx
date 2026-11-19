@@ -4,19 +4,19 @@
 import { api } from "../api/client";
 import type { ApprovalCard } from "../cards/types.gen";
 import type { CoreState, Job } from "../api/types";
-import { elapsed } from "../state/jobs";
 import { GLYPH } from "../state/states";
 import { useApp } from "../state/store";
-import { ApprovalView, Button, StatusGlyph, useNow } from "./core";
+import { ApprovalView, Button, StatusGlyph } from "./core";
+import { useElapsed } from "./JobProgress";
 
 const DESIGN_KINDS = ["designer", "power"];
 
 function DesignJobRow({ j, canCancel }: { j: Job; canCancel: boolean }) {
-  const now = useNow(1000, true);
+  const time = useElapsed(j.id, j.elapsed_s ?? 0);
   return (
     <span className="job-design">
       <span className="gos-src num" data-testid={`job-elapsed-${j.id}`}>
-        {j.started !== null ? elapsed(j.started, now) : ""}
+        {time}
       </span>
       {canCancel && (
         <Button

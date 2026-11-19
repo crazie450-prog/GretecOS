@@ -9,6 +9,7 @@ import json
 import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -208,6 +209,34 @@ def test_pushes_are_throttled_but_start_and_end_always_go(
     job = reg.start("designer", "Designer: widget", many)
     reg.wait(job.id, 10)
     assert [p["status"] for p in pushed] == [dj.RUNNING, dj.DONE]
+
+
+def test_a_change_held_back_by_the_throttle_is_pushed_once_it_is_up(
+    jobs: tuple[dj.DesignJobs, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review LOW-1: a stage that begins just after a push reaches the right rail late, not
+    never (the rail follows only pushes)."""
+    reg, pushed = jobs
+    monkeypatch.setattr(dj, "PUSH_S", 0.2)
+    go = threading.Event()
+
+    def long_solve() -> dict[str, Any]:
+        progress.stage("graph")
+        progress.stage("solve", 1, 3)  # held back: the start was pushed just now
+        assert go.wait(10)
+        return {}
+
+    job = reg.start("designer", "Designer: widget", long_solve)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not any(
+        p["stage"] == "solve" for p in pushed
+    ):
+        time.sleep(0.02)
+    running = [p for p in pushed if p["status"] == dj.RUNNING]
+    go.set()
+    reg.wait(job.id, 10)
+    assert running[-1]["stage"] == "solve" and running[-1]["k"] == 1
+    assert pushed[-1]["status"] == dj.DONE
 
 
 def test_stages_outside_a_job_do_nothing() -> None:

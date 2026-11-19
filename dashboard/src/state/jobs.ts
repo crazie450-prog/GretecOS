@@ -23,9 +23,11 @@ export function stageText(job: Pick<DesignJob, "stage" | "k" | "n" | "sub">): st
   return `${base}${count}${sub}`;
 }
 
-/** Elapsed time as m:ss (h:mm:ss past an hour), from the job's start (epoch seconds). */
-export function elapsed(startedS: number, nowMs: number): string {
-  const s = Math.max(0, Math.floor(nowMs / 1000 - startedS));
+/** Elapsed time as m:ss (h:mm:ss past an hour): the core's `elapsed_s` as received at
+ * `receivedMs`, plus the time since on this device. Never the core's start time against this
+ * device's clock, so a phone whose clock is skewed still shows the right time (review LOW-3). */
+export function elapsed(elapsedS: number, receivedMs: number, nowMs: number): string {
+  const s = Math.max(0, Math.floor(elapsedS + (nowMs - receivedMs) / 1000));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const ss = String(s % 60).padStart(2, "0");

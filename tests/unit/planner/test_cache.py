@@ -243,6 +243,32 @@ def test_a_changed_quantity_in_my_base_reuses_the_solves(
         assert design(conn, req, edited) == on
 
 
+def test_a_shared_key_resolves_the_same_whatever_was_read_first(
+    conn: sqlite3.Connection,
+) -> None:
+    """Review LOW-6: two items whose NBT hashes share their first 8 characters have one key;
+    the shared reader gives both ids, in id order, however an earlier read loaded them."""
+    from gregtec.planner import graph, machines
+
+    ids = [
+        int(
+            conn.execute(
+                "INSERT INTO item(registry_name, meta, nbt_hash) VALUES ('t:twin', 0, ?)"
+                " RETURNING id",
+                (h,),
+            ).fetchone()[0]
+        )
+        for h in ("abcdef01aaaa", "abcdef01bbbb")
+    ]
+    run = machines.current_run(conn)
+    key = "t:twin@0#abcdef01"
+    for first in ([ids[1]], [ids[0]], []):  # one twin read first (a recipe), or neither
+        r = graph._Reader(conn, run)
+        r.load_items(first)
+        assert r.key_ids(key) == (sorted(ids), [])
+        assert r.key_ids(key) == (sorted(ids), [])
+
+
 # --- invalidation and bounds ---------------------------------------------------------------------
 
 

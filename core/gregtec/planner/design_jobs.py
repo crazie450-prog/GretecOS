@@ -10,7 +10,8 @@ its own thread, and the job's ``stage`` follows the planner's checkpoints (:mod:
 (``effort`` k of n inside it), ``ranking``, ``saving`` for a production design; ``candidates``,
 ``chains`` k of n, ``lines``, ``metrics`` k of n, ``ranking``, ``saving`` for a power design.
 Every change goes to ``on_change`` (the core pushes it over the WebSocket), at most every
-:data:`PUSH_S` seconds while it runs and always when it starts and ends.
+:data:`PUSH_S` seconds while it runs (a change held back is pushed once that time is up) and
+always when it starts and ends.
 
 - **One job per kind** (Designer, power) at a time: a second request gets :class:`Busy`
   naming the running job, never a queue. The two kinds share the planner's lock, so a power
@@ -44,7 +45,7 @@ from typing import Any, Protocol
 from gregtec.planner import progress
 from gregtec.vault.io import atomic_write
 
-log = logging.getLogger("gregtec.planner.jobs")
+log = logging.getLogger("gregtec.planner.design_jobs")
 
 KINDS = ("designer", "power")
 RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED = (
@@ -144,6 +145,7 @@ class DesignJobs:
         self._jobs: dict[str, Job] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._pushed: dict[str, float] = {}
+        self._trailing: dict[str, threading.Timer] = {}  # a held-back change's push
         self._recover()
 
     # --- records ----------------------------------------------------------------------------
@@ -269,13 +271,32 @@ class DesignJobs:
             return
         now = time.monotonic()
         with self._lock:
-            if not force and now - self._pushed.get(job.id, 0.0) < PUSH_S:
+            wait = PUSH_S - (now - self._pushed.get(job.id, 0.0))
+            if not force and wait > 0:
+                # Held back: push it once the throttle is up, so the last stage is never lost
+                # (the right rail follows only pushes).
+                if job.id not in self._trailing:
+                    timer = threading.Timer(wait, self._trail, (job,))
+                    timer.daemon = True
+                    self._trailing[job.id] = timer
+                    timer.start()
                 return
             self._pushed[job.id] = now
+            held = self._trailing.pop(job.id, None)
+        if held is not None:
+            held.cancel()
         try:
             self.on_change(job)
         except Exception:  # a push that fails must not stop the design
             log.exception("job push failed")
+
+    def _trail(self, job: Job) -> None:
+        with self._lock:
+            if self._trailing.pop(job.id, None) is None:
+                return  # a push went out in the meantime
+            ended = job.status in ENDED
+        if not ended:  # the end has its own push
+            self._push(job, force=True)
 
     def cancel(self, job_id: str) -> Job:
         """Ask a running job to stop at its next checkpoint. A job already saving, or ended,

@@ -355,8 +355,9 @@ describe("the Designer view", () => {
   });
 
   it("runs a design as a job: its stage and time at once, then a Cancel that saves nothing", async () => {
-    let polled = job({ stage: "solve", k: 2, n: 3, started: Date.now() / 1000 - 65 });
-    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job({ started: Date.now() / 1000 - 65 }) } });
+    // The core's elapsed_s, never its start against this device's clock (review LOW-3).
+    let polled = job({ stage: "solve", k: 2, n: 3, started: 1, elapsed_s: 65 });
+    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job({ started: 1, elapsed_s: 65 }) } });
     routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: polled } });
     routes[`POST /api/design-jobs/${JOB}/cancel`] = () => {
       polled = { ...polled, cancel_asked: true };
