@@ -181,10 +181,16 @@ def test_the_designer_job_api(
                 j for j in dashboard.state(core, True)["jobs"] if j["id"] == jid
             ]
             # The core answers while a design computes (a busy Python loop, as the planner is).
+            # The loop runs until the test lets it go, so every answer below came while it ran:
+            # a core the job starved could answer only after it (then "done", after the 60 s
+            # cap). No bound on the runner's speed (WO-11.4: a 1.0 s bound on the pair failed on
+            # loaded Windows runners at 1.02-1.13 s; on the harness DB a real design leaves the
+            # core's answers at a median of 8 ms).
+            free = threading.Event()
 
             def busy(h: Path, req: Request) -> Any:  # noqa: ANN401
-                end = time.monotonic() + 3.0
-                while time.monotonic() < end:
+                end = time.monotonic() + 60.0
+                while not free.is_set() and time.monotonic() < end:
                     sum(i * i for i in range(2000))
                     progress.check()
                 return real(h, req)
@@ -193,16 +199,15 @@ def test_the_designer_job_api(
             jid = c.post("/api/designer/jobs", json=body, headers=ADMIN_H).json()[
                 "job"
             ]["id"]
-            slowest = 0.0
-            for _ in range(5):
-                t = time.monotonic()
-                assert c.get("/api/health", headers=ADMIN_H).status_code == 200
-                assert (
-                    c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H).status_code == 200
-                )
-                slowest = max(slowest, time.monotonic() - t)
-                time.sleep(0.2)
-            assert slowest < 1.0, slowest
+            try:
+                for _ in range(5):
+                    assert c.get("/api/health", headers=ADMIN_H).status_code == 200
+                    got = c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H)
+                    assert got.status_code == 200
+                    assert got.json()["job"]["status"] == dj.RUNNING
+                    time.sleep(0.2)
+            finally:
+                free.set()
             assert _ended(c, jid)["status"] == dj.DONE
     finally:
         core.store.close()
