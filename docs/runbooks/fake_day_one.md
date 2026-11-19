@@ -122,6 +122,7 @@ controller and D9's shell.
 | H1 | Task Manager: end the core's python.exe | restarted within 5 s; voice quiet (a short outage); the next question answered | C11 crash | ops.md 5, core_service.md B |
 | H2 | End the watchers', the voice client's and the bot's processes in turn | each back within its back-off; no event twice in the feed | C11 crash | ops.md 5 |
 | H3 | `gos key delete anthropic` mid-question, ask "how do I make steel", then `gos key set anthropic` | "AI offline" on monitor 2; the lookup still answered; AI back within 30 s | C5 no-AI, L9 | fast_lane.md, setup_wizard.md |
+| H3b | The revoke itself (a stored key the API refuses, plan 9 L9): `gos key set anthropic` with a wrong value (e.g. your key with its last character changed), ask "how do I make steel", then `gos key set anthropic` with the real key | "AI offline" on monitor 2 with an authentication reason (not "no key"); the lookup still answered; AI back within 30 s of the real key. A 401 costs nothing | C5 no-AI, L9 | fast_lane.md, setup_wizard.md |
 | H4 | Walk away, `gos stop` (core only) for 2 minutes | the bot's "GOS offline" DM once; nothing while you are present | C9 offline DMs | alert_routing.md 6 |
 | H5 | Throughout: Task Manager's GPU and RAM, F3's FPS, vs the baseline | FPS drop ≤ 10 %, TPS unaffected, VRAM headroom ≥ 1 GB | L7 | voice_benchmarks.md B-C |
 
@@ -146,8 +147,9 @@ Then quit the game normally. `gos status`: watchers and voice stopped with Lab.
 
 ## J. Tick the checklist
 
-Go through §10 with the CI report (the PR's "fake day one" artifact or the integration test's
-output) beside you: a line is done when the CI report has it green and every PC-only item above
+Go through §10 with the CI report beside you: the `fake-day-one` artifact of the PR's CI run
+(the `mod` job uploads it green or red; or rerun the integration test locally with
+`GOS_REHEARSAL_REPORT=<file>` or `-rP`): a line is done when the CI report has it green and every PC-only item above
 passed. Lines with a red item block G11; write each in the G11 report with its step number.
 
 | §10 line | here (steps) |
@@ -156,14 +158,14 @@ passed. Lines with a red item block G11; write each in the G11 report with its s
 | Designer | D1-D6 |
 | Power | D7 |
 | Voice | C1, C2 (talk key), C7, C8, I7-I9, the benchmark |
-| Q&A | C1-C6, H3, I3 (wiki and hover: no eval yet) |
+| Q&A | C1-C6, H3, H3b, I3 (wiki and hover: no eval yet) |
 | Context | B2, E7-E9, I1, I10 |
 | Crops | F1-F3 |
 | OC bridge | E1-E6 |
 | Discord and phone | E6, G1-G5, H4 |
 | Build | D8-D9 |
 | Ops | A4-A8, B1, H1-H2, I2 |
-| Lab scenarios L1-L10 | L1 I6; L2 C2, E9, I5, I10; L3 E7-E8; L4 E1-E6; L5 C8, I8, H5; L6 D8-D9; L7 H5; L8 G1-G4; L9 H3; L10 I4 |
+| Lab scenarios L1-L10 | L1 I6; L2 C2, E9, I5, I10; L3 E7-E8; L4 E1-E6; L5 C8, I8, H5; L6 D8-D9; L7 H5; L8 G1-G4; L9 H3, H3b; L10 I4 |
 | Fake day one | this runbook |
 
 §10's OC line ends "In survival, M1 switches on at MV and M2 at HV/EV": that is how Play's base

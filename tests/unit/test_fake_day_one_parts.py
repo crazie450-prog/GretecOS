@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import keyring.backend
 import keyring.errors
 import pytest
 
@@ -90,6 +91,18 @@ def test_file_keyring(tmp_path: Path) -> None:
     k.delete_password("s", "u")
     with pytest.raises(keyring.errors.PasswordDeleteError):
         k.delete_password("s", "u")
+
+
+def test_file_keyring_is_never_a_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Importing the rehearsal's keyring must not make keyring pick it as the process default
+    (review L1): viable only where the rehearsal's children set its file."""
+    rf = mod("rfakes")
+    monkeypatch.delenv(rf.KEYRING_ENV, raising=False)
+    assert rf.FileKeyring not in set(
+        keyring.backend.KeyringBackend.get_viable_backends()
+    )
+    monkeypatch.setenv(rf.KEYRING_ENV, "unused.json")
+    assert rf.FileKeyring.priority == 1
 
 
 def test_mailbox_in_order_once(tmp_path: Path) -> None:

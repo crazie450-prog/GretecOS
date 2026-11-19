@@ -446,17 +446,23 @@ class Rehearsal:
     # --- the session ------------------------------------------------------------------------
 
     def run(self) -> dict[str, Result]:
-        self.setup()
+        import keyring
+
+        saved = (
+            keyring.get_keyring()
+        )  # setup() swaps in the file keyring; put back below
         try:
+            self.setup()
             self.start()
             self.session()
-        except Exception as exc:  # noqa: BLE001 - setup failed: every step is red
-            self.results.setdefault(
-                "processes_up", Result(RED, f"setup: {exc!r}"[:600])
-            )
+        except Exception as exc:  # noqa: BLE001 - a failure outside a step: the run is red
+            self.results["session"] = Result(RED, f"outside a step: {exc!r}"[:600])
+        else:
+            self.results["session"] = Result(GREEN, "every step ran")
         finally:
             self.step("shutdown", self.shutdown)
             self.step("play_untouched", self.play_untouched)
+            keyring.set_keyring(saved)
         return self.results
 
     def session(self) -> None:
@@ -622,9 +628,26 @@ class Rehearsal:
         views2 = [self.api("GET", f"/api/plans/{i}/designer") for i in again["ids"]]
 
         def order(vs: list[dict[str, Any]]) -> list[Any]:
-            return [json.dumps(v.get("rank"), sort_keys=True) for v in vs]
+            # rank.py's verdict per route: column, position, score and the recipes chosen
+            return [
+                (
+                    r["name"],
+                    r["column"],
+                    r["position"],
+                    r["score"],
+                    [n["recipe"] for n in r.get("nodes") or ()],
+                )
+                for v in vs
+                for r in v.get("routes", [])
+            ]
 
-        check(order(views) == order(views2), "the same request ranked differently")
+        ranked = order(views)
+        check(ranked, "the designer returned no routes")
+        check(
+            all(r[3] is not None and r[2] is not None for r in ranked),
+            f"routes without rank.py's score/position: {ranked}",
+        )
+        check(ranked == order(views2), "the same request ranked differently")
         for pid in out["ids"]:
             view = self.api("GET", f"/api/plans/{pid}/designer")
             for route in view.get("routes", []):
@@ -698,11 +721,16 @@ class Rehearsal:
 
     def voice_talk(self) -> str:
         t0 = time.time()
-        self.voice_box.send({"op": "talk", "text": f"how do I make {self.item_name()}"})
+        name = self.item_name()
+        self.voice_box.send({"op": "talk", "text": f"how do I make {name}"})
         said = self.said_after(t0)
         pushes = {
             r.get("push") for r in self.voice_box.results() if r.get("t", 0) >= t0
         }
+        check(
+            name.casefold() in said.casefold(),
+            f"the spoken answer is not the recipe answer for {name!r}: {said[:200]!r}",
+        )
         return f"said {said[:80]!r}; pushes {sorted(p for p in pushes if p)}"
 
     def voice_wake(self) -> str:
@@ -807,7 +835,8 @@ class Rehearsal:
 
     def my_base(self) -> str:
         """Only Play's watchers feed My base (D261): the Lab's listener events just replayed must
-        not be counted; a machine Clayton adds by hand is, and the designer reads it."""
+        not be counted; a machine Clayton adds by hand is. That the boundary then uses it is
+        a PC step (fake_day_one.md D6)."""
         before = self.api("GET", "/api/base")
         check(
             '"event"' not in json.dumps(before.get("machines", [])),
@@ -981,11 +1010,13 @@ class Rehearsal:
 
     def discord_commands(self) -> str:
         got = self.discord("ask", {"text": f"how do I make {self.item_name()}"})
-        check("r:" in got[-1]["text"] or got[-1]["text"], f"/ask: {got}")
+        answer = next((g["text"] for g in got if "r:" in g["text"]), "")
+        check(answer, f"/ask's recipe answer cites no r: id: {got}")
         status = self.discord("status", {})
+        check(status[-1]["text"].strip(), f"/status: {status}")
         none = self.discord("ask", {"text": "hello"}, user=STRANGER)
         check(none == [], f"answered a stranger: {none}")
-        return f"/ask -> {got[-1]['text'][:60]!r}; /status -> {status[-1]['text'][:40]!r}; stranger ignored"
+        return f"/ask -> {answer[:60]!r}; /status -> {status[-1]['text'][:40]!r}; stranger ignored"
 
     def phone(self) -> str:
         import http.client
@@ -1005,6 +1036,8 @@ class Rehearsal:
         dist = (REPO / "dashboard" / "dist" / "index.html").is_file()
         if dist:
             check(code == 200 and "viewport" in body, f"tailnet GET /: {code}")
+        else:  # no dashboard build here: the tailnet Host must still be let in
+            check(code not in (400, 403, 421), f"tailnet Host refused: {code}")
         code_bad, _ = get("evil.example.com")
         check(code_bad in (400, 403, 421), f"a foreign Host got {code_bad}")
         return (
@@ -1168,9 +1201,13 @@ class Rehearsal:
         return f"pid {before['pid']} -> {after['pid']}"
 
     def journal(self) -> str:
-        today = dt.date.today().isoformat()
-        logs = list((self.home / "vault").glob(f"log/{today}*.md"))
-        check(logs, "no journal note for today")
+        today = dt.date.today()  # a run that crossed midnight wrote yesterday's
+        logs = [
+            p
+            for d in (today, today - dt.timedelta(days=1))
+            for p in (self.home / "vault").glob(f"log/{d.isoformat()}*.md")
+        ]
+        check(logs, "no journal note for today or yesterday")
         return f"{logs[0].name}: {logs[0].stat().st_size} bytes"
 
     def costs(self) -> str:

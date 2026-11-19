@@ -96,9 +96,13 @@ CHECKLIST: tuple[Line, ...] = (
                 runbook="designer.md",
             ),
             here(
-                "My base fills from GregtecLink's listener (the boundary's input)",
+                "Lab's listener kept out of My base (D261); a hand-added machine is in My base",
                 "my_base",
                 runbook="machine_events.md",
+            ),
+            pc(
+                "Play's listener fills My base and the boundary uses it (fake_day_one.md D6)",
+                "machine_events.md",
             ),
         ),
     ),
@@ -166,9 +170,14 @@ CHECKLIST: tuple[Line, ...] = (
             ),
             pc("the evals pass (gos eval, paid)", "fast_lane.md"),
             here(
-                "no-AI mode: key revoked -> lookups answer, AI offline; key restored -> back (L9)",
+                "no-AI mode: key removed -> lookups answer, AI offline; key restored -> back (L9)",
                 "l9_key",
                 runbook="fast_lane.md",
+            ),
+            pc(
+                "a revoked key (stored, refused with 401): AI offline with an auth reason (L9, "
+                "fake_day_one.md H3b)",
+                "fast_lane.md",
             ),
         ),
     ),
@@ -275,6 +284,7 @@ CHECKLIST: tuple[Line, ...] = (
                 "the supervisor runs every process; voice and watchers start with Lab",
                 "processes_up",
                 "play_linked",
+                "session",  # nothing failed outside a step (setup, OC feed, suites)
                 runbook="core_service.md",
             ),
             pc("login start", "core_service.md"),

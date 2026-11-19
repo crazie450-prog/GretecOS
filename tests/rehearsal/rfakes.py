@@ -19,6 +19,7 @@ from typing import Any
 
 import keyring.backend
 import keyring.errors
+from keyring.compat import properties
 
 KEYRING_ENV = "GOS_REHEARSAL_KEYRING"
 CONTROL_ENV = "GOS_REHEARSAL_CONTROL"
@@ -54,7 +55,13 @@ def read_json(path: Path, default: Any = None) -> Any:  # noqa: ANN401 - JSON
 class FileKeyring(keyring.backend.KeyringBackend):
     """A keyring in the JSON file :data:`KEYRING_ENV` names (test only)."""
 
-    priority = 1  # type: ignore[assignment]
+    @properties.classproperty
+    def priority(cls) -> float:
+        # Viable only where KEYRING_ENV is set (the rehearsal's children): keyring's own choice
+        # of a default backend, in a test process that imported this module, never picks it.
+        if not os.environ.get(KEYRING_ENV):
+            raise RuntimeError(f"{KEYRING_ENV} is not set")
+        return 1
 
     def __init__(self, path: Path | None = None) -> None:
         super().__init__()

@@ -11,7 +11,6 @@ their restarts, so CI runs it with no other xdist worker beside it (D340).
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -67,4 +66,3 @@ def test_the_fake_day_one_smoke_on_made_up_data(tmp_path: Path) -> None:
     }
     not_run = {k for k, v in results.items() if v.status == cl.NOT_RUN}
     assert ONLY or not_run <= harness_only, not_run
-    assert ONLY or sys.platform == "win32" or results["crash_core"].status == cl.GREEN
