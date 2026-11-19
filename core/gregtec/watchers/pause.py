@@ -24,6 +24,10 @@ the threaded IO queue), or when the world closes (``Stopping server``: then unkn
 first pause line it says ``None`` (unknown), as the dashboard's ``game.paused`` did before WO-6.1.
 A pause line while it already thinks the game is paused (an unpause it missed) restarts
 ``since``. The clock is injected, so tests run without waiting.
+
+Lines older than the watchers' restart (a log that rotated while they were down, read from its
+start: ``files.LogTail.replay``, D355) are never given to the tracker (``runner.LogWatch``): an
+old pause is not replayed, and the state stays unknown until a line written after the restart.
 """
 
 from __future__ import annotations

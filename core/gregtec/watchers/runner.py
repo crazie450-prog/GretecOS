@@ -118,19 +118,26 @@ class LogWatch:
                         p.time, found, self.clock(), tail.path.name
                     ):
                         continue
-                    events.extend(self._event(found, p.time))
+                    events.extend(self._event(found, p.time, tail.replay))
         return events
 
-    def _event(self, found: logparse.Found, stamp: str) -> list[Event]:
+    def _event(
+        self, found: logparse.Found, stamp: str, replay: bool = False
+    ) -> list[Event]:
+        """``replay``: the line is older than the watchers' restart (``LogTail.replay``, D355).
+        It still gives its events, but never moves the paused state: a pause that old says
+        nothing about now."""
         now = self.clock()
         if found.kind == "pause":
-            return _paused(self.tracker.pause_line(stamp))
+            return [] if replay else _paused(self.tracker.pause_line(stamp))
         if found.kind == "server_tick":
-            return _paused(self.tracker.server_line(stamp))
+            return [] if replay else _paused(self.tracker.server_line(stamp))
         if (
             found.kind == "quit"
         ):  # the session's end (WO-6.3, D264), and the paused state's
             closed = Event("world_closed", now, self.source, {"via": "log"})
+            if replay:
+                return [closed]
             return [closed, *_paused(self.tracker.world_closed())]
         if found.kind == "login":
             data = dict(found.data)
@@ -241,12 +248,21 @@ class Watchers:
             out.append(e)
         return out
 
+    def _tails(self) -> list[files.LogTail]:
+        return [
+            *(tail for tail, _ in self.logs.tails),
+            *self.worldlog.tails,
+            self.machines.tail,
+        ]
+
+    def tails_moved(self) -> bool:
+        """A tail went to a new file the saved offsets don't have (a rotation, D355)."""
+        return any(tail.moved for tail in self._tails())
+
     def save_tails(self) -> None:
         tails: dict[str, Any] = {}
-        for tail, _ in self.logs.tails:
-            if (state := tail.state()) is not None:
-                tails[str(tail.path)] = state
-        for tail in [*self.worldlog.tails, self.machines.tail]:
+        for tail in self._tails():
+            tail.moved = False  # also when the save fails: the 30 s save tries again
             if (state := tail.state()) is not None:
                 tails[str(tail.path)] = state
         try:
@@ -433,7 +449,9 @@ def run_loop(
             )
             emit(watchers.poll_files())
             sender.problems = watchers.problems()
-        if now >= next_save:
+        # also right after a rotation: an offset saved for the old file would have a restart
+        # read the new one from its start a second time (D355)
+        if now >= next_save or watchers.tails_moved():
             next_save = now + 30.0
             watchers.save_tails()
         stop.wait(TICK_S)

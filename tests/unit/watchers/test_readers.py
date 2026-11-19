@@ -83,9 +83,56 @@ def test_tail_resumes_from_its_saved_offset(tmp_path: Path) -> None:
     with open(path, "a", encoding="utf-8") as f:
         f.write("\nd\n")
     again = files.LogTail(path, saved)  # a watcher restarted mid-session
-    assert again.poll() == ["c", "d"]
-    other = files.LogTail(path, {"offset": 1, "ident": [1, 2]})  # another file's offset
-    assert other.poll() == []
+    assert again.poll() == ["c", "d"] and not again.replay
+    # D355 (it was [] before: the tail started at the end, D337 finding F1): an offset saved
+    # for another file means the log rotated while the watchers were down, and the file there
+    # now is read from its start
+    other = files.LogTail(path, {"offset": 1, "ident": [1, 2]})
+    assert other.poll() == ["a", "b", "c", "d"] and other.replay
+
+
+def test_tail_reads_a_file_rotated_while_it_was_down_from_its_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "latest.log"
+    path.write_text("old 1\n", encoding="utf-8")
+    tail = files.LogTail(path)
+    tail.poll()
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("old 2\n")
+    assert tail.poll() == ["old 2"]
+    saved = tail.state()
+    # the watchers are down: log4j rolls the log and the game writes the new one
+    path.rename(tmp_path / "2026-11-11-1.log")
+    path.write_text("new 1\nnew 2\nnew 3\n", encoding="utf-8")
+    monkeypatch.setattr(files, "MAX_READ", 12)  # the catch-up takes two polls
+    again = files.LogTail(path, saved)
+    assert again.poll() == ["new 1", "new 2"] and again.replay and again.moved
+    # stopped again while catching up: the rest is still old to the next tail
+    mid = files.LogTail(path, again.state())
+    assert mid.poll() == ["new 3"] and mid.replay and not mid.moved
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("new 4\n")  # written after the restart
+    # a poll stops at what was there at the restart: its lines are all old or all new
+    assert again.poll() == ["new 3"] and again.replay
+    assert again.poll() == ["new 4"] and not again.replay
+    assert again.poll() == []
+    # with that offset saved, the next restart goes on from it: nothing from the start again
+    third = files.LogTail(path, again.state())
+    assert third.poll() == [] and not third.moved and not third.replay
+
+
+def test_tail_reads_a_file_cut_while_it_was_down_from_its_start(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "latest.log"
+    path.write_text("a long first line\n", encoding="utf-8")
+    tail = files.LogTail(path, from_start=True)
+    assert tail.poll() == ["a long first line"]
+    saved = tail.state()
+    path.write_text("x\n", encoding="utf-8")  # the same file, shorter than the offset
+    again = files.LogTail(path, saved)
+    assert again.poll() == ["x"] and again.replay
 
 
 def test_tail_bad_bytes_and_long_lines(tmp_path: Path) -> None:

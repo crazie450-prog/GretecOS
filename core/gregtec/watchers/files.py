@@ -9,10 +9,14 @@ can), and a file is read only once its size and mtime have held still for a mome
 
 **Log tails** (:class:`LogTail`) poll: stat, open, seek to the saved offset, read what is new,
 close. A rotated log (log4j renames ``latest.log`` at every start and at midnight) shows as a new
-file identity or a smaller size and is read from its start. The first look at a log starts at its
-end, unless the tail's saved offset (``GOS_HOME/data/watchers/tails.json``) is for that same file,
-so a watcher restarted mid-session goes on where it stopped and the last session's lines never
-come back as new.
+file identity or a smaller size and is read from its start. A tail with no saved offset
+(``GOS_HOME/data/watchers/tails.json``) starts at the log's end, so the last session's lines never
+come back as new. A restarted tail goes on from its saved offset when that is for the same file;
+when the log rotated (or was cut) while the watchers were down, the file there now was never
+read, so it is read from its start (D355). Those lines are older than the restart:
+``LogTail.replay`` says so, and the pause tracker is not given them. A tail that goes to a new
+file (found at a restart, or a rotation while running) sets ``moved``, and the runner saves the
+offsets at once, so a second restart never reads that file from its start again.
 """
 
 from __future__ import annotations
@@ -115,6 +119,10 @@ class LogTail:
         self.ident: tuple[int, int] | None = None
         self.pending = b""
         self.from_start = from_start
+        # the last poll's lines were in a rotated file before this tail first looked at it
+        self.replay = False
+        self._replay_to = 0
+        self.moved = False  # went to a new file the saved offsets don't have yet
         if (
             saved
             and isinstance(saved.get("offset"), int)
@@ -124,6 +132,8 @@ class LogTail:
                 saved["offset"],
                 (int(saved["ident"][0]), int(saved["ident"][1])),
             )
+            if isinstance(saved.get("replay_to"), int):
+                self._replay_to = saved["replay_to"]  # stopped while catching up
         else:
             self._saved = None
 
@@ -131,12 +141,18 @@ class LogTail:
         """What to save so a restart goes on from here (the offset of the last whole line)."""
         if self.ident is None:
             return None
-        return {"offset": self.offset - len(self.pending), "ident": list(self.ident)}
+        offset = self.offset - len(self.pending)
+        state: dict[str, Any] = {"offset": offset, "ident": list(self.ident)}
+        if offset < self._replay_to:
+            # still catching up: the rest stays old across another restart
+            state["replay_to"] = self._replay_to
+        return state
 
     def poll(self) -> list[str]:
         st = stamp(self.path)
         if st is None:
             return []  # not there yet, or between log4j's rename and its new file
+        self.replay = False
         if self.ident is None:
             self.ident = st.ident
             if (
@@ -145,18 +161,25 @@ class LogTail:
                 and self._saved[0] <= st.size
             ):
                 self.offset = self._saved[0]
+            elif self._saved is not None:
+                # rotated or truncated while the watchers were down: never read, so from its
+                # start; what is in it now is older than the restart
+                self._replay_to, self.moved = st.size, True
             elif not self.from_start:
                 self.offset = st.size
                 return []
         elif st.ident != self.ident or st.size < self.offset:
             # rotated (renamed away and a new file made) or truncated: the new file from its start
             self.ident, self.offset, self.pending = st.ident, 0, b""
-        if st.size <= self.offset:
+            self._replay_to, self.moved = 0, True
+        end = st.size
+        if self.offset < self._replay_to:
+            # one poll is all replay or all new: stop at what was there at the restart
+            end, self.replay = min(end, self._replay_to), True
+        if end <= self.offset:
             return []
         try:
-            data = read_range(
-                self.path, self.offset, min(st.size - self.offset, MAX_READ)
-            )
+            data = read_range(self.path, self.offset, min(end - self.offset, MAX_READ))
         except FileNotFoundError:
             return []
         self.offset += len(data)
