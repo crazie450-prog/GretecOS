@@ -69,7 +69,7 @@ from gregtec.agents import prefetch
 from gregtec.agents.tools import items as item_tools
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Call, Env
-from gregtec.planner import chains, machines
+from gregtec.planner import cache, chains, machines, progress
 from gregtec.planner.gtmath.parallel import Supply
 from gregtec.planner.gtmath.processing import EnergyHatch
 from gregtec.planner.request import BaseInputs, Request, RequestError, is_stable_key
@@ -700,9 +700,10 @@ class _Builder:
         base: BaseInputs,
         templates: chains.Templates,
         run_id: int,
+        reader: _Reader | None = None,  # the run's shared reader (D352)
     ) -> None:
         self.req = request
-        self.reader = _Reader(conn, run_id)
+        self.reader = _Reader(conn, run_id) if reader is None else reader
         self.templates = templates
         self.loops: dict[str, frozenset[str]] = {}  # chain -> items on its loops
         self.player = player(request, base)
@@ -1049,16 +1050,38 @@ def build(
     run_id: int | None = None,
     max_depth: int = MAX_DEPTH,
 ) -> Graph:
-    """The recipe graph for ``request`` (see the module docstring)."""
+    """The recipe graph for ``request`` (see the module docstring). The run's batch reader is
+    shared with the other builds on this DB run (:mod:`.cache`, D352)."""
     run = machines.current_run(conn) if run_id is None else run_id
+    with cache.reader(conn, run, _Reader, _reader_size, _bind) as reader:
+        return _build(conn, request, base, templates, run, max_depth, reader)
+
+
+def _reader_size(reader: _Reader) -> int:
+    return len(reader.recipes)
+
+
+def _bind(reader: _Reader, conn: sqlite3.Connection | None) -> None:
+    reader.conn = conn  # type: ignore[assignment]  # None between builds
+
+
+def _build(
+    conn: sqlite3.Connection,
+    request: Request,
+    base: BaseInputs,
+    templates: chains.Templates | None,
+    run: int,
+    max_depth: int,
+    reader: _Reader,
+) -> Graph:
     b = _Builder(
         conn,
         request,
         base,
         chains.load() if templates is None else templates,
         run,
+        reader,
     )
-    reader = b.reader
     if reader.info(request.target) is None:
         raise GraphError(f"{request.target} is not in export run {run}")
     nodes: dict[str, ItemNode] = {}
@@ -1096,6 +1119,7 @@ def build(
             for key in pending:
                 if key in nodes:
                     continue
+                progress.check()  # a design job's cancel (D353)
                 kind = _kind(key)
                 info = reader.info(key) if kind in ("item", "fluid") else None
                 name = info.name if info else key

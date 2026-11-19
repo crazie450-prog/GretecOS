@@ -38,7 +38,16 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.config import GT_PIN
-from gregtec.planner import chains, effort, graph, metrics, rank, sizing, solve
+from gregtec.planner import (
+    chains,
+    effort,
+    graph,
+    metrics,
+    progress,
+    rank,
+    sizing,
+    solve,
+)
 from gregtec.planner.graph import EU_KEY, Graph
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.machines import MachineOption
@@ -138,6 +147,7 @@ def design(
     """The plans for ``request`` (see the module docstring), measured and ranked (WO-3.5:
     :mod:`.metrics`, :mod:`.rank` with ``prefs``' weights). ``exact``: whole machine counts
     from the integer MILP instead of ceil (step 6)."""
+    progress.stage("graph")  # a design job's stages (D353)
     g = graph.build(conn, request, base, templates=templates, run_id=run_id)
     run_key = _run_key(conn, g.run_id)
     player = graph.player(request, base)
@@ -178,12 +188,14 @@ def design(
         run_id=g.run_id,
     )
     table = metrics.load_scarcity()
-    for p in built:
+    for i, p in enumerate(built, 1):
+        progress.stage("metrics", i, len(built))
         p["metrics"] = metrics.route(
             conn, g, p, measure.on_map, table, measure.route(p)
         )
         p["layout"] = footprint.layout(conn, p)  # WO-3.6, D200
         p["metrics"]["footprint"] = footprint.summary(p["layout"])
+    progress.stage("ranking")
     ranked = rank.order(built, prefs)
     for p in ranked:
         r = p["rank"]

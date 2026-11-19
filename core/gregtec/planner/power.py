@@ -80,6 +80,7 @@ from gregtec.planner import (
     machines,
     metrics,
     plan,
+    progress,
     rank,
     sizing,
     solve,
@@ -1561,6 +1562,7 @@ def design(
     farms_path: Path = farms.FARMS,
 ) -> PowerDesign:
     """The ranked power-line options for ``req`` (see the module docstring)."""
+    progress.stage("candidates")  # a design job's stages (D353)
     run = graph.machines.current_run(conn) if run_id is None else run_id
     run_key = plan._run_key(conn, run)
     tier = req.tier_cap if req.tier_cap is not None else base.tier_cap()
@@ -1601,7 +1603,8 @@ def design(
     chains_by_fuel: dict[str, tuple[list[Chain], list[str]]] = {}
     side_chains: dict[str, Chain | None] = {}
     options: list[Option] = []
-    for gen in pool:
+    for k, gen in enumerate(pool, 1):
+        progress.stage("chains", k, len(pool))
         if gen.fuel not in chains_by_fuel:
             chains_by_fuel[gen.fuel] = fuel_chains(
                 conn, gen.fuel, req, base, tier, run, templates, levels
@@ -1669,6 +1672,7 @@ def design(
     )
     table = metrics.load_scarcity()
     sized: list[tuple[int, Option, dict[str, Any], float | None, str]] = []
+    progress.stage("lines")
     for n, opt in enumerate(options, 1):
         p = build_plan(conn, run_key, req, opt, farm_map, n)
         net_unit = float(p["power"]["net_eut"])
@@ -1699,7 +1703,8 @@ def design(
             else (n, opt, p, u, why)
             for n, opt, p, u, why in sized
         ]
-    for n, opt, p, units, why in sized:
+    for k, (n, opt, p, units, why) in enumerate(sized, 1):
+        progress.stage("metrics", k, len(sized))
         if units is None:
             rejected.append((opt.gen.id, why))
             continue
@@ -1758,6 +1763,7 @@ def design(
             f"{len({p['id'] for p in built}) - len(unique)} duplicate line(s) left out: the "
             "same generator, fuel and recipes at the same rates as a line kept"
         )
+    progress.stage("ranking")
     ranked = rank.order_power(unique, req.mode, prefs)
     top = ranked[: req.options]
     ids = [p["id"] for p in top]

@@ -68,6 +68,8 @@ import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import coo_array
 
+from gregtec.planner import progress
+
 EU_KEY = "eu"
 BIG_M = (1e4, 1e5)
 FLOOR = 1e-3  # x the smallest running rate (stage 4)
@@ -535,6 +537,7 @@ def _run(
     cuts: Sequence[Mapping[str, str]] = (),
     strict: bool = True,
 ) -> tuple[_Model, np.ndarray, Objectives] | None:
+    progress.check()  # between solver calls: a design job's cancel (D353)
     for big_m in BIG_M:
         m = _build(net, procs, big_m, floors or {}, cuts)
         out = _lexicographic(m, strict)
@@ -789,6 +792,7 @@ def routes(net: Network, n: int = 3) -> list[Flow]:
         sum(f.all_run for f in out) < n + EXPLORE
         and len(cuts) < (n + EXPLORE) * MAX_TRIES
     ):
+        progress.stage("solve", len(out) + 1, n)
         found = _run(narrowed, procs, cuts=cuts, strict=False)
         if found is None:
             break
