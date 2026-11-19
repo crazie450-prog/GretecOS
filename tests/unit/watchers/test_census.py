@@ -33,6 +33,13 @@ class Timer:
         return self.now
 
 
+# A poll's read budget (0.5 s of wall clock) is the product's; a test that checks what one poll
+# reads must not depend on how fast the runner parses (WO-11.4: on a loaded Windows runner the
+# 2,000-machine chunk outlasted the budget and the 3 machines after it waited for the next poll,
+# '2000 == 2003'). The budget itself is tested with its own timer below.
+STILL = Timer()
+
+
 def world_with(fg: ModuleType, rg: ModuleType, root: Path, ts: int = 100) -> Path:
     world = root / "world"
     rg.region_file(
@@ -140,7 +147,7 @@ def test_baseline_reads_every_region_then_lists_them(
     fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
 ) -> None:
     world = world_with(fg, rg, tmp_path)
-    watch = census.CensusWatch(world, clock, settle_s=1.0)
+    watch = census.CensusWatch(world, clock, settle_s=1.0, timer=STILL)
     assert watch.poll() == []  # not settled yet
     clock.advance(1.5)
     events = watch.poll()
@@ -176,7 +183,7 @@ def test_only_changed_chunks_are_read_again(
         reads.append((path.name, offset, size))
         return files.read_range(path, offset, size)
 
-    watch = census.CensusWatch(world, clock, settle_s=0, read=read)
+    watch = census.CensusWatch(world, clock, settle_s=0, read=read, timer=STILL)
     watch.poll()
     # the save: chunk (3,1) loses a machine, (0,0) is rewritten unchanged, (5,5) is gone
     region = world / "region" / "r.0.0.mca"
@@ -224,7 +231,7 @@ def test_a_torn_chunk_is_read_again_then_reported(
     rg.region_file(
         world / "region" / "r.0.0.mca", {(0, 0): (good[:5] + bytes(len(good) - 5), 100)}
     )
-    watch = census.CensusWatch(world, clock, settle_s=0)
+    watch = census.CensusWatch(world, clock, settle_s=0, timer=STILL)
     for _ in range(census.TRIES - 1):
         assert machines(watch.poll()) == {}
         assert watch.problem is None
@@ -279,7 +286,7 @@ def test_a_chunk_too_big_for_one_event_is_split_and_reaches_my_base(
     from gregtec.watchers.feed import CENSUS_DATA_MAX, GameFeed
 
     world = dense_world(fg, rg, tmp_path, {(-1280, -1280): 2000, (-1279, -1280): 3})
-    events = census.CensusWatch(world, clock, settle_s=0).poll()
+    events = census.CensusWatch(world, clock, settle_s=0, timer=STILL).poll()
     chunks = [e for e in events if e.data["scope"] == "chunks"]
     sizes = [len(json.dumps(e.data)) for e in chunks]
     assert max(sizes) <= census.EVENT_BYTES < CENSUS_DATA_MAX
@@ -307,7 +314,7 @@ def test_events_are_packed_under_the_byte_budget(
     fg: ModuleType, rg: ModuleType, tmp_path: Path, clock: FakeClock
 ) -> None:
     world = dense_world(fg, rg, tmp_path, {(-1280 + i, -1280): 300 for i in range(8)})
-    events = census.CensusWatch(world, clock, settle_s=0).poll()
+    events = census.CensusWatch(world, clock, settle_s=0, timer=STILL).poll()
     chunks = [e.data for e in events if e.data["scope"] == "chunks"]
     assert all(len(json.dumps(d)) <= census.EVENT_BYTES for d in chunks)
     assert not any(d.get("append") for d in chunks)  # no chunk is split
@@ -320,7 +327,7 @@ def test_a_deleted_region_drops_its_chunks(
 ) -> None:
     """Review L4: a region deleted after the baseline sends its known chunks with no machines."""
     world = world_with(fg, rg, tmp_path)
-    watch = census.CensusWatch(world, clock, settle_s=0)
+    watch = census.CensusWatch(world, clock, settle_s=0, timer=STILL)
     watch.poll()
     (world / "DIM-1" / "region" / "r.-1.-1.mca").unlink()
     events = watch.poll()
