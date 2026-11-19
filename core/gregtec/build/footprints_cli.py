@@ -256,6 +256,13 @@ def _capture(db: Path, args: argparse.Namespace, out: TextIO) -> int:
         f"{len(f.hatch_cells)} hatch cells (captured facing {cap.facing}, {cap.tool})",
         file=out,
     )
+    if cap.trigger_stack_size == 1 and not cap.channels:
+        print(
+            "note: variant t1, no channels: if the projection was built at another tier, "
+            "say so (--trigger/--channel for a .schematic, trigger_stack_size/channels in a "
+            "gos-capture file)",
+            file=out,
+        )
     if args.dry_run:
         return 0
     if not db.is_file():

@@ -313,9 +313,11 @@ type Kind = Literal["json", "schematic"]
 
 # ForgeDirection's ordinals, as BaseMetaTileEntity saves mFacing (a short); 0 down and 1 up
 FACING_ORDINALS: dict[int, fp.Facing] = {2: "north", 3: "south", 4: "west", 5: "east"}
-# GT's HatchElement at the pin (5.09.54.265): each kind's base MTE class. A placed hatch of exactly
-# one of these classes takes that kind; any other class (a subclass such as an ME bus, a TecTech
-# or GT++ hatch) stays ``Captured``: the DB doesn't hold the class tree (D351).
+# GT's HatchElement at the pin (5.09.54.265) has 15 elements; these are the 8 with a single base
+# MTE class in ``implementations``, each with its kind. A placed hatch of exactly one of these
+# classes takes that kind; any other class (a subclass such as an ME bus, a TecTech or GT++ hatch,
+# or an element such as ExoticEnergy or LaserSource) stays ``Captured``: the DB doesn't hold the
+# class tree (D350).
 _IMPL = "gregtech.api.metatileentity.implementations."
 HATCH_CLASSES: dict[str, str] = {
     _IMPL + "MTEHatchMuffler": "Muffler",
@@ -385,6 +387,13 @@ def gt_tiles(sc: schematic.Capture) -> dict[fp.Offset, schematic.TileEntity]:
     seen: set[fp.Offset] = set()
     out: dict[fp.Offset, schematic.TileEntity] = {}
     for t in sc.tile_entities:
+        if t.pos is None:
+            if t.id in (schematic.GT_TILE, schematic.GT_PIPE_TILE):
+                raise CaptureError(
+                    f"a {t.id} tile entity (mID {t.mte_id}) has no integer x, y and z: "
+                    "the file doesn't say which cell it belongs to"
+                )
+            continue  # another block's tile entity: its cell is a block like any other
         x, y, z = t.pos
         if not (0 <= x < s.width and 0 <= y < s.height and 0 <= z < s.length):
             raise CaptureError(
@@ -438,8 +447,10 @@ def from_schematic(
     whose ``mID`` ``catalog`` (the DB's ``machine`` rows) lists as a multiblock controller, or
     the cell ``controller_at`` names (box coordinates, as ``gos schematic read`` lists the tile
     entities). Its front is the controller's saved ``mFacing``, or ``facing`` when the NBT has
-    no horizontal one (a ``facing`` that disagrees with the saved one is refused). The cells then
-    go through :func:`from_cells`, which refuses what the JSON path refuses (D351)."""
+    no horizontal one (a ``facing`` that disagrees with the saved one is refused). The
+    controller's cell must hold a GT machine the catalog doesn't call a non-multiblock, and must
+    not be rotated or flipped (StructureLib's ``eRotation``/``eFlip``). The cells then go through
+    :func:`from_cells`, which refuses what the JSON path refuses (D351)."""
     s = sc.schematic
     tiles = gt_tiles(sc)
     cells: dict[fp.Offset, tuple[str, int]] = {}
@@ -474,7 +485,26 @@ def from_schematic(
         where = "air" if _in_box(s, controller_at) else f"outside the {s.size} box"
         raise CaptureError(f"the controller's cell {list(controller_at)} is {where}")
     tile = tiles.get(controller_at)
-    raw = None if tile is None else tile.facing
+    if tile is None:
+        raise CaptureError(
+            f"the controller's cell {list(controller_at)} is {s.at(*controller_at).key}, not "
+            f"a GT machine ({GT_MACHINES} with a {schematic.GT_TILE} and its mID): check "
+            "--controller against the tile entities `gos schematic read` lists"
+        )
+    picked = catalog.get(int(tile.mte_id or 0))
+    if picked is not None and not picked.multiblock:
+        raise CaptureError(
+            f"the controller's cell {list(controller_at)} holds mID {tile.mte_id} "
+            f"{picked.name or '?'}, which the DB's machine table says is not a multiblock "
+            "controller: check --controller"
+        )
+    if tile.rotation or tile.flip:
+        raise CaptureError(
+            f"the controller at {list(controller_at)} is rotated or flipped (eRotation "
+            f"{tile.rotation}, eFlip {tile.flip}): rotate it back to normal with the wrench, "
+            "build the projection again and capture again"
+        )
+    raw = tile.facing
     saved = None if raw is None else FACING_ORDINALS.get(raw)
     if saved is not None and facing is not None and saved != facing:
         raise CaptureError(

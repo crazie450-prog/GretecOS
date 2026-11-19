@@ -507,12 +507,17 @@ class TileEntity:
     ``BaseMetaTileEntity``) and, for a GT machine or pipe, the MetaTileEntity id ``mID`` (GT
     5.09.54.265's ``BaseMetaTileEntity.writeToNBT`` writes it as an int, ``readFromNBT`` reads any
     integer tag) and the front facing ``mFacing`` (a short: ForgeDirection's ordinal, 0 down, 1 up,
-    2 north, 3 south, 4 west, 5 east). Anything else in the tag is dropped."""
+    2 north, 3 south, 4 west, 5 east). An enhanced multi's controller also saves StructureLib's
+    ``eRotation`` and ``eFlip`` (bytes, ``MTEEnhancedMultiBlockBase.saveNBTData``) in the same
+    compound; a capture refuses a non-zero one (D351). ``pos`` is None when the tag lacks an
+    integer ``x``, ``y`` or ``z``. Anything else in the tag is dropped."""
 
-    pos: Pos
+    pos: Pos | None
     id: str | None
     mte_id: int | None
     facing: int | None
+    rotation: int | None = None
+    flip: int | None = None
 
 
 @dataclass(frozen=True)
@@ -659,9 +664,11 @@ def _triple(root: Mapping[str, object], prefix: str) -> Pos | None:
     return None
 
 
-def _te_pos(t: Mapping[str, object]) -> Pos:
+def _te_pos(t: Mapping[str, object]) -> Pos | None:
     vals = [t.get(a) for a in "xyz"]
-    return tuple(v if isinstance(v, int) else 0 for v in vals)  # type: ignore[return-value]
+    if all(isinstance(v, int) for v in vals):
+        return (vals[0], vals[1], vals[2])  # type: ignore[return-value]
+    return None
 
 
 def _tile(t: Mapping[str, object]) -> TileEntity:
@@ -675,6 +682,8 @@ def _tile(t: Mapping[str, object]) -> TileEntity:
         te_id if isinstance(te_id, str) else None,
         whole("mID"),
         whole("mFacing"),
+        whole("eRotation"),
+        whole("eFlip"),
     )
 
 

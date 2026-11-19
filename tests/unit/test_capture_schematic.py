@@ -76,6 +76,45 @@ CONTROLLER_AT = (3, 0, 1)
 HATCHES = {(1, 0, 0): IN_BUS, (1, 0, 2): OUT_BUS, (2, 1, 1): ENERGY}
 EAST = 5  # ForgeDirection.EAST.ordinal()
 
+# the JSON fixture's row as origin/main's capture.parse built it before WO-10.9
+_FA = "fixtureaddon:"
+PINNED_JSON_ROW = fp.Row(
+    registry_name=_FA + "reactor_controller",
+    meta=0,
+    variant="t1;tier=2",
+    size=(3, 3, 3),
+    blocks=(
+        ((-1, 0, 1), _FA + "casing", 3),
+        ((-1, 0, 2), _FA + "casing", 3),
+        ((-1, 1, 0), _FA + "glass", 2),
+        ((-1, 1, 1), _FA + "glass", 2),
+        ((-1, 1, 2), _FA + "glass", 2),
+        ((0, 0, 0), _FA + "reactor_controller", 0),
+        ((0, 0, 1), _FA + "casing", 3),
+        ((0, 0, 2), _FA + "casing", 3),
+        ((0, 1, 0), _FA + "glass", 2),
+        ((0, 1, 2), _FA + "glass", 2),
+        ((1, 0, 0), _FA + "casing", 3),
+        ((1, 0, 1), _FA + "casing", 3),
+        ((1, 0, 2), _FA + "casing", 3),
+        ((1, 1, 0), _FA + "glass", 2),
+        ((1, 1, 1), _FA + "glass", 2),
+        ((1, 1, 2), _FA + "glass", 2),
+    ),
+    hatches=(
+        ((-1, 0, 0), ("Captured",), "gregtech:gt.blockmachines@70"),
+        ((0, 1, 1), ("Muffler",), None),
+        ((0, 2, 1), ("Maintenance",), None),
+        ((1, 0, 1), ("InputHatch", "OutputHatch"), None),
+    ),
+    subs={},
+    caveats=(),
+    name="Fixture Addon Reactor",
+    class_name="fixtureaddon.tile.FixtureReactor",
+    source="lab-capture",
+    machine_id=None,
+)
+
 type Cells = dict[tuple[int, int, int], tuple[str, int]]
 type Tile = tuple[tuple[int, int, int], str | None, int | None, int | None]
 
@@ -125,8 +164,10 @@ def save(
     writer: str = "worldedit",
     first_id: int = 1,
     mapping: bool = True,
+    fields: list[list[Field]] | None = None,
 ) -> bytes:
-    """A save of ``cells`` (others air): world ids from ``first_id`` up, in the file's order."""
+    """A save of ``cells`` (others air): world ids from ``first_id`` up, in the file's order;
+    ``fields`` replaces the tile entities' tags :func:`tile_fields` makes of ``tiles``."""
     w, h, ln = size
     names = sorted({b for b, _ in cells.values()})
     ids = {n: first_id + i for i, n in enumerate(names)}
@@ -137,9 +178,10 @@ def save(
                 b, m = cells.get((x, y, z), ("minecraft:air", 0))
                 flat.append((0, 0) if b == "minecraft:air" else (ids[b], m))
     table = ({"minecraft:air": 0} | ids) if mapping else None
+    te = tile_fields(tiles) if fields is None else fields
     if writer == "worldedit":
-        return worldedit_copy(size, flat, table, tiles=tile_fields(tiles))
-    return schematica_save(size, flat, table, tiles=tile_fields(tiles))
+        return worldedit_copy(size, flat, table, tiles=te)
+    return schematica_save(size, flat, table, tiles=te)
 
 
 @pytest.fixture
@@ -239,9 +281,12 @@ def test_the_file_kind_is_its_content_not_its_extension(
 
 
 def test_the_json_path_is_unchanged(tmp_path: Path) -> None:
+    """The fixture's capture, pinned literally (as the JSON path built it before WO-10.9), so a
+    change to the shared path shows here as well as in test_build_footprints.py's older capture tests."""
     raw = JSON_CAPTURE.read_bytes()
     via_any = capture.read_any(JSON_CAPTURE, None)
     assert via_any == capture.read(JSON_CAPTURE) == capture.parse(raw)
+    assert via_any.row() == PINNED_JSON_ROW
     assert via_any.tool == "worldedit-copy" and via_any.facing == "east"
     with pytest.raises(capture.CaptureError, match="are for a .schematic"):
         capture.read_any(JSON_CAPTURE, None, capture.SchematicOptions(facing="north"))
@@ -344,6 +389,85 @@ def test_a_controller_cell_that_is_air_or_outside_is_refused(
     _refused(tmp_path, db, data, r"\[0, 0, 0\] is air", air)
     out = capture.SchematicOptions(controller_at=(9, 0, 0))
     _refused(tmp_path, db, data, "outside the", out)
+
+
+def test_a_controller_cell_that_is_not_a_multi_controller_is_refused(
+    tmp_path: Path, db: sqlite3.Connection
+) -> None:
+    data = save(multi(), gt_tiles())
+    casing = capture.SchematicOptions(controller_at=(2, 0, 1), facing="east")
+    _refused(
+        tmp_path,
+        db,
+        data,
+        r"\[2, 0, 1\] is gregtech:gt.blockcasings@11, not a GT",
+        casing,
+    )
+    _refused(tmp_path, None, data, "not a GT machine", casing)  # without a DB too
+    bus = capture.SchematicOptions(controller_at=(1, 0, 0))
+    _refused(
+        tmp_path,
+        db,
+        data,
+        r"mID 7101 Input Bus \(LV\).*not a multiblock controller",
+        bus,
+    )
+    # an mID the catalog doesn't hold is not refused: the cell is named, the DB can't say
+    unknown = {CONTROLLER_AT: 7999, **HATCHES}
+    named = capture.SchematicOptions(controller_at=CONTROLLER_AT)
+    cap = capture.read_any(
+        write(tmp_path, save(multi(unknown), gt_tiles(unknown))), db, named
+    )
+    assert cap.meta == 7999 and cap.name is None
+
+
+@pytest.mark.parametrize(("rotation", "flip"), [(1, 0), (0, 1), (2, 1)])
+def test_a_rotated_or_flipped_controller_is_refused(
+    tmp_path: Path, db: sqlite3.Connection, rotation: int, flip: int
+) -> None:
+    fields = tile_fields(gt_tiles())
+    for f in fields:
+        if ("x", nbt.INT, CONTROLLER_AT[0]) in f and (
+            "z",
+            nbt.INT,
+            CONTROLLER_AT[2],
+        ) in f:
+            f += [("eRotation", nbt.BYTE, rotation), ("eFlip", nbt.BYTE, flip)]
+    _refused(
+        tmp_path,
+        db,
+        save(multi(), [], fields=fields),
+        rf"rotated or flipped \(eRotation {rotation}, eFlip {flip}\)",
+    )
+
+
+def test_an_unrotated_enhanced_controller_is_read(
+    tmp_path: Path, db: sqlite3.Connection
+) -> None:
+    # MTEEnhancedMultiBlockBase saves eRotation 0 and eFlip 0, as the harness's EBF does
+    fields = tile_fields(gt_tiles())
+    for f in fields:
+        f += [("eRotation", nbt.BYTE, 0), ("eFlip", nbt.BYTE, 0)]
+    assert capture.read_any(write(tmp_path, save(multi(), [], fields=fields)), db) == (
+        expected()
+    )
+
+
+def test_a_gt_tile_entity_without_its_coordinates_is_refused(
+    tmp_path: Path, db: sqlite3.Connection
+) -> None:
+    fields = tile_fields(gt_tiles())
+    fields[1] = [f for f in fields[1] if f[0] != "y"]
+    _refused(
+        tmp_path,
+        db,
+        save(multi(), [], fields=fields),
+        "BaseMetaTileEntity tile entity .* has no integer x, y and z",
+    )
+    # another block's tile entity without them is left alone, as any non-GT tile entity
+    chest = [("id", nbt.STRING, "Chest"), ("x", nbt.INT, 0)]
+    ok = save(multi(), [], fields=[*tile_fields(gt_tiles()), chest])
+    assert capture.read_any(write(tmp_path, ok), db) == expected()
 
 
 def test_a_gt_cell_without_its_tile_entity_is_refused(
@@ -462,6 +586,7 @@ def test_cli_capture_of_a_schematic_then_coverage(tmp_path: Path) -> None:
     path = write(tmp_path, save(multi(), gt_tiles()))
     code, out = _gos(toml, "capture", str(path), "--dry-run")
     assert code == 0 and "3x2x3, 18 cells, 3 hatch cells" in out, out
+    assert "note: variant t1, no channels" in out  # forgetting --trigger is visible
     code, out = _gos(toml, "capture", str(path))
     assert code == 0 and f"loaded: {GT}@{CONTROLLER}|t1|north" in out, out
     code, out = _gos(toml, "coverage", "--all")
@@ -510,6 +635,7 @@ def test_cli_options_and_refusals(tmp_path: Path) -> None:
         "east",
     )
     assert code == 0 and "t2;height=3" in out, out
+    assert "note: variant t1" not in out
 
 
 def test_coverage_counts_a_schematic_capture(
