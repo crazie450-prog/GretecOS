@@ -49,7 +49,7 @@ from gregtec.db import access
 from gregtec.packupdate import addons
 from gregtec.packupdate.plans import PLAN_ID
 from gregtec.planner import alternatives as alts
-from gregtec.planner import graph, ledger, plan, rank, solve
+from gregtec.planner import graph, ledger, plan, progress, rank, solve
 from gregtec.planner.gtmath.tiers import VN
 from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
@@ -68,7 +68,9 @@ from gregtec.vault.io import VaultError, VaultIO, atomic_write
 LATEST = Path("data", "plans", "designer.json")  # in GOS_HOME
 LINES = "base/lines"
 NAME_MAX = 80
-_LOCK = threading.Lock()  # one design, pin, accept or rename at a time per process
+# One design, pin, accept or rename at a time per process; re-entrant so a design job
+# (WO-3.9) can wait for it where a cancel is still heard, then call design() holding it.
+_LOCK = threading.RLock()
 
 # The route comparison card's metrics, in the order the routes are ranked on (rank.METRICS),
 # then the score; each says which way is better.
@@ -230,7 +232,9 @@ def _save_all(home: Path, d: plan.Design, conn: sqlite3.Connection) -> Designed:
 def design(home: Path, request: Request) -> Designed:
     """Solve, rank and save every route of ``request`` (see the module docstring)."""
     with _LOCK, _conn(home, readonly=True) as conn:
-        return _save_all(home, _solve(conn, home, request), conn)
+        d = _solve(conn, home, request)
+        progress.stage("saving")  # a design job's last cancel point (D353)
+        return _save_all(home, d, conn)
 
 
 def resolve(home: Path, pid: str) -> Designed:
@@ -269,6 +273,7 @@ def pin(home: Path, pid: str, node: str, recipe: str | None) -> Designed:
                     f"{recipe} can't make {node} here"
                     + (f": {why}" if why else " (it isn't one of its recipes)")
                 )
+        progress.stage("saving")  # a design job's last cancel point (D353)
         return _save_all(home, d, conn)
 
 

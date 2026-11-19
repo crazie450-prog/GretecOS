@@ -37,7 +37,15 @@ from typing import Any
 
 from gregtec.base.state import MyBase
 from gregtec.packupdate.plans import PLAN_ID
-from gregtec.planner import chains, designer, distribution, ledger, power, rank
+from gregtec.planner import (
+    chains,
+    designer,
+    distribution,
+    ledger,
+    power,
+    progress,
+    rank,
+)
 from gregtec.planner.gtmath.tiers import VN, V
 from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
@@ -194,6 +202,7 @@ def design(
                 f"no power line at {VN[d.tier_cap]} for mode {req.mode}"
                 + (f" ({reasons})" if reasons else "")
             )
+        progress.stage("saving")  # a design job's last cancel point (D353)
         with designer._conn(home, readonly=False) as rw:
             for p in d.options:
                 store.save_power(home, p, rw)
