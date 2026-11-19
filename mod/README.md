@@ -311,6 +311,17 @@ world cell by cell (registry name + meta against WorldEdit's reading) in the box
 same block state in every cell and the same offset (D310). The dev runtime has no EndlessIDs: ids above 4095 and metas
 above 15 are the Lab round trip (`docs/runbooks/schematic_roundtrip.md`). CI runs it after the listener harness.
 
+Then (WO-10.9, D350) it builds one GT multiblock as Clayton does in the Lab for an addon multi: a 4 x 2 x 3 block of
+heat proof casings with the EBF's controller in its east face (turned east), an input bus, an output bus and an energy
+hatch, each machine placed as a player places it (the item's use by a fake player, so GT writes its tile entity), then
+`//copy` with one air column and `//schem save` through WorldEdit's classes, with the tile entities, to
+`gregteclink/schematic-harness/out/gt_multi_capture.schematic`, and what it placed (box cells, MTE ids, facing) to
+`gt_multi_capture.placed.json`. Checks `multi_placed` and `multi_copied_with_tile_entities` (every machine's
+`BaseMetaTileEntity` with its `mID` in the save). `tests/integration/test_footprints_schematic_harness.py` turns the
+save into a footprint through `gos footprints capture` on the export harness's DB and checks its controller, hatch
+cells and box against the placed JSON, and that `gos footprints coverage` then reports the EBF as `capture`. The
+capture adds well under a second to the run (`durations_ms.schematic_ms` 351 for the whole schematic step here).
+
 ## Listener module (WO-6.2)
 
 With `B:listener=true` (and `export` off: the module refuses to start beside the export module, so Export never
