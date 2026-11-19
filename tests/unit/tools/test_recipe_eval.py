@@ -851,11 +851,9 @@ def test_the_oracle_passes_every_row(
     assert report.rstrip().endswith("Result: PASS")
     by_id = {r.q.id: r for r in results}
     assert by_id["o2"].lane == "instant" and by_id["o8"].reply.asked
-    # o1: the first row without a flag (the kiln's fake? row is listed first)
+    # o1: the first row without a flag (the kiln's fake? row is listed after them, D341)
     assert by_id["o1"].score.cited == [PBF]
-    assert (
-        f"The first unflagged one is Bricked Blast Furnace ({PBF})" in by_id["o2"].text
-    )
+    assert f"The first is Bricked Blast Furnace ({PBF})" in by_id["o2"].text
     # o3 named no item the router could pre-retrieve: the oracle looked its words up
     assert by_id["o3"].reply.tool_calls == ["recipe_find"]
     assert EBF_O2 in by_id["o4"].score.cited
@@ -1124,13 +1122,15 @@ def test_the_cli_parser_stays_light() -> None:
 def test_the_instant_answer_names_the_first_row_without_a_flag(
     lane_reg: Registry,
 ) -> None:
-    """The kiln's fake? row is listed first; the instant answer names the first without a
-    flag, as the skill does, and says so."""
+    """The kiln's fake? row is listed after the known recipes (D341), so the card's first
+    row is the first without a flag, as the skill picks it, and the instant answer names it."""
     pre = prefetch.prefetch(lane_reg, router.route("recipe for steel"))
     text = ask.card_text(pre, router.RECIPES)
     assert text is not None and text.startswith("Steel Ingot: 5 recipes, lowest tier")
-    assert f"The first unflagged one is Bricked Blast Furnace ({PBF})." in text
-    assert pre.main is not None and pre.main.parsed.rows[0]["ref"] == KILN  # the card
+    assert f"The first is Bricked Blast Furnace ({PBF})." in text
+    assert pre.main is not None
+    rows = pre.main.parsed.rows
+    assert rows[0]["ref"] == PBF and rows[3]["ref"] == KILN  # the card
     uses = prefetch.prefetch(lane_reg, router.route("what uses steel"))
     said = ask.card_text(uses, router.USES)
     assert said is not None and MAC_REC not in said  # the recycling row isn't named

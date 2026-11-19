@@ -7,9 +7,10 @@ metadata (coil heat, cleanroom, ...). The only numbers code derives are exact un
 duration in seconds (ticks / 20) and chances in percent (basis points / 100), never rounded.
 
 Planner defaults (plan 5.2) hide disabled and fake recipes unless ``show_fake``; a recipe whose
-handler doesn't say whether it is fake (NEI-only handlers, D105) is shown and flagged ``fake?``.
-GT's recycling recipes (an item back to its material: GT categories ``*_recycling``) come last,
-flagged ``recycling``, so a page starts with the ways an item is actually made.
+handler doesn't say whether it is fake (NEI-only handlers, D105) is shown and flagged ``fake?``,
+after the recipes whose status is known (D341). GT's recycling recipes (an item back to its
+material: GT categories ``*_recycling``) come last, flagged ``recycling``, so a page starts
+with the ways an item is actually made.
 
 A ``machine`` filter is a recipe map or NEI handler named exactly (``gt.recipe.blastfurnace``,
 "Blast Furnace"), else a machine resolved as ``item_resolve`` resolves one (glossary aliases

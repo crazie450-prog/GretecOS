@@ -10,7 +10,7 @@ GOS's DB holds Clayton's own export of GregTech: New Horizons 2.9 (GT 5.09.54.26
 | Tool | What it returns |
 |---|---|
 | `item_resolve(text, kind?)` | Ranked candidates (key, name, mod) for his words or a glossary alias ("SS", "EBF"). `ambiguous: 1` means ask. |
-| `recipe_find(item, tier_max?, machine?, show_fake?)` | Recipes that make an item or fluid. No tier first (crafting, smelting, and NEI-only handlers, which may be flagged `fake?`), then the lowest tier; GT's recycling recipes last. |
+| `recipe_find(item, tier_max?, machine?, show_fake?)` | Recipes that make an item or fluid. No tier first (crafting, smelting), then the lowest tier; after those the rows flagged `fake?` (NEI-only handlers), and GT's recycling recipes last. |
 | `recipe_uses(item)` | Recipes that take it as an input: itself, through an oredict it is in, or as an accepted alternative. |
 | `machine_info(machine)` | A GT machine by name or `mte:<id>`: its recipe maps and the facts the planner uses (parallel, speed, eu_modifier, oc, ...). |
 | `more(cursor)` | The next page of a result (50 rows a page). |
@@ -39,7 +39,7 @@ GOS's DB holds Clayton's own export of GregTech: New Horizons 2.9 (GT 5.09.54.26
 | What makes X, and then what makes its input Y? | `recipe_find(X)`; in the chosen row's `in` cell, take the `[key]` of the slot named Y and call `recipe_find` with that key. When no slot has Y's name (an oredict slot shows another item of it), resolve Y's words instead | both rows, each with its own id |
 
 - Conditions (`cond`) are GT's own: `coil_heat` in K, `cleanroom`, `low_gravity`, and more. Say them when they matter to building it.
-- Flags: `fake?` (the NEI handler doesn't say whether the recipe is real), `recycling` (an item back into its material), `disabled` and `fake` (shown only with `show_fake`). Answer with the first row without a flag, even when a flagged row is listed above it; use a flagged row only when no other row answers, and say its flag.
+- Flags: `fake?` (the NEI handler doesn't say whether the recipe is real), `recycling` (an item back into its material), `disabled` and `fake` (shown only with `show_fake`). Answer with the first row without a flag (`fake?` and `recycling` rows are listed after the others); use a flagged row only when no other row answers, and say its flag.
 - Designing a line, rates, machine counts, ratios and comparisons that need maths belong to the designer: give the recipes with their ids and say which part needs it.
 
 ## 3. Cite every number
