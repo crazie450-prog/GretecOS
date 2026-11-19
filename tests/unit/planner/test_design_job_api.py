@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import sqlite3
+import statistics
 import sys
 import threading
 import time
@@ -181,10 +182,20 @@ def test_the_designer_job_api(
                 j for j in dashboard.state(core, True)["jobs"] if j["id"] == jid
             ]
             # The core answers while a design computes (a busy Python loop, as the planner is).
+            # The loop runs until the test lets it go, so every answer below came while it ran:
+            # a core the job starved could answer only after it (then "done", after the 60 s
+            # cap). The bound is on the median of the five pairs, not the slowest (WO-11.4). It
+            # mostly measures this test's own client thread waiting for the GIL beside the busy
+            # job (an idle job: 0-16 ms; a browser in another process, measured on the harness
+            # DB during a real design: 8 ms). Measured medians with this busy job: 0.21-0.40 s on
+            # Ubuntu runners, 0.34-0.91 s on Windows runners (timer granularity per GIL hand-off).
+            # A job that holds the GIL in 50 ms slices (sys.setswitchinterval(0.05)) gives
+            # 3.1-4.5 s on both and fails it.
+            free = threading.Event()
 
             def busy(h: Path, req: Request) -> Any:  # noqa: ANN401
-                end = time.monotonic() + 3.0
-                while time.monotonic() < end:
+                end = time.monotonic() + 60.0
+                while not free.is_set() and time.monotonic() < end:
                     sum(i * i for i in range(2000))
                     progress.check()
                 return real(h, req)
@@ -193,16 +204,19 @@ def test_the_designer_job_api(
             jid = c.post("/api/designer/jobs", json=body, headers=ADMIN_H).json()[
                 "job"
             ]["id"]
-            slowest = 0.0
-            for _ in range(5):
-                t = time.monotonic()
-                assert c.get("/api/health", headers=ADMIN_H).status_code == 200
-                assert (
-                    c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H).status_code == 200
-                )
-                slowest = max(slowest, time.monotonic() - t)
-                time.sleep(0.2)
-            assert slowest < 1.0, slowest
+            pairs: list[float] = []
+            try:
+                for _ in range(5):
+                    t0 = time.monotonic()
+                    assert c.get("/api/health", headers=ADMIN_H).status_code == 200
+                    got = c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H)
+                    pairs.append(time.monotonic() - t0)
+                    assert got.status_code == 200
+                    assert got.json()["job"]["status"] == dj.RUNNING
+                    time.sleep(0.2)
+            finally:
+                free.set()
+            assert statistics.median(pairs) < 2.0, pairs
             assert _ended(c, jid)["status"] == dj.DONE
     finally:
         core.store.close()
