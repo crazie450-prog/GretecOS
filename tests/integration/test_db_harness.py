@@ -206,7 +206,7 @@ def test_gt_slots_keep_their_oredict_alternatives(
     assert [(meta, alts) for meta, _, alts in got] == [(m, n) for m, n, _ in got]
 
 
-# D332: GT recipes that give something and have no input they use up, and the export's marker.
+# D364: GT recipes that give something and have no input they use up, and the export's marker.
 NO_USED_UP_INPUT = (
     "SELECT r.ref FROM recipe r WHERE r.source IN ('gt', 'gt+nei') AND EXISTS (SELECT 1 FROM"
     " recipe_output ro WHERE ro.recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_input ri"
@@ -222,7 +222,7 @@ UNKEYED = (
 def test_every_gt_recipe_with_no_used_up_input_is_marked(
     side: str, request: pytest.FixtureRequest
 ) -> None:
-    # The dev runtime has such rows (GT's own recipes there, D332): each carries the export's
+    # The dev runtime has such rows (GT's own recipes there, D364): each carries the export's
     # "unkeyed" marker with its cause, and no other recipe does.
     result: build.Result = request.getfixturevalue(side)
     marks = dict(rows(result.db, UNKEYED))

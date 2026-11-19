@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonParser;
 
-/** The "unkeyed" marker (D332): a recipe that gives something and lists no input it uses up. */
+/** The "unkeyed" marker (D364): a recipe that gives something and lists no input it uses up. */
 class GtRecipeDumpTest {
 
     private static final String CIRCUIT = "{\"item\":\"gregtech:gt.integrated_circuit\",\"meta\":1,\"n\":0}";

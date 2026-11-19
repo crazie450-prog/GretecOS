@@ -157,7 +157,7 @@ def test_chances_alternatives_and_metadata_are_content() -> None:
     }
     assert len(hashes) == 4
     assert desc.content_hash == base.content_hash  # display text only
-    assert marked.content_hash == base.content_hash  # the export's marker (D332)
+    assert marked.content_hash == base.content_hash  # the export's marker (D364)
 
 
 def test_nei_only_recipes_key_an_oredict_slot_by_what_it_accepts() -> None:

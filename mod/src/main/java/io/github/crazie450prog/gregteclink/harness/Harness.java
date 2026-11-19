@@ -1937,7 +1937,7 @@ public final class Harness {
             int coilHeat;
             int withOwners;
             int nZero;
-            /** Lines per "unkeyed" cause (D332). */
+            /** Lines per "unkeyed" cause (D364). */
             final Map<String, Integer> unkeyed = new TreeMap<>();
             int unkeyedWrong;
             String unkeyedExample;
@@ -1962,7 +1962,7 @@ public final class Harness {
             }
 
             /**
-             * D332, worked out again from the line's slots: a recipe with an output and no input it uses up carries
+             * D364, worked out again from the line's slots: a recipe with an output and no input it uses up carries
              * "unkeyed", which is "null_input" exactly when an input slot is null, else "special_items" exactly when
              * the line has them, else "none"; every other recipe has no "unkeyed".
              */

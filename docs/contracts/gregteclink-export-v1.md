@@ -104,7 +104,7 @@ Recipes store EU/t with the amperage included (`amperage` is the map's).
 - **Arrays stay positional.** `in`, `out`, `fin` and `fout` keep their nulls so the chance arrays line up with the
   slots. A null GT array is written as `[]`. A `*_chance` array is omitted when GT's is null (every slot 100%);
   values are GT's raw 1..10000.
-- **`unkeyed`** (D332) marks a recipe that gives something (a non-null `out` or `fout` slot) and has no input it
+- **`unkeyed`** (D364) marks a recipe that gives something (a non-null `out` or `fout` slot) and has no input it
   uses up (no `in` slot with `n` > 0 and no `fin` slot with `mb` > 0; a programmed circuit has `n` 0). Every such
   line has it and no other line does, and `counts.recipes_unkeyed` counts them. It is the one fact the mod derives
   instead of leaving to Python, so that the run itself says which recipes these are. The export drops no input:
@@ -442,7 +442,7 @@ same (meta, item meta) are written once (`counts.palette_duplicates`).
   real instance shows in the first Export run on the PC. Play's mods come from Python's fingerprint (§5.2.4), never
   from here.
 - `counts.items` is the number of lines in `items.jsonl`, NBT variants included.
-- `counts.recipes_unkeyed` (D332) is the number of `gt_recipes.jsonl` lines with `unkeyed`. Runs made before D332
+- `counts.recipes_unkeyed` (D364) is the number of `gt_recipes.jsonl` lines with `unkeyed`. Runs made before D364
   have neither; `gos db build` loads them as before, with no marker.
 - `pack_version` `2.9.x` means unknown [A§5.5 correction]: trust jar hashes over this string.
 - `complete` covers the GT parts and the manifest, as before: a failed NEI step leaves `complete: true`. **Readers that

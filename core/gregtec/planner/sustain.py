@@ -26,7 +26,7 @@ the node's crafts per second and sums each item over the whole line:
 
 A GT recipe that uses up nothing but gives something outside the free set (GT's own recipe is
 like that in the instance: a machine that works from EU alone, or an input GT's recipe builder
-dropped; the export marks it ``unkeyed``, D332) is never counted on: the proof names it (D234).
+dropped; the export marks it ``unkeyed``, D364) is never counted on: the proof names it (D234).
 
 Any item whose balance is below zero (beyond float noise, :data:`TOL`) and
 is not in the free set is an import (noise is relative to that item's own flow, so a trickle of

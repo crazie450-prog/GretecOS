@@ -25,7 +25,7 @@ contract, ``docs/contracts/gregteclink-export-v1.md``). Nothing here reads a fil
 - **Content hash** (:func:`content_hash`) = everything else that changes how the recipe runs:
   EU/t, duration, amperage, raw special value, chances, oredict names and alternatives, NEI
   container items, metadata, special items and flags (not ``nei_desc``, which is display text,
-  nor the export's ``unkeyed`` marker, D332).
+  nor the export's ``unkeyed`` marker, D364).
   For an NEI-only slot with alternatives it is the accepted set, not the displayed stack or
   that stack's container item. A rebalance changes only the content hash, so a diff reports
   the recipe as changed and its citation key ``r:<map>/<sig12>`` survives; so does an oredict
@@ -51,8 +51,8 @@ ITEM, FLUID = "i", "f"
 # NEI typed NBT integers: "1B", "3S", "144L" (NBTJson); ints are bare.
 _TYPED_INT = re.compile(r"(-?[0-9]+)[BSL]?")
 # recipe_meta keys that are display text only: kept in the DB, left out of the content hash.
-# "unkeyed" (D332) is the export's note on a recipe that gives something from no input it uses
-# up: it changes nothing about how the recipe runs, and runs made before D332 don't have it.
+# "unkeyed" (D364) is the export's note on a recipe that gives something from no input it uses
+# up: it changes nothing about how the recipe runs, and runs made before D364 don't have it.
 DISPLAY_ONLY = frozenset({"nei_desc", "unkeyed"})
 # GT recipe maps whose input slots with alternatives show a different alternative on each run, so
 # they are keyed by what they accept, as NEI-only slots are (D135). CropsNH's Crop Breeder builds

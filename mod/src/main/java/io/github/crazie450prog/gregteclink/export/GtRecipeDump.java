@@ -28,7 +28,7 @@ import gregtech.api.util.GTRecipe;
 /**
  * (a) of plan §5.2 step 2: every map in {@link RecipeMap#ALL_RECIPE_MAPS} (sorted by name) and every recipe in it
  * (sorted by its JSON line). Raw game facts only; the normaliser (WO-1.3) derives circuits, tiers, signatures and
- * hashes. The one exception is "unkeyed" (D332), which marks a recipe that gives something from no input it uses up.
+ * hashes. The one exception is "unkeyed" (D364), which marks a recipe that gives something from no input it uses up.
  */
 final class GtRecipeDump {
 
@@ -52,7 +52,7 @@ final class GtRecipeDump {
     int mapErrors;
     int recipes;
     int recipeErrors;
-    /** Lines with "unkeyed": recipes that give something and list no input they use up (D332). */
+    /** Lines with "unkeyed": recipes that give something and list no input they use up (D364). */
     int recipesUnkeyed;
 
     GtRecipeDump(StackJson stacks) {
@@ -225,7 +225,7 @@ final class GtRecipeDump {
     }
 
     /**
-     * Why a recipe that gives something has no input the export can key as used up (D332), or null when it has one
+     * Why a recipe that gives something has no input the export can key as used up (D364), or null when it has one
      * or gives nothing. GT's own arrays are like that; the export drops nothing:
      * <ul>
      * <li>{@code null_input}: an input slot is null in GT's array. The recipe's loader asked for an item this

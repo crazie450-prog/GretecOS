@@ -1244,7 +1244,7 @@ def test_a_bad_line_fails_the_build_with_its_place(
     assert rows(good.db, "SELECT ref, content_hash FROM recipe ORDER BY ref") == before
 
 
-# The task's query (D332): recipes that give something and have no input they use up.
+# The task's query (D364): recipes that give something and have no input they use up.
 NO_USED_UP_INPUT = (
     "SELECT r.ref FROM recipe r WHERE EXISTS (SELECT 1 FROM recipe_output ro"
     " WHERE ro.recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_input ri"
@@ -1299,7 +1299,7 @@ def test_the_exports_unkeyed_marker_reaches_the_db(
         assert "unkeyed" not in {c["key"] for c in conds}  # not a condition
     finally:
         conn.close()
-    # A run made before D332 has no marker: the same keys and content hashes.
+    # A run made before D364 has no marker: the same keys and content hashes.
     make_run(tmp_path / "old", files=files(False))
     old = built(tmp_path / "old", allow_list)
     assert rows(old.db, UNKEYED) == []

@@ -72,7 +72,7 @@ the manifest and renames the folder. With autoexport (below) the game then quits
 - One deliberate runtime change, with `export=true` only: GT's recipe-owner capture is turned on in preInit (the same
   switch as GT's `NEIRecipeOwner` client option), so each recipe records the mod that added it. NEI in Export then
   shows "added by" lines.
-- **Recipes with no input they use up** (D332). A recipe line that gives something and has no input with an amount
+- **Recipes with no input they use up** (D364). A recipe line that gives something and has no input with an amount
   above 0 gets `"unkeyed"`: `null_input` (GT holds a null input slot: the loader asked for an item this instance
   doesn't have), `special_items` (the machine reads its inputs from the recipe's special object, as Eye of Harmony
   does) or `none` (GT lists a circuit or nothing: a machine that works from EU alone, or an input GT's recipe
