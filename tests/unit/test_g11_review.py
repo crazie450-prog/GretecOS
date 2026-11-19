@@ -14,6 +14,10 @@ PLAN = REPO / "docs" / "implementation_plan.md"
 REPORT = REPO / "docs" / "reviews" / "G11_review.md"
 EVALS = REPO / "tests" / "evals"
 STATUSES = ("met with fakes", "not met", "not merged", "met")
+STATUS = re.compile(r"(?:automated: )?\*\*(met with fakes|not met|not merged|met)\*\*")
+VERDICT = re.compile(
+    r"^\*\*Verdict: (met with fakes|not met|not merged|met)\.?\*\*", re.MULTILINE
+)
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 
@@ -44,7 +48,7 @@ def test_every_plan_10_line_has_a_row_with_a_status() -> None:
     rows = re.findall(r"^\| (\d+) \| [^|]+ \| ([^|]+) \|", table, re.MULTILINE)
     assert [int(n) for n, _ in rows] == list(range(1, len(lines) + 1))
     for n, status in rows:
-        assert any(s in status for s in STATUSES), (n, status)
+        assert STATUS.match(status), (n, status)
 
 
 def test_every_phase_11_row_and_g11_has_a_verdict() -> None:
@@ -52,9 +56,9 @@ def test_every_phase_11_row_and_g11_has_a_verdict() -> None:
     for wo in ("WO-11.1", "WO-11.2", "WO-11.3", "G11"):
         head = re.search(rf"^### {re.escape(wo)}: .+$", text, re.MULTILINE)
         assert head, wo
-        after = text[head.end() :]
-        verdict = re.search(r"\*\*Verdict: ([^*]+)\*\*", after)
-        assert verdict and any(s in verdict.group(1) for s in STATUSES), wo
+        after = re.split(r"^#{2,3} ", text[head.end() :], flags=re.MULTILINE)[0]
+        verdict = VERDICT.search(after)
+        assert verdict and verdict.group(1) in STATUSES, wo
 
 
 def test_every_plan_9_eval_is_listed_and_the_sizes_are_the_files() -> None:
