@@ -153,6 +153,14 @@ jobs:
         env:
           GOS_REQUIRE_HARNESS_RUN: "1"
           GOS_CLIENT_RUN_B: mod/run/client-b
+          GOS_REHEARSAL_REPORT: ${{ runner.temp }}/fake-day-one.md
+      # WO-11.3: the fake day one's plan-10 report, green or not (docs/runbooks/fake_day_one.md J).
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fake-day-one
+          path: ${{ runner.temp }}/fake-day-one.md
+          if-no-files-found: warn
       # D188: once more with a recipe handler that always fails and an item lookup (as R does) just before the NEI
       # step; the harness expects the failure reported and GT's NEI caches built again. After the integration tests,
       # since it replaces run/client's export.

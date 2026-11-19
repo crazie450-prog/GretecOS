@@ -35,6 +35,9 @@ Builder = Callable[[Path, Path], None]  # (game folder, empty GOS_HOME) -> None
 # the run. Unlisted files follow in collection order. A new file that takes more than about a
 # minute belongs here (only the order changes: every test still runs).
 SLOW_FIRST: dict[str, float] = {
+    # WO-11.3: the 10-minute soak plus the designs and the suites it runs beside them (a local
+    # serial run on 2026-11-19, D336); first, so it never starts last.
+    "test_fake_day_one.py": 1194,
     "test_rank_harness.py": 442,
     "test_power_view_harness.py": 340,
     "test_design_cache_harness.py": 300,  # WO-3.9: every G3 and G4 line three times

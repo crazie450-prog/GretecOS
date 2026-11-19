@@ -63,6 +63,7 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         ("Tell me about the steel hull.", "fast", "item", "steel hull", None),
         ("Which quest asks for steel?", "fast", "quest_item", "steel", None),
         ("what quests can I do now", "fast", "frontier", None, None),
+        ("What quests can I do next?", "fast", "frontier", None, None),
         ("What are my next quests?", "fast", "frontier", None, None),
         (
             "tell me about the quest called first steps",
