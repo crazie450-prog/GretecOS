@@ -655,6 +655,8 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
  "alternatives":["pl-0008","pl-0009"],"layout":{"w":21,"l":14,"h":9}}
 ```
 
+**As built: speed and design jobs (WO-3.9, D352–D354).** What is pure per DB run is kept between designs, in the core's process: the graph builder's batch reader (one per DB file, DB generation and export run) and the effort model's component solves (keyed by the DB file, its generation, the run, the component's request digest, My base and the chain templates and raw-inputs list). The generation is a digest of the file's identity, every `export_run` row, the build stamp `gos db build` writes (`kv` `db.build`) and the structure tables, so a rebuild, a pack update or an addon export drops it all; nothing is shared across DB files; both are bounded. Results never change: a differential test designs with the cache off and on and compares the plans byte for byte, and rank.py's order is untouched. On the client harness DB, steel ingot at HV went from 74 s to 26 s cold and 1.5 s warm. The dashboard runs designs as jobs (`POST /api/designer/jobs`, `/api/power/jobs`): the stage (graph, solve k of n, metrics k of n, ranking, saving), the time and a Cancel, checked between stages, solver calls, graph items and effort components; a cancelled job saves nothing, a closed page leaves the job running to its saved result. `POST /api/designer/design` and `/api/power/design` still answer when done, for the callers that wait.
+
 ### 7.2 Power designer
 - **Catalog.** Fuels come from GT's fuel maps. `FUEL_VALUE` is EU per litre for liquid engines and turbines [E§4.1]; decode and test every other map (naquadah, RTG, magic, boiler) one by one:
   - maps: `dieselFuels`, `extremeDieselFuels`, `gasTurbineFuels`, `hotFuels`, `denseLiquidFuels`, `plasmaFuels`, `magicFuels`, the naquadah reactor maps, `rocketFuels`, `rtgFuels`, `largeBoilerFakeFuels`.
@@ -885,6 +887,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 | **Workbench** | Mouse on monitor 2, game paused, or game closed | The full shell: views, Designer, tables, 3D viewer, settings |
 
 - **Shell:** left navigation with number-key shortcuts; a right rail that is always visible, showing what the agent is doing, running jobs and anything waiting for approval; a voice strip with a standby ring; a Ctrl+K command palette (items, recipes, quests, plans, settings) in workbench mode.
+  - As built (WO-3.9, D353): the rail's jobs include the Designer's and the Power view's design jobs, each with its stage, the time it has run and a Cancel on Clayton's paired dashboards.
 - **In-game control:** voice ("show route 2", "open BOM") and global hotkeys (confirm, cancel, next card) from WO-5.1.
 - **Targets:** 2560×1440 landscape (D50), plus a phone layout of the same views for Tailscale (D53).
 - **Build rules:**

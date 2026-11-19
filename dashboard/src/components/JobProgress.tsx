@@ -132,22 +132,29 @@ export function JobProgress(props: { job: DesignJob; onCancel: () => void; testI
   const now = useNow(1000, true);
   const j = props.job;
   const saving = j.stage === "saving";
+  const box = useRef<HTMLDivElement | null>(null);
+  // On the phone the panel is below the form: bring it into view when the job starts.
+  useEffect(() => {
+    box.current?.scrollIntoView?.({ block: "nearest" });
+  }, []);
   return (
-    <div className="gos-panel job-progress" aria-busy="true" data-testid={props.testId} data-job={j.id}>
-      <span className="empty" data-testid={`${props.prefix}-job-stage`}>
-        {GLYPH.progress} {stageText(j)}
-      </span>
-      <span className="gos-src num" data-testid={`${props.prefix}-job-elapsed`} title="Time since the design started">
-        {elapsed(j.started, now)}
-      </span>
-      <Button
-        onClick={props.onCancel}
-        disabled={j.cancel_asked || saving}
-        title={saving ? "Saving: too late to cancel" : "Stop the design; nothing is saved"}
-        testId={`${props.prefix}-cancel`}
-      >
-        {j.cancel_asked ? `${GLYPH.paused} Cancelling` : "Cancel"}
-      </Button>
+    <div className="gos-panel" aria-busy="true" data-testid={props.testId} data-job={j.id} ref={box}>
+      <div className="job-progress">
+        <span className="empty" data-testid={`${props.prefix}-job-stage`}>
+          {GLYPH.progress} {stageText(j)}
+        </span>
+        <span className="gos-src num" data-testid={`${props.prefix}-job-elapsed`} title="Time since the design started">
+          {elapsed(j.started, now)}
+        </span>
+        <Button
+          onClick={props.onCancel}
+          disabled={j.cancel_asked || saving}
+          title={saving ? "Saving: too late to cancel" : "Stop the design; nothing is saved"}
+          testId={`${props.prefix}-cancel`}
+        >
+          {j.cancel_asked ? `${GLYPH.paused} Cancelling` : "Cancel"}
+        </Button>
+      </div>
     </div>
   );
 }
