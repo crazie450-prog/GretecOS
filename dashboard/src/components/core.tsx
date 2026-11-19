@@ -191,7 +191,7 @@ export function AlertView(props: { card: AlertCard; big?: boolean }) {
   );
 }
 
-function useNow(everyMs: number, on: boolean): number {
+export function useNow(everyMs: number, on: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!on) return;
