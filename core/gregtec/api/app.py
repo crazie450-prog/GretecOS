@@ -119,6 +119,7 @@ from gregtec.api.security import (
     Pairing,
     PairingError,
     Principal,
+    ReadBodyFirst,
 )
 from gregtec.base import routes as base_routes
 from gregtec.bridge import http as bridge_http
@@ -142,6 +143,7 @@ from gregtec.quests import view as quest_view
 from gregtec.remote import routes as remote_routes
 from gregtec.remote.jobs import JobQueue
 from gregtec.screen import routes as screen_routes
+from gregtec.screen.cache import MAX_BYTES as MAX_FRAME
 from gregtec.screen.reader import ScreenReader
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
@@ -157,6 +159,8 @@ POLL_S = 1.0  # how often the core refreshes the supervisor's process table
 KEY_CHECK_S = 30.0  # how often it asks the keyring whether the Anthropic key is stored
 HEARTBEAT_S = 15.0  # a health push at least this often, changed or not
 MAX_MESSAGE = 4096  # request bodies and WebSocket messages
+# The largest body a route takes (a screen frame): read before any answer (D355).
+READ_FIRST_MAX = MAX_FRAME
 # Process states from the supervisor and the strip status each one shows as.
 STATE_STATUS = {
     "running": "ok",
@@ -619,6 +623,8 @@ def create_app(core: Core) -> FastAPI:
         allowed_hosts=core.cfg.allowed_hosts,
         guide_hosts=(core.cfg.guide_host,),
     )
+    # Outermost, so the guard's refusals read the body first too (D355).
+    app.add_middleware(ReadBodyFirst, limit=READ_FIRST_MAX)
 
     def principal(request: Request) -> Principal:
         found = core.auth.from_headers(
