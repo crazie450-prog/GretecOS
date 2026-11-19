@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import sqlite3
+import statistics
 import sys
 import threading
 import time
@@ -183,9 +184,10 @@ def test_the_designer_job_api(
             # The core answers while a design computes (a busy Python loop, as the planner is).
             # The loop runs until the test lets it go, so every answer below came while it ran:
             # a core the job starved could answer only after it (then "done", after the 60 s
-            # cap). No bound on the runner's speed (WO-11.4: a 1.0 s bound on the pair failed on
-            # loaded Windows runners at 1.02-1.13 s; on the harness DB a real design leaves the
-            # core's answers at a median of 8 ms).
+            # cap). The bound is on the median pair, not the slowest (WO-11.4: the slowest pair
+            # was 1.02-1.13 s on loaded Windows runners, one GC pause or runner hiccup; on the
+            # harness DB a real design leaves the pair at a median of 8 ms, worst 0.4 s). A job
+            # that holds the GIL in 50 ms slices makes the median 3.3 s and fails it.
             free = threading.Event()
 
             def busy(h: Path, req: Request) -> Any:  # noqa: ANN401
@@ -199,15 +201,19 @@ def test_the_designer_job_api(
             jid = c.post("/api/designer/jobs", json=body, headers=ADMIN_H).json()[
                 "job"
             ]["id"]
+            pairs: list[float] = []
             try:
                 for _ in range(5):
+                    t0 = time.monotonic()
                     assert c.get("/api/health", headers=ADMIN_H).status_code == 200
                     got = c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H)
+                    pairs.append(time.monotonic() - t0)
                     assert got.status_code == 200
                     assert got.json()["job"]["status"] == dj.RUNNING
                     time.sleep(0.2)
             finally:
                 free.set()
+            assert statistics.median(pairs) < 0.5, pairs
             assert _ended(c, jid)["status"] == dj.DONE
     finally:
         core.store.close()
