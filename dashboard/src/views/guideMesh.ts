@@ -210,3 +210,29 @@ export function fallbackColour(block: string): string {
 export function hatchWords(kind: string): string {
   return kind.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
 }
+
+/** A box drawn as an outline over the blocks (WO-10.10: the floor plan's machines and keep-outs
+ * inside a shell, D370): ``lo`` and ``hi`` its corner cells, inclusive, in the drawing's cells. */
+export interface GhostBox {
+  id: string;
+  kind: "machine" | "keepout";
+  label: string;
+  lo: number[];
+  hi: number[];
+}
+
+/** The box's 12 edges as one SVG path in the drawing's frame (as for :func:`project`). */
+export function boxEdges(size: Vec, box: Pick<GhostBox, "lo" | "hi">, view: ViewAngle): string {
+  const centre: Vec = [size[0] / 2, size[1] / 2, size[2] / 2];
+  const lo = box.lo;
+  const hi = box.hi.map((v) => v + 1);
+  const pt = (c: Vec): string => {
+    const [px, py] = toView([c[0] - centre[0], c[1] - centre[1], c[2] - centre[2]], view);
+    return `${px.toFixed(3)},${(-py).toFixed(3)}`;
+  };
+  const corner = (i: number): Vec => [i & 1 ? hi[0] : lo[0], i & 2 ? hi[1] : lo[1], i & 4 ? hi[2] : lo[2]];
+  const edges: [number, number][] = [];
+  for (let i = 0; i < 8; i++)
+    for (const bit of [1, 2, 4]) if (!(i & bit)) edges.push([i, i | bit]);
+  return edges.map(([a, b]) => `M${pt(corner(a))} L${pt(corner(b))}`).join(" ");
+}

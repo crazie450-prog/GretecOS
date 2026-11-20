@@ -24,7 +24,7 @@ export interface JobRunner {
 }
 
 export function useDesignJob(
-  kind: "designer" | "power",
+  kind: DesignJob["kind"],
   onDone: (result: unknown) => void,
   onEnded: (text: string) => void,
 ): JobRunner {

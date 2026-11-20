@@ -82,7 +82,10 @@ def builds_on_disk(home: Path) -> set[str]:
 
 
 def rev(
-    conn: sqlite3.Connection, home: Path, words: str, **kw: Any  # noqa: ANN401
+    conn: sqlite3.Connection,
+    home: Path,
+    words: str,
+    **kw: Any,  # noqa: ANN401
 ) -> versions.Revised:
     return versions.revise(conn, home, VaultIO(home / "vault"), None, words, **kw)
 

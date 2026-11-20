@@ -279,6 +279,28 @@ def add_routes(
 
         return await asyncio.to_thread(chain, run)
 
+    @app.get("/api/shells/themes")
+    async def shell_themes(who: Anyone) -> dict[str, Any]:
+        """The themes the workbench's picker offers (WO-10.6's, from the vault)."""
+
+        def run() -> dict[str, Any]:
+            from gregtec.build import themes as theme_lib
+            from gregtec.vault.io import VaultIO
+
+            found, problems = theme_lib.Themes(VaultIO(home() / "vault")).load()
+            rows = [
+                {"id": t.id, "name": t.name, "v": t.v, "summary": t.summary}
+                for t in found
+            ]
+            return {
+                "themes": rows,
+                "line_types": list(theme_lib.LINE_TYPES),
+                "limits": {k: list(v) for k, v in shell.LIMITS.items()},
+                "problems": [str(p) for p in problems][:20],
+            }
+
+        return await asyncio.to_thread(run)
+
     @app.get("/api/shells/designs/{ds}")
     async def shell_design_get(ds: str, who: Anyone) -> dict[str, Any]:
         return await asyncio.to_thread(
