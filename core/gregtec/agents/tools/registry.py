@@ -206,9 +206,21 @@ def guard(
 def epoch(conn: sqlite3.Connection) -> str:
     """The DB's state as far as paging cares: the newest export run and the last quest load
     (whose record has its load time). A rebuild of the same run that changes nothing else is
-    not seen; its recipes keep their keys and order."""
-    run = access.query(conn, "current_run")
-    quests = conn.execute("SELECT value FROM kv WHERE key = ?", (KV_SOURCE,)).fetchone()
+    not seen; its recipes keep their keys and order. A DB with only the core's own tables
+    (before the first ``gos db build``) has neither: its event tools page all the same."""
+    have = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+            " AND name IN ('export_run', 'kv')"
+        )
+    }
+    run = access.query(conn, "current_run") if "export_run" in have else []
+    quests = (
+        conn.execute("SELECT value FROM kv WHERE key = ?", (KV_SOURCE,)).fetchone()
+        if "kv" in have
+        else None
+    )
     loaded = hashlib.sha256(quests[0].encode()).hexdigest()[:12] if quests else "-"
     newest = (
         f"{run[0]['id']}:{run[0]['run_key']}:{run[0]['created_at']}" if run else "-"

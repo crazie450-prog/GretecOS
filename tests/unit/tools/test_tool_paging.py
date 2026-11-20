@@ -24,12 +24,14 @@ from typing import Any
 
 import pytest
 
+from gregtec import store as core_store
 from gregtec.agents.tools.catalog import build_registry
 from gregtec.agents.tools.registry import DEEP, Registry
 from gregtec.agents.tools.tsv import Result, digest
 from gregtec.bridge import ops as bridge_ops
 from gregtec.config import Config
 from gregtec.db import access
+from gregtec.events import store as event_store
 from gregtec.store import Store
 from gregtec.vault import deploy as vault_deploy
 from gregtec.vault.io import VaultIO
@@ -253,6 +255,22 @@ def test_telemetry_get_pages_to_the_end(tmp_path: Path, ops: bridge_ops.Ops) -> 
     assert same_when_paged(small, whole, "telemetry_get", {"scope": "all"}) > 1
 
 
+def test_crop_status_pages_to_the_end(
+    tmp_path: Path, ops: bridge_ops.Ops, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The breeding stations' status reads telemetry too: three stations, a page of one."""
+    from gregtec.crops import station
+
+    found = [
+        {"ref": f"tel:lab/station-{n}", "state": "idle", "age_s": n, "stale": False}
+        for n in range(3)
+    ]
+    monkeypatch.setattr(station, "status", lambda telemetry, instance: found)
+    small = build_registry(tmp_path / "no.sqlite", ops=ops, page=1)
+    whole = build_registry(tmp_path / "no.sqlite", ops=ops, page=WHOLE)
+    assert same_when_paged(small, whole, "crop_status", {}) == 3
+
+
 # --- the DB tools, on the made-up export with its quest book --------------------------------
 
 
@@ -272,3 +290,31 @@ def test_the_db_tools_page_to_the_end(
     small = build_registry(tool_db, page=1)
     whole = build_registry(tool_db, page=WHOLE)
     assert same_when_paged(small, whole, tool, args) > 1
+
+
+def test_the_event_tools_page_before_the_first_db_build(tmp_path: Path) -> None:
+    """Found by the same check: on a home whose gos.sqlite only the core's Store has made (no
+    ``gos db build`` yet, QA 5-9's state) a result past one page failed with "there is no DB
+    ... yet", because the cursor's epoch asked for the export run. Such a DB's epoch is empty."""
+    path = tmp_path / "gos.sqlite"
+    conn = core_store.connect(path)
+    now = time.time()
+    event_store.record(
+        conn,
+        "play",
+        [
+            {"id": "p1", "kind": "location", "ts": now - 600, "source": "log",
+             "data": {"via": "login", "x": 5, "y": 64, "z": 5, "dim": 0}},
+            {"id": "p2", "kind": "quest_done", "ts": now - 500, "source": "log",
+             "data": {"quest": "q:AAAAAAAAAAAAAAAAAAAABQ"}},
+            {"id": "p3", "kind": "death", "ts": now - 200, "source": "log",
+             "data": {"message": "Clayton was slain by Zombie"}},
+        ],
+        "survival",
+    )  # fmt: skip
+    conn.close()
+    assert not access.is_built(path)
+    small = build_registry(path, page=1)
+    whole = build_registry(path, page=WHOLE)
+    assert same_when_paged(small, whole, "events_recent", {"window": "1h"}) == 3
+    assert same_when_paged(small, whole, "session_summary", {}) == 3

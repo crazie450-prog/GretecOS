@@ -25,7 +25,7 @@ The shell workbench is the separate window you asked for: the dashboard's **Buil
 
 ## Known limits
 
-Some phrasings in Chat or voice are not taken as a revision of the current shell, because the router needs a part of the building to change (D369): "I want a shell around X" goes to the fast lane, which neither designs nor revises a shell; "add a lamp over the door" and "put lights on the shell" are not taken as changes to the shell either. For these, type the words in the workbench and press **Ask the architect**, which revises the design picked in the list whatever the words are (or **Design new** for a new shell). The dashboard's ask route (`POST /api/ask`, its `shell` field) lets any signed-in caller, a paired client device such as the phone included, name which design its words revise, as Ask the architect does.
+Some phrasings in Chat or voice neither design a shell nor revise the current one, because the router decides in code and needs a design verb or a part of the building that changes (D369): "I want a shell around X" and "add a lamp over the door" go to the fast lane, which can't write a shell; "put lights on the shell" goes to the deep lane as an ordinary task, not as a revision of the current design. For these, type the words in the workbench and press **Ask the architect**, which revises the design picked in the list whatever the words are (or **Design new** for a new shell). The dashboard's ask route (`POST /api/ask`, its `shell` field) lets any signed-in caller, a paired client device such as the phone included, name which design its words revise, as Ask the architect does (D370).
 
 ## The same from PowerShell
 
