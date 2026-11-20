@@ -39,6 +39,7 @@ from gregtec.build import palette, schematic, shell
 from gregtec.build import themes as theme_lib
 from gregtec.build.worldreg import WorldRegistry
 from gregtec.ingest.fingerprint import atomic_write
+from gregtec.planner import progress
 from gregtec.planner.outputs import store as plan_store
 from gregtec.vault.io import VaultIO
 
@@ -101,7 +102,9 @@ def make(
     site: Site | None = None,
     save_it: bool = True,
 ) -> Made:
-    """Design a shell around the plans' layout and save it unless refused (see the module)."""
+    """Design a shell around the plans' layout and save it unless refused (see the module).
+    Under a shell job (WO-10.10) each step is a stage and a cancel point, all before saving."""
+    progress.stage("layout")
     if not plan_ids or len(plan_ids) > MAX_PLANS:
         raise shell.ShellError(f"name 1 to {MAX_PLANS} saved plans")
     plans = []
@@ -141,6 +144,7 @@ def make(
             "(role and block, from block_find) for a prompt-only shell"
         )
     swatches = shell.swatches_of(brief.theme, extra, exclude)
+    progress.stage("palette")
     try:
         shell.check_palette(conn, swatches)
     except palette.CatalogError as exc:
@@ -155,6 +159,7 @@ def make(
         headroom=headroom,
     )
     source = "procedural" if ops is None else "architect"
+    progress.stage("compose")
     design_ops = tuple(
         dict(o)
         for o in (shell.procedural(spec) if ops is None else ops)
@@ -165,11 +170,13 @@ def make(
             "refused", source, {}, {}, ("every operation is an object",)
         )
     else:
+        progress.stage("gate")
         outcome = shell.design(conn, spec, design_ops, source)
     build = shell.build_id(spec, design_ops)
     made = Made(spec, design_ops, outcome, brief, build, None)
     if not outcome.ok or not save_it:
         return made
+    progress.stage("saving")
     path = save(home, made, lay)
     if site is not None and brief.theme is not None:
         theme_lib.record_use(

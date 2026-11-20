@@ -9,11 +9,14 @@
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
   model call, D206), "next crop step" (WO-6.7, plan 7.17: the crop guide's next step),
+  "undo" / "go back to the previous version" after a shell (WO-10.10, D369: the current
+  shell design's previous version made current again, in code),
   and "what's this?" (WO-8.1, D286: the item Clayton hovers over or the
   block he looks at, as GregtecLink's client module reports it, answered from the DB). These
   keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice, making or refining a building theme (WO-10.6),
-  designing a decorative shell (WO-10.7)
+  designing a decorative shell (WO-10.7), changing the current shell ("make the roof
+  steeper": ``shell_revise``, WO-10.10, D369)
   and anything quantitative over a line ("how many ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
   asked about, so pre-retrieval (:mod:`gregtec.agents.prefetch`) can resolve it first.
@@ -49,6 +52,8 @@ SPOIL = "spoil"  # the last answer's locked quests, partial or full (WO-6.4, D26
 CROP_STEP = (
     "crop_step"  # the next step of the crop guide he follows (WO-6.7, plan 7.17)
 )
+# the current shell design (WO-10.10, D369): revise it (deep) or undo its last change (instant)
+SHELL_REVISE, SHELL_UNDO = "shell_revise", "shell_undo"
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -197,6 +202,53 @@ DEEP_RULES = [
     )
 ]
 
+# Changing the shell Clayton is working on (WO-10.10, D369): a change word and a part of a
+# building, or a bare comparative ("taller, and no windows on the north wall"); never a question
+# ("which roof is steeper"), and never when he asks for a new one ("design another shell").
+_SHELL_PART = re.compile(
+    r"\b(?:roofs?|walls?|windows?|pillars?|columns?|lights?|lamps?|parapets?|plinth|trim|"
+    r"eaves|band|doorways?|fa[cç]ades?|shells?|buildings?)\b"
+)
+_SHELL_CHANGE = re.compile(
+    r"\b(?:steeper|flatter|flat|shallower|pitched|peaked|gabled?|taller|higher|shorter|"
+    r"lower|bigger|larger|wider|smaller|narrower|more|fewer|less|no|without|remove|drop|add|"
+    r"change|swap|revise|tweak|adjust|raise)\b"
+)
+_SHELL_COMPARATIVE = re.compile(
+    r"^(?:(?:a bit|a little|much|slightly|way) )?(?:steeper|flatter|taller|higher|shorter|"
+    r"lower|wider|narrower|bigger|smaller)(?:$|[,;]| (?:and|by \d+|please|still|again|too)\b)"
+)
+_SHELL_NEW = re.compile(
+    r"\b(?:new|another|fresh|second|different|separate)\b.*\b(?:shells?|buildings?|designs?|"
+    r"fa[cç]ades?)\b|\bfrom scratch\b|\bstart (?:over|again|afresh)\b"
+)
+_SHELL_QUESTION = re.compile(
+    r"^(?:what|which|why|who|when|where|is|are|does|do|did|should|will|would|shall|"
+    r"how (?:do|does|did|can|to|would|should|many|much|long|tall|big))\b"
+)
+SHELL_UNDO_RULES = _rx(
+    r"undo(?: (?:that|it|this|the last (?:change|revision|version)|the (?:shell|building|roof)"
+    r"(?: change)?))?",
+    r"go back(?: to)? (?:the |a )?(?:previous|last|earlier|old|former) "
+    r"(?:version|one|shell|building|design)",
+    r"revert(?: (?:that|it|the shell|the building|the change))?",
+    r"(?:put|change) it back",
+)
+
+
+def shell_change(said: str) -> str | None:
+    """``undo`` or ``revise`` when the normalised words change the current shell, else None."""
+    if any(p.match(said) for p in SHELL_UNDO_RULES):
+        return SHELL_UNDO
+    if _SHELL_QUESTION.match(said) or _SHELL_NEW.search(said):
+        return None
+    if _SHELL_COMPARATIVE.match(said) or (
+        _SHELL_CHANGE.search(said) and _SHELL_PART.search(said)
+    ):
+        return SHELL_REVISE
+    return None
+
+
 FAST_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     (
         FRONTIER,
@@ -282,15 +334,19 @@ def subject_of(words: str) -> str | None:
     return words
 
 
-def route(text: str, *, plans: bool = True) -> Route:
+def route(text: str, *, plans: bool = True, shell: bool = False) -> Route:
     """``plans=False``: a saved-plan command (PLAN) isn't matched, for a question that named no
-    saved plan and goes to the AI as before WO-2.8."""
+    saved plan and goes to the AI as before WO-2.8. ``shell``: Clayton has a shell design he is
+    working on (WO-10.10): words that change a building revise it (deep lane, ``build_revise``)
+    and "undo" makes its previous version current (instant), instead of starting over."""
     said = normalise(text)
     tier = None
     if m := _AT_TIER.search(said):  # "... at LV": the recipe tool's tier_max
         tier, said = _TIER_NAMES[m["tier"]], said[: m.start()]
     if spoilers.command(text) is not None:  # the whole request is the command (D268)
         return Route(INSTANT, SPOIL, text)
+    if shell and (change := shell_change(said)) is not None:
+        return Route(INSTANT if change == SHELL_UNDO else DEEP, change, text)
     deep = any(d.search(said) for d in DEEP_RULES)
     for command, patterns in INSTANT_RULES:
         for p in patterns:
