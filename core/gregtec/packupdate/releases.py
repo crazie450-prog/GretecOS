@@ -633,7 +633,8 @@ def watch(
     addons_path: Path = ADDONS,
 ) -> Watch:
     """Check once and record what was seen in ``watch.json`` (``play``: Play's instance folder,
-    for its mod list; None leaves the addons out)."""
+    for its mod list; with None, or mods that can't be listed, only the addons watched
+    ``always`` are checked)."""
     state = load_state(home)
     web = Web(home, state, fetch, now=now, force=force)
     pack = check_pack(web, adopted)
@@ -648,9 +649,11 @@ def watch(
         try:
             files = play_mod_files(play)
         except (OSError, fingerprint.FingerprintError) as exc:
-            notes.append(f"Play's mods couldn't be listed ({exc}): addons not checked")
-            play = None
-    checks = check_addons(web, read_addons(addons_path), files) if play else []
+            notes.append(
+                f"Play's mods couldn't be listed ({exc}): only the addons watched always "
+                "were checked"
+            )
+    checks = check_addons(web, read_addons(addons_path), files)
     result = Watch(_utc(now()), pack, summaries, checks, notes + web.notes)
     state["last"] = {
         "checked_utc": result.checked_utc,

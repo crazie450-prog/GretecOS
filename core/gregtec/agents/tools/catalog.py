@@ -518,6 +518,7 @@ TOOLS = (
         lanes=frozenset({DEEP}),
         gate=shells.GATE,
         deadline_s=30.0,
+        max_value_bytes=shells.MAX_STRUCTURE_BYTES,
     ),
     Tool(
         "build_revise",
