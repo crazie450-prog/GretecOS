@@ -5,6 +5,8 @@
 // the hatch kinds they take; the BOM per structure; a build checklist the core keeps.
 // Everything shown comes from the core (gregtec.build.guide_data): positions from the footprint,
 // names and colours from the block catalog. GOS never pastes a machine: Clayton builds it.
+// WO-10.10: the drawing is `Scene`, which the shell workbench uses too (a shell's blocks with
+// the floor plan's machines and keep-outs as ghosts, D370).
 // Built to the design system: needs Clayton's board approval (D92, D158 (5)).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
@@ -13,8 +15,11 @@ import { Button, CitationChip, Panel } from "../components/core";
 import { GLYPH } from "../state/states";
 import {
   DEFAULT_VIEW,
+  type GhostBox,
+  type GuideCell,
   type Vec,
   type ViewAngle,
+  boxEdges,
   compass,
   fallbackColour,
   frontArrow,
@@ -43,22 +48,42 @@ function blockName(g: GuideData, key: string): string {
   return g.palette.find((p) => p.block === key)?.name ?? key;
 }
 
-function Viewer(props: { g: GuideData; upTo: number }) {
-  const { g, upTo } = props;
+export interface SceneProps {
+  cells: GuideCell[];
+  size: Vec;
+  upTo: number;
+  palette: { block: string; top: string | null; side: string | null }[];
+  label: string; // the drawing's accessible name
+  describe: (cell: number) => string; // what hovering or tapping a cell says
+  hint: string; // what the hover line says before a cell is hovered
+  compassLabel: string;
+  prefix?: string; // test ids: `${prefix}-scene`, `${prefix}-turn-left`, ... ("guide" by default)
+  controllerAt?: Vec | null; // the guide's controller, its front face marked
+  front?: number[];
+  ghosts?: GhostBox[]; // boxes drawn as outlines over the blocks (the shell's machines, keep-outs)
+}
+
+/** The 3D drawing (D319): turn and tilt (drag, buttons), zoom (wheel, buttons), a compass that
+ * turns with it, hover or tap a block for what it is, cells shown up to layer ``upTo``. */
+export function Scene(props: SceneProps) {
+  const { cells, size, upTo, palette } = props;
+  const prefix = props.prefix ?? "guide";
   const [view, setView] = useState<ViewAngle>(DEFAULT_VIEW);
   const [zoom, setZoom] = useState(1);
   const [hover, setHover] = useState<number | null>(null);
   const svg = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x: number; y: number; moved: number } | null>(null);
-  const drawing = useMemo(() => project(g.cells, g.size, upTo, view), [g.cells, g.size, upTo, view]);
+  const drawing = useMemo(() => project(cells, size, upTo, view), [cells, size, upTo, view]);
   const box = zoomed(drawing.box, zoom);
   // The controller and the way its front looks (review M1): its front face is marked, an arrow
   // points out of it, and the compass turns with the drawing, so a turned view can't mirror it.
-  const [ax, ay, az] = g.controller_at;
-  const controller = g.cells.findIndex(([x, y, z]) => x === ax && y === ay && z === az);
-  const frontDir = normalIndex(g.front);
+  const at = props.controllerAt ?? null;
+  const controller = at ? cells.findIndex(([x, y, z]) => x === at[0] && y === at[1] && z === at[2]) : -1;
+  const frontDir = props.front ? normalIndex(props.front) : -1;
   const arrow =
-    controller >= 0 && frontDir >= 0 && ay <= upTo ? frontArrow(g.size as Vec, [ax, ay, az], g.front as Vec, view) : null;
+    at && props.front && controller >= 0 && frontDir >= 0 && at[1] <= upTo
+      ? frontArrow(size, at, props.front as Vec, view)
+      : null;
 
   useEffect(() => {
     // A wheel listener React would add is passive, so it couldn't keep the page from scrolling.
@@ -73,8 +98,8 @@ function Viewer(props: { g: GuideData; upTo: number }) {
   }, []);
 
   const cellOf = (target: EventTarget | null): number | null => {
-    const at = (target as Element | null)?.getAttribute?.("data-cell");
-    return at === null || at === undefined ? null : Number(at);
+    const got = (target as Element | null)?.getAttribute?.("data-cell");
+    return got === null || got === undefined ? null : Number(got);
   };
   const turn = (by: number) => setView((v) => ({ ...v, yaw: (v.yaw + by + 360) % 360 }));
 
@@ -85,11 +110,12 @@ function Viewer(props: { g: GuideData; upTo: number }) {
         className="guide-scene"
         viewBox={box.map((n) => n.toFixed(3)).join(" ")}
         role="img"
-        aria-label={`${g.name ?? g.controller}, layers 1 to ${upTo + 1} of ${g.size[1]}`}
-        data-testid="guide-scene"
+        aria-label={props.label}
+        data-testid={`${prefix}-scene`}
         data-faces={drawing.polys.length}
         data-yaw={Math.round(view.yaw)}
         data-zoom={zoom.toFixed(2)}
+        data-ghosts={props.ghosts?.length ?? 0}
         onPointerDown={(e) => {
           drag.current = { x: e.clientX, y: e.clientY, moved: 0 };
           (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
@@ -126,8 +152,8 @@ function Viewer(props: { g: GuideData; upTo: number }) {
         }}
       >
         {drawing.polys.map((p) => {
-          const [, y, , b, s] = g.cells[p.cell];
-          const block = b >= 0 ? g.palette[b] : null;
+          const [, y, , b, s] = cells[p.cell];
+          const block = b >= 0 ? palette[b] : null;
           const colour = block
             ? ((p.shade === "top" ? block.top : block.side) ?? block.top ?? block.side ?? fallbackColour(block.block))
             : undefined;
@@ -145,14 +171,24 @@ function Viewer(props: { g: GuideData; upTo: number }) {
             .join(" ");
           return <polygon key={`${p.cell}-${p.dir}`} className={cls} points={p.points} fill={colour} data-cell={p.cell} />;
         })}
-        {arrow && <path className="guide-front-arrow" d={arrow} data-testid="guide-front-arrow" />}
+        {(props.ghosts ?? []).map((g) => (
+          <path
+            key={`${g.kind}-${g.id}`}
+            className={`guide-ghost ${g.kind}`}
+            d={boxEdges(size, g, view)}
+            data-ghost={g.kind}
+          >
+            <title>{g.label}</title>
+          </path>
+        ))}
+        {arrow && <path className="guide-front-arrow" d={arrow} data-testid={`${prefix}-front-arrow`} />}
       </svg>
       <svg
         className="guide-compass"
         viewBox="-1.6 -1.6 3.2 3.2"
         role="img"
-        aria-label={`Compass: the controller's front faces ${g.facing}`}
-        data-testid="guide-compass"
+        aria-label={props.compassLabel}
+        data-testid={`${prefix}-compass`}
       >
         <circle r={1.05} />
         {compass(view).map((c) => (
@@ -164,26 +200,24 @@ function Viewer(props: { g: GuideData; upTo: number }) {
           </g>
         ))}
       </svg>
-      <p className="gos-sub guide-hover" data-testid="guide-hover" aria-live="polite">
-        {hover === null
-          ? "Hover or tap a block for its name and registry name. The arrow shows which way the controller's front faces."
-          : cellLabel(g, hover)}
+      <p className="gos-sub guide-hover" data-testid={`${prefix}-hover`} aria-live="polite">
+        {hover === null ? props.hint : props.describe(hover)}
       </p>
       <div className="guide-controls">
-        <Button testId="guide-turn-left" title="Turn left" onClick={() => turn(-45)}>
+        <Button testId={`${prefix}-turn-left`} title="Turn left" onClick={() => turn(-45)}>
           ⟲
         </Button>
-        <Button testId="guide-turn-right" title="Turn right" onClick={() => turn(45)}>
+        <Button testId={`${prefix}-turn-right`} title="Turn right" onClick={() => turn(45)}>
           ⟳
         </Button>
-        <Button testId="guide-zoom-in" title="Zoom in" onClick={() => setZoom((z) => Math.min(8, z * 1.25))}>
+        <Button testId={`${prefix}-zoom-in`} title="Zoom in" onClick={() => setZoom((z) => Math.min(8, z * 1.25))}>
           +
         </Button>
-        <Button testId="guide-zoom-out" title="Zoom out" onClick={() => setZoom((z) => Math.max(0.25, z / 1.25))}>
+        <Button testId={`${prefix}-zoom-out`} title="Zoom out" onClick={() => setZoom((z) => Math.max(0.25, z / 1.25))}>
           −
         </Button>
         <Button
-          testId="guide-view-reset"
+          testId={`${prefix}-view-reset`}
           title="Back to the first view"
           onClick={() => {
             setView(DEFAULT_VIEW);
@@ -194,6 +228,24 @@ function Viewer(props: { g: GuideData; upTo: number }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+function Viewer(props: { g: GuideData; upTo: number }) {
+  const { g, upTo } = props;
+  return (
+    <Scene
+      cells={g.cells}
+      size={g.size as Vec}
+      upTo={upTo}
+      palette={g.palette}
+      label={`${g.name ?? g.controller}, layers 1 to ${upTo + 1} of ${g.size[1]}`}
+      describe={(i) => cellLabel(g, i)}
+      hint="Hover or tap a block for its name and registry name. The arrow shows which way the controller's front faces."
+      compassLabel={`Compass: the controller's front faces ${g.facing}`}
+      controllerAt={g.controller_at as Vec}
+      front={g.front}
+    />
   );
 }
 

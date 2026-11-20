@@ -41,6 +41,7 @@ from gregtec.build import (
     layout_cli,
     schematic_cli,
     shell_cli,
+    shell_eval_cli,
     theme_cli,
 )
 from gregtec.crops import cli as cropcli
@@ -517,6 +518,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     advisor_cli.add_parsers(eval_cmds)
     hover_eval_cli.add_parsers(eval_cmds)
     wiki_evals_cli.add_parsers(eval_cmds)
+    shell_eval_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -844,6 +846,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return screen_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:
             return design_cost_cli.run(args, sys.stdout)
+        if args.eval_command == shell_eval_cli.COMMAND:
+            return shell_eval_cli.run(args, sys.stdout)
         if args.eval_command == powereval.COMMAND:
             return powereval.main(args, sys.stdout)
         if args.eval_command == quest_cli.EVAL:

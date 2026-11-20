@@ -74,6 +74,7 @@ WRITERS = {
     "design_power",  # WO-4.6: saves power plans through the planner's store
     "theme_save",  # WO-10.6: a theme version, catalog-checked, through the vault (D314)
     "build_request",  # WO-10.7: a shell build, gate-checked, under data/build/shells (D316)
+    "build_revise",  # WO-10.10: a shell version, gate-checked, its design's chain (D367)
 }  # WO-2.5, behind the path guard
 HANDOFF = "handoff"  # WO-2.3: the fast lane's one writing tool, to the deep lane
 

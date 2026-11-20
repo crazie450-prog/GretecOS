@@ -35,6 +35,11 @@ tier-up recap.
 ``--power`` (WO-4.6, :func:`setup_power`): WO-4.2's made-up power export instead of the tool
 fixtures', so the Power view designs, ranks and accepts real (made-up) power lines.
 
+``--shells`` (WO-10.10, :func:`setup_shells`): the shell workbench's core: WO-10.7's test home
+(tests/unit/test_shell.py: the made-up block catalog, the structure fixture, the steel line and
+its power plan) and one shell made before the workbench, so the workbench designs, revises, compares and undoes real
+(made-up) shells; ``design_delay`` slows its jobs' stages too.
+
 ``--tailnet <name>:<port>`` (WO-9.3): that Host is allowed too, as the phone's tailnet name is
 in ``[core] allowed_hosts``; ``e2e/fake_serve.py`` stands in for Tailscale Serve in front of it.
 
@@ -318,6 +323,40 @@ def setup_power(home: Path) -> None:
     powerview.design = design  # type: ignore[assignment]
 
 
+def setup_shells(root: Path) -> Path:
+    """``--shells`` (WO-10.10): WO-10.7's test home in ``root/home`` (its block catalog, the
+    structure fixture's multis, the steel line and its power plan) and one procedural foundry
+    shell, as a build from before the workbench (its plans aren't saved-plan rows, so the
+    workbench offers them from that shell's design). The vault
+    is deployed by ``main`` as for the other cores. Returns GOS_HOME."""
+    spec = importlib.util.spec_from_file_location(
+        "shell_fixtures", REPO / "tests" / "unit" / "test_shell.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the shell test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["shell_fixtures"] = module
+    spec.loader.exec_module(module)
+    home: Path = module.make_home(
+        root, module.lay_tests.production(), module.lay_tests.power()
+    )
+    from gregtec.build import shell_store
+    from gregtec.db import access
+    from gregtec.vault.io import VaultIO
+
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:  # one shell from before the workbench (WO-10.7's procedural foundry shell)
+        made = shell_store.make(
+            conn, home, VaultIO(home / "vault"), ["pl-steel"], theme_id="th-foundry"
+        )
+    finally:
+        conn.close()
+    if made.saved is None:
+        raise RuntimeError(f"the e2e shell was refused: {made.outcome.reasons}")
+    shutil.rmtree(home / "vault")  # main deploys it, as for every core
+    return home
+
+
 def _load_fakes() -> object:
     """tests/unit/setup/fakes.py: the file keyring and the fake Prism tree (WO-2.9)."""
     spec = importlib.util.spec_from_file_location(
@@ -398,6 +437,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="the Power view's core (WO-4.6): WO-4.2's power fixture; see setup_power",
     )
+    parser.add_argument(
+        "--shells",
+        action="store_true",
+        help="the shell workbench's core (WO-10.10): WO-10.7's test home; see setup_shells",
+    )
     parser.add_argument("--host-name", default=DASHBOARD_HOST)
     parser.add_argument(
         "--tailnet",
@@ -412,10 +456,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.fresh:
         home = setup_fresh(root)
     else:
-        home = root
+        home = setup_shells(root) if args.shells else root
         if args.power:
             setup_power(home)
-        else:
+        elif not args.shells:
             build_db(home)
             ores_lab = load_ores(home)
             load_crops(home)

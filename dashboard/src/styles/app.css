@@ -2996,6 +2996,113 @@ select.ask-input option {
   }
 }
 
+/* --- The shell workbench (WO-10.10, D367-D370): words, versions, compare, the 3D view ---------- */
+
+.shell-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.shell-words {
+  width: 100%;
+  height: auto;
+  min-height: calc(4 * 1.5em + 2 * var(--space-2));
+  padding: var(--space-2) var(--space-4);
+  line-height: 1.5;
+  resize: vertical;
+  font: inherit;
+}
+
+.shell-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.shell-form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.shell-form-row input.num {
+  width: 9ch;
+}
+
+.shell-form-row select {
+  max-width: 100%;
+}
+
+.shell-version-list {
+  width: 100%;
+}
+
+.shell-version-list tr.current td {
+  background: var(--surface-2, var(--panel));
+}
+
+.shell-version-list button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.shell-version-list button.gos-chip[aria-pressed="true"] {
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
+.shell-version-list .shell-asked {
+  overflow-wrap: anywhere;
+}
+
+.shell-ghost-toggle input {
+  accent-color: var(--primary);
+}
+
+.guide-ghost {
+  fill: none;
+  stroke-width: 0.06;
+  stroke-dasharray: 0.25 0.15;
+  pointer-events: stroke;
+}
+
+.guide-ghost.machine {
+  stroke: var(--primary);
+}
+
+.guide-ghost.keepout {
+  stroke: var(--accent);
+  stroke-opacity: 0.7;
+}
+
+.shell-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.shell-compare-grid .guide-scene {
+  height: min(40vh, 520px);
+}
+
+@media (max-width: 760px) {
+  .shell-compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell-version-list {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
 /* --- Shell card (WO-10.7, D316): the decorative shell's isometric preview -------------------- */
 
 .shell-view-row {

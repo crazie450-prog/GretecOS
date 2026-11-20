@@ -26,6 +26,12 @@ import type {
   GuideEntry,
   GuideQuery,
   ShellSummary,
+  ShellCompare,
+  ShellDesign,
+  ShellDesignSummary,
+  ShellJobBody,
+  ShellScene,
+  ShellThemes,
   Health,
   LiveBase,
   MyBase,
@@ -125,9 +131,19 @@ export const api = {
   shell: (id: string) => get<{ card: Card }>(`/api/shells/${encodeURIComponent(id)}`),
   designShell: (plans: string[], theme?: string) =>
     post<{ card: Card }>("/api/shells", theme ? { plans, theme } : { plans }),
+  // The shell workbench (WO-10.10, D367-D370): versions, jobs, compare and the 3D view.
+  shellDesigns: () => get<{ designs: ShellDesignSummary[]; current: string | null }>("/api/shells/designs"),
+  shellDesign: (ds: string) => get<{ design: ShellDesign }>(`/api/shells/designs/${encodeURIComponent(ds)}`),
+  shellCurrent: (ds: string, build: string) =>
+    post<{ design: ShellDesign }>(`/api/shells/designs/${encodeURIComponent(ds)}/current`, { build }),
+  shellThemes: () => get<ShellThemes>("/api/shells/themes"),
+  shellJob: (body: ShellJobBody) => post<JobStart>("/api/shells/jobs", body),
+  shellCompare: (a: string, b: string) =>
+    get<ShellCompare>(`/api/shells/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
+  shellScene: (build: string) => get<ShellScene>(`/api/shells/${encodeURIComponent(build)}/view`),
   answers: () => get<Answer[]>("/api/answers"),
   deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
-  ask: (text: string) => post<Reply>("/api/ask", { text }),
+  ask: (text: string, shell?: string) => post<Reply>("/api/ask", shell ? { text, shell } : { text }),
   tool: (name: string, args: Record<string, unknown>) => post<{ card: Card }>(`/api/tools/${name}`, { args }),
   recipe: (ref: string) => get<Card>(`/api/recipe?ref=${encodeURIComponent(ref)}`),
   verify: () => get<Verify>("/api/verify"),

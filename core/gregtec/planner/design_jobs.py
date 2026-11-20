@@ -47,7 +47,7 @@ from gregtec.vault.io import atomic_write
 
 log = logging.getLogger("gregtec.planner.design_jobs")
 
-KINDS = ("designer", "power")
+KINDS = ("designer", "power", "shell")  # shell: WO-10.10's workbench (D370)
 RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED = (
     "running",
     "done",
