@@ -4,10 +4,12 @@ gives (the registry's paging contract, plan 5.3).
 Defect (two agents on real 'steel ingot' plans built from a harness export): effort_estimate
 failed with "has no DB to page from" once a plan's effort table ran past one page (50 rows).
 The registry refused any second page of a tool registered with ``needs_db=False``, so
-plan_export, plan_get (nodes, alternatives, routes), plan_list, theme_list and telemetry_get
-failed the same way. Such a tool's cursor now carries the tool's own epoch (``Result.epoch``,
-a digest of every row) and is refused once those rows change; a live reading's (telemetry) is
-never refused. A writing tool's result comes in one page: a cursor would run its write again.
+plan_export, plan_get (nodes, alternatives, routes), plan_list, theme_list, telemetry_get and
+crop_status failed the same way. Such a tool's cursor now carries the tool's own epoch
+(``Result.epoch``, a digest of every row) and is refused once those rows change; a live
+reading's (telemetry, the breeding stations) is never refused. A writing tool's result comes in
+one page: a cursor would run its write again. And a DB tool pages on a DB that has only the
+core's own tables (the event tools before the first ``gos db build``).
 
 The cases run on the tool tests' made-up export with a page of 1 row, so a few rows already
 page (effort_estimate: the registry's own 50, on a breakdown of 120 rows).
