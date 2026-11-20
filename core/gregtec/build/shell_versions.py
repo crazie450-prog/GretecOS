@@ -625,16 +625,17 @@ def compare(home: Path, a: str, b: str) -> dict[str, Any]:
 # --- the 3D viewer's data -------------------------------------------------------------------
 
 
-def viewer(conn: sqlite3.Connection, home: Path, build: str) -> dict[str, Any]:
+def viewer(conn: sqlite3.Connection | None, home: Path, build: str) -> dict[str, Any]:
     """One version for the build guide's 3D viewer (D319's drawing): its cells as ``[x, y, z,
     palette index, -1]`` from the shell's min corner, the palette (``registry@meta``, the
     catalog's name and face colours, role, count), per-layer materials, and the floor plan's
     machines and keep-outs as ghosts in the same frame. The cells come from the build's own
-    files through the gate again (:func:`gregtec.build.shell_store.rebuild`)."""
+    files (:func:`gregtec.build.shell_store.cells_of`); the catalog (``conn``, none: no DB yet)
+    gives only the names and colours."""
     from gregtec.build import guide_data
 
     rec = shell_store.load(home, build)
-    spec, outcome = shell_store.rebuild(conn, home, build)
+    spec, placed = shell_store.cells_of(home, build)
     lay = _layout_of(home, build)
     order = [m["block"] for m in rec["materials"]]
     index = {k: i for i, k in enumerate(order)}
@@ -642,7 +643,7 @@ def viewer(conn: sqlite3.Connection, home: Path, build: str) -> dict[str, Any]:
     cells = sorted(
         (
             [c[0] - lo[0], c[1] - lo[1], c[2] - lo[2], index[e.key], -1]
-            for c, e in outcome.cells.items()
+            for c, e in placed.items()
         ),
         key=lambda c: (c[1], c[2], c[0]),
     )
@@ -657,7 +658,7 @@ def viewer(conn: sqlite3.Connection, home: Path, build: str) -> dict[str, Any]:
     for x in cells:
         mats = layers.setdefault(x[1], {})
         mats[order[x[3]]] = mats.get(order[x[3]], 0) + 1
-    look = guide_data.looks(conn, order)
+    look = guide_data.looks(conn, order) if conn is not None else {}
     pal = []
     for m in rec["materials"]:
         lk = look.get(m["block"])

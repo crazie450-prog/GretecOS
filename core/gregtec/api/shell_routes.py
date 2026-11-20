@@ -229,10 +229,8 @@ def viewed(home: Path, build: str) -> dict[str, Any]:
     from gregtec.build import shell_versions as versions
     from gregtec.db import access
 
-    db = access.db_path(home)
-    if not db.is_file():
-        raise HTTPException(503, "no recipe DB: run gos db build")
-    conn = access.connect(db, readonly=True)
+    db = access.db_path(home)  # the catalog only names and colours the blocks
+    conn = access.connect(db, readonly=True) if db.is_file() else None
     try:
         return versions.viewer(conn, home, build)
     except (shell.ShellError, palette.CatalogError) as exc:
@@ -240,7 +238,8 @@ def viewed(home: Path, build: str) -> dict[str, Any]:
             404 if "no shell build" in str(exc) else 409, str(exc)
         ) from None
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def add_routes(

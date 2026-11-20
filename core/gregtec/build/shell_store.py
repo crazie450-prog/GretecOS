@@ -377,6 +377,49 @@ def rebuild(
     return spec, outcome
 
 
+def cells_of(
+    home: Path, build: str
+) -> tuple[shell.Spec, dict[shell.Cell, palette.Entry]]:
+    """The saved build's cells from its own files alone, no DB (the 3D viewer's, WO-10.10): its
+    operations compiled against its saved layout and palette, less what the gate removed (cells
+    outside the bounding volume or in a volume left empty). The same cells the gate saved:
+    refused when the count differs from the saved one (a changed file). The palette rule is
+    not run here (nothing is written): :func:`rebuild` and the export run it."""
+    rec = load(home, build)
+    try:
+        lay = json.loads(
+            (folder(home, build) / "layout.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise shell.ShellError(
+            f"build {build}'s layout.json can't be read: {exc}"
+        ) from None
+    swatches = [
+        shell.Swatch(r["role"], palette.parse_entry(r["block"]), r.get("note", ""))
+        for r in rec["palette"]
+    ]
+    spec = shell.spec_from_layout(
+        lay,
+        swatches,
+        prompt=rec.get("prompt", ""),
+        line_type=rec.get("line_type", theme_lib.GENERAL),
+        max_blocks=rec["max_blocks"],
+        headroom=rec["headroom"],
+    )
+    got = shell.compile_ops(spec, rec["ops"])
+    vols = shell._index(spec)
+    cells = {
+        c: e
+        for c, e in got.cells.items()
+        if spec.bounds.contains(c) and shell.breach_of(spec, c, vols) is None
+    }
+    if len(cells) != rec["blocks"]:
+        raise shell.ShellError(
+            f"build {build} gives {len(cells)} blocks, not the {rec['blocks']} saved"
+        )
+    return spec, cells
+
+
 def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -> None:
     """The layout of the build's plans laid out again now must be the saved one (its id hashes
     the geometry, WO-10.5): after a re-solve or new footprint data its keep-outs and corridors

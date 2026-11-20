@@ -187,6 +187,25 @@ export function ShellScene3D(props: { build: string; prefix?: string; compact?: 
           )}
         </div>
       )}
+      {!props.compact && (
+        <details className="shell-manifest" data-testid={`${prefix}-manifest`}>
+          <summary className="gos-label">
+            The whole shell: {scene.palette.reduce((n, p) => n + p.count, 0)} blocks, {scene.palette.length} kinds
+          </summary>
+          <table className="bom">
+            <tbody>
+              {scene.palette.map((p) => (
+                <tr key={p.block} data-block={p.block} data-count={p.count}>
+                  <td>{p.role}</td>
+                  <td>{p.name ?? "—"}</td>
+                  <td className="gos-src">{p.block}</td>
+                  <td className="num">{p.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
       {scene.caveats.map((c) => (
         <p key={c} className="gos-sub">
           {GLYPH.warn} {c}
@@ -393,7 +412,7 @@ export function ShellWorkbench() {
     (result) => {
       const r = result as ShellJobResult;
       if (r.refused?.length) setNotice(`Refused, nothing written; the current version stays: ${r.refused.join(" | ")}`);
-      else setNotice(r.changes?.length ? `New version: ${r.changes.join("; ")}` : "Designed: version 1 of a new design.");
+      else setNotice(r.changes?.length ? `New version: ${r.changes.join("; ")}` : "Designed: its first version is current.");
       setPicked([]);
       load(r.design ?? null);
     },
@@ -461,6 +480,13 @@ export function ShellWorkbench() {
   };
 
   const limits = themes?.limits;
+  // The saved plans, and the plans the shells already house (a plan file without a row too).
+  const choices = useMemo(() => {
+    const out = plans.map((p) => ({ id: p.id, name: p.name }));
+    for (const d of designs ?? [])
+      for (const id of d.plans) if (!out.some((p) => p.id === id)) out.push({ id, name: "from a shell" });
+    return out;
+  }, [plans, designs]);
   const versions = useMemo(() => [...(design?.versions ?? [])].reverse(), [design]);
   return (
     <div className="shell-workbench" data-testid="shell-workbench">
@@ -484,7 +510,7 @@ export function ShellWorkbench() {
             Plan{" "}
             <select className="ask-input" value={plan} onChange={(e) => setPlan(e.target.value)} data-testid="shell-plan">
               <option value="">Pick a plan</option>
-              {plans.map((p) => (
+              {choices.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.id})
                 </option>
@@ -495,7 +521,7 @@ export function ShellWorkbench() {
             And its power{" "}
             <select className="ask-input" value={plan2} onChange={(e) => setPlan2(e.target.value)} data-testid="shell-plan-2">
               <option value="">none</option>
-              {plans
+              {choices
                 .filter((p) => p.id !== plan)
                 .map((p) => (
                   <option key={p.id} value={p.id}>

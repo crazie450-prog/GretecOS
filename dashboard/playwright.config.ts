@@ -1,11 +1,13 @@
 // End-to-end tests (WO-2.6): the built dashboard (pnpm build first) against a real core with a
 // fake fast lane (e2e/serve_core.py), in Chromium at 2560x1440 (monitor 2, D50) and 390x844 (the
 // phone, D53). Screenshots go to test-results/, which git ignores. The setup wizard's tests
-// (WO-2.9, e2e/setup.spec.ts) run against a second core with an empty GOS_HOME (--fresh).
+// (WO-2.9, e2e/setup.spec.ts) run against a second core with an empty GOS_HOME (--fresh); the Power
+// view's (--power) and the shell workbench's (--shells, WO-10.10) have their own cores too.
 import { defineConfig } from "@playwright/test";
 import { FRESH_HOST, FRESH_PORT, FRESH_ROOT } from "./e2e/fresh";
 import { BASE, HOME, PORT, SERVE_PORT, TAILNET } from "./e2e/harness";
 import { POWER_HOME, POWER_HOST, POWER_PORT } from "./e2e/power";
+import { SHELLS_HOST, SHELLS_PORT, SHELLS_ROOT } from "./e2e/shells_core";
 
 export default defineConfig({
   testDir: "e2e",
@@ -42,6 +44,15 @@ export default defineConfig({
       command: `uv run python dashboard/e2e/serve_core.py --home "${POWER_HOME}" --port ${POWER_PORT} --power --host-name ${POWER_HOST}`,
       cwd: "..",
       url: `http://127.0.0.1:${POWER_PORT}/health`,
+      timeout: 120_000,
+      reuseExistingServer: false,
+      stdout: "pipe",
+    },
+    {
+      // The shell workbench's core (WO-10.10): WO-10.7's test home and one shell.
+      command: `uv run python dashboard/e2e/serve_core.py --home "${SHELLS_ROOT}" --port ${SHELLS_PORT} --shells --host-name ${SHELLS_HOST}`,
+      cwd: "..",
+      url: `http://127.0.0.1:${SHELLS_PORT}/health`,
       timeout: 120_000,
       reuseExistingServer: false,
       stdout: "pipe",

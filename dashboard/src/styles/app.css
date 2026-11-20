@@ -3041,6 +3041,19 @@ select.ask-input option {
   background: var(--surface-2, var(--panel));
 }
 
+.shell-version-list button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.shell-version-list button.gos-chip[aria-pressed="true"] {
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
 .shell-version-list .shell-asked {
   overflow-wrap: anywhere;
 }

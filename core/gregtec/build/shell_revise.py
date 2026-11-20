@@ -226,6 +226,8 @@ def revise(rec: Mapping[str, Any], words: str) -> Revision:
         if _filler(c):
             continue
         before = len(changes) + len(impossible)
+        was_changes = list(changes)
+        was = (copy.deepcopy(o.ops), o.headroom)
         part = _part(c)
         if part == "parapet" or (part == "roof" and "parapet" in c):
             _parapet(o, c, changes, impossible)
@@ -246,6 +248,12 @@ def revise(rec: Mapping[str, Any], words: str) -> Revision:
             _height(o, c, changes, impossible)
         if len(changes) + len(impossible) == before:
             unknown.append(c)
+        elif len(changes) > len(was_changes) and (o.ops, o.headroom) == was:
+            # understood, but it changes nothing: as far as that part goes already
+            del changes[len(was_changes) :]
+            impossible.append(
+                f"{c!r}: it is as far as that goes already; nothing changes"
+            )
     # The roof must fit: raise the headroom to what it needs (at most 16), never lower it.
     need = o.need_headroom()
     _, _, top = shell.LIMITS["headroom"]
