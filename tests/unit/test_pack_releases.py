@@ -283,6 +283,11 @@ PINNED_JARS = {
     "plannh-0.2.0.jar": "PlanNH",
     "worldedit-v0.0.10.jar": "worldedit-gtnh",
 }
+# The jars it pins for the Lab test first (D365): not in Play until that test passes.
+LAB_FIRST_JARS = {
+    "sciencenotleisure-0.2.7.jar": "GT-Not-Leisure",
+    "gtnllib-1.1.6.jar": "GTNLLib",
+}
 FETCH_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fetch_play_files.ps1"
 
 
@@ -292,9 +297,10 @@ def test_every_pinned_play_jar_matches_exactly_its_addon_row() -> None:
     pinned = set(
         re.findall(r"name = '([^']+\.jar)'", FETCH_SCRIPT.read_text(encoding="utf-8"))
     )
-    assert pinned == set(PINNED_JARS)  # a new pin needs its row here and in addons.tsv
+    # a new pin needs its row here and in addons.tsv
+    assert pinned == set(PINNED_JARS) | set(LAB_FIRST_JARS)
     addons = releases.read_addons()
-    for jar, row in PINNED_JARS.items():
+    for jar, row in (PINNED_JARS | LAB_FIRST_JARS).items():
         rows = [
             a.name
             for a in addons
@@ -328,7 +334,10 @@ def test_watch_checks_every_pinned_addon_in_play(tmp_path: Path) -> None:
         tmp_path / "home", "2.9.0", tmp_path / "GTNH-Play", net, now=Clock()
     )
     got = {a.addon.name: a for a in w.addons}
-    assert set(got) == {a.name for a in addons}  # every installed addon, and GTNL
+    # every installed addon, and GTNL (watched always); GTNLLib only once its jar is there
+    assert set(got) == set(PINNED_JARS.values()) | {
+        a.name for a in addons if a.watch == "always"
+    }
     for jar, row in PINNED_JARS.items():
         assert got[row].jars == (jar,)
         assert got[row].latest is not None, row
