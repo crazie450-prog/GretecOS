@@ -256,6 +256,10 @@ def test_a_small_breach_is_repaired_and_saved_as_a_version(
     assert (
         v["by"] == "architect" and v["cost_usd"] is None and v["status"] == "repaired"
     )
+    # the viewer's DB-free cells are the gate's cells, the repair included
+    _, gated = shell_store.rebuild(conn, home, got.build)
+    _, free = shell_store.cells_of(home, got.build)
+    assert free == dict(gated.cells)
 
 
 def test_revise_reads_no_structure_row(conn: sqlite3.Connection, home: Path) -> None:
@@ -637,6 +641,14 @@ def test_the_workbench_routes(home: Path) -> None:
             assert (
                 c.get(f"/api/shells/{v2}", headers=admin).json()["card"]["build"] == v2
             )
+            themes = c.get("/api/shells/themes", headers=admin).json()
+            assert {t["id"] for t in themes["themes"]} >= {
+                "th-foundry",
+                "th-marble-works",
+            }
+            assert themes["limits"]["headroom"] == [4, 1, 16]
+            # unchanged on purpose: nothing here writes a .schematic or touches a world
+            assert not (home / shell_store.SCHEMATICS).exists()
     finally:
         store.close()
 
