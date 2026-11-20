@@ -640,7 +640,14 @@ def test_openai_timeout_cut_off_and_stream_errors() -> None:
         openai(api, clock=lambda: next(ticks)).complete("s", "u", {}, 100)
     assert got.value.kind == llm.TIMEOUT
     # nothing listening
-    dead = llm.OpenAIDesigner(OPENAI_KEY, "m", url="http://127.0.0.1:9/v1/responses")
+    import socket
+
+    with socket.socket() as free:  # a loopback port nothing listens on
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+    dead = llm.OpenAIDesigner(
+        OPENAI_KEY, "m", url=f"http://127.0.0.1:{port}/v1/responses", read_s=5.0
+    )
     with pytest.raises(llm.ProviderError) as got:
         dead.complete("s", "u", {}, 100)
     assert got.value.kind == llm.NETWORK

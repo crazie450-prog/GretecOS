@@ -838,6 +838,7 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - WO-10.0 imports the img2schem SOW and re-scopes Phase 10 from it, including any reference-image input.
   - **Built** (WO-10.7, D316-D318; from 7.10 as written, the SOW not yet in the repo): `gregtec.build.shell` takes a WO-10.5 layout (bounds grown by a 1-block wall ring and roof headroom; keep-outs, corridors, chases, a doorway per entrance and the rest of the layout's interior below the roof left empty, so walls stand in the ring only), the theme's palette (WO-10.6's three modes), prompt and `max_blocks`. The architect designs through `build_request` in a building vocabulary (walls, pillars, windows, roof, lights, fill, frame, clear) that code turns into blocks; every design (the model's or the procedural generator's, which is the fallback, the No-AI path and the test baseline) passes one gate: small breaches removed and said, anything else (a block outside the palette, so any tile entity or machine block; too many blocks; a malformed design) refused with nothing written. Builds are files in `GOS_HOME/data/build/shells/` with a palette manifest, a preview mesh (the dashboard's shell card in the Build view) and notes; `gos shell design|list|show|export`; the `.schematic` is Clayton's `gos shell export` (WO-10.4's writer, the Lab world's registry; refused when the plans' layout changed since the design), pasted from the first entrance's corridor cell. The Lab paste (L6) is runbook `shells_lab.md`.
   - **Built** (WO-10.10, D367-D370, a follow-up under D158 after Clayton asked for a window to iterate in before a shell reaches the world): every saved shell belongs to a **design**, a chain of versions (`data/build/designs/`: parent, what was asked, by whom, time, cost; undo = an older version made current; nothing deleted). `build_revise` (deep lane, the architect's) and GOS's own reviser (`gregtec.build.shell_revise`, the No-AI path) make the next version from the current one's saved operations and Clayton's words through the same gate; a revision reads only the version's own files and the catalog, never `structure` rows; a refused one writes nothing. The router sends change words after a shell to a revision and "undo" to code (D369). The Build view's shell workbench: words, theme, max blocks and headroom, Design and Revise as shell jobs (WO-3.9's machinery, stages and Cancel), the version list with Make current, Compare side by side (materials and block counts), and the build guide's 3D drawing with the floor plan's machines and keep-outs as ghosts (D370). `gos shell versions|revise|undo|current|compare`, `gos eval shell-revise`. Still nothing reaches a world but `gos shell export` and his paste. Runbook `shells.md`.
+  - **Built** (WO-10.11, D374-D377, a follow-up under D158 after Clayton asked for a bake-off, 2026-11-20): `gos shell bakeoff` gives the same briefs (`tests/evals/shell_bakeoff.tsv`: six, each with a follow-up) to several models through one tool-less seam (`gregtec.build.shell_brief`: brief in, `shell.OPS` out as JSON; `gregtec.llm.designers`: Anthropic through the SDK, OpenAI's Responses API over plain HTTPS, fakes for CI), hands every answer to the same gate with the same two repair rounds, keeps the results under `data/bakeoff/<run>/` apart from his shells (never current, never exportable, deletable as a run), shows them blind (A, B, C from a stored seed) in the Build view's bake-off panel with the workbench's viewer, takes his pick per case and names the models only in the report. Spending is his: an estimate, a typed yes, a hard cap per run (USD, or tokens for a model with no price in `gos.toml`), the usual meter. The live roles in 4.4 stay Anthropic-only; a winner from another vendor becoming the live designer is his decision (checklist 5.11.17). Runbook: `docs/runbooks/shell_bakeoff.md`.
 - **Placement.**
   - Shells are pasted with WorldEdit (free, D35).
   - Machinery is built by Clayton from the 3D guide. Optional helpers:
@@ -1415,6 +1416,18 @@ vision = "claude-sonnet-5-5"
 heavy = "claude-fable-5-1"    # opt-in only
 fast_context_max_tokens = 60000
 use_heavy = false             # true: planner and architect run on heavy (D155)
+
+# [bakeoff]                   # optional: the shell bake-off's models and caps (WO-10.11, D376);
+# cap_usd = 10.0              # read only by `gos shell bakeoff`; keys never go here (`gos key set openai`)
+# cap_tokens = 1000000        # for models given no price
+# [[bakeoff.models]]
+# label = "astra"
+# provider = "openai"         # or "anthropic"
+# model = "gpt-6-astra"       # the id and prices from the vendor's own pages, checked on the day
+# effort = "high"             # optional
+# input_usd = 10.00           # per million tokens; left out: cost "unknown", capped by tokens
+# output_usd = 50.00
+# cached_input_usd = 1.00
 
 [budget]
 monthly_included_usd = 100    # D47
