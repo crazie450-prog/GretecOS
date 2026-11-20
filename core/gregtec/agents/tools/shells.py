@@ -36,6 +36,11 @@ GATE = (
 )
 COLUMNS = ("role", "block", "name", "count")
 MAX_DESIGN_TEXT = 60_000  # characters of the operations as JSON
+# The value limit of build_request's connection (Tool.max_value_bytes): the layout reads each of
+# the plans' multis' structure rows whole, and a real dump's largest blocks_json is over the
+# tools' 1 MB (Forge of the Gods t3: 1,239,746 bytes on 2.9.0). Only the plans' rows are read
+# (footprints.library's mtes), so this bounds those, with room for an addon's Lab capture.
+MAX_STRUCTURE_BYTES = 4_000_000
 
 VOCABULARY = (
     "a JSON list of operations, in the layout's coordinates (x east, y up, z south; y 0 the "

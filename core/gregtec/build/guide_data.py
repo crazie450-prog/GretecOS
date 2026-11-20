@@ -52,6 +52,11 @@ class Look:
     side: str | None  # the north face's
 
 
+def look_keys(f: fp.Footprint) -> list[str]:
+    """The keys :func:`guide` looks up: the footprint's materials and every tier choice's block."""
+    return [*f.materials(), *(t.key for ts in f.choices.values() for t in ts)]
+
+
 def looks(conn: sqlite3.Connection, keys: Iterable[str]) -> dict[str, Look]:
     """``registry@meta`` -> :class:`Look` from the newest block catalog, for the keys it has.
     Empty when there is no catalog yet (``gos db build`` after a client export run)."""
@@ -182,8 +187,16 @@ def guide(
         "facing": f.facing,
         "front": list(fp.FRONT[f.facing]),
         "tiers": dict(f.tiers),
+        # each tier's block with its catalog name: the palette names only the built tier's
         "choices": {
-            ch: [{"value": t.value, "block": t.key} for t in tiers]
+            ch: [
+                {
+                    "value": t.value,
+                    "block": t.key,
+                    "name": look.name if (look := catalog.get(t.key)) else None,
+                }
+                for t in tiers
+            ]
             for ch, tiers in sorted(f.choices.items())
         },
         "caveats": list(f.caveats),

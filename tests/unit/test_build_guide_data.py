@@ -165,6 +165,32 @@ def test_names_and_colours_come_from_the_catalog(
     assert doc["ref"] == "mte:9001" and doc["name"] == "Fixture Furnace"
 
 
+def test_every_tier_choice_has_its_catalog_name(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """QA (harness DB, the EBF's guide): the coil picker showed raw registry names for every
+    tier but the built one, whose block alone is in the palette. Each choice now carries its
+    block's catalog name, looked up with the materials (look_keys)."""
+    furnace = fp.library(conn).get(GT, 9001)
+    add_catalog(conn, tmp_path / "run")
+    assert set(guide_data.look_keys(furnace)) >= {"fixture:coil@1", "fixture:coil@2"}
+    only_materials = guide_data.guide(
+        furnace, guide_data.looks(conn, furnace.materials())
+    )
+    assert only_materials["choices"]["coil"][1]["name"] is None
+    named = {
+        **guide_data.looks(conn, guide_data.look_keys(furnace)),
+        "fixture:coil@1": guide_data.Look("Fixture Coil Mk II", None, None),
+    }
+    doc = guide_data.guide(furnace, named)
+    assert doc["choices"]["coil"] == [
+        {"value": 1, "block": "fixture:coil@0", "name": "Fixture Coil"},
+        {"value": 2, "block": "fixture:coil@1", "name": "Fixture Coil Mk II"},
+        {"value": 3, "block": "fixture:coil@2", "name": None},  # not in this catalog
+    ]
+    assert [p["block"] for p in doc["palette"]] == list(furnace.materials())
+
+
 def test_keys_are_registry_names_never_numeric_ids(conn: sqlite3.Connection) -> None:
     for f in fp.library(conn).footprints:
         doc = guide_data.guide(f, {})
@@ -309,7 +335,7 @@ def test_guide_routes(tmp_path: Path) -> None:
 def _looks(home: Path, f: fp.Footprint) -> dict[str, guide_data.Look]:
     conn = access.connect(access.db_path(home), readonly=True)
     try:
-        return guide_data.looks(conn, f.materials())
+        return guide_data.looks(conn, guide_data.look_keys(f))
     finally:
         conn.close()
 
