@@ -263,14 +263,25 @@ describe("ShellWorkbench", () => {
     await waitFor(() => expect(screen.getByTestId("shell-notice").textContent).toMatch(/Refused, nothing written.*gothic/));
   });
 
-  it("asks the architect through the router, and shows the empty state", async () => {
+  it("asks the architect to revise the design picked here, not Chat's current one, and shows the empty state", async () => {
+    const DS2 = "ds-222222222222";
+    const other = { ...design, id: DS2, current: V1, versions: [version(1, V1)] };
+    const listed = routes["GET /api/shells/designs"];
+    routes["GET /api/shells/designs"] = (b, u) => {
+      const got = listed(b, u).body as { designs: unknown[]; current: string };
+      const row = { id: DS2, plans: ["pl-steel"], current: V1, current_n: 1, versions: 1, asked: "a second shell", theme: null, blocks: 714, touched: 0 };
+      return { status: 200, body: { ...got, designs: [...got.designs, row] } };
+    };
+    routes[`GET /api/shells/designs/${DS2}`] = () => ({ status: 200, body: { design: other } });
     routes["POST /api/ask"] = () => ({ status: 200, body: { text: "On it.", lane: "deep", intent: "shell_revise" } });
     render(<ShellWorkbench />);
     await screen.findByTestId("shell-version-list");
-    fireEvent.change(screen.getByTestId("shell-words"), { target: { value: "make the roof steeper" } });
+    fireEvent.change(screen.getByTestId("shell-design-pick"), { target: { value: DS2 } });
+    await waitFor(() => expect(screen.getByTestId("shell-version-list").getAttribute("data-design")).toBe(DS2));
+    fireEvent.change(screen.getByTestId("shell-words"), { target: { value: "use brick instead of stone" } });
     fireEvent.click(screen.getByTestId("shell-ask"));
-    await waitFor(() => expect(screen.getByTestId("shell-notice").textContent).toContain("The architect revises the current shell"));
-    expect(calls.find((c) => c.url === "/api/ask")?.body).toEqual({ text: "make the roof steeper" });
+    await waitFor(() => expect(screen.getByTestId("shell-notice").textContent).toContain(`The architect revises ${DS2}`));
+    expect(calls.find((c) => c.url === "/api/ask")?.body).toEqual({ text: "use brick instead of stone", shell: DS2 });
     cleanup();
     routes["GET /api/shells/designs"] = () => ({ status: 200, body: { designs: [], current: null } });
     render(<ShellWorkbench />);

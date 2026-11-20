@@ -2,8 +2,8 @@
 // window Clayton iterates on a shell in before it goes near a world. Words, theme and the sizes
 // the gate supports (max_blocks, headroom); Design and Revise run as shell jobs (stage, time,
 // Cancel; one at a time, WO-3.9's machinery) with GOS's own generator or reviser (no model, free);
-// "Ask the architect" sends the same words through Chat's router, which revises the current
-// shell in the deep lane (D369). The version list shows what was asked, by whom, the blocks and
+// "Ask the architect" sends the same words to the architect with the design picked here named, so
+// that design is revised in the deep lane (D369, D370). The version list shows what was asked, by whom, the blocks and
 // the cost of each, makes any version current (undo) and picks two to compare side by side
 // (materials and block counts). The viewer is the build guide's 3D drawing (D319: free turn, zoom,
 // layer slider, per-layer materials) with the floor plan's machines and keep-outs as ghosts.
@@ -444,13 +444,15 @@ export function ShellWorkbench() {
       setNotice("Say what to change first");
       return;
     }
+    if (!ds) return;
     setBusy("Asking the architect");
-    api.ask(text).then(
+    // The design picked here is the one revised, whatever Chat worked on last (the router is not asked).
+    api.ask(text, ds).then(
       (r) => {
         setBusy(null);
         setNotice(
           r.lane === "deep"
-            ? `${r.text} The architect revises the current shell; its version shows here when it is done.`
+            ? `${r.text} The architect revises ${ds}; its version shows here when it is done.`
             : r.text,
         );
         load();
@@ -492,8 +494,9 @@ export function ShellWorkbench() {
     <div className="shell-workbench" data-testid="shell-workbench">
       <Panel label="Shell workbench" testId="shell-form" aside={<span className="gos-src">no world is touched here</span>}>
         <p className="gos-sub">
-          Say what you want, then Design a new shell or Revise the current one. GOS's own generator and reviser are free and need no AI;
-          the architect (AI) takes the same words. Every version is kept.
+          Words shape revisions and the architect; Design new uses the theme, plans and sizes (GOS's free generator keeps the words as
+          the design's request). GOS's own generator and reviser are free and need no AI; Ask the architect (AI) revises the design
+          picked below from the same words. Every version is kept.
         </p>
         <textarea
           className="ask-input shell-words"
@@ -587,7 +590,7 @@ export function ShellWorkbench() {
           <Button testId="shell-revise" disabled={working || !ds} onClick={() => start("revise")} title="A new version of the current shell (GOS's reviser, free)">
             Revise
           </Button>
-          <Button testId="shell-ask" disabled={working || !ds} onClick={architect} title="The architect (AI) revises the current shell from these words">
+          <Button testId="shell-ask" disabled={working || !ds} onClick={architect} title="The architect (AI) revises the design picked below from these words">
             Ask the architect
           </Button>
         </div>

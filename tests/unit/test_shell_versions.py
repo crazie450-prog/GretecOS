@@ -357,6 +357,16 @@ def test_the_viewer_data_is_the_shell_with_its_layers_and_ghosts(
         ("design another shell around my line", True, "handoff"),
         ("start over and design a new building", True, "handoff"),
         ("design a shell around the steel line", True, "handoff"),
+        ("design a shell around my EBF plan with no windows", True, "handoff"),
+        ("make a shell for plan p-1 with a steeper roof", True, "handoff"),
+        ("make a gothic theme with no lights", True, "handoff"),
+        # the change word's object is a part of the building, not something else
+        ("no windows on the north wall", True, router.SHELL_REVISE),
+        ("add more lights", True, router.SHELL_REVISE),
+        ("make the shell taller", True, router.SHELL_REVISE),
+        ("I need more power for the building", True, "general"),
+        ("add more lights to my base", True, "general"),
+        ("remove the walls in plan x", True, "general"),
         # questions and other things are not changes
         ("which roof is steeper", True, "general"),
         ("lower the tier", True, "general"),
@@ -411,6 +421,41 @@ def test_with_no_ai_gos_revises_in_code_and_undo_is_instant(
     reply = a.ask("undo")
     assert reply.intent == router.SHELL_UNDO and "version 1" in reply.text
     assert versions.get(home, ds)["current"] == v1
+
+
+def test_the_workbench_names_the_design_it_revises(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """ "Ask the architect" revises the design picked in the workbench, not the one Chat made
+    current last, and the button (not the router) makes any words a revision."""
+    ds_a, _ = first(conn, home)
+    made = shell_store.make(
+        conn,
+        home,
+        VaultIO(home / "vault"),
+        ["pl-steel"],
+        theme_id="th-foundry",
+        headroom=6,
+    )
+    ds_b = versions.start(home, made.build, asked="a taller one", by="procedural")["id"]
+    versions.make_current(home, ds_a, versions.get(home, ds_a)["current"])
+    assert versions.current_id(home) == ds_a
+    a, deep = asker(home, ai=True)
+    words = (
+        "use brick instead of stone"  # no part word: the router alone wouldn't revise
+    )
+    assert router.route(words, shell=True).intent == router.GENERAL
+    reply = a.ask(words, shell=ds_b)
+    assert reply.lane == router.DEEP and reply.intent == router.SHELL_REVISE
+    item = deep.recent()[-1]
+    assert ds_b in item.task and ds_a not in item.task
+    a, deep = asker(home, ai=False)
+    reply = a.ask("make the roof steeper", shell=ds_b)
+    assert reply.lane == "no_ai" and "version 2" in reply.text, reply.text
+    assert len(versions.get(home, ds_b)["versions"]) == 2
+    assert len(versions.get(home, ds_a)["versions"]) == 1
+    reply = a.ask("make the roof steeper", shell="ds-000000000000")
+    assert "no shell design" in reply.text and not deep.recent()
 
 
 # --- the tool ---------------------------------------------------------------------------------
@@ -649,6 +694,47 @@ def test_the_workbench_routes(home: Path) -> None:
             assert themes["limits"]["headroom"] == [4, 1, 16]
             # unchanged on purpose: nothing here writes a .schematic or touches a world
             assert not (home / shell_store.SCHEMATICS).exists()
+    finally:
+        store.close()
+
+
+def test_ask_takes_the_workbench_design_and_checks_its_id(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.config import Config
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    ds, _ = first(conn, home)
+    store = Store(home / "data" / "core.sqlite")
+    core = Core(
+        cfg=Config(gos_home=home),
+        store=store,
+        auth=Auth(store, ADMIN),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+        asker=asker(home, ai=False)[0],
+    )
+    admin = {"Authorization": f"Bearer {ADMIN}"}
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            assert (
+                c.post("/api/ask", json={"text": "x", "shell": ds}).status_code == 401
+            )
+            for bad in ("../ds", "ds-XYZ", 7, "sh-aaaaaaaaaaaa"):
+                r = c.post("/api/ask", headers=admin, json={"text": "x", "shell": bad})
+                assert r.status_code == 400, (bad, r.text)
+            r = c.post(
+                "/api/ask",
+                headers=admin,
+                json={"text": "make the roof steeper", "shell": ds},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["intent"] == router.SHELL_REVISE
+            assert len(versions.get(home, ds)["versions"]) == 2
     finally:
         store.close()
 

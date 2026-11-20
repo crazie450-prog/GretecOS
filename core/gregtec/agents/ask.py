@@ -324,12 +324,28 @@ class Asker:
                         log.exception("can't set up the fast lane")
             return self._lane
 
-    def ask(self, text: str, *, task: str = "ask", via: str | None = None) -> Reply:
-        """``via``: how the request came in, if it may confirm an action (:data:`VIAS`)."""
+    def ask(
+        self,
+        text: str,
+        *,
+        task: str = "ask",
+        via: str | None = None,
+        shell: str | None = None,
+    ) -> Reply:
+        """``via``: how the request came in, if it may confirm an action (:data:`VIAS`).
+        ``shell``: a design id (``ds-...``) whose current version these words revise, sent by
+        the workbench's "Ask the architect" (WO-10.10, D370): the button, not the words, makes
+        it a revision of that design, so the router is not asked."""
         started = self.clock()
         text = " ".join(text.split())[:TEXT_MAX]
         if not text:
             return Reply(EMPTY, router.INSTANT, "empty", ttft_ms=0)
+        if shell is not None:
+            route = router.Route(router.DEEP, router.SHELL_REVISE, text, shell)
+            reasons = self.ai.reasons() if self.ai is not None else []
+            reply = self._shell_revise(route, reasons)
+            reply.total_ms = round((self.clock() - started) * 1000)
+            return reply
         with self._lock:
             pending, self._pending = self._pending, None
         route = self._picked(pending, text) or router.route(
@@ -462,10 +478,16 @@ class Asker:
         """Words that change the current shell: the architect revises it (deep lane, with the
         design named, so it calls build_revise and never starts over); with no AI, GOS's own
         reviser does it here, in code, through the same gate (D316)."""
-        ds = self._shell_design()
-        assert ds is not None and self.home is not None  # the router saw one
         from gregtec.build import shell, shell_store, shell_versions
         from gregtec.vault.io import VaultIO
+
+        ds = route.subject or self._shell_design()  # the workbench names its design
+        if ds is None or self.home is None:
+            return Reply("There is no shell to revise.", "no_ai", route.intent)
+        try:
+            shell_versions.get(self.home, ds)
+        except shell.ShellError as exc:
+            return Reply(f"No shell revision: {exc}", router.INSTANT, route.intent)
 
         if not reasons:
             task = shell_versions.revise_task(ds, route.text)

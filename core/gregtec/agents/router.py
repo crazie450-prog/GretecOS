@@ -202,17 +202,34 @@ DEEP_RULES = [
     )
 ]
 
-# Changing the shell Clayton is working on (WO-10.10, D369): a change word and a part of a
-# building, or a bare comparative ("taller, and no windows on the north wall"); never a question
-# ("which roof is steeper"), and never when he asks for a new one ("design another shell").
-_SHELL_PART = re.compile(
-    r"\b(?:roofs?|walls?|windows?|pillars?|columns?|lights?|lamps?|parapets?|plinth|trim|"
-    r"eaves|band|doorways?|fa[cç]ades?|shells?|buildings?)\b"
+# Changing the shell Clayton is working on (WO-10.10, D369): a change word whose object is
+# a part of a building ("no windows on the north wall", "add more lights"), a part or the whole
+# building with a comparative after it ("make the roof steeper", "the building taller"), or a
+# bare comparative ("taller, and no windows ..."); never a question ("which roof is steeper"),
+# never when he asks for a new one ("design another shell", "make a shell for plan p-1 with a
+# steeper roof", "make a gothic theme with no lights"), and never when the words name some other
+# thing to change ("add more lights to my base", "remove the walls in plan x").
+_SHELL_PARTS = (
+    r"(?:roofs?|walls?|windows?|pillars?|columns?|lights?|lamps?|parapets?|plinth|trim|"
+    r"eaves|band|doorways?|fa[cç]ades?)"
 )
-_SHELL_CHANGE = re.compile(
-    r"\b(?:steeper|flatter|flat|shallower|pitched|peaked|gabled?|taller|higher|shorter|"
-    r"lower|bigger|larger|wider|smaller|narrower|more|fewer|less|no|without|remove|drop|add|"
-    r"change|swap|revise|tweak|adjust|raise)\b"
+_SHELL_MORE = (
+    r"(?:steeper|flatter|flat|shallower|pitched|peaked|gabled?|taller|higher|shorter|lower|"
+    r"bigger|larger|wider|smaller|narrower)"
+)
+_SHELL_CHANGE_OF = re.compile(
+    r"\b(?:more|fewer|less|no|without|remove|drop|add|change|swap|revise|tweak|adjust|raise|"
+    + _SHELL_MORE
+    + r")\b(?:\W+\w+){0,3}?\W+"
+    + _SHELL_PARTS
+    + r"\b"
+)
+_SHELL_MADE_MORE = re.compile(
+    r"\b(?:"
+    + _SHELL_PARTS
+    + r"|shells?|buildings?)\b(?:\W+\w+){0,2}?\W+"
+    + _SHELL_MORE
+    + r"\b"
 )
 _SHELL_COMPARATIVE = re.compile(
     r"^(?:(?:a bit|a little|much|slightly|way) )?(?:steeper|flatter|taller|higher|shorter|"
@@ -221,6 +238,15 @@ _SHELL_COMPARATIVE = re.compile(
 _SHELL_NEW = re.compile(
     r"\b(?:new|another|fresh|second|different|separate)\b.*\b(?:shells?|buildings?|designs?|"
     r"fa[cç]ades?)\b|\bfrom scratch\b|\bstart (?:over|again|afresh)\b"
+    # a creation verb with a thing to create: a new design (build_request) or theme (theme_save)
+    r"|\b(?:design|make|build|create|draw|wrap|put|give)\b(?: me)? (?:a|an|one)\b.*"
+    r"\b(?:shells?|buildings?|fa[cç]ades?|themes?|designs?)\b"
+    r"|\b(?:create|make|new)\b.*\bthemes?\b"
+)
+# The words name some other thing: a plan, or a part of his base that is not this shell.
+_SHELL_ELSEWHERE = re.compile(
+    r"\bplans?\b|\bplan:|\b(?:to|in|on|for|of|around|at) (?:my|the|our|this|that) "
+    r"(?:\w+ )?(?:base|factory|line|setup|world|house|room|plant|island|power|ae|network)\b"
 )
 _SHELL_QUESTION = re.compile(
     r"^(?:what|which|why|who|when|where|is|are|does|do|did|should|will|would|shall|"
@@ -240,10 +266,16 @@ def shell_change(said: str) -> str | None:
     """``undo`` or ``revise`` when the normalised words change the current shell, else None."""
     if any(p.match(said) for p in SHELL_UNDO_RULES):
         return SHELL_UNDO
-    if _SHELL_QUESTION.match(said) or _SHELL_NEW.search(said):
+    if (
+        _SHELL_QUESTION.match(said)
+        or _SHELL_NEW.search(said)
+        or _SHELL_ELSEWHERE.search(said)
+    ):
         return None
-    if _SHELL_COMPARATIVE.match(said) or (
-        _SHELL_CHANGE.search(said) and _SHELL_PART.search(said)
+    if (
+        _SHELL_COMPARATIVE.match(said)
+        or _SHELL_CHANGE_OF.search(said)
+        or _SHELL_MADE_MORE.search(said)
     ):
         return SHELL_REVISE
     return None

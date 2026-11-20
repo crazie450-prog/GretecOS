@@ -143,7 +143,7 @@ export const api = {
   shellScene: (build: string) => get<ShellScene>(`/api/shells/${encodeURIComponent(build)}/view`),
   answers: () => get<Answer[]>("/api/answers"),
   deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
-  ask: (text: string) => post<Reply>("/api/ask", { text }),
+  ask: (text: string, shell?: string) => post<Reply>("/api/ask", shell ? { text, shell } : { text }),
   tool: (name: string, args: Record<string, unknown>) => post<{ card: Card }>(`/api/tools/${name}`, { args }),
   recipe: (ref: string) => get<Card>(`/api/recipe?ref=${encodeURIComponent(ref)}`),
   verify: () => get<Verify>("/api/verify"),
