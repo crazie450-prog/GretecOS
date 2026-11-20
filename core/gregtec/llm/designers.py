@@ -213,7 +213,9 @@ class AnthropicDesigner:
             raise ProviderError(NETWORK, "Anthropic could not be reached") from None
         except anthropic.APIStatusError as exc:
             text = scrub(str(getattr(exc, "message", "")) or type(exc).__name__)
-            if exc.status_code >= 500:
+            # below 400: an error event inside an answer that began with HTTP 200 (overloaded,
+            # for one): the server's trouble, worth another try, never "this model can't be used"
+            if exc.status_code >= 500 or exc.status_code < 400:
                 raise ProviderError(
                     SERVER,
                     f"Anthropic had a server error (HTTP {exc.status_code})",

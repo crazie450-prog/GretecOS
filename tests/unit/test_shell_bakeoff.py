@@ -458,6 +458,8 @@ def test_anthropic_errors_are_named_without_the_key() -> None:
             llm.RATE,
         ),
         (_status_error(anthropic.InternalServerError, 500), llm.SERVER),
+        # an error event inside a stream that began with HTTP 200 (overloaded): retried
+        (_status_error(anthropic.APIStatusError, 200), llm.SERVER),
         (_status_error(anthropic.BadRequestError, 400), llm.BAD_REQUEST),
         (anthropic.APITimeoutError(request=request), llm.TIMEOUT),
         (anthropic.APIConnectionError(request=request), llm.NETWORK),
