@@ -835,7 +835,8 @@ def design(
     if total and bad > REPAIR_SHARE * total:
         return refuse(
             f"{bad} of {total} placed cells are outside the bounding volume or inside a "
-            "keep-out, corridor, chase, doorway or the layout's interior: more than {round(REPAIR_SHARE * 100)}% is too far off "
+            "keep-out, corridor, chase, doorway or the layout's interior: "
+            f"more than {round(REPAIR_SHARE * 100)}% is too far off "
             "to repair; redesign",
             f=f,
         )

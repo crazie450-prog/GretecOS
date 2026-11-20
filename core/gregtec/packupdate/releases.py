@@ -592,6 +592,13 @@ class Watch:
                 + (f" (also {', '.join(p.newer[:-1])})" if len(p.newer) > 1 else "")
                 + f". Start the playbook: gos pack update --start {p.newer[-1]}"
             )
+        elif (
+            not p.feed_seen
+        ):  # no feed body at all (offline, rate-limited): not an all-clear
+            out.append(
+                f"Couldn't check for a stable release newer than {p.adopted}: "
+                "the GTNH releases feed wasn't read (see Notes). Run it again later."
+            )
         else:
             out.append(f"No stable release newer than {p.adopted} on its line.")
         if p.other_lines:

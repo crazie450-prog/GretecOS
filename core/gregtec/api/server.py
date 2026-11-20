@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import secrets
@@ -149,6 +150,18 @@ def _default_agents(
     return ask.setup(cfg, store=store, ops=ops)
 
 
+# CPython's thresholds with full collections 100 times rarer (D364): a design runs on a thread
+# in this process, and each full collection of its millions of objects held the GIL, so the
+# event loop (dashboard, voice and OC replies) stalled up to 0.37 s, 19 times in a cold design.
+GC_THRESHOLD = (700, 10, 1000)
+
+
+def tune_gc() -> None:
+    """Set :data:`GC_THRESHOLD` for the core process (D364)."""
+    gc.collect()
+    gc.set_threshold(*GC_THRESHOLD)
+
+
 def run(
     cfg: Config,
     *,
@@ -183,6 +196,7 @@ def run(
             extra={"port": cfg.core_port, "error": str(exc)},
         )
         return EXIT_PORT_IN_USE
+    tune_gc()
     store = Store(cfg.data_dir / DB_NAME)
     admin_token = secrets.token_urlsafe(32)
     meter = UsageMeter(

@@ -89,8 +89,18 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         conn.close()
     text = json.dumps(lay, indent=1, ensure_ascii=False) + "\n"
     if args.out is not None:
+        from gregtec import doctor
         from gregtec.vault.io import atomic_write
 
+        folders = [*doctor.guarded(cfg), ("the vault", cfg.gos_home / "vault")]
+        if (why := doctor.touch_problem(args.out, folders)) is not None:
+            # GOS never writes into the Lab, Export or Play (D309 (6)); the vault only through
+            # gregtec.vault
+            print(
+                f"Won't write {args.out}: it {why}. Write it elsewhere and copy it",
+                file=out,
+            )
+            return 2
         atomic_write(args.out, text.encode("utf-8"))
         print(f"wrote {args.out}", file=out)
     elif args.json:

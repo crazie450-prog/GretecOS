@@ -90,7 +90,8 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
             "--source-world",
             type=Path,
             default=None,
-            help="the world a file without a mapping was copied in (its level.dat, read-only)",
+            help="the folder of the world a file without a mapping was copied in "
+            "(or its level.dat; read-only)",
         )
 
 

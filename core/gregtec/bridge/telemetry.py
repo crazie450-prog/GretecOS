@@ -266,7 +266,7 @@ class Telemetry:
             if (
                 agent.binding == binding
                 and msg is not None
-                and now - msg.received_at <= STALE_S
+                and int(now) - int(msg.received_at) <= STALE_S  # as snapshot()'s stale
             ):
                 out.append(msg)
         return out
@@ -319,7 +319,9 @@ class Telemetry:
             msg = self.latest.latest(agent)
             if msg is None or (binding is not None and agent.binding != binding):
                 continue
-            age = max(0, int(now - msg.received_at))
+            # whole seconds, as a machine's last_seen and sweep() count (QA 10-13): an agent and
+            # the machines of its message always show the same age and staleness
+            age = max(0, int(now) - int(msg.received_at))
             doc = msg.doc
             agents.append(
                 {
@@ -354,7 +356,7 @@ class Telemetry:
         )
         machines = []
         for r in rows:
-            age = max(0, int(now - (r["last_seen"] or 0)))
+            age = max(0, int(now) - int(r["last_seen"] or 0))
             machines.append(
                 {
                     "id": r["id"],

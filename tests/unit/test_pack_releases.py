@@ -271,3 +271,44 @@ def test_stock_reports_a_missing_play_as_a_note(tmp_path: Path) -> None:
     )
     result, notes = releases.stock(tmp_path, "2.9.0", tmp_path / "no-play", net)
     assert result is None and "Play's mods couldn't be listed" in notes[0]
+
+
+def test_a_watch_that_read_no_feed_is_not_an_all_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """QA 10-13: offline or rate-limited, the watch says it couldn't check and exits 1."""
+    from gregtec import cli
+
+    down = Net({})
+    down.fail = "HTTP 403 Forbidden"
+    w = releases.watch(tmp_path / "h0", "2.9.0", None, down, force=True, now=Clock())
+    text = "\n".join(w.lines())
+    assert not w.pack.feed_seen and not w.pack.newer
+    assert "Couldn't check for a stable release newer than 2.9.0" in text
+    assert "No stable release newer" not in text and "HTTP 403 Forbidden" in text
+
+    toml = tmp_path / "gos.toml"
+    toml.write_text(
+        f'[paths]\ngos_home = "{(tmp_path / "home").as_posix()}"\n'
+        f'prism_instances = "{(tmp_path / "instances").as_posix()}"\n',
+        encoding="utf-8",
+    )
+    real, clock, net = releases.watch, Clock(), [down]
+
+    def fake(
+        home: Path, adopted: str, play: Path | None, *, force: bool
+    ) -> releases.Watch:
+        return real(home, adopted, play, net[0], force=force, now=clock)
+
+    monkeypatch.setattr(releases, "watch", fake)
+    args = ["pack", "watch", "--config", str(toml)]
+    assert cli.main([*args, "--force"]) == 1
+    assert "Couldn't check" in capsys.readouterr().out
+    net[0] = Net({releases.PACK_FEED: atom("2.9.0")})
+    assert cli.main([*args, "--force"]) == 0  # --force: past the failure's back-off
+    assert "No stable release newer than 2.9.0 on its line." in capsys.readouterr().out
+    # Within the once-a-day interval the cached feed counts as read: still the all-clear.
+    clock.t += 60
+    net[0] = down
+    assert cli.main(args) == 0
+    assert "No stable release newer than 2.9.0 on its line." in capsys.readouterr().out

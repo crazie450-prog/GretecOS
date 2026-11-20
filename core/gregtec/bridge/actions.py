@@ -224,6 +224,10 @@ class ActionDesk:
         self.on_change = on_change
         self.clock = clock
         self._lock = threading.RLock()
+        # The newest proposal's id and its clock time unrounded: the settle time is measured
+        # from it, not from the whole second stored in ``created`` (QA 10-13). One proposal is
+        # pending at a time, and _recover ends every proposed row a restart finds.
+        self._proposed_at: tuple[int, float] | None = None
         self._recover()
 
     # --- reading
@@ -286,7 +290,8 @@ class ActionDesk:
         phrase = self.describe(kind, checked, target)
         with self._lock:
             self.tick()
-            now = int(self.clock())
+            at = self.clock()
+            now = int(at)
             old = self._proposed()
             with self.store.transaction() as conn:
                 if old is not None:
@@ -301,6 +306,7 @@ class ActionDesk:
                     (now, kind, _json(checked), target, computer, phrase, source[:40]),
                 )
                 new_id = int(cur.lastrowid or 0)
+            self._proposed_at = (new_id, at)
             new = self.get(new_id)
             assert new is not None
             cancelled = self.get(old.id) if old is not None else None
@@ -320,8 +326,15 @@ class ActionDesk:
             pending = self._proposed()
             if pending is None or (action_id is not None and action_id != pending.id):
                 return Outcome(False, self._not_pending(action_id))
-            now = int(self.clock())
-            if action_id is None and now - pending.created < SETTLE_S:
+            at = self.clock()
+            now = int(at)
+            since = (
+                self._proposed_at[1]
+                if self._proposed_at is not None and self._proposed_at[0] == pending.id
+                else pending.created
+                + 1  # not proposed here: the stored second, rounded up
+            )
+            if action_id is None and at - since < SETTLE_S:
                 # A plain "confirm" names no action: one proposed this recently may not have
                 # been read back yet (an async deep lane, a second proposal in one turn).
                 replaced = self.store.rows(

@@ -11,7 +11,7 @@ import type { DesignJob, JobStart } from "../api/types";
 import type { ChoicesCard } from "../cards/types.gen";
 import { elapsed, ended, endedText, newer, runningOf, stageText } from "../state/jobs";
 import { GLYPH } from "../state/states";
-import { store, useApp } from "../state/store";
+import { useApp } from "../state/store";
 import { Button, useNow } from "./core";
 
 export const POLL_MS = 1000;
@@ -38,9 +38,11 @@ export function useDesignJob(
   const jobId = job?.id ?? null;
   const pushed = useApp((s) => (jobId ? s.jobs[jobId] : undefined));
 
-  // A view opened while its kind's job runs follows that job.
+  // A view opened while its kind's job runs follows that job, also when the core's state arrives
+  // after the view mounted (a full page load: the state is null until the socket's first push).
+  const runningId = useApp((s) => runningOf(s.core, kind));
   useEffect(() => {
-    const id = runningOf(store.get().core, kind);
+    const id = runningId;
     if (!id) return;
     let live = true;
     api.job(id).then(
@@ -50,7 +52,7 @@ export function useDesignJob(
     return () => {
       live = false;
     };
-  }, [kind]);
+  }, [runningId]);
 
   useEffect(() => {
     if (!jobId) return;
