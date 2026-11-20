@@ -10,6 +10,8 @@
 // WO-10.10 replaces their list and quarter-turn card here with the shell workbench
 // (ShellWorkbench.tsx): words, theme and sizes, Design and Revise as jobs, the versions with
 // undo and compare, and the guide's 3D drawing with the machines and keep-outs as ghosts.
+// WO-10.11 adds the bake-off panel under it (ShellBakeoff.tsx): several models' answers to one
+// brief, blind, with his pick per case; it shows only once a run exists.
 // Built to the design system: needs Clayton's board approval (D92, D158 (5)).
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
@@ -18,6 +20,7 @@ import { Panel } from "../components/core";
 import { GLYPH } from "../state/states";
 import { useApp } from "../state/store";
 import { GuideView } from "./BuildGuide";
+import { ShellBakeoff } from "./ShellBakeoff";
 import { ShellWorkbench } from "./ShellWorkbench";
 
 const mb = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -246,6 +249,7 @@ export function Build() {
       {query && <GuideView query={query} onQuery={open} />}
       <GuideFrame />
       <ShellWorkbench />
+      <ShellBakeoff />
     </div>
   );
 }

@@ -3103,6 +3103,31 @@ select.ask-input option {
   }
 }
 
+/* --- Shell bake-off (WO-10.11, D374-D377): blind entries side by side, the workbench's parts --- */
+
+.shell-bakeoff button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.shell-bakeoff button.gos-chip[aria-pressed="true"] {
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
+.bakeoff-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  margin-top: var(--space-2);
+}
+
+.shell-bakeoff [data-testid="bakeoff-brief"],
+.shell-bakeoff [data-testid="bakeoff-followup"] {
+  overflow-wrap: anywhere;
+}
+
 /* --- Shell card (WO-10.7, D316): the decorative shell's isometric preview -------------------- */
 
 .shell-view-row {

@@ -95,22 +95,30 @@ export function jobBody(
   return { revise: { design, words, ...(form.theme ? { theme: form.theme } : {}), ...sizes } };
 }
 
-function useScene(build: string | null): { scene: ShellScene | null; error: string | null } {
+/** Where a scene comes from when it is not one of his own builds (the bake-off's blind entries, WO-10.11). */
+export interface SceneSource {
+  key: string; // changes when another scene is meant
+  load: () => Promise<ShellScene>;
+}
+
+function useScene(build: string | null, source?: SceneSource): { scene: ShellScene | null; error: string | null } {
   const [scene, setScene] = useState<ShellScene | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const key = source?.key ?? build;
   useEffect(() => {
-    if (!build) return;
+    if (!key) return;
     let live = true;
     setScene(null);
     setError(null);
-    api.shellScene(build).then(
+    (source ? source.load() : api.shellScene(key)).then(
       (s) => live && setScene(s),
       (e: unknown) => live && setError(message(e)),
     );
     return () => {
       live = false;
     };
-  }, [build]);
+    // the source is named by its key: a new object with the same key is the same scene
+  }, [key]);
   return { scene, error };
 }
 
@@ -134,9 +142,9 @@ function sceneProps(scene: ShellScene, upTo: number, ghosts: boolean, prefix: st
 }
 
 /** One version in the 3D viewer, its layer slider and that layer's materials. */
-export function ShellScene3D(props: { build: string; prefix?: string; compact?: boolean }) {
+export function ShellScene3D(props: { build: string; prefix?: string; compact?: boolean; source?: SceneSource }) {
   const prefix = props.prefix ?? "shell3d";
-  const { scene, error } = useScene(props.build);
+  const { scene, error } = useScene(props.build, props.source);
   const [upTo, setUpTo] = useState<number | null>(null);
   const [ghosts, setGhosts] = useState(true);
   if (error) return <p className="empty">{GLYPH.warn} {error}</p>;
