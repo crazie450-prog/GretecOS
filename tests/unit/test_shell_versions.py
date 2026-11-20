@@ -1,0 +1,675 @@
+"""WO-10.10: the shell workbench's core (plan 7.10, D367-D370) on WO-10.7's fixtures.
+
+- GOS's reviser (:mod:`gregtec.build.shell_revise`): the words it acts on and the ones it refuses;
+- the version chain (:mod:`gregtec.build.shell_versions`): parents, notes, times, costs; revise
+  through the same gate (accepted, refused with nothing written, repaired); undo and make
+  current, nothing ever deleted; a build made before WO-10.10 adopted as a one-version design;
+  revise reads no ``structure`` row (the real dump's rows are large);
+- the roof's ``pitch`` (1 is the cells of before);
+- the router's revise-versus-new decision and the asker's lanes for it;
+- ``build_revise`` (deep lane, the architect's), ``gos shell revise|versions|undo|current|compare``
+  and the workbench's routes (auth, jobs with a Cancel that saves nothing, compare, the viewer);
+- unchanged on purpose: no tool places blocks, refused designs write nothing, the palette is the
+  catalog's registry name + meta, nothing here writes a ``.schematic`` or a world.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from gregtec.agents import ask, deep_config, router
+from gregtec.agents.deep_lane import HandoffRecorder
+from gregtec.agents.no_ai import AiMode
+from gregtec.agents.tools import build_registry
+from gregtec.agents.tools.catalog import TOOLS
+from gregtec.agents.tools.registry import DEEP, FAST
+from gregtec.build import shell, shell_revise, shell_store
+from gregtec.build import shell_versions as versions
+from gregtec.db import access
+from gregtec.vault.io import VaultIO
+
+HERE = Path(__file__).parent
+ts: Any = sys.modules.get("_wo1010_shell_tests")
+if ts is None:
+    import importlib.util
+
+    _spec = importlib.util.spec_from_file_location(
+        "_wo1010_shell_tests", HERE / "test_shell.py"
+    )
+    assert _spec is not None and _spec.loader is not None
+    ts = importlib.util.module_from_spec(_spec)
+    sys.modules["_wo1010_shell_tests"] = ts
+    _spec.loader.exec_module(ts)
+
+ADMIN = "a" * 40
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    return ts.make_home(tmp_path, ts.lay_tests.production(), ts.lay_tests.power())
+
+
+@pytest.fixture
+def conn(home: Path) -> Iterator[sqlite3.Connection]:
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        yield c
+    finally:
+        c.close()
+
+
+def first(conn: sqlite3.Connection, home: Path) -> tuple[str, str]:
+    """A procedural foundry shell around the steel line, started as a design."""
+    made = shell_store.make(
+        conn, home, VaultIO(home / "vault"), ["pl-steel"], theme_id="th-foundry"
+    )
+    assert made.outcome.status == "accepted"
+    d = versions.start(home, made.build, asked="a foundry shell", by="procedural")
+    return d["id"], made.build
+
+
+def builds_on_disk(home: Path) -> set[str]:
+    root = home / shell_store.ROOT
+    return {p.name for p in root.iterdir()} if root.is_dir() else set()
+
+
+def rev(
+    conn: sqlite3.Connection, home: Path, words: str, **kw: Any  # noqa: ANN401
+) -> versions.Revised:
+    return versions.revise(conn, home, VaultIO(home / "vault"), None, words, **kw)
+
+
+# --- GOS's reviser ----------------------------------------------------------------------------
+
+
+def test_clauses_split_requests_and_keep_a_list_of_sides_together() -> None:
+    assert shell_revise.clauses("Taller, and no windows on the north wall") == [
+        "taller",
+        "no windows on the north wall",
+    ]
+    assert shell_revise.clauses("no windows on the north and east walls") == [
+        "no windows on the north and east walls"
+    ]
+    assert shell_revise.clauses("make the roof steeper. more lights") == [
+        "make the roof steeper",
+        "more lights",
+    ]
+
+
+def test_the_reviser_changes_only_what_the_words_name(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, build = first(conn, home)
+    rec = shell_store.load(home, build)
+    r = shell_revise.revise(rec, "make the roof steeper")
+    assert r.ok and r.unknown == () and r.impossible == ()
+    roof = [o for o in r.ops if o["op"] == "roof"]
+    assert roof[0]["style"] == "gable" and "parapet" not in roof[0]
+    others = [o for o in r.ops if o["op"] != "roof"]
+    assert others == [o for o in rec["ops"] if o["op"] != "roof"]  # the rest kept
+    assert r.headroom >= rec["headroom"]  # raised so the gable fits, never lowered
+    r = shell_revise.revise(rec, "taller, and no windows on the north wall")
+    assert r.ok, r
+    wins = [o for o in r.ops if o["op"] == "windows"]
+    assert wins and all("north" not in o["sides"] for o in wins)
+    assert r.headroom == rec["headroom"] + shell_revise.STEP
+    roof = next(o for o in r.ops if o["op"] == "roof")
+    assert roof["y"] == rec["roof_y"] + shell_revise.STEP
+    r = shell_revise.revise(rec, "no lights")
+    assert r.ok and not [o for o in r.ops if o["op"] == "lights"]
+    r = shell_revise.revise(rec, "fewer pillars")
+    assert r.ok and next(o for o in r.ops if o["op"] == "pillars")["every"] == 12
+
+
+@pytest.mark.parametrize(
+    ("words", "kind"),
+    [
+        ("make it gothic", "unknown"),
+        ("lower", "impossible"),  # the walls stop at the machines' height already
+        ("flatter", "impossible"),  # the fixture's roof is flat
+        ("no plinth and make it gothic", "unknown"),  # half a request is never done
+    ],
+)
+def test_the_reviser_refuses_what_it_cannot_do(
+    conn: sqlite3.Connection, home: Path, words: str, kind: str
+) -> None:
+    _, build = first(conn, home)
+    r = shell_revise.revise(shell_store.load(home, build), words)
+    assert not r.ok
+    assert getattr(r, kind), r
+
+
+def test_a_gable_pitch_of_one_is_the_roof_of_before(conn: sqlite3.Connection) -> None:
+    lay = ts.layout.plan_layout(conn, [ts.lay_tests.production()])
+    spec = ts.spec_for(conn, lay, headroom=16)
+    gable = {"op": "roof", "role": "roof", "style": "gable"}
+    walls = {"op": "walls", "role": "wall"}
+    one = shell.compile_ops(spec, [walls, gable]).cells
+    same = shell.compile_ops(spec, [walls, {**gable, "pitch": 1}]).cells
+    two = shell.compile_ops(spec, [walls, {**gable, "pitch": 2}]).cells
+    assert one == same and len(two) > len(one)
+    top = max(c[1] for c in one)
+    assert max(c[1] for c in two) > top
+    with pytest.raises(shell.ShellError, match="pitch"):
+        shell.compile_ops(spec, [walls, {**gable, "pitch": 4}])
+
+
+# --- the version chain ------------------------------------------------------------------------
+
+
+def test_versions_form_a_chain_and_nothing_is_deleted(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    ds, v1 = first(conn, home)
+    v1_bytes = (shell_store.folder(home, v1) / "design.json").read_bytes()
+    a = rev(conn, home, "make the roof steeper")
+    assert a.saved and a.version is not None and a.parent == v1
+    b = rev(conn, home, "no lights")
+    assert b.saved and b.version is not None and b.parent == a.build
+    d = versions.get(home, ds)
+    chain = [(v["n"], v["build"], v["parent"]) for v in d["versions"]]
+    assert chain == [(1, v1, None), (2, a.build, v1), (3, b.build, a.build)]
+    assert [v["asked"] for v in d["versions"]] == [
+        "a foundry shell",
+        "make the roof steeper",
+        "no lights",
+    ]
+    assert all(v["by"] == "procedural" and v["cost_usd"] == 0.0 for v in d["versions"])
+    ats = [v["at"] for v in d["versions"]]
+    assert ats == sorted(ats)
+    assert d["current"] == b.build and versions.current_id(home) == ds
+    # the saved builds are never touched: a version is a build folder, written once
+    assert (shell_store.folder(home, v1) / "design.json").read_bytes() == v1_bytes
+    # undo, then make any version current: history grows, no build goes
+    d2, cur = versions.undo(home)
+    assert cur["build"] == a.build and d2["current"] == a.build
+    versions.make_current(home, ds, v1)
+    with pytest.raises(versions.VersionError, match="first version"):
+        versions.undo(home)
+    d = versions.get(home, ds)
+    assert [h["current"] for h in d["history"]] == [v1, a.build, b.build, a.build, v1]
+    assert builds_on_disk(home) == {v1, a.build, b.build}
+    # a revision starts from the current version (v1 again), its parent recorded
+    c = rev(conn, home, "fewer pillars")
+    assert c.saved and c.parent == v1 and len(versions.get(home, ds)["versions"]) == 4
+    with pytest.raises(versions.VersionError, match="not a version"):
+        versions.make_current(home, ds, "sh-000000000000")
+
+
+def test_a_refused_revision_writes_nothing_and_keeps_the_current_version(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    ds, v1 = first(conn, home)
+    design_file = (home / versions.ROOT / f"{ds}.json").read_bytes()
+    before = builds_on_disk(home)
+    for words in ("make it gothic", "flatter"):
+        got = rev(conn, home, words)
+        assert not got.saved and got.reasons and got.version is None
+    # the gate refuses the architect's design with a tile entity or GT's machine block
+    rec = shell_store.load(home, v1)
+    for block in (ts.CHEST, ts.MACHINE):
+        ops = [
+            *rec["ops"],
+            {"op": "fill", "block": block, "lo": [0, 0, 0], "hi": [0, 0, 0]},
+        ]
+        got = rev(conn, home, "a chest by the door", ops=ops, by="architect")
+        assert not got.saved and got.outcome.status == "refused"
+        assert "outside the palette" in " ".join(got.reasons)
+    # the same shell again is not a new version
+    got = rev(conn, home, "", ops=rec["ops"], by="architect")
+    assert not got.saved and "again" in got.reasons[0]
+    assert builds_on_disk(home) == before
+    assert (home / versions.ROOT / f"{ds}.json").read_bytes() == design_file
+    assert versions.get(home, ds)["current"] == v1
+
+
+def test_a_small_breach_is_repaired_and_saved_as_a_version(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    ds, v1 = first(conn, home)
+    rec = shell_store.load(home, v1)
+    lay = json.loads((shell_store.folder(home, v1) / "layout.json").read_text("utf-8"))
+    k = lay["keepouts"][0]
+    lo = k["lo"]
+    breach = {
+        "op": "fill",
+        "role": "accent",
+        "lo": lo,
+        "hi": lo,
+    }  # one cell in a keep-out
+    got = rev(conn, home, "an accent block", ops=[*rec["ops"], breach], by="architect")
+    assert got.saved and got.outcome.status == "repaired", got.reasons
+    assert any(k["id"] in r for r in got.outcome.repairs)
+    v = versions.get(home, ds)["versions"][-1]
+    assert (
+        v["by"] == "architect" and v["cost_usd"] is None and v["status"] == "repaired"
+    )
+
+
+def test_revise_reads_no_structure_row(conn: sqlite3.Connection, home: Path) -> None:
+    first(conn, home)
+
+    def deny(action: int, table: str | None, *_: object) -> int:
+        if action == sqlite3.SQLITE_READ and table == "structure":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    conn.set_authorizer(deny)
+    try:
+        got = rev(conn, home, "make the roof steeper, no lights")
+    finally:
+        conn.set_authorizer(None)
+    assert got.saved, got.reasons
+
+
+def test_a_build_from_before_the_workbench_is_a_one_version_design(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    made = shell_store.make(
+        conn, home, VaultIO(home / "vault"), ["pl-steel"], theme_id="th-foundry"
+    )
+    listed = versions.designs(home)  # no design file yet: nothing is written by a GET
+    assert [d["current"] for d in listed] == [made.build]
+    assert not (home / versions.ROOT).exists()
+    ds = listed[0]["id"]
+    assert ds == versions.design_id(made.build) and versions.current_id(home) == ds
+    got = rev(conn, home, "no lights")
+    assert got.saved
+    d = versions.get(home, ds)
+    assert [v["build"] for v in d["versions"]] == [made.build, got.build]
+    assert len(versions.designs(home)) == 1
+
+
+def test_compare_gives_material_and_block_differences(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, v1 = first(conn, home)
+    got = rev(conn, home, "make the roof steeper")
+    c = versions.compare(home, v1, got.build)
+    a, b = shell_store.load(home, v1), shell_store.load(home, got.build)
+    assert c["blocks_delta"] == b["blocks"] - a["blocks"]
+    by = {m["block"]: m for m in c["materials"]}
+    for m in a["materials"]:
+        assert by[m["block"]]["a"] == m["count"]
+    for m in b["materials"]:
+        assert by[m["block"]]["b"] == m["count"]
+    assert all(m["delta"] == m["b"] - m["a"] for m in c["materials"])
+    assert all("@" in m["block"] for m in c["materials"])  # registry name + meta
+    assert any(line.startswith("roof") for line in c["ops"])
+
+
+def test_the_viewer_data_is_the_shell_with_its_layers_and_ghosts(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, v1 = first(conn, home)
+    vw = versions.viewer(conn, home, v1)
+    rec = shell_store.load(home, v1)
+    assert len(vw["cells"]) == rec["blocks"]
+    sx, sy, sz = vw["size"]
+    assert all(
+        0 <= x < sx and 0 <= y < sy and 0 <= z < sz for x, y, z, _, _ in vw["cells"]
+    )
+    assert (
+        sum(sum(layer["materials"].values()) for layer in vw["layers"]) == rec["blocks"]
+    )
+    assert [p["block"] for p in vw["palette"]] == [m["block"] for m in rec["materials"]]
+    machines = vw["ghosts"]["machines"]
+    assert machines and all(m["ref"].startswith("mte:") for m in machines)
+    cells = {(x, y, z) for x, y, z, _, _ in vw["cells"]}
+    for k in vw["ghosts"]["keepouts"]:  # no shell block inside a keep-out
+        lo, hi = k["lo"], k["hi"]
+        assert not any(
+            lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1] and lo[2] <= z <= hi[2]
+            for x, y, z in cells
+        )
+
+
+# --- the router and the asker -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "shell_on", "intent"),
+    [
+        ("make the roof steeper", True, router.SHELL_REVISE),
+        ("taller, and no windows on the north wall", True, router.SHELL_REVISE),
+        ("Can you make the building taller?", True, router.SHELL_REVISE),
+        ("a bit steeper please", True, router.SHELL_REVISE),
+        ("swap the windows for reinforced glass", True, router.SHELL_REVISE),
+        ("undo", True, router.SHELL_UNDO),
+        ("go back to the previous version", True, router.SHELL_UNDO),
+        # a new one is asked for: build_request, never a revision
+        ("design another shell around my line", True, "handoff"),
+        ("start over and design a new building", True, "handoff"),
+        ("design a shell around the steel line", True, "handoff"),
+        # questions and other things are not changes
+        ("which roof is steeper", True, "general"),
+        ("lower the tier", True, "general"),
+        ("recipe for glass", True, router.RECIPES),
+        ("how do I make a turtle shell", True, router.RECIPE),
+        # without a shell nothing is revised
+        ("make the roof steeper", False, "general"),
+        ("undo", False, "general"),
+    ],
+)
+def test_the_router_decides_revise_or_new(
+    text: str, shell_on: bool, intent: str
+) -> None:
+    assert router.route(text, shell=shell_on).intent == intent
+
+
+def asker(home: Path, *, ai: bool) -> tuple[ask.Asker, HandoffRecorder]:
+    reg = build_registry(access.db_path(home), vault=VaultIO(home / "vault"))
+    deep = HandoffRecorder()
+    mode = AiMode()
+    mode.key_stored = ai
+    return ask.Asker(reg, deep, None, ai=mode, home=home), deep
+
+
+def test_the_asker_hands_a_revision_to_the_deep_lane_naming_the_design(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    ds, _ = first(conn, home)
+    a, deep = asker(home, ai=True)
+    reply = a.ask("make the roof steeper")
+    assert reply.lane == router.DEEP and reply.intent == router.SHELL_REVISE
+    item = deep.recent()[-1]
+    assert item.request == "make the roof steeper"
+    assert ds in item.task and "build_revise" in item.task
+    assert (
+        len(versions.get(home, ds)["versions"]) == 1
+    )  # the deep lane writes, not this
+
+
+def test_with_no_ai_gos_revises_in_code_and_undo_is_instant(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    ds, v1 = first(conn, home)
+    a, deep = asker(home, ai=False)
+    reply = a.ask("make the roof steeper")
+    assert reply.lane == "no_ai" and "version 2" in reply.text, reply.text
+    assert reply.card is not None and reply.card["type"] == "shell"
+    assert not deep.recent()  # no model
+    reply = a.ask("change the roof to gothic")
+    assert "nothing changed" in reply.text, reply.text
+    assert len(versions.get(home, ds)["versions"]) == 2
+    reply = a.ask("undo")
+    assert reply.intent == router.SHELL_UNDO and "version 1" in reply.text
+    assert versions.get(home, ds)["current"] == v1
+
+
+# --- the tool ---------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def reg(home: Path) -> Any:  # noqa: ANN401
+    return build_registry(access.db_path(home), vault=VaultIO(home / "vault"))
+
+
+def test_build_revise_is_the_architects_and_deep_lane_only(reg: Any) -> None:  # noqa: ANN401
+    assert "build_revise" in {s["name"] for s in reg.specs(DEEP)}
+    assert "build_revise" not in {s["name"] for s in reg.specs(FAST)}
+    main, agents = deep_config.tool_sets(reg)
+    assert (
+        "mcp__gos__build_revise" in agents["architect"]
+        and "mcp__gos__build_revise" in main
+    )
+    assert "mcp__gos__build_revise" not in agents["planner"]
+    tool = next(t for t in TOOLS if t.name == "build_revise")
+    assert not tool.read_only and tool.lanes == frozenset({DEEP})
+    # the locked-down shape: data only, no code, no world action
+    props = set(tool.input_schema["properties"])
+    assert props == {
+        "design",
+        "words",
+        "design_ops",
+        "theme",
+        "max_blocks",
+        "headroom",
+        "save",
+    }
+    assert tool.input_schema["additionalProperties"] is False
+
+
+def test_build_revise_looks_revises_and_refuses(
+    reg: Any,  # noqa: ANN401
+    conn: sqlite3.Connection,
+    home: Path,
+) -> None:
+    ds, v1 = first(conn, home)
+    before = builds_on_disk(home)
+    look = reg.call("build_revise", {"words": "no lights", "save": False}, lane=DEEP)
+    assert (
+        not look.is_error
+        and "current ops: " in look.text
+        and "GOS's reviser:" in look.text
+    )
+    assert builds_on_disk(home) == before
+    ops = json.loads(look.text.split("current ops: ", 1)[1].splitlines()[0])
+    gable = [dict(o, style="gable") if o["op"] == "roof" else o for o in ops]
+    for o in gable:
+        if o["op"] == "roof":
+            o.pop("parapet", None)
+            o.pop("parapet_role", None)
+    out = reg.call(
+        "build_revise",
+        {"words": "a gable roof", "design_ops": json.dumps(gable), "headroom": 12},
+        lane=DEEP,
+    )
+    assert not out.is_error, out.text
+    assert "version: v2 (current)" in out.text and f"revised: v1 {v1}" in out.text
+    d = versions.get(home, ds)
+    assert (
+        d["versions"][-1]["by"] == "architect"
+        and d["versions"][-1]["asked"] == "a gable roof"
+    )
+    bad = [*ops, {"op": "fill", "block": ts.CHEST, "lo": [0, 0, 0], "hi": [0, 0, 0]}]
+    out = reg.call(
+        "build_revise", {"words": "a chest", "design_ops": json.dumps(bad)}, lane=DEEP
+    )
+    assert out.is_error and "nothing was written" in out.text and "v2" in out.text
+    assert len(versions.get(home, ds)["versions"]) == 2
+    out = reg.call("build_revise", {"words": "no lights"}, lane=DEEP)  # GOS's reviser
+    assert not out.is_error and "version: v3" in out.text
+    assert reg.call("build_revise", {"words": "x"}, lane=FAST).is_error
+
+
+# --- gos shell --------------------------------------------------------------------------------
+
+
+def _gos(home: Path, tmp_path: Path, *argv: str) -> tuple[int, str]:
+    return ts._gos(home, tmp_path, *argv)  # type: ignore[no-any-return]
+
+
+def test_gos_shell_revise_versions_undo_compare(
+    home: Path, tmp_path: Path, conn: sqlite3.Connection
+) -> None:
+    code, text = _gos(home, tmp_path, "design", "pl-steel", "--theme", "th-foundry")
+    assert code == 0 and "(design ds-" in text, text
+    code, text = _gos(home, tmp_path, "revise", "make", "the", "roof", "steeper")
+    assert code == 0 and "v2" in text and "roof: gable" in text, text
+    code, text = _gos(home, tmp_path, "revise", "make", "it", "gothic")
+    assert code == 1 and "REFUSED: nothing written" in text
+    code, text = _gos(home, tmp_path, "versions")
+    assert code == 0 and "v2 of 2" in text
+    ds = text.split()[1]
+    code, text = _gos(home, tmp_path, "versions", ds)
+    assert code == 0 and text.count("\n") == 2 and "* v2" in text
+    builds = [line.split("\t")[1] for line in text.splitlines()]
+    code, text = _gos(home, tmp_path, "compare", *builds)
+    assert code == 0 and "blocks" in text
+    code, text = _gos(home, tmp_path, "undo")
+    assert code == 0 and "v1" in text
+    code, text = _gos(home, tmp_path, "current", ds, builds[1])
+    assert code == 0 and builds[1] in text
+    code, text = _gos(home, tmp_path, "versions", "ds-000000000000")
+    assert code == 2
+
+
+# --- the routes -------------------------------------------------------------------------------
+
+
+def test_the_workbench_routes(home: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.config import Config
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    store = Store(home / "data" / "core.sqlite")
+    core = Core(
+        cfg=Config(gos_home=home),
+        store=store,
+        auth=Auth(store, ADMIN),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+    )
+    admin = {"Authorization": f"Bearer {ADMIN}"}
+    client_token = core.auth.issue_client_token("voice")
+
+    def job(c: Any, body: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN401
+        r = c.post("/api/shells/jobs", headers=admin, json=body)
+        assert r.status_code == 200, r.text
+        jid = r.json()["job"]["id"]
+        for _ in range(400):
+            j = c.get(f"/api/design-jobs/{jid}", headers=admin).json()["job"]
+            if j["status"] != "running":
+                return j  # type: ignore[no-any-return]
+            time.sleep(0.05)
+        raise AssertionError("the job didn't end")
+
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            for path in ("/api/shells/designs", "/api/shells/compare?a=x&b=y"):
+                assert c.get(path).status_code == 401
+            assert c.post("/api/shells/jobs", json={}).status_code == 401
+            if client_token:
+                bearer = {"Authorization": f"Bearer {client_token}"}
+                assert (
+                    c.post("/api/shells/jobs", headers=bearer, json={}).status_code
+                    == 403
+                )
+            assert c.get("/api/shells/designs", headers=admin).json() == {
+                "designs": [],
+                "current": None,
+            }
+            bad = c.post(
+                "/api/shells/jobs", headers=admin, json={"design": {"plans": []}}
+            )
+            assert bad.status_code == 400
+            bad = c.post(
+                "/api/shells/jobs",
+                headers=admin,
+                json={"design": {"plans": ["pl-steel"], "max_blocks": 0}},
+            )
+            assert bad.status_code == 400 and "max_blocks" in bad.text
+            assert (
+                c.post(
+                    "/api/shells/jobs",
+                    headers=admin,
+                    json={"revise": {"words": "taller"}},
+                ).status_code
+                == 400
+            )  # no shell yet
+            j = job(
+                c,
+                {
+                    "design": {
+                        "plans": ["pl-steel"],
+                        "theme": "th-foundry",
+                        "headroom": 6,
+                    }
+                },
+            )
+            assert j["status"] == "done" and j["kind"] == "shell", j
+            ds, v1 = j["result"]["design"], j["result"]["build"]
+            assert shell_store.load(home, v1)["headroom"] == 6
+            j = job(c, {"revise": {"design": ds, "words": "make the roof steeper"}})
+            assert j["status"] == "done" and "changes" in j["result"], j
+            v2 = j["result"]["build"]
+            j = job(c, {"revise": {"words": "make it gothic"}})
+            assert j["result"]["refused"] and j["result"]["build"] == v2
+            got = c.get(f"/api/shells/designs/{ds}", headers=admin).json()["design"]
+            assert [v["build"] for v in got["versions"]] == [v1, v2]
+            listed = c.get("/api/shells/designs", headers=admin).json()
+            assert listed["current"] == ds and listed["designs"][0]["versions"] == 2
+            cmp = c.get(f"/api/shells/compare?a={v1}&b={v2}", headers=admin).json()
+            assert cmp["a"]["build"] == v1 and cmp["materials"]
+            view = c.get(f"/api/shells/{v2}/view", headers=admin).json()
+            assert view["build"] == v2 and view["cells"] and view["ghosts"]["machines"]
+            assert (
+                c.get("/api/shells/sh-000000000000/view", headers=admin).status_code
+                == 404
+            )
+            r = c.post(
+                f"/api/shells/designs/{ds}/current", headers=admin, json={"build": v1}
+            )
+            assert r.status_code == 200 and r.json()["design"]["current"] == v1
+            r = c.post(
+                f"/api/shells/designs/{ds}/current",
+                headers=admin,
+                json={"build": "sh-000000000000"},
+            )
+            assert r.status_code == 400
+            assert (
+                c.post(
+                    f"/api/shells/designs/{ds}/current", json={"build": v1}
+                ).status_code
+                == 401
+            )
+            assert (
+                c.get("/api/shells/designs/ds-000000000000", headers=admin).status_code
+                == 404
+            )
+            # the shell card route is unchanged and still finds builds
+            assert (
+                c.get(f"/api/shells/{v2}", headers=admin).json()["card"]["build"] == v2
+            )
+    finally:
+        store.close()
+
+
+def test_a_cancelled_shell_job_saves_nothing(home: Path) -> None:
+    from gregtec.api import shell_routes
+    from gregtec.planner import design_jobs, progress
+    from gregtec.planner.designer import _LOCK
+
+    jobs = design_jobs.DesignJobs(home, _LOCK)
+    real = progress.stage
+    gate = __import__("threading").Event()
+
+    def slow(name: str, k: int | None = None, n: int | None = None) -> None:
+        real(name, k, n)
+        if name == "compose":
+            gate.wait(5)
+            real(name, k, n)  # the cancel is heard here, before the gate and saving
+
+    title, work = shell_routes.shell_job(
+        home, {"design": {"plans": ["pl-steel"], "theme": "th-foundry"}}
+    )
+    progress.stage = slow  # type: ignore[assignment]
+    try:
+        job = jobs.start("shell", title, work)
+        for _ in range(100):
+            if jobs.get(job.id).stage == "compose":  # type: ignore[union-attr]
+                break
+            time.sleep(0.02)
+        with pytest.raises(design_jobs.Busy):
+            jobs.start("shell", title, work)  # one shell job at a time
+        jobs.cancel(job.id)
+        gate.set()
+        jobs.wait(job.id, 10)
+    finally:
+        progress.stage = real  # type: ignore[assignment]
+    assert jobs.get(job.id).status == "cancelled"  # type: ignore[union-attr]
+    assert (
+        not (home / shell_store.ROOT).exists() and not (home / versions.ROOT).exists()
+    )

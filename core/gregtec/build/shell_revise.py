@@ -137,7 +137,7 @@ def clauses(words: str) -> list[str]:
             for rx in (_NO, _ADD, _MORE, _FEWER, _BIGGER, _SMALLER, _TALLER)
             + (_SHORTER, _STEEPER, _FLATTER, _FLAT)
         )
-        if out and verbless and (_SIDE.search(piece) or not _part(piece)):
+        if out and verbless and _SIDE.search(piece):
             out[-1] = f"{out[-1]} and {piece}"
         else:
             out.append(piece)
