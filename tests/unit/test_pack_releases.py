@@ -225,6 +225,35 @@ def test_addons_relevant_to_play(tmp_path: Path) -> None:
     assert got[1].verdict.startswith("not in Play; newest release 0.2.8")
 
 
+def test_the_pinned_gtnl_jars_count_as_installed(tmp_path: Path) -> None:
+    """D365: once Play has the pinned jars, the real list matches each to its own row, and a
+    feed whose newest release is the pinned one says so."""
+    addons = [
+        a for a in releases.read_addons() if a.name in ("GT-Not-Leisure", "GTNLLib")
+    ]
+    feed = releases.FEED_URL.format
+    net = Net(
+        {
+            feed(repo="GTNotLeisure/GT-Not-Leisure"): atom("0.2.7", "0.2.7-rc2.1"),
+            feed(repo="GTNotLeisure/GTNLLib"): atom("1.1.8", "1.1.6"),
+        }
+    )
+    files = ["mods/sciencenotleisure-0.2.7.jar", "mods/gtnllib-1.1.6.jar"]
+    got = {
+        a.addon.name: a
+        for a in releases.check_addons(web(tmp_path, net, Clock()), addons, files)
+    }
+    assert got["GT-Not-Leisure"].jars == ("sciencenotleisure-0.2.7.jar",)
+    assert got["GT-Not-Leisure"].verdict.endswith("matches the installed jar")
+    assert got["GTNLLib"].jars == ("gtnllib-1.1.6.jar",)
+    # 1.1.8 is out, but GTNL 0.2.7 builds against 1.1.6
+    assert "a newer release?" in got["GTNLLib"].verdict
+    got = releases.check_addons(web(tmp_path, net, Clock()), addons, [])
+    # GTNL is watched always; GTNLLib only once installed
+    assert [a.addon.name for a in got] == ["GT-Not-Leisure"]
+    assert got[0].verdict.startswith("not in Play; newest release 0.2.7")
+
+
 def test_watch_records_what_it_saw(tmp_path: Path) -> None:
     play = tmp_path / "GTNH-Play"
     (play / ".minecraft" / "mods").mkdir(parents=True)
@@ -254,6 +283,11 @@ PINNED_JARS = {
     "plannh-0.2.0.jar": "PlanNH",
     "worldedit-v0.0.10.jar": "worldedit-gtnh",
 }
+# The jars it pins for the Lab test first (D365): not in Play until that test passes.
+LAB_FIRST_JARS = {
+    "sciencenotleisure-0.2.7.jar": "GT-Not-Leisure",
+    "gtnllib-1.1.6.jar": "GTNLLib",
+}
 FETCH_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fetch_play_files.ps1"
 
 
@@ -263,9 +297,10 @@ def test_every_pinned_play_jar_matches_exactly_its_addon_row() -> None:
     pinned = set(
         re.findall(r"name = '([^']+\.jar)'", FETCH_SCRIPT.read_text(encoding="utf-8"))
     )
-    assert pinned == set(PINNED_JARS)  # a new pin needs its row here and in addons.tsv
+    # a new pin needs its row here and in addons.tsv
+    assert pinned == set(PINNED_JARS) | set(LAB_FIRST_JARS)
     addons = releases.read_addons()
-    for jar, row in PINNED_JARS.items():
+    for jar, row in (PINNED_JARS | LAB_FIRST_JARS).items():
         rows = [
             a.name
             for a in addons
@@ -299,7 +334,10 @@ def test_watch_checks_every_pinned_addon_in_play(tmp_path: Path) -> None:
         tmp_path / "home", "2.9.0", tmp_path / "GTNH-Play", net, now=Clock()
     )
     got = {a.addon.name: a for a in w.addons}
-    assert set(got) == {a.name for a in addons}  # every installed addon, and GTNL
+    # every installed addon, and GTNL (watched always); GTNLLib only once its jar is there
+    assert set(got) == set(PINNED_JARS.values()) | {
+        a.name for a in addons if a.watch == "always"
+    }
     for jar, row in PINNED_JARS.items():
         assert got[row].jars == (jar,)
         assert got[row].latest is not None, row
