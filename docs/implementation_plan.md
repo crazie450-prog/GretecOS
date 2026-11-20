@@ -1240,7 +1240,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 ### 13.1 Addon status against GTNH 2.9.0 stable (checked 2026-11-05) [F]
 | Mod | Latest release | Built against | Status |
 |---|---|---|---|
-| GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31), still the newest versioned release. GTNLLib 1.1.4 | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") is only in the rolling `dev-build` asset (rc2.1 still calls GT/CropsNH/NEI methods removed in stable), which is replaced on every push and can't be pinned (GTNL dev-290 needs GTNLLib 1.1.3). The repo is now also at github.com/GTNotLeisure/GT-Not-Leisure. |
+| GT-Not-Leisure (+ GTNLLib) | **0.2.7** (2026-11-16, tag `ef436cf`; rechecked 2026-11-20). GTNLLib **1.1.6** | 2.9.0 stable (contains `28007498` "adapt to GTNH 2.9.0 final", #666; GT .265, NEI 2.8.171) | ⏳ **Pinned for the Lab test** (D365): `sciencenotleisure-0.2.7.jar` and `gtnllib-1.1.6.jar` go into Lab first; Play gets them only after Clayton's Lab smoke test. 0.2.7-rc2.1 and the rolling `dev-build` are no stand-ins. The repo is now at github.com/GTNotLeisure/GT-Not-Leisure. |
 | Twist Space Technology | 0.8.0 (2026-11-02) | 2.9.0 stable | ✓ In Play (D88). 0.8.0-RC2.9 crashes on stable, so it is no stand-in. Lab, which mirrors Play, has loaded a world; the D02 smoke test is still to do. |
 | 123Technology | 2.2.1.1 (2026-11-04) | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ **Ready.** Fixes #277 (recipe `IllegalAccessError` with TST). Pinned; goes into Play after a Lab smoke test, jar only, no `123Technology_Musics.zip` (D90). |
 | Programmable Hatches | v0.2.1p1-beta and v0.2.1p2-beta (2026-11-01) | GT .264, NEI 2.8.171 (p1) | ✓ Play keeps **0.2.1p0** (D88): the author's README still maps 2.9.0 to 0.2.1p0. |
@@ -1249,11 +1249,11 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | NEI | 2.8.171 ships in 2.9.0; 2.8.172-GTNH and 2.8.173-GTNH are out | n/a | Export keeps its manual swap to 2.8.172 (V03). |
 | GT5-Unofficial | 5.09.54.265 ships in 2.9.0 | n/a | `release/2.9.x` has 2 untagged hotfix commits, so a 2.9.1 may come. The GT pin stays at .265 until the pack changes. |
 
-- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST; not rechecked on 2026-11-05). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
+- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST) is still open on 2026-11-20 (D365). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
 - **Play-world start gate (D02):**
-  - GTNL has a release that includes `28007498`.
+  - GTNL has a release that includes `28007498`. **0.2.7 does** (D365); it is pinned, and the item is met once its Lab smoke test passes (load the world, NEI opens, one GTNL multi forms and runs a recipe).
   - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93). **Done 2026-11-05 (D94).**
-  - #575 is fixed or Clayton accepts it. #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93).
+  - #575 is fixed or Clayton accepts it (still open on 2026-11-20; the D365 Lab test looks at memory). #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93), in the same Lab session (D365).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
 ### 13.2 VERIFY list
