@@ -31,7 +31,10 @@ LWJGL 2) works the same way.
 
 After the harnesses, the Python integration tests check their runs, from the repo root:
 `GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest tests/integration` (serial; the
-`GOS_CLIENT_RUN_B` copy is described under the client harness and in `tests/integration/test_db_harness.py`). CI's
+`GOS_CLIENT_RUN_B` copy is described under the client harness and in `tests/integration/test_db_harness.py`).
+`tests/integration/test_real_dump_harness.py` also needs a real structure dump: `uv run gos structures extract --out
+<dir>` (about 10 minutes once Gradle's caches are warm), then `GOS_REAL_STRUCTURES=<dir>`; CI's `mod` job extracts one
+and sets `GOS_REQUIRE_REAL_DUMP=1`, so the test fails rather than skips there. CI's
 `mod` job adds `-n 4 --dist loadfile --no-loadscope-reorder` (pytest-xdist, D340): four workers, each running whole
 test files, so a file's module fixtures (most build their own DB from the harness runs) are built once, as in a serial
 run, and the slowest files start first (`SLOW_FIRST` in `tests/integration/harness_cache.py`: add a new file there

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -271,6 +273,86 @@ def test_watch_records_what_it_saw(tmp_path: Path) -> None:
     assert "Twist Space Technology" in text  # its feed 404s: noted, not fatal
     state = releases.load_state(tmp_path / "home")
     assert state["last"]["newer"] == ["2.9.1"] and len(state["history"]) == 1
+
+
+# The addon jars scripts/fetch_play_files.ps1 pins for Play, and the addons.tsv row each is.
+PINNED_JARS = {
+    "TwistSpaceTechnology-0.8.0.jar": "Twist Space Technology",
+    "OTHTechnology-2.2.1.1.jar": "123Technology",
+    "programmablehatches-0.2.1p0.jar": "Programmable Hatches",
+    "plannh-0.2.0.jar": "PlanNH",
+    "worldedit-v0.0.10.jar": "worldedit-gtnh",
+}
+FETCH_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fetch_play_files.ps1"
+
+
+def test_every_pinned_play_jar_matches_exactly_its_addon_row() -> None:
+    """Each jar the fetch script pins matches its own addons.tsv row and no other, so
+    `gos pack watch` checks it (123Technology's release jar is OTHTechnology-<v>.jar)."""
+    pinned = set(
+        re.findall(r"name = '([^']+\.jar)'", FETCH_SCRIPT.read_text(encoding="utf-8"))
+    )
+    assert pinned == set(PINNED_JARS)  # a new pin needs its row here and in addons.tsv
+    addons = releases.read_addons()
+    for jar, row in PINNED_JARS.items():
+        rows = [
+            a.name
+            for a in addons
+            if any(fnmatch.fnmatchcase(jar.lower(), p) for p in a.patterns)
+        ]
+        assert rows == [row], jar
+
+
+def test_watch_checks_every_pinned_addon_in_play(tmp_path: Path) -> None:
+    mods = tmp_path / "GTNH-Play" / ".minecraft" / "mods"
+    mods.mkdir(parents=True)
+    for jar in PINNED_JARS:
+        (mods / jar).write_bytes(b"x")
+    addons = releases.read_addons()
+    newest = {
+        "Twist Space Technology": "0.8.0",
+        "123Technology": "2.2.1.1",
+        "Programmable Hatches": "v0.2.1p0-beta",
+        "PlanNH": "0.2.0",
+        "worldedit-gtnh": "v0.0.10",
+        "GT-Not-Leisure": "0.2.8",
+    }
+    net = Net(
+        {
+            releases.FEED_URL.format(repo=a.repo): atom(newest[a.name])
+            for a in addons
+            if a.name in newest
+        }
+    )
+    w = releases.watch(
+        tmp_path / "home", "2.9.0", tmp_path / "GTNH-Play", net, now=Clock()
+    )
+    got = {a.addon.name: a for a in w.addons}
+    assert set(got) == {a.name for a in addons}  # every installed addon, and GTNL
+    for jar, row in PINNED_JARS.items():
+        assert got[row].jars == (jar,)
+        assert got[row].latest is not None, row
+    assert "matches the installed jar" in got["123Technology"].verdict
+    assert got["GT-Not-Leisure"].verdict.startswith("not in Play; newest release 0.2.8")
+
+
+@pytest.mark.parametrize("play", ["missing", None])
+def test_addons_watched_always_are_checked_without_plays_mods(
+    tmp_path: Path, play: str | None
+) -> None:
+    """pack_update.md: the watch reports GT-Not-Leisure (watch always) whether or not Play
+    has it, so a Play whose mods can't be listed (or none configured) still gets it."""
+    gtnl = next(a for a in releases.read_addons() if a.watch == "always")
+    net = Net({releases.FEED_URL.format(repo=gtnl.repo): atom("0.2.8")})
+    folder = None if play is None else tmp_path / "no-play"
+    w = releases.watch(tmp_path / "home", "2.9.0", folder, net, now=Clock())
+    assert [a.addon.name for a in w.addons] == [gtnl.name]
+    assert w.addons[0].verdict.startswith("not in Play; newest release 0.2.8")
+    text = "\n".join(w.lines())
+    if play is not None:
+        assert "only the addons watched always were checked" in text
+    state = releases.load_state(tmp_path / "home")
+    assert state["last"]["addons"] == {gtnl.name: "0.2.8"}
 
 
 @pytest.mark.parametrize(

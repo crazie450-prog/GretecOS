@@ -383,10 +383,36 @@ def test_a_flow_to_an_unplaced_machine_is_warned(conn: sqlite3.Connection) -> No
     lay = layout.plan_layout(conn, [plan])
     assert not any(s["item"] == "gregtech:dust@2" for s in lay["services"])
     assert (
-        "pl-steel n3 -> n4 gregtech:dust@2: not routed, n4 has no placement"
-        in lay["warnings"]
+        "pl-steel n3 -> n4 gregtech:dust@2: not routed, n4 has a machine with no "
+        "footprint yet, so it isn't placed" in lay["warnings"]
     )
     assert any("not routed" in n for n in layout.card(lay)["notes"])
+
+
+def test_a_flow_to_a_step_done_by_hand_says_so(conn: sqlite3.Connection) -> None:
+    """QA (harness DB, steel ingot MV): a furnace recipe done by hand has no machine, so its
+    flows aren't routed; the warning says that, not that a node was left unplaced."""
+    hand = {
+        "n": "n5",
+        "kind": "recipe",
+        "recipe": "r:codechicken.nei.recipe.FurnaceRecipeHandler/0",
+        "machine": None,
+        "count": None,
+        "flags": ["manual"],
+    }
+    plan = production(
+        nodes=[*production()["nodes"], hand],
+        edges=[{"from": "n5", "to": "n3", "item": "gregtech:dust@9", "rate_s": 1.0}],
+    )
+    lay = layout.plan_layout(conn, [plan])
+    assert (
+        lay["warnings"].count(
+            "pl-steel n5 -> n3 gregtech:dust@9: not routed, n5 is a step done by hand "
+            "(no machine to place): carry it yourself"
+        )
+        == 1
+    )
+    assert not any(u["node"] == "n5" for u in lay["unplaced"])
 
 
 def test_a_multi_with_no_hatch_data_is_warned(conn: sqlite3.Connection) -> None:
