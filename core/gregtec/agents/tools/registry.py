@@ -134,6 +134,9 @@ class Tool:
     read_only: bool = True
     lanes: frozenset[str] = frozenset(LANES)
     deadline_s: float = DEADLINE_S
+    # SQLITE_LIMIT_LENGTH for this tool's connection: MAX_VALUE_BYTES unless the tool reads a
+    # column whose values are legitimately longer (build_request: a multi's structure row)
+    max_value_bytes: int = MAX_VALUE_BYTES
     needs_db: bool = True
     gate: str = (
         ""  # what checks a writing tool's every call (required when not read_only)
@@ -178,15 +181,17 @@ MORE_TOOL = Tool(
 )
 
 
-def guard(conn: sqlite3.Connection, seconds: float) -> float:
+def guard(
+    conn: sqlite3.Connection, seconds: float, max_value: int = MAX_VALUE_BYTES
+) -> float:
     """Make ``conn`` (opened ``mode=ro``) refuse writes and ATTACH, cap the size of any value
-    a query makes, and stop any statement still running ``seconds`` from now (returned, as a
-    ``time.monotonic()``). SQLite checks the progress handler only between steps of a query
+    a query makes or reads at ``max_value`` bytes, and stop any statement still running
+    ``seconds`` from now (returned, as a ``time.monotonic()``). SQLite checks the progress handler only between steps of a query
     (its loops), never inside one row's expressions; db_sql bounds those itself."""
     conn.execute("PRAGMA query_only = ON")
     conn.execute("PRAGMA trusted_schema = OFF")
     conn.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
-    conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)
+    conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, max_value)
     conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, MAX_SQL_BYTES)
     deadline = time.monotonic() + seconds
     conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
@@ -370,7 +375,7 @@ class Registry:
         except (access.SchemaError, sqlite3.Error) as exc:
             raise ToolError(f"can't open the DB: {exc}") from None
         try:
-            yield conn, guard(conn, tool.deadline_s)
+            yield conn, guard(conn, tool.deadline_s, tool.max_value_bytes)
         except sqlite3.OperationalError as exc:
             if str(exc) == "interrupted":
                 raise ToolError(
