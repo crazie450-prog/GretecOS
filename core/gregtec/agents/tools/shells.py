@@ -42,7 +42,7 @@ VOCABULARY = (
     "first layer above the floor). Each is an object with op: walls (the outer ring; y [y0, y1], "
     "inset), pillars (corners and every N along the ring; every, y, inset), windows (openings "
     "along the ring; y, every, width < every, sides [north, south, east, west]), roof (style "
-    "flat or gable, y, edge + edge_n, parapet 0-3 + parapet_role), lights (a grid set in the "
+    "flat or gable, pitch 1-3 (a gable's rise a step), y, edge + edge_n, parapet 0-3 + parapet_role), lights (a grid set in the "
     "roof; every, y), fill and frame (a solid box, or its edges; lo [x,y,z], hi [x,y,z]), clear "
     "(air; lo, hi). Each but clear names a palette role (role, and n: that role's entry "
     "number) or one block (<registry name>@<meta> from the palette). Later operations overwrite "

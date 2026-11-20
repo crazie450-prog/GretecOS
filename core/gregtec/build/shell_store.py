@@ -186,6 +186,8 @@ def notes(
         out.append(
             f"theme {brief.theme.name} ({spec.theme}): {brief.mode} mode, {brief.why}"
         )
+    elif spec.theme:  # a revision that kept its version's theme and palette (WO-10.10)
+        out.append(f"theme {spec.theme_name} ({spec.theme}): kept from {brief.why}")
     else:
         out.append("prompt only: the palette given with the request")
     out.append(f"concept for {brief.line_type}: {brief.concept}")
