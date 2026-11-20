@@ -17,6 +17,19 @@ The workbench (WO-10.10, D367-D370):
 | GET  /api/shells/compare?a=&b=          | admin, client, device | two versions' materials and block counts side by side |
 | GET  /api/shells/{id}/view              | admin, client, device | the 3D viewer's data: cells, palette with the catalog's colours, layers, the floor plan's machines and keep-outs as ghosts |
 
+The bake-off (WO-10.11, D374-D377): runs are started only by ``gos shell bakeoff run`` (spending
+is Clayton's, at the CLI); these routes show a run **blind** and take his ratings. Before the
+report is written nothing here names a model, a provider, a cost, a token count or a time.
+
+| route                                        | who                   | what                                |
+|----------------------------------------------|-----------------------|-------------------------------------|
+| GET  /api/shells/bakeoff                     | admin, client, device | ``{"runs": [...]}``: the runs, newest first (blind summaries) |
+| GET  /api/shells/bakeoff/{run}               | admin, client, device | ``{"run": the blind view, "report": the report's table card or null}`` |
+| GET  /api/shells/bakeoff/{run}/view?case=&letter=&which= | admin, client, device | one blind entry's 3D viewer data (``which``: design or revise) |
+| GET  /api/shells/bakeoff/{run}/compare?case=&a=&b=&which= | admin, client, device | two blind entries of a case side by side |
+| POST /api/shells/bakeoff/{run}/rate          | admin, device         | ``{"case", "pick"}``: a letter, ``tie`` or ``bad``; refused once the models are named |
+| POST /api/shells/bakeoff/{run}/report        | admin, device         | ``{"reveal"?: bool}``: write the report and name the models (refused while cases are unrated, unless ``reveal``) |
+
 The shell card is data (plan 7.14 rule 1); the Build view draws it. Nothing here writes a world or
 a ``.schematic``: ``gos shell export`` is Clayton's (it reads the Lab world's registry, D318).
 
@@ -242,6 +255,46 @@ def viewed(home: Path, build: str) -> dict[str, Any]:
             conn.close()
 
 
+def _bakeoff(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    from gregtec.build import palette, shell
+
+    try:
+        return fn()
+    except (shell.ShellError, palette.CatalogError) as exc:
+        text = str(exc)
+        status = (
+            404
+            if text.startswith(("no bake-off run", "no shell build", "no such"))
+            or "is not a bake-off run id" in text
+            else 409
+            if "ratings are closed" in text or "still running" in text
+            else 400
+        )
+        raise HTTPException(status, text) from None
+
+
+def bakeoff_run(home: Path, run_id: str) -> dict[str, Any]:
+    from gregtec.build import shell_bakeoff as bo
+
+    run = bo.load(home, run_id)
+    return {"run": bo.blind(run), "report": bo.card_of(home, run)}
+
+
+def bakeoff_scene(
+    home: Path, run_id: str, case: str, letter: str, which: str
+) -> dict[str, Any]:
+    from gregtec.build import shell_bakeoff as bo
+    from gregtec.db import access
+
+    db = access.db_path(home)  # the catalog only names and colours the blocks
+    conn = access.connect(db, readonly=True) if db.is_file() else None
+    try:
+        return bo.scene(conn, home, run_id, case, letter, which)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def add_routes(
     app: FastAPI,
     core: "Core",
@@ -331,6 +384,68 @@ def add_routes(
     @app.get("/api/shells/compare")
     async def shell_compare(a: str, b: str, who: Anyone) -> dict[str, Any]:
         return await asyncio.to_thread(chain, lambda: versions.compare(home(), a, b))
+
+    # The bake-off (WO-10.11): before /api/shells/{build}, "bakeoff" isn't a build id.
+    @app.get("/api/shells/bakeoff")
+    async def shell_bakeoff_runs(who: Anyone) -> dict[str, Any]:
+        from gregtec.build import shell_bakeoff as bo
+
+        return await asyncio.to_thread(_bakeoff, lambda: {"runs": bo.runs(home())})
+
+    @app.get("/api/shells/bakeoff/{run}")
+    async def shell_bakeoff_run(run: str, who: Anyone) -> dict[str, Any]:
+        return await asyncio.to_thread(_bakeoff, lambda: bakeoff_run(home(), run))
+
+    @app.get("/api/shells/bakeoff/{run}/view")
+    async def shell_bakeoff_view(
+        run: str, case: str, letter: str, who: Anyone, which: str = "design"
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            _bakeoff, lambda: bakeoff_scene(home(), run, case, letter, which)
+        )
+
+    @app.get("/api/shells/bakeoff/{run}/compare")
+    async def shell_bakeoff_compare(
+        run: str, case: str, a: str, b: str, who: Anyone, which: str = "design"
+    ) -> dict[str, Any]:
+        from gregtec.build import shell_bakeoff as bo
+
+        return await asyncio.to_thread(
+            _bakeoff, lambda: bo.compare(home(), run, case, a, b, which)
+        )
+
+    @app.post("/api/shells/bakeoff/{run}/rate")
+    async def shell_bakeoff_rate(
+        run: str, request: Request, who: Trusted
+    ) -> dict[str, Any]:
+        from gregtec.build import shell_bakeoff as bo
+
+        body = await json_body(request)
+        case, pick = body.get("case"), body.get("pick")
+        if set(body) != {"case", "pick"} or not (
+            isinstance(case, str) and isinstance(pick, str)
+        ):
+            raise HTTPException(400, "send case and pick (a letter, tie or bad)")
+        return await asyncio.to_thread(
+            _bakeoff, lambda: {"run": bo.blind(bo.rate(home(), run, case, pick))}
+        )
+
+    @app.post("/api/shells/bakeoff/{run}/report")
+    async def shell_bakeoff_report(
+        run: str, request: Request, who: Trusted
+    ) -> dict[str, Any]:
+        from gregtec.build import shell_bakeoff as bo
+
+        body = await json_body(request)
+        reveal = body.get("reveal", False)
+        if set(body) - {"reveal"} or not isinstance(reveal, bool):
+            raise HTTPException(400, "send reveal (true or false), or nothing")
+
+        def write() -> dict[str, Any]:
+            bo.report(home(), run, reveal_unrated=reveal)
+            return bakeoff_run(home(), run)
+
+        return await asyncio.to_thread(_bakeoff, write)
 
     @app.get("/api/shells/{build}/view")
     async def shell_view(build: str, who: Anyone) -> dict[str, Any]:

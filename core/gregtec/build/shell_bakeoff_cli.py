@@ -311,7 +311,9 @@ def _designers(models: Any, out: TextIO) -> dict[str, Any] | None:  # noqa: ANN4
                 llm.anthropic_client(key), m.model, m.effort
             )
         else:
-            out_map[m.label] = llm.OpenAIDesigner(key, m.model, m.effort)
+            out_map[m.label] = llm.OpenAIDesigner(
+                key, m.model, m.effort, url=llm.OPENAI_URL
+            )
     return out_map
 
 

@@ -447,21 +447,18 @@ def prepare(
             loaded = [plan_store.load(home, pid) for pid in ids]
             lay = layout_lib.plan_layout(conn, loaded)
 
-            made = _preview(
-                conn,
-                home,
-                vault,
-                case,
-                ids,
-                int(case.max_blocks) if case.max_blocks.isdigit() else None,
-            )
+            made = _preview(conn, home, vault, case, ids, None)
             if not made.outcome.ok:
                 raise BakeoffError(" | ".join(made.outcome.reasons))
             baseline = len(made.outcome.cells)
-            if case.max_blocks == "tight":
-                made = _preview(
-                    conn, home, vault, case, ids, math.ceil(baseline * TIGHT)
+            if case.max_blocks != "default":
+                # the record's sizes are what the brief states; the gate judges each answer
+                limit = (
+                    math.ceil(baseline * TIGHT)
+                    if case.max_blocks == "tight"
+                    else int(case.max_blocks)
                 )
+                made = _preview(conn, home, vault, case, ids, limit)
             rec = made.record
             brief = shell_brief.design_brief(
                 rec,
@@ -1016,6 +1013,8 @@ class Runner:
             step, ds = self._design(case, model, spec.brief, where)
         except BaseException:
             shutil.rmtree(where, ignore_errors=True)  # nothing half-written stays
+            if where.parent.is_dir() and not any(where.parent.iterdir()):
+                where.parent.rmdir()
             raise
         result["design"], result["design_id"] = step.to_json(), ds
         self.run["results"].append(result)
