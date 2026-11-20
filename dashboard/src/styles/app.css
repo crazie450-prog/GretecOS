@@ -3006,6 +3006,10 @@ select.ask-input option {
 
 .shell-words {
   width: 100%;
+  height: auto;
+  min-height: calc(4 * 1.5em + 2 * var(--space-2));
+  padding: var(--space-2) var(--space-4);
+  line-height: 1.5;
   resize: vertical;
   font: inherit;
 }

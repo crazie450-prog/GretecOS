@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
 import sys
@@ -676,3 +677,66 @@ def test_a_cancelled_shell_job_saves_nothing(home: Path) -> None:
     assert (
         not (home / shell_store.ROOT).exists() and not (home / versions.ROOT).exists()
     )
+
+
+# --- the revise eval (gos eval shell-revise, D368) --------------------------------------------
+
+
+def test_the_revise_eval_passes_with_gos_reviser_and_its_scorer_bites(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    from gregtec.build import shell_eval
+
+    cases = shell_eval.load_cases()
+    assert len(cases) >= 5 and all(c.followup and c.expect for c in cases)
+    text = shell_eval.CASES.read_text(encoding="utf-8")
+    assert "mte:" not in text and "r:" not in text  # no game number or id in the cases
+    vault = VaultIO(home / "vault")
+    out = io.StringIO()
+    rows = shell_eval.run(
+        conn, home, vault, ["pl-steel"], cases, shell_eval.gos_reviser(conn, vault), out
+    )
+    assert [r["result"] for r in rows] == ["PASS"] * len(cases), out.getvalue()
+    assert f"{len(cases)} of {len(cases)} cases pass" in out.getvalue()
+
+    # a reviser that also changes what wasn't asked fails "kept"
+    def sloppy(h: Path, ds: str, words: str) -> None:
+        versions.revise(conn, h, vault, ds, f"{words}, and no plinth")
+
+    row = shell_eval.run_case(conn, home, vault, ["pl-steel"], cases[0], sloppy)
+    assert row["gate"] == "pass" and row["kept"] == "fail" and row["result"] == "FAIL"
+
+    # one that changes the wrong thing fails "asked"
+    def wrong(h: Path, ds: str, words: str) -> None:
+        versions.revise(conn, h, vault, ds, "fewer pillars")
+
+    row = shell_eval.run_case(conn, home, vault, ["pl-steel"], cases[0], wrong)
+    assert row["asked"] == "fail" and row["result"] == "FAIL"
+    # one that makes no new version fails the gate column
+    row = shell_eval.run_case(
+        conn, home, vault, ["pl-steel"], cases[0], lambda h, ds, w: None
+    )
+    assert row["gate"] == "refused" and row["result"] == "FAIL"
+
+
+def test_gos_eval_shell_revise_fake_runs_on_a_scratch_copy(
+    home: Path, tmp_path: Path
+) -> None:
+    import argparse
+
+    from gregtec.build import shell_eval_cli
+
+    cfg = tmp_path / "gos.toml"
+    cfg.write_text(
+        f"[paths]\ngos_home = {json.dumps(home.as_posix())}\n", encoding="utf-8"
+    )
+    args = argparse.Namespace(
+        plans=["pl-steel"], fake=True, cases=None, limit=2, config=cfg
+    )
+    out = io.StringIO()
+    assert shell_eval_cli.run(args, out) == 0, out.getvalue()
+    assert "Result: PASS" in out.getvalue()
+    assert not (home / shell_store.ROOT).exists()  # his own shells untouched
+    assert (home / shell_eval_cli.SCRATCH / shell_store.ROOT).is_dir()
+    args.plans = ["pl-nope"]
+    assert shell_eval_cli.run(args, io.StringIO()) == 2

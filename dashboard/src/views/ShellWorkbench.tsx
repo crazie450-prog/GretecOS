@@ -497,11 +497,11 @@ export function ShellWorkbench() {
         </p>
         <textarea
           className="ask-input shell-words"
-          rows={2}
+          rows={4}
           maxLength={400}
           value={words}
           onChange={(e) => setWords(e.target.value)}
-          placeholder="make the roof steeper · taller, and no windows on the north wall"
+          placeholder="make the roof steeper; taller, and no windows on the north wall"
           aria-label="What to design or change"
           data-testid="shell-words"
         />

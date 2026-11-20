@@ -81,6 +81,15 @@ def design_id(first_build: str) -> str:
     return "ds-" + digest[:12]
 
 
+def revise_task(ds: str, said: str) -> str:
+    """The deep lane's task for a revision, as the router hands it (D369): the design named, so
+    the architect calls build_revise on it and never starts over. ``said`` is Clayton's words."""
+    return (
+        f"Revise Clayton's current shell design {ds} with build_revise (design {ds}): change "
+        f"only what he asked and keep the rest; never start a new shell. He said: {said}"
+    )
+
+
 def _path(home: Path, ds: str) -> Path:
     if not DESIGN_ID.fullmatch(ds):
         raise VersionError(f"{ds!r} is not a shell design id (ds-<12 hex>)")

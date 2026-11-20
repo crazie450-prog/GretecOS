@@ -468,11 +468,7 @@ class Asker:
         from gregtec.vault.io import VaultIO
 
         if not reasons:
-            task = (
-                f"Revise Clayton's current shell design {ds} with build_revise (design {ds}): "
-                "change only what he asked and keep the rest; never start a new shell. He "
-                f"said: {route.text}"
-            )
+            task = shell_versions.revise_task(ds, route.text)
             item = self.deep.handoff(task, route.text, "router")
             text = DEEP_OFFLINE if item.status == OFFLINE else HANDED_OFF
             return Reply(text, router.DEEP, route.intent, handoff=item.as_dict())
