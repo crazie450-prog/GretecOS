@@ -349,7 +349,7 @@ class Asker:
         with self._lock:
             pending, self._pending = self._pending, None
         route = self._picked(pending, text) or router.route(
-            text, shell=self._shell_design() is not None
+            text, shell=self._any_shell()
         )
         if route.intent == router.REPEAT and pending is not None:
             with self._lock:  # the repeated question can still be answered
@@ -462,6 +462,15 @@ class Asker:
         return self._fast(route, pre, answer)
 
     # --- the current shell design (WO-10.10, D369) --------------------------------------------
+
+    def _any_shell(self) -> bool:
+        """Whether a shell exists, for the router on every request: folder names only, so no
+        design file is read until a revision or an undo needs the design (WO-10.10)."""
+        if self.home is None:
+            return False
+        from gregtec.build import shell_versions
+
+        return shell_versions.any_shell(self.home)
 
     def _shell_design(self) -> str | None:
         """The shell design Clayton works on, or None (no GOS_HOME, or no shell yet)."""

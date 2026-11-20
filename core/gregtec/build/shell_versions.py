@@ -265,6 +265,21 @@ def current_id(home: Path) -> str | None:
     return found[0]["id"] if found else None
 
 
+def any_shell(home: Path) -> bool:
+    """Whether there is a shell at all: ``current.json`` or a saved build, from the folders'
+    names only (no file is read), so the router can ask it on every request."""
+    if (home / ROOT / CURRENT).is_file():
+        return True
+    root = home / shell_store.ROOT
+    try:
+        return any(
+            shell_store.BUILD_ID.fullmatch(d.name) and (d / "design.json").is_file()
+            for d in root.iterdir()
+        )
+    except OSError:  # no shells folder yet
+        return False
+
+
 def _point(home: Path, ds: str) -> None:
     atomic_write(
         home / ROOT / CURRENT, _json({"design": ds, "at": round(time.time(), 3)})
@@ -525,8 +540,11 @@ def revise(
     if build == parent or any(v["build"] == build for v in d["versions"]):
         same = next(v for v in d["versions"] if v["build"] == build)
         again = (
-            f"the revision gives v{same['n']} ({build}) again: make it current instead "
-            "(nothing was written)"
+            f"the revision gives the current v{same['n']} ({build}) again: nothing "
+            "changes (nothing was written)"
+            if build == parent
+            else f"the revision gives v{same['n']} ({build}) again: make it current "
+            "instead (nothing was written)"
         )
         return Revised(
             ds,

@@ -133,6 +133,28 @@ def test_the_reviser_changes_only_what_the_words_name(
     assert r.ok and next(o for o in r.ops if o["op"] == "pillars")["every"] == 12
 
 
+def test_the_headroom_note_is_given_only_when_the_headroom_changes(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, build = first(conn, home)
+    rec = shell_store.load(home, build)
+    _, _, top = shell.LIMITS["headroom"]
+    seen = []
+    for words in ["make the roof steeper"] * 3 + [
+        "no windows on the north wall",
+        "no lights",
+    ]:
+        r = shell_revise.revise(rec, words)
+        if not r.ok:
+            continue
+        noted = any(c.startswith("headroom") for c in r.changes)
+        assert noted == (r.headroom != rec["headroom"]), (words, r.changes)
+        seen.append((words, r.headroom))
+        rec = {**rec, "ops": list(r.ops), "headroom": r.headroom}
+    assert ("no windows on the north wall", rec["headroom"]) in seen
+    assert rec["headroom"] <= top
+
+
 @pytest.mark.parametrize(
     ("words", "kind"),
     [
@@ -206,6 +228,12 @@ def test_versions_form_a_chain_and_nothing_is_deleted(
     assert c.saved and c.parent == v1 and len(versions.get(home, ds)["versions"]) == 4
     with pytest.raises(versions.VersionError, match="not a version"):
         versions.make_current(home, ds, "sh-000000000000")
+    # operations that give the current version again change nothing, and say so
+    now = shell_store.load(home, c.build)
+    same = rev(conn, home, "the same again", ops=now["ops"], by="architect")
+    assert not same.saved and same.build == c.build
+    assert "nothing changes" in same.reasons[0], same.reasons
+    assert "make it current" not in same.reasons[0]
 
 
 def test_a_refused_revision_writes_nothing_and_keeps_the_current_version(
@@ -409,8 +437,11 @@ def test_the_asker_hands_a_revision_to_the_deep_lane_naming_the_design(
 def test_with_no_ai_gos_revises_in_code_and_undo_is_instant(
     conn: sqlite3.Connection, home: Path
 ) -> None:
-    ds, v1 = first(conn, home)
     a, deep = asker(home, ai=False)
+    assert not versions.any_shell(home)  # the router's check reads no file
+    assert a.ask("make the roof steeper").intent != router.SHELL_REVISE
+    ds, v1 = first(conn, home)
+    assert versions.any_shell(home)
     reply = a.ask("make the roof steeper")
     assert reply.lane == "no_ai" and "version 2" in reply.text, reply.text
     assert reply.card is not None and reply.card["type"] == "shell"
@@ -810,6 +841,14 @@ def test_the_revise_eval_passes_with_gos_reviser_and_its_scorer_bites(
 
     row = shell_eval.run_case(conn, home, vault, ["pl-steel"], cases[0], wrong)
     assert row["asked"] == "fail" and row["result"] == "FAIL"
+
+    # one that drops windows from another side too fails "asked" (the other sides are kept)
+    def greedy(h: Path, ds: str, words: str) -> None:
+        versions.revise(conn, h, vault, ds, "no windows on the north and east walls")
+
+    north = next(c for c in cases if c.id == "no-north-windows")
+    row = shell_eval.run_case(conn, home, vault, ["pl-steel"], north, greedy)
+    assert row["asked"] == "fail" and "not" in row["why"], row
     # one that makes no new version fails the gate column
     row = shell_eval.run_case(
         conn, home, vault, ["pl-steel"], cases[0], lambda h, ds, w: None

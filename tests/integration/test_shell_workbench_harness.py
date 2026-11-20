@@ -6,15 +6,20 @@ locally mod/README.md). WO-10.7's harness test (``test_shell_harness``) gives th
 lines' layout (the server run's DB, the structures from GOS_STRUCTURES_DATASET when it is set, a
 real ``gos structures extract`` dump, else the repo's fixture with stand-ins) and the client run's
 block catalog. Here the client run is built into a GOS_HOME of its own and the same structure dump
-is loaded into that DB, so the tools' read guard (``registry.guard``: a value larger than
-``MAX_VALUE_BYTES`` stops the query) meets real structure rows if revise reads one. It must not:
-a revision reads only the version's own files and the catalog (D367).
+is loaded into that DB. Only with GOS_STRUCTURES_DATASET set (a real dump, Clayton's PC step)
+are those rows as large as the real ones (over ``MAX_VALUE_BYTES``, the tools' read guard's
+limit, which is then asserted); CI's mod job loads the fixture's small stand-ins, so there this
+test proves revise on the real block catalog, not on a 1.2 MB row. What proves that a revision
+reads no structure row at all (only the version's own files and the catalog, D367) is the unit
+test ``test_revise_reads_no_structure_row`` (a sqlite authorizer denies every read of
+``structure``).
 
 On that home: the steel line's procedural foundry shell is saved and started as a design, then
 ``build_revise`` (deep lane, the architect's tool) revises it from words (GOS's reviser) and from
-operations (the architect's path), each a new version through the gate; a design with a chest
-from the real catalog is refused and writes nothing; undo makes v1 current; the 3D viewer's data
-and compare read the real catalog's names. Nothing is written outside tmp_path.
+operations (the architect's path), each a new version through the gate; undo makes v1
+current; the 3D viewer's data and compare read the real catalog's names. A design with a chest
+from the real catalog is refused and writes nothing (skipped, not passed, when the catalog has no
+chest). Nothing is written outside tmp_path.
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ from typing import Any
 import pytest
 
 from gregtec.agents.tools import build_registry
-from gregtec.agents.tools.registry import DEEP
+from gregtec.agents.tools.registry import DEEP, MAX_VALUE_BYTES
 from gregtec.build import layout, shell, shell_store
 from gregtec.build import shell_versions as versions
 from gregtec.build import themes as theme_lib
@@ -89,6 +94,8 @@ def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
     finally:
         c.close()
     print(f"\nthe largest structure row: {biggest} bytes")
+    if laid.DATASET:  # a real dump: its rows are what the read guard refuses
+        assert biggest > MAX_VALUE_BYTES, biggest
     import shutil
 
     shutil.copytree(TEMPLATE, h / "vault")
@@ -151,32 +158,6 @@ def test_build_revise_on_real_structure_rows_and_the_real_catalog(
     assert not out.is_error, out.text
     v3 = versions.get(home, ds)["current"]
     assert versions.get(home, ds)["versions"][-1]["by"] == "architect"
-    # a chest from the real catalog is refused and writes nothing
-    cat = access.connect(access.db_path(home), readonly=True)
-    try:
-        chest = cat.execute(
-            "SELECT registry_name, meta FROM block_state WHERE registry_name = 'minecraft:chest'"
-            " LIMIT 1"
-        ).fetchone()
-    finally:
-        cat.close()
-    if chest is not None:
-        bad = [
-            *ops,
-            {
-                "op": "fill",
-                "block": f"{chest[0]}@{chest[1]}",
-                "lo": [-1, 1, -1],
-                "hi": [-1, 1, -1],
-            },
-        ]
-        out = reg.call(
-            "build_revise",
-            {"words": "a chest", "design_ops": json.dumps(bad)},
-            lane=DEEP,
-        )
-        assert out.is_error and "nothing was written" in out.text
-    assert versions.get(home, ds)["current"] == v3
     after = {p.name for p in (home / shell_store.ROOT).iterdir()}
     assert after - before == {v2, v3}
     # undo, compare and the viewer, on the real catalog's names
@@ -192,3 +173,40 @@ def test_build_revise_on_real_structure_rows_and_the_real_catalog(
     assert len(view["cells"]) == shell_store.load(home, v3)["blocks"]
     assert any(p["name"] for p in view["palette"]), "the real catalog names the blocks"
     print(f"\nrevised {v1} -> {v2} -> {v3}: {len(view['cells'])} blocks")
+
+
+def test_a_chest_from_the_real_catalog_is_refused_and_writes_nothing(
+    home: Path, started: tuple[str, str]
+) -> None:
+    ds, v1 = started
+    cat = access.connect(access.db_path(home), readonly=True)
+    try:
+        chest = cat.execute(
+            "SELECT registry_name, meta FROM block_state WHERE registry_name = 'minecraft:chest'"
+            " LIMIT 1"
+        ).fetchone()
+    finally:
+        cat.close()
+    if chest is None:
+        pytest.skip("the client run's catalog has no minecraft:chest")
+    reg = build_registry(access.db_path(home), vault=VaultIO(home / "vault"))
+    design_file = (home / versions.ROOT / f"{ds}.json").read_bytes()
+    before = {p.name for p in (home / shell_store.ROOT).iterdir()}
+    bad = [
+        *shell_store.load(home, v1)["ops"],
+        {
+            "op": "fill",
+            "block": f"{chest[0]}@{chest[1]}",
+            "lo": [-1, 1, -1],
+            "hi": [-1, 1, -1],
+        },
+    ]
+    out = reg.call(
+        "build_revise",
+        {"words": "a chest", "design_ops": json.dumps(bad)},
+        lane=DEEP,
+    )
+    assert out.is_error and "nothing was written" in out.text, out.text
+    assert versions.get(home, ds)["current"] == v1
+    assert (home / versions.ROOT / f"{ds}.json").read_bytes() == design_file
+    assert {p.name for p in (home / shell_store.ROOT).iterdir()} == before

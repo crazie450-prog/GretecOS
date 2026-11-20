@@ -1,6 +1,7 @@
 id	theme	line_type	brief	followup	expect	touches
 roof-steeper	th-foundry	smelting	a foundry shell around the steel line	make the roof steeper	roof.style=gable	roof
-taller-no-north	th-foundry	smelting	a foundry shell around the steel line	taller, and no windows on the north wall	headroom>+0;walls.top>+0;windows.sides!north	walls,windows,pillars,roof,lights
+taller-no-north	th-foundry	smelting	a foundry shell around the steel line	taller, and no windows on the north wall	headroom>+0;walls.top>+0;windows.sides!north;windows.sides-north	walls,windows,pillars,roof,lights
+no-north-windows	th-foundry	smelting	a foundry shell around the steel line	no windows on the north wall	windows.sides!north;windows.sides-north	windows
 no-lights	th-marble-works	general	a marble hall around the steel line	no lights	lights=none	lights
 fewer-pillars	th-marble-works	general	a marble hall around the steel line	fewer pillars	pillars.every>+0	pillars
 more-windows	th-marble-works	general	a marble hall around the steel line	more windows	windows.every<+0	windows

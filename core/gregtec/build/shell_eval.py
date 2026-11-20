@@ -9,7 +9,8 @@ follow-up to the **reviser under test** and scores the version it leaves current
 - **gate**: the brief's shell and the revision both passed the gate (:func:`gregtec.build.shell.
   design`) and the revision is a new version (refused: the case fails);
 - **asked**: every ``expect`` check holds on the new version against the old one (``;``-separated:
-  ``roof.style=gable``, ``lights=none``, ``windows.sides!north``, ``headroom>+0``,
+  ``roof.style=gable``, ``lights=none``, ``windows.sides!north``, ``windows.sides-north``
+  (the old version's sides less north, every other side kept), ``headroom>+0``,
   ``walls.top>+0``, ``<kind>.every>+0`` / ``<+0``: the new value against the old);
 - **kept**: every operation whose kind is not in ``touches`` is unchanged (the rest of the shell).
 
@@ -42,7 +43,7 @@ REPO = Path(__file__).resolve().parents[3]
 CASES = REPO / "tests" / "evals" / "shell_revise.tsv"
 COLUMNS = ("id", "theme", "line_type", "brief", "followup", "expect", "touches")
 TABLE = ("id", "gate", "asked", "kept", "result", "why")
-_CHECK = re.compile(r"^([a-z]+)(?:\.([a-z]+))?(=|!|>|<)(.+)$")
+_CHECK = re.compile(r"^([a-z]+)(?:\.([a-z]+))?(=|!|-|>|<)(.+)$")
 
 Reviser = Callable[[Path, str, str], None]
 
@@ -130,6 +131,21 @@ def check(old: Mapping[str, Any], new: Mapping[str, Any], spec: str) -> str | No
             return f"no {kind} left at all"
         bad = [o for o in found if want in o.get(key or "", list(shell.SIDES))]
         return None if not bad else f"{kind}.{key} still has {want}"
+    if op == "-":  # the old sides less these ones, and no other side lost or gained
+
+        def sides(rec: Mapping[str, Any]) -> set[str]:
+            return {
+                x
+                for o in _of(rec["ops"], kind)
+                for x in o.get(key or "", list(shell.SIDES))
+            }
+
+        want_sides = sides(old) - set(want.split("+"))
+        return (
+            None
+            if sides(new) == want_sides
+            else f"{kind}.{key} are {sorted(sides(new))}, not {sorted(want_sides)}"
+        )
     before = _value(old, kind, key)
     if not isinstance(got, int) or not isinstance(before, int):
         return f"{kind}.{key}: no number to compare ({before!r} -> {got!r})"

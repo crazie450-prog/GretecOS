@@ -257,7 +257,7 @@ def revise(rec: Mapping[str, Any], words: str) -> Revision:
     # The roof must fit: raise the headroom to what it needs (at most 16), never lower it.
     need = o.need_headroom()
     _, _, top = shell.LIMITS["headroom"]
-    if need > o.headroom and not impossible:
+    if min(need, top) > o.headroom and not impossible:  # a note only when it changes
         if need > top:
             o.headroom = top
             changes.append(
