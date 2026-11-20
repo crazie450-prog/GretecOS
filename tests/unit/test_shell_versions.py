@@ -388,6 +388,33 @@ def test_the_viewer_data_is_the_shell_with_its_layers_and_ghosts(
         ("design a shell around my EBF plan with no windows", True, "handoff"),
         ("make a shell for plan p-1 with a steeper roof", True, "handoff"),
         ("make a gothic theme with no lights", True, "handoff"),
+        # other phrasings of WO-10.7's creation rule (design|make|build|draw|wrap|put ...
+        # shell|building|facade) and of "a shell around X": new ones, never a revision
+        ("wrap the EBF in a shell with no windows", True, "handoff"),
+        ("wrap my EBF in a building with a steeper roof", True, "handoff"),
+        ("put the ebf in a building with no windows", True, "handoff"),
+        ("build the ebf a shell with a steeper roof", True, "handoff"),
+        ("make the EBF a building with no windows", True, "handoff"),
+        ("design the shell for the ebf with no windows", True, "handoff"),
+        ("design shells with steeper roofs", True, "handoff"),
+        # no creation verb: routed as without a shell (WO-10.7's rule), never a revision
+        ("I want a shell around the EBF with no windows", True, "general"),
+        ("a shell around the cleanroom with a steeper roof please", True, "general"),
+        ("refine the foundry theme with fewer lamps", True, "handoff"),
+        # the same words without a shell go the same way
+        ("wrap the EBF in a shell with no windows", False, "handoff"),
+        ("build the ebf a shell with a steeper roof", False, "handoff"),
+        # a new part ("a ... wall") or a part of something else is not this shell
+        ("build a taller wall", True, "general"),
+        ("add more lamps to the nether portal", True, "general"),
+        ("add a wall of solar panels", True, "general"),
+        ("build a taller wall", False, "general"),
+        ("add more lamps to the nether portal", False, "general"),
+        # the shell itself made more, or a place on it, is still a revision
+        ("build the building higher", True, router.SHELL_REVISE),
+        ("make the shell a bit taller", True, router.SHELL_REVISE),
+        ("add more lights to the roof", True, router.SHELL_REVISE),
+        ("no windows on the left side", True, router.SHELL_REVISE),
         # the change word's object is a part of the building, not something else
         ("no windows on the north wall", True, router.SHELL_REVISE),
         ("add more lights", True, router.SHELL_REVISE),
@@ -452,6 +479,28 @@ def test_with_no_ai_gos_revises_in_code_and_undo_is_instant(
     reply = a.ask("undo")
     assert reply.intent == router.SHELL_UNDO and "version 1" in reply.text
     assert versions.get(home, ds)["current"] == v1
+
+
+def test_a_new_shell_request_never_revises_the_existing_design(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """With a design in place, "wrap the EBF in a shell ..." asks for a new shell
+    (build_request), so neither the code reviser (AI off) nor the architect's revise task
+    (AI on) touches the existing design."""
+    ds, v1 = first(conn, home)
+    for words in (
+        "wrap the EBF in a shell with no windows",
+        "build the ebf a shell with a steeper roof",
+    ):
+        a, deep = asker(home, ai=False)
+        reply = a.ask(words)
+        assert reply.intent != router.SHELL_REVISE, reply.text
+        a, deep = asker(home, ai=True)
+        reply = a.ask(words)
+        assert reply.intent != router.SHELL_REVISE, reply.text
+        assert all("build_revise" not in item.task for item in deep.recent())
+    d = versions.get(home, ds)
+    assert len(d["versions"]) == 1 and d["current"] == v1
 
 
 def test_the_workbench_names_the_design_it_revises(

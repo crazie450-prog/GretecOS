@@ -190,17 +190,25 @@ DEEP_RULES = [
         r"\bratios?\b|\bcalculate\b|\bbudget\b|\boverclock",
         r"\b(?:set up|build|automate)\b.*\b(?:line|setup|factory|plant)\b",
         r"\bpower (?:line|plant|setup|generation)\b",
-        # making or refining a building theme (WO-10.6): theme_save is deep-lane only
+    )
+]
+# making or refining a building theme (WO-10.6): theme_save is deep-lane only
+_THEME_RULES = [
+    re.compile(p)
+    for p in (
         r"\b(?:create|make|refine|change|tweak|update|edit|adjust|swap|rework)\b.*"
         + r"\bthemes?\b",
         r"\bnew theme\b",
         r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust)\b",
-        # designing a decorative shell around a line (WO-10.7): build_request is deep-lane only
-        # ("how do I make/craft a turtle shell" is a recipe question, not a building)
-        r"^(?!.*\bhow (?:do|can|to|would|should)\b(?: (?:i|you|we))? (?:make|craft|get)\b)"
-        + r".*\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b",
     )
 ]
+# designing a decorative shell around a line (WO-10.7): build_request is deep-lane only
+# ("how do I make/craft a turtle shell" is a recipe question, not a building)
+_SHELL_DESIGN_RULE = re.compile(
+    r"^(?!.*\bhow (?:do|can|to|would|should)\b(?: (?:i|you|we))? (?:make|craft|get)\b)"
+    + r".*\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b"
+)
+DEEP_RULES += [*_THEME_RULES, _SHELL_DESIGN_RULE]
 
 # Changing the shell Clayton is working on (WO-10.10, D369): a change word whose object is
 # a part of a building ("no windows on the north wall", "add more lights"), a part or the whole
@@ -241,13 +249,122 @@ _SHELL_NEW = re.compile(
     # a creation verb with a thing to create: a new design (build_request) or theme (theme_save)
     r"|\b(?:design|make|build|create|draw|wrap|put|give)\b(?: me)? (?:a|an|one)\b.*"
     r"\b(?:shells?|buildings?|fa[cç]ades?|themes?|designs?)\b"
-    r"|\b(?:create|make|new)\b.*\bthemes?\b"
+    # "a shell around the EBF", "I want a building with ...": an indefinite one is a new one
+    r"|\b(?:a|an|one|some)\b (?:\w+ ){0,2}?(?:shells?|buildings?|fa[cç]ades?)\b"
 )
+# "make the shell taller", "build the building higher": the shell itself made more, which is
+# a revision even though WO-10.7's creation rule (_SHELL_DESIGN_RULE) sees a verb and a shell.
+_SHELL_ITSELF = re.compile(
+    r"\b(?:make|build|get)\b (?:the|this|my|our|that) (?:shell|building|fa[cç]ade) "
+    r"(?:(?:a bit|a little|much|slightly|way|even) )?" + _SHELL_MORE + r"\b"
+)
+# A part made or added with "a"/"an" ("build a taller wall", "add a wall of solar panels") is
+# a new thing, not a part of this shell.
+_SHELL_A_PART = re.compile(r"\b(?:a|an)\b (?:\w+ ){0,2}?" + _SHELL_PARTS + r"\b")
 # The words name some other thing: a plan, or a part of his base that is not this shell.
 _SHELL_ELSEWHERE = re.compile(
     r"\bplans?\b|\bplan:|\b(?:to|in|on|for|of|around|at) (?:my|the|our|this|that) "
     r"(?:\w+ )?(?:base|factory|line|setup|world|house|room|plant|island|power|ae|network)\b"
 )
+# "to the nether portal", "around the cleanroom": a place named after a preposition is
+# elsewhere unless one of its words is a word for this shell or a place on it.
+_SHELL_PLACE = re.compile(
+    r"\b(?:to|in|on|onto|into|inside|for|of|around|at|near|by|over|above|below|under) "
+    r"(?:the|my|our|this|that|its) ((?:\w+ ){0,2}\w+)"
+)
+_SHELL_WORDS = frozenset(
+    [
+        "roof",
+        "roofs",
+        "wall",
+        "walls",
+        "window",
+        "windows",
+        "pillar",
+        "pillars",
+        "column",
+        "columns",
+        "light",
+        "lights",
+        "lamp",
+        "lamps",
+        "parapet",
+        "parapets",
+        "plinth",
+        "trim",
+        "eaves",
+        "band",
+        "doorway",
+        "doorways",
+        "facade",
+        "facades",
+        "façade",
+        "façades",
+        "shell",
+        "building",
+        "side",
+        "sides",
+        "top",
+        "bottom",
+        "front",
+        "back",
+        "rear",
+        "end",
+        "ends",
+        "corner",
+        "corners",
+        "edge",
+        "edges",
+        "north",
+        "south",
+        "east",
+        "west",
+        "left",
+        "right",
+        "middle",
+        "centre",
+        "center",
+        "outside",
+        "inside",
+        "entrance",
+        "door",
+        "doors",
+        "floor",
+        "ground",
+        "level",
+        "storey",
+        "story",
+        "one",
+        "style",
+        "look",
+        "version",
+        "same",
+        "rest",
+        "whole",
+        "first",
+        "last",
+        "upper",
+        "lower",
+    ]
+)
+
+
+def _names_elsewhere(said: str) -> bool:
+    return bool(_SHELL_ELSEWHERE.search(said)) or any(
+        not _SHELL_WORDS & set(m[1].split()) for m in _SHELL_PLACE.finditer(said)
+    )
+
+
+def _creates(said: str) -> bool:
+    """A WO-10.7 shell design or a WO-10.6 theme is asked for (build_request, theme_save)."""
+    rest = _SHELL_ITSELF.sub(" ", said)
+    return (
+        bool(_SHELL_NEW.search(rest))
+        or bool(_SHELL_DESIGN_RULE.search(rest))
+        or any(p.search(said) for p in _THEME_RULES)
+    )
+
+
 _SHELL_QUESTION = re.compile(
     r"^(?:what|which|why|who|when|where|is|are|does|do|did|should|will|would|shall|"
     r"how (?:do|does|did|can|to|would|should|many|much|long|tall|big))\b"
@@ -268,8 +385,9 @@ def shell_change(said: str) -> str | None:
         return SHELL_UNDO
     if (
         _SHELL_QUESTION.match(said)
-        or _SHELL_NEW.search(said)
-        or _SHELL_ELSEWHERE.search(said)
+        or _creates(said)
+        or _names_elsewhere(said)
+        or _SHELL_A_PART.search(said)
     ):
         return None
     if (
