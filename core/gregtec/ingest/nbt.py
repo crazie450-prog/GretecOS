@@ -63,8 +63,9 @@ def read(
     data: bytes, *, limit: int = MAX_BYTES, max_tags: int | None = None
 ) -> tuple[str, dict[str, Tag]]:
     """The root compound of an NBT file (gzip or plain): (its name, its value). ``limit`` caps
-    the decompressed size; ``max_tags`` (None: no cap) the number of values read, an array
-    counting as one, so a small file of millions of empty compounds can't fill the memory."""
+    the decompressed size; ``max_tags`` (None: no cap) the number of values read, a byte array
+    counting as one and an int array as one per int, so a small file of millions of empty
+    compounds or ints can't fill the memory."""
     r = _Reader(decompress(data, limit), max_tags)
     tag = r.u8()
     if tag != COMPOUND:
@@ -160,6 +161,10 @@ class _Reader:
             return self.compound(depth + 1)
         if tag == INT_ARRAY:
             n = self.length()
+            if self.left is not None:  # each int is a Python object once read
+                self.left -= n
+                if self.left < 0:
+                    raise ValueError("more NBT values than this file can hold")
             ints = array("i", self.take(4 * n))
             if sys.byteorder == "little":
                 ints.byteswap()

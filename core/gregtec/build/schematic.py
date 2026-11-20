@@ -63,8 +63,8 @@ MAX_SIDE = (
 MAX_CELLS = 32 << 20  # Blocks + Data + AddData stay well under nbt.MAX_BYTES
 # A .schematic is untrusted input: decompressed it holds at most its cell arrays (Blocks, Data,
 # AddData, AddBlocks) plus the mappings and tile entities, and it is read as at most MAX_TAGS
-# values (an array is one), so a small file of millions of empty compounds is refused, not read
-# into gigabytes of Python objects (QA 10-13).
+# values (a byte array is one, an int array one per int), so a small file of millions of empty
+# compounds or of int arrays is refused, not read into gigabytes of Python objects (QA 10-13).
 MAX_READ = 4 * MAX_CELLS + (16 << 20)
 MAX_TAGS = (
     1 << 22

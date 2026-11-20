@@ -536,6 +536,36 @@ def test_a_file_of_millions_of_empty_compounds_is_refused_before_it_is_read(
         schematic.read(_junk_list(5000))
 
 
+def _int_arrays(k: int, n: int) -> bytes:
+    """A gzip Schematic root holding one list of ``k`` int arrays of ``n`` ints each (1000:
+    outside CPython's small-int cache): tiny on disk, one Python int per element once read."""
+    name = schematic.ROOT.encode()
+    arr = struct.pack(">i", n) + struct.pack(">i", 1000) * n
+    body = (
+        bytes((nbt.LIST,))
+        + struct.pack(">H", 4)
+        + b"Junk"
+        + struct.pack(">bi", nbt.INT_ARRAY, k)
+        + arr * k
+    )
+    root = bytes((nbt.COMPOUND,)) + struct.pack(">H", len(name)) + name + body + b"\x00"
+    return gzip.compress(root)
+
+
+def test_a_file_of_int_arrays_counts_every_int_against_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA 10-13 final check: an int array counts one value per int, not one in all (a 139 KB
+    file of 34 arrays of 1M ints peaked at 1.8 GB before its refusal)."""
+    data = _int_arrays(4, 500)  # 2000 ints in 5 values
+    with pytest.raises(ValueError, match="more NBT values"):
+        nbt.read(data, max_tags=1000)
+    assert len(nbt.read(data, max_tags=2005)[1]["Junk"]) == 4  # the budget is exact
+    monkeypatch.setattr(schematic, "MAX_TAGS", 1000)
+    with pytest.raises(schematic.CaptureError, match="more NBT values"):
+        schematic.read(data)
+
+
 def test_a_file_without_a_mapping_needs_the_source_world() -> None:
     data = worldedit_copy((3, 2, 2), capture_cells(), None)
     with pytest.raises(schematic.CaptureError, match="give the world it was copied in"):
