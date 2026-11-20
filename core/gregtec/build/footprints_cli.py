@@ -115,7 +115,8 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
             "--source-world",
             type=Path,
             default=None,
-            help="the Lab world a .schematic without a mapping was copied in (its level.dat)",
+            help="the Lab world's folder a .schematic without a mapping was copied in "
+            "(or its level.dat)",
         )
     for each in (ls, show, cov, cap, cmp):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")

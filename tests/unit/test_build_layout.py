@@ -337,6 +337,7 @@ def test_an_mv_line_on_an_ev_power_plan_needs_a_transformer(
     plan = production(
         nodes=[node("n1", 9001, 1, tier="MV"), node("n2", 50, 2, "singleblock", "MV")],
         edges=[{"from": "n2", "to": "n1", "item": "gregtech:dust@1", "rate_s": 1.0}],
+        metrics={"eu": [{"tier": "MV", "eut_avg": 200.0, "amps": 2}]},
     )
     lay = layout.plan_layout(conn, [plan, pw])
     check(lay)
@@ -346,7 +347,16 @@ def test_an_mv_line_on_an_ev_power_plan_needs_a_transformer(
     assert mv["via_transformer"] is True and "e1" not in mv["from"]
     (w,) = [w for w in lay["warnings"] if "eu:MV" in w]
     assert "EV generator(s) " + " ".join(gens) in w
-    assert "gos dist transformer" in w
+    # QA 10-13: the command runs as printed (gos dist transformer needs --amps)
+    assert "(gos dist transformer --from EV --to MV --amps 2)" in w
+    # generators at two tiers: one runnable command per source tier, never "<tier>"
+    hv = power("pl-power2")
+    hv["power"] = {"generator": {"tier": "HV"}}
+    lay = layout.plan_layout(conn, [plan, pw, hv])
+    (w,) = [w for w in lay["warnings"] if "eu:MV" in w]
+    assert "<tier>" not in w
+    assert "gos dist transformer --from EV --to MV --amps 2" in w
+    assert "gos dist transformer --from HV --to MV --amps 2" in w
 
 
 def test_a_multi_with_several_variants_is_placed_at_its_largest(
@@ -697,6 +707,26 @@ def test_cli_without_a_db(tmp_path: Path) -> None:
     access.db_path(tmp_path / "home").unlink()
     code, out = _gos(toml, "pl-steel")
     assert code == 2 and "gos db build" in out
+
+
+def test_cli_out_never_writes_into_play_or_the_vault(tmp_path: Path) -> None:
+    """QA 10-13: ``--out`` has the gate ``gos shell export --out`` has (D309 (6)), and the
+    vault is written only through gregtec.vault."""
+    toml = _home(tmp_path, production(), power())
+    prism = tmp_path / "instances"
+    (prism / "GTNH-Play" / ".minecraft" / "saves" / "World").mkdir(parents=True)
+    with toml.open("a", encoding="utf-8") as f:
+        f.write(f"prism_instances = {json.dumps(prism.as_posix())}\n")
+    play = (
+        prism / "GTNH-Play" / ".minecraft" / "saves" / "World" / "sub" / "layout.json"
+    )
+    me = tmp_path / "home" / "vault" / "me" / "x.json"
+    for target in (play, me):
+        code, out = _gos(toml, "pl-steel", "--out", str(target))
+        assert code == 2 and f"Won't write {target}" in out, out
+        assert not target.exists() and not target.parent.exists()
+    code, out = _gos(toml, "pl-steel", "--out", str(tmp_path / "elsewhere.json"))
+    assert "wrote" in out and (tmp_path / "elsewhere.json").is_file(), out
 
 
 def test_the_gos_cli_has_the_command() -> None:

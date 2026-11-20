@@ -811,10 +811,27 @@ def services(
                     f"{t} generator(s) {' '.join(generators[t])}"
                     for t in sorted(generators)
                 )
-                src = next(iter(generators)) if len(generators) == 1 else "<tier>"
+                # the amps the plan's own EU metrics say this tier draws (a planner number)
+                eu = (p.get("metrics") or {}).get("eu") or ()
+                amps = next(
+                    (
+                        int(e.get("amps") or 0)
+                        for e in eu
+                        if isinstance(e, Mapping)
+                        and str(e.get("tier", "")).upper() == tier
+                    ),
+                    0,
+                )
+                amp = f"--amps {amps}" if amps > 0 else "--amps <A>"
+                cmds = "; ".join(
+                    f"gos dist transformer --from {t} --to {tier} {amp}"
+                    for t in sorted(generators)
+                )
+                if amps <= 0:
+                    cmds += f"; the plan has no EU metrics for {tier}: its amps from gos dist ledger"
                 warnings.append(
                     f"{pid} eu:{tier}: no {tier} generator in the layout, fed from {at}: "
-                    f"a transformer step (gos dist transformer --from {src} --to {tier})"
+                    f"a transformer step ({cmds})"
                 )
     return out, warnings
 

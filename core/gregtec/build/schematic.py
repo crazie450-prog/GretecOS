@@ -61,6 +61,14 @@ MAX_SIDE = (
     32767  # Width/Height/Length are signed shorts (worldedit-gtnh loops `x < width`)
 )
 MAX_CELLS = 32 << 20  # Blocks + Data + AddData stay well under nbt.MAX_BYTES
+# A .schematic is untrusted input: decompressed it holds at most its cell arrays (Blocks, Data,
+# AddData, AddBlocks) plus the mappings and tile entities, and it is read as at most MAX_TAGS
+# values (an array is one), so a small file of millions of empty compounds is refused, not read
+# into gigabytes of Python objects (QA 10-13).
+MAX_READ = 4 * MAX_CELLS + (16 << 20)
+MAX_TAGS = (
+    1 << 22
+)  # tile entities, entities and mappings; a few hundred MB of Python at most
 MAX_COMPACT = 255  # block types numbered 1..255 in Blocks alone (plan 7.10)
 MAX_ADDBLOCKS = 4095  # 12 bits with AddBlocks
 MAX_META = 0xFFFF  # Data + AddData; EndlessIDs' 16-bit metadata
@@ -536,7 +544,7 @@ def read(data: bytes, source_ids: Mapping[int, str] | None = None) -> Capture:
     (the block ids of the world it was copied in, :func:`worldreg.read_block_ids`) names the ids
     the file's own mapping doesn't."""
     try:
-        name, root = nbt.read(data)
+        name, root = nbt.read(data, limit=MAX_READ, max_tags=MAX_TAGS)
     except ValueError as exc:
         raise CaptureError(f"not a schematic (NBT): {exc}") from None
     if name != ROOT:

@@ -575,6 +575,8 @@ def test_a_small_breach_is_repaired_a_large_one_refused(
     flood = {"op": "fill", "role": "wall", "lo": list(i.lo), "hi": list(i.hi)}
     out = shell.design(conn, spec, [*good_design(spec), flood], "architect")
     assert out.status == "refused" and "too far off to repair" in out.reasons[0]
+    assert f"more than {round(shell.REPAIR_SHARE * 100)}%" in out.reasons[0]
+    assert "{" not in out.reasons[0]  # QA 10-13: the share is formatted, not shown raw
     # a design that is mostly outside the bounding volume is refused, a little is clipped
     far = {"op": "fill", "role": "wall", "lo": [-40, 0, -40], "hi": [-20, 9, -20]}
     out = shell.design(conn, spec, [*good_design(spec), far], "architect")

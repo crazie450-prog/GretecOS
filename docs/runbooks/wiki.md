@@ -67,7 +67,7 @@ your cache, never made up in the cloud. They live in `$gh\data\evals\wiki_questi
    printed first): `& $gos eval wiki | Tee-Object -FilePath "$gh\data\reports\wiki-eval.txt"`, type `yes` after the
    `worst case $` line (through `Tee-Object` the prompt may not show until you press Enter). It refuses while the AI is
    paused or off, or when today's spend plus the worst case would pass `[budget] day_max_usd`: then raise it for the
-   sitting (checklist 3.14.5) or run it another day. A `capped` row stopped at the task cap: re-run it; it says nothing
+   sitting (checklist 3.5, first paragraph) or run it another day. A `capped` row stopped at the task cap: re-run it; it says nothing
    about the answer. Pass: `passed: 15 of 15
    (plan 9 asks for 15)`, `Result: PASS`. Paste: `wiki-eval.txt`.
 

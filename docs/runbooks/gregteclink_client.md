@@ -88,7 +88,7 @@ from the DB at run time, so the file runs on your DB as it does on the client ha
 2. **Paid** (the fast lane, about $0.15 worst case; it prints the estimate first): `& $gos eval hover`, read the
    `worst case $` line, type `yes` (through `Tee-Object` the prompt may not show until you press Enter; type it after
    that line). It refuses while the AI is paused or off, or when today's spend plus the estimate would pass
-   `[budget] day_max_usd`: then raise it for the sitting (checklist 3.14.5) or run it another day. Pass: `passed: 10 of 10`, `Result: PASS`. Paste: the table (`Tee-Object` it into
+   `[budget] day_max_usd`: then raise it for the sitting (checklist 3.5, first paragraph) or run it another day. Pass: `passed: 10 of 10`, `Result: PASS`. Paste: the table (`Tee-Object` it into
    `$gh\data\reports\hover-eval.txt`). A failing row says why (a wrong or missing citation, an uncited number, the
    wrong variant, the hovered item ignored); report it as it is, don't edit the case to make it pass.
 
