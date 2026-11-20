@@ -172,6 +172,19 @@ In your own window, a runbook's bare "gos ..." (or "uv run gos" in themes.md / s
 93. PLAY Close Play: & \$py "\$app\scripts\install_gregteclink.py" --instance play, then --apply; bind What's this? in Play. Worked: /api/game shows binding: play. [3.15.3]
 94. PLAY Add [startup] watchers_with_play = "play", & \$gos stop --all, sign out and in; after the first Play session run row 3.15.4's Select-String. Worked: "start (play).", nothing found. [3.15.4]
 
+## Session 17: addon jars, the Lab sitting then Play (about 2 hours, in one go)
+
+GT-Not-Leisure 0.2.7 (new), TST 0.8.2 and PlanNH 0.2.4 (updates). Run no other Lab step between step 96 and step 99 or 100: the Lab's mods differ from Play's until then. Details and every line to paste: docs/runbooks/addon_lab_test.md.
+
+95. powershell -NoProfile -ExecutionPolicy Bypass -File "\$app\scripts\fetch_play_files.ps1"   Worked: ok for the four new jars, no FAILED. [3.4.3]
+96. Prism closed: addon_lab_test.md steps 3-6: the four [sync.lab] exclude entries in gos.toml, copy lab-ops aside, delete TwistSpaceTechnology-0.8.0.jar and plannh-0.2.0.jar from Lab's mods, copy the four new jars in, & \$py \$sync --dry-run --only lab   Worked: no delete or copy line names them. [3.4.3]
+97. LAB addon_lab_test.md steps 7-17: Mods list, lab-ops, NEI, one TST, one 123Technology and one GTNL multi each run a recipe, the PH #323 hatch test, PlanNH opens an old chart, memory for 20-30 minutes. Worked: no crash. A crash: steps 18-21 (send the crash report and fml-client-latest.log, take the new jars out one at a time). [3.4.3]
+98. Answer: GT-Not-Leisure into Play? TST 0.8.2 and PlanNH 0.2.4 into Play? [5.2.12, 5.2.13]
+99. PLAY Only what you said yes to, before the survival world starts: addon_lab_test.md steps 22-28 (old jar out, new jar in, main menu, quit, Export now, take the exclude entries out, & \$py \$sync). Worked: one jar per mod; "Refused" never printed. [3.15.8, 3.15.9]
+100. A no or not yet: addon_lab_test.md steps 29-30 (take the exclude entries out, & \$py \$sync --only lab). Worked: the Lab has Play's jars again. [3.4.3]
+
+Not ready, nothing to do (& \$gos pack watch keeps reporting them): 123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta, worldedit-gtnh 1.0.1. [7.1]
+
 ## Later
 
 Later (optional or not needed for day one): wizard board and display notes [2.10, 2.11]; deep-lane cap test D [3.5.4]; board approvals [3.10.14, 3.11.10, 3.12.7, 3.13.4]; relocation [3.14.7]; addon watcher on Play [3.15.2]; OC on Play, M1 only [3.15.5]; update_play.py real run only on a real adopted pack update [3.15.6]; remove Lab hooks [3.15.7]; ElevenLabs [1]; decisions and sign-offs [5, 6].
