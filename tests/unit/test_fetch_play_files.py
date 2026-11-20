@@ -189,7 +189,8 @@ def test_refuses_a_name_that_is_a_path(
 
 
 def test_real_pins() -> None:
-    """The pinned files: both zips and the addons cleared for Play (D88, D90), never GTNL."""
+    """The pinned files: both zips, the addons cleared for Play (D88, D90), and GTNL 0.2.7 with
+    the GTNLLib it is built against, for the Lab test first (D365); never GTNL's rolling dev-build."""
     text = SCRIPT.read_text(encoding="ascii")
     pins = re.findall(
         r"name = '([^']+)'.*?url = '([^']+)'\s+sha256 = '([0-9a-f]{64})'",
@@ -204,7 +205,12 @@ def test_real_pins() -> None:
         "worldedit-v0.0.10.jar",
         "plannh-0.2.0.jar",  # one PlanNH only: two in mods/ is a duplicate-mod crash
         "OTHTechnology-2.2.1.1.jar",
+        "sciencenotleisure-0.2.7.jar",  # the main jar, not -dev or -sources
+        "gtnllib-1.1.6.jar",  # the GTNLLib that GTNL 0.2.7 builds against
     ]
     for name, url, _ in pins:
         assert url.startswith("https://") and url.endswith("/" + name)
     assert len({p[2] for p in pins}) == len(pins)
+    assert "dev-build" not in "".join(p[1] for p in pins)
+    gtnl = [p[1] for p in pins if "GTNotLeisure/" in p[1]]
+    assert all("/releases/download/" in u for u in gtnl) and len(gtnl) == 2

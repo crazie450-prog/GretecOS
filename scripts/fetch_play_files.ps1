@@ -19,6 +19,12 @@
     sync_instances.py run, which mirrors Lab from Play), then Clayton copies them into Play's mods
     and deletes plannh-0.1.9.jar there (two PlanNH jars won't start).
 
+    GT-Not-Leisure 0.2.7 and GTNLLib 1.1.6 (D365) go into the LAB only, both together (GTNL won't
+    start without GTNLLib): Lab's smoke test first, and Play gets them only after Clayton passes it
+    and decides (D365, D02's world gate). Same order as above: copy them into Lab's mods before the
+    next sync_instances.py run, and add a temporary [sync.lab] exclude entry for them (D93 (5)) so
+    the sync, which mirrors Lab from Play, doesn't delete them.
+
 .PARAMETER Build
     Java17 (the Java 17-26 build, recommended by D68) or Java8.
 
@@ -43,7 +49,8 @@ $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is far slower wit
 # Windows PowerShell 5.1 may not offer TLS 1.2 by default; GitHub requires it.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# Pins, checked 2026-11-03 (123Technology and PlanNH 0.2.0: 2026-11-05, D90).
+# Pins, checked 2026-11-03 (123Technology and PlanNH 0.2.0: 2026-11-05, D90; GTNL and GTNLLib:
+# 2026-11-20, D365).
 # downloads.gtnewhorizons.com publishes no checksum, so the zip hashes are those of the files it
 # serves (two full passes agreed, and the sizes matched Content-Length). The jars are GitHub release
 # assets, hashed the same way; the worldedit and PlanNH 0.1.9 hashes also match GTNH's Nexus.
@@ -80,11 +87,22 @@ $Addons = @(
     # (recipe IllegalAccessError with TST). The jar only, not the optional 123Technology_Musics.zip (D90).
     @{ name = 'OTHTechnology-2.2.1.1.jar'
         url = 'https://github.com/CallmeSHaobe/123Technology/releases/download/2.2.1.1/OTHTechnology-2.2.1.1.jar'
-        sha256 = 'f863dacded2231cda2239ae68912dcec64a62b1ee067cc70432e3cab7034efce' }
+        sha256 = 'f863dacded2231cda2239ae68912dcec64a62b1ee067cc70432e3cab7034efce' },
+    # GT-Not-Leisure 0.2.7 (tag 0.2.7 = ef436cf, 2026-11-16, 21,180,104 bytes): the first versioned
+    # release with 28007498 "adapt to GTNH 2.9.0 final" (#666), D02's gate (D365). LAB FIRST: Play
+    # gets it only after Clayton's Lab smoke test (D365). Not the -dev, -predowngrade or -sources jar.
+    @{ name = 'sciencenotleisure-0.2.7.jar'
+        url = 'https://github.com/GTNotLeisure/GT-Not-Leisure/releases/download/0.2.7/sciencenotleisure-0.2.7.jar'
+        sha256 = '17e7f8b28f4de9f460cd0845fdbad3b57ff820b66b6de36c928107c43f0c97ce' },
+    # GTNLLib 1.1.6 (2026-11-10, 1,102,473 bytes): the version GTNL 0.2.7 is built against
+    # (its dependencies.gradle); GTNL requires it. LAB FIRST, together with GTNL (D365).
+    @{ name = 'gtnllib-1.1.6.jar'
+        url = 'https://github.com/GTNotLeisure/GTNLLib/releases/download/1.1.6/gtnllib-1.1.6.jar'
+        sha256 = '83a3b0ab4487fc86bda0ee9694a3fe5aa860e4d4e3494b1894aab8bce502c9ca' }
 )
 # Left out on purpose:
-# - GT-Not-Leisure and GTNLLib: no versioned release contains 28007498 (plan 13.1, D02). The rolling
-#   "dev-build" asset is replaced on every push, so it can't be pinned.
+# - GT-Not-Leisure's rolling "dev-build" asset: it is replaced on every push, so it can't be pinned.
+#   0.2.7 above is the versioned release with 28007498 (D365).
 
 try {
     $files = if ($Manifest) { Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json } else { @($Zips[$Build]) + $Addons }
@@ -141,6 +159,8 @@ try {
     Write-Output "`nAll files are in $Dest. Next (the PR's WO-0.7 steps):"
     Write-Output '  (Play already built? Skip these steps. Run the Lab smoke test first (D90), and when you copy'
     Write-Output '  plannh-0.2.0.jar into Play''s mods, delete plannh-0.1.9.jar there: two PlanNH jars won''t start.)'
+    Write-Output '  (sciencenotleisure-0.2.7.jar and gtnllib-1.1.6.jar go into the LAB only, both together, until'
+    Write-Output '  the D365 Lab test passes and you decide; GTNL is a world gate: Play gets it before the world starts.)'
     foreach ($f in $files | Where-Object { $_.name -like '*.zip' }) {
         Write-Output "  Prism: Add Instance > Import > $(Join-Path $Dest $f.name), Name: GTNH-Play"
     }

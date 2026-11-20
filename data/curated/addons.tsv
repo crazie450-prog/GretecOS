@@ -1,6 +1,7 @@
 name	repo	jar	watch	note
 Twist Space Technology	Nxer/Twist-Space-Technology-Mod	*twist*space*.jar|*twistspace*.jar|tst-*.jar	installed	In Play (D88); plan 13.1
-GT-Not-Leisure	GTNotLeisure/GT-Not-Leisure	*notleisure*.jar|*not-leisure*.jar|gtnl-*.jar	always	The D02 start gate waits for a versioned release with commit 28007498 (plan 13.1); GTNLLib comes with it
+GT-Not-Leisure	GTNotLeisure/GT-Not-Leisure	*notleisure*.jar|*not-leisure*.jar|gtnl-*.jar	always	0.2.7 (sciencenotleisure-0.2.7.jar, with 28007498) pinned for the Lab test; Play only after it passes (D365, D02's gate)
+GTNLLib	GTNotLeisure/GTNLLib	gtnllib-*.jar|*gtnllib*.jar	installed	GTNL 0.2.7 needs 1.1.6; goes in with GTNL (D365)
 123Technology	CallmeSHaobe/123Technology	*123tech*.jar	installed	In Play (D90, D94)
 Programmable Hatches	reobf/Programmable-Hatches-Mod	*programmable*hatch*.jar|*programmablehatches*.jar	installed	Play keeps 0.2.1p0 (D88)
 worldedit-gtnh	GTNewHorizons/worldedit-gtnh	*worldedit*.jar	installed	In Play (D88); V16
