@@ -24,7 +24,7 @@ from typing import Any
 
 from gregtec.agents.tools.registry import Call, ToolError
 from gregtec.agents.tools.tsv import Result
-from gregtec.build import palette, shell
+from gregtec.build import palette, shell, shell_brief
 from gregtec.build import themes as theme_lib
 from gregtec.packupdate.plans import PLAN_ID
 
@@ -35,7 +35,7 @@ GATE = (
     "refused designs write nothing) and the build folder (GOS_HOME/data/build/shells/ only)"
 )
 COLUMNS = ("role", "block", "name", "count")
-MAX_DESIGN_TEXT = 60_000  # characters of the operations as JSON
+MAX_DESIGN_TEXT = shell_brief.MAX_REPLY_CHARS  # characters of the operations as JSON
 # The value limit of build_request's connection (Tool.max_value_bytes): the layout reads each of
 # the plans' multis' structure rows whole, and a real dump's largest blocks_json is over the
 # tools' 1 MB (Forge of the Gods t3: 1,239,746 bytes on 2.9.0). Only the plans' rows are read
@@ -43,15 +43,8 @@ MAX_DESIGN_TEXT = 60_000  # characters of the operations as JSON
 MAX_STRUCTURE_BYTES = 4_000_000
 
 VOCABULARY = (
-    "a JSON list of operations, in the layout's coordinates (x east, y up, z south; y 0 the "
-    "first layer above the floor). Each is an object with op: walls (the outer ring; y [y0, y1], "
-    "inset), pillars (corners and every N along the ring; every, y, inset), windows (openings "
-    "along the ring; y, every, width < every, sides [north, south, east, west]), roof (style "
-    "flat or gable, pitch 1-3 (a gable's rise a step), y, edge + edge_n, parapet 0-3 + parapet_role), lights (a grid set in the "
-    "roof; every, y), fill and frame (a solid box, or its edges; lo [x,y,z], hi [x,y,z]), clear "
-    "(air; lo, hi). Each but clear names a palette role (role, and n: that role's entry "
-    "number) or one block (<registry name>@<meta> from the palette). Later operations overwrite "
-    "earlier ones. Leave design out for GOS's procedural shell: its operations come back in the "
+    shell_brief.OPERATIONS
+    + " Leave design out for GOS's procedural shell: its operations come back in the "
     "result's ops note to start from (with save false, nothing is saved)."
 )
 BUILD_REQUEST_SCHEMA: dict[str, Any] = {

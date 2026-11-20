@@ -20,6 +20,11 @@ DISCORD = "discord"  # the Discord bot's token (stored by the setup wizard, WO-2
 ELEVENLABS = "elevenlabs"
 # The secrets `gos key` manages; the setup wizard stores each of them too (WO-2.9).
 NAMES = (ANTHROPIC, DISCORD, ELEVENLABS)
+# OpenAI's key, read only by the shell bake-off when a run names an OpenAI model (WO-10.11,
+# D374). `gos key` manages it; the setup wizard does not ask for it (nothing else uses it).
+OPENAI = "openai"
+OPTIONAL = (OPENAI,)
+MANAGED = (*NAMES, *OPTIONAL)  # every secret `gos key set|status|delete` knows
 
 
 class MissingKeyError(LookupError):
@@ -110,10 +115,21 @@ def discord_token_problem(value: str) -> str | None:
     return None
 
 
+def openai_key_problem(value: str) -> str | None:
+    """Why ``value`` doesn't look like an OpenAI API key, or None. A loose shape check only."""
+    if value.startswith("sk-ant-"):
+        return "that is an Anthropic key; paste the OpenAI one (platform.openai.com, API keys)"
+    if any(c.isspace() for c in value) or len(value) < 20:
+        return "the key looks cut off or has spaces in it; copy it again"
+    return None
+
+
 def secret_problem(name: str, value: str) -> str | None:
     """Why ``value`` can't be the ``name`` secret (its loose shape check), or None."""
     if name == ANTHROPIC:
         return anthropic_key_problem(value)
+    if name == OPENAI:
+        return openai_key_problem(value)
     if name == DISCORD:
         return discord_token_problem(value)
     return None

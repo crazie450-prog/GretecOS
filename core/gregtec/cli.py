@@ -609,10 +609,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     key_set = key_cmds.add_parser(
         "set", help="store a secret (asks for it with hidden input)"
     )
-    key_set.add_argument("name", choices=keys.NAMES)
+    key_set.add_argument("name", choices=keys.MANAGED)
     key_cmds.add_parser("status", help="say which secrets are stored")
     key_del = key_cmds.add_parser("delete", help="remove a stored secret")
-    key_del.add_argument("name", choices=keys.NAMES)
+    key_del.add_argument("name", choices=keys.MANAGED)
 
     smoke = commands.add_parser(
         "smoke",
@@ -1145,7 +1145,7 @@ def _lock(args: argparse.Namespace) -> int:
 def _key(command: str, name: str | None) -> int:
     if command == "status":
         print(f"keyring backend: {', '.join(keys.backend_chain())}")
-        for each in keys.NAMES:
+        for each in keys.MANAGED:
             print(f"{each}: {'stored' if keys.has_key(each) else 'not stored'}")
         return 0
     assert name is not None

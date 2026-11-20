@@ -608,7 +608,12 @@ def _refused(
 def compare(home: Path, a: str, b: str) -> dict[str, Any]:
     """Two versions side by side: each one's summary and the differences in materials (per
     ``registry@meta``: the count in each and the change), block counts and operations."""
-    ra, rb = shell_store.load(home, a), shell_store.load(home, b)
+    return compare_records(shell_store.load(home, a), shell_store.load(home, b))
+
+
+def compare_records(ra: Mapping[str, Any], rb: Mapping[str, Any]) -> dict[str, Any]:
+    """:func:`compare` on two builds' ``design.json`` records, wherever they are saved (the
+    bake-off's two blind entries live in two folders, WO-10.11)."""
 
     def side(rec: Mapping[str, Any]) -> dict[str, Any]:
         return {
