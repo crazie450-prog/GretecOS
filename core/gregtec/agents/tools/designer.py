@@ -30,7 +30,7 @@ from typing import Any
 
 from gregtec.agents import prefetch
 from gregtec.agents.tools.registry import Call, ToolError
-from gregtec.agents.tools.tsv import Result
+from gregtec.agents.tools.tsv import Result, digest
 
 GATE = (
     "the planner's store (gregtec.planner.outputs.store: data/plans, the plan row and the "
@@ -239,6 +239,7 @@ def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str,
         total=len(rows),
         offset=offset,
         more=offset + call.page < len(rows),
+        epoch=digest(rows),
     )
 
 
@@ -325,6 +326,7 @@ def plan_get(call: Call, args: dict[str, Any], offset: int) -> Result:
             total=len(rows),
             offset=offset,
             more=offset + call.page < len(rows),
+            epoch=digest(rows),
         )
     v = _guard(d.view, home, pid)
     route = next((r for r in v["routes"] if r["id"] == pid), None)
@@ -356,6 +358,7 @@ def plan_get(call: Call, args: dict[str, Any], offset: int) -> Result:
             total=len(rows),
             offset=offset,
             more=offset + call.page < len(rows),
+            epoch=digest(rows),
         )  # fmt: skip
     p = d.load(home, pid)
     m = p.get("metrics") or {}
@@ -473,6 +476,7 @@ def plan_list(call: Call, args: dict[str, Any], offset: int) -> Result:
         total=len(rows),
         offset=offset,
         more=offset + call.page < len(rows),
+        epoch=digest(rows),
     )
 
 

@@ -139,6 +139,52 @@ def test_second_run_skips_and_a_stale_file_is_replaced(
 
 
 @windows
+def test_the_next_steps_keep_the_lab_first_jars_out_of_play(
+    tmp_path: Path, server: tuple[Path, str]
+) -> None:
+    """D365: the fresh-build steps list GTNL and GTNLLib for the Lab first, never under the
+    'copy into Play's mods' list."""
+    names = ["pack.zip", "a.jar", "sciencenotleisure-0.2.7.jar", "gtnllib-1.1.6.jar"]
+    m = manifest(
+        tmp_path / "manifest.json", [serve(server, n, n.encode()) for n in names]
+    )
+    staging = tmp_path / "staging"
+    result = run("-Manifest", str(m), "-Dest", str(staging))
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    into_play = lines.index(
+        "  then copy into C:\\Games\\PrismLauncher\\instances\\GTNH-Play\\.minecraft\\mods\\ :"
+    )
+    no_world = lines.index(
+        "  then launch to the main menu and quit. Do not create a world."
+    )
+    lab = next(
+        i for i, ln in enumerate(lines) if ln.startswith("  NOT into Play yet (D365)")
+    )
+    play_list = [ln.strip() for ln in lines[into_play + 1 : no_world]]
+    assert play_list == [str(staging / "a.jar")]
+    assert no_world < lab
+    assert [ln.strip() for ln in lines[lab + 3 :]] == [
+        str(staging / "sciencenotleisure-0.2.7.jar"),
+        str(staging / "gtnllib-1.1.6.jar"),
+    ]
+
+
+def test_the_lab_first_patterns_are_the_gtnl_pins() -> None:
+    """The printed steps hold back exactly the jars D365 pins for the Lab first."""
+    from fnmatch import fnmatchcase
+
+    text = SCRIPT.read_text(encoding="ascii")
+    patterns = re.findall(
+        r"'([^']+)'", re.search(r"\$labFirst = @\(([^)]*)\)", text)[1]
+    )
+    names = re.findall(r"name = '([^']+\.jar)'", text)
+    held = [n for n in names if any(fnmatchcase(n, p) for p in patterns)]
+    assert held == ["sciencenotleisure-0.2.7.jar", "gtnllib-1.1.6.jar"]
+    assert "foreach ($f in $jars)" in text and "foreach ($f in $lab)" in text
+
+
+@windows
 def test_default_staging_folder_is_in_the_profile(
     tmp_path: Path, server: tuple[Path, str]
 ) -> None:

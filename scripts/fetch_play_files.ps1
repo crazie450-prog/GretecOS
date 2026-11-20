@@ -159,18 +159,26 @@ try {
     Write-Output "`nAll files are in $Dest. Next (the PR's WO-0.7 steps):"
     Write-Output '  (Play already built? Skip these steps. Run the Lab smoke test first (D90), and when you copy'
     Write-Output '  plannh-0.2.0.jar into Play''s mods, delete plannh-0.1.9.jar there: two PlanNH jars won''t start.)'
-    Write-Output '  (sciencenotleisure-0.2.7.jar and gtnllib-1.1.6.jar go into the LAB only, both together, until'
-    Write-Output '  the D365 Lab test passes and you decide; GTNL is a world gate: Play gets it before the world starts.)'
     foreach ($f in $files | Where-Object { $_.name -like '*.zip' }) {
         Write-Output "  Prism: Add Instance > Import > $(Join-Path $Dest $f.name), Name: GTNH-Play"
     }
-    $jars = @($files | Where-Object { $_.name -like '*.jar' })
+    # D365: GT-Not-Leisure and GTNLLib go into the Lab first; Play gets them only after Clayton's yes.
+    $labFirst = @('sciencenotleisure-*.jar', 'gtnllib-*.jar')
+    $isLabFirst = { param($n) [bool]($labFirst | Where-Object { $n -like $_ }) }
+    $jars = @($files | Where-Object { $_.name -like '*.jar' -and -not (& $isLabFirst $_.name) })
+    $lab = @($files | Where-Object { $_.name -like '*.jar' -and (& $isLabFirst $_.name) })
     if ($jars) {
         Write-Output '  then launch it with no addons to the main menu and quit,'
         Write-Output '  then copy into C:\Games\PrismLauncher\instances\GTNH-Play\.minecraft\mods\ :'
         foreach ($f in $jars) { Write-Output "    $(Join-Path $Dest $f.name)" }
     }
     Write-Output '  then launch to the main menu and quit. Do not create a world.'
+    if ($lab) {
+        Write-Output '  NOT into Play yet (D365): these go into the LAB first, both together, for its smoke test'
+        Write-Output '  (checklist 3.4.3); Play gets them only after that test passes and you say yes (5.2.12, 3.15.8),'
+        Write-Output '  before the survival world starts (GTNL is a world gate):'
+        foreach ($f in $lab) { Write-Output "    $(Join-Path $Dest $f.name)" }
+    }
 } catch {
     Write-Output "ERROR: $($_.Exception.Message)"
     exit 1

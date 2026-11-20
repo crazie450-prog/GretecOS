@@ -350,13 +350,17 @@ def test_addons_watched_always_are_checked_without_plays_mods(
     tmp_path: Path, play: str | None
 ) -> None:
     """pack_update.md: the watch reports GT-Not-Leisure (watch always) whether or not Play
-    has it, so a Play whose mods can't be listed (or none configured) still gets it."""
+    has it, so a Play whose mods can't be listed (or none configured) still gets it; its
+    verdict says Play wasn't looked in, never 'not in Play', which isn't known then."""
     gtnl = next(a for a in releases.read_addons() if a.watch == "always")
     net = Net({releases.FEED_URL.format(repo=gtnl.repo): atom("0.2.8")})
     folder = None if play is None else tmp_path / "no-play"
     w = releases.watch(tmp_path / "home", "2.9.0", folder, net, now=Clock())
     assert [a.addon.name for a in w.addons] == [gtnl.name]
-    assert w.addons[0].verdict.startswith("not in Play; newest release 0.2.8")
+    assert w.addons[0].verdict.startswith(
+        "couldn't look in Play's mods; newest release 0.2.8"
+    )
+    assert "not in Play" not in "\n".join(w.lines())
     text = "\n".join(w.lines())
     if play is not None:
         assert "only the addons watched always were checked" in text
