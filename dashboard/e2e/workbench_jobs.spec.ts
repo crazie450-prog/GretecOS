@@ -109,8 +109,10 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       await expect(page.getByTestId("designer-job-stage")).toBeVisible({ timeout: 3000 });
       await expect(page.getByTestId("designer-cancel")).toBeVisible();
       await expect(page.getByTestId("designer-go")).toBeDisabled();
-      await expect(page.getByTestId("route-1-base")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId("designer-busy")).toHaveCount(0);
+      await expect(page.getByTestId("designer-busy")).toHaveCount(0, { timeout: 30_000 });
+      expect((await asAdmin<Jobs>("/api/design-jobs")).latest.designer.status).toBe("done");
+      await expect(page.getByTestId("route-1-base")).toBeVisible();
+      expect(page.url()).toMatch(/#\/designer\/pl-[a-z0-9]+$/); // the result handed to the view
     });
   });
 }
@@ -175,7 +177,10 @@ test.describe("the Power view's design job", () => {
     await expect(page.getByTestId("power-job-stage")).toBeVisible({ timeout: 3000 });
     await expect(page.getByTestId("power-cancel")).toBeVisible();
     await expect(page.getByTestId("power-go")).toBeDisabled();
-    await expect(page.getByTestId("option-1")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("power-busy")).toHaveCount(0);
+    // the job ends in the reloaded view and its result shows (an earlier design's options may
+    // already be on the page, so wait for the end first)
+    await expect(page.getByTestId("power-busy")).toHaveCount(0, { timeout: 30_000 });
+    expect((await powerAdmin<Jobs>("/api/design-jobs")).latest.power.status).toBe("done");
+    await expect(page.getByTestId("option-1")).toBeVisible();
   });
 });
