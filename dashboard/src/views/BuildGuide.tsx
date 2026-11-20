@@ -354,7 +354,7 @@ export function GuideView(props: { query: GuideQuery; onQuery: (q: GuideQuery) =
               >
                 {options.map((o) => (
                   <option key={o.value} value={o.value}>
-                    {o.value} · {blockName(g, o.block) === o.block ? o.block : blockName(g, o.block)}
+                    {o.value} · {o.name ?? blockName(g, o.block)}
                   </option>
                 ))}
               </select>

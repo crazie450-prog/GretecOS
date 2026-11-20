@@ -23,6 +23,10 @@ The shell workbench is the separate window you asked for: the dashboard's **Buil
 4. **Compare** two versions, pick one, make it current.
 5. **Export it**: `& $gos shell export <sh-id>` with the id of the version you chose (the viewer's title and `gos shell versions` show it), then paste it in the Lab ([`shells_lab.md`](shells_lab.md) D).
 
+## Known limits
+
+Some phrasings in Chat or voice neither design a shell nor revise the current one, because the router decides in code and needs a design verb or a part of the building that changes (D369): "I want a shell around X" and "add a lamp over the door" go to the fast lane, which can't write a shell; "put lights on the shell" goes to the deep lane as an ordinary task, not as a revision of the current design. For these, type the words in the workbench and press **Ask the architect**, which revises the design picked in the list whatever the words are (or **Design new** for a new shell). The dashboard's ask route (`POST /api/ask`, its `shell` field) lets any signed-in caller, a paired client device such as the phone included, name which design its words revise, as Ask the architect does (D370).
+
 ## The same from PowerShell
 
 ```powershell

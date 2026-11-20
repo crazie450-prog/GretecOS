@@ -294,7 +294,8 @@ export interface BuildGuide {
   facing: Facing;
   front: number[];
   tiers: Record<string, number>;
-  choices: Record<string, { value: number; block: string }[]>;
+  // each tier choice: its block and the block catalog's name for it (null when the catalog lacks it)
+  choices: Record<string, { value: number; block: string; name?: string | null }[]>;
   caveats: string[];
   size: [number, number, number];
   controller_at: [number, number, number];

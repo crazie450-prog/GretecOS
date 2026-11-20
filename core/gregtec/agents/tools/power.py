@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.agents.tools.registry import Call, ToolError
-from gregtec.agents.tools.tsv import Result
+from gregtec.agents.tools.tsv import Result, digest
 
 GATE = "the planner's store (gregtec.planner.outputs.store.save_power: data/plans, the plan row)"
 MODES = ("best", "max_output", "output_per_effort", "self_sustaining")
@@ -239,4 +239,5 @@ def effort_estimate(call: Call, args: dict[str, Any], offset: int) -> Result:
         total=len(rows),
         offset=offset,
         more=offset + call.page < len(rows),
+        epoch=digest(rows),
     )

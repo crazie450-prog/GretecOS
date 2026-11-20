@@ -228,3 +228,114 @@ def test_the_guide_api_on_the_lines_multis_and_the_largest_structure(
                     assert all("name" in o for o in options)
     finally:
         store.close()
+
+
+def _all_pages(
+    reg: registry.Registry, tool: str, args: dict[str, Any]
+) -> tuple[list[dict[str, str]], int]:
+    """Every table row of the tool's result, its ``more`` cursors followed to the end; and
+    the number of pages."""
+    from gregtec.agents.tools.tsv import parse
+
+    out = reg.call(tool, args, lane=DEEP)
+    rows: list[dict[str, str]] = []
+    pages = 0
+    while True:
+        assert not out.is_error, out.text
+        pages += 1
+        rows += parse(out.text).rows
+        lines = out.text.splitlines()
+        after = lines[
+            next(i for i, ln in enumerate(lines) if ln.startswith("rows: ")) :
+        ]
+        more = [ln.removeprefix("more: ") for ln in after if ln.startswith("more: ")]
+        if not more:
+            return rows, pages
+        out = reg.call("more", {"cursor": more[0]}, lane=DEEP)
+
+
+def _paged_and_whole(home: Path, pid: str) -> tuple[list[dict[str, str]], int]:
+    """effort_estimate of ``pid`` page by page; it equals one page holding every row."""
+    vault = VaultIO(home / "vault")
+    rows, pages = _all_pages(
+        build_registry(access.db_path(home), vault=vault),
+        "effort_estimate",
+        {"id": f"plan:{pid}"},
+    )
+    whole = build_registry(access.db_path(home), vault=vault, page=10**6)
+    assert (rows, 1) == _all_pages(whole, "effort_estimate", {"id": f"plan:{pid}"})
+    return rows, pages
+
+
+def test_effort_estimate_pages_a_real_plan_to_the_end(home: Path) -> None:
+    """Defect: effort_estimate failed with 'has no DB to page from' once a real steel plan's
+    effort table ran past one page (the registry refused a second page of any tool without
+    the DB)."""
+    from gregtec.agents.tools import tsv
+    from gregtec.planner import effort
+
+    want = effort.table(_steel(home)["metrics"]["effort"])
+    assert len(want) > tsv.PAGE  # a real steel plan's breakdown: more than one page
+    rows, pages = _paged_and_whole(home, PLAN)
+    assert pages == -(-len(want) // tsv.PAGE)
+    assert [list(r.values()) for r in rows] == want
+
+
+def test_the_effort_tools_on_a_plan_with_the_largest_structure(home: Path) -> None:
+    """Defect: effort.structure_blocks read every variant of a plan's multis, so a plan with
+    Forge of the Gods (t3 over the tools' 1 MB value limit) failed under the tools' guard.
+    The steel plan plus the dump's largest structure: its parts are counted (the advisor's
+    check too) and its effort measured on a connection with the tools' limit, and
+    effort_estimate pages the result to the end."""
+    from gregtec.advisor import checks
+    from gregtec.planner import effort
+
+    steel = _steel(home)
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        mte, size = c.execute(
+            "SELECT m.mte_id, octet_length(s.blocks_json) FROM structure AS s"
+            " JOIN machine AS m ON m.id = s.machine_id"
+            " ORDER BY octet_length(s.blocks_json) DESC LIMIT 1"
+        ).fetchone()
+        smallest = effort.structure_blocks(c, mte)  # no limit here: every variant read
+    finally:
+        c.close()
+    assert size > registry.MAX_VALUE_BYTES and smallest
+    big = {**steel, "id": "pl-real-forge"}
+    big["nodes"] = [
+        *steel["nodes"],
+        {"n": "forge", "count": 1, "machine": {"mte": mte, "kind": "multiblock"}},
+    ]
+    key, tier = _g3().LINES["steel (EBF)"]
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        registry.guard(
+            c, 600.0
+        )  # the 1 MB value limit every tool but build_request has
+        assert effort.structure_blocks(c, mte) == smallest
+        found, _, _ = effort.components(c, big)
+        assert {
+            x.key: x.qty for x in found if x.of == mte and x.part == "structure"
+        } == {k: n for k, n in smallest.items() if effort.is_stable_key(k)}
+        needs = checks.needs(c, big)  # the advisor's 'buildable from stock' check
+        assert needs is not None and all(needs[0].get(x.key) for x in found)
+        eff = effort.Effort(
+            c, Request(key, qty=1, tier_cap=tier), DefaultBaseInputs.from_db(c), tier
+        ).route(big)
+    finally:
+        c.close()
+    assert any(x["for"] == f"mte:{mte}" for x in eff["components"])
+    big["metrics"] = {
+        **steel["metrics"],
+        **{k: eff[k] for k in ("eff_h", "build_h", "unlock_h")},
+        "effort": {
+            k: eff[k]
+            for k in ("craft_s", "rows", "components", "unlocks", "uncounted", "notes")
+        },
+    }
+    (home / "data" / "plans" / "pl-real-forge.json").write_text(
+        json.dumps(big), encoding="utf-8"
+    )
+    rows, _ = _paged_and_whole(home, "pl-real-forge")
+    assert [list(r.values()) for r in rows] == effort.table(big["metrics"]["effort"])

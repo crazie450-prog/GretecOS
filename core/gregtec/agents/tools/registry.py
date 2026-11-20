@@ -6,7 +6,10 @@
 - :meth:`Registry.call` validates the arguments, opens the DB read-only (URI ``mode=ro`` plus
   ``PRAGMA query_only``, no ATTACH, a cap on value sizes and a progress-handler time limit),
   runs the tool and renders its result as TSV (:mod:`.tsv`): at most 50 rows a page, then a
-  ``more`` cursor (:mod:`.cursor`) that the ``more`` tool turns into the next page. Errors come
+  ``more`` cursor (:mod:`.cursor`) that the ``more`` tool turns into the next page. A tool with
+  ``needs_db=False`` pages the same way, its cursor carrying the tool's own epoch
+  (``Result.epoch``) instead of the DB's; a writing tool's result is never paged (a cursor
+  would run its write again). Errors come
   back as text with ``is_error`` set, the way Anthropic's ``tool_result`` carries them; so
   does a tool's own bug (logged), so a lane's turn never ends on an exception.
 - A tool that writes runs only with its own gate, named in ``Tool.gate``: the note tools'
@@ -59,6 +62,8 @@ DEADLINE_S = 5.0  # a named query that runs longer is stopped
 # db_sql sets its own, smaller limits (sql.LIMITS).
 MAX_VALUE_BYTES = 1_000_000
 MAX_SQL_BYTES = 100_000
+# The page size of a writing tool's call: every row (an int SQLite takes, with room for + 1).
+WHOLE = 2**31 - 1
 
 
 class ToolError(Exception):
@@ -201,9 +206,21 @@ def guard(
 def epoch(conn: sqlite3.Connection) -> str:
     """The DB's state as far as paging cares: the newest export run and the last quest load
     (whose record has its load time). A rebuild of the same run that changes nothing else is
-    not seen; its recipes keep their keys and order."""
-    run = access.query(conn, "current_run")
-    quests = conn.execute("SELECT value FROM kv WHERE key = ?", (KV_SOURCE,)).fetchone()
+    not seen; its recipes keep their keys and order. A DB with only the core's own tables
+    (before the first ``gos db build``) has neither: its event tools page all the same."""
+    have = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+            " AND name IN ('export_run', 'kv')"
+        )
+    }
+    run = access.query(conn, "current_run") if "export_run" in have else []
+    quests = (
+        conn.execute("SELECT value FROM kv WHERE key = ?", (KV_SOURCE,)).fetchone()
+        if "kv" in have
+        else None
+    )
     loaded = hashlib.sha256(quests[0].encode()).hexdigest()[:12] if quests else "-"
     newest = (
         f"{run[0]['id']}:{run[0]['run_key']}:{run[0]['created_at']}" if run else "-"
@@ -316,12 +333,14 @@ class Registry:
         values = validate(tool.input_schema, args)
         spoil_default, spoil_top = self._spoils(lane, spoil_max)
         spoil_grant = {q: spoilers.check_level(v) for q, v in (grant or {}).items()}
+        # A writing tool's result comes in one page: a more cursor would run its write again.
+        size = self.page if tool.read_only else WHOLE
         if not tool.needs_db:
             result = tool.handler(
                 Call(
                     None,
                     self.env,
-                    self.page,
+                    size,
                     request=request,
                     spoil_default=spoil_default,
                     spoil_max=spoil_top,
@@ -330,9 +349,15 @@ class Registry:
                 values,
                 offset,
             )
-            if result.more:
-                raise AssertionError(f"{tool.name} has no DB to page from")
-            return render(result)
+            # Its pages come from files (a saved plan, telemetry), not the DB: the cursor
+            # carries the tool's own epoch, checked once the next page is made.
+            made = f"files:{result.epoch or '-'}"
+            if issued is not None and issued != made:
+                raise ToolError(
+                    f"what {tool.name} reads changed since this cursor was issued; call "
+                    "the tool again"
+                )
+            return render(result, self._cursor(tool, values, result, lambda: made))
         with self._connect(tool) as (conn, deadline):
             if issued is not None and issued != epoch(conn):
                 raise ToolError(
@@ -341,7 +366,7 @@ class Registry:
             call = Call(
                 conn,
                 self.env,
-                self.page,
+                size,
                 deadline,
                 request,
                 spoil_default=spoil_default,
@@ -349,17 +374,29 @@ class Registry:
                 spoil_grant=spoil_grant,
             )
             result = tool.handler(call, values, offset)
-            cursor = None
-            if result.more:
-                cursor = self._cursors.issue(
-                    tool.name, values, result.offset + len(result.rows), epoch(conn)
-                )
-                if cursor is None:
-                    result.notes.append(
-                        "more rows exist, but these arguments are too long for a more "
-                        "cursor: narrow the call"
-                    )
+            cursor = self._cursor(tool, values, result, lambda: epoch(conn))
         return render(result, cursor)
+
+    def _cursor(
+        self,
+        tool: Tool,
+        values: dict[str, Any],
+        result: Result,
+        at: Callable[[], str],
+    ) -> str | None:
+        """The ``more`` cursor of ``result``'s next page (None on its last page); ``at`` gives
+        the epoch it carries, asked only when there is a next page."""
+        if not result.more:
+            return None
+        cursor = self._cursors.issue(
+            tool.name, values, result.offset + len(result.rows), at()
+        )
+        if cursor is None:
+            result.notes.append(
+                "more rows exist, but these arguments are too long for a more "
+                "cursor: narrow the call"
+            )
+        return cursor
 
     @contextmanager
     def _connect(self, tool: Tool) -> Iterator[tuple[sqlite3.Connection, float]]:

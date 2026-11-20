@@ -542,9 +542,12 @@ def version_in(tag: str, jar: str) -> bool:
 
 
 def check_addons(
-    web: Web, addons: Sequence[Addon], files: Sequence[str]
+    web: Web, addons: Sequence[Addon], files: Sequence[str] | None
 ) -> list[AddonCheck]:
-    names = [Path(f).name for f in files]
+    """Each addon Play has, and each watched ``always``, against its newest release.
+    ``files``: Play's mod files; None when they couldn't be listed (or no Play is set), so
+    whether an addon is in Play isn't known."""
+    names = [Path(f).name for f in files or ()]
     out = []
     for a in addons:
         jars = tuple(
@@ -558,6 +561,11 @@ def check_addons(
         latest = releases[0] if releases else None
         if latest is None:
             verdict = "no release feed read (see notes)"
+        elif files is None:
+            verdict = (
+                f"couldn't look in Play's mods; newest release {latest.tag} "
+                f"({latest.updated})"
+            )
         elif not jars:
             verdict = f"not in Play; newest release {latest.tag} ({latest.updated})"
         else:
@@ -644,7 +652,7 @@ def watch(
         if isinstance(base, dict) and v in pack.manifests:
             summaries.append(manifest_diff(adopted, base, v, pack.manifests[v]))
     notes = []
-    files: list[str] = []
+    files: list[str] | None = None
     if play is not None:
         try:
             files = play_mod_files(play)

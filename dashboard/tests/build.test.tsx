@@ -277,6 +277,23 @@ describe("GuideView", () => {
     expect(box()?.checked).toBe(false);
   });
 
+  it("names each tier option by the catalog name the core sends, else the palette's, else the key", async () => {
+    const options = async () => {
+      const select = await screen.findByTestId("guide-tier-coil");
+      return Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    };
+    render(<GuideView query={q} onQuery={() => undefined} />);
+    // the fixture: coil@0 named (also in the palette), coil@1 and coil@2 not in the catalog
+    expect(await options()).toEqual(["1 · Fixture Coil", "2 · fixture:coil@1", "3 · fixture:coil@2"]);
+    cleanup();
+    const named = structuredClone(furnace);
+    named.choices.coil[1].name = "Fixture Coil Mk II"; // a tier the default doesn't build: not in the palette
+    named.choices.coil[0].name = null; // an older core without the name: the palette's
+    routes["GET /api/build/guide"] = () => ({ status: 200, body: named });
+    render(<GuideView query={q} onQuery={() => undefined} />);
+    expect(await options()).toEqual(["1 · Fixture Coil", "2 · Fixture Coil Mk II", "3 · fixture:coil@2"]);
+  });
+
   it("asks the core again for another facing or tier", async () => {
     const onQuery = vi.fn();
     render(<GuideView query={q} onQuery={onQuery} />);
