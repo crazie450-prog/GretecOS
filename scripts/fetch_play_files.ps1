@@ -25,6 +25,13 @@
     next sync_instances.py run, and add a temporary [sync.lab] exclude entry for them (D93 (5)) so
     the sync, which mirrors Lab from Play, doesn't delete them.
 
+    Twist Space Technology 0.8.2 and PlanNH 0.2.4 (D373) are UPDATES of jars Play has, for the LAB
+    first: Play keeps TwistSpaceTechnology-0.8.0.jar and plannh-0.2.0.jar, which stay pinned here
+    as the rollback, until Clayton passes the Lab test and says yes. In Lab's mods the old jar is
+    deleted when the new one is copied in (two versions of one mod won't start). A sync would
+    delete the new jar and put the old one back until Play has the new one, so the same temporary
+    [sync.lab] exclude entries come first (D93 (5); checklist 3.4.3 lists them).
+
 .PARAMETER Build
     Java17 (the Java 17-26 build, recommended by D68) or Java8.
 
@@ -50,7 +57,7 @@ $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is far slower wit
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # Pins, checked 2026-11-03 (123Technology and PlanNH 0.2.0: 2026-11-05, D90; GTNL and GTNLLib:
-# 2026-11-20, D365).
+# 2026-11-20, D365; Twist Space Technology 0.8.2 and PlanNH 0.2.4: 2026-11-20, D373).
 # downloads.gtnewhorizons.com publishes no checksum, so the zip hashes are those of the files it
 # serves (two full passes agreed, and the sizes matched Content-Length). The jars are GitHub release
 # assets, hashed the same way; the worldedit and PlanNH 0.1.9 hashes also match GTNH's Nexus.
@@ -64,6 +71,7 @@ $Zips = @{
 }
 $Addons = @(
     # Twist Space Technology 0.8.0 (2026-11-02), built for 2.9.0 stable. 0.8.0-RC2.9 is not a stand-in.
+    # In Play (D94). It stays pinned as the rollback while 0.8.2, below, is tested in the Lab (D373).
     @{ name = 'TwistSpaceTechnology-0.8.0.jar'
         url = 'https://github.com/Nxer/Twist-Space-Technology-Mod/releases/download/0.8.0/TwistSpaceTechnology-0.8.0.jar'
         sha256 = '7c2b217d2bd31123ed7badc30fc94e3ad82f1b42507b17a0ee2effdfd5a723f8' },
@@ -80,6 +88,8 @@ $Addons = @(
     # deletes files it doesn't list). To fetch it again:
     # https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar
     # SHA256 a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb.
+    # 0.2.0 is in Play (D94) and stays pinned as the rollback while 0.2.4, below, is tested in the
+    # Lab (D373).
     @{ name = 'plannh-0.2.0.jar'
         url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.0/plannh-0.2.0.jar'
         sha256 = '7201b4b32f3dadef5160ae24b89bc9ff079c25af00eac067e1273b61940f5fc9' },
@@ -98,11 +108,26 @@ $Addons = @(
     # (its dependencies.gradle); GTNL requires it. LAB FIRST, together with GTNL (D365).
     @{ name = 'gtnllib-1.1.6.jar'
         url = 'https://github.com/GTNotLeisure/GTNLLib/releases/download/1.1.6/gtnllib-1.1.6.jar'
-        sha256 = '83a3b0ab4487fc86bda0ee9694a3fe5aa860e4d4e3494b1894aab8bce502c9ca' }
+        sha256 = '83a3b0ab4487fc86bda0ee9694a3fe5aa860e4d4e3494b1894aab8bce502c9ca' },
+    # Twist Space Technology 0.8.2 (tag 0.8.2 = 99f8ed2, released 2026-11-17, 29,683,612 bytes):
+    # built with gtnhVersion "2.9.0" (GT 5.09.54.265); no machine id of 0.8.0 moved or went away.
+    # LAB FIRST: it REPLACES TwistSpaceTechnology-0.8.0.jar, and Play keeps 0.8.0 until Clayton's
+    # Lab test and his yes (D373). The main jar, not the -dev or -sources one.
+    @{ name = 'TwistSpaceTechnology-0.8.2.jar'
+        url = 'https://github.com/Nxer/Twist-Space-Technology-Mod/releases/download/0.8.2/TwistSpaceTechnology-0.8.2.jar'
+        sha256 = '5d5a537af18baea5b49efeafa200bd4c2869c4b100b6b1ba52b4e6fd80f427ed' },
+    # PlanNH 0.2.4 (tag 0.2.4 = 45a0d1e, released 2026-11-13, 14,495,171 bytes), client only: the same
+    # dependencies file as 0.2.0. LAB FIRST: it REPLACES plannh-0.2.0.jar, and Play keeps 0.2.0
+    # until Clayton's Lab test and his yes (D373).
+    @{ name = 'plannh-0.2.4.jar'
+        url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.4/plannh-0.2.4.jar'
+        sha256 = '671e54712deb732264ef51aed1fde6134fc6257f193938df53d84c247f10cbd7' }
 )
 # Left out on purpose:
 # - GT-Not-Leisure's rolling "dev-build" asset: it is replaced on every push, so it can't be pinned.
 #   0.2.7 above is the versioned release with 28007498 (D365).
+# - 123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta and worldedit-gtnh 1.0.1: not ready
+#   for GTNH 2.9.0 stable on 2026-11-20 (D373 says what each waits for). Play's pins above stay.
 
 try {
     $files = if ($Manifest) { Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json } else { @($Zips[$Build]) + $Addons }
@@ -164,9 +189,16 @@ try {
     }
     # D365: GT-Not-Leisure and GTNLLib go into the Lab first; Play gets them only after Clayton's yes.
     $labFirst = @('sciencenotleisure-*.jar', 'gtnllib-*.jar')
+    # D373: updates that REPLACE a jar Play has (new jar = the jar it replaces). Lab first; Play
+    # keeps the old jar, still pinned above as the rollback, until Clayton's Lab test and his yes.
+    $replaces = @{
+        'TwistSpaceTechnology-0.8.2.jar' = 'TwistSpaceTechnology-0.8.0.jar'
+        'plannh-0.2.4.jar' = 'plannh-0.2.0.jar'
+    }
     $isLabFirst = { param($n) [bool]($labFirst | Where-Object { $n -like $_ }) }
-    $jars = @($files | Where-Object { $_.name -like '*.jar' -and -not (& $isLabFirst $_.name) })
+    $jars = @($files | Where-Object { $_.name -like '*.jar' -and -not (& $isLabFirst $_.name) -and -not $replaces.ContainsKey($_.name) })
     $lab = @($files | Where-Object { $_.name -like '*.jar' -and (& $isLabFirst $_.name) })
+    $swap = @($files | Where-Object { $_.name -like '*.jar' -and $replaces.ContainsKey($_.name) })
     if ($jars) {
         Write-Output '  then launch it with no addons to the main menu and quit,'
         Write-Output '  then copy into C:\Games\PrismLauncher\instances\GTNH-Play\.minecraft\mods\ :'
@@ -178,6 +210,13 @@ try {
         Write-Output '  (checklist 3.4.3); Play gets them only after that test passes and you say yes (5.2.12, 3.15.8),'
         Write-Output '  before the survival world starts (GTNL is a world gate):'
         foreach ($f in $lab) { Write-Output "    $(Join-Path $Dest $f.name)" }
+    }
+    if ($swap) {
+        Write-Output '  NOT into Play yet (D373): these REPLACE a jar, in the LAB first (checklist 3.4.3). In the'
+        Write-Output '  Lab''s mods folder delete the old jar named beside each one: two versions of one mod won''t'
+        Write-Output '  start. A sync would put the old jar back, so add 3.4.3''s [sync.lab] exclude entries first.'
+        Write-Output '  Play keeps the old jar until that test passes and you say yes (5.2.13, 3.15.9):'
+        foreach ($f in $swap) { Write-Output "    $(Join-Path $Dest $f.name)  (replaces $($replaces[$f.name]))" }
     }
 } catch {
     Write-Output "ERROR: $($_.Exception.Message)"

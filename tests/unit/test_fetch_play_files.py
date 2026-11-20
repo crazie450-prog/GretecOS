@@ -170,6 +170,54 @@ def test_the_next_steps_keep_the_lab_first_jars_out_of_play(
     ]
 
 
+@windows
+def test_the_next_steps_keep_a_replacing_jar_out_of_play_and_name_the_old_one(
+    tmp_path: Path, server: tuple[Path, str]
+) -> None:
+    """D373: an update that replaces a jar Play has is listed for the Lab first, with the jar
+    it replaces; Play's list keeps the old jar."""
+    names = [
+        "pack.zip",
+        "TwistSpaceTechnology-0.8.0.jar",
+        "plannh-0.2.0.jar",
+        "gtnllib-1.1.6.jar",
+        "TwistSpaceTechnology-0.8.2.jar",
+        "plannh-0.2.4.jar",
+    ]
+    m = manifest(
+        tmp_path / "manifest.json", [serve(server, n, n.encode()) for n in names]
+    )
+    staging = tmp_path / "staging"
+    result = run("-Manifest", str(m), "-Dest", str(staging))
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    into_play = lines.index(
+        "  then copy into C:\\Games\\PrismLauncher\\instances\\GTNH-Play\\.minecraft\\mods\\ :"
+    )
+    no_world = lines.index(
+        "  then launch to the main menu and quit. Do not create a world."
+    )
+    lab = next(
+        i for i, ln in enumerate(lines) if ln.startswith("  NOT into Play yet (D365)")
+    )
+    swap = next(
+        i for i, ln in enumerate(lines) if ln.startswith("  NOT into Play yet (D373)")
+    )
+    assert [ln.strip() for ln in lines[into_play + 1 : no_world]] == [
+        str(staging / "TwistSpaceTechnology-0.8.0.jar"),
+        str(staging / "plannh-0.2.0.jar"),
+    ]
+    assert no_world < lab < swap
+    assert [ln.strip() for ln in lines[lab + 3 : swap]] == [
+        str(staging / "gtnllib-1.1.6.jar")
+    ]
+    assert "[sync.lab] exclude" in " ".join(lines[swap : swap + 4])
+    assert [ln.strip() for ln in lines[swap + 4 :]] == [
+        f"{staging / 'TwistSpaceTechnology-0.8.2.jar'}  (replaces TwistSpaceTechnology-0.8.0.jar)",
+        f"{staging / 'plannh-0.2.4.jar'}  (replaces plannh-0.2.0.jar)",
+    ]
+
+
 def test_the_lab_first_patterns_are_the_gtnl_pins() -> None:
     """The printed steps hold back exactly the jars D365 pins for the Lab first."""
     from fnmatch import fnmatchcase
@@ -182,6 +230,24 @@ def test_the_lab_first_patterns_are_the_gtnl_pins() -> None:
     held = [n for n in names if any(fnmatchcase(n, p) for p in patterns)]
     assert held == ["sciencenotleisure-0.2.7.jar", "gtnllib-1.1.6.jar"]
     assert "foreach ($f in $jars)" in text and "foreach ($f in $lab)" in text
+
+
+def test_the_replacing_jars_are_pinned_beside_the_jars_they_replace() -> None:
+    """D373: every Lab-first update names the jar it replaces, both are pinned (the old one is
+    Play's and the rollback), and the printed steps list them apart from Play's."""
+    text = SCRIPT.read_text(encoding="ascii")
+    table = re.search(r"\$replaces = @\{([^}]*)\}", text)[1]
+    replaces = dict(re.findall(r"'([^']+\.jar)' = '([^']+\.jar)'", table))
+    assert replaces == {
+        "TwistSpaceTechnology-0.8.2.jar": "TwistSpaceTechnology-0.8.0.jar",
+        "plannh-0.2.4.jar": "plannh-0.2.0.jar",
+    }
+    names = re.findall(r"name = '([^']+\.jar)'", text)
+    assert set(replaces) | set(replaces.values()) <= set(names)
+    for new, old in replaces.items():  # the same mod, another version
+        assert new.split("-")[0] == old.split("-")[0] and new != old
+    assert "foreach ($f in $swap)" in text
+    assert "-and -not $replaces.ContainsKey($_.name)" in text  # kept out of Play's list
 
 
 @windows
@@ -235,8 +301,9 @@ def test_refuses_a_name_that_is_a_path(
 
 
 def test_real_pins() -> None:
-    """The pinned files: both zips, the addons cleared for Play (D88, D90), and GTNL 0.2.7 with
-    the GTNLLib it is built against, for the Lab test first (D365); never GTNL's rolling dev-build."""
+    """The pinned files: both zips, the addons cleared for Play (D88, D90), GTNL 0.2.7 with the
+    GTNLLib it is built against, for the Lab test first (D365), and the two updates for the Lab
+    test first (D373); never GTNL's rolling dev-build."""
     text = SCRIPT.read_text(encoding="ascii")
     pins = re.findall(
         r"name = '([^']+)'.*?url = '([^']+)'\s+sha256 = '([0-9a-f]{64})'",
@@ -249,11 +316,24 @@ def test_real_pins() -> None:
         "TwistSpaceTechnology-0.8.0.jar",
         "programmablehatches-0.2.1p0.jar",
         "worldedit-v0.0.10.jar",
-        "plannh-0.2.0.jar",  # one PlanNH only: two in mods/ is a duplicate-mod crash
+        "plannh-0.2.0.jar",  # Play's PlanNH: two in mods/ is a duplicate-mod crash
         "OTHTechnology-2.2.1.1.jar",
         "sciencenotleisure-0.2.7.jar",  # the main jar, not -dev or -sources
         "gtnllib-1.1.6.jar",  # the GTNLLib that GTNL 0.2.7 builds against
+        "TwistSpaceTechnology-0.8.2.jar",  # Lab first; replaces 0.8.0 (D373)
+        "plannh-0.2.4.jar",  # Lab first; replaces 0.2.0 (D373)
     ]
+    # Play's own list (what isn't held back for the Lab) has one jar per mod
+    held = (
+        "sciencenotleisure-",
+        "gtnllib-",
+        "TwistSpaceTechnology-0.8.2",
+        "plannh-0.2.4",
+    )
+    for_play = [
+        p[0] for p in pins if p[0].endswith(".jar") and not p[0].startswith(held)
+    ]
+    assert len({n.split("-")[0].lower() for n in for_play}) == len(for_play) == 5
     for name, url, _ in pins:
         assert url.startswith("https://") and url.endswith("/" + name)
     assert len({p[2] for p in pins}) == len(pins)
