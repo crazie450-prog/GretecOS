@@ -12,8 +12,10 @@ D374-D377; :mod:`gregtec.build.shell_bakeoff`).
   question, never the caps). Fake models need no key and cost nothing. Real ones need their
   key in the keyring (``gos key set anthropic`` / ``gos key set openai``), are refused while the
   AI is off (No-AI mode) or once today's spend has reached ``[budget] day_max_usd``, get no
-  higher a cap than that day cap still leaves (said before the question), and stop at the
-  run's cap with what they have. Ctrl+C stops cleanly too.
+  higher a cap than that day cap still leaves (said before the question), are refused when
+  the cap is less than one answer can cost, and stop at the run's cap with what they have.
+  Ctrl+C stops cleanly too. A model that can't be asked at all (a refused key, a wrong model
+  id, no credit) stops the run before more is spent on the others (D378).
 - ``gos shell bakeoff list`` and ``gos shell bakeoff show RUN``: the runs; one run as the rater
   sees it (letters, never names).
 - ``gos shell bakeoff rate RUN [CASE PICK]``: your pick for one case (a letter, ``tie`` or
@@ -21,6 +23,9 @@ D374-D377; :mod:`gregtec.build.shell_bakeoff`).
 - ``gos shell bakeoff report RUN [--reveal]``: the models named and the numbers, written to
   ``GOS_HOME/data/reports/shell-bakeoff-<run>.md``. Refused until every case is rated, unless
   ``--reveal`` (which closes the ratings).
+- ``gos shell bakeoff close RUN [--yes]``: ends a run that still says ``running`` although its
+  window was shut or the PC restarted: cancelled, its finished answers kept, so it can be
+  rated. Refused while the run was heard from in the last 15 minutes.
 - ``gos shell bakeoff delete RUN [--yes]``: says what it removes (the run's folder and its
   report), then removes it.
 
@@ -103,12 +108,18 @@ def add_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         action="store_true",
         help="name the models although cases are unrated (closes the ratings)",
     )
+    c = cmds.add_parser(
+        "close",
+        help="end a run left `running` by a shut window; its finished answers stay",
+    )
+    c.add_argument("run")
+    c.add_argument("--yes", action="store_true", help="don't ask")
     d = cmds.add_parser(
         "delete", help="remove a whole run (says what it removes first)"
     )
     d.add_argument("run")
     d.add_argument("--yes", action="store_true", help="don't ask")
-    for each in (m, r, ls, s, t, rep, d):
+    for each in (m, r, ls, s, t, rep, c, d):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
 
@@ -148,6 +159,8 @@ def run(
             print(got.text, file=out)
             print(f"Written: {got.path}", file=out)
             return 0
+        if command == "close":
+            return _close(home, args, out, answer_in)
         if command == "delete":
             for line in bo.removal(home, args.run):
                 print(f"Removes: {line}", file=out)
@@ -163,6 +176,30 @@ def run(
     except shell.ShellError as exc:  # BakeoffError is one
         print(str(exc), file=out)
         return 2
+
+
+def _close(home: Path, args: argparse.Namespace, out: TextIO, answer_in: Answer) -> int:
+    from gregtec.build import shell_bakeoff as bo
+
+    run = bo.load(home, args.run)
+    done = sum(1 for r in run["results"] if r["design"] and r["design"]["ok"])
+    print(
+        f"Closes run {args.run} as cancelled. Its {done} finished building(s) stay and can "
+        "be rated; nothing is deleted. Do this only when no window is still running it.",
+        file=out,
+    )
+    if not args.yes:
+        print("Type yes to close it: ", end="", file=out, flush=True)
+        if answer_in().strip().casefold() != "yes":
+            print("Not closed.", file=out)
+            return 1
+    bo.close(home, args.run)
+    print(
+        f"Closed run {args.run}. Now rate it in the Build view's Bake-off panel or with "
+        f"`gos shell bakeoff rate {args.run}`, then `gos shell bakeoff report {args.run}`.",
+        file=out,
+    )
+    return 0
 
 
 def _price(spec: Any) -> str:  # noqa: ANN401 - a ModelSpec
@@ -345,6 +382,23 @@ def _held(cfg: Any, store: Any, meter: Any) -> tuple[str | None, float]:  # noqa
     return None, left
 
 
+def _too_small(need: tuple[float, int], cap_usd: float, cap_tokens: int) -> str:
+    """Why the caps can't pay for even one answer of every model ("" when they can): such a
+    run would stop at its first call and leave an empty run behind."""
+    usd, tokens = need
+    if usd > cap_usd:
+        return (
+            f"this run's cap ${cap_usd:.2f} is less than one answer can cost (up to "
+            f"${usd:.2f} for the dearest model named)"
+        )
+    if tokens > cap_tokens:
+        return (
+            f"this run's token cap {cap_tokens:,} is less than one answer can take (up to "
+            f"{tokens:,} tokens for a model without a price)"
+        )
+    return ""
+
+
 def _question(amount: float | None, unpriced: Sequence[str], cap_tokens: int) -> str:
     """The sentence he answers yes to. ``amount`` is the most the priced models can cost (None
     when no model in the run has a price); a model without a price is never given a dollar
@@ -379,9 +433,7 @@ def _run(
     models = settings.pick(labels)
     cap_usd = settings.cap_usd if args.cap_usd is None else args.cap_usd
     cap_tokens = settings.cap_tokens if args.cap_tokens is None else args.cap_tokens
-    if cap_usd <= 0 or cap_tokens <= 0:
-        print("The caps must be above 0.", file=out)
-        return 2
+    bo.check_caps(cap_usd, cap_tokens)  # nan and inf would never trip
     try:
         cases = bo.load_cases(args.cases or bo.CASES)
     except OSError as exc:
@@ -420,14 +472,24 @@ def _run(
                     f"is lowered from ${cap_usd:.2f} to that, so the day's limit holds too."
                 )
                 cap_usd = left
-        est = bo.estimate(prepared, models, cap_usd, cap_tokens)
+        est = bo.estimate(prepared, models, cap_usd, cap_tokens, lowered)
         for line in est.lines:
             print(line, file=out)
         if why:
             print(f"Not run: {why}.", file=out)
             return 1
-        if lowered:
-            print(lowered, file=out)
+        if small := _too_small(bo.first_call(prepared, models), cap_usd, cap_tokens):
+            print(
+                f"Not run: {small}: nothing is spent and no run is made. "
+                + (
+                    "Run it another day, or raise [budget] day_max_usd in gos.toml."
+                    if lowered
+                    else "Give it a higher cap (--cap-usd, --cap-tokens or [bakeoff] in "
+                    "gos.toml)."
+                ),
+                file=out,
+            )
+            return 1
         amount = min(est.worst_usd, cap_usd) if priced else None
         designers = _designers(models, out)
         if designers is None:
@@ -481,6 +543,13 @@ def _run(
     )
     if broke := bo.broken_off(run):
         print(broke, file=out)
+    if run["why"] == bo.MODEL_WHY:
+        print(
+            "Which model, and why, is in the report (it is not said here, so that what was "
+            f"made stays blind): `gos shell bakeoff report {run['id']} --reveal` names it "
+            "now and closes the ratings; or rate first, then the same without --reveal.",
+            file=out,
+        )
     print(
         f"Next: look at it in the Build view's Bake-off panel, rate it there or with "
         f"`gos shell bakeoff rate {run['id']}`, then `gos shell bakeoff report {run['id']}`. "

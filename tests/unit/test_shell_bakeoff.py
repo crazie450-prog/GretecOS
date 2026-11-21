@@ -1,5 +1,5 @@
-"""WO-10.11: the shell designer bake-off (D374-D377) on WO-10.7's fixtures. No test opens a
-socket to anything but 127.0.0.1, and none needs a key.
+"""WO-10.11: the shell designer bake-off (D374-D378) on WO-10.7's fixtures. No test opens a
+socket to anything but 127.0.0.1 (a fixture refuses any other host), and none needs a key.
 
 - the seam (:mod:`gregtec.build.shell_brief`): one schema both vendors' strict modes take, the
   brief's facts, the request words as data, the answer parsed as data only;
@@ -7,14 +7,20 @@ socket to anything but 127.0.0.1, and none needs a key.
   :mod:`gregtec.llm.fake_openai` (the request each sends: no tools, the schema, the limits; the
   usage each reports), and every way a call can fail: HTTP 401, 429 with and without
   Retry-After, a quota 429, 500, a timeout, a stream that stops half way, an error event, a
-  refusal, an answer over the size limit;
+  refusal, an answer over the size limit, an answer without its token count, a redirect (never
+  followed), a full-length answer one event per token, a deeply nested event line;
 - the gate decides, exactly as for the product: an answer that names a chest, GT's machine
   block or an unknown role, has too many blocks, is not JSON, is 5 MB, or follows an injection
   typed into the words box is refused with the reason ``shell_store.make`` gives, sent back for
   the same number of repair rounds for every model, and writes nothing when it never passes;
 - a run: kept apart from his own shells (never current, never listed, not exportable), the
   caps (USD and tokens) reached mid-run, Cancel and Ctrl+C, the usage meter, a model that
-  stops being asked after its key is refused;
+  can't be asked at all stopping the run (D378);
+- ``run.json`` on Windows: a save waits for a file another program holds, a run whose
+  ``run.json`` stays held ends rateable with every answer kept (beside it), a pick and a delete
+  say so in a sentence, and two real handles on the Windows CI job;
+- a run left ``running`` by a shut window is closed and rated (``gos shell bakeoff close``),
+  never while it is still heard from, and a live runner never writes over a closed run;
 - blind: the lettering is the seed's, and no model name reaches the blind view, the routes, a
   file name, a version note or the 3D viewer before the report;
 - rating, the report and its ordering, deleting a run, ``[bakeoff]`` in gos.toml, the ``openai``
@@ -23,10 +29,16 @@ socket to anything but 127.0.0.1, and none needs a key.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
+import os
+import shutil
+import socket
 import sqlite3
 import sys
+import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -84,6 +96,35 @@ ANTHROPIC_KEY = "sk-ant-api03-" + "T3stK3y" * 12
 ZEBRA = bo.ModelSpec("zebra", "openai", "vendor-x-9000", "high", Price(10, 50, 12.5, 1))
 QUOKKA = bo.ModelSpec("quokka", "anthropic", OPUS, None, PRICES[OPUS])
 MYSTERY = bo.ModelSpec("mystery", "openai", "no-price-model")
+
+
+LOCAL = ("127.0.0.1", "::1", "localhost")
+
+
+@pytest.fixture(autouse=True)
+def outside(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """No test in this file opens a connection to, or looks up, anything but this PC: a guard
+    that a change weakened fails here instead of reaching a vendor's host with a test's key.
+    Gives the hosts that were refused."""
+    refused: list[str] = []
+    connect, resolve = socket.socket.connect, socket.getaddrinfo
+
+    def guarded_connect(self: socket.socket, address: Any, *rest: Any) -> None:  # noqa: ANN401
+        if isinstance(address, tuple) and address[0] not in LOCAL:
+            refused.append(str(address[0]))
+            raise AssertionError(f"a bake-off test tried to connect to {address[0]!r}")
+        return connect(self, address, *rest)
+
+    def guarded_resolve(host: Any, *rest: Any, **kw: Any) -> Any:  # noqa: ANN401
+        name = host.decode() if isinstance(host, bytes) else host
+        if name not in (None, "", *LOCAL):
+            refused.append(str(name))
+            raise AssertionError(f"a bake-off test tried to look up {name!r}")
+        return resolve(host, *rest, **kw)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_resolve)
+    return refused
 
 
 @pytest.fixture
@@ -1269,24 +1310,86 @@ def test_ctrl_c_inside_a_call_leaves_nothing_half_written(
         assert (d / "design.json").is_file()
 
 
-def test_a_model_whose_key_is_refused_is_not_asked_again(
+def _seed_where(first: str) -> int:
+    """A seed whose lettering asks ``first`` (zebra or quokka) first in case c1."""
+    return next(
+        n
+        for n in range(1, 50)
+        if bo.letters(n, "c1", ["zebra", "quokka"])["A"] == first
+    )
+
+
+@pytest.mark.parametrize("kind", sorted(llm.STOPS_MODEL))
+def test_a_model_that_cannot_be_asked_stops_the_run_before_more_is_spent(
+    kind: str, conn: sqlite3.Connection, home: Path
+) -> None:
+    """D378: a refused key, a wrong model id or no credit can't succeed on the next request
+    either. The run stops there, so no further request is paid for the other model with
+    nothing to compare it with. The sentence the blind views show names no model."""
+    refused = llm.ProviderError(kind, "OpenAI refused the key (HTTP 401)")
+    # asked first: nothing at all is spent on the other model
+    model, other = Scripted(then=refused), Scripted()
+    run = ran(
+        conn,
+        home,
+        [ZEBRA, QUOKKA],
+        {"zebra": model, "quokka": other},
+        cases3(),
+        seed=_seed_where("zebra"),
+    )
+    assert run["status"] == bo.STOPPED and run["why"] == bo.MODEL_WHY
+    assert len(model.seen) == 1 and other.seen == []
+    assert run["results"] == [] and run["spent"]["usd"] == 0.0
+    assert not (bo.run_dir(home, run["id"]) / "entries" / "c1").exists()
+    seen = json.dumps(bo.blind(run)) + json.dumps(bo.summary(run))
+    for word in (*secrets_of(run), "OpenAI", "401"):
+        assert word not in seen, word
+    assert "zebra (openai vendor-x-9000) can't be asked" in run["why_named"]
+    text = bo.report(
+        home, run["id"]
+    ).text  # nothing to rate: the report says which and why
+    assert "zebra (openai vendor-x-9000) can't be asked: OpenAI refused the key" in text
+    # asked second: the other model's first case is there to look at, and that is all
+    model, other = Scripted(then=refused), Scripted()
+    run = ran(
+        conn,
+        home,
+        [ZEBRA, QUOKKA],
+        {"zebra": model, "quokka": other},
+        cases3(),
+        seed=_seed_where("quokka"),
+    )
+    assert run["status"] == bo.STOPPED and len(model.seen) == 1
+    assert len(other.seen) == 2  # c1's design and follow-up; never c2 or c3
+    assert [(r["model"], r["case"]) for r in run["results"]] == [("quokka", "c1")]
+    assert bo.rateable(run) == ["c1"]
+    with pytest.raises(bo.BakeoffError, match="not rated yet"):
+        bo.report(home, run["id"])
+    bo.rate(home, run["id"], "c1", "A")
+    assert (
+        "zebra (openai vendor-x-9000) can't be asked" in bo.report(home, run["id"]).text
+    )
+
+
+def test_credit_that_runs_out_mid_run_keeps_what_was_made(
     conn: sqlite3.Connection, home: Path
 ) -> None:
-    refused = llm.ProviderError(llm.AUTH, "OpenAI refused the key (HTTP 401)")
-    model = Scripted(then=refused)
-    other = Scripted()
-    run = ran(conn, home, [ZEBRA, QUOKKA], {"zebra": model, "quokka": other}, cases3())
-    assert run["status"] == bo.DONE and len(model.seen) == 1  # one call, not six
-    mine = [r for r in run["results"] if r["model"] == "zebra"]
-    assert "no answer: OpenAI refused the key" in mine[0]["design"]["refused"]
-    assert all(
-        r["design"]["refused"].startswith("not asked:") and r["design"]["calls"] == 0
-        for r in mine[1:]
-    )
-    assert all(r["design"]["ok"] for r in run["results"] if r["model"] == "quokka")
-    # a passing failure (a server error after the retries) is asked again next case
+    out = llm.ProviderError(llm.QUOTA, "OpenAI says the account is out of credit")
+    model = Scripted([good, out])  # the design is paid for, the follow-up is refused
+    run = ran(conn, home, [ZEBRA], {"zebra": model}, cases3())
+    assert run["status"] == bo.STOPPED and len(model.seen) == 2
+    (only,) = run["results"]
+    assert only["design"]["ok"] and only["revise"] is None
+    assert bo.rateable(run) == ["c1"] and bo.load(home, run["id"]) == run
+
+
+def test_a_passing_failure_does_not_stop_the_run(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    # a server error after the retries: that request has no design, the next is asked
     flaky = Scripted([llm.ProviderError(llm.SERVER, "HTTP 500")] * 3)
     run = ran(conn, home, [ZEBRA], {"zebra": flaky}, cases3(), sleep=lambda s: None)
+    assert run["status"] == bo.DONE
     assert [r["design"]["ok"] for r in run["results"]] == [False, True, True]
 
 
@@ -1981,7 +2084,7 @@ def test_a_paid_run_is_refused_once_the_day_cap_is_reached(
 
 def test_gos_has_the_commands() -> None:
     assert shell_bakeoff_cli.COMMAND == "bakeoff"
-    for sub in ("models", "run", "list", "show", "rate", "report", "delete"):
+    for sub in ("models", "run", "list", "show", "rate", "report", "close", "delete"):
         with pytest.raises(SystemExit) as got:
             cli.main(["shell", "bakeoff", sub, "--help"])
         assert got.value.code == 0
@@ -2099,3 +2202,575 @@ def test_the_bakeoff_routes_are_blind_and_authed(
             assert late.status_code == 409 and "ratings are closed" in late.text
     finally:
         store.close()
+
+
+# --- run.json while another program has it open (Windows) -------------------------------------
+
+
+class Held:
+    """``os.replace`` onto a run's ``run.json`` refused the way Windows refuses it while another
+    program has the file open (PermissionError): for the next ``left`` tries, or, with ``left``
+    None, until it is let go. ``names``: the files it holds."""
+
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, names: tuple[str, ...] = (bo.RECORD,)
+    ) -> None:
+        self.left: int | None = 0
+        self.refused = 0
+        real = os.replace
+
+        def replace(src: Any, dst: Any, *rest: Any, **kw: Any) -> None:  # noqa: ANN401
+            if Path(dst).name in names and (self.left is None or self.left > 0):
+                if self.left is not None:
+                    self.left -= 1
+                self.refused += 1
+                raise PermissionError(13, "Access is denied", str(dst))
+            real(src, dst, *rest, **kw)
+
+        monkeypatch.setattr(os, "replace", replace)
+        monkeypatch.setattr(bo, "SAVE_WAIT_S", 0.0)  # the waits between two tries
+
+
+def on_disk(home: Path, run_id: str, name: str = bo.RECORD) -> dict[str, Any]:
+    path = bo.run_dir(home, run_id) / name
+    return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+
+
+def test_a_save_waits_for_a_run_json_another_program_holds(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard reads a run every few seconds while the runner replaces its run.json, and
+    Windows refuses a replace onto an open file. A refusal that passes is waited out: the run
+    ends done, in run.json, as if nothing had happened."""
+    held = Held(monkeypatch)
+    said: list[str] = []
+    runner, prepared = started(
+        conn, home, [ZEBRA], {"zebra": Scripted()}, say=said.append
+    )
+    held.left = bo.SAVE_TRIES - 1  # the first save gets through on its last try
+    run = runner.execute(prepared)
+    assert held.refused == bo.SAVE_TRIES - 1
+    assert run["status"] == bo.DONE and result(run, "zebra")["revise"]["ok"]
+    assert on_disk(home, run["id"]) == run
+    assert not (bo.run_dir(home, run["id"]) / bo.BESIDE).exists()
+    assert not any("held open" in line for line in said)
+    held.left = 3  # the same for a pick
+    assert bo.rate(home, run["id"], "c1", bo.TIE)["ratings"]["c1"]["pick"] == bo.TIE
+
+
+def test_a_run_json_that_stays_held_never_loses_a_paid_answer(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Held for the whole run: the run still ends, rateable, with every answer, in the record
+    kept beside run.json. It is never left ``running`` and nothing paid for is lost."""
+    held = Held(monkeypatch)
+    said: list[str] = []
+    model = Scripted()
+    runner, prepared = started(
+        conn, home, [ZEBRA], {"zebra": model}, cases3(), say=said.append
+    )
+    rid = runner.run["id"]
+    held.left = None
+    run = runner.execute(prepared)
+    assert run["status"] == bo.DONE and len(model.seen) == 6
+    assert on_disk(home, rid)["status"] == bo.RUNNING  # the file nobody could replace
+    assert on_disk(home, rid, bo.BESIDE) == run
+    assert bo.load(home, rid) == run  # every reader gets the whole, finished record
+    assert sum("kept beside it" in line for line in said) == 1  # said once
+    view = bo.blind(bo.load(home, rid))
+    assert view["status"] == bo.DONE and view["rateable"] == 3
+    assert [r["id"] for r in bo.runs(home)] == [rid] and bo.runs(home)[0]["rateable"]
+    # a pick while it is still held: a sentence, nothing changed, no traceback
+    with pytest.raises(bo.BakeoffError, match="can't be saved right now") as got:
+        bo.rate(home, rid, "c1", bo.TIE)
+    assert "Nothing was changed" in str(got.value)
+    assert bo.load(home, rid)["ratings"] == {}
+    # let go: the pick lands in run.json, and the record beside it is gone
+    held.left = 0
+    bo.rate(home, rid, "c1", bo.TIE)
+    assert on_disk(home, rid)["ratings"]["c1"]["pick"] == bo.TIE
+    assert on_disk(home, rid)["status"] == bo.DONE
+    assert not (bo.run_dir(home, rid) / bo.BESIDE).exists()
+    assert bo.load(home, rid)["results"] == run["results"]
+
+
+def test_a_record_that_cannot_be_written_anywhere_stops_before_anything_is_spent(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held = Held(monkeypatch, (bo.RECORD, bo.BESIDE))
+    said: list[str] = []
+    model = Scripted()
+    runner, prepared = started(conn, home, [ZEBRA], {"zebra": model}, say=said.append)
+    rid = runner.run["id"]
+    held.left = None
+    run = runner.execute(prepared)  # no traceback
+    assert run["status"] == bo.STOPPED and run["why"] == bo.FILE_WHY
+    assert model.seen == []  # no call is paid for that could not be recorded
+    assert any("could not be saved" in line for line in said)
+    assert any(f"gos shell bakeoff close {rid}" in line for line in said)
+    held.left = 0
+    assert bo.load(home, rid)["status"] == bo.RUNNING  # what the disk still says
+    closed = bo.close(home, rid, now=time.time() + bo.STALE_S + 1)
+    assert closed["status"] == bo.CANCELLED
+
+
+def test_a_delete_waits_for_a_held_file_and_then_says_so(
+    conn: sqlite3.Connection,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bo, "SAVE_WAIT_S", 0.0)
+    first = ran(conn, home, [ZEBRA], {"zebra": Scripted()})["id"]
+    second = ran(conn, home, [ZEBRA], {"zebra": Scripted()}, seed=5)["id"]
+    bo.report(home, second, reveal_unrated=True)
+    fails = [3]
+    real = shutil.rmtree
+
+    def rmtree(path: Any, *rest: Any, **kw: Any) -> None:  # noqa: ANN401
+        if fails[0] and not kw.get("ignore_errors"):
+            fails[0] -= 1
+            raise PermissionError(13, "The process cannot access the file", str(path))
+        real(path, *rest, **kw)
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+    bo.delete(home, first)  # refused three times, then removed
+    assert fails == [0] and not bo.run_dir(home, first).exists()
+    fails[0] = 10**6  # held for good
+    with pytest.raises(bo.BakeoffError, match="is not all removed yet"):
+        bo.delete(home, second)
+    assert (
+        bo.load(home, second)["id"] == second
+    )  # still a run: the command can be run again
+    code, text = gos(toml_for(home, tmp_path), "delete", second, "--yes")
+    assert code == 2 and "Run the same command again" in text
+    assert "Traceback" not in text
+    fails[0] = 0
+    bo.delete(home, second)
+    assert not bo.run_dir(home, second).exists() and bo.runs(home) == []
+    assert not list((home / "data" / "reports").glob("shell-bakeoff-*"))
+
+
+def _holder(path: Path) -> tuple[threading.Thread, threading.Event]:
+    """Another program with ``path`` open the plain way (no delete sharing), until let go."""
+    opened, let_go = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with open(path, "rb"):
+            opened.set()
+            let_go.wait(30)
+
+    thread = threading.Thread(target=hold, daemon=True)
+    thread.start()
+    assert opened.wait(5), "the other program didn't open the file"
+    return thread, let_go
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="only Windows refuses a replace onto a file another program has open",
+)
+def test_on_windows_a_held_run_json_costs_neither_a_run_nor_a_pick(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two real handles on one run.json (the Windows CI job): a reader that holds the file
+    the plain way, and the bake-off's writer."""
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted()}, cases3())
+    path = bo.run_dir(home, run["id"]) / bo.RECORD
+    thread, let_go = _holder(path)
+    probe = path.with_name("probe.tmp")
+    probe.write_bytes(path.read_bytes())
+    with pytest.raises(PermissionError):  # the clash is real: Windows refuses this
+        os.replace(probe, path)
+    probe.unlink()
+    assert bo.load(home, run["id"]) == run  # reading it is never refused
+    threading.Timer(0.6, let_go.set).start()
+    bo.rate(home, run["id"], "c1", bo.TIE)  # waits for the other program, then lands
+    thread.join(10)
+    assert on_disk(home, run["id"])["ratings"]["c1"]["pick"] == bo.TIE
+    # held from the first call to the last: the run ends rateable, with every answer
+    monkeypatch.setattr(bo, "SAVE_WAIT_S", 0.01)
+    model = Scripted()
+    runner, prepared = started(conn, home, [ZEBRA], {"zebra": model}, cases3(), seed=2)
+    rid = runner.run["id"]
+    path = bo.run_dir(home, rid) / bo.RECORD
+    thread, let_go = _holder(path)
+    second = runner.execute(prepared)
+    assert second["status"] == bo.DONE and len(model.seen) == 6
+    assert on_disk(home, rid)["status"] == bo.RUNNING
+    assert bo.load(home, rid) == second and len(second["results"]) == 3
+    with pytest.raises(bo.BakeoffError, match="can't be saved right now"):
+        bo.rate(home, rid, "c1", bo.TIE)
+    let_go.set()
+    thread.join(10)
+    bo.rate(home, rid, "c1", bo.TIE)
+    assert on_disk(home, rid)["ratings"]["c1"]["pick"] == bo.TIE
+    assert not (bo.run_dir(home, rid) / bo.BESIDE).exists()
+    # and a delete while a file of the run is held: a sentence, then it works
+    thread, let_go = _holder(path)
+    with pytest.raises(bo.BakeoffError, match="is not all removed yet"):
+        bo.delete(home, rid)
+    let_go.set()
+    thread.join(10)
+    bo.delete(home, rid)
+    assert not bo.run_dir(home, rid).exists()
+
+
+def test_reading_a_run_never_stands_in_its_writers_way(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """The dashboard's look at a run (``load``) against the runner's saves, at once, on real
+    files: no save is refused and no read gives half a record. (On Windows ``load`` opens
+    run.json the way game files are read, so it gives way to the writer.)"""
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted()})
+    rid = run["id"]
+    stop = threading.Event()
+    wrong: list[object] = []
+    reads = [0]
+
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                got = bo.load(home, rid)
+            except (
+                bo.BakeoffError
+            ):  # a read the writer broke three times over: said plainly
+                continue
+            except BaseException as exc:  # noqa: BLE001 - anything else is the failure
+                wrong.append(exc)
+                return
+            if got["id"] != rid or got["results"] != run["results"]:
+                wrong.append(got)
+            reads[0] += 1
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    try:
+        for n in range(60):
+            run["spent"]["calls"] = n
+            bo._store(home, run)  # raises when the replace is refused on every try
+            time.sleep(0.005)
+    finally:
+        stop.set()
+        thread.join(10)
+    assert not wrong and reads[0] > 0
+    assert on_disk(home, rid)["spent"]["calls"] == 59
+    assert not (bo.run_dir(home, rid) / bo.BESIDE).exists()
+
+
+@contextlib.contextmanager
+def served(home: Path) -> Iterator[tuple[Any, dict[str, str]]]:
+    """The core's API over ``home``: (a test client, the admin's headers)."""
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import Core, create_app
+    from gregtec.api.security import Auth
+    from gregtec.config import Config
+
+    store = Store(home / "data" / "core.sqlite")
+    core = Core(
+        cfg=Config(gos_home=home),
+        store=store,
+        auth=Auth(store, ADMIN),
+        meter=UsageMeter(store, 100.0, (80, 100)),
+    )
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            yield c, {"Authorization": f"Bearer {ADMIN}"}
+    finally:
+        store.close()
+
+
+def test_a_pick_through_the_panel_while_the_file_is_held_is_a_sentence_not_a_500(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted()})
+    base = f"/api/shells/bakeoff/{run['id']}"
+    held = Held(monkeypatch)
+    with served(home) as (c, admin):
+        held.left = None
+        r = c.post(f"{base}/rate", headers=admin, json={"case": "c1", "pick": "tie"})
+        assert r.status_code == 503 and "can't be saved right now" in r.text
+        assert c.get(base, headers=admin).json()["run"]["rated"] == 0
+        held.left = 2
+        r = c.post(f"{base}/rate", headers=admin, json={"case": "c1", "pick": "tie"})
+        assert r.status_code == 200 and r.json()["run"]["rated"] == 1
+
+
+# --- a run left `running` by a shut window ----------------------------------------------------
+
+
+class Killed(BaseException):
+    """The runner's window was shut: nothing of the runner runs after this."""
+
+
+def test_a_run_left_running_is_closed_with_its_answers_and_rated(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    model = Scripted([good, good, Killed()])  # c1 is finished, then the window is shut
+    runner, prepared = started(conn, home, [ZEBRA], {"zebra": model}, cases3())
+    rid = runner.run["id"]
+    with pytest.raises(Killed):
+        runner.execute(prepared)
+    left = bo.load(home, rid)
+    assert left["status"] == bo.RUNNING and len(left["results"]) == 1
+    with pytest.raises(bo.BakeoffError, match="still running"):
+        bo.rate(home, rid, "c1", bo.TIE)  # what it spent could not be rated
+    # just heard from: it may be going in another window, so it is not closed
+    with pytest.raises(bo.BakeoffError, match="may be going in another window"):
+        bo.close(home, rid)
+    with pytest.raises(bo.BakeoffError, match="may be going in another window"):
+        bo.close(home, rid, now=left["saved"] + bo.STALE_S - 1)
+    assert bo.load(home, rid) == left
+    closed = bo.close(home, rid, now=left["saved"] + bo.STALE_S + 1)
+    assert closed["status"] == bo.CANCELLED and closed["why"] == bo.CLOSED_WHY
+    assert closed["results"] == left["results"] and closed["finished"] is not None
+    assert bo.load(home, rid) == closed
+    assert bo.rateable(closed) == ["c1"]
+    bo.rate(home, rid, "c1", "A")
+    text = bo.report(home, rid).text
+    assert "| zebra | openai | vendor-x-9000 |" in text and "cancelled" in text
+    with pytest.raises(bo.BakeoffError, match="is not running"):
+        bo.close(home, rid, now=time.time() + 10 * bo.STALE_S)
+
+
+def test_the_runner_stamps_the_record_before_every_call(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """What ``close`` goes by: a live runner saves before each call, so its record is never
+    older than one call lasts."""
+    stamps: list[float] = []
+    box: list[str] = []
+
+    def stamped(user: str) -> str:
+        stamps.append(bo.load(home, box[0])["saved"])
+        return good(user)
+
+    runner, prepared = started(
+        conn, home, [ZEBRA], {"zebra": Scripted(then=stamped)}, cases3()
+    )
+    box.append(runner.run["id"])
+    made = runner.run["saved"]
+    run = runner.execute(prepared)
+    assert len(stamps) == 6 and stamps == sorted(set(stamps)) and stamps[0] > made
+    assert run["saved"] > stamps[-1]
+    assert bo.STALE_S > llm.TIMEOUT_S + llm.MAX_WAIT_S  # longer than any one try
+
+
+def test_a_runner_that_finds_its_run_closed_stops_without_writing_over_it(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    box: list[str] = []
+
+    def closes(user: str) -> str:  # closed from another window during the third call
+        bo.close(home, box[0], now=time.time() + bo.STALE_S + 1)
+        return good(user)
+
+    model = Scripted([good, good, closes])
+    said: list[str] = []
+    runner, prepared = started(
+        conn, home, [ZEBRA], {"zebra": model}, cases3(), say=said.append
+    )
+    box.append(runner.run["id"])
+    run = runner.execute(prepared)
+    disk = bo.load(home, box[0])
+    assert run == disk and disk["status"] == bo.CANCELLED
+    assert disk["why"] == bo.CLOSED_WHY
+    assert [r["case"] for r in disk["results"]] == ["c1"]  # as it was closed
+    assert len(model.seen) == 3  # and nothing more was asked or spent
+    assert any("closed from another window" in line for line in said)
+    assert bo.rateable(disk) == ["c1"]
+
+
+def test_gos_shell_bakeoff_close(
+    conn: sqlite3.Connection, home: Path, tmp_path: Path
+) -> None:
+    toml = toml_for(home, tmp_path)
+    runner, prepared = started(
+        conn, home, [ZEBRA], {"zebra": Scripted([good, good, Killed()])}, cases3()
+    )
+    rid = runner.run["id"]
+    with pytest.raises(Killed):
+        runner.execute(prepared)
+    code, text = gos(toml, "close", rid, typed="no\n")
+    assert code == 1 and "Not closed" in text and "1 finished building(s) stay" in text
+    code, text = gos(toml, "close", rid, typed="yes\n")  # heard from a moment ago
+    assert code == 2 and "may be going in another window" in text
+    assert "15 minutes" in text and bo.load(home, rid)["status"] == bo.RUNNING
+    old = on_disk(home, rid)
+    old["saved"] = time.time() - bo.STALE_S - 5  # the window was shut a while ago
+    (bo.run_dir(home, rid) / bo.RECORD).write_text(json.dumps(old), encoding="utf-8")
+    code, text = gos(toml, "close", rid, typed="yes\n")
+    assert code == 0 and f"Closed run {rid}" in text
+    assert f"gos shell bakeoff rate {rid}" in text
+    assert f"{rid}\tcancelled\t" in gos(toml, "list")[1]
+    code, text = gos(toml, "rate", rid, "c1", "A")
+    assert code == 0, text
+    code, text = gos(toml, "close", rid, "--yes")
+    assert code == 2 and "is not running" in text
+    assert gos(toml, "close", "bo-20000101-000000-0000", "--yes")[0] == 2
+
+
+# --- money: an answer without its token count, caps that never trip, a cap too small ----------
+
+
+def test_openai_an_answer_without_its_token_count_is_unmeasured_not_free() -> None:
+    def reply(answer: Answer) -> llm.Reply:
+        with FakeResponsesAPI(lambda body: answer) as api:
+            return openai(api).complete("s", "u", {}, 100)
+
+    assert reply(Answer(text="{}")).measured  # the usual answer: counted
+    for answer in (
+        Answer(text="{}", usage=False),
+        Answer(
+            text='{"ops": [',
+            status="incomplete",
+            reason="max_output_tokens",
+            usage=False,
+        ),
+        Answer(status="incomplete", reason="content_filter", usage=False),
+        Answer(status="failed", failed=("invalid_prompt", "no"), usage=False),
+        Answer(refusal="I can't help with that.", usage=False),
+    ):
+        got = reply(answer)
+        assert got.measured is False, answer
+        assert got.usage == Usage() and got.reasoning_tokens == 0
+
+
+def test_an_answer_without_its_token_count_is_held_against_the_cap(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """The reference lets a final event's usage be null. Such an answer used to count as zero
+    tokens and $0.00; it is held at the most it can have cost, like a call that broke off."""
+
+    def policy(body: dict[str, Any]) -> Answer:
+        return Answer(text=good(body["input"]), usage=False)
+
+    with FakeResponsesAPI(policy, key=OPENAI_KEY) as api:
+        designer = llm.OpenAIDesigner(OPENAI_KEY, ZEBRA.model, url=api.url)
+        run = ran(conn, home, [ZEBRA], {"zebra": designer}, cap_usd=10.0)
+        step = result(run, "zebra")
+        assert (
+            run["status"] == bo.DONE and step["design"]["ok"] and step["revise"]["ok"]
+        )
+        lost = run["unmeasured"]
+        assert lost["calls"] == 2 and run["spent"]["usd"] == 0.0
+        assert lost["usd"] > 2 * shell_brief.MAX_OUTPUT_TOKENS * 50 / 1e6
+        assert "without their token count" in bo.broken_off(run)
+        assert f"at most ${lost['usd']:.2f} in all" in bo.broken_off(run)
+        # so a cap the two answers could pass stops the run before the second
+        sent = len(api.requests)
+        run = ran(conn, home, [ZEBRA], {"zebra": designer}, cap_usd=1.5, seed=2)
+        assert run["status"] == bo.CAP and len(api.requests) == sent + 1
+        assert run["spent"]["usd"] + run["unmeasured"]["usd"] <= 1.5
+        only = result(run, "zebra")
+        assert (
+            only["design"]["ok"] and only["revise"] is None
+        )  # the paid answer is kept
+
+
+@pytest.mark.parametrize("cap", ["nan", "inf", "-inf", "0", "-1"])
+def test_a_dollar_cap_that_would_never_trip_is_refused_at_the_command_line(
+    cap: str, home: Path, tmp_path: Path, ring: MemoryKeyring, outside: list[str]
+) -> None:
+    ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
+    code, text = gos(
+        toml_for(home, tmp_path),
+        "run", "pl-steel", "--models", "astra", "--limit", "1", "--yes",
+        f"--cap-usd={cap}",
+    )  # fmt: skip
+    assert code == 2 and "the dollar cap must be a plain number above 0" in text
+    assert bo.runs(home) == [] and outside == []  # no run, nobody contacted
+
+
+def test_a_token_cap_that_would_never_trip_is_refused(
+    conn: sqlite3.Connection,
+    home: Path,
+    tmp_path: Path,
+    ring: MemoryKeyring,
+    outside: list[str],
+) -> None:
+    ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
+    toml = toml_for(home, tmp_path)
+    argv = ["run", "pl-steel", "--models", "mystery", "--limit", "1", "--yes"]
+    code, text = gos(toml, *argv, "--cap-tokens=0")
+    assert code == 2 and "the token cap must be a whole number above 0" in text
+    for word in (
+        "nan",
+        "inf",
+        "1e9",
+        "1.5",
+    ):  # not whole numbers: argparse's own refusal
+        with pytest.raises(SystemExit) as got:
+            gos(toml, *argv, f"--cap-tokens={word}")
+        assert got.value.code == 2
+    assert bo.runs(home) == [] and outside == []
+    # the settings check: nan and inf are numbers in TOML
+    for text in (
+        "[bakeoff]\ncap_usd = nan\n",
+        "[bakeoff]\ncap_usd = inf\n",
+        "[bakeoff]\ncap_usd = -inf\n",
+        "[bakeoff]\ncap_tokens = inf\n",
+        "[bakeoff]\ncap_tokens = nan\n",
+    ):
+        with pytest.raises(ConfigError, match="cap_(usd|tokens) must be"):
+            settings(text, tmp_path)
+    # and whoever makes a run without the command line
+    prepared = bo.prepare(conn, home, VaultIO(home / "vault"), [one_case()], PLANS)
+    for usd, tokens in (
+        (float("nan"), 1000),
+        (float("inf"), 1000),
+        (0.0, 1000),
+        (5.0, 0),
+        (5.0, True),
+    ):
+        with pytest.raises(bo.BakeoffError, match="cap must be"):
+            bo.create(home, prepared, [ZEBRA], PLANS, cap_usd=usd, cap_tokens=tokens)
+    assert bo.runs(home) == []
+
+
+def test_a_cap_that_cannot_pay_for_one_answer_is_refused_before_a_run_is_made(
+    home: Path, tmp_path: Path, ring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run whose cap the day limit lowered to less than one call can cost used to start,
+    stop at once and leave an empty run to delete."""
+    ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
+
+    def policy(body: dict[str, Any]) -> Answer:
+        return Answer(text=good(body["input"]), input_tokens=5_000, output_tokens=8_000)
+
+    argv = ["run", "pl-steel", "--models", "astra", "--limit", "1", "--yes"]
+    with FakeResponsesAPI(policy, key=OPENAI_KEY) as api:
+        monkeypatch.setattr(llm, "OPENAI_URL", api.url)
+        # the day limit leaves 50 cents; one answer can cost more than that
+        toml = toml_for(home, tmp_path, GOOD_TOML + "\n[budget]\nday_max_usd = 0.5\n")
+        code, text = gos(toml, *argv)
+        assert code == 1, text
+        assert "Not run: this run's cap $0.50 is less than one answer can cost" in text
+        assert "nothing is spent and no run is made" in text
+        assert "raise [budget] day_max_usd" in text
+        assert bo.runs(home) == [] and api.requests == []
+        assert not (home / "data" / "bakeoff").exists()
+        # the line that explains the lowered cap comes before the cap it explains
+        assert text.index("Today's limit ([budget] day_max_usd) leaves $0.50") < (
+            text.index("Hard cap for this run: $0.50")
+        )
+        # a cap he typed himself that is too small: the same refusal, another way out
+        toml = toml_for(home, tmp_path)
+        code, text = gos(toml, *argv, "--cap-usd", "0.5")
+        assert code == 1 and "is less than one answer can cost" in text
+        assert "Give it a higher cap" in text and "day_max_usd" not in text
+        code, text = gos(
+            toml, "run", "pl-steel", "--models", "mystery", "--limit", "1", "--yes",
+            "--cap-tokens", "1000",
+        )  # fmt: skip
+        assert code == 1 and "token cap 1,000 is less than one answer can take" in text
+        assert bo.runs(home) == [] and api.requests == []
+        # a lowered cap that does pay for an answer still runs, and says so in that order
+        toml = toml_for(home, tmp_path, GOOD_TOML + "\n[budget]\nday_max_usd = 2.0\n")
+        code, text = gos(toml, *argv)
+        assert code == 0, text
+        assert text.index("this run's cap is lowered from $4.50 to that") < (
+            text.index("Hard cap for this run: $2.00")
+        )
+        assert text.count("Today's limit") == 1

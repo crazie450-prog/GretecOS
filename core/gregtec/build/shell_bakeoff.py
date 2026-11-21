@@ -37,6 +37,14 @@ off after it was sent (a timeout, a cut-off answer) reports no usage, yet the ve
 it: each is counted against the cap at the most it can have cost (``run["unmeasured"]``), and
 the report says how many there were.
 
+**Run.json on Windows.** The dashboard reads a run while the runner replaces its ``run.json``,
+and Windows refuses a replace while another program has the target open (D356's table). So a
+run is read with :func:`gregtec.gamestate.safe_open.read_bytes` (it gives way to the writer),
+every write is tried again for a short while (:data:`SAVE_TRIES`), and a runner that still
+can't replace ``run.json`` keeps its record beside it (``run.unsaved.json``; :func:`load` takes
+the newer of the two). A run whose window was shut stays ``running``: :func:`close` ends it as
+cancelled with its finished answers, once it has been silent for :data:`STALE_S`.
+
 Nothing here writes a world or a ``.schematic``.
 """
 
@@ -51,8 +59,9 @@ import shutil
 import sqlite3
 import time
 import tomllib
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +77,7 @@ from gregtec.build import (
 from gregtec.build import shell_versions as versions
 from gregtec.build import themes as theme_lib
 from gregtec.config import ConfigError
+from gregtec.gamestate.safe_open import read_bytes
 from gregtec.ingest.fingerprint import atomic_write
 from gregtec.llm import designers as llm
 from gregtec.llm.prices import PRICES, Price, Usage, estimate_cost
@@ -108,12 +118,44 @@ HOSTS = {"anthropic": llm.ANTHROPIC_HOST, "openai": llm.OPENAI_HOST}
 TIE, BAD = "tie", "bad"
 LANE = "bakeoff"
 DONE, RUNNING, CAP, CANCELLED = "done", "running", "stopped at the cap", "cancelled"
+STOPPED = "stopped"  # by something that is not a cap or a Cancel: ``why`` says what
+RECORD, BESIDE = "run.json", "run.unsaved.json"
+SAVE_TRIES = 12  # of one write, while Windows refuses it because the file is held open
+SAVE_WAIT_S = 0.25  # between two tries
+# A run that has saved nothing for this long is taken as gone (close). The runner saves before
+# every try, and one try lasts at most the provider's timeout, so a live run is never this old.
+STALE_S = 900.0
+assert STALE_S > llm.TIMEOUT_S + llm.MAX_WAIT_S
 # The share of the output limit a first look assumes an answer uses (the estimate's "likely").
 LIKELY_OUTPUT = 0.25
 
 
 class BakeoffError(shell.ShellError):
     """A bake-off request that can't be done (said as is; nothing was written or spent)."""
+
+
+def plain(text: str, limit: int = 1000) -> str:
+    """Words a model or a vendor wrote, safe to print in a terminal and a table: one line,
+    without control or format characters (ESC, newlines, bidi marks), clipped."""
+    kept = (" " if unicodedata.category(c)[0] in "CZ" else c for c in text)
+    return " ".join("".join(kept).split())[:limit]
+
+
+def check_caps(cap_usd: float, cap_tokens: int) -> None:
+    """A cap that is not a plain number above 0 never trips (nan compares false, inf is never
+    reached): refused."""
+    if isinstance(cap_usd, bool) or not isinstance(cap_usd, int | float):
+        raise BakeoffError("the dollar cap must be a number above 0")
+    if not math.isfinite(cap_usd) or cap_usd <= 0:
+        raise BakeoffError(
+            f"the dollar cap must be a plain number above 0, not {cap_usd}: for example "
+            "--cap-usd 5"
+        )
+    if type(cap_tokens) is not int or cap_tokens <= 0:
+        raise BakeoffError(
+            f"the token cap must be a whole number above 0, not {cap_tokens}: for example "
+            "--cap-tokens 500000"
+        )
 
 
 # --- the models ------------------------------------------------------------------------------
@@ -230,9 +272,12 @@ def settings_of(data: Mapping[str, Any]) -> Settings:
     if (
         isinstance(cap_usd, bool)
         or not isinstance(cap_usd, int | float)
+        or not math.isfinite(cap_usd)  # nan and inf are TOML numbers, and never trip
         or cap_usd <= 0
     ):
-        raise ConfigError("gos.toml: [bakeoff] cap_usd must be a number of USD above 0")
+        raise ConfigError(
+            "gos.toml: [bakeoff] cap_usd must be a number of USD above 0 (not nan or inf)"
+        )
     cap_tokens = table.get("cap_tokens", DEFAULT_CAP_TOKENS)
     if type(cap_tokens) is not int or cap_tokens <= 0:
         raise ConfigError(
@@ -279,9 +324,10 @@ def settings_of(data: Mapping[str, Any]) -> Settings:
                 f"gos.toml: {where} model must be the model's id, e.g. 'gpt-6-astra'"
             )
         effort = row.get("effort")
-        if effort is not None and effort not in llm.EFFORTS:
+        if effort is not None and effort not in llm.EFFORTS[provider]:
             raise ConfigError(
-                f"gos.toml: {where} effort must be one of {', '.join(llm.EFFORTS)}"
+                f"gos.toml: {where} effort must be one of "
+                f"{', '.join(llm.EFFORTS[provider])} for a model of {provider}"
             )
         cin, cout = _usd(row, "input_usd", where), _usd(row, "output_usd", where)
         if (cin is None) != (cout is None):
@@ -494,6 +540,37 @@ def _bound(text: str) -> int:
 OVERHEAD = _bound(json.dumps(shell_brief.SCHEMA)) + 1_000
 
 
+def _most(system: str, model: ModelSpec, user: str) -> tuple[float, int]:
+    """The most one try of a call can cost: (USD, tokens). Its input counted as one token a
+    byte plus :data:`OVERHEAD`, the whole output limit, the dearest input rate."""
+    tokens_in = _bound(system) + _bound(user) + OVERHEAD
+    tokens_out = shell_brief.MAX_OUTPUT_TOKENS
+    p = model.price
+    if p is None:
+        return 0.0, tokens_in + tokens_out
+    usd = (tokens_in * max(p.input, p.cache_write) + tokens_out * p.output) / 1_000_000
+    return usd, tokens_in + tokens_out
+
+
+def first_call(
+    prepared: Sequence[Prepared], models: Sequence[ModelSpec]
+) -> tuple[float, int]:
+    """What the caps must at least allow for the run to get an answer from every model: the
+    most the first case's design can cost for the dearest priced model (USD) and the most
+    tokens it can take for a model without a price. A run with less would stop at once."""
+    system = shell_brief.system_prompt()
+    usd, tokens = 0.0, 0
+    for m in models:
+        if m.fake:
+            continue
+        one_usd, one_tokens = _most(system, m, prepared[0].brief)
+        if m.price is None:
+            tokens = max(tokens, one_tokens)
+        else:
+            usd = max(usd, one_usd)
+    return usd, tokens
+
+
 @dataclass(frozen=True)
 class Estimate:
     lines: tuple[str, ...]
@@ -507,10 +584,12 @@ def estimate(
     models: Sequence[ModelSpec],
     cap_usd: float,
     cap_tokens: int,
+    lowered: str = "",
 ) -> Estimate:
     """What the run asks, of whom, and what it can cost: cases x models x the token bounds x
     the prices. "Likely" assumes every answer passes first time and uses a quarter of the
-    output limit; "worst case" every repair round and the whole limit."""
+    output limit; "worst case" every repair round and the whole limit. ``lowered`` (why the
+    cap is less than he asked for) is said just before the cap it explains."""
     system = shell_brief.system_prompt()
     steps = 2 * len(prepared)
     most = steps * (1 + REPAIR_ROUNDS)
@@ -581,6 +660,8 @@ def estimate(
             )
         else:  # a dollar cap would bound nothing here: it is never shown as if it did
             cap = f"{cap_tokens:,} tokens (no dollar cap: no model in it has a price)"
+        if lowered:
+            lines.append(lowered)
         lines.append(
             f"Hard cap for this run: {cap}. It stops before a call that could pass it, "
             "with what it has so far."
@@ -612,25 +693,86 @@ def _json(data: object) -> bytes:
     return (json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def _save(home: Path, run: Mapping[str, Any]) -> None:
-    atomic_write(run_dir(home, run["id"]) / "run.json", _json(run))
+# Said when a write is still refused after every try (the routes answer 503 for it).
+BUSY = "can't be saved right now: another program has one of its files open"
+
+
+def _patient(op: Callable[[], object], held: type[OSError] = PermissionError) -> None:
+    """``op()``, tried again for a short while when Windows refuses it because another program
+    has the file open (the dashboard's look at a run, a virus scanner). A file that is not
+    there is not waited for."""
+    for attempt in range(SAVE_TRIES):
+        try:
+            op()
+            return
+        except FileNotFoundError:
+            raise
+        except held:
+            if attempt == SAVE_TRIES - 1:
+                raise
+            time.sleep(SAVE_WAIT_S)
+
+
+def _write(path: Path, data: bytes) -> None:
+    _patient(lambda: atomic_write(path, data))
+
+
+def _stamp(run: Mapping[str, Any]) -> float:
+    """When the record was last saved (a run from before the stamp: when it was made)."""
+    at = run.get("saved")
+    return float(at) if isinstance(at, int | float) else 0.0
+
+
+def _store(home: Path, run: dict[str, Any]) -> None:
+    """Stamp the record and replace ``run.json`` with it (``OSError`` when that can't be)."""
+    where = run_dir(home, run["id"])
+    run["saved"] = round(max(time.time(), _stamp(run) + 0.001), 3)
+    _write(where / RECORD, _json(run))
+    try:  # run.json is the newer one again
+        (where / BESIDE).unlink(missing_ok=True)
+    except OSError:
+        pass  # load() takes the newer of the two
+
+
+def _save(home: Path, run: dict[str, Any]) -> None:
+    """:func:`_store` for a command or a click: a file that stays held is said in a sentence,
+    and nothing is changed."""
+    try:
+        _store(home, run)
+    except OSError as exc:
+        raise BakeoffError(
+            f"run {run['id']} {BUSY} ({type(exc).__name__}). Nothing was changed: try again "
+            "in a moment"
+        ) from None
 
 
 def load(home: Path, run_id: str) -> dict[str, Any]:
-    path = run_dir(home, run_id) / "run.json"
-    try:
-        run = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise BakeoffError(f"no bake-off run {run_id}") from None
-    except (OSError, ValueError) as exc:
-        raise BakeoffError(f"run {run_id} can't be read: {exc}") from None
-    if (
-        not isinstance(run, dict)
-        or run.get("schema") != SCHEMA
-        or run.get("id") != run_id
-    ):
-        raise BakeoffError(f"run {run_id}'s run.json is not a {SCHEMA} record")
-    return run
+    """The run's record: ``run.json``, or the copy a runner kept beside it while ``run.json``
+    could not be replaced, whichever was saved last. Read whole, then parsed, with the game
+    files' reader: on Windows it never stands in the way of the runner's next save."""
+    where = run_dir(home, run_id)
+    best: dict[str, Any] | None = None
+    problem = ""
+    for name in (BESIDE, RECORD):
+        try:
+            run = json.loads(read_bytes(where / name).decode("utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError, RecursionError) as exc:
+            problem = f"run {run_id} can't be read: {exc}"
+            continue
+        if (
+            not isinstance(run, dict)
+            or run.get("schema") != SCHEMA
+            or run.get("id") != run_id
+        ):
+            problem = f"run {run_id}'s {name} is not a {SCHEMA} record"
+            continue
+        if best is None or _stamp(run) >= _stamp(best):
+            best = run
+    if best is None:
+        raise BakeoffError(problem or f"no bake-off run {run_id}")
+    return best
 
 
 def runs(home: Path) -> list[dict[str, Any]]:
@@ -668,6 +810,7 @@ def create(
     now: float | None = None,
 ) -> dict[str, Any]:
     """A new run's record, written before the first call."""
+    check_caps(cap_usd, cap_tokens)
     at = time.time() if now is None else now
     seed = random.SystemRandom().randrange(2**32) if seed is None else seed
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(at))
@@ -723,6 +866,25 @@ def create(
 CAP_WHY = "the next call could have taken the run past its cap"
 
 
+# Why a run stopped because a model can't be asked at all (D378): which model and why are the
+# report's, never a blind view's.
+MODEL_WHY = (
+    "a model could not be asked at all (a refused key, a wrong model id or no credit), so "
+    "nothing more was spent on the others"
+)
+FILE_WHY = "an error on this PC stopped it (a file could not be written); what was finished is kept"
+CLOSED_WHY = "closed by hand after its window was shut or the PC restarted"
+
+
+class _Closed(Exception):
+    """The run was ended from another window (:func:`close`) while this runner was still at
+    it: the runner stops and writes nothing over that record."""
+
+    def __init__(self, run: dict[str, Any]) -> None:
+        super().__init__(run["id"])
+        self.run = run
+
+
 class _Stop(Exception):
     """The run ends here. ``why`` is shown while the run is still blind, so it never says which
     model was next or anything that tells the models apart (a price, priced or not); ``named``
@@ -743,7 +905,10 @@ class _Step:
     rounds: int = 0  # repair rounds used
     seconds: float = 0.0
     usd: float | None = 0.0
-    refused: str | None = None
+    refused: str | None = None  # why there is no design (None once an answer passed)
+    refusals: list[str] = field(
+        default_factory=list
+    )  # every refused answer's reason, in order
     build: str | None = None
     status: str | None = None
     blocks: int | None = None
@@ -758,6 +923,11 @@ class _Step:
         self.reasoning += reasoning
         self.usd = None if usd is None or self.usd is None else self.usd + usd
 
+    def refuse(self, why: str) -> None:
+        """An answer (or the lack of one) was refused: kept per round, as plain text."""
+        self.refused = plain(why)
+        self.refusals.append(self.refused)
+
     def to_json(self) -> dict[str, Any]:
         t = self.tokens or Usage()
         return {
@@ -765,6 +935,7 @@ class _Step:
             "first_try": self.build is not None and self.rounds == 0,
             "repair_rounds": self.rounds,
             "refused": self.refused,
+            "refusals": list(self.refusals),
             "build": self.build,
             "status": self.status,
             "blocks": self.blocks,
@@ -807,11 +978,14 @@ class _Capped:
     ) -> llm.Reply:
         self.runner._guard(self.spec, user)
         try:
-            return self.inner.complete(system, user, schema, max_output_tokens)
+            reply = self.inner.complete(system, user, schema, max_output_tokens)
         except llm.ProviderError as exc:
             if exc.maybe_billed:
                 self.runner._broke(self.spec, user)
             raise
+        if not reply.measured:  # answered, but the vendor sent no token count with it
+            self.runner._broke(self.spec, user)
+        return reply
 
 
 @dataclass
@@ -834,28 +1008,44 @@ class Runner:
     def __post_init__(self) -> None:
         self.models = {m["label"]: ModelSpec.from_json(m) for m in self.run["models"]}
         self.system = shell_brief.system_prompt()
-        self.dead: dict[str, str] = {}
+        self.beside = False  # said once: the record is being kept beside run.json
+
+    # -- the record ---------------------------------------------------------------------------
+
+    def _keep(self) -> None:
+        """Save the record (and with it the sign that the run is alive). A run that was closed
+        from another window is never written over; when ``run.json`` can't be replaced (held
+        open by another program) the record goes beside it, where :func:`load` finds it."""
+        try:
+            disk = load(self.home, self.run["id"])
+        except BakeoffError:
+            disk = None  # not readable right now: this runner's record is the whole one
+        if disk is not None and disk["status"] != RUNNING:
+            raise _Closed(disk)
+        try:
+            _store(self.home, self.run)
+        except OSError:
+            where = run_dir(self.home, self.run["id"])
+            _write(where / BESIDE, _json(self.run))
+            if not self.beside:
+                self.beside = True
+                self.say(
+                    f"{RECORD} is held open by another program: the run's record is kept "
+                    f"beside it ({BESIDE}) and read from there. Nothing is lost."
+                )
 
     # -- one call, inside the caps ------------------------------------------------------------
 
     def _most(self, model: ModelSpec, user: str) -> tuple[float, int]:
-        """The most one try of this call can cost: (USD, tokens). Its input counted as one
-        token a byte plus :data:`OVERHEAD`, the whole output limit, the dearest input rate."""
-        tokens_in = _bound(self.system) + _bound(user) + OVERHEAD
-        tokens_out = shell_brief.MAX_OUTPUT_TOKENS
-        p = model.price
-        if p is None:
-            return 0.0, tokens_in + tokens_out
-        usd = (
-            tokens_in * max(p.input, p.cache_write) + tokens_out * p.output
-        ) / 1_000_000
-        return usd, tokens_in + tokens_out
+        return _most(self.system, model, user)
 
     def _guard(self, model: ModelSpec, user: str) -> None:
-        """Asked before every try, a retry too: Cancel, then the caps. What is counted is what
-        was spent plus the most the broken-off tries can have cost."""
+        """Asked before every try, a retry too: Cancel, the record (saved, so the run is seen
+        to be alive, and a run closed from another window stops here), then the caps. What is
+        counted is what was spent plus the most the broken-off tries can have cost."""
         if self.cancel():
             raise _Stop(CANCELLED, "cancelled")
+        self._keep()
         if model.fake:
             return
         usd, tokens = self._most(model, user)
@@ -880,8 +1070,8 @@ class Runner:
             )
 
     def _broke(self, model: ModelSpec, user: str) -> None:
-        """A try that broke off after it was sent: nothing came back to count, so the most it
-        can have cost is held against the cap."""
+        """A try that broke off after it was sent, or whose answer came without a token count:
+        nothing came back to count, so the most it can have cost is held against the cap."""
         if model.fake:
             return
         usd, tokens = self._most(model, user)
@@ -908,7 +1098,14 @@ class Runner:
             step.calls += 1
             step.seconds += self.clock() - started
             if exc.kind in llm.STOPS_MODEL:
-                self.dead[model.label] = str(exc)
+                # It can't succeed on another try either, and every further request would be
+                # paid for the other models with nothing to compare them with (D378).
+                raise _Stop(
+                    STOPPED,
+                    MODEL_WHY,
+                    f"{model.label} ({model.provider} {model.model}) can't be asked: "
+                    f"{plain(str(exc))}",
+                ) from None
             return f"no answer: {exc}"
         step.calls += 1
         step.seconds += self.clock() - started
@@ -951,10 +1148,10 @@ class Runner:
             step.rounds = attempt
             got = self._ask(model, user, step)
             if isinstance(got, str):
-                step.refused = got
+                step.refuse(got)
                 return
             if got.stop == llm.REFUSAL:
-                step.refused = got.detail or "the model declined"
+                step.refuse(got.detail or "the model declined")
                 return
             if got.stop == llm.MAX_TOKENS:
                 why = (
@@ -971,7 +1168,7 @@ class Runner:
                     if refused is None:
                         return
                     why = refused
-            step.refused = why
+            step.refuse(why)
             user = shell_brief.repair_brief(brief, got.text, why)
 
     # -- the two steps ------------------------------------------------------------------------
@@ -1083,11 +1280,6 @@ class Runner:
             "checks": None,
             "design_id": None,
         }
-        if label in self.dead:
-            skipped = _Step(refused=f"not asked: {self.dead[label]}")
-            result["design"] = skipped.to_json()
-            self.run["results"].append(result)
-            return
         self._copy_plans(case, where)
         try:
             step, ds = self._design(case, model, spec.brief, where)
@@ -1098,32 +1290,58 @@ class Runner:
             raise
         result["design"], result["design_id"] = step.to_json(), ds
         self.run["results"].append(result)
-        _save(self.home, self.run)
+        self._keep()
         self.say(_line(case["id"], letter, "design", result["design"]))
         if ds is None:
             return
         rstep, checks = self._revise(case, spec.case, model, where, ds)
         result["revise"], result["checks"] = rstep.to_json(), checks
-        _save(self.home, self.run)
+        self._keep()
         self.say(_line(case["id"], letter, "follow-up", result["revise"]))
 
     def execute(self, prepared: Sequence[Prepared]) -> dict[str, Any]:
         """Every case x model, in the run's order. Stops cleanly at a cap, on ``cancel`` or
-        Ctrl+C: what is finished stays, the step in hand is dropped, the run says why."""
+        Ctrl+C, when a model can't be asked at all (D378) and when a file can't be written:
+        what is finished stays, the step in hand is dropped, the run says why. It never ends
+        as ``running``: a record that can't replace ``run.json`` is kept beside it."""
         by_id = {p.case.id: p for p in prepared}
         status, why, named = DONE, "", ""
         try:
             for case in self.run["cases"]:
                 for letter, label in sorted(case["letters"].items()):
                     self._one(case, by_id[case["id"]], label, letter)
+        except _Closed as closed:
+            return self._gone(closed)
         except _Stop as stop:
             status, why, named = stop.status, stop.why, stop.named
         except KeyboardInterrupt:
             status, why = CANCELLED, "cancelled (Ctrl+C)"
+        except OSError as exc:
+            status, why = STOPPED, FILE_WHY
+            named = f"{type(exc).__name__}: {plain(str(exc))}"
+            self.say(f"Stopped: {named}")
         self.run["status"], self.run["why"] = status, why
         self.run["why_named"] = named  # the report's: never in a blind view
         self.run["finished"] = round(time.time(), 3)
-        _save(self.home, self.run)
+        try:
+            self._keep()
+        except _Closed as closed:
+            return self._gone(closed)
+        except OSError as exc:
+            self.say(
+                f"The run's record could not be saved ({type(exc).__name__}): what was saved "
+                f"before is in {run_dir(self.home, self.run['id'])}. Once this window is "
+                f"closed and {STALE_S / 60:.0f} minutes have passed, `gos shell bakeoff close "
+                f"{self.run['id']}` makes that rateable."
+            )
+        return self.run
+
+    def _gone(self, closed: _Closed) -> dict[str, Any]:
+        self.say(
+            f"Run {closed.run['id']} was closed from another window (gos shell bakeoff "
+            "close): stopped here, and nothing of it was written over."
+        )
+        self.run = closed.run
         return self.run
 
 
@@ -1252,7 +1470,9 @@ def scene(
 def compare(
     home: Path, run_id: str, case_id: str, a: str, b: str, which: str
 ) -> dict[str, Any]:
-    """Two blind entries of one case side by side (materials, blocks, operations)."""
+    """Two blind entries of one case side by side: blocks and materials. Not the operations:
+    an operation can carry text the gate never reads (``parapet_role`` on a roof without a
+    parapet), which a model could sign its answer with, so no blind view shows them."""
     run = load(home, run_id)
     recs = [
         shell_store.load(
@@ -1261,7 +1481,7 @@ def compare(
         )
         for letter in (a, b)
     ]
-    return versions.compare_records(recs[0], recs[1])
+    return {**versions.compare_records(recs[0], recs[1]), "ops": []}
 
 
 # --- rating ----------------------------------------------------------------------------------
@@ -1292,6 +1512,31 @@ def rate(home: Path, run_id: str, case_id: str, pick: str) -> dict[str, Any]:
             f"pick one of {', '.join(good)}, {TIE} or {BAD} (none is good) for {case_id}"
         )
     run["ratings"][case_id] = {"pick": pick, "at": round(time.time(), 3)}
+    _save(home, run)
+    return run
+
+
+def close(home: Path, run_id: str, *, now: float | None = None) -> dict[str, Any]:
+    """End a run that still says ``running`` although nothing is running it (its window was
+    shut, the PC restarted): cancelled, with every finished answer kept, so it can be rated.
+    Refused while the run was saved less than :data:`STALE_S` ago: a live runner saves before
+    every call, so that one may still be going in another window (and a runner that does find
+    its run closed stops without writing over it)."""
+    run = load(home, run_id)
+    if run["status"] != RUNNING:
+        raise BakeoffError(
+            f"run {run_id} is not running (it is {run['status']}): there is nothing to close"
+        )
+    at = time.time() if now is None else now
+    quiet = at - (_stamp(run) or float(run["created"]))
+    if quiet < STALE_S:
+        raise BakeoffError(
+            f"run {run_id} was last heard from {max(0, int(quiet // 60))} minute(s) ago: it "
+            "may be going in another window. Stop it there with Ctrl+C, or run this again "
+            f"once it has been silent for {STALE_S / 60:.0f} minutes"
+        )
+    run["status"], run["why"] = CANCELLED, CLOSED_WHY
+    run["finished"] = round(at, 3)
     _save(home, run)
     return run
 
@@ -1463,7 +1708,7 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
     if run["status"] != DONE:
         notes.append(
             f"The run did not finish ({run['status']}: "
-            f"{run.get('why_named') or run['why']}): a partial result."
+            f"{plain(str(run.get('why_named') or run['why']))}): a partial result."
         )
     if run["reveal_unrated"]:
         notes.append("The models were revealed before every case was rated.")
@@ -1519,22 +1764,36 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
                 )
                 continue
             d, v, k = r["design"], r["revise"], r["checks"] or {}
-            why = " / ".join(
-                str(s["refused"]).replace("|", ";")[:200]
-                for s in (d, v)
-                if s and s["refused"]
-            )
+            why = " / ".join([*_refusals("design", d), *_refusals("follow-up", v)])
             lines.append(
                 f"| {c['id']} | {pick} | {letter} | {label} | {_step_text(d)} | "
                 f"{_step_text(v)} | {k.get('asked', '-')} | {k.get('kept', '-')} | {why} |"
             )
     text = "\n".join(lines) + "\n"
     path = home / REPORTS / f"shell-bakeoff-{run['id']}.md"
-    atomic_write(path, text.encode("utf-8"))
-    atomic_write(path.with_suffix(".json"), _json(card))
+    try:
+        _write(path, text.encode("utf-8"))
+        _write(path.with_suffix(".json"), _json(card))
+    except OSError as exc:
+        raise BakeoffError(
+            f"the report {BUSY} ({type(exc).__name__}). Run it again in a moment"
+        ) from None
     run["report"] = (REPORTS / path.name).as_posix()
     _save(home, run)
     return Report(text, card, path)
+
+
+def _refusals(what: str, step: Mapping[str, Any] | None) -> list[str]:
+    """Why the gate (or the vendor) refused each answer of a step, try by try, for the
+    report's table: an answer that was repaired later still shows why its first try failed.
+    The words may be a model's: one line, no control characters, no table bar."""
+    if not step:
+        return []
+    said = step.get("refusals") or ([step["refused"]] if step.get("refused") else [])
+    return [
+        f"{what} try {n}: {plain(str(r), 200).replace('|', ';')}"
+        for n, r in enumerate(said, 1)
+    ]
 
 
 def broken_off(run: Mapping[str, Any]) -> str:
@@ -1552,8 +1811,9 @@ def broken_off(run: Mapping[str, Any]) -> str:
     )
     return (
         f"{lost['calls']} call(s) broke off after they were sent (a timeout or a cut-off "
-        f"answer). The vendor may still bill them, at most {most} in all: that is not in the "
-        "cost column or the usage meter, but it was held against the run's cap."
+        "answer) or came back without their token count. The vendor may still bill them, at "
+        f"most {most} in all: that is not in the cost column or the usage meter, but it was "
+        "held against the run's cap."
     )
 
 
@@ -1571,7 +1831,7 @@ def card_of(home: Path, run: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     try:
         card: dict[str, Any] = json.loads(
-            (home / run["report"]).with_suffix(".json").read_text(encoding="utf-8")
+            read_bytes((home / run["report"]).with_suffix(".json")).decode("utf-8")
         )
     except (OSError, ValueError):
         return None
@@ -1609,9 +1869,26 @@ def _report_files(home: Path, run_id: str) -> list[Path]:
     ]
 
 
+def _removed(op: Callable[[], object]) -> None:
+    try:
+        _patient(op, OSError)
+    except FileNotFoundError:
+        pass
+
+
 def delete(home: Path, run_id: str) -> None:
+    """Remove the run. Its buildings and reports go first and ``run.json`` last, so a delete
+    that could not finish (Windows: the dashboard was reading one of the files) can simply be
+    run again."""
     where = run_dir(home, run_id)
     load(home, run_id)  # only a real run's folder is ever removed
-    for p in _report_files(home, run_id):
-        p.unlink()
-    shutil.rmtree(where)
+    try:
+        _removed(lambda: shutil.rmtree(where / "entries"))
+        for p in _report_files(home, run_id):
+            _removed(p.unlink)
+        _removed(lambda: shutil.rmtree(where))
+    except OSError as exc:
+        raise BakeoffError(
+            f"run {run_id} is not all removed yet: another program has one of its files "
+            f"open ({type(exc).__name__}). Run the same command again in a moment"
+        ) from None
