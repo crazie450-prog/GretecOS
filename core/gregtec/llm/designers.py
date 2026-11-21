@@ -13,7 +13,8 @@ policy every provider gets.
   ``text.format`` ``{type: json_schema, name, schema, strict: true}``, ``max_output_tokens``
   (visible and reasoning tokens together), optional ``reasoning.effort``, ``store: false``,
   ``stream: true`` (server-sent events; the last one, ``response.completed``, ``.incomplete`` or
-  ``.failed``, carries the whole response and its ``usage``). Built from OpenAI's own API
+  ``.failed``, carries the whole response and its ``usage``, which may be null: such an answer
+  is :attr:`Reply.measured` false). A redirect is never followed. Built from OpenAI's own API
   reference and guides (Responses "Create a model response", Structured Outputs, Error codes,
   Rate limits) as read on 2026-11-20; the host is contacted only when a bake-off names an
   OpenAI model.
@@ -49,9 +50,26 @@ CONNECT_S = 10.0
 RETRIES = 2  # after the first try, for every provider
 BACKOFF_S = (2.0, 8.0)  # the waits without a Retry-After
 MAX_WAIT_S = 60.0  # a Retry-After longer than this is not waited for
-MAX_STREAM_BYTES = 2_000_000  # of one answer's whole HTTP body
+# An answer's text is bounded in characters, the same for every vendor (the caller's
+# ``shell_brief.MAX_REPLY_CHARS``, checked on the text itself). The stream that carries it is
+# far larger: one server-sent event per token, each a few hundred bytes of framing around a few
+# characters, then the whole response once more in the last event. So the stream's own bounds
+# only stop a stream that never ends: MAX_ANSWER_CHARS one-character events of 500 bytes each
+# still fit, with room for the last event.
+MAX_ANSWER_CHARS = 60_000
+MAX_LINE_BYTES = 2_000_000  # one event (the last one carries the whole answer)
+MAX_STREAM_BYTES = 32_000_000  # of one answer's whole HTTP body
+assert MAX_STREAM_BYTES >= MAX_ANSWER_CHARS * 500 + MAX_LINE_BYTES
 MAX_ERROR_BYTES = 65_536
-EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+# The effort values each vendor's own page lists (read 2026-11-21): Anthropic's "Effort" page
+# (output_config.effort: five levels), OpenAI's "Reasoning" guide (reasoning.effort: "Supported
+# values are model-dependent and can include none, minimal, low, medium, high, xhigh, and max").
+# Which of them one model takes is the vendor's to say: a value it doesn't take comes back as
+# HTTP 400.
+EFFORTS = {
+    "anthropic": ("low", "medium", "high", "xhigh", "max"),
+    "openai": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+}
 
 AUTH, QUOTA, RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF, BAD_REQUEST, TOO_LARGE = (
     "auth",
@@ -65,7 +83,8 @@ AUTH, QUOTA, RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF, BAD_REQUEST, TOO_LARGE = (
     "too_large",
 )
 RETRYABLE = frozenset({RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF})
-# After one of these the same model is not asked again in the run: the next call would fail too.
+# One of these can't succeed on another try, now or at the next request: the bake-off stops its
+# run there (D378).
 STOPS_MODEL = frozenset({AUTH, QUOTA, BAD_REQUEST})
 # A call that failed one of these ways had been sent and may have been answering: the vendor may
 # bill what it had made, and no usage came back to count (ProviderError.maybe_billed).
@@ -115,6 +134,9 @@ class Reply:
     reasoning_tokens: int = (
         0  # the part of usage.output spent reasoning, where reported
     )
+    # False: the vendor sent the answer without its token count, so ``usage`` is zeros that
+    # mean "unknown", never "free" (the caller counts such a call at the most it can cost).
+    measured: bool = True
 
 
 class Designer(Protocol):
@@ -287,7 +309,7 @@ def _error_parts(raw: bytes) -> tuple[str, str, str]:
     isn't one."""
     try:
         err = json.loads(raw.decode("utf-8", "replace")).get("error")
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, RecursionError):
         return "", "", ""
     if not isinstance(err, dict):
         return "", "", ""
@@ -296,6 +318,16 @@ def _error_parts(raw: bytes) -> tuple[str, str, str]:
         str(err.get("type") or ""),
         str(err.get("message") or ""),
     )
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib's own handler sends the request's headers, the
+    ``Authorization`` key with them, to whatever host a 301, 302, 303, 307 or 308 names."""
+
+    def redirect_request(  # type: ignore[override]
+        self, *args: object, **kwargs: object
+    ) -> None:
+        return None  # the 3xx then comes up as an HTTPError
 
 
 def _loopback(url: str) -> bool:
@@ -352,7 +384,9 @@ class OpenAIDesigner:
             },
         )
         # A test's fake server is on loopback: no proxy stands between.
-        handlers = [urllib.request.ProxyHandler({})] if _loopback(self.url) else []
+        handlers: list[urllib.request.BaseHandler] = [_NoRedirect()]
+        if _loopback(self.url):
+            handlers.append(urllib.request.ProxyHandler({}))
         opener = urllib.request.build_opener(*handlers)
         try:
             with opener.open(request, timeout=self.read_s) as r:
@@ -380,6 +414,13 @@ class OpenAIDesigner:
         said = scrub(message, self.key)
         tail = f": {said}" if said else ""
         wait = _retry_after(exc.headers)
+        if 300 <= exc.code < 400:
+            return ProviderError(
+                BAD_REQUEST,
+                f"OpenAI's address answered with a redirect (HTTP {exc.code}): not followed, "
+                "so the key goes nowhere else. Something stands between this PC and "
+                f"{OPENAI_HOST} (a proxy, a sign-in page of the network)",
+            )
         if exc.code in (401, 403):
             return ProviderError(
                 AUTH,
@@ -413,16 +454,17 @@ class OpenAIDesigner:
         deadline = self.clock() + self.timeout_s
         size = 0
         while True:
-            line = r.readline(MAX_STREAM_BYTES + 1)
+            line = r.readline(MAX_LINE_BYTES + 1)
             if not line:
                 raise ProviderError(
                     CUT_OFF, "OpenAI's answer broke off before it was complete"
                 )
             size += len(line)
-            if size > MAX_STREAM_BYTES:
+            if len(line) > MAX_LINE_BYTES or size > MAX_STREAM_BYTES:
                 raise ProviderError(
                     TOO_LARGE,
-                    f"the answer is over {MAX_STREAM_BYTES} bytes: not read further",
+                    f"the answer's stream is over {MAX_LINE_BYTES:,} bytes in one event or "
+                    f"{MAX_STREAM_BYTES:,} in all: not read further",
                 )
             if self.clock() > deadline:
                 raise ProviderError(TIMEOUT, "OpenAI did not finish in time")
@@ -430,7 +472,7 @@ class OpenAIDesigner:
                 continue
             try:
                 event = json.loads(line[5:].decode("utf-8", "replace"))
-            except ValueError:
+            except (ValueError, RecursionError):  # not an event: nested too deep is one
                 continue
             if not isinstance(event, dict):
                 continue
@@ -453,7 +495,15 @@ class OpenAIDesigner:
                 return found
 
     def _reply(self, response: Mapping[str, Any]) -> Reply:
-        raw = response.get("usage") or {}
+        raw = response.get("usage")
+        # The reference lets usage be null. Zeros would then read as "free": say unmeasured.
+        measured = (
+            isinstance(raw, dict)
+            and type(raw.get("input_tokens")) is int
+            and type(raw.get("output_tokens")) is int
+        )
+        if not isinstance(raw, dict):
+            raw = {}
         in_details = raw.get("input_tokens_details") or {}
         out_details = raw.get("output_tokens_details") or {}
         cached = int(in_details.get("cached_tokens") or 0)
@@ -486,19 +536,21 @@ class OpenAIDesigner:
                 REFUSAL,
                 scrub("the model declined: " + " ".join(refusal), self.key),
                 reasoning,
+                measured,
             )
         if status == "completed":
-            return Reply("".join(text), used, END, "", reasoning)
+            return Reply("".join(text), used, END, "", reasoning, measured)
         if status == "incomplete":
             reason = (response.get("incomplete_details") or {}).get("reason")
             if reason == "max_output_tokens":
-                return Reply("".join(text), used, MAX_TOKENS, "", reasoning)
+                return Reply("".join(text), used, MAX_TOKENS, "", reasoning, measured)
             return Reply(
                 "",
                 used,
                 REFUSAL,
                 scrub(f"the answer was stopped ({reason or 'no reason given'})"),
                 reasoning,
+                measured,
             )
         err = response.get("error") or {}
         code = str(err.get("code") or "")
@@ -519,4 +571,5 @@ class OpenAIDesigner:
             REFUSAL,
             scrub(f"the request was declined ({code}): {said}"),
             reasoning,
+            measured,
         )

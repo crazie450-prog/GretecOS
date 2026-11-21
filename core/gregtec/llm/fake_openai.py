@@ -7,7 +7,9 @@ server-sent events ending in ``response.completed``, ``response.incomplete`` or
 ``output_text`` or ``refusal`` parts, ``incomplete_details``, ``error``, ``usage`` with
 ``input_tokens_details.cached_tokens`` and ``output_tokens_details.reasoning_tokens``); or an
 HTTP error with ``{"error": {"message", "type", "code"}}`` and, when asked, a ``Retry-After``
-header; or a stream that stops half way; or one that never starts (a timeout).
+header; or a stream that stops half way; or one that never starts (a timeout); or a last
+event whose ``usage`` is null; or a redirect (``location``); and the text one event for every
+few characters, as a real stream sends it (``per_event``).
 
 The policy decides each answer from the request body (:class:`Answer`). Every request body and
 its headers are kept (``requests``, ``headers``), so a test can check what was sent: the model,
@@ -45,6 +47,14 @@ class Answer:
     cut_after: int | None = None  # close the stream after this many events
     stream_error: tuple[str, str] | None = None  # an `error` event (code, message)
     delay_s: float = 0.0  # wait this long before answering
+    usage: bool = (
+        True  # False: the last event's usage is null (the reference allows it)
+    )
+    per_event: int = (
+        0  # characters of text in one delta event (0: the text in four pieces)
+    )
+    location: str | None = None  # with http 3xx: where the redirect points
+    lines: tuple[str, ...] = ()  # raw ``data:`` lines sent before the last event
 
 
 Policy = Callable[[dict[str, Any]], Answer]
@@ -65,6 +75,17 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        """Nothing is served by GET. A client that followed a redirect arrives as one: what it
+        carried is kept, so a test can see that no key came along."""
+        api = self.server.api
+        with api.lock:
+            api.requests.append({})
+            api.headers.append({k.lower(): v for k, v in self.headers.items()})
+        self._json(
+            404, {"error": {"message": "no such route", "type": "x", "code": None}}, {}
+        )
 
     def do_POST(self) -> None:
         size = int(self.headers.get("content-length") or 0)
@@ -106,6 +127,8 @@ class _Handler(BaseHTTPRequestHandler):
                 extra = (
                     {"Retry-After": answer.retry_after} if answer.retry_after else {}
                 )
+                if answer.location:
+                    extra["Location"] = answer.location
                 self._json(
                     answer.http,
                     {
@@ -121,7 +144,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("content-type", "text/event-stream")
             self.end_headers()  # no length: the stream ends when the connection closes
-            for n, event in enumerate(api.events(answer, str(body.get("model", "")))):
+            events = api.events(answer, str(body.get("model", "")))
+            for n, event in enumerate(events):
+                if n == len(events) - 1:
+                    for raw_line in answer.lines:
+                        self.wfile.write(f"data: {raw_line}\n\n".encode())
                 if answer.cut_after is not None and n >= answer.cut_after:
                     break
                 self.wfile.write(
@@ -207,7 +234,9 @@ class FakeResponsesAPI:
             ),
             "incomplete_details": {"reason": answer.reason} if answer.reason else None,
             "output": output,
-            "usage": {
+            "usage": None
+            if not answer.usage
+            else {
                 "input_tokens": answer.input_tokens,
                 "input_tokens_details": {
                     "cached_tokens": answer.cached_tokens,
@@ -230,7 +259,7 @@ class FakeResponsesAPI:
         if answer.stream_error is not None:
             code, message = answer.stream_error
             return [*events, {"type": "error", "code": code, "message": message}]
-        step = max(1, len(answer.text) // 4)
+        step = answer.per_event or max(1, len(answer.text) // 4)
         for i in range(0, len(answer.text), step):
             events.append(
                 {

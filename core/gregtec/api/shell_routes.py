@@ -28,7 +28,7 @@ report is written nothing here names a model, a provider, a cost, a token count 
 | GET  /api/shells/bakeoff/{run}/view?case=&letter=&which= | admin, client, device | one blind entry's 3D viewer data (``which``: design or revise) |
 | GET  /api/shells/bakeoff/{run}/compare?case=&a=&b=&which= | admin, client, device | two blind entries of a case side by side |
 | POST /api/shells/bakeoff/{run}/rate          | admin, device         | ``{"case", "pick"}``: a letter, ``tie`` or ``bad``; refused once the models are named |
-| POST /api/shells/bakeoff/{run}/report        | admin, device         | ``{"reveal"?: bool}``: write the report and name the models (refused while cases are unrated, unless ``reveal``) |
+| POST /api/shells/bakeoff/{run}/report        | admin, device         | ``{}``: write the report and name the models; refused while cases are unrated (giving up blind rating is ``gos shell bakeoff report RUN --reveal``, at the CLI only, D377: ``{"reveal": true}`` is refused) |
 
 The shell card is data (plan 7.14 rule 1); the Build view draws it. Nothing here writes a world or
 a ``.schematic``: ``gos shell export`` is Clayton's (it reads the Lab world's registry, D318).
@@ -257,6 +257,7 @@ def viewed(home: Path, build: str) -> dict[str, Any]:
 
 def _bakeoff(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     from gregtec.build import palette, shell
+    from gregtec.build import shell_bakeoff as bo
 
     try:
         return fn()
@@ -268,6 +269,8 @@ def _bakeoff(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
             or "is not a bake-off run id" in text
             else 409
             if "ratings are closed" in text or "still running" in text
+            else 503  # a file held open by another program: said, never a 500
+            if bo.BUSY in text
             else 400
         )
         raise HTTPException(status, text) from None
@@ -439,10 +442,18 @@ def add_routes(
         body = await json_body(request)
         reveal = body.get("reveal", False)
         if set(body) - {"reveal"} or not isinstance(reveal, bool):
-            raise HTTPException(400, "send reveal (true or false), or nothing")
+            raise HTTPException(400, "send nothing (or reveal: false)")
+        if (
+            reveal
+        ):  # D377: giving up blind rating is his own typed command, never a request
+            raise HTTPException(
+                400,
+                "naming the models before every case is rated is done at the command line "
+                f"only: gos shell bakeoff report {run} --reveal",
+            )
 
         def write() -> dict[str, Any]:
-            bo.report(home(), run, reveal_unrated=reveal)
+            bo.report(home(), run)
             return bakeoff_run(home(), run)
 
         return await asyncio.to_thread(_bakeoff, write)

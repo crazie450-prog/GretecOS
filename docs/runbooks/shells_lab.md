@@ -14,7 +14,7 @@ What is left is the real model, your own catalog, and the paste. About 30 minute
 ## A. Before you start
 
 1. WO-10.3's catalog is built (runbook `palette_export.md`) and `gos theme check` passes (runbook `themes.md`).
-2. A saved plan for the line to house, e.g. from the Designer (`uv run gos plan list` shows its id, `pl-...`).
+2. A saved plan for the line to house, e.g. from the Designer (`uv run gos tool plan_list` lists the saved plans with their ids, `pl-...`).
 3. `[paths] lab_world` names the Lab world in `gos.toml` (or pass `--world`), and worldedit-gtnh v0.0.10 is installed in the Lab (runbook `schematic_roundtrip.md`).
 
 ## B. A procedural shell, no AI (the fallback)
