@@ -89,7 +89,7 @@ A bake-off building can't be exported. To put a building into the Lab, use one o
 
 One run asks each model for 6 buildings and 6 changes: 12 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included.
 
-With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $13 and $33; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
+With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $14 and $35; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
 
 ### F. Store the two keys (once)
 
