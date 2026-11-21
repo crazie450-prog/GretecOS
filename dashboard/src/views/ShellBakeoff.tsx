@@ -18,6 +18,9 @@ import { ShellScene3D } from "./ShellWorkbench";
 
 const message = (e: unknown): string => (e instanceof ApiError ? e.message : String(e));
 
+/** A run is started, finished and deleted at the CLI while this view is open: look again. */
+export const REFRESH_MS = 5_000;
+
 export const TIE = "tie";
 export const BAD = "bad";
 
@@ -107,16 +110,22 @@ export function ShellBakeoff() {
 
   useEffect(() => {
     let live = true;
-    api.bakeoffRuns().then(
-      (r) => {
-        if (!live) return;
-        setRuns(r.runs);
-        setId((prev) => prev ?? r.runs[0]?.id ?? null);
-      },
-      () => live && setRuns([]),
-    );
+    const load = (): void => {
+      api.bakeoffRuns().then(
+        (r) => {
+          if (!live) return;
+          setRuns(r.runs);
+          // keep the run he is looking at; a deleted one gives way to the newest, or to nothing
+          setId((prev) => (prev && r.runs.some((x) => x.id === prev) ? prev : (r.runs[0]?.id ?? null)));
+        },
+        () => live && setRuns((prev) => prev ?? []), // a failed look keeps what is shown
+      );
+    };
+    load();
+    const timer = window.setInterval(load, REFRESH_MS);
     return () => {
       live = false;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -139,6 +148,23 @@ export function ShellBakeoff() {
       live = false;
     };
   }, [id, took]);
+
+  // a run still going fills in as its answers arrive, and ends: follow it until it has
+  const running = run?.status === "running";
+  useEffect(() => {
+    if (!id || !running) return;
+    let live = true;
+    const timer = window.setInterval(() => {
+      api.bakeoffRun(id).then(
+        (r) => live && took(r),
+        () => undefined, // the next look tries again
+      );
+    }, REFRESH_MS);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [id, running, took]);
 
   const current = useMemo(() => run?.cases.find((c) => c.id === caseId) ?? null, [run, caseId]);
   const left = run ? leftToRate(run) : [];

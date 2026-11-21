@@ -2,10 +2,10 @@
 // shown blind (letters, the workbench's own 3D viewer and materials table), the first design
 // and the version after the follow-up, his pick per case, and the report (the models named) only
 // after every case is rated. No model name, cost or time is on the page before that.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BakeoffView, ShellScene } from "../src/api/types";
-import { BAD, ShellBakeoff, TIE, leftToRate, pickText, shownLetters } from "../src/views/ShellBakeoff";
+import { BAD, REFRESH_MS, ShellBakeoff, TIE, leftToRate, pickText, shownLetters } from "../src/views/ShellBakeoff";
 
 const RUN = "bo-20261120-210000-ab12";
 const build = (n: string) => ({ build: `sh-${n.repeat(12)}`, blocks: 700 + n.charCodeAt(0), types: 5, status: "accepted" as const });
@@ -137,8 +137,15 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+/** The panel's next look at the core (it looks again every REFRESH_MS). */
+const nextLook = () =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+  });
 
 describe("the bake-off's words", () => {
   it("says a pick plainly", () => {
@@ -233,6 +240,70 @@ describe("ShellBakeoff", () => {
     expect(screen.getByTestId("bakeoff-blind").textContent).toContain("named");
     expect(screen.queryByTestId("bakeoff-reveal")).toBeNull();
     expect((screen.getByTestId("bakeoff-pick-B") as HTMLButtonElement).disabled).toBe(true); // ratings are closed
+  });
+
+  // The runs are made, finished and deleted at the CLI while the Build view stays open
+  // (the runbook's steps 9, 10 and 20): the panel has to follow without a reload.
+  it("shows a run made while the view is open, without a reload", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    runs = [];
+    render(<ShellBakeoff />);
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/shells/bakeoff")).toBe(true));
+    expect(screen.queryByTestId("bakeoff")).toBeNull();
+    runs = [{ id: RUN }]; // `gos shell bakeoff run` in PowerShell
+    await nextLook();
+    expect(await screen.findByTestId("bakeoff")).toBeTruthy();
+    expect((await screen.findByTestId("bakeoff-status")).getAttribute("data-run")).toBe(RUN);
+    expect(await screen.findByTestId("bakeoff3d-A-view")).toBeTruthy();
+    expect(REFRESH_MS).toBeLessThanOrEqual(5000);
+  });
+
+  it("follows a run that is still going until it has ended", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const done = view();
+    run = { ...done, status: "running", rateable: 1, cases: [done.cases[0], { ...done.cases[1], entries: done.cases[1].entries.map((e) => ({ ...e, asked: false, design: null, revise: null })) }] };
+    render(<ShellBakeoff />);
+    expect((await screen.findByTestId("bakeoff-status")).textContent).toContain("running");
+    fireEvent.click(screen.getByTestId("bakeoff-case-marble-small"));
+    expect(screen.getByTestId("bakeoff-entry-text-B").textContent).toContain("no design");
+    expect((screen.getByTestId("bakeoff-reveal") as HTMLButtonElement).disabled).toBe(true);
+    run = done; // the run ended at the CLI
+    await nextLook();
+    await waitFor(() => expect(screen.getByTestId("bakeoff-status").textContent).toContain("done"));
+    expect(screen.getByTestId("bakeoff-status").textContent).not.toContain("running");
+    expect(screen.getByTestId("bakeoff-case").getAttribute("data-case")).toBe("marble-small"); // he stays where he was
+    expect(await screen.findByTestId("bakeoff3d-B-view")).toBeTruthy();
+    const asked = calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length;
+    await nextLook();
+    expect(calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length).toBe(asked); // an ended run is not asked for again
+  });
+
+  it("lists a second run when it is made, and lets go of a deleted one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ShellBakeoff />);
+    await screen.findByTestId("bakeoff-case");
+    expect(screen.queryByTestId("bakeoff-run-pick")).toBeNull(); // one run: nothing to choose
+    const second = "bo-20261121-193000-cd34";
+    runs = [{ id: second }, { id: RUN }];
+    await nextLook();
+    const pick = (await screen.findByTestId("bakeoff-run-pick")) as HTMLSelectElement;
+    expect([...pick.options].map((o) => o.value)).toEqual([second, RUN]);
+    expect(pick.value).toBe(RUN); // the run he is looking at stays
+    expect(screen.getByTestId("bakeoff-status").getAttribute("data-run")).toBe(RUN);
+    runs = []; // `gos shell bakeoff delete`
+    await nextLook();
+    await waitFor(() => expect(screen.queryByTestId("bakeoff")).toBeNull());
+  });
+
+  it("keeps what it shows when one look at the core fails", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ShellBakeoff />);
+    await screen.findByTestId("bakeoff-case");
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "the core is restarting" }), { status: 503 }));
+    await nextLook();
+    expect(screen.getByTestId("bakeoff-case")).toBeTruthy();
+    vi.stubGlobal("fetch", real);
   });
 
   it("says what the core refuses", async () => {
