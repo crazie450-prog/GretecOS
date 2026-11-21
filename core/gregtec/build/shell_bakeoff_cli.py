@@ -11,8 +11,9 @@ D374-D377; :mod:`gregtec.build.shell_bakeoff`).
   ask, what it can cost and which hosts it contacts, and waits for ``yes`` (``--yes`` skips the
   question, never the caps). Fake models need no key and cost nothing. Real ones need their
   key in the keyring (``gos key set anthropic`` / ``gos key set openai``), are refused while the
-  AI is off (No-AI mode) or when the run could pass today's ``[budget] day_max_usd``, and stop
-  at the run's cap with what they have. Ctrl+C stops cleanly too.
+  AI is off (No-AI mode) or once today's spend has reached ``[budget] day_max_usd``, get no
+  higher a cap than that day cap still leaves (said before the question), and stop at the
+  run's cap with what they have. Ctrl+C stops cleanly too.
 - ``gos shell bakeoff list`` and ``gos shell bakeoff show RUN``: the runs; one run as the rater
   sees it (letters, never names).
 - ``gos shell bakeoff rate RUN [CASE PICK]``: your pick for one case (a letter, ``tie`` or
@@ -29,6 +30,7 @@ Exit 0 done, 1 refused, stopped or not run, 2 bad input or setup. Nothing here w
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -225,7 +227,7 @@ def _entry(e: dict[str, Any]) -> str:
 
 
 def _show(view: dict[str, Any], out: TextIO) -> int:
-    print(_run_line(view), file=out)
+    print(_run_line({**view, "cases": len(view["cases"])}), file=out)
     for c in view["cases"]:
         print(
             f"{c['id']} ({c['theme']}, {c['line']} line, max {c['max_blocks']} blocks)",
@@ -317,27 +319,30 @@ def _designers(models: Any, out: TextIO) -> dict[str, Any] | None:  # noqa: ANN4
     return out_map
 
 
-def _held(cfg: Any, store: Any, meter: Any, amount: float) -> str | None:  # noqa: ANN401
-    """Why a paid run may not start now: the AI is off (D48's pause, his switch), or today's
-    spend plus the most this run can spend would pass the day cap (D334)."""
+def _held(cfg: Any, store: Any, meter: Any) -> tuple[str | None, float]:  # noqa: ANN401
+    """Why a paid run may not start now, and what the day cap (D334) still leaves in whole
+    cents: the AI is off (D48's pause, his switch), or today's spend has reached the day cap.
+    A run never gets more than what is left (:func:`_run` lowers its cap to that), so a run
+    after an earlier one the same day starts, and the day cap still holds."""
     from gregtec.agents.no_ai import AiMode, CreditWatch
     from gregtec.ops.costs import CostWatch
 
     mode = AiMode(store)
     CreditWatch(meter, mode).check()
+    day = CostWatch.of(store, cfg).caps()["day"]
+    left = math.floor((day["cap_usd"] - day["spent_usd"]) * 100 + 1e-6) / 100
     if reasons := mode.reasons():
         return (
             f"the AI is off ({', '.join(reasons)}): nothing is spent. The fake models "
             "still run"
-        )
-    day = CostWatch.of(store, cfg).caps()["day"]
-    if day["spent_usd"] + amount > day["cap_usd"]:
+        ), left
+    if left <= 0:
         return (
-            f"today's spend ${day['spent_usd']:.2f} plus this run's ${amount:.2f} would pass "
-            f"the day cap ${day['cap_usd']:.2f} ([budget] day_max_usd): lower --cap-usd, or "
-            "run it another day"
-        )
-    return None
+            f"today's spend ${day['spent_usd']:.2f} has reached the day cap "
+            f"${day['cap_usd']:.2f} ([budget] day_max_usd): nothing is spent. Run it another "
+            "day, or raise day_max_usd in gos.toml"
+        ), left
+    return None, left
 
 
 def _run(
@@ -383,22 +388,31 @@ def _run(
     try:
         vault = VaultIO(home / "vault")
         prepared = bo.prepare(conn, home, vault, cases, plans)
-        est = bo.estimate(prepared, models, cap_usd, cap_tokens)
-        for line in est.lines:
-            print(line, file=out)
         real = [m for m in models if not m.fake]
+        priced = any(m.price is not None for m in real)
         meter = None
-        amount = 0.0
+        why, lowered = None, ""
         if real:
             store = Store(db)
             meter = UsageMeter(
                 store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
             )
-            priced = any(m.price is not None for m in real)
-            amount = min(est.worst_usd, cap_usd) if priced else 0.0
-            if why := _held(cfg, store, meter, amount):
-                print(f"Not run: {why}.", file=out)
-                return 1
+            why, left = _held(cfg, store, meter)
+            if why is None and priced and left < cap_usd:
+                lowered = (
+                    f"Today's limit ([budget] day_max_usd) leaves ${left:.2f}: this run's cap "
+                    f"is lowered from ${cap_usd:.2f} to that, so the day's limit holds too."
+                )
+                cap_usd = left
+        est = bo.estimate(prepared, models, cap_usd, cap_tokens)
+        for line in est.lines:
+            print(line, file=out)
+        if why:
+            print(f"Not run: {why}.", file=out)
+            return 1
+        if lowered:
+            print(lowered, file=out)
+        amount = min(est.worst_usd, cap_usd) if priced else 0.0
         designers = _designers(models, out)
         if designers is None:
             return 1

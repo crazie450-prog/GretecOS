@@ -39,7 +39,7 @@ import keyring.backend
 import keyring.errors
 import pytest
 
-from gregtec import cli
+from gregtec import cli, config
 from gregtec.build import (
     shell,
     shell_bakeoff_cli,
@@ -59,6 +59,7 @@ from gregtec.llm.fake import ScriptedClient, Turn
 from gregtec.llm.fake_openai import Answer, FakeResponsesAPI
 from gregtec.llm.prices import OPUS, PRICES, Price, Usage
 from gregtec.llm.usage import UsageMeter
+from gregtec.ops.costs import CostWatch
 from gregtec.store import Store
 from gregtec.vault.io import VaultIO
 
@@ -261,6 +262,38 @@ def test_the_schema_is_one_both_vendors_strict_modes_take() -> None:
     assert set(op["properties"]) == set().union(*shell._KEYS.values())
 
 
+def _unions(node: Any) -> int:  # noqa: ANN401 - any JSON
+    """Properties with a union type, as Anthropic counts them: anyOf, or a list of types."""
+    if isinstance(node, list):
+        return sum(_unions(v) for v in node)
+    if not isinstance(node, dict):
+        return 0
+    here = sum(
+        1
+        for prop in node.get("properties", {}).values()
+        if "anyOf" in prop or isinstance(prop.get("type"), list)
+    )
+    return here + sum(_unions(v) for v in node.values())
+
+
+def test_the_schema_stays_inside_the_documented_complexity_limits() -> None:
+    """Anthropic's structured outputs ("Schema complexity limits", read 2026-11-21) refuse a
+    request (HTTP 400) with more than 16 union-typed or 24 optional properties: that would stop
+    the Claude model of a paid run at its first call, and no fake would show it."""
+    schema = shell_brief.SCHEMA
+    assert shell_brief.MAX_UNIONS == 16
+    assert _unions({"properties": {"root": schema}}) <= shell_brief.MAX_UNIONS
+    for obj in _objects(schema):
+        assert set(obj["properties"]) - set(obj["required"]) == set()  # none optional
+    # the counter sees both spellings of a union, so it can't pass by being blind
+    assert _unions({"properties": {"a": {"type": ["string", "null"]}}}) == 1
+    assert _unions({"properties": {"a": {"anyOf": [{"type": "null"}]}}}) == 1
+    op = schema["properties"]["ops"]["items"]["properties"]
+    for key in shell_brief.TEXT_KEYS:  # "" is their "not used", so they need no null
+        assert op[key] == {"type": "string"}
+    assert '"" and every other key to null' in shell_brief.system_prompt()
+
+
 def test_the_tool_and_the_seam_describe_the_same_vocabulary() -> None:
     from gregtec.agents.tools import shells
 
@@ -274,6 +307,24 @@ def test_parse_reads_an_answer_as_data_only() -> None:
         '{"ops": [{"op": "walls", "role": "wall", "y": [0, 4], "inset": null}]}'
     )
     assert ops == [{"op": "walls", "role": "wall", "y": [0, 4]}]  # nulls dropped
+    # an answer in the schema's own shape: every key there, "" or null where it isn't used
+    unused = {
+        k: None for k in shell_brief.SCHEMA["properties"]["ops"]["items"]["required"]
+    }
+    unused |= dict.fromkeys(shell_brief.TEXT_KEYS, "")
+    full = {**unused, "op": "roof", "role": "roof", "n": 0, "style": "flat"}
+    assert shell_brief.parse(json.dumps({"ops": [full]})) == [
+        {
+            "op": "roof",
+            "role": "roof",
+            "n": 0,
+            "style": "flat",
+        }  # 0 is a value, "" is not
+    ]
+    # only the role and block keys read "" as "not used": elsewhere the gate still sees it
+    assert shell_brief.parse('{"ops": [{"op": "roof", "style": ""}]}') == [
+        {"op": "roof", "style": ""}
+    ]
     for bad, why in [
         ("Sure! Here it is: {}", "not JSON"),
         ("", "not JSON"),
@@ -1045,7 +1096,9 @@ def test_the_usd_cap_stops_the_run_mid_way_with_what_it_has(
         rows = store.rows("SELECT lane, model, usd, task FROM llm_usage")
     finally:
         store.close()
-    assert run["status"] == bo.CAP and "could take the run past $2.00" in run["why"]
+    assert run["status"] == bo.CAP and run["why"] == bo.CAP_WHY
+    assert "(zebra, up to $" in run["why_named"]  # the report's, never a blind view's
+    assert "could take the run past $2.00" in run["why_named"]
     assert 0 < run["spent"]["usd"] <= 2.0  # never over
     assert 1 <= len(model.seen) < 6  # stopped mid-run, before a call
     assert len(model.seen) == run["spent"]["calls"]
@@ -1069,6 +1122,9 @@ def test_the_usd_cap_stops_the_run_mid_way_with_what_it_has(
         bo.rate(home, run["id"], c, bo.TIE)
     text = bo.report(home, run["id"]).text
     assert "did not finish" in text and bo.CAP in text
+    assert (
+        "(zebra, up to $" in text
+    )  # once the models are named, so is the one it stopped at
 
 
 def test_an_unpriced_model_is_capped_by_tokens_and_its_cost_is_unknown(
@@ -1090,9 +1146,8 @@ def test_an_unpriced_model_is_capped_by_tokens_and_its_cost_is_unknown(
         rows = store.rows("SELECT usd, task FROM llm_usage")
     finally:
         store.close()
-    assert (
-        run["status"] == bo.CAP and "unpriced models past 50,000 tokens" in run["why"]
-    )
+    assert run["status"] == bo.CAP and run["why"] == bo.CAP_WHY
+    assert "(mystery) could take the unpriced models past 50,000" in run["why_named"]
     assert run["spent"]["usd"] == 0.0 and 0 < run["spent"]["unpriced_tokens"] <= 50_000
     assert all(r["usd"] == 0 and r["task"].endswith(":unpriced") for r in rows)
     step = run["results"][0]["design"]
@@ -1140,7 +1195,7 @@ def test_a_call_that_broke_off_is_held_against_the_cap(
     # with a cap the broken tries use up, the run stops before the retry that could pass it
     model = Scripted([cut, cut, cut])
     run = ran(conn, home, [ZEBRA], {"zebra": model}, cap_usd=2.0, sleep=slept.append)
-    assert run["status"] == bo.CAP and "could take the run past $2.00" in run["why"]
+    assert run["status"] == bo.CAP and "past $2.00" in run["why_named"]
     assert len(model.seen) == 2  # the third try was never sent
     assert run["spent"]["usd"] == 0.0 and run["unmeasured"]["calls"] == 2
     assert run["spent"]["usd"] + run["unmeasured"]["usd"] <= 2.0
@@ -1311,6 +1366,54 @@ def test_nothing_blind_names_a_model(conn: sqlite3.Connection, home: Path) -> No
         bo.scene(conn, home, run["id"], "c1", "A", "export")
     with pytest.raises(bo.BakeoffError):
         bo.entry_home(home, run["id"], "../../x", "A")
+
+
+@pytest.mark.parametrize(
+    ("models", "caps"),
+    [
+        (
+            [ZEBRA, QUOKKA],
+            {"cap_usd": 2.6},
+        ),  # the dollar cap, at the dearer model's call
+        (
+            [MYSTERY, QUOKKA],
+            {"cap_tokens": 60_000},
+        ),  # the token cap, at the unpriced one's
+    ],
+)
+def test_a_run_stopped_at_the_cap_stays_blind(
+    conn: sqlite3.Connection,
+    home: Path,
+    models: list[bo.ModelSpec],
+    caps: dict[str, Any],
+) -> None:
+    """The cap stops the run before one model's call, in a case the other has answered: the
+    reason every blind view shows must not say whose call it was (nor its price, nor that it
+    has none), or the letters of a case still to be rated are given away."""
+    usage = Usage(input=5_000, output=7_000)
+    designers = {m.label: Scripted(usage=usage) for m in models}
+    run = ran(conn, home, models, designers, cases3(), seed=3, **caps)
+    assert run["status"] == bo.CAP and run["why"] == bo.CAP_WHY
+    assert bo.unrated(run)  # there is still something to rate blind
+    stopped_at = next(m.label for m in models if f"({m.label}" in run["why_named"])
+    assert (
+        len(designers[stopped_at].seen) < 6
+    )  # it really stopped before that model's call
+    view = bo.blind(run)
+    assert view["why"] == bo.CAP_WHY
+    shown = json.dumps(view) + json.dumps(bo.runs(home))
+    for word in secrets_of(run):
+        assert word not in shown, word
+    assert "$" not in shown
+    out = io.StringIO()
+    assert shell_bakeoff_cli._show(view, out) == 0
+    for word in secrets_of(run):
+        assert word not in out.getvalue(), word
+    with pytest.raises(bo.BakeoffError, match="not rated yet"):
+        bo.report(home, run["id"])  # and the named reason stays shut until he has rated
+    for c in bo.rateable(run):
+        bo.rate(home, run["id"], c, bo.TIE)
+    assert f"({stopped_at}" in bo.report(home, run["id"]).text
 
 
 # --- rating, the report, deleting -------------------------------------------------------------
@@ -1637,6 +1740,13 @@ def test_gos_shell_bakeoff_with_the_fake_models_start_to_end(
     )  # the progress is blind
     code, text = gos(toml, "show", rid)
     assert code == 0 and "your pick: not rated" in text and "fake-" not in text
+    # its first line is the run in one line, as `list` prints it: never the raw data
+    assert text.splitlines()[0] == (
+        f"{rid}\tdone\t2 cases x 2 models\trated 0 of 2\tblind"
+    )
+    assert (
+        "{" not in text and gos(toml, "list")[1].splitlines() == text.splitlines()[:1]
+    )
     code, text = gos(toml, "report", rid)
     assert code == 2 and "not rated yet" in text
     code, text = gos(toml, "rate", rid, "foundry-small", "A")
@@ -1748,16 +1858,68 @@ def test_no_ai_mode_refuses_real_models_and_still_runs_the_fakes(
     assert code == 0 and len(bo.runs(home)) == 1
 
 
-def test_a_paid_run_that_could_pass_the_day_cap_is_refused(
+def test_a_paid_run_gets_no_more_than_the_day_cap_leaves(
+    home: Path, tmp_path: Path, ring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runbook's two steps on one day: a one-case run, then the full one. The second is
+    not refused for the first one's spend: its cap is lowered to what the day cap leaves."""
+    ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
+    # the run cap and the day cap alike, as the defaults are ($10 and $10)
+    toml = toml_for(home, tmp_path, GOOD_TOML + "\n[budget]\nday_max_usd = 4.5\n")
+
+    def policy(body: dict[str, Any]) -> Answer:
+        return Answer(text=good(body["input"]), input_tokens=5_000, output_tokens=8_000)
+
+    with FakeResponsesAPI(policy, key=OPENAI_KEY) as api:
+        monkeypatch.setattr(llm, "OPENAI_URL", api.url)
+        argv = ["run", "pl-steel", "--models", "astra", "--yes"]
+        code, text = gos(toml, *argv, "--limit", "1")
+        assert code == 0, text
+        assert "Hard cap for this run: $4.50" in text and "lowered" not in text
+        assert "2 calls, $0.90." in text  # two calls at (5,000 x 10 + 8,000 x 50) / 1e6
+        code, text = gos(toml, *argv, "--limit", "2")  # the same day, no --cap-usd
+        assert "Not run" not in text
+        assert (
+            "Today's limit ([budget] day_max_usd) leaves $3.60: this run's cap is lowered "
+            "from $4.50 to that"
+        ) in text
+        assert "Hard cap for this run: $3.60" in text
+        second = bo.load(home, bo.runs(home)[0]["id"])
+        assert second["caps"]["usd"] == 3.6 and second["status"] == bo.DONE
+        assert code == 0 and "4 calls, $1.80." in text
+        # a third run asks for more than is left: it gets what is left, and the day cap holds
+        code, text = gos(toml, *argv, "--limit", "2", "--cap-usd", "9")
+        assert "is lowered from $9.00 to that" in text and "leaves $1.80" in text
+        third = bo.load(home, bo.runs(home)[0]["id"])
+        assert third["id"] != second["id"] and third["caps"]["usd"] == 1.8
+        assert third["spent"]["usd"] <= 1.8
+        store = Store(access.db_path(home))
+        try:
+            today = CostWatch.of(store, config.load(toml)).caps()["day"]
+        finally:
+            store.close()
+        assert 2.7 <= today["spent_usd"] <= 4.5
+    assert OPENAI_KEY not in text
+
+
+def test_a_paid_run_is_refused_once_the_day_cap_is_reached(
     home: Path, tmp_path: Path, ring: MemoryKeyring
 ) -> None:
     ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
     toml = toml_for(home, tmp_path, GOOD_TOML + "\n[budget]\nday_max_usd = 3.0\n")
+    store = Store(access.db_path(home))
+    try:
+        UsageMeter(store, 100.0, (80, 100)).record("fast", OPUS, Usage(0, 0), usd=3.0)
+        spent = CostWatch.of(store, config.load(toml)).caps()["day"]["spent_usd"]
+    finally:
+        store.close()
+    assert spent >= 3.0
     code, text = gos(
         toml, "run", "pl-steel", "--models", "astra", "--limit", "1", "--yes"
     )
-    assert code == 1 and "would pass the day cap $3.00" in text
-    assert "lower --cap-usd" in text and bo.runs(home) == []
+    assert code == 1 and "has reached the day cap $3.00" in text
+    assert "nothing is spent" in text and "raise day_max_usd" in text
+    assert bo.runs(home) == []
 
 
 def test_gos_has_the_commands() -> None:

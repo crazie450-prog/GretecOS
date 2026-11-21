@@ -676,6 +676,7 @@ def create(
         "finished": None,
         "status": RUNNING,
         "why": "",
+        "why_named": "",
         "seed": seed,
         "plans": {k: list(v) for k, v in plans.items()},
         "repair_rounds": REPAIR_ROUNDS,
@@ -713,11 +714,20 @@ def create(
 # --- running ---------------------------------------------------------------------------------
 
 
+# Why a run stopped at a cap, as the blind views say it: no model, no amount, not which cap.
+CAP_WHY = "the next call could have taken the run past its cap"
+
+
 class _Stop(Exception):
-    def __init__(self, status: str, why: str) -> None:
+    """The run ends here. ``why`` is shown while the run is still blind, so it never says which
+    model was next or anything that tells the models apart (a price, priced or not); ``named``
+    is the same with the model in it, kept for the report."""
+
+    def __init__(self, status: str, why: str, named: str = "") -> None:
         super().__init__(why)
         self.status = status
         self.why = why
+        self.named = named
 
 
 @dataclass
@@ -850,6 +860,7 @@ class Runner:
             if used + tokens > caps["tokens"]:
                 raise _Stop(
                     CAP,
+                    CAP_WHY,
                     f"the next call ({model.label}) could take the unpriced models past "
                     f"{caps['tokens']:,} tokens ({used:,} used)",
                 )
@@ -858,6 +869,7 @@ class Runner:
         if used_usd + usd > caps["usd"]:
             raise _Stop(
                 CAP,
+                CAP_WHY,
                 f"the next call ({model.label}, up to ${usd:.2f}) could take the run past "
                 f"${caps['usd']:.2f} (${used_usd:.2f} spent)",
             )
@@ -1094,16 +1106,17 @@ class Runner:
         """Every case x model, in the run's order. Stops cleanly at a cap, on ``cancel`` or
         Ctrl+C: what is finished stays, the step in hand is dropped, the run says why."""
         by_id = {p.case.id: p for p in prepared}
-        status, why = DONE, ""
+        status, why, named = DONE, "", ""
         try:
             for case in self.run["cases"]:
                 for letter, label in sorted(case["letters"].items()):
                     self._one(case, by_id[case["id"]], label, letter)
         except _Stop as stop:
-            status, why = stop.status, stop.why
+            status, why, named = stop.status, stop.why, stop.named
         except KeyboardInterrupt:
             status, why = CANCELLED, "cancelled (Ctrl+C)"
         self.run["status"], self.run["why"] = status, why
+        self.run["why_named"] = named  # the report's: never in a blind view
         self.run["finished"] = round(time.time(), 3)
         _save(self.home, self.run)
         return self.run
@@ -1444,7 +1457,8 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
     notes = [f"Order: {ORDER}.", FEW]
     if run["status"] != DONE:
         notes.append(
-            f"The run did not finish ({run['status']}: {run['why']}): a partial result."
+            f"The run did not finish ({run['status']}: "
+            f"{run.get('why_named') or run['why']}): a partial result."
         )
     if run["reveal_unrated"]:
         notes.append("The models were revealed before every case was rated.")

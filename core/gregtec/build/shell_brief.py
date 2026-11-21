@@ -60,10 +60,18 @@ def _opt(*kinds: Mapping[str, Any]) -> dict[str, Any]:
 
 
 _CELL = {"type": "array", "items": _INT}
-_ROLE = {"type": "string"}
+_TEXT = {"type": "string"}
+# The keys that name a palette role or a block: plain strings, "" when an operation doesn't use
+# them (:func:`parse` drops it). They are not nullable because Anthropic's structured outputs
+# take at most MAX_UNIONS properties with a union type (anyOf or a type array) in one request and
+# answer 400 above that ("Schema complexity limits", read 2026-11-21); "" is never a role or a
+# block, so nothing is lost.
+TEXT_KEYS = ("role", "block", "edge", "parapet_role")
+MAX_UNIONS = 16
 # One flat operation object: every key is listed and required, the ones an operation doesn't use
-# are null (both vendors' strict JSON schemas want every property required and no extra ones,
-# and neither takes numeric ranges, so the gate, not the schema, checks the values).
+# are null, or "" for TEXT_KEYS (both vendors' strict JSON schemas want every property required
+# and no extra ones, and neither takes numeric ranges, so the gate, not the schema, checks the
+# values).
 SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -73,8 +81,8 @@ SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "op": {"type": "string", "enum": list(shell.OPS)},
-                    "role": _opt(_ROLE),
-                    "block": _opt({"type": "string"}),
+                    "role": _TEXT,
+                    "block": _TEXT,
                     "n": _opt(_INT),
                     "y": _opt(_INT, _CELL),
                     "inset": _opt(_INT),
@@ -88,10 +96,10 @@ SCHEMA: dict[str, Any] = {
                     ),
                     "style": _opt({"type": "string", "enum": ["flat", "gable"]}),
                     "pitch": _opt(_INT),
-                    "edge": _opt(_ROLE),
+                    "edge": _TEXT,
                     "edge_n": _opt(_INT),
                     "parapet": _opt(_INT),
-                    "parapet_role": _opt(_ROLE),
+                    "parapet_role": _TEXT,
                     "parapet_n": _opt(_INT),
                     "lo": _opt(_CELL),
                     "hi": _opt(_CELL),
@@ -140,8 +148,9 @@ def system_prompt() -> str:
         "building operations, and code turns them into blocks and checks them.\n\n"
         'Answer with one JSON object, {"ops": [...]}, and nothing else. "ops" is '
         + OPERATIONS
-        + " In your JSON every operation carries every key: set the keys it does not use to "
-        "null. y is one height or [y0, y1].\n\n"
+        + " In your JSON every operation carries every key. For the keys it does not use: set "
+        'role, block, edge and parapet_role to "" and every other key to null. y is one height '
+        "or [y0, y1].\n\n"
         "The code checks every design. It refuses one that names a role or block the palette "
         "does not have (the palette holds plain blocks only: nothing with an inventory or a "
         "screen, no machine block), has more than max_blocks blocks, or has none. It removes "
@@ -340,8 +349,9 @@ def repair_brief(brief: str, answer: str, why: str) -> str:
 
 def parse(text: str) -> list[dict[str, Any]]:
     """The operations of a model's answer, as data: one JSON object ``{"ops": [...]}`` of at most
-    :data:`MAX_REPLY_CHARS` characters. Null keys are dropped (the schema's "not used"). Nothing
-    else is read from the answer, and what comes back still has to pass the gate."""
+    :data:`MAX_REPLY_CHARS` characters. Null keys are dropped, and "" for :data:`TEXT_KEYS` (the
+    schema's "not used"). Nothing else is read from the answer, and what comes back still has to
+    pass the gate."""
     if len(text) > MAX_REPLY_CHARS:
         raise BriefError(
             f"the answer is {len(text)} characters, more than the {MAX_REPLY_CHARS} a design "
@@ -361,5 +371,11 @@ def parse(text: str) -> list[dict[str, Any]]:
     for o in data["ops"]:
         if not isinstance(o, dict):
             raise BriefError("every operation is an object")
-        ops.append({str(k): v for k, v in o.items() if v is not None})
+        ops.append(
+            {
+                str(k): v
+                for k, v in o.items()
+                if v is not None and not (v == "" and k in TEXT_KEYS)
+            }
+        )
     return ops
