@@ -7,7 +7,7 @@
 // bake-off shell is never one of his own designs.
 // Built to the design system from the workbench's parts, no board yet: needs Clayton's board
 // approval (D92, D158 (5)).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { BakeoffCase, BakeoffEntry, BakeoffSummary, BakeoffView, BakeoffWhich, ShellCompare } from "../api/types";
 import { Card } from "../cards/Card";
@@ -150,14 +150,19 @@ export function ShellBakeoff() {
     };
   }, [id, took]);
 
-  // a run still going fills in as its answers arrive, and ends: follow it until it has
+  // A run still going fills in as its answers arrive, and ends. A finished one is still rated,
+  // closed and reported at the command line while this view is open: follow a run until its
+  // report is written (after that nothing about it changes).
   const running = run?.status === "running";
+  const unreported = run !== null && !run.revealed;
+  const acted = useRef(0); // his own picks and report: a look that started before one is stale
   useEffect(() => {
-    if (!id || !running) return;
+    if (!id || !unreported) return;
     let live = true;
     const timer = window.setInterval(() => {
+      const before = acted.current;
       api.bakeoffRun(id).then(
-        (r) => live && took(r),
+        (r) => live && before === acted.current && took(r),
         () => undefined, // the next look tries again
       );
     }, REFRESH_MS);
@@ -165,7 +170,7 @@ export function ShellBakeoff() {
       live = false;
       window.clearInterval(timer);
     };
-  }, [id, running, took]);
+  }, [id, unreported, took]);
 
   const current = useMemo(() => run?.cases.find((c) => c.id === caseId) ?? null, [run, caseId]);
   const left = run ? leftToRate(run) : [];
@@ -177,6 +182,7 @@ export function ShellBakeoff() {
     api.bakeoffRate(run.id, current.id, pick).then(
       (r) => {
         setBusy(false);
+        acted.current += 1;
         took({ run: r.run, report });
         setNotice(null);
       },
@@ -193,6 +199,7 @@ export function ShellBakeoff() {
     api.bakeoffReport(run.id).then(
       (r) => {
         setBusy(false);
+        acted.current += 1;
         took(r);
       },
       (e: unknown) => {

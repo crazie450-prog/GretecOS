@@ -1,6 +1,6 @@
 # The shell designer bake-off (WO-10.11)
 
-You asked for it on 2026-11-20: "I do think a bakeoff so to speak would be a good idea so i can also test out the framework of the building generator app". A bake-off gives the same building requests to several AI models, checks every answer with GOS's own gate, and lets you pick the better building without knowing which model drew it. Decisions: D374-D377.
+You asked for it on 2026-11-20: "I do think a bakeoff so to speak would be a good idea so i can also test out the framework of the building generator app". A bake-off gives the same building requests to several AI models, checks every answer with GOS's own gate, and lets you pick the better building without knowing which model drew it. Decisions: D374-D378.
 
 There are two walk-throughs here. **Part 1 is free** (fake models, no key, nothing leaves the PC) and doubles as your hands-on tour of the building tool. **Part 2 is paid**: real models from Anthropic and OpenAI, your money, your yes.
 
@@ -55,9 +55,9 @@ The fake models are small programs inside GOS that answer like a model would. `f
 11. Click **After the follow-up** to see each building after the change that was asked; click **The first design** to go back. Turn the buildings and use the layer sliders as in step 7. The table under them compares the blocks of the first two.
 12. Pick: **A is better**, **B is better** (and so on for each letter), **Tie**, or **None is good**. Then click the next request's name at the top and pick again, until it says "every case is rated".
 13. Click **Name the models and show the report**. The table now says which model was which, how often its answer passed the gate on the first try, how many repair rounds it needed, the blocks, the cost (free here) and your picks. After this the picks can't be changed for this run.
-14. The same report as a file: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`.
+14. The same report as a file: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`. Its second table has one line per request and letter; the last column, **why refused**, says why the gate sent an answer back. For `fake-sloppy` it reads `design try 1: ...` with the reason, although the repair round then fixed it.
 
-Prefer the keyboard? `& $gos shell bakeoff show <run>` shows a run, `& $gos shell bakeoff rate <run>` asks for each pick in turn, `& $gos shell bakeoff report <run>` prints the report.
+Prefer the keyboard? `& $gos shell bakeoff show <run>` shows a run, `& $gos shell bakeoff rate <run>` asks for each pick in turn, `& $gos shell bakeoff report <run>` prints the report. You can mix the two: a pick or a report made at the keyboard shows in the open panel within a few seconds, without a reload.
 
 ### C. From a design to the Lab (your own shell, not a bake-off one)
 
@@ -115,19 +115,20 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
     label = "opus"             # your short name for it
     provider = "anthropic"
     model = "claude-opus-5-5"  # GOS knows this one's price already
+    effort = "high"            # how hard it thinks: the same word for both models
 
     [[bakeoff.models]]
     label = "astra"
     provider = "openai"
     model = "gpt-6-astra"
-    effort = "high"            # optional: how hard it thinks
+    effort = "high"
     input_usd = 10.00          # price per million tokens, from OpenAI's pricing page
     output_usd = 50.00
     cached_input_usd = 1.00
     ```
     - **The model id and the prices are yours to check on the day.** OpenAI: the id is on `https://developers.openai.com/api/docs/models` ("Model ID"), the prices on `https://developers.openai.com/api/docs/pricing` (Standard, "Input", "Output", "Cached input", per 1M tokens). Anthropic: `https://platform.claude.com/docs/en/about-claude/pricing`. On 2026-11-20 and again on 2026-11-21 OpenAI's pages listed `gpt-6-astra` at $10 in / $50 out / $1 cached and `gpt-5.6-sol` at $4 / $20 / $0.40 (a promotional price until 2026-11-30). The same page listed newer models too, for one `gpt-6.2-astra` at $8 / $40 / $0.40: the example uses `gpt-6-astra` only because that is the model the claim you were sent was about. Compare whichever you like; a second `[[bakeoff.models]]` block with another `label` adds one.
     - Leave the three price lines out and GOS shows that model's cost as **unknown** and limits it by tokens instead of dollars (`cap_tokens`, 1,000,000 by default). GOS never guesses a price. The run then asks "Type yes to spend an unknown amount" (or "up to $... plus an unknown amount for" that model) instead of one dollar figure, and that model's money is **not counted in your day limit or the credit alerts**, because GOS can't count money it has no price for: the token limit is all that holds it, and the vendor's bill tells you what it cost. Putting the prices in is the safer choice.
-    - `effort` is optional (`low`, `medium`, `high`, `xhigh`, `max`). Left out, each model uses its own default, which is not the same for every model; set it the same for both if you want that held equal.
+    - `effort` is optional. Left out, each model uses its own default, and those differ (on 2026-11-21 Anthropic's page gave `medium` for Claude Opus 5.5 and `high` for most of its other models), so the example sets `high` for both to compare like with like. Take the line out of both blocks if you would rather compare each model as it comes. The words each vendor's page lists: Anthropic `low`, `medium`, `high`, `xhigh`, `max`; OpenAI the same five plus `none` and `minimal`. GOS refuses any other word when it reads the file. Not every model takes every word (OpenAI's page says GPT-6 Astra does not take `none`): a word the model does not take comes back as "refused the request (HTTP 400)" on the first request, and the run stops there with nothing spent on the other model (see "If something is off").
 24. Check that GOS reads it and sees both keys:
     ```powershell
     & $gos shell bakeoff models
@@ -146,9 +147,11 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
     & $gos shell bakeoff run <plan-id> --models opus,astra
     ```
     It takes a few minutes per model. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
-    If you already spent something today (step 25 did), it may print "Today's limit ([budget] day_max_usd) leaves $9.55: this run's cap is lowered from $10.00 to that". That is fine: the run can never take the day over your day limit, and the six requests likely cost far less. Type `yes` as before.
-    If the connection drops in the middle of an answer, GOS tries that answer again (at most twice). The vendor may still charge for the broken one, and GOS can't see how much, so it counts each at the most it could have cost against the cap and tells you at the end ("... call(s) broke off after they were sent"). Your bill on the vendor's site is the last word.
-27. If it says **Not run**, the line says why: a key is missing (it names the `gos key set` command), the AI is switched off or paused for credits (No-AI mode; the fake models still run), or today's spend has already reached your day limit (`[budget] day_max_usd` in `gos.toml`, $10 unless you changed it): run it another day, or raise that number, save, and run the command again.
+    If you already spent something today (step 25 did), it prints "Today's limit ([budget] day_max_usd) leaves $9.55: this run's cap is lowered from $10.00 to that" just above the "Hard cap for this run" line. That is fine: the run can never take the day over your day limit, and the six requests likely cost far less. Type `yes` as before.
+    If the connection drops in the middle of an answer, GOS tries that answer again (at most twice). The vendor may still charge for the broken one, and GOS can't see how much, so it counts each at the most it could have cost against the cap and tells you at the end ("... call(s) broke off after they were sent ... or came back without their token count"). The same goes for an answer that arrives without its token count. Your bill on the vendor's site is the last word.
+    **If one model can't be asked at all** (its key is refused, its model id is wrong, the account is out of credit), the run stops at that request instead of paying for the other model's remaining requests with nothing to compare them with. The last line then says "stopped (a model could not be asked at all ...)". It does not say which model, so that what was already made can still be rated blind; "If something is off" below has the steps.
+    You can leave the dashboard open while it runs. The panel reading the run never gets in the run's way, and if some other program does hold the run's file for a while (a virus scanner, an editor), the run keeps its record in a second file beside it (`run.unsaved.json`) and everything reads it from there: nothing you paid for is lost.
+27. If it says **Not run**, the line says why: a key is missing (it names the `gos key set` command), the AI is switched off or paused for credits (No-AI mode; the fake models still run), today's spend has already reached your day limit (`[budget] day_max_usd` in `gos.toml`, $10 unless you changed it), or the cap is less than one answer can cost ("this run's cap $0.40 is less than one answer can cost (up to $0.95 ...)": no run is made and nothing is spent). For the last two: run it another day, or raise the number it names, save, and run the command again. A cap of `nan`, `inf`, 0 or less is refused the same way, with nothing spent.
 
 ### I. Rate it blind, then read the report
 
@@ -160,7 +163,8 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
 - **picked**: how often you chose that model's building. This is the only number about looks.
 - **first try / passed**: how many of its answers the gate accepted at once, and in the end. **repair rounds**: how many times, on average, GOS had to send an answer back. A model that needs many is slower and dearer, and may fail on a bigger building.
 - **asked / kept**: for the follow-up, whether it changed what was asked and left the rest alone (checked by code, for simple requests only).
-- **cost / seconds / tokens**: what the answers took. A cost of "unknown" means you gave no price. If the report has a line about calls that "broke off", the vendor may have charged a little more than the cost column says (that line gives the most it can be).
+- **cost / seconds / tokens**: what the answers took. A cost of "unknown" means you gave no price. If the report has a line about calls that "broke off" or "came back without their token count", the vendor may have charged a little more than the cost column says (that line gives the most it can be).
+- **why refused** (the second table): for each request and letter, why the gate sent an answer back, try by try (`design try 1: ...`, `follow-up try 2: ...`). An answer that passed after a repair round still shows why its first try failed.
 - **Six requests is a first look, not proof.** If one model is ahead 4 to 2, that can be chance; 6 to 0 with clearly better buildings is worth believing. To be surer, run it again another day (each run shuffles the letters anew) or with other plans, and see whether the same model wins.
 - The bake-off only compares. Which model draws your real shells does not change: that stays the architect in `[models]` (Anthropic) until you decide otherwise (checklist 5.11.17).
 
@@ -169,14 +173,32 @@ Your usual cost page counts these runs too (**Costs** view, lane `bakeoff`).
 ## If something is off
 
 - `no bake-off model 'x'`: the label isn't in `gos.toml`; `& $gos shell bakeoff models` lists what is.
-- `OpenAI refused the key (HTTP 401)`: store it again (step 22). `out of credit or at a spend limit`: add credit on OpenAI's site or raise its limit there.
-- `OpenAI refused the request (HTTP 400 or 404)` with a note about the model: the id in `gos.toml` is wrong, or your account can't use that model; check OpenAI's models page.
-- A model shows "no design" for every request: its answers never passed the gate. The report's last column says why (for example a block that isn't in the palette, or too many blocks).
-- A run still says `running` although nothing is running (the window was closed or the PC restarted): it can't be rated; delete it (`& $gos shell bakeoff delete <run>`) and run again.
+- **The run ends with "stopped (a model could not be asked at all (a refused key, a wrong model id or no credit), so nothing more was spent on the others)"**. One model's very first request was refused in a way that can't work on a second try, so the run stopped before it spent more. Which model, and why, is in the report:
+  1. If the panel shows buildings for the first request and you want to keep this run's picks blind, rate that request first (step 28), then:
+     ```powershell
+     & $gos shell bakeoff report <run>
+     ```
+  2. If you don't care about this run (the usual case), name the models at once:
+     ```powershell
+     & $gos shell bakeoff report <run> --reveal
+     ```
+  3. Read the line "The run did not finish (stopped: ...)". It names the model and what the vendor said. `refused the key (HTTP 401)`: store that vendor's key again (`& $gos key set anthropic` or `& $gos key set openai`, step 22). `out of credit or at a spend limit`: add credit on that vendor's site or raise its limit there. `refused the request (HTTP 400 or 404)` with a note about the model: the `model` id in `gos.toml` is wrong, your account can't use that model, or the `effort` word is one that model doesn't take; check the vendor's models page and step 23. `answered with a redirect`: something between this PC and OpenAI sent the request elsewhere (a hotel or guest network's sign-in page, a proxy); GOS never follows it, so the key went nowhere. Try on your normal connection.
+  4. Fix that, then start a new run (step 25). The stopped run can be removed with `& $gos shell bakeoff delete <run>`.
+- A model shows "no design" for some requests: its answers never passed the gate. The report's **why refused** column says why (for example a block that isn't in the palette, or too many blocks).
+- **A run still says `running` although nothing is running** (the window was closed or the PC restarted). What it finished is kept and can be rated once the run is closed:
+  1. Make sure no PowerShell window is still running it. Wait until 15 minutes have passed since it last did anything (GOS refuses earlier, because a run that is still going saves a sign of life before every request).
+  2. Close it (it says what it does and waits for `yes`; nothing is deleted):
+     ```powershell
+     & $gos shell bakeoff close <run>
+     ```
+  3. Rate it and read the report as in steps 28-29. The report says "cancelled".
+  If step 2 says "was last heard from ... minute(s) ago: it may be going in another window", it is still running somewhere, or it stopped less than 15 minutes ago: stop it there with Ctrl+C, or wait and run step 2 again.
+- `... can't be saved right now: another program has one of its files open` (after a pick, a report or a delete): Windows would not let GOS replace the run's file because another program had it open (a virus scanner, an editor showing `run.json`). Nothing was changed. Close that program if you know which, and do the same thing again a moment later. `is not all removed yet` after a delete means the same: run the delete again.
+- **The run's own last lines say "The run's record could not be saved"**: the disk is full or the folder can't be written. What was saved before is still there; free some space, then follow the "still says `running`" steps above.
 - `case ... can't be set up`: the plan isn't saved, or the theme isn't in your vault (`& $gos theme list`).
 
 ## Where things are
 
-- A run: `%USERPROFILE%\GregtecOS\data\bakeoff\<run>\` (its buildings and `run.json`).
+- A run: `%USERPROFILE%\GregtecOS\data\bakeoff\<run>\` (its buildings and `run.json`; `run.unsaved.json` beside it only while another program was holding `run.json`).
 - Reports: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`.
 - The six requests: `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own).

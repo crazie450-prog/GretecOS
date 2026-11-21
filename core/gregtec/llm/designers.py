@@ -83,7 +83,8 @@ AUTH, QUOTA, RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF, BAD_REQUEST, TOO_LARGE = (
     "too_large",
 )
 RETRYABLE = frozenset({RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF})
-# After one of these the same model is not asked again in the run: the next call would fail too.
+# One of these can't succeed on another try, now or at the next request: the bake-off stops its
+# run there (D378).
 STOPS_MODEL = frozenset({AUTH, QUOTA, BAD_REQUEST})
 # A call that failed one of these ways had been sent and may have been answering: the vendor may
 # bill what it had made, and no usage came back to count (ProviderError.maybe_billed).

@@ -276,9 +276,60 @@ describe("ShellBakeoff", () => {
     expect(screen.getByTestId("bakeoff-case").getAttribute("data-case")).toBe("marble-small"); // he stays where he was
     expect(await screen.findByTestId("bakeoff3d-B-view")).toBeTruthy();
     expect(screen.getByTestId("bakeoff-entry-text-A").textContent).toContain("no design (the gate refused"); // asked, none came
-    const asked = calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length;
+  });
+
+  // He rates in the panel or at the command line, and may write the report there
+  // (`gos shell bakeoff rate`, `report`): the panel has to show it without a reload, or the
+  // button stays disabled and a pick gets "ratings are closed".
+  it("picks up a pick and a report made at the command line, then stops asking", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ShellBakeoff />);
+    await screen.findByTestId("bakeoff-case");
+    expect(screen.getByTestId("bakeoff-status").textContent).toContain("done");
+    expect((screen.getByTestId("bakeoff-reveal") as HTMLButtonElement).disabled).toBe(true);
+    const looks = () => calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length;
+    // `gos shell bakeoff rate` in PowerShell: both cases
+    run = { ...run, rated: 2, cases: run.cases.map((c, n) => ({ ...c, pick: n === 0 ? "A" : BAD })) };
     await nextLook();
-    expect(calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length).toBe(asked); // an ended run is not asked for again
+    await waitFor(() => expect(screen.getByTestId("bakeoff-left").textContent).toContain("every case is rated"));
+    expect(screen.getByTestId("bakeoff-case-foundry-small").getAttribute("data-pick")).toBe("A");
+    expect(screen.getByTestId("bakeoff-pick-text").textContent).toContain("A is better");
+    expect((screen.getByTestId("bakeoff-reveal") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("bakeoff-case").getAttribute("data-case")).toBe("foundry-small"); // he stays where he was
+    // `gos shell bakeoff report`: the models are named there, so here too
+    run = { ...run, revealed: true };
+    report = REPORT;
+    await nextLook();
+    expect((await screen.findByTestId("bakeoff-report")).textContent).toContain("gpt-6-astra");
+    expect(screen.queryByTestId("bakeoff-reveal")).toBeNull();
+    expect((screen.getByTestId("bakeoff-pick-B") as HTMLButtonElement).disabled).toBe(true); // ratings are closed, and it shows
+    const asked = looks();
+    await nextLook();
+    await nextLook();
+    expect(looks()).toBe(asked); // a reported run changes no more: it is not asked for again
+  });
+
+  it("does not let a look that started before his pick undo it on the page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ShellBakeoff />);
+    await screen.findByTestId("bakeoff-case");
+    const real = globalThis.fetch;
+    let release: (() => void) | null = null;
+    const stale = JSON.stringify({ run, report: null }); // the run as it was before the pick
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
+      if ((init.method ?? "GET") === "GET" && url === `/api/shells/bakeoff/${RUN}` && release === null) {
+        await new Promise<void>((done) => (release = done));
+        return new Response(stale, { status: 200 });
+      }
+      return real(url, init);
+    });
+    await nextLook(); // the look goes out, and is slow
+    await waitFor(() => expect(release).not.toBeNull());
+    fireEvent.click(screen.getByTestId("bakeoff-pick-A"));
+    await waitFor(() => expect(screen.getByTestId("bakeoff-pick-text").textContent).toContain("A is better"));
+    await act(async () => release!()); // the slow look comes back with the run as it was
+    expect(screen.getByTestId("bakeoff-pick-text").textContent).toContain("A is better");
+    vi.stubGlobal("fetch", real);
   });
 
   it("lists a second run when it is made, and lets go of a deleted one", async () => {

@@ -413,7 +413,7 @@ export interface ShellJobResult {
 export interface BakeoffSummary {
   id: string;
   created: number;
-  status: string; // done, running, stopped at the cap, cancelled
+  status: string; // done, running, stopped at the cap, stopped, cancelled
   why: string;
   cases: number;
   models: number;

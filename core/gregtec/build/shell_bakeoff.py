@@ -1,5 +1,5 @@
 """The shell designer bake-off: the same briefs to several models, through the same gate, rated
-blind (WO-10.11, plan 7.10 "Shell designer", D374-D377).
+blind (WO-10.11, plan 7.10 "Shell designer", D374-D378).
 
 Clayton, 2026-11-20: "I do think a bakeoff so to speak would be a good idea so i can also test
 out the framework of the building generator app".
@@ -35,7 +35,9 @@ models, tokens for the ones without a price in ``gos.toml``), and every real cal
 ``llm_usage`` (lane ``bakeoff``), so it counts towards the cycle and the day. A call that broke
 off after it was sent (a timeout, a cut-off answer) reports no usage, yet the vendor may bill
 it: each is counted against the cap at the most it can have cost (``run["unmeasured"]``), and
-the report says how many there were.
+the report says how many there were. An answer that came without its token count is counted
+the same way. A model that can't be asked at all (a refused key, a wrong model id, no credit)
+stops the run before more is spent on the others (D378).
 
 **Run.json on Windows.** The dashboard reads a run while the runner replaces its ``run.json``,
 and Windows refuses a replace while another program has the target open (D356's table). So a
