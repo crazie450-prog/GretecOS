@@ -548,7 +548,9 @@ def estimate(
             unpriced.append(m.label)
             lines.append(
                 f"{who}: no price in gos.toml, so its cost is unknown; capped by tokens "
-                f"instead (at most {cap_tokens:,} for the run's unpriced models together)"
+                f"instead (at most {cap_tokens:,} for the run's unpriced models together). "
+                "GOS can't count its money, so today's limit and the credit alerts don't "
+                "see it: the vendor's bill says what it cost"
             )
             continue
         p = m.price
@@ -571,14 +573,17 @@ def estimate(
             + ". Sent: the briefs (the request words, the theme, the palette's block names "
             "and the layout's boxes). No key, file or world leaves this PC otherwise."
         )
-        lines.append(
-            f"Hard cap for this run: ${cap_usd:.2f}"
-            + (
+        if any(m.price is not None for m in models if not m.fake):
+            cap = f"${cap_usd:.2f}" + (
                 f" and {cap_tokens:,} tokens for the unpriced models"
                 if unpriced
                 else ""
             )
-            + ". It stops before a call that could pass it, with what it has so far."
+        else:  # a dollar cap would bound nothing here: it is never shown as if it did
+            cap = f"{cap_tokens:,} tokens (no dollar cap: no model in it has a price)"
+        lines.append(
+            f"Hard cap for this run: {cap}. It stops before a call that could pass it, "
+            "with what it has so far."
         )
     else:
         lines.append("Contacts: nothing. Fake models only: free.")

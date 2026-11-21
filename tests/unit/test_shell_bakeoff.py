@@ -1837,6 +1837,63 @@ def test_a_paid_run_states_the_estimate_waits_for_yes_and_meters(
             assert OPENAI_KEY not in path.read_text(encoding="utf-8", errors="replace")
 
 
+def test_the_yes_question_never_puts_a_dollar_figure_on_a_model_without_a_price(
+    home: Path, tmp_path: Path, ring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sentence he answers yes to is the only gate on an unpriced model's money (its calls
+    are stored as $0, so the day cap and the alerts never see it): it says "unknown" and the
+    token cap, never "$0.00", and a mixed run's dollar figure is not passed off as the whole."""
+    ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
+    toml = toml_for(home, tmp_path)
+    limit = "no price, limited to 500,000 tokens, not to a dollar amount"
+
+    def policy(body: dict[str, Any]) -> Answer:
+        return Answer(text=good(body["input"]), input_tokens=2000, output_tokens=400)
+
+    with FakeResponsesAPI(policy, key=OPENAI_KEY) as api:
+        monkeypatch.setattr(llm, "OPENAI_URL", api.url)
+        # only a model with no price lines in gos.toml
+        argv = ["run", "pl-steel", "--models", "mystery", "--limit", "1"]
+        code, text = gos(toml, *argv, typed="no\n")
+        assert code == 1 and "Not run." in text and api.requests == []
+        *estimate, question = text.splitlines()
+        assert question == (
+            f"Type yes to spend an unknown amount (mystery: {limit}): Not run."
+        )
+        # no dollar figure anywhere for this run: not $0.00, and not a cap that bounds nothing
+        assert "$" not in text and "up to" not in question
+        assert estimate[-1].startswith(
+            "Hard cap for this run: 500,000 tokens (no dollar cap: no model in it has a "
+            "price). It stops before"
+        )
+        assert "today's limit and the credit alerts don't see it" in text
+        # a priced and an unpriced model: the dollars are the priced one's, and it says so
+        argv = ["run", "pl-steel", "--models", "mystery,astra", "--limit", "1"]
+        code, text = gos(toml, *argv, typed="no\n")
+        assert code == 1 and api.requests == []
+        assert (
+            f"Type yes to spend up to $4.50, plus an unknown amount for mystery ({limit}): "
+        ) in text
+        # --cap-tokens is the number in the question, and yes runs it
+        code, text = gos(toml, *argv, "--cap-tokens", "300000", typed="yes\n")
+        assert code == 0, text
+        assert (
+            "Type yes to spend up to $4.50, plus an unknown amount for mystery (no price, "
+            "limited to 300,000 tokens, not to a dollar amount): "
+        ) in text
+        assert len(api.requests) == 4  # a design and a follow-up from each
+    (run,) = bo.runs(home)
+    spent = bo.load(home, run["id"])["spent"]
+    assert (
+        spent["unpriced_tokens"] == 2 * 2400 and f"{2 * 2400:,} unpriced tokens" in text
+    )
+    # a run of priced models keeps the plain question
+    assert (
+        shell_bakeoff_cli._question(3.0, (), 500_000)
+        == "Type yes to spend up to $3.00: "
+    )
+
+
 def test_no_ai_mode_refuses_real_models_and_still_runs_the_fakes(
     home: Path, tmp_path: Path, ring: MemoryKeyring
 ) -> None:

@@ -32,7 +32,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -345,6 +345,22 @@ def _held(cfg: Any, store: Any, meter: Any) -> tuple[str | None, float]:  # noqa
     return None, left
 
 
+def _question(amount: float | None, unpriced: Sequence[str], cap_tokens: int) -> str:
+    """The sentence he answers yes to. ``amount`` is the most the priced models can cost (None
+    when no model in the run has a price); a model without a price is never given a dollar
+    figure, not even $0.00: its money is unknown and only the token cap bounds it."""
+    if not unpriced:
+        return f"Type yes to spend up to ${amount:.2f}: "
+    limit = f"no price, limited to {cap_tokens:,} tokens, not to a dollar amount"
+    who = ", ".join(unpriced)
+    if amount is None:
+        return f"Type yes to spend an unknown amount ({who}: {limit}): "
+    return (
+        f"Type yes to spend up to ${amount:.2f}, plus an unknown amount for {who} "
+        f"({limit}): "
+    )
+
+
 def _run(
     cfg: Any,  # noqa: ANN401 - Config
     settings: Any,  # noqa: ANN401 - Settings
@@ -412,13 +428,16 @@ def _run(
             return 1
         if lowered:
             print(lowered, file=out)
-        amount = min(est.worst_usd, cap_usd) if priced else 0.0
+        amount = min(est.worst_usd, cap_usd) if priced else None
         designers = _designers(models, out)
         if designers is None:
             return 1
         if real and not args.yes:
             print(
-                f"Type yes to spend up to ${amount:.2f}: ", end="", file=out, flush=True
+                _question(amount, est.unpriced, cap_tokens),
+                end="",
+                file=out,
+                flush=True,
             )
             if answer_in().strip().casefold() != "yes":
                 print("Not run.", file=out)
