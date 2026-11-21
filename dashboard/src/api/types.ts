@@ -409,6 +409,50 @@ export interface ShellJobResult {
   refused?: string[];
 }
 
+// The shell bake-off (WO-10.11, D374-D377), blind: letters, never a model's name, cost or time.
+export interface BakeoffSummary {
+  id: string;
+  created: number;
+  status: string; // done, running, stopped at the cap, cancelled
+  why: string;
+  cases: number;
+  models: number;
+  rateable: number;
+  rated: number;
+  revealed: boolean;
+}
+
+export interface BakeoffBuild {
+  build: string;
+  blocks: number;
+  types: number;
+  status: "accepted" | "repaired";
+}
+
+export interface BakeoffEntry {
+  letter: string;
+  asked: boolean;
+  design: BakeoffBuild | null;
+  revise: BakeoffBuild | null;
+}
+
+export interface BakeoffCase {
+  id: string;
+  line: string;
+  theme: string;
+  max_blocks: number;
+  brief: string;
+  followup: string;
+  entries: BakeoffEntry[];
+  pick: string | null; // a letter, "tie" or "bad"
+}
+
+export interface BakeoffView extends Omit<BakeoffSummary, "cases"> {
+  cases: BakeoffCase[];
+}
+
+export type BakeoffWhich = "design" | "revise";
+
 // GET /api/shells (WO-10.7, D316): the saved decorative shells, newest first.
 export interface ShellSummary {
   id: string;

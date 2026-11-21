@@ -39,6 +39,8 @@ fixtures', so the Power view designs, ranks and accepts real (made-up) power lin
 (tests/unit/test_shell.py: the made-up block catalog, the structure fixture, the steel line and
 its power plan) and one shell made before the workbench, so the workbench designs, revises, compares and undoes real
 (made-up) shells; ``design_delay`` slows its jobs' stages too.
+It also holds two finished bake-off runs with the fake models (WO-10.11, :func:`bake_off`), for
+shell_bakeoff.spec.ts.
 
 ``--tailnet <name>:<port>`` (WO-9.3): that Host is allowed too, as the phone's tailnet name is
 in ``[core] allowed_hosts``; ``e2e/fake_serve.py`` stands in for Tailscale Serve in front of it.
@@ -353,8 +355,36 @@ def setup_shells(root: Path) -> Path:
         conn.close()
     if made.saved is None:
         raise RuntimeError(f"the e2e shell was refused: {made.outcome.reasons}")
+    bake_off(home)
     shutil.rmtree(home / "vault")  # main deploys it, as for every core
     return home
+
+
+def bake_off(home: Path) -> None:
+    """Two finished bake-off runs with the fake models (WO-10.11), one for each screen size
+    shell_bakeoff.spec.ts rates (rating then naming the models closes a run): two cases, the
+    plain and the ornate fake, kept under ``data/bakeoff`` apart from the workbench's shells."""
+    from gregtec.build import shell_bakeoff as bo
+    from gregtec.build import shell_fakes
+    from gregtec.db import access
+    from gregtec.vault.io import VaultIO
+
+    plans = {"small": ["pl-steel"], "large": ["pl-steel", "pl-power"]}
+    models = [bo.FAKES[shell_fakes.PLAIN], bo.FAKES[shell_fakes.ORNATE]]
+    vault = VaultIO(home / "vault")
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:
+        prepared = bo.prepare(conn, home, vault, bo.load_cases()[:2], plans)
+        for seed in (1, 2):
+            run = bo.create(
+                home, prepared, models, plans, seed=seed, now=1_794_000_000 + seed
+            )
+            designers = {m.label: shell_fakes.FakeDesigner(m.model) for m in models}
+            done = bo.Runner(conn, home, vault, run, designers).execute(prepared)
+            if done["status"] != bo.DONE or len(bo.rateable(done)) != 2:
+                raise RuntimeError(f"the e2e bake-off did not finish: {done['status']}")
+    finally:
+        conn.close()
 
 
 def _load_fakes() -> object:

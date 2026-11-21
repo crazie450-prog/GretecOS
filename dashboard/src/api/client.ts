@@ -25,6 +25,9 @@ import type {
   BuildGuide,
   GuideEntry,
   GuideQuery,
+  BakeoffSummary,
+  BakeoffView,
+  BakeoffWhich,
   ShellSummary,
   ShellCompare,
   ShellDesign,
@@ -141,6 +144,21 @@ export const api = {
   shellCompare: (a: string, b: string) =>
     get<ShellCompare>(`/api/shells/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
   shellScene: (build: string) => get<ShellScene>(`/api/shells/${encodeURIComponent(build)}/view`),
+  // The shell bake-off (WO-10.11, D374-D377): blind runs to look at and rate; started only from the CLI.
+  bakeoffRuns: () => get<{ runs: BakeoffSummary[] }>("/api/shells/bakeoff"),
+  bakeoffRun: (run: string) => get<{ run: BakeoffView; report: Card | null }>(`/api/shells/bakeoff/${encodeURIComponent(run)}`),
+  bakeoffScene: (run: string, caseId: string, letter: string, which: BakeoffWhich) =>
+    get<ShellScene>(
+      `/api/shells/bakeoff/${encodeURIComponent(run)}/view?case=${encodeURIComponent(caseId)}&letter=${encodeURIComponent(letter)}&which=${which}`,
+    ),
+  bakeoffCompare: (run: string, caseId: string, a: string, b: string, which: BakeoffWhich) =>
+    get<ShellCompare>(
+      `/api/shells/bakeoff/${encodeURIComponent(run)}/compare?case=${encodeURIComponent(caseId)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&which=${which}`,
+    ),
+  bakeoffRate: (run: string, caseId: string, pick: string) =>
+    post<{ run: BakeoffView }>(`/api/shells/bakeoff/${encodeURIComponent(run)}/rate`, { case: caseId, pick }),
+  bakeoffReport: (run: string) =>
+    post<{ run: BakeoffView; report: Card | null }>(`/api/shells/bakeoff/${encodeURIComponent(run)}/report`, {}),
   answers: () => get<Answer[]>("/api/answers"),
   deepTasks: () => get<DeepTask[]>("/api/deep/tasks"),
   ask: (text: string, shell?: string) => post<Reply>("/api/ask", shell ? { text, shell } : { text }),

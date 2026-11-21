@@ -25,6 +25,8 @@ Iterating (WO-10.10, D367): every saved design starts a **design** whose version
 - ``gos shell undo [DESIGN]`` and ``gos shell current DESIGN BUILD``: make the previous version, or
   any version, current again.
 - ``gos shell compare BUILD BUILD``: two versions' materials and block counts side by side.
+- ``gos shell bakeoff ...``: the same briefs to several models through the gate, rated blind
+  (WO-10.11; :mod:`gregtec.build.shell_bakeoff_cli`). Its shells are kept apart from these.
 
 ``--palette FILE`` holds extra swatches, one ``<role> <registry name>@<meta>`` a line (a
 prompt-only shell needs its wall and roof there).
@@ -39,7 +41,14 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from gregtec import config, doctor
-from gregtec.build import palette, schematic, shell, shell_store, worldreg
+from gregtec.build import (
+    palette,
+    schematic,
+    shell,
+    shell_bakeoff_cli,
+    shell_store,
+    worldreg,
+)
 from gregtec.build import themes as theme_lib
 from gregtec.db import access
 from gregtec.db import ores as ore_db
@@ -112,6 +121,7 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     e.add_argument("--over", choices=("split", "addblocks"), default="split")
     e.add_argument("--out", type=Path, default=None, help="the .schematic to write")
+    shell_bakeoff_cli.add_parsers(sub)  # gos shell bakeoff ... (WO-10.11)
     for each in (d, sub.choices["list"], s, e, v, r, u, c, k):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
@@ -131,6 +141,8 @@ def extra_swatches(text: str) -> list[tuple[str, str]]:
 
 
 def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
+    if args.shell_command == shell_bakeoff_cli.COMMAND:
+        return shell_bakeoff_cli.run(args, out)
     try:
         cfg = config.load(args.config)
     except (OSError, ValueError) as exc:
