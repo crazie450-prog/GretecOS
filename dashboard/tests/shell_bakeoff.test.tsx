@@ -265,7 +265,9 @@ describe("ShellBakeoff", () => {
     render(<ShellBakeoff />);
     expect((await screen.findByTestId("bakeoff-status")).textContent).toContain("running");
     fireEvent.click(screen.getByTestId("bakeoff-case-marble-small"));
-    expect(screen.getByTestId("bakeoff-entry-text-B").textContent).toContain("no design");
+    // an answer still to come is not called a refusal
+    expect(screen.getByTestId("bakeoff-entry-text-B").textContent).toContain("not asked yet");
+    expect(screen.getByTestId("bakeoff-entry-text-B").textContent).not.toContain("refused");
     expect((screen.getByTestId("bakeoff-reveal") as HTMLButtonElement).disabled).toBe(true);
     run = done; // the run ended at the CLI
     await nextLook();
@@ -273,6 +275,7 @@ describe("ShellBakeoff", () => {
     expect(screen.getByTestId("bakeoff-status").textContent).not.toContain("running");
     expect(screen.getByTestId("bakeoff-case").getAttribute("data-case")).toBe("marble-small"); // he stays where he was
     expect(await screen.findByTestId("bakeoff3d-B-view")).toBeTruthy();
+    expect(screen.getByTestId("bakeoff-entry-text-A").textContent).toContain("no design (the gate refused"); // asked, none came
     const asked = calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length;
     await nextLook();
     expect(calls.filter((c) => c.url === `/api/shells/bakeoff/${RUN}`).length).toBe(asked); // an ended run is not asked for again

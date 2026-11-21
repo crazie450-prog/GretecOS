@@ -51,7 +51,7 @@ The fake models are small programs inside GOS that answer like a model would. `f
    ```
    If you also have a power plan for that line, add `--large <plan-id>,<power-plan-id>` so three of the six requests get a bigger building.
    The last lines name the run (it looks like `bo-20261121-193000-ab12`). Below, `<run>` means that name.
-10. In the dashboard's **Build** view scroll down to **Shell bake-off**. You see the first request, what was asked next ("Then"), and the answers side by side as **A**, **B**, **C**. Which model is which letter is hidden, and it is shuffled for every request.
+10. In the dashboard's **Build** view scroll down to **Shell bake-off**. The panel shows up by itself a few seconds after the run starts, also when the Build view was already open: you do not need to reload the page. (If you look while the run is still going, it says "running" and the buildings fill in as they are made.) You see the first request, what was asked next ("Then"), and the answers side by side as **A**, **B**, **C**. Which model is which letter is hidden, and it is shuffled for every request.
 11. Click **After the follow-up** to see each building after the change that was asked; click **The first design** to go back. Turn the buildings and use the layer sliders as in step 7. The table under them compares the blocks of the first two.
 12. Pick: **A is better**, **B is better** (and so on for each letter), **Tie**, or **None is good**. Then click the next request's name at the top and pick again, until it says "every case is rated".
 13. Click **Name the models and show the report**. The table now says which model was which, how often its answer passed the gate on the first try, how many repair rounds it needed, the blocks, the cost (free here) and your picks. After this the picks can't be changed for this run.
@@ -82,6 +82,7 @@ A bake-off building can't be exported. To put a building into the Lab, use one o
     ```powershell
     & $gos shell bakeoff delete <run>
     ```
+    The **Shell bake-off** panel leaves the Build view by itself a few seconds later (it comes back with your next run).
 
 ## Part 2. The paid bake-off (real models)
 
@@ -151,7 +152,7 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
 
 ### I. Rate it blind, then read the report
 
-28. Rate as in steps 10-12. Take your time; look at both the first design and the one after the follow-up. Do not look at `run.json` in the run's folder before you have rated: that file is the only place that knows which letter is which.
+28. Rate as in steps 10-12. If you made more than one run (step 25's and step 26's), the panel keeps showing the one you were looking at and gets a drop-down list of the runs at its top: pick `<run>` there (the newest is first). Take your time; look at both the first design and the one after the follow-up. Do not look at `run.json` in the run's folder before you have rated: that file is the only place that knows which letter is which.
 29. Click **Name the models and show the report** (or `& $gos shell bakeoff report <run>`).
 
 ### J. What the numbers mean, and what they don't

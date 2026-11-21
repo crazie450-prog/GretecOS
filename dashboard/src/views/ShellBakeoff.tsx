@@ -42,7 +42,8 @@ export function leftToRate(run: BakeoffView): string[] {
   return run.cases.filter((c) => c.pick === null && c.entries.some((e) => e.design !== null)).map((c) => c.id);
 }
 
-function entryText(e: BakeoffEntry, which: BakeoffWhich): string {
+function entryText(e: BakeoffEntry, which: BakeoffWhich, running: boolean): string {
+  if (!e.asked) return running ? "not asked yet: the run is still going" : "not asked: the run stopped before this one";
   const b = e[which];
   if (b) return `${b.blocks} blocks, ${b.types} kinds${b.status === "repaired" ? ", a few blocks removed by the gate" : ""}`;
   if (which === "revise" && e.design) return "no version after the follow-up (the gate refused it, or nothing changed)";
@@ -285,7 +286,7 @@ export function ShellBakeoff() {
                   />
                 ) : null}
                 <p className="gos-sub" data-testid={`bakeoff-entry-text-${e.letter}`}>
-                  {e[which] ? GLYPH.ok : GLYPH.warn} {entryText(e, which)}
+                  {e[which] ? GLYPH.ok : e.asked ? GLYPH.warn : GLYPH.todo} {entryText(e, which, running)}
                 </p>
               </div>
             ))}

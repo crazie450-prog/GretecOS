@@ -155,7 +155,7 @@ In your own window, a runbook's bare "gos ..." (or "uv run gos" in themes.md / s
 
 ## Session 13b: the building tool tour and the shell bake-off (after the Lab building session; about 1 hour; optional, not in the total above)
 
-84a. shell_bakeoff.md Part 1: the Build view tour (design from words, revise, undo, compare, layer slider), then & \$gos shell bakeoff models and & \$gos shell bakeoff run `<plan>` --models fake-plain,fake-ornate,fake-sloppy (free), rate A/B/C in the Build view, show the report, & \$gos shell bakeoff delete `<run>`. Worked: "Contacts: nothing"; no model named before the report. [3.13.10]
+84a. shell_bakeoff.md Part 1: the Build view tour (design from words, revise, undo, compare, layer slider), then & \$gos shell bakeoff models and & \$gos shell bakeoff run `<plan>` --models fake-plain,fake-ornate,fake-sloppy (free), rate A/B/C in the Build view (the Shell bake-off panel appears by itself within seconds, no reload), show the report, & \$gos shell bakeoff delete `<run>`. Worked: "Contacts: nothing"; no model named before the report. [3.13.10]
 84b. \$10 (the run's cap) & \$gos key set openai, add [bakeoff] and two [[bakeoff.models]] to gos.toml (shell_bakeoff.md G), & \$gos shell bakeoff run `<plan>` --models opus,astra --limit 1, type yes, then without --limit; rate blind; & \$gos shell bakeoff report `<run>`. Worked: estimate shown before yes; report names both models. [3.13.11]
 
 ## Session 14: backups and safety
