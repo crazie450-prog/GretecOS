@@ -2451,17 +2451,24 @@ def test_reading_a_run_never_stands_in_its_writers_way(
                 wrong.append(got)
             reads[0] += 1
 
+    def wait_for_a_read(more_than: int) -> None:
+        until = time.monotonic() + 20
+        while reads[0] <= more_than and not wrong and time.monotonic() < until:
+            time.sleep(0.02)
+
     thread = threading.Thread(target=reader, daemon=True)
     thread.start()
     try:
+        wait_for_a_read(0)  # the reader is at it before the first save
         for n in range(60):
             run["spent"]["calls"] = n
             bo._store(home, run)  # raises when the replace is refused on every try
             time.sleep(0.005)
+        wait_for_a_read(reads[0])  # and reads the last save whole
     finally:
         stop.set()
         thread.join(10)
-    assert not wrong and reads[0] > 0
+    assert not wrong and reads[0] > 1
     assert on_disk(home, rid)["spent"]["calls"] == 59
     assert not (bo.run_dir(home, rid) / bo.BESIDE).exists()
 

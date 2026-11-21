@@ -125,7 +125,9 @@ RECORD, BESIDE = "run.json", "run.unsaved.json"
 SAVE_TRIES = 12  # of one write, while Windows refuses it because the file is held open
 SAVE_WAIT_S = 0.25  # between two tries
 # A run that has saved nothing for this long is taken as gone (close). The runner saves before
-# every try, and one try lasts at most the provider's timeout, so a live run is never this old.
+# every try, and a try is over well inside this (the provider's timeout; an answer of the whole
+# output limit streams in a few minutes). Should one ever last longer and the run be closed
+# meanwhile, the runner finds that at its next save and stops without writing over it.
 STALE_S = 900.0
 assert STALE_S > llm.TIMEOUT_S + llm.MAX_WAIT_S
 # The share of the output limit a first look assumes an answer uses (the estimate's "likely").
