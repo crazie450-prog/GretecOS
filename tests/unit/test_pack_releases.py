@@ -283,10 +283,21 @@ PINNED_JARS = {
     "plannh-0.2.0.jar": "PlanNH",
     "worldedit-v0.0.10.jar": "worldedit-gtnh",
 }
-# The jars it pins for the Lab test first (D365): not in Play until that test passes.
+# The jars it pins for the Lab test first: not in Play until that test passes. GTNL and GTNLLib
+# are new (D365); the other two replace a jar Play has, which stays pinned as the rollback (D373).
 LAB_FIRST_JARS = {
     "sciencenotleisure-0.2.7.jar": "GT-Not-Leisure",
     "gtnllib-1.1.6.jar": "GTNLLib",
+    "TwistSpaceTechnology-0.8.2.jar": "Twist Space Technology",
+    "plannh-0.2.4.jar": "PlanNH",
+}
+# What upstream's newest release was on 2026-11-20, per addon row (D373).
+NEWEST_2026_11_20 = {
+    "Twist Space Technology": ("0.8.2", "0.8.1", "0.8.0"),
+    "123Technology": ("2.2.1.3", "2.2.1.2", "2.2.1.1"),
+    "Programmable Hatches": ("v0.2.1p9-beta", "v0.2.1p0-beta"),
+    "PlanNH": ("0.2.4", "0.2.0"),
+    "worldedit-gtnh": ("1.0.1", "1.0.0", "v0.0.10"),
 }
 FETCH_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fetch_play_files.ps1"
 
@@ -343,6 +354,43 @@ def test_watch_checks_every_pinned_addon_in_play(tmp_path: Path) -> None:
         assert got[row].latest is not None, row
     assert "matches the installed jar" in got["123Technology"].verdict
     assert got["GT-Not-Leisure"].verdict.startswith("not in Play; newest release 0.2.8")
+
+
+def test_the_watch_reports_each_newer_addon_release_until_play_has_it(
+    tmp_path: Path,
+) -> None:
+    """D373: with Play on its pinned jars, `gos pack watch` reports every addon whose newest
+    release isn't the installed one (the ready ones and the ones still waiting alike); once
+    Play has a Lab-first update, that addon reads as up to date and its jar is still known."""
+    addons = [a for a in releases.read_addons() if a.name in NEWEST_2026_11_20]
+    assert len(addons) == len(NEWEST_2026_11_20)
+    net = Net(
+        {
+            releases.FEED_URL.format(repo=a.repo): atom(*NEWEST_2026_11_20[a.name])
+            for a in addons
+        }
+    )
+
+    def verdicts(files: list[str]) -> dict[str, str]:
+        got = releases.check_addons(web(tmp_path, net, Clock()), addons, files)
+        assert all(len(a.jars) == 1 for a in got), [a.jars for a in got]
+        return {a.addon.name: a.verdict for a in got}
+
+    before = verdicts([f"mods/{jar}" for jar in PINNED_JARS])
+    assert set(before) == set(NEWEST_2026_11_20)
+    assert all("a newer release?" in v for v in before.values()), before
+
+    swapped = {
+        "TwistSpaceTechnology-0.8.0.jar": "TwistSpaceTechnology-0.8.2.jar",
+        "plannh-0.2.0.jar": "plannh-0.2.4.jar",
+    }
+    assert set(swapped.values()) < set(LAB_FIRST_JARS)
+    after = verdicts([f"mods/{swapped.get(jar, jar)}" for jar in PINNED_JARS])
+    for name, verdict in after.items():
+        if name in ("Twist Space Technology", "PlanNH"):
+            assert verdict.endswith("matches the installed jar"), name
+        else:  # 123Technology, Programmable Hatches and worldedit-gtnh still wait (D373)
+            assert "a newer release?" in verdict, name
 
 
 @pytest.mark.parametrize("play", ["missing", None])
