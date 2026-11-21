@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import anthropic
+import httpx2  # the anthropic SDK's HTTP client: its errors come up raw from inside a stream
 
 from gregtec.llm.prices import Usage
 
@@ -66,6 +67,9 @@ AUTH, QUOTA, RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF, BAD_REQUEST, TOO_LARGE = (
 RETRYABLE = frozenset({RATE, SERVER, TIMEOUT, NETWORK, CUT_OFF})
 # After one of these the same model is not asked again in the run: the next call would fail too.
 STOPS_MODEL = frozenset({AUTH, QUOTA, BAD_REQUEST})
+# A call that failed one of these ways had been sent and may have been answering: the vendor may
+# bill what it had made, and no usage came back to count (ProviderError.maybe_billed).
+MAYBE_BILLED = frozenset({TIMEOUT, CUT_OFF, TOO_LARGE})
 END, MAX_TOKENS, REFUSAL = "end", "max_tokens", "refusal"
 # OpenAI's 429 codes that are about money or an assigned limit, not about pace (Error codes).
 _QUOTA_CODES = frozenset(
@@ -82,14 +86,24 @@ _KEYLIKE = re.compile(r"sk-[A-Za-z0-9_\-*.]{6,}")
 
 class ProviderError(RuntimeError):
     """A call that gave no answer. ``kind`` is one of the constants above; the message is
-    plain words with no key in it."""
+    plain words with no key in it. ``maybe_billed``: the answer had (or may have) begun when
+    the call failed, so the vendor may bill it although no usage was reported (default: by
+    ``kind``, :data:`MAYBE_BILLED`; an error sent inside a begun answer says so itself)."""
 
     def __init__(
-        self, kind: str, message: str, retry_after: float | None = None
+        self,
+        kind: str,
+        message: str,
+        retry_after: float | None = None,
+        *,
+        maybe_billed: bool | None = None,
     ) -> None:
         super().__init__(message)
         self.kind = kind
         self.retry_after = retry_after
+        self.maybe_billed = (
+            kind in MAYBE_BILLED if maybe_billed is None else maybe_billed
+        )
 
 
 @dataclass(frozen=True)
@@ -146,6 +160,7 @@ def call(
                     exc.kind,
                     f"{exc} (asked to wait {wait:.0f} s, longer than {MAX_WAIT_S:.0f} s: "
                     "not waited for)",
+                    maybe_billed=exc.maybe_billed,
                 ) from None
             sleep(wait)
     raise AssertionError("unreachable")
@@ -220,6 +235,7 @@ class AnthropicDesigner:
                     SERVER,
                     f"Anthropic had a server error (HTTP {exc.status_code})",
                     _retry_after(getattr(exc.response, "headers", None)),
+                    maybe_billed=exc.status_code < 400,
                 ) from None
             if "credit balance" in text.lower():
                 raise ProviderError(
@@ -230,6 +246,16 @@ class AnthropicDesigner:
                 f"Anthropic refused the request (HTTP {exc.status_code}): {text}",
             ) from None
         except anthropic.APIError as exc:  # an error event inside the stream
+            raise ProviderError(
+                CUT_OFF, f"Anthropic's answer broke off ({type(exc).__name__})"
+            ) from None
+        # The SDK wraps a failed request, not a connection that fails while the answer
+        # streams: that comes up as the HTTP client's own error.
+        except httpx2.TimeoutException:
+            raise ProviderError(
+                TIMEOUT, "Anthropic stopped answering part way"
+            ) from None
+        except httpx2.HTTPError as exc:
             raise ProviderError(
                 CUT_OFF, f"Anthropic's answer broke off ({type(exc).__name__})"
             ) from None
@@ -339,7 +365,7 @@ class OpenAIDesigner:
             if isinstance(exc.reason, TimeoutError):
                 raise ProviderError(TIMEOUT, "OpenAI did not answer in time") from None
             raise ProviderError(NETWORK, "OpenAI could not be reached") from None
-        except (http.client.HTTPException, ConnectionError):
+        except (http.client.HTTPException, OSError):  # a reset, a TLS failure, ...
             raise ProviderError(
                 CUT_OFF, "OpenAI's answer broke off before it was complete"
             ) from None
@@ -414,7 +440,9 @@ class OpenAIDesigner:
                 said = scrub(str(event.get("message") or ""), self.key)
                 which = RATE if code == "rate_limit_exceeded" else SERVER
                 raise ProviderError(
-                    which, f"OpenAI sent an error in the answer ({code}): {said}"
+                    which,
+                    f"OpenAI sent an error in the answer ({code}): {said}",
+                    maybe_billed=True,
                 )
             if kind in (
                 "response.completed",
@@ -476,10 +504,14 @@ class OpenAIDesigner:
         code = str(err.get("code") or "")
         said = scrub(str(err.get("message") or ""), self.key)
         if code == "rate_limit_exceeded":
-            raise ProviderError(RATE, f"OpenAI says too many requests: {said}")
+            raise ProviderError(
+                RATE, f"OpenAI says too many requests: {said}", maybe_billed=True
+            )
         if code == "server_error" or status != "failed":
             raise ProviderError(
-                SERVER, f"OpenAI could not make the answer ({code or status}): {said}"
+                SERVER,
+                f"OpenAI could not make the answer ({code or status}): {said}",
+                maybe_billed=True,
             )
         return Reply(
             "",

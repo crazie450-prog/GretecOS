@@ -53,7 +53,7 @@ The fake models are small programs inside GOS that answer like a model would. `f
    The last lines name the run (it looks like `bo-20261121-193000-ab12`). Below, `<run>` means that name.
 10. In the dashboard's **Build** view scroll down to **Shell bake-off**. You see the first request, what was asked next ("Then"), and the answers side by side as **A**, **B**, **C**. Which model is which letter is hidden, and it is shuffled for every request.
 11. Click **After the follow-up** to see each building after the change that was asked; click **The first design** to go back. Turn the buildings and use the layer sliders as in step 7. The table under them compares the blocks of the first two.
-12. Pick: **A is better**, **B is better**, **A tie**, or **None is good**. Then click the next request's name at the top and pick again, until it says "every case is rated".
+12. Pick: **A is better**, **B is better** (and so on for each letter), **Tie**, or **None is good**. Then click the next request's name at the top and pick again, until it says "every case is rated".
 13. Click **Name the models and show the report**. The table now says which model was which, how often its answer passed the gate on the first try, how many repair rounds it needed, the blocks, the cost (free here) and your picks. After this the picks can't be changed for this run.
 14. The same report as a file: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`.
 
@@ -145,6 +145,7 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
     & $gos shell bakeoff run <plan-id> --models opus,astra
     ```
     It takes a few minutes per model. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
+    If the connection drops in the middle of an answer, GOS tries that answer again (at most twice). The vendor may still charge for the broken one, and GOS can't see how much, so it counts each at the most it could have cost against the cap and tells you at the end ("... call(s) broke off after they were sent"). Your bill on the vendor's site is the last word.
 27. If it says **Not run**, the line says why: a key is missing (it names the `gos key set` command), the AI is switched off or paused for credits (No-AI mode; the fake models still run), or today's spend plus this run could pass your day limit (`[budget] day_max_usd`; use a lower `--cap-usd`).
 
 ### I. Rate it blind, then read the report
@@ -157,7 +158,7 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
 - **picked**: how often you chose that model's building. This is the only number about looks.
 - **first try / passed**: how many of its answers the gate accepted at once, and in the end. **repair rounds**: how many times, on average, GOS had to send an answer back. A model that needs many is slower and dearer, and may fail on a bigger building.
 - **asked / kept**: for the follow-up, whether it changed what was asked and left the rest alone (checked by code, for simple requests only).
-- **cost / seconds / tokens**: what the answers took. A cost of "unknown" means you gave no price.
+- **cost / seconds / tokens**: what the answers took. A cost of "unknown" means you gave no price. If the report has a line about calls that "broke off", the vendor may have charged a little more than the cost column says (that line gives the most it can be).
 - **Six requests is a first look, not proof.** If one model is ahead 4 to 2, that can be chance; 6 to 0 with clearly better buildings is worth believing. To be surer, run it again another day (each run shuffles the letters anew) or with other plans, and see whether the same model wins.
 - The bake-off only compares. Which model draws your real shells does not change: that stays the architect in `[models]` (Anthropic) until you decide otherwise (checklist 5.11.17).
 

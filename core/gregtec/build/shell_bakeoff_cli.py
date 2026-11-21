@@ -446,6 +446,8 @@ def _run(
         + ".",
         file=out,
     )
+    if broke := bo.broken_off(run):
+        print(broke, file=out)
     print(
         f"Next: look at it in the Build view's Bake-off panel, rate it there or with "
         f"`gos shell bakeoff rate {run['id']}`, then `gos shell bakeoff report {run['id']}`. "

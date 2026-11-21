@@ -30,7 +30,7 @@ import sys
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import anthropic
 import httpx2
@@ -473,6 +473,44 @@ def test_anthropic_errors_are_named_without_the_key() -> None:
             assert got.value.retry_after == 7.0
         if kind == llm.AUTH:
             assert "uv run gos key set anthropic" in str(got.value)
+        # only a call that had been sent and may have been answering can still be billed
+        in_stream = isinstance(exc, anthropic.APIStatusError) and exc.status_code < 400
+        assert got.value.maybe_billed == (kind == llm.TIMEOUT or in_stream), exc
+
+
+class _Breaking:
+    """A Messages client whose stream opens (HTTP 200) and then fails while it is read."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+        self.messages = self
+
+    def stream(self, **request: object) -> Self:
+        return self
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def get_final_message(self) -> object:
+        raise self.exc
+
+
+def test_anthropic_a_connection_that_fails_part_way_is_named_and_retried() -> None:
+    # the SDK does not wrap these: they come up as the HTTP client's own errors
+    cases: list[tuple[BaseException, str]] = [
+        (httpx2.ReadTimeout("the read timed out"), llm.TIMEOUT),
+        (httpx2.RemoteProtocolError("peer closed connection"), llm.CUT_OFF),
+        (httpx2.ReadError("connection reset"), llm.CUT_OFF),
+    ]
+    for exc, kind in cases:
+        client = _Breaking(exc)
+        with pytest.raises(llm.ProviderError) as got:
+            llm.AnthropicDesigner(client, OPUS).complete("s", "u", {}, 100)
+        assert got.value.kind == kind and kind in llm.RETRYABLE, exc
+        assert got.value.maybe_billed  # the answer had begun
 
 
 # --- the OpenAI provider, against the fake Responses API -------------------------------------
@@ -532,7 +570,7 @@ def test_openai_http_401_names_the_command_and_never_the_key() -> None:
         with pytest.raises(llm.ProviderError) as got:
             llm.call(openai(api), "s", "u", {}, 100, sleep=lambda s: None)
         assert len(api.requests) == 1  # not retried
-    assert got.value.kind == llm.AUTH
+    assert got.value.kind == llm.AUTH and not got.value.maybe_billed
     assert "uv run gos key set openai" in str(got.value)
     assert OPENAI_KEY not in str(got.value) and "T3stOpenAIKey" not in str(got.value)
     # the wrong key, refused by the server itself
@@ -567,6 +605,7 @@ def test_openai_429_waits_for_retry_after_or_backs_off() -> None:
             llm.call(openai(api), "s", "u", {}, 100, sleep=slept.append)
         assert len(api.requests) == 1
     assert got.value.kind == llm.RATE and slept == []  # ten minutes: not waited for
+    assert not got.value.maybe_billed  # refused before any answer began
     with FakeResponsesAPI(lambda body: Answer(http=429)) as api:
         with pytest.raises(llm.ProviderError):
             llm.call(openai(api), "s", "u", {}, 100, sleep=slept.append)
@@ -597,6 +636,7 @@ def test_openai_500_is_retried_then_said() -> None:
             llm.call(openai(api), "s", "u", {}, 100, sleep=slept.append)
         assert len(api.requests) == 3
     assert got.value.kind == llm.SERVER and slept == list(llm.BACKOFF_S)
+    assert not got.value.maybe_billed
     with FakeResponsesAPI(
         _then(Answer(http=503, retry_after="2"), Answer(text="{}"))
     ) as api:
@@ -617,7 +657,7 @@ def test_openai_timeout_cut_off_and_stream_errors() -> None:
         pytest.raises(llm.ProviderError) as got,
     ):
         openai(api, read_s=0.2).complete("s", "u", {}, 100)
-    assert got.value.kind == llm.TIMEOUT
+    assert got.value.kind == llm.TIMEOUT and got.value.maybe_billed
     # the stream stops after three events: no last word
     with (
         FakeResponsesAPI(lambda body: Answer(text="{}" * 20, cut_after=3)) as api,
@@ -625,6 +665,7 @@ def test_openai_timeout_cut_off_and_stream_errors() -> None:
     ):
         openai(api).complete("s", "u", {}, 100)
     assert got.value.kind == llm.CUT_OFF and got.value.kind in llm.RETRYABLE
+    assert got.value.maybe_billed  # the answer had begun: the vendor may bill it
     with (
         FakeResponsesAPI(
             lambda body: Answer(stream_error=("server_error", f"boom {OPENAI_KEY}"))
@@ -633,6 +674,7 @@ def test_openai_timeout_cut_off_and_stream_errors() -> None:
     ):
         openai(api).complete("s", "u", {}, 100)
     assert got.value.kind == llm.SERVER and OPENAI_KEY not in str(got.value)
+    assert got.value.maybe_billed  # an error inside an answer that had begun
     # an answer that slowly never ends is stopped by the clock
     ticks = iter(range(0, 10_000, 400))
     with (
@@ -652,7 +694,24 @@ def test_openai_timeout_cut_off_and_stream_errors() -> None:
     )
     with pytest.raises(llm.ProviderError) as got:
         dead.complete("s", "u", {}, 100)
-    assert got.value.kind == llm.NETWORK
+    assert got.value.kind == llm.NETWORK and not got.value.maybe_billed
+
+
+def test_openai_a_tls_failure_part_way_is_a_cut_off_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ssl
+    import urllib.request
+
+    class Broken:
+        def open(self, request: object, timeout: float) -> object:
+            raise ssl.SSLError("decryption failed or bad record mac")
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Broken())
+    with pytest.raises(llm.ProviderError) as got:
+        llm.OpenAIDesigner(OPENAI_KEY, "m").complete("s", "u", {}, 100)
+    assert got.value.kind == llm.CUT_OFF and got.value.maybe_billed
+    assert OPENAI_KEY not in str(got.value)
 
 
 def test_openai_refusals_cut_offs_and_failures_in_the_response() -> None:
@@ -678,7 +737,7 @@ def test_openai_refusals_cut_offs_and_failures_in_the_response() -> None:
         pytest.raises(llm.ProviderError) as got,
     ):
         openai(api).complete("s", "u", {}, 100)
-    assert got.value.kind == llm.SERVER
+    assert got.value.kind == llm.SERVER and got.value.maybe_billed
 
 
 def test_openai_an_answer_over_the_size_limit_is_not_read() -> None:
@@ -687,7 +746,7 @@ def test_openai_an_answer_over_the_size_limit_is_not_read() -> None:
         with pytest.raises(llm.ProviderError) as got:
             llm.call(openai(api), "s", "u", {}, 100, sleep=lambda s: None)
         assert len(api.requests) == 1  # not retried: it would be as large again
-    assert got.value.kind == llm.TOO_LARGE
+    assert got.value.kind == llm.TOO_LARGE and got.value.maybe_billed
 
 
 # --- the gate decides, as for the product -----------------------------------------------------
@@ -1055,6 +1114,70 @@ def test_a_cap_too_small_for_one_call_spends_nothing(
     assert run["status"] == bo.CAP and model.seen == [] and run["results"] == []
     assert run["spent"]["usd"] == 0.0
     assert not (bo.run_dir(home, run["id"]) / "entries" / "c1").exists()
+
+
+def test_a_call_that_broke_off_is_held_against_the_cap(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """A timeout or a cut-off answer reports no usage, but the vendor may bill it: each such
+    try counts at the most it can have cost, and the guard is asked before every retry."""
+    cut = llm.ProviderError(llm.CUT_OFF, "the answer broke off")
+    model = Scripted([cut, cut])  # two tries break off, the third answers
+    slept: list[float] = []
+    run = ran(conn, home, [ZEBRA], {"zebra": model}, cap_usd=10.0, sleep=slept.append)
+    step = result(run, "zebra")["design"]
+    assert step["ok"] and step["first_try"] and slept == list(llm.BACKOFF_S)
+    lost = run["unmeasured"]
+    assert lost["calls"] == 2 and lost["tokens"] == 0
+    one = (shell_brief.MAX_OUTPUT_TOKENS * 50 + len(model.seen[0][1]) * 12.5) / 1e6
+    assert 2 * one < lost["usd"] < 2 * one * 1.2  # the whole output limit, twice
+    assert run["status"] == bo.DONE and run["spent"]["usd"] > 0
+    for c in bo.rateable(run):
+        bo.rate(home, run["id"], c, bo.TIE)
+    text = bo.report(home, run["id"]).text
+    assert "2 call(s) broke off after they were sent" in text
+    assert f"at most ${lost['usd']:.2f} in all" in text
+    # with a cap the broken tries use up, the run stops before the retry that could pass it
+    model = Scripted([cut, cut, cut])
+    run = ran(conn, home, [ZEBRA], {"zebra": model}, cap_usd=2.0, sleep=slept.append)
+    assert run["status"] == bo.CAP and "could take the run past $2.00" in run["why"]
+    assert len(model.seen) == 2  # the third try was never sent
+    assert run["spent"]["usd"] == 0.0 and run["unmeasured"]["calls"] == 2
+    assert run["spent"]["usd"] + run["unmeasured"]["usd"] <= 2.0
+    assert run["results"] == []  # the step in hand left nothing behind
+    assert not (bo.run_dir(home, run["id"]) / "entries" / "c1").exists()
+    # a refusal before any answer began (HTTP 500, 429) costs nothing and holds nothing
+    flaky = Scripted([llm.ProviderError(llm.SERVER, "HTTP 500")] * 2)
+    run = ran(conn, home, [ZEBRA], {"zebra": flaky}, sleep=slept.append)
+    assert run["unmeasured"] == {"calls": 0, "usd": 0.0, "tokens": 0}
+    assert "broke off" not in bo.broken_off(run)
+    # a model with no price: the broken tries count in tokens
+    model = Scripted([llm.ProviderError(llm.TIMEOUT, "no answer in time")])
+    run = ran(conn, home, [MYSTERY], {"mystery": model}, sleep=slept.append)
+    lost = run["unmeasured"]
+    assert lost["calls"] == 1 and lost["usd"] == 0.0
+    assert lost["tokens"] > shell_brief.MAX_OUTPUT_TOKENS
+    assert f"{lost['tokens']:,} tokens" in bo.broken_off(run)
+    # the fakes are free: nothing is held
+    model = Scripted([cut])
+    run = ran(conn, home, [bo.FAKES[shell_fakes.PLAIN]], {shell_fakes.PLAIN: model})
+    assert run["unmeasured"]["calls"] == 0
+
+
+def test_cancel_is_asked_before_a_retry_too(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    model = Scripted([llm.ProviderError(llm.RATE, "HTTP 429")] * 3)
+    runner, prepared = started(
+        conn,
+        home,
+        [ZEBRA],
+        {"zebra": model},
+        cancel=lambda: len(model.seen) >= 1,
+        sleep=lambda s: None,
+    )
+    run = runner.execute(prepared)
+    assert run["status"] == bo.CANCELLED and len(model.seen) == 1
 
 
 def test_cancel_stops_cleanly_between_calls(

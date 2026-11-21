@@ -280,7 +280,7 @@ export function ShellBakeoff() {
                 </Button>
               ))}
             <Button testId="bakeoff-pick-tie" variant={current.pick === TIE ? "primary" : "plain"} disabled={busy || run.revealed} onClick={() => rate(TIE)}>
-              A tie
+              Tie
             </Button>
             <Button testId="bakeoff-pick-bad" variant={current.pick === BAD ? "primary" : "plain"} disabled={busy || run.revealed} onClick={() => rate(BAD)}>
               None is good

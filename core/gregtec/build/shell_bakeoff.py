@@ -32,7 +32,10 @@ case is rated (or Clayton gives up rating: ``reveal_unrated``); after that ratin
 **Spending** is Clayton's: :func:`estimate` says what a run can cost and what it contacts,
 :func:`execute` stops before any call that could take the run past its cap (USD for priced
 models, tokens for the ones without a price in ``gos.toml``), and every real call is recorded in
-``llm_usage`` (lane ``bakeoff``), so it counts towards the cycle and the day.
+``llm_usage`` (lane ``bakeoff``), so it counts towards the cycle and the day. A call that broke
+off after it was sent (a timeout, a cut-off answer) reports no usage, yet the vendor may bill
+it: each is counted against the cap at the most it can have cost (``run["unmeasured"]``), and
+the report says how many there were.
 
 Nothing here writes a world or a ``.schematic``.
 """
@@ -486,6 +489,11 @@ def _bound(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
+# What a request holds beside the two texts, as a bound in tokens: the schema (both vendors
+# hand it to the model as input) and the messages' framing.
+OVERHEAD = _bound(json.dumps(shell_brief.SCHEMA)) + 1_000
+
+
 @dataclass(frozen=True)
 class Estimate:
     lines: tuple[str, ...]
@@ -512,7 +520,7 @@ def estimate(
     in_worst = sum(
         2
         * (1 + REPAIR_ROUNDS)
-        * (_bound(system) + _bound(p.brief) + shell_brief.MAX_ECHO)
+        * (_bound(system) + _bound(p.brief) + shell_brief.MAX_ECHO + OVERHEAD)
         for p in prepared
     )
     out_limit = shell_brief.MAX_OUTPUT_TOKENS
@@ -674,6 +682,8 @@ def create(
         "max_output_tokens": shell_brief.MAX_OUTPUT_TOKENS,
         "caps": {"usd": cap_usd, "tokens": cap_tokens},
         "spent": {"usd": 0.0, "unpriced_tokens": 0, "calls": 0},
+        # calls that broke off after they were sent: no usage reported, maybe billed
+        "unmeasured": {"calls": 0, "usd": 0.0, "tokens": 0},
         "models": [m.to_json() for m in models],
         "cases": [
             {
@@ -761,6 +771,35 @@ Say = Callable[[str], None]
 
 
 @dataclass
+class _Capped:
+    """A model's designer inside the run's caps: every try (:func:`gregtec.llm.designers.call`
+    retries) passes the runner's guard first, and a try that broke off is counted."""
+
+    runner: Runner
+    spec: ModelSpec
+    inner: llm.Designer
+
+    @property
+    def provider(self) -> str:
+        return self.inner.provider
+
+    @property
+    def model(self) -> str:
+        return self.inner.model
+
+    def complete(
+        self, system: str, user: str, schema: Mapping[str, Any], max_output_tokens: int
+    ) -> llm.Reply:
+        self.runner._guard(self.spec, user)
+        try:
+            return self.inner.complete(system, user, schema, max_output_tokens)
+        except llm.ProviderError as exc:
+            if exc.maybe_billed:
+                self.runner._broke(self.spec, user)
+            raise
+
+
+@dataclass
 class Runner:
     """One run's work. ``designers`` maps a model label to its :class:`~gregtec.llm.designers.
     Designer`; ``meter`` (the live ``llm_usage``) records every real call; ``cancel`` is asked
@@ -784,40 +823,64 @@ class Runner:
 
     # -- one call, inside the caps ------------------------------------------------------------
 
+    def _most(self, model: ModelSpec, user: str) -> tuple[float, int]:
+        """The most one try of this call can cost: (USD, tokens). Its input counted as one
+        token a byte plus :data:`OVERHEAD`, the whole output limit, the dearest input rate."""
+        tokens_in = _bound(self.system) + _bound(user) + OVERHEAD
+        tokens_out = shell_brief.MAX_OUTPUT_TOKENS
+        p = model.price
+        if p is None:
+            return 0.0, tokens_in + tokens_out
+        usd = (
+            tokens_in * max(p.input, p.cache_write) + tokens_out * p.output
+        ) / 1_000_000
+        return usd, tokens_in + tokens_out
+
     def _guard(self, model: ModelSpec, user: str) -> None:
+        """Asked before every try, a retry too: Cancel, then the caps. What is counted is what
+        was spent plus the most the broken-off tries can have cost."""
         if self.cancel():
             raise _Stop(CANCELLED, "cancelled")
         if model.fake:
             return
-        tokens_in = _bound(self.system) + _bound(user)
-        tokens_out = shell_brief.MAX_OUTPUT_TOKENS
-        spent, caps = self.run["spent"], self.run["caps"]
+        usd, tokens = self._most(model, user)
+        spent, caps, lost = self.run["spent"], self.run["caps"], self.run["unmeasured"]
         if model.price is None:
-            if spent["unpriced_tokens"] + tokens_in + tokens_out > caps["tokens"]:
+            used = spent["unpriced_tokens"] + lost["tokens"]
+            if used + tokens > caps["tokens"]:
                 raise _Stop(
                     CAP,
                     f"the next call ({model.label}) could take the unpriced models past "
-                    f"{caps['tokens']:,} tokens ({spent['unpriced_tokens']:,} used)",
+                    f"{caps['tokens']:,} tokens ({used:,} used)",
                 )
             return
-        p = model.price
-        worst = (
-            tokens_in * max(p.input, p.cache_write) + tokens_out * p.output
-        ) / 1_000_000
-        if spent["usd"] + worst > caps["usd"]:
+        used_usd = spent["usd"] + lost["usd"]
+        if used_usd + usd > caps["usd"]:
             raise _Stop(
                 CAP,
-                f"the next call ({model.label}, up to ${worst:.2f}) could take the run past "
-                f"${caps['usd']:.2f} (${spent['usd']:.2f} spent)",
+                f"the next call ({model.label}, up to ${usd:.2f}) could take the run past "
+                f"${caps['usd']:.2f} (${used_usd:.2f} spent)",
             )
+
+    def _broke(self, model: ModelSpec, user: str) -> None:
+        """A try that broke off after it was sent: nothing came back to count, so the most it
+        can have cost is held against the cap."""
+        if model.fake:
+            return
+        usd, tokens = self._most(model, user)
+        lost = self.run["unmeasured"]
+        lost["calls"] += 1
+        if model.price is None:
+            lost["tokens"] += tokens
+        else:
+            lost["usd"] = round(lost["usd"] + usd, 6)
 
     def _ask(self, model: ModelSpec, user: str, step: _Step) -> llm.Reply | str:
         """One answer (inside the caps, metered), or why there is none."""
-        self._guard(model, user)
         started = self.clock()
         try:
             reply = llm.call(
-                self.designers[model.label],
+                _Capped(self, model, self.designers[model.label]),
                 self.system,
                 user,
                 shell_brief.SCHEMA,
@@ -1402,6 +1465,8 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
         ),
         ("seed", str(run["seed"])),
     ]
+    if broke := broken_off(run):
+        notes.append(broke)
     card = checked(
         {
             "type": "table",
@@ -1451,6 +1516,26 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
     run["report"] = (REPORTS / path.name).as_posix()
     _save(home, run)
     return Report(text, card, path)
+
+
+def broken_off(run: Mapping[str, Any]) -> str:
+    """The run's calls that broke off after they were sent, in words ("" when none)."""
+    lost = run.get("unmeasured") or {}
+    if not lost.get("calls"):
+        return ""
+    most = " and ".join(
+        x
+        for x in (
+            f"${lost['usd']:.2f}" if lost["usd"] else "",
+            f"{lost['tokens']:,} tokens" if lost["tokens"] else "",
+        )
+        if x
+    )
+    return (
+        f"{lost['calls']} call(s) broke off after they were sent (a timeout or a cut-off "
+        f"answer). The vendor may still bill them, at most {most} in all: that is not in the "
+        "cost column or the usage meter, but it was held against the run's cap."
+    )
 
 
 def _step_text(step: Mapping[str, Any] | None) -> str:
