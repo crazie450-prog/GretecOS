@@ -213,6 +213,9 @@ describe("ShellBakeoff", () => {
     const reveal = screen.getByTestId("bakeoff-reveal") as HTMLButtonElement;
     expect(reveal.disabled).toBe(true);
     expect(screen.getByTestId("bakeoff-left").textContent).toContain("2 cases left");
+    // the tie button can't be read as entry A's ("A tie" beside "A is better")
+    expect(screen.getByTestId("bakeoff-pick-tie").textContent).toBe("Tie");
+    expect(screen.getByTestId("bakeoff-pick-A").textContent).toBe("A is better");
     fireEvent.click(screen.getByTestId("bakeoff-pick-A"));
     await waitFor(() => expect(screen.getByTestId("bakeoff-pick-text").textContent).toContain("A is better"));
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ case: "foundry-small", pick: "A" });
