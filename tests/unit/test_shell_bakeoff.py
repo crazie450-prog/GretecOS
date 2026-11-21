@@ -108,6 +108,13 @@ def outside(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     Gives the hosts that were refused."""
     refused: list[str] = []
     connect, resolve = socket.socket.connect, socket.getaddrinfo
+    for name in (
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):  # a proxy on this PC is a way out
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.upper(), raising=False)
 
     def guarded_connect(self: socket.socket, address: Any, *rest: Any) -> None:  # noqa: ANN401
         if isinstance(address, tuple) and address[0] not in LOCAL:
@@ -123,6 +130,7 @@ def outside(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return resolve(host, *rest, **kw)
 
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect)
     monkeypatch.setattr(socket, "getaddrinfo", guarded_resolve)
     return refused
 
@@ -2774,3 +2782,331 @@ def test_a_cap_that_cannot_pay_for_one_answer_is_refused_before_a_run_is_made(
             text.index("Hard cap for this run: $2.00")
         )
         assert text.count("Today's limit") == 1
+
+
+# --- blind view and hygiene -------------------------------------------------------------------
+
+SIGNATURE = "zz-signed-by-vendor-x"
+
+
+def signed(user: str) -> str:
+    """The good design, signed where the gate never looks: a parapet's role on a roof that
+    has no parapet is not read, so any text passes."""
+    ops = json.loads(good(user))["ops"]
+    roof = next(o for o in ops if o["op"] == "roof")
+    roof.pop("parapet", None)
+    roof["parapet_role"] = SIGNATURE
+    return json.dumps({"ops": ops})
+
+
+def test_a_signed_answer_leaves_no_trace_in_any_blind_view(
+    conn: sqlite3.Connection, home: Path, tmp_path: Path
+) -> None:
+    run = ran(
+        conn,
+        home,
+        [ZEBRA, QUOKKA],
+        {"zebra": Scripted(then=signed), "quokka": Scripted()},
+    )
+    rid = run["id"]
+    mine = result(run, "zebra")
+    assert (
+        mine["design"]["ok"] and mine["design"]["first_try"]
+    )  # the gate lets it through
+    where = bo.entry_home(home, rid, "c1", mine["letter"])
+    saved = shell_store.load(where, mine["design"]["build"])
+    assert SIGNATURE in json.dumps(saved["ops"])  # it is in the answer as saved
+    other = result(run, "quokka")
+    raw = versions.compare_records(
+        saved,
+        shell_store.load(
+            bo.entry_home(home, rid, "c1", other["letter"]), other["design"]["build"]
+        ),
+    )
+    assert SIGNATURE in json.dumps(raw["ops"])  # and the plain compare would show it
+    base = f"/api/shells/bakeoff/{rid}"
+    seen = [json.dumps(bo.blind(run)), json.dumps(bo.runs(home))]
+    seen.append(gos(toml_for(home, tmp_path), "show", rid)[1])
+    with served(home) as (c, admin):
+        for path in (
+            "/api/shells/bakeoff",
+            base,
+            *(
+                f"{base}/view?case=c1&letter={letter}&which={which}"
+                for letter in "AB"
+                for which in ("design", "revise")
+            ),
+            f"{base}/compare?case=c1&a=A&b=B",
+            f"{base}/compare?case=c1&a=B&b=A&which=revise",
+        ):
+            r = c.get(path, headers=admin)
+            assert r.status_code == 200, (path, r.text)
+            seen.append(r.text)
+        compared = c.get(f"{base}/compare?case=c1&a=A&b=B", headers=admin).json()
+    assert SIGNATURE not in "".join(seen)
+    assert compared["ops"] == [] and compared["materials"]  # the panel's table is whole
+    assert compared["blocks_delta"] == compared["b"]["blocks"] - compared["a"]["blocks"]
+
+
+def controls(text: str) -> list[str]:
+    import unicodedata
+
+    return [
+        c
+        for c in text
+        if unicodedata.category(c)[0] == "C" or ord(c) in (0x2028, 0x2029)
+    ]
+
+
+# ESC sequences, a newline, a table bar, a bell, a right-to-left override, a line separator
+NASTY = (
+    "declined\x1b[2J\x1b[31m now\r\nbuy | more\x07 "
+    + chr(0x202E)
+    + "gnp.exe"
+    + chr(0x2028)
+    + "next\x00"
+)
+
+
+def test_words_a_model_or_a_vendor_wrote_are_printed_without_control_characters(
+    conn: sqlite3.Connection, home: Path, tmp_path: Path
+) -> None:
+    """ESC sequences, newlines, bells, bidi marks: a refusal's words reach the terminal (the
+    report, printed) and a table. They are made plain where they are recorded and again where
+    they are printed (a run recorded before this was)."""
+    assert bo.plain(NASTY) == "declined [2J [31m now buy | more gnp.exe next"
+    refusal = llm.Reply("", Usage(input=10, output=5), llm.REFUSAL, NASTY)
+    broken = llm.ProviderError(llm.SERVER, f"HTTP 500 {NASTY}")
+    run = ran(
+        conn,
+        home,
+        [ZEBRA, QUOKKA],
+        {"zebra": Scripted([refusal]), "quokka": Scripted([broken] * 3)},
+        sleep=lambda s: None,
+    )
+    for label in ("zebra", "quokka"):
+        step = result(run, label)["design"]
+        assert not step["ok"] and "declined" in step["refused"]
+        assert controls(step["refused"]) == [] and controls(step["refusals"][0]) == []
+    assert controls(json.dumps(run, ensure_ascii=False)) == []
+    # a record from before, with the raw words in it and in the reason the run stopped
+    old = on_disk(home, run["id"])
+    old["results"][0]["design"]["refused"] = NASTY
+    del old["results"][0]["design"]["refusals"]
+    old["status"], old["why_named"] = bo.STOPPED, f"zebra: {NASTY}"
+    (bo.run_dir(home, run["id"]) / bo.RECORD).write_text(
+        json.dumps(old), encoding="utf-8"
+    )
+    code, text = gos(toml_for(home, tmp_path), "report", run["id"], "--reveal")
+    assert code == 0 and "declined [2J [31m now buy ; more gnp.exe next" in text
+    assert controls(text.replace("\n", "")) == []
+    rows = [line for line in text.splitlines() if line.startswith("| c1 |")]
+    assert len(rows) == 2 and all(
+        row.count("|") == 10 for row in rows
+    )  # no cell broke out
+    card = json.dumps(bo.card_of(home, bo.load(home, run["id"])), ensure_ascii=False)
+    assert controls(card) == []
+
+
+def test_the_report_says_why_the_gate_refused_an_answer_that_was_repaired(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """The free tour's fake-sloppy is there to show the gate refusing an answer; the report
+    used to show only "1 repair round(s)" for it, the reason thrown away once it passed."""
+    run = ran(
+        conn,
+        home,
+        [bo.FAKES[shell_fakes.SLOPPY], bo.FAKES[shell_fakes.PLAIN]],
+        {
+            shell_fakes.SLOPPY: shell_fakes.FakeDesigner(shell_fakes.SLOPPY),
+            shell_fakes.PLAIN: shell_fakes.FakeDesigner(shell_fakes.PLAIN),
+        },
+    )
+    sloppy = result(run, shell_fakes.SLOPPY)
+    for step in (sloppy["design"], sloppy["revise"]):
+        assert step["ok"] and step["repair_rounds"] == 1 and step["refused"] is None
+        assert len(step["refusals"]) == 1 and step["refusals"][0]
+    plain = result(run, shell_fakes.PLAIN)
+    assert plain["design"]["refusals"] == [] and plain["revise"]["refusals"] == []
+    assert "refusals" not in json.dumps(bo.blind(run))  # never in a blind view
+    bo.rate(home, run["id"], "c1", bo.TIE)
+    text = bo.report(home, run["id"]).text
+    row = next(
+        line for line in text.splitlines() if f"| {shell_fakes.SLOPPY} |" in line
+        and line.startswith("| c1 |")
+    )  # fmt: skip
+    assert "1 repair round(s)" in row
+    assert f"design try 1: {sloppy['design']['refusals'][0][:60]}" in row
+    assert "follow-up try 1: " in row
+    clean = next(
+        line for line in text.splitlines() if f"| {shell_fakes.PLAIN} |" in line
+        and line.startswith("| c1 |")
+    )  # fmt: skip
+    assert "try 1" not in clean
+    # every round of an answer that never passed
+    chest = {"op": "fill", "block": ts.CHEST, "lo": [0, 8, 0], "hi": [0, 8, 0]}
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted(then=plus(chest))}, seed=2)
+    step = result(run, "zebra")["design"]
+    assert len(step["refusals"]) == 1 + bo.REPAIR_ROUNDS
+    assert step["refused"] == step["refusals"][-1]
+    text = bo.report(home, run["id"], reveal_unrated=True).text
+    assert all(f"design try {n}: " in text for n in (1, 2, 3))
+
+
+def test_the_report_route_never_gives_up_blind_rating(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """D377: naming the models before every case is rated is CLI only."""
+    run = ran(conn, home, [ZEBRA, QUOKKA], {"zebra": Scripted(), "quokka": Scripted()})
+    base = f"/api/shells/bakeoff/{run['id']}"
+    with served(home) as (c, admin):
+        r = c.post(f"{base}/report", headers=admin, json={"reveal": True})
+        assert r.status_code == 400 and "command line" in r.text
+        assert f"gos shell bakeoff report {run['id']} --reveal" in r.text
+        view = c.get(base, headers=admin).json()
+        assert view["run"]["revealed"] is False and view["report"] is None
+        for word in secrets_of(run):
+            assert word not in r.text, word
+        # unrated and not revealed: still refused the usual way; rated: the report
+        for body in ({}, {"reveal": False}):
+            assert c.post(f"{base}/report", headers=admin, json=body).status_code == 400
+        c.post(f"{base}/rate", headers=admin, json={"case": "c1", "pick": "tie"})
+        r = c.post(f"{base}/report", headers=admin, json={"reveal": True})
+        assert r.status_code == 400  # refused whatever the ratings are
+        r = c.post(f"{base}/report", headers=admin, json={"reveal": False})
+        assert r.status_code == 200 and r.json()["report"]["type"] == "table"
+    assert bo.load(home, run["id"])["reveal_unrated"] is False
+    # the command line still can
+    again = ran(conn, home, [ZEBRA], {"zebra": Scripted()}, seed=2)
+    assert bo.report(home, again["id"], reveal_unrated=True).card
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_openai_never_follows_a_redirect_with_the_key(code: int) -> None:
+    """urllib's own opener sends a redirected request's headers, the key among them, to the
+    host the redirect names."""
+    with FakeResponsesAPI(lambda body: Answer(text="{}")) as second:
+
+        def away(body: dict[str, Any]) -> Answer:
+            return Answer(http=code, location=second.url)
+
+        with FakeResponsesAPI(away, key=OPENAI_KEY) as first:
+            with pytest.raises(llm.ProviderError) as got:
+                llm.call(openai(first), "s", "u", {}, 100, sleep=lambda s: None)
+            assert len(first.requests) == 1  # not tried again: it can't succeed
+        assert second.requests == [] and second.headers == []  # it never saw the key
+    assert got.value.kind == llm.BAD_REQUEST and not got.value.maybe_billed
+    assert f"redirect (HTTP {code})" in str(got.value) and "not followed" in str(
+        got.value
+    )
+    assert OPENAI_KEY not in str(got.value) and got.value.kind in llm.STOPS_MODEL
+
+
+def _stream_bytes(api: FakeResponsesAPI, answer: Answer) -> int:
+    return sum(
+        len(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode())
+        for e in api.events(answer, "m")
+    )
+
+
+def test_openai_a_full_length_answer_is_read_whole_and_an_endless_stream_is_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stream is one event for every few characters, so its bytes are many times the
+    answer's. The old bound on the stream (2,000,000 bytes) cut a design at about 25,000
+    characters, well under the 60,000 a Claude answer may use in full."""
+    assert (
+        llm.MAX_ANSWER_CHARS == shell_brief.MAX_REPLY_CHARS
+    )  # one limit, both vendors
+    text = '{"ops": []}'.ljust(shell_brief.MAX_REPLY_CHARS)
+    full = Answer(text=text, per_event=4, output_tokens=15_000)
+    with FakeResponsesAPI(lambda body: full) as api:
+        assert _stream_bytes(api, full) > 2_000_000
+        got = openai(api).complete("s", "u", {}, 100)
+    assert got.text == text and got.usage.output == 15_000 and got.measured
+    assert shell_brief.parse(got.text) == []
+    # one character more: read too, and refused by the check every vendor's answer gets
+    over = Answer(text=text + " ", per_event=4)
+    with FakeResponsesAPI(lambda body: over) as api:
+        longer = openai(api).complete("s", "u", {}, 100)
+    with pytest.raises(shell_brief.BriefError, match="more than the 60000"):
+        shell_brief.parse(longer.text)
+    # the bounds on the raw stream are still there: one event, and the stream in all
+    assert llm.MAX_LINE_BYTES < llm.MAX_STREAM_BYTES
+    monkeypatch.setattr(llm, "MAX_STREAM_BYTES", 300_000)
+    with FakeResponsesAPI(lambda body: full) as api:
+        with pytest.raises(llm.ProviderError) as cut:
+            llm.call(openai(api), "s", "u", {}, 100, sleep=lambda s: None)
+        assert len(api.requests) == 1
+    assert cut.value.kind == llm.TOO_LARGE and cut.value.maybe_billed
+
+
+def test_openai_a_deeply_nested_event_line_is_not_a_traceback() -> None:
+    """``json.loads`` raises RecursionError, not ValueError, on a line nested too deep."""
+    deep = "[" * 100_000 + "]" * 100_000
+    with pytest.raises(RecursionError):
+        json.loads(deep)
+    # among the events: skipped like any line that is not an event
+    with FakeResponsesAPI(lambda body: Answer(text="{}", lines=(deep,))) as api:
+        assert openai(api).complete("s", "u", {}, 100).text == "{}"
+    # in the place of the last event: the answer has no last word, as when it breaks off
+    events = 5  # created, in_progress, two deltas, the last one
+    with (
+        FakeResponsesAPI(
+            lambda body: Answer(text="{}", lines=(deep,), cut_after=events - 1)
+        ) as api,
+        pytest.raises(llm.ProviderError) as got,
+    ):
+        openai(api).complete("s", "u", {}, 100)
+    assert got.value.kind == llm.CUT_OFF and got.value.maybe_billed
+    assert llm._error_parts(deep.encode()) == ("", "", "")  # as an error's body
+
+
+def test_effort_is_checked_against_each_vendors_own_values(tmp_path: Path) -> None:
+    row = '[[bakeoff.models]]\nlabel="a"\nprovider="{0}"\nmodel="m1"\neffort="{1}"\n'
+    assert set(llm.EFFORTS) == set(bo.PROVIDERS)
+    for effort in ("low", "medium", "high", "xhigh", "max"):  # both vendors list these
+        for provider in bo.PROVIDERS:
+            got = settings(row.format(provider, effort), tmp_path).models["a"]
+            assert got.effort == effort
+    for effort in ("none", "minimal"):  # OpenAI's reasoning.effort only
+        assert settings(row.format("openai", effort), tmp_path).models["a"].effort
+        with pytest.raises(ConfigError, match="for a model of anthropic") as got_error:
+            settings(row.format("anthropic", effort), tmp_path)
+        assert "low, medium, high, xhigh, max" in str(got_error.value)
+    for provider in bo.PROVIDERS:
+        with pytest.raises(ConfigError, match="effort must be one of"):
+            settings(row.format(provider, "extreme"), tmp_path)
+
+
+def test_the_anthropic_client_never_retries_by_itself() -> None:
+    """``call()``'s retries are the only ones, and the cap guard is asked before each: a retry
+    inside the SDK would be a paid call the guard never saw."""
+    client = llm.anthropic_client(ANTHROPIC_KEY)
+    assert client.max_retries == 0
+    assert client.timeout.read == llm.READ_S and client.timeout.connect == llm.CONNECT_S
+
+
+def test_no_test_here_can_reach_another_host(outside: list[str]) -> None:
+    with pytest.raises(AssertionError, match="tried to look up '192.0.2.1'"):
+        socket.create_connection(("192.0.2.1", 443), timeout=0.5)
+    with pytest.raises(AssertionError, match="tried to look up"):
+        socket.getaddrinfo(llm.OPENAI_HOST, 443)
+    for connect in (socket.socket.connect, socket.socket.connect_ex):
+        with (
+            socket.socket() as s,
+            pytest.raises(AssertionError, match="tried to connect to '192.0.2.1'"),
+        ):
+            connect(s, ("192.0.2.1", 443))
+    # the real clients, at their real hosts, with a test's key: stopped before a packet
+    before = len(outside)
+    with pytest.raises(AssertionError):
+        llm.OpenAIDesigner(OPENAI_KEY, "m").complete("s", "u", {}, 100)
+    with pytest.raises(
+        llm.ProviderError
+    ) as got:  # the SDK wraps what its transport raises
+        llm.AnthropicDesigner(llm.anthropic_client(ANTHROPIC_KEY), "m").complete(
+            "s", "u", {}, 100
+        )
+    assert got.value.kind == llm.NETWORK and len(outside) >= before + 2
+    assert all(host not in LOCAL for host in outside)
