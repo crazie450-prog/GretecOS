@@ -140,13 +140,14 @@ With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1
     & $gos shell bakeoff run <plan-id> --models opus,astra --limit 1
     ```
     Read what it prints: how many answers it will ask for, each model's likely and worst-case cost, "Contacts: api.anthropic.com, api.openai.com", and the hard cap. Type `yes` and press Enter to spend it; anything else stops with nothing spent.
-26. Then the full six (add `--large <plan-id>,<power-plan-id>` if you have a power plan, and `--cap-usd 6` if you want a lower limit for this run):
+26. Then the full six, the same day or later (add `--large <plan-id>,<power-plan-id>` if you have a power plan, and `--cap-usd 6` if you want a lower limit for this run):
     ```powershell
     & $gos shell bakeoff run <plan-id> --models opus,astra
     ```
     It takes a few minutes per model. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
+    If you already spent something today (step 25 did), it may print "Today's limit ([budget] day_max_usd) leaves $9.55: this run's cap is lowered from $10.00 to that". That is fine: the run can never take the day over your day limit, and the six requests likely cost far less. Type `yes` as before.
     If the connection drops in the middle of an answer, GOS tries that answer again (at most twice). The vendor may still charge for the broken one, and GOS can't see how much, so it counts each at the most it could have cost against the cap and tells you at the end ("... call(s) broke off after they were sent"). Your bill on the vendor's site is the last word.
-27. If it says **Not run**, the line says why: a key is missing (it names the `gos key set` command), the AI is switched off or paused for credits (No-AI mode; the fake models still run), or today's spend plus this run could pass your day limit (`[budget] day_max_usd`; use a lower `--cap-usd`).
+27. If it says **Not run**, the line says why: a key is missing (it names the `gos key set` command), the AI is switched off or paused for credits (No-AI mode; the fake models still run), or today's spend has already reached your day limit (`[budget] day_max_usd` in `gos.toml`, $10 unless you changed it): run it another day, or raise that number, save, and run the command again.
 
 ### I. Rate it blind, then read the report
 
