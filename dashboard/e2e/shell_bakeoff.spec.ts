@@ -54,7 +54,7 @@ for (const [size, viewport] of Object.entries(SIZES) as [keyof typeof SIZES, { w
       const panel = page.getByTestId("bakeoff");
       await expect(panel.getByTestId("bakeoff-blind")).toContainText("blind");
       await expect(panel.getByTestId("bakeoff-brief")).toContainText("foundry");
-      await expect(panel.getByTestId("bakeoff-followup")).toContainText("make the roof steeper");
+      await expect(panel.getByTestId("bakeoff-followup")).toContainText("make it taller");
       const a = panel.getByTestId("bakeoff3d-A-scene");
       const b = panel.getByTestId("bakeoff3d-B-scene");
       await expect(a).toBeVisible();

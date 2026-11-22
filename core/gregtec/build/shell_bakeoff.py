@@ -105,8 +105,11 @@ COLUMNS = (
     "expect",
     "touches",
 )
-# an optional last column (WO-10.13): the case's headroom, "default" or a number
+# optional last columns, in this order: the case's headroom and relief ("default" or a number;
+# WO-10.13, D386) and its own palette ("role registry@meta, ..." for a case without a theme, or
+# extra entries for one with a theme; WO-10.14, D387)
 HEADROOM_COLUMN = "headroom"
+OPTIONAL = ("headroom", "relief", "palette")
 LINES = ("small", "large")
 RUN_ID = re.compile(r"bo-\d{8}-\d{6}-[0-9a-f]{4}")
 CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
@@ -134,7 +137,9 @@ SAVE_WAIT_S = 0.25  # between two tries
 STALE_S = 900.0
 assert STALE_S > llm.TIMEOUT_S + llm.MAX_WAIT_S
 # The share of the output limit a first look assumes an answer uses (the estimate's "likely").
-LIKELY_OUTPUT = 0.25
+# the share of the output limit a likely answer uses: a build script with its reasoning took
+# 13,184 of 16,000 tokens on GPT-6 Astra at effort high (2026-11-22, D387); 0.25 before
+LIKELY_OUTPUT = 0.8
 
 
 class BakeoffError(shell.ShellError):
@@ -399,6 +404,8 @@ class Case:
     expect: tuple[str, ...]
     touches: frozenset[str]
     headroom: int | None = None  # None: shell.LIMITS' default
+    relief: int | None = None
+    palette: tuple[tuple[str, str], ...] = ()  # (role, registry@meta), the case's own
 
 
 def load_cases(path: Path = CASES) -> list[Case]:
@@ -407,18 +414,34 @@ def load_cases(path: Path = CASES) -> list[Case]:
     out = []
     for n, r in enumerate(rows, 2):
         where = f"{path.name} line {n}"
-        if tuple(r) not in (COLUMNS, (*COLUMNS, HEADROOM_COLUMN)):
+        extra = tuple(r)[len(COLUMNS) :]
+        if tuple(r)[: len(COLUMNS)] != COLUMNS or extra != OPTIONAL[: len(extra)]:
             raise BakeoffError(
-                f"{path.name}: the columns are {' '.join(COLUMNS)} [{HEADROOM_COLUMN}]"
+                f"{path.name}: the columns are {' '.join(COLUMNS)}, then optionally "
+                f"{' '.join(OPTIONAL)}"
             )
-        hr_text = r.get(HEADROOM_COLUMN) or "default"
-        _, hr_lo, hr_hi = shell.LIMITS["headroom"]
-        if hr_text != "default" and not (
-            hr_text.isdigit() and hr_lo <= int(hr_text) <= hr_hi
-        ):
-            raise BakeoffError(
-                f"{where}: headroom is default or a number from {hr_lo} to {hr_hi}"
-            )
+        sizes: dict[str, int | None] = {}
+        for key in ("headroom", "relief"):
+            text = r.get(key) or "default"
+            _, lo_v, hi_v = shell.LIMITS[key]
+            if text != "default" and not (text.isdigit() and lo_v <= int(text) <= hi_v):
+                raise BakeoffError(
+                    f"{where}: {key} is default or a number from {lo_v} to {hi_v}"
+                )
+            sizes[key] = None if text == "default" else int(text)
+        own: list[tuple[str, str]] = []
+        for part in (r.get("palette") or "").split(","):
+            if not part.strip():
+                continue
+            bits = part.split()
+            if len(bits) != 2 or bits[0] not in theme_lib.ROLES or "@" not in bits[1]:
+                raise BakeoffError(
+                    f"{where}: a palette entry is '<role> <registry name>@<meta>', "
+                    f"not {part.strip()!r}"
+                )
+            own.append((bits[0], bits[1]))
+        if r["theme"] == "none" and not own:
+            raise BakeoffError(f"{where}: a case without a theme needs its own palette")
         if not CASE_ID.fullmatch(r["id"]):
             raise BakeoffError(f"{where}: {r['id']!r} is not a case id (a-z, 0-9, -)")
         if r["line"] not in LINES:
@@ -437,7 +460,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
             )
         expect = tuple(x.strip() for x in r["expect"].split(";") if x.strip())
         for x in expect:
-            if not shell_eval._CHECK.match(x):
+            if x != shell_eval.CHANGED and not shell_eval._CHECK.match(x):
                 raise BakeoffError(f"{where}: {x!r} is not a check")
         touches = frozenset(x.strip() for x in r["touches"].split(",") if x.strip())
         if not expect or not touches or not touches <= set(shell.OPS):
@@ -453,7 +476,9 @@ def load_cases(path: Path = CASES) -> list[Case]:
                 r["followup"],
                 expect,
                 touches,
-                None if hr_text == "default" else int(hr_text),
+                sizes["headroom"],
+                sizes["relief"],
+                tuple(own),
             )
         )
     if not out or len(out) > MAX_CASES:
@@ -489,11 +514,13 @@ def _preview(
         home,
         vault,
         list(ids),
-        theme_id=case.theme,
+        theme_id=None if case.theme == "none" else case.theme,
         prompt=case.brief,
         line_type=case.line_type,
         max_blocks=max_blocks,
         headroom=case.headroom,
+        relief=case.relief,
+        extra=case.palette,
         save_it=False,
     )
 
@@ -868,6 +895,8 @@ def create(
                 "line_type": p.case.line_type,
                 "max_blocks": p.max_blocks,
                 "headroom": p.case.headroom,
+                "relief": p.case.relief,
+                "palette": [list(e) for e in p.case.palette],
                 "baseline_blocks": p.baseline,
                 "brief": p.case.brief,
                 "followup": p.case.followup,
@@ -1213,11 +1242,13 @@ class Runner:
                     where,
                     self.vault,
                     case["plans"],
-                    theme_id=case["theme"],
+                    theme_id=None if case["theme"] == "none" else case["theme"],
                     prompt=case["brief"],
                     line_type=case["line_type"],
                     max_blocks=case["max_blocks"],
                     headroom=case.get("headroom"),
+                    relief=case.get("relief"),
+                    extra=[tuple(e) for e in case.get("palette") or ()],
                     ops=ops,
                 )
             except (shell.ShellError, palette.CatalogError) as exc:

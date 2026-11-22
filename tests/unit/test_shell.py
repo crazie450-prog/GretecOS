@@ -111,6 +111,26 @@ STATES = [
     state("minecraft:glowstone", 0),
     state("minecraft:glass", 0),
     state("minecraft:quartz_block", 2),
+    # the bake-off's own palettes (tests/evals/shell_bakeoff.tsv, WO-10.14)
+    *(state("minecraft:stonebrick", m) for m in (0, 1, 3)),
+    *(
+        state(b, m)
+        for b, m in (
+            ("minecraft:stone", 0),
+            ("minecraft:nether_brick", 0),
+            ("minecraft:cobblestone", 0),
+            ("minecraft:gold_block", 0),
+            ("minecraft:log", 1),
+            ("minecraft:wool", 14),
+            ("minecraft:wooden_slab", 5),
+            ("minecraft:stained_hardened_clay", 15),
+        )
+    ),
+    *(state("minecraft:stone_slab", m) for m in (1, 5, 7)),
+    *(state("minecraft:stained_glass", m) for m in (3, 11, 14)),
+    *(state("minecraft:sandstone", m) for m in (0, 1, 2)),
+    *(state("minecraft:planks", m) for m in (1, 5)),
+    *(state("minecraft:quartz_block", m) for m in (0, 1)),
     state("minecraft:wool", 20),
     state("minecraft:chest", 0, has_te=True),
     state("gregtech:gt.blockmachines", 0, has_te=True),

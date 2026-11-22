@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from gregtec.build import shell_revise
+from gregtec.build import shell_brief, shell_revise
 from gregtec.llm.designers import Reply
 from gregtec.llm.prices import Usage
 
@@ -152,6 +152,9 @@ def revised(user: str, facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     """The current operations with the request applied by GOS's reviser (unchanged when it
     can't act on the words: the gate then says nothing changed)."""
     current = _line(user, "current operations: ")
+    script = _line(user, "current script: ")
+    if script:  # the script runs first (shell_brief.parse)
+        current = [{"op": "script", "script": script}, *current]
     m = _REQUEST.search(user)
     words = m.group(1) if m else ""
     rec = {**facts, "ops": current}
@@ -194,6 +197,6 @@ class FakeDesigner:
                 m = _LINE_TYPE.search(user)
                 line = m.group(1) if m else "general"
                 ops = ornate(facts, line) if self.model == ORNATE else plain(facts)
-            text = json.dumps({"ops": ops}, separators=(",", ":"))
+            text = shell_brief.answer(ops)
         usage = Usage(input=(len(system) + len(user)) // 4, output=len(text) // 4 + 1)
         return Reply(text, usage)

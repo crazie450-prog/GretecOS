@@ -306,9 +306,11 @@ def test_the_schema_is_one_both_vendors_strict_modes_take() -> None:
     for word in ("minimum", "maximum", "minItems", "maxItems", "$ref", "pattern"):
         assert word not in text  # nothing either vendor refuses: the gate checks values
     op = schema["properties"]["ops"]["items"]
-    assert op["properties"]["op"]["enum"] == list(shell.OPS)
+    # the script is the answer's own key (v4, D387), never an op in it
+    assert op["properties"]["op"]["enum"] == [k for k in shell.OPS if k != "script"]
+    assert schema["required"] == ["script", "ops"]
     # the schema's keys are exactly the vocabulary's: nothing the gate would call unknown
-    assert set(op["properties"]) == set().union(*shell._KEYS.values())
+    assert set(op["properties"]) == set().union(*shell._KEYS.values()) - {"script"}
 
 
 def _unions(node: Any) -> int:  # noqa: ANN401 - any JSON
@@ -347,7 +349,9 @@ def test_the_tool_and_the_seam_describe_the_same_vocabulary() -> None:
     from gregtec.agents.tools import shells
 
     assert shells.VOCABULARY.startswith(shell_brief.OPERATIONS)
-    assert shell_brief.OPERATIONS in shell_brief.system_prompt()
+    assert shell_brief.OPERATIONS.endswith(shell_brief.VOCAB)
+    assert shell_brief.VOCAB in shell_brief.system_prompt()
+    assert shell_brief.SCRIPT_API in shell_brief.system_prompt()
     assert shells.MAX_DESIGN_TEXT == shell_brief.MAX_REPLY_CHARS
 
 
@@ -466,10 +470,18 @@ def test_a_tight_case_allows_a_tenth_over_the_procedural_shell(
 
 def test_the_shipped_cases_load_and_span_what_the_work_order_asks() -> None:
     cases = bo.load_cases()
-    assert 5 <= len(cases) <= 8
+    assert len(cases) == 7
     assert {c.line for c in cases} == {"small", "large"}
-    assert len({c.theme for c in cases}) == 2
-    assert any(c.max_blocks == "tight" for c in cases)
+    # varied on purpose (D387): both starter themes, and cases with a palette of their own
+    assert {"th-foundry", "th-marble-works", "none"} <= {c.theme for c in cases}
+    assert all(c.palette for c in cases if c.theme == "none")
+    assert len({c.palette for c in cases if c.palette}) >= 3
+    assert (
+        len({c.headroom for c in cases}) >= 3
+        and min(c.headroom or 4 for c in cases) >= 10
+    )
+    assert all(c.relief for c in cases)
+    assert any(not c.brief for c in cases)  # one from the theme alone
     assert all(c.followup and c.expect and c.touches for c in cases)
 
 
@@ -1863,13 +1875,13 @@ def test_gos_shell_bakeoff_with_the_fake_models_start_to_end(
     )
     code, text = gos(toml, "report", rid)
     assert code == 2 and "not rated yet" in text
-    code, text = gos(toml, "rate", rid, "foundry-small", "A")
+    code, text = gos(toml, "rate", rid, "foundry-stacks", "A")
     assert code == 0 and "1 case(s) left" in text
-    code, text = gos(toml, "rate", rid, "foundry-small")
+    code, text = gos(toml, "rate", rid, "foundry-stacks")
     assert code == 2
     code, text = gos(toml, "rate", rid, typed="b\n")  # the rest, asked in turn
-    assert code == 0 and "All rated" in text and "marble-small" in text
-    assert bo.load(home, rid)["ratings"]["marble-small"]["pick"] == "B"
+    assert code == 0 and "All rated" in text and "marble-temple" in text
+    assert bo.load(home, rid)["ratings"]["marble-temple"]["pick"] == "B"
     code, text = gos(toml, "report", rid)
     assert code == 0 and "| fake-plain | fake |" in text and "free (fake)" in text
     assert (home / "data" / "reports" / f"shell-bakeoff-{rid}.md").is_file()
