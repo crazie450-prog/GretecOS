@@ -614,7 +614,7 @@ def test_single_block_fuel_is_gts_truncated_eu_per_litre(
 def test_a_large_boiler_burns_a_solid_by_its_exported_burn_value(
     db: Path, tmp_path: Path
 ) -> None:
-    # D329: charcoal with the export's exact furnace burn value (1650 here, so GT's carried
+    # D379: charcoal with the export's exact furnace burn value (1650 here, so GT's carried
     # remainder shows) in a bronze boiler feeding a large steam turbine, Steel large rotor.
     c = _writable_copy(db, tmp_path)
     multi = "gregtech.common.tileentities.machines.multi."
@@ -636,7 +636,7 @@ def test_a_large_boiler_burns_a_solid_by_its_exported_burn_value(
             " ?, ?)",
             [
                 (900, f"r:{fake}/aaaaaaaaaaaa", fake, coal, 1, "furnace burn value", 1650.0),
-                # A solid the export has no burn value for (a run made before D329).
+                # A solid the export has no burn value for (a run made before D379).
                 (901, f"r:{fake}/bbbbbbbbbbbb", fake, log, 0, "furnace burn value / 1600", 0.0),
             ],
         )  # fmt: skip

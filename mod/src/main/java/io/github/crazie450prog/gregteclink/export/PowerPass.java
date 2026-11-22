@@ -54,7 +54,7 @@ import gregtech.common.tileentities.machines.multi.MTELargeNaquadahReactor;
  * reactor class and GoodGenerator's config as this instance loaded them. {@code dynamos}: every dynamo hatch (GT's,
  * TecTech's multi-amp and laser source hatches) with its voltage and amps out, the cap a generator's output must fit.
  * <p>
- * {@code boiler_fuels} (D329): every solid fuel of GT's large boiler map with its exact furnace burn value
+ * {@code boiler_fuels} (D379): every solid fuel of GT's large boiler map with its exact furnace burn value
  * ({@code GTModHandler.getFuelValue}), which the 2.9 large boilers compute its burn time from; the map's recipe keeps
  * only that value divided by 1600, rounded down. Keyed by item ref, never by numeric IDs.
  */

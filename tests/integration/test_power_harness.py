@@ -17,7 +17,7 @@ the harnesses; locally: mod/README.md):
 - **The Large Naquadah Reactor** (WO-4.8, D326): ``make_naquadah_vectors.py`` reruns GT's own
   class and must write exactly ``vectors/naquadah.tsv``; the export's reactor lists and fuel map
   are the oracle's, and the catalog's steady run on each fuel equals the oracle's run.
-- **Solid boiler fuels** (D329): ``make_boiler_vectors.py`` reruns GT's own boilers and must
+- **Solid boiler fuels** (D379): ``make_boiler_vectors.py`` reruns GT's own boilers and must
   write exactly ``vectors/boiler.tsv``; every solid fuel of ``largeBoilerFakeFuels`` carries the
   furnace burn value GT gave in the game (``boiler_fuel``), and the 2.9 large boilers are sized
   on charcoal from it, the designer and the validator alike.
@@ -91,7 +91,7 @@ def test_the_committed_naquadah_vectors_are_what_gts_own_class_computes(
 def test_the_committed_boiler_vectors_are_what_gts_own_classes_compute(
     tmp_path: Path,
 ) -> None:
-    """D329: GT's own 2.9 large boilers (solid fuels through their ``checkProcessing``) and
+    """D379: GT's own 2.9 large boilers (solid fuels through their ``checkProcessing``) and
     Tree Growth Simulator, rerun on the mod's GT jar."""
     _require_harness()
     assert _load("make_boiler_vectors").main(["--out", str(tmp_path)]) == 0
@@ -210,7 +210,7 @@ CHARCOAL = "minecraft:coal@1"
 
 
 def test_solid_boiler_fuels_carry_gts_furnace_values(conn: sqlite3.Connection) -> None:
-    """D329: every solid fuel of GT's large boiler map has the furnace burn value GT's own
+    """D379: every solid fuel of GT's large boiler map has the furnace burn value GT's own
     ``GTModHandler.getFuelValue`` gave in the game, keyed by registry name and meta, and its
     ``fuel`` row carries it (the map's own value is that / 1600, rounded down)."""
     run = _run(conn)
@@ -241,7 +241,7 @@ def test_solid_boiler_fuels_carry_gts_furnace_values(conn: sqlite3.Connection) -
 
 
 def test_the_large_boilers_are_sized_on_charcoal(conn: sqlite3.Connection) -> None:
-    """D329: at EV the designer offers the bronze and the steel boiler on charcoal (GT's 1600:
+    """D379: at EV the designer offers the bronze and the steel boiler on charcoal (GT's 1600:
     20 raw ticks an item, x 2 in the bronze boiler), never a superheated one (charcoal is not
     one of GT's allowed fuels), and the validator derives the same ports from the DB."""
     run = _run(conn)

@@ -296,7 +296,7 @@ def gen_ports(
             ), None
         if kind == "boiler_steam":
             b = gt_boiler.BOILERS.get(_class(conn, int(spec["boiler_mte"])) or "")
-            # A fluid by its burn ticks, a solid by its exact furnace burn value (D329).
+            # A fluid by its burn ticks, a solid by its exact furnace burn value (D379).
             burns: dict[str, Any] | None = None
             if fluid is not None and str(row[5]) == fuels.Unit.BOILER_TICKS.value:
                 burns = {"fluid": fluid, "duration": int(row[4])}

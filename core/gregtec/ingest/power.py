@@ -23,7 +23,7 @@ GregtecLink's power pass writes what no recipe carries (docs/contracts/gregtecli
   multiplier, in the reactor's order) and its liquid air a second, as the instance loaded
   GoodGenerator's config; ``dynamos``: every dynamo hatch (GT's, TecTech's multi-amp and laser
   source hatches), its tier, voltage and amps out;
-- ``boiler_fuels`` (D329; absent from runs made before it): every solid fuel of
+- ``boiler_fuels`` (D379; absent from runs made before it): every solid fuel of
   ``largeBoilerFakeFuels`` (an item input that holds no fluid) with its exact furnace burn value,
   GT's ``GTModHandler.getFuelValue``, which the large boilers compute its burn time from (the
   recipe keeps only that value / 1600, rounded down: ``special``).

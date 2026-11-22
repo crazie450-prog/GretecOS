@@ -61,7 +61,7 @@ def test_each_map_decodes_by_its_rule(fuel_map: fuels.FuelMap) -> None:
     else:
         assert fluid == fuels.Decoded(fuels.Unit.BOILER_TICKS, 40.0)
         assert item == fuels.Decoded(fuels.Unit.BURN_RATIO, 7.0)
-        # With the export's exact furnace burn value (D329) a solid reads as that.
+        # With the export's exact furnace burn value (D379) a solid reads as that.
         exact = fuels.decode(
             fuel_map, special=7, duration=40, fluid=False, burn_value=12345
         )
@@ -187,7 +187,7 @@ def test_gt_power_json_reads() -> None:
         power_ingest.BoilerFuel("test:coal", 1, "", 1, 1650),
     )  # an error row is left out
     without = {k: v for k, v in POWER_JSON.items() if k != "boiler_fuels"}
-    assert power_ingest.parse(without).boiler_fuels == ()  # a run made before D329
+    assert power_ingest.parse(without).boiler_fuels == ()  # a run made before D379
     assert power_ingest.status({"parts": {"power": "ok"}}) == "ok"
     assert power_ingest.status({}) == "absent"
     with pytest.raises(power_ingest.FormatError):
@@ -303,7 +303,7 @@ def test_fuel_rows_are_decoded_per_map(conn: sqlite3.Connection) -> None:
         5e5,
     )
     assert rows[4][5:] == (fuels.Unit.BOILER_TICKS.value, 1200.0)
-    # A solid boiler fuel carries the export's exact furnace burn value (D329); one the export
+    # A solid boiler fuel carries the export's exact furnace burn value (D379); one the export
     # has no value for keeps GT's special value, the value / 1600 rounded down.
     assert rows[8][1:] == (
         "test:coal@1",
@@ -518,7 +518,7 @@ def test_gos_power_is_wired_into_the_cli(
 
 
 def test_a_version_7_db_gets_the_boiler_fuel_table(tmp_path: Path) -> None:
-    """D329: a new table only, so a DB built before it is upgraded with no migration file."""
+    """D379: a new table only, so a DB built before it is upgraded with no migration file."""
     path = tmp_path / "gos.sqlite"
     access.connect(path).close()
     c = sqlite3.connect(path)

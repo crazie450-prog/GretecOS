@@ -16,7 +16,7 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
   optimal flow (``gtmath.turbine``), on the smallest dynamo hatch (1 A, up to the tier cap) that
   doesn't cap it;
 - ``boiler_steam``: a 2.9 large boiler on a fluid fuel or a solid one (``gtmath.boiler``; a
-  solid by its exported furnace burn value, D329) feeding a large steam turbine (an HP steam
+  solid by its exported furnace burn value, D379) feeding a large steam turbine (an HP steam
   turbine for the superheated boilers) at its optimal flow: as many boilers as the flow needs,
   throttled by GT's circuit so their fuel follows the steam taken;
 - ``naquadah_reactor``: GoodGenerator's Large Naquadah Reactor (WO-4.8, D327) on one fuel of
@@ -27,7 +27,7 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
 
 For each generator the fuels are pruned to the top :data:`TOP_FUELS` by EU per unit of fuel
 (the request's ``candidates``; a boiler's solid fuels apart from its fluid ones, since an item
-is not a litre, D329; ``self_sustaining`` keeps only fuels a forward closure over the
+is not a litre, D379; ``self_sustaining`` keeps only fuels a forward closure over the
 DB's recipes reaches from the free set and the farms first, :func:`reachable`).
 
 **EU** (WO-4.7, D323): the chain pays for its EU out of the generator's output, so the network
@@ -492,7 +492,7 @@ def candidates(
         if unsized:
             notes.append(
                 f"{unsized} solid boiler fuels not sized: the export run has no furnace burn"
-                " values (gt_power.json's boiler_fuels, D329); export again"
+                " values (gt_power.json's boiler_fuels, D379); export again"
             )
         for b in boilers:
             spec = gt_boiler.BOILERS[_simple(b.class_name)]

@@ -21,7 +21,7 @@
 -- LSC cells), one set per export run; new tables only, so no migration file.
 -- Version 6 (D307, WO-10.3): the block catalog (block_state, block_texture), one set per export
 -- run; new tables only, so no migration file.
--- Version 8 (D329): boiler_fuel, the solid large-boiler fuels' furnace burn values, one set per
+-- Version 8 (D379): boiler_fuel, the solid large-boiler fuels' furnace burn values, one set per
 -- export run; a new table only, so no migration file.
 
 -- Base tables [A§5.4]
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS crop_soil(run_id INT NOT NULL, soil TEXT NOT NULL, sl
 -- generator: every single-block generator's fuel efficiency (%), voltage and amps out;
 -- generator_gt: what GT's own generator gives for each fuel of its map (eu per operation of
 -- `consumed` litres for a fluid, item_eu per item), for checks; fuel_container: the fluid in each
--- fluid container a fuel map lists; boiler_fuel (D329): the exact furnace burn value (GT's
+-- fluid container a fuel map lists; boiler_fuel (D379): the exact furnace burn value (GT's
 -- GTModHandler.getFuelValue) of each solid fuel of largeBoilerFakeFuels, whose recipe keeps only
 -- that value / 1600 rounded down (special); the solid's fuel row carries it as its value (unit
 -- 'furnace burn value'). fuel: every fuel recipe of GT's fuel maps, decoded by its map's

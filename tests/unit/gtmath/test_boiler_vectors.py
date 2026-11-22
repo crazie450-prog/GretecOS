@@ -1,7 +1,7 @@
 """Replay GT's own 2.9 large boilers and Tree Growth Simulator (``vectors/boiler.tsv``, written by
 ``oracle/make_boiler_vectors.py`` from GT 5.09.54.265's classes) through the ports in
 ``gtmath/boiler.py`` and ``gtmath/treefarm.py`` (WO-4.2, D231, D234), solid fuels included
-(D329: GT's own ``checkProcessing`` on an item of each furnace burn value)."""
+(D379: GT's own ``checkProcessing`` on an item of each furnace burn value)."""
 
 from __future__ import annotations
 

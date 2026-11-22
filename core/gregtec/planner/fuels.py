@@ -31,7 +31,7 @@ from GT's maps, frontends and the generators that burn them, read at the pin):
   maps and furnace fuels): for a fluid, the steel boiler's ticks per 1000 L (the recipe's
   duration, GT's ``getBurntimeRatio`` already applied); for a solid fuel, its exact furnace burn
   value (``GTModHandler.getFuelValue``, exported per fuel in ``gt_power.json``'s ``boiler_fuels``,
-  D329: what the boilers compute an item's burn time from), or, from an export run made before
+  D379: what the boilers compute an item's burn time from), or, from an export run made before
   that, only the value / 1600 rounded down (special), which sizes nothing.
 
 A single-block generator then turns a fuel into EU at its own efficiency

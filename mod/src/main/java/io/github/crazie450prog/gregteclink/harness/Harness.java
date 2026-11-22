@@ -1477,7 +1477,7 @@ public final class Harness {
                     + " dynamo hatches, "
                     + lasers
                     + " of 256 A or more");
-            // D329: the large boilers' solid fuels with their exact furnace burn values. Charcoal burns 1600 like
+            // D379: the large boilers' solid fuels with their exact furnace burn values. Charcoal burns 1600 like
             // coal; the map's own special value is that burn value / 1600, rounded down.
             int solids = 0;
             int ratios = 0;
