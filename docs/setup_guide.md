@@ -24,7 +24,7 @@ One document. Every command is written out here. You never have to open a second
 | 10 | The paid bake-off | 30 to 45 minutes |
 | 11 | What you have now and what comes next | reading only |
 
-**What it costs.** Parts 0 to 9 are free, with one exception. The **Test** button for your Anthropic key in the wizard (step 37) makes one tiny call to the cheapest model. That is well under one cent at the price GOS has on file for it. One more thing to know: once a key is stored, GOS's own upkeep may make one small call to that same model for each old week of session logs in your vault. The upkeep runs while the PC is idle. With no old logs it makes none, and by the project record you have none. Part 10 spends real money at two vendors: Anthropic (your key) and OpenAI (a new key, with credit you buy on their site first, in step 76). One bake-off run can never spend more than its cap, which is \$10 unless you change it. Your day limit (also \$10 unless you changed it; the program's messages call it the day cap) holds too. With the prices read on 2026-11-20 the project's own estimate was "likely well under \$1" for the one-request trial and "about \$1 for Claude Opus 5.5 and about \$2.50 to \$3 for GPT-6 Astra" for the full run. Prices move. The command prints its own estimate and waits for you to type `yes`. Trust that estimate, not this page. The amount in its question ("up to") is the worst case, not the likely cost: step 79 explains it.
+**What it costs.** Parts 0 to 9 are free, with one exception. The **Test** button for your Anthropic key in the wizard (step 37) makes one tiny call to the cheapest model. That is well under one cent at the price GOS has on file for it. One more thing to know: once a key is stored, GOS's own upkeep may make one small call to that same model for each old week of session logs in your vault. The upkeep runs while the PC is idle. With no old logs it makes none, and by the project record you have none. Part 10 spends real money at two vendors: Anthropic (your key) and OpenAI (a new key, with credit you buy on their site first, in step 76). One bake-off run can never spend more than its cap, which is \$10 unless you change it. Your day limit (also \$10 unless you changed it; the program's messages call it the day cap) holds too. With the prices read on 2026-11-20 the project's own estimate was "likely well under \$1" for the one-request trial and "about \$1 for Claude Opus 5.5 and about \$2.50 to \$3 for GPT-6 Astra" for the full run; since D386 (seven requests, the longer designer prompt) it is about \$1.35 and \$3.35. Prices move. The command prints its own estimate and waits for you to type `yes`. Trust that estimate, not this page. The amount in its question ("up to") is the worst case, not the likely cost: step 79 explains it.
 
 **Marks.** `$` in a step's title = the step costs money. `LAB` = the Lab game is open. `PLAY` = the step touches Play. In this guide only `$` occurs, on steps 37, 76, 79 and 80. Steps 37, 79 and 80 spend API money. In step 76 you buy credit at OpenAI. **No step is marked LAB or PLAY:** nothing here starts Lab or Play, and nothing writes to Play. Eight steps read Play's files without changing them: `gos doctor` (step 25), the sync (steps 26 and 27), three screens of the wizard (steps 36, 41 and 43), and two one-line looks that show Play was left alone (steps 47 and 51). Each of those steps says so.
 
@@ -1552,7 +1552,7 @@ More detail: [shells.md](runbooks/shells.md), and [shell_bakeoff.md](runbooks/sh
 
 ## Part 9. The free bake-off
 
-A bake-off gives the same six building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are three small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it.
+A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are three small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it.
 
 **Paste this first in every new window:**
 
@@ -1621,10 +1621,10 @@ You should see: a few lines about what it will do, among them exactly this one:
 Contacts: nothing. Fake models only: free.
 ```
 
-Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`. Then one line per building, 36 of them. Each names a request and a letter A, B or C, never a model. Then:
+Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`. Then one line per building, 42 of them. Each names a request and a letter A, B or C, never a model. Then:
 
 ```text
-Run bo-...: done. 48 calls, $0.00.
+Run bo-...: done. 56 calls, $0.00.
 Next: look at it in the Build view's Bake-off panel, rate it there or with `gos shell bakeoff rate bo-...`, then `gos shell bakeoff report bo-...`. To remove it: `gos shell bakeoff delete bo-...`.
 ```
 
@@ -1650,14 +1650,14 @@ If not:
 
 ### Step 72. Look at the buildings and rate them
 
-In the dashboard's **Build** view, scroll down to the panel **Shell bake-off**. It appears by itself a few seconds after a run exists. At its top are the six requests by name. For each request:
+In the dashboard's **Build** view, scroll down to the panel **Shell bake-off**. It appears by itself a few seconds after a run exists. At its top are the seven requests by name. For each request:
 
 1. Look at the answers side by side. They are named **A**, **B** and **C**. Which model is which letter is hidden, and it is shuffled for every request.
 2. Click **After the follow-up** to see each building after the change that was asked. Click **The first design** to go back.
 3. Pick one: **A is better**, **B is better**, **C is better**, **Tie** or **None is good**.
 4. Click the next request's name at the top.
 
-You should see: the top right of the panel says "blind: the models are A, B, C until you have rated". A tick appears on each request you have rated. After the sixth, the text beside the button at the bottom says "every case is rated".
+You should see: the top right of the panel says "blind: the models are A, B, C until you have rated". A tick appears on each request you have rated. After the seventh, the text beside the button at the bottom says "every case is rated".
 
 If not: the panel is not there, or the window shows a Chrome error page: GOS must be running. Do the check at the top of this part, wait five seconds, then press F5. If the panel still stays away, you can rate this practice run from PowerShell. There you see only block counts and never the buildings. That is good enough for this free practice run, and for nothing else. This shows the run, then asks for each pick in turn (type a letter, `tie` or `bad`, then Enter):
 
@@ -1674,7 +1674,7 @@ Click **Name the models and show the report**. Or, from PowerShell:
 & $gos shell bakeoff report $run
 ```
 
-You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 12` in the column "first try" and `12 of 12` in the column "passed". The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
+You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 14` in the column "first try" and `14 of 14` in the column "passed". The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
 
 After this the picks for this run cannot be changed.
 
@@ -1698,7 +1698,7 @@ More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (Part 1).
 
 ## Part 10. The paid bake-off
 
-The same six requests, now sent to two real models: one from Anthropic and one from OpenAI. This is the only part that spends real money. A model gets words and numbers and gives back a list of building steps, usually with a short Python building program among them. It gets no tools and reads no file. GOS runs the program in its own locked box: a separate process with no files, no network, no keys and no world, stopped after 10 seconds. Then it checks every block, as for any building. What is sent: the request words, the theme, the names of the allowed blocks and the boxes of your layout. No key, file or world leaves the PC. The vendors bill by the **token**: a small piece of text, about a short word. Prices are given per million tokens.
+The same seven requests, now sent to two real models: one from Anthropic and one from OpenAI. This is the only part that spends real money. A model gets words and numbers and gives back a list of building steps, usually with a short Python building program among them. It gets no tools and reads no file. GOS runs the program in its own locked box: a separate process with no files, no network, no keys and no world, stopped after 10 seconds. Then it checks every block, as for any building. What is sent: the request words, the theme, the names of the allowed blocks and the boxes of your layout. No key, file or world leaves the PC. The vendors bill by the **token**: a small piece of text, about a short word. Prices are given per million tokens.
 
 What holds the cost: each run stops at its cap (\$10 unless you change it), and it is also held to what your day limit still leaves (`[budget] day_max_usd`, \$10 unless you changed it). Before every paid run the command prints its estimate and waits for `yes`. Anything else typed there stops it with nothing spent.
 
@@ -1759,7 +1759,7 @@ If not: `anthropic: not stored`: store it now with `& $gos key set anthropic`. I
 
 This step has three parts. The first two are in your browser, at `https://platform.openai.com/`. This is the one place in the guide where you pay before a command has shown you an estimate.
 
-**1. Buy credit.** OpenAI's API is paid in advance. How much to buy: the project's estimate for the full run was about \$2.50 to \$3 for the OpenAI model, at the prices of 2026-11-20. One run can never use more than its cap of \$10, both vendors together. So a small amount is enough. The smallest amount their site sells is not known here.
+**1. Buy credit.** OpenAI's API is paid in advance. How much to buy: the project's estimate for the full run is about \$3.35 for the OpenAI model (seven requests, D386), at the prices of 2026-11-20. One run can never use more than its cap of \$10, both vendors together. So a small amount is enough. The smallest amount their site sells is not known here.
 
 You should see: the site shows a credit balance above \$0.
 
@@ -1852,7 +1852,7 @@ Delete everything from the line `[bakeoff]` down to the end of the file, and sav
 
 ### Step 79. $ Run one request first
 
-`--limit 1` sends only the first of the six requests, so you see it work for little money.
+`--limit 1` sends only the first of the seven requests, so you see it work for little money.
 
 ```powershell
 & $gos shell bakeoff run $plan --models "opus,astra" --limit 1
@@ -1898,7 +1898,7 @@ It stops before the estimate with `error: the following arguments are required: 
 
 The run ends with a line that starts `stopped (a model could not be asked at all`: one model refused its very first request. Nothing more was spent on the other model. Do step 83 now.
 
-### Step 80. $ Run all six requests
+### Step 80. $ Run all seven requests
 
 The same day or later. Ctrl+C stops it cleanly: what is finished stays.
 
@@ -1906,7 +1906,7 @@ The same day or later. Ctrl+C stops it cleanly: what is finished stays.
 & $gos shell bakeoff run $plan --models "opus,astra"
 ```
 
-You should see: the same kind of estimate, now for 6 cases. The worst case of six requests is above the cap, so the question now says "up to" the "Hard cap" figure itself. If you already spent something today, the line that starts `Today's limit ([budget] day_max_usd) leaves $<X>:` stands just above the "Hard cap" line again, as in step 79. Step 79 itself counts as such a spend. That is normal. Type `yes`. It then takes a few minutes per model and ends with `Run bo-...: done. <N> calls, $<X>.` If it reaches the cap first, it stops cleanly and says so.
+You should see: the same kind of estimate, now for 7 cases. The worst case of seven requests is above the cap, so the question now says "up to" the "Hard cap" figure itself. If you already spent something today, the line that starts `Today's limit ([budget] day_max_usd) leaves $<X>:` stands just above the "Hard cap" line again, as in step 79. Step 79 itself counts as such a spend. That is normal. Type `yes`. It then takes a few minutes per model and ends with `Run bo-...: done. <N> calls, $<X>.` If it reaches the cap first, it stops cleanly and says so.
 
 Put this run's name into a name for the next steps. You type nothing: the first line finds the newest run, and the second shows its name.
 

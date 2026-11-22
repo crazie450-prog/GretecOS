@@ -105,6 +105,8 @@ COLUMNS = (
     "expect",
     "touches",
 )
+# an optional last column (WO-10.13): the case's headroom, "default" or a number
+HEADROOM_COLUMN = "headroom"
 LINES = ("small", "large")
 RUN_ID = re.compile(r"bo-\d{8}-\d{6}-[0-9a-f]{4}")
 CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
@@ -396,6 +398,7 @@ class Case:
     followup: str
     expect: tuple[str, ...]
     touches: frozenset[str]
+    headroom: int | None = None  # None: shell.LIMITS' default
 
 
 def load_cases(path: Path = CASES) -> list[Case]:
@@ -404,8 +407,18 @@ def load_cases(path: Path = CASES) -> list[Case]:
     out = []
     for n, r in enumerate(rows, 2):
         where = f"{path.name} line {n}"
-        if tuple(r) != COLUMNS:
-            raise BakeoffError(f"{path.name}: the columns are {' '.join(COLUMNS)}")
+        if tuple(r) not in (COLUMNS, (*COLUMNS, HEADROOM_COLUMN)):
+            raise BakeoffError(
+                f"{path.name}: the columns are {' '.join(COLUMNS)} [{HEADROOM_COLUMN}]"
+            )
+        hr_text = r.get(HEADROOM_COLUMN) or "default"
+        _, hr_lo, hr_hi = shell.LIMITS["headroom"]
+        if hr_text != "default" and not (
+            hr_text.isdigit() and hr_lo <= int(hr_text) <= hr_hi
+        ):
+            raise BakeoffError(
+                f"{where}: headroom is default or a number from {hr_lo} to {hr_hi}"
+            )
         if not CASE_ID.fullmatch(r["id"]):
             raise BakeoffError(f"{where}: {r['id']!r} is not a case id (a-z, 0-9, -)")
         if r["line"] not in LINES:
@@ -440,6 +453,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
                 r["followup"],
                 expect,
                 touches,
+                None if hr_text == "default" else int(hr_text),
             )
         )
     if not out or len(out) > MAX_CASES:
@@ -479,6 +493,7 @@ def _preview(
         prompt=case.brief,
         line_type=case.line_type,
         max_blocks=max_blocks,
+        headroom=case.headroom,
         save_it=False,
     )
 
@@ -852,6 +867,7 @@ def create(
                 "theme": p.case.theme,
                 "line_type": p.case.line_type,
                 "max_blocks": p.max_blocks,
+                "headroom": p.case.headroom,
                 "baseline_blocks": p.baseline,
                 "brief": p.case.brief,
                 "followup": p.case.followup,
@@ -1201,6 +1217,7 @@ class Runner:
                     prompt=case["brief"],
                     line_type=case["line_type"],
                     max_blocks=case["max_blocks"],
+                    headroom=case.get("headroom"),
                     ops=ops,
                 )
             except (shell.ShellError, palette.CatalogError) as exc:

@@ -99,6 +99,7 @@ def make(
     max_blocks: int | None = None,
     headroom: int | None = None,
     ops: Sequence[Mapping[str, Any]] | None = None,
+    relief: int | None = None,
     site: Site | None = None,
     save_it: bool = True,
 ) -> Made:
@@ -157,6 +158,7 @@ def make(
         line_type=brief.line_type,
         max_blocks=max_blocks,
         headroom=headroom,
+        relief=relief,
     )
     source = "procedural" if ops is None else "architect"
     progress.stage("compose")
@@ -363,6 +365,7 @@ def rebuild(
         line_type=rec.get("line_type", theme_lib.GENERAL),
         max_blocks=rec["max_blocks"],
         headroom=rec["headroom"],
+        relief=rec.get("relief", 0),  # a build from before D386 had none
     )
     spec = replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
     outcome = shell.design(
@@ -407,6 +410,7 @@ def cells_of(
         line_type=rec.get("line_type", theme_lib.GENERAL),
         max_blocks=rec["max_blocks"],
         headroom=rec["headroom"],
+        relief=rec.get("relief", 0),  # a build from before D386 had none
     )
     got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
     vols = shell._index(spec)

@@ -15,6 +15,7 @@ Each test that starts a child process starts one or two: they run on Linux and W
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import sqlite3
@@ -280,7 +281,7 @@ def test_a_script_design_goes_through_the_whole_gate(
 ) -> None:
     script = (
         "import math\n"
-        "lo, hi = BOUNDS['lo'], BOUNDS['hi']\n"
+        "lo, hi = WALLS['lo'], WALLS['hi']\n"
         "for y in range(WALL_TOP + 1):\n"
         "    for x in range(lo[0], hi[0] + 1):\n"
         "        set_block(x, y, lo[2], 'wall'); set_block(x, y, hi[2], 'wall')\n"
@@ -297,7 +298,9 @@ def test_a_script_design_goes_through_the_whole_gate(
     out = shell.design(conn, spec, [script_op(script)], "architect")
     assert out.status == "accepted", (out.reasons, out.repairs)
     lay = layout.plan_layout(conn, [ts.lay_tests.production()])
-    ts.rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+    ts.rules_hold(
+        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+    )
     assert shell.inspect(spec, out.cells).clean
     # deterministic: the same script, the same build id and the same cells
     again = shell.design(conn, spec, [script_op(script)], "architect")
@@ -310,7 +313,7 @@ def test_a_script_is_held_to_the_gate_like_any_design(
     door = spec.doorways()[0].box
     keep = next(v for v in spec.clear if v.kind == "keepout").box
     ring = (
-        "lo, hi = BOUNDS['lo'], BOUNDS['hi']\n"
+        "lo, hi = WALLS['lo'], WALLS['hi']\n"
         "for y in range(WALL_TOP + 1):\n"
         "    for x in range(lo[0], hi[0] + 1):\n"
         "        set_block(x, y, lo[2], 'wall'); set_block(x, y, hi[2], 'wall')\n"
@@ -393,6 +396,8 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
         "BOUNDS",
         "WALL_TOP",
         "ROOF_Y",
+        "WALLS",
+        "RELIEF",
         "DOORWAYS",
         "KEEP_CLEAR",
         "PALETTE",
@@ -407,9 +412,9 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
     assert "script" in shell_brief.SCHEMA["properties"]["ops"]["items"]["required"]
     rec = shell_bakeoff.prompt_record()
     assert (
-        rec["version"] == shell_brief.PROMPT_VERSION == 2 and len(rec["sha256"]) == 12
+        rec["version"] == shell_brief.PROMPT_VERSION == 3 and len(rec["sha256"]) == 12
     )
-    assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v2 (sha ")
+    assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v3 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
 
 
@@ -624,3 +629,76 @@ def test_the_prompts_example_passes_at_the_default_headroom(
     spec = ts.spec_for(conn, lay, ts.foundry())  # headroom 4, as the bake-off's cases
     out = shell.design(conn, spec, [script_op(example_script())], "architect")
     assert out.status == "accepted", (out.reasons, out.repairs)
+
+
+# --- facades that stand out: the relief zone (WO-10.13, D386) ----------------------------------
+
+
+def test_facades_stand_out_into_the_relief_zone(
+    conn: sqlite3.Connection, spec: shell.Spec
+) -> None:
+    r, w, b = spec.relief, spec.walls, spec.bounds
+    assert r == shell.LIMITS["relief"][0] == 3
+    assert b.lo[0] == w.lo[0] - r and b.hi[2] == w.hi[2] + r and b.hi[1] == w.hi[1]
+    doors = [
+        {"op": "clear", "lo": list(v.box.lo), "hi": list(v.box.hi)}
+        for v in spec.doorways()
+    ]
+    # the doorway runs out through the relief zone: nothing may block the way in
+    assert all(
+        v.box.lo[0] == b.lo[0]
+        or v.box.hi[0] == b.hi[0]
+        or v.box.lo[2] == b.lo[2]
+        or v.box.hi[2] == b.hi[2]
+        for v in spec.doorways()
+    )
+    # a ring with a negative inset (a stepped plinth), buttresses from a script, an
+    # overhanging eave: all accepted, and all of it outside the wall line
+    script = (
+        "lo, hi = WALLS['lo'], WALLS['hi']\n"
+        "for x in range(lo[0], hi[0] + 1, 4):\n"
+        "    fill((x, 0, lo[2] - RELIEF), (x, WALL_TOP - 1, lo[2] - 1), 'pillar')\n"
+        "fill((BOUNDS['lo'][0], ROOF_Y, BOUNDS['lo'][2]), (BOUNDS['hi'][0], ROOF_Y, "
+        "BOUNDS['hi'][2]), 'roof')\n"
+    )
+    ops = [
+        {"op": "walls", "role": "wall", "y": [0, spec.wall_top]},
+        {"op": "walls", "role": "trim", "y": [0, 0], "inset": -1},
+        script_op(script),
+        *doors,
+    ]
+    out = shell.design(conn, spec, ops, "architect")
+    assert out.status == "accepted", (out.reasons, out.repairs)
+    outside = [c for c in out.cells if not w.contains(c)]
+    assert outside and all(b.contains(c) for c in outside)
+    assert (w.lo[0] - 1, 0, w.lo[2] + 2) in out.cells  # the stepped plinth
+    assert any(
+        c[2] == w.lo[2] - r and c[1] < spec.wall_top for c in out.cells
+    )  # buttress
+    assert (b.lo[0], spec.roof_y, b.lo[2]) in out.cells  # the eave's corner
+    # an inset past the relief zone is refused
+    bad = {"op": "walls", "role": "wall", "inset": -(r + 1)}
+    assert shell.design(conn, spec, [bad], "architect").status == "refused"
+
+
+def test_a_build_from_before_the_relief_zone_keeps_its_size_and_id(
+    conn: sqlite3.Connection,
+) -> None:
+    lay = layout.plan_layout(conn, [ts.lay_tests.production()])
+    old = ts.spec_for(conn, lay, ts.foundry(), relief=0)
+    new = ts.spec_for(conn, lay, ts.foundry())
+    assert old.bounds == old.walls == new.walls
+    ops = shell.procedural(old)
+    # the same cells: the vocabulary is drawn on the wall line either way
+    assert (
+        shell.design(conn, old, ops, "procedural").cells
+        == shell.design(conn, new, ops, "procedural").cells
+    )
+    assert "relief" not in json.dumps(
+        {k: v for k, v in shell.spec_json(old).items() if k != "relief"}
+    )
+    assert shell.build_id(old, ops) != shell.build_id(new, ops)
+    # an id from before D386 is unchanged: relief 0 adds nothing to the hash
+    assert shell.build_id(old, ops) == shell.build_id(
+        dataclasses.replace(new, relief=0, bounds=old.bounds), ops
+    )
