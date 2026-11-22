@@ -14,6 +14,20 @@
   ``.schematic`` to ``GOS_HOME/data/schematics/shells/`` (never into Play, Prism's instances,
   Export or the Lab: Clayton copies it, runbook ``shells_lab.md``). Exit 0 written, 1 refused, 2.
 
+Iterating (WO-10.10, D367): every saved design starts a **design** whose versions form a chain
+(``data/build/designs/``); nothing is ever deleted.
+
+- ``gos shell versions [DESIGN]``: the designs, or one design's versions (what was asked, by whom,
+  blocks, cost; ``*`` marks the current one).
+- ``gos shell revise [--design DS] [--theme ID] [--max-blocks N] [--headroom N] WORDS...``: a new
+  version of the current design (or ``--design``) by GOS's own reviser (no AI, free), through the
+  same gate; refused: nothing written, the current version stays. Exit 0, 1 refused, 2.
+- ``gos shell undo [DESIGN]`` and ``gos shell current DESIGN BUILD``: make the previous version, or
+  any version, current again.
+- ``gos shell compare BUILD BUILD``: two versions' materials and block counts side by side.
+- ``gos shell bakeoff ...``: the same briefs to several models through the gate, rated blind
+  (WO-10.11; :mod:`gregtec.build.shell_bakeoff_cli`). Its shells are kept apart from these.
+
 ``--palette FILE`` holds extra swatches, one ``<role> <registry name>@<meta>`` a line (a
 prompt-only shell needs its wall and roof there).
 """
@@ -27,7 +41,14 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from gregtec import config, doctor
-from gregtec.build import palette, schematic, shell, shell_store, worldreg
+from gregtec.build import (
+    palette,
+    schematic,
+    shell,
+    shell_bakeoff_cli,
+    shell_store,
+    worldreg,
+)
 from gregtec.build import themes as theme_lib
 from gregtec.db import access
 from gregtec.db import ores as ore_db
@@ -61,6 +82,26 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--design", type=Path, default=None, help="a JSON list of operations"
     )
     sub.add_parser("list", help="the saved shell builds")
+    v = sub.add_parser("versions", help="the shell designs, or one design's versions")
+    v.add_argument("design", nargs="?", default=None)
+    r = sub.add_parser(
+        "revise", help="a new version from your words (GOS's reviser, no AI)"
+    )
+    r.add_argument("words", nargs="+")
+    r.add_argument(
+        "--design", default=None, help="ds-<12 hex> (default: the current one)"
+    )
+    r.add_argument("--theme", default=None, help="th-<name>: another theme's palette")
+    r.add_argument("--max-blocks", type=int, default=None)
+    r.add_argument("--headroom", type=int, default=None)
+    u = sub.add_parser("undo", help="make the current version's parent current again")
+    u.add_argument("design", nargs="?", default=None)
+    c = sub.add_parser("current", help="make one version of a design current")
+    c.add_argument("design")
+    c.add_argument("build")
+    k = sub.add_parser("compare", help="two versions' materials and block counts")
+    k.add_argument("a")
+    k.add_argument("b")
     s = sub.add_parser("show", help="one build's manifest, notes and paste steps")
     s.add_argument("build")
     s.add_argument("--card", action="store_true", help="print the dashboard card")
@@ -80,7 +121,8 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     e.add_argument("--over", choices=("split", "addblocks"), default="split")
     e.add_argument("--out", type=Path, default=None, help="the .schematic to write")
-    for each in (d, sub.choices["list"], s, e):
+    shell_bakeoff_cli.add_parsers(sub)  # gos shell bakeoff ... (WO-10.11)
+    for each in (d, sub.choices["list"], s, e, v, r, u, c, k):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
 
@@ -99,6 +141,8 @@ def extra_swatches(text: str) -> list[tuple[str, str]]:
 
 
 def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
+    if args.shell_command == shell_bakeoff_cli.COMMAND:
+        return shell_bakeoff_cli.run(args, out)
     try:
         cfg = config.load(args.config)
     except (OSError, ValueError) as exc:
@@ -117,6 +161,8 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
             return 0
         if args.shell_command == "show":
             return _show(home, args, out)
+        if args.shell_command in ("versions", "undo", "current", "compare"):
+            return _chain(home, args, out)
     except shell.ShellError as exc:
         print(str(exc), file=out)
         return 2
@@ -126,7 +172,100 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         return 2
     if args.shell_command == "design":
         return _design(cfg, args, out)
+    if args.shell_command == "revise":
+        return _revise(cfg, args, out)
     return _export(cfg, args, out)
+
+
+def _version_line(v: dict[str, Any], current: str) -> str:
+    cost = (
+        "free"
+        if v["cost_usd"] == 0
+        else ("see Costs" if v["cost_usd"] is None else f"${v['cost_usd']:.2f}")
+    )
+    mark = "*" if v["build"] == current else " "
+    return (
+        f"{mark} v{v['n']}\t{v['build']}\t{v['status']}\t{v['blocks']} blocks\t{v['by']}, "
+        f"{cost}\tfrom {v['parent'] or '-'}\t{v['asked']}"
+    )
+
+
+def _chain(home: Path, args: argparse.Namespace, out: TextIO) -> int:
+    from gregtec.build import shell_versions as versions
+
+    if args.shell_command == "compare":
+        got = versions.compare(home, args.a, args.b)
+        print(
+            f"{args.a}: {got['a']['blocks']} blocks; {args.b}: {got['b']['blocks']} blocks "
+            f"({got['blocks_delta']:+d})",
+            file=out,
+        )
+        for m in got["materials"]:
+            print(f"  {m['block']}\t{m['a']}\t{m['b']}\t{m['delta']:+d}", file=out)
+        for line in got["ops"]:
+            print(f"  ops: {line}", file=out)
+        return 0
+    if args.shell_command == "undo":
+        d, cur = versions.undo(home, args.design)
+        print(
+            f"design {d['id']}: v{cur['n']} {cur['build']} is current again", file=out
+        )
+        return 0
+    if args.shell_command == "current":
+        d = versions.make_current(home, args.design, args.build)
+        print(f"design {d['id']}: {d['current']} is current", file=out)
+        return 0
+    if args.design is None:
+        now = versions.current_id(home)
+        for s in versions.designs(home):
+            mark = "*" if s["id"] == now else " "
+            print(
+                f"{mark} {s['id']}\tv{s['current_n']} of {s['versions']}\t{s['current']}\t"
+                f"{s['blocks']} blocks\tplans {', '.join(s['plans'])}\t{s['asked']}",
+                file=out,
+            )
+        return 0
+    d = versions.get(home, args.design)
+    for v in d["versions"]:
+        print(_version_line(v, d["current"]), file=out)
+    return 0
+
+
+def _revise(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
+    from gregtec.build import shell_versions as versions
+
+    home = cfg.gos_home
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:
+        got = versions.revise(
+            conn,
+            home,
+            VaultIO(home / "vault"),
+            args.design,
+            " ".join(args.words),
+            theme_id=args.theme,
+            max_blocks=args.max_blocks,
+            headroom=args.headroom,
+        )
+    except (shell.ShellError, palette.CatalogError) as exc:
+        print(str(exc), file=out)
+        return 2
+    finally:
+        conn.close()
+    if not got.saved:
+        print(f"REFUSED: nothing written; {got.parent} stays current", file=out)
+        for why in got.reasons:
+            print(f"  {why}", file=out)
+        return 1
+    assert got.version is not None
+    print(_version_line(got.version, got.build), file=out)
+    for c in got.changes:
+        print(f"  {c}", file=out)
+    print(
+        f"next: gos shell export {got.build} (writes the .schematic for the Lab)",
+        file=out,
+    )
+    return 0
 
 
 def _show(home: Path, args: argparse.Namespace, out: TextIO) -> int:
@@ -209,7 +348,15 @@ def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
         for why in made.outcome.reasons:
             print(f"  {why}", file=out)
         return 1
-    print(f"build {made.build} saved in {made.saved}", file=out)
+    from gregtec.build import shell_versions as versions
+
+    design = versions.start(
+        home,
+        made.build,
+        asked=args.prompt or "gos shell design",
+        by="architect" if made.outcome.source == "architect" else "procedural",
+    )
+    print(f"build {made.build} saved in {made.saved} (design {design['id']})", file=out)
     for line in render(made.record):
         print(line, file=out)
     print(

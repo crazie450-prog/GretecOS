@@ -29,15 +29,18 @@
   "coil": [
    {
     "value": 1,
-    "block": "fixture:coil@0"
+    "block": "fixture:coil@0",
+    "name": "Fixture Coil"
    },
    {
     "value": 2,
-    "block": "fixture:coil@1"
+    "block": "fixture:coil@1",
+    "name": null
    },
    {
     "value": 3,
-    "block": "fixture:coil@2"
+    "block": "fixture:coil@2",
+    "name": null
    }
   ]
  },

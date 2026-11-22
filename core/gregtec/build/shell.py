@@ -543,6 +543,7 @@ _KEYS: dict[str, frozenset[str]] = {
             "n",
             "y",
             "style",
+            "pitch",
             "edge",
             "edge_n",
             "parapet",
@@ -653,6 +654,8 @@ def _roof(
     bx = b.spec.bounds
     x0, x1, z0, z1 = bx.lo[0], bx.hi[0], bx.lo[2], bx.hi[2]
     edge = b.state(op, n, "edge", "edge_n") if "edge" in op else None
+    # pitch: how many blocks each step of a gable's slope rises (WO-10.10, D368; 1 before)
+    pitch = _int(op.get("pitch", 1), f"op {n}: pitch", 1, 3)
     if style == "flat":
         b.box((x0, y, z0), (x1, y, z1), e, n)
         if edge is not None:
@@ -664,24 +667,29 @@ def _roof(
         lo_s, hi_s = (z0, z1) if along_x else (x0, x1)
         i = 0
         while lo_s + i <= hi_s - i:
-            yy = y + i
-            if yy > bx.hi[1]:  # out of headroom: close the roof flat here
-                yy = bx.hi[1]
-                for s in range(lo_s + i, hi_s - i + 1):
+            closed = False
+            for rise in range(pitch):
+                yy = y + i * pitch + rise
+                if yy > bx.hi[1]:  # out of headroom: close the roof flat here
+                    yy = bx.hi[1]
+                    for s in range(lo_s + i, hi_s - i + 1):
+                        _line(b, along_x, s, yy, x0, x1, z0, z1, e)
+                    closed = True
+                    break
+                for s in {lo_s + i, hi_s - i}:
                     _line(b, along_x, s, yy, x0, x1, z0, z1, e)
+                for s in range(lo_s + i, hi_s - i + 1):  # the gable ends
+                    if along_x:
+                        b.put((x0, yy, s), e)
+                        b.put((x1, yy, s), e)
+                    else:
+                        b.put((s, yy, z0), e)
+                        b.put((s, yy, z1), e)
+                if edge is not None and i == 0 and rise == 0:
+                    for s in (lo_s, hi_s):
+                        _line(b, along_x, s, yy, x0, x1, z0, z1, edge)
+            if closed:
                 break
-            for s in {lo_s + i, hi_s - i}:
-                _line(b, along_x, s, yy, x0, x1, z0, z1, e)
-            for s in range(lo_s + i, hi_s - i + 1):  # the gable ends
-                if along_x:
-                    b.put((x0, yy, s), e)
-                    b.put((x1, yy, s), e)
-                else:
-                    b.put((s, yy, z0), e)
-                    b.put((s, yy, z1), e)
-            if edge is not None and i == 0:
-                for s in (lo_s, hi_s):
-                    _line(b, along_x, s, yy, x0, x1, z0, z1, edge)
             i += 1
         top = y
     parapet = _int(op.get("parapet", 0), f"op {n}: parapet", 0, 3)
@@ -835,7 +843,8 @@ def design(
     if total and bad > REPAIR_SHARE * total:
         return refuse(
             f"{bad} of {total} placed cells are outside the bounding volume or inside a "
-            "keep-out, corridor, chase, doorway or the layout's interior: more than {round(REPAIR_SHARE * 100)}% is too far off "
+            "keep-out, corridor, chase, doorway or the layout's interior: "
+            f"more than {round(REPAIR_SHARE * 100)}% is too far off "
             "to repair; redesign",
             f=f,
         )

@@ -72,7 +72,8 @@ removes the scratch folder. It refuses a `--work` folder in or around Prism, the
 folder, GOS_APP, the vault or `data`, and never writes anywhere else. It needs free space for
 the copy and twice the world's unpacked size; short of that, or if the zip can't be read
 (locked, access denied), it prints `FAIL` and exits 1 (`--work` on a bigger drive). Pass: `ok   the world restores and reads`,
-exit 0. `--keep --work C:\Temp\world-check` keeps the restored world to look at.
+exit 0. `--keep --work C:\Temp\world-check` keeps the restored world to look at. Before Play
+has a world `backups\world` is empty: pass `--backups "$env:TEMP\gos-lab-backup-test"`, phase1 step 12's Lab copy.
 
 ## 4. Restore Play's world from a backup (Clayton only; manual, never scripted)
 

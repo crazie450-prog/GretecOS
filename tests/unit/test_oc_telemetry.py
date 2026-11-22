@@ -78,6 +78,24 @@ def msg(seq: int, **changes: object) -> dict[str, Any]:
     return doc
 
 
+def test_an_agent_and_its_machines_agree_on_age_and_staleness(rig: Rig) -> None:
+    """QA 10-13: both count from the whole second the message came in (as sweep() does), so a
+    message received at .9 doesn't read 0 s old for its agent and 1 s for its machines."""
+    rig.clock.now = 2_000_000.9
+    assert rig.send(msg(1)).ok
+    for step, sweep in ((0.3, False), (30.2, True), (0.5, True)):
+        rig.clock.now += step
+        if sweep:
+            rig.tel.sweep()
+        snap = rig.tel.snapshot()
+        (agent,) = snap["agents"]
+        assert snap["machines"]
+        for m in snap["machines"]:
+            assert (m["age_s"], m["stale"]) == (agent["age_s"], agent["stale"]), step
+            assert (m["status"] == "stale") == agent["stale"]
+        assert bool(rig.tel.fresh("lab")) == (not agent["stale"])
+
+
 def test_a_message_fills_the_tables(rig: Rig) -> None:
     assert rig.send(msg(1)).ok
     rows = {

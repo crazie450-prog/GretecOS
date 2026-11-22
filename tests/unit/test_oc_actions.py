@@ -277,6 +277,22 @@ def test_a_plain_confirm_waits_for_the_read_back(d: Desk) -> None:
     assert d.desk.confirm("dashboard", third.id).ok  # by id: at once
 
 
+@pytest.mark.parametrize("phase", [0.0, 0.5, 0.95])
+def test_the_read_back_wait_is_a_full_settle_time_at_any_phase(
+    d: Desk, phase: float
+) -> None:
+    """QA 10-13: SETTLE_S counts from the proposal's own time, not from its whole second (a
+    proposal at .95 was taken 2.05 s later)."""
+    d.clock.now = 1_000_000.0 + phase
+    a = d.desk.propose("say", ARGS["say"], target="lab").action
+    assert a is not None
+    d.clock.now += SETTLE_S - 0.1
+    early = d.desk.confirm("voice")
+    assert not early.ok and early.text.startswith("Just proposed")
+    d.clock.now += 0.1
+    assert d.desk.confirm("voice").ok
+
+
 def test_an_expired_action_cant_be_confirmed(d: Desk) -> None:
     a = propose(d)
     d.clock.now = a.created + PENDING_S - 1

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.agents.tools.registry import Call, ToolError
-from gregtec.agents.tools.tsv import Result
+from gregtec.agents.tools.tsv import Result, digest
 from gregtec.gamestate.safe_open import read_bytes
 from gregtec.packupdate.plans import PLAN_ID
 from gregtec.planner.outputs import FILES  # a plain dict: imports no planner code
@@ -171,4 +171,5 @@ def _page(
         total=len(rows),
         offset=offset,
         more=offset + call.page < len(rows),
+        epoch=digest(rows),
     )

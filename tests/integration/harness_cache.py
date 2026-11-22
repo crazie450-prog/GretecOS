@@ -51,6 +51,7 @@ SLOW_FIRST: dict[str, float] = {
     "test_discord_harness.py": 107,
     "test_crops_harness.py": 103,
     "test_power_harness.py": 95,
+    "test_real_dump_harness.py": 95,  # a real structure dump loaded and laid out (local run)
     "test_dashboard_harness.py": 70,
     "test_gtmath_harness.py": 59,
 }

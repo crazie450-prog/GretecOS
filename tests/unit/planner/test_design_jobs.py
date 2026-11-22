@@ -372,4 +372,23 @@ def test_a_power_design_as_a_job(
     order = [s for s in dict.fromkeys(stages) if s != "waiting"]
     assert order[0] == "candidates" and order[-1] == "saving"
     assert order.index("chains") < order.index("metrics") < order.index("ranking")
+    # QA 10-13: the per-chain solves don't replace "chains" (the docstring's stages only).
+    assert set(stages) - {"waiting"} <= dj.POWER_STAGES, stages
     assert [store.load(home, i)["id"] for i in done.result["ids"]] == done.result["ids"]  # type: ignore[index]
+
+
+def test_a_power_jobs_nested_solve_is_a_cancel_point_not_a_stage(
+    tmp_path: Path,
+) -> None:
+    reg = dj.DesignJobs(tmp_path, threading.Lock())
+    job = dj.Job("job-x", "power", "Power")
+    report = reg._report(job)
+    report("chains", 2, 40)
+    report("solve", 1, 2)
+    assert (job.stage, job.k, job.n) == ("chains", 2, 40)
+    job.cancel_asked = True
+    with pytest.raises(progress.Cancelled):
+        report("solve", 2, 2)
+    designer_job = dj.Job("job-y", "designer", "Designer")
+    reg._report(designer_job)("solve", 1, 2)
+    assert (designer_job.stage, designer_job.k, designer_job.n) == ("solve", 1, 2)

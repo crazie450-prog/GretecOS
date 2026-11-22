@@ -474,17 +474,44 @@ def _volume(size: Offset) -> int:
     return size[0] * size[1] * size[2]
 
 
-def library(conn: sqlite3.Connection) -> Library:
+def library(conn: sqlite3.Connection, mtes: Iterable[int] | None = None) -> Library:
     """Every structure row's footprint (north, built tiers); an empty library before WO-1.8's
-    columns exist. A controller in both sources keeps the extractor's rows (D306)."""
+    columns exist. A controller in both sources keeps the extractor's rows (D306).
+
+    ``mtes``: only the controllers of these GT machines (``gregtech:gt.blockmachines@<mte>``,
+    and any controller with a row linked to one of them by ``machine_id``), every row of each;
+    the other rows' cells are never read. A real dump's largest rows are over a megabyte of
+    ``blocks_json`` (Forge of the Gods t3: 1,239,746 bytes on 2.9.0), more than a tool's
+    connection reads (``registry.MAX_VALUE_BYTES``), so a caller that needs a few multis
+    (a plan's layout) names them."""
     if not _has_columns(conn):
         return Library(())
     rows: dict[tuple[str, int, str], Row] = {}
     skipped: list[Skipped] = []
     by_source: dict[str, set[tuple[str, int]]] = {s: set() for s in SOURCES}
+    where = "registry_name IS NOT NULL"
+    params: tuple[str, ...] = ()
+    if mtes is not None:
+        ids = json.dumps(sorted({int(m) for m in mtes}))
+        linked = (
+            " OR machine_id IN (SELECT id FROM machine WHERE mte_id IN"
+            " (SELECT value FROM json_each(?)))"
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'machine'"
+            ).fetchone()
+            else ""
+        )
+        where += (
+            " AND (registry_name, meta) IN (SELECT registry_name, meta FROM structure"
+            " WHERE (registry_name = ? AND meta IN (SELECT value FROM json_each(?)))"
+            + linked
+            + ")"
+        )
+        params = (GT_MACHINES, ids, ids) if linked else (GT_MACHINES, ids)
     raw = conn.execute(
-        f"SELECT {', '.join(_COLUMNS)} FROM structure WHERE registry_name IS NOT NULL"
-        " ORDER BY registry_name, meta, variant, source"
+        f"SELECT {', '.join(_COLUMNS)} FROM structure WHERE {where}"
+        " ORDER BY registry_name, meta, variant, source",
+        params,
     ).fetchall()
     parsed: list[Row] = []
     for r in raw:

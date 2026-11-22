@@ -18,10 +18,11 @@ const PHONE = { width: 390, height: 844 };
 
 interface Guide {
   size: number[];
-  palette: { block: string; count: number }[];
+  palette: { block: string; name: string | null; count: number }[];
   cells: [number, number, number, number, number][];
   slots: { kinds: string[] }[];
   checklist: { id: string }[];
+  choices: Record<string, { value: number; block: string; name?: string | null }[]>;
 }
 
 /** The footprint's own counts per layer, from its cells (not from the guide's layer summary). */
@@ -52,6 +53,12 @@ async function checkGuide(page: Page, g: Guide, size: { width: number; height: n
   await expect(page.getByTestId("view")).toHaveAttribute("data-view", "build");
   const scene = page.getByTestId("guide-scene");
   await expect(scene).toBeVisible();
+  // Each tier option is named by the catalog name the core sends, else the palette's, else its key.
+  for (const [ch, options] of Object.entries(g.choices)) {
+    const label = (o: { value: number; block: string; name?: string | null }) =>
+      `${o.value} · ${o.name ?? g.palette.find((p) => p.block === o.block)?.name ?? o.block}`;
+    await expect(page.getByTestId(`guide-tier-${ch}`).locator("option")).toHaveText(options.map(label));
+  }
   // Materials per layer equal the footprint's counts; the drawing shows layers up to the slider.
   const want = countsByLayer(g);
   for (let y = 0; y < g.size[1]; y++) {

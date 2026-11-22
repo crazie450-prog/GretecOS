@@ -85,6 +85,7 @@ NOTE_TOOLS = ("note_read", "vault_search", "note_write", "note_append", "inbox_p
 WIKI_TOOLS = frozenset({"wiki_search", "wiki_fetch"})
 THEME_SAVE = "theme_save"  # the architect's writing tools: themes (WO-10.6, D314)
 BUILD_REQUEST = "build_request"  # and shells (WO-10.7, D316)
+BUILD_REVISE = "build_revise"  # and their revisions (WO-10.10, D367)
 
 
 @dataclass(frozen=True)
@@ -119,11 +120,14 @@ SUBAGENTS = (
     Subagent(
         "architect",
         "Building themes (creates and refines them with theme_save), decorative shells "
-        "around lines (designs them with build_request) and build guides.",
+        "around lines (designs them with build_request, revises them with build_revise) and "
+        "build guides.",
         "You design themed buildings around GregTech lines: shells are decoration, machinery "
         "is built legitimately. Work from the structures, themes and notes the tools return; "
         "a theme's palette holds only block_find states without a tile entity; a shell is "
-        "designed only through build_request, whose code checks it." + _DATA,
+        "designed only through build_request and changed only through build_revise, whose "
+        "code checks it; when Clayton asks to change a shell, revise it, never start over."
+        + _DATA,
         "architect",
         "high",
         "architect",
@@ -195,7 +199,7 @@ def tool_sets(registry: Registry) -> tuple[frozenset[str], dict[str, frozenset[s
     orchestrator gets every deep-lane tool but db_sql and the wiki tools, the researcher the
     read-only ones with the wiki tools (D290), the db-analyst the read-only ones with db_sql, the
     vault-curator the note tools, the architect the read-only ones, theme_save (D314) and
-    build_request (D316), the
+    build_request (D316) and build_revise (D367), the
     others the read-only ones but db_sql and the wiki."""
     deep = mcp.tools(registry)
     every = {t.name for t in deep}
@@ -205,7 +209,7 @@ def tool_sets(registry: Registry) -> tuple[frozenset[str], dict[str, frozenset[s
         "research": read | (WIKI_TOOLS & every),
         "sql": read | ({DB_SQL} & every),
         "notes": (set(NOTE_TOOLS) | {"more"}) & every,
-        "architect": read | ({THEME_SAVE, BUILD_REQUEST} & every),
+        "architect": read | ({THEME_SAVE, BUILD_REQUEST, BUILD_REVISE} & every),
     }
     main = frozenset(mcp.qualified(n) for n in every - {DB_SQL} - WIKI_TOOLS)
     agents = {

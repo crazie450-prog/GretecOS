@@ -9,11 +9,14 @@
   saved plans: "my plans" (the list) and "show plan X" / "BOM for X" / ``plan:<id>`` (its BOM
   card, WO-2.8), and "persona <name>" / "which persona" (WO-5.6, plan 7.11: a switch with no
   model call, D206), "next crop step" (WO-6.7, plan 7.17: the crop guide's next step),
+  "undo" / "go back to the previous version" after a shell (WO-10.10, D369: the current
+  shell design's previous version made current again, in code),
   and "what's this?" (WO-8.1, D286: the item Clayton hovers over or the
   block he looks at, as GregtecLink's client module reports it, answered from the DB). These
   keep working with no API key or credits (plan 0.1 principle 9, 7.16).
 - **deep**: design, plans, comparisons, advice, making or refining a building theme (WO-10.6),
-  designing a decorative shell (WO-10.7)
+  designing a decorative shell (WO-10.7), changing the current shell ("make the roof
+  steeper": ``shell_revise``, WO-10.10, D369)
   and anything quantitative over a line ("how many ... per second"), handed to the deep lane (WO-2.4) with a spoken acknowledgement.
 - **fast**: everything else, with an ``intent`` and a ``subject`` when the words say what is
   asked about, so pre-retrieval (:mod:`gregtec.agents.prefetch`) can resolve it first.
@@ -49,6 +52,8 @@ SPOIL = "spoil"  # the last answer's locked quests, partial or full (WO-6.4, D26
 CROP_STEP = (
     "crop_step"  # the next step of the crop guide he follows (WO-6.7, plan 7.17)
 )
+# the current shell design (WO-10.10, D369): revise it (deep) or undo its last change (instant)
+SHELL_REVISE, SHELL_UNDO = "shell_revise", "shell_undo"
 # fast-lane intents (what pre-retrieval fetches)
 RECIPE, ITEM, QUEST_ITEM, QUESTS, FRONTIER, GENERAL = (
     "recipe",
@@ -185,17 +190,214 @@ DEEP_RULES = [
         r"\bratios?\b|\bcalculate\b|\bbudget\b|\boverclock",
         r"\b(?:set up|build|automate)\b.*\b(?:line|setup|factory|plant)\b",
         r"\bpower (?:line|plant|setup|generation)\b",
-        # making or refining a building theme (WO-10.6): theme_save is deep-lane only
+    )
+]
+# making or refining a building theme (WO-10.6): theme_save is deep-lane only
+_THEME_RULES = [
+    re.compile(p)
+    for p in (
         r"\b(?:create|make|refine|change|tweak|update|edit|adjust|swap|rework)\b.*"
         + r"\bthemes?\b",
         r"\bnew theme\b",
         r"\bthemes?\b.*\b(?:refine|change|tweak|swap|update|edit|adjust)\b",
-        # designing a decorative shell around a line (WO-10.7): build_request is deep-lane only
-        # ("how do I make/craft a turtle shell" is a recipe question, not a building)
-        r"^(?!.*\bhow (?:do|can|to|would|should)\b(?: (?:i|you|we))? (?:make|craft|get)\b)"
-        + r".*\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b",
     )
 ]
+# designing a decorative shell around a line (WO-10.7): build_request is deep-lane only
+# ("how do I make/craft a turtle shell" is a recipe question, not a building)
+_SHELL_DESIGN_RULE = re.compile(
+    r"^(?!.*\bhow (?:do|can|to|would|should)\b(?: (?:i|you|we))? (?:make|craft|get)\b)"
+    + r".*\b(?:design|make|build|draw|wrap|put)\b.*\b(?:shells?|buildings?|fa[cç]ades?)\b"
+)
+DEEP_RULES += [*_THEME_RULES, _SHELL_DESIGN_RULE]
+
+# Changing the shell Clayton is working on (WO-10.10, D369): a change word whose object is
+# a part of a building ("no windows on the north wall", "add more lights"), a part or the whole
+# building with a comparative after it ("make the roof steeper", "the building taller"), or a
+# bare comparative ("taller, and no windows ..."); never a question ("which roof is steeper"),
+# never when he asks for a new one ("design another shell", "make a shell for plan p-1 with a
+# steeper roof", "make a gothic theme with no lights"), and never when the words name some other
+# thing to change ("add more lights to my base", "remove the walls in plan x").
+_SHELL_PARTS = (
+    r"(?:roofs?|walls?|windows?|pillars?|columns?|lights?|lamps?|parapets?|plinth|trim|"
+    r"eaves|band|doorways?|fa[cç]ades?)"
+)
+_SHELL_MORE = (
+    r"(?:steeper|flatter|flat|shallower|pitched|peaked|gabled?|taller|higher|shorter|lower|"
+    r"bigger|larger|wider|smaller|narrower)"
+)
+_SHELL_CHANGE_OF = re.compile(
+    r"\b(?:more|fewer|less|no|without|remove|drop|add|change|swap|revise|tweak|adjust|raise|"
+    + _SHELL_MORE
+    + r")\b(?:\W+\w+){0,3}?\W+"
+    + _SHELL_PARTS
+    + r"\b"
+)
+_SHELL_MADE_MORE = re.compile(
+    r"\b(?:"
+    + _SHELL_PARTS
+    + r"|shells?|buildings?)\b(?:\W+\w+){0,2}?\W+"
+    + _SHELL_MORE
+    + r"\b"
+)
+_SHELL_COMPARATIVE = re.compile(
+    r"^(?:(?:a bit|a little|much|slightly|way) )?(?:steeper|flatter|taller|higher|shorter|"
+    r"lower|wider|narrower|bigger|smaller)(?:$|[,;]| (?:and|by \d+|please|still|again|too)\b)"
+)
+_SHELL_NEW = re.compile(
+    r"\b(?:new|another|fresh|second|different|separate)\b.*\b(?:shells?|buildings?|designs?|"
+    r"fa[cç]ades?)\b|\bfrom scratch\b|\bstart (?:over|again|afresh)\b"
+    # a creation verb with a thing to create: a new design (build_request) or theme (theme_save)
+    r"|\b(?:design|make|build|create|draw|wrap|put|give)\b(?: me)? (?:a|an|one)\b.*"
+    r"\b(?:shells?|buildings?|fa[cç]ades?|themes?|designs?)\b"
+    # "a shell around the EBF", "I want a building with ...": an indefinite one is a new one
+    r"|\b(?:a|an|one|some)\b (?:\w+ ){0,2}?(?:shells?|buildings?|fa[cç]ades?)\b"
+)
+# "make the shell taller", "build the building higher": the shell itself made more, which is
+# a revision even though WO-10.7's creation rule (_SHELL_DESIGN_RULE) sees a verb and a shell.
+_SHELL_ITSELF = re.compile(
+    r"\b(?:make|build|get)\b (?:the|this|my|our|that) (?:shell|building|fa[cç]ade) "
+    r"(?:(?:a bit|a little|much|slightly|way|even) )?" + _SHELL_MORE + r"\b"
+)
+# A part made or added with "a"/"an" ("build a taller wall", "add a wall of solar panels") is
+# a new thing, not a part of this shell.
+_SHELL_A_PART = re.compile(r"\b(?:a|an)\b (?:\w+ ){0,2}?" + _SHELL_PARTS + r"\b")
+# The words name some other thing: a plan, or a part of his base that is not this shell.
+_SHELL_ELSEWHERE = re.compile(
+    r"\bplans?\b|\bplan:|\b(?:to|in|on|for|of|around|at) (?:my|the|our|this|that) "
+    r"(?:\w+ )?(?:base|factory|line|setup|world|house|room|plant|island|power|ae|network)\b"
+)
+# "to the nether portal", "around the cleanroom": a place named after a preposition is
+# elsewhere unless one of its words is a word for this shell or a place on it.
+_SHELL_PLACE = re.compile(
+    r"\b(?:to|in|on|onto|into|inside|for|of|around|at|near|by|over|above|below|under) "
+    r"(?:the|my|our|this|that|its) ((?:\w+ ){0,2}\w+)"
+)
+_SHELL_WORDS = frozenset(
+    [
+        "roof",
+        "roofs",
+        "wall",
+        "walls",
+        "window",
+        "windows",
+        "pillar",
+        "pillars",
+        "column",
+        "columns",
+        "light",
+        "lights",
+        "lamp",
+        "lamps",
+        "parapet",
+        "parapets",
+        "plinth",
+        "trim",
+        "eaves",
+        "band",
+        "doorway",
+        "doorways",
+        "facade",
+        "facades",
+        "façade",
+        "façades",
+        "shell",
+        "building",
+        "side",
+        "sides",
+        "top",
+        "bottom",
+        "front",
+        "back",
+        "rear",
+        "end",
+        "ends",
+        "corner",
+        "corners",
+        "edge",
+        "edges",
+        "north",
+        "south",
+        "east",
+        "west",
+        "left",
+        "right",
+        "middle",
+        "centre",
+        "center",
+        "outside",
+        "inside",
+        "entrance",
+        "door",
+        "doors",
+        "floor",
+        "ground",
+        "level",
+        "storey",
+        "story",
+        "one",
+        "style",
+        "look",
+        "version",
+        "same",
+        "rest",
+        "whole",
+        "first",
+        "last",
+        "upper",
+        "lower",
+    ]
+)
+
+
+def _names_elsewhere(said: str) -> bool:
+    return bool(_SHELL_ELSEWHERE.search(said)) or any(
+        not _SHELL_WORDS & set(m[1].split()) for m in _SHELL_PLACE.finditer(said)
+    )
+
+
+def _creates(said: str) -> bool:
+    """A WO-10.7 shell design or a WO-10.6 theme is asked for (build_request, theme_save)."""
+    rest = _SHELL_ITSELF.sub(" ", said)
+    return (
+        bool(_SHELL_NEW.search(rest))
+        or bool(_SHELL_DESIGN_RULE.search(rest))
+        or any(p.search(said) for p in _THEME_RULES)
+    )
+
+
+_SHELL_QUESTION = re.compile(
+    r"^(?:what|which|why|who|when|where|is|are|does|do|did|should|will|would|shall|"
+    r"how (?:do|does|did|can|to|would|should|many|much|long|tall|big))\b"
+)
+SHELL_UNDO_RULES = _rx(
+    r"undo(?: (?:that|it|this|the last (?:change|revision|version)|the (?:shell|building|roof)"
+    r"(?: change)?))?",
+    r"go back(?: to)? (?:the |a )?(?:previous|last|earlier|old|former) "
+    r"(?:version|one|shell|building|design)",
+    r"revert(?: (?:that|it|the shell|the building|the change))?",
+    r"(?:put|change) it back",
+)
+
+
+def shell_change(said: str) -> str | None:
+    """``undo`` or ``revise`` when the normalised words change the current shell, else None."""
+    if any(p.match(said) for p in SHELL_UNDO_RULES):
+        return SHELL_UNDO
+    if (
+        _SHELL_QUESTION.match(said)
+        or _creates(said)
+        or _names_elsewhere(said)
+        or _SHELL_A_PART.search(said)
+    ):
+        return None
+    if (
+        _SHELL_COMPARATIVE.match(said)
+        or _SHELL_CHANGE_OF.search(said)
+        or _SHELL_MADE_MORE.search(said)
+    ):
+        return SHELL_REVISE
+    return None
+
 
 FAST_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
     (
@@ -282,15 +484,19 @@ def subject_of(words: str) -> str | None:
     return words
 
 
-def route(text: str, *, plans: bool = True) -> Route:
+def route(text: str, *, plans: bool = True, shell: bool = False) -> Route:
     """``plans=False``: a saved-plan command (PLAN) isn't matched, for a question that named no
-    saved plan and goes to the AI as before WO-2.8."""
+    saved plan and goes to the AI as before WO-2.8. ``shell``: Clayton has a shell design he is
+    working on (WO-10.10): words that change a building revise it (deep lane, ``build_revise``)
+    and "undo" makes its previous version current (instant), instead of starting over."""
     said = normalise(text)
     tier = None
     if m := _AT_TIER.search(said):  # "... at LV": the recipe tool's tier_max
         tier, said = _TIER_NAMES[m["tier"]], said[: m.start()]
     if spoilers.command(text) is not None:  # the whole request is the command (D268)
         return Route(INSTANT, SPOIL, text)
+    if shell and (change := shell_change(said)) is not None:
+        return Route(INSTANT if change == SHELL_UNDO else DEEP, change, text)
     deep = any(d.search(said) for d in DEEP_RULES)
     for command, patterns in INSTANT_RULES:
         for p in patterns:

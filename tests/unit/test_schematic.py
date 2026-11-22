@@ -504,6 +504,68 @@ def test_reads_schematica_saves_in_both_formats() -> None:
     assert c.order == "byte" and [e for _, e in cells_of(c.schematic)] == want
 
 
+def _junk_list(n: int) -> bytes:
+    """A gzip Schematic root holding one list of ``n`` empty compounds: a few KB on disk, one
+    Python dict per element once read."""
+    name = schematic.ROOT.encode()
+    body = (
+        bytes((nbt.LIST,))
+        + struct.pack(">H", 4)
+        + b"Junk"
+        + struct.pack(">bi", nbt.COMPOUND, n)
+        + b"\x00" * n
+    )
+    root = bytes((nbt.COMPOUND,)) + struct.pack(">H", len(name)) + name + body + b"\x00"
+    return gzip.compress(root)
+
+
+def test_a_file_of_millions_of_empty_compounds_is_refused_before_it_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA 10-13: a .schematic is read as at most MAX_TAGS values (a 58 KB file of 60M empty
+    compounds took 4.3 GB before), and decompressed to at most MAX_READ bytes."""
+    assert schematic.MAX_READ < nbt.MAX_BYTES
+    with pytest.raises(ValueError, match="more NBT values"):
+        nbt.read(_junk_list(5000), max_tags=1000)
+    assert len(nbt.read(_junk_list(5000))[1]["Junk"]) == 5000  # no budget: as before
+    monkeypatch.setattr(schematic, "MAX_TAGS", 1000)
+    with pytest.raises(schematic.CaptureError, match="more NBT values"):
+        schematic.read(_junk_list(5000))
+    monkeypatch.setattr(schematic, "MAX_READ", 1000)
+    with pytest.raises(schematic.CaptureError, match="decompressed"):
+        schematic.read(_junk_list(5000))
+
+
+def _int_arrays(k: int, n: int) -> bytes:
+    """A gzip Schematic root holding one list of ``k`` int arrays of ``n`` ints each (1000:
+    outside CPython's small-int cache): tiny on disk, one Python int per element once read."""
+    name = schematic.ROOT.encode()
+    arr = struct.pack(">i", n) + struct.pack(">i", 1000) * n
+    body = (
+        bytes((nbt.LIST,))
+        + struct.pack(">H", 4)
+        + b"Junk"
+        + struct.pack(">bi", nbt.INT_ARRAY, k)
+        + arr * k
+    )
+    root = bytes((nbt.COMPOUND,)) + struct.pack(">H", len(name)) + name + body + b"\x00"
+    return gzip.compress(root)
+
+
+def test_a_file_of_int_arrays_counts_every_int_against_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA 10-13 final check: an int array counts one value per int, not one in all (a 139 KB
+    file of 34 arrays of 1M ints peaked at 1.8 GB before its refusal)."""
+    data = _int_arrays(4, 500)  # 2000 ints in 5 values
+    with pytest.raises(ValueError, match="more NBT values"):
+        nbt.read(data, max_tags=1000)
+    assert len(nbt.read(data, max_tags=2005)[1]["Junk"]) == 4  # the budget is exact
+    monkeypatch.setattr(schematic, "MAX_TAGS", 1000)
+    with pytest.raises(schematic.CaptureError, match="more NBT values"):
+        schematic.read(data)
+
+
 def test_a_file_without_a_mapping_needs_the_source_world() -> None:
     data = worldedit_copy((3, 2, 2), capture_cells(), None)
     with pytest.raises(schematic.CaptureError, match="give the world it was copied in"):
@@ -880,6 +942,21 @@ def test_world_block_ids_name_a_capture_without_mappings(tmp_path: Path) -> None
     c = schematic.read(data, source_ids=ids)
     assert c.schematic.at(0, 0, 0) == E("minecraft:stone", 0)
     assert c.schematic.at(0, 0, 1) == schematic.AIR_STATE
+
+
+def test_the_source_world_may_be_its_level_dat(tmp_path: Path) -> None:
+    """QA 10-13: ``--source-world <world>/level.dat`` reads the world; a file that isn't one is
+    refused as not a world folder, without the save-in-progress retry hint."""
+    w = tmp_path / "lab"
+    w.mkdir()
+    (w / "level.dat").write_bytes(level_dat(["minecraft:air", "minecraft:stone"]))
+    assert worldreg.read_block_ids(w / "level.dat") == worldreg.read_block_ids(w)
+    assert worldreg.read(w / "level.dat").world == "lab"
+    other = tmp_path / "pal.txt"
+    other.write_text("x", encoding="utf-8")
+    with pytest.raises(worldreg.WorldRegistryError, match="not a world folder") as got:
+        worldreg.read_block_ids(other)
+    assert "try again" not in str(got.value)
 
 
 def test_the_schematic_harness_inputs_are_current() -> None:

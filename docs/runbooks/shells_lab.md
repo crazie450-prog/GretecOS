@@ -1,4 +1,4 @@
-# Decorative shells in the Lab (WO-10.7, L6)
+# Decorative shells in the Lab (WO-10.7, L6; iterating first: WO-10.10)
 
 WO-10.7's acceptance on Clayton's PC: **a Claude-designed shell is pasted in the Lab with no tile entities, and respects keep-outs and corridors** (plan 8 row 10.7, Lab test L6). Claude Code has checked everything up to the paste:
 
@@ -14,7 +14,7 @@ What is left is the real model, your own catalog, and the paste. About 30 minute
 ## A. Before you start
 
 1. WO-10.3's catalog is built (runbook `palette_export.md`) and `gos theme check` passes (runbook `themes.md`).
-2. A saved plan for the line to house, e.g. from the Designer (`uv run gos plan list` shows its id, `pl-...`).
+2. A saved plan for the line to house, e.g. from the Designer (`uv run gos tool plan_list` lists the saved plans with their ids, `pl-...`).
 3. `[paths] lab_world` names the Lab world in `gos.toml` (or pass `--world`), and worldedit-gtnh v0.0.10 is installed in the Lab (runbook `schematic_roundtrip.md`).
 
 ## B. A procedural shell, no AI (the fallback)
@@ -32,6 +32,16 @@ With the core running and the key stored, ask by voice or in the dashboard: **"D
 
 1. **Expect** the deep lane to hand it to the architect; the answer names the build (`sh-...`), its size and blocks, and says whether blocks were removed from the machines' space. `uv run gos shell list` shows it with source `architect`.
 2. If it says it was refused, the first sentence says why (for example a block with a tile entity): that is the gate working. Ask again, or use the procedural shell from B.
+
+## C2. Iterate before you export (WO-10.10)
+
+Before anything goes near the Lab, iterate in the Build view's workbench ([`shells.md`](shells.md)):
+
+1. After C, say **"make the roof steeper"**, then **"taller, and no windows on the north wall"**. **Expect** each to make a new version of the same design (the Versions list grows; the deep lane's answer says the version and that "undo" goes back), not a new shell.
+2. Turn the AI off (Settings, No-AI) and say **"no lights"**: GOS's own reviser makes the version ("No AI, so GOS's own reviser did it"). Say **"change the roof to gothic"**: it says it can't and nothing is written. Turn the AI on again.
+3. Say **"undo"**: the version before is current again. Tick two versions and **Compare**: the materials table shows the change per block.
+4. In the viewer, drag the layer slider down: the layer's materials change; the machines and keep-outs show as outlines inside the shell.
+5. Make the version you want current; its id (`sh-...`) is what you export in D.
 
 ## D. Export and paste in the Lab
 

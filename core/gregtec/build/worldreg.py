@@ -98,18 +98,31 @@ def _read(path: Path) -> dict[str, Any]:
     return nbt.read(data)[1]
 
 
+def world_dir(world: Path) -> Path:
+    """The world folder ``world`` names: the folder itself, or the folder of its ``level.dat``."""
+    if world.name in (LEVEL_DAT, LEVEL_DAT_OLD) and not world.is_dir():
+        return world.parent
+    return world
+
+
 def read(world: Path) -> WorldRegistry:
-    """The registry of the world folder ``world`` (its ``level.dat``)."""
+    """The registry of the world folder ``world`` (or its ``level.dat``)."""
+    world = world_dir(world)
     root, source = _root(world)
     return parse(root, world.name, source)
 
 
 def read_block_ids(world: Path) -> dict[int, str]:
-    """:func:`block_ids` of the world folder ``world`` (its ``level.dat``, read-only)."""
+    """:func:`block_ids` of the world folder ``world`` (or its ``level.dat``; read-only)."""
+    world = world_dir(world)
     return block_ids(_root(world)[0], world.name)
 
 
 def _root(world: Path) -> tuple[dict[str, Any], str]:
+    if world.is_file():
+        raise WorldRegistryError(
+            f"{world} is not a world folder: give the world's folder (the one holding level.dat)"
+        )
     path = world / LEVEL_DAT
     source = LEVEL_DAT
     try:

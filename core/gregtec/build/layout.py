@@ -47,7 +47,8 @@ the power plan's generators of that tier to the consumers, each with the plan it
 A tier with no generator of its own is fed from the layout's generators of other tiers with
 ``via_transformer`` set and a warning (the transformer step is WO-4.5's, not placed), or from the
 entrance, the base grid, when the layout holds no generator. A flow to or from a node that isn't
-placed is not routed, and a warning names it. Numbers in them are the plan's, copied. The id
+placed is not routed, and a warning names it and says why (a step done by hand, or a machine with
+no footprint). Numbers in them are the plan's, copied. The id
 hashes the plans and the whole layout, so new footprint data gives a new id.
 
 Deterministic: the same plans and options give the same JSON (no clock, no randomness; the order
@@ -218,10 +219,11 @@ def _single(mte: int, name: str | None) -> fp.Footprint:
 
 
 class _Footprints:
-    """MTE id -> its footprint facing north (or None), read once per layout."""
+    """MTE id -> its footprint facing north (or None), read once per layout: the structure
+    rows of ``mtes`` (the plans' machines) only."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self.lib = fp.library(conn)
+    def __init__(self, conn: sqlite3.Connection, mtes: Iterable[int]) -> None:
+        self.lib = fp.library(conn, mtes)
         self.linked = coverage._linked(conn, self.lib)
         self._cache: dict[tuple[int, str], fp.Footprint | None] = {}
         # controller (registry@meta) -> its variants and sizes, when it has more than one
@@ -410,7 +412,16 @@ def plan_layout(
     ids = [str(p.get("id", "?")) for p in plans]
     if len(set(ids)) != len(ids):
         raise LayoutError("a plan is named twice")
-    footprints = _Footprints(conn)
+    footprints = _Footprints(
+        conn,
+        {
+            m[0]
+            for p in plans
+            for n in p.get("nodes", [])
+            if isinstance(n, Mapping)
+            for m in _machines_of(p, n)
+        },
+    )
     items, unplaced = instances(plans, footprints)
     c, ct, W, H = (
         opts.clearance,
@@ -711,6 +722,28 @@ def _ids_by_node(
     return out
 
 
+def _why_unplaced(plan: Mapping[str, Any], gone: Sequence[str]) -> str:
+    """Why the nodes ``gone`` of ``plan`` have no placement, in plain words: a step with no
+    machine (a crafting-table or furnace recipe, done by hand) or a machine with no footprint."""
+    nodes = {
+        str(x.get("n")): x for x in plan.get("nodes", []) if isinstance(x, Mapping)
+    }
+    hand = [n for n in gone if n in nodes and not _machines_of(plan, nodes[n])]
+    bare = [n for n in gone if n not in hand]
+    out = []
+    if hand:
+        are = "is a step" if len(hand) == 1 else "are steps"
+        out.append(
+            f"{' and '.join(hand)} {are} done by hand (no machine to place): carry it yourself"
+        )
+    if bare:
+        has = "has" if len(bare) == 1 else "have"
+        out.append(
+            f"{' and '.join(bare)} {has} a machine with no footprint yet, so it isn't placed"
+        )
+    return "; ".join(out)
+
+
 def _kind(item: str) -> str:
     return "fluid" if item.startswith("fluid:") else "item"
 
@@ -750,7 +783,7 @@ def services(
                 gone = [str(e.get(k)) for k, ids in (("from", a), ("to", b)) if not ids]
                 warnings.append(
                     f"{pid} {e.get('from')} -> {e.get('to')} {e.get('item')}: not routed, "
-                    f"{' and '.join(gone)} has no placement"
+                    + _why_unplaced(p, gone)
                 )
                 continue
             item = str(e.get("item"))
@@ -811,10 +844,27 @@ def services(
                     f"{t} generator(s) {' '.join(generators[t])}"
                     for t in sorted(generators)
                 )
-                src = next(iter(generators)) if len(generators) == 1 else "<tier>"
+                # the amps the plan's own EU metrics say this tier draws (a planner number)
+                eu = (p.get("metrics") or {}).get("eu") or ()
+                amps = next(
+                    (
+                        int(e.get("amps") or 0)
+                        for e in eu
+                        if isinstance(e, Mapping)
+                        and str(e.get("tier", "")).upper() == tier
+                    ),
+                    0,
+                )
+                amp = f"--amps {amps}" if amps > 0 else "--amps <A>"
+                cmds = "; ".join(
+                    f"gos dist transformer --from {t} --to {tier} {amp}"
+                    for t in sorted(generators)
+                )
+                if amps <= 0:
+                    cmds += f"; the plan has no EU metrics for {tier}: its amps from gos dist ledger"
                 warnings.append(
                     f"{pid} eu:{tier}: no {tier} generator in the layout, fed from {at}: "
-                    f"a transformer step (gos dist transformer --from {src} --to {tier})"
+                    f"a transformer step ({cmds})"
                 )
     return out, warnings
 

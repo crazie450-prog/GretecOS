@@ -198,22 +198,32 @@ def wait_until(check: Callable[[], object], want: bool) -> bool:
     return False
 
 
-def supervisor_command(cfg: Config, config_path: Path | None) -> list[str]:
-    """How to start a supervisor in the background: the windowless launcher if installed."""
-    name = "gos-supervisor.exe" if sys.platform == "win32" else "gos-supervisor"
-    exe = Path(sys.executable).with_name(name)
-    argv = (
-        [str(exe)]
-        if exe.is_file()
-        else [supervisor.python_exe(), "-m", "gregtec.supervisor"]
-    )
+def supervisor_argv(python: str | Path, config_path: Path | None) -> list[str]:
+    """``<python> -P -m gregtec.supervisor [--config ABS]``: how GOS starts a supervisor (D379).
+
+    Always python.exe, never the ``gos-supervisor.exe`` trampoline or pythonw.exe: Smart App
+    Control blocks those two (WinError 4551), and it allows python.exe, which also runs every
+    child the supervisor starts. :func:`spawn_detached` keeps its console hidden. ``-P``: the
+    folder it starts in isn't on the import path, as it wasn't for the trampoline.
+    """
+    argv = [str(python), "-P", "-m", "gregtec.supervisor"]
     if config_path is not None:  # absolute: the supervisor starts in GOS_HOME
         argv += ["--config", str(config_path.absolute())]
     return argv
 
 
+def supervisor_command(cfg: Config, config_path: Path | None) -> list[str]:
+    """How ``gos serve --detach`` starts a supervisor: with this install's python.exe."""
+    return supervisor_argv(supervisor.python_exe(), config_path)
+
+
 def spawn_detached(argv: list[str], cwd: Path) -> None:
-    """Start ``argv`` with no console and no tie to this window."""
+    """Start ``argv`` in the background with no console window and no tie to this window.
+
+    On Windows: CREATE_NO_WINDOW, not DETACHED_PROCESS. The venv's python.exe is a launcher
+    that starts the base python.exe; with no console at all, that child would open a visible
+    one. With a hidden console of its own, Ctrl+C or closing this window doesn't reach it.
+    """
     cwd.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(
         argv,
@@ -221,7 +231,7 @@ def spawn_detached(argv: list[str], cwd: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         cwd=cwd,
-        creationflags=supervisor.DETACHED_PROCESS | supervisor.CREATE_NEW_PROCESS_GROUP
+        creationflags=supervisor.CREATE_NO_WINDOW | supervisor.CREATE_NEW_PROCESS_GROUP
         if sys.platform == "win32"
         else 0,
         start_new_session=sys.platform != "win32",
@@ -259,7 +269,11 @@ def _serve(cfg: Config, args: argparse.Namespace) -> int:
         print(f"Not starting GOS: {why}", file=sys.stderr)
         return supervisor.EXIT_ELEVATED
     if args.detach:
-        spawn_detached(supervisor_command(cfg, args.config), cfg.gos_home)
+        try:
+            spawn_detached(supervisor_command(cfg, args.config), cfg.gos_home)
+        except OSError as exc:  # WinError 4551: Smart App Control blocked it (D379)
+            print(f"Couldn't start the supervisor: {exc}", file=sys.stderr)
+            return 1
         if not wait_until(lambda: _supervisor(cfg), True):
             print(
                 f"The supervisor didn't answer within {WAIT_S:.0f} s; see "

@@ -318,6 +318,11 @@ def test_the_guide_host_serves_the_guide_only(tmp_path: Path) -> None:
                     "Sec-Fetch-Dest": "script",
                     "Sec-Fetch-Mode": "no-cors",
                 },
+                {  # QA 10-13: a frame's request that isn't a navigation (pins the mode check)
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Dest": "iframe",
+                    "Sec-Fetch-Mode": "no-cors",
+                },
                 {
                     "Sec-Fetch-Site": "cross-site",
                     "Sec-Fetch-Dest": "document",

@@ -528,11 +528,13 @@ def backup(
         folder
     ):  # DB backups made before WO-11.2 (vault zips weren't)
         if old.kind == "db" and not old.has_manifest:
+            if deadline is not None:
+                break  # a stopping core makes today's backup; the next daily run backfills
             try:
                 backups.write_manifest(old.path, backups.db_manifest(old.path))
-            except (
-                sqlite3.DatabaseError
-            ) as exc:  # unreadable: restore says "no manifest"
+            except (sqlite3.DatabaseError, OSError) as exc:
+                # unreadable or locked (QA 10-13): restore says "no manifest", and today's
+                # backup is still made
                 log.warning("backup %s has no manifest: %s", old.path.name, exc)
     if target.exists():
         detail = f"{target.name} already exists"

@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from gregtec.agents.tools.registry import Call, ToolError
-from gregtec.agents.tools.tsv import Result
+from gregtec.agents.tools.tsv import Result, digest
 from gregtec.build import palette
 from gregtec.build import themes as theme_lib
 
@@ -186,10 +186,8 @@ def _head(theme: theme_lib.Theme) -> list[tuple[str, object]]:
 
 def theme_list(call: Call, args: dict[str, Any], offset: int) -> Result:
     found, problems = _store(call).load()
-    rows = [
-        (t.id, t.name, t.v, t.source, ", ".join(t.fits), t.summary)
-        for t in found[offset : offset + call.page]
-    ]
+    every = [(t.id, t.name, t.v, t.source, ", ".join(t.fits), t.summary) for t in found]
+    rows = every[offset : offset + call.page]
     notes = [DATA, "theme_get shows one theme's rules and palette"]
     notes += [f"not loaded: {p}" for p in problems]
     return Result(
@@ -199,6 +197,7 @@ def theme_list(call: Call, args: dict[str, Any], offset: int) -> Result:
         total=len(found),
         offset=offset,
         more=len(found) > offset + call.page,
+        epoch=digest(every),
     )
 
 

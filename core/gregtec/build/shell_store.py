@@ -39,6 +39,7 @@ from gregtec.build import palette, schematic, shell
 from gregtec.build import themes as theme_lib
 from gregtec.build.worldreg import WorldRegistry
 from gregtec.ingest.fingerprint import atomic_write
+from gregtec.planner import progress
 from gregtec.planner.outputs import store as plan_store
 from gregtec.vault.io import VaultIO
 
@@ -101,7 +102,9 @@ def make(
     site: Site | None = None,
     save_it: bool = True,
 ) -> Made:
-    """Design a shell around the plans' layout and save it unless refused (see the module)."""
+    """Design a shell around the plans' layout and save it unless refused (see the module).
+    Under a shell job (WO-10.10) each step is a stage and a cancel point, all before saving."""
+    progress.stage("layout")
     if not plan_ids or len(plan_ids) > MAX_PLANS:
         raise shell.ShellError(f"name 1 to {MAX_PLANS} saved plans")
     plans = []
@@ -141,6 +144,7 @@ def make(
             "(role and block, from block_find) for a prompt-only shell"
         )
     swatches = shell.swatches_of(brief.theme, extra, exclude)
+    progress.stage("palette")
     try:
         shell.check_palette(conn, swatches)
     except palette.CatalogError as exc:
@@ -155,6 +159,7 @@ def make(
         headroom=headroom,
     )
     source = "procedural" if ops is None else "architect"
+    progress.stage("compose")
     design_ops = tuple(
         dict(o)
         for o in (shell.procedural(spec) if ops is None else ops)
@@ -165,11 +170,13 @@ def make(
             "refused", source, {}, {}, ("every operation is an object",)
         )
     else:
+        progress.stage("gate")
         outcome = shell.design(conn, spec, design_ops, source)
     build = shell.build_id(spec, design_ops)
     made = Made(spec, design_ops, outcome, brief, build, None)
     if not outcome.ok or not save_it:
         return made
+    progress.stage("saving")
     path = save(home, made, lay)
     if site is not None and brief.theme is not None:
         theme_lib.record_use(
@@ -186,6 +193,8 @@ def notes(
         out.append(
             f"theme {brief.theme.name} ({spec.theme}): {brief.mode} mode, {brief.why}"
         )
+    elif spec.theme:  # a revision that kept its version's theme and palette (WO-10.10)
+        out.append(f"theme {spec.theme_name} ({spec.theme}): kept from {brief.why}")
     else:
         out.append("prompt only: the palette given with the request")
     out.append(f"concept for {brief.line_type}: {brief.concept}")
@@ -366,6 +375,49 @@ def rebuild(
             f"build {build} gives {len(outcome.cells)} blocks, not the {rec['blocks']} saved"
         )
     return spec, outcome
+
+
+def cells_of(
+    home: Path, build: str
+) -> tuple[shell.Spec, dict[shell.Cell, palette.Entry]]:
+    """The saved build's cells from its own files alone, no DB (the 3D viewer's, WO-10.10): its
+    operations compiled against its saved layout and palette, less what the gate removed (cells
+    outside the bounding volume or in a volume left empty). The same cells the gate saved:
+    refused when the count differs from the saved one (a changed file). The palette rule is
+    not run here (nothing is written): :func:`rebuild` and the export run it."""
+    rec = load(home, build)
+    try:
+        lay = json.loads(
+            (folder(home, build) / "layout.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise shell.ShellError(
+            f"build {build}'s layout.json can't be read: {exc}"
+        ) from None
+    swatches = [
+        shell.Swatch(r["role"], palette.parse_entry(r["block"]), r.get("note", ""))
+        for r in rec["palette"]
+    ]
+    spec = shell.spec_from_layout(
+        lay,
+        swatches,
+        prompt=rec.get("prompt", ""),
+        line_type=rec.get("line_type", theme_lib.GENERAL),
+        max_blocks=rec["max_blocks"],
+        headroom=rec["headroom"],
+    )
+    got = shell.compile_ops(spec, rec["ops"])
+    vols = shell._index(spec)
+    cells = {
+        c: e
+        for c, e in got.cells.items()
+        if spec.bounds.contains(c) and shell.breach_of(spec, c, vols) is None
+    }
+    if len(cells) != rec["blocks"]:
+        raise shell.ShellError(
+            f"build {build} gives {len(cells)} blocks, not the {rec['blocks']} saved"
+        )
+    return spec, cells
 
 
 def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -> None:

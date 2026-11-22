@@ -69,12 +69,16 @@ def url(cfg: Config) -> str:
 
 
 def chrome_path(env: dict[str, str] | None = None) -> Path | None:
-    """Chrome's chrome.exe where its installers put it, or None."""
-    env = dict(os.environ) if env is None else env
+    """Chrome's chrome.exe where its installers put it, or None.
+
+    Variable names are matched case-insensitively, as Windows does: ``os.environ`` there keeps
+    them upper-cased (``PROGRAMFILES``), and a plain dict copy loses its case-blind lookup.
+    """
+    upper = {k.upper(): v for k, v in (os.environ if env is None else env).items()}
     roots = [
-        env.get("ProgramFiles"),
-        env.get("ProgramFiles(x86)"),
-        env.get("LOCALAPPDATA"),
+        upper.get("PROGRAMFILES"),
+        upper.get("PROGRAMFILES(X86)"),
+        upper.get("LOCALAPPDATA"),
     ]
     for root in roots:
         if root:

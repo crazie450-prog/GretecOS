@@ -28,6 +28,7 @@ A result is ``key: value`` lines (a record), then a TSV table with a header row,
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections.abc import Sequence
@@ -89,6 +90,10 @@ class Result:
     offset: int = 0  # rows before this page
     more: bool = False  # another page exists
     text: str | None = None  # a note's text, shown after the head (no table then)
+    # A tool without the DB (needs_db=False): what its pages come from (:func:`digest` of all
+    # its rows), so a ``more`` cursor is refused once they change; None for live readings,
+    # whose cursor is never refused
+    epoch: str | None = None
 
     def __post_init__(self) -> None:
         for row in self.rows:
@@ -96,6 +101,12 @@ class Result:
                 raise ValueError(
                     f"row of {len(row)} cells for {len(self.columns)} columns"
                 )
+
+
+def digest(rows: Sequence[Sequence[object]]) -> str:
+    """A short hash of a whole table (every page's rows): :attr:`Result.epoch`."""
+    text = repr([tuple(row) for row in rows])
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
 def span(result: Result) -> str:

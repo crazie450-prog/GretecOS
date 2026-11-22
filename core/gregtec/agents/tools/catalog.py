@@ -518,6 +518,23 @@ TOOLS = (
         lanes=frozenset({DEEP}),
         gate=shells.GATE,
         deadline_s=30.0,
+        max_value_bytes=shells.MAX_STRUCTURE_BYTES,
+    ),
+    Tool(
+        "build_revise",
+        "Revise Clayton's current shell (or the design named) from his words instead of "
+        "starting over: send design_ops (the current version's operations with only what he "
+        "asked changed), or leave them out for GOS's own reviser. save false shows the current "
+        "operations and the reviser's attempt and saves nothing. The same gate checks it; a "
+        "refused revision writes nothing and the current version stays current. Every version "
+        "is kept; undo makes the previous one current again.",
+        shells.BUILD_REVISE_SCHEMA,
+        shells.build_revise,
+        read_only=False,
+        # The architect's and the orchestrator's (WO-10.10, D367): writes a version, deep only.
+        lanes=frozenset({DEEP}),
+        gate=shells.REVISE_GATE,
+        deadline_s=30.0,
     ),
 )
 

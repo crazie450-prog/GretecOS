@@ -47,7 +47,7 @@ from gregtec.vault.io import atomic_write
 
 log = logging.getLogger("gregtec.planner.design_jobs")
 
-KINDS = ("designer", "power")
+KINDS = ("designer", "power", "shell")  # shell: WO-10.10's workbench (D370)
 RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED = (
     "running",
     "done",
@@ -62,6 +62,10 @@ RECORDS = Path("data", "jobs")  # in GOS_HOME
 KEEP = 20  # finished jobs kept in memory for GET /api/design-jobs/{id}
 ERROR_MAX = 500
 SAVING = "saving"
+# A power design's stages (the docstring); the solver's own "solve" inside "chains" isn't one.
+POWER_STAGES = frozenset(
+    {"candidates", "chains", "lines", "metrics", "ranking", SAVING}
+)
 
 Work = Callable[[], dict[str, Any]]
 
@@ -222,6 +226,12 @@ class DesignJobs:
                     raise progress.Cancelled()
                 if name is None:
                     return
+                if (
+                    job.kind == "power"
+                    and name not in POWER_STAGES
+                    and name != "effort"
+                ):
+                    return  # the per-chain solves inside "chains": a cancel point, not a stage
                 if name == "effort":
                     job.sub = (k, n) if k and n else None
                 else:

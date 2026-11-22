@@ -68,7 +68,9 @@ is such a value): the key keeps its default and the problem goes into
 dashboard name (D115); the core and the supervisor refuse to start while there is any.
 delete the file it was meant to keep. ``[fingerprint] configs`` likewise adds to its default; each
 pattern is matched as an exclude pattern is, and must start in ``config/``. Every other key in the
-Appendix C skeleton is ignored until its WO reads it.
+Appendix C skeleton is ignored until its WO reads it. ``[bakeoff]`` (the shell bake-off's models
+and caps, WO-10.11, D376) is not read here at all: only the bake-off commands read it
+(:func:`gregtec.build.shell_bakeoff.read_settings`), so a mistake in it never stops the core.
 """
 
 from __future__ import annotations

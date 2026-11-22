@@ -567,6 +567,7 @@ telemetry_get(scope)                 action_propose(kind,args) action_status(id)
 wiki_search(q)                       wiki_fetch(title)         structure_get(machine, variant)
 theme_get/list/save                  build_request(spec)       schematic_export(build, part)
 block_find(text?, mod?, plain?)      # the block catalog for shell palettes, deep lane only (D307)
+build_revise(design?, words, ...)    # the current shell's next version, gate-checked, deep lane only (D367)
 note_read/note_write/note_append     inbox_propose(title,body) vault_search(q)
 db_query(name, params)               db_sql(select)            speak(text)  notify(ch,text,lvl)
 timer_set(...)                       handoff(task)             persona_set(id)
@@ -836,6 +837,8 @@ Telemetry modes unlock with Clayton's survival progression. In the Lab all of th
   - All schematic and palette code lives in `core/gregtec/build/`; there is no separate img2schem repo.
   - WO-10.0 imports the img2schem SOW and re-scopes Phase 10 from it, including any reference-image input.
   - **Built** (WO-10.7, D316-D318; from 7.10 as written, the SOW not yet in the repo): `gregtec.build.shell` takes a WO-10.5 layout (bounds grown by a 1-block wall ring and roof headroom; keep-outs, corridors, chases, a doorway per entrance and the rest of the layout's interior below the roof left empty, so walls stand in the ring only), the theme's palette (WO-10.6's three modes), prompt and `max_blocks`. The architect designs through `build_request` in a building vocabulary (walls, pillars, windows, roof, lights, fill, frame, clear) that code turns into blocks; every design (the model's or the procedural generator's, which is the fallback, the No-AI path and the test baseline) passes one gate: small breaches removed and said, anything else (a block outside the palette, so any tile entity or machine block; too many blocks; a malformed design) refused with nothing written. Builds are files in `GOS_HOME/data/build/shells/` with a palette manifest, a preview mesh (the dashboard's shell card in the Build view) and notes; `gos shell design|list|show|export`; the `.schematic` is Clayton's `gos shell export` (WO-10.4's writer, the Lab world's registry; refused when the plans' layout changed since the design), pasted from the first entrance's corridor cell. The Lab paste (L6) is runbook `shells_lab.md`.
+  - **Built** (WO-10.10, D367-D370, a follow-up under D158 after Clayton asked for a window to iterate in before a shell reaches the world): every saved shell belongs to a **design**, a chain of versions (`data/build/designs/`: parent, what was asked, by whom, time, cost; undo = an older version made current; nothing deleted). `build_revise` (deep lane, the architect's) and GOS's own reviser (`gregtec.build.shell_revise`, the No-AI path) make the next version from the current one's saved operations and Clayton's words through the same gate; a revision reads only the version's own files and the catalog, never `structure` rows; a refused one writes nothing. The router sends change words after a shell to a revision and "undo" to code (D369). The Build view's shell workbench: words, theme, max blocks and headroom, Design and Revise as shell jobs (WO-3.9's machinery, stages and Cancel), the version list with Make current, Compare side by side (materials and block counts), and the build guide's 3D drawing with the floor plan's machines and keep-outs as ghosts (D370). `gos shell versions|revise|undo|current|compare`, `gos eval shell-revise`. Still nothing reaches a world but `gos shell export` and his paste. Runbook `shells.md`.
+  - **Built** (WO-10.11, D374-D377, a follow-up under D158 after Clayton asked for a bake-off, 2026-11-20): `gos shell bakeoff` gives the same briefs (`tests/evals/shell_bakeoff.tsv`: six, each with a follow-up) to several models through one tool-less seam (`gregtec.build.shell_brief`: brief in, `shell.OPS` out as JSON; `gregtec.llm.designers`: Anthropic through the SDK, OpenAI's Responses API over plain HTTPS, fakes for CI), hands every answer to the same gate with the same two repair rounds, keeps the results under `data/bakeoff/<run>/` apart from his shells (never current, never exportable, deletable as a run), shows them blind (A, B, C from a stored seed) in the Build view's bake-off panel with the workbench's viewer, takes his pick per case and names the models only in the report. Spending is his: an estimate, a typed yes, a hard cap per run (USD, or tokens for a model with no price in `gos.toml`), the usual meter. The live roles in 4.4 stay Anthropic-only; a winner from another vendor becoming the live designer is his decision (checklist 5.11.17). Runbook: `docs/runbooks/shell_bakeoff.md`.
 - **Placement.**
   - Shells are pasted with WorldEdit (free, D35).
   - Machinery is built by Clayton from the 3D guide. Optional helpers:
@@ -1238,20 +1241,20 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 ### 13.1 Addon status against GTNH 2.9.0 stable (checked 2026-11-05) [F]
 | Mod | Latest release | Built against | Status |
 |---|---|---|---|
-| GT-Not-Leisure (+ GTNLLib) | 0.2.7-rc2.1 (2026-10-31), still the newest versioned release. GTNLLib 1.1.4 | 2.9.0-RC-2 | ✗ **Wait.** Commit `28007498` ("adapt to GTNH 2.9.0 final") is only in the rolling `dev-build` asset (rc2.1 still calls GT/CropsNH/NEI methods removed in stable), which is replaced on every push and can't be pinned (GTNL dev-290 needs GTNLLib 1.1.3). The repo is now also at github.com/GTNotLeisure/GT-Not-Leisure. |
-| Twist Space Technology | 0.8.0 (2026-11-02) | 2.9.0 stable | ✓ In Play (D88). 0.8.0-RC2.9 crashes on stable, so it is no stand-in. Lab, which mirrors Play, has loaded a world; the D02 smoke test is still to do. |
-| 123Technology | 2.2.1.1 (2026-11-04) | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ **Ready.** Fixes #277 (recipe `IllegalAccessError` with TST). Pinned; goes into Play after a Lab smoke test, jar only, no `123Technology_Musics.zip` (D90). |
-| Programmable Hatches | v0.2.1p1-beta and v0.2.1p2-beta (2026-11-01) | GT .264, NEI 2.8.171 (p1) | ✓ Play keeps **0.2.1p0** (D88): the author's README still maps 2.9.0 to 0.2.1p0. |
-| worldedit-gtnh | v0.0.10 (2026-07-19), not in the pack | n/a | ⚠ #30 (meta > 15), #24 (EndlessIDs schematic save/load) and #28 (chunk corruption on non-existent meta) are still open (V16). In Play (D88). |
-| PlanNH (optional) | 0.2.0 (2026-11-03), client-only | ≥ 2.9.0-RC-2, same GT compile target as 0.1.9 | ✓ Replaces 0.1.9 in Play after a Lab test; 0.1.9 is the rollback (D90). |
+| GT-Not-Leisure (+ GTNLLib) | **0.2.7** (2026-11-16, tag `ef436cf`; rechecked 2026-11-20). GTNLLib **1.1.6** | 2.9.0 stable (contains `28007498` "adapt to GTNH 2.9.0 final", #666; GT .265, NEI 2.8.171) | ⏳ **Pinned for the Lab test** (D365): `sciencenotleisure-0.2.7.jar` and `gtnllib-1.1.6.jar` go into Lab first; Play gets them only after Clayton's Lab smoke test. 0.2.7-rc2.1 and the rolling `dev-build` are no stand-ins. The repo is now at github.com/GTNotLeisure/GT-Not-Leisure. |
+| Twist Space Technology | **0.8.2** (2026-11-17, tag `99f8ed2`; rechecked 2026-11-20). Play has 0.8.0 (2026-11-02) | 2.9.0 stable (`setGtnhVersion("2.9.0")` at the tag) | ✓ 0.8.0 in Play (D88); its D02 smoke test passed 2026-11-05 (D94). ⏳ **0.8.2 pinned for the Lab test** (D373): `TwistSpaceTechnology-0.8.2.jar` replaces 0.8.0 in Lab first; Play keeps 0.8.0, the rollback, until Clayton's Lab test and his yes. 0.8.0-RC2.9 crashes on stable, so it is no stand-in. |
+| 123Technology | 2.2.1.1 (2026-11-04) in Play. 2.2.1.3 (2026-11-15; rechecked 2026-11-20) is out | 2.9.0 stable (`gtnhVersion` "2.9.0", has the stable port `812d2e0`) | ✓ 2.2.1.1 in Play (D90, D94): fixes #277 (recipe `IllegalAccessError` with TST); jar only, no `123Technology_Musics.zip`. ✗ 2.2.1.3 **waits** (D373): its notes say "Contains WIP Content" (2.2.1.2: "WIP DO NOT USE"), the mod id changed and it now requires TST. |
+| Programmable Hatches | v0.2.1p9-beta (2026-11-19; rechecked 2026-11-20) | GT .264, NEI 2.8.171 (p0 and p9 alike) | ✓ Play keeps **0.2.1p0** (D88, D373): the author's README still maps 2.9.0 to 0.2.1p0 and lists the newer builds under "2.9.0 Daily". |
+| worldedit-gtnh | v0.0.10 (2026-07-19) in Play, not in the pack. 1.0.1 (2026-11-10; rechecked 2026-11-20) is out | v0.0.10: n/a. 1.0.1: mods newer than 2.9.0 ships (CodeChickenCore 1.5.0, ForgeMultipart 1.8.0, ArchitectureCraft 1.13.0, CarpentersBlocks 3.8.0-GTNH) | ⚠ Play keeps v0.0.10 (D88), where #30 (meta > 15), #24 (EndlessIDs schematic save/load) and #28 (chunk corruption on non-existent meta) still apply (V16). Upstream closed #30 (2026-11-10, with its 1.0 rewrite) and #24 (2026-11-20); #28 is still open. ✗ 1.0.1 **waits** (D373). |
+| PlanNH (optional) | **0.2.4** (2026-11-13, tag `45a0d1e`; rechecked 2026-11-20). Play has 0.2.0 (2026-11-03). Client-only | ≥ 2.9.0-RC-2; 0.2.4's dependencies file is 0.2.0's, unchanged | ✓ 0.2.0 in Play (D90, D94). ⏳ **0.2.4 pinned for the Lab test** (D373): `plannh-0.2.4.jar` replaces 0.2.0 in Lab first; Play keeps 0.2.0, the rollback, until Clayton's Lab test and his yes. |
 | NEI | 2.8.171 ships in 2.9.0; 2.8.172-GTNH and 2.8.173-GTNH are out | n/a | Export keeps its manual swap to 2.8.172 (V03). |
 | GT5-Unofficial | 5.09.54.265 ships in 2.9.0 | n/a | `release/2.9.x` has 2 untagged hotfix commits, so a 2.9.1 may come. The GT pin stays at .265 until the pack changes. |
 
-- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST; not rechecked on 2026-11-05). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
+- **Open cross-addon bugs:** GTNL #575 (memory leak when loaded with TST) is still open on 2026-11-20 (D365). PH #323 (crash with a PH hatch in a GTNL machine) is closed.
 - **Play-world start gate (D02):**
-  - GTNL has a release that includes `28007498`.
-  - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93). **Done 2026-11-05 (D94).**
-  - #575 is fixed or Clayton accepts it. #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93).
+  - GTNL has a release that includes `28007498`. **0.2.7 does** (D365); it is pinned, and the item is met once its Lab smoke test passes (load the world, NEI opens, one GTNL multi forms and runs a recipe).
+  - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93). **Done 2026-11-05 (D94).** TST 0.8.2 (D373) repeats it in the Lab before it replaces 0.8.0 in Play: one TST multi and one 123Tech multi (still 2.2.1.1) form and run a recipe.
+  - #575 is fixed or Clayton accepts it (still open on 2026-11-20; the D365 Lab test looks at memory). #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93), in the same Lab session (D365).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
 ### 13.2 VERIFY list
@@ -1413,6 +1416,18 @@ vision = "claude-sonnet-5-5"
 heavy = "claude-fable-5-1"    # opt-in only
 fast_context_max_tokens = 60000
 use_heavy = false             # true: planner and architect run on heavy (D155)
+
+# [bakeoff]                   # optional: the shell bake-off's models and caps (WO-10.11, D376);
+# cap_usd = 10.0              # read only by `gos shell bakeoff`; keys never go here (`gos key set openai`)
+# cap_tokens = 1000000        # for models given no price
+# [[bakeoff.models]]
+# label = "astra"
+# provider = "openai"         # or "anthropic"
+# model = "gpt-6-astra"       # the id and prices from the vendor's own pages, checked on the day
+# effort = "high"             # optional
+# input_usd = 10.00           # per million tokens; left out: cost "unknown", capped by tokens
+# output_usd = 50.00
+# cached_input_usd = 1.00
 
 [budget]
 monthly_included_usd = 100    # D47
