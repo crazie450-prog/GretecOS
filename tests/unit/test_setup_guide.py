@@ -2,8 +2,10 @@
 
 Every ``gos`` command it writes exists in the CLI with the subcommands and flags it uses, every
 ``scripts/`` file it names is in the repo, its links resolve, its steps are numbered 1..N once,
-and no step is finished by opening another document. :func:`problems` lists what is wrong with
-a guide text; the mutation test proves it does, on broken copies of the real guide.
+and no step is finished by opening another document. The parts that need GOS running check that
+it runs, the gos.toml block is one the bake-off reads, and no block holds a made-up id.
+:func:`problems` lists what is wrong with a guide text; the mutation test proves it does, on
+broken copies of the real guide.
 """
 
 from __future__ import annotations
@@ -11,12 +13,15 @@ from __future__ import annotations
 import argparse
 import re
 import shlex
+import tomllib
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
 
 from gregtec import cli, sync
+from gregtec.build import shell_bakeoff
+from gregtec.config import Config
 
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
@@ -37,18 +42,28 @@ STEP_REF = re.compile(r"\bsteps? (\d+)(?:(?:, | and | or | to )(\d+))*", re.IGNO
 FULL = re.compile(r"(?:&[ \t]+\$gos|uv run gos)[ \t]+([^;|\n]*)")
 # A looser look at the whole text, as test_quick_start.py does: a bare `gos x y` in prose or in
 # quoted program output names a command (and a subcommand) the CLI has.
-BARE = re.compile(
-    r"(?<![\w$.\\-])gos[ \t]+([a-z][a-z0-9-]*)(?:[ \t]+([a-z][a-z0-9-]*))?"
-)
+BARE = re.compile(r"(?<![\w$.\\-])gos((?:[ \t]+[a-z][a-z0-9_-]*){1,4})")
+# A flag named alone in prose, as in "add `--cap-usd 6`".
+FLAG = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
 SYNC = re.compile(r"\$sync\b([^;|\n]*)")
 # The names the "paste this first" blocks define; a part that uses one must define it first.
-VARS = ("app", "gos", "py", "gh", "exp", "sync", "clone")
+VARS = ("app", "gos", "py", "gh", "exp", "sync", "clone", "plan", "run", "run2", "nei")
+# The parts whose steps use the dashboard or the bake-off panel: GOS must be running, and it
+# isn't after a restart of the PC. Each checks that before its first step.
+NEEDS_GOS = ("Part 4.", "Part 5.", "Part 8.", "Part 9.", "Part 10.")
+# An id that only looks like one: pasted as it stands, the block runs with it.
+FAKE_ID = re.compile(r"\b(?:pl|bo|ds|sh|lo)-0{4,}")
+# GOS's two ports, wherever a number that looks like one is written.
+PORT = re.compile(r"\b87\d\d\b")
 # A step may name another document of the repo only on a "More detail:" line.
 DOC_LINK = re.compile(r"\]\((?!https?://|#)")
 DOC_NAME = re.compile(r"\b[\w-]+\.md\b")
 DOC_NAMES = frozenset(p.name for p in [*DOCS.rglob("*.md"), *REPO.glob("*.md")])
 # "see ... step N", but not the guide's own "You should see: ... step N"
 SEE_STEP = re.compile(r"(?<!should )\bsee\b(?:(?!\. )[^\n])*\bsteps?\b", re.IGNORECASE)
+# The guide's own steps are whole numbers: "step 8b" is a step of some other document.
+FOREIGN_STEP = re.compile(r"\bsteps? \d+[a-z]\b", re.IGNORECASE)
+RUNBOOK = re.compile(r"\brunbooks?\b", re.IGNORECASE)
 
 
 class _Parsed(Exception):
@@ -134,6 +149,33 @@ def _command_problem(parser: argparse.ArgumentParser, command: str) -> str | Non
     return None
 
 
+def _reached(
+    parser: argparse.ArgumentParser, command: str
+) -> argparse.ArgumentParser | None:
+    """The parser ``command``'s subcommands lead to, or None for a command the CLI hasn't."""
+    try:
+        words = _words(command)
+    except ValueError:
+        return None
+    for word in words:
+        if word.startswith("-"):
+            break
+        subs = _subparsers(parser)
+        if not subs:
+            break
+        if word not in subs:
+            return None
+        parser = subs[word]
+    return parser
+
+
+def _every_flag(parser: argparse.ArgumentParser) -> set[str]:
+    out = set(parser._option_string_actions)
+    for sub in _subparsers(parser).values():
+        out |= _every_flag(sub)
+    return out
+
+
 def _code(text: str) -> list[str]:
     """The PowerShell the guide tells him to type: its powershell blocks' lines, and the inline
     code spans outside every block."""
@@ -146,7 +188,6 @@ def _code(text: str) -> list[str]:
 
 def command_problems(text: str) -> list[str]:
     gos, syncer = _gos_parser(), _sync_parser()
-    top = _subparsers(gos)
     out = []
     for line in _code(text):
         for command in FULL.findall(line):
@@ -155,17 +196,94 @@ def command_problems(text: str) -> list[str]:
         for flags in SYNC.findall(line):
             if why := _command_problem(syncer, flags):
                 out.append(why.replace("`gos`", "`sync_instances.py`"))
-    for cmd, sub in BARE.findall(text):
-        if cmd not in top:
-            out.append(f"`gos` has no subcommand {cmd}")
-        elif sub and (subs := _subparsers(top[cmd])) and sub not in subs:
-            out.append(f"`gos {cmd}` has no subcommand {sub}")
+    for words in BARE.findall(text):
+        parser, said = gos, "gos"
+        for word in words.split():
+            subs = _subparsers(parser)
+            if not subs:
+                break
+            if word not in subs:
+                out.append(f"`{said}` has no subcommand {word}")
+                break
+            parser, said = subs[word], f"{said} {word}"
     for lang, body in FENCE.findall(text):
-        if lang == "powershell" and (m := re.search(r"<[A-Za-z]", body)):
+        if lang != "powershell":
+            continue
+        if m := re.search(r"<[A-Za-z]", body):
             where = body[m.start() :].split("\n", 1)[0]
             out.append(
                 f"a powershell block isn't paste-ready: PowerShell refuses {where}"
             )
+        if m := FAKE_ID.search(body):
+            where = body[: m.end()].rsplit("\n", 1)[-1]
+            out.append(f"a powershell block isn't paste-ready: {where} is a made-up id")
+    return out
+
+
+def flag_problems(text: str) -> list[str]:
+    """A flag named alone in prose is a flag of a command the same part runs (anywhere in the
+    CLI, for the text outside the parts)."""
+    gos, syncer = _gos_parser(), _sync_parser()
+    anywhere = _every_flag(gos) | set(syncer._option_string_actions)
+    parts = _parts(text)
+    whole = text
+    for _, body in parts:
+        whole = whole.replace(body, "")
+    out = []
+    for head, body in [*parts, ("outside the parts", whole)]:
+        runs_sync = re.search(r"&[ \t]+\$py[ \t]+\$sync\b", body)
+        known = set(syncer._option_string_actions) if runs_sync else set()
+        for line in _code(body):
+            for command in FULL.findall(line):
+                if (reached := _reached(gos, command)) is not None:
+                    known |= set(reached._option_string_actions)
+        if head == "outside the parts":
+            known = anywhere
+        for span in SPAN.findall(FENCE.sub("", body)):
+            # only a flag on its own: `git status --short` is another program's
+            if (m := FLAG.match(span)) and m.group(0) not in known:
+                out.append(f"{head}: no command it runs has the flag {m.group(0)}")
+    return out
+
+
+def toml_problems(text: str) -> list[str]:
+    """Every toml block is a gos.toml the bake-off reads without a complaint."""
+    out = []
+    for lang, body in FENCE.findall(text):
+        if lang != "toml":
+            continue
+        try:
+            shell_bakeoff.settings_of(tomllib.loads(body))
+        except (tomllib.TOMLDecodeError, ValueError) as exc:
+            out.append(f"a toml block isn't one GOS reads: {exc}")
+    return out
+
+
+def port_problems(text: str) -> list[str]:
+    ports = {Config.core_port, Config.supervisor_port}
+    return [
+        f"{n} is not one of GOS's ports {sorted(ports)}"
+        for n in sorted(set(PORT.findall(text)))
+        if int(n) not in ports
+    ]
+
+
+def running_problems(text: str) -> list[str]:
+    """A part that needs GOS running checks it, and says how to start it, before its first
+    step: GOS doesn't start by itself after a restart of the PC."""
+    out = []
+    parts = dict(_parts(text))
+    for name in NEEDS_GOS:
+        head = next((h for h in parts if h.startswith(f"## {name}")), None)
+        if head is None:
+            out.append(f"there is no {name}")
+            continue
+        top = parts[head].split("\n### Step ", 1)[0]
+        code = "\n".join(b for lang, b in FENCE.findall(top) if lang == "powershell")
+        if not re.search(r"^& \$gos status$", code, re.MULTILINE) or not re.search(
+            r"^& \$gos serve --detach$", code, re.MULTILINE
+        ):
+            out.append(f"{head}: it never checks that GOS runs before its first step")
     return out
 
 
@@ -202,6 +320,8 @@ def step_problems(text: str) -> list[str]:
         for n in re.findall(r"\d+", m.group(0)):
             if not 1 <= int(n) <= len(numbers):
                 out.append(f"`{m.group(0)}` names a step the guide doesn't have")
+    for m in FOREIGN_STEP.finditer(text):
+        out.append(f"`{m.group(0)}` names a step the guide doesn't have")
     return out
 
 
@@ -225,7 +345,11 @@ def handoff_problems(text: str) -> list[str]:
         if m := SEE_STEP.search(prose):
             out.append(f"{head}: `{m.group(0)}` sends him elsewhere to finish the step")
         for line in prose.splitlines():
-            named = DOC_LINK.search(line) or DOC_NAMES & set(DOC_NAME.findall(line))
+            named = (
+                DOC_LINK.search(line)
+                or DOC_NAMES & set(DOC_NAME.findall(line))
+                or RUNBOOK.search(line)
+            )
             if named and not line.startswith("More detail:"):
                 out.append(f"{head}: another document outside `More detail:`: {line}")
     return out
@@ -265,7 +389,11 @@ def problems(text: str) -> list[str]:
     return [
         *step_problems(text),
         *command_problems(text),
+        *flag_problems(text),
         *variable_problems(text),
+        *running_problems(text),
+        *toml_problems(text),
+        *port_problems(text),
         *handoff_problems(text),
         *script_problems(text),
         *link_problems(text),
@@ -292,6 +420,10 @@ def test_the_guard_looked_at_enough() -> None:
     assert sum(len(SYNC.findall(line)) for line in code) >= 2
     assert {"sync_instances.py", "check_tweaks.py"} <= set(SCRIPT.findall(text))
     assert len([t for t in LINK.findall(text) if not t.startswith("http")]) >= 8
+    assert [lang for lang, _ in FENCE.findall(text)].count("toml") == 1
+    assert len(BARE.findall(text)) >= 20
+    assert sum(1 for s in SPAN.findall(FENCE.sub("", text)) if FLAG.match(s)) >= 6
+    assert set(PORT.findall(text)) == {"8765", "8766"}
 
 
 # old text in the real guide -> its broken replacement, and a word of the problem it must raise
@@ -341,6 +473,78 @@ MUTATIONS = (
         '$exp   = "C:\\Games\\PrismLauncher\\instances\\GTNH-Export\\.minecraft"',
         "",
         "$exp is used before",
+    ),
+    (
+        "a variable set only in a later part",
+        "$run = (Get-ChildItem",
+        "$other = (Get-ChildItem",
+        "$run is used before",
+    ),
+    (
+        "a part that never sets $plan",
+        "$plan = (Get-ChildItem",
+        "$other = (Get-ChildItem",
+        "$plan is used before",
+    ),
+    (
+        "a made-up id that runs as it stands",
+        "& $gos layout $plan\n",
+        '& $gos layout "pl-0000000000"\n',
+        "made-up id",
+    ),
+    (
+        "a part that needs GOS and never checks it",
+        "& $gos serve --detach\nStart-Sleep -Seconds 10\n& $gos status\n",
+        "",
+        "never checks that GOS runs",
+    ),
+    (
+        "an unknown flag named alone in prose",
+        "`--cap-usd 6`",
+        "`--cap-dollars 6`",
+        "the flag --cap-dollars",
+    ),
+    (
+        "a flag of a command the part doesn't run",
+        "`--cap-usd 6`",
+        "`--dry-run`",
+        "the flag --dry-run",
+    ),
+    (
+        "an unknown third word in quoted program output",
+        "`gos shell bakeoff report bo-...`",
+        "`gos shell bakeoff grade bo-...`",
+        "no subcommand grade",
+    ),
+    (
+        "a misspelt key in the gos.toml block",
+        "cached_input_usd = 1.00",
+        "cached_usd = 1.00",
+        "has no key cached_usd",
+    ),
+    (
+        "an effort word the vendor doesn't take",
+        'model = "gpt-6-astra"\neffort = "high"',
+        'model = "gpt-6-astra"\neffort = "hihg"',
+        "effort must be one of",
+    ),
+    (
+        "a wrong port",
+        "the ports 8765 and 8766",
+        "the ports 8756 and 8766",
+        "8756 is not one of GOS's ports",
+    ),
+    (
+        "a step of another document, without the word see",
+        "### Step 50. ",
+        "Then do step 8b of the phase 1 notes.\n\n### Step 50. ",
+        "`step 8b` names a step",
+    ),
+    (
+        "a runbook named without its file name",
+        "### Step 50. ",
+        "The rest is in the phase 1 runbook.\n\n### Step 50. ",
+        "outside `More detail:`",
     ),
     (
         "a script that isn't there",
