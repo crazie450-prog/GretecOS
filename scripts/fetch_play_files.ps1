@@ -145,7 +145,7 @@ $Addons = @(
 # - GT-Not-Leisure's rolling "dev-build" asset: it is replaced on every push, so it can't be pinned.
 #   0.2.7 above is the versioned release with 28007498 (D365).
 # - worldedit-gtnh 1.0.1 and 1.0.2: built against newer mods than GTNH 2.9.0 or 2.9.1 ship, and no
-#   gain GOS needs today (D380, D382). Play keeps v0.0.10.
+#   gain GOS needs today (D382, D383). Play keeps v0.0.10.
 # - GTNH 2.9.1's zips (D382): not yet, because TST 0.8.2 fails to load on 2.9.1 (TST #1430). Java 17-26:
 #   753,304,930 bytes, SHA256 998875d413ed5d9b16fed9992844b61dcb82e819a15ea56e4eb868f68ea98327; Java 8:
 #   737,944,815 bytes, SHA256 5663d779b2c0b31f7006d404fcc0e8a5bba15e3af68f59636c66b3a390c0d18d.

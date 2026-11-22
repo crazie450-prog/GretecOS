@@ -200,7 +200,7 @@ def test_excludes_are_never_copied_over_or_deleted(tmp_path: Path) -> None:
 
 
 def test_phase10_lab_files_survive_a_sync(tmp_path: Path) -> None:
-    """D381: shells pasted and captures saved in the Lab, GuideNH's GOS page and its export."""
+    """D384: shells pasted and captures saved in the Lab, GuideNH's GOS page and its export."""
     env = Env(tmp_path)
     kept = {
         "config/worldedit/schematics/sh-1.schematic": b"shell",
