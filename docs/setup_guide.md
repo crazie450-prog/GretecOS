@@ -6,7 +6,7 @@ One document. Every command is written out here. You never have to open a second
 
 **Where it ends.** The current release is installed, the core service runs, the dashboard on monitor 2 is paired, the setup wizard is finished, the recipe database is built from one Export run, one plan is saved, you have toured the building tool, and you have run the shell bake-off: first with the free fake models, then (if you want) with two real ones.
 
-**How long.** Nobody has timed any of this on your PC. These are rough guesses, so you can plan the sitting. You can stop after any part and go on another day: every part starts with the block to paste, and each part that needs GOS running starts with a check that it runs.
+**How long.** Nobody has timed any of this on your PC. These are rough guesses, so you can plan the sitting. You can stop after any part and go on another day: every part starts with the start block to paste, and each part that needs GOS running starts with a check that it runs.
 
 | Part | What | Rough time |
 |---|---|---|
@@ -18,20 +18,20 @@ One document. Every command is written out here. You never have to open a second
 | 5 | Setup wizard | 10 to 15 minutes |
 | 6 | Recipe data | 30 to 60 minutes; the Export game runs by itself for "a few minutes, at most 30" |
 | 7 | One saved plan | 5 to 10 minutes |
-| 7b | Structure data, only if step 59 says you need it | up to a few hours, unattended |
+| 7b | Multiblock shapes, only if step 59 says you need it | up to a few hours, unattended |
 | 8 | The building tour | 15 minutes |
 | 9 | The free bake-off | 15 minutes |
 | 10 | The paid bake-off | 30 to 45 minutes |
 | 11 | What you have now and what comes next | reading only |
 
-**What it costs.** Parts 0 to 9 are free, with one exception. The **Test** button for your Anthropic key in the wizard (step 37) makes one tiny call to the cheapest model. That is well under one cent at the price GOS has on file for it. One more thing to know: once a key is stored, GOS's own upkeep may make one small call to that same model for each old week of session logs in your vault. The upkeep runs while the PC is idle. With no old logs it makes none, and by the project record you have none. Part 10 spends real money at two vendors: Anthropic (your key) and OpenAI (a new key, with credit you buy on their site first, in step 76). One bake-off run can never spend more than its cap, which is \$10 unless you change it. Your day limit (also \$10 unless you changed it; the program's messages call it the day cap) holds too. With the prices read on 2026-11-20 the project's own estimate was "likely well under \$1" for the one-request trial and "about \$1 for Claude Opus 5.5 and about \$2.50 to \$3 for GPT-6 Astra" for the full run. Prices move. The command prints its own estimate and waits for you to type `yes`. Trust that estimate, not this page.
+**What it costs.** Parts 0 to 9 are free, with one exception. The **Test** button for your Anthropic key in the wizard (step 37) makes one tiny call to the cheapest model. That is well under one cent at the price GOS has on file for it. One more thing to know: once a key is stored, GOS's own upkeep may make one small call to that same model for each old week of session logs in your vault. The upkeep runs while the PC is idle. With no old logs it makes none, and by the project record you have none. Part 10 spends real money at two vendors: Anthropic (your key) and OpenAI (a new key, with credit you buy on their site first, in step 76). One bake-off run can never spend more than its cap, which is \$10 unless you change it. Your day limit (also \$10 unless you changed it; the program's messages call it the day cap) holds too. With the prices read on 2026-11-20 the project's own estimate was "likely well under \$1" for the one-request trial and "about \$1 for Claude Opus 5.5 and about \$2.50 to \$3 for GPT-6 Astra" for the full run. Prices move. The command prints its own estimate and waits for you to type `yes`. Trust that estimate, not this page. The amount in its question ("up to") is the worst case, not the likely cost: step 79 explains it.
 
-**Marks.** `$` in a step's title = the step costs money. `LAB` = the Lab game is open. `PLAY` = the step touches Play. In this guide only `$` occurs, on steps 37, 76, 79 and 80. Steps 37, 79 and 80 spend API money. In step 76 you buy credit at OpenAI. **No step is marked LAB or PLAY:** nothing here starts Lab or Play, and nothing writes to Play. Six steps read Play's files without changing them: `gos doctor` (step 25), the sync (steps 26 and 27) and three screens of the wizard (steps 36, 41 and 43). Each of those steps says so.
+**Marks.** `$` in a step's title = the step costs money. `LAB` = the Lab game is open. `PLAY` = the step touches Play. In this guide only `$` occurs, on steps 37, 76, 79 and 80. Steps 37, 79 and 80 spend API money. In step 76 you buy credit at OpenAI. **No step is marked LAB or PLAY:** nothing here starts Lab or Play, and nothing writes to Play. Eight steps read Play's files without changing them: `gos doctor` (step 25), the sync (steps 26 and 27), three screens of the wizard (steps 36, 41 and 43), and two one-line looks that show Play was left alone (steps 47 and 51). Each of those steps says so.
 
 **Four rules for the whole guide.**
 
 - Use a normal PowerShell window. Never "Run as administrator": GOS refuses to run that way.
-- One game at a time. Before the Export run (step 52) close Play and Lab yourself. Nothing checks this for you yet.
+- One game at a time. Before the Export run (step 52) close Play and Lab yourself. Nothing stops a second game for you yet. Step 52 has a line that shows what is open.
 - A key or token goes in only through the setup wizard or `gos key set`. Never into a file, a chat or a pull request.
 - If what you see is not what "You should see" says, and no "If not" line covers it: stop there. Copy the text from the window and ask. Do not guess.
 
@@ -45,6 +45,7 @@ One document. Every command is written out here. You never have to open a second
 - **gos.toml** is GOS's settings file: `config\gos.toml` inside GOS_HOME. "The settings file" always means this file.
 - **The vault** is a folder of notes inside GOS_HOME that GOS keeps. This guide does not set it up.
 - **The repo** is the project's code on GitHub. **A branch** is one line of work in it. `main` is the branch with the finished work.
+- **Windows Credential Manager** is where Windows keeps passwords and keys, one store for each Windows account. GOS puts your keys there and nowhere else. The program's own messages call it the **keyring**.
 - **PATH** is Windows' list of folders in which it looks for a program when you type its name.
 - **A port** is a numbered door on the PC that one program listens on. GOS uses the ports 8765 and 8766.
 - Nothing puts `gos.exe` on your PATH. In your window every command starts with `& $gos`. When a message from the program names a command that starts with `gos` or `uv run gos`, you type `& $gos` and then the same words.
@@ -55,9 +56,9 @@ One document. Every command is written out here. You never have to open a second
 
 Every command in this part only reads. Nothing is changed.
 
-### Step 1. Open a PowerShell window and paste the block
+### Step 1. Open a PowerShell window and paste the start block
 
-Open PowerShell from the Start menu the normal way. Paste this. **Paste it again first in every new window:** PowerShell forgets these names when a window closes.
+Open PowerShell from the Start menu the normal way. Paste the lines below. This guide calls them **the start block**. **Paste the start block again first in every new window:** PowerShell forgets these names when a window closes.
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
@@ -93,7 +94,7 @@ uv --version
 
 You should see: `uv 0.13.6` or a newer version. (0.13.6 is what the project record says your PC had.)
 
-If not: "uv is not recognized" would also be a surprise. The project's notes for your PC name uv as a winget package, `astral-sh.uv`. So `winget install astral-sh.uv` should bring it back. Then open a new window and go back to step 1. If that fails too, stop and ask.
+If not: "uv is not recognized" would also be a surprise. winget is Windows' own installer for programs, run from PowerShell. The project's notes for your PC name uv as a winget package, `astral-sh.uv`. So `winget install astral-sh.uv` should bring it back. Then open a new window and go back to step 1. If that fails too, stop and ask.
 
 ### Step 4. Check Java
 
@@ -122,13 +123,13 @@ If not: do step 15 in Part 1.
 
 ### Step 6. Check pnpm
 
-pnpm downloads the dashboard's building blocks. Also new since November.
+pnpm downloads the parts the dashboard is built from. Also new since November.
 
 ```powershell
 pnpm --version
 ```
 
-You should see: a version number. `10.28.0` is the one the project pins. `12` and a few more digits is probably fine too: on a test machine pnpm 12 switched itself to 10.28.0 inside the project. (Not tried with your pnpm. The real proof is the line `Built the dashboard:` in step 21.)
+You should see: a version number. `10.28.0` is the one the project pins: it names that exact version, so that every build uses the same one. `12` and a few more digits is probably fine too: on a test machine pnpm 12 switched itself to 10.28.0 inside the project. (Not tried with your pnpm. The real proof is the line `Built the dashboard:` in step 21.)
 
 If not: "pnpm is not recognized": do step 16 in Part 1. "running scripts is disabled on this system": pnpm is there, but Windows will not run its PowerShell starter. Type `pnpm.cmd --version` in its place. If that prints a version, you are fine: the deploy starts pnpm that way itself.
 
@@ -145,6 +146,8 @@ You should see: three lines, at least one of them `True`.
 If not: three times `False`: do step 17 in Part 1.
 
 ### Step 8. Look at the installed release
+
+A release is made from one **commit**: one saved state of the project's code. A commit's id is a row of letters and digits, and its first seven are enough to name it.
 
 ```powershell
 Get-Content "$app\release.json"
@@ -186,7 +189,7 @@ Test-Path "$gh\config\gos.toml"
 
 You should see: two lines: `True`, then `True` or `False`. The first command prints nothing, because `GOS_HOME` is not set. That is the normal case. **Write down the last answer.** Both are fine, but it decides what the dashboard shows in Part 5, and whether you do step 24.
 
-If not: three lines, and the first is a folder path: every GOS command then uses that folder as GOS_HOME. In every block of this guide, change the `$gh =` line to that path in double quotes. The line before the last says `False`: fine, GOS makes the folder when it first starts.
+If not: three lines, and the first is a folder path: every GOS command then uses that folder as GOS_HOME. In every start block of this guide, change the `$gh =` line to that path in double quotes. The line before the last says `False`: fine, GOS makes the folder when it first starts.
 
 ### Step 12. Check that nothing runs from GOS_APP and the two ports are free
 
@@ -247,7 +250,7 @@ $exp   = "C:\Games\PrismLauncher\instances\GTNH-Export\.minecraft"
 winget install OpenJS.NodeJS.LTS
 ```
 
-The first time, winget may ask you to agree to its terms: type `Y` and press Enter. Windows may also ask you to allow the change. Then open a new window, paste the block, and run:
+The first time, winget may ask you to agree to its terms: type `Y` and press Enter. Windows may also ask you to allow the change. Then open a new window, paste the start block, and run:
 
 ```powershell
 node --version
@@ -259,13 +262,13 @@ If not: still "not recognized" in a new window: stop and ask.
 
 ### Step 16. Install pnpm (only if step 6 failed)
 
-Do this in a window opened after Node.js was installed. The `.cmd` at the end of both names is on purpose. With Windows' usual settings PowerShell refuses the plain `npm` and `pnpm` with "running scripts is disabled on this system". The `.cmd` form is not affected.
+npm is the installer that comes with Node.js. Do this in a window opened after Node.js was installed. The `.cmd` at the end of both names is on purpose. With Windows' usual settings PowerShell refuses the plain `npm` and `pnpm` with "running scripts is disabled on this system". The `.cmd` form is not affected.
 
 ```powershell
 npm.cmd install -g pnpm@10.28.0
 ```
 
-Then open a new window, paste the block, and run:
+Then open a new window, paste the start block, and run:
 
 ```powershell
 pnpm.cmd --version
@@ -289,7 +292,7 @@ If not: Chrome went to an unusual place. GOS only looks in these three. Stop and
 
 ### Step 18. Make Java findable (only if step 4 failed both ways)
 
-The November deploy built the mod, so a JDK was on this PC then. The record says it was Temurin 25, unpacked from a ZIP file, with `JAVA_HOME` set for the whole PC. I cannot see where that folder is, and the project has no install command for Java. So this step has no checked command. Get a JDK of version 17 or newer as a Windows installer (a file that ends in `.msi`). Temurin's are at `https://adoptium.net/`. If the installer offers to set `JAVA_HOME` or to add Java to PATH, say yes. Then open a new window, paste the block, and run:
+The November deploy built the mod, so a JDK was on this PC then. The record says it was Temurin 25, unpacked from a ZIP file, with `JAVA_HOME` set for the whole PC. I cannot see where that folder is, and the project has no install command for Java. So this step has no checked command. Get a JDK of version 17 or newer as a Windows installer (a file that ends in `.msi`). Temurin's are at `https://adoptium.net/`. If the installer offers to set `JAVA_HOME` or to add Java to PATH, say yes. Then open a new window, paste the start block, and run:
 
 ```powershell
 java -version
@@ -319,17 +322,22 @@ $exp   = "C:\Games\PrismLauncher\instances\GTNH-Export\.minecraft"
 
 ### Step 19. Close Prism, every game, and everything inside GOS_APP
 
-Close Prism Launcher and any open game (Play, Lab, Export). Close every File Explorer window, editor and PowerShell window that is inside `C:\GregtecOS-app`. Then check:
+Close Prism Launcher and any open game (Play, Lab, Export). Close every File Explorer window, editor and PowerShell window that is inside `C:\GregtecOS-app`. Then check. The first line lists the programs that run from GOS_APP. The second lists Prism and open games.
 
 ```powershell
 Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like 'C:\GregtecOS-app\*' } | Select-Object ProcessId, Name, ExecutablePath
+Get-Process prismlauncher, javaw, java -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle
 ```
 
-You should see: nothing printed.
+You should see: nothing printed, from either line.
 
-If not: it lists a program: close the window it runs in, and run the check again. One exception: you have done Part 3 before, and GOS runs in the background. Then the list shows programs from `C:\GregtecOS-app\current\.venv` that have no window. Leave them. The deploy stops GOS itself just before it swaps the release, and starts it again after.
+If not: the second line lists `prismlauncher`: Prism is still open. It lists `javaw` or `java` with a window title in the last column: a game is still open. Close what it lists and run the check again. A `java` line with an empty last column is some other Java program, not a game: leave it. The first line lists a program: close the window it runs in, and run the check again. One exception: you have done Part 3 before, and GOS runs in the background. Then the list shows programs from `C:\GregtecOS-app\current\.venv` that have no window. Leave them. The deploy stops GOS itself just before it swaps the release, and starts it again after.
 
 ### Step 20. Update your clone
+
+This step has two parts: get the newest code, then look at its checks on GitHub.
+
+**1. Get the newest code.**
 
 ```powershell
 $clone = (Get-Content -Raw "$app\release.json" | ConvertFrom-Json).source
@@ -342,9 +350,13 @@ git log -1 --format="%h %s"
 
 You should see: `Already on 'main'` or `Switched to branch 'main'`. Then nothing from `git status --short`, or only lines that start with `??` (files of your own that git does not track; the deploy ignores them). Then the pull's list of changed files. Then one line with a short commit id and a title. The id must **not** be `362a22e`: that would mean nothing was pulled.
 
-Also look at `https://github.com/crazie450-prog/GretecOS/commits/main` in your browser. The top commit should have a green tick. A red cross means the checks failed on it: do not deploy over that, stop and ask.
-
 If not: `git status --short` prints a line that starts with `M` or `D`: a tracked file was changed, and the deploy will refuse. `git restore` followed by the file name puts that file back as the project has it. **That throws your own change to the file away for good.** If you made the change on purpose, first copy the file to another folder (your Desktop, say). Then run `git restore` with the file name, and run this step again. `git pull` fails: check the internet connection and try again.
+
+**2. Look at the checks on GitHub.** Open `https://github.com/crazie450-prog/GretecOS/commits/main` in your browser. Find the commit whose id is the one the last line just printed. It is normally the top one.
+
+You should see: a green tick beside that commit.
+
+If not: a red cross: the checks failed on it. Do not deploy over that: stop and ask. A yellow dot: the checks are still running. Wait ten minutes, reload the page with F5, and go on only when the dot has turned into a green tick. No mark at all, or the commit is not in the list: stop and ask.
 
 ### Step 21. Run the deploy
 
@@ -464,7 +476,17 @@ If not: a line that starts with `problem:` under an instance: copy it, stop and 
 
 ### Step 26. Sync, as a dry run first
 
-The sync copies Play's `mods`, `config` and `scripts` folders into Export and Lab, and puts the GregtecLink mod file that the deploy just built into Export. It only reads Play. The dry run writes nothing at all: it shows what the real run would do. Prism and all three games must be closed.
+The sync copies Play's `mods`, `config` and `scripts` folders into Export and Lab, and puts the GregtecLink mod file that the deploy just built into Export. It only reads Play. The dry run writes nothing at all: it shows what the real run would do.
+
+Prism and all three games must be closed. This line shows whether one is still open:
+
+```powershell
+Get-Process prismlauncher, javaw, java -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle
+```
+
+It should print nothing. If it lists `prismlauncher` (Prism), or a `javaw` or `java` line with a window title in the last column (a game), close that and run the line again. A `java` line with an empty last column is some other Java program, not a game: leave it.
+
+Then the dry run:
 
 ```powershell
 & $py $sync --dry-run
@@ -501,7 +523,17 @@ If not: it prints `Refused, nothing written in any instance:` and a reason. Noth
 
 ### Step 27. Sync for real
 
-The real run reads Play's three folders again, as the dry run did, and writes only into Export and Lab. Do it only if the dry run printed no `Refused` and no `delete` line under `lab:` that surprised you:
+The real run reads Play's three folders again, as the dry run did, and writes only into Export and Lab. Do it only if the dry run printed no `Refused` and no `delete` line under `lab:` that surprised you.
+
+Prism and the games must still be closed. If you opened one since step 26, look again first:
+
+```powershell
+Get-Process prismlauncher, javaw, java -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle
+```
+
+It should print nothing. `prismlauncher` is Prism, and a `javaw` or `java` line with a window title in the last column is a game: close it and run the line again.
+
+Then the real run:
 
 ```powershell
 & $py $sync
@@ -589,7 +621,7 @@ overall: warn
 
 **It passes when the Supervisor line and the Core line both say `ok` and `running`.** `overall: warn` is normal now, because no key is stored yet. The Discord bot line with `off` is expected: Discord is not part of this guide. The exact words of the last three lines on Windows are not known.
 
-If not: `The core isn't answering; the supervisor says:` with `core  starting`: wait five seconds and run it again. `GOS isn't running.`: go back to step 29.
+If not: `The core isn't answering; the supervisor says:` with `core  starting`: wait five seconds and run it again. The table shows, but its Core line says `warn` and `starting`: the same, wait five seconds and run it again. `GOS isn't running.`: go back to step 29.
 
 More detail: [core_service.md](runbooks/core_service.md).
 
@@ -617,7 +649,7 @@ $exp   = "C:\Games\PrismLauncher\instances\GTNH-Export\.minecraft"
 & $gos status
 ```
 
-It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
+It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. Two other lines may read differently than in step 30: once step 44 is done, Game watchers and Voice say `stopped by gos stop`. That is fine. If the Core line says `warn` and `starting`, the core is still coming up: wait five seconds and run `& $gos status` again. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
 
 ```powershell
 & $gos serve --detach
@@ -712,7 +744,7 @@ $exp   = "C:\Games\PrismLauncher\instances\GTNH-Export\.minecraft"
 & $gos status
 ```
 
-It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
+It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. Two other lines may read differently than in step 30: once step 44 is done, Game watchers and Voice say `stopped by gos stop`. That is fine. If the Core line says `warn` and `starting`, the core is still coming up: wait five seconds and run `& $gos status` again. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
 
 ```powershell
 & $gos serve --detach
@@ -729,9 +761,9 @@ What you do depends on the answer you wrote down in step 11.
 - It was `False` (no settings file): the whole window already is the wizard. Do nothing.
 - It was `True` (an old settings file): the dashboard shows a banner **Setup isn't finished**. Click **Open setup**.
 
-You should see: a page titled **First-run setup** with the eight screens listed on the left, and a line near the top that says where settings go: your `gos.toml`, and "keys and tokens into Windows Credential Manager, never into a file".
+You should see: a page titled **First-run setup** with the eight screens listed on the left. A line near the top says where settings go: your `gos.toml`, and "keys and tokens into Windows Credential Manager, never into a file".
 
-If not: neither the wizard nor the banner shows: press `9` in the dashboard (the Settings view), find the panel **Setup wizard** and click **Open the setup wizard**.
+If not: the window shows the other of the two (the banner although step 11 said `False`, or the wizard although it said `True`): that is fine. Follow what you see. Neither the wizard nor the banner shows: press `9` in the dashboard (the Settings view), find the panel **Setup wizard** and click **Open the setup wizard**.
 
 ### Step 36. Screen 1, Paths
 
@@ -839,7 +871,7 @@ You should see:
 | GOS_APP | found | green |
 | GOS_HOME | there and writable | green |
 | Recipe DB and GT pin | GT pin 5.09.54.265: no DB yet, so no recipes ... | green |
-| Keyring | the name of Windows' key store | green |
+| Keyring | the program's name for Windows Credential Manager | green |
 | Anthropic API key | stored | green |
 | Discord bot token | not stored: needed from WO-9.1 (Discord) | yellow, fine |
 | ElevenLabs API key | not stored (not needed) | green |
@@ -864,7 +896,9 @@ The third line only waits ten seconds: the core needs a moment to come up.
 
 You should see: first `Stopped (the supervisor keeps running; ...)` with a short list. Then `The supervisor is running; started what was stopped:` with a short list. Then, after the wait, the status table, with the Supervisor and Core lines `ok` and `running` again, and now `Anthropic key  ok  stored`. The key line can take up to 30 seconds to turn.
 
-If not: in place of the table it says `The core isn't answering; the supervisor says:` and the core's line says `starting`: the core needed longer. Wait five seconds and run `& $gos status` again. `& $gos serve` holds the window and prints `Running the supervisor in this window; Ctrl+C stops GOS.`: then the supervisor was not running. Press Ctrl+C, then run `& $gos serve --detach`.
+Two lines of the table have new words after this step: Game watchers and Voice now read `off  stopped by gos stop`, and no longer `starts when Play launches`. That is what `gos stop` leaves behind, and it is fine. They read so until GOS is next started fresh, for example after a restart of the PC.
+
+If not: in place of the table it says `The core isn't answering; the supervisor says:` and the core's line says `starting`: the core needed longer. Wait five seconds and run `& $gos status` again. The table shows, but its Core line says `warn` and `starting`: the same. Wait five seconds and run `& $gos status` again. `& $gos serve` holds the window and prints `Running the supervisor in this window; Ctrl+C stops GOS.`: then the supervisor was not running. Press Ctrl+C, then run `& $gos serve --detach`.
 
 ### Step 45. Check what the wizard wrote
 
@@ -913,13 +947,16 @@ You should see: the same file name twice, like `gregteclink-<hex>.jar`. The seco
 
 If not: the names differ, or there are two files: close Export and Prism and run `& $py $sync --only export`. That is the sync of step 27 for Export alone. It reads Play in the same way. Then run this step again.
 
-### Step 47. Check that the export part of the mod is switched on
+### Step 47. Check that the export part of the mod is switched on, in Export only
+
+The first line shows the mod's settings file in Export. The second looks whether Play has such a file. It only lists file names in Play's `config` folder and changes nothing.
 
 ```powershell
 Get-Content "$exp\config\gregteclink.cfg"
+Get-ChildItem "C:\Games\PrismLauncher\instances\GTNH-Play\.minecraft\config\gregteclink*"
 ```
 
-You should see:
+You should see: this text, and nothing after it. The second line prints nothing, because Play has no such file: the sync never writes to Play.
 
 ```text
 # GregtecLink in GTNH-Export: the export module only (D98).
@@ -932,7 +969,7 @@ modules {
 }
 ```
 
-If not: "cannot find path": run `& $py $sync --only export`, then this step again. Without this file the mod does nothing.
+If not: "cannot find path" from the first line: run `& $py $sync --only export`, then this step again. Without this file the mod does nothing. The second line lists a file: do not start Play. Copy what it printed, stop and ask. (One day a later sitting puts GregtecLink into Play. From then on a `gregteclink.cfg` is listed here, and that is right as long as its line `B:export` says `false`.)
 
 ### Step 48. Look at which NEI is in Export
 
@@ -973,15 +1010,23 @@ The last line prints the file's fingerprint (its SHA256 hash). The first line on
 
 You should see: exactly `9362A063C04AAF11A668291542223725DB1147E76F483936AD965530E084104F`
 
-If not: any other value: **stop.** Delete the downloaded file and do not copy it anywhere. "Could not create SSL/TLS secure channel": paste the first line again, then the third.
+If not: any other value: **stop.** Delete the downloaded file and do not copy it anywhere. "Could not create SSL/TLS secure channel", or another red error from the third line (no connection, say): nothing was downloaded, and the last line has no file to check. Paste all four lines again, so that the file is fetched and its fingerprint is checked. The same error a second time: stop and ask.
 
 ### Step 50. Swap NEI in Export only (only if step 48 showed 2.8.171)
 
-Export and Prism must be closed. Both lines name `$exp`, the Export folder. Never do this in Play or Lab.
+Export and Prism must be closed. This line shows whether one is still open:
 
 ```powershell
-Remove-Item "$exp\mods\NotEnoughItems-2.8.171-GTNH.jar"
+Get-Process prismlauncher, javaw, java -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle
+```
+
+It should print nothing. `prismlauncher` is Prism, and a `javaw` or `java` line with a window title in the last column is a game: close it and run the line again.
+
+Then the swap. All three lines name `$exp`, the Export folder. Never do this in Play or Lab. The first line copies the new file in. The second removes the old file, and only when the new one is there. The third lists the result.
+
+```powershell
 Copy-Item "$env:USERPROFILE\Downloads\NotEnoughItems-2.8.172-GTNH.jar" "$exp\mods\"
+if (Test-Path "$exp\mods\NotEnoughItems-2.8.172-GTNH.jar") { Remove-Item "$exp\mods\NotEnoughItems-2.8.171-GTNH.jar" }
 Get-ChildItem "$exp\mods\NotEnoughItems-*" | Select-Object Name
 ```
 
@@ -989,21 +1034,35 @@ You should see: one file, `NotEnoughItems-2.8.172-GTNH.jar`.
 
 The sync never undoes this: it is told to leave NEI's file in Export alone.
 
-If not: `Remove-Item` says the file is in use: Export is open. Close it and run the step again.
+If not:
+
+| You see | What it means | What to do |
+|---|---|---|
+| `Copy-Item` says it cannot find the file in `Downloads`, and the list shows only the 2.8.171 file | the downloaded file is gone. Nothing was changed in Export | do step 49 again, then this step |
+| `Remove-Item` says the file is in use, and the list shows both files | Export is open | close it and run the step again |
 
 ### Step 51. Add the autoexport flag to GTNH-Export in Prism (once)
 
 With this flag, every start of GTNH-Export becomes an export that runs by itself and then closes the game. The project decided the flag stays for good. It does nothing in any other instance.
 
+**First look whether the flag is already there.** It may be there since November: the project's record says the flag stays in Export for good. Do this before you open Prism.
+
+```powershell
+Select-String -Path "C:\Games\PrismLauncher\instances\GTNH-Export\instance.cfg" -Pattern '^JvmArgs=', '^OverrideJavaArgs='
+```
+
+- It prints a line `JvmArgs=` that holds `-Dgregtec.autoexport=true`, and a line `OverrideJavaArgs=true`: the flag is set. Do not add it a second time. Skip the five points below and go on at **Last, one look at Play**.
+- Anything else (nothing printed, no flag in the `JvmArgs=` line, or `OverrideJavaArgs=false`): add the flag now, with these five points.
+
 1. Open Prism Launcher. Click **GTNH-Export** once. Click **Edit**.
 2. Go to **Settings**, then the **Java** tab.
 3. Find the box for Java arguments (it may be labelled "JVM arguments"). Tick its check box if it is not ticked.
-4. Put the cursor at the **end** of what is already in the box. Type a space, then `-Dgregtec.autoexport=true`. Keep everything that was there. If the box was not ticked before and is empty once you tick it, type only the flag, and tell me that this happened: I could not check what Prism then does with its general Java arguments.
+4. Put the cursor at the **end** of what is already in the box. Type a space, then `-Dgregtec.autoexport=true`. Keep everything that was there. If the flag already stands in the box, do not type it again. If the box was not ticked before and is empty once you tick it, type only the flag. Tell me that this happened: I could not check what Prism then does with its general Java arguments.
 5. Close the Edit window. **Do not open GTNH-Play's settings.**
 
 The names of the buttons and tabs are from the project's notes. Your Prism version may word them a little differently.
 
-Then check, in PowerShell:
+Then look again, in PowerShell, with the same line as before:
 
 ```powershell
 Select-String -Path "C:\Games\PrismLauncher\instances\GTNH-Export\instance.cfg" -Pattern '^JvmArgs=', '^OverrideJavaArgs='
@@ -1011,11 +1070,25 @@ Select-String -Path "C:\Games\PrismLauncher\instances\GTNH-Export\instance.cfg" 
 
 You should see: a line `JvmArgs=` that ends with `-Dgregtec.autoexport=true`, and a line `OverrideJavaArgs=true`.
 
-If not: it prints nothing, or the flag is missing: Prism may write that file only when it closes. Close Prism and run the check again. If it still differs, trust the Prism window: open the box again and look.
+If not: it prints nothing, or the flag is missing: Prism may write that file only when it closes. Close Prism and run the line again. If it still differs, trust the Prism window: open the box again and look.
+
+**Last, one look at Play.** The flag belongs in GTNH-Export only. This line reads Play's settings file and changes nothing:
+
+```powershell
+Select-String -Path "C:\Games\PrismLauncher\instances\GTNH-Play\instance.cfg" -Pattern 'gregtec'
+```
+
+It should print nothing. If it prints a line, do not start Play: copy the line, stop and ask. (One day a later sitting puts GOS's own start and stop scripts into this file. From then on this line prints them, and that is right.)
 
 ### Step 52. Run the export
 
-**First close Play and Lab, if either is open.** Prism will start a second game without asking, and nothing in GOS stops it yet. Two games at once is the one thing this project never does.
+**First close Play and Lab, if either is open.** Prism will start a second game without asking, and nothing in GOS stops it yet. Two games at once is the one thing this project never does. This line shows what is open:
+
+```powershell
+Get-Process prismlauncher, javaw, java -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle
+```
+
+It should print nothing, or one line for `prismlauncher` (Prism itself, if it is open already). A `javaw` or `java` line with a window title in the last column is a game that is still open: close it and run the line again.
 
 Then, in Prism: click **GTNH-Export**, click **Launch**, and touch nothing. Note the time.
 
@@ -1071,7 +1144,7 @@ If not:
 
 | You see | Cause | What to do |
 |---|---|---|
-| the `run:` line is old, or the function fails because there is no run | the export never started | run `Select-String -Path "$exp\logs\fml-client-latest.log" -Pattern 'autoexport: no run'`. It prints the reason. Then go back to step 51 |
+| the `run:` line is old, or the function fails because there is no run | the export never started | run `Select-String -Path "$exp\logs\fml-client-latest.log" -Pattern 'autoexport: no run'`. It prints nothing: the flag is missing or mistyped, because the mod writes that line only when the flag is on. Go back to step 51. It prints a line: the flag is on, and the line says why no run was made. Do step 52 once more. If it fails again, keep the file `$exp\logs\fml-client-latest.log`, stop and ask |
 | `nei : absent` | NEI was not swapped | go back to step 48, then step 52 |
 | `nei : failed`, with a line under `part_errors:` | NEI's part failed or was not ready in time | do step 52 once more with nothing else heavy running. If it fails again, keep the file `$exp\logs\fml-client-latest.log`, stop and ask |
 | `complete : False`, or `autoexport : failed` | the run hit its time limit | the same |
@@ -1199,7 +1272,7 @@ If not:
 
 | It prints | What it means | What to do |
 |---|---|---|
-| `...\data\gos.sqlite doesn't exist` and a hint to run the database build first | no database yet | go back to step 55 |
+| many lines of error text, the last one `sqlite3.OperationalError: no such table: name_fts` | the database holds no recipes yet: the build of step 55 was missed or did not finish | go back to step 55 |
 | a question and a numbered list of items, each with its key in square brackets | the words fit more than one item | run it again with the key of the item you mean in place of `"steel ingot"`. Copy what stands between the square brackets and put it in single quotes. A key always names one item |
 | a line that starts with `refused:` | the planner cannot make that item at that tier | read the sentence. Try another item or tier |
 | `no such function: octet_length` | the SQLite inside the release is too old | go back to step 23 |
@@ -1220,37 +1293,37 @@ $plan = (Get-ChildItem "$gh\data\plans\pl-*.json" | Sort-Object LastWriteTime | 
 $plan
 ```
 
-It should print the `pl-` id that the table shows for your plan. In a new window, set `$plan` again with the same two lines after you paste the block. The later parts have them at their top.
+It should print the id that the table shows for your plan, without the `plan:` in front: it starts with `pl-`. In a new window, set `$plan` again with the same two lines after you paste the start block. The later parts have them at their top.
 
-If not: the table is empty, or `$plan` prints nothing: the plan was not saved. Go back to step 57 and look for the word `--save`. It prints the id of another plan, because you saved more than one: type the first line yourself as `$plan = ` followed by the id you want in double quotes.
+If not: the table is empty, or `$plan` prints nothing: the plan was not saved. Go back to step 57 and look for the word `--save`. It prints the id of another plan, because you saved more than one: type the first line yourself as `$plan = ` followed by the id you want in double quotes. Leave off the `plan:` that the table shows in front. The id is only the part that starts with `pl-`.
 
 ### Step 59. See whether every machine of the plan can be placed
 
-The building tool first lays the plan's machines out on the ground. A machine made of many blocks (a multiblock) can only be placed when GOS knows its shape. Those shapes come from a separate, long step (Part 7b). This command tells you whether you need it.
+The building tool first lays the plan's machines out on the ground. A machine made of many blocks (a multiblock) can only be placed when GOS knows its shape. The program's own messages have two more words for a shape: **structure** (in the command `gos structures`) and **footprint** (in the warning below). The shapes come from a separate, long step (Part 7b). This command tells you whether you need it.
 
 ```powershell
 & $gos layout $plan
 ```
 
-You should see: a first line like `Layout lo-... of plan:pl-...: <X> x <Z> blocks, <Y> high; <N> machines, ...`, then one line per placed machine, then perhaps lines that start with `warning:`. Warnings are normal here. Some only say that a step is done by hand (`... carry it yourself`) or that an item is `not routed`. The warnings that matter end in `not placed: no footprint`. Decide by those:
+You should see: a first line like `Layout lo-... of plan:pl-...: <X> x <Z> blocks, <Y> high; <N> machines, ...`. Then one line per placed machine. Then perhaps lines that start with `warning:`. Warnings are normal here. Some only say that a step is done by hand (`... carry it yourself`) or that an item is `not routed`. The warnings that matter end in `not placed: no footprint`. Decide by those:
 
 - **No line says `not placed: no footprint`.** Every machine has a place. Skip Part 7b and go to Part 8.
-- **Some lines say `not placed: no footprint`, and the first line counts 1 machine or more.** The tour and the bake-off will run, but the building will have no room for the machines those lines name. For a first look that is enough: go to Part 8. For a real building, do Part 7b first.
+- **Some lines say `not placed: no footprint`, and the first line counts 1 machine or more.** The tour and the bake-off will run. But the building will have no room for the machines those lines name. For a first look that is enough: go to Part 8. For a real building, and before you spend money in Part 10, do Part 7b first.
 - **The first line counts 0 machines.** The building tool will refuse this plan ("the layout places no machine: nothing to house"). Do Part 7b, or go back to step 57 with another item.
 
 Which case your plan is in depends on your pack's recipes. I do not guess it.
 
-If not: `plan ... isn't saved`: the id in `$plan` is not right. Go back to step 58.
+If not: `plan ... isn't saved`: the id in `$plan` is not right. Go back to step 58. `error: the following arguments are required: PLAN_ID`: `$plan` is empty in this window. Set it with the two lines in step 58.
 
 More detail: [designer.md](runbooks/designer.md) (the dashboard's Designer makes plans too).
 
 ---
 
-## Part 7b. Structure data (only if step 59 sent you here)
+## Part 7b. Multiblock shapes (only if step 59 sent you here)
 
 Skip this whole part if step 59 printed no `not placed: no footprint` line.
 
-This part runs as the `gos-dev` account. It fetches a small helper project, builds it for your pack's version, starts a game server without a window, and writes down the shape of every multiblock of the base pack. It reads and writes no Prism instance. It downloads several GB the first time and can take long: it stops itself after 4 hours at the latest. Start it only when the Export run of step 52 has finished. Do not sign out of Windows while it runs: that would end it.
+This part runs as the `gos-dev` account. It fetches a small helper project, builds it for your pack's version, starts a game server without a window, and writes down the shape of every multiblock of the base pack. It reads and writes no Prism instance. It downloads several GB the first time and can take long: it stops itself after 4 hours at the latest. Start it only when the Export run of step 52 has finished. Do not sign out of Windows while it runs: that would end it. While it runs you can use the PC for other things, and go on with Part 8 and Part 9 in your own window: they work with the plan as it is. Leave the games closed until it ends. Nothing in the program stops a game beside it, but the extract needs a lot of memory and nobody has tried the two together.
 
 Multiblocks from addon mods are not covered by it. They need the Lab, which is outside this guide.
 
@@ -1295,7 +1368,7 @@ You should see: `Already on 'main'` or `Switched to branch 'main'`, the pull's r
 
 If not: `git switch main` or `git pull` stops with `Your local changes to the following files would be overwritten`: that clone holds unfinished work. It is not to be thrown away from here. Close that window, stop and ask. `java -version` fails: run `$env:JAVA_HOME` in that window. If it prints a folder, you are fine. If it prints nothing, stop and ask: the extract needs Java in the gos-dev account. `git` or `uv` "is not recognized" in that window: stop and ask.
 
-### Step 61. Extract the structures (in the gos-dev window)
+### Step 61. Extract the shapes (in the gos-dev window)
 
 ```powershell
 uv run gos structures extract --out C:\GregtecOS-dev\structures\2.9.0-pc1
@@ -1315,7 +1388,7 @@ Next: gos structures load C:\GregtecOS-dev\structures\2.9.0-pc1
 
 If not: `Extract failed: ...`: copy the message, stop and ask. `... is not empty; name a new --out folder.`: a first try left files behind. Run the command again with `2.9.0-pc2` in place of `2.9.0-pc1`, and use that name in the next step too.
 
-### Step 62. Load the structures into your database (in your own window)
+### Step 62. Load the shapes into your database (in your own window)
 
 ```powershell
 & $gos structures load C:\GregtecOS-dev\structures\2.9.0-pc1
@@ -1344,7 +1417,7 @@ If not: `linked to machine rows: 0`: the database of Part 6 is missing or empty.
 
 You should see: the same first line as in step 59 with a higher machine count, and fewer or no `not placed: no footprint` lines.
 
-If not: lines still say `not placed: no footprint`: those machines come from an addon mod, or the extract could not write them down. The tour still runs if the first line counts 1 machine or more. Otherwise go back to step 57 with another item.
+If not: lines still say `not placed: no footprint`: those machines come from an addon mod, or the extract could not write them down. The tour still runs if the first line counts 1 machine or more. Otherwise go back to step 57 with another item. `error: the following arguments are required: PLAN_ID`: `$plan` is empty in this window. Set it with the two lines at the top of this part.
 
 To make the saved plan count the multiblocks' own blocks in its effort figures, save the plan once more (step 57) after this load. For the building tour that is not needed. If you do save it again, do step 58 again too. The id normally stays the same, but `$plan` must hold the id the table shows.
 
@@ -1383,7 +1456,7 @@ $plan
 & $gos status
 ```
 
-It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
+It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. Two other lines may read differently than in step 30: once step 44 is done, Game watchers and Voice say `stopped by gos stop`. That is fine. If the Core line says `warn` and `starting`, the core is still coming up: wait five seconds and run `& $gos status` again. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
 
 ```powershell
 & $gos serve --detach
@@ -1504,7 +1577,7 @@ $plan
 & $gos status
 ```
 
-It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
+It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. Two other lines may read differently than in step 30: once step 44 is done, Game watchers and Voice say `stopped by gos stop`. That is fine. If the Core line says `warn` and `starting`, the core is still coming up: wait five seconds and run `& $gos status` again. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
 
 ```powershell
 & $gos serve --detach
@@ -1530,7 +1603,7 @@ fake-sloppy	fake	fake-sloppy	default	free	none needed
 # run cap: $10.00, and 1,000,000 tokens for models without a price ([bakeoff] cap_usd, cap_tokens)
 ```
 
-If not: `Can't read gos.toml: Invalid statement (at line 1, column 1)`: the settings file was saved in a form GOS cannot read. Open it in Notepad, choose "Save as", set the encoding to "UTF-8" (not "UTF-8 with BOM"), and save over it.
+If not: `Can't read gos.toml: Invalid statement (at line 1, column 1)`: the settings file was saved in a form GOS cannot read. Open it in Notepad, choose "Save as", set the encoding to "UTF-8" (not "UTF-8 with BOM"), and save over it. UTF-8 is the usual way to store text in a file. "With BOM" puts three hidden marker bytes at the very start of the file, and GOS cannot read past them.
 
 ### Step 71. Run the free bake-off
 
@@ -1546,7 +1619,7 @@ You should see: a few lines about what it will do, among them exactly this one:
 Contacts: nothing. Fake models only: free.
 ```
 
-Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`, then one line per building (36 of them), each naming a request and a letter A, B or C, never a model. Then:
+Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`. Then one line per building, 36 of them. Each names a request and a letter A, B or C, never a model. Then:
 
 ```text
 Run bo-...: done. 48 calls, $0.00.
@@ -1560,7 +1633,7 @@ $run = (Get-ChildItem "$gh\data\bakeoff" -Directory -Filter 'bo-*' | Sort-Object
 $run
 ```
 
-It should print the `bo-...` name from the `Run bo-...` lines above. In a new window, set `$run` again with the same two lines after you paste the block.
+It should print the `bo-...` name from the `Run bo-...` lines above. In a new window, set `$run` again with the same two lines after you paste the start block.
 
 If not:
 
@@ -1570,6 +1643,7 @@ If not:
 | `case foundry-small can't be set up: no block catalog in the DB: ...` | go back to step 56 |
 | `case foundry-small can't be set up:` and a reason about the layout (`the layout places no machine: nothing to house`) | go back to step 59 |
 | `no bake-off model '...'` | a typing mistake in the names after `--models` |
+| `error: the following arguments are required: PLAN_ID` | `$plan` is empty in this window. Set it with the two lines at the top of this part |
 | `$run` prints nothing | no run was made. Look in this table for the line the run command printed |
 
 ### Step 72. Look at the buildings and rate them
@@ -1583,7 +1657,7 @@ In the dashboard's **Build** view, scroll down to the panel **Shell bake-off**. 
 
 You should see: the top right of the panel says "blind: the models are A, B, C until you have rated". A tick appears on each request you have rated. After the sixth, the text beside the button at the bottom says "every case is rated".
 
-If not: the panel is not there, or the window shows a Chrome error page: do the check at the top of this part (GOS must be running), wait five seconds, then press F5. If the panel still stays away, you can rate this practice run from PowerShell. There you see only block counts and never the buildings. That is good enough for this free practice run, and for nothing else. This shows the run, then asks for each pick in turn (type a letter, `tie` or `bad`, then Enter):
+If not: the panel is not there, or the window shows a Chrome error page: GOS must be running. Do the check at the top of this part, wait five seconds, then press F5. If the panel still stays away, you can rate this practice run from PowerShell. There you see only block counts and never the buildings. That is good enough for this free practice run, and for nothing else. This shows the run, then asks for each pick in turn (type a letter, `tie` or `bad`, then Enter):
 
 ```powershell
 & $gos shell bakeoff show $run
@@ -1598,7 +1672,7 @@ Click **Name the models and show the report**. Or, from PowerShell:
 & $gos shell bakeoff report $run
 ```
 
-You should see: a table with one line per model: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks, cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 12` in the column "first try" and `12 of 12` in the column "passed". The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
+You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 12` in the column "first try" and `12 of 12` in the column "passed". The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
 
 After this the picks for this run cannot be changed.
 
@@ -1651,7 +1725,7 @@ $plan
 & $gos status
 ```
 
-It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
+It should print the table from step 30, with the Supervisor line and the Core line both `ok` and `running`. Two other lines may read differently than in step 30: once step 44 is done, Game watchers and Voice say `stopped by gos stop`. That is fine. If the Core line says `warn` and `starting`, the core is still coming up: wait five seconds and run `& $gos status` again. If it says `GOS isn't running.` or `The core isn't answering`, start GOS, wait ten seconds and look again:
 
 ```powershell
 & $gos serve --detach
@@ -1661,19 +1735,37 @@ Start-Sleep -Seconds 10
 
 When GOS starts fresh, the Chrome window opens on monitor 2 again by itself. If no window is there after that (you closed it, or GOS was only stopped and not off), open it with `& $gos dashboard`.
 
+**Then look once more whether every machine of the plan has a place.** This is the command of step 59. It is free.
+
+```powershell
+& $gos layout $plan
+```
+
+If a line ends in `not placed: no footprint`, the paid run compares the two models on a building with no room for the machines those lines name. The money is spent all the same. Do Part 7b first, then come back here. If you have done Part 7b and the lines are still there, Part 7b cannot fill them in: go on, and keep in mind what the buildings lack. If no line says that, go on.
+
 ### Step 75. Check which keys are stored
 
 ```powershell
 & $gos key status
 ```
 
-You should see: a first line that names Windows' key store, then four lines. `anthropic: stored` (from the wizard) and `openai: not stored` are the two that matter.
+You should see: a first line `keyring backend:` with the program's name for Windows Credential Manager, then four lines. `anthropic: stored` (from the wizard) and `openai: not stored` are the two that matter.
 
 If not: `anthropic: not stored`: store it now with `& $gos key set anthropic`. It asks `anthropic key (input hidden): `. Paste the key and press Enter.
 
 ### Step 76. $ Buy OpenAI credit and store an OpenAI key
 
-In your browser, at `https://platform.openai.com/`, make an API key and buy credit: OpenAI's API is paid in advance. This is the one place in the guide where you pay before a command has shown you an estimate. How much to buy: the project's estimate for the full run was about \$2.50 to \$3 for the OpenAI model, at the prices of 2026-11-20. One run can never use more than its cap of \$10, both vendors together. So a small amount is enough. The smallest amount their site sells is not known here. Then:
+This step has three parts. The first two are in your browser, at `https://platform.openai.com/`. This is the one place in the guide where you pay before a command has shown you an estimate.
+
+**1. Buy credit.** OpenAI's API is paid in advance. How much to buy: the project's estimate for the full run was about \$2.50 to \$3 for the OpenAI model, at the prices of 2026-11-20. One run can never use more than its cap of \$10, both vendors together. So a small amount is enough. The smallest amount their site sells is not known here.
+
+You should see: the site shows a credit balance above \$0.
+
+**2. Make an API key.** On the same site, open the page for API keys and make a new key. Copy it at once, and keep the page open until part 3 is done: the site may show a key only once.
+
+You should see: a long key on the page, ready to copy.
+
+**3. Store the key.** In PowerShell:
 
 ```powershell
 & $gos key set openai
@@ -1683,7 +1775,11 @@ It prints `openai key (input hidden): `. Paste the key (nothing shows) and press
 
 You should see: `openai: stored in the OS keyring`
 
-If not: `Not stored: that is an Anthropic key; paste the OpenAI one (platform.openai.com, API keys).`, or `Not stored: the key looks cut off or has spaces in it; copy it again.`, or `Nothing entered; nothing stored.`: run the step again with the right key.
+If not: it prints one of these three lines. Run part 3 again with the right key.
+
+- `Not stored: that is an Anthropic key; paste the OpenAI one (platform.openai.com, API keys).`
+- `Not stored: the key looks cut off or has spaces in it; copy it again.`
+- `Nothing entered; nothing stored.`
 
 ### Step 77. Name the two models in gos.toml
 
@@ -1715,13 +1811,13 @@ output_usd = 50.00
 cached_input_usd = 1.00
 ```
 
-**The OpenAI model id and its three prices are yours to check on the day.** The values above are what OpenAI's pages listed on 2026-11-20 and 2026-11-21. The id is on `https://developers.openai.com/api/docs/models` ("Model ID"). The prices are on `https://developers.openai.com/api/docs/pricing` (Standard: "Input", "Output", "Cached input", per 1M tokens). Type what you read there. Never put a key into this file: GOS refuses a model block that holds one.
+**The OpenAI model id and its three prices are yours to check on the day.** The values above are what OpenAI's pages listed on 2026-11-20 and 2026-11-21. The id is on `https://developers.openai.com/api/docs/models` ("Model ID"). The prices are on `https://developers.openai.com/api/docs/pricing` (Standard: "Input", "Output", "Cached input", per 1M tokens). Type what you read there. Never put a key into this file: GOS refuses a model entry that holds one.
 
 You should see: Notepad saves without a question.
 
-If not: nothing to see yet. The next step tells you whether GOS can read the file. A mistake in this block never stops the core. It only stops the bake-off commands.
+If not: nothing to see yet. The next step tells you whether GOS can read the file. Do it right away. A wrong value in the new lines (a misspelt `effort` word, say) only stops the bake-off commands. A typing mistake that makes the whole file unreadable is worse: a missing quote, or the lines pasted in twice. Then every `gos` command stops with `Can't read gos.toml`, and GOS would not start after the next restart of the PC. Step 78 shows that at once and says how to get out of it.
 
-### Step 78. Check that GOS reads the block and sees both keys
+### Step 78. Check that GOS reads the new lines and sees both keys
 
 ```powershell
 & $gos shell bakeoff models
@@ -1738,10 +1834,19 @@ If not:
 
 | It says | What to do |
 |---|---|
-| a line ends `not stored (uv run gos key set openai)` | go back to step 76 |
+| a line ends `not stored (uv run gos key set openai)` | go back to step 76, part 3 |
 | `Can't read gos.toml: Invalid statement (at line 1, column 1)` | Notepad saved the file as "UTF-8 with BOM". Choose "Save as", set the encoding to "UTF-8", save over it |
-| `Can't read gos.toml: ...` with another reason | the reason names the line or the key that is wrong. Compare with the block in step 77 |
-| `effort must be one of ...` or `has no key ...` | a typing mistake in the block. The message lists what is allowed |
+| `Can't read gos.toml: Cannot declare ('bakeoff',) twice (at line ...)` | the lines of step 77 are in the file twice. Delete the second copy and save |
+| `Can't read gos.toml: ...` with another reason | the reason names the line or the key that is wrong. Compare with the lines in step 77 |
+| `effort must be one of ...` or `has no key ...` | a typing mistake in the new lines. The message lists what is allowed |
+
+**Do not leave this step failing.** A message that ends in `(at line <n>, column <m>)` means the whole file is unreadable. Until that is fixed, every `gos` command says the same, and GOS would not start after the next restart of the PC. If you cannot find the mistake, open the file again:
+
+```powershell
+notepad "$gh\config\gos.toml"
+```
+
+Delete everything from the line `[bakeoff]` down to the end of the file, and save. Run this step again: it then prints the three fake lines, as in step 70. After that you can do step 77 once more.
 
 ### Step 79. $ Run one request first
 
@@ -1763,9 +1868,14 @@ Hard cap for this run: $<X>. It stops before a call that could pass it, with wha
 Type yes to spend up to $<X>:
 ```
 
+Two things about these lines, so that the question does not stop you.
+
+- **The amount after "up to" is the worst case, not the likely cost.** It assumes that every answer is as long as it may be, and that every repair round is used. It is far above the two "likely about" figures on the model lines. With the prices of step 77 it is about \$7 or more for this one request. On a test database it was about \$8, and the two "likely about" figures together stayed under \$1. Your figures will differ. The run can never pass the "Hard cap" figure.
+- **One more line can stand just above the "Hard cap" line.** It reads `Today's limit ([budget] day_max_usd) leaves $<X>: this run's cap is lowered from $10.00 to that, so the day's limit holds too.` It shows when anything was spent today already, and the **Test** click of step 37 counts. The "Hard cap" figure is then that lower amount, for example `$9.99`. That is normal.
+
 Type `yes` and press Enter to spend it. Then a line `Run bo-... (Ctrl+C stops it cleanly):`, one line per building, and `Run bo-...: done. <N> calls, $<X>.`
 
-You do not rate this trial run. Look at it in the **Shell bake-off** panel if you like. It stays in the panel's list of runs until you remove it. If it ended with `done`, you can remove it with the block below, now or later. The first line finds the newest run, the second shows its name, and the third lists what it will remove and waits for `yes`. Check that the name is the trial run's before you type `yes`. The money is spent either way.
+You do not rate this trial run. Look at it in the **Shell bake-off** panel if you like. It stays in the panel's list of runs until you remove it. If it ended with `done`, you can remove it with the three lines below, now or later. The first line finds the newest run, the second shows its name, and the third lists what it will remove and waits for `yes`. Check that the name is the trial run's before you type `yes`. The money is spent either way.
 
 ```powershell
 $run = (Get-ChildItem "$gh\data\bakeoff" -Directory -Filter 'bo-*' | Sort-Object Name | Select-Object -Last 1).Name
@@ -1780,9 +1890,11 @@ If not: you typed anything but `yes`: it says `Not run.` and nothing was sent or
 | `no anthropic key is stored ...` or `no openai key is stored ...` | go back to step 75 or step 76 |
 | `the AI is off (...)` | the AI is switched off, or paused because the month's credits are used up. The words in the brackets say which. For the pause: click **Resume AI** on the dashboard's banner. Then run the step again |
 | `today's spend ... has reached the day cap ...` | run it another day, or raise `day_max_usd` under `[budget]` in `gos.toml` |
-| `this run's cap ... is less than one answer can cost ...` | the cap is too low. Raise `cap_usd` in the block of step 77 |
+| `this run's cap ... is less than one answer can cost ...` | the cap is too low. Raise `cap_usd` in the lines of step 77 |
 
-The run ends with `stopped (a model could not be asked at all (a refused key, a wrong model id or no credit), so nothing more was spent on the others)`: one model refused its very first request. Do step 83 now.
+It stops before the estimate with `error: the following arguments are required: PLAN_ID`: `$plan` is empty in this window. Nothing was sent or spent. Set `$plan` with the two lines at the top of this part and run the step again.
+
+The run ends with a line that starts `stopped (a model could not be asked at all`: one model refused its very first request. Nothing more was spent on the other model. Do step 83 now.
 
 ### Step 80. $ Run all six requests
 
@@ -1792,7 +1904,7 @@ The same day or later. Ctrl+C stops it cleanly: what is finished stays.
 & $gos shell bakeoff run $plan --models "opus,astra"
 ```
 
-You should see: the same kind of estimate, now for 6 cases. If you already spent something today (step 79 did), a line `Today's limit ([budget] day_max_usd) leaves $<X>: this run's cap is lowered from $10.00 to that, so the day's limit holds too.` stands just above the "Hard cap" line. That is normal. Type `yes`. It then takes a few minutes per model and ends with `Run bo-...: done. <N> calls, $<X>.` If it reaches the cap first, it stops cleanly and says so.
+You should see: the same kind of estimate, now for 6 cases. The worst case of six requests is above the cap, so the question now says "up to" the "Hard cap" figure itself. If you already spent something today, the line that starts `Today's limit ([budget] day_max_usd) leaves $<X>:` stands just above the "Hard cap" line again, as in step 79. Step 79 itself counts as such a spend. That is normal. Type `yes`. It then takes a few minutes per model and ends with `Run bo-...: done. <N> calls, $<X>.` If it reaches the cap first, it stops cleanly and says so.
 
 Put this run's name into a name for the next steps. You type nothing: the first line finds the newest run, and the second shows its name.
 
@@ -1803,7 +1915,7 @@ $run2
 
 It should print the `bo-...` name from the lines of the full run. In a new window, set `$run2` again with the same two lines. That works as long as the full run is still the newest one.
 
-If not: the same `Not run:` reasons as in step 79. To give this one run a lower limit, add `--cap-usd 6` (or another number) to the end of the command.
+If not: the same `Not run:` reasons as in step 79, and the same `PLAN_ID` line when `$plan` is empty. To give this one run a lower limit, add `--cap-usd 6` (or another number) to the end of the command.
 
 ### Step 81. Rate it blind
 
@@ -1811,7 +1923,7 @@ Rate exactly as in step 72. With more than one run, the **Shell bake-off** panel
 
 You should see: "every case is rated" beside the button at the bottom of the panel.
 
-If not: the panel does not show the run, or the window shows a Chrome error page: do the check at the top of this part (GOS must be running), then press F5. Do not rate this run from PowerShell. There you see only block counts and never the buildings, and after the report the picks cannot be changed. If the panel still does not show the run, stop and ask.
+If not: the panel does not show the run, or the window shows a Chrome error page: GOS must be running. Do the check at the top of this part, then press F5. Do not rate this run from PowerShell. There you see only block counts and never the buildings, and after the report the picks cannot be changed. If the panel still does not show the run, stop and ask.
 
 ### Step 82. Read the report
 
@@ -1821,7 +1933,7 @@ Click **Name the models and show the report**, or:
 & $gos shell bakeoff report $run2
 ```
 
-You should see: one line per model, now with its real name, your picks, how many answers passed at the first try and in the end, the repair rounds, tokens, cost and seconds. Your usual **Costs** view in the dashboard (key `8`) counts these runs too, under the name `bakeoff`. (GOS calls each kind of AI work a lane. The bake-off is one of them.)
+You should see: one line per model, now with its real name. Its columns: your picks, how many answers passed at the first try and in the end, the repair rounds, tokens, cost and seconds. Your usual **Costs** view in the dashboard (key `8`) counts these runs too, under the name `bakeoff`. (GOS calls each kind of AI work a lane. The bake-off is one of them.)
 
 How to read it: **picked** is the only number about looks. **first try**, **passed** and **repair rounds** say how well a model followed the rules. Six requests are a first look, not proof: 4 to 2 can be chance.
 
@@ -1878,10 +1990,10 @@ More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (Part 2 and "If somet
 
 **Four things to know until the later sittings are done.**
 
-- **GOS does not start by itself yet.** After a restart of the PC, open PowerShell, paste the block and run `& $gos serve --detach`. Starting at login is set up in a later sitting.
+- **GOS does not start by itself yet.** After a restart of the PC, open PowerShell, paste the start block and run `& $gos serve --detach`. Starting at login is set up in a later sitting.
 - **Keep closing Play and Lab by hand before every Export start.** The parts that would stop a second game for you are not installed yet.
 - **Do not start your survival world on the strength of this guide.** The world-backup test (Session 2 of the quick start) must pass first.
-- **Playing in Play while GOS runs starts nothing in GOS.** The two lines `starts when Play launches` in the status table stay as they are. GOS's game watchers and its voice part start only when Prism tells GOS that a game is launching. The small scripts that do that (the hooks) are not put into Play by this guide. This was read in the code, not tried on your PC.
+- **Playing in Play while GOS runs starts nothing in GOS.** The Game watchers and Voice lines in the status table stay `off`, whether they read `starts when Play launches` or `stopped by gos stop`. GOS's game watchers and its voice part start only when Prism tells GOS that a game is launching. The small scripts that do that (the hooks) are not put into Play by this guide. This was read in the code, not tried on your PC.
 
 **What this guide skipped, and why that was safe.** The whole road to day one is in [quick_start.md](quick_start.md), one line per step, with the long form in [deployment_checklist.md](deployment_checklist.md). This guide did the deploy and setup steps of its Session 1, the first Export run and your own database from Session 2, and Session 13b. It left out:
 
@@ -1890,19 +2002,19 @@ More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (Part 2 and "If somet
 | Updating the gos-dev clone | Session 1 | Nothing in this guide runs as gos-dev, except Part 7b, which updates that clone itself |
 | gos-dev's own database, its power commands and palette checks | Session 2 | Each account builds its own database straight from Export. Yours does not use gos-dev's. Those steps feed gos-dev's later tests |
 | The core-service acceptance checks with Play at its main menu (a PLAY step), and `gos launch` | Session 2 | They test that the supervisor sees a running game and refuses a second one. No data step needs that. Skipping it is safe only with the rule above: one game at a time, closed by hand |
-| The second Export run from the command line, the "Play untouched" compare after the Export run, and the check that four helper scripts are in `C:\GregtecOS-app\scripts` | Session 2 | They test the tooling, not the data. The compare needs a snapshot taken before the sync, which this guide does not take. Nothing in this guide writes to Play |
+| The second Export run from the command line, the compare of Play's mod list before and after (the long half of the "Play untouched" check), and the check that four helper scripts are in `C:\GregtecOS-app\scripts` | Session 2 | They test the tooling, not the data. The compare was left out to keep this guide short: it needs a second `gos doctor` snapshot and a few more lines. The two short lines of that check are in steps 47 and 51. Nothing in this guide writes to Play |
 | The Lab tweaks and the Lab's Prism hooks (small scripts that Prism runs when a game starts and stops) | Session 2 | They matter when you play in the Lab. This guide never opens it |
 | Vault deploy, maintenance and measuring | Session 2 | A plan saves without them, the two starter themes are built in, and the database can always be rebuilt with `& $gos db build` |
 | The world-backup test | Session 2 | Not needed for recipe data or buildings. **It must pass before the survival world starts** |
-| Structure data, if you did not need Part 7b | Session 3 | Only plans with multiblocks need it. Step 59 told you |
+| Multiblock shapes, if you did not need Part 7b | Session 3 | Only plans with multiblocks need it. Step 59 told you |
 | The Lab checks of recipes, quests, ores and crops, and the pack-update rehearsal | Session 3 | They prove the data against the game. The building tool does not depend on them |
 | The dashboard checks and the paid evals (test runs that score the AI's answers) | Session 4 | They test the question-answering lanes, which this guide does not use |
-| The planner and power checks | Sessions 5 and 6 | A saved plan was enough for a building. Those sessions prove the planner's numbers in the Lab |
+| The planner and power checks, the dashboard's Designer, the paid design-cost eval and the licence compare for `NOTICE.txt` | Sessions 5 and 6 | A saved plan was enough for a building, and step 57 made one without the Designer. Those sessions prove the planner's numbers in the Lab and measure what the Designer's AI costs. The licence compare is paperwork, not setup |
 | Voice | Sessions 7 and 8 | Not used here. The wizard's voice screens were saved as they were |
 | GregtecLink in the game, screen reading, the wiki | Session 9 | Not used here |
 | Watchers, events, quests, OpenComputers | Sessions 10 and 11 | Not used here |
 | Discord and the phone | Session 12 | Not used here. The Discord rows in the wizard and in `gos status` stay yellow or off until then |
-| The schematic round-trip test, footprints, gos-dev's layout test, themes by voice, pasting a shell into the Lab, and the in-game guide's site export | Session 13 | The bake-off touches no world and needs no vault, so it can come first. The rest is Lab work, gos-dev's tests or voice |
+| The schematic round-trip test, the Lab captures of machine shapes (`gos footprints`), gos-dev's layout test, themes by voice, pasting a shell into the Lab, the build guide in the Lab, and the in-game guide's site export | Session 13 | The bake-off touches no world and needs no vault, so it can come first. The rest is Lab work, gos-dev's tests or voice |
 | Backups, safety and the start at login | Session 14 | See the four things above |
 | The fake day one, the Play steps and the addon jars | Sessions 15 to 17 | They come last. Most of the PLAY steps are there |
 
@@ -1910,12 +2022,15 @@ More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (Part 2 and "If somet
 
 ## Not checked on a real PC
 
-This guide was put together from the code at commit `3367d4f` and from test runs on a Linux machine. Nothing in it was run on Windows or on your PC. Where it mattered, the steps above are worded so that they do not lean on an unchecked detail. This is the list of what nobody could check:
+This guide was put together from the code at commit `3367d4f` and from test runs on a Linux machine. Nothing in it was run on Windows or on your PC. Where it mattered, the steps above are worded so that they do not lean on an unchecked detail. A follow-up went through 26 small findings against the code at commit `cf78e58`, again on Linux only. This is the list of what nobody could check:
 
 - **Every PowerShell line.** No PowerShell was available. Lines taken from the project's runbooks and scripts were read against the code. Lines written for this guide were never run:
   - the checks in Part 0 and the `$clone` line;
   - the SQLite line in step 23 (its Python part was run on Linux);
   - the hash check and the `Remove-Item` line in step 48;
+  - the `Get-Process prismlauncher, javaw, java` line in steps 19, 26, 27, 50 and 52. The three program names are the ones GOS itself looks for. That an open game always shows a window title in the last column, and a Java program without a window never does, is how Windows is known to behave, not something seen here;
+  - the swap in step 50: `Copy-Item`, then `if (Test-Path ...) { Remove-Item ... }`;
+  - the two looks at Play in steps 47 and 51 (`Get-ChildItem` and `Select-String`). They are the two last lines of the project's own "Play untouched" check, with the full path written out;
   - the `Select-String` on the saved report in step 56;
   - the quoting of comma lists such as `--models "opus,astra"`;
   - the `Start-Sleep` waits;
@@ -1925,7 +2040,7 @@ This guide was put together from the code at commit `3367d4f` and from test runs
 - **Your PC's real state:** the tool versions, whether Node and pnpm are still installed, whether a winget pnpm 12 switches itself to 10.28.0 on Windows, whether the dashboard builds with Node 26 (the project's checks use Node 22), whether Chrome is installed, the old release's commit, and whether an old `gos.toml` exists and holds the placeholder host.
 - **What holds `C:\GregtecOS-app\current`** when the swap fails with WinError 5.
 - **The Chrome window:** that it opens on monitor 2, its place and size, and whether another browser can be paired in its place.
-- **Some exact words on Windows:** the Maintenance, Deep lane and Presence lines of `gos status`, the name of the key store in the wizard's Keyring row and in `gos key status`, and whether the wizard's Paths boxes show backslashes or forward slashes.
+- **Some exact words on Windows:** the Maintenance, Deep lane and Presence lines of `gos status`, the program's name for Windows Credential Manager in the wizard's Keyring row and in `gos key status`, the words of `Copy-Item` and `Remove-Item` when step 50 fails, and whether the wizard's Paths boxes show backslashes or forward slashes.
 - **The wizard on real hardware:** the real list of audio devices, storing a key in Windows Credential Manager, and the **Test** call against the real service.
 - **The names of Prism's buttons and tabs** for the Java arguments in your Prism version, and the two names `JvmArgs` and `OverrideJavaArgs` in `instance.cfg`.
 - **The Export run on the full pack:** how long it takes and how big a run is. Nobody has measured it. The same goes for the time of `gos export collect` and `gos db build`, and for whether the full pack's build passes the collision test. It has never been tried with the pack's addon mods.
@@ -1933,8 +2048,9 @@ This guide was put together from the code at commit `3367d4f` and from test runs
 - **Your plan on the real pack:** whether "steel ingot" at MV resolves without a question, how long the first plan takes, and whether its machines include a multiblock. That last one is game data and is not guessed here: step 59 answers it.
 - **Part 7b on your PC:** how long the extract takes, and that the gos-dev account has git and a Java of 17 or newer.
 - **The dashboard in a real browser:** how the Build view and the bake-off panel look, the panel appearing by itself, drag, zoom and the layer slider, and the Costs view showing the lane `bakeoff`. The buttons' names were read in the source, and what they do was driven through the program's own interface.
-- **The vendors' sites:** that the Anthropic Console still shows a key only once, and the smallest amount of credit OpenAI sells.
+- **The vendors' sites:** that the Anthropic Console still shows a key only once, where OpenAI's site has its pages for credit and API keys, whether it shows a key only once, and the smallest amount of credit OpenAI sells. GitHub's marks beside a commit in step 20 (green tick, red cross, yellow dot) are how GitHub is known to show them.
 - **GOS's idle upkeep with a stored key.** The code makes one call to the cheapest model for each old week of session logs in the vault, and none without such logs. It was not run here.
+- **The paid run's estimate on your pack.** That the "up to" figure of step 79 is about \$7 or more follows from the prices in step 77 and the program's own formula. The \$8, the "likely about" figures and the `Today's limit` line were seen on a small test database with the project's fake vendors.
 - **Any real vendor call:** that the ids `claude-opus-5-5` and `gpt-6-astra` are accepted today, OpenAI's prices, real answers, real run time and real cost. The paid steps were run only against the project's fake vendors. The words a real vendor sends when it refuses a key may differ from the ones shown here.
 - **Notepad's way of saving** `gos.toml`, and the "UTF-8 with BOM" fix for it.
 - **That the supervisor notices a running Play on your PC.** The test for that is one of the skipped steps, which is why this guide says: close Play and Lab by hand.

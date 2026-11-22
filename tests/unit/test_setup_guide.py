@@ -4,6 +4,9 @@ Every ``gos`` command it writes exists in the CLI with the subcommands and flags
 ``scripts/`` file it names is in the repo, its links resolve, its steps are numbered 1..N once,
 and no step is finished by opening another document. The parts that need GOS running check that
 it runs, the gos.toml block is one the bake-off reads, and no block holds a made-up id.
+A value the CLI limits to a fixed set (a key's vendor, a line type, a sync target) is one of
+the set, a tool named after ``gos tool`` is one the agents have, and ``--yes``, which would
+answer a paid run's question for him, is nowhere.
 :func:`problems` lists what is wrong with a guide text; the mutation test proves it does, on
 broken copies of the real guide.
 """
@@ -20,6 +23,7 @@ from typing import NoReturn
 import pytest
 
 from gregtec import cli, sync
+from gregtec.agents.tools.catalog import default_registry
 from gregtec.build import shell_bakeoff
 from gregtec.config import Config
 
@@ -64,6 +68,9 @@ SEE_STEP = re.compile(r"(?<!should )\bsee\b(?:(?!\. )[^\n])*\bsteps?\b", re.IGNO
 # The guide's own steps are whole numbers: "step 8b" is a step of some other document.
 FOREIGN_STEP = re.compile(r"\bsteps? \d+[a-z]\b", re.IGNORECASE)
 RUNBOOK = re.compile(r"\brunbooks?\b", re.IGNORECASE)
+# The flag that answers a paid run's question for him. The guide never writes it: he reads the
+# estimate and types yes himself.
+YES = re.compile(r"(?<![\w-])--yes\b")
 
 
 class _Parsed(Exception):
@@ -167,6 +174,100 @@ def _reached(
             return None
         parser = subs[word]
     return parser
+
+
+def _taken(
+    parser: argparse.ArgumentParser, command: str
+) -> tuple[str, list[tuple[argparse.Action, str]]]:
+    """The command ``command``'s subcommands lead to, and each value in it with the option or
+    the positional argument that takes it. It stops where :func:`_command_problem` complains."""
+    try:
+        words = _words(command)
+    except ValueError:
+        return "gos", []
+    said = "gos"
+    out: list[tuple[argparse.Action, str]] = []
+    free: list[str] = []
+    waiting: argparse.Action | None = None
+    for word in words:
+        if waiting is not None:
+            out.append((waiting, word))
+            waiting = None
+            continue
+        if word.startswith("-") and not re.fullmatch(r"-?[\d.]+", word):
+            flag, eq, value = word.partition("=")
+            action = parser._option_string_actions.get(flag)
+            if action is None:
+                return said, out
+            if eq:
+                out.append((action, value))
+            elif action.nargs != 0:
+                waiting = action
+            continue
+        subs = _subparsers(parser)
+        if not subs:
+            free.append(word)
+        elif word in subs:
+            parser, said, free = subs[word], f"{said} {word}", []
+        else:
+            return said, out
+    for action in parser._actions:
+        if action.option_strings or isinstance(action, argparse._SubParsersAction):
+            continue
+        many = action.nargs in ("*", "+", argparse.REMAINDER)
+        n = len(free) if many else action.nargs if isinstance(action.nargs, int) else 1
+        out += [(action, word) for word in free[:n]]
+        free = free[n:]
+    return said, out
+
+
+def _values(text: str) -> list[tuple[str, argparse.Action, str]]:
+    """Every value the guide's ``gos`` and sync commands give, with the command and the
+    argument that takes it. A ``$name`` is skipped: PowerShell fills it in."""
+    gos, syncer = _gos_parser(), _sync_parser()
+    out = []
+    for line in _code(text):
+        found = [(gos, c, None) for c in FULL.findall(line)]
+        found += [(syncer, c, "sync_instances.py") for c in SYNC.findall(line)]
+        for parser, command, name in found:
+            said, taken = _taken(parser, command)
+            for action, word in taken:
+                # quoted program output can end the command with its own punctuation
+                word = word.rstrip(").,:;")
+                if word and not word.startswith("$"):
+                    out.append((name or said, action, word))
+    return out
+
+
+def _is_tool(said: str, action: argparse.Action) -> bool:
+    return said == "gos tool" and action.dest == "name"
+
+
+def value_problems(text: str) -> list[str]:
+    """A value argparse limits to choices is one of them (``gos key set openia`` isn't), and
+    the tool after ``gos tool`` is a read-only tool of the agents' registry: ``gos tool`` runs
+    no other."""
+    tools = default_registry(REPO / "no-such-gos-home")
+    out = []
+    for said, action, word in _values(text):
+        if action.choices is not None:
+            choices = sorted(str(c) for c in action.choices)
+            if word not in choices:
+                out.append(f"`{said}` takes no {word}: one of {', '.join(choices)}")
+        if _is_tool(said, action):
+            tool = tools.get(word)
+            if tool is None:
+                out.append(f"`gos tool` has no tool {word}")
+            elif not tool.read_only:
+                out.append(f"`gos tool` doesn't run {word}: it changes things")
+    return out
+
+
+def yes_problems(text: str) -> list[str]:
+    return [
+        "`--yes` answers a paid run's question for him: the guide never writes it"
+        for _ in YES.finditer(text)
+    ]
 
 
 def _every_flag(parser: argparse.ArgumentParser) -> set[str]:
@@ -390,6 +491,8 @@ def problems(text: str) -> list[str]:
         *step_problems(text),
         *command_problems(text),
         *flag_problems(text),
+        *value_problems(text),
+        *yes_problems(text),
         *variable_problems(text),
         *running_problems(text),
         *toml_problems(text),
@@ -424,6 +527,15 @@ def test_the_guard_looked_at_enough() -> None:
     assert len(BARE.findall(text)) >= 20
     assert sum(1 for s in SPAN.findall(FENCE.sub("", text)) if FLAG.match(s)) >= 6
     assert set(PORT.findall(text)) == {"8765", "8766"}
+    values = _values(text)
+    limited = {(said, word) for said, a, word in values if a.choices is not None}
+    assert {
+        ("gos key set", "anthropic"),
+        ("gos key set", "openai"),
+        ("gos shell design", "smelting"),
+        ("sync_instances.py", "export"),
+    } <= limited
+    assert "plan_list" in {word for said, a, word in values if _is_tool(said, a)}
 
 
 # old text in the real guide -> its broken replacement, and a word of the problem it must raise
@@ -527,6 +639,48 @@ MUTATIONS = (
         'model = "gpt-6-astra"\neffort = "high"',
         'model = "gpt-6-astra"\neffort = "hihg"',
         "effort must be one of",
+    ),
+    (
+        "a key vendor GOS doesn't have",
+        "& $gos key set openai\n",
+        "& $gos key set openia\n",
+        "`gos key set` takes no openia",
+    ),
+    (
+        "a line type the builder doesn't have",
+        "--line-type smelting",
+        "--line-type smelt",
+        "`gos shell design` takes no smelt",
+    ),
+    (
+        "a sync target that isn't one",
+        "& $py $sync --only export\n",
+        "& $py $sync --only exprot\n",
+        "`sync_instances.py` takes no exprot",
+    ),
+    (
+        "a tool the agents don't have",
+        "& $gos tool plan_list\n",
+        "& $gos tool plan_lst\n",
+        "`gos tool` has no tool plan_lst",
+    ),
+    (
+        "a tool that changes things",
+        "& $gos tool plan_list\n",
+        "& $gos tool plan_rename\n",
+        "doesn't run plan_rename",
+    ),
+    (
+        "a paid run that skips its question",
+        '--models "opus,astra" --limit 1',
+        '--models "opus,astra" --limit 1 --yes',
+        "`--yes` answers a paid run's question",
+    ),
+    (
+        "the flag that skips the question, named in prose",
+        "`--cap-usd 6`",
+        "`--yes`",
+        "`--yes` answers a paid run's question",
     ),
     (
         "a wrong port",
