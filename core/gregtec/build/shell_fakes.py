@@ -122,7 +122,8 @@ def ornate(
     roof: dict[str, Any] = {"op": "roof", "role": "roof"}
     if short <= 33:
         roof["style"] = "gable"
-        if facts["headroom"] >= 4:  # a low gable in its own volume: the ornament stands above
+        # a low gable in its own volume, so the ornament stands above it
+        if facts["headroom"] >= 4:
             roof["lo"] = [lo[0], facts["roof_y"], lo[2]]
             roof["hi"] = [hi[0], hi[1] - 2, hi[2]]
     else:

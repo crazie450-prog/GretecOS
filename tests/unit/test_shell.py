@@ -383,7 +383,8 @@ def designs(draw: st.DrawFn, bounds: tuple[Cell, Cell]) -> list[dict[str, Any]]:
             op["y"] = draw(st.integers(hi[1] - 6, hi[1] + 1))
             if op["style"] in ("shed", "sawtooth"):
                 op["sides"] = [draw(st.sampled_from(shell.SIDES))]
-        if kind in shell.VOLUME_OPS and draw(st.booleans()):  # a volume of its own (WO-10.12)
+        # sometimes a volume of its own (WO-10.12)
+        if kind in shell.VOLUME_OPS and draw(st.booleans()):
             a = [draw(c) for c in coord]
             b = [draw(c) for c in coord]
             op["lo"] = [min(a[i], b[i]) for i in range(3)]
