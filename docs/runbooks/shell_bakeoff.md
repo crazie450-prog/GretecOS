@@ -4,7 +4,7 @@ You asked for it on 2026-11-20: "I do think a bakeoff so to speak would be a goo
 
 There are two walk-throughs here. **Part 1 is free** (fake models, no key, nothing leaves the PC) and doubles as your hands-on tour of the building tool. **Part 2 is paid**: real models from Anthropic and OpenAI, your money, your yes.
 
-**What never happens.** Nothing here touches a world. A model gets words and numbers and gives back a list of building steps; it gets no tools, runs no code and reads no file. GOS turns the steps into blocks and checks them (only blocks from the theme's palette, nothing with an inventory or a screen, nothing where the machines go, not more than the block limit). A bake-off building is kept apart from your own shells: it is never your current design, `gos shell list` doesn't show it and `gos shell export` can't export it.
+**What never happens.** Nothing here touches a world. A model gets words and numbers and gives back a list of building steps, usually with a short Python building program among them (since D385). It gets no tools and reads no file. GOS runs that program in its own locked box (a separate process with no files, no network, no keys and no world, stopped after 10 seconds), turns everything into blocks and checks them (only blocks from the theme's palette, nothing with an inventory or a screen, nothing where the machines go, not more than the block limit). A bake-off building is kept apart from your own shells: it is never your current design, `gos shell list` doesn't show it and `gos shell export` can't export it.
 
 Use your own PowerShell window with the block from the deployment checklist's "Windows used throughout" pasted in (`$gos`, `$gh`, `$lab`). The core must be running for the dashboard (`& $gos serve`, or it is already running since login).
 
@@ -91,6 +91,8 @@ A bake-off building can't be exported. To put a building into the Lab, use one o
 One run asks each model for 6 buildings and 6 changes: 12 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included.
 
 With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $14 and $35; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
+
+Since D385 (designer prompt v2, freeform build scripts) every call also carries a longer designer prompt: 6,480 characters instead of 2,235, about 1,100 more input tokens a call. Over the 12 answers that adds about **$0.07 for Claude Opus 5.5 and $0.13 for GPT-6 Astra** to the likely cost above (at most about $0.20 and $0.40 with every repair round). A building program can also make the answers longer than the old lists were; the cap still holds. The report's head line `designer prompt` says which prompt a run used (`v1` for runs from before D385), so never compare a v1 run's picks with a v2 run's as if they were the same test.
 
 ### F. Store the two keys (once)
 

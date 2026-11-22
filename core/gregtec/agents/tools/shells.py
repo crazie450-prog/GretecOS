@@ -13,8 +13,11 @@ architect's first look at the procedural ops; review L3). A saved build is files
 ``GOS_HOME/data/build/shells/`` (never the vault, never a world). The ``.schematic`` is written
 only by Clayton's ``gos shell export``, which reads the Lab world's registry; GOS never pastes.
 
-The model gets no free-form code execution: the vocabulary is data, and every number in a
-design is a coordinate the code checks.
+The model holds no code-execution tool. A design may carry one ``script`` operation, a Python
+build script that GOS runs in its own sandbox (:mod:`gregtec.build.sandbox`: a child process with
+no files, network, environment or world, under time, memory and cell limits; WO-10.12, Clayton's
+option B): it can only hand back cells, and every cell then goes through the same gate. Every
+number in a design is a coordinate the code checks.
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ MAX_STRUCTURE_BYTES = 4_000_000
 
 VOCABULARY = (
     shell_brief.OPERATIONS
+    + " A script operation's script has this building API: "
+    + shell_brief.SCRIPT_API
     + " Leave design out for GOS's procedural shell: its operations come back in the "
     "result's ops note to start from (with save false, nothing is saved)."
 )

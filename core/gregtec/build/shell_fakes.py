@@ -7,7 +7,10 @@ operations:`` line), with no network, no key and no cost:
 - ``fake-plain``: walls, a few low windows, corner pillars, a flat roof, lights; every
   doorway cleared.
 - ``fake-ornate``: a plinth, an eaves band, windows, pillars, a gable roof where the span
-  allows it (else a parapet), lights.
+  allows it (in its own volume, two blocks under the top, when the headroom allows; else a
+  parapet), lights, and a freeform build script (WO-10.12) for what the
+  vocabulary can't draw: buttresses at the corners, round chimney stacks over a smelting line,
+  a domed cupola over any other; on a tight block limit the script leaves the ornament out.
 - ``fake-sloppy``: its first design puts a chest in the roof (the gate refuses a block with an
   inventory) and its first revision is chat instead of JSON; each is right on the next round,
   so a run shows what a repair round looks like.
@@ -34,6 +37,35 @@ NAMES = (PLAIN, ORNATE, SLOPPY)
 PROVIDER = "fake"
 _REQUEST = re.compile(r"<request>\n(.*?)\n</request>", re.DOTALL)
 _REPAIR = "Your previous answer was:"
+_LINE_TYPE = re.compile(r"Line type: (\w+)\.")
+# fake-ornate's build script: it reads the build's facts and the line type it is given
+ORNAMENT = """import math
+lo, hi = BOUNDS["lo"], BOUNDS["hi"]
+if MAX_BLOCKS < 4 * (2 * (hi[0] - lo[0] + hi[2] - lo[2]) * (WALL_TOP + 1)):
+    print("tight block limit: no ornament")
+else:
+    for x in (lo[0], hi[0]):
+        for z in (lo[2], hi[2]):
+            fill((x, 0, z), (x, WALL_TOP + 1, z), "pillar")
+    if LINE == "smelting":
+        for cx in (lo[0] + 3, hi[0] - 3):
+            cz = lo[2] + 3
+            for y in range(ROOF_Y, hi[1] + 1):
+                for k in range(0, 360, 30):
+                    a = math.radians(k)
+                    set_block(cx + 1.5 * math.cos(a), y, cz + 1.5 * math.sin(a), "wall")
+    else:
+        cx, cz = (lo[0] + hi[0]) / 2, (lo[2] + hi[2]) / 2
+        base = max(ROOF_Y, hi[1] - 2)  # on the ridge, under the top
+        for j in range(0, 360, 15):  # a drum of pillars
+            b = math.radians(j)
+            set_block(cx + 2.5 * math.cos(b), base - 1, cz + 2.5 * math.sin(b), "pillar")
+        for k in range(0, 91, 10):  # and a dome on it
+            for j in range(0, 360, 15):
+                a, b = math.radians(k), math.radians(j)
+                set_block(cx + 2.5 * math.cos(a) * math.cos(b), base + 2 * math.sin(a),
+                          cz + 2.5 * math.cos(a) * math.sin(b), "roof")
+"""
 
 
 def _line(user: str, key: str) -> Any:  # noqa: ANN401 - the line's JSON
@@ -63,7 +95,9 @@ def plain(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [*ops, *_clears(facts)]
 
 
-def ornate(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
+def ornate(
+    facts: Mapping[str, Any], line_type: str = "general"
+) -> list[dict[str, Any]]:
     roles = [p["role"] for p in facts["palette"]]
     top = facts["wall_top"]
     lo, hi = facts["bounds"]["lo"], facts["bounds"]["hi"]
@@ -88,6 +122,9 @@ def ornate(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     roof: dict[str, Any] = {"op": "roof", "role": "roof"}
     if short <= 33:
         roof["style"] = "gable"
+        if facts["headroom"] >= 4:  # a low gable in its own volume: the ornament stands above
+            roof["lo"] = [lo[0], facts["roof_y"], lo[2]]
+            roof["hi"] = [hi[0], hi[1] - 2, hi[2]]
     else:
         roof["style"] = "flat"
         if facts["headroom"] >= 2:
@@ -99,6 +136,8 @@ def ornate(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     ops.append(roof)
     if "light" in roles:
         ops.append({"op": "lights", "role": "light", "every": 4})
+    line = f"LINE = {line_type!r}\n"
+    ops.append({"op": "script", "script": line + ORNAMENT})
     return [*ops, *_clears(facts)]
 
 
@@ -145,7 +184,9 @@ class FakeDesigner:
             if revise:
                 ops = revised(user, facts)
             else:
-                ops = ornate(facts) if self.model == ORNATE else plain(facts)
+                m = _LINE_TYPE.search(user)
+                line = m.group(1) if m else "general"
+                ops = ornate(facts, line) if self.model == ORNATE else plain(facts)
             text = json.dumps({"ops": ops}, separators=(",", ":"))
         usage = Usage(input=(len(system) + len(user)) // 4, output=len(text) // 4 + 1)
         return Reply(text, usage)

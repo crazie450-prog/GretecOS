@@ -365,7 +365,7 @@ def designs(draw: st.DrawFn, bounds: tuple[Cell, Cell]) -> list[dict[str, Any]]:
     coord = [st.integers(lo[i] - 3, hi[i] + 3) for i in range(3)]
     ops: list[dict[str, Any]] = []
     for _ in range(draw(st.integers(1, 6))):
-        kind = draw(st.sampled_from(shell.OPS))
+        kind = draw(st.sampled_from([k for k in shell.OPS if k != "script"]))
         op: dict[str, Any] = {"op": kind}
         if kind != "clear":
             op["role"] = draw(st.sampled_from(ROLES))
@@ -379,8 +379,16 @@ def designs(draw: st.DrawFn, bounds: tuple[Cell, Cell]) -> list[dict[str, Any]]:
             op["y"] = [y0, draw(st.integers(y0, hi[1] + 1))]
             op["inset"] = draw(st.integers(0, 3))
         elif kind == "roof":
-            op["style"] = draw(st.sampled_from(["flat", "gable"]))
+            op["style"] = draw(st.sampled_from(shell.ROOFS))
             op["y"] = draw(st.integers(hi[1] - 6, hi[1] + 1))
+            if op["style"] in ("shed", "sawtooth"):
+                op["sides"] = [draw(st.sampled_from(shell.SIDES))]
+        if kind in shell.VOLUME_OPS and draw(st.booleans()):  # a volume of its own (WO-10.12)
+            a = [draw(c) for c in coord]
+            b = [draw(c) for c in coord]
+            op["lo"] = [min(a[i], b[i]) for i in range(3)]
+            op["hi"] = [max(a[i], b[i]) for i in range(3)]
+            op.pop("y", None)
         ops.append(op)
     return ops
 

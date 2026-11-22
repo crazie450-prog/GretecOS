@@ -81,7 +81,17 @@ LIMITS: dict[str, tuple[int, int, int]] = {  # (default, lowest, highest)
     "max_blocks": (20_000, 1, MAX_BLOCKS),
     "headroom": (4, 1, 16),
 }
-OPS = ("walls", "pillars", "windows", "roof", "lights", "fill", "frame", "clear")
+OPS = (
+    "walls",
+    "pillars",
+    "windows",
+    "roof",
+    "lights",
+    "fill",
+    "frame",
+    "clear",
+    "script",
+)
 SIDES = ("north", "south", "east", "west")
 ROOFS = ("flat", "gable", "hip", "shed", "sawtooth")
 # the ops that may work on a volume of their own (lo, hi) instead of the bounding volume
@@ -479,6 +489,16 @@ class _Builder:
         self.placed_as.setdefault(e, role)
         return e
 
+    def resolve(self, what: str, n: int) -> Entry:
+        """A build script's block: a palette role (``wall``), a role's entry (``roof:1``) or
+        one ``registry@meta`` state."""
+        if "@" in what:
+            return self.state({"block": what}, n)
+        role, _, pick = what.partition(":")
+        if pick and not pick.isdigit():
+            raise ShellError(f"op {n} (script): {what!r} is not role:number")
+        return self.state({"role": role, "n": int(pick or 0)}, n)
+
     def put(self, c: Cell, e: Entry | None) -> None:
         if not self.spec.bounds.contains(c):
             if e is not None:  # clearing air outside the bounds places nothing (D317)
@@ -581,6 +601,8 @@ _KEYS: dict[str, frozenset[str]] = {
     "fill": frozenset({"op", "role", "block", "n", "lo", "hi"}),
     "frame": frozenset({"op", "role", "block", "n", "lo", "hi"}),
     "clear": frozenset({"op", "lo", "hi"}),
+    # a freeform build script, run in gregtec.build.sandbox (WO-10.12; Clayton's option B)
+    "script": frozenset({"op", "script"}),
 }
 
 
@@ -591,6 +613,8 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
         raise ShellError("a design is a non-empty list of operations")
     if len(ops) > MAX_OPS:
         raise ShellError(f"{len(ops)} operations: at most {MAX_OPS}")
+    if sum(1 for o in ops if isinstance(o, Mapping) and o.get("op") == "script") > 1:
+        raise ShellError("a design has at most one script operation")
     b = _Builder(spec)
     bx = spec.bounds
     for n, op in enumerate(ops, 1):
@@ -604,6 +628,9 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
             raise ShellError(
                 f"op {n} ({kind}): unknown key(s) {', '.join(sorted(extra))}"
             )
+        if kind == "script":
+            _script(b, op, n)
+            continue
         vol = _volume_of(op, n, kind)
         if kind in ("fill", "frame", "clear"):
             lo, hi = (
@@ -666,6 +693,45 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
                     ) % every == every // 2:
                         b.put((x, y, z), e)
     return Compiled(b.cells, b.placed_as, b.outside)
+
+
+def script_facts(spec: Spec) -> dict[str, Any]:
+    """What a build script can read (as upper-case names: ``BOUNDS["lo"]``, ``WALL_TOP``, ...):
+    the sizes, the palette and every volume the gate keeps empty."""
+    count: dict[str, int] = {}
+    pal = []
+    for s in spec.swatches:
+        k = count.get(s.role, 0)
+        count[s.role] = k + 1
+        pal.append({"role": s.role, "n": k, "block": s.entry.key, "note": s.note})
+    return {
+        "bounds": spec.bounds.to_json(),
+        "interior": spec.interior.to_json(),
+        "wall_top": spec.wall_top,
+        "roof_y": spec.roof_y,
+        "headroom": spec.headroom,
+        "max_blocks": spec.max_blocks,
+        "palette": pal,
+        "roles": count,
+        "doorways": [{"id": v.id, **v.box.to_json()} for v in spec.doorways()],
+        "keep_clear": [
+            {"id": v.id, "kind": v.kind, **v.box.to_json()} for v in spec.clear
+        ],
+    }
+
+
+def _script(b: _Builder, op: Mapping[str, Any], n: int) -> None:
+    from gregtec.build import sandbox
+
+    text = op.get("script")
+    if not isinstance(text, str):
+        raise ShellError(f"op {n} (script) needs script: the Python build script")
+    try:
+        ran = sandbox.run(text, script_facts(b.spec), b.cap)
+    except sandbox.ScriptError as exc:
+        raise ShellError(f"op {n} (script): {exc}") from None
+    for c, what in sorted(ran.cells.items()):
+        b.put(c, b.resolve(what, n))
 
 
 def _volume_of(op: Mapping[str, Any], n: int, kind: object) -> Box | None:
