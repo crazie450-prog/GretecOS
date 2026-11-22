@@ -500,7 +500,11 @@ class DeepLaneService:
         elif loop is None or queue is None:
             self._finish(item, FAILED, error="the deep lane didn't start")
         else:
+            # The snapshot first: once the worker has the task it can run, even finish, before
+            # this thread reads the status, and a handoff is reported as it was handed over.
+            snap = item.handoff()
             loop.call_soon_threadsafe(queue.put_nowait, item)
+            return snap
         return item.handoff()
 
     def get(self, task_id: str) -> DeepTask | None:
