@@ -137,7 +137,9 @@ SAVE_WAIT_S = 0.25  # between two tries
 STALE_S = 900.0
 assert STALE_S > llm.TIMEOUT_S + llm.MAX_WAIT_S
 # The share of the output limit a first look assumes an answer uses (the estimate's "likely").
-LIKELY_OUTPUT = 0.25
+# the share of the output limit a likely answer uses: a build script with its reasoning took
+# 13,184 of 16,000 tokens on GPT-6 Astra at effort high (2026-11-22, D387); 0.25 before
+LIKELY_OUTPUT = 0.8
 
 
 class BakeoffError(shell.ShellError):

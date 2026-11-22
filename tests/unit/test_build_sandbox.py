@@ -369,17 +369,26 @@ def test_a_script_op_mixes_with_the_vocabulary(
 # --- the prompt ----------------------------------------------------------------------------
 
 
-def example_script() -> str:
+def fragments() -> str:
+    """The prompt's helper fragments with their placeholders filled in (a whole building is no
+    longer shown, D387)."""
     text = shell_brief.system_prompt()
-    start = text.index("import math\n", text.index("An example script"))
-    return text[start : text.index("\n\nThe brief gives")]
+    start = text.index("\n", text.index("Fragments that show the helpers")) + 1
+    body = text[start : text.index("\n\nThe code refuses")]
+    head = (
+        "lo, hi = WALLS['lo'], WALLS['hi']\n"
+        "x, z = lo[0] + 2, lo[2] + 2\n"
+        "x0, z0, x1, z1 = lo[0], lo[2], hi[0], hi[2]\n"
+    )
+    return head + body
 
 
-def test_the_prompts_example_script_passes_the_gate(
+def test_the_prompts_fragments_run_and_pass_the_gate(
     conn: sqlite3.Connection, spec: shell.Spec
 ) -> None:
-    out = shell.design(conn, spec, [script_op(example_script())], "architect")
-    assert out.status == "accepted", (out.reasons, out.repairs)
+    out = shell.design(conn, spec, [script_op(fragments())], "architect")
+    assert out.ok, (out.reasons, out.repairs)
+    assert len(out.cells) > 100
 
 
 def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
@@ -398,23 +407,37 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
         "ROOF_Y",
         "WALLS",
         "RELIEF",
+        "cylinder",
+        "sphere",
+        "pyramid",
+        "arch",
+        "ring",
         "DOORWAYS",
         "KEEP_CLEAR",
         "PALETTE",
         "MAX_BLOCKS",
     ):
         assert name in text, name
-    for principle in ("silhouette", "roofline", "base course", "rhythm", "entrance"):
+    for principle in (
+        "never a box",
+        "Massing",
+        "Roofline",
+        "Facades with depth",
+        "Rhythm",
+        "entrance",
+        "suggestions",
+        "silhouette",
+    ):
         assert principle in text, principle
     assert (
         len(text) < 8_000
     )  # the per-call estimate in the runbook assumes about this size
-    assert "script" in shell_brief.SCHEMA["properties"]["ops"]["items"]["required"]
+    assert shell_brief.SCHEMA["required"] == ["script", "ops"]
     rec = shell_bakeoff.prompt_record()
     assert (
-        rec["version"] == shell_brief.PROMPT_VERSION == 3 and len(rec["sha256"]) == 12
+        rec["version"] == shell_brief.PROMPT_VERSION == 4 and len(rec["sha256"]) == 12
     )
-    assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v3 (sha ")
+    assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v4 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
 
 
@@ -622,15 +645,6 @@ def test_a_repair_round_echoes_a_whole_script() -> None:
     )
 
 
-def test_the_prompts_example_passes_at_the_default_headroom(
-    conn: sqlite3.Connection,
-) -> None:
-    lay = layout.plan_layout(conn, [ts.lay_tests.production()])
-    spec = ts.spec_for(conn, lay, ts.foundry())  # headroom 4, as the bake-off's cases
-    out = shell.design(conn, spec, [script_op(example_script())], "architect")
-    assert out.status == "accepted", (out.reasons, out.repairs)
-
-
 # --- facades that stand out: the relief zone (WO-10.13, D386) ----------------------------------
 
 
@@ -702,3 +716,83 @@ def test_a_build_from_before_the_relief_zone_keeps_its_size_and_id(
     assert shell.build_id(old, ops) == shell.build_id(
         dataclasses.replace(new, relief=0, bounds=old.bounds), ops
     )
+
+
+# --- the answer is a script first; varied cases (WO-10.14, D387) ---------------------------------
+
+
+def test_the_answer_is_a_script_first_and_the_old_shape_still_reads() -> None:
+    ops = shell_brief.parse(
+        json.dumps(
+            {
+                "script": "set_block(0, 9, 0, 'wall')",
+                "ops": [
+                    {
+                        "op": "clear",
+                        "lo": [0, 0, 0],
+                        "hi": [0, 0, 0],
+                        "role": "",
+                        "n": None,
+                    }
+                ],
+            }
+        )
+    )
+    assert ops[0] == {"op": "script", "script": "set_block(0, 9, 0, 'wall')"}
+    assert ops[1] == {"op": "clear", "lo": [0, 0, 0], "hi": [0, 0, 0]}
+    assert shell_brief.parse(json.dumps({"script": "  ", "ops": []})) == []
+    assert shell_brief.parse(
+        json.dumps({"ops": [{"op": "walls", "role": "wall"}]})
+    ) == [{"op": "walls", "role": "wall"}]
+    for bad in (
+        {"script": 3, "ops": []},
+        {"script": "", "ops": [], "x": 1},
+        {"script": ""},
+    ):
+        with pytest.raises(shell_brief.BriefError):
+            shell_brief.parse(json.dumps(bad))
+    # a saved design round-trips through the answer a fake gives
+    saved = [
+        {"op": "walls", "role": "wall"},
+        script_op("x = 1"),
+        {"op": "clear", "lo": [0, 0, 0], "hi": [0, 0, 0]},
+    ]
+    back = shell_brief.parse(shell_brief.answer(saved))
+    assert back[0] == script_op("x = 1") and back[1:] == [saved[0], saved[2]]
+
+
+def test_a_revision_shows_the_current_script_on_its_own() -> None:
+    from gregtec.build import shell_eval
+
+    old = {"ops": [script_op("x = 1"), {"op": "walls", "role": "wall"}], "headroom": 4}
+    assert shell_eval.check(old, dict(old), shell_eval.CHANGED) == "nothing changed"
+    new = {**old, "ops": [script_op("x = 2"), {"op": "walls", "role": "wall"}]}
+    assert shell_eval.check(old, new, shell_eval.CHANGED) is None
+    assert shell_eval.check(old, {**old, "headroom": 6}, shell_eval.CHANGED) is None
+    script, rest = shell_brief.split(new["ops"])
+    assert script == "x = 2" and rest == [{"op": "walls", "role": "wall"}]
+
+
+def test_a_case_may_bring_its_own_sizes_and_palette(tmp_path: Path) -> None:
+    head = "\t".join([*shell_bakeoff.COLUMNS, *shell_bakeoff.OPTIONAL])
+    good = (
+        "c1\tsmall\tnone\tgeneral\tdefault\ta tower\tmake it taller\tchanged\t"
+        "script\t12\t5\twall minecraft:stonebrick@0, roof minecraft:nether_brick@0"
+    )
+    path = tmp_path / "cases.tsv"
+    path.write_text(head + "\n" + good + "\n", encoding="utf-8")
+    c = shell_bakeoff.load_cases(path)[0]
+    assert (c.headroom, c.relief) == (12, 5)
+    assert c.palette == (
+        ("wall", "minecraft:stonebrick@0"),
+        ("roof", "minecraft:nether_brick@0"),
+    )
+    for bad in (
+        good.replace("\t12\t", "\t99\t"),
+        good.replace("\t5\t", "\tdeep\t"),
+        good.replace("wall minecraft:stonebrick@0", "wall"),
+        good.replace("wall minecraft:stonebrick@0, roof minecraft:nether_brick@0", ""),
+    ):
+        path.write_text(head + "\n" + bad + "\n", encoding="utf-8")
+        with pytest.raises(shell_bakeoff.BakeoffError):
+            shell_bakeoff.load_cases(path)
