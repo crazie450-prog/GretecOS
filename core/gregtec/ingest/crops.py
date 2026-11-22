@@ -147,7 +147,7 @@ class Crop:
     unlocalized: str
     flavour: str
     creator: str
-    soil: str  # CropsNH's soil id: a list name, "<name>(a+b)" for a union, "global" for any
+    soil: str  # CropsNH's soil id: a list name, "<name>(a+b)" for a union (nestable), "global"
     soil_lists: tuple[str, ...]  # the soil lists it grows on
     tier: int
     min_seed_bed_tier: int  # -1: none
@@ -342,11 +342,27 @@ def _drops(text: str, where: str) -> tuple[Drop, ...]:
 
 def soil_lists(soil: str) -> tuple[str, ...]:
     """The soil lists of a crop's soil id: ``mushroom(stone+dirtGrass+mycelium)`` is the union of
-    three lists; ``global`` is CropsNH's list of every registered soil."""
-    m = re.fullmatch(r"[^(]*\((.*)\)", soil)
-    if m is None:
+    three lists; ``global`` is CropsNH's list of every registered soil. A compound list's id
+    (``CompoundSoilList.getId``) nests its members' ids, which can be compound too:
+    ``netherMushroom(mushroom(stone+dirtGrass+mycelium)+netherrack)`` gives the four plain lists,
+    the only ones ``soilRegistry.txt`` has. An id whose brackets don't balance is kept whole."""
+    out: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(soil):
+        if ch == "(":
+            depth += 1
+            start = i + 1
+        elif ch in "+)":
+            if depth == 0:
+                return (soil,)
+            if i > start:
+                out.append(soil[start:i])
+            start = i + 1
+            depth -= ch == ")"
+    if depth or not out:
         return (soil,)
-    return tuple(p for p in m.group(1).split("+") if p)
+    return tuple(dict.fromkeys(out))
 
 
 def parse_crops(rows: list[list[str]]) -> dict[str, Crop]:

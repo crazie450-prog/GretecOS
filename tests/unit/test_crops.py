@@ -564,6 +564,61 @@ def test_requirement_kinds() -> None:
     assert crops.clean("§6Gold §rLeaf") == "Gold Leaf"
 
 
+# CropsNH 2.0.140's glowshrooms grow on CropsNHSoilTypes.netherMushroom, a compound list of a
+# compound list; CompoundSoilList.getId nests the ids, and soilRegistry.txt has only plain lists.
+GLOWSHROOM_SOIL = "netherMushroom(mushroom(stone+dirtGrass+mycelium)+netherrack)"
+
+
+@pytest.mark.parametrize(
+    ("soil", "lists"),
+    [
+        ("sand", ("sand",)),
+        ("mushroom(stone+dirtGrass+mycelium)", ("stone", "dirtGrass", "mycelium")),
+        (GLOWSHROOM_SOIL, ("stone", "dirtGrass", "mycelium", "netherrack")),
+        ("a(b(c)+b(c))", ("c",)),
+        # Brackets that don't balance: kept whole, so the soil-list check reports them.
+        ("mushroom(stone+mycelium", ("mushroom(stone+mycelium",)),
+        ("stone)", ("stone)",)),
+        ("empty()", ("empty()",)),
+    ],
+)
+def test_soil_lists_of_nested_compound_ids(soil: str, lists: tuple[str, ...]) -> None:
+    assert crops.soil_lists(soil) == lists
+
+
+def test_glowshrooms_soils_read_without_problems(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    files = crop_files(
+        crop_rows=[
+            *CROP_ROWS,
+            crop_row("cropsnh:blueGlowshroom", "Blue Glowshroom", GLOWSHROOM_SOIL, 3),
+        ]
+    )
+    files[f"crops/{crops.SOILS}"] += (
+        b"\r\nmycelium\r\n- minecraft:mycelium\r\n\r\n"
+        b"netherrack\r\n- minecraft:netherrack\r\n"
+    )
+    run = make_run(home, files={**base_files(nei_ok=False), **files})
+    data = parsed(run, with_nei=False)
+    glow = data.crops["cropsnh:blueGlowshroom"]
+    assert glow.soil == GLOWSHROOM_SOIL
+    assert glow.soil_lists == ("stone", "dirtGrass", "mycelium", "netherrack")
+    assert not [p for p in data.problems if "soil" in p]
+    toml = tmp_path / "gos.toml"
+    toml.write_text(f'[paths]\ngos_home = "{home.as_posix()}"\n', encoding="utf-8")
+    build.build(home)
+    capsys.readouterr()
+    assert cli.main(["crops", "show", "blue glowshroom", "--config", str(toml)]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "  soil: stone (TConstruct:decoration.multibrick@3, minecraft:stone); "
+        "dirtGrass (minecraft:dirt, minecraft:grass); mycelium (minecraft:mycelium); "
+        "netherrack (minecraft:netherrack)"
+    ) in out
+
+
 # --- the DB ----------------------------------------------------------------------------------
 
 
