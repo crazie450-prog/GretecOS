@@ -182,7 +182,7 @@ def test_the_next_steps_keep_a_replacing_jar_out_of_play_and_name_the_old_one(
         "plannh-0.2.0.jar",
         "gtnllib-1.1.6.jar",
         "TwistSpaceTechnology-0.8.2.jar",
-        "plannh-0.2.4.jar",
+        "plannh-0.2.6.jar",
     ]
     m = manifest(
         tmp_path / "manifest.json", [serve(server, n, n.encode()) for n in names]
@@ -214,7 +214,7 @@ def test_the_next_steps_keep_a_replacing_jar_out_of_play_and_name_the_old_one(
     assert "[sync.lab] exclude" in " ".join(lines[swap : swap + 4])
     assert [ln.strip() for ln in lines[swap + 4 :]] == [
         f"{staging / 'TwistSpaceTechnology-0.8.2.jar'}  (replaces TwistSpaceTechnology-0.8.0.jar)",
-        f"{staging / 'plannh-0.2.4.jar'}  (replaces plannh-0.2.0.jar)",
+        f"{staging / 'plannh-0.2.6.jar'}  (replaces plannh-0.2.0.jar)",
     ]
 
 
@@ -228,7 +228,7 @@ def test_the_lab_first_patterns_are_the_gtnl_pins() -> None:
     )
     names = re.findall(r"name = '([^']+\.jar)'", text)
     held = [n for n in names if any(fnmatchcase(n, p) for p in patterns)]
-    assert held == ["sciencenotleisure-0.2.7.jar", "gtnllib-1.1.6.jar"]
+    assert held == ["sciencenotleisure-0.2.7.jar", "gtnllib-1.1.8.jar"]
     assert "foreach ($f in $jars)" in text and "foreach ($f in $lab)" in text
 
 
@@ -240,7 +240,9 @@ def test_the_replacing_jars_are_pinned_beside_the_jars_they_replace() -> None:
     replaces = dict(re.findall(r"'([^']+\.jar)' = '([^']+\.jar)'", table))
     assert replaces == {
         "TwistSpaceTechnology-0.8.2.jar": "TwistSpaceTechnology-0.8.0.jar",
-        "plannh-0.2.4.jar": "plannh-0.2.0.jar",
+        "plannh-0.2.6.jar": "plannh-0.2.0.jar",
+        "OTHTechnology-2.2.1.3.jar": "OTHTechnology-2.2.1.1.jar",
+        "programmablehatches-0.2.1p9.jar": "programmablehatches-0.2.1p0.jar",
     }
     names = re.findall(r"name = '([^']+\.jar)'", text)
     assert set(replaces) | set(replaces.values()) <= set(names)
@@ -303,32 +305,39 @@ def test_refuses_a_name_that_is_a_path(
 def test_real_pins() -> None:
     """The pinned files: both zips, the addons cleared for Play (D88, D90), GTNL 0.2.7 with the
     GTNLLib it is built against, for the Lab test first (D365), and the two updates for the Lab
-    test first (D373); never GTNL's rolling dev-build."""
+    test first (D373), and D381's newest builds for the same test; never GTNL's rolling dev-build."""
     text = SCRIPT.read_text(encoding="ascii")
     pins = re.findall(
         r"name = '([^']+)'.*?url = '([^']+)'\s+sha256 = '([0-9a-f]{64})'",
         text,
         flags=re.DOTALL,
     )
-    assert [p[0] for p in pins] == [
-        "GT_New_Horizons_2.9.0_Java_17-26.zip",
-        "GT_New_Horizons_2.9.0_Java_8.zip",
-        "TwistSpaceTechnology-0.8.0.jar",
-        "programmablehatches-0.2.1p0.jar",
-        "worldedit-v0.0.10.jar",
-        "plannh-0.2.0.jar",  # Play's PlanNH: two in mods/ is a duplicate-mod crash
-        "OTHTechnology-2.2.1.1.jar",
-        "sciencenotleisure-0.2.7.jar",  # the main jar, not -dev or -sources
-        "gtnllib-1.1.6.jar",  # the GTNLLib that GTNL 0.2.7 builds against
-        "TwistSpaceTechnology-0.8.2.jar",  # Lab first; replaces 0.8.0 (D373)
-        "plannh-0.2.4.jar",  # Lab first; replaces 0.2.0 (D373)
-    ]
+    assert (
+        [p[0] for p in pins]
+        == [
+            "GT_New_Horizons_2.9.0_Java_17-26.zip",
+            "GT_New_Horizons_2.9.0_Java_8.zip",
+            "TwistSpaceTechnology-0.8.0.jar",
+            "programmablehatches-0.2.1p0.jar",
+            "worldedit-v0.0.10.jar",
+            "plannh-0.2.0.jar",  # Play's PlanNH: two in mods/ is a duplicate-mod crash
+            "OTHTechnology-2.2.1.1.jar",
+            "sciencenotleisure-0.2.7.jar",  # the main jar, not -dev or -sources
+            "gtnllib-1.1.8.jar",  # GTNL 0.2.7 builds on 1.1.6; 1.1.7 fixes 123Tech's id (D381)
+            "TwistSpaceTechnology-0.8.2.jar",  # Lab first; replaces 0.8.0 (D373)
+            "plannh-0.2.6.jar",  # Lab first; replaces 0.2.0 (D381)
+            "OTHTechnology-2.2.1.3.jar",  # Lab first; replaces 2.2.1.1 (D381)
+            "programmablehatches-0.2.1p9.jar",  # Lab first; replaces 0.2.1p0 (D381)
+        ]
+    )
     # Play's own list (what isn't held back for the Lab) has one jar per mod
     held = (
         "sciencenotleisure-",
         "gtnllib-",
         "TwistSpaceTechnology-0.8.2",
-        "plannh-0.2.4",
+        "plannh-0.2.6",
+        "OTHTechnology-2.2.1.3",
+        "programmablehatches-0.2.1p9",
     )
     for_play = [
         p[0] for p in pins if p[0].endswith(".jar") and not p[0].startswith(held)
