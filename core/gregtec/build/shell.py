@@ -18,8 +18,12 @@ prompt-only builds bring their own); Clayton's prompt; the line type; and ``max_
 a short list of operations (:data:`OPS`) in the layout's coordinates (x east, y up, z south; y 0
 the first layer above the floor), each naming a palette *role* (or one ``block`` state), which
 code turns into cells (:func:`compile_ops`): ``walls`` (the outer ring between two heights),
-``pillars``, ``windows`` (openings of another role along the ring), ``roof`` (flat or gable, with
-an edge and a parapet), ``lights`` (a grid set into the roof), ``fill``, ``frame`` and ``clear``.
+``pillars``, ``windows`` (openings of another role along the ring), ``roof`` (flat, gable, hip,
+shed or sawtooth, with an edge and a parapet), ``lights`` (a grid set into the roof), ``fill``,
+``frame`` and ``clear``. ``walls``, ``pillars``, ``windows`` and ``roof`` may name a **volume**
+(``lo``, ``hi``): they then work on that box's outline and heights instead of the whole bounding
+volume, so one design can have several masses (a clerestory, a tower or stack, a stepped tier, a
+cross gable over an entrance; WO-10.12). The gate is the same for every cell they place.
 
 **Validation** (:func:`inspect`, :func:`design`, D317): every design, the model's or the
 procedural generator's, goes through the same gate. A design is refused (nothing written) when
@@ -79,6 +83,10 @@ LIMITS: dict[str, tuple[int, int, int]] = {  # (default, lowest, highest)
 }
 OPS = ("walls", "pillars", "windows", "roof", "lights", "fill", "frame", "clear")
 SIDES = ("north", "south", "east", "west")
+ROOFS = ("flat", "gable", "hip", "shed", "sawtooth")
+# the ops that may work on a volume of their own (lo, hi) instead of the bounding volume
+VOLUME_OPS = ("walls", "pillars", "windows", "roof")
+_OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east"}
 STATUSES = ("accepted", "repaired")
 SOURCES = ("architect", "procedural")
 BUILD_ID_PREFIX = "sh-"
@@ -530,10 +538,24 @@ def _sides(op: Mapping[str, Any], n: int) -> set[str]:
 
 
 _KEYS: dict[str, frozenset[str]] = {
-    "walls": frozenset({"op", "role", "block", "n", "y", "inset"}),
-    "pillars": frozenset({"op", "role", "block", "n", "y", "inset", "every"}),
+    "walls": frozenset({"op", "role", "block", "n", "y", "inset", "lo", "hi"}),
+    "pillars": frozenset(
+        {"op", "role", "block", "n", "y", "inset", "every", "lo", "hi"}
+    ),
     "windows": frozenset(
-        {"op", "role", "block", "n", "y", "inset", "every", "width", "sides"}
+        {
+            "op",
+            "role",
+            "block",
+            "n",
+            "y",
+            "inset",
+            "every",
+            "width",
+            "sides",
+            "lo",
+            "hi",
+        }
     ),
     "roof": frozenset(
         {
@@ -549,6 +571,10 @@ _KEYS: dict[str, frozenset[str]] = {
             "parapet",
             "parapet_role",
             "parapet_n",
+            "every",
+            "sides",
+            "lo",
+            "hi",
         }
     ),
     "lights": frozenset({"op", "role", "block", "n", "y", "every"}),
@@ -578,6 +604,7 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
             raise ShellError(
                 f"op {n} ({kind}): unknown key(s) {', '.join(sorted(extra))}"
             )
+        vol = _volume_of(op, n, kind)
         if kind in ("fill", "frame", "clear"):
             lo, hi = (
                 _cell(op.get("lo"), f"op {n}: lo"),
@@ -593,15 +620,20 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
                 b.put(c, e)
             continue
         e = b.state(op, n)
+        area = bx if vol is None else vol
         if kind in ("walls", "pillars", "windows"):
-            y0, y1 = _heights(op, n, spec, bx.lo[1], spec.wall_top)
+            if vol is None:
+                y0, y1 = _heights(op, n, spec, bx.lo[1], spec.wall_top)
+            else:
+                y0, y1 = _heights(op, n, spec, vol.lo[1], vol.hi[1])
+                _within(n, (y0, y1), vol)
             inset = _int(op.get("inset", 0), f"op {n}: inset", 0, 8)
             if kind == "walls":
-                for c, *_ in _ring(bx, inset, y0, y1):
+                for c, *_ in _ring(area, inset, y0, y1):
                     b.put(c, e)
             elif kind == "pillars":
                 every = _int(op.get("every", 8), f"op {n}: every", 2, 64)
-                for c, _, k, length in _ring(bx, inset, y0, y1):
+                for c, _, k, length in _ring(area, inset, y0, y1):
                     if k == 0 or k == length - 1 or k % every == 0:
                         b.put(c, e)
             else:
@@ -609,17 +641,21 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
                 width = _int(op.get("width", 2), f"op {n}: width", 1, every - 1)
                 sides = _sides(op, n)
                 start = (every - width + 1) // 2
-                for c, side, k, length in _ring(bx, inset, y0, y1):
+                for c, side, k, length in _ring(area, inset, y0, y1):
                     if side not in sides or k in (0, length - 1):
                         continue
                     if start <= k % every < start + width:
                         b.put(c, e)
         elif kind == "roof":
-            y = _int(op.get("y", spec.roof_y), f"op {n}: y", -64, 512)
+            if vol is None:
+                y = _int(op.get("y", spec.roof_y), f"op {n}: y", -64, 512)
+            else:
+                y = _int(op.get("y", vol.lo[1]), f"op {n}: y", -64, 512)
+                _within(n, (y, y), vol)
             style = op.get("style", "flat")
-            if style not in ("flat", "gable"):
-                raise ShellError(f"op {n}: style must be flat or gable")
-            _roof(b, op, n, e, y, str(style))
+            if style not in ROOFS:
+                raise ShellError(f"op {n}: style must be one of {', '.join(ROOFS)}")
+            _roof(b, op, n, e, y, str(style), area)
         else:  # lights
             y = _int(op.get("y", spec.roof_y), f"op {n}: y", -64, 512)
             every = _int(op.get("every", 6), f"op {n}: every", 2, 32)
@@ -630,6 +666,30 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
                     ) % every == every // 2:
                         b.put((x, y, z), e)
     return Compiled(b.cells, b.placed_as, b.outside)
+
+
+def _volume_of(op: Mapping[str, Any], n: int, kind: object) -> Box | None:
+    """The volume (``lo``, ``hi``) a ring or roof operation works on, or None for the whole
+    bounding volume. ``fill``, ``frame`` and ``clear`` read their own box."""
+    if kind not in VOLUME_OPS:
+        return None
+    if "lo" not in op and "hi" not in op:
+        return None
+    if "lo" not in op or "hi" not in op:
+        raise ShellError(f"op {n} ({kind}): a volume needs both lo and hi")
+    lo, hi = _cell(op["lo"], f"op {n}: lo"), _cell(op["hi"], f"op {n}: hi")
+    if any(lo[i] > hi[i] for i in range(3)):
+        raise ShellError(f"op {n}: lo must not be above hi")
+    from gregtec.build import layout as layout_lib
+
+    return layout_lib.Box(lo, hi)
+
+
+def _within(n: int, ys: tuple[int, int], vol: Box) -> None:
+    if ys[0] < vol.lo[1] or ys[1] > vol.hi[1]:
+        raise ShellError(
+            f"op {n}: y must lie inside its volume's heights ({vol.lo[1]} to {vol.hi[1]})"
+        )
 
 
 def _edges(lo: Cell, hi: Cell) -> Iterator[Cell]:
@@ -649,20 +709,31 @@ def _edges(lo: Cell, hi: Cell) -> Iterator[Cell]:
 
 
 def _roof(
-    b: _Builder, op: Mapping[str, Any], n: int, e: Entry, y: int, style: str
+    b: _Builder,
+    op: Mapping[str, Any],
+    n: int,
+    e: Entry,
+    y: int,
+    style: str,
+    area: Box,
 ) -> None:
-    bx = b.spec.bounds
-    x0, x1, z0, z1 = bx.lo[0], bx.hi[0], bx.lo[2], bx.hi[2]
+    """A roof over ``area``'s x and z, standing at ``y``; a slope that reaches ``area``'s top
+    closes flat there (the bounding volume's top for the whole-building roof)."""
+    x0, x1, z0, z1 = area.lo[0], area.hi[0], area.lo[2], area.hi[2]
+    cap = area.hi[1]
     edge = b.state(op, n, "edge", "edge_n") if "edge" in op else None
-    # pitch: how many blocks each step of a gable's slope rises (WO-10.10, D368; 1 before)
+    # pitch: how many blocks each step of a slope rises (WO-10.10, D368; 1 before)
     pitch = _int(op.get("pitch", 1), f"op {n}: pitch", 1, 3)
+    if "every" in op and style != "sawtooth":
+        raise ShellError(f"op {n}: every is a sawtooth roof's tooth length")
+    if "sides" in op and style not in ("shed", "sawtooth"):
+        raise ShellError(f"op {n}: sides names a shed or sawtooth roof's high side")
     if style == "flat":
         b.box((x0, y, z0), (x1, y, z1), e, n)
         if edge is not None:
-            for c, *_ in _ring(bx, 0, y, y):
+            for c, *_ in _ring(area, 0, y, y):
                 b.put(c, edge)
-        top = y
-    else:  # gable: slopes rise from the long sides; the ends are filled
+    elif style == "gable":  # slopes rise from the long sides; the ends are filled
         along_x = (x1 - x0) >= (z1 - z0)
         lo_s, hi_s = (z0, z1) if along_x else (x0, x1)
         i = 0
@@ -670,8 +741,8 @@ def _roof(
             closed = False
             for rise in range(pitch):
                 yy = y + i * pitch + rise
-                if yy > bx.hi[1]:  # out of headroom: close the roof flat here
-                    yy = bx.hi[1]
+                if yy > cap:  # out of headroom: close the roof flat here
+                    yy = cap
                     for s in range(lo_s + i, hi_s - i + 1):
                         _line(b, along_x, s, yy, x0, x1, z0, z1, e)
                     closed = True
@@ -691,7 +762,31 @@ def _roof(
             if closed:
                 break
             i += 1
-        top = y
+    elif style == "hip":  # slopes rise from all four sides: rings stepping in
+        i = 0
+        while x0 + i <= x1 - i and z0 + i <= z1 - i:
+            closed = False
+            for rise in range(pitch):
+                yy = y + i * pitch + rise
+                if yy > cap:  # out of headroom: close the roof flat (a mansard)
+                    b.box((x0 + i, cap, z0 + i), (x1 - i, cap, z1 - i), e, n)
+                    closed = True
+                    break
+                for c, *_ in _ring(area, i, yy, yy):
+                    b.put(c, edge if edge is not None and i == 0 and rise == 0 else e)
+            if closed:
+                break
+            i += 1
+    else:  # shed or sawtooth: slopes rising toward the high side, an upright face there
+        high = _high_side(op, n)
+        along = high in ("north", "south")  # the slope runs along z, else along x
+        lo_s, hi_s = (z0, z1) if along else (x0, x1)
+        every = hi_s - lo_s + 1
+        if style == "sawtooth":
+            every = _int(op.get("every", 4), f"op {n}: every", 2, 16)
+        for start in range(lo_s, hi_s + 1, every):
+            stop = min(start + every - 1, hi_s)
+            _shed(b, (x0, x1, z0, z1), along, high, start, stop, y, cap, pitch, e, edge)
     parapet = _int(op.get("parapet", 0), f"op {n}: parapet", 0, 3)
     if parapet:
         pe = (
@@ -699,8 +794,54 @@ def _roof(
             if "parapet_role" in op
             else edge or e
         )
-        for c, *_ in _ring(bx, 0, top + 1, top + parapet):
+        for c, *_ in _ring(area, 0, y + 1, y + parapet):
             b.put(c, pe)
+
+
+def _high_side(op: Mapping[str, Any], n: int) -> str:
+    got = op.get("sides", ["north"])
+    if not isinstance(got, list) or len(got) != 1 or got[0] not in SIDES:
+        raise ShellError(
+            f"op {n}: a shed or sawtooth roof's sides is one side, its high side "
+            f"({', '.join(SIDES)})"
+        )
+    return str(got[0])
+
+
+def _shed(
+    b: _Builder,
+    rect: tuple[int, int, int, int],
+    along: bool,
+    high: str,
+    start: int,
+    stop: int,
+    y: int,
+    cap: int,
+    pitch: int,
+    e: Entry,
+    edge: Entry | None,
+) -> None:
+    """One slope from ``start`` to ``stop`` (z when ``along``, else x) rising toward ``high``,
+    its two ends filled and its upright face on the high side in ``edge`` (else the roof)."""
+    x0, x1, z0, z1 = rect
+    rows = list(range(start, stop + 1))
+    if high in ("north", "west"):  # rises toward the low coordinate
+        rows.reverse()
+    face = edge if edge is not None else e
+    top_row = rows[-1]
+    ends = (x0, x1) if along else (z0, z1)
+    for i, s in enumerate(rows):
+        for rise in range(pitch):
+            yy = min(y + i * pitch + rise, cap)
+            for t in rows[i:]:  # the ends, below the slope still to come
+                for end in ends:
+                    b.put((end, yy, t) if along else (t, yy, end), e)
+            _line(b, along, top_row, yy, x0, x1, z0, z1, face)  # the upright face
+            _line(b, along, s, yy, x0, x1, z0, z1, e)
+            if yy == cap:
+                for t in rows[i:]:  # out of headroom: close the rest flat here
+                    _line(b, along, t, cap, x0, x1, z0, z1, e)
+                return
 
 
 def _line(
