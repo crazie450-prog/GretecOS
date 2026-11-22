@@ -126,8 +126,10 @@ $Addons = @(
 # Left out on purpose:
 # - GT-Not-Leisure's rolling "dev-build" asset: it is replaced on every push, so it can't be pinned.
 #   0.2.7 above is the versioned release with 28007498 (D365).
-# - 123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta and worldedit-gtnh 1.0.1: not ready
-#   for GTNH 2.9.0 stable on 2026-11-20 (D373 says what each waits for). Play's pins above stay.
+# - 123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta and worldedit-gtnh 1.0.1 and 1.0.2: not
+#   ready for GTNH 2.9.0 stable on 2026-11-20 and 2026-11-22 (D373, D379 say what each waits for).
+#   Play's pins above stay. PlanNH 0.2.6 (SHA256 b3acb053a17f3aeebb22c26577ab060e8bc0a409a9325640c2c2c497e4e0ec37)
+#   could replace 0.2.4 if Clayton says so (D379); 0.3.0 is built for GTNH 2.9.1.
 
 try {
     $files = if ($Manifest) { Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json } else { @($Zips[$Build]) + $Addons }

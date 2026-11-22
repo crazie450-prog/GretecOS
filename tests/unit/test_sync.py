@@ -199,6 +199,30 @@ def test_excludes_are_never_copied_over_or_deleted(tmp_path: Path) -> None:
     env.assert_play_untouched()
 
 
+def test_phase10_lab_files_survive_a_sync(tmp_path: Path) -> None:
+    """D380: shells pasted and captures saved in the Lab, GuideNH's GOS page and its export."""
+    env = Env(tmp_path)
+    kept = {
+        "config/worldedit/schematics/sh-1.schematic": b"shell",
+        "config/guidenh/DefaultGuide/gos/guidenh/_en_us/index.md": b"# EBF",
+        "config/guidenh/site-export/20261122-120000/index.html": b"<html>",
+    }
+    for rel, data in kept.items():
+        write(env.lab, rel, data)
+    write(env.play, "config/worldedit/worldedit.properties", b"wand-item=271")
+    write(
+        env.lab, "config/guidenh/other.cfg", b"not Lab-only: Play has none, so it goes"
+    )
+    env.play_before = snapshot(env.play.parent)
+
+    assert env.sync("--only", "lab") == 0
+    lab = snapshot(env.lab)
+    assert {rel: lab[rel] for rel in kept} == {rel: (d, OLD) for rel, d in kept.items()}
+    assert lab["config/worldedit/worldedit.properties"] == (b"wand-item=271", OLD)
+    assert "config/guidenh/other.cfg" not in lab
+    env.assert_play_untouched()
+
+
 def test_dry_run_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

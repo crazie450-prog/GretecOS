@@ -1,19 +1,29 @@
-# Addon jars: one Lab sitting, then Play (D365, D373)
+# Addon jars: one Lab sitting, then Play (D365, D373, D379)
 
 One sitting in the Lab tests every addon jar that is waiting to go into Play. Play gets a jar
 only after this test passes **and** you say yes (checklist 5.2.12 and 5.2.13). Nothing in
 Gregtec OS copies these jars: every step here is yours.
 
-| Jar (in `Downloads\GTNH-2.9.0`) | What it is | In the Lab it replaces |
-|---|---|---|
-| `sciencenotleisure-0.2.7.jar` and `gtnllib-1.1.6.jar` | GT-Not-Leisure 0.2.7 and its library: new (D365) | nothing; the two go in together |
-| `TwistSpaceTechnology-0.8.2.jar` | Twist Space Technology, update from 0.8.0 (D373) | `TwistSpaceTechnology-0.8.0.jar` |
-| `plannh-0.2.4.jar` | PlanNH, update from 0.2.0 (D373) | `plannh-0.2.0.jar` |
+| Jar (in `Downloads\GTNH-2.9.0`) | What it is | In the Lab it replaces | SHA256 (rechecked 2026-11-22, D379) |
+|---|---|---|---|
+| `sciencenotleisure-0.2.7.jar` and `gtnllib-1.1.6.jar` | GT-Not-Leisure 0.2.7 and its library: new (D365) | nothing; the two go in together | `17e7f8b2…2c97ce` and `83a3b0ab…02c9ca` |
+| `TwistSpaceTechnology-0.8.2.jar` | Twist Space Technology, update from 0.8.0 (D373) | `TwistSpaceTechnology-0.8.0.jar` | `5d5a537a…f427ed` |
+| `plannh-0.2.4.jar` | PlanNH, update from 0.2.0 (D373) | `plannh-0.2.0.jar` | `671e5471…10cbd7` |
 
-**Not in this sitting** (not ready for GTNH 2.9.0 on 2026-11-20, D373; part G says what each
-waits for): 123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta, worldedit-gtnh 1.0.1.
-The Lab and Play keep `OTHTechnology-2.2.1.1.jar`, `programmablehatches-0.2.1p0.jar` and
+The full hashes and download addresses are in `scripts/fetch_play_files.ps1`, which checks every
+jar for you in step 2. You never type a hash.
+
+**Not in this sitting** (rechecked 2026-11-22, D379; part G says what each waits for):
+123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta, worldedit-gtnh 1.0.2. The Lab and
+Play keep `OTHTechnology-2.2.1.1.jar`, `programmablehatches-0.2.1p0.jar` and
 `worldedit-v0.0.10.jar`.
+
+**GTNH 2.9.1 came out on 2026-11-21.** This sitting is for 2.9.0, the pack Play has. If you
+decide to move to 2.9.1 first (`pack_update.md`), do that before this sitting and ask for this
+list to be checked again: TST has an open report that it won't start a server on 2.9.1 (#1430).
+
+The building generator's mods (worldedit-gtnh, GuideNH, StructureLib, Schematica) need no new
+jar. Their check is [`building_mods_check.md`](building_mods_check.md), a separate sitting.
 
 **When.** In one go, about 1.5 hours, with Play closed until part E. From part B until part E
 or F the Lab's mods differ from Play's, and the other Lab checks of checklist section 3 compare
@@ -52,7 +62,8 @@ PlanNH 0.2.0 back (D93 (5)).
    [sync.lab]
    exclude = ["mods/sciencenotleisure-*", "mods/gtnllib-*", "mods/TwistSpaceTechnology-*", "mods/plannh-*"]
    ```
-   Save and close Notepad.
+   Save and close Notepad. (Phase 10's Lab files in `config\worldedit\schematics` and
+   `config\guidenh` are already left alone by default, D380: they need no entry here.)
 4. Keep a copy of the Lab world, so a failed test costs nothing:
    ```powershell
    Copy-Item "$lab\saves\lab-ops" "$env:USERPROFILE\Downloads\lab-ops-before-addon-test" -Recurse
@@ -193,11 +204,13 @@ other way round (remove the new jar, copy the old one in). A world saved with TS
 holds one of its newer machines (Bottled Chaos, the Mega Digester) loses those machines under
 0.8.0.
 
-## G. The three that wait
+## G. What waits
 
 `& $gos pack watch` reports each of these on every run, with the line "newest release ... isn't
 in the installed jar's name: a newer release? Check it in Lab before Play". That line is
 expected until the addon is pinned here. Nothing to do on your side until then.
+
+Rechecked on 2026-11-22 (D379): no newer 123Technology or Programmable Hatches release; worldedit-gtnh now has 1.0.2.
 
 - **123Technology 2.2.1.3** waits for a release its author does not call work in progress. His
   notes on 2.2.1.3 say "Contains WIP Content", and on 2.2.1.2 "WIP DO NOT USE". Since 2.2.1.2
@@ -206,7 +219,13 @@ expected until the addon is pinned here. Nothing to do on your side until then.
 - **Programmable Hatches v0.2.1p9-beta** waits for the author's README to name a newer version
   for GTNH 2.9.0. Today its table still says 0.2.1p0 for 2.9.0 and lists the newer builds under
   "2.9.0 Daily" (D88's rule).
-- **worldedit-gtnh 1.0.1** waits for a build made for GTNH 2.9.0's mods, or for the next stable
-  GTNH. It is a rewrite, built against newer CodeChickenCore, ForgeMultipart, ArchitectureCraft
-  and Carpenter's Blocks than 2.9.0 ships, and GOS's own paste test still runs on v0.0.10. The
-  shell paste keeps v0.0.10 and its limits (meta 15 at most, V16).
+- **worldedit-gtnh 1.0.2** (2026-11-21) waits for a build made for GTNH 2.9.0's mods, or for
+  the stable GTNH that ships the mods it is built against. It is a rewrite (1.0.0 and 1.0.1 on
+  2026-11-10), built against newer CodeChickenCore, Carpenter's Blocks and NEI than 2.9.0 or
+  2.9.1 ship, and GOS's own paste test still runs on v0.0.10. 1.0.2 adds EndlessIDs schematic
+  save and load (upstream #24, closed), and #30 (meta above 15) is closed since 1.0.0, but
+  neither helps while Play has v0.0.10. The shell paste keeps v0.0.10 and its limits (meta 15
+  at most, V16). Trying 1.0.2 in the Lab anyway is your call (D379).
+- **PlanNH 0.2.6** (2026-11-22) is built on exactly 2.9.0's libraries and could replace 0.2.4 in
+  this sitting if you prefer it (D379). Until you say so, the sitting tests 0.2.4. PlanNH 0.3.0
+  is for 2.9.1.

@@ -8,7 +8,7 @@
 | [paths] world            | none (Play's world: a folder in saves/)  | quests load (WO-1.5)        |
 | [paths] lab_world        | none (a Lab world: a folder in saves/)   | ores load (WO-1.6)          |
 | [sync.export] exclude    | the NEI jar and GregtecLink (plan 5.1)   | sync                        |
-| [sync.lab] exclude       | GregtecLink (WO-8.1, D287)               | sync                        |
+| [sync.lab] exclude       | GregtecLink (WO-8.1, D287); Phase 10's Lab files (D380) | sync          |
 | [export] keep_collected  | 5 (D102)                                 | export collect              |
 | [db] keep_runs           | 2 (D107)                                 | db build (WO-1.3)           |
 | [policy] ore_server_cache| true (D27: every generated vein)         | ores load (WO-1.6)          |
@@ -104,8 +104,17 @@ DEFAULT_SYNC_EXCLUDE: dict[str, tuple[str, ...]] = {
         "mods/gregteclink*",
         "config/gregteclink*",
     ),
-    # GregtecLink in Lab is its own (install_gregteclink.py --instance lab, WO-8.1): never Play's
-    "lab": ("mods/gregteclink*", "config/gregteclink*"),
+    # GregtecLink in Lab is its own (install_gregteclink.py --instance lab, WO-8.1): never Play's.
+    # Phase 10's Lab-only files under config/ (D380): the shells and captures Clayton pastes and
+    # saves with worldedit-gtnh, GuideNH's guide page for GOS and its exportsite output. Without
+    # these the next sync deletes them, because Play has none of them.
+    "lab": (
+        "mods/gregteclink*",
+        "config/gregteclink*",
+        "config/worldedit/schematics",
+        "config/guidenh/DefaultGuide/gos",
+        "config/guidenh/site-export",
+    ),
 }
 
 # Recipe-affecting configs in Play's fingerprint besides dreamcraft.cfg, which is always in it
