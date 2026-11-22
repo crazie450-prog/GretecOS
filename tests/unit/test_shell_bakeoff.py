@@ -1350,7 +1350,8 @@ def test_a_model_that_cannot_be_asked_stops_the_run_before_more_is_spent(
     assert run["results"] == [] and run["spent"]["usd"] == 0.0
     assert not (bo.run_dir(home, run["id"]) / "entries" / "c1").exists()
     seen = json.dumps(bo.blind(run)) + json.dumps(bo.summary(run))
-    for word in (*secrets_of(run), "OpenAI", "401"):
+    # the vendor's words, not bare digits: a run id's stamp or random part can hold "401"
+    for word in (*secrets_of(run), "OpenAI", "HTTP 401", "refused the key"):
         assert word not in seen, word
     assert "zebra (openai vendor-x-9000) can't be asked" in run["why_named"]
     text = bo.report(

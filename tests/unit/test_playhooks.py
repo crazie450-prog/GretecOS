@@ -604,7 +604,8 @@ def test_yes_starts_the_export_and_waits_for_its_lock(env: Env) -> None:
     ask = Asker(True)
     try:
         code, text = post_exit(env, ask, spawn)
-        assert ready.is_set()
+        # post_exit returns once the lock is held; the thread sets ready just after taking it
+        assert ready.wait(5)
         assert code == 0 and "export started" in text
         # Play can't start meanwhile.
         assert env.pre_launch()[0] == playhooks.EXIT_REFUSE
