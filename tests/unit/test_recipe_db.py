@@ -1173,6 +1173,62 @@ def test_without_neis_files_only_gt_is_loaded(tmp_path: Path, allow_list: Path) 
     )
 
 
+def test_thaumcraft_aspect_lines_are_skipped_and_reported(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    """Aspect Recipe Index's lines (D379): not in the DB, counted per handler in the report."""
+    plain = tmp_path / "plain"
+    make_run(plain)
+    before = rows(built(plain, allow_list).db, "SELECT ref FROM recipe ORDER BY ref")
+    ari = "com.gtnewhorizons.aspectrecipeindex.nei."
+    unknown = {"Count": 10, "TCAspect": "vitreus", "name": "Unknown Aspect"}
+    files = default_files()
+    files["nei/Alchemy.jsonl"] = jsonl(
+        [
+            nei_line(
+                ari + "AlchemyRecipeHandler",
+                [stack("test:plate"), unknown],
+                [stack("test:gear")],
+                None,
+            ),
+            nei_line(  # in an anyOf
+                ari + "AlchemyRecipeHandler",
+                [stack("test:plate", anyOf=[stack("test:plate"), unknown])],
+                [stack("test:gear")],
+                None,
+            ),
+        ],
+        "\r\n",
+    )
+    files["nei/Aspect Combination.jsonl"] = jsonl(
+        [
+            nei_line(
+                ari + "AspectCombinationHandler",
+                [{"Count": 1, "TCAspect": "aer", "name": "Aer"}],
+                [{"Count": 1, "TCAspect": "aer", "name": "Aer"}],
+                None,
+            )
+        ],
+        "\r\n",
+    )
+    make_run(tmp_path, files=files)
+    result = built(tmp_path, allow_list)
+    assert rows(result.db, "SELECT ref FROM recipe ORDER BY ref") == before
+    text = report.lines(result, full=False)
+    assert (
+        "  NEI: skipped 3 lines with Thaumcraft aspects (aspects aren't modelled, so their "
+        "recipes aren't in the DB, D379): "
+        f"{ari}AlchemyRecipeHandler (2), {ari}AspectCombinationHandler (1)"
+    ) in text
+    (notes,) = rows(result.db, "SELECT sources_json FROM export_run")[0]
+    assert json.loads(notes)["merge"]["aspect_lines"] == 3
+    # A run without aspects says nothing about them.
+    assert not any(
+        "Thaumcraft" in line
+        for line in report.lines(built(plain, allow_list), full=True)
+    )
+
+
 def test_refusals_leave_the_db_alone(tmp_path: Path, allow_list: Path) -> None:
     with pytest.raises(build.BuildError, match="gos export collect"):
         built(tmp_path, allow_list)

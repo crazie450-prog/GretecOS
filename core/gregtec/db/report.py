@@ -238,6 +238,13 @@ def lines(result: Result, full: bool) -> list[str]:
             f"copies of another NEI-only recipe), {sum(stats.not_recipes.values()):,} lines of "
             f"{len(stats.not_recipes)} handlers that aren't recipes, left out"
         )
+        aspects = loaded.nei_refs.aspect_lines
+        if aspects:
+            out.append(
+                f"  NEI: skipped {sum(aspects.values()):,} lines with Thaumcraft aspects "
+                "(aspects aren't modelled, so their recipes aren't in the DB, D379): "
+                + ", ".join(f"{h} ({n:,})" for h, n in sorted(aspects.items()))
+            )
         if loaded.oredict is not None:
             unread = sum(o.error is not None for o in loaded.oredict)
             tail = f", {unread:,} whose members the mod couldn't read" if unread else ""
