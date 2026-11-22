@@ -16,6 +16,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -44,13 +45,16 @@ def restore_logging() -> Iterator[None]:
     root.setLevel(level)
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+def two_free_ports() -> tuple[int, int]:
+    """Two different free ports: both sockets stay bound until both numbers are read."""
+    with socket.socket() as a, socket.socket() as b:
+        a.bind(("127.0.0.1", 0))
+        b.bind(("127.0.0.1", 0))
+        return int(a.getsockname()[1]), int(b.getsockname()[1])
 
 
 def make_cfg(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
+    port, supervisor_port = two_free_ports()
     lines = [
         "[paths]",
         f'gos_home = "{(tmp_path / "home").as_posix()}"',
@@ -58,8 +62,8 @@ def make_cfg(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
         f'prism_instances = "{(tmp_path / "prism" / "instances").as_posix()}"',
         *[f'{k} = "{v}"' for k, v in extra.items()],
         "[core]",
-        f"port = {free_port()}",
-        f"supervisor_port = {free_port()}",
+        f"port = {port}",
+        f"supervisor_port = {supervisor_port}",
     ]
     path = tmp_path / "gos.toml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -333,9 +337,46 @@ def test_gos_watch_run_spools_events(
         raise keys.MissingKeyError(name)
 
     monkeypatch.setattr(keys, "get_key", no_token)
+    # The game pauses after the watcher's first look at the log (a first look starts at the
+    # log's end, so a line written before it is history), and the 4 s stop waits until the
+    # pause is spooled: the test no longer races the watcher's start-up on a loaded runner
+    # (WO-11.4: IndexError, no spool, when the start took over the 1.5 s the game waited).
+    looked, spooled = threading.Event(), threading.Event()
+    poll, write, loop = runner.LogWatch.poll, runner.Spool.write, runner.run_loop
+
+    def first_look(self: runner.LogWatch) -> list[Any]:
+        try:
+            return poll(self)
+        finally:
+            looked.set()
+
+    def spool(self: runner.Spool, events: Any) -> None:  # noqa: ANN401
+        write(self, events)
+        if events:
+            spooled.set()
+
+    class AfterSpooled:
+        """The run's stop, once the pause is spooled (at most 30 s later)."""
+
+        def __init__(self, stop: threading.Event) -> None:
+            self.stop, self.cap = stop, time.monotonic() + 30
+
+        def is_set(self) -> bool:
+            return self.stop.is_set() and (
+                spooled.is_set() or time.monotonic() > self.cap
+            )
+
+        def wait(self, s: float) -> bool:
+            return self.stop.wait(s) and spooled.wait(s)
+
+    monkeypatch.setattr(runner.LogWatch, "poll", first_look)
+    monkeypatch.setattr(runner.Spool, "write", spool)
+    monkeypatch.setattr(
+        runner, "run_loop", lambda w, sp, se, stop: loop(w, sp, se, AfterSpooled(stop))
+    )
 
     def game() -> None:
-        time.sleep(1.5)
+        assert looked.wait(30)
         tree.log(fg.stamp_line("Saving and pausing game...", "Server thread"))
 
     threading.Thread(target=game, daemon=True).start()

@@ -542,9 +542,12 @@ def version_in(tag: str, jar: str) -> bool:
 
 
 def check_addons(
-    web: Web, addons: Sequence[Addon], files: Sequence[str]
+    web: Web, addons: Sequence[Addon], files: Sequence[str] | None
 ) -> list[AddonCheck]:
-    names = [Path(f).name for f in files]
+    """Each addon Play has, and each watched ``always``, against its newest release.
+    ``files``: Play's mod files; None when they couldn't be listed (or no Play is set), so
+    whether an addon is in Play isn't known."""
+    names = [Path(f).name for f in files or ()]
     out = []
     for a in addons:
         jars = tuple(
@@ -558,6 +561,11 @@ def check_addons(
         latest = releases[0] if releases else None
         if latest is None:
             verdict = "no release feed read (see notes)"
+        elif files is None:
+            verdict = (
+                f"couldn't look in Play's mods; newest release {latest.tag} "
+                f"({latest.updated})"
+            )
         elif not jars:
             verdict = f"not in Play; newest release {latest.tag} ({latest.updated})"
         else:
@@ -591,6 +599,13 @@ class Watch:
                 f"NEW STABLE RELEASE: GTNH {p.newer[-1]}"
                 + (f" (also {', '.join(p.newer[:-1])})" if len(p.newer) > 1 else "")
                 + f". Start the playbook: gos pack update --start {p.newer[-1]}"
+            )
+        elif (
+            not p.feed_seen
+        ):  # no feed body at all (offline, rate-limited): not an all-clear
+            out.append(
+                f"Couldn't check for a stable release newer than {p.adopted}: "
+                "the GTNH releases feed wasn't read (see Notes). Run it again later."
             )
         else:
             out.append(f"No stable release newer than {p.adopted} on its line.")
@@ -626,7 +641,8 @@ def watch(
     addons_path: Path = ADDONS,
 ) -> Watch:
     """Check once and record what was seen in ``watch.json`` (``play``: Play's instance folder,
-    for its mod list; None leaves the addons out)."""
+    for its mod list; with None, or mods that can't be listed, only the addons watched
+    ``always`` are checked)."""
     state = load_state(home)
     web = Web(home, state, fetch, now=now, force=force)
     pack = check_pack(web, adopted)
@@ -636,14 +652,16 @@ def watch(
         if isinstance(base, dict) and v in pack.manifests:
             summaries.append(manifest_diff(adopted, base, v, pack.manifests[v]))
     notes = []
-    files: list[str] = []
+    files: list[str] | None = None
     if play is not None:
         try:
             files = play_mod_files(play)
         except (OSError, fingerprint.FingerprintError) as exc:
-            notes.append(f"Play's mods couldn't be listed ({exc}): addons not checked")
-            play = None
-    checks = check_addons(web, read_addons(addons_path), files) if play else []
+            notes.append(
+                f"Play's mods couldn't be listed ({exc}): only the addons watched always "
+                "were checked"
+            )
+    checks = check_addons(web, read_addons(addons_path), files)
     result = Watch(_utc(now()), pack, summaries, checks, notes + web.notes)
     state["last"] = {
         "checked_utc": result.checked_utc,

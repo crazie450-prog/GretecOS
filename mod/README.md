@@ -29,6 +29,22 @@ On Linux without a display, run the client harness under Xvfb (CI does):
 `x11-xserver-utils` (LWJGL 2 crashes at startup without `xrandr`) and Mesa's `libgl1-mesa-dri`. `runClient` (Java 8,
 LWJGL 2) works the same way.
 
+After the harnesses, the Python integration tests check their runs, from the repo root:
+`GOS_REQUIRE_HARNESS_RUN=1 GOS_CLIENT_RUN_B=mod/run/client-b uv run pytest tests/integration` (serial; the
+`GOS_CLIENT_RUN_B` copy is described under the client harness and in `tests/integration/test_db_harness.py`).
+`tests/integration/test_real_dump_harness.py` also needs a real structure dump: `uv run gos structures extract --out
+<dir>` (about 10 minutes once Gradle's caches are warm), then `GOS_REAL_STRUCTURES=<dir>`; CI's `mod` job extracts one
+and sets `GOS_REQUIRE_REAL_DUMP=1`, so the test fails rather than skips there. CI's
+`mod` job adds `-n 4 --dist loadfile --no-loadscope-reorder` (pytest-xdist, D340): four workers, each running whole
+test files, so a file's module fixtures (most build their own DB from the harness runs) are built once, as in a serial
+run, and the slowest files start first (`SLOW_FIRST` in `tests/integration/harness_cache.py`: add a new file there
+if it takes more than about a minute). The fixtures' GOS_HOMEs are copies of one build per harness run
+(`built_home`, built once per run even across workers). Each worker
+writes only under its own pytest temp folder and reads `mod/run/` without changing it. A new integration test must
+keep that true: no fixed ports, no writes outside `tmp_path`, no dependence on another file's tests having run. (The
+`serial` marker is honoured only by the `checks` jobs, which run marked tests in a step of their own; the `mod` job
+runs every integration test on the workers, so none may need the machine to itself.)
+
 The jar to install is `build/libs/gregteclink-<version>.jar` (not `-dev` or `-sources`). Its name matches the
 `mods/gregteclink*` entry of Export's `sync_exclude`.
 
@@ -72,6 +88,13 @@ the manifest and renames the folder. With autoexport (below) the game then quits
 - One deliberate runtime change, with `export=true` only: GT's recipe-owner capture is turned on in preInit (the same
   switch as GT's `NEIRecipeOwner` client option), so each recipe records the mod that added it. NEI in Export then
   shows "added by" lines.
+- **Recipes with no input they use up** (D364). A recipe line that gives something and has no input with an amount
+  above 0 gets `"unkeyed"`: `null_input` (GT holds a null input slot: the loader asked for an item this instance
+  doesn't have), `special_items` (the machine reads its inputs from the recipe's special object, as Eye of Harmony
+  does) or `none` (GT lists a circuit or nothing: a machine that works from EU alone, or an input GT's recipe
+  builder dropped because it was null). The export drops nothing; GT's own recipe is like that.
+  `counts.recipes_unkeyed` counts them, `gos db build` keeps the marker as `recipe_meta` `unkeyed`, and both
+  harnesses check that every such line is marked and no other.
 - `-Dgregtec.runId=<id>` names the run (`[A-Za-z0-9._-]`, up to 64 characters); otherwise it is the UTC time.
 - **NEI step.** NEI returns normally even when its dump fails, so GregtecLink judges it by NEI's own log lines,
   captured during the call from the logger object NEI writes to (`NEIClientConfig.logger`, named `NotEnoughItems`),
@@ -281,6 +304,33 @@ place and break; `mteAt` on an unloaded chunk leaves it unloaded (the listener n
 outside `gregteclink/`. `tests/integration/test_machine_events_harness.py` then checks the census of each phase's
 region files against `expected.json` and runs the events and the census through the watchers into My base on a DB
 built from the export harness's run. CI runs it in the `mod` job, after the export harness.
+
+### Schematic harness (WO-10.4)
+
+`./gradlew runServer -Pharness -PharnessSchematic` puts worldedit-gtnh `v0.0.10:dev` on the dev server's classpath
+for that run only (the harness code compiles against it, `compileOnly`; no other run and not the shipped jar has
+WorldEdit) and turns no GregtecLink module on. It deletes only the world, `gregteclink/schematic-harness/`, the old
+result and `config/worldedit/`, and copies `harness/schematic/in/` (GOS-written shells,
+`tests/harness/schematic_inputs.py`) to `gregteclink/schematic-harness/in/`. 40 ticks after server start, for each
+shell, through WorldEdit's own classes: read it (`ClipboardFormat.SCHEMATIC`, as `//schem load`), paste it with air at
+a "player" position high above the superflat (`ClipboardHolder.createPaste().to(player)`, as `//paste`), check the
+world cell by cell (registry name + meta against WorldEdit's reading) in the box at the player plus the file's
+`WEOffset` read from the NBT, and air in the layers above and below it, then copy that box with the player as origin
+(`ForwardExtentCopy` into a `BlockArrayClipboard`, as `//copy`) and save it to `gregteclink/schematic-harness/out/`
+(as `//schem save`). `tests/integration/test_schematic_harness.py` reads each copy with GOS's reader and requires the
+same block state in every cell and the same offset (D310). The dev runtime has no EndlessIDs: ids above 4095 and metas
+above 15 are the Lab round trip (`docs/runbooks/schematic_roundtrip.md`). CI runs it after the listener harness.
+
+Then (WO-10.9, D350) it builds one GT multiblock as Clayton does in the Lab for an addon multi: a 4 x 2 x 3 block of
+heat proof casings with the EBF's controller in its east face (turned east), an input bus, an output bus and an energy
+hatch, each machine placed as a player places it (the item's use by a fake player, so GT writes its tile entity), then
+`//copy` with one air column and `//schem save` through WorldEdit's classes, with the tile entities, to
+`gregteclink/schematic-harness/out/gt_multi_capture.schematic`, and what it placed (box cells, MTE ids, facing) to
+`gt_multi_capture.placed.json`. Checks `multi_placed` and `multi_copied_with_tile_entities` (every machine's
+`BaseMetaTileEntity` with its `mID` in the save). `tests/integration/test_footprints_schematic_harness.py` turns the
+save into a footprint through `gos footprints capture` on the export harness's DB and checks its controller, hatch
+cells and box against the placed JSON, and that `gos footprints coverage` then reports the EBF as `capture`. The
+capture adds well under a second to the run (`durations_ms.schematic_ms` 351 for the whole schematic step here).
 
 ## Listener module (WO-6.2)
 

@@ -19,7 +19,7 @@ burning, no throttle circuit, maintenance done.
   x 15 / 100, in Java's integer arithmetic. The superheated boilers take only GT's allowed fuels
   (:data:`ALLOWED_FUELS`, ``LargeBoilerFuelBackend.ALLOWED_FUELS``).
 - **Solid fuel.** An item in the input bus burns by its furnace burn value
-  (``GTModHandler.getFuelValue``, exported per solid fuel of ``largeBoilerFakeFuels``, D329): the
+  (``GTModHandler.getFuelValue``, exported per solid fuel of ``largeBoilerFakeFuels``, D380): the
   boiler takes it when the value is at least 80 and at least its ``EUT_GENERATED``, one item at
   a time. Its raw burn time is the value / 80, the remainder carried from item to item
   (``excessFuel``), stretched by ``LargeBoilerFuelBackend.getBurntimeRatioTicks(ticks, 20)``

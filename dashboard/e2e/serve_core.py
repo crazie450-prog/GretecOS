@@ -9,8 +9,10 @@ real Host/Origin checks, cookie and pairing.
 
 What the dashboard reads from the desktop comes from files the tests write in ``<tmp>/e2e/``:
 ``foreground`` (the program in front, e.g. ``javaw.exe``: the core's focus signal), ``running``
-(a JSON list of running GTNH roles, default none) and ``key`` (``missing``: no Anthropic key, so
-"AI offline"); the core polls them every second. Test-only: production code never reads these
+(a JSON list of running GTNH roles, default none), ``key`` (``missing``: no Anthropic key, so
+"AI offline") and ``design_delay`` (seconds each design stage waits before it goes on, so the
+design-job tests (WO-3.9) can watch the stages and cancel on these small made-up exports, which
+design in well under a second); the core polls them every second. Test-only: production code never reads these
 files. Its gos.toml marks setup done, so the shell shows.
 
 Ores (WO-6.6, :func:`load_ores`): WO-1.6's made-up ore mixes and Lab world (tests/unit/test_ores.py)
@@ -22,12 +24,26 @@ Crops (WO-6.7, :func:`load_crops`): the crop guide's made-up world (tests/fixtur
 to the tool fixtures' export run, never as a newer run of its own: the recipe tools read only the
 newest run, so a crop-only run would hide the e2e world's recipes.
 
+Shells (WO-10.7, :func:`load_shell`): one shell build made by the real designer on made-up data.
+Floor plan (WO-10.5, :func:`load_structures`): the structure fixture, its made-up furnace as
+the e2e export's EBF, so the Designer's floor plan places a multiblock.
+
 Activity (WO-6.3, :func:`load_events`): made-up Play and Lab sessions in the event store, the open
 age first seen three days ago and one OC power reading in it, for the Activity view and the
 tier-up recap.
 
 ``--power`` (WO-4.6, :func:`setup_power`): WO-4.2's made-up power export instead of the tool
 fixtures', so the Power view designs, ranks and accepts real (made-up) power lines.
+
+``--shells`` (WO-10.10, :func:`setup_shells`): the shell workbench's core: WO-10.7's test home
+(tests/unit/test_shell.py: the made-up block catalog, the structure fixture, the steel line and
+its power plan) and one shell made before the workbench, so the workbench designs, revises, compares and undoes real
+(made-up) shells; ``design_delay`` slows its jobs' stages too.
+It also holds two finished bake-off runs with the fake models (WO-10.11, :func:`bake_off`), for
+shell_bakeoff.spec.ts.
+
+``--tailnet <name>:<port>`` (WO-9.3): that Host is allowed too, as the phone's tailnet name is
+in ``[core] allowed_hosts``; ``e2e/fake_serve.py`` stands in for Tailscale Serve in front of it.
 
 ``--fresh`` (WO-2.9's first run, :func:`setup_fresh`): no DB and no gos.toml; GOS_HOME is
 ``<tmp>/GregtecOS`` and the fake Prism tree, GOS_APP and keyring are in ``<tmp>/fixtures``.
@@ -41,6 +57,7 @@ import importlib.util
 import json
 import shutil
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -158,6 +175,42 @@ def load_guide(home: Path) -> None:
     module.make(guide.site_root(Config(gos_home=home)))
 
 
+def load_shell(home: Path) -> None:
+    """WO-10.7: one shell build, made by the real designer (the procedural generator around WO-10.5's
+    made-up steel line, on tests/unit/test_shell.py's made-up catalog) in a scratch home, then
+    copied into ``home/data/build/shells`` so the Build view lists and draws it."""
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location(
+        "shell_fixtures", REPO / "tests" / "unit" / "test_shell.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the shell test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["shell_fixtures"] = module
+    spec.loader.exec_module(module)
+    from gregtec.build import shell_store
+    from gregtec.db import access
+    from gregtec.vault.io import VaultIO
+
+    with tempfile.TemporaryDirectory(prefix="gos-e2e-shell-") as tmp:
+        scratch = module.make_home(Path(tmp), module.lay_tests.production())
+        conn = access.connect(access.db_path(scratch), readonly=True)
+        try:
+            made = shell_store.make(
+                conn,
+                scratch,
+                VaultIO(scratch / "vault"),
+                ["pl-steel"],
+                theme_id="th-foundry",
+            )
+        finally:
+            conn.close()
+        if made.saved is None:
+            raise RuntimeError(f"the e2e shell was refused: {made.outcome.reasons}")
+        shutil.copytree(made.saved, home / shell_store.ROOT / made.build)
+
+
 def load_events(home: Path) -> None:
     """WO-6.3's made-up sessions in ``home``'s event store, as the watchers would post them:
     Play two days ago (login, quests, machines, a death, chat, quit) and three hours ago (ending
@@ -272,6 +325,68 @@ def setup_power(home: Path) -> None:
     powerview.design = design  # type: ignore[assignment]
 
 
+def setup_shells(root: Path) -> Path:
+    """``--shells`` (WO-10.10): WO-10.7's test home in ``root/home`` (its block catalog, the
+    structure fixture's multis, the steel line and its power plan) and one procedural foundry
+    shell, as a build from before the workbench (its plans aren't saved-plan rows, so the
+    workbench offers them from that shell's design). The vault
+    is deployed by ``main`` as for the other cores. Returns GOS_HOME."""
+    spec = importlib.util.spec_from_file_location(
+        "shell_fixtures", REPO / "tests" / "unit" / "test_shell.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("can't load the shell test fixtures")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["shell_fixtures"] = module
+    spec.loader.exec_module(module)
+    home: Path = module.make_home(
+        root, module.lay_tests.production(), module.lay_tests.power()
+    )
+    from gregtec.build import shell_store
+    from gregtec.db import access
+    from gregtec.vault.io import VaultIO
+
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:  # one shell from before the workbench (WO-10.7's procedural foundry shell)
+        made = shell_store.make(
+            conn, home, VaultIO(home / "vault"), ["pl-steel"], theme_id="th-foundry"
+        )
+    finally:
+        conn.close()
+    if made.saved is None:
+        raise RuntimeError(f"the e2e shell was refused: {made.outcome.reasons}")
+    bake_off(home)
+    shutil.rmtree(home / "vault")  # main deploys it, as for every core
+    return home
+
+
+def bake_off(home: Path) -> None:
+    """Two finished bake-off runs with the fake models (WO-10.11), one for each screen size
+    shell_bakeoff.spec.ts rates (rating then naming the models closes a run): two cases, the
+    plain and the ornate fake, kept under ``data/bakeoff`` apart from the workbench's shells."""
+    from gregtec.build import shell_bakeoff as bo
+    from gregtec.build import shell_fakes
+    from gregtec.db import access
+    from gregtec.vault.io import VaultIO
+
+    plans = {"small": ["pl-steel"], "large": ["pl-steel", "pl-power"]}
+    models = [bo.FAKES[shell_fakes.PLAIN], bo.FAKES[shell_fakes.ORNATE]]
+    vault = VaultIO(home / "vault")
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:
+        prepared = bo.prepare(conn, home, vault, bo.load_cases()[:2], plans)
+        for seed in (1, 2):
+            run = bo.create(
+                home, prepared, models, plans, seed=seed, now=1_794_000_000 + seed
+            )
+            designers = {m.label: shell_fakes.FakeDesigner(m.model) for m in models}
+            done = bo.Runner(conn, home, vault, run, designers).execute(prepared)
+            if done["status"] != bo.DONE or len(bo.rateable(done)) != 2:
+                raise RuntimeError(f"the e2e bake-off did not finish: {done['status']}")
+    finally:
+        conn.close()
+
+
 def _load_fakes() -> object:
     """tests/unit/setup/fakes.py: the file keyring and the fake Prism tree (WO-2.9)."""
     spec = importlib.util.spec_from_file_location(
@@ -304,6 +419,35 @@ def setup_fresh(root: Path) -> Path:
     return root / "GregtecOS"
 
 
+def load_structures(home: Path) -> None:
+    """WO-10.5's floor plan: WO-1.8's self-authored structure fixture (tests/fixtures/
+    gtnh-extractor), its made-up furnace (mte 9001) standing in for the e2e export's made-up
+    Electric Blast Furnace (mte 1000), so the Designer lays out a real multi. Test data only."""
+    import json
+
+    from gregtec.db import access
+    from gregtec.db import structures as structure_db
+
+    conn = access.connect(access.db_path(home))
+    try:
+        structure_db.load(conn, REPO / "tests" / "fixtures" / "gtnh-extractor")
+        rows = conn.execute(
+            "SELECT rowid, blocks_json FROM structure WHERE meta = 9001"
+        ).fetchall()
+        for rowid, text in rows:
+            blocks = json.loads(text)
+            for b in blocks:
+                if b["block"] == "gregtech:gt.blockmachines" and b["meta"] == 9001:
+                    b["meta"] = 1000
+            conn.execute(
+                "UPDATE structure SET meta = 1000, blocks_json = ? WHERE rowid = ?",
+                (json.dumps(blocks), rowid),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="serve_core.py")
     parser.add_argument(
@@ -323,7 +467,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="the Power view's core (WO-4.6): WO-4.2's power fixture; see setup_power",
     )
+    parser.add_argument(
+        "--shells",
+        action="store_true",
+        help="the shell workbench's core (WO-10.10): WO-10.7's test home; see setup_shells",
+    )
     parser.add_argument("--host-name", default=DASHBOARD_HOST)
+    parser.add_argument(
+        "--tailnet",
+        action="append",
+        default=[],
+        help="a tailnet Host to allow, as [core] allowed_hosts takes it (the phone, WO-9.3)",
+    )
     args = parser.parse_args(argv)
     root: Path = args.home.absolute()
     fresh_home(root)
@@ -331,15 +486,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.fresh:
         home = setup_fresh(root)
     else:
-        home = root
+        home = setup_shells(root) if args.shells else root
         if args.power:
             setup_power(home)
-        else:
+        elif not args.shells:
             build_db(home)
             ores_lab = load_ores(home)
             load_crops(home)
             load_events(home)
             load_guide(home)
+            load_shell(home)
+            load_structures(home)
         # The vault from the template, so the Designer's accept writes its notes (WO-3.7).
         from gregtec.vault import deploy as vault_deploy
 
@@ -373,10 +530,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     desktop.foreground_program = foreground
     prism.running_clients = running
+    from gregtec.planner import progress
+
+    real_stage = progress.stage
+
+    def slow_stage(name: str, k: int | None = None, n: int | None = None) -> None:
+        delay = float(_read(controls / "design_delay") or 0)
+        if delay > 0 and name != "effort":
+            real_stage(
+                name, k, n
+            )  # report it, then wait, then check again for a cancel
+            time.sleep(delay)
+        real_stage(name, k, n)
+
+    progress.stage = slow_stage
     if not args.fresh:  # --fresh: the real check, against the file keyring
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).
     core_app.KEY_CHECK_S = 1.0
+    # Every spec pairs its own page (and the phone spec pairs over the tailnet, WO-9.3), more
+    # than D117's 10 starts per 10 minutes in one run; the limit itself is tested in tests/security.
+    from gregtec.api import security
+
+    security.PAIR_RATE = (40, 600)
     dashboard.GAME_EVERY_S = 1.0
     dashboard.DATA_EVERY_S = 1.0
 
@@ -388,6 +564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         core_port=args.port,
         supervisor_port=args.port + 1,
         dashboard_host=args.host_name,
+        extra_allowed_hosts=tuple(args.tailnet),
         # WO-7.5: a low store alerts after 5 s, not 30, so oc_displays.spec.ts needn't wait.
         alerts=AlertRules(power_low_s=5),
     )

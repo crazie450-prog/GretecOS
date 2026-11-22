@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -63,6 +64,11 @@ public final class Harness {
 
     public static final String PROPERTY = "gregtec.harness";
     public static final String RESULT = "harness-result.json";
+    /**
+     * The schematic harness (WO-10.4): read here, so that {@link SchematicHarness} and its WorldEdit classes load
+     * only in that run, which is the only one with worldedit-gtnh on the classpath.
+     */
+    private static final String SCHEMATIC_PROPERTY = "gregtec.harness.schematic";
     /** Set by {@code -PharnessNeiFail}: the client harness expects NEI's dump to fail. */
     private static final String NEI_FAIL_PROPERTY = "gregtec.harness.neiFail";
     /** Set by {@code -PharnessNeiHandlerFail}: the NEI step gets one more recipe handler, which always fails (D188). */
@@ -179,6 +185,10 @@ public final class Harness {
         ran = true;
         if (ListenerHarness.requested()) {
             ListenerHarness.start(gameDir, modules);
+            return;
+        }
+        if (Boolean.getBoolean(SCHEMATIC_PROPERTY)) {
+            SchematicHarness.start(gameDir);
             return;
         }
         List<JsonObject> checks = new ArrayList<>();
@@ -831,6 +841,21 @@ public final class Harness {
             check(checks, "blastfurnace_coil_heat", scan.coilHeat > 0, scan.coilHeat + " EBF recipes with coil_heat");
             check(checks, "recipe_owners_captured", scan.withOwners > 0, scan.withOwners + " recipes with owners");
             check(checks, "non_consumed_inputs_kept", scan.nZero > 0, scan.nZero + " inputs with n == 0");
+            int unkeyedCount = counts.get("recipes_unkeyed")
+                .getAsInt();
+            check(
+                checks,
+                "recipes_without_used_up_input_marked",
+                scan.unkeyedWrong == 0 && unkeyedCount == scan.unkeyed.values()
+                    .stream()
+                    .mapToInt(Integer::intValue)
+                    .sum(),
+                scan.unkeyedWrong == 0
+                    ? "every recipe with an output and no input it uses up has \"unkeyed\", and no other: "
+                        + scan.unkeyed
+                        + "; counts.recipes_unkeyed="
+                        + unkeyedCount
+                    : scan.unkeyedWrong + " recipes marked wrongly, e.g. " + scan.unkeyedExample);
 
             boolean[] ebf = { false };
             eachLine(dir.resolve("gt_machines.jsonl"), o -> {
@@ -1468,7 +1493,7 @@ public final class Harness {
                     + " dynamo hatches, "
                     + lasers
                     + " of 256 A or more");
-            // D329: the large boilers' solid fuels with their exact furnace burn values. Charcoal burns 1600 like
+            // D380: the large boilers' solid fuels with their exact furnace burn values. Charcoal burns 1600 like
             // coal; the map's own special value is that burn value / 1600, rounded down.
             int solids = 0;
             int ratios = 0;
@@ -1950,6 +1975,10 @@ public final class Harness {
             int coilHeat;
             int withOwners;
             int nZero;
+            /** Lines per "unkeyed" cause (D364). */
+            final Map<String, Integer> unkeyed = new TreeMap<>();
+            int unkeyedWrong;
+            String unkeyedExample;
 
             void recipe(JsonObject o) {
                 if (o.has("error")) return;
@@ -1962,10 +1991,51 @@ public final class Harness {
                     coilHeat++;
                 if (o.has("owners") && o.getAsJsonArray("owners")
                     .size() > 0) withOwners++;
+                unkeyed(o);
                 for (JsonElement in : o.getAsJsonArray("in")) {
                     if (in.isJsonObject() && in.getAsJsonObject()
                         .get("n")
                         .getAsInt() == 0) nZero++;
+                }
+            }
+
+            /**
+             * D364, worked out again from the line's slots: a recipe with an output and no input it uses up carries
+             * "unkeyed", which is "null_input" exactly when an input slot is null, else "special_items" exactly when
+             * the line has them, else "none"; every other recipe has no "unkeyed".
+             */
+            private void unkeyed(JsonObject o) {
+                boolean gives = false;
+                for (String outs : new String[] { "out", "fout" }) {
+                    for (JsonElement e : o.getAsJsonArray(outs)) gives |= e.isJsonObject();
+                }
+                boolean usesUp = false;
+                boolean nullSlot = false;
+                for (JsonElement e : o.getAsJsonArray("in")) {
+                    nullSlot |= e.isJsonNull();
+                    usesUp |= e.isJsonObject() && e.getAsJsonObject()
+                        .get("n")
+                        .getAsInt() > 0;
+                }
+                for (JsonElement e : o.getAsJsonArray("fin")) {
+                    nullSlot |= e.isJsonNull();
+                    usesUp |= e.isJsonObject() && e.getAsJsonObject()
+                        .get("mb")
+                        .getAsInt() > 0;
+                }
+                String want = !gives || usesUp ? null
+                    : nullSlot ? "null_input" : o.has("special_items") ? "special_items" : "none";
+                String got = o.has("unkeyed") ? o.get("unkeyed")
+                    .getAsString() : null;
+                if (got != null) unkeyed.merge(got, 1, Integer::sum);
+                if (!Objects.equals(want, got) && unkeyedWrong++ == 0) {
+                    unkeyedExample = o.get("map")
+                        .getAsString() + " idx "
+                        + o.get("idx")
+                        + ": \"unkeyed\" is "
+                        + got
+                        + ", expected "
+                        + want;
                 }
             }
         }

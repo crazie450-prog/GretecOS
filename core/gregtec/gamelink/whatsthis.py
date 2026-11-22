@@ -50,6 +50,7 @@ class Answer:
     card: dict[str, Any] | None = None
     refs: list[str] = field(default_factory=list)
     found: bool = False
+    mod: str | None = None  # the DB's mod for it
 
 
 def item_of(target: dict[str, Any]) -> dict[str, Any] | None:
@@ -95,18 +96,18 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
-def _plain_first(p: Parsed) -> dict[str, str] | None:
-    """The first row without a ``fake?`` or ``recycling`` flag, else the first (D172)."""
-    for row in p.rows:
-        if not {"fake?", "recycling"} & set(row.get("flags", "").split()):
-            return row
+def _first(p: Parsed) -> dict[str, str] | None:
+    """The first row: rows without a ``fake?`` or ``recycling`` flag are listed first (D341)."""
     return p.rows[0] if p.rows else None
 
 
-def answer(
+def resolve(
     reg: Registry, target: dict[str, Any] | None, *, linked: bool = True
 ) -> Answer:
-    """What ``target`` (a ``target`` message from the client module) is, from the DB."""
+    """Which DB item ``target`` is, with no lookup beyond ``item_resolve``: ``found`` with its
+    key, name and kind (``text`` empty), or not found with the sentence that says why (no
+    link, nothing pointed at, the feed off, or an item the DB lacks). The hover context of a
+    question about "this" (WO-8.4, D362) and :func:`answer` both start here."""
     if target is None:
         return Answer(NO_LINK if not linked else NOTHING)
     if target.get("kind") == "off":
@@ -114,20 +115,35 @@ def answer(
     item = item_of(target)
     if item is None:
         return Answer(NOTHING)
-    keys = keys_for(item)
-    found = None
-    for key in keys:
+    for key in keys_for(item):
         found = _resolved(reg, key)
         if found is not None:
-            break
-    if found is None:
-        plain = f"{item['item']}@{item['meta']}"
-        shown = target.get("display")
-        if isinstance(shown, str) and (shown := _CONTROL.sub("", shown).strip()[:80]):
-            return Answer(f"{shown} ({plain}) isn't in the recipe DB.", key=plain)
-        return Answer(f"{plain} isn't in the recipe DB.", key=plain)
-    key, name = found["key"], found.get("name") or found["key"]
-    parts = [f"{name}, from {found.get('mod') or 'an unknown mod'}."]
+            return Answer(
+                "",
+                key=found["key"],
+                name=found.get("name") or found["key"],
+                kind=found.get("kind"),
+                found=True,
+                mod=found.get("mod") or None,
+            )
+    plain = f"{item['item']}@{item['meta']}"
+    shown = target.get("display")
+    if isinstance(shown, str) and (shown := _CONTROL.sub("", shown).strip()[:80]):
+        return Answer(f"{shown} ({plain}) isn't in the recipe DB.", key=plain)
+    return Answer(f"{plain} isn't in the recipe DB.", key=plain)
+
+
+def answer(
+    reg: Registry, target: dict[str, Any] | None, *, linked: bool = True
+) -> Answer:
+    """What ``target`` (a ``target`` message from the client module) is, from the DB."""
+    got = resolve(reg, target, linked=linked)
+    item = None if target is None else item_of(target)
+    if not got.found or item is None or got.key is None:
+        return got
+    keys = keys_for(item)
+    key, name = got.key, got.name or got.key
+    parts = [f"{name}, from {got.mod or 'an unknown mod'}."]
     if "#" in keys[0] and "#" not in key:
         parts.append("That exact NBT isn't in the DB; this is the plain item.")
     refs: list[str] = []
@@ -142,7 +158,7 @@ def answer(
     made = _call(reg, "recipe_find", {"item": key})
     if not made.is_error:
         p = made.parsed
-        first = _plain_first(p)
+        first = _first(p)
         total = p.total if p.total is not None else len(p.rows)
         if first is None and "#" in key:
             # an NBT variant (a charged battery) is rarely made as such: say what makes the
@@ -151,7 +167,7 @@ def answer(
             base = None
             for other in keys[1:]:  # the plain item, then its wildcard row
                 plain = _call(reg, "recipe_find", {"item": other})
-                base = None if plain.is_error else _plain_first(plain.parsed)
+                base = None if plain.is_error else _first(plain.parsed)
                 if base is not None:
                     break
             if base is not None:
@@ -185,8 +201,9 @@ def answer(
         " ".join(parts),
         key=key,
         name=name,
-        kind=found.get("kind"),
+        kind=got.kind,
         card=card,
         refs=[r for r in refs if r],
         found=True,
+        mod=got.mod,
     )

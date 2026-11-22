@@ -8,6 +8,7 @@ import type {
   ChoicesCard,
   FlowCard,
   HealthCard,
+  LayoutCard,
   PowerLedgerCard,
   RouteComparisonCard,
   TableCard,
@@ -63,11 +64,33 @@ export interface TierState {
 
 export interface Job {
   id: string;
-  kind: "deep" | "export";
+  kind: "deep" | "export" | "designer" | "power" | "shell";
   title: string;
   status: string;
   detail: string | null;
   started: number | null;
+  cancel_asked?: boolean; // design jobs (WO-3.9)
+  elapsed_s?: number; // design jobs: the core's own count, never the device's clock
+}
+
+/** A design job (WO-3.9, D353): its stage as the planner reports it, and once done its result
+ * (what POST /api/designer/design or /api/power/design answers). */
+export interface DesignJob {
+  id: string;
+  kind: "designer" | "power" | "shell";
+  title: string;
+  status: "running" | "done" | "failed" | "cancelled" | "interrupted";
+  stage: string;
+  k: number | null;
+  n: number | null;
+  sub: [number, number] | null;
+  detail: string | null;
+  started: number; // epoch seconds
+  finished: number | null;
+  elapsed_s: number;
+  error: string | null;
+  cancel_asked: boolean;
+  result?: unknown;
 }
 
 export interface Asking {
@@ -200,6 +223,21 @@ export interface UsageRow {
   cache_write: number;
 }
 
+// GET /api/usage caps (WO-11.2, D334): today against the day cap, tasks against the task cap.
+export interface CostTask {
+  task: string;
+  usd: number;
+  calls: number;
+  reached: boolean;
+}
+
+export interface CostCaps {
+  day: { start: string; spent_usd: number; calls: number; cap_usd: number; pct: number; reached: boolean };
+  task: { cap_usd: number; reached: number; top: CostTask[] };
+  notice_pct: number[];
+  crossed_notice: number[];
+}
+
 export interface Usage {
   cycle_start: string;
   cycle_end: string;
@@ -211,6 +249,7 @@ export interface Usage {
   calls: number;
   by_lane: UsageRow[];
   by_model: UsageRow[];
+  caps?: CostCaps; // absent from a core older than WO-11.2
 }
 
 // GET /api/guide (WO-10.1, D304): Clayton's GuideNH export in GOS_HOME/data/guide-site.
@@ -219,6 +258,212 @@ export interface GuideSite {
   pages: { path: string; title: string; scenes: number }[];
   files: number;
   bytes: number;
+  // The frame's base on the guide's own origin with a path token (WO-10.8, D319); null on the
+  // tailnet name, which has no guide host.
+  frame: { base: string; expires: number } | null;
+}
+
+// GET /api/build/guides (WO-10.8): the controllers with a footprint.
+export interface GuideEntry {
+  controller: string; // registry_name@meta, never a numeric id
+  name: string | null;
+  mte: number | null;
+  source: string;
+  variants: string[];
+}
+
+export type Facing = "north" | "east" | "south" | "west";
+
+export interface GuideQuery {
+  controller: string;
+  variant?: string | null;
+  facing?: Facing | null;
+  tiers?: Record<string, number>;
+}
+
+// GET /api/build/guide (WO-10.8, gregtec.build.guide_data): one footprint laid out for building.
+export interface BuildGuide {
+  key: string;
+  checklist_key: string;
+  controller: string;
+  name: string | null;
+  ref: string | null; // mte:<id>
+  source: string;
+  variant: string;
+  variants: { variant: string; size: number[] }[];
+  facing: Facing;
+  front: number[];
+  tiers: Record<string, number>;
+  // each tier choice: its block and the block catalog's name for it (null when the catalog lacks it)
+  choices: Record<string, { value: number; block: string; name?: string | null }[]>;
+  caveats: string[];
+  size: [number, number, number];
+  controller_at: [number, number, number];
+  palette: { block: string; name: string | null; top: string | null; side: string | null; count: number }[];
+  slots: { kinds: string[]; cells: number }[];
+  cells: [number, number, number, number, number][]; // x, y, z, palette index (-1 hatch-only), slot (-1 none)
+  layers: { y: number; blocks: number; hatch_slots: number; hatch_only: number; materials: Record<string, number> }[];
+  checklist: { id: string; label: string }[];
+  done: string[];
+  catalog: boolean;
+}
+
+// The shell workbench (WO-10.10, D367-D370): designs, their versions, compare, the 3D view.
+export interface ShellVersion {
+  n: number;
+  build: string;
+  parent: string | null;
+  asked: string;
+  by: "procedural" | "architect";
+  at: number; // epoch seconds
+  cost_usd: number | null; // 0 for GOS's own; null: the architect's deep-lane task (Costs)
+  status: "accepted" | "repaired";
+  blocks: number;
+  theme: string | null;
+  headroom: number;
+  max_blocks: number;
+}
+
+export interface ShellDesign {
+  id: string;
+  plans: string[];
+  created: number;
+  current: string;
+  versions: ShellVersion[];
+  history: { at: number; current: string; why: string }[];
+  written: boolean;
+}
+
+export interface ShellDesignSummary {
+  id: string;
+  plans: string[];
+  current: string;
+  current_n: number;
+  versions: number;
+  asked: string;
+  theme: string | null;
+  blocks: number;
+  touched: number;
+}
+
+export interface ShellThemes {
+  themes: { id: string; name: string; v: number; summary: string }[];
+  line_types: string[];
+  limits: Record<"max_blocks" | "headroom", [number, number, number]>; // default, lowest, highest
+  problems: string[];
+}
+
+export interface ShellCompareSide {
+  build: string;
+  status: string;
+  source: string;
+  theme: string | null;
+  size: [number, number, number];
+  blocks: number;
+  max_blocks: number;
+  headroom: number;
+  types: number;
+}
+
+export interface ShellCompare {
+  a: ShellCompareSide;
+  b: ShellCompareSide;
+  blocks_delta: number;
+  materials: { block: string; name: string | null; role: string | null; a: number; b: number; delta: number }[];
+  ops: string[];
+}
+
+export interface ShellBox {
+  id: string;
+  lo: [number, number, number];
+  hi: [number, number, number];
+}
+
+export interface ShellScene {
+  build: string;
+  size: [number, number, number];
+  palette: { block: string; name: string | null; role: string; count: number; top: string | null; side: string | null }[];
+  cells: [number, number, number, number, number][]; // x, y, z, palette index, -1
+  layers: { y: number; blocks: number; materials: Record<string, number> }[];
+  ghosts: { machines: (ShellBox & { name: string | null; ref: string | null })[]; keepouts: ShellBox[] };
+  caveats: string[];
+}
+
+export type ShellJobBody =
+  | {
+      design: {
+        plans: string[];
+        theme?: string;
+        line_type?: string;
+        prompt?: string;
+        max_blocks?: number;
+        headroom?: number;
+      };
+    }
+  | { revise: { design?: string; words: string; theme?: string; max_blocks?: number; headroom?: number } };
+
+export interface ShellJobResult {
+  design?: string;
+  build?: string;
+  changes?: string[];
+  refused?: string[];
+}
+
+// The shell bake-off (WO-10.11, D374-D377), blind: letters, never a model's name, cost or time.
+export interface BakeoffSummary {
+  id: string;
+  created: number;
+  status: string; // done, running, stopped at the cap, stopped, cancelled
+  why: string;
+  cases: number;
+  models: number;
+  rateable: number;
+  rated: number;
+  revealed: boolean;
+}
+
+export interface BakeoffBuild {
+  build: string;
+  blocks: number;
+  types: number;
+  status: "accepted" | "repaired";
+}
+
+export interface BakeoffEntry {
+  letter: string;
+  asked: boolean;
+  design: BakeoffBuild | null;
+  revise: BakeoffBuild | null;
+}
+
+export interface BakeoffCase {
+  id: string;
+  line: string;
+  theme: string;
+  max_blocks: number;
+  brief: string;
+  followup: string;
+  entries: BakeoffEntry[];
+  pick: string | null; // a letter, "tie" or "bad"
+}
+
+export interface BakeoffView extends Omit<BakeoffSummary, "cases"> {
+  cases: BakeoffCase[];
+}
+
+export type BakeoffWhich = "design" | "revise";
+
+// GET /api/shells (WO-10.7, D316): the saved decorative shells, newest first.
+export interface ShellSummary {
+  id: string;
+  status: "accepted" | "repaired";
+  source: "architect" | "procedural";
+  theme: string | null;
+  theme_name: string | null;
+  plans: string[];
+  layout: string;
+  size: [number, number, number];
+  blocks: number;
 }
 
 export interface Device {
@@ -707,6 +952,8 @@ export interface DesignerRoute {
   pins: PlanPin[];
   nodes: DesignerNode[];
   warnings: string[];
+  /** "affected by update" (QA:D9, WO-11.1): the export run that flagged it and what it hit */
+  affected: { run: string; hits: { cite: string; why: string }[] } | null;
   /** the comparison metrics, by key (machines, eut_avg, ..., score) */
   metrics: Record<string, number>;
   /** the choices another route of the design makes differently: "name (r:...)" */
@@ -730,6 +977,15 @@ export interface Designed {
 
 /** POST /api/designer/design: the new design, or the one question when the target is unclear. */
 export type DesignAnswer = Designed | { clarify: ChoicesCard };
+
+/** POST /api/designer/jobs and /api/power/jobs: the job at once, or the question (no job). */
+export type JobStart = { job: DesignJob } | { clarify: ChoicesCard };
+
+/** What a Designer job is asked to do: a new design, a re-solve, or a pin (null frees it). */
+export type DesignJobBody =
+  | { spec: DesignSpec }
+  | { resolve: string }
+  | { pin: { plan: string; node: string; recipe: string | null } };
 
 export interface DesignSpec {
   target: string;
@@ -759,6 +1015,13 @@ export interface Alternatives {
   alternatives: Alternative[];
 }
 
+/** GET /api/plans/{id}/layout (WO-10.5, D312): the layout JSON (gos-layout v1, read by the shell
+ * designer and the build guide) and its top-down preview card. */
+export interface PlanLayout {
+  layout: { id: string; [key: string]: unknown };
+  card: LayoutCard;
+}
+
 export interface Accepted {
   id: string;
   status: PlanStatus;
@@ -774,6 +1037,7 @@ export interface SavedPlanRow {
   name: string;
   status: string;
   kind: string | null;
+  affected?: boolean; // flagged by an export (WO-11.1)
 }
 
 // --- The Activity view (WO-6.3, GET /api/activity, plan 7.5, 7.14) ------------------------------

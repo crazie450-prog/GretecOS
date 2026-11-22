@@ -2,7 +2,7 @@
 // (React reads it with useSyncExternalStore). Pure reducers live beside it (mode.ts, now.ts,
 // states.ts) so the logic is tested without a DOM.
 import { useSyncExternalStore } from "react";
-import type { Answer, CoreState, DeepTask, Health, Session, VoiceState } from "../api/types";
+import type { Answer, CoreState, DeepTask, DesignJob, Health, Session, VoiceState } from "../api/types";
 import { addTasks } from "./deep";
 
 export type Phase = "loading" | "unpaired" | "ready";
@@ -17,6 +17,7 @@ export interface AppState {
   health: Health | null;
   answers: Answer[];
   deep: DeepTask[]; // deep-lane tasks (WO-2.4), for Chat
+  jobs: Record<string, DesignJob>; // design jobs as last pushed (WO-3.9), by id
   voice: { state: VoiceState; trigger: string | null; ts: number } | null;
   nextCard: number; // bumped by the "next card" hotkey (WO-5.1's ui push)
   notices: number; // bumped by each proactive notice, cleared problem or fired/cleared alert: Now asks the advisor again
@@ -34,6 +35,7 @@ export const initialState: AppState = {
   health: null,
   answers: [],
   deep: [],
+  jobs: {},
   voice: null,
   nextCard: 0,
   notices: 0,
@@ -78,6 +80,18 @@ export function addAnswers(list: Answer[], more: Answer[]): Answer[] {
   return [...byId.values()].sort((a, b) => a.asked_ts - b.asked_ts || a.ts - b.ts).slice(-ANSWERS_KEEP);
 }
 
+export const JOBS_KEEP = 20;
+
+/** Keep a pushed design job (the newest 20 by start). */
+export function addJob(jobs: Record<string, DesignJob>, job: DesignJob): Record<string, DesignJob> {
+  if (!job || typeof job.id !== "string") return jobs;
+  const all = { ...jobs, [job.id]: job };
+  const keep = Object.values(all)
+    .sort((a, b) => b.started - a.started)
+    .slice(0, JOBS_KEEP);
+  return Object.fromEntries(keep.map((j) => [j.id, j]));
+}
+
 /** What one WebSocket message from the core changes (unknown messages change nothing). */
 export function applyMessage(s: AppState, message: unknown): Partial<AppState> {
   if (typeof message !== "object" || message === null) return {};
@@ -91,6 +105,8 @@ export function applyMessage(s: AppState, message: unknown): Partial<AppState> {
       return { answers: addAnswers(s.answers, [m.data as Answer]) };
     case "deep.task":
       return { deep: addTasks(s.deep, [m.data as DeepTask]) };
+    case "job":
+      return { jobs: addJob(s.jobs, m.data as DesignJob) };
     case "voice.state":
       return { voice: m.data as AppState["voice"] };
     case "notice":

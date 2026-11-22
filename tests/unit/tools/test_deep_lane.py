@@ -106,6 +106,7 @@ def test_only_gos_tools_skill_and_agent(lane_reg: Registry, tmp_path: Path) -> N
     )
     assert o.skills == [
         "gos:advisor",  # WO-6.5
+        "gos:architect",  # WO-10.6 (themes)
         "gos:crop-breeder",  # WO-6.7
         "gos:line-designer",
         "gos:ore-intel",
@@ -259,6 +260,7 @@ def test_the_plugin_copy_has_only_the_manifest_and_skills(
     assert written == {"name": "gos", "version": "1.2.3"}
     assert deep_config.skill_names(dest) == [
         "gos:advisor",
+        "gos:architect",
         "gos:crop-breeder",
         "gos:line-designer",
         "gos:ore-intel",
@@ -681,6 +683,39 @@ def test_a_task_runs_and_its_cost_is_recorded(
     finally:
         lane.stop()
     assert log[-1] == "disconnect"
+
+
+def test_a_handoff_reads_queued_even_when_the_worker_has_finished(
+    lane_reg: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker thread can finish a task before handoff() returns; the handoff still says
+    queued. Here the caller is held, once the task is on the loop, until the task is done."""
+    session: list[list[Message]] = [[init(), result(0.01, text="A plan.")]]
+    lane, _ = service(lane_reg, tmp_path, [session, list(session)])
+    lane.start()
+    loop = lane._loop
+    assert loop is not None
+    put = loop.call_soon_threadsafe
+    seen: list[str] = []
+
+    def put_then_wait(fn: Callable[..., object], *args: object) -> object:
+        handle = put(fn, *args)
+        if args and isinstance(args[0], deep.DeepTask):
+            done = lane.wait(args[0].id, 10)
+            assert done is not None
+            seen.append(done.status)
+        return handle
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", put_then_wait)
+    try:
+        h = lane.handoff("steel line", "plan a steel line", "router")
+        assert seen == [deep.DONE]  # the task had finished before handoff() returned
+        assert h.status == deep.QUEUED
+        reply = ask.Asker(lane_reg, lane, None).ask("plan a steel line")
+        assert seen == [deep.DONE, deep.DONE]
+        assert reply.handoff is not None and reply.handoff["status"] == deep.QUEUED
+    finally:
+        lane.stop()
 
 
 def test_the_cap_pauses_and_asks_then_continues(

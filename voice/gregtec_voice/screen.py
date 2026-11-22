@@ -103,11 +103,11 @@ class Screenshots:
         games: Sequence[Path | None],
         *,
         clock: Callable[[], float] = time.time,
-        read: Callable[[Path], bytes] = read_bytes,
+        read: Callable[[Path], bytes] | None = None,
     ) -> None:
         self.games = [game for game in games if game is not None]
         self.clock = clock
-        self.read = read
+        self.read = read or read_png
 
     def grab(self) -> Frame:
         if not self.games:
@@ -140,6 +140,17 @@ class Screenshots:
             raise CaptureError(
                 f"the newest screenshot doesn't read ({type(exc).__name__})"
             ) from None
+
+
+def _decodes(data: bytes) -> None:
+    with Image.open(io.BytesIO(data)) as image:
+        image.load()  # a PNG the game is still writing raises OSError: read_bytes retries it
+
+
+def read_png(path: Path) -> bytes:
+    """``path`` read and decoded inside read_bytes' retry loop (copy, then parse, retry x3):
+    Minecraft writes an F2 screenshot straight to its final name."""
+    return read_bytes(path, validate=_decodes)
 
 
 # --- dxcam (Windows) ---------------------------------------------------------------------------

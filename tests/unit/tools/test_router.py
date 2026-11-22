@@ -63,6 +63,7 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         ("Tell me about the steel hull.", "fast", "item", "steel hull", None),
         ("Which quest asks for steel?", "fast", "quest_item", "steel", None),
         ("what quests can I do now", "fast", "frontier", None, None),
+        ("What quests can I do next?", "fast", "frontier", None, None),
         ("What are my next quests?", "fast", "frontier", None, None),
         (
             "tell me about the quest called first steps",
@@ -84,6 +85,34 @@ from gregtec.agents.tools.tsv import Result, parse, render, unescape
         ("what does the plan say about steel", "fast", "general", None, None),
         ("plan my power line", "deep", "handoff", None, None),
         ("how many macerators do I need", "deep", "handoff", None, None),
+        # building themes (WO-10.6): making or refining one is the deep lane's theme_save
+        (
+            "make a new theme with dark concrete and brass",
+            "deep",
+            "handoff",
+            None,
+            None,
+        ),
+        ("refine the foundry theme with more glass", "deep", "handoff", None, None),
+        (
+            "the foundry theme, swap the windows for reinforced glass",
+            "deep",
+            "handoff",
+            None,
+            None,
+        ),
+        ("what themes do I have", "fast", "general", None, None),
+        # decorative shells (WO-10.7): designing one is the deep lane's build_request
+        ("make a building around my benzene line", "deep", "handoff", None, None),
+        ("design a foundry shell around the steel line", "deep", "handoff", None, None),
+        ("what is a shell", "fast", "item", "shell", None),
+        # a recipe question about a shell is not a building (review L4)
+        ("how do I make a turtle shell", "fast", "recipe", "turtle shell", None),
+        ("How can I craft a shell?", "fast", "recipe", "shell", None),
+        ("how do I design a shell around my line", "deep", "handoff", None, None),
+        ("give me the list of themes", "fast", "general", None, None),
+        ("read me the marble works theme instead", "fast", "general", None, None),
+        ("I want a new theme for the reactor hall", "deep", "handoff", None, None),
     ],
 )
 def test_route(

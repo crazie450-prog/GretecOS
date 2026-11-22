@@ -7,7 +7,7 @@ This script runs ``GtBoilerOracle.java`` with GT's jar and writes what GT comput
 ``runtimeBoost`` over a range of burn times; per boiler and programmed circuit (0-25), the throttled
 ``lEUt`` (``adjustEUtForConfig``), ``adjustBurnTimeForConfig`` summed over 1000 fuel loads, and
 ``getWaterConsumptionForSteam`` / ``getSuperheatedSteam`` summed over 4800 ticks; the tree
-farm's ``getTierMultiplier``, mode multipliers and tool constants; and for solid fuels (D329)
+farm's ``getTierMultiplier``, mode multipliers and tool constants; and for solid fuels (D380)
 ``LargeBoilerFuelBackend.getBurntimeRatioTicks`` over a range of burn times and, per boiler,
 circuit and furnace burn value, the burn counters GT's own ``checkProcessing`` set for 160 items
 (or that it refused the item), with ``isAllowedFuel`` for a few items.

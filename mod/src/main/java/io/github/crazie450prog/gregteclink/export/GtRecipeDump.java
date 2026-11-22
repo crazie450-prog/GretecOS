@@ -28,7 +28,7 @@ import gregtech.api.util.GTRecipe;
 /**
  * (a) of plan §5.2 step 2: every map in {@link RecipeMap#ALL_RECIPE_MAPS} (sorted by name) and every recipe in it
  * (sorted by its JSON line). Raw game facts only; the normaliser (WO-1.3) derives circuits, tiers, signatures and
- * hashes.
+ * hashes. The one exception is "unkeyed" (D364), which marks a recipe that gives something from no input it uses up.
  */
 final class GtRecipeDump {
 
@@ -52,6 +52,8 @@ final class GtRecipeDump {
     int mapErrors;
     int recipes;
     int recipeErrors;
+    /** Lines with "unkeyed": recipes that give something and list no input they use up (D364). */
+    int recipesUnkeyed;
 
     GtRecipeDump(StackJson stacks) {
         this.stacks = stacks;
@@ -183,15 +185,24 @@ final class GtRecipeDump {
         o.addProperty("duration", r.mDuration);
         o.addProperty("special", r.mSpecialValue);
 
-        o.add("in", inputs(r));
+        JsonArray in = inputs(r);
+        JsonArray out = stacks.items(r.mOutputs);
+        JsonArray fin = fluidInputs(r);
+        JsonArray fout = stacks.fluids(r.mFluidOutputs);
+        o.add("in", in);
         if (r.mInputChances != null) o.add("in_chance", Json.ints(r.mInputChances));
-        o.add("out", stacks.items(r.mOutputs));
+        o.add("out", out);
         if (r.mOutputChances != null) o.add("out_chance", Json.ints(r.mOutputChances));
-        o.add("fin", fluidInputs(r));
+        o.add("fin", fin);
         if (r.mFluidInputChances != null) o.add("fin_chance", Json.ints(r.mFluidInputChances));
-        o.add("fout", stacks.fluids(r.mFluidOutputs));
+        o.add("fout", fout);
         if (r.mFluidOutputChances != null) o.add("fout_chance", Json.ints(r.mFluidOutputChances));
         if (r.mSpecialItems != null) o.add("special_items", meta.encode(r.mSpecialItems));
+        String unkeyed = unkeyed(in, fin, out, fout, r.mSpecialItems != null);
+        if (unkeyed != null) {
+            o.addProperty("unkeyed", unkeyed);
+            recipesUnkeyed++;
+        }
 
         JsonObject md = metadata(r);
         if (md.entrySet()
@@ -211,6 +222,47 @@ final class GtRecipeDump {
             o.add("owners", Json.strings(owners));
         }
         return o;
+    }
+
+    /**
+     * Why a recipe that gives something has no input the export can key as used up (D364), or null when it has one
+     * or gives nothing. GT's own arrays are like that; the export drops nothing:
+     * <ul>
+     * <li>{@code null_input}: an input slot is null in GT's array. The recipe's loader asked for an item this
+     * instance doesn't have (a mod that isn't loaded, an oredict name with no member), so there is no item to
+     * name.</li>
+     * <li>{@code special_items}: no null slot, and the recipe carries a special object, which its machine reads
+     * (Eye of Harmony) or NEI shows (the tree farm's display recipes).</li>
+     * <li>{@code none}: GT lists a programmed circuit or nothing. The machine works from EU and its own code
+     * (fishing pond, rock breaker), or GT's recipe builder dropped a trailing null input before the recipe was
+     * built; the recipe no longer says which.</li>
+     * </ul>
+     * An input is used up when its amount is above 0 (a programmed circuit has 0).
+     */
+    static String unkeyed(JsonArray in, JsonArray fin, JsonArray out, JsonArray fout, boolean specialItems) {
+        if (!hasStack(out) && !hasStack(fout)) return null;
+        if (usedUp(in, "n") || usedUp(fin, "mb")) return null;
+        if (hasNull(in) || hasNull(fin)) return "null_input";
+        return specialItems ? "special_items" : "none";
+    }
+
+    private static boolean hasStack(JsonArray slots) {
+        for (JsonElement e : slots) if (e.isJsonObject()) return true;
+        return false;
+    }
+
+    private static boolean hasNull(JsonArray slots) {
+        for (JsonElement e : slots) if (e.isJsonNull()) return true;
+        return false;
+    }
+
+    private static boolean usedUp(JsonArray slots, String amount) {
+        for (JsonElement e : slots) {
+            if (e.isJsonObject() && e.getAsJsonObject()
+                .get(amount)
+                .getAsInt() > 0) return true;
+        }
+        return false;
     }
 
     /** Positional item inputs; GTRecipe_WithAlt slots also get "ore" (by name) and "alt". */

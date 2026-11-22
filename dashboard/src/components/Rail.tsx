@@ -1,9 +1,35 @@
 // The right rail, always there in workbench mode (plan 7.14): what the agent is doing, what is
-// waiting for Clayton, and the jobs that run.
+// waiting for Clayton, and the jobs that run. A design job (WO-3.9, D353) shows its stage, the
+// time it has run and, for his paired dashboards, a Cancel.
+import { api } from "../api/client";
 import type { ApprovalCard } from "../cards/types.gen";
-import type { CoreState } from "../api/types";
+import type { CoreState, Job } from "../api/types";
 import { GLYPH } from "../state/states";
-import { ApprovalView, StatusGlyph } from "./core";
+import { useApp } from "../state/store";
+import { ApprovalView, Button, StatusGlyph } from "./core";
+import { useElapsed } from "./JobProgress";
+
+const DESIGN_KINDS = ["designer", "power"];
+
+function DesignJobRow({ j, canCancel }: { j: Job; canCancel: boolean }) {
+  const time = useElapsed(j.id, j.elapsed_s ?? 0);
+  return (
+    <span className="job-design">
+      <span className="gos-src num" data-testid={`job-elapsed-${j.id}`}>
+        {time}
+      </span>
+      {canCancel && (
+        <Button
+          onClick={() => void api.cancelJob(j.id).catch(() => {})}
+          disabled={j.cancel_asked === true || j.detail === "saving"}
+          testId={`job-cancel-${j.id}`}
+        >
+          {j.cancel_asked ? `${GLYPH.paused} Cancelling` : "Cancel"}
+        </Button>
+      )}
+    </span>
+  );
+}
 
 export function Activity({ core }: { core: CoreState | null }) {
   const asking = core?.asking ?? [];
@@ -31,6 +57,8 @@ export function Activity({ core }: { core: CoreState | null }) {
 
 export function Jobs({ core }: { core: CoreState | null }) {
   const jobs = core?.jobs ?? [];
+  const role = useApp((s) => s.session?.role ?? null);
+  const canCancel = role === "admin" || role === "device";
   if (!jobs.length) return <p className="gos-src">{GLYPH.todo} No jobs running</p>;
   return (
     <ul className="jobs">
@@ -43,6 +71,7 @@ export function Jobs({ core }: { core: CoreState | null }) {
           />
           <span className="job-title">{j.title}</span>
           {j.detail && <span className="gos-src">{j.detail}</span>}
+          {DESIGN_KINDS.includes(j.kind) && <DesignJobRow j={j} canCancel={canCancel} />}
         </li>
       ))}
     </ul>

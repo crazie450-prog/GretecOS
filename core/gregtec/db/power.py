@@ -6,7 +6,7 @@ run's recipes, after they are written: ``fuel``, one row per fuel of GT's fuel m
 its map's rule (:mod:`gregtec.planner.fuels`). From its ``storage`` (WO-4.5, D240): ``cable``,
 ``battery``, ``battery_buffer``, ``transformer`` and ``lsc_cell``. From its ``naquadah_reactors``
 and ``dynamos`` (WO-4.8, D326): ``reactor_boost`` and ``dynamo_hatch``. From its ``boiler_fuels``
-(D329): ``boiler_fuel``, which the solid large-boiler ``fuel`` rows take their exact furnace burn
+(D380): ``boiler_fuel``, which the solid large-boiler ``fuel`` rows take their exact furnace burn
 value from. Like recipes, every table holds one set per export run, and pruning a run deletes its
 rows.
 """

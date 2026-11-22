@@ -45,7 +45,7 @@ import gregtech.common.tileentities.machines.multi.MTETreeFarm;
  * getWaterConsumptionForSteam and getSuperheatedSteam over many ticks; and runtimeBoost over a range of burn
  * times. The tree farm: getTierMultiplier per tier, the mode multipliers and the tool constants.
  *
- * Solid fuels (D329): LargeBoilerFuelBackend.getBurntimeRatioTicks over a range of burn times, and each boiler's
+ * Solid fuels (D380): LargeBoilerFuelBackend.getBurntimeRatioTicks over a range of burn times, and each boiler's
  * own checkProcessing on an item. The boiler is a subclass that only stands in for its hatches (its input bus
  * holds the item, it has no fluid, and the programmed circuit's number is put where setupCircuit puts it); the
  * item's furnace burn value comes from a Forge fuel handler, so GT reads it through GTModHandler.getFuelValue as

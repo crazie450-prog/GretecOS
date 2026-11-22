@@ -6,7 +6,7 @@
 | GET  /api/session              | admin, client, device   | who the caller is                     |
 | GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
 | GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
-| POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3) |
+| POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3); `shell`: the design whose words revise it (WO-10.10) |
 | POST /api/prewarm              | admin, client, device   | warm the fast lane's prompt cache     |
 | POST /api/ui                   | admin, client, device   | a dashboard action (``next_card``)    |
 | POST /api/voice/state          | admin, the voice client | the voice strip's state (WO-5.1)      |
@@ -76,6 +76,7 @@ import logging
 import math
 import os
 import sqlite3
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -95,15 +96,19 @@ from gregtec.agents.ask import TEXT_MAX, Asker
 from gregtec.agents.deep import DeepLaneService, DeepTask
 from gregtec.agents.no_ai import AiMode, CreditWatch, Problem
 from gregtec.agents.personas import Personas
+from gregtec.alerts import routes as alert_routes
 from gregtec.alerts.engine import AlertEvent
+from gregtec.alerts.router import AlertRouter
 from gregtec.api import (
     ai_routes,
     dashboard,
     guide_routes,
+    job_routes,
     persona_routes,
     plan_routes,
     power_routes,
     setup_routes,
+    shell_routes,
 )
 from gregtec.api.security import (
     COOKIE,
@@ -114,12 +119,14 @@ from gregtec.api.security import (
     Pairing,
     PairingError,
     Principal,
+    ReadBodyFirst,
 )
 from gregtec.base import routes as base_routes
 from gregtec.bridge import http as bridge_http
 from gregtec.bridge.actions import Action
 from gregtec.bridge.ingest import Bridge
 from gregtec.bridge.ops import Ops
+from gregtec.build import shell_versions
 from gregtec.config import LOOPBACK, Config
 from gregtec.crops import view as crop_view
 from gregtec.events import routes as event_routes
@@ -129,11 +136,15 @@ from gregtec.gamelink import link as gamelink
 from gregtec.gamelink.link import GameLink
 from gregtec.llm import keys
 from gregtec.llm.usage import UsageMeter
+from gregtec.ops.costs import CostWatch
 from gregtec.ores import view as ore_view
+from gregtec.packupdate import routes as addon_routes
+from gregtec.planner.design_jobs import DesignJobs
 from gregtec.quests import view as quest_view
 from gregtec.remote import routes as remote_routes
 from gregtec.remote.jobs import JobQueue
 from gregtec.screen import routes as screen_routes
+from gregtec.screen.cache import MAX_BYTES as MAX_FRAME
 from gregtec.screen.reader import ScreenReader
 from gregtec.setup.service import SetupService
 from gregtec.store import Store
@@ -149,6 +160,8 @@ POLL_S = 1.0  # how often the core refreshes the supervisor's process table
 KEY_CHECK_S = 30.0  # how often it asks the keyring whether the Anthropic key is stored
 HEARTBEAT_S = 15.0  # a health push at least this often, changed or not
 MAX_MESSAGE = 4096  # request bodies and WebSocket messages
+# The largest body a route takes (a screen frame): read before any answer (D355).
+READ_FIRST_MAX = MAX_FRAME
 # Process states from the supervisor and the strip status each one shows as.
 STATE_STATUS = {
     "running": "ok",
@@ -235,8 +248,10 @@ class Core:
     _alert_state_due: bool = False  # a state push for alert events is queued (WO-7.5)
     events: EventService | None = None  # the event store, sessions, journal (WO-6.3)
     jobs: JobQueue | None = None  # the durable design-job queue for Discord (WO-9.1)
+    design_jobs: DesignJobs | None = None  # the dashboard's design jobs (WO-3.9)
     journal: Callable[[list[str]], None] | None = None  # the day's journal (WO-9.1)
     notices: Notices | None = None  # the proactive notices (WO-6.5, D71)
+    router: AlertRouter | None = None  # the alert router (WO-9.2, D298)
 
     # --- pushing to WebSocket clients
 
@@ -273,8 +288,12 @@ class Core:
     def alert_changed(self, event: AlertEvent) -> None:
         """The alert engine's sink (its thread): push the event to every socket, the voice
         client's included (it says a ``fired`` event's ``say``), and refresh the state so the
-        alert cards come and go (WO-7.5, D281)."""
+        alert cards come and go (WO-7.5, D281). With the alert router (WO-9.2), the router
+        says the line (or holds it: quiet hours, away, a DM instead), so the push has none."""
         data = event.as_dict()
+        if self.router is not None:
+            self.router.alert_event(event)
+            data["say"] = None
 
         async def state() -> None:
             self._alert_state_due = False
@@ -311,8 +330,12 @@ class Core:
 
     def notice_given(self, notice: Notice) -> None:
         """The notices' ``deliver`` (their thread): push the notice to every socket (the voice
-        client says its ``say`` line, D76) and refresh the state, whose alerts now hold it."""
+        client says its ``say`` line, D76) and refresh the state, whose alerts now hold it.
+        With the alert router (WO-9.2), the router says it, so the push has no line."""
         data = notice.as_dict()
+        if self.router is not None:
+            self.router.notice(notice)
+            data["say"] = None
 
         def push() -> None:
             self.broadcast({"type": "notice", "data": data})
@@ -436,6 +459,8 @@ class Core:
             items.append(self._maintenance_item())
         if self.deep is not None:
             items.append(_item("deep_lane", "check", "Deep lane", *self.deep.health()))
+        if self.router is not None:
+            items.append(self._presence_item())
         statuses = {i["status"] for i in items}
         overall = (
             "error" if "error" in statuses else "warn" if "warn" in statuses else "ok"
@@ -473,6 +498,21 @@ class Core:
                 "maintenance", "check", "Maintenance", "error", type(exc).__name__
             )
         return _item("maintenance", "check", "Maintenance", status, detail)
+
+    def _presence_item(self) -> dict[str, Any]:
+        """Is Clayton at the PC (WO-9.2, D76)? Unknown counts as present (D299), so the AFK
+        DMs are off while it lasts: a warning on Windows, where it should be known."""
+        assert self.router is not None
+        presence = self.router.presence()
+        if presence != "unknown":
+            return _item("presence", "check", "Presence", "ok", presence)
+        if sys.platform == "win32":
+            return _item(
+                "presence", "check", "Presence", "warn", "unknown: AFK DMs are off"
+            )
+        return _item(
+            "presence", "check", "Presence", "off", "no input-idle source here"
+        )
 
     def _credits_item(self) -> dict[str, Any]:
         try:
@@ -540,6 +580,8 @@ def create_app(core: Core) -> FastAPI:
             core.ops.alerts.paused = core.paused_since
             if core.alert_changed not in core.ops.alerts.sinks:
                 core.ops.alerts.sinks.append(core.alert_changed)
+        if core.router is not None:  # WO-9.2
+            alert_routes.wire(core, core.router)
         tasks = [asyncio.create_task(_watch(core))]
         if core.maintenance is not None:
             tasks.append(asyncio.create_task(_maintain(core.maintenance)))
@@ -577,7 +619,13 @@ def create_app(core: Core) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
-    app.add_middleware(HostOriginGuard, allowed_hosts=core.cfg.allowed_hosts)
+    app.add_middleware(
+        HostOriginGuard,
+        allowed_hosts=core.cfg.allowed_hosts,
+        guide_hosts=(core.cfg.guide_host,),
+    )
+    # Outermost, so the guard's refusals read the body first too (D355).
+    app.add_middleware(ReadBodyFirst, limit=READ_FIRST_MAX)
 
     def principal(request: Request) -> Principal:
         found = core.auth.from_headers(
@@ -636,7 +684,8 @@ def create_app(core: Core) -> FastAPI:
 
     @app.get("/api/usage")
     def usage(_: Anyone) -> dict[str, Any]:
-        return core.meter.cycle()
+        caps = CostWatch.of(core.store, core.cfg).caps()  # WO-11.2 (D334)
+        return {**core.meter.cycle(), "caps": caps}
 
     @app.post("/api/ask")
     async def ask(request: Request, who: Anyone) -> dict[str, Any]:
@@ -647,6 +696,13 @@ def create_app(core: Core) -> FastAPI:
         text = body.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
             raise HTTPException(400, f"text must be 1 to {TEXT_MAX} characters")
+        # The workbench's "Ask the architect" names the design its words revise (WO-10.10).
+        shell = body.get("shell")
+        if shell is not None and not (
+            isinstance(shell, str) and shell_versions.DESIGN_ID.fullmatch(shell)
+        ):
+            raise HTTPException(400, "shell must be a design id (ds-<12 hex>)")
+        extra = {} if shell is None else {"shell": shell}
         board = dashboard.board_of(core)
         entry = board.asked(text)  # the rail shows what is being worked on
         # Whatever happens next, the question stops showing as asked.
@@ -656,7 +712,7 @@ def create_app(core: Core) -> FastAPI:
             via = bridge_http.confirm_via(
                 who, request.headers.get("host"), core.cfg.dashboard_host
             )
-            reply = await asyncio.to_thread(core.asker.ask, text, via=via)
+            reply = await asyncio.to_thread(core.asker.ask, text, via=via, **extra)
         finally:
             board.done(entry)
         log.info(
@@ -895,6 +951,7 @@ def create_app(core: Core) -> FastAPI:
     persona_routes.add_routes(app, core, principal, _json_body)
     plan_routes.add_routes(app, core, principal, trusted, _json_body)
     power_routes.add_routes(app, core, principal, trusted, _json_body)
+    job_routes.add_routes(app, core, principal, trusted, _json_body)
     quest_view.add_routes(app, core, principal)
     ore_view.add_routes(app, core, principal, _json_body)
     crop_view.add_routes(app, core, principal, trusted, _json_body)
@@ -903,8 +960,11 @@ def create_app(core: Core) -> FastAPI:
     screen_routes.add_routes(app, core, principal)  # after the game link: it reads it
     watch_routes.add_routes(app, core, principal)
     event_routes.add_routes(app, core, principal)
-    guide_routes.add_routes(app, core, principal)
+    addon_routes.add_routes(app, core, principal)  # the export question (WO-11.1)
+    guide_routes.add_routes(app, core, principal, trusted, _json_body)
+    shell_routes.add_routes(app, core, principal, trusted, _json_body)
     remote_routes.add_routes(app, core, principal, _json_body)
+    alert_routes.add_routes(app, core, principal)
     return app
 
 
@@ -1000,6 +1060,11 @@ async def _watch(core: Core) -> None:
                 await asyncio.to_thread(core.ops.tick)
             except Exception:  # the watcher must keep running
                 log.exception("ops tick failed")
+        if core.router is not None:  # the alert router, right after the alerts (WO-9.2)
+            try:
+                await asyncio.to_thread(core.router.tick)
+            except Exception:  # the watcher must keep running
+                log.exception("alert routing failed")
         try:
             if now - last_key >= KEY_CHECK_S:
                 await asyncio.to_thread(core.refresh_key)

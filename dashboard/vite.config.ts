@@ -34,7 +34,9 @@ export default defineConfig({
     target: "es2022",
     assetsInlineLimit: 0, // fonts as files: the page's CSP allows fonts from 'self' only
     modulePreload: { polyfill: false },
-    chunkSizeWarningLimit: 800,
+    // elkjs's bundled layout engine (~1.41 MB) is its own lazy chunk (FlowDiagram's dynamic
+    // import); the main chunk stays well under this.
+    chunkSizeWarningLimit: 1500,
   },
   server: {
     host: "localhost",

@@ -1,8 +1,9 @@
 // Costs (plan 7.14): am I within credits? Month to date against the included credits, by lane
-// and model, from the llm_usage meter (D118). Needs Clayton's board approval (no board, D92/D158).
+// and model, from the llm_usage meter (D118), and the day and task caps (WO-11.2, D334). Needs
+// Clayton's board approval (no board, D92/D158).
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { Usage, UsageRow } from "../api/types";
+import type { CostCaps, Usage, UsageRow } from "../api/types";
 import { Panel, StatusGlyph } from "../components/core";
 import { pct, tokens, usd } from "../state/format";
 import { GLYPH } from "../state/states";
@@ -42,6 +43,65 @@ function Rows({ rows, by }: { rows: UsageRow[]; by: "lane" | "model" }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** The caps card (WO-11.2, D334): today against the day cap, today's tasks against the task cap.
+ * Reaching either raises an alert through the alert routes; nothing is paused by it (D16). */
+export function Caps({ caps }: { caps: CostCaps }) {
+  const day = caps.day;
+  const level = day.reached ? "warn" : "ok";
+  return (
+    <>
+      <div className="gos-big" data-testid="day-spent">
+        {usd(day.spent_usd)}
+      </div>
+      <p className="gos-sub">
+        today, of a {usd(day.cap_usd)} day cap · {pct(day.pct)} ·{" "}
+        <StatusGlyph status={level} label={day.reached ? "day cap reached" : "within the day cap"} />
+      </p>
+      <div className="gos-track credit-track" role="img" aria-label={`${pct(day.pct)} of the day cap`}>
+        <span className={`fill ${level}`} style={{ width: `${Math.min(100, day.pct)}%` }} />
+      </div>
+      <p className="gos-sub" data-testid="task-cap">
+        Task cap {usd(caps.task.cap_usd)}: a task pauses there and asks you ·{" "}
+        {caps.task.reached ? (
+          <StatusGlyph status="warn" label={`${caps.task.reached} reached it today`} />
+        ) : (
+          <StatusGlyph status="ok" label="none reached today" />
+        )}
+      </p>
+      {caps.task.top.length > 0 && (
+        <table className="usage">
+          <thead>
+            <tr>
+              <th>task today</th>
+              <th className="num">calls</th>
+              <th className="num">cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {caps.task.top.map((t) => (
+              <tr key={t.task} data-row={t.task}>
+                <td>
+                  {t.reached ? <StatusGlyph status="warn" label={t.task} /> : t.task}
+                </td>
+                <td className="num">{t.calls}</td>
+                <td className="num">{usd(t.usd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="gos-src">
+        {caps.notice_pct.length
+          ? `heads-up at ${caps.notice_pct.join("% and ")}% of the credits${
+              caps.crossed_notice.length ? ` (past ${Math.max(...caps.crossed_notice)}%)` : ""
+            } · `
+          : ""}
+        [budget] day_max_usd and task_max_usd · GOS's own meter
+      </p>
+    </>
   );
 }
 
@@ -105,6 +165,11 @@ export function Costs() {
               {usage.calls} calls · alerts at {usage.alerts_pct.join("% and ")}%
             </p>
           </Panel>
+          {usage.caps && (
+            <Panel label="Caps" testId="caps">
+              <Caps caps={usage.caps} />
+            </Panel>
+          )}
           <Panel label="By lane" testId="by-lane">
             <Rows rows={usage.by_lane} by="lane" />
           </Panel>

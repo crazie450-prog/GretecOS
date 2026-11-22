@@ -19,7 +19,7 @@ The dashboard's recipe card (plan §7.3, §7.14 rule 1) as data, for WO-2.6 to a
 | `run` | string | the export run the rows are from, with its GT version |
 | `filters` | string or null | the tool's filters (`tier_max=LV machine=EBF`), as its head line says |
 | `total` | integer or null | how many recipes match in all; the page holds the first ones (50 at most), so "how many alternatives exist" is `total` |
-| `recipes` | list | one entry per recipe row on the page, in the tool's order (simplest first; recycling last) |
+| `recipes` | list | one entry per recipe row on the page, in the tool's order (simplest first; then `fake?` rows; recycling last, D341) |
 
 Each entry of `recipes`:
 

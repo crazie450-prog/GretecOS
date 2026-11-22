@@ -3,8 +3,9 @@
 | route                               | who                         | what                          |
 |-------------------------------------|-----------------------------|-------------------------------|
 | GET /api/plans/{id}/cards           | admin, client, device       | ``{"flow": card, "bom": card}`` (catalog cards, D160) |
+| GET /api/plans/{id}/layout          | admin, client, device       | ``{"layout", "card"}``: the line layout (WO-10.5); ``?power=<id>`` lays its power plan out too |
 | GET /api/plans/{id}/export/{format} | admin, client, device       | the export file: ``bom`` (TSV), ``mermaid``, ``png``, ``gtnhplanner`` (JSON), ``gtnhflow`` (YAML) |
-| GET /api/plans                      | admin, client, device       | saved plans, newest first (id, name, status, kind) |
+| GET /api/plans                      | admin, client, device       | saved plans, newest first (id, name, status, kind, affected) |
 | GET /api/designer                   | admin, client, device       | the Designer's latest design: ``{"ids": [...]}`` |
 | GET /api/plans/{id}/designer        | admin, client, device       | the Designer's view of the plan's routes (WO-3.7) |
 | GET /api/plans/{id}/alternatives    | admin, client, device       | ``?node=<key>[&all=1]``: a node's candidate recipes (D61) |
@@ -83,6 +84,36 @@ def cards(home: Path, pid: str) -> dict[str, Any]:
     if "effort" in plan.get("metrics", {}):
         out["effort"] = plan_cards.effort_card(plan)  # WO-4.3, D237
     return out
+
+
+def layout_view(home: Path, pids: list[str]) -> dict[str, Any]:
+    """GET /api/plans/{id}/layout (WO-10.5, D312, D313): the plans' line layout and its
+    top-down preview card, made on the DB the core reads. Read-only."""
+    from gregtec.build import layout
+    from gregtec.db import access
+    from gregtec.planner.outputs import store
+
+    plans = []
+    for pid in pids:
+        try:
+            plans.append(store.load(home, pid))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(404, f"plan {pid} isn't saved") from exc
+    db = access.db_path(home)
+    if not db.is_file():
+        raise HTTPException(503, "no recipe DB: run gos db build")
+    conn = access.connect(db, readonly=True)
+    try:
+        lay = layout.plan_layout(conn, plans)
+    except layout.LayoutError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            503, f"the DB can't be used now ({type(exc).__name__})"
+        ) from None
+    finally:
+        conn.close()
+    return {"layout": lay, "card": layout.card(lay)}
 
 
 JsonBody = Callable[[Request], Awaitable[dict[str, Any]]]
@@ -206,7 +237,13 @@ def add_routes(
         )
         return {
             "plans": [
-                {"id": p.id, "name": p.name, "status": p.status, "kind": p.kind}
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "status": p.status,
+                    "kind": p.kind,
+                    "affected": p.affected_run is not None,  # WO-11.1
+                }
                 for p in found
             ],
             "problems": problems,
@@ -285,6 +322,11 @@ def add_routes(
     @app.get("/api/plans/{plan_id}/cards")
     async def plan_cards(plan_id: str, who: Anyone) -> dict[str, Any]:
         return await asyncio.to_thread(cards, core.cfg.gos_home, _pid(plan_id))
+
+    @app.get("/api/plans/{plan_id}/layout")
+    async def plan_layout(plan_id: str, who: Anyone, power: str = "") -> dict[str, Any]:
+        pids = [_pid(plan_id)] + ([_pid(power)] if power else [])
+        return await asyncio.to_thread(layout_view, core.cfg.gos_home, pids)
 
     @app.get("/api/plans/{plan_id}/export/{fmt}")
     def plan_file(plan_id: str, fmt: str, who: Anyone) -> FileResponse:

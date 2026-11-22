@@ -14,6 +14,7 @@ import copy
 import json
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,6 @@ import pytest
 from gregtec.bridge import display as disp
 from gregtec.bridge import ops as bridge_ops
 from gregtec.config import Config
-from gregtec.db import build
 from gregtec.ingest import collect
 from gregtec.store import Store
 
@@ -32,15 +32,16 @@ SHOWN = json.loads(
 
 
 @pytest.fixture(scope="module")
-def home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def home(
+    tmp_path_factory: pytest.TempPathFactory, built_home: Callable[[Path, Path], Path]
+) -> Path:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
     game = REPO / "mod" / "run" / "server"
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("oc-live")
-    collect.collect(game, home, 1, allow_harness=True)
-    build.build(home, allow_harness=True)
+    built_home(game, home)
     return home
 
 

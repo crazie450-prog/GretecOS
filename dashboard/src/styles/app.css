@@ -474,6 +474,42 @@ button.gos-chip.cite {
   min-height: 100%;
 }
 
+/* The phone's More tab (WO-9.3): one row per view, each a full-width tap target. */
+.view-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.more-list {
+  margin: 0;
+  list-style: none;
+}
+
+.more-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.more-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: var(--space-3) var(--space-2);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-item .gos-title {
+  margin: 0;
+}
+
 .view-now {
   height: 100%;
 }
@@ -1644,6 +1680,25 @@ tr.depleted td {
   justify-content: space-between;
 }
 
+/* A design job's busy panel (WO-3.9): stage, time, Cancel on one line, wrapping on a phone. */
+.job-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.job-progress .empty {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.job-design {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .designer-name .gos-title {
   margin: 0;
   flex: 1 1 auto;
@@ -1709,6 +1764,96 @@ tr.depleted td {
 
 .designer-exports a {
   color: var(--text-2);
+}
+
+/* --- Layout card (WO-10.5, D313): the floor plan from above ----------------------------------- */
+
+.layout-plan {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  margin: var(--space-2) 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.layout-plan rect,
+.layout-plan polygon {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1px;
+}
+
+.layout-bounds {
+  fill: none;
+  stroke: var(--rule);
+  stroke-dasharray: 4 3;
+}
+
+.layout-corridor rect,
+.swatch.layout-corridor {
+  fill: var(--track);
+  background: var(--track);
+  stroke: none;
+}
+
+.layout-chase rect,
+.swatch.layout-chase {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-dasharray: 3 3;
+  border: 1px dashed var(--text-3);
+}
+
+.layout-keepout rect,
+.swatch.layout-keepout {
+  fill: none;
+  stroke: var(--rule);
+  border: 1px solid var(--rule);
+}
+
+.layout-machine rect,
+.swatch.layout-machine {
+  fill: var(--panel);
+  background: var(--panel);
+  stroke: var(--text-2);
+  border: 1px solid var(--text-2);
+}
+
+.layout-machine.bad rect {
+  stroke: var(--err);
+}
+
+.layout-front {
+  fill: var(--text);
+}
+
+.layout-entrance rect,
+.swatch.layout-entrance {
+  fill: var(--accent);
+  background: var(--accent);
+  stroke: none;
+}
+
+.layout-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.layout-legend .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+}
+
+.designer-layout > summary {
+  cursor: pointer;
 }
 
 /* --- Power (WO-4.6) --------------------------------------------------------------------------- */
@@ -2660,4 +2805,432 @@ select.ask-input option {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--panel);
+}
+
+/* --- The 3D build guide (WO-10.8, D319): a footprint drawn as SVG faces, panels beside it ------ */
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.guide-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.guide-meta {
+  overflow-wrap: anywhere;
+}
+
+.guide-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+}
+
+.guide-viewer {
+  position: relative; /* the compass sits in the scene's top right corner */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.guide-scene {
+  display: block;
+  width: 100%;
+  height: min(62vh, 820px);
+  min-height: 280px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  touch-action: none;
+  cursor: grab;
+}
+
+.guide-face {
+  stroke: var(--bg);
+  stroke-width: 0.03;
+  stroke-linejoin: round;
+}
+
+.guide-face.side-a {
+  fill-opacity: 0.85;
+}
+
+.guide-face.side-b {
+  fill-opacity: 0.7;
+}
+
+.guide-face.below {
+  opacity: 0.5;
+}
+
+.guide-face.hatch-slot {
+  stroke: var(--accent);
+  stroke-width: 0.08;
+}
+
+.guide-face.hatch-only {
+  fill: var(--needs-tint);
+  fill-opacity: 0.35;
+  stroke: var(--accent);
+  stroke-width: 0.06;
+  stroke-dasharray: 0.15 0.1;
+}
+
+.guide-face.hovered {
+  stroke: var(--primary);
+  stroke-width: 0.12;
+  opacity: 1;
+}
+
+/* The controller's front and the compass (review M1): which way the multi faces, however turned. */
+.guide-face.controller-front {
+  stroke: var(--text);
+  stroke-width: 0.12;
+}
+
+.guide-front-arrow {
+  fill: var(--text);
+  stroke: var(--bg);
+  stroke-width: 0.04;
+  pointer-events: none;
+}
+
+.guide-compass {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: 64px;
+  height: 64px;
+  pointer-events: none;
+}
+
+.guide-compass circle {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 0.06;
+}
+
+.guide-compass line {
+  stroke: var(--text);
+  stroke-width: 0.12;
+}
+
+.guide-compass text {
+  fill: var(--text-2);
+  font-size: 0.6px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.guide-compass text.north {
+  fill: var(--text);
+  font-weight: 700;
+}
+
+.guide-hover {
+  min-height: 2.6em;
+  overflow-wrap: anywhere;
+}
+
+.guide-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.guide-layer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.guide-layer input {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+.guide-checks,
+.guide-slots {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.guide-checks li,
+.guide-slots li {
+  padding: var(--space-1) 0;
+}
+
+.guide-checks input {
+  accent-color: var(--primary);
+}
+
+.guide-side .bom td.gos-src {
+  overflow-wrap: anywhere;
+}
+
+.swatch.guide-slot-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: middle;
+  border: 2px solid var(--accent);
+}
+
+@media (max-width: 760px) {
+  .guide-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .guide-scene {
+    height: 52vh;
+  }
+}
+
+/* --- The shell workbench (WO-10.10, D367-D370): words, versions, compare, the 3D view ---------- */
+
+.shell-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.shell-words {
+  width: 100%;
+  height: auto;
+  min-height: calc(4 * 1.5em + 2 * var(--space-2));
+  padding: var(--space-2) var(--space-4);
+  line-height: 1.5;
+  resize: vertical;
+  font: inherit;
+}
+
+.shell-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.shell-form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.shell-form-row input.num {
+  width: 9ch;
+}
+
+.shell-form-row select {
+  max-width: 100%;
+}
+
+.shell-version-list {
+  width: 100%;
+}
+
+.shell-version-list tr.current td {
+  background: var(--surface-2, var(--panel));
+}
+
+.shell-version-list button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.shell-version-list button.gos-chip[aria-pressed="true"] {
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
+.shell-version-list .shell-asked {
+  overflow-wrap: anywhere;
+}
+
+.shell-ghost-toggle input {
+  accent-color: var(--primary);
+}
+
+.guide-ghost {
+  fill: none;
+  stroke-width: 0.06;
+  stroke-dasharray: 0.25 0.15;
+  pointer-events: stroke;
+}
+
+.guide-ghost.machine {
+  stroke: var(--primary);
+}
+
+.guide-ghost.keepout {
+  stroke: var(--accent);
+  stroke-opacity: 0.7;
+}
+
+.shell-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.shell-compare-grid .guide-scene {
+  height: min(40vh, 520px);
+}
+
+@media (max-width: 760px) {
+  .shell-compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell-version-list {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+/* --- Shell bake-off (WO-10.11, D374-D377): blind entries side by side, the workbench's parts --- */
+
+.shell-bakeoff button.gos-chip {
+  min-height: var(--hit-min, 44px);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.shell-bakeoff button.gos-chip[aria-pressed="true"] {
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
+.bakeoff-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  margin-top: var(--space-2);
+}
+
+.shell-bakeoff [data-testid="bakeoff-brief"],
+.shell-bakeoff [data-testid="bakeoff-followup"] {
+  overflow-wrap: anywhere;
+}
+
+/* --- Shell card (WO-10.7, D316): the decorative shell's isometric preview -------------------- */
+
+.shell-view-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.shell-preview {
+  display: block;
+  flex: 1 1 320px;
+  min-width: 0;
+  width: 100%;
+  max-height: 560px;
+  margin: var(--space-2) 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.shell-face {
+  stroke: var(--bg);
+  stroke-width: 0.04;
+  stroke-linejoin: round;
+}
+
+.shell-face.side-a {
+  fill-opacity: 0.78;
+}
+
+.shell-face.side-b {
+  fill-opacity: 0.58;
+}
+
+.role-wall {
+  fill: var(--text-2);
+  background: var(--text-2);
+}
+
+.role-trim {
+  fill: var(--text-3);
+  background: var(--text-3);
+}
+
+.role-pillar {
+  fill: var(--text);
+  background: var(--text);
+}
+
+.role-floor {
+  fill: var(--track);
+  background: var(--track);
+}
+
+.role-roof {
+  fill: var(--rule);
+  background: var(--rule);
+}
+
+.role-window {
+  fill: var(--primary);
+  background: var(--primary);
+}
+
+.role-light {
+  fill: var(--warn);
+  background: var(--warn);
+}
+
+.role-accent {
+  fill: var(--accent);
+  background: var(--accent);
+}
+
+.role-block {
+  fill: var(--needs);
+  background: var(--needs);
+}
+
+.shell-palette .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+  border: 1px solid var(--border);
+}
+
+.shell-palette td.gos-src {
+  overflow-wrap: anywhere;
+}
+
+.shell-paste ol {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+.shell-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
 }

@@ -174,6 +174,12 @@ def test_design_refusals(home: Path) -> None:
     empty.mkdir()
     with pytest.raises(designer.DesignerError, match="gos db build"):
         designer.design(empty, Request(WIDGET, tier_cap="MV"))
+    # a finite rate so big that sizing overflows is a refusal, not a 500
+    huge = designer.request_from_spec(
+        home, {"target": WIDGET, "rate": "1e308/s", "tier": "MV"}
+    )
+    with pytest.raises(designer.DesignerError, match="can't design it"):
+        designer.design(home, huge)
 
 
 def test_resolve_target(home: Path) -> None:

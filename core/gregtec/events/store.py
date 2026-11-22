@@ -70,7 +70,7 @@ def _int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
-        return value
+        return value if -(2**63) <= value < 2**63 else None  # SQLite's INTEGER range
     if isinstance(value, float) and math.isfinite(value) and abs(value) < 1e9:
         return round(value)
     return None
@@ -210,6 +210,8 @@ def _ts(value: object) -> float | None:
     """An event's time: epoch seconds, finite and in range, else None (the event is skipped)."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
+    if isinstance(value, int):  # math.isfinite can't take an int too big for a float
+        return float(value) if 0 <= value < TS_MAX else None
     return float(value) if math.isfinite(value) and 0 <= value < TS_MAX else None
 
 

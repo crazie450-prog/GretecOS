@@ -124,7 +124,7 @@ changes GT, before answering yes:
      controller's `fluidIntoPower` changed, port the change into `gtmath/turbine.py` first.
      Then the boiler and tree-farm vectors (WO-4.2, D233):
      `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py`; if a 2.9 large boiler,
-     `LargeBoilerFuelBackend` (solid fuels, D329) or `MTETreeFarm` changed, port it into
+     `LargeBoilerFuelBackend` (solid fuels, D380) or `MTETreeFarm` changed, port it into
      `gtmath/boiler.py` or `gtmath/treefarm.py` first.
      Then the Large Naquadah Reactor's (WO-4.8, D326):
      `uv run python tests/unit/gtmath/oracle/make_naquadah_vectors.py`; if
@@ -170,7 +170,9 @@ After the PR is merged and deployed (`gos deploy` from your clone):
    & $gos pack watch --force
    & $gos pack stock
    ```
-   Expect "No stable release newer than 2.9.0" (or a real 2.9.x), your addons with their newest
+   Expect "No stable release newer than 2.9.0" (or a real 2.9.x; "Couldn't check for a stable
+   release newer than 2.9.0" and exit 1 mean the feed wasn't read, offline or rate-limited:
+   run it again later), your addons with their newest
    tags, and a stock check listing TST, 123Technology, Programmable Hatches, worldedit-gtnh and
    PlanNH as not stock and NEI 2.8.171 present.
 2. **The Lab dry run** (WO-1.9 acceptance, the shape of L10). Play's export must be in the main

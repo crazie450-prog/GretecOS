@@ -69,7 +69,7 @@ from gregtec.agents import prefetch
 from gregtec.agents.tools import items as item_tools
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.registry import Call, Env
-from gregtec.planner import chains, machines
+from gregtec.planner import cache, chains, machines, progress
 from gregtec.planner.gtmath.parallel import Supply
 from gregtec.planner.gtmath.processing import EnergyHatch
 from gregtec.planner.request import BaseInputs, Request, RequestError, is_stable_key
@@ -310,6 +310,7 @@ class _Reader:
         self.ores: dict[int, str] = {}
         self.recipes: dict[int, _Recipe] = {}
         self.ids: dict[str, tuple[list[int], list[int]]] = {}  # key -> item, fluid ids
+        self.resolved: set[str] = set()  # keys key_ids looked up in full
         self.makers: dict[
             str, list[tuple[int, int, int]]
         ] = {}  # key -> recipe, amount, chance
@@ -348,13 +349,21 @@ class _Reader:
             self.ids.setdefault(info.key, ([], []))[1].append(int(r[0]))
 
     def key_ids(self, key: str) -> tuple[list[int], list[int]]:
-        """The DB ids of a stable key (an NBT key's prefix matches its full hash)."""
-        if key in self.ids:
-            return self.ids[key]
-        items, fluids = chains._item_ids(self.conn, key)
-        self.load_items(items)
-        self.load_fluids(fluids)
-        return self.ids.setdefault(key, ([], []))
+        """The DB ids of a stable key (an NBT key's prefix matches its full hash). Resolved in
+        full once per reader, never from the ids earlier reads happened to load: the reader is
+        shared between designs (D352), so a key two items share must not depend on which of
+        them an earlier design read (review LOW-6)."""
+        if key not in self.resolved:
+            items, fluids = chains._item_ids(self.conn, key)
+            self.load_items(items)
+            self.load_fluids(fluids)
+            got = self.ids.get(key, ([], []))
+            self.ids[key] = (
+                sorted(got[0]),
+                sorted(got[1]),
+            )  # in id order, whoever read first
+            self.resolved.add(key)
+        return self.ids[key]
 
     def info(self, key: str) -> _Info | None:
         items, fluids = self.key_ids(key)
@@ -700,9 +709,10 @@ class _Builder:
         base: BaseInputs,
         templates: chains.Templates,
         run_id: int,
+        reader: _Reader | None = None,  # the run's shared reader (D352)
     ) -> None:
         self.req = request
-        self.reader = _Reader(conn, run_id)
+        self.reader = _Reader(conn, run_id) if reader is None else reader
         self.templates = templates
         self.loops: dict[str, frozenset[str]] = {}  # chain -> items on its loops
         self.player = player(request, base)
@@ -1049,16 +1059,38 @@ def build(
     run_id: int | None = None,
     max_depth: int = MAX_DEPTH,
 ) -> Graph:
-    """The recipe graph for ``request`` (see the module docstring)."""
+    """The recipe graph for ``request`` (see the module docstring). The run's batch reader is
+    shared with the other builds on this DB run (:mod:`.cache`, D352)."""
     run = machines.current_run(conn) if run_id is None else run_id
+    with cache.reader(conn, run, _Reader, _reader_size, _bind) as reader:
+        return _build(conn, request, base, templates, run, max_depth, reader)
+
+
+def _reader_size(reader: _Reader) -> int:
+    return len(reader.recipes)
+
+
+def _bind(reader: _Reader, conn: sqlite3.Connection | None) -> None:
+    reader.conn = conn  # type: ignore[assignment]  # None between builds
+
+
+def _build(
+    conn: sqlite3.Connection,
+    request: Request,
+    base: BaseInputs,
+    templates: chains.Templates | None,
+    run: int,
+    max_depth: int,
+    reader: _Reader,
+) -> Graph:
     b = _Builder(
         conn,
         request,
         base,
         chains.load() if templates is None else templates,
         run,
+        reader,
     )
-    reader = b.reader
     if reader.info(request.target) is None:
         raise GraphError(f"{request.target} is not in export run {run}")
     nodes: dict[str, ItemNode] = {}
@@ -1096,6 +1128,7 @@ def build(
             for key in pending:
                 if key in nodes:
                     continue
+                progress.check()  # a design job's cancel (D353)
                 kind = _kind(key)
                 info = reader.info(key) if kind in ("item", "fluid") else None
                 name = info.name if info else key

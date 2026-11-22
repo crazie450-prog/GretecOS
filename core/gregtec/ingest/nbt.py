@@ -8,7 +8,8 @@ VisualProspecting's own reader also accepts. Values come back as plain Python: a
 array a ``list[int]``, a string ``str`` (Java's modified UTF-8 decoded). Nothing is ever written.
 
 Bad data raises ``ValueError``: a truncated file, an unknown tag, a length past the end, nesting
-deeper than Minecraft's own limit (512), or more than :data:`MAX_BYTES` once decompressed.
+deeper than Minecraft's own limit (512), more than :data:`MAX_BYTES` (or the caller's ``limit``)
+once decompressed, or more values than the caller's ``max_tags``.
 """
 
 from __future__ import annotations
@@ -58,9 +59,14 @@ def decompress(data: bytes, limit: int = MAX_BYTES) -> bytes:
     return out
 
 
-def read(data: bytes) -> tuple[str, dict[str, Tag]]:
-    """The root compound of an NBT file (gzip or plain): (its name, its value)."""
-    r = _Reader(decompress(data))
+def read(
+    data: bytes, *, limit: int = MAX_BYTES, max_tags: int | None = None
+) -> tuple[str, dict[str, Tag]]:
+    """The root compound of an NBT file (gzip or plain): (its name, its value). ``limit`` caps
+    the decompressed size; ``max_tags`` (None: no cap) the number of values read, a byte array
+    counting as one and an int array as one per int, so a small file of millions of empty
+    compounds or ints can't fill the memory."""
+    r = _Reader(decompress(data, limit), max_tags)
     tag = r.u8()
     if tag != COMPOUND:
         raise ValueError(f"the root tag is type {tag}, not a compound")
@@ -73,9 +79,10 @@ def read(data: bytes) -> tuple[str, dict[str, Tag]]:
 
 
 class _Reader:
-    def __init__(self, data: bytes) -> None:
+    def __init__(self, data: bytes, max_tags: int | None = None) -> None:
         self.data = data
         self.pos = 0
+        self.left = max_tags
 
     def take(self, n: int) -> bytes:
         end = self.pos + n
@@ -122,6 +129,10 @@ class _Reader:
         return out
 
     def value(self, tag: int, depth: int) -> Tag:
+        if self.left is not None:
+            self.left -= 1
+            if self.left < 0:
+                raise ValueError("more NBT values than this file can hold")
         if tag == BYTE:
             return self.int_("b")
         if tag == SHORT:
@@ -150,6 +161,10 @@ class _Reader:
             return self.compound(depth + 1)
         if tag == INT_ARRAY:
             n = self.length()
+            if self.left is not None:  # each int is a Python object once read
+                self.left -= n
+                if self.left < 0:
+                    raise ValueError("more NBT values than this file can hold")
             ints = array("i", self.take(4 * n))
             if sys.byteorder == "little":
                 ints.byteswap()

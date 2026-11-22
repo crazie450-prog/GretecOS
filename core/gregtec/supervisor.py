@@ -1,7 +1,9 @@
 r"""``gos-supervisor`` (plan 4.2, D77, QA:A5, D115): starts, watches and restarts GOS's processes.
 
 It starts at Windows login from the HKCU Run key that ``scripts/install_login_start.ps1`` writes
-(D116), as ``GOS_APP\current\.venv\Scripts\gos-supervisor.exe --login``, a windowless launcher.
+(D116, D379), as ``conhost.exe --headless GOS_APP\current\.venv\Scripts\python.exe -m
+gregtec.supervisor --login``: python.exe, which Smart App Control allows, in a console with no
+window.
 ``gos serve`` runs it in the foreground instead. It manages the core and the Discord bot
 (``python -m gregtec.discordbot run``, WO-9.1) from the start; the bot exits with the setup code
 (2) and stays stopped until ``[discord] owner_id`` and its two secrets are set.
@@ -1052,6 +1054,10 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
     def _dispatch(self, method: str) -> None:
+        # Read the body before any answer: a refusal that closes the socket with the body
+        # unread makes the OS reset the connection, and Windows clients then lose the answer
+        # (WinError 10053 instead of the 403, D340).
+        body = self._body() if method == "POST" else {}
         if (why := self._refused()) is not None:
             self._reply(403, {"error": why})
             return
@@ -1079,7 +1085,6 @@ class _Handler(BaseHTTPRequestHandler):
         if role not in allowed:
             self._reply(403, {"error": f"the {role} token can't do that"})
             return
-        body = self._body() if method == "POST" else {}
         if body is None:
             self._reply(400, {"error": "send a small JSON object"})
             return
@@ -1220,8 +1225,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cfg = config.load(path)
     except (OSError, ValueError) as exc:
-        # No config, so no [paths] gos_home: log where GOS_HOME is by default. A login start
-        # runs under pythonw, which has no stderr, so the log file is the only trace.
+        # No config, so no [paths] gos_home: log where GOS_HOME is by default. A login start's
+        # console has no window, so the log file is the only trace.
         applog.setup("supervisor", config.default_home() / "logs")
         log.error("can't read gos.toml", extra={"path": str(path), "error": str(exc)})
         return 2

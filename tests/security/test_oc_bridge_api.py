@@ -383,6 +383,11 @@ def test_the_confirmed_command_goes_out_in_the_next_reply(
 
 
 def test_saying_confirm(client: TestClient, core: Core, token: str) -> None:
+    # The desk's clock stands still until the test moves it: "right after a proposal" must not
+    # depend on how fast the runner gets there (WO-11.4: a loaded Windows runner passed the
+    # settle time between the proposal and the voice "confirm", so it was confirmed).
+    now = time.time()
+    core.ops.desk.clock = lambda: now  # type: ignore[union-attr]
     aid = proposed(client, core, token)
     admin = client.post("/api/ask", json={"text": "confirm"}, headers=bearer(ADMIN))
     assert admin.status_code == 200 and admin.json()["text"] == CONFIRM_ELSEWHERE
@@ -392,7 +397,7 @@ def test_saying_confirm(client: TestClient, core: Core, token: str) -> None:
     assert soon.json()["pending"] is True
     assert soon.json()["text"] == 'Just proposed: Say "hi" in chat in Lab. Say confirm.'
     assert core.ops.desk.get(aid).state == "proposed"  # type: ignore[union-attr]
-    core.ops.desk.clock = lambda: time.time() + SETTLE_S  # type: ignore[union-attr]
+    core.ops.desk.clock = lambda: now + SETTLE_S  # type: ignore[union-attr]
     r = client.post("/api/ask", json={"text": "confirm"}, headers=voice)
     assert r.status_code == 200, r.text
     assert r.json()["pending"] is True and r.json()["text"].startswith(

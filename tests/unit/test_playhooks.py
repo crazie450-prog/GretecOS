@@ -11,6 +11,7 @@ import dataclasses
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -120,6 +121,9 @@ class Env:
             "clients": self.clients,
             "poll_s": 0.02,
             "config_path": self.config_path,
+            # These fake runs are the pipeline's, not loadable ones: loading them is
+            # WO-11.1's, tested in test_addon_watcher.py on real-shaped runs.
+            "load": False,
         }
         code = playhooks.run_export(self.cfg, out, **{**defaults, **kwargs})
         for t in self.threads:
@@ -258,11 +262,17 @@ def test_run_problems() -> None:
 def test_export_waits_for_a_launch_to_start_its_client(env: Env) -> None:
     """Prism starts Play's Java a while after pre-launch passed: an export started meanwhile
     would run beside it, so it refuses until post-exit or LAUNCH_GRACE_S."""
+    started = time.time()
     assert env.pre_launch()[0] == 0
     code, text = env.run_export()
-    assert (
-        code == 1 and "GTNH-Play was launched 0 s ago and may still be starting" in text
+    took = time.time() - started
+    # How long ago, as the wall clock says: at most what the test itself took (WO-11.4: a
+    # slow runner's "1 s ago" against an exact "0 s ago").
+    said = re.search(
+        r"GTNH-Play was launched (\d+) s ago and may still be starting", text
     )
+    assert code == 1 and said is not None, text
+    assert int(said[1]) <= took + 0.5
     assert env.launched == []
     assert post_exit(env, Asker(False))[0] == 0  # Play quit: the mark goes
     assert playhooks.launching(env.home) is None
@@ -763,8 +773,10 @@ def test_end_to_end_with_the_real_commands(env: Env) -> None:
     assert len(logs) == 1
     log = logs[0].read_text()
     assert "recorded export" in log and "instance lock released" in log, log
+    # The fake run isn't a loadable export: recorded, not loaded, so still stale (D329).
+    assert "not loaded into the DB" in log, log
     code, text = gos("hook", "pre-launch")
-    assert code == 0 and "recipe data matches Play" in text, text
+    assert code == 0 and "matches Play but isn't loaded" in text, text
 
     (env.play / ".minecraft/mods/tst-0.8.0.jar").write_bytes(b"tst rebuilt")
     code, text = gos("hook", "pre-launch")
@@ -777,11 +789,20 @@ def test_end_to_end_with_the_real_commands(env: Env) -> None:
     assert len(reports) == 1
     assert "Play: 0 added, 0 removed, 1 changed" in reports[0].read_text()
     code, text = gos("hook", "pre-launch")
-    assert code == 0 and "recipe data matches Play" in text, text
+    assert code == 0 and "matches Play but isn't loaded" in text, text
 
+    # Play unchanged but the last export not loaded: post-exit offers the load alone, which
+    # starts `gos export run --load-only` (no third export, no new run recorded).
     code, text = gos("hook", "post-exit", "--answer", "yes")
-    assert code == 0 and "nothing to do" in text, text
-    assert len(list((env.home / "logs").glob("export-*.log"))) == 2  # no third export
+    assert "isn't loaded" in text, text
+    # the fake run can't be loaded: it fails fast, before or after post-exit sees its lock
+    assert (code, "export started" in text) in ((0, True), (1, False)), text
+    wait_for_the_export()
+    logs = sorted((env.home / "logs").glob("export-*.log"))
+    assert len(logs) == 3
+    third = logs[-1].read_text()  # named by the time it started
+    assert "launching" not in third and "not loaded into the DB" in third, third
+    assert len(fingerprint.load_state(env.home)["exports"]) == 2
     code, text = gos("export", "diff")
     assert code == 0 and "Play: 0 added, 0 removed, 1 changed" in text, text
     assert not planted.exists()  # neither the hooks nor the exports they started ran it

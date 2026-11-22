@@ -28,7 +28,8 @@ dependencies = [
 gos = "gregtec.cli:main"
 
 [project.gui-scripts]
-# WO-2.1, D116: the login Run key starts this windowless launcher (pythonw on Windows).
+# WO-2.1, D116: a windowless launcher (pythonw on Windows). Since D379 GOS never starts it:
+# Smart App Control blocks it. Kept so a Run key from before D379 works where SAC is off.
 gos-supervisor = "gregtec.supervisor:main"
 
 [build-system]
@@ -44,6 +45,9 @@ module-name = "gregtec"
 dev = [
     "hypothesis>=6.100",
     "pytest>=9.2",
+    # D340: CI's mod job runs tests/integration with -n 4 --dist loadfile (MIT; plain
+    # `uv run pytest` stays serial).
+    "pytest-xdist>=3.8",
     # Ruff changed its default rule set in 0.16 and 0.17; take minor bumps on purpose.
     "ruff>=0.17.3,<0.18",
 ]
@@ -92,7 +96,12 @@ testpaths = ["tests"]
 # importlib mode lets tests/unit, tests/security, ... share file names without __init__.py files.
 addopts = ["--import-mode=importlib"]
 strict = true
-markers = ["slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)"]
+markers = [
+    "slow: needs a downloaded speech model; skipped unless one is present (WO-5.2)",
+    # D340: CI's checks jobs run these in their own step, after the xdist step, with no other
+    # workers beside them (a plain `uv run pytest` runs everything serially anyway).
+    "serial: timing- or desktop-sensitive; CI runs it alone, never beside other xdist workers (D340)",
+]
 # A full run writes about 7 GB of per-test temp folders (DB copies). Keep only failed tests'
 # folders, and only from the last run, so runs side by side don't fill the disk.
 tmp_path_retention_policy = "failed"

@@ -24,8 +24,9 @@ the node's crafts per second and sums each item over the whole line:
   its dynamo hatch's voltage x amps (``dynamo_hatch``, D327). Ports the node declares must match (each item within :data:`TOL` of its
   flow), or the proof names the difference.
 
-A GT recipe that uses up nothing but gives something outside the free set (an export quirk: an
-input it couldn't key) is never counted on: the proof names it (D234).
+A GT recipe that uses up nothing but gives something outside the free set (GT's own recipe is
+like that in the instance: a machine that works from EU alone, or an input GT's recipe builder
+dropped; the export marks it ``unkeyed``, D364) is never counted on: the proof names it (D234).
 
 Any item whose balance is below zero (beyond float noise, :data:`TOL`) and
 is not in the free set is an import (noise is relative to that item's own flow, so a trickle of
@@ -296,7 +297,7 @@ def gen_ports(
             ), None
         if kind == "boiler_steam":
             b = gt_boiler.BOILERS.get(_class(conn, int(spec["boiler_mte"])) or "")
-            # A fluid by its burn ticks, a solid by its exact furnace burn value (D329).
+            # A fluid by its burn ticks, a solid by its exact furnace burn value (D380).
             burns: dict[str, Any] | None = None
             if fluid is not None and str(row[5]) == fuels.Unit.BOILER_TICKS.value:
                 burns = {"fluid": fluid, "duration": int(row[4])}

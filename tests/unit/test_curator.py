@@ -104,8 +104,8 @@ def test_index_from_the_template_follows_the_schema(vault: Path) -> None:
     assert rows[2][3] == "Clayton's goals, one per line as goal: {text}; agents rea..."
     assert len(rows[1][3]) <= index.SUMMARY_MAX
     assert (
-        "upd: 2026-11-12" in text
-    )  # the newest row's date (the schema note's, WO-6.4)
+        "upd: 2026-11-18" in text
+    )  # the newest row's date (the schema note's, WO-10.6)
     assert not index.build(
         vault, TODAY + dt.timedelta(days=3)
     )  # unchanged: not rewritten
@@ -413,6 +413,7 @@ def test_backup_vacuums_into_a_dated_file_and_keeps_the_newest(tmp_path: Path) -
         "gos-20261007.sqlite",
         "gos-20261008.sqlite",
         "gos-20261106.sqlite",
+        "gos-20261106.sqlite.manifest.json",  # WO-11.2 (D332)
         "notes.txt",
     ]
     conn = sqlite3.connect(folder / "gos-20261106.sqlite")
@@ -636,7 +637,46 @@ def test_a_stale_backup_tmp_is_removed(tmp_path: Path) -> None:
     folder.mkdir()
     (folder / "gos-20261001.sqlite.tmp").write_bytes(b"half")
     curator.backup(db, folder, TODAY)
-    assert sorted(p.name for p in folder.iterdir()) == ["gos-20261106.sqlite"]
+    assert sorted(p.name for p in folder.iterdir()) == [
+        "gos-20261106.sqlite",
+        "gos-20261106.sqlite.manifest.json",
+    ]
+
+
+def test_a_locked_old_backup_doesnt_stop_todays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """QA 10-13: the manifest backfill of a backup made before WO-11.2 is skipped on an OSError
+    (a file another process holds), and a stopping core's backup (a deadline) skips it."""
+    import time
+
+    from gregtec.ops import backups
+
+    db, folder = tmp_path / "gos.sqlite", tmp_path / "backups"
+    make_db(db)
+    folder.mkdir()
+    make_db(folder / "gos-20261101.sqlite")  # no manifest
+    asked: list[str] = []
+    real = backups.db_manifest
+
+    def locked(path: Path) -> dict[str, Any]:
+        asked.append(path.name)
+        if path.name == "gos-20261101.sqlite":
+            raise PermissionError(13, "being used by another process")
+        return real(path)
+
+    monkeypatch.setattr(backups, "db_manifest", locked)
+    result = curator.backup(db, folder, TODAY, deadline=time.monotonic() + 60)
+    assert result.detail == "wrote gos-20261106.sqlite"
+    assert "gos-20261101.sqlite" not in asked  # a deadline: no backfill
+    assert (folder / "gos-20261106.sqlite.manifest.json").is_file()
+    (folder / "gos-20261106.sqlite").unlink()
+    (folder / "gos-20261106.sqlite.manifest.json").unlink()
+    result = curator.backup(db, folder, TODAY)
+    assert result.detail == "wrote gos-20261106.sqlite"
+    assert "gos-20261101.sqlite" in asked
+    assert (folder / "gos-20261106.sqlite.manifest.json").is_file()
+    assert "gos-20261101.sqlite has no manifest" in caplog.text
 
 
 def test_git_never_commits_a_killed_writes_temp_file(vault: Path) -> None:

@@ -4,6 +4,7 @@
 // which item when the target is unclear.
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import valid from "../../tests/fixtures/cards/valid.json";
 import type { DesignerRoute, DesignerView } from "../src/api/types";
 import { RouteComparisonView } from "../src/cards/renderers";
 import { Designer, planFromHash, routeLabel } from "../src/views/Designer";
@@ -30,6 +31,7 @@ function route(id: string, position: number, over: Partial<DesignerRoute> = {}):
         machine: "Basic Macerator", mte: "mte:30", tier: "LV", count: 5, pinned: false, primary: true },
     ],
     warnings: [],
+    affected: null,
     metrics: { machines: 18, score: position === 1 ? 0.76 : 0.5 },
     differs: [],
     flow: { type: "flow", title: "Steel", ref: `plan:${id}`, nodes: [], edges: [], notes: [] },
@@ -64,6 +66,20 @@ function view(id: string, routes: DesignerRoute[]): DesignerView {
 // Out of rank order on purpose in the ids: the view must keep the order the core gave.
 const FIRST = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), route("pl-aaaaaaaaaa", 2)]);
 
+// A design job (WO-3.9): the POST answers it running, the poll answers it done with its result.
+const JOB = "job-0123456789ab";
+function job(over: Record<string, unknown> = {}) {
+  return {
+    id: JOB, kind: "designer", title: "Designer: steel ingot", status: "running", stage: "graph",
+    k: null, n: null, sub: null, detail: "graph", started: Date.now() / 1000, finished: null,
+    elapsed_s: 0, error: null, cancel_asked: false, ...over,
+  };
+}
+function jobAnswers(result: unknown): void {
+  routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job() } });
+  routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: job({ status: "done", result }) } });
+}
+
 type Call = { method: string; url: string; body: unknown };
 let calls: Call[];
 let routes: Record<string, () => { status: number; body: unknown }>;
@@ -74,6 +90,11 @@ beforeEach(() => {
   routes = {
     "GET /api/plans": () => ({ status: 200, body: { plans: [], problems: [] } }),
     "GET /api/designer": () => ({ status: 200, body: { ids: [] } }),
+    // WO-10.8: the EBF (mte 1000) has a footprint, the macerator isn't a multi.
+    "GET /api/build/guides": () => ({
+      status: 200,
+      body: { guides: [{ controller: "gregtech:gt.blockmachines@1000", name: "EBF", mte: 1000, source: "gtnh-extractor", variants: ["t1"] }] },
+    }),
   };
   // React Flow measures its canvas; jsdom has no ResizeObserver.
   vi.stubGlobal(
@@ -139,6 +160,10 @@ describe("the Designer view", () => {
     expect(screen.getByTestId("designer-compare").querySelector("li.differs")?.textContent).toContain("differs");
     expect(window.location.hash).toBe(`#/designer/${FIRST.id}`);
     expect(screen.getByTestId("designer-weights").textContent).toContain("balanced");
+    // A multi with a footprint opens in the Build view's 3D guide (WO-10.8); others have no link.
+    const link = await screen.findByTestId(`guide-link-${FIRST.routes[0].id}-n1`);
+    expect(link.getAttribute("href")).toBe("#/build?guide=gregtech%3Agt.blockmachines%401000");
+    expect(screen.queryByTestId(`guide-link-${FIRST.routes[0].id}-n2`)).toBeNull();
   });
 
   it("swaps a node: its alternatives, then a pin that the core solves again", async () => {
@@ -160,7 +185,7 @@ describe("the Designer view", () => {
       nodes: route("x", 1).nodes.map((n) => (n.item === DUST ? { ...n, recipe: other, pinned: true } : n)),
     });
     const pinned = view("pl-cccccccccc", [pinnedRoute]);
-    routes[`POST /api/plans/${FIRST.id}/pin`] = () => ({ status: 200, body: { ids: [pinned.id], problems: [], view: pinned } });
+    jobAnswers({ ids: [pinned.id], problems: [], view: pinned });
     routes[`GET /api/plans/${pinned.id}/alternatives`] = routes[`GET /api/plans/${FIRST.id}/alternatives`];
     render(<Designer />);
     fireEvent.click(await screen.findByTestId(`swap-${FIRST.id}-n2`));
@@ -171,11 +196,46 @@ describe("the Designer view", () => {
       fireEvent.click(pin);
     });
     const posted = calls.find((c) => c.method === "POST");
-    expect(posted).toEqual({ method: "POST", url: `/api/plans/${FIRST.id}/pin`, body: { node: DUST, recipe: other } });
+    expect(posted).toEqual({
+      method: "POST",
+      url: "/api/designer/jobs",
+      body: { pin: { plan: FIRST.id, node: DUST, recipe: other } },
+    });
     const pins = await screen.findByTestId(`pins-${pinned.id}`);
     expect(pins.textContent).toContain("pinned Steel Dust");
     expect(pins.querySelector(`[data-cite="${other}"]`)).not.toBeNull();
     expect(window.location.hash).toBe(`#/designer/${pinned.id}`);
+  });
+
+  it("shows a plan an export affected, with a one-click re-solve on the new data (WO-11.1)", async () => {
+    const hit = "r:gt.recipe.blastfurnace/9c40869458cb";
+    const flagged = view(FIRST.id, [
+      route(FIRST.id, 1, {
+        status: "accepted",
+        affected: { run: "20261114T124556Z", hits: [{ cite: hit, why: "changed in 20261114T124556Z" }] },
+      }),
+    ]);
+    window.location.hash = `/designer/${FIRST.id}`;
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: flagged });
+    routes["GET /api/plans"] = () => ({
+      status: 200,
+      body: { plans: [{ id: FIRST.id, name: "Steel", status: "accepted", kind: "production", affected: true }], problems: [] },
+    });
+    const fresh = view("pl-dddddddddd", [route("pl-dddddddddd", 1)]);
+    jobAnswers({ ids: [fresh.id], problems: [], view: fresh });
+    render(<Designer />);
+    const banner = await screen.findByTestId(`affected-${FIRST.id}`);
+    expect(banner.textContent).toContain("Affected by update");
+    expect(banner.textContent).toContain("20261114T124556Z");
+    expect(banner.querySelector(`[data-cite="${hit}"]`)).not.toBeNull();
+    expect((await screen.findByTestId("designer-saved")).textContent).toContain("affected by update");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`affected-resolve-${FIRST.id}`));
+    });
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ resolve: FIRST.id }]);
+    await screen.findByTestId("route-1-base");
+    expect(window.location.hash).toBe(`#/designer/${fresh.id}`);
+    expect(screen.queryByTestId(`affected-${fresh.id}`)).toBeNull();
   });
 
   it("asks before accepting, then shows the route accepted", async () => {
@@ -200,7 +260,7 @@ describe("the Designer view", () => {
   });
 
   it("asks which item when the target is unclear, then designs with its key", async () => {
-    routes["POST /api/designer/design"] = () => ({
+    routes["POST /api/designer/jobs"] = () => ({
       status: 200,
       body: {
         clarify: {
@@ -216,25 +276,145 @@ describe("the Designer view", () => {
       fireEvent.click(screen.getByTestId("designer-go"));
     });
     expect((await screen.findByTestId("designer-clarify")).textContent).toContain("Which ingot");
-    routes["POST /api/designer/design"] = () => ({ status: 200, body: { ids: [FIRST.id], problems: [], view: FIRST } });
+    jobAnswers({ ids: [FIRST.id], problems: [], view: FIRST });
     await act(async () => {
       fireEvent.click(screen.getByTestId("clarify-1"));
     });
-    const designs = calls.filter((c) => c.url === "/api/designer/design").map((c) => c.body);
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
     expect(designs).toEqual([
-      { target: "ingot", rate: "1/s", tier: "HV", routes: 3, addons: false },
-      { target: STEEL, rate: "1/s", tier: "HV", routes: 3, addons: false },
+      { spec: { target: "ingot", rate: "1/s", tier: "HV", routes: 3, addons: false } },
+      { spec: { target: STEEL, rate: "1/s", tier: "HV", routes: 3, addons: false } },
     ]);
     await screen.findByTestId("route-1-base");
   });
 
+  it("tries the floor plan again when its panel is reopened after a failed load", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: FIRST });
+    const url = `/api/plans/${FIRST.id}/layout`;
+    routes[`GET ${url}`] = () => ({ status: 500, body: { error: "the DB is busy" } });
+    render(<Designer />);
+    const panel = (await screen.findByTestId(`layout-${FIRST.id}`)) as HTMLDetailsElement;
+    // jsdom fires the details' toggle event itself, a task after open changes, as a browser does
+    const toggle = async (open: boolean) => {
+      await act(async () => {
+        panel.open = open;
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    };
+    await toggle(true);
+    expect(await within(panel).findByText(/the DB is busy/)).toBeTruthy();
+    const card = {
+      type: "layout", title: "Floor plan · Steel", ref: `plan:${FIRST.id}`, layout: "lo-0123456789ab",
+      size: { x: 4, y: 3, z: 3 }, rects: [], notes: ["0 machines placed"],
+    };
+    routes[`GET ${url}`] = () => ({ status: 200, body: { layout: { id: "lo-0123456789ab" }, card } });
+    await toggle(false);
+    await toggle(true);
+    expect(await within(panel).findByText(/Floor plan · Steel/)).toBeTruthy();
+    expect(within(panel).queryByText(/the DB is busy/)).toBeNull();
+    expect(calls.filter((c) => c.url === url)).toHaveLength(2);
+  });
+
+  it("designs a shell around the floor plan through the core, and shows its refusal", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: FIRST });
+    const card = {
+      type: "layout", title: "Floor plan · Steel", ref: `plan:${FIRST.id}`, layout: "lo-0123456789ab",
+      size: { x: 4, y: 3, z: 3 }, rects: [], notes: ["0 machines placed"],
+    };
+    routes[`GET /api/plans/${FIRST.id}/layout`] = () => ({ status: 200, body: { layout: { id: "lo-0123456789ab" }, card } });
+    routes["POST /api/shells"] = () => ({ status: 400, body: { error: "no theme for this build" } });
+    render(<Designer />);
+    const panel = (await screen.findByTestId(`layout-${FIRST.id}`)) as HTMLDetailsElement;
+    await act(async () => {
+      panel.open = true;
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const button = await within(panel).findByTestId(`shell-design-${FIRST.id}`);
+    fireEvent.click(button);
+    expect(await within(panel).findByText(/no theme for this build/)).toBeTruthy();
+    // the core designs it (the procedural shell); the view draws the card it returns
+    routes["POST /api/shells"] = () => ({ status: 200, body: { card: valid.shell } });
+    fireEvent.click(within(panel).getByTestId(`shell-design-${FIRST.id}`));
+    await within(panel).findByTestId("shell-preview");
+    expect(within(panel).queryByText(/no theme for this build/)).toBeNull();
+    expect(within(panel).queryByTestId(`shell-design-${FIRST.id}`)).toBeNull();
+    const posts = calls.filter((c) => c.method === "POST" && c.url === "/api/shells");
+    expect(posts.map((c) => c.body)).toEqual([{ plans: [FIRST.id] }, { plans: [FIRST.id] }]);
+  });
+
   it("shows the core's refusal", async () => {
-    routes["POST /api/designer/design"] = () => ({ status: 400, body: { error: "no route: no recipe makes the target" } });
+    routes["POST /api/designer/jobs"] = () => ({ status: 400, body: { error: "no route: no recipe makes the target" } });
     render(<Designer />);
     fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: "unobtainium" } });
     await act(async () => {
       fireEvent.click(screen.getByTestId("designer-go"));
     });
     expect((await screen.findByTestId("designer-notice")).textContent).toContain("no recipe makes the target");
+  });
+
+  it("runs a design as a job: its stage and time at once, then a Cancel that saves nothing", async () => {
+    // The core's elapsed_s, never its start against this device's clock (review LOW-3).
+    let polled = job({ stage: "solve", k: 2, n: 3, started: 1, elapsed_s: 65 });
+    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job({ started: 1, elapsed_s: 65 }) } });
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: polled } });
+    routes[`POST /api/design-jobs/${JOB}/cancel`] = () => {
+      polled = { ...polled, cancel_asked: true };
+      return { status: 200, body: { job: polled } };
+    };
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: "steel ingot" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const panel = await screen.findByTestId("designer-busy");
+    expect(panel.getAttribute("aria-busy")).toBe("true");
+    expect((await screen.findByText(/Solving route 2 of 3/)).textContent).toContain("◐");
+    expect(screen.getByTestId("designer-job-elapsed").textContent).toMatch(/^1:0[5-9]$/);
+    expect((screen.getByTestId("designer-go") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-cancel"));
+    });
+    expect(calls.some((c) => c.method === "POST" && c.url === `/api/design-jobs/${JOB}/cancel`)).toBe(true);
+    expect((await screen.findByTestId("designer-cancel")).textContent).toContain("Cancelling");
+    polled = { ...polled, status: "cancelled", cancel_asked: true };
+    expect((await screen.findByTestId("designer-notice", {}, { timeout: 3000 })).textContent).toContain(
+      "Cancelled: nothing was saved.",
+    );
+    expect(screen.queryByTestId("designer-busy")).toBeNull();
+    expect(screen.getByTestId("designer-empty")).not.toBeNull(); // no design was opened
+  });
+
+  it("shows a failed job's refusal, and a job the core lost to a restart", async () => {
+    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job() } });
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({
+      status: 200,
+      body: { job: job({ status: "failed", error: "no route: nothing makes it at LV" }) },
+    });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: "steel ingot" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    expect((await screen.findByTestId("designer-notice")).textContent).toContain("nothing makes it at LV");
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 404, body: { error: "no job" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    expect((await screen.findByText(/core restarted/)).textContent).toContain("start it again");
+  });
+
+  it("says when another design is already running", async () => {
+    routes["POST /api/designer/jobs"] = () => ({
+      status: 409,
+      body: { error: "a designer design is already running (Designer: steel, graph): wait for it or cancel it" },
+    });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: "steel ingot" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    expect((await screen.findByTestId("designer-notice")).textContent).toContain("already running");
   });
 });
