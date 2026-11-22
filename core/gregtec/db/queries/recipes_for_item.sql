@@ -4,8 +4,10 @@
 -- fake NULL (an NEI-only handler that doesn't say, D105) stays in. :tier_max (a GT voltage tier)
 -- keeps recipes up to that tier and those with none (crafting, furnace); :maps and :handlers are
 -- JSON arrays of recipe_map and nei_handler ids, or NULL for any machine. GT's recycling recipes
--- (categories gt.recipe.category.*_recycling: an item back to its material) last, then lowest
--- tier first, no tier (crafting) before tier 0, then by machine and ref; total counts every match.
+-- (categories gt.recipe.category.*_recycling: an item back to its material) last; before them,
+-- and again among them, recipes whose fake status is known before fake NULL ones (D341), then
+-- lowest tier first, no tier (crafting) before tier 0, then by machine and ref; total counts
+-- every match.
 SELECT r.id, r.ref, r.source,
   coalesce(m.name_en, h.name_en, (
     SELECT mc.name_en FROM machine_map AS mm JOIN machine AS mc ON mc.id = mm.machine_id
@@ -27,5 +29,5 @@ WHERE r.run_id = :run_id
   AND (:maps IS NULL
     OR r.recipe_map_id IN (SELECT value FROM json_each(:maps))
     OR r.nei_handler_id IN (SELECT value FROM json_each(:handlers)))
-ORDER BY recycling, r.voltage_tier IS NOT NULL, r.voltage_tier, machine, r.ref
+ORDER BY recycling, r.fake IS NULL, r.voltage_tier IS NOT NULL, r.voltage_tier, machine, r.ref
 LIMIT :limit OFFSET :offset;

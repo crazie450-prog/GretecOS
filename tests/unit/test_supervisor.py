@@ -338,9 +338,13 @@ def test_hung_process_is_killed_and_restarted(
         ticking(lambda: managed.state == "running", 20)
         first_pid = managed.proc.pid  # type: ignore[union-attr]
         flag.write_text("")
-        ticking(lambda: managed.state == "unresponsive", 10)
+        # One tick can mark it unresponsive, kill it and schedule the restart, so don't
+        # poll for the momentary "unresponsive" state. The backoff detail carries the hang
+        # kill's reason, which only the running-but-silent branch of tick() sets.
         ticking(lambda: managed.state == "backoff", 10)
-        assert "didn't answer" in managed.detail
+        assert managed.detail.startswith("/health didn't answer for "), managed.detail
+        assert managed.proc is None
+        assert managed.last_exit is not None and managed.last_exit["code"] != 0
         flag.unlink()
         ticking(lambda: managed.state == "running" and managed.restarts == 1, 20)
         assert managed.proc.pid != first_pid  # type: ignore[union-attr]
