@@ -593,6 +593,7 @@ If not:
 |---|---|
 | `Not starting GOS: gos.toml: ...` | a setting in an old `gos.toml` is wrong. If it names `allowed_hosts`, do step 24. Otherwise stop and ask, with the line |
 | `Not starting GOS: GOS doesn't run elevated (as administrator) ...` | this is an Administrator window. Go back to step 1 |
+| `Couldn't start the supervisor: [WinError 4551] An Application Control policy has blocked this file` | Smart App Control blocked `python.exe`. Its online check sometimes fails once, so run the command again. If it says the same again, stop and ask, with the line |
 | `The supervisor didn't answer within 15 s; see ...\logs\supervisor.log` | run `Get-Content "$gh\logs\supervisor.log" -Tail 20`, copy what it prints, stop and ask |
 | `The supervisor is running; started what was stopped:` and a short list | GOS was already running in the background. That is fine. No new Chrome window opens in this case. If none is on monitor 2, run `& $gos dashboard` |
 

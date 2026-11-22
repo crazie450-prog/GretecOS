@@ -1276,6 +1276,11 @@ def test_a_collect_in_progress_blocks_the_build(
             + b"\n",
             "fake is not true or false",
         ),
+        (
+            json.dumps({**gt("gt.recipe.mixer", 0, 1, 1), "unkeyed": 1}).encode()
+            + b"\n",
+            "unkeyed is not a string",
+        ),
     ],
 )
 def test_a_bad_line_fails_the_build_with_its_place(
@@ -1293,6 +1298,69 @@ def test_a_bad_line_fails_the_build_with_its_place(
     with pytest.raises(build.BuildError, match=where):
         built(tmp_path, allow_list)
     assert rows(good.db, "SELECT ref, content_hash FROM recipe ORDER BY ref") == before
+
+
+# The task's query (D364): recipes that give something and have no input they use up.
+NO_USED_UP_INPUT = (
+    "SELECT r.ref FROM recipe r WHERE EXISTS (SELECT 1 FROM recipe_output ro"
+    " WHERE ro.recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_input ri"
+    " WHERE ri.recipe_id = r.id AND ri.consumed = 1 AND ri.amount > 0)"
+)
+UNKEYED = "SELECT r.ref, m.value_text FROM recipe r JOIN recipe_meta m ON m.recipe_id = r.id AND m.key = 'unkeyed'"
+
+
+def test_the_exports_unkeyed_marker_reaches_the_db(
+    tmp_path: Path, allow_list: Path
+) -> None:
+    def files(marked: bool) -> dict[str, bytes]:
+        # As GT's dev-runtime centrifuge and macerator rows: a circuit and a fluid out; a null
+        # input slot and an item out.
+        extra = [
+            gt(
+                "gt.recipe.mixer",
+                10,
+                5,
+                288,
+                **{
+                    "in": [ref(CIRCUIT, 3, 0)],
+                    "fout": [{"fluid": "molten.test", "mb": 36}],
+                },
+            ),
+            gt(
+                "gt.recipe.mixer",
+                11,
+                2,
+                40,
+                **{"in": [None], "out": [ref("test:tiny", 5, 1)]},
+            ),
+        ]
+        if marked:
+            extra[0]["unkeyed"] = "none"
+            extra[1]["unkeyed"] = "null_input"
+        return {
+            **default_files(nei=False),
+            "gt_recipes.jsonl": jsonl(gt_recipes() + extra),
+        }
+
+    make_run(tmp_path / "new", files=files(True))
+    new = built(tmp_path / "new", allow_list)
+    marks = dict(rows(new.db, UNKEYED))
+    assert sorted(marks.values()) == ["none", "null_input"]
+    # Every row the query finds is marked, and nothing else is.
+    assert {r for (r,) in rows(new.db, NO_USED_UP_INPUT)} == set(marks)
+    conn = access.connect(new.db, readonly=True)
+    try:
+        ids = json.dumps([i for (i,) in conn.execute("SELECT id FROM recipe")])
+        conds = access.query(conn, "recipe_conditions", {"ids": ids})
+        assert "unkeyed" not in {c["key"] for c in conds}  # not a condition
+    finally:
+        conn.close()
+    # A run made before D364 has no marker: the same keys and content hashes.
+    make_run(tmp_path / "old", files=files(False))
+    old = built(tmp_path / "old", allow_list)
+    assert rows(old.db, UNKEYED) == []
+    keys = "SELECT ref, signature, content_hash FROM recipe ORDER BY ref"
+    assert rows(old.db, keys) == rows(new.db, keys)
 
 
 def test_a_failed_write_rolls_back(

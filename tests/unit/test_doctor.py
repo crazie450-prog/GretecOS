@@ -487,3 +487,48 @@ def test_doctor_checks_the_gt_pin(
     out = io.StringIO()
     assert doctor.main([prism], tmp_path / "home", False, out) == 1
     assert "!!! GT PIN MISMATCH" in out.getvalue()
+
+
+# --- Smart App Control (D379) ------------------------------------------------------------------
+
+OLD_RUN = r'"C:\GregtecOS-app\current\.venv\Scripts\gos-supervisor.exe" --login'
+NEW_RUN = (
+    r'"C:\Windows\System32\conhost.exe" --headless '
+    r'"C:\GregtecOS-app\current\.venv\Scripts\python.exe" -P -m gregtec.supervisor --login'
+)
+
+
+def test_smart_app_control_lines() -> None:
+    assert doctor.smart_app_control_lines(None, OLD_RUN) == []  # not Windows
+    assert doctor.smart_app_control_lines("off", OLD_RUN) == ["Smart App Control: off"]
+    [line] = doctor.smart_app_control_lines("on", NEW_RUN)
+    assert line.startswith("Smart App Control: on (") and "python.exe" in line
+    assert len(doctor.smart_app_control_lines("on", None)) == 1  # no login start yet
+    for state in ("on", "evaluation"):
+        state_line, warning = doctor.smart_app_control_lines(state, OLD_RUN)
+        assert state_line.startswith(f"Smart App Control: {state}")
+        assert warning.startswith("warning: the login start runs gos-supervisor.exe")
+        assert r"GOS_APP\scripts" in warning
+    _, warning = doctor.smart_app_control_lines("on", r'"C:\x\pythonw.exe" -m x')
+    assert "runs pythonw.exe" in warning
+
+
+def test_printed_report_has_smart_app_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(doctor, "smart_app_control", lambda: "on")
+    monkeypatch.setattr(doctor, "login_start_command", lambda: OLD_RUN)
+    out = io.StringIO()
+    code = doctor.main([make_prism(tmp_path / "Prism")], tmp_path / "home", False, out)
+    text = out.getvalue()
+    assert code == 0, text  # a warning, not a failure
+    assert "Smart App Control: on" in text
+    assert "warning: the login start runs gos-supervisor.exe" in text
+
+
+def test_smart_app_control_reads_on_this_pc() -> None:
+    state = doctor.smart_app_control()
+    if os.name != "nt":
+        assert state is None and doctor.login_start_command() is None
+    else:  # GitHub's runners: Server editions have no Smart App Control
+        assert state in ("off", "on", "evaluation", "unknown")
