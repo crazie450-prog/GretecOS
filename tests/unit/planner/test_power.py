@@ -668,6 +668,18 @@ def test_a_large_boiler_burns_a_solid_by_its_exported_burn_value(
             coal: pytest.approx(g.fuel_per_s),
             "fluid:water": pytest.approx(g.water_per_s),
         }
+        # self_sustaining offers a solid only when the request names it (D330).
+        ss = power.PowerRequest(
+            mode="self_sustaining", free=FREE, kinds=("boiler_steam",)
+        )
+        none, ss_notes = power.candidates(c, 1, ss, 2)
+        assert none == [] and any(
+            "1 solid boiler fuels left out" in n for n in ss_notes
+        )
+        named = power.PowerRequest(
+            mode="self_sustaining", free=FREE, kinds=("boiler_steam",), fuels=(coal,)
+        )
+        assert [x.fuel for x in power.candidates(c, 1, named, 2)[0]] == [coal]
         # A burn value below the boiler's 480 EU/t is not a fuel GT takes.
         c.execute("UPDATE fuel SET value = 479 WHERE recipe_id = 900")
         assert power.candidates(c, 1, req, 2)[0] == []

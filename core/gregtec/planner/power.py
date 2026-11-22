@@ -27,7 +27,8 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
 
 For each generator the fuels are pruned to the top :data:`TOP_FUELS` by EU per unit of fuel
 (the request's ``candidates``; a boiler's solid fuels apart from its fluid ones, since an item
-is not a litre, D329; ``self_sustaining`` keeps only fuels a forward closure over the
+is not a litre, D329, and in ``self_sustaining`` only a solid the request names, D330;
+``self_sustaining`` keeps only fuels a forward closure over the
 DB's recipes reaches from the free set and the farms first, :func:`reachable`).
 
 **EU** (WO-4.7, D323): the chain pays for its EU out of the generator's output, so the network
@@ -479,11 +480,17 @@ def candidates(
         # solid by its exact furnace burn value.
         fake: list[tuple[fuels.Fuel, str, dict[str, Any]]] = []
         unsized = 0
+        unnamed = 0
         for f in by_map.get(fuels.BY_NAME["largeBoilerFakeFuels"].map, ()):
             if f.fluid and f.unit == fuels.Unit.BOILER_TICKS.value:
                 burns = {"fluid": f.fluid, "duration": int(f.value)}
                 fake.append((f, f"fluid:{f.fluid}", burns))
             elif f.unit == fuels.Unit.BURN_VALUE.value and is_stable_key(f.input):
+                # self_sustaining offers a solid only when the request names it (D330): each
+                # costs a chain search, and none closed on the harness DB.
+                if req.mode == "self_sustaining" and f.input not in req.fuels:
+                    unnamed += 1
+                    continue
                 burns = {"item": f.input, "burn_value": int(f.value)}
                 fake.append((f, f.input, burns))
             elif f.unit == fuels.Unit.BURN_RATIO.value:
@@ -492,6 +499,11 @@ def candidates(
             notes.append(
                 f"{unsized} solid boiler fuels not sized: the export run has no furnace burn"
                 " values (gt_power.json's boiler_fuels, D329); export again"
+            )
+        if unnamed:
+            notes.append(
+                f"{unnamed} solid boiler fuels left out: self_sustaining offers a solid only"
+                " when the request names it (D330)"
             )
         for b in boilers:
             spec = gt_boiler.BOILERS[_simple(b.class_name)]
