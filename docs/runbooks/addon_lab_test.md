@@ -1,4 +1,4 @@
-# Addon jars: one Lab sitting, then Play (D365, D373, D380, D382)
+# Addon jars: one Lab sitting, then Play (D365, D373, D382, D383)
 
 One sitting in the Lab tests every addon jar that is waiting to go into Play. Play gets a jar
 only after this test passes **and** you say yes (checklist 5.2.12 and 5.2.13). Nothing in
@@ -77,7 +77,7 @@ ones back (D93 (5)).
    exclude = ["mods/sciencenotleisure-*", "mods/gtnllib-*", "mods/TwistSpaceTechnology-*", "mods/OTHTechnology-*", "mods/programmablehatches-*", "mods/plannh-*"]
    ```
    Save and close Notepad. (Phase 10's Lab files in `config\worldedit\schematics` and
-   `config\guidenh` are already left alone by default, D381: they need no entry here.)
+   `config\guidenh` are already left alone by default, D384: they need no entry here.)
 4. Keep a copy of the Lab world, so a failed test costs nothing:
    ```powershell
    Copy-Item "$lab\saves\lab-ops" "$env:USERPROFILE\Downloads\lab-ops-before-addon-test" -Recurse

@@ -1,7 +1,7 @@
-# The building generator's mods: a Lab check (D380, D381)
+# The building generator's mods: a Lab check (D383, D384)
 
 Phase 10 (the building generator: shells, footprints, the 3D guide, the bake-off) uses four mods
-in the game. On GTNH 2.9.0 **none of them needs a new jar** (checked 2026-11-22, D380):
+in the game. On GTNH 2.9.0 **none of them needs a new jar** (checked 2026-11-22, D383):
 
 | Mod | Where it comes from | Version in Lab and Play | Used by |
 |---|---|---|---|
@@ -13,16 +13,16 @@ in the game. On GTNH 2.9.0 **none of them needs a new jar** (checked 2026-11-22,
 GregtecLink is GOS's own mod and goes in with `install_gregteclink.py`, as before.
 
 So this sitting only checks that the four are there and work, and that the sync now leaves your
-Phase 10 files in the Lab alone (D381). **Nothing here changes Play.** You only read Play's
+Phase 10 files in the Lab alone (D384). **Nothing here changes Play.** You only read Play's
 `mods` folder in step 2. About 20 minutes, Lab only. Do it after the addon jars' sitting
 ([`addon_lab_test.md`](addon_lab_test.md)) is finished or undone, never in the middle of it.
 
 **Why the sync matters.** `sync_instances.py` makes the Lab's `config` folder equal to Play's.
-Before D381, the next sync deleted the shells you copied into the Lab's
+Before D384, the next sync deleted the shells you copied into the Lab's
 `config\worldedit\schematics`, your `//schem save` captures, and GuideNH's GOS page and exports
 under `config\guidenh`, because Play has none of them. Now those three folders are left alone by
 default. The GOS that does this is the one `gos deploy` installs, so first deploy the commit
-with D381.
+with D384.
 
 ## A. Before you start (5 minutes; Prism and every game window closed)
 
@@ -46,7 +46,7 @@ with D381.
    You should see: if the Lab already has any of `config/worldedit/schematics`,
    `config/guidenh/DefaultGuide/gos` or `config/guidenh/site-export`, the line
    `excluded (never copied or deleted):` names it, and no `delete` line names a file in one of
-   them. If a `delete` line does, GOS_APP is older than D381: run `gos deploy` first (Clayton
+   them. If a `delete` line does, GOS_APP is older than D384: run `gos deploy` first (Clayton
    only, from your own clone), then repeat this step.
 
 ## B. In the Lab (15 minutes)
@@ -83,7 +83,7 @@ with D381.
     "$lab\logs\fml-client-latest.log"
     ```
     Don't swap any of the four jars to fix it: three are the pack's own, and worldedit-gtnh's
-    newer builds are not ready for 2.9.0 (D380).
+    newer builds are not ready for 2.9.0 (D383).
 
 ## D. Play
 
@@ -91,6 +91,6 @@ There is nothing to copy into Play: Play already has all four (step 2). The
 building generator never puts anything into Play's world by itself: shells reach a world only
 through `gos shell export` and your own paste, in the Lab (D35, plan 7.10).
 
-If you later say yes to worldedit-gtnh 1.0.2 (D380's question), that becomes its own pinned jar
+If you later say yes to worldedit-gtnh 1.0.2 (D383's question), that becomes its own pinned jar
 with a Lab test and a Play step in [`addon_lab_test.md`](addon_lab_test.md), and WO-10.4's paste
 test runs again on it first.

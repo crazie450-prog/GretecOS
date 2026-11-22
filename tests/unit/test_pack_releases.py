@@ -294,7 +294,7 @@ LAB_FIRST_JARS = {
     "OTHTechnology-2.2.1.3.jar": "123Technology",
     "programmablehatches-0.2.1p9.jar": "Programmable Hatches",
 }
-# What upstream's newest 2.9.0 release was on 2026-11-22, per addon row (D380, D382; PlanNH's
+# What upstream's newest 2.9.0 release was on 2026-11-22, per addon row (D382, D383; PlanNH's
 # 0.3.0 is for 2.9.1, so its feed's newest is left out here).
 NEWEST_2026_11_22 = {
     "Twist Space Technology": ("0.8.2", "0.8.1", "0.8.0"),
@@ -393,7 +393,7 @@ def test_the_watch_reports_each_newer_addon_release_until_play_has_it(
     assert set(swapped.values()) < set(LAB_FIRST_JARS)
     after = verdicts([f"mods/{swapped.get(jar, jar)}" for jar in PINNED_JARS])
     for name, verdict in after.items():
-        if name == "worldedit-gtnh":  # Play keeps v0.0.10 (D380, D382)
+        if name == "worldedit-gtnh":  # Play keeps v0.0.10 (D382, D383)
             assert "a newer release?" in verdict, name
         else:
             assert verdict.endswith("matches the installed jar"), name
