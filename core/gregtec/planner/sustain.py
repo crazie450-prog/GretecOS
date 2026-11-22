@@ -296,12 +296,14 @@ def gen_ports(
             ), None
         if kind == "boiler_steam":
             b = gt_boiler.BOILERS.get(_class(conn, int(spec["boiler_mte"])) or "")
-            if (
-                b is None
-                or fluid is None
-                or str(row[5]) != fuels.Unit.BOILER_TICKS.value
-            ):
-                return None, f"{ref}: not a 2.9 large boiler on a fluid fuel"
+            # A fluid by its burn ticks, a solid by its exact furnace burn value (D329).
+            burns: dict[str, Any] | None = None
+            if fluid is not None and str(row[5]) == fuels.Unit.BOILER_TICKS.value:
+                burns = {"fluid": fluid, "duration": int(row[4])}
+            elif fluid is None and str(row[5]) == fuels.Unit.BURN_VALUE.value:
+                burns = {"item": item, "burn_value": int(row[4])}
+            if b is None or burns is None:
+                return None, f"{ref}: not a 2.9 large boiler on a fuel it is sized for"
             steam = (
                 "MTELargeTurbineHPSteam" if b.superheated else "MTELargeTurbineSteam"
             )
@@ -310,9 +312,7 @@ def gen_ports(
                     None,
                     f"{ref}: mte:{spec['turbine_mte']} doesn't take {b.steam_fluid}",
                 )
-            st = gt_boiler.steady(
-                b, fluid=fluid, duration=int(row[4]), circuit=int(spec["circuit"])
-            )
+            st = gt_boiler.steady(b, **burns, circuit=int(spec["circuit"]))
             tr = _turbine_run(
                 conn, Kind.HP_STEAM if b.superheated else Kind.STEAM, spec, None, run
             )

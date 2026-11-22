@@ -294,7 +294,7 @@ def test_a_version_5_db_gets_the_reactor_tables(tmp_path: Path) -> None:
         c.close()
     conn = access.connect(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
         for table in ("reactor_boost", "dynamo_hatch"):
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
     finally:
@@ -320,7 +320,7 @@ def test_a_version_6_db_without_the_reactor_tables_gets_them(tmp_path: Path) -> 
         assert (
             conn.execute("PRAGMA user_version").fetchone()[0]
             == access.SCHEMA_VERSION
-            == 7
+            == 8
         )
         for table in ("reactor_boost", "dynamo_hatch", "block_state", "block_texture"):
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0

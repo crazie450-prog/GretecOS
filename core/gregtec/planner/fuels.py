@@ -29,8 +29,10 @@ from GT's maps, frontends and the generators that burn them, read at the pin):
   fluid multiplies fuel and output alike, so EU per litre moves only with the coolant).
 - **Large boiler burn time** (``largeBoilerFakeFuels``, NEI-only recipes GT builds from the other
   maps and furnace fuels): for a fluid, the steel boiler's ticks per 1000 L (the recipe's
-  duration, GT's ``getBurntimeRatio`` already applied); for a solid fuel, its furnace burn value
-  / 1600 (special).
+  duration, GT's ``getBurntimeRatio`` already applied); for a solid fuel, its exact furnace burn
+  value (``GTModHandler.getFuelValue``, exported per fuel in ``gt_power.json``'s ``boiler_fuels``,
+  D329: what the boilers compute an item's burn time from), or, from an export run made before
+  that, only the value / 1600 rounded down (special), which sizes nothing.
 
 A single-block generator then turns a fuel into EU at its own efficiency
 (:func:`single_block_eu`, ``MTEBasicGenerator.getFuelValue``); GregtecLink exports what GT's own
@@ -51,6 +53,7 @@ class Unit(Enum):
     EU_PER_L = "EU/L"
     EU_PER_ITEM = "EU/item"
     BOILER_TICKS = "steel boiler ticks per 1000 L"
+    BURN_VALUE = "furnace burn value"
     BURN_RATIO = "furnace burn value / 1600"
 
 
@@ -194,11 +197,18 @@ def rtg_pellet_eu(*, special: int, eut: int) -> int:
 
 
 def decode(
-    fuel_map: FuelMap, *, special: int, duration: int, fluid: bool, eut: int = 0
+    fuel_map: FuelMap,
+    *,
+    special: int,
+    duration: int,
+    fluid: bool,
+    eut: int = 0,
+    burn_value: int | None = None,
 ) -> Decoded:
     """One fuel recipe's ``FUEL_VALUE`` in its map's unit (see the module doc). ``fluid``: the
     fuel is a fluid (a fluid input, or a fluid container GT indexes by its fluid); ``eut``: the
-    recipe's EU/t (the RTG reads it)."""
+    recipe's EU/t (the RTG reads it); ``burn_value``: a solid boiler fuel's exported furnace
+    burn value (None: the run has none)."""
     if fuel_map.rule == "lnr":
         return Decoded(Unit.EU_PER_L, float(special * duration))
     if fuel_map.rule == "rtg":
@@ -206,6 +216,8 @@ def decode(
     if fuel_map.rule == "boiler":
         if fluid:
             return Decoded(Unit.BOILER_TICKS, float(duration))
+        if burn_value is not None:
+            return Decoded(Unit.BURN_VALUE, float(burn_value))
         return Decoded(Unit.BURN_RATIO, float(special))
     if fluid:
         return Decoded(Unit.EU_PER_L, float(special))

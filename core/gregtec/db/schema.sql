@@ -1,4 +1,4 @@
--- Gregtec OS SQLite schema, version 7 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1, WO-10.3, WO-4.8).
+-- Gregtec OS SQLite schema, version 8 (plan section 5.3, Appendix D; WO-1.3, WO-1.5, WO-1.10, WO-4.1, WO-10.3, WO-4.8).
 -- gregtec.db.access applies this file to GOS_HOME/data/gos.sqlite when the DB's user_version is
 -- older than this file's (a new DB is 0): every statement is IF NOT EXISTS, so it only adds what
 -- is missing. PRAGMA user_version records the version; a DB newer than this file is refused.
@@ -21,6 +21,8 @@
 -- LSC cells), one set per export run; new tables only, so no migration file.
 -- Version 6 (D307, WO-10.3): the block catalog (block_state, block_texture), one set per export
 -- run; new tables only, so no migration file.
+-- Version 8 (D329): boiler_fuel, the solid large-boiler fuels' furnace burn values, one set per
+-- export run; a new table only, so no migration file.
 
 -- Base tables [A§5.4]
 CREATE TABLE IF NOT EXISTS export_run(id INTEGER PRIMARY KEY, created_at TEXT, pack_version TEXT,
@@ -170,7 +172,10 @@ CREATE TABLE IF NOT EXISTS crop_soil(run_id INT NOT NULL, soil TEXT NOT NULL, sl
 -- generator: every single-block generator's fuel efficiency (%), voltage and amps out;
 -- generator_gt: what GT's own generator gives for each fuel of its map (eu per operation of
 -- `consumed` litres for a fluid, item_eu per item), for checks; fuel_container: the fluid in each
--- fluid container a fuel map lists. fuel: every fuel recipe of GT's fuel maps, decoded by its map's
+-- fluid container a fuel map lists; boiler_fuel (D329): the exact furnace burn value (GT's
+-- GTModHandler.getFuelValue) of each solid fuel of largeBoilerFakeFuels, whose recipe keeps only
+-- that value / 1600 rounded down (special); the solid's fuel row carries it as its value (unit
+-- 'furnace burn value'). fuel: every fuel recipe of GT's fuel maps, decoded by its map's
 -- rule (gregtec.planner.fuels): `fluid` names the fluid it burns (the container's for a cell),
 -- fuel_value is GT's FUEL_VALUE raw, value is it in `unit`; ref cites the recipe. hidden: GT's fuel
 -- map hid it as a second fuel of the same fluid (its fluid lookup uses the other; an item lookup
@@ -192,6 +197,9 @@ CREATE TABLE IF NOT EXISTS generator_gt(run_id INT NOT NULL, mte_id INT NOT NULL
 CREATE INDEX IF NOT EXISTS ix_generator_gt ON generator_gt(run_id, mte_id);
 CREATE TABLE IF NOT EXISTS fuel_container(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
   nbt_hash TEXT NOT NULL, fluid TEXT NOT NULL, mb INT NOT NULL, PRIMARY KEY(run_id, registry_name, meta, nbt_hash));
+CREATE TABLE IF NOT EXISTS boiler_fuel(run_id INT NOT NULL, registry_name TEXT NOT NULL, meta INT NOT NULL,
+  nbt_hash TEXT NOT NULL, special INT NOT NULL, fuel_value INT NOT NULL,
+  PRIMARY KEY(run_id, registry_name, meta, nbt_hash));
 CREATE TABLE IF NOT EXISTS fuel(run_id INT NOT NULL, recipe_id INT NOT NULL, ref TEXT NOT NULL,
   map TEXT NOT NULL, gt_name TEXT NOT NULL, input TEXT NOT NULL, fluid TEXT, fluid_input INT NOT NULL,
   hidden INT NOT NULL, fuel_value INT NOT NULL, unit TEXT NOT NULL, value REAL NOT NULL,
@@ -259,4 +267,4 @@ CREATE TABLE IF NOT EXISTS alert(id INTEGER PRIMARY KEY, ts INT, kind TEXT, leve
   ref TEXT, state TEXT, acked_ts INT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, upd INT);   -- stale flag, tier override, credit state, log offsets
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;

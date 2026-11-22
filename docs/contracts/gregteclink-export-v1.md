@@ -70,7 +70,7 @@ only what needs the live game: registry names, ore names, display names and GT's
 | `gt_recipes.jsonl` | One recipe per line; maps sorted by name, each map's lines sorted by their JSON (see `idx`) |
 | `gt_machines.jsonl` | One line per non-null `GregTechAPI.METATILEENTITIES` entry, by `mte_id` |
 | `gt_ore_mixes.json` | GT's worldgen ore layers (`WorldgenGTOreLayer.sList`) and the instance's dimension IDs (WO-1.6, D126) |
-| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230); cables, batteries, battery buffers, transformers and LSC cells (`storage`, WO-4.5, D240); the Large Naquadah Reactor's boost lists and every dynamo hatch (`naquadah_reactors`, `dynamos`, WO-4.8, D326) |
+| `gt_power.json` | Turbine rotor sizes and materials, single-block generators with GT's fuel values, fuel containers (WO-4.1, D230); cables, batteries, battery buffers, transformers and LSC cells (`storage`, WO-4.5, D240); the Large Naquadah Reactor's boost lists and every dynamo hatch (`naquadah_reactors`, `dynamos`, WO-4.8, D326); the large boilers' solid fuels with their furnace burn values (`boiler_fuels`, D329) |
 | `oredict.jsonl` | The full ore dictionary: one line per oredict name, sorted by name, with its members (D145) |
 | `items.jsonl` | Every (item, meta) and every (item, meta, NBT) referenced in the files above (the ore blocks of `gt_ore_mixes.json` and the members of `oredict.jsonl` too), sorted by item, meta, then NBT JSON (none first) |
 | `fluids.jsonl` | Every fluid referenced in the files above, sorted by name |
@@ -194,7 +194,8 @@ WO-4.1 (D230): the power catalog's game data, what no recipe carries.
    "coolants":[{"fluid":"temporalfluid","amount":20,"value":500}, ...],
    "excited":[{"fluid":"spatialfluid","amount":20,"value":64}, ...]}],
  "dynamos":[{"mte_id":15230,"class":"tectech.thing.metaTileEntity.hatch.MTEHatchDynamoTunnel","tier":5,
-   "eu_out":8192,"amps_out":256}, ...]}
+   "eu_out":8192,"amps_out":256}, ...],
+ "boiler_fuels":[{"input":{"item":"minecraft:coal","meta":1,"n":1},"special":1,"fuel_value":1600}, ...]}
 ```
 
 - `sizes`: GT's four turbine rotor sizes, the tool stats of `MetaGeneratedTool01`'s ids 170, 172, 174 and 176.
@@ -238,6 +239,13 @@ WO-4.1 (D230): the power catalog's game data, what no recipe carries.
 - `dynamos` (WO-4.8, D326; absent from earlier runs): every `MTEHatchDynamo` (GT's, GT++'s buffered one, TecTech's
   multi-amp `MTEHatchDynamoMulti` and laser source `MTEHatchDynamoTunnel`), by `mte_id`: `mTier`, `maxEUOutput()`
   and `maxAmperesOut()`, the cap a multiblock generator's output is checked against.
+- `boiler_fuels` (D329; absent from earlier runs): every recipe of `RecipeMaps.largeBoilerFakeFuels` whose input is
+  an item that holds no fluid (`GTUtility.getFluidForFilledItem`; the map's fluid fuels are recipes with a fluid
+  input), sorted by its JSON: the item ref (`input`, never a numeric ID), the recipe's special value (`special`: the
+  burn value / 1600, rounded down, all the recipe keeps) and `fuel_value`, GT's own `GTModHandler.getFuelValue` for
+  one item (the furnace burn value, an int), which the 2.9 large boilers compute the item's burn time from. A row
+  that throws carries `error` (`counts.power_errors`). For a run without it, `gos db build` keeps the solid fuels'
+  `fuel` rows at `furnace burn value / 1600` and the planner sizes no solid boiler fuel.
 - Items are item refs and fluids registry names, never numeric IDs; the refs are recorded in `items.jsonl`.
 
 ### `oredict.jsonl` line
