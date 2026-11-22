@@ -224,7 +224,8 @@ def lines(result: Result, full: bool) -> list[str]:
         (
             f"  GT: {loaded.gt_recipes:,} recipe lines, {len(loaded.recipe_errors):,} the mod "
             f"couldn't serialise, {keys.duplicates['gt']:,} rows dropped as copies of another "
-            "GT recipe"
+            f"GT recipe, {keys.display_copies:,} fake rows dropped as the NEI display of a "
+            "real one (D381)"
         ),
     ]
     if loaded.nei_status == "ok":

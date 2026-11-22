@@ -1004,7 +1004,7 @@ def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     argv = servicecli.supervisor_argv(python, config_path)
     try:
         servicecli.spawn_detached(argv, cfg.gos_home)
-    except OSError as exc:  # WinError 4551: Smart App Control blocked it (D379)
+    except OSError as exc:  # WinError 4551: Smart App Control blocked it (D380)
         print(
             f"Couldn't restart GOS ({exc}). Run gos serve --detach, or log off and on."
         )

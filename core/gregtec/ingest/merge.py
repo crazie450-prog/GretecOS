@@ -18,6 +18,10 @@ have [A§5.3]. An NEI line whose handler is a GT recipe category is the NEI view
    GT recipe is dropped, because NEI shows some GT recipes in another form (fuel cells as fluids,
    for example) and GT's own row is the recipe. Both are counted by handler.
 
+A GT map whose dump recipes have no category (GT++'s Industrial Chisel) is shown by NEI under a
+handler named after the map: its lines are compared with those recipes the same way, with no
+category, not loaded as NEI-only recipes in the map's own namespace (D381).
+
 A merged slot also gets NEI's alternatives (``anyOf``: the oredict-equivalent stacks GT
 accepts). The content hash stays GT's. NEI lines of other handlers, and of GT categories with
 no recipe in GT's dump, are NEI-only recipes, keyed in their handler's namespace with oredict
@@ -27,7 +31,9 @@ exports of one pack (D105).
 
 **Collision test.** Recipes are grouped by citation key namespace and the first 12 hex digits
 of their identity hash. A group whose recipes all have one content hash is one recipe registered
-more than once: it is kept once (``duplicates``). A group with different content hashes is a
+more than once: it is kept once (``duplicates``). A fake GT recipe (an NEI display recipe) in a
+group that also has a real GT recipe is that recipe's NEI picture and is dropped
+(``display_copies``, D381). A group with different content hashes is a
 collision: two different recipes would share a key. Unless the allow-list
 (:data:`ALLOW_LIST`, curated in the repo) names the group, the build fails and the collisions
 are written out as a curation task. The allow-list gives each suffix its recipe by content hash
@@ -253,6 +259,9 @@ def merge(
         by_sig[(r.space, r.signature)].append(r)
         by_run[(r.category, r.eut, r.duration)].append(r)
     filled = {r.category for r in gt}
+    # GT maps with recipes that have no category (GT++'s Industrial Chisel builds its display
+    # recipes without one): NEI shows them under a handler named after the map (D381).
+    bare = {r.space for r in gt if r.category is None}
     merged: set[int] = set()  # id() of merged GT recipes
     nei_only: list[Recipe] = []
     for n in nei:
@@ -264,7 +273,10 @@ def merge(
             stats.not_recipes[handler] += 1
             continue
         space = categories.get(handler)
-        if space is None or handler not in filled:
+        category: str | None = handler
+        if handler not in filled and handler in bare:
+            space, category = handler, None
+        elif space is None or handler not in filled:
             # Not a GT category, or one with no recipe in GT's dump. In the dev runtime TecTech's
             # gt.recipe.fog_molten is empty in GT's dump (written at server start) while NEI
             # shows 723 recipes in it, so NEI's are the only ones there are.
@@ -275,7 +287,9 @@ def merge(
             continue
         # GT-style, so it matches the GT recipe's; keyed by what a slot accepts in the maps
         # whose displayed item is unstable (D135).
-        sig = signature(space, handler, n.inputs, n.outputs, space in ALT_IDENTITY_MAPS)
+        sig = signature(
+            space, category, n.inputs, n.outputs, space in ALT_IDENTITY_MAPS
+        )
         exact = by_sig.get((space, sig), [])
         free = [g for g in exact if id(g) not in merged]
         if free:
@@ -289,7 +303,7 @@ def merge(
             continue
         found = None
         dup = False
-        for g in by_run.get((handler, n.eut, n.duration), []):
+        for g in by_run.get((category, n.eut, n.duration), []):
             pairing = match(g, n)
             if pairing is None:
                 continue
@@ -338,6 +352,8 @@ class KeyResult:
     stale: list[tuple[str, str]]  # allow-list entries with no collision in this run
     # allow-listed recipes with a new content hash that kept their suffix: (ref, content12)
     relisted: list[tuple[str, str]] = field(default_factory=list)
+    # fake GT recipes dropped as the NEI picture of a real GT recipe with their identity (D381)
+    display_copies: int = 0
 
 
 def _content12(text: str) -> bool:
@@ -400,20 +416,38 @@ def _suffixes(
     return [r for r in ordered if r is not None], changed
 
 
+def _fake_gt(r: Recipe) -> bool:
+    return r.source in ("gt", "gt+nei") and r.flags.get("fake", False)
+
+
+def _real_gt(r: Recipe) -> bool:
+    return r.source in ("gt", "gt+nei") and not r.flags.get("fake", False)
+
+
 def assign_keys(
     recipes: Iterable[Recipe], allowed: Mapping[tuple[str, str], Sequence[str]]
 ) -> KeyResult:
     """Drop duplicates, check collisions and set each recipe's ``ref``; raise
-    :class:`CollisionError` for collisions the allow-list doesn't cover."""
+    :class:`CollisionError` for collisions the allow-list doesn't cover. A fake GT recipe in a
+    group with a real (not fake) GT recipe is dropped first: it is that recipe's NEI picture,
+    and the planner never routes through a fake recipe (D381)."""
     groups: dict[tuple[str, str], list[Recipe]] = defaultdict(list)
     for r in recipes:
         groups[(r.space, r.signature[:SIG_CHARS])].append(r)
     kept: list[Recipe] = []
     duplicates: Counter[str] = Counter()
+    display_copies = 0
     bad: list[Collision] = []
     ok: list[Collision] = []
     relisted: list[tuple[str, str]] = []
     for (space, sig12), group in groups.items():
+        if any(_real_gt(r) for r in group):
+            # A fake GT recipe that shares a real one's identity is its NEI picture (D381):
+            # Nanochip Assembly Matrix and Solar Factory register each recipe hidden and real
+            # and again fake and shown, with other alternatives.
+            copies = [r for r in group if _fake_gt(r)]
+            display_copies += len(copies)
+            group = [r for r in group if not _fake_gt(r)]
         distinct: dict[str, Recipe] = {}
         for r in group:
             if r.content_hash in distinct:
@@ -442,4 +476,4 @@ def assign_keys(
     seen = {(c.space, c.sig12) for c in ok}
     stale = sorted(k for k in allowed if k not in seen)
     kept.sort(key=lambda r: r.ref)
-    return KeyResult(kept, duplicates, ok, stale, sorted(relisted))
+    return KeyResult(kept, duplicates, ok, stale, sorted(relisted), display_copies)
