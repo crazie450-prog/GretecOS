@@ -909,8 +909,12 @@ class _Builder:
                 rejected.append(
                     Candidate(self.reader.recipes[rid].ref, "rejected", c.reason)
                 )
+        # Every node of the graph is an input, at some depth, of the request's target, so a
+        # recipe that uses the target up to make one is a loop back to the target, never a
+        # source of it (steel nuggets from the steel ingot asked for, WO-3.10).
+        target = frozenset({self.req.target} - {key})
         uses = self.uses[key] = (
-            self.reader.made_from(key) - self.boundary.keys()
+            (self.reader.made_from(key) | target) - self.boundary.keys()
             if len(passed) > 1
             else frozenset()
         )
