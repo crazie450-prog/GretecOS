@@ -107,8 +107,9 @@ def _value(rec: Mapping[str, Any], kind: str, key: str | None) -> Any:  # noqa: 
     if key is None:
         return found
     if kind == "walls" and key == "top":
+        whole = [o for o in found if "lo" not in o] or found  # not a tower's walls
         tops = [
-            o.get("y", [0, o["hi"][1] if "hi" in o else rec["wall_top"]]) for o in found
+            o.get("y", [0, o["hi"][1] if "hi" in o else rec["wall_top"]]) for o in whole
         ]
         return max((t[1] if isinstance(t, list) else t) for t in tops) if tops else None
     if (

@@ -1,4 +1,4 @@
-"""The child side of the build-script sandbox (D-number at merge; see gregtec.build.sandbox).
+"""The child side of the build-script sandbox (D385; see gregtec.build.sandbox).
 
 Run only by :func:`gregtec.build.sandbox.run`, as ``python -S -s -B -P <this file>`` with an
 empty environment, in an empty folder, under OS limits (a Windows Job Object; rlimits on POSIX).
@@ -212,6 +212,7 @@ def _main() -> None:
             return
         raise RuntimeError(f"not allowed in a build script: {event}")
 
+    _disarm_os()
     sys.addaudithook(hook)
     try:
         exec(code, env)  # noqa: S102 - the sandboxed script (see the module's docstring)
@@ -230,6 +231,54 @@ def _main() -> None:
         _answer({"error": f"{type(exc).__name__}: {exc}{line}"[:500], "log": log})
         return
     _answer({"cells": [[c[0], c[1], c[2], w] for c, w in cells.items()], "log": log})
+
+
+# The modules that reach the operating system. Some of their functions raise no audit event
+# (pidfd_send_signal, mkfifo, mknod, setsid, nice, os.write, ...), so the audit hook can't stop
+# them: every function in them is removed before the script runs. The child needs none of them
+# afterwards (its answer goes through sys.stdout, which is C code with its own file handle), and
+# it imports nothing more.
+OS_MODULES = (
+    "os",
+    "posix",
+    "nt",
+    "_signal",
+    "signal",
+    "_posixsubprocess",
+    "resource",
+    "_winapi",
+    "msvcrt",
+    "fcntl",
+    "termios",
+    "select",
+    "_socket",
+    "socket",
+    "mmap",
+    "_ctypes",
+    "_thread",
+    # the import machinery: it can make a fresh copy of a built-in module (posix, with all its
+    # functions); every module a script may import is already loaded (MODULES)
+    "_imp",
+    "_frozen_importlib",
+    "_frozen_importlib_external",
+    "importlib",
+    "zipimport",
+)
+
+
+def _disarm_os() -> None:
+    for name in OS_MODULES:
+        mod = sys.modules.get(name)
+        if mod is None:
+            continue
+        for attr in list(vars(mod)):
+            if attr.startswith("__"):
+                continue
+            if callable(getattr(mod, attr, None)):
+                try:
+                    delattr(mod, attr)
+                except (AttributeError, TypeError):
+                    pass
 
 
 def _freeze(v: object) -> object:

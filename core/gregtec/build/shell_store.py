@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from gregtec.build import layout as layout_lib
-from gregtec.build import palette, schematic, shell
+from gregtec.build import palette, sandbox, schematic, shell
 from gregtec.build import themes as theme_lib
 from gregtec.build.worldreg import WorldRegistry
 from gregtec.ingest.fingerprint import atomic_write
@@ -365,7 +365,9 @@ def rebuild(
         headroom=rec["headroom"],
     )
     spec = replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
-    outcome = shell.design(conn, spec, rec["ops"], rec["source"])
+    outcome = shell.design(
+        conn, spec, rec["ops"], rec["source"], sandbox.REPLAY_TIMEOUT_S
+    )
     if not outcome.ok:
         raise shell.ShellError(
             f"build {build} no longer passes: " + " | ".join(outcome.reasons)
@@ -406,7 +408,7 @@ def cells_of(
         max_blocks=rec["max_blocks"],
         headroom=rec["headroom"],
     )
-    got = shell.compile_ops(spec, rec["ops"])
+    got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
     vols = shell._index(spec)
     cells = {
         c: e

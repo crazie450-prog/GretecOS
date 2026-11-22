@@ -166,11 +166,30 @@ def child(script: str, tmp_path: Path) -> dict[str, Any]:
         # the API functions' globals reach the child's modules
         "set_block.__globals__['sys'].modules['os'].system('echo x > canary')\n",
         "set_block.__globals__['sys'].modules['io'].open('canary', 'w')\n",
+        # functions no audit event covers (review of WO-10.12): a signal to GOS, a FIFO, a
+        # fresh copy of posix from the import machinery, a forged answer on stdout
+        (
+            "m = set_block.__globals__['sys'].modules\n"
+            "m['_signal'].pidfd_send_signal(m['os'].pidfd_open(m['os'].getppid()), 0)\n"
+        ),
+        "set_block.__globals__['sys'].modules['posix'].mkfifo('canary')\n",
+        (
+            "m = set_block.__globals__['sys'].modules\n"
+            "p = m['_imp'].create_builtin(m['_frozen_importlib'].ModuleSpec('posix', None))\n"
+            "p.mkfifo('canary')\n"
+        ),
+        (
+            "m = set_block.__globals__['sys'].modules\n"
+            "s = m['math'].__spec__\n"
+            "s.loader.create_module(s.__class__('posix', None)).mkfifo('canary')\n"
+        ),
+        "set_block.__globals__['__builtins__'].__import__('ctypes')\n",
+        "set_block.__globals__['sys'].modules['os'].write(1, b'{\"cells\": []}')\n",
     ],
 )
 def test_the_audit_hook_stops_the_classic_escapes(escape: str, tmp_path: Path) -> None:
     got = child(escape, tmp_path)
-    assert "not allowed in a build script" in got["error"], got
+    assert "error" in got and "cells" not in got, got
     assert not (tmp_path / "canary").exists()
     assert list(tmp_path.iterdir()) == []
 
@@ -453,3 +472,155 @@ def test_volumes_and_the_new_roofs_are_built_and_checked(
             op,
             got.reasons,
         )
+
+
+# --- what the adversarial review of WO-10.12 found ----------------------------------------------
+
+
+def test_a_huge_volume_is_clamped_not_looped_over(
+    conn: sqlite3.Connection, spec: shell.Spec
+) -> None:
+    import time
+
+    far = {"lo": [-100_000, 0, -100_000], "hi": [100_000, 100_000, 100_000]}
+    start = time.monotonic()
+    out = shell.design(
+        conn, spec, [{"op": "roof", "role": "roof", "style": "hip", **far}], "architect"
+    )
+    assert time.monotonic() - start < 10
+    assert out.ok or out.reasons
+    away = {"lo": [500, 0, 500], "hi": [600, 5, 600]}
+    got = shell.design(
+        conn, spec, [{"op": "walls", "role": "wall", **away}], "architect"
+    )
+    assert got.status == "refused" and "outside the bounding volume" in got.reasons[0]
+
+
+def test_a_unicode_digit_is_not_a_role_number(
+    conn: sqlite3.Connection, spec: shell.Spec
+) -> None:
+    for what in ("wall:²", "wall:٠"):
+        got = shell.design(
+            conn, spec, [script_op(f"set_block(0, 9, 0, {what!r})")], "architect"
+        )
+        assert got.status == "refused" and "role:number" in got.reasons[0]
+
+
+def test_the_child_flooding_its_pipes_is_stopped(tmp_path: Path) -> None:
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    with pytest.raises(sandbox.ScriptError, match="too large|longer than"):
+        sandbox._talk(proc, b"", 20)
+    proc.wait(timeout=10)
+
+
+def rec_of(spec: shell.Spec, ops: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "ops": ops,
+        "headroom": spec.headroom,
+        "wall_top": spec.wall_top,
+        "roof_y": spec.roof_y,
+        "bounds": spec.bounds.to_json(),
+        "palette": [{"role": s.role, "block": s.entry.key} for s in spec.swatches],
+    }
+
+
+def test_the_reviser_on_new_roofs_volumes_and_scripts(
+    conn: sqlite3.Connection, spec: shell.Spec
+) -> None:
+    top = spec.wall_top
+    base = [{"op": "walls", "role": "wall", "y": [0, top]}]
+    doors = [
+        {"op": "clear", "lo": list(v.box.lo), "hi": list(v.box.hi)}
+        for v in spec.doorways()
+    ]
+    # a flat roof drops a shed's high side and a sawtooth's tooth: the gate takes it
+    for roof in (
+        {"style": "shed", "sides": ["south"]},
+        {"style": "sawtooth", "sides": ["north"], "every": 5},
+    ):
+        ops = [*base, {"op": "roof", "role": "roof", **roof}, *doors]
+        for words in ("flat roof", "flatter"):
+            r = shell_revise.revise(rec_of(spec, ops), words)
+            assert r.ok, (roof, words, r)
+            assert shell.design(conn, spec, list(r.ops), "architect").ok
+    # steeper keeps a hip a hip
+    r = shell_revise.revise(
+        rec_of(spec, [*base, {"op": "roof", "role": "roof", "style": "hip"}]), "steeper"
+    )
+    assert next(o for o in r.ops if o["op"] == "roof")["style"] == "hip"
+    # taller moves a capped roof's volume and a tower with it
+    b = spec.bounds
+    roof_vol = {
+        "lo": [b.lo[0], top + 1, b.lo[2]],
+        "hi": [b.hi[0], b.hi[1] - 2, b.hi[2]],
+    }
+    tower = {
+        "lo": [b.lo[0], top + 1, b.lo[2]],
+        "hi": [b.lo[0] + 3, b.hi[1], b.lo[2] + 3],
+    }
+    ops = [
+        *base,
+        {"op": "roof", "role": "roof", "style": "gable", **roof_vol},
+        {"op": "walls", "role": "pillar", **tower},
+        *doors,
+    ]
+    r = shell_revise.revise(rec_of(spec, ops), "taller")
+    assert r.ok and r.headroom == spec.headroom + 2
+    moved = [o for o in r.ops if "lo" in o and o["op"] != "clear"]
+    assert all(o["lo"][1] == top + 3 for o in moved)
+    grown = ts.spec_for(
+        conn,
+        layout.plan_layout(conn, [ts.lay_tests.production()]),
+        ts.foundry(),
+        headroom=r.headroom,
+    )
+    assert shell.design(conn, grown, list(r.ops), "architect").ok
+    # a shell drawn only by its script can't be made taller by GOS's reviser: it says so
+    r = shell_revise.revise(rec_of(spec, [script_op("x = 1"), *doors]), "taller")
+    assert not r.ok and any("build script" in w for w in r.impossible)
+    # a parapet on a roof that closes inside its volume needs no more headroom
+    flat_vol = [
+        *base,
+        {
+            "op": "roof",
+            "role": "roof",
+            "style": "flat",
+            "lo": [b.lo[0], top + 1, b.lo[2]],
+            "hi": [b.hi[0], b.hi[1], b.hi[2]],
+        },
+    ]
+    r = shell_revise.revise(rec_of(spec, flat_vol), "add a parapet")
+    assert r.ok and r.headroom == spec.headroom
+
+
+def test_a_repair_round_echoes_a_whole_script() -> None:
+    script = "\n".join(f"set_block({i}, 0, 0, 'wall')" for i in range(400))
+    answer = json.dumps({"ops": [{"op": "script", "script": script}]})
+    assert len(answer) > 4_000
+    text = shell_brief.repair_brief("brief", answer, "why")
+    assert (
+        script.splitlines()[-1]
+        in json.loads(
+            text.split("Your previous answer was:\n", 1)[1].split(
+                "\n\nThe code refused", 1
+            )[0]
+        )["ops"][0]["script"]
+    )
+
+
+def test_the_prompts_example_passes_at_the_default_headroom(
+    conn: sqlite3.Connection,
+) -> None:
+    lay = layout.plan_layout(conn, [ts.lay_tests.production()])
+    spec = ts.spec_for(conn, lay, ts.foundry())  # headroom 4, as the bake-off's cases
+    out = shell.design(conn, spec, [script_op(example_script())], "architect")
+    assert out.status == "accepted", (out.reasons, out.repairs)

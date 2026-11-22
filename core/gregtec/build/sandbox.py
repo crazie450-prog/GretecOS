@@ -1,5 +1,5 @@
 """The build-script sandbox: a model's Python build script, run apart and turned into cells
-(D-number at merge; Clayton, 2026-11-22: option B, "run real Python, sandboxed").
+(D385; Clayton, 2026-11-22: option B, "run real Python, sandboxed").
 
 A freeform shell design is a short Python program that places blocks with the building API
 (``set_block``, ``fill``, ``clear``, ``get_block``; :mod:`gregtec.build.sandbox_child`). GOS never
@@ -21,7 +21,7 @@ runs it in its own process. Every layer below must hold before a block reaches t
    (address space, CPU seconds, no file may be written, few file handles, no core). A wall-clock
    timeout kills it either way.
 4. **The answer is data**: one JSON object of cells (``[x, y, z, what]``, at most the cap) that
-   :func:`gregtec.build.shell.compile_cells` reads, after which the whole shell gate runs as for
+   the ``script`` operation of :func:`gregtec.build.shell.compile_ops` reads (``_Builder.resolve``), after which the whole shell gate runs as for
    any design (palette only, nothing in a machine's keep-out, a corridor, a chase or a doorway,
    inside the bounding volume, at most ``max_blocks``).
 
@@ -46,6 +46,9 @@ CHILD = Path(__file__).with_name("sandbox_child.py")
 MODULES = ("math", "random", "itertools", "functools")
 MAX_SCRIPT_CHARS = 40_000
 TIMEOUT_S = 10.0  # wall clock, start-up included (the tools' deadline is 30 s)
+# A saved build's script run again (a rebuild, the viewer, export): it passed once, so a busy
+# PC gets more time before the same build is refused.
+REPLAY_TIMEOUT_S = 25.0
 CPU_S = 8  # CPU seconds
 MEMORY_BYTES = 1 << 30  # 1 GiB
 MAX_ANSWER_BYTES = 64 << 20
@@ -223,24 +226,17 @@ def run(
             "env": _env(),
         }
         if os.name == "nt":
-            kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+            proc = _start_windows(argv, kw)
         else:
             kw["preexec_fn"] = _posix_limits
             kw["start_new_session"] = True
-        proc = subprocess.Popen(argv, **kw)  # our own child, fixed argv
+            proc = subprocess.Popen(argv, **kw)  # our own child, fixed argv
         job = None
         try:
             if os.name == "nt":
                 # before the script is sent: it waits on stdin until then
                 job = _windows_job(proc)
-            try:
-                out, err = proc.communicate(request, timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.communicate()
-                raise ScriptError(
-                    f"the script ran longer than {timeout:g} seconds and was stopped"
-                ) from None
+            out, err = _talk(proc, request, timeout)
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -248,6 +244,61 @@ def run(
             if job is not None:
                 _close(job)
     return _read(out, proc.returncode, max_cells, err)
+
+
+MAX_ERR_BYTES = 64 << 10
+
+
+def _talk(
+    proc: subprocess.Popen[bytes], request: bytes, timeout: float
+) -> tuple[bytes, bytes]:
+    """Send the request and read both pipes, each up to its cap: a child that writes more is
+    killed, so GOS never holds more than MAX_ANSWER_BYTES of its output."""
+    import threading
+    import time
+
+    over = threading.Event()
+
+    def drain(pipe: Any, cap: int, into: bytearray) -> None:  # noqa: ANN401 - a pipe
+        while True:
+            chunk = pipe.read1(65536) if hasattr(pipe, "read1") else pipe.read(65536)
+            if not chunk:
+                return
+            if len(into) + len(chunk) > cap:
+                over.set()
+                proc.kill()
+                return
+            into += chunk
+
+    out, err = bytearray(), bytearray()
+    readers = [
+        threading.Thread(target=drain, args=(proc.stdout, MAX_ANSWER_BYTES, out)),
+        threading.Thread(target=drain, args=(proc.stderr, MAX_ERR_BYTES, err)),
+    ]
+    for t in readers:
+        t.daemon = True
+        t.start()
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(request)
+        proc.stdin.close()
+    except OSError:  # the child already stopped: its pipes say why
+        pass
+    deadline = time.monotonic() + timeout
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise ScriptError(
+            f"the script ran longer than {timeout:g} seconds and was stopped"
+        ) from None
+    finally:
+        for t in readers:
+            t.join(timeout=max(1.0, deadline - time.monotonic()))
+    if over.is_set():
+        raise ScriptError("the script's answer is too large")
+    return bytes(out), bytes(err)
 
 
 def _last_line(err: bytes) -> str:
@@ -263,7 +314,7 @@ def _read(out: bytes, code: int | None, max_cells: int, err: bytes = b"") -> Ran
         raise ScriptError("the script's answer is too large")
     try:
         got = json.loads(out.decode("utf-8")) if out else None
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         got = None
     if not isinstance(got, dict):
         why = _last_line(err)
@@ -271,7 +322,8 @@ def _read(out: bytes, code: int | None, max_cells: int, err: bytes = b"") -> Ran
             "the script was stopped (it used too much memory or CPU time, or broke the "
             f"sandbox's rules; exit code {code}" + (f": {why}" if why else "") + ")"
         )
-    log = tuple(str(x)[:200] for x in got.get("log", [])[:50])
+    raw = got.get("log", [])
+    log = tuple(str(x)[:200] for x in raw[:50]) if isinstance(raw, list) else ()
     if "error" in got:
         raise ScriptError(str(got["error"])[:500])
     rows = got.get("cells")
@@ -291,6 +343,19 @@ def _read(out: bytes, code: int | None, max_cells: int, err: bytes = b"") -> Ran
 
 
 # --- Windows: a Job Object ------------------------------------------------------------------
+
+
+def _start_windows(
+    argv: list[str], kw: dict[str, Any]
+) -> subprocess.Popen[bytes]:  # pragma: no cover
+    """Start the child out of any job GOS itself runs in (a launcher's or a terminal's), so
+    its own Job Object can be the only one; a parent job that refuses that keeps it (the
+    pattern of gregtec.playhooks)."""
+    flags = subprocess.CREATE_NO_WINDOW
+    try:
+        return subprocess.Popen(argv, creationflags=flags | 0x01000000, **kw)
+    except OSError:  # CREATE_BREAKAWAY_FROM_JOB refused by the job GOS is in
+        return subprocess.Popen(argv, creationflags=flags, **kw)
 
 
 def _windows_job(
@@ -351,41 +416,55 @@ def _windows_job(
         wintypes.DWORD,
     ]
     k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    job = k32.CreateJobObjectW(None, None)
-    try:
+
+    def make(ui_limits: bool) -> int:
+        job = k32.CreateJobObjectW(None, None)
         if not job:
             raise OSError(ctypes.get_last_error(), "CreateJobObjectW")
-        info = Extended()
-        info.BasicLimitInformation.LimitFlags = (
-            0x0002  # PROCESS_TIME
-            | 0x0008  # ACTIVE_PROCESS
-            | 0x0100  # PROCESS_MEMORY
-            | 0x0400  # DIE_ON_UNHANDLED_EXCEPTION
-            | 0x2000  # KILL_ON_JOB_CLOSE
-        )
-        info.BasicLimitInformation.PerProcessUserTimeLimit = CPU_S * 10_000_000
-        info.BasicLimitInformation.ActiveProcessLimit = 1
-        info.ProcessMemoryLimit = MEMORY_BYTES
-        if not k32.SetInformationJobObject(
-            job, 9, ctypes.byref(info), ctypes.sizeof(info)
-        ):
-            raise OSError(ctypes.get_last_error(), "SetInformationJobObject")
-        ui = UiRestrictions(
-            0xFF
-        )  # every JOB_OBJECT_UILIMIT_* (desktop, clipboard, ...)
-        if not k32.SetInformationJobObject(job, 4, ctypes.byref(ui), ctypes.sizeof(ui)):
-            raise OSError(ctypes.get_last_error(), "SetInformationJobObject(UI)")
-        handle = int(proc._handle)  # type: ignore[attr-defined]
-        if not k32.AssignProcessToJobObject(job, handle):
-            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject")
+        try:
+            info = Extended()
+            info.BasicLimitInformation.LimitFlags = (
+                0x0002  # PROCESS_TIME
+                | 0x0008  # ACTIVE_PROCESS
+                | 0x0100  # PROCESS_MEMORY
+                | 0x0400  # DIE_ON_UNHANDLED_EXCEPTION
+                | 0x2000  # KILL_ON_JOB_CLOSE
+            )
+            info.BasicLimitInformation.PerProcessUserTimeLimit = CPU_S * 10_000_000
+            info.BasicLimitInformation.ActiveProcessLimit = 1
+            info.ProcessMemoryLimit = MEMORY_BYTES
+            if not k32.SetInformationJobObject(
+                job, 9, ctypes.byref(info), ctypes.sizeof(info)
+            ):
+                raise OSError(ctypes.get_last_error(), "SetInformationJobObject")
+            if ui_limits:  # every JOB_OBJECT_UILIMIT_* (desktop, clipboard, ...)
+                ui = UiRestrictions(0xFF)
+                if not k32.SetInformationJobObject(
+                    job, 4, ctypes.byref(ui), ctypes.sizeof(ui)
+                ):
+                    raise OSError(
+                        ctypes.get_last_error(), "SetInformationJobObject(UI)"
+                    )
+            handle = int(proc._handle)  # type: ignore[attr-defined]
+            if not k32.AssignProcessToJobObject(job, handle):
+                raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject")
+        except OSError:
+            _close(int(job))
+            raise
+        return int(job)
+
+    try:
+        try:
+            return make(ui_limits=True)
+        except OSError:
+            # A child that stayed in GOS's own job (its breakaway refused) can be nested in
+            # a second job only without UI limits: keep every other limit.
+            return make(ui_limits=False)
     except OSError as exc:
         proc.kill()
-        if job:
-            _close(job)
         raise ScriptError(
             f"the sandbox could not be set up ({exc}); nothing ran"
         ) from None
-    return int(job)
 
 
 def _close(job: int) -> None:  # pragma: no cover - Windows only

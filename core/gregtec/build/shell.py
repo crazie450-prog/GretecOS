@@ -461,6 +461,9 @@ class _Builder:
         self.placed_as: dict[Entry, str] = {}
         self.outside = 0
         self.cap = 4 * spec.max_blocks
+        self.script_timeout: float | None = (
+            None  # None: the sandbox's own (a new design)
+        )
 
     def state(
         self, op: Mapping[str, Any], n: int, key: str = "role", pick_key: str = "n"
@@ -495,7 +498,7 @@ class _Builder:
         if "@" in what:
             return self.state({"block": what}, n)
         role, _, pick = what.partition(":")
-        if pick and not pick.isdigit():
+        if pick and not (pick.isascii() and pick.isdigit()):
             raise ShellError(f"op {n} (script): {what!r} is not role:number")
         return self.state({"role": role, "n": int(pick or 0)}, n)
 
@@ -606,7 +609,11 @@ _KEYS: dict[str, frozenset[str]] = {
 }
 
 
-def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
+def compile_ops(
+    spec: Spec,
+    ops: Sequence[Mapping[str, Any]],
+    script_timeout: float | None = None,
+) -> Compiled:
     """Turn the vocabulary into cells (later operations overwrite earlier ones). A malformed
     operation refuses the whole design (:class:`ShellError`)."""
     if not isinstance(ops, list | tuple) or not ops:
@@ -616,6 +623,7 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
     if sum(1 for o in ops if isinstance(o, Mapping) and o.get("op") == "script") > 1:
         raise ShellError("a design has at most one script operation")
     b = _Builder(spec)
+    b.script_timeout = script_timeout
     bx = spec.bounds
     for n, op in enumerate(ops, 1):
         if not isinstance(op, Mapping):
@@ -631,7 +639,7 @@ def compile_ops(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> Compiled:
         if kind == "script":
             _script(b, op, n)
             continue
-        vol = _volume_of(op, n, kind)
+        vol = _volume_of(op, n, kind, bx)
         if kind in ("fill", "frame", "clear"):
             lo, hi = (
                 _cell(op.get("lo"), f"op {n}: lo"),
@@ -727,16 +735,22 @@ def _script(b: _Builder, op: Mapping[str, Any], n: int) -> None:
     if not isinstance(text, str):
         raise ShellError(f"op {n} (script) needs script: the Python build script")
     try:
-        ran = sandbox.run(text, script_facts(b.spec), b.cap)
+        ran = sandbox.run(
+            text,
+            script_facts(b.spec),
+            b.cap,
+            b.script_timeout or sandbox.TIMEOUT_S,
+        )
     except sandbox.ScriptError as exc:
         raise ShellError(f"op {n} (script): {exc}") from None
     for c, what in sorted(ran.cells.items()):
         b.put(c, b.resolve(what, n))
 
 
-def _volume_of(op: Mapping[str, Any], n: int, kind: object) -> Box | None:
-    """The volume (``lo``, ``hi``) a ring or roof operation works on, or None for the whole
-    bounding volume. ``fill``, ``frame`` and ``clear`` read their own box."""
+def _volume_of(op: Mapping[str, Any], n: int, kind: object, bounds: Box) -> Box | None:
+    """The volume (``lo``, ``hi``) a ring or roof operation works on, clamped to the bounding
+    volume (so no loop runs over cells that can't be placed), or None for the whole bounding
+    volume. ``fill``, ``frame`` and ``clear`` read their own box."""
     if kind not in VOLUME_OPS:
         return None
     if "lo" not in op and "hi" not in op:
@@ -746,9 +760,15 @@ def _volume_of(op: Mapping[str, Any], n: int, kind: object) -> Box | None:
     lo, hi = _cell(op["lo"], f"op {n}: lo"), _cell(op["hi"], f"op {n}: hi")
     if any(lo[i] > hi[i] for i in range(3)):
         raise ShellError(f"op {n}: lo must not be above hi")
+    got = _clamp(lo, hi, bounds)
+    if got is None:
+        raise ShellError(
+            f"op {n} ({kind}): its volume lies outside the bounding volume "
+            f"({list(bounds.lo)} to {list(bounds.hi)})"
+        )
     from gregtec.build import layout as layout_lib
 
-    return layout_lib.Box(lo, hi)
+    return layout_lib.Box(*got)
 
 
 def _within(n: int, ys: tuple[int, int], vol: Box) -> None:
@@ -1025,6 +1045,7 @@ def design(
     spec: Spec,
     ops: Sequence[Mapping[str, Any]],
     source: str = "architect",
+    script_timeout: float | None = None,
 ) -> Outcome:
     """Compile, inspect, repair or refuse (D317). An accepted or repaired outcome's cells are
     clean by :func:`inspect` and pass the palette rule; a refused one has none."""
@@ -1035,7 +1056,7 @@ def design(
         return Outcome("refused", source, {}, {}, tuple(why), findings=f)
 
     try:
-        got = compile_ops(spec, ops)
+        got = compile_ops(spec, ops, script_timeout)
     except ShellError as exc:
         return refuse(str(exc))
     f = inspect(spec, got.cells, got.outside)

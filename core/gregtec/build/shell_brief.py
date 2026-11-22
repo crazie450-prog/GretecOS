@@ -54,8 +54,10 @@ OPERATIONS = (
 # The building API a script op's script has (gregtec.build.sandbox_child), in the prompt's words.
 SCRIPT_API = (
     "set_block(x, y, z, what) or set_block((x, y, z), what); fill(lo, hi, what) for a solid box "
-    "(both corners included; lo and hi are (x, y, z)); clear(lo, hi) or clear(x, y, z) for air; "
-    'get_block(x, y, z) for what is there so far. what is a palette role ("wall"), a role\'s '
+    "(both corners included; lo and hi are (x, y, z)); clear(lo, hi) or clear(x, y, z) to take "
+    "back blocks the script placed; get_block(x, y, z) for what the script placed there so far "
+    "(a script sees only its own blocks, never other operations'). "
+    'what is a palette role ("wall"), a role\'s '
     'entry ("roof:1") or one block from the palette ("minecraft:glass@0"). Coordinates may be '
     "floats (rounded to the nearest block), so math.cos and math.sin draw curves. The script "
     'reads the build\'s facts as names: BOUNDS, INTERIOR (each {"lo": (x, y, z), "hi": (x, y, '
@@ -75,7 +77,7 @@ MAX_OUTPUT_TOKENS = (
 )
 MAX_BRIEF_CHARS = 60_000
 MAX_LISTED = 120  # machines, keep-outs, corridors or chases named in one brief
-MAX_ECHO = 4_000  # characters of a refused answer sent back
+MAX_ECHO = 16_000  # characters of a refused answer sent back (room for a build script)
 
 _INT = {"type": "integer"}
 _NULL = {"type": "null"}
@@ -185,8 +187,9 @@ def system_prompt() -> str:
         + SCRIPT_API
         + " A script can draw what the other operations can't: curved and barrel-vaulted roofs, "
         "domes, arches, round towers and stacks, buttresses, cornices, patterned brickwork. "
-        "You may put other operations before it (a quick base to build on) or after it (they "
-        "overwrite it); keep the clear operations over the doorways last.\n\n"
+        "You may put other operations before it (a quick base: the script's blocks overwrite "
+        "it, but the script can't see or remove it) or after it (they overwrite the script's); "
+        "keep the clear operations over the doorways last.\n\n"
         "What makes a good shell: never a plain extruded box. Break the silhouette: vary the "
         "heights and the roofline, and give the building more than one mass (a raised "
         "clerestory, a tower, stacks, a stepped tier, a cross gable over the entrance). Layer "
@@ -222,10 +225,11 @@ def system_prompt() -> str:
         "for x in range(lo[0], hi[0] + 1, 4):\n"
         '    fill((x, 0, lo[2]), (x, WALL_TOP, lo[2]), "pillar")\n'
         "mid, r = (lo[2] + hi[2]) / 2, (hi[2] - lo[2]) / 2\n"
+        "rise = min(0.6 * r, hi[1] - ROOF_Y)  # never above the bounding volume\n"
         "for x in range(lo[0], hi[0] + 1):\n"
         "    for k in range(0, 181, 4):\n"
         "        a = math.radians(k)\n"
-        '        set_block(x, ROOF_Y + 0.6 * r * math.sin(a), mid + r * math.cos(a), "roof")\n'
+        '        set_block(x, ROOF_Y + rise * math.sin(a), mid + r * math.cos(a), "roof")\n'
         "for y in range(ROOF_Y, hi[1] + 1):\n"
         "    for k in range(0, 360, 30):\n"
         "        a = math.radians(k)\n"

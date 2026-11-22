@@ -210,8 +210,8 @@ class _Ops:
         top = self.roof_at()
         style = r.get("style", "flat") if r is not None else "flat"
         if r is not None and "hi" in r:  # a roof in its own volume closes at its top
-            top = int(r["hi"][1])
-        elif style in ("gable", "hip"):
+            return max(int(r["hi"][1]), top + int(r.get("parapet", 0))) - self.wall_top
+        if style in ("gable", "hip"):
             steps = (self.short - 1) // 2 + 1
             top += steps * int(r.get("pitch", 1)) - 1  # type: ignore[union-attr]
         elif style in ("shed", "sawtooth") and r is not None:
@@ -310,7 +310,12 @@ def _roof(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
             r.get("pitch", 1)
         ) == 1:
             r["style"] = "flat"
-            r.pop("pitch", None)
+            for k in (
+                "pitch",
+                "sides",
+                "every",
+            ):  # a shed's high side, a sawtooth's tooth
+                r.pop(k, None)
             changes.append("roof: flat")
         else:
             r["pitch"] = int(r.get("pitch", 1)) - 1
@@ -364,6 +369,14 @@ def _parapet(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None
 
 
 def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
+    whole = [w for w in (*o.of("walls"), *o.of("roof")) if "lo" not in w]
+    if o.of("script") and not whole:
+        impossible.append(
+            f"{c!r}: this version's walls and roof are drawn by its build script, which sets "
+            "them from the layout's height, not the headroom; the script has to be rewritten "
+            "to change the height"
+        )
+        return
     k = _by(c)
     if _SHORTER.search(c):
         up = o.raise_by()
