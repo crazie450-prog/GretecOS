@@ -50,15 +50,16 @@ def test_recipe_find_lists_the_ways_to_make_an_item(run: Runner, db_rows: Rows) 
     assert p.span == "1-5 of 5"
     check_cited(p, db_rows)
     assert all(r["ref"].startswith("r:") for r in p.rows)
-    # No tier (NEI-only, crafting) first, then by tier; GT's recycling recipes last.
+    # No tier (crafting) first, then by tier; then the NEI-only handler that doesn't say
+    # whether it is fake, though it has no tier (D341); GT's recycling recipes last.
     assert [r["machine"] for r in p.rows] == [
-        "Alloy Kiln",
         "Bricked Blast Furnace",  # its map has no NEI name: named by its machine
         "Blast Furnace",
         "Blast Furnace",
+        "Alloy Kiln",
         "gt.recipe.arcfurnace",
     ]
-    assert [r["flags"] for r in p.rows] == ["fake?", "", "", "", "recycling"]
+    assert [r["flags"] for r in p.rows] == ["", "", "", "fake?", "recycling"]
     assert any("cite each recipe by its r: id" in n for n in p.notes)
 
 
@@ -86,6 +87,8 @@ def test_disabled_and_fake_recipes_only_on_request(run: Runner, db_rows: Rows) -
         "disabled",
         "fake",
     ]
+    # Their status is known, so they keep their place by tier, before the fake? row (D341).
+    assert shown.col("flags")[-2:] == ["fake?", "recycling"]
     assert shown.head["filters"] == "show_fake=True"
     check_cited(shown, db_rows)
 
@@ -146,6 +149,15 @@ def test_recipe_uses_finds_slots_oredict_and_alternatives(
     # TConstruct's steel isn't shown in any slot, but the oredict slot takes it.
     tcon = run("recipe_uses", item="TConstruct:materials@16")
     assert tcon.col("in") == [f"1x Steel Ingot [{STEEL}] (any ore:ingotSteel)"]
+
+
+def test_recipe_uses_lists_a_fake_unknown_recipe_after_the_known(run: Runner) -> None:
+    p = run("recipe_uses", item="minecraft:iron_ingot@0")
+    # By machine, but the Alloy Kiln's handler doesn't say whether it is fake (D341).
+    assert [(r["machine"], r["flags"]) for r in p.rows] == [
+        ("Bricked Blast Furnace", ""),
+        ("Alloy Kiln", "fake?"),
+    ]
 
 
 def test_recipe_uses_matches_a_wildcard_meta_slot(run: Runner) -> None:
