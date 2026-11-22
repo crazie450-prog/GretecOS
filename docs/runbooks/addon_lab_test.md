@@ -124,8 +124,32 @@ ones back (D93 (5)).
     you left it. Add one recipe to it, close the planner, open it again: the change is there.
 16. **Memory** (GTNL #575, a leak with TST, is still open): press F3 and note the memory line
     now, after 10 minutes and after 20 to 30 minutes in the world. Worked: it goes up and down
-    but does not climb steadily toward the limit. You accept #575 on that result (D383). If it
-    climbs, GT-Not-Leisure waits: send the three readings.
+    but does not climb steadily toward the limit. You accept #575 on that result (D383).
+
+    **If it climbs: the fallback** (D384, about 40 minutes). #575's one upstream comment says the
+    leak goes away when TST's **Mega Crafting Center** is switched off. The setting is TST's own,
+    in `config\TwistSpaceTechnology.cfg`. Off, TST loads none of the Mega Crafting Center's
+    recipes (171 endgame ones, the commenter counts) and the machine can't be crafted. Nothing
+    else changes. Note the three readings first, then:
+    1. Quit the game. Close Prism.
+    2. Tell the sync to leave Lab's TST config alone: open `gos.toml` (step 3) and add
+       `"config/TwistSpaceTechnology.cfg"` to the same `exclude` list. Save.
+    3. Open TST's config:
+       ```powershell
+       notepad "$lab\config\TwistSpaceTechnology.cfg"
+       ```
+       Press Ctrl+F, search `Enable_MegaCraftingCenter`, and change the line
+       `B:Enable_MegaCraftingCenter=true` to `B:Enable_MegaCraftingCenter=false`. Change nothing
+       else. Save and close Notepad.
+    4. Check it:
+       ```powershell
+       Select-String -Path "$lab\config\TwistSpaceTechnology.cfg" -Pattern 'Enable_MegaCraftingCenter='
+       ```
+       Worked: one line, ending in `=false`.
+    5. Launch **GTNH-Lab**, load `lab-ops`, and take the three memory readings again.
+       Worked: they go up and down without climbing. Then the fallback is the fix: you accept
+       #575 with it (D383, D384), and part E's step 27 adds the same change to Play. If they
+       still climb, GT-Not-Leisure waits: send both sets of readings.
 17. Quit the game from the menu.
 
 **Paste back** (in the PR or to the PM): which multiblock and recipe for steps 11, 12 and 13;
@@ -213,6 +237,14 @@ Play's folder. Paste only the lines for what you said yes to.
     ```powershell
     Copy-Item "$dl\sciencenotleisure-0.2.7.jar", "$dl\gtnllib-1.1.8.jar" "$play\mods\"
     ```
+    **Only if step 16 needed the fallback:** make the same change in Play's TST config.
+    ```powershell
+    notepad "$play\config\TwistSpaceTechnology.cfg"
+    ```
+    Change `B:Enable_MegaCraftingCenter=true` to `B:Enable_MegaCraftingCenter=false`, save, then
+    check it as in step 16's fallback, with `$play` in place of `$lab`. Worked: one line, ending
+    in `=false`. (If Play has no such file yet, it hasn't run TST 0.8.2: launch it to the main
+    menu once, quit, and do this step again.)
 28. Check Play has one jar per mod:
     ```powershell
     Get-ChildItem "$play\mods" | Where-Object Name -match 'twist|othtech|programmable|plannh|notleisure|gtnllib' | Select-Object Name
@@ -222,7 +254,8 @@ Play's folder. Paste only the lines for what you said yes to.
 29. Launch **GTNH-Play** to the main menu, click **Mods** and check the versions, then quit. Do
     not create a world. If GOS asks "Mods changed. Export now?", answer **Export now**: the
     recipe data is then rebuilt from the new jars ([`addon_watcher.md`](addon_watcher.md)).
-30. Open `gos.toml` again (step 3) and take out the entries for the jars Play now has. Then let
+30. Open `gos.toml` again (step 3) and take out the entries for the jars Play now has, and the
+    `config/TwistSpaceTechnology.cfg` entry if step 27 changed Play's TST config. Then let
     the sync make the Lab and Export equal to Play:
     ```powershell
     & $py "$app\scripts\sync_instances.py"
@@ -232,7 +265,8 @@ Play's folder. Paste only the lines for what you said yes to.
 ## F. A no, or not yet: put the Lab back
 
 31. Open `gos.toml` (step 3), take out the entries for the jars that are **not** going into
-    Play, save, and run the sync:
+    Play (and the `config/TwistSpaceTechnology.cfg` entry, if you added it in step 16), save,
+    and run the sync:
     ```powershell
     & $py "$app\scripts\sync_instances.py" --only lab
     ```
