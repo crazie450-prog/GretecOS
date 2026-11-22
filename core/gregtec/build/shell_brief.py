@@ -33,13 +33,15 @@ from gregtec.build import palette, shell
 # The version of the designer's instructions (system_prompt, OPERATIONS, SCRIPT_API): every
 # bake-off run records it, so runs before and after a change are never compared unawares.
 # 1: the op vocabulary only (WO-10.11). 2: freeform build scripts (WO-10.12, Clayton's option B).
-PROMPT_VERSION = 2
+# 3: facades may stand out into a relief zone around the wall ring (WO-10.13, D386).
+PROMPT_VERSION = 3
 # What the vocabulary is, in the words build_request's own description uses (its tool adds how
 # to ask for GOS's procedural shell; gregtec.agents.tools.shells.VOCABULARY).
 OPERATIONS = (
     "a JSON list of operations, in the layout's coordinates (x east, y up, z south; y 0 the "
     "first layer above the floor). Each is an object with op: script (a Python build script "
-    "that places blocks freely; script: its text), walls (a ring; y [y0, y1], inset), pillars "
+    "that places blocks freely; script: its text), walls (a ring, by default the wall line; y "
+    "[y0, y1], inset: a negative inset steps out into the relief zone), pillars "
     "(corners and every N along a ring; every, y, inset), windows (openings along a ring; y, "
     "every, width < every, sides [north, south, east, west]), roof (style flat, gable, hip, shed "
     "or sawtooth; pitch 1-3, the rise a step; y; edge + edge_n; parapet 0-3 + parapet_role; a "
@@ -60,8 +62,10 @@ SCRIPT_API = (
     'what is a palette role ("wall"), a role\'s '
     'entry ("roof:1") or one block from the palette ("minecraft:glass@0"). Coordinates may be '
     "floats (rounded to the nearest block), so math.cos and math.sin draw curves. The script "
-    'reads the build\'s facts as names: BOUNDS, INTERIOR (each {"lo": (x, y, z), "hi": (x, y, '
-    "z)}), WALL_TOP, ROOF_Y, HEADROOM, MAX_BLOCKS, PALETTE (rows of role, n, block, note), ROLES "
+    "reads the build's facts as names: BOUNDS, WALLS (the wall line: the one-block ring around "
+    'the interior is its edge), INTERIOR (each {"lo": (x, y, z), "hi": (x, y, z)}), RELIEF (how '
+    "far BOUNDS reaches past WALLS on every side), WALL_TOP, ROOF_Y, HEADROOM, MAX_BLOCKS, "
+    "PALETTE (rows of role, n, block, note), ROLES "
     "({role: entries}), DOORWAYS and KEEP_CLEAR (rows of id, kind, lo, hi). It may import math, "
     "random (seeded: the same script gives the same building), itertools and functools, define "
     "functions and use loops, comprehensions and lambdas. It may not import anything else, "
@@ -195,16 +199,20 @@ def system_prompt() -> str:
         "clerestory, a tower, stacks, a stepped tier, a cross gable over the entrance). Layer "
         "every facade: a base course, the body, and a top (a band, a cornice, a parapet), and "
         "give it rhythm (pilasters or buttresses at a steady bay, windows grouped in the bays) "
-        "and contrast from the palette's roles (trim, accent, pillar against wall). Make the "
-        "entrance read as one. Let the building say what happens inside, within its theme: a "
+        "and contrast from the palette's roles (trim, accent, pillar against wall). Give the "
+        "facades depth in the relief zone: buttresses, projecting bays, a porch, a stepped "
+        "plinth, a cornice that overhangs. Make the entrance read as one. Let the building say what happens inside, within its theme: a "
         "foundry reads heavy and dark, with chimney stacks over its furnaces and high strip "
         "windows; a clean works hall reads light and even, with tall bays and a glazed "
         "clerestory. Use the headroom above the walls: that is where the silhouette is made. "
-        "Stay valid first, then be ambitious: a refused design is worth nothing.\n\n"
+        "The shell is pasted whole with WorldEdit, so detail costs nothing to build: spend "
+        "the blocks. Stay valid first, then be ambitious: a refused design is worth nothing.\n\n"
         "Where blocks may go (the code checks every one): inside the bounding volume only. "
-        "Below the roof (y up to wall_top) only in the one-block ring around the layout's "
-        "interior: the interior is the machines' and their pipes' space. Above wall_top, the "
-        "whole footprint up to the top of the bounding volume. Never in a keep-out, corridor, "
+        "Below the roof (y up to wall_top): the one-block wall ring around the layout's "
+        "interior (the edge of WALLS) and the relief zone outside it (RELIEF blocks on every "
+        "side, from the ground up): never inside the interior, which is the machines' and "
+        "their pipes' space. Above wall_top: the whole bounding volume, relief zone included "
+        "(eaves and cornices that overhang). Never in a keep-out, corridor, "
         "chase or doorway (the brief and KEEP_CLEAR list them; leave every doorway open). The "
         "code refuses a design that names a role or block the palette does not have (the "
         "palette holds plain blocks only: nothing with an inventory or a screen, no machine "
@@ -212,9 +220,10 @@ def system_prompt() -> str:
         "blocks, or none. It removes blocks placed where they may not go and refuses the design "
         "when that is more than a quarter of it.\n\n"
         "An example script (adapt it, never copy it): a hall with a plinth, buttresses every "
-        "four blocks, a barrel-vaulted roof and a round stack.\n"
+        "four blocks that stand out into the relief zone, a barrel-vaulted roof and a round "
+        "stack.\n"
         "import math\n"
-        'lo, hi = BOUNDS["lo"], BOUNDS["hi"]\n'
+        'lo, hi = WALLS["lo"], WALLS["hi"]\n'
         "def ring(y, what):\n"
         "    for x in range(lo[0], hi[0] + 1):\n"
         "        set_block(x, y, lo[2], what); set_block(x, y, hi[2], what)\n"
@@ -223,7 +232,7 @@ def system_prompt() -> str:
         "for y in range(WALL_TOP + 1):\n"
         '    ring(y, "trim" if y == 0 else "accent" if y == WALL_TOP else "wall")\n'
         "for x in range(lo[0], hi[0] + 1, 4):\n"
-        '    fill((x, 0, lo[2]), (x, WALL_TOP, lo[2]), "pillar")\n'
+        '    fill((x, 0, lo[2] - min(2, RELIEF)), (x, WALL_TOP, lo[2]), "pillar")\n'
         "mid, r = (lo[2] + hi[2]) / 2, (hi[2] - lo[2]) / 2\n"
         "rise = min(0.6 * r, hi[1] - ROOF_Y)  # never above the bounding volume\n"
         "for x in range(lo[0], hi[0] + 1):\n"
@@ -276,6 +285,11 @@ def facts(rec: Mapping[str, Any]) -> dict[str, Any]:
     """The sizes and roles of a build record as one JSON object (the brief's last line)."""
     return {
         "bounds": {"lo": list(rec["bounds"]["lo"]), "hi": list(rec["bounds"]["hi"])},
+        "walls": {
+            "lo": list((rec.get("walls") or rec["bounds"])["lo"]),
+            "hi": list((rec.get("walls") or rec["bounds"])["hi"]),
+        },
+        "relief": rec.get("relief", 0),
         "interior": {
             "lo": list(rec["interior"]["lo"]),
             "hi": list(rec["interior"]["hi"]),
@@ -314,8 +328,10 @@ def _body(
         f"Bounding volume: {_box(b)} ({sx} wide in x, {sz} long in z, {sy} high).",
         f"The layout's interior (the machines' space): {_box(rec['interior'])}.",
         (
-            f"Walls: the ring around the interior, from y {b['lo'][1]} to y {rec['wall_top']} "
-            f"(wall_top). The roof starts at y {rec['roof_y']} (roof_y) and may rise to y "
+            "Walls: the one-block ring around the interior, the edge of the wall line "
+            f"{_box(rec.get('walls') or b)}, from y {b['lo'][1]} to y {rec['wall_top']} "
+            f"(wall_top). Relief: {rec.get('relief', 0)} blocks outside the wall line on every "
+            "side, from the ground to the top, for facades that stand out. The roof starts at y {rec['roof_y']} (roof_y) and may rise to y "
             f"{b['hi'][1]} (headroom {rec['headroom']})."
         ),
         f"max_blocks: {rec['max_blocks']}.",

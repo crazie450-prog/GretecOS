@@ -1,7 +1,8 @@
-id	line	theme	line_type	max_blocks	brief	followup	expect	touches
-foundry-small	small	th-foundry	smelting	default	a heavy foundry around the line: thick dark walls and a strip of high windows	make the roof steeper	roof.style=gable	roof
-marble-small	small	th-marble-works	general	default	a bright marble hall with tall windows and pillars along the walls	no windows on the north wall	windows.sides!north;windows.sides-north	windows
-foundry-large	large	th-foundry	smelting	default	one foundry hall over the line and its power, with pillars every four blocks and a gable roof	taller, and no windows on the north wall	walls.top>+0;windows.sides!north;windows.sides-north	walls,windows,pillars,roof,lights
-marble-large	large	th-marble-works	general	default	a calm marble works over the line and its power: a flat roof with a parapet and plenty of light inside	fewer pillars	pillars.every>+0	pillars
-foundry-tight	small	th-foundry	smelting	tight	a plain foundry shed that wastes no blocks	no lights	lights=none	lights
-marble-theme-only	large	th-marble-works	general	default		more windows	windows.every<+0	windows
+id	line	theme	line_type	max_blocks	brief	followup	expect	touches	headroom
+foundry-small	small	th-foundry	smelting	default	a heavy foundry around the line: thick dark walls and a strip of high windows	make the roof steeper	roof.style=gable	roof	default
+marble-small	small	th-marble-works	general	default	a bright marble hall with tall windows and pillars along the walls	no windows on the north wall	windows.sides!north;windows.sides-north	windows	default
+foundry-large	large	th-foundry	smelting	default	one foundry hall over the line and its power, with pillars every four blocks and a gable roof	taller, and no windows on the north wall	walls.top>+0;windows.sides!north;windows.sides-north	walls,windows,pillars,roof,lights	default
+marble-large	large	th-marble-works	general	default	a calm marble works over the line and its power: a flat roof with a parapet and plenty of light inside	fewer pillars	pillars.every>+0	pillars	default
+foundry-tight	small	th-foundry	smelting	tight	a plain foundry shed that wastes no blocks	no lights	lights=none	lights	default
+marble-theme-only	large	th-marble-works	general	default		more windows	windows.every<+0	windows	default
+landmark-large	large	th-foundry	smelting	default	a striking landmark over the line and its power: a skyline of towers and chimney stacks, a dramatic roofline, and deep facades whose buttresses, bays and cornices stand out from the walls	no lights	lights=none	lights,script	10

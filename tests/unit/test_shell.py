@@ -224,9 +224,11 @@ def rules_hold(
     allowed: set[Entry],
     max_blocks: int,
     headroom: int,
+    relief: int = 0,
 ) -> None:
     lo, hi = lay["bounds"]["lo"], lay["bounds"]["hi"]
-    outer = ((lo[0] - 1, lo[1], lo[2] - 1), (hi[0] + 1, hi[1] + headroom, hi[2] + 1))
+    m = 1 + relief  # the wall ring and the relief zone outside it (D386)
+    outer = ((lo[0] - m, lo[1], lo[2] - m), (hi[0] + m, hi[1] + headroom, hi[2] + m))
     clear = [_b(v) for k in ("keepouts", "corridors", "chases") for v in lay[k]]
     clear += [door_box(e, outer) for e in lay["entrances"]]
     clear.append(
@@ -268,12 +270,16 @@ def test_the_procedural_shell_on_the_fixture_layouts(
         t = theme()
         spec = spec_for(conn, lay, t)
         out = accepted(conn, spec)
-        rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+        rules_hold(
+            lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+        )
         assert out.repairs == ()
         # walls all round, a roof over everything, lights in it
         roles = {out.roles[e] for e in out.cells.values()}
         assert {"wall", "roof", "light", "window"} <= roles
-        b = spec.bounds
+        b = (
+            spec.walls
+        )  # the roof covers the wall line (D386: the relief zone is outside)
         roof = {(c[0], c[2]) for c in out.cells if c[1] == spec.roof_y}
         assert (
             roof
@@ -407,7 +413,9 @@ def test_whatever_the_validator_lets_through_holds_every_rule(
     ops = data.draw(designs((b.lo, b.hi)))
     out = shell.design(conn, spec, ops, "architect")
     if out.ok:
-        rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+        rules_hold(
+            lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+        )
         f = shell.inspect(spec, out.cells)
         assert f.clean and (out.status == "repaired") == bool(out.repairs)
     else:
@@ -486,7 +494,9 @@ def test_a_good_design_is_accepted(
     spec = spec_for(conn, lay)
     out = shell.design(conn, spec, good_design(spec), "architect")
     assert out.status == "accepted" and out.repairs == ()
-    rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+    rules_hold(
+        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+    )
     top = spec.roof_y + 1
     assert any(c[1] == top for c in out.cells)  # the parapet
 
@@ -572,7 +582,9 @@ def test_a_small_breach_is_repaired_a_large_one_refused(
     out = shell.design(conn, spec, [*good_design(spec), pillar], "architect")
     assert out.status == "repaired"
     assert any(f"inside keepout {k.id}" in r for r in out.repairs), out.repairs
-    rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+    rules_hold(
+        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+    )
     clean = shell.design(conn, spec, good_design(spec), "architect")
     assert out.cells == clean.cells  # only the breach went
     # blocks over the doorway and in a corridor are removed too
@@ -591,7 +603,13 @@ def test_a_small_breach_is_repaired_a_large_one_refused(
     far = {"op": "fill", "role": "wall", "lo": [-40, 0, -40], "hi": [-20, 9, -20]}
     out = shell.design(conn, spec, [*good_design(spec), far], "architect")
     assert out.status == "refused"
-    near = {"op": "fill", "role": "wall", "lo": [-3, 0, -1], "hi": [-1, 0, -1]}
+    b = spec.bounds  # two cells past its west edge, one inside
+    near = {
+        "op": "fill",
+        "role": "wall",
+        "lo": [b.lo[0] - 2, 0, b.lo[2]],
+        "hi": [b.lo[0], 0, b.lo[2]],
+    }
     out = shell.design(conn, spec, [*good_design(spec), near], "architect")
     assert out.status == "repaired" and "outside the bounding volume" in out.repairs[0]
 
@@ -636,7 +654,9 @@ def test_the_interior_below_the_roof_is_never_the_shells(
     out = shell.design(conn, spec, [*good_design(spec), stub], "architect")
     assert out.status == "repaired" and free not in out.cells
     assert any("the layout's interior" in r for r in out.repairs), out.repairs
-    rules_hold(lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom)
+    rules_hold(
+        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+    )
     # walls set in from the ring are inside the interior too
     inset = {"op": "walls", "role": "wall", "y": [0, 1], "inset": 1}
     out = shell.design(conn, spec, [*good_design(spec), inset], "architect")
@@ -741,8 +761,10 @@ def test_the_schematic_puts_each_cell_where_the_layout_has_it(
         5,
     ]  # in the hall corridor, not (0, 0, 0)
     lo_b = lay["bounds"]["lo"]
-    corner = (lo_b[0] - 1, lo_b[1], lo_b[2] - 1)
-    assert s.offset == tuple(corner[i] - e1["lo"][i] for i in range(3)) == (-1, 0, -6)
+    r = spec.relief  # the bounding volume reaches past the wall ring (D386)
+    corner = (lo_b[0] - 1 - r, lo_b[1], lo_b[2] - 1 - r)
+    assert s.offset == tuple(corner[i] - e1["lo"][i] for i in range(3))
+    assert s.offset == (-1 - r, 0, -6 - r)
     stand = shell.paste_steps(shell.spec_json(spec)["origin"])[2]
     x, y, z = e1["lo"]
     assert "entrance e1" in stand and f"(layout x {x}, y {y}, z {z})" in stand

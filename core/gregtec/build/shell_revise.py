@@ -169,7 +169,8 @@ class _Ops:
         self.wall_top = int(rec["wall_top"])
         self.roof_y = int(rec["roof_y"])
         self.floor = int(rec["bounds"]["lo"][1])
-        lo, hi = rec["bounds"]["lo"], rec["bounds"]["hi"]
+        walls = rec.get("walls") or rec["bounds"]  # the wall line (D386)
+        lo, hi = walls["lo"], walls["hi"]
         self.short = min(hi[0] - lo[0], hi[2] - lo[2]) + 1
         self.span_x, self.span_z = hi[0] - lo[0] + 1, hi[2] - lo[2] + 1
         self.roles = {str(p["role"]) for p in rec["palette"]}

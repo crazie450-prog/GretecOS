@@ -6,7 +6,7 @@ operations:`` line), with no network, no key and no cost:
 
 - ``fake-plain``: walls, a few low windows, corner pillars, a flat roof, lights; every
   doorway cleared.
-- ``fake-ornate``: a plinth, an eaves band, windows, pillars, a gable roof where the span
+- ``fake-ornate`` (buttresses that stand out into the relief zone, D386): a plinth, an eaves band, windows, pillars, a gable roof where the span
   allows it (in its own volume, two blocks under the top, when the headroom allows; else a
   parapet), lights, and a freeform build script (WO-10.12) for what the
   vocabulary can't draw: buttresses at the corners, round chimney stacks over a smelting line,
@@ -40,13 +40,18 @@ _REPAIR = "Your previous answer was:"
 _LINE_TYPE = re.compile(r"Line type: (\w+)\.")
 # fake-ornate's build script: it reads the build's facts and the line type it is given
 ORNAMENT = """import math
-lo, hi = BOUNDS["lo"], BOUNDS["hi"]
+lo, hi = WALLS["lo"], WALLS["hi"]
 if MAX_BLOCKS < 4 * (2 * (hi[0] - lo[0] + hi[2] - lo[2]) * (WALL_TOP + 1)):
     print("tight block limit: no ornament")
 else:
     for x in (lo[0], hi[0]):
         for z in (lo[2], hi[2]):
             fill((x, 0, z), (x, WALL_TOP + 1, z), "pillar")
+    d = min(2, RELIEF)  # buttresses that stand out from the long walls, every 4 blocks
+    for x in range(lo[0] + 4, hi[0] - 1, 4):
+        for z0, z1 in ((lo[2] - d, lo[2] - 1), (hi[2] + 1, hi[2] + d)):
+            if d:
+                fill((x, 0, z0), (x, WALL_TOP - 1, z1), "pillar")
     if LINE == "smelting":
         for cx in (lo[0] + 3, hi[0] - 3):
             cz = lo[2] + 3
@@ -100,7 +105,8 @@ def ornate(
 ) -> list[dict[str, Any]]:
     roles = [p["role"] for p in facts["palette"]]
     top = facts["wall_top"]
-    lo, hi = facts["bounds"]["lo"], facts["bounds"]["hi"]
+    walls = facts.get("walls") or facts["bounds"]  # the wall line (D386)
+    lo, hi = walls["lo"], walls["hi"]
     ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top]}]
     if "trim" in roles:
         ops.append({"op": "walls", "role": "trim", "y": [0, 0]})

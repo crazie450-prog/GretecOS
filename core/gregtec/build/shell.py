@@ -80,6 +80,9 @@ MAX_BLOCKS = 200_000
 LIMITS: dict[str, tuple[int, int, int]] = {  # (default, lowest, highest)
     "max_blocks": (20_000, 1, MAX_BLOCKS),
     "headroom": (4, 1, 16),
+    # blocks outside the wall ring a facade may stand out (bays, buttresses, porches, cornices;
+    # WO-10.13, D386: a shell is pasted whole with WorldEdit)
+    "relief": (3, 0, 8),
 }
 OPS = (
     "walls",
@@ -179,6 +182,7 @@ class Spec:
     max_blocks: int = LIMITS["max_blocks"][0]
     headroom: int = LIMITS["headroom"][0]
     theme_rules: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    relief: int = 0  # blocks the bounding volume reaches past the wall ring (D386)
     # where Clayton stands to paste: the first entrance's lo cell (D318)
     origin: Cell = (0, 0, 0)
     origin_entrance: str = ""
@@ -188,6 +192,18 @@ class Spec:
     def wall_top(self) -> int:
         """The highest wall course: the layout's top."""
         return self.interior.hi[1]
+
+    @property
+    def walls(self) -> Box:
+        """The wall line: the bounding volume less the relief zone (the layout's bounds and the
+        one-block wall ring around them, from the floor to the top of the bounding volume)."""
+        from gregtec.build import layout as layout_lib
+
+        r = self.relief
+        b = self.bounds
+        return layout_lib.Box(
+            (b.lo[0] + r, b.lo[1], b.lo[2] + r), (b.hi[0] - r, b.hi[1], b.hi[2] - r)
+        )
 
     @property
     def roof_y(self) -> int:
@@ -333,9 +349,11 @@ def spec_from_layout(
     line_type: str = theme_lib.GENERAL,
     max_blocks: int | None = None,
     headroom: int | None = None,
+    relief: int | None = None,
 ) -> Spec:
     """The shell's input from a WO-10.5 layout JSON (gos-layout v1). The palette must already
-    have passed :func:`check_palette`."""
+    have passed :func:`check_palette`. ``relief`` defaults to :data:`LIMITS`' (a saved build
+    from before D386 passes 0)."""
     from gregtec.build import layout as layout_lib
 
     if lay.get("schema") != layout_lib.SCHEMA or lay.get("v") != layout_lib.VERSION:
@@ -344,6 +362,8 @@ def spec_from_layout(
             f"{lay.get('schema')!r} v{lay.get('v')!r}"
         )
     mb, hr = options(max_blocks, headroom)
+    rf = LIMITS["relief"][0] if relief is None else relief
+    _int(rf, "relief", LIMITS["relief"][1], LIMITS["relief"][2])
     if line_type not in theme_lib.LINE_TYPES:
         raise ShellError(
             f"line type {line_type!r} is not one of {', '.join(theme_lib.LINE_TYPES)}"
@@ -354,8 +374,8 @@ def spec_from_layout(
         )
     inner = _box(lay["bounds"])
     bounds = layout_lib.Box(
-        (inner.lo[0] - MARGIN, inner.lo[1], inner.lo[2] - MARGIN),
-        (inner.hi[0] + MARGIN, inner.hi[1] + hr, inner.hi[2] + MARGIN),
+        (inner.lo[0] - MARGIN - rf, inner.lo[1], inner.lo[2] - MARGIN - rf),
+        (inner.hi[0] + MARGIN + rf, inner.hi[1] + hr, inner.hi[2] + MARGIN + rf),
     )
     clear: list[Volume] = []
     for key, kind in (
@@ -393,6 +413,7 @@ def spec_from_layout(
         line_type=line_type,
         max_blocks=mb,
         headroom=hr,
+        relief=rf,
         theme_rules=rules,
         origin=_box(first).lo,
         origin_entrance=str(first["id"]),
@@ -655,14 +676,15 @@ def compile_ops(
                 b.put(c, e)
             continue
         e = b.state(op, n)
-        area = bx if vol is None else vol
+        area = spec.walls if vol is None else vol
         if kind in ("walls", "pillars", "windows"):
             if vol is None:
                 y0, y1 = _heights(op, n, spec, bx.lo[1], spec.wall_top)
             else:
                 y0, y1 = _heights(op, n, spec, vol.lo[1], vol.hi[1])
                 _within(n, (y0, y1), vol)
-            inset = _int(op.get("inset", 0), f"op {n}: inset", 0, 8)
+            # a negative inset stands out from the wall line, into the relief zone (D386)
+            inset = _int(op.get("inset", 0), f"op {n}: inset", -spec.relief, 8)
             if kind == "walls":
                 for c, *_ in _ring(area, inset, y0, y1):
                     b.put(c, e)
@@ -694,10 +716,11 @@ def compile_ops(
         else:  # lights
             y = _int(op.get("y", spec.roof_y), f"op {n}: y", -64, 512)
             every = _int(op.get("every", 6), f"op {n}: every", 2, 32)
-            for x in range(bx.lo[0] + 1, bx.hi[0]):
-                for z in range(bx.lo[2] + 1, bx.hi[2]):
-                    if (x - bx.lo[0]) % every == every // 2 and (
-                        z - bx.lo[2]
+            wl = spec.walls
+            for x in range(wl.lo[0] + 1, wl.hi[0]):
+                for z in range(wl.lo[2] + 1, wl.hi[2]):
+                    if (x - wl.lo[0]) % every == every // 2 and (
+                        z - wl.lo[2]
                     ) % every == every // 2:
                         b.put((x, y, z), e)
     return Compiled(b.cells, b.placed_as, b.outside)
@@ -714,6 +737,8 @@ def script_facts(spec: Spec) -> dict[str, Any]:
         pal.append({"role": s.role, "n": k, "block": s.entry.key, "note": s.note})
     return {
         "bounds": spec.bounds.to_json(),
+        "walls": spec.walls.to_json(),
+        "relief": spec.relief,
         "interior": spec.interior.to_json(),
         "wall_top": spec.wall_top,
         "roof_y": spec.roof_y,
@@ -1169,7 +1194,7 @@ def procedural(spec: Spec) -> list[dict[str, Any]]:
     if "pillar" in roles:
         ops.append({"op": "pillars", "role": "pillar", "y": [0, top], "every": 8})
     roof_words = _words(spec, "roof") + " " + _words(spec, "massing")
-    b = spec.bounds
+    b = spec.walls
     short = min(b.hi[0] - b.lo[0], b.hi[2] - b.lo[2]) + 1
     gable = (
         any(w in roof_words for w in ("steep", "gable", "pitched", "slope"))
@@ -1209,6 +1234,8 @@ def build_id(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> str:
         "headroom": spec.headroom,
         "ops": list(ops),
     }
+    if spec.relief:  # builds from before D386 keep their ids
+        payload["relief"] = spec.relief
     text = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -1311,6 +1338,8 @@ def spec_json(spec: Spec) -> dict[str, Any]:
         "layout": spec.layout,
         "plans": list(spec.plans),
         "bounds": {**spec.bounds.to_json(), "size": list(spec.bounds.size)},
+        "walls": spec.walls.to_json(),
+        "relief": spec.relief,
         "interior": spec.interior.to_json(),
         "wall_top": spec.wall_top,
         "roof_y": spec.roof_y,

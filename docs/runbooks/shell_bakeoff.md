@@ -49,7 +49,7 @@ The fake models are small programs inside GOS that answer like a model would. `f
    ```powershell
    & $gos shell bakeoff run <plan-id> --models fake-plain,fake-ornate,fake-sloppy
    ```
-   If you also have a power plan for that line, add `--large <plan-id>,<power-plan-id>` so three of the six requests get a bigger building.
+   If you also have a power plan for that line, add `--large <plan-id>,<power-plan-id>` so four of the seven requests get a bigger building.
    The last lines name the run (it looks like `bo-20261121-193000-ab12`). Below, `<run>` means that name.
 10. In the dashboard's **Build** view scroll down to **Shell bake-off**. The panel shows up by itself a few seconds after the run starts, also when the Build view was already open: you do not need to reload the page. (If you look while the run is still going, it says "running" and the buildings fill in as they are made.) You see the first request, what was asked next ("Then"), and the answers side by side as **A**, **B**, **C**. Which model is which letter is hidden, and it is shuffled for every request.
 11. Click **After the follow-up** to see each building after the change that was asked; click **The first design** to go back. Turn the buildings and use the layer sliders as in step 7. The table under them compares the blocks of the first two.
@@ -88,9 +88,11 @@ A bake-off building can't be exported. To put a building into the Lab, use one o
 
 ### E. What it costs
 
-One run asks each model for 6 buildings and 6 changes: 12 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included.
+One run asks each model for 7 buildings and 7 changes: 14 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included.
 
-With the prices read on 2026-11-20, a run of all 6 requests is likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $14 and $35; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
+With the prices read on 2026-11-20, a run of the first 6 requests was likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $14 and $35; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
+
+**Since D386 (designer prompt v3, seven requests):** the 7th request, `landmark-large`, asks for something striking with headroom 10 (the table's new `headroom` column; the first six are unchanged and keep the default 4), and every building may now stand out 3 blocks past its wall ring (the relief zone). On the test fixtures the command's own estimate for all seven is **likely about $1.33 for Claude Opus 5.5 and $3.34 for GPT-6 Astra** (worst case $19.77 and $46.26, which the $10 cap stops long before). The report's `designer prompt` line says v3 for these runs.
 
 Since D385 (designer prompt v2, freeform build scripts) every call also carries a longer designer prompt: about 6,800 characters instead of 2,235, about 1,200 more input tokens a call. Over the 12 answers that adds about **$0.07 for Claude Opus 5.5 and $0.15 for GPT-6 Astra** to the likely cost above (at most about $0.20 and $0.40 with every repair round). The worst case the command prints is higher than before too, because a repair round now sends back up to 16,000 characters of the refused answer so that a building program comes back whole. On the test fixtures (2026-11-22) the command's own estimate went from likely about $1 and $2.50 to $3 to **likely $1.13 and $2.82**, and the worst case from about $14 and $35 to $16.78 and $39.33; the $10 cap is unchanged and still stops the run first. A building program can also make the answers longer than the old lists were; the cap still holds. The report's head line `designer prompt` says which prompt a run used (`v1` for runs from before D385), so never compare a v1 run's picks with a v2 run's as if they were the same test.
 
@@ -144,7 +146,7 @@ Since D385 (designer prompt v2, freeform build scripts) every call also carries 
     & $gos shell bakeoff run <plan-id> --models opus,astra --limit 1
     ```
     Read what it prints: how many answers it will ask for, each model's likely and worst-case cost, "Contacts: api.anthropic.com, api.openai.com", and the hard cap. Type `yes` and press Enter to spend it; anything else stops with nothing spent.
-26. Then the full six, the same day or later (add `--large <plan-id>,<power-plan-id>` if you have a power plan, and `--cap-usd 6` if you want a lower limit for this run):
+26. Then the full seven, the same day or later (add `--large <plan-id>,<power-plan-id>` if you have a power plan, and `--cap-usd 6` if you want a lower limit for this run):
     ```powershell
     & $gos shell bakeoff run <plan-id> --models opus,astra
     ```
@@ -203,4 +205,4 @@ Your usual cost page counts these runs too (**Costs** view, lane `bakeoff`).
 
 - A run: `%USERPROFILE%\GregtecOS\data\bakeoff\<run>\` (its buildings and `run.json`; `run.unsaved.json` beside it only while another program was holding `run.json`).
 - Reports: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`.
-- The six requests: `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own).
+- The seven requests: `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own).
