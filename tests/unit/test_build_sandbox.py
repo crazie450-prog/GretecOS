@@ -135,7 +135,7 @@ def child(script: str, tmp_path: Path) -> dict[str, Any]:
     """The child alone, as :func:`sandbox.run` starts it but without :func:`sandbox.check`."""
     req = json.dumps({"script": script, "facts": FACTS, "max_cells": 100})
     out = subprocess.run(
-        [sys.executable, "-S", "-s", "-B", "-P", str(sandbox.CHILD)],
+        [sandbox.interpreter(), "-S", "-s", "-B", "-P", str(sandbox.CHILD)],
         input=req.encode(),
         capture_output=True,
         cwd=tmp_path,
@@ -184,6 +184,15 @@ def test_the_child_has_no_open_eval_or_import(tmp_path: Path) -> None:
     ):
         assert word in child(script, tmp_path)["error"]
     assert list(tmp_path.iterdir()) == []
+
+
+def test_the_child_is_started_without_the_venv_launcher() -> None:
+    exe = sandbox.interpreter()
+    assert Path(exe).is_file()
+    if (
+        sys.platform == "win32"
+    ):  # the venv's python.exe would start a second process (D380)
+        assert Path(exe).resolve() == Path(sys._base_executable).resolve()
 
 
 def test_the_child_gets_no_environment() -> None:

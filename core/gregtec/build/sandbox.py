@@ -167,6 +167,19 @@ class Ran:
     log: tuple[str, ...]  # the script's print() lines
 
 
+def interpreter() -> str:
+    """The Python that runs the child. On Windows a venv's ``python.exe`` is a launcher that
+    starts the base interpreter as a second process (D380): the Job Object allows one process,
+    and a process started before the job is assigned would be outside it, so the base
+    interpreter is started directly. The child needs nothing from the venv (``-S``: stdlib
+    only)."""
+    if os.name == "nt":
+        base = getattr(sys, "_base_executable", None)
+        if base and Path(base).is_file():
+            return str(base)
+    return sys.executable
+
+
 def _env() -> dict[str, str]:
     env = {"PYTHONHASHSEED": "0", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     if os.name == "nt":  # Windows' own start-up needs it; it names no user folder
@@ -200,7 +213,7 @@ def run(
     request = json.dumps(
         {"script": script, "facts": dict(facts), "max_cells": int(max_cells)}
     ).encode("utf-8")
-    argv = [sys.executable, "-S", "-s", "-B", "-P", str(CHILD)]
+    argv = [interpreter(), "-S", "-s", "-B", "-P", str(CHILD)]
     with tempfile.TemporaryDirectory(prefix="gos-build-") as cwd:
         kw: dict[str, Any] = {
             "stdin": subprocess.PIPE,
