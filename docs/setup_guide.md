@@ -1621,7 +1621,7 @@ You should see: a few lines about what it will do, among them exactly this one:
 Contacts: nothing. Fake models only: free.
 ```
 
-Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`. Then two lines per building, 84 in all: one when it is asked (`... asking`) and one when it is done. Each names a request and a letter A, B or C, never a model. Then:
+Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`. Then, for every building, a line when it is asked (`... asking`) and one when it is done, with how long it took (42 buildings), and after each request a line with what the run has spent so far. Each names a request and a letter A, B or C, never a model. Then:
 
 ```text
 Run bo-...: done. 56 calls, $0.00.
@@ -1902,7 +1902,7 @@ The run ends with a line that starts `stopped (a model could not be asked at all
 
 The same day or later. Ctrl+C stops it cleanly: what is finished stays.
 
-**It takes a while.** Each answer is a building program the model thinks about first: about 4 minutes each in the project's own test, so the whole run can take one and a half to two hours. The window says `... asking` before each answer and prints a line when it is done; a quiet window between those is a model thinking, not a hang. You can rate the requests that are done in the **Shell bake-off** panel while it runs. Ctrl+C stops it cleanly and keeps what is finished.
+**It takes a while.** Each answer is a building program the model thinks about first: about 4 minutes each in the project's own test, so the whole run can take one and a half to two hours. The window says `... asking` before each answer, `... still waiting for the answer (2m 00s)` every minute while the model thinks, and a line when it is done, with how long it took; after each request it says what the run has spent of its cap. If a vendor says the account is out of credit, the run stops at once with a `Stopped:` line that says so, and nothing more is spent. You can rate the requests that are done in the **Shell bake-off** panel while it runs. Ctrl+C stops it cleanly and keeps what is finished.
 
 **First, make room for the whole run.** Each answer is now a building program, and the models think hard before they write one: one real answer used 13,184 of its 16,000 output tokens. The estimate for all seven requests is about \$3.80 for Claude Opus 5.5 and \$9.45 for GPT-6 Astra, about \$13 together. That is more than the run's cap (`cap_usd`, \$10) and your day limit (`day_max_usd`, \$10), so with them unchanged the run stops cleanly partway and some requests stay unanswered. To let it finish, open `gos.toml` (`notepad "$gh\config\gos.toml"`), set `cap_usd = 20.0` under `[bakeoff]` and `day_max_usd = 25.0` under `[budget]` (add the line if it is not there), save, and run step 78 again to check the file. Put them back afterwards if you like. Or keep them, and accept a partial run.
 

@@ -109,7 +109,7 @@ COLUMNS = (
 # WO-10.13, D386) and its own palette ("role registry@meta, ..." for a case without a theme, or
 # extra entries for one with a theme; WO-10.14, D387)
 HEADROOM_COLUMN = "headroom"
-OPTIONAL = ("headroom", "relief", "palette")
+OPTIONAL = ("headroom", "relief", "palette", "layout")
 LINES = ("small", "large")
 RUN_ID = re.compile(r"bo-\d{8}-\d{6}-[0-9a-f]{4}")
 CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
@@ -406,6 +406,12 @@ class Case:
     headroom: int | None = None  # None: shell.LIMITS' default
     relief: int | None = None
     palette: tuple[tuple[str, str], ...] = ()  # (role, registry@meta), the case's own
+    # the layout planner's options for this case ("max_run=24 spacing=2 band_gap=4", D389): how
+    # the machines are arranged, so the cases don't all wrap the same rows
+    layout: tuple[str, ...] = ()
+
+    def layout_options(self) -> layout_lib.Options:
+        return layout_lib.Options.parse(self.layout)
 
 
 def load_cases(path: Path = CASES) -> list[Case]:
@@ -442,6 +448,11 @@ def load_cases(path: Path = CASES) -> list[Case]:
             own.append((bits[0], bits[1]))
         if r["theme"] == "none" and not own:
             raise BakeoffError(f"{where}: a case without a theme needs its own palette")
+        arrangement = tuple((r.get("layout") or "").split())
+        try:
+            layout_lib.Options.parse(arrangement)
+        except layout_lib.LayoutError as exc:
+            raise BakeoffError(f"{where}: layout: {exc}") from None
         if not CASE_ID.fullmatch(r["id"]):
             raise BakeoffError(f"{where}: {r['id']!r} is not a case id (a-z, 0-9, -)")
         if r["line"] not in LINES:
@@ -479,6 +490,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
                 sizes["headroom"],
                 sizes["relief"],
                 tuple(own),
+                arrangement,
             )
         )
     if not out or len(out) > MAX_CASES:
@@ -521,6 +533,7 @@ def _preview(
         headroom=case.headroom,
         relief=case.relief,
         extra=case.palette,
+        layout_options=case.layout_options(),
         save_it=False,
     )
 
@@ -541,7 +554,7 @@ def prepare(
             raise BakeoffError(f"case {case.id} needs the {case.line} line's plans")
         try:
             loaded = [plan_store.load(home, pid) for pid in ids]
-            lay = layout_lib.plan_layout(conn, loaded)
+            lay = layout_lib.plan_layout(conn, loaded, case.layout_options())
 
             made = _preview(conn, home, vault, case, ids, None)
             if not made.outcome.ok:
@@ -897,6 +910,7 @@ def create(
                 "headroom": p.case.headroom,
                 "relief": p.case.relief,
                 "palette": [list(e) for e in p.case.palette],
+                "layout": list(p.case.layout),
                 "baseline_blocks": p.baseline,
                 "brief": p.case.brief,
                 "followup": p.case.followup,
@@ -1060,6 +1074,8 @@ class Runner:
     cancel: Callable[[], bool] = lambda: False
     sleep: Callable[[float], None] = time.sleep
     clock: Callable[[], float] = time.perf_counter
+    # how often a long answer says it is still coming (D389: a quiet window looked hung)
+    heartbeat_s: float = 60.0
 
     def __post_init__(self) -> None:
         self.models = {m["label"]: ModelSpec.from_json(m) for m in self.run["models"]}
@@ -1141,6 +1157,7 @@ class Runner:
     def _ask(self, model: ModelSpec, user: str, step: _Step) -> llm.Reply | str:
         """One answer (inside the caps, metered), or why there is none."""
         started = self.clock()
+        beat = _Heartbeat(self.say, self.heartbeat_s)
         try:
             reply = llm.call(
                 _Capped(self, model, self.designers[model.label]),
@@ -1151,6 +1168,7 @@ class Runner:
                 sleep=self.sleep,
             )
         except llm.ProviderError as exc:
+            beat.stop()
             step.calls += 1
             step.seconds += self.clock() - started
             if exc.kind in llm.STOPS_MODEL:
@@ -1163,6 +1181,7 @@ class Runner:
                     f"{plain(str(exc))}",
                 ) from None
             return f"no answer: {exc}"
+        beat.stop()
         step.calls += 1
         step.seconds += self.clock() - started
         usd = cost(model, reply.usage)
@@ -1249,6 +1268,7 @@ class Runner:
                     headroom=case.get("headroom"),
                     relief=case.get("relief"),
                     extra=[tuple(e) for e in case.get("palette") or ()],
+                    layout_options=layout_lib.Options.parse(case.get("layout") or ()),
                     ops=ops,
                 )
             except (shell.ShellError, palette.CatalogError) as exc:
@@ -1374,6 +1394,9 @@ class Runner:
             for case in self.run["cases"]:
                 for letter, label in sorted(case["letters"].items()):
                     self._one(case, by_id[case["id"]], label, letter)
+                # the run's spend after a whole case (every model's answers to it), never
+                # after one letter: that would tell the models apart by their prices
+                self.say(f"{case['id']} done. {spend_line(self.run)}")
         except _Closed as closed:
             return self._gone(closed)
         except _Stop as stop:
@@ -1409,15 +1432,58 @@ class Runner:
         return self.run
 
 
+def _took(seconds: float) -> str:
+    m, s = divmod(round(seconds), 60)
+    return f"{m}m {s:02d}s" if m else f"{s}s"
+
+
+def spend_line(run: Mapping[str, Any]) -> str:
+    """What the run has spent so far against its caps (D389)."""
+    spent, caps = run["spent"], run["caps"]
+    out = f"The run has spent ${spent['usd']:.2f} of its ${caps['usd']:.2f} cap"
+    if spent.get("unpriced_tokens"):
+        out += (
+            f", and {spent['unpriced_tokens']:,} of {caps['tokens']:,} unpriced tokens"
+        )
+    return out + f" ({spent['calls']} calls)."
+
+
+class _Heartbeat:
+    """Says every ``every`` seconds that an answer is still coming, until stopped."""
+
+    def __init__(self, say: Say, every: float) -> None:
+        import threading
+
+        self.say, self.every, self.started = say, every, time.monotonic()
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        while not self.done.wait(self.every):
+            self.say(
+                f"  ... still waiting for the answer ({_took(time.monotonic() - self.started)}): "
+                "the model is thinking; Ctrl+C stops the run cleanly"
+            )
+
+    def stop(self) -> None:
+        self.done.set()
+        self.thread.join(timeout=1)
+
+
 def _line(case: str, letter: str, what: str, step: Mapping[str, Any]) -> str:
+    took = f" in {_took(step.get('seconds') or 0)}"
     if step["ok"]:
         how = (
             "first try"
             if step["first_try"]
             else f"after {step['repair_rounds']} repair round(s)"
         )
-        return f"{case} {letter} {what}: {step['blocks']} blocks, {how}"
-    return f"{case} {letter} {what}: no design"
+        return f"{case} {letter} {what}: {step['blocks']} blocks, {how}{took}"
+    why = step.get("refused") or ""
+    return f"{case} {letter} {what}: no design{took}" + (
+        f" ({why[:200]})" if why else ""
+    )
 
 
 # --- the blind view --------------------------------------------------------------------------

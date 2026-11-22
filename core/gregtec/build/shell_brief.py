@@ -36,7 +36,8 @@ from gregtec.build import palette, shell
 # 3: facades may stand out into a relief zone around the wall ring (WO-10.13, D386).
 # 4: the answer is a script first ({"script", "ops"}), shape helpers, the theme's massing a
 #    suggestion, no whole-building example to copy (WO-10.14, D387: v3 gave boxes).
-PROMPT_VERSION = 4
+# 5: an open interior: the floor between machines is the shell's (WO-10.15, D389).
+PROMPT_VERSION = 5
 # What the vocabulary is, in the words build_request's own description uses (its tool adds how
 # to ask for GOS's procedural shell; gregtec.agents.tools.shells.VOCABULARY).
 # The vocabulary's operations but the script (the bake-off's answer carries its script apart).
@@ -218,13 +219,17 @@ def system_prompt() -> str:
         "The theme gives the palette and a mood. Its massing, roof and window notes are "
         "suggestions: leave them whenever a stronger building needs it. The request comes "
         "first.\n\n"
-        "The space (exact numbers in the brief): the layout's interior holds the machines and "
-        "their pipes; below the roof (y up to wall_top) nothing may be inside it. Below the "
-        "roof a block may stand in the one-block wall ring around the interior (the edge of "
-        "WALLS) or in the relief zone outside it (RELIEF blocks on every side, from the ground "
-        "up). Above wall_top the whole bounding volume is yours, relief zone included, up to "
-        "its top: that is where the silhouette is made. Never build in a keep-out, corridor, "
-        "chase or doorway (KEEP_CLEAR lists them); leave every doorway open.\n\n"
+        "The space (exact numbers in the brief): the machines stand in the layout's interior. "
+        "What they need stays empty: each machine's keep-out (the machine and its service "
+        "ring), the corridors, the chases for pipes and cables above the corridors, and the "
+        "doorways (KEEP_CLEAR lists them all; leave every doorway open). Everything else in "
+        "the bounding volume is yours: the open floor between machine rows and keep-outs "
+        "(columns, inner walls, arcades, light wells, a courtyard), the one-block wall ring "
+        "around the interior (the edge of WALLS), the relief zone outside it (RELIEF blocks on "
+        "every side, from the ground up), and everything above, up to the top of the bounding "
+        "volume: that is where the silhouette is made. The outer walls need not follow the "
+        "interior's rectangle: let them step in and out around the machines. If the brief "
+        "says the interior is closed, nothing may stand inside it below the roof.\n\n"
         'Answer with one JSON object and nothing else: {"script": "<python>", "ops": [...]}. '
         '"script" is your building. Its building API: '
         + SCRIPT_API
@@ -293,6 +298,7 @@ def facts(rec: Mapping[str, Any]) -> dict[str, Any]:
             "hi": list((rec.get("walls") or rec["bounds"])["hi"]),
         },
         "relief": rec.get("relief", 0),
+        "interior_open": rec.get("interior_open", False),
         "interior": {
             "lo": list(rec["interior"]["lo"]),
             "hi": list(rec["interior"]["hi"]),
@@ -334,7 +340,14 @@ def _body(
     lines += [
         "Coordinates: x east, y up, z south; y 0 is the first layer above the floor.",
         f"Bounding volume: {_box(b)} ({sx} wide in x, {sz} long in z, {sy} high).",
-        f"The layout's interior (the machines' space): {_box(rec['interior'])}.",
+        (
+            f"The layout's interior: {_box(rec['interior'])}. "
+            + (
+                "It is open: between the keep-outs, corridors and chases you may build."
+                if rec.get("interior_open")
+                else "It is closed: nothing may stand inside it below the roof."
+            )
+        ),
         (
             "Walls: the one-block ring around the interior, the edge of the wall line "
             f"{_box(rec.get('walls') or b)}, from y {b['lo'][1]} to y {rec['wall_top']} "

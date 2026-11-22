@@ -183,6 +183,9 @@ class Spec:
     headroom: int = LIMITS["headroom"][0]
     theme_rules: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     relief: int = 0  # blocks the bounding volume reaches past the wall ring (D386)
+    # the layout's interior may hold the shell's blocks outside the keep-outs, corridors and
+    # chases (D389); False: the whole interior below the roof is kept empty (D316)
+    interior_open: bool = False
     # where Clayton stands to paste: the first entrance's lo cell (D318)
     origin: Cell = (0, 0, 0)
     origin_entrance: str = ""
@@ -350,6 +353,7 @@ def spec_from_layout(
     max_blocks: int | None = None,
     headroom: int | None = None,
     relief: int | None = None,
+    interior_open: bool = True,
 ) -> Spec:
     """The shell's input from a WO-10.5 layout JSON (gos-layout v1). The palette must already
     have passed :func:`check_palette`. ``relief`` defaults to :data:`LIMITS`' (a saved build
@@ -390,10 +394,12 @@ def spec_from_layout(
         raise ShellError("the layout has no entrance: a shell needs a doorway")
     for e in entrances:
         clear.append(Volume(f"door-{e['id']}", "doorway", doorway(e, bounds)))
-    # Last, so a cell in a keep-out, corridor or chase is reported as that. The rest of the
-    # layout's interior below the roof is the machines' and their runs' space (a short machine's
-    # runs drop through corridor headroom), never the shell's: walls stand in the margin ring.
-    clear.append(Volume(INTERIOR, "interior", inner))
+    # Last, so a cell in a keep-out, corridor or chase is reported as that. Before D389 the rest
+    # of the layout's interior below the roof was kept empty too (walls stood in the margin ring
+    # only); an open interior leaves it to the shell: the machines' service space is their
+    # keep-out rings and the corridors, and their runs go through the chases (WO-10.5).
+    if not interior_open:
+        clear.append(Volume(INTERIOR, "interior", inner))
     first = entrances[0]
     rules: dict[str, tuple[str, ...]] = {}
     if theme is not None:
@@ -414,6 +420,7 @@ def spec_from_layout(
         max_blocks=mb,
         headroom=hr,
         relief=rf,
+        interior_open=interior_open,
         theme_rules=rules,
         origin=_box(first).lo,
         origin_entrance=str(first["id"]),
@@ -739,6 +746,7 @@ def script_facts(spec: Spec) -> dict[str, Any]:
         "bounds": spec.bounds.to_json(),
         "walls": spec.walls.to_json(),
         "relief": spec.relief,
+        "interior_open": spec.interior_open,
         "interior": spec.interior.to_json(),
         "wall_top": spec.wall_top,
         "roof_y": spec.roof_y,
@@ -1236,6 +1244,8 @@ def build_id(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> str:
     }
     if spec.relief:  # builds from before D386 keep their ids
         payload["relief"] = spec.relief
+    if spec.interior_open:  # and from before D389
+        payload["interior_open"] = True
     text = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -1340,6 +1350,7 @@ def spec_json(spec: Spec) -> dict[str, Any]:
         "bounds": {**spec.bounds.to_json(), "size": list(spec.bounds.size)},
         "walls": spec.walls.to_json(),
         "relief": spec.relief,
+        "interior_open": spec.interior_open,
         "interior": spec.interior.to_json(),
         "wall_top": spec.wall_top,
         "roof_y": spec.roof_y,

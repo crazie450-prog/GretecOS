@@ -245,15 +245,17 @@ def rules_hold(
     max_blocks: int,
     headroom: int,
     relief: int = 0,
+    interior_open: bool = False,
 ) -> None:
     lo, hi = lay["bounds"]["lo"], lay["bounds"]["hi"]
     m = 1 + relief  # the wall ring and the relief zone outside it (D386)
     outer = ((lo[0] - m, lo[1], lo[2] - m), (hi[0] + m, hi[1] + headroom, hi[2] + m))
     clear = [_b(v) for k in ("keepouts", "corridors", "chases") for v in lay[k]]
     clear += [door_box(e, outer) for e in lay["entrances"]]
-    clear.append(
-        _b(lay["bounds"])
-    )  # the interior below the roof: walls in the ring only
+    if (
+        not interior_open
+    ):  # before D389 the interior below the roof: walls in the ring only
+        clear.append(_b(lay["bounds"]))
     tes = {Entry(s.block, s.meta) for s in STATES if s.has_te}
     assert 0 < len(cells) <= max_blocks
     for c, e in cells.items():
@@ -291,7 +293,13 @@ def test_the_procedural_shell_on_the_fixture_layouts(
         spec = spec_for(conn, lay, t)
         out = accepted(conn, spec)
         rules_hold(
-            lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+            lay,
+            out.cells,
+            spec.allowed(),
+            spec.max_blocks,
+            spec.headroom,
+            spec.relief,
+            spec.interior_open,
         )
         assert out.repairs == ()
         # walls all round, a roof over everything, lights in it
@@ -434,7 +442,13 @@ def test_whatever_the_validator_lets_through_holds_every_rule(
     out = shell.design(conn, spec, ops, "architect")
     if out.ok:
         rules_hold(
-            lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+            lay,
+            out.cells,
+            spec.allowed(),
+            spec.max_blocks,
+            spec.headroom,
+            spec.relief,
+            spec.interior_open,
         )
         f = shell.inspect(spec, out.cells)
         assert f.clean and (out.status == "repaired") == bool(out.repairs)
@@ -515,7 +529,13 @@ def test_a_good_design_is_accepted(
     out = shell.design(conn, spec, good_design(spec), "architect")
     assert out.status == "accepted" and out.repairs == ()
     rules_hold(
-        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+        lay,
+        out.cells,
+        spec.allowed(),
+        spec.max_blocks,
+        spec.headroom,
+        spec.relief,
+        spec.interior_open,
     )
     top = spec.roof_y + 1
     assert any(c[1] == top for c in out.cells)  # the parapet
@@ -603,7 +623,13 @@ def test_a_small_breach_is_repaired_a_large_one_refused(
     assert out.status == "repaired"
     assert any(f"inside keepout {k.id}" in r for r in out.repairs), out.repairs
     rules_hold(
-        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+        lay,
+        out.cells,
+        spec.allowed(),
+        spec.max_blocks,
+        spec.headroom,
+        spec.relief,
+        spec.interior_open,
     )
     clean = shell.design(conn, spec, good_design(spec), "architect")
     assert out.cells == clean.cells  # only the breach went
@@ -662,9 +688,10 @@ def test_a_clear_outside_the_bounds_places_nothing_and_is_not_counted(
 def test_the_interior_below_the_roof_is_never_the_shells(
     conn: sqlite3.Connection, lay: dict[str, Any]
 ) -> None:
-    """Cells in no keep-out, corridor or chase but inside the layout (above a short machine,
-    between keep-outs) are the machines' and their runs' space: repaired away (D316, review M2)."""
-    spec = spec_for(conn, lay)
+    """With the interior closed (a build from before D389), cells in no keep-out, corridor or
+    chase but inside the layout (above a short machine, between keep-outs) are the machines' and
+    their runs' space: repaired away (D316, review M2)."""
+    spec = spec_for(conn, lay, interior_open=False)
     i = spec.interior
     vols = [v.box for v in spec.clear if v.kind != "interior"]
     free = next(
@@ -675,7 +702,13 @@ def test_the_interior_below_the_roof_is_never_the_shells(
     assert out.status == "repaired" and free not in out.cells
     assert any("the layout's interior" in r for r in out.repairs), out.repairs
     rules_hold(
-        lay, out.cells, spec.allowed(), spec.max_blocks, spec.headroom, spec.relief
+        lay,
+        out.cells,
+        spec.allowed(),
+        spec.max_blocks,
+        spec.headroom,
+        spec.relief,
+        spec.interior_open,
     )
     # walls set in from the ring are inside the interior too
     inset = {"op": "walls", "role": "wall", "y": [0, 1], "inset": 1}
@@ -1231,3 +1264,23 @@ def test_build_request_reads_a_plans_own_structure_row_over_a_megabyte(
     )
     assert not got.is_error, got.text
     assert "status: accepted" in got.text
+
+
+def test_an_open_interior_is_the_shells_but_the_machines_space_is_not(
+    conn: sqlite3.Connection, lay: dict[str, Any]
+) -> None:
+    """D389: the floor between machines is the shell's (columns, inner walls, courtyards); their
+    keep-outs, the corridors and the chases stay empty."""
+    spec = spec_for(conn, lay)
+    assert spec.interior_open and not any(v.kind == "interior" for v in spec.clear)
+    i = spec.interior
+    vols = [v.box for v in spec.clear]
+    free = next(c for c in i.cells() if not any(v.contains(c) for v in vols))
+    stub = {"op": "fill", "role": "pillar", "lo": list(free), "hi": list(free)}
+    out = shell.design(conn, spec, [*good_design(spec), stub], "architect")
+    assert out.status == "accepted" and free in out.cells
+    keep = next(v.box for v in spec.clear if v.kind == "keepout")
+    into = {"op": "fill", "role": "pillar", "lo": list(keep.lo), "hi": list(keep.lo)}
+    out = shell.design(conn, spec, [*good_design(spec), into], "architect")
+    assert out.status == "repaired" and keep.lo not in out.cells
+    assert shell.spec_json(spec)["interior_open"] is True

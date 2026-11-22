@@ -435,9 +435,9 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
     assert shell_brief.SCHEMA["required"] == ["script", "ops"]
     rec = shell_bakeoff.prompt_record()
     assert (
-        rec["version"] == shell_brief.PROMPT_VERSION == 4 and len(rec["sha256"]) == 12
+        rec["version"] == shell_brief.PROMPT_VERSION == 5 and len(rec["sha256"]) == 12
     )
-    assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v4 (sha ")
+    assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v5 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
 
 
@@ -796,3 +796,64 @@ def test_a_case_may_bring_its_own_sizes_and_palette(tmp_path: Path) -> None:
         path.write_text(head + "\n" + bad + "\n", encoding="utf-8")
         with pytest.raises(shell_bakeoff.BakeoffError):
             shell_bakeoff.load_cases(path)
+
+
+# --- an open interior, machine arrangements, the runner's progress (WO-10.15, D389) ------------
+
+
+def test_the_planner_spreads_machines_when_asked(conn: sqlite3.Connection) -> None:
+    from gregtec.build import layout as layout_lib
+
+    plans = [ts.lay_tests.production(), ts.lay_tests.power()]
+    flush = layout.plan_layout(conn, plans)
+    spread = layout.plan_layout(
+        conn, plans, layout_lib.Options(max_run=16, spacing=2, band_gap=4)
+    )
+    assert "spacing" not in flush["options"]  # layouts from before D389 keep their ids
+    assert spread["options"]["spacing"] == 2 and spread["id"] != flush["id"]
+    keeps = [layout_lib.box_of(k) for k in spread["keepouts"]]
+    assert not any(a.overlaps(b) for i, a in enumerate(keeps) for b in keeps[i + 1 :])
+    assert all(p.get("reach", {}).get("ok", True) for p in spread["placements"])
+    fx, fz = flush["bounds"]["size"][0], flush["bounds"]["size"][2]
+    sx, sz = spread["bounds"]["size"][0], spread["bounds"]["size"][2]
+    assert (sx, sz) != (fx, fz)
+
+
+def test_a_case_picks_its_machine_arrangement() -> None:
+    cases = shell_bakeoff.load_cases()
+    assert len({c.layout for c in cases}) == len(
+        cases
+    )  # every case arranged its own way
+    for c in cases:
+        c.layout_options()  # each is a valid set of the planner's options
+
+
+def test_the_runner_says_it_is_still_waiting_and_what_it_spent() -> None:
+    import threading
+
+    said: list[str] = []
+    beat = shell_bakeoff._Heartbeat(said.append, 0.02)
+    threading.Event().wait(0.1)
+    beat.stop()
+    assert said and all("still waiting for the answer" in s for s in said)
+    n = len(said)
+    threading.Event().wait(0.06)
+    assert len(said) == n  # stopped means stopped
+    run = {
+        "spent": {"usd": 1.234, "unpriced_tokens": 0, "calls": 3},
+        "caps": {"usd": 20.0, "tokens": 1_000_000},
+    }
+    assert shell_bakeoff.spend_line(run) == (
+        "The run has spent $1.23 of its $20.00 cap (3 calls)."
+    )
+    line = shell_bakeoff._line(
+        "c1",
+        "A",
+        "design",
+        {"ok": True, "first_try": True, "blocks": 9, "seconds": 125.4},
+    )
+    assert line == "c1 A design: 9 blocks, first try in 2m 05s"
+    line = shell_bakeoff._line(
+        "c1", "B", "design", {"ok": False, "seconds": 3, "refused": "no answer: credit"}
+    )
+    assert line == "c1 B design: no design in 3s (no answer: credit)"
