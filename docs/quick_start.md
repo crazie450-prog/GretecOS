@@ -2,6 +2,8 @@
 
 (short version of [`docs/deployment_checklist.md`](deployment_checklist.md))
 
+First sitting, from the November install to the building bake-off, with every command written out in one place: [`docs/setup_guide.md`](setup_guide.md). It covers steps 1-3, 5-11, 13, 84a and 84b below (and 20-21 when your plan needs them).
+
 Marks: \$ = spends API money (worst case). LAB = Lab game open. PLAY = touches Play. [n] = checklist row.
 
 Whole run, worst case: about \$130 (task cap C = \$2; about \$157 if C becomes \$3). If the AI pauses at \$100 of monthly credit, click Resume AI. The Console's \$150/month backstop is the real hard stop: at C = \$3, spread the paid steps over two months. [1]
