@@ -381,7 +381,7 @@ C:\Games\PrismLauncher\           portable Prism (V24)
    - Prefer metadata keys over `mSpecialValue`, and keep the raw value.
    - Recipe **identity hash** (`signature`) = sha256 over the recipe map plus sorted (input key, amount, consumed, circuit) and sorted (output key, amount). It merges NEI rows into GT rows (GT wins for numbers) and gives the **stable citation key** `r:<map>/<sig12>`.
    - A separate **content hash** covers EU/t, duration, amperage, chances and special conditions. When only the content hash changes between exports, the diff reports the recipe as **changed**, not removed and re-added, so citations survive rebalances [QA:D8, modified: the review proposed folding these fields into the key itself].
-   - **Collision test** on every export: a new collision (two recipes in one map with the same identity hash) fails the run and opens a curation task. Once a pair is allow-listed as genuine, its keys get numeric suffixes in a stable order (by content hash).
+   - **Collision test** on every export: a new collision (two recipes in one map with the same identity hash) fails the run and opens a curation task. Once a pair is allow-listed as genuine, its keys get numeric suffixes in a stable order (by content hash). A fake GT recipe (an NEI display recipe) with the same identity as a real GT recipe of its map is that recipe's NEI picture, not a collision: it is dropped (D381).
    - Plans store keys plus the `run` they were solved on. An old export run is kept while any accepted plan references it.
    - Keep the hidden, fake, disabled and nbt-sensitive flags. The planner defaults to `enabled && !fake`.
 4. **Fingerprint and triggers** [A§5.5]:

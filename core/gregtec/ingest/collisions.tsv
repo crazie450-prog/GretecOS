@@ -14,8 +14,17 @@
 # dependencies); the first full-pack run will show which still apply (stale ones are reported).
 map	sig12	content12	why
 gt.recipe.arcfurnace	a8739d091427	6c677e126ef4,73d775075a1a	two arc furnace recycling recipes for one Werkstoff block: 1920 EU/t for 20 ticks and 30 EU/t for 1102 ticks
+gt.recipe.assembler	49dc5a0060bb	2edb9a09446f,5aa804bdef29	the 16 dreamcraft:CircuitMAX wrap (GoodGenerator:circuitWrap@14, circuit 16, 72 mB soldering alloy) registered twice, at 32 and at 30 EU/t for 600 ticks (run 20261122T170438Z)
+gt.recipe.assembler	be2121683e83	8469c6461c61,d312f5444a44	the AE2 crafting storage upgrade (BlockCraftingUnit@0 and 2 ItemMultiMaterial@24 to BlockCraftingUnit@1) registered twice: 480 EU/t for 100 ticks and 120 EU/t for 400 ticks (run 20261122T170438Z)
 gt.recipe.canner	ec02bd9e078c	8bc9550faa23,f293b5f70566	the bromine cell canning recipe registered twice, at 4 and at 16 ticks
+gt.recipe.compressor	2ff785bdeb0d	3c86cbd2881b,8553e58da5b2	9 gt.metaitem.01@11386 ingots to a TConstruct:MetalBlock@2, registered twice at 2 EU/t, for 156 and for 300 ticks (run 20261122T170438Z)
+gt.recipe.compressor	5c6e6fd2d3cc	78c72838e0c6,8f909978d55a	9 Extra Utilities unstable ingots to an ExtraUtilities:decorativeBlock1@5, registered twice at 2 EU/t, for 300 and for 196 ticks (run 20261122T170438Z)
+gt.recipe.compressor	8aab56a3dac0	6a8e8f18bad2,c7c3afa85bb3	9 gt.metaitem.01@11382 ingots to a TConstruct:MetalBlock@1, registered twice at 2 EU/t, for 300 and for 196 ticks (run 20261122T170438Z)
+gt.recipe.compressor	992979c9c5dc	08c39df7aa14,99380b14a440	9 gt.metaitem.01@2022 dusts to a dreamcraft:Sulfur block, registered twice for 300 ticks, at 2 and at 7 EU/t (run 20261122T170438Z)
+gt.recipe.compressor	ee6b9dc1e0b7	b92d009c5063,ded967440618	9 gt.metaitem.01@11400 ingots to a TConstruct:MetalBlock@8, registered twice at 2 EU/t, for 106 and for 300 ticks (run 20261122T170438Z)
+gt.recipe.compressor	fa58ccfeaa6a	c92aea931303,f60ad75f5cb0	9 TConstruct:materials@14 ingots to a TConstruct:MetalBlock@7, registered twice at 2 EU/t, for 300 and for 196 ticks (run 20261122T170438Z)
 gt.recipe.extruder	f17fa900f0eb	0613ee40ae44,ac4871496f64	two extruder recipes that keep only the extruder shape (their material is missing in the dev runtime), at 128 and at 64 ticks
+gt.recipe.hammer	812f62728330	33c06d56465b,8f1117c475ea	Hardcore Ender Expansion endium ore to gt.metaitem.01@5770 registered twice: 15 EU/t for 10 ticks and 10 EU/t for 16 ticks (run 20261122T170438Z)
 gt.recipe.large_hadron_collider	67dee7c662d9	1382b4697eda,2c8be8db96bd	one collider casing input, two particle lists in large_hadron_collider_metadata
 gt.recipe.packager	03dbc435eb60	3a9b60638b7f,c7c673ba48d0	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
 gt.recipe.packager	0a7d7df5b50d	513626c4ab09,caba6e59136c	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
@@ -35,3 +44,5 @@ gt.recipe.packager	bf30fde30ecc	14680dca0b7e,fcd7401d3a26	the same dust packing 
 gt.recipe.packager	c3194eb15a25	64c9d0ba95ea,eb6e83ca6a35	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
 gt.recipe.packager	ea144dba0d9b	85e63a6b7fec,fa8a779c38b7	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
 gt.recipe.packager	fcaaccccf1f9	8f32ba0171a1,940beb8e2a1d	the same dust packing or unpacking registered twice, at 100 and at 20 ticks
+tst.common.recipe.StarKernelGeneratorRecipeMap.name	3eab47fc3f6c	4ebf83dc2ecb,e99f5b1b4003	1000 mB molten technetium to plasma registered twice for 50 ticks, at 100,000,000 and at 100,352,000 EU/t (run 20261122T170438Z)
+tst.common.recipe.StarKernelGeneratorRecipeMap.name	4be017058315	9367728344a1,da94f5b7ab3a	1000 mB molten tritanium to plasma registered twice for 50 ticks, at 100,000,000 and at 330,752,000 EU/t (run 20261122T170438Z)

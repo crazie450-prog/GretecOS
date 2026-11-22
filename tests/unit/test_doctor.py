@@ -489,7 +489,7 @@ def test_doctor_checks_the_gt_pin(
     assert "!!! GT PIN MISMATCH" in out.getvalue()
 
 
-# --- Smart App Control (D379) ------------------------------------------------------------------
+# --- Smart App Control (D380) ------------------------------------------------------------------
 
 OLD_RUN = r'"C:\GregtecOS-app\current\.venv\Scripts\gos-supervisor.exe" --login'
 NEW_RUN = (

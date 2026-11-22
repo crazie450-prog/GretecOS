@@ -815,7 +815,7 @@ def test_deploy_stops_a_supervisor_running_from_gos_app_only_for_the_swap(
     assert cli.main(["deploy", "--config", str(path)]) == 1
     assert posted == ["/shutdown"]
     # The old release, restarted with the gos.toml it ran with, not deploy's --config, and
-    # with python.exe: Smart App Control blocks gos-supervisor.exe (D379).
+    # with python.exe: Smart App Control blocks gos-supervisor.exe (D380).
     assert spawned == [[str(python), *SUPERVISOR_M, "--config", ran_with]]
     assert flags == [NO_WINDOW]
     assert "Restarted GOS" in capsys.readouterr().out
@@ -854,7 +854,7 @@ def test_deploy_stops_a_supervisor_running_from_gos_app_only_for_the_swap(
     assert "Couldn't restart GOS (" in capsys.readouterr().out
 
 
-# D379: Smart App Control blocks gos-supervisor.exe and pythonw.exe (WinError 4551), so a
+# D380: Smart App Control blocks gos-supervisor.exe and pythonw.exe (WinError 4551), so a
 # background supervisor is python.exe -P -m gregtec.supervisor, in a console with no window.
 SUPERVISOR_M = ["-P", "-m", "gregtec.supervisor"]
 NO_WINDOW = (
@@ -904,7 +904,7 @@ def test_serve_detach_launches_python_with_no_window(
 
 @pytest.mark.skipif(sys.platform != "win32", reason="console windows")
 def test_spawn_detached_python_has_no_console_window(tmp_path: Path) -> None:
-    """The venv's python.exe starts the base python.exe; neither may show a console (D379)."""
+    """The venv's python.exe starts the base python.exe; neither may show a console (D380)."""
     out = tmp_path / "out.json"
     code = (
         "import ctypes, json, sys; h = ctypes.windll.kernel32.GetConsoleWindow(); "

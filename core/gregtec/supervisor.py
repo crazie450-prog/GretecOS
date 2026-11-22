@@ -1,7 +1,7 @@
 r"""``gos-supervisor`` (plan 4.2, D77, QA:A5, D115): starts, watches and restarts GOS's processes.
 
 It starts at Windows login from the HKCU Run key that ``scripts/install_login_start.ps1`` writes
-(D116, D379), as ``conhost.exe --headless GOS_APP\current\.venv\Scripts\python.exe -m
+(D116, D380), as ``conhost.exe --headless GOS_APP\current\.venv\Scripts\python.exe -m
 gregtec.supervisor --login``: python.exe, which Smart App Control allows, in a console with no
 window.
 ``gos serve`` runs it in the foreground instead. It manages the core and the Discord bot
