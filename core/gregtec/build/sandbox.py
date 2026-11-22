@@ -234,7 +234,7 @@ def run(
                 # before the script is sent: it waits on stdin until then
                 job = _windows_job(proc)
             try:
-                out, _err = proc.communicate(request, timeout=timeout)
+                out, err = proc.communicate(request, timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.communicate()
@@ -247,10 +247,18 @@ def run(
                 proc.wait()
             if job is not None:
                 _close(job)
-    return _read(out, proc.returncode, max_cells)
+    return _read(out, proc.returncode, max_cells, err)
 
 
-def _read(out: bytes, code: int | None, max_cells: int) -> Ran:
+def _last_line(err: bytes) -> str:
+    """The child's last stderr line (the exception, never the traceback's paths), clipped."""
+    lines = [
+        ln.strip() for ln in err.decode("utf-8", "replace").splitlines() if ln.strip()
+    ]
+    return lines[-1][:200] if lines else ""
+
+
+def _read(out: bytes, code: int | None, max_cells: int, err: bytes = b"") -> Ran:
     if len(out) > MAX_ANSWER_BYTES:
         raise ScriptError("the script's answer is too large")
     try:
@@ -258,9 +266,10 @@ def _read(out: bytes, code: int | None, max_cells: int) -> Ran:
     except (ValueError, UnicodeDecodeError):
         got = None
     if not isinstance(got, dict):
+        why = _last_line(err)
         raise ScriptError(
             "the script was stopped (it used too much memory or CPU time, or broke the "
-            f"sandbox's rules; exit code {code})"
+            f"sandbox's rules; exit code {code}" + (f": {why}" if why else "") + ")"
         )
     log = tuple(str(x)[:200] for x in got.get("log", [])[:50])
     if "error" in got:
