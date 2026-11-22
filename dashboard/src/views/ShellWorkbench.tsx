@@ -10,7 +10,7 @@
 // Everything shown comes from the core; nothing here writes a world: the .schematic is still
 // only `gos shell export` and his paste in the Lab (D318).
 // Built to the design system, no board yet: needs Clayton's board approval (D92, D158 (5)).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type {
   SavedPlanRow,
@@ -142,7 +142,17 @@ function sceneProps(scene: ShellScene, upTo: number, ghosts: boolean, prefix: st
 }
 
 /** One version in the 3D viewer, its layer slider and that layer's materials. */
-export function ShellScene3D(props: { build: string; prefix?: string; compact?: boolean; source?: SceneSource }) {
+type Scene3DProps = { build: string; prefix?: string; compact?: boolean; source?: SceneSource };
+
+/** One version in the 3D viewer (memoised: a parent that refreshes every few seconds, like the
+ * bake-off panel, doesn't redraw a scene whose build and source key are the same, D388). */
+export const ShellScene3D = memo(
+  ShellScene3DInner,
+  (a: Scene3DProps, b: Scene3DProps) =>
+    a.build === b.build && a.prefix === b.prefix && a.compact === b.compact && a.source?.key === b.source?.key,
+);
+
+function ShellScene3DInner(props: Scene3DProps) {
   const prefix = props.prefix ?? "shell3d";
   const { scene, error } = useScene(props.build, props.source);
   const [upTo, setUpTo] = useState<number | null>(null);

@@ -1340,6 +1340,10 @@ class Runner:
             "design_id": None,
         }
         self._copy_plans(case, where)
+        # said before each answer, which can take minutes: a quiet window isn't a hung one (D388)
+        self.say(
+            f"{case['id']} {letter} design: asking (an answer can take several minutes)"
+        )
         try:
             step, ds = self._design(case, model, spec.brief, where)
         except BaseException:
@@ -1353,6 +1357,7 @@ class Runner:
         self.say(_line(case["id"], letter, "design", result["design"]))
         if ds is None:
             return
+        self.say(f"{case['id']} {letter} follow-up: asking")
         rstep, checks = self._revise(case, spec.case, model, where, ds)
         result["revise"], result["checks"] = rstep.to_json(), checks
         self._keep()
