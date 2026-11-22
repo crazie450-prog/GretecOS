@@ -306,6 +306,14 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   GregtecLink's `nbt`. `chance` is 1/10000 and only present below 10000. `anyOf` lists every accepted stack of the
   slot (oredict alternatives), without `Count`. `returns` is a crafting grid's container item. GT fluid display stacks
   carry `neiFluidName` and `Count` in mB. Non-consumed stacks (molds, programmed circuits) keep `Count: 0`.
+- Thaumcraft aspect stacks (Aspect Recipe Index, `com.gtnewhorizons.aspectrecipeindex.nei.*` handlers: Alchemy,
+  Arcane Infusion, Aspect Combination, Items Containing Aspect) are `{"TCAspect": "<aspect tag>", "Count", "name"}`,
+  with neither `strId` nor `neiFluidName`. They can be ingredients, results, or `anyOf`/`returns` entries. `name` is
+  "Unknown Aspect" for an aspect not yet researched in the export world, so a reader keys on `TCAspect`, never on
+  `name`. `gos db build` skips every line with an aspect stack and counts the skipped lines per handler in its report
+  (`NEI: skipped N lines with Thaumcraft aspects ...`, D379): aspects are not modelled, and a recipe kept without its
+  aspect cost would look cheaper than it is. A stack with none of `strId`, `neiFluidName` or a non-empty `TCAspect`
+  refuses the run with its file and line.
 - `handler` is NEI's handler id: for GT handlers the recipe **category** id, e.g. `gt.recipe.assembler` or
   `gt.recipe.category.alloy_smelter_molding`, so one GT map can appear as several handlers. **Readers key on each
   line's `handler`, never on the file name**: file names are NEI's cleaned handler display names in the instance's

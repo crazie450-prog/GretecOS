@@ -7,13 +7,20 @@ gt?}``. Readers key on each line's ``handler``, never on the file name. A stack 
 IDs in ItemStack-shaped compounds; they are mapped to registry names through the run's own table
 (:func:`gregtec.ingest.normalize.item_ids`), so no key depends on a numeric ID.
 
+A Thaumcraft aspect stack from Aspect Recipe Index (``{TCAspect, Count, name}``; ``name`` is
+"Unknown Aspect" for an aspect not researched in the export world) has no item or fluid key, so
+every line with one is skipped and counted per handler in :attr:`NeiRefs.aspect_lines` (D379):
+dropping only the aspects would leave an infusion or crucible recipe looking cheaper than it is.
+TODO(D379): model aspects as a ref kind once Clayton says he wants Thaumcraft recipes in GOS.
+
 Only runs whose manifest says ``parts.nei == "ok"`` have usable NEI files; the caller checks.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +45,7 @@ SHAPELESS = "codechicken.nei.recipe.ShapelessRecipeHandler"
 FURNACE = "codechicken.nei.recipe.FurnaceRecipeHandler"
 # recipe.source for NEI's own vanilla handlers (Appendix D's CHECK); every other handler is "nei".
 SOURCES = {SHAPED: "crafting", SHAPELESS: "crafting", FURNACE: "furnace"}
+ASPECT = "TCAspect"  # a Thaumcraft aspect stack (Aspect Recipe Index), D379
 
 
 @dataclass
@@ -47,6 +55,8 @@ class NeiRefs:
     id_names: Mapping[int, str | None]  # the run's numeric ID -> registry name
     names: dict[Ref, str]
     nbt: dict[Ref, Json]
+    # NEI handler -> lines skipped because a stack is a Thaumcraft aspect (D379)
+    aspect_lines: Counter[str] = field(default_factory=Counter)
 
 
 def stack_ref(s: Mapping[str, Any], refs: NeiRefs) -> Ref:
@@ -66,11 +76,32 @@ def stack_ref(s: Mapping[str, Any], refs: NeiRefs) -> Ref:
         if nbt is not None and ref.nbt_hash:
             refs.nbt.setdefault(ref, nbt)
     else:
-        raise Malformed("a stack has neither strId nor neiFluidName")
+        raise Malformed(
+            "a stack has neither strId nor neiFluidName (nor a non-empty TCAspect)"
+        )
     name = s.get("name")
     if isinstance(name, str) and name:
         refs.names.setdefault(ref, name)
     return ref
+
+
+def has_aspect(r: Mapping[str, Any]) -> bool:
+    """Whether any stack of the line (an ``anyOf`` or ``returns`` entry too) is a Thaumcraft
+    aspect with a non-empty ``TCAspect``. A badly shaped line is False here and is refused by
+    :func:`recipe_from_line`."""
+    for part in ("ingredients", "results"):
+        stacks = r.get(part)
+        if not isinstance(stacks, list):
+            continue
+        for s in stacks:
+            if not isinstance(s, dict):
+                continue
+            alts = s.get("anyOf")
+            nested = [s, s.get("returns"), *(alts if isinstance(alts, list) else [])]
+            for n in nested:
+                if isinstance(n, dict) and isinstance(n.get(ASPECT), str) and n[ASPECT]:
+                    return True
+    return False
 
 
 def _stacks(value: object, what: str) -> list[Mapping[str, Any]]:
@@ -140,10 +171,15 @@ def nei_files(manifest: Mapping[str, Any]) -> list[str]:
 
 
 def read_nei(run: Path, rels: list[str], refs: NeiRefs) -> Iterator[tuple[str, Recipe]]:
-    """(file, recipe) for every line of the listed NEI files."""
+    """(file, recipe) for every line of the listed NEI files, except the lines with a
+    Thaumcraft aspect, which are counted in ``refs.aspect_lines`` (D379)."""
     for rel in rels:
         for number, r in jsonl(run / rel):
             try:
+                handler = r.get("handler")
+                if isinstance(handler, str) and handler and has_aspect(r):
+                    refs.aspect_lines[handler] += 1
+                    continue
                 yield rel, recipe_from_line(r, refs)
             except ValueError as exc:
                 raise FormatError(f"{rel}:{number}: {exc}") from None

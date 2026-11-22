@@ -1209,6 +1209,7 @@ If not:
 | `Not built: run ...: parts.oredict is 'failed' ...` | that run cannot be used | go back to step 52, then collect and build again |
 | `Not built: ... collision ...` and a file name ending in `.tsv` | two different recipes got the same name. This has never been tried on the full pack, so it can happen | **stop.** Nothing was written. Send me the `.tsv` file the message names |
 | `Not built: database is locked` | another program was writing | run the step again |
+| `Not built: run ...: nei/<file>.jsonl:<n>: a stack has neither strId nor neiFluidName ...` | a mod in the pack shows NEI stacks GOS doesn't know yet (Thaumcraft aspects are known: they are skipped and counted, D379) | **stop.** Nothing was written. Send me the whole line |
 | lines that start with `!!!` at the very end | the pack's GregTech version is not the one GOS is built for | stop and ask, with those lines |
 
 ### Step 56. Check the report and the block catalog
@@ -1220,7 +1221,7 @@ Select-String -Path "$gh\data\reports\db-*.txt" -Pattern '^Block catalog', '^Col
 & $gos theme check
 ```
 
-You should see: from the first command, lines that each start with the report's file name. Among them: one `Block catalog: <N> block states ...`, one `Collision test: passed, ...`, and one `NEI: <N> lines: ...`. A line `WARNING: GT categories with recipes only in NEI ...` is expected and fine.
+You should see: from the first command, lines that each start with the report's file name. Among them: one `Block catalog: <N> block states ...`, one `Collision test: passed, ...`, and one `NEI: <N> lines: ...`. A line `WARNING: GT categories with recipes only in NEI ...` is expected and fine. So is a line `NEI: skipped <N> lines with Thaumcraft aspects ...`: GOS leaves Thaumcraft's aspect recipes out for now.
 
 From the second command, two lines:
 
