@@ -139,3 +139,79 @@ def test_duplicates_are_counted_by_source() -> None:
     keys = merge.assign_keys([a, copy, *crafted], {})
     assert keys.duplicates == {"gt": 1, "nei": 1}
     assert len(keys.recipes) == 2
+
+
+NANOCHIP = "gt.recipe.nanochip.assemblymatrix"
+
+
+def nanochip(*, fake: bool, alts: tuple[Ref, ...] = ()) -> Recipe:
+    """A Nanochip Assembly Matrix recipe: registered hidden and real, and again fake and shown
+    with other alternatives (run 20261122T170438Z, D381)."""
+    return Recipe(
+        source="gt",
+        space=NANOCHIP,
+        inputs=[
+            input_slot(item("gregtech:gt.fakecircuitcomponent", 500), 1, alts=alts),
+            input_slot(Ref("f", "molten.indalloy140"), 4),
+        ],
+        outputs=[Slot(item("gregtech:gt.fakecircuitcomponent", 2100), 1)],
+        category=NANOCHIP,
+        eut=1966080,
+        duration=50,
+        amperage=1,
+        flags={"hidden": not fake, "fake": fake},
+    ).seal()
+
+
+def test_a_fake_copy_of_a_real_gt_recipe_is_dropped() -> None:
+    real = nanochip(fake=False)
+    shown = nanochip(fake=True, alts=(item("gregtech:gt.fakecircuitcomponent", 501),))
+    assert real.signature == shown.signature and real.content_hash != shown.content_hash
+    keys = merge.assign_keys([shown, real], {})
+    assert keys.recipes == [real] and keys.display_copies == 1
+    assert real.ref == f"r:{NANOCHIP}/{real.signature[:12]}"
+
+
+def test_fake_recipes_alone_are_kept() -> None:
+    """Without a real twin a fake recipe stays (GT's assembly-line map is all fake recipes);
+    two that differ are still a collision."""
+    (one,) = merge.assign_keys([nanochip(fake=True)], {}).recipes
+    assert one.flags["fake"]
+    other = nanochip(fake=True, alts=(item("gregtech:gt.fakecircuitcomponent", 501),))
+    with pytest.raises(merge.CollisionError):
+        merge.assign_keys([nanochip(fake=True), other], {})
+
+
+CHISEL = "gt.recipe.industrialchisel"
+
+
+def test_nei_lines_of_a_gt_map_without_categories_merge_into_it() -> None:
+    """GT++'s Industrial Chisel writes its recipes with no category, and NEI shows them under a
+    handler named after the map: those lines are GT's recipes, not NEI-only ones in the map's
+    namespace that collide with them (run 20261122T170438Z, D381)."""
+    pillar = item("chisel:voidstonePillar")
+    circuit = item("gregtech:gt.integrated_circuit", 1)
+    gt = Recipe(
+        source="gt",
+        space=CHISEL,
+        inputs=[input_slot(pillar, 1, alts=(pillar,)), input_slot(circuit, 0)],
+        outputs=[Slot(pillar, 1)],
+        eut=15,
+        duration=20,
+        amperage=1,
+        special_value=1,
+        flags={"fake": True},
+    ).seal()
+    nei = Recipe(
+        source="nei",
+        space=CHISEL,
+        inputs=[input_slot(pillar, 1), input_slot(circuit, 0)],
+        outputs=[Slot(pillar, 1)],
+        handler=CHISEL,
+        eut=15,
+        duration=20,
+    ).seal()
+    merged, stats = merge.merge([gt], [nei], {CHISEL: CHISEL})
+    assert merged == [gt] and gt.source == "gt+nei"
+    assert stats.exact == 1 and stats.nei_only == 0
+    merge.assign_keys(merged, {})  # no collision

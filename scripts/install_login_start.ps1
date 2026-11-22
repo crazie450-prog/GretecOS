@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Start Gregtec OS at Windows login (D77, D116, D379): a per-user Run key for the supervisor.
+    Start Gregtec OS at Windows login (D77, D116, D380): a per-user Run key for the supervisor.
 
 .DESCRIPTION
     WO-2.1. Clayton runs this as himself (no admin needed), from GOS_APP\scripts after a deploy.

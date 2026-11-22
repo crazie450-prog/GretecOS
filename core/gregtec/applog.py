@@ -112,7 +112,7 @@ def setup(process: str, logs_dir: Path, *, level: int = logging.INFO) -> Path:
     )
     file_handler.setFormatter(JsonFormatter(process))
     handlers: list[logging.Handler] = [file_handler]
-    # pythonw (gos-supervisor.exe, which D379 stopped using) has no stderr; a supervised process's is a
+    # pythonw (gos-supervisor.exe, which D380 stopped using) has no stderr; a supervised process's is a
     # file (see the module docstring).
     if sys.stderr is not None and _isatty(sys.stderr):
         console = logging.StreamHandler(sys.stderr)

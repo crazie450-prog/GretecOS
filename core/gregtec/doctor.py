@@ -692,7 +692,7 @@ SAC_KEY = r"SYSTEM\CurrentControlSet\Control\CI\Policy"  # HKLM, readable withou
 SAC_STATES = {0: "off", 1: "on", 2: "evaluation"}  # VerifiedAndReputablePolicyState
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"  # HKCU
 RUN_VALUE = "GregtecOS"  # scripts/install_login_start.ps1
-# Unsigned launchers Smart App Control blocked on Clayton's PC (WinError 4551, D379).
+# Unsigned launchers Smart App Control blocked on Clayton's PC (WinError 4551, D380).
 BLOCKED_LAUNCHERS = ("gos-supervisor.exe", "pythonw.exe")
 
 
@@ -725,8 +725,8 @@ def login_start_command() -> str | None:
 
 
 def smart_app_control_lines(state: str | None, login: str | None) -> list[str]:
-    """What doctor prints about Smart App Control (D379): its state, and a warning when the
-    login start names a launcher it blocks (a Run key from before D379)."""
+    """What doctor prints about Smart App Control (D380): its state, and a warning when the
+    login start names a launcher it blocks (a Run key from before D380)."""
     if state is None:
         return []
     lines = [f"Smart App Control: {state}"]

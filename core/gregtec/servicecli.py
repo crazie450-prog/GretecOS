@@ -199,7 +199,7 @@ def wait_until(check: Callable[[], object], want: bool) -> bool:
 
 
 def supervisor_argv(python: str | Path, config_path: Path | None) -> list[str]:
-    """``<python> -P -m gregtec.supervisor [--config ABS]``: how GOS starts a supervisor (D379).
+    """``<python> -P -m gregtec.supervisor [--config ABS]``: how GOS starts a supervisor (D380).
 
     Always python.exe, never the ``gos-supervisor.exe`` trampoline or pythonw.exe: Smart App
     Control blocks those two (WinError 4551), and it allows python.exe, which also runs every
@@ -271,7 +271,7 @@ def _serve(cfg: Config, args: argparse.Namespace) -> int:
     if args.detach:
         try:
             spawn_detached(supervisor_command(cfg, args.config), cfg.gos_home)
-        except OSError as exc:  # WinError 4551: Smart App Control blocked it (D379)
+        except OSError as exc:  # WinError 4551: Smart App Control blocked it (D380)
             print(f"Couldn't start the supervisor: {exc}", file=sys.stderr)
             return 1
         if not wait_until(lambda: _supervisor(cfg), True):

@@ -318,6 +318,9 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   `gt.recipe.category.alloy_smelter_molding`, so one GT map can appear as several handlers. **Readers key on each
   line's `handler`, never on the file name**: file names are NEI's cleaned handler display names in the instance's
   language, with `_2`, `_3` added for duplicate names (two handlers named "Blast Furnace", for example).
+  A GT map whose `gt_recipes.jsonl` lines have `category` null (GT++'s Industrial Chisel, `gt.recipe.industrialchisel`,
+  on the full pack) is shown under a handler named after the map; `gos db build` compares those lines with the map's
+  recipes as having no category (D381).
 - Coverage limits: a handler hidden in NEI's config (Export mirrors Play's `config/NEI/`) is not dumped; a handler that
   fails to load is dropped by NEI without notice (it counts in `counts.nei_lookup_errors`); a recipe NEI can't
   serialise is left out (`counts.nei_skipped`). For the dump, GregtecLink has NEI load every handler on the client

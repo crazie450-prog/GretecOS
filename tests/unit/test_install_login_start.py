@@ -1,9 +1,9 @@
-"""WO-2.1, D116, D379: scripts/install_login_start.ps1 against a throwaway HKCU key (Windows only).
+"""WO-2.1, D116, D380: scripts/install_login_start.ps1 against a throwaway HKCU key (Windows only).
 
 The script runs from a copy in a temporary GOS_APP, as it would from GOS_APP\\scripts, and writes
 to ``HKCU\\Software\\GregtecOS-test-<random>``, never the real Run key. The value it writes is
 ``conhost.exe --headless <venv python.exe> -P -m gregtec.supervisor --login``: Smart App Control
-blocks gos-supervisor.exe and pythonw.exe (D379). One test runs that command, and -StartNow,
+blocks gos-supervisor.exe and pythonw.exe (D380). One test runs that command, and -StartNow,
 against a stub ``gregtec.supervisor`` that only records how it was started.
 """
 
@@ -190,7 +190,7 @@ def wait_for(path: Path) -> dict[str, object]:
 def test_the_login_command_runs_python_m_supervisor_headless(
     tmp_path: Path, run_key: str
 ) -> None:
-    """The Run key's command, as Windows runs it at login, and -StartNow's (D379)."""
+    """The Run key's command, as Windows runs it at login, and -StartNow's (D380)."""
     assert CONHOST.is_file()
     app, exe, script = make_app(tmp_path, venv=True)
     stub = tmp_path / "stub"
