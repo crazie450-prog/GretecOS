@@ -9,6 +9,8 @@ imports", on the D65 benchmark the plan names: steam boilers on a tree farm (G4)
   large steam turbine), and the validator, reading every recipe again from the DB, proves it
   takes nothing but water; its bootstrap kit names the sapling, the saw and starter creosote;
 - the same line with its farm taken out (one hidden import: the logs) fails the validator;
+- the same boilers on charcoal close too (D380): the Industrial Coke Oven recipes nearest the
+  free set can't be sized without build inputs, and the pyrolyse oven's take their place;
 - every mode returns 2-3 ranked options at HV, with the weights printed.
 
 Nothing is written outside tmp_path.
@@ -32,6 +34,7 @@ from gregtec.planner.request import DefaultBaseInputs
 REPO = Path(__file__).resolve().parents[2]
 EV, HV = 4, 3
 CREOSOTE = "fluid:creosote"
+CHARCOAL = "minecraft:coal@1"
 
 
 def _require_harness() -> None:
@@ -110,6 +113,36 @@ def test_the_same_line_without_its_farm_fails(
     assert not proof.ok
     assert len(proof.imports) == 1  # the logs the farm grew
     assert "log" in proof.imports[0][0].lower()
+
+
+def test_a_charcoal_boiler_line_is_proven_closed(conn: sqlite3.Connection) -> None:
+    # D380: charcoal's candidates nearest the free set are Industrial Coke Oven recipes, which
+    # the graph refuses when pinned (the oven's parallels need build inputs). Each gives its
+    # place to the next candidate as near, so the pyrolyse oven's recipes are tried: logs from
+    # the tree farm into charcoal, burnt in a 2.9 large boiler.
+    req = power.PowerRequest(
+        mode="self_sustaining", tier_cap=EV, kinds=("boiler_steam",), fuels=(CHARCOAL,)
+    )
+    d = power.design(conn, req, DefaultBaseInputs(EV), with_effort=False)
+    assert 2 <= len(d.options) <= 3, d.rejected
+    fl, _ = farms.load(
+        conn, int(conn.execute("SELECT MAX(id) FROM export_run").fetchone()[0])
+    )
+    for p in d.options:
+        gen = next(n for n in p["nodes"] if n["kind"] == "generator")
+        assert gen["fuel"]["id"] == CHARCOAL
+        farm = next(n for n in p["nodes"] if n["kind"] == "farm")
+        assert farm["recipe"].startswith("farm:r:gt.recipe.treefarm/")
+        made = [n for n in p["nodes"] if n["kind"] == "recipe"]
+        assert made and all(n["recipe"].startswith("r:gt.recipe.pyro/") for n in made)
+        assert p["closed"]["ok"] and p["closed"]["imports"] == []
+        proof = sustain.validate(conn, p, power.DEFAULT_FREE, {f.id: f for f in fl})
+        assert proof.ok, proof
+        assert {k for k, _ in proof.free_used} <= {"fluid:water"}
+        assert proof.net_eut > 0 and p["power"]["net_eut"] > 0
+    # The pins that were refused are still listed, each with the graph's reason.
+    refused = [why for _, why in d.rejected if why.startswith("fuel chain pinned to ")]
+    assert refused and all("r:gt.recipe.industrialcokeoven/" in why for why in refused)
 
 
 @pytest.mark.parametrize("mode", power.MODES)

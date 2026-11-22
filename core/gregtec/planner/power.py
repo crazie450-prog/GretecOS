@@ -952,7 +952,9 @@ def fuel_chains(
     each other candidate the graph keeps for the fuel, side routes included (a fuel is often a
     byproduct: creosote of a pyrolyse oven), up to :data:`graph.TOP_N` in all (D61, D233).
     With ``levels`` (``self_sustaining``) the pins are the fuel's candidates (any status but
-    rejected) whose inputs the closure reaches, the fewest steps from the free set first.
+    rejected) whose inputs the closure reaches, the fewest steps from the free set first; one
+    the graph refuses when pinned (most are unchecked until then: a machine that needs build
+    inputs) gives its place to the next candidate as few steps away, if there is one (D380).
     Returns (chains, why each failed)."""
     out: list[Chain] = []
     errors: list[str] = []
@@ -963,6 +965,7 @@ def fuel_chains(
     out.append(first)
     item = first.graph.item(fuel)
     others = [c.recipe for c in item.candidates if c.status == "alternative"]
+    steps: dict[str, int] = {}
     if levels is not None:
         ranked = []
         for i, c in enumerate(item.candidates):
@@ -976,11 +979,19 @@ def fuel_chains(
                 continue
             ranked.append((max([0, *(v for v in need if v is not None)]), i, c.recipe))
         others = [ref for _, _, ref in sorted(ranked)]
-    for ref in others[: graph.TOP_N - 1]:
+        steps = {ref: step for step, _, ref in ranked}
+    queue, spare = others[: graph.TOP_N - 1], others[graph.TOP_N - 1 :]
+    while queue:
+        ref = queue.pop(0)
         try:
             out.append(_chain(conn, fuel, req, base, tier, run_id, templates, ref))
         except (graph.GraphError, RequestError, LookupError) as exc:
             errors.append(f"fuel chain pinned to {ref}: {exc}")
+            if ref in steps:
+                nxt = next((r for r in spare if steps[r] == steps[ref]), None)
+                if nxt is not None:
+                    spare.remove(nxt)
+                    queue.append(nxt)
     return out, errors
 
 

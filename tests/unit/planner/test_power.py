@@ -188,6 +188,62 @@ def test_reachable_levels(conn: sqlite3.Connection) -> None:
     assert lv[tg.DUST_B] == 1 and lv[GAS] == 2
 
 
+def test_a_refused_pin_gives_its_place_to_the_next_candidate_as_near(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D380: of a fuel's reachable candidates (nearest first, three pins) one the graph refuses
+    when pinned gives its place to the next candidate as few steps from the free set, never
+    to one further away; without ``levels`` (the other modes) nothing takes its place."""
+    from types import SimpleNamespace
+
+    # (recipe, status, the key it uses up): a0, b0, d0, e0 use up k0 (no steps away), c1 and
+    # f1 use up k1 (one step); "far" needs a key the closure never reaches.
+    rows = [
+        ("r:t/own", "chosen", "k0"),
+        ("r:t/a0", "unchecked", "k0"),
+        ("r:t/b0", "alternative", "k0"),
+        ("r:t/c1", "alternative", "k1"),
+        ("r:t/d0", "pruned", "k0"),
+        ("r:t/e0", "alternative", "k0"),
+        ("r:t/f1", "alternative", "k1"),
+        ("r:t/far", "unchecked", "k9"),
+        ("r:t/no", "rejected", "k0"),
+    ]
+    cands = [SimpleNamespace(recipe=r, status=s) for r, s, _ in rows]
+    refused: set[str] = set()
+
+    def fake_chain(*args: object) -> Any:  # noqa: ANN401
+        pin = args[7] if len(args) > 7 else None
+        if pin in refused:
+            raise RequestError(f"pin {pin}: not a candidate here")
+        item = SimpleNamespace(candidates=cands)
+        return SimpleNamespace(pin=pin, graph=SimpleNamespace(item=lambda _: item))
+
+    def fake_ports(_c: object, ref: str, _run: int) -> Any:  # noqa: ANN401
+        return SimpleNamespace(used={next(k for r, _, k in rows if r == ref): 1.0})
+
+    monkeypatch.setattr(power, "_chain", fake_chain)
+    monkeypatch.setattr(sustain, "db_ports", fake_ports)
+    levels = {"k0": 0, "k1": 1}
+
+    def pins(lv: dict[str, int] | None) -> tuple[list[str | None], int]:
+        got, errors = power.fuel_chains(
+            None, "fluid:x", power.PowerRequest(), tg.Base(), 2, 1, None, lv  # type: ignore[arg-type]
+        )  # fmt: skip
+        return [c.pin for c in got], len(errors)  # type: ignore[attr-defined]
+
+    assert pins(levels) == ([None, "r:t/a0", "r:t/b0", "r:t/d0"], 0)
+    refused.update({"r:t/a0", "r:t/b0"})
+    # a0's place goes to e0; nothing as near is left for b0's, and c1 and f1 are a step away.
+    assert pins(levels) == ([None, "r:t/d0", "r:t/e0"], 2)
+    refused.update({"r:t/d0", "r:t/e0"})
+    assert pins(levels) == ([None], 4)
+    # The other modes pin the graph's alternatives, the first three: b0 refused, c1 and e0.
+    refused.clear()
+    refused.add("r:t/b0")
+    assert pins(None) == ([None, "r:t/c1", "r:t/e0"], 1)
+
+
 # --- modes ------------------------------------------------------------------------------------
 
 
