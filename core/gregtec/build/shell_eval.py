@@ -120,8 +120,16 @@ def _value(rec: Mapping[str, Any], kind: str, key: str | None) -> Any:  # noqa: 
     return found[0].get(key) if found else None
 
 
+CHANGED = (
+    "changed"  # any change to the design (a script-drawn building's follow-up, D387)
+)
+
+
 def check(old: Mapping[str, Any], new: Mapping[str, Any], spec: str) -> str | None:
     """None when ``spec`` holds of ``new`` (against ``old``), else why not."""
+    if spec == CHANGED:
+        same = old["ops"] == new["ops"] and old.get("headroom") == new.get("headroom")
+        return "nothing changed" if same else None
     m = _CHECK.match(spec)
     if m is None:
         return f"{spec!r} is not a check"

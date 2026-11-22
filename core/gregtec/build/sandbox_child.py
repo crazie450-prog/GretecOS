@@ -128,6 +128,131 @@ def _main() -> None:
         """The block placed at a cell so far, or None."""
         return cells.get(_xyz(args, 3, "get_block"))
 
+    # --- shape helpers: each places blocks with _put, so the same caps hold -------------
+
+    def _pt(v: object, n: int, name: str) -> tuple[int, ...]:
+        if not isinstance(v, (tuple, list)):
+            raise BuildError(f"{name} takes points as (x, y, z) or (x, z)")
+        return _xyz((v,), n, name)
+
+    def _r(v: object, name: str) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 < v <= 64:
+            raise BuildError(f"{name}: a radius is a number above 0, at most 64")
+        return float(v)
+
+    def line(a: object, b: object, what: object) -> None:
+        """Every block on the straight line from a to b (both (x, y, z))."""
+        w = _what(what)
+        p, q = _pt(a, 3, "line"), _pt(b, 3, "line")
+        steps = max(abs(q[i] - p[i]) for i in range(3))
+        for k in range(steps + 1):
+            t = k / steps if steps else 0.0
+            _put(tuple(round(p[i] + (q[i] - p[i]) * t) for i in range(3)), w)
+
+    def ring(lo: object, hi: object, what: object) -> None:
+        """The four walls of the box lo..hi (its outline at every height), no top or floor."""
+        w = _what(what)
+        a, b = _box((lo, hi), "ring")
+        for y in range(a[1], b[1] + 1):
+            for x in range(a[0], b[0] + 1):
+                _put((x, y, a[2]), w)
+                _put((x, y, b[2]), w)
+            for z in range(a[2], b[2] + 1):
+                _put((a[0], y, z), w)
+                _put((b[0], y, z), w)
+
+    def box(lo: object, hi: object, what: object, hollow: bool = False) -> None:
+        """A solid box, or with hollow=True only its six faces."""
+        w = _what(what)
+        a, b = _box((lo, hi), "box")
+        for x in range(a[0], b[0] + 1):
+            for y in range(a[1], b[1] + 1):
+                for z in range(a[2], b[2] + 1):
+                    face = x in (a[0], b[0]) or y in (a[1], b[1]) or z in (a[2], b[2])
+                    if face or not hollow:
+                        _put((x, y, z), w)
+
+    def cylinder(
+        center: object,
+        radius: object,
+        y0: object,
+        y1: object,
+        what: object,
+        hollow: bool = True,
+    ) -> None:
+        """A round tower or stack: center (x, z), from y0 to y1; hollow=False fills it."""
+        w = _what(what)
+        cx, cz = _pt(center, 2, "cylinder")
+        r = _r(radius, "cylinder")
+        lo_y, hi_y = sorted((_num(y0, "cylinder: y0"), _num(y1, "cylinder: y1")))
+        n = int(r) + 1
+        for y in range(lo_y, hi_y + 1):
+            for dx in range(-n, n + 1):
+                for dz in range(-n, n + 1):
+                    d = math.hypot(dx, dz)
+                    if d <= r + 0.5 and (not hollow or d > r - 0.5):
+                        _put((cx + dx, y, cz + dz), w)
+
+    def sphere(
+        center: object,
+        radius: object,
+        what: object,
+        hollow: bool = True,
+        dome: bool = False,
+    ) -> None:
+        """A ball around center (x, y, z); dome=True keeps the top half (from center's y up)."""
+        w = _what(what)
+        cx, cy, cz = _pt(center, 3, "sphere")
+        r = _r(radius, "sphere")
+        n = int(r) + 1
+        for dx in range(-n, n + 1):
+            for dy in range(0 if dome else -n, n + 1):
+                for dz in range(-n, n + 1):
+                    d = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    if d <= r + 0.5 and (not hollow or d > r - 0.5):
+                        _put((cx + dx, cy + dy, cz + dz), w)
+
+    def pyramid(lo: object, hi: object, what: object, rise: object = 1) -> None:
+        """A stepped hip roof or spire: from the footprint lo..hi (x and z; y from lo), each
+        course one block in on every side, `rise` blocks high, up to hi's y."""
+        w = _what(what)
+        a, b = _box((lo, hi), "pyramid")
+        step = _num(rise, "pyramid: rise")
+        if not 1 <= step <= 8:
+            raise BuildError("pyramid: rise is 1 to 8")
+        i, y = 0, a[1]
+        while a[0] + i <= b[0] - i and a[2] + i <= b[2] - i and y <= b[1]:
+            for _ in range(step):
+                if y > b[1]:
+                    break
+                for x in range(a[0] + i, b[0] - i + 1):
+                    _put((x, y, a[2] + i), w)
+                    _put((x, y, b[2] - i), w)
+                for z in range(a[2] + i, b[2] - i + 1):
+                    _put((a[0] + i, y, z), w)
+                    _put((b[0] - i, y, z), w)
+                y += 1
+            i += 1
+
+    def arch(a: object, b: object, rise: object, what: object) -> None:
+        """A half-round (or flattened) arch from foot a to foot b (both (x, y, z), same y),
+        rising `rise` blocks at the middle."""
+        w = _what(what)
+        p, q = _pt(a, 3, "arch"), _pt(b, 3, "arch")
+        h = float(_num(rise, "arch: rise"))
+        span = max(abs(q[0] - p[0]), abs(q[2] - p[2]), 1)
+        for k in range(4 * span + 1):
+            t = k / (4 * span)
+            lift = h * math.sin(math.pi * t)
+            _put(
+                (
+                    round(p[0] + (q[0] - p[0]) * t),
+                    round(p[1] + lift),
+                    round(p[2] + (q[2] - p[2]) * t),
+                ),
+                w,
+            )
+
     def _print(*args: object, sep: object = " ", end: object = "") -> None:
         if len(log) < MAX_LOG:
             log.append(str(sep).join(str(a) for a in args)[:MAX_LINE])
@@ -196,6 +321,13 @@ def _main() -> None:
         "fill": fill,
         "clear": clear,
         "get_block": get_block,
+        "line": line,
+        "ring": ring,
+        "box": box,
+        "cylinder": cylinder,
+        "sphere": sphere,
+        "pyramid": pyramid,
+        "arch": arch,
         **{k.upper(): _freeze(v) for k, v in facts.items()},
         **MODULES,
     }
