@@ -40,8 +40,9 @@ from hypothesis import strategies as st
 
 from gregtec import cards, cli
 from gregtec.agents import deep_config
-from gregtec.agents.tools import build_registry
+from gregtec.agents.tools import build_registry, registry, shells
 from gregtec.agents.tools.registry import DEEP, FAST
+from gregtec.build import footprints as fp
 from gregtec.build import layout, palette, schematic, shell, shell_cli, shell_store
 from gregtec.build import themes as theme_lib
 from gregtec.build.palette import Entry
@@ -575,6 +576,8 @@ def test_a_small_breach_is_repaired_a_large_one_refused(
     flood = {"op": "fill", "role": "wall", "lo": list(i.lo), "hi": list(i.hi)}
     out = shell.design(conn, spec, [*good_design(spec), flood], "architect")
     assert out.status == "refused" and "too far off to repair" in out.reasons[0]
+    assert f"more than {round(shell.REPAIR_SHARE * 100)}%" in out.reasons[0]
+    assert "{" not in out.reasons[0]  # QA 10-13: the share is formatted, not shown raw
     # a design that is mostly outside the bounding volume is refused, a little is clipped
     far = {"op": "fill", "role": "wall", "lo": [-40, 0, -40], "hi": [-20, 9, -20]}
     out = shell.design(conn, spec, [*good_design(spec), far], "architect")
@@ -1088,3 +1091,92 @@ def test_the_shell_routes(home: Path) -> None:
             assert nope.status_code == 400 and "isn't saved" in nope.text
     finally:
         store.close()
+
+
+# --- a real dump's largest structure rows -------------------------------------------------------
+
+BIG_MTE = (
+    15411  # Forge of the Gods: its t3 row is 1,239,746 bytes of blocks_json on 2.9.0
+)
+
+
+def add_big_structure(home: Path, mte: int = BIG_MTE, cells: int = 24_000) -> int:
+    """A structure row for ``mte`` (no plan's machine) whose blocks_json is over the tools'
+    1 MB value limit; returns its size in bytes."""
+    blocks = json.dumps(
+        [
+            {
+                "d": [i % 40, i // 1600, (i // 40) % 40],
+                "block": "gregtech:gt.blockcasings",
+                "meta": 8,
+            }
+            for i in range(cells)
+        ]
+    )
+    assert len(blocks) > registry.MAX_VALUE_BYTES
+    c = access.connect(access.db_path(home))
+    try:
+        c.execute(
+            "INSERT INTO structure(variant, size_x, size_y, size_z, blocks_json, source,"
+            " registry_name, meta, name_en, channels_json, hatches_json, subs_json,"
+            " failures_json) VALUES ('t3', 40, 15, 40, ?, 'gtnh-extractor', ?, ?,"
+            " 'Forge of the Gods', '{}', '[]', '{}', '[]')",
+            (blocks, palette.GT_MACHINES, mte),
+        )
+        c.commit()
+    finally:
+        c.close()
+    return len(blocks)
+
+
+def test_a_layout_reads_only_its_plans_structure_rows(home: Path) -> None:
+    """Defect (real dump): every build_request failed with "string or blob too big" because the
+    layout read every structure row, and Forge of the Gods' is over the tools' 1 MB limit."""
+    add_big_structure(home)
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        registry.guard(c, 30.0)  # a tool's connection, at the default value limit
+        lay = layout.plan_layout(c, [lay_tests.production(), lay_tests.power()])
+        assert lay["placements"]
+        with pytest.raises(sqlite3.DataError, match="too big"):
+            fp.library(c)  # every row: what the layout did before
+        with pytest.raises(sqlite3.DataError, match="too big"):
+            fp.library(c, [BIG_MTE])  # that row itself: over the default limit
+    finally:
+        c.close()
+
+
+def test_build_request_beside_a_structure_row_over_a_megabyte(
+    reg: Any,  # noqa: ANN401
+    home: Path,
+) -> None:
+    add_big_structure(home)
+    got = ask(reg, save=False)
+    assert not got.is_error, got.text
+    assert "status: accepted" in got.text
+
+
+def test_build_request_reads_a_plans_own_structure_row_over_a_megabyte(
+    tmp_path: Path,
+) -> None:
+    """A plan with Forge of the Gods: build_request's connection allows its structure row
+    (shells.MAX_STRUCTURE_BYTES), every other tool keeps the 1 MB limit."""
+    forge = {
+        **lay_tests.production("pl-forge"),
+        "nodes": [lay_tests.node("n1", BIG_MTE, 1)],
+    }
+    forge["edges"] = []
+    home = make_home(tmp_path, forge)
+    size = add_big_structure(home)
+    assert registry.MAX_VALUE_BYTES < size < shells.MAX_STRUCTURE_BYTES
+    reg = build_registry(access.db_path(home), vault=VaultIO(home / "vault"))
+    limits = {t.name: t.max_value_bytes for t in reg.tools()}
+    assert limits.pop("build_request") == shells.MAX_STRUCTURE_BYTES
+    assert set(limits.values()) == {registry.MAX_VALUE_BYTES}
+    got = reg.call(
+        "build_request",
+        {"plans": "pl-forge", "theme": "th-foundry", "save": False},
+        lane=DEEP,
+    )
+    assert not got.is_error, got.text
+    assert "status: accepted" in got.text

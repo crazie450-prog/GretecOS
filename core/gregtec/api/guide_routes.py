@@ -118,7 +118,7 @@ def shown(
             lib.get(f.registry_name, f.meta, v.variant)
             for v in lib.for_controller(f.registry_name, f.meta)
         ]
-        looks = guide_data.looks(conn, f.materials())
+        looks = guide_data.looks(conn, guide_data.look_keys(f))
         done = guide_data.checked(store, guide_data.checklist_key(f))
         return guide_data.guide(f, looks, variants, done)
     except sqlite3.Error as exc:

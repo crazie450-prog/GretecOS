@@ -189,14 +189,29 @@ def machine_items(conn: sqlite3.Connection, mtes: Sequence[int]) -> dict[int, st
 
 def structure_blocks(conn: sqlite3.Connection, mte: int) -> dict[str, int] | None:
     """The blocks of the multiblock's smallest structure variant, by stable key (None: no
-    structure row)."""
-    rows = conn.execute(
-        "SELECT s.variant, s.blocks_json FROM structure AS s JOIN machine AS m"
+    structure row).
+
+    Only the variants that fit under the connection's value limit are read (the tools' is 1 MB,
+    ``registry.MAX_VALUE_BYTES``): Forge of the Gods' t3 holds 1,239,746 bytes of cells, its t1
+    469,878. A longer variant is left out while a shorter one fits; on a real dump (297
+    controllers) the variant with the fewest bytes is always the one with the fewest blocks.
+    When none fits, the shortest is read (and the limit says so)."""
+    sized = conn.execute(
+        "SELECT s.rowid, octet_length(s.blocks_json) FROM structure AS s JOIN machine AS m"
         " ON m.id = s.machine_id WHERE m.mte_id = ? ORDER BY s.variant, s.source",
         (mte,),
     ).fetchall()
+    if not sized:
+        return None
+    limit = conn.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
+    read = [rid for rid, n in sized if (n or 0) <= limit] or [
+        min(sized, key=lambda r: r[1] or 0)[0]
+    ]
     best: dict[str, int] | None = None
-    for _, text in rows:
+    for rid in read:
+        (text,) = conn.execute(
+            "SELECT blocks_json FROM structure WHERE rowid = ?", (rid,)
+        ).fetchone()
         try:
             cells = json.loads(text or "[]")
         except ValueError:

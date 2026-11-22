@@ -24,7 +24,7 @@ from typing import Any
 
 from gregtec.agents.tools.registry import Call, ToolError
 from gregtec.agents.tools.tsv import Result
-from gregtec.build import palette, shell
+from gregtec.build import palette, shell, shell_brief
 from gregtec.build import themes as theme_lib
 from gregtec.packupdate.plans import PLAN_ID
 
@@ -35,18 +35,16 @@ GATE = (
     "refused designs write nothing) and the build folder (GOS_HOME/data/build/shells/ only)"
 )
 COLUMNS = ("role", "block", "name", "count")
-MAX_DESIGN_TEXT = 60_000  # characters of the operations as JSON
+MAX_DESIGN_TEXT = shell_brief.MAX_REPLY_CHARS  # characters of the operations as JSON
+# The value limit of build_request's connection (Tool.max_value_bytes): the layout reads each of
+# the plans' multis' structure rows whole, and a real dump's largest blocks_json is over the
+# tools' 1 MB (Forge of the Gods t3: 1,239,746 bytes on 2.9.0). Only the plans' rows are read
+# (footprints.library's mtes), so this bounds those, with room for an addon's Lab capture.
+MAX_STRUCTURE_BYTES = 4_000_000
 
 VOCABULARY = (
-    "a JSON list of operations, in the layout's coordinates (x east, y up, z south; y 0 the "
-    "first layer above the floor). Each is an object with op: walls (the outer ring; y [y0, y1], "
-    "inset), pillars (corners and every N along the ring; every, y, inset), windows (openings "
-    "along the ring; y, every, width < every, sides [north, south, east, west]), roof (style "
-    "flat or gable, y, edge + edge_n, parapet 0-3 + parapet_role), lights (a grid set in the "
-    "roof; every, y), fill and frame (a solid box, or its edges; lo [x,y,z], hi [x,y,z]), clear "
-    "(air; lo, hi). Each but clear names a palette role (role, and n: that role's entry "
-    "number) or one block (<registry name>@<meta> from the palette). Later operations overwrite "
-    "earlier ones. Leave design out for GOS's procedural shell: its operations come back in the "
+    shell_brief.OPERATIONS
+    + " Leave design out for GOS's procedural shell: its operations come back in the "
     "result's ops note to start from (with save false, nothing is saved)."
 )
 BUILD_REQUEST_SCHEMA: dict[str, Any] = {
@@ -193,7 +191,18 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
     rec = made.record
     sx, sy, sz = rec["bounds"]["size"]
     b = rec["bounds"]
+    design = None
+    if made.saved is not None:  # a new design's first version (WO-10.10, D367)
+        from gregtec.build import shell_versions as versions
+
+        design = versions.start(
+            home,
+            made.build,
+            asked=call.request or args.get("prompt", "") or "designed",
+            by="architect" if out.source == "architect" else "procedural",
+        )["id"]
     head: list[tuple[str, object]] = [
+        *([("design", design)] if design else []),
         ("build", made.build),
         ("status", out.status),
         ("source", out.source),
@@ -246,6 +255,169 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
         page,
         head=head,
         notes=notes,
+        total=len(rows),
+        offset=offset,
+        more=len(rows) > offset + call.page,
+    )
+
+
+# --- build_revise (WO-10.10, D367) ----------------------------------------------------------
+
+REVISE_GATE = (
+    GATE
+    + "; a revision reads only the saved version's files and the block catalog, and a "
+    "refused one writes nothing and leaves the current version current"
+)
+BUILD_REVISE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "design": {
+            "type": "string",
+            "maxLength": 15,
+            "description": "the shell design to revise (ds-<12 hex>); leave out for the "
+            "current design (the one Clayton works on, shown in the Build view)",
+        },
+        "words": {
+            "type": "string",
+            "maxLength": 400,
+            "description": 'what Clayton asked to change, as he said it ("make the roof '
+            'steeper", "taller, and no windows on the north wall")',
+        },
+        "design_ops": {
+            "type": "string",
+            "maxLength": MAX_DESIGN_TEXT,
+            "description": "your revised design: the current version's operations (from "
+            "save false) with only what he asked changed; " + VOCABULARY,
+        },
+        "theme": {
+            "type": "string",
+            "maxLength": theme_lib.MAX_ID,
+            "description": "th-<name> to change the palette to another theme's (theme_list)",
+        },
+        "max_blocks": BUILD_REQUEST_SCHEMA["properties"]["max_blocks"],
+        "headroom": BUILD_REQUEST_SCHEMA["properties"]["headroom"],
+        "save": {
+            "type": "boolean",
+            "description": "false: save nothing; return the current version's operations and "
+            "what GOS's own reviser makes of the words (start your design from them); "
+            "default true",
+        },
+    },
+    "required": ["words"],
+    "additionalProperties": False,
+}
+
+
+def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
+    """A new version of a saved shell design from Clayton's words
+    (:func:`gregtec.build.shell_versions.revise`): the model's revised operations
+    (``design_ops``), or GOS's reviser's without them, through the same gate. Refused: nothing
+    written and the current version stays current."""
+    from gregtec.build import shell_store
+    from gregtec.build import shell_versions as versions
+
+    home = call.env.db.parent.parent
+    words = args["words"]
+    ops = None
+    if "design_ops" in args:
+        try:
+            ops = json.loads(args["design_ops"])
+        except ValueError as exc:
+            raise ToolError(f"design_ops is not JSON: {exc}") from None
+        if not isinstance(ops, list):
+            raise ToolError("design_ops is a JSON list of operations")
+    save = args.get("save", True)
+    # The chain's note is Clayton's own request when a lane passes it on, else the words.
+    asked = call.request or words
+    try:
+        ds = args.get("design") or versions.current_id(home)
+        if ds is None:
+            raise ToolError(
+                "there is no shell yet: design one with build_request first"
+            )
+        d = versions.get(home, ds)
+        cur = next(v for v in d["versions"] if v["build"] == d["current"])
+        if not save and ops is None:
+            rec = shell_store.load(home, d["current"])
+            look = versions.revise(
+                call.conn, home, call.env.vault, ds, words, save_it=False
+            )
+            notes = ["current ops: " + json.dumps(rec["ops"], separators=(",", ":"))]
+            if look.record is not None and not look.reasons:
+                notes.append(
+                    "GOS's reviser: "
+                    + "; ".join(look.changes)
+                    + " | ops: "
+                    + json.dumps(list(look.ops), separators=(",", ":"))
+                )
+            else:
+                notes.append("GOS's reviser can't: " + " | ".join(look.reasons))
+            return Result(
+                head=[
+                    ("design", ds),
+                    ("current", f"v{cur['n']} {d['current']}"),
+                    ("saved", "no (save false: nothing written)"),
+                ],
+                notes=notes,
+            )
+        got = versions.revise(
+            call.conn,
+            home,
+            call.env.vault,
+            ds,
+            words,
+            ops=ops,
+            by="architect" if ops is not None else "procedural",
+            theme_id=args.get("theme"),
+            max_blocks=args.get("max_blocks"),
+            headroom=args.get("headroom"),
+            asked=asked,
+            save_it=save,
+        )
+    except (shell.ShellError, palette.CatalogError) as exc:
+        raise ToolError(f"no revision: {exc}") from None
+    if got.reasons or got.record is None:
+        raise ToolError(
+            f"revision of {ds} refused, nothing was written; v{cur['n']} ({got.parent}) "
+            "stays current: "
+            + " | ".join(got.reasons)
+            + ". Fix the design and send it again."
+        )
+    rec = got.record
+    v = got.version
+    head: list[tuple[str, object]] = [
+        ("design", ds),
+        ("revised", f"v{cur['n']} {got.parent}"),
+        ("build", got.build),
+        (
+            "version",
+            f"v{v['n']} (current)" if v is not None else "not saved (save false)",
+        ),
+        ("status", got.outcome.status),
+        ("blocks", f"{rec['blocks']} of max {rec['max_blocks']}"),
+        ("headroom", rec["headroom"]),
+    ]
+    head += [("repaired", r) for r in got.outcome.repairs]
+    rows = [(c,) for c in got.changes]
+    say = (
+        f"Done: version {v['n']}, {rec['blocks']} blocks. Say undo to go back to version "
+        f"{cur['n']}."
+        if v is not None
+        else "Checked; nothing saved."
+    )
+    page = rows[offset : offset + call.page]
+    return Result(
+        ("change",),
+        page,
+        head=head,
+        notes=[
+            "say: " + say,
+            (
+                "it shows in the Build view's workbench; Clayton exports it with gos shell "
+                f"export {got.build} and pastes it in the Lab only"
+            ),
+            "ops: " + json.dumps(list(got.ops), separators=(",", ":")),
+        ],
         total=len(rows),
         offset=offset,
         more=len(rows) > offset + call.page,

@@ -28,7 +28,8 @@ dependencies = [
 gos = "gregtec.cli:main"
 
 [project.gui-scripts]
-# WO-2.1, D116: the login Run key starts this windowless launcher (pythonw on Windows).
+# WO-2.1, D116: a windowless launcher (pythonw on Windows). Since D379 GOS never starts it:
+# Smart App Control blocks it. Kept so a Run key from before D379 works where SAC is off.
 gos-supervisor = "gregtec.supervisor:main"
 
 [build-system]

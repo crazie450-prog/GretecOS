@@ -1,6 +1,6 @@
 # Core service: first start and acceptance checks (WO-2.1)
 
-Clayton runs these on the gaming PC after the WO-2.1 PR is merged. They take about 15 minutes. Decisions: D115 (service), D116 (login start), D117 (auth), D118 (usage meter).
+Clayton runs these on the gaming PC after the WO-2.1 PR is merged. They take about 15 minutes. Decisions: D115 (service), D116 (login start), D117 (auth), D118 (usage meter), D379 (Smart App Control).
 
 `gos` below means Clayton's release copy, `C:\GregtecOS-app\current\.venv\Scripts\gos.exe` (D91). `curl.exe` is the one that ships with Windows.
 
@@ -11,7 +11,7 @@ Clayton runs these on the gaming PC after the WO-2.1 PR is merged. They take abo
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File C:\GregtecOS-app\scripts\install_login_start.ps1 -StartNow
    ```
-   It prints `GOS starts at login: ...\Run\GregtecOS = "C:\GregtecOS-app\current\.venv\Scripts\gos-supervisor.exe" --login`. No window opens: the supervisor runs in the background.
+   It prints `GOS starts at login: ...\Run\GregtecOS = "C:\Windows\System32\conhost.exe" --headless "C:\GregtecOS-app\current\.venv\Scripts\python.exe" -P -m gregtec.supervisor --login`. No window opens: the supervisor runs in the background. A Run key from before D379 named `gos-supervisor.exe`, which Smart App Control blocks; running this step again replaces it, and `gos doctor` warns while the old one is still there.
 3. `gos status`. Expect `overall: ok` and these lines (spacing aside; `warn` on the key line, and so on `overall`, if no Anthropic key is stored):
    ```text
    Supervisor     ok     running  (pid ...)
@@ -60,7 +60,21 @@ Clayton runs these on the gaming PC after the WO-2.1 PR is merged. They take abo
 
 ## D. Next deploys
 
-`gos deploy` now stops GOS just before it swaps `current\`, because Windows can't rename the folder while the supervisor runs from it, and starts it again afterwards with the same gos.toml (the Run key's `--config`, if any). It prints `Stopping GOS for the swap ...` and `Restarted GOS: ...`. GOS is down for a few seconds, not for the staging and the GregtecLink build, and a deploy that is refused (uncommitted changes, a ref not in `origin/main`) doesn't stop it. Deploy from a normal window: a GOS restarted from an elevated one would refuse to start.
+`gos deploy` now stops GOS just before it swaps `current\`, because Windows can't rename the folder while the supervisor runs from it, and starts it again afterwards with the same gos.toml (the Run key's `--config`, if any). It prints `Stopping GOS for the swap ...` and `Restarted GOS: C:\GregtecOS-app\current\.venv\Scripts\python.exe -P -m gregtec.supervisor ...`. GOS is down for a few seconds, not for the staging and the GregtecLink build, and a deploy that is refused (uncommitted changes, a ref not in `origin/main`) doesn't stop it. Deploy from a normal window: a GOS restarted from an elevated one would refuse to start.
+
+## Smart App Control (D379)
+
+Windows 11's Smart App Control blocks unsigned programs that have no reputation, with `[WinError 4551] An Application Control policy has blocked this file` (Event Viewer: Applications and Services Logs > Microsoft > Windows > CodeIntegrity > Operational, event 3077, names the file). On Clayton's PC it blocks the release's `gos-supervisor.exe` and `pythonw.exe` every time and allows `python.exe` and `gos.exe`. So every start of the supervisor uses `python.exe -P -m gregtec.supervisor`:
+
+| Start | How the console stays hidden |
+|---|---|
+| `gos serve --detach` | started with `CREATE_NO_WINDOW` |
+| the restart at the end of `gos deploy` | the same |
+| login (and `install_login_start.ps1 -StartNow`) | the Run key runs `conhost.exe --headless`, Windows' own console host, which opens no window |
+
+`gos doctor` prints `Smart App Control: on`, `off`, `evaluation` or `unknown`, and a `warning:` line when the login start still names `gos-supervisor.exe` or `pythonw.exe` (do A.2 again). A `python.exe` was blocked once and then allowed, so a single `Couldn't start the supervisor: [WinError 4551] ...` is worth one retry; if it repeats, read event 3077 for the file it names.
+
+Check with Smart App Control on: `gos stop --all; gos serve --detach`, a `gos deploy`, and a sign-out and in each end with `gos status` showing Supervisor and Core `ok running`, and no console window opens.
 
 ## Turning it off
 

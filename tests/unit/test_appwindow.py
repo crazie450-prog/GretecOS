@@ -3,6 +3,7 @@ once the core is up, and ``gos dashboard``. The Windows path runs here with fake
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -135,6 +136,44 @@ def test_chrome_is_found_where_its_installers_put_it(tmp_path: Path) -> None:
     exe.write_bytes(b"MZ")
     assert appwindow.chrome_path({"LOCALAPPDATA": str(tmp_path / "Local")}) == exe
     assert appwindow.chrome_path({"ProgramFiles": str(tmp_path / "none")}) is None
+
+
+def test_chrome_is_found_under_program_files_with_windows_upper_cased_keys(
+    tmp_path: Path,
+) -> None:
+    """Regression: Windows' os.environ keys are upper-cased (PROGRAMFILES), and a mixed-case
+    lookup on a dict copy missed Program Files, where Clayton's Chrome is."""
+    exe = tmp_path / "PF" / "Google" / "Chrome" / "Application" / "chrome.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    env = {
+        "PROGRAMFILES": str(tmp_path / "PF"),
+        "PROGRAMFILES(X86)": str(tmp_path / "PF86"),
+        "LOCALAPPDATA": str(tmp_path / "Local"),
+    }
+    assert appwindow.chrome_path(env) == exe
+    x86 = {
+        "PROGRAMFILES(X86)": str(tmp_path / "PF"),
+        "PROGRAMFILES": str(tmp_path / "none"),
+    }
+    assert appwindow.chrome_path(x86) == exe
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' own os.environ")
+def test_chrome_is_found_with_the_real_environ_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "PF"))
+    exe = (
+        Path(os.environ["ProgramFiles"])
+        / "Google"
+        / "Chrome"
+        / "Application"
+        / "chrome.exe"
+    )
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    assert appwindow.chrome_path() == exe
 
 
 def test_the_supervisor_opens_it_at_startup_unless_turned_off(

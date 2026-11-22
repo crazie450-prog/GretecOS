@@ -6,18 +6,22 @@
 // WO-10.1's frame of Clayton's GuideNH export stays beside it for the in-game look; WO-10.8 serves
 // it from its own origin with a path token (gregtec.build.guide, D304, D319), so its scripts can't
 // reach the dashboard. On the phone's tailnet name there is no guide host, so no frame.
-// WO-10.7 adds the decorative shells: the core designs and checks them (gregtec.build.shell); this
-// view lists them and draws the chosen one's card (preview, palette, Lab-only paste steps).
+// WO-10.7 adds the decorative shells: the core designs and checks them (gregtec.build.shell).
+// WO-10.10 replaces their list and quarter-turn card here with the shell workbench
+// (ShellWorkbench.tsx): words, theme and sizes, Design and Revise as jobs, the versions with
+// undo and compare, and the guide's 3D drawing with the machines and keep-outs as ghosts.
+// WO-10.11 adds the bake-off panel under it (ShellBakeoff.tsx): several models' answers to one
+// brief, blind, with his pick per case; it shows only once a run exists.
 // Built to the design system: needs Clayton's board approval (D92, D158 (5)).
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { Facing, GuideEntry, GuideQuery, GuideSite, ShellSummary } from "../api/types";
-import { Card } from "../cards/Card";
-import type { Card as CardData } from "../cards/types.gen";
+import type { Facing, GuideEntry, GuideQuery, GuideSite } from "../api/types";
 import { Panel } from "../components/core";
 import { GLYPH } from "../state/states";
 import { useApp } from "../state/store";
 import { GuideView } from "./BuildGuide";
+import { ShellBakeoff } from "./ShellBakeoff";
+import { ShellWorkbench } from "./ShellWorkbench";
 
 const mb = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
 const FACINGS: readonly string[] = ["north", "east", "south", "west"];
@@ -98,73 +102,6 @@ export function useGuides(): GuideEntry[] {
 export function guideFor(guides: GuideEntry[], mte: number | null | undefined): string | null {
   if (mte === null || mte === undefined) return null;
   return guides.find((g) => g.mte === mte)?.controller ?? null;
-}
-
-/** The saved shells, newest first; the chosen one's card (WO-10.7, D316). */
-export function Shells() {
-  const [list, setList] = useState<ShellSummary[] | null>(null);
-  const [pick, setPick] = useState<string | null>(null);
-  const [card, setCard] = useState<CardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    api.shells().then(
-      (r) => {
-        if (!live) return;
-        setList(r.shells);
-        setPick(r.shells[0]?.id ?? null);
-      },
-      (e: unknown) => live && setError(e instanceof ApiError ? e.message : String(e)),
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!pick) return;
-    let live = true;
-    setCard(null);
-    api.shell(pick).then(
-      (r) => live && setCard(r.card),
-      (e: unknown) => live && setError(e instanceof ApiError ? e.message : String(e)),
-    );
-    return () => {
-      live = false;
-    };
-  }, [pick]);
-  return (
-    <Panel
-      label="Shells"
-      testId="shells"
-      aside={list ? <span className="gos-src">{list.length} saved</span> : undefined}
-    >
-      {error && <p className="empty">{GLYPH.warn} {error}</p>}
-      {!list && !error && <p className="empty">{GLYPH.progress} Looking for shells</p>}
-      {list && !list.length && (
-        <p className="gos-sub" data-testid="shells-empty">
-          {GLYPH.todo} No shell yet. Ask for one ("design a foundry shell around my steel line"), or run gos shell design
-          with the plan's id.
-        </p>
-      )}
-      {list && list.length > 1 && (
-        <select
-          className="ask-input base-select"
-          aria-label="Shell"
-          value={pick ?? ""}
-          onChange={(e) => setPick(e.target.value)}
-          data-testid="shell-pick"
-        >
-          {list.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.id} · {s.theme_name ?? "no theme"} · {s.source} · plans {s.plans.join(", ")}
-            </option>
-          ))}
-        </select>
-      )}
-      {pick && !card && !error && <p className="empty">{GLYPH.progress} Loading the shell</p>}
-      {card && <Card card={card} />}
-    </Panel>
-  );
 }
 
 /** Clayton's GuideNH export, framed from the guide's own origin (WO-10.1, D304, D319). */
@@ -311,7 +248,8 @@ export function Build() {
       </Panel>
       {query && <GuideView query={query} onQuery={open} />}
       <GuideFrame />
-      <Shells />
+      <ShellWorkbench />
+      <ShellBakeoff />
     </div>
   );
 }

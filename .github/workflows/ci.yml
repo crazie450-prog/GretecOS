@@ -18,8 +18,9 @@ jobs:
         # has no lua5.2 package (D340). Move on purpose, with the OC agent's Lua 5.2 tests in mind.
         os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
-    # A hung test must not hold a runner for hours (Windows runs take about 10 minutes).
-    timeout-minutes: 30
+    # A hung test must not hold a runner for hours. Windows runs took 17 to 24 minutes on
+    # 2026-11-20 and 29 on a slow runner (about 11,400 tests), so 30 cancelled green runs (D371).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -101,8 +102,9 @@ jobs:
     # WO-1.1: GregtecLink build, then the headless harness (dev server, scripted export, checks, exit),
     # then the client harness (dev client under Xvfb: autoexport world, export, NEI's dump, checks, exit).
     runs-on: ubuntu-24.04
-    # D340: 18-27 min on 4 xdist workers (44-60 min serially, which is why WO-10.4 had raised this to 90).
-    timeout-minutes: 60
+    # D340: 18-27 min on 4 xdist workers (44-60 min serially, which is why WO-10.4 had raised this to 90),
+    # plus about 10-15 min for the real structure dump (gos structures extract) below.
+    timeout-minutes: 80
     defaults:
       run:
         working-directory: mod
@@ -145,6 +147,12 @@ jobs:
           version: "0.13.6"
       - run: uv python install
         working-directory: .
+      # The real gtnh-extractor dump of the base pack's multiblocks (about 10 min), for
+      # tests/integration/test_real_dump_harness.py: build_request, the layout, the footprints and the guide on
+      # real structures (a real dump's largest row is over the tools' 1 MB value limit; the fixture's are tiny).
+      # The other harness tests keep the repo's fixture dump (GOS_STRUCTURES_DATASET stays unset).
+      - run: timeout 1800 uv run --locked gos structures extract --work "$RUNNER_TEMP/gtnh-extractor" --out "$RUNNER_TEMP/structures"
+        working-directory: .
       # D340: 4 workers (the runner's 4 vCPUs), one test file per worker, so each file's module fixtures
       # (its DB built from the harness runs) are built once, as in a serial run. --no-loadscope-reorder keeps
       # conftest.py's order (the slowest files first, harness_cache.SLOW_FIRST). --durations shows where the time goes.
@@ -152,6 +160,8 @@ jobs:
         working-directory: .
         env:
           GOS_REQUIRE_HARNESS_RUN: "1"
+          GOS_REAL_STRUCTURES: ${{ runner.temp }}/structures
+          GOS_REQUIRE_REAL_DUMP: "1"
           GOS_CLIENT_RUN_B: mod/run/client-b
           GOS_REHEARSAL_REPORT: ${{ runner.temp }}/fake-day-one.md
       # WO-11.3: the fake day one's plan-10 report, green or not (docs/runbooks/fake_day_one.md J).

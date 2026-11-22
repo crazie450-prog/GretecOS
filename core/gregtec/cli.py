@@ -41,6 +41,7 @@ from gregtec.build import (
     layout_cli,
     schematic_cli,
     shell_cli,
+    shell_eval_cli,
     theme_cli,
 )
 from gregtec.crops import cli as cropcli
@@ -517,6 +518,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     advisor_cli.add_parsers(eval_cmds)
     hover_eval_cli.add_parsers(eval_cmds)
     wiki_evals_cli.add_parsers(eval_cmds)
+    shell_eval_cli.add_parsers(eval_cmds)
 
     vault = commands.add_parser("vault", help="vault tasks")
     vault_cmds = vault.add_subparsers(dest="vault_command", required=True)
@@ -607,10 +609,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     key_set = key_cmds.add_parser(
         "set", help="store a secret (asks for it with hidden input)"
     )
-    key_set.add_argument("name", choices=keys.NAMES)
+    key_set.add_argument("name", choices=keys.MANAGED)
     key_cmds.add_parser("status", help="say which secrets are stored")
     key_del = key_cmds.add_parser("delete", help="remove a stored secret")
-    key_del.add_argument("name", choices=keys.NAMES)
+    key_del.add_argument("name", choices=keys.MANAGED)
 
     smoke = commands.add_parser(
         "smoke",
@@ -844,6 +846,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return screen_eval_cli.run(args, sys.stdout)
         if args.eval_command == design_cost_cli.COMMAND:
             return design_cost_cli.run(args, sys.stdout)
+        if args.eval_command == shell_eval_cli.COMMAND:
+            return shell_eval_cli.run(args, sys.stdout)
         if args.eval_command == powereval.COMMAND:
             return powereval.main(args, sys.stdout)
         if args.eval_command == quest_cli.EVAL:
@@ -993,13 +997,19 @@ def _stop_for_deploy(cfg: config.Config) -> dict[str, object] | None:
 
 def _restart_after_deploy(cfg: config.Config, config_path: Path | None) -> None:
     """Start the supervisor of GOS_APP's current release, with the gos.toml it ran with."""
-    exe = app_deploy.venv_exe(cfg.gos_app / app_deploy.CURRENT, "gos-supervisor")
-    if not exe.is_file():
-        print(f"Couldn't restart GOS: there is no {exe}. Log off and on, or run it.")
+    python = app_deploy.venv_exe(cfg.gos_app / app_deploy.CURRENT, "python")
+    if not python.is_file():
+        print(f"Couldn't restart GOS: there is no {python}. Log off and on, or run it.")
         return
-    argv = [str(exe)] + (["--config", str(config_path)] if config_path else [])
-    servicecli.spawn_detached(argv, cfg.gos_home)
-    print(f"Restarted GOS: {exe}")
+    argv = servicecli.supervisor_argv(python, config_path)
+    try:
+        servicecli.spawn_detached(argv, cfg.gos_home)
+    except OSError as exc:  # WinError 4551: Smart App Control blocked it (D379)
+        print(
+            f"Couldn't restart GOS ({exc}). Run gos serve --detach, or log off and on."
+        )
+        return
+    print(f"Restarted GOS: {' '.join(argv)}")
 
 
 def _maintain(config_path: Path | None, jobs: list[str] | None, rerun: bool) -> int:
@@ -1141,7 +1151,7 @@ def _lock(args: argparse.Namespace) -> int:
 def _key(command: str, name: str | None) -> int:
     if command == "status":
         print(f"keyring backend: {', '.join(keys.backend_chain())}")
-        for each in keys.NAMES:
+        for each in keys.MANAGED:
             print(f"{each}: {'stored' if keys.has_key(each) else 'not stored'}")
         return 0
     assert name is not None

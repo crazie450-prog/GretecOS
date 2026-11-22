@@ -30,11 +30,11 @@ the WO-11.3 follow-up issue or the G11 report, in step order.
 
 | # | Do | Expect | §10 / L | From |
 |---|---|---|---|---|
-| A1 | `gos doctor` | every line `ok` or an explained `warn`; the addon versions printed | C1 addons | addon_watcher.md |
-| A2 | `gos pack watch --force` | `No stable release newer than 2.9.0 on its line.` or the new version's checklist; every addon on a 2.9-compatible release | C1 | addon_watcher.md, pack_update.md |
+| A1 | `gos doctor` | each instance line shows `GTNH` and `pack=2.9.0`, no `problem:` lines, the `GT pin 5.09.54.265: ...` line matching the DB, and the VERIFY list; exit 0. The addon versions are in `data\env.json` (A2 checks them against the release feeds) | C1 addons | phase1_pc_checks.md 1, core_service.md |
+| A2 | `gos pack watch --force` | `No stable release newer than 2.9.0 on its line.` or the new version's checklist; every addon on a 2.9-compatible release. `Couldn't check for a stable release newer than 2.9.0` and exit 1 mean the feed wasn't read (no network, rate-limited): run it again later | C1 | addon_watcher.md, pack_update.md |
 | A3 | Dashboard Health card (and `gos doctor`) | Play's last export fingerprint = the DB's; no "recipe data is stale" | C1 Play fingerprint | phase1_pc_checks.md 3-4 |
 | A4 | `gos backup restore --verify` | exit 0, `ok   db row counts`, `ok   vault file hashes` | C11 backups | ops.md 1 |
-| A5 | `& $py "$app\scripts\verify_world_backup.py"` (as in ops.md 3) | the newest world backup opens and checks in a scratch folder | C11 world backup | ops.md 3 |
+| A5 | `& $py "$app\scripts\verify_world_backup.py" --backups "$env:TEMP\gos-lab-backup-test"` (as in ops.md 3; Lab's copy from phase1 12, since `backups\world` stays empty until Play has a world) | the newest world backup opens and checks in a scratch folder | C11 world backup | ops.md 3 |
 | A6 | The isolation re-test, as gos-dev (`$env:GOS_LIVE_ISOLATION = '1'`, `$env:GOS_CLAYTON_HOME`, `uv run pytest tests/security/test_isolation_live.py -v`, as ops.md's PC step 4 gives it) | every write to Play, GOS_APP and `backups\world` refused | C11 isolation | ops.md (Clayton's PC steps 4), phase1_pc_checks.md |
 | A7 | Reboot, log in, wait 1 minute | the supervisor, core and bot started at login; monitor 2 shows the dashboard in glance mode | C11 login start | core_service.md A-B, phase1_pc_checks.md 13 |
 | A8 | `gos status` | core and discord `running`; watchers and voice `starts when Play launches` | C11 | core_service.md B |
@@ -148,9 +148,9 @@ Then quit the game normally. `gos status`: watchers and voice stopped with Lab.
 
 ## J. Tick the checklist
 
-Go through §10 with the CI report beside you: the `fake-day-one` artifact of the PR's CI run
-(the `mod` job uploads it green or red; or rerun the integration test locally with
-`GOS_REHEARSAL_REPORT=<file>` or `-rP`): a line is done when the CI report has it green and every PC-only item above
+Go through §10 with the CI report beside you: the `fake-day-one` artifact of the deployed commit's CI run
+(the `mod` job uploads it green or red; the integration test skips without the harness runs
+CI makes first, so it is not a local alternative): a line is done when the CI report has it green and every PC-only item above
 passed. Lines with a red item block G11; write each in the G11 report with its step number.
 
 | §10 line | here (steps) |

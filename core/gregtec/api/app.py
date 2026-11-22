@@ -6,7 +6,7 @@
 | GET  /api/session              | admin, client, device   | who the caller is                     |
 | GET  /api/health               | admin, client, device   | the dashboard health strip's data     |
 | GET  /api/usage                | admin, client, device   | the credit cycle's llm_usage summary  |
-| POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3) |
+| POST /api/ask                  | admin, client, device   | route and answer one request (WO-2.3); `shell`: the design whose words revise it (WO-10.10) |
 | POST /api/prewarm              | admin, client, device   | warm the fast lane's prompt cache     |
 | POST /api/ui                   | admin, client, device   | a dashboard action (``next_card``)    |
 | POST /api/voice/state          | admin, the voice client | the voice strip's state (WO-5.1)      |
@@ -126,6 +126,7 @@ from gregtec.bridge import http as bridge_http
 from gregtec.bridge.actions import Action
 from gregtec.bridge.ingest import Bridge
 from gregtec.bridge.ops import Ops
+from gregtec.build import shell_versions
 from gregtec.config import LOOPBACK, Config
 from gregtec.crops import view as crop_view
 from gregtec.events import routes as event_routes
@@ -695,6 +696,13 @@ def create_app(core: Core) -> FastAPI:
         text = body.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > TEXT_MAX:
             raise HTTPException(400, f"text must be 1 to {TEXT_MAX} characters")
+        # The workbench's "Ask the architect" names the design its words revise (WO-10.10).
+        shell = body.get("shell")
+        if shell is not None and not (
+            isinstance(shell, str) and shell_versions.DESIGN_ID.fullmatch(shell)
+        ):
+            raise HTTPException(400, "shell must be a design id (ds-<12 hex>)")
+        extra = {} if shell is None else {"shell": shell}
         board = dashboard.board_of(core)
         entry = board.asked(text)  # the rail shows what is being worked on
         # Whatever happens next, the question stops showing as asked.
@@ -704,7 +712,7 @@ def create_app(core: Core) -> FastAPI:
             via = bridge_http.confirm_via(
                 who, request.headers.get("host"), core.cfg.dashboard_host
             )
-            reply = await asyncio.to_thread(core.asker.ask, text, via=via)
+            reply = await asyncio.to_thread(core.asker.ask, text, via=via, **extra)
         finally:
             board.done(entry)
         log.info(

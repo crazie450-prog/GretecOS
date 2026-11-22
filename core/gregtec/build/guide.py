@@ -91,7 +91,7 @@ def media_type(path: Path) -> str | None:
 
 
 def frame_headers(guide_origin: str, dashboard_origin: str) -> dict[str, str]:
-    """Headers for one guide file served on ``guide_origin`` (``http://guide.<host>:<port>``)
+    """Headers for one guide file served on ``guide_origin`` (``http://guide-<host>:<port>``)
     and framed by the dashboard on ``dashboard_origin``.
 
     The page may run scripts, and load styles, images, fonts, media and data, from ``/guide/``

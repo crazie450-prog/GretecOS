@@ -64,7 +64,7 @@ export interface TierState {
 
 export interface Job {
   id: string;
-  kind: "deep" | "export" | "designer" | "power";
+  kind: "deep" | "export" | "designer" | "power" | "shell";
   title: string;
   status: string;
   detail: string | null;
@@ -77,7 +77,7 @@ export interface Job {
  * (what POST /api/designer/design or /api/power/design answers). */
 export interface DesignJob {
   id: string;
-  kind: "designer" | "power";
+  kind: "designer" | "power" | "shell";
   title: string;
   status: "running" | "done" | "failed" | "cancelled" | "interrupted";
   stage: string;
@@ -294,7 +294,8 @@ export interface BuildGuide {
   facing: Facing;
   front: number[];
   tiers: Record<string, number>;
-  choices: Record<string, { value: number; block: string }[]>;
+  // each tier choice: its block and the block catalog's name for it (null when the catalog lacks it)
+  choices: Record<string, { value: number; block: string; name?: string | null }[]>;
   caveats: string[];
   size: [number, number, number];
   controller_at: [number, number, number];
@@ -306,6 +307,151 @@ export interface BuildGuide {
   done: string[];
   catalog: boolean;
 }
+
+// The shell workbench (WO-10.10, D367-D370): designs, their versions, compare, the 3D view.
+export interface ShellVersion {
+  n: number;
+  build: string;
+  parent: string | null;
+  asked: string;
+  by: "procedural" | "architect";
+  at: number; // epoch seconds
+  cost_usd: number | null; // 0 for GOS's own; null: the architect's deep-lane task (Costs)
+  status: "accepted" | "repaired";
+  blocks: number;
+  theme: string | null;
+  headroom: number;
+  max_blocks: number;
+}
+
+export interface ShellDesign {
+  id: string;
+  plans: string[];
+  created: number;
+  current: string;
+  versions: ShellVersion[];
+  history: { at: number; current: string; why: string }[];
+  written: boolean;
+}
+
+export interface ShellDesignSummary {
+  id: string;
+  plans: string[];
+  current: string;
+  current_n: number;
+  versions: number;
+  asked: string;
+  theme: string | null;
+  blocks: number;
+  touched: number;
+}
+
+export interface ShellThemes {
+  themes: { id: string; name: string; v: number; summary: string }[];
+  line_types: string[];
+  limits: Record<"max_blocks" | "headroom", [number, number, number]>; // default, lowest, highest
+  problems: string[];
+}
+
+export interface ShellCompareSide {
+  build: string;
+  status: string;
+  source: string;
+  theme: string | null;
+  size: [number, number, number];
+  blocks: number;
+  max_blocks: number;
+  headroom: number;
+  types: number;
+}
+
+export interface ShellCompare {
+  a: ShellCompareSide;
+  b: ShellCompareSide;
+  blocks_delta: number;
+  materials: { block: string; name: string | null; role: string | null; a: number; b: number; delta: number }[];
+  ops: string[];
+}
+
+export interface ShellBox {
+  id: string;
+  lo: [number, number, number];
+  hi: [number, number, number];
+}
+
+export interface ShellScene {
+  build: string;
+  size: [number, number, number];
+  palette: { block: string; name: string | null; role: string; count: number; top: string | null; side: string | null }[];
+  cells: [number, number, number, number, number][]; // x, y, z, palette index, -1
+  layers: { y: number; blocks: number; materials: Record<string, number> }[];
+  ghosts: { machines: (ShellBox & { name: string | null; ref: string | null })[]; keepouts: ShellBox[] };
+  caveats: string[];
+}
+
+export type ShellJobBody =
+  | {
+      design: {
+        plans: string[];
+        theme?: string;
+        line_type?: string;
+        prompt?: string;
+        max_blocks?: number;
+        headroom?: number;
+      };
+    }
+  | { revise: { design?: string; words: string; theme?: string; max_blocks?: number; headroom?: number } };
+
+export interface ShellJobResult {
+  design?: string;
+  build?: string;
+  changes?: string[];
+  refused?: string[];
+}
+
+// The shell bake-off (WO-10.11, D374-D377), blind: letters, never a model's name, cost or time.
+export interface BakeoffSummary {
+  id: string;
+  created: number;
+  status: string; // done, running, stopped at the cap, stopped, cancelled
+  why: string;
+  cases: number;
+  models: number;
+  rateable: number;
+  rated: number;
+  revealed: boolean;
+}
+
+export interface BakeoffBuild {
+  build: string;
+  blocks: number;
+  types: number;
+  status: "accepted" | "repaired";
+}
+
+export interface BakeoffEntry {
+  letter: string;
+  asked: boolean;
+  design: BakeoffBuild | null;
+  revise: BakeoffBuild | null;
+}
+
+export interface BakeoffCase {
+  id: string;
+  line: string;
+  theme: string;
+  max_blocks: number;
+  brief: string;
+  followup: string;
+  entries: BakeoffEntry[];
+  pick: string | null; // a letter, "tie" or "bad"
+}
+
+export interface BakeoffView extends Omit<BakeoffSummary, "cases"> {
+  cases: BakeoffCase[];
+}
+
+export type BakeoffWhich = "design" | "revise";
 
 // GET /api/shells (WO-10.7, D316): the saved decorative shells, newest first.
 export interface ShellSummary {

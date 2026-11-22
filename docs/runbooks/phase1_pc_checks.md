@@ -313,7 +313,7 @@ D97 deferred this from G0. The job (`\GregtecOS\GregtecOS world backup`, every 3
   ```
   Expect `Copied <name>.zip (<bytes> bytes).` and `Done: <n> copied, 0 removed.`. A second run prints `Done: 0 copied, 0 removed.`
 - [ ] The scheduled task itself: `Get-ScheduledTask -TaskPath '\GregtecOS\' -TaskName 'GregtecOS world backup' | Get-ScheduledTaskInfo` should show a recent `LastRunTime` and `LastTaskResult` 0. `Get-Content "$gh\logs\backup_world.log" -Tail 3` should show `No backups folder at ... yet; nothing to do.` until Play has a world.
-- [ ] Clean up: `Remove-Item -Recurse $t, "$t.log"`.
+- [ ] Keep `$t`: the deployment checklist's 3.14.2-3.14.3 and the fake day one's A5 check this copy (`backups\world` stays empty until Play has a world). Clean up after the checklist's section 4: `Remove-Item -Recurse $t, "$t.log"`.
 
 **Paste back:** both script outputs, plus the task's `LastRunTime` and `LastTaskResult`.
 

@@ -324,15 +324,33 @@ class Asker:
                         log.exception("can't set up the fast lane")
             return self._lane
 
-    def ask(self, text: str, *, task: str = "ask", via: str | None = None) -> Reply:
-        """``via``: how the request came in, if it may confirm an action (:data:`VIAS`)."""
+    def ask(
+        self,
+        text: str,
+        *,
+        task: str = "ask",
+        via: str | None = None,
+        shell: str | None = None,
+    ) -> Reply:
+        """``via``: how the request came in, if it may confirm an action (:data:`VIAS`).
+        ``shell``: a design id (``ds-...``) whose current version these words revise, sent by
+        the workbench's "Ask the architect" (WO-10.10, D370): the button, not the words, makes
+        it a revision of that design, so the router is not asked."""
         started = self.clock()
         text = " ".join(text.split())[:TEXT_MAX]
         if not text:
             return Reply(EMPTY, router.INSTANT, "empty", ttft_ms=0)
+        if shell is not None:
+            route = router.Route(router.DEEP, router.SHELL_REVISE, text, shell)
+            reasons = self.ai.reasons() if self.ai is not None else []
+            reply = self._shell_revise(route, reasons)
+            reply.total_ms = round((self.clock() - started) * 1000)
+            return reply
         with self._lock:
             pending, self._pending = self._pending, None
-        route = self._picked(pending, text) or router.route(text)
+        route = self._picked(pending, text) or router.route(
+            text, shell=self._any_shell()
+        )
         if route.intent == router.REPEAT and pending is not None:
             with self._lock:  # the repeated question can still be answered
                 self._pending = pending
@@ -413,6 +431,8 @@ class Asker:
             return self._instant(route, via)
         if route.kind == router.DEEP:
             reasons = self.ai.reasons() if self.ai is not None else []
+            if route.intent == router.SHELL_REVISE:
+                return self._shell_revise(route, reasons)
             if reasons:
                 assert self.ai is not None
                 text = NEEDS_AI.format(why=self.ai.why())
@@ -440,6 +460,93 @@ class Asker:
         with self._lock:
             self._warm_at = started
         return self._fast(route, pre, answer)
+
+    # --- the current shell design (WO-10.10, D369) --------------------------------------------
+
+    def _any_shell(self) -> bool:
+        """Whether a shell exists, for the router on every request: folder names only, so no
+        design file is read until a revision or an undo needs the design (WO-10.10)."""
+        if self.home is None:
+            return False
+        from gregtec.build import shell_versions
+
+        return shell_versions.any_shell(self.home)
+
+    def _shell_design(self) -> str | None:
+        """The shell design Clayton works on, or None (no GOS_HOME, or no shell yet)."""
+        if self.home is None:
+            return None
+        from gregtec.build import shell_versions
+
+        try:
+            return shell_versions.current_id(self.home)
+        except (OSError, ValueError):
+            return None
+
+    def _shell_revise(self, route: router.Route, reasons: list[str]) -> Reply:
+        """Words that change the current shell: the architect revises it (deep lane, with the
+        design named, so it calls build_revise and never starts over); with no AI, GOS's own
+        reviser does it here, in code, through the same gate (D316)."""
+        from gregtec.build import shell, shell_store, shell_versions
+        from gregtec.vault.io import VaultIO
+
+        ds = route.subject or self._shell_design()  # the workbench names its design
+        if ds is None or self.home is None:
+            return Reply("There is no shell to revise.", "no_ai", route.intent)
+        try:
+            shell_versions.get(self.home, ds)
+        except shell.ShellError as exc:
+            return Reply(f"No shell revision: {exc}", router.INSTANT, route.intent)
+
+        if not reasons:
+            task = shell_versions.revise_task(ds, route.text)
+            item = self.deep.handoff(task, route.text, "router")
+            text = DEEP_OFFLINE if item.status == OFFLINE else HANDED_OFF
+            return Reply(text, router.DEEP, route.intent, handoff=item.as_dict())
+        why = reasons[0]
+        try:
+            conn = access.connect(self.registry.env.db, readonly=True)
+        except (access.SchemaError, sqlite3.Error) as exc:
+            text = f"No shell revision: the DB can't be read ({exc})."
+            return Reply(text, "no_ai", route.intent, error=why)
+        try:
+            got = shell_versions.revise(
+                conn, self.home, VaultIO(self.home / "vault"), ds, route.text
+            )
+        except shell.ShellError as exc:
+            return Reply(f"No shell revision: {exc}", "no_ai", route.intent, error=why)
+        finally:
+            conn.close()
+        if not got.saved:
+            text = (
+                "No AI, and GOS's own reviser couldn't do that, so nothing changed: "
+                + " ".join(got.reasons)
+            )
+            return Reply(text, "no_ai", route.intent, error=why)
+        v = got.version or {}
+        blocks = (got.record or {}).get("blocks")
+        text = (
+            f"No AI, so GOS's own reviser did it: version {v.get('n')}, {blocks} blocks "
+            f"({'; '.join(got.changes)}). Say undo to go back."
+        )
+        card = shell_store.card(self.home, got.build)
+        return Reply(text, "no_ai", route.intent, card=card, error=why)
+
+    def _shell_undo(self) -> Reply:
+        """The current shell design's previous version made current again (no model)."""
+        from gregtec.build import shell, shell_store, shell_versions
+
+        if self.home is None:
+            return Reply(
+                "There is no shell to undo.", router.INSTANT, router.SHELL_UNDO
+            )
+        try:
+            d, v = shell_versions.undo(self.home)
+        except shell.ShellError as exc:
+            return Reply(str(exc), router.INSTANT, router.SHELL_UNDO)
+        text = f"Back to version {v['n']} of the shell ({v['asked']}). Every version is kept."
+        card = shell_store.card(self.home, d["current"])
+        return Reply(text, router.INSTANT, router.SHELL_UNDO, card=card)
 
     def _ai_usable(self) -> bool:
         """Whether a model could answer now: the AI isn't off and a fast lane is set up."""
@@ -563,6 +670,8 @@ class Asker:
                 return Reply(card["error"], router.INSTANT, intent, card=card)
             tier = block.parsed.head.get("tier", "unknown")
             return Reply(f"Your tier: {tier}.", router.INSTANT, intent, card=card)
+        if intent == router.SHELL_UNDO:
+            return self._shell_undo()
         if intent == router.PERSONA:
             return self._persona(route)
         if intent == router.WHATS_THIS:

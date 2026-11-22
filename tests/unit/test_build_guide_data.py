@@ -44,8 +44,11 @@ def _palette_tests() -> ModuleType:
     return sys.modules[name]
 
 
-def add_catalog(conn: sqlite3.Connection, folder: Path) -> None:
-    """A made-up catalog for the fixture furnace's blocks (casing named, coil coloured)."""
+def add_catalog(
+    conn: sqlite3.Connection, folder: Path, more: tuple[tuple[str, int, str], ...] = ()
+) -> None:
+    """A made-up catalog for the fixture furnace's blocks (casing named, coil coloured), plus
+    ``more`` (registry name, meta, name)."""
     pt = _palette_tests()
     states = [
         pt.state(
@@ -55,6 +58,7 @@ def add_catalog(conn: sqlite3.Connection, folder: Path) -> None:
             faces=["fx:side", "fx:top"] + ["fx:side"] * 4,
         ),
         pt.state("fixture:coil", 0, name="Fixture Coil"),
+        *(pt.state(block, meta, name=name) for block, meta, name in more),
     ]
     textures = [
         {
@@ -163,6 +167,32 @@ def test_names_and_colours_come_from_the_catalog(
     assert by["fixture:coil@0"]["top"] is None  # its icon has no texture line
     assert by[f"{GT}@9001"]["name"] is None  # not in this catalog
     assert doc["ref"] == "mte:9001" and doc["name"] == "Fixture Furnace"
+
+
+def test_every_tier_choice_has_its_catalog_name(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """QA (harness DB, the EBF's guide): the coil picker showed raw registry names for every
+    tier but the built one, whose block alone is in the palette. Each choice now carries its
+    block's catalog name, looked up with the materials (look_keys)."""
+    furnace = fp.library(conn).get(GT, 9001)
+    add_catalog(conn, tmp_path / "run")
+    assert set(guide_data.look_keys(furnace)) >= {"fixture:coil@1", "fixture:coil@2"}
+    only_materials = guide_data.guide(
+        furnace, guide_data.looks(conn, furnace.materials())
+    )
+    assert only_materials["choices"]["coil"][1]["name"] is None
+    named = {
+        **guide_data.looks(conn, guide_data.look_keys(furnace)),
+        "fixture:coil@1": guide_data.Look("Fixture Coil Mk II", None, None),
+    }
+    doc = guide_data.guide(furnace, named)
+    assert doc["choices"]["coil"] == [
+        {"value": 1, "block": "fixture:coil@0", "name": "Fixture Coil"},
+        {"value": 2, "block": "fixture:coil@1", "name": "Fixture Coil Mk II"},
+        {"value": 3, "block": "fixture:coil@2", "name": None},  # not in this catalog
+    ]
+    assert [p["block"] for p in doc["palette"]] == list(furnace.materials())
 
 
 def test_keys_are_registry_names_never_numeric_ids(conn: sqlite3.Connection) -> None:
@@ -306,10 +336,45 @@ def test_guide_routes(tmp_path: Path) -> None:
         core.store.close()
 
 
+def test_the_guide_route_names_a_tier_choice_that_is_not_built(tmp_path: Path) -> None:
+    """The route looks up every tier choice's block (look_keys), not only the built
+    variant's materials: the catalog names coil@1, a choice the default tier doesn't build."""
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import create_app
+
+    home = tmp_path / "home"
+    (home / "data").mkdir(parents=True)
+    db = access.connect(access.db_path(home))
+    structure_db.load(db, FIXTURES / "gtnh-extractor")
+    add_catalog(db, tmp_path / "run", (("fixture:coil", 1, "Fixture Coil Mk II"),))
+    furnace = fp.library(db).get(GT, 9001)
+    db.close()
+    assert "fixture:coil@1" not in furnace.materials()
+    core = _core(home)
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            got = c.get(
+                "/api/build/guide",
+                params={"controller": f"{GT}@9001"},
+                headers={"Authorization": f"Bearer {ADMIN}"},
+            )
+    finally:
+        core.store.close()
+    assert got.status_code == 200, got.text
+    doc = got.json()
+    assert doc["choices"]["coil"] == [
+        {"value": 1, "block": "fixture:coil@0", "name": "Fixture Coil"},
+        {"value": 2, "block": "fixture:coil@1", "name": "Fixture Coil Mk II"},
+        {"value": 3, "block": "fixture:coil@2", "name": None},  # not in this catalog
+    ]
+    assert "fixture:coil@1" not in {p["block"] for p in doc["palette"]}
+
+
 def _looks(home: Path, f: fp.Footprint) -> dict[str, guide_data.Look]:
     conn = access.connect(access.db_path(home), readonly=True)
     try:
-        return guide_data.looks(conn, f.materials())
+        return guide_data.looks(conn, guide_data.look_keys(f))
     finally:
         conn.close()
 

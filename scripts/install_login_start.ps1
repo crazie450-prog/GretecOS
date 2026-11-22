@@ -1,23 +1,28 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Start Gregtec OS at Windows login (D77, D116): a per-user Run key for gos-supervisor.
+    Start Gregtec OS at Windows login (D77, D116, D379): a per-user Run key for the supervisor.
 
 .DESCRIPTION
     WO-2.1. Clayton runs this as himself (no admin needed), from GOS_APP\scripts after a deploy.
     It writes one value under his HKCU Run key:
 
-        GregtecOS = "<GOS_APP>\current\.venv\Scripts\gos-supervisor.exe" --login
+        GregtecOS = "C:\Windows\System32\conhost.exe" --headless
+                    "<GOS_APP>\current\.venv\Scripts\python.exe" -P -m gregtec.supervisor --login
 
-    gos-supervisor.exe is a windowless launcher. At each login it starts the supervisor, which
-    starts the core and restarts it if it dies. The supervisor exits at once if gos.toml says
+    (one line). At each login it starts the supervisor, which starts the core and restarts it if
+    it dies. python.exe, not gos-supervisor.exe or pythonw.exe: Smart App Control blocks those
+    two unsigned launchers (WinError 4551) and allows python.exe. A Run key can't hide a console
+    window, so conhost.exe (signed by Microsoft, part of Windows) hosts python.exe's console
+    with --headless, which opens no window. -P keeps the folder the Run key starts in off
+    Python's import path. The supervisor exits at once if gos.toml says
     [startup] core_at_login = false, so that switch works without running this script again.
     `gos stop` stops GOS until `gos serve`; Task Manager's Startup apps tab can also turn the
     entry off.
 
     It refuses to run from anywhere but GOS_APP (Clayton never runs code gos-dev can change,
     D75), as gos-dev, elevated (run it in a normal window), or when the release has no
-    gos-supervisor.exe. -Remove deletes the value.
+    .venv\Scripts\python.exe. -Remove deletes the value.
     -StartNow also starts the supervisor straight away, so there is no need to log off.
 
 .EXAMPLE
@@ -85,22 +90,27 @@ $appItem = Get-Item -LiteralPath $app -Force
 if ($appItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
     Stop-Script "$app is a link or junction; GOS_APP must be a real folder."
 }
-$exe = Join-Path $app 'current\.venv\Scripts\gos-supervisor.exe'
-if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-    Stop-Script "$exe is missing. Deploy a release that has it: uv run gos deploy"
+$python = Join-Path $app 'current\.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    Stop-Script "$python is missing. Deploy a release that has it: uv run gos deploy"
+}
+$conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+if (-not (Test-Path -LiteralPath $conhost -PathType Leaf)) {
+    Stop-Script "$conhost is missing; it is part of Windows 10 and 11."
 }
 
-$command = '"{0}" --login' -f $exe
-if ($Config) { $command += ' --config "{0}"' -f (Get-FullPath $Config) }
+# Everything after conhost.exe --headless; Windows PowerShell's Start-Process joins arguments
+# without quoting them, so the paths are quoted here.
+$arguments = @('--headless', ('"{0}"' -f $python), '-P', '-m', 'gregtec.supervisor', '--login')
+if ($Config) { $arguments += @('--config', ('"{0}"' -f (Get-FullPath $Config))) }
+$command = '"{0}" {1}' -f $conhost, ($arguments -join ' ')
 if (-not (Test-Path -LiteralPath $RunKey)) { New-Item -Path $RunKey -Force | Out-Null }
 New-ItemProperty -LiteralPath $RunKey -Name $ValueName -Value $command -PropertyType String -Force | Out-Null
 Write-Host "GOS starts at login: $RunKey\$ValueName = $command"
 
 if ($StartNow) {
-    $arguments = @('--login')
-    # Windows PowerShell's Start-Process joins arguments without quoting them.
-    if ($Config) { $arguments += @('--config', ('"{0}"' -f (Get-FullPath $Config))) }
-    Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $env:USERPROFILE
+    # The same command as the Run key's, so this also tries the login start.
+    Start-Process -FilePath $conhost -ArgumentList $arguments -WorkingDirectory $env:USERPROFILE
     Write-Host 'Started the supervisor. Check it with: gos status'
 }
 exit 0

@@ -15,9 +15,19 @@ const WORDS: Record<string, string> = {
   lines: "Sizing the lines",
 };
 
+// A shell job's stages (WO-10.10, D370): GOS's own generator or reviser, through the gate.
+const SHELL_WORDS: Record<string, string> = {
+  waiting: "Waiting for the other design to finish",
+  layout: "Laying the plans out",
+  palette: "Checking the palette against the block catalog",
+  compose: "Writing the operations",
+  gate: "Checking it (the gate)",
+  saving: "Saving the version",
+};
+
 /** A job's stage in words: "Solving route 2 of 3", "Measuring route 1 of 3 · effort 12 of 40". */
-export function stageText(job: Pick<DesignJob, "stage" | "k" | "n" | "sub">): string {
-  const base = WORDS[job.stage] ?? job.stage;
+export function stageText(job: Pick<DesignJob, "stage" | "k" | "n" | "sub"> & { kind?: DesignJob["kind"] }): string {
+  const base = (job.kind === "shell" ? SHELL_WORDS[job.stage] : WORDS[job.stage]) ?? job.stage;
   const count = job.k && job.n ? ` ${job.k} of ${job.n}` : "";
   const sub = job.sub ? ` · effort ${job.sub[0]} of ${job.sub[1]}` : "";
   return `${base}${count}${sub}`;
@@ -42,7 +52,7 @@ export function ended(job: Pick<DesignJob, "status">): boolean {
 
 /** The running job of a kind the core's state lists (the right rail's), for a view opened
  * while it runs: the view follows it instead of starting another. */
-export function runningOf(core: CoreState | null, kind: "designer" | "power"): string | null {
+export function runningOf(core: CoreState | null, kind: DesignJob["kind"]): string | null {
   const j = (core?.jobs ?? []).find((x) => x.kind === kind && x.status === "running");
   return j ? j.id : null;
 }

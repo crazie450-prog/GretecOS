@@ -155,7 +155,7 @@ def _run(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
         path = home / releases.REPORTS / f"pack-watch-{w.checked_utc[:10]}.txt"
         fingerprint.atomic_write(path, text.encode("utf-8"))
         print(text + f"Saved: {path}", file=out)
-        return 0
+        return 0 if w.pack.feed_seen or w.pack.newer else 1  # 1: the check couldn't run
     if cmd == "stock":
         version = args.version or str(playbook.adopted(home)["version"])
         result, notes = releases.stock(

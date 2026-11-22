@@ -95,6 +95,25 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       if (size === "phone") expect(await clipped(page)).toEqual([]);
       await page.screenshot({ path: shot(`designer-job-done-${size}`), fullPage: true });
     });
+
+    test("a reload while a design runs follows the job again, to its routes", async () => {
+      control("design_delay", "1.0");
+      await page.goto("/#/designer");
+      await page.getByTestId("designer-target").fill("steel ingot");
+      await page.getByTestId("designer-tier").selectOption("HV");
+      await page.getByTestId("designer-go").click();
+      await expect(page.getByTestId("designer-job-stage")).toBeVisible({ timeout: 1000 });
+      await page.reload(); // the core's state arrives only after the view mounted
+      await expect(page.getByTestId("view-designer")).toBeVisible();
+      expect((await asAdmin<Jobs>("/api/design-jobs")).running).toHaveLength(1);
+      await expect(page.getByTestId("designer-job-stage")).toBeVisible({ timeout: 3000 });
+      await expect(page.getByTestId("designer-cancel")).toBeVisible();
+      await expect(page.getByTestId("designer-go")).toBeDisabled();
+      await expect(page.getByTestId("designer-busy")).toHaveCount(0, { timeout: 30_000 });
+      expect((await asAdmin<Jobs>("/api/design-jobs")).latest.designer.status).toBe("done");
+      await expect(page.getByTestId("route-1-base")).toBeVisible();
+      expect(page.url()).toMatch(/#\/designer\/pl-[a-z0-9]+$/); // the result handed to the view
+    });
   });
 }
 
@@ -143,4 +162,25 @@ test.describe("the Power view's design job", () => {
       expect((await powerAdmin<Jobs>("/api/design-jobs")).latest.power.status).toBe("done");
     });
   }
+
+  test("a reload while a power design runs follows the job again, to its options", async () => {
+    await page.setViewportSize(SIZES.monitor);
+    powerDelay("1.0");
+    await page.goto(`${POWER_BASE}/#/power`);
+    await page.getByTestId("power-mode-best").click();
+    await page.getByTestId("power-tier").selectOption("MV");
+    await page.getByTestId("power-go").click();
+    await expect(page.getByTestId("power-job-stage")).toBeVisible({ timeout: 1000 });
+    await page.reload(); // the core's state arrives only after the view mounted
+    await expect(page.getByTestId("view-power")).toBeVisible();
+    expect((await powerAdmin<Jobs>("/api/design-jobs")).running).toHaveLength(1);
+    await expect(page.getByTestId("power-job-stage")).toBeVisible({ timeout: 3000 });
+    await expect(page.getByTestId("power-cancel")).toBeVisible();
+    await expect(page.getByTestId("power-go")).toBeDisabled();
+    // the job ends in the reloaded view and its result shows (an earlier design's options may
+    // already be on the page, so wait for the end first)
+    await expect(page.getByTestId("power-busy")).toHaveCount(0, { timeout: 30_000 });
+    expect((await powerAdmin<Jobs>("/api/design-jobs")).latest.power.status).toBe("done");
+    await expect(page.getByTestId("option-1")).toBeVisible();
+  });
 });

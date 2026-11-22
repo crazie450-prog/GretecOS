@@ -41,7 +41,9 @@ def furnace() -> dict[str, object]:
             variants = [
                 lib.get(f.registry_name, f.meta, v.variant) for v in lib.for_mte(9001)
             ]
-            return guide_data.guide(f, guide_data.looks(conn, f.materials()), variants)
+            return guide_data.guide(
+                f, guide_data.looks(conn, guide_data.look_keys(f)), variants
+            )
         finally:
             conn.close()
 
