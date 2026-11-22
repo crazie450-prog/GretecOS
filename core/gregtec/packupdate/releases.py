@@ -533,12 +533,17 @@ class AddonCheck:
 def version_in(tag: str, jar: str) -> bool:
     """Whether release ``tag`` is the version in ``jar``'s name, on version boundaries: tag
     ``1.2`` is in ``x-1.2.jar`` and ``x-1.2-GTNH.jar``, not in ``x-1.2.3.jar`` or
-    ``x-11.2.jar``."""
+    ``x-11.2.jar``. A bare ``-beta`` at the tag's end may be missing from the jar's name, as
+    Programmable Hatches tags every release ``v<version>-beta`` (D382); ``-beta3`` or ``-rc1``
+    may not."""
     v = tag.lower().removeprefix("v")
     if not v:
         return False
-    pattern = rf"(?<![0-9.]){re.escape(v)}(?![0-9]|\.[0-9])"
-    return re.search(pattern, jar.lower()) is not None
+    for version in dict.fromkeys((v, v.removesuffix("-beta"))):
+        pattern = rf"(?<![0-9.]){re.escape(version)}(?![0-9]|\.[0-9])"
+        if version and re.search(pattern, jar.lower()) is not None:
+            return True
+    return False
 
 
 def check_addons(

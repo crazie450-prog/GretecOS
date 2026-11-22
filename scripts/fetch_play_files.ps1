@@ -19,15 +19,16 @@
     sync_instances.py run, which mirrors Lab from Play), then Clayton copies them into Play's mods
     and deletes plannh-0.1.9.jar there (two PlanNH jars won't start).
 
-    GT-Not-Leisure 0.2.7 and GTNLLib 1.1.6 (D365) go into the LAB only, both together (GTNL won't
+    GT-Not-Leisure 0.2.7 and GTNLLib 1.1.8 (D365, D382) go into the LAB only, both together (GTNL won't
     start without GTNLLib): Lab's smoke test first, and Play gets them only after Clayton passes it
     and decides (D365, D02's world gate). Same order as above: copy them into Lab's mods before the
     next sync_instances.py run, and add a temporary [sync.lab] exclude entry for them (D93 (5)) so
     the sync, which mirrors Lab from Play, doesn't delete them.
 
-    Twist Space Technology 0.8.2 and PlanNH 0.2.4 (D373) are UPDATES of jars Play has, for the LAB
-    first: Play keeps TwistSpaceTechnology-0.8.0.jar and plannh-0.2.0.jar, which stay pinned here
-    as the rollback, until Clayton passes the Lab test and says yes. In Lab's mods the old jar is
+    Twist Space Technology 0.8.2, PlanNH 0.2.6, 123Technology 2.2.1.3 and Programmable Hatches
+    0.2.1p9 (D373, D382) are UPDATES of jars Play has, for the LAB first: Play keeps
+    TwistSpaceTechnology-0.8.0.jar, plannh-0.2.0.jar, OTHTechnology-2.2.1.1.jar and
+    programmablehatches-0.2.1p0.jar, which stay pinned here as the rollback, until Clayton passes the Lab test and says yes. In Lab's mods the old jar is
     deleted when the new one is copied in (two versions of one mod won't start). A sync would
     delete the new jar and put the old one back until Play has the new one, so the same temporary
     [sync.lab] exclude entries come first (D93 (5); checklist 3.4.3 lists them).
@@ -57,7 +58,8 @@ $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is far slower wit
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # Pins, checked 2026-11-03 (123Technology and PlanNH 0.2.0: 2026-11-05, D90; GTNL and GTNLLib:
-# 2026-11-20, D365; Twist Space Technology 0.8.2 and PlanNH 0.2.4: 2026-11-20, D373).
+# 2026-11-20, D365; Twist Space Technology 0.8.2: 2026-11-20, D373; GTNLLib 1.1.8, PlanNH 0.2.6,
+# 123Technology 2.2.1.3 and Programmable Hatches 0.2.1p9: 2026-11-22, D382).
 # downloads.gtnewhorizons.com publishes no checksum, so the zip hashes are those of the files it
 # serves (two full passes agreed, and the sizes matched Content-Length). The jars are GitHub release
 # assets, hashed the same way; the worldedit and PlanNH 0.1.9 hashes also match GTNH's Nexus.
@@ -88,8 +90,8 @@ $Addons = @(
     # deletes files it doesn't list). To fetch it again:
     # https://github.com/GTNewHorizons/PlanNH/releases/download/0.1.9/plannh-0.1.9.jar
     # SHA256 a9976d2f43463ccf19683eb00b21ff68e8aa81a5b0573b2108b423847ffa36cb.
-    # 0.2.0 is in Play (D94) and stays pinned as the rollback while 0.2.4, below, is tested in the
-    # Lab (D373).
+    # 0.2.0 is in Play (D94) and stays pinned as the rollback while 0.2.6, below, is tested in the
+    # Lab (D373, D382).
     @{ name = 'plannh-0.2.0.jar'
         url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.0/plannh-0.2.0.jar'
         sha256 = '7201b4b32f3dadef5160ae24b89bc9ff079c25af00eac067e1273b61940f5fc9' },
@@ -104,11 +106,14 @@ $Addons = @(
     @{ name = 'sciencenotleisure-0.2.7.jar'
         url = 'https://github.com/GTNotLeisure/GT-Not-Leisure/releases/download/0.2.7/sciencenotleisure-0.2.7.jar'
         sha256 = '17e7f8b28f4de9f460cd0845fdbad3b57ff820b66b6de36c928107c43f0c97ce' },
-    # GTNLLib 1.1.6 (2026-11-10, 1,102,473 bytes): the version GTNL 0.2.7 is built against
-    # (its dependencies.gradle); GTNL requires it. LAB FIRST, together with GTNL (D365).
-    @{ name = 'gtnllib-1.1.6.jar'
-        url = 'https://github.com/GTNotLeisure/GTNLLib/releases/download/1.1.6/gtnllib-1.1.6.jar'
-        sha256 = '83a3b0ab4487fc86bda0ee9694a3fe5aa860e4d4e3494b1894aab8bce502c9ca' },
+    # GTNLLib 1.1.8 (tag 1.1.8 = cd4256d, 2026-11-16, 1,253,517 bytes; D382): GTNL 0.2.7 builds
+    # against 1.1.6, and 1.1.7 fixes GTNLLib's id for 123Technology ("123technology" since 2.2.1.2),
+    # which 123Technology 2.2.1.3 below needs; 1.1.6..1.1.8 deletes no class. GTNL requires it.
+    # LAB FIRST, together with GTNL (D365). (1.1.6, D365's first pin: SHA256
+    # 83a3b0ab4487fc86bda0ee9694a3fe5aa860e4d4e3494b1894aab8bce502c9ca.)
+    @{ name = 'gtnllib-1.1.8.jar'
+        url = 'https://github.com/GTNotLeisure/GTNLLib/releases/download/1.1.8/gtnllib-1.1.8.jar'
+        sha256 = '93011e8d8da447e138e8ea228b5937c1946c4f23c04c9136b4bd1b6f3803befa' },
     # Twist Space Technology 0.8.2 (tag 0.8.2 = 99f8ed2, released 2026-11-17, 29,683,612 bytes):
     # built with gtnhVersion "2.9.0" (GT 5.09.54.265); no machine id of 0.8.0 moved or went away.
     # LAB FIRST: it REPLACES TwistSpaceTechnology-0.8.0.jar, and Play keeps 0.8.0 until Clayton's
@@ -116,18 +121,35 @@ $Addons = @(
     @{ name = 'TwistSpaceTechnology-0.8.2.jar'
         url = 'https://github.com/Nxer/Twist-Space-Technology-Mod/releases/download/0.8.2/TwistSpaceTechnology-0.8.2.jar'
         sha256 = '5d5a537af18baea5b49efeafa200bd4c2869c4b100b6b1ba52b4e6fd80f427ed' },
-    # PlanNH 0.2.4 (tag 0.2.4 = 45a0d1e, released 2026-11-13, 14,495,171 bytes), client only: the same
-    # dependencies file as 0.2.0. LAB FIRST: it REPLACES plannh-0.2.0.jar, and Play keeps 0.2.0
-    # until Clayton's Lab test and his yes (D373).
-    @{ name = 'plannh-0.2.4.jar'
-        url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.4/plannh-0.2.4.jar'
-        sha256 = '671e54712deb732264ef51aed1fde6134fc6257f193938df53d84c247f10cbd7' }
+    # PlanNH 0.2.6 (tag 0.2.6 = 95d3e41, released 2026-11-22, 14,504,496 bytes; D382), client only:
+    # built on exactly 2.9.0's GTNHLib, ModularUI2 and NEI; mixins as in 0.2.4. LAB FIRST: it
+    # REPLACES plannh-0.2.0.jar, and Play keeps 0.2.0 until Clayton's Lab test and his yes. (0.2.4,
+    # D373's first pin: SHA256 671e54712deb732264ef51aed1fde6134fc6257f193938df53d84c247f10cbd7.)
+    @{ name = 'plannh-0.2.6.jar'
+        url = 'https://github.com/GTNewHorizons/PlanNH/releases/download/0.2.6/plannh-0.2.6.jar'
+        sha256 = 'b3acb053a17f3aeebb22c26577ab060e8bc0a409a9325640c2c2c497e4e0ec37' },
+    # 123Technology 2.2.1.3 (tag 2.2.1.3 = b1b826d, 2026-11-15, 8,152,080 bytes; D382): built with
+    # gtnhVersion "2.9.0"; its notes say "Contains WIP Content"; requires TST; mod id 123technology.
+    # LAB FIRST: it REPLACES OTHTechnology-2.2.1.1.jar, and Play keeps 2.2.1.1 until his yes.
+    @{ name = 'OTHTechnology-2.2.1.3.jar'
+        url = 'https://github.com/CallmeSHaobe/123Technology/releases/download/2.2.1.3/OTHTechnology-2.2.1.3.jar'
+        sha256 = '1e29c3bd76fe59cbc63385b3df7c00aa96c3697f5adfa1b8873ad6ba005b7a64' },
+    # Programmable Hatches 0.2.1p9 (tag v0.2.1p9-beta = 0644186, 2026-11-19, 3,154,355 bytes; D382):
+    # the author's "2.9.0 Daily" (currently maintained) build, against GT .264 and NEI 2.8.171.
+    # LAB FIRST: it REPLACES programmablehatches-0.2.1p0.jar, and Play keeps p0 until his yes.
+    @{ name = 'programmablehatches-0.2.1p9.jar'
+        url = 'https://github.com/reobf/Programmable-Hatches-Mod/releases/download/v0.2.1p9-beta/programmablehatches-0.2.1p9.jar'
+        sha256 = '1f6aa64911e3c611905e88df433bc8d56524e12260a52a81ebc861cfb5f0264e' }
 )
 # Left out on purpose:
 # - GT-Not-Leisure's rolling "dev-build" asset: it is replaced on every push, so it can't be pinned.
 #   0.2.7 above is the versioned release with 28007498 (D365).
-# - 123Technology 2.2.1.3, Programmable Hatches v0.2.1p9-beta and worldedit-gtnh 1.0.1: not ready
-#   for GTNH 2.9.0 stable on 2026-11-20 (D373 says what each waits for). Play's pins above stay.
+# - worldedit-gtnh 1.0.1 and 1.0.2: built against newer mods than GTNH 2.9.0 or 2.9.1 ship, and no
+#   gain GOS needs today (D380, D382). Play keeps v0.0.10.
+# - GTNH 2.9.1's zips (D382): not yet, because TST 0.8.2 fails to load on 2.9.1 (TST #1430). Java 17-26:
+#   753,304,930 bytes, SHA256 998875d413ed5d9b16fed9992844b61dcb82e819a15ea56e4eb868f68ea98327; Java 8:
+#   737,944,815 bytes, SHA256 5663d779b2c0b31f7006d404fcc0e8a5bba15e3af68f59636c66b3a390c0d18d.
+#   PlanNH 0.3.0 is built for 2.9.1.
 
 try {
     $files = if ($Manifest) { Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json } else { @($Zips[$Build]) + $Addons }
@@ -193,7 +215,9 @@ try {
     # keeps the old jar, still pinned above as the rollback, until Clayton's Lab test and his yes.
     $replaces = @{
         'TwistSpaceTechnology-0.8.2.jar' = 'TwistSpaceTechnology-0.8.0.jar'
-        'plannh-0.2.4.jar' = 'plannh-0.2.0.jar'
+        'plannh-0.2.6.jar' = 'plannh-0.2.0.jar'
+        'OTHTechnology-2.2.1.3.jar' = 'OTHTechnology-2.2.1.1.jar'
+        'programmablehatches-0.2.1p9.jar' = 'programmablehatches-0.2.1p0.jar'
     }
     $isLabFirst = { param($n) [bool]($labFirst | Where-Object { $n -like $_ }) }
     $jars = @($files | Where-Object { $_.name -like '*.jar' -and -not (& $isLabFirst $_.name) -and -not $replaces.ContainsKey($_.name) })

@@ -1,8 +1,8 @@
 name	repo	jar	watch	note
-Twist Space Technology	Nxer/Twist-Space-Technology-Mod	*twist*space*.jar|*twistspace*.jar|tst-*.jar	installed	Play has 0.8.0 (D88, D94); 0.8.2 (TwistSpaceTechnology-0.8.2.jar) pinned for the Lab test, Play only after it passes (D373)
+Twist Space Technology	Nxer/Twist-Space-Technology-Mod	*twist*space*.jar|*twistspace*.jar|tst-*.jar	installed	Play has 0.8.0 (D88, D94); 0.8.2 (TwistSpaceTechnology-0.8.2.jar) pinned for the Lab test, Play only after it passes (D373); 0.8.2 fails to load on GTNH 2.9.1 (#1430, D382)
 GT-Not-Leisure	GTNotLeisure/GT-Not-Leisure	*notleisure*.jar|*not-leisure*.jar|gtnl-*.jar	always	0.2.7 (sciencenotleisure-0.2.7.jar, with 28007498) pinned for the Lab test; Play only after it passes (D365, D02's gate)
-GTNLLib	GTNotLeisure/GTNLLib	gtnllib-*.jar|*gtnllib*.jar	installed	GTNL 0.2.7 needs 1.1.6; goes in with GTNL (D365)
-123Technology	CallmeSHaobe/123Technology	*123tech*.jar|*othtechnology*.jar	installed	Play keeps 2.2.1.1 (D90, D94); its release jar is OTHTechnology-<version>.jar; 2.2.1.3 is not ready: upstream says it contains WIP content (D373)
-Programmable Hatches	reobf/Programmable-Hatches-Mod	*programmable*hatch*.jar|*programmablehatches*.jar	installed	Play keeps 0.2.1p0 (D88): the author's README still maps GTNH 2.9.0 to it and lists the newer tags under 2.9.0 Daily (D373)
-worldedit-gtnh	GTNewHorizons/worldedit-gtnh	*worldedit*.jar	installed	Play keeps v0.0.10 (D88); V16; 1.0.1 is not ready: built against newer mods than 2.9.0 ships (D373)
-PlanNH	GTNewHorizons/PlanNH	*plannh*.jar	installed	Optional, client only; Play has 0.2.0 (D90, D94); 0.2.4 (plannh-0.2.4.jar) pinned for the Lab test, Play only after it passes (D373)
+GTNLLib	GTNotLeisure/GTNLLib	gtnllib-*.jar|*gtnllib*.jar	installed	GTNL 0.2.7 builds against 1.1.6; 1.1.8 (pinned) also knows 123Technology's new id; goes in with GTNL (D365, D382)
+123Technology	CallmeSHaobe/123Technology	*123tech*.jar|*othtechnology*.jar	installed	Play keeps 2.2.1.1 (D90, D94); its release jar is OTHTechnology-<version>.jar; 2.2.1.3 (WIP content, new mod id, needs TST) pinned for the Lab test, Play only after it passes (D382)
+Programmable Hatches	reobf/Programmable-Hatches-Mod	*programmable*hatch*.jar|*programmablehatches*.jar	installed	Play keeps 0.2.1p0 (D88); 0.2.1p9 (the author's 2.9.0 Daily) pinned for the Lab test, Play only after it passes (D382); tags end in -beta, jars don't
+worldedit-gtnh	GTNewHorizons/worldedit-gtnh	*worldedit*.jar	installed	Play keeps v0.0.10 (D88); V16; 1.0.x waits: built against newer mods than 2.9.0 or 2.9.1 ship, and GOS's paste test runs on v0.0.10 (D373, D380, D382)
+PlanNH	GTNewHorizons/PlanNH	*plannh*.jar	installed	Optional, client only; Play has 0.2.0 (D90, D94); 0.2.6 (plannh-0.2.6.jar) pinned for the Lab test, Play only after it passes (D382); 0.3.0 is for 2.9.1
