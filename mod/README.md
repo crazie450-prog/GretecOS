@@ -88,6 +88,13 @@ the manifest and renames the folder. With autoexport (below) the game then quits
 - One deliberate runtime change, with `export=true` only: GT's recipe-owner capture is turned on in preInit (the same
   switch as GT's `NEIRecipeOwner` client option), so each recipe records the mod that added it. NEI in Export then
   shows "added by" lines.
+- **Recipes with no input they use up** (D364). A recipe line that gives something and has no input with an amount
+  above 0 gets `"unkeyed"`: `null_input` (GT holds a null input slot: the loader asked for an item this instance
+  doesn't have), `special_items` (the machine reads its inputs from the recipe's special object, as Eye of Harmony
+  does) or `none` (GT lists a circuit or nothing: a machine that works from EU alone, or an input GT's recipe
+  builder dropped because it was null). The export drops nothing; GT's own recipe is like that.
+  `counts.recipes_unkeyed` counts them, `gos db build` keeps the marker as `recipe_meta` `unkeyed`, and both
+  harnesses check that every such line is marked and no other.
 - `-Dgregtec.runId=<id>` names the run (`[A-Za-z0-9._-]`, up to 64 characters); otherwise it is the UTC time.
 - **NEI step.** NEI returns normally even when its dump fails, so GregtecLink judges it by NEI's own log lines,
   captured during the call from the logger object NEI writes to (`NEIClientConfig.logger`, named `NotEnoughItems`),
