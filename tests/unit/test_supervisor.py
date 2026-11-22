@@ -41,6 +41,14 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
+def two_free_ports() -> tuple[int, int]:
+    """Two different free ports: both sockets stay bound until both numbers are read."""
+    with socket.socket() as a, socket.socket() as b:
+        a.bind(("127.0.0.1", 0))
+        b.bind(("127.0.0.1", 0))
+        return int(a.getsockname()[1]), int(b.getsockname()[1])
+
+
 def wait_for[T](check: Callable[[], T | None], timeout: float, step: float = 0.1) -> T:
     deadline = time.monotonic() + timeout
     while True:
@@ -55,6 +63,7 @@ def wait_for[T](check: Callable[[], T | None], timeout: float, step: float = 0.1
 def write_config(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
     home = tmp_path / "home"
     instances = tmp_path / "instances"
+    port, supervisor_port = two_free_ports()
     lines = [
         "[paths]",
         f'gos_home = "{home.as_posix()}"',
@@ -62,8 +71,8 @@ def write_config(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
         f'prism_instances = "{instances.as_posix()}"',
         *[f'{k} = "{v}"' for k, v in extra.items()],
         "[core]",
-        f"port = {free_port()}",
-        f"supervisor_port = {free_port()}",
+        f"port = {port}",
+        f"supervisor_port = {supervisor_port}",
     ]
     path = tmp_path / "gos.toml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
