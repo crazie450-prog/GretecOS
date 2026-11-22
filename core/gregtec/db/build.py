@@ -354,6 +354,7 @@ def _export_run(
             "dropped": sum(stats.dropped.values()),
             "not_recipes": sum(stats.not_recipes.values()),
             "nei_only": stats.nei_only,
+            "aspect_lines": sum(loaded.nei_refs.aspect_lines.values()),  # D379
         },
     }
     row = (

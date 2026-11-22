@@ -305,7 +305,7 @@ def test_refuses_a_name_that_is_a_path(
 def test_real_pins() -> None:
     """The pinned files: both zips, the addons cleared for Play (D88, D90), GTNL 0.2.7 with the
     GTNLLib it is built against, for the Lab test first (D365), and the two updates for the Lab
-    test first (D373), and D381's newest builds for the same test; never GTNL's rolling dev-build."""
+    test first (D373), and D382's newest builds for the same test; never GTNL's rolling dev-build."""
     text = SCRIPT.read_text(encoding="ascii")
     pins = re.findall(
         r"name = '([^']+)'.*?url = '([^']+)'\s+sha256 = '([0-9a-f]{64})'",
@@ -323,11 +323,11 @@ def test_real_pins() -> None:
             "plannh-0.2.0.jar",  # Play's PlanNH: two in mods/ is a duplicate-mod crash
             "OTHTechnology-2.2.1.1.jar",
             "sciencenotleisure-0.2.7.jar",  # the main jar, not -dev or -sources
-            "gtnllib-1.1.8.jar",  # GTNL 0.2.7 builds on 1.1.6; 1.1.7 fixes 123Tech's id (D381)
+            "gtnllib-1.1.8.jar",  # GTNL 0.2.7 builds on 1.1.6; 1.1.7 fixes 123Tech's id (D382)
             "TwistSpaceTechnology-0.8.2.jar",  # Lab first; replaces 0.8.0 (D373)
-            "plannh-0.2.6.jar",  # Lab first; replaces 0.2.0 (D381)
-            "OTHTechnology-2.2.1.3.jar",  # Lab first; replaces 2.2.1.1 (D381)
-            "programmablehatches-0.2.1p9.jar",  # Lab first; replaces 0.2.1p0 (D381)
+            "plannh-0.2.6.jar",  # Lab first; replaces 0.2.0 (D382)
+            "OTHTechnology-2.2.1.3.jar",  # Lab first; replaces 2.2.1.1 (D382)
+            "programmablehatches-0.2.1p9.jar",  # Lab first; replaces 0.2.1p0 (D382)
         ]
     )
     # Play's own list (what isn't held back for the Lab) has one jar per mod

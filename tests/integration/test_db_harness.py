@@ -206,6 +206,33 @@ def test_gt_slots_keep_their_oredict_alternatives(
     assert [(meta, alts) for meta, _, alts in got] == [(m, n) for m, n, _ in got]
 
 
+# D364: GT recipes that give something and have no input they use up, and the export's marker.
+NO_USED_UP_INPUT = (
+    "SELECT r.ref FROM recipe r WHERE r.source IN ('gt', 'gt+nei') AND EXISTS (SELECT 1 FROM"
+    " recipe_output ro WHERE ro.recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_input ri"
+    " WHERE ri.recipe_id = r.id AND ri.consumed = 1 AND ri.amount > 0)"
+)
+UNKEYED = (
+    "SELECT r.ref, m.value_text FROM recipe r JOIN recipe_meta m ON m.recipe_id = r.id"
+    " AND m.key = 'unkeyed'"
+)
+
+
+@pytest.mark.parametrize("side", ["server", "client"])
+def test_every_gt_recipe_with_no_used_up_input_is_marked(
+    side: str, request: pytest.FixtureRequest
+) -> None:
+    # The dev runtime has such rows (GT's own recipes there, D364): each carries the export's
+    # "unkeyed" marker with its cause, and no other recipe does.
+    result: build.Result = request.getfixturevalue(side)
+    marks = dict(rows(result.db, UNKEYED))
+    assert {ref for (ref,) in rows(result.db, NO_USED_UP_INPUT)} == set(marks)
+    assert set(marks.values()) == {"null_input", "special_items", "none"}
+    # GT++'s copy of GT's centrifuge recipe for a Twilight Forest item the dev runtime lacks:
+    # methane from a programmed circuit alone.
+    assert marks["r:gt.recipe.multicentrifuge/5a3d6c4c649f"] == "none"
+
+
 def test_the_same_run_again_is_byte_identical(
     client: build.Result, tmp_path: Path
 ) -> None:

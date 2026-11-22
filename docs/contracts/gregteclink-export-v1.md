@@ -95,7 +95,8 @@ Recipes store EU/t with the amperage included (`amperage` is the map's).
  "in_chance":[10000,2500]?, "out":[...], "out_chance":[...]?,
  "fin":[{"fluid":"liquidnitrogen","mb":2000,"alt":[{"fluid":"...","mb":2000}]?}], "fin_chance":[...]?,
  "fout":[...], "fout_chance":[...]?,
- "special_items":<value>?, "metadata":{"coil_heat":4600}?, "nei_desc":["..."]?,
+ "special_items":<value>?, "unkeyed":"null_input|special_items|none"?,
+ "metadata":{"coil_heat":4600}?, "nei_desc":["..."]?,
  "enabled":true,"hidden":false,"fake":false,"can_be_buffered":true,
  "needs_empty_output":false,"nbt_sensitive":false,"owners":["GoodGenerator"]?}
 ```
@@ -103,6 +104,28 @@ Recipes store EU/t with the amperage included (`amperage` is the map's).
 - **Arrays stay positional.** `in`, `out`, `fin` and `fout` keep their nulls so the chance arrays line up with the
   slots. A null GT array is written as `[]`. A `*_chance` array is omitted when GT's is null (every slot 100%);
   values are GT's raw 1..10000.
+- **`unkeyed`** (D364) marks a recipe that gives something (a non-null `out` or `fout` slot) and has no input it
+  uses up (no `in` slot with `n` > 0 and no `fin` slot with `mb` > 0; a programmed circuit has `n` 0). Every such
+  line has it and no other line does, and `counts.recipes_unkeyed` counts them. It is the one fact the mod derives
+  instead of leaving to Python, so that the run itself says which recipes these are. The export drops no input:
+  GT's own recipe is like that, and the value says what the mod can see of why.
+  - `null_input`: an input slot is null in GT's array. The recipe's loader asked for an item this instance doesn't
+    have (a mod that isn't loaded, an oredict name with no member) and GT kept the empty slot, so there is no item to
+    name. Dev runtime: 2 macerator recipes (`cropChilipepper`, an oredict name with no member there) and 2 extruder
+    recipes.
+  - `special_items`: no null slot, and the line has `special_items`: the machine reads its inputs from that object
+    (Eye of Harmony's hydrogen and helium, which GT keeps in private fields), or it is the kept item of a display
+    recipe (the tree farm's fake recipes: the sapling).
+  - `none`: GT lists a programmed circuit or nothing. Either the machine works from EU and its own code (GT++'s
+    fishing pond, algae pond, rock breaker and matter fabricator; GT's fake mass fabricator recipe), or the loader's
+    only item was null and GT's recipe builder dropped it, as it drops trailing nulls (`ArrayExt.removeTrailingNulls`),
+    before the recipe existed: in the dev runtime GT's centrifuge recipes for Twilight Forest's meats give methane
+    from programmed circuit 1 alone, GT++ copies them to its multiblock centrifuge map, and the assembler makes an
+    ender pearl from circuit 5 (Forestry's item is missing). The recipe no longer says which of the two it is.
+
+  A null `in` slot beside an input that is used up is not marked: it is an empty slot (the primitive blast furnace's
+  second input) or a missing item (as `null_input`), and the line alone doesn't say which. WO-1.3 leaves null slots
+  out, so such a recipe is loaded with the inputs GT has for it.
 - **Slot order is GT's and is not always stable.** Some recipes build their outputs from a HashMap, so the same
   recipe lists them in a different order on each run (in the dev runtime: all 43 `gt.recipe.eyeofharmony` recipes).
   WO-1.3 compares outputs as a multiset of (ref, chance) pairs, never by position, and an "unchanged export" check
@@ -283,6 +306,14 @@ wrote (regular files only, never a link) into `nei/`. The format is NEI's, not G
   GregtecLink's `nbt`. `chance` is 1/10000 and only present below 10000. `anyOf` lists every accepted stack of the
   slot (oredict alternatives), without `Count`. `returns` is a crafting grid's container item. GT fluid display stacks
   carry `neiFluidName` and `Count` in mB. Non-consumed stacks (molds, programmed circuits) keep `Count: 0`.
+- Thaumcraft aspect stacks (Aspect Recipe Index, `com.gtnewhorizons.aspectrecipeindex.nei.*` handlers: Alchemy,
+  Arcane Infusion, Aspect Combination, Items Containing Aspect) are `{"TCAspect": "<aspect tag>", "Count", "name"}`,
+  with neither `strId` nor `neiFluidName`. They can be ingredients, results, or `anyOf`/`returns` entries. `name` is
+  "Unknown Aspect" for an aspect not yet researched in the export world, so a reader keys on `TCAspect`, never on
+  `name`. `gos db build` skips every line with an aspect stack and counts the skipped lines per handler in its report
+  (`NEI: skipped N lines with Thaumcraft aspects ...`, D379): aspects are not modelled, and a recipe kept without its
+  aspect cost would look cheaper than it is. A stack with none of `strId`, `neiFluidName` or a non-empty `TCAspect`
+  refuses the run with its file and line.
 - `handler` is NEI's handler id: for GT handlers the recipe **category** id, e.g. `gt.recipe.assembler` or
   `gt.recipe.category.alloy_smelter_molding`, so one GT map can appear as several handlers. **Readers key on each
   line's `handler`, never on the file name**: file names are NEI's cleaned handler display names in the instance's
@@ -392,7 +423,7 @@ same (meta, item meta) are written once (`counts.palette_duplicates`).
  "gregteclink":{"version":"<build version: the deployed commit's first 12 hex digits, else git-derived>"},
  "mods":[{"modid","name","version","file","sha256"}],
  "files":{"gt_recipes.jsonl":{"sha256":"...","bytes":0,"lines":0}, "...":{}},
- "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","machines","machine_errors",
+ "counts":{"recipe_maps","recipe_map_errors","recipes","recipe_errors","recipes_unkeyed","machines","machine_errors",
            "ore_mixes","ore_mix_errors","dimensions","oredict","oredict_members","oredict_errors",
            "items","item_errors","fluids","unregistered",
            "nei_handlers"?,"nei_reported"?,"nei_skipped"?,"nei_lookup_errors"?,"nei_serial_load"?,"nei_files"?,
@@ -419,6 +450,8 @@ same (meta, item meta) are written once (`counts.palette_duplicates`).
   real instance shows in the first Export run on the PC. Play's mods come from Python's fingerprint (§5.2.4), never
   from here.
 - `counts.items` is the number of lines in `items.jsonl`, NBT variants included.
+- `counts.recipes_unkeyed` (D364) is the number of `gt_recipes.jsonl` lines with `unkeyed`. Runs made before D364
+  have neither; `gos db build` loads them as before, with no marker.
 - `pack_version` `2.9.x` means unknown [A§5.5 correction]: trust jar hashes over this string.
 - `complete` covers the GT parts and the manifest, as before: a failed NEI step leaves `complete: true`. **Readers that
   need NEI's data check `parts.nei == "ok"`** and use `nei/` only then.

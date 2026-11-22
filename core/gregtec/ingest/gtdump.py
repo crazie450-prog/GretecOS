@@ -291,7 +291,10 @@ def recipe_from_line(
     # Values may hold item refs with NBT (an ItemStack in metadata, special items): no numeric
     # IDs there either.
     raw_meta = dict(_obj(r.get("metadata") or {}, "metadata"))
-    for extra in ("special_items", "nei_desc"):
+    # "unkeyed" (D364): the mod's marker for a recipe that gives something from no input it
+    # uses up, with the cause. Kept as recipe_meta so the DB says which rows those are.
+    _opt_str(r.get("unkeyed"), "unkeyed")
+    for extra in ("special_items", "nei_desc", "unkeyed"):
         if extra in r:
             if extra in raw_meta:
                 raise Malformed(

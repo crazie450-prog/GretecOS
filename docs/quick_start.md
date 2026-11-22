@@ -181,7 +181,7 @@ In your own window, a runbook's bare "gos ..." (or "uv run gos" in themes.md / s
 
 ## Session 17: addon jars, the Lab sitting then Play (about 2 hours, in one go)
 
-GT-Not-Leisure 0.2.7 with GTNLLib 1.1.8 (new), TST 0.8.2, 123Technology 2.2.1.3, Programmable Hatches 0.2.1p9 and PlanNH 0.2.6 (updates; the newest of each for 2.9.0, D381). Run no other Lab step between step 96 and step 99 or 100: the Lab's mods differ from Play's until then. Details and every line to paste: docs/runbooks/addon_lab_test.md.
+GT-Not-Leisure 0.2.7 with GTNLLib 1.1.8 (new), TST 0.8.2, 123Technology 2.2.1.3, Programmable Hatches 0.2.1p9 and PlanNH 0.2.6 (updates; the newest of each for 2.9.0, D382). Run no other Lab step between step 96 and step 99 or 100: the Lab's mods differ from Play's until then. Details and every line to paste: docs/runbooks/addon_lab_test.md.
 
 95. powershell -NoProfile -ExecutionPolicy Bypass -File "\$app\scripts\fetch_play_files.ps1"   Worked: ok for the six new jars, no FAILED. [3.4.3]
 96. Prism closed: addon_lab_test.md steps 3-6: the six [sync.lab] exclude entries in gos.toml, copy lab-ops aside, delete the four old jars (TST 0.8.0, OTHTechnology 2.2.1.1, programmablehatches 0.2.1p0, plannh 0.2.0) from Lab's mods, copy the six new jars in, & \$py \$sync --dry-run --only lab   Worked: no delete or copy line names them. [3.4.3]

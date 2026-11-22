@@ -41,6 +41,14 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
+def two_free_ports() -> tuple[int, int]:
+    """Two different free ports: both sockets stay bound until both numbers are read."""
+    with socket.socket() as a, socket.socket() as b:
+        a.bind(("127.0.0.1", 0))
+        b.bind(("127.0.0.1", 0))
+        return int(a.getsockname()[1]), int(b.getsockname()[1])
+
+
 def wait_for[T](check: Callable[[], T | None], timeout: float, step: float = 0.1) -> T:
     deadline = time.monotonic() + timeout
     while True:
@@ -55,6 +63,7 @@ def wait_for[T](check: Callable[[], T | None], timeout: float, step: float = 0.1
 def write_config(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
     home = tmp_path / "home"
     instances = tmp_path / "instances"
+    port, supervisor_port = two_free_ports()
     lines = [
         "[paths]",
         f'gos_home = "{home.as_posix()}"',
@@ -62,8 +71,8 @@ def write_config(tmp_path: Path, **extra: str) -> tuple[config.Config, Path]:
         f'prism_instances = "{instances.as_posix()}"',
         *[f'{k} = "{v}"' for k, v in extra.items()],
         "[core]",
-        f"port = {free_port()}",
-        f"supervisor_port = {free_port()}",
+        f"port = {port}",
+        f"supervisor_port = {supervisor_port}",
     ]
     path = tmp_path / "gos.toml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -338,9 +347,13 @@ def test_hung_process_is_killed_and_restarted(
         ticking(lambda: managed.state == "running", 20)
         first_pid = managed.proc.pid  # type: ignore[union-attr]
         flag.write_text("")
-        ticking(lambda: managed.state == "unresponsive", 10)
+        # One tick can mark it unresponsive, kill it and schedule the restart, so don't
+        # poll for the momentary "unresponsive" state. The backoff detail carries the hang
+        # kill's reason, which only the running-but-silent branch of tick() sets.
         ticking(lambda: managed.state == "backoff", 10)
-        assert "didn't answer" in managed.detail
+        assert managed.detail.startswith("/health didn't answer for "), managed.detail
+        assert managed.proc is None
+        assert managed.last_exit is not None and managed.last_exit["code"] != 0
         flag.unlink()
         ticking(lambda: managed.state == "running" and managed.restarts == 1, 20)
         assert managed.proc.pid != first_pid  # type: ignore[union-attr]
@@ -764,6 +777,8 @@ def test_deploy_stops_a_supervisor_running_from_gos_app_only_for_the_swap(
     exe = app_deploy.venv_exe(app / app_deploy.CURRENT, "gos-supervisor")
     exe.parent.mkdir(parents=True)
     exe.write_text("")
+    python = app_deploy.venv_exe(app / app_deploy.CURRENT, "python")
+    python.write_text("")
     ran_with = str(tmp_path / "run key's" / "gos.toml")  # the Run key's --config
     running = {"pid": 1, "port": 1, "token": "t", "exe": str(exe), "config": ran_with}
     state = {"up": True}
@@ -789,14 +804,20 @@ def test_deploy_stops_a_supervisor_running_from_gos_app_only_for_the_swap(
 
     monkeypatch.setattr(control, "running", fake_running)
     monkeypatch.setattr(control, "call", fake_call)
-    monkeypatch.setattr(
-        servicecli, "spawn_detached", lambda argv, cwd: spawned.append(argv)
-    )
+    flags: list[int] = []
+
+    def fake_popen(argv: list[str], **kw: Any) -> None:  # noqa: ANN401
+        spawned.append(argv)
+        flags.append(kw["creationflags"])
+
+    monkeypatch.setattr(servicecli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(app_deploy, "deploy", swap_fails)
     assert cli.main(["deploy", "--config", str(path)]) == 1
     assert posted == ["/shutdown"]
-    # The old release, restarted with the gos.toml it ran with, not deploy's --config.
-    assert spawned == [[str(exe), "--config", ran_with]]
+    # The old release, restarted with the gos.toml it ran with, not deploy's --config, and
+    # with python.exe: Smart App Control blocks gos-supervisor.exe (D379).
+    assert spawned == [[str(python), *SUPERVISOR_M, "--config", ran_with]]
+    assert flags == [NO_WINDOW]
     assert "Restarted GOS" in capsys.readouterr().out
 
     # A deploy refused before the swap never stops GOS.
@@ -820,17 +841,81 @@ def test_deploy_stops_a_supervisor_running_from_gos_app_only_for_the_swap(
     running.update(exe=str(exe), config=None)
     monkeypatch.setattr(app_deploy, "deploy", swap_fails)
     assert cli.main(["deploy", "--config", str(path)]) == 1
-    assert spawned == [[str(exe)]]
+    assert spawned == [[str(python), *SUPERVISOR_M]]
+
+    # A launch Windows blocks (WinError 4551) is one line, not a traceback after the swap.
+    def blocked(argv: list[str], **kw: Any) -> None:  # noqa: ANN401
+        raise OSError(22, "An Application Control policy has blocked this file")
+
+    state["up"] = True
+    monkeypatch.setattr(servicecli.subprocess, "Popen", blocked)
+    capsys.readouterr()
+    assert cli.main(["deploy", "--config", str(path)]) == 1
+    assert "Couldn't restart GOS (" in capsys.readouterr().out
 
 
-def test_supervisor_command_prefers_the_windowless_launcher(tmp_path: Path) -> None:
+# D379: Smart App Control blocks gos-supervisor.exe and pythonw.exe (WinError 4551), so a
+# background supervisor is python.exe -P -m gregtec.supervisor, in a console with no window.
+SUPERVISOR_M = ["-P", "-m", "gregtec.supervisor"]
+NO_WINDOW = (
+    supervisor.CREATE_NO_WINDOW | supervisor.CREATE_NEW_PROCESS_GROUP
+    if sys.platform == "win32"
+    else 0
+)
+
+
+def test_supervisor_command_is_python_m_gregtec_supervisor(tmp_path: Path) -> None:
     cfg, path = write_config(tmp_path)
     argv = servicecli.supervisor_command(cfg, path)
-    assert argv[-2:] == ["--config", str(path)]
-    assert Path(argv[0]).name.startswith("gos-supervisor") or argv[1:3] == [
-        "-m",
-        "gregtec.supervisor",
-    ]
+    assert argv == [supervisor.python_exe(), *SUPERVISOR_M, "--config", str(path)]
+
+
+def test_serve_detach_launches_python_with_no_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, path = write_config(tmp_path)
+    started: list[tuple[list[str], dict[str, Any]]] = []
+    monkeypatch.setattr(servicecli, "_supervisor", lambda cfg: None)
+    monkeypatch.setattr(servicecli, "wait_until", lambda check, want: False)
+    monkeypatch.setattr(supervisor, "elevation_problem", lambda: None)
+    monkeypatch.setattr(
+        servicecli.subprocess, "Popen", lambda argv, **kw: started.append((argv, kw))
+    )
+    assert (
+        cli.main(["serve", "--detach", "--config", str(path)]) == 1
+    )  # no answer: faked
+    [(argv, kw)] = started
+    assert argv == [supervisor.python_exe(), *SUPERVISOR_M, "--config", str(path)]
+    assert kw["creationflags"] == NO_WINDOW
+    assert kw["stdin"] == kw["stdout"] == kw["stderr"] == servicecli.subprocess.DEVNULL
+
+    def blocked(argv: list[str], **kw: Any) -> None:  # noqa: ANN401
+        raise OSError(22, "An Application Control policy has blocked this file")
+
+    monkeypatch.setattr(servicecli.subprocess, "Popen", blocked)
+    assert cli.main(["serve", "--detach", "--config", str(path)]) == 1
+    assert "Couldn't start the supervisor: " in capsys.readouterr().err
+    if sys.platform == "win32":
+        # DETACHED_PROCESS would leave the venv launcher's base python.exe a new, visible
+        # console; CREATE_NO_WINDOW gives both one with no window.
+        assert not kw["creationflags"] & supervisor.DETACHED_PROCESS
+        assert Path(argv[0]).name.lower() == "python.exe"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="console windows")
+def test_spawn_detached_python_has_no_console_window(tmp_path: Path) -> None:
+    """The venv's python.exe starts the base python.exe; neither may show a console (D379)."""
+    out = tmp_path / "out.json"
+    code = (
+        "import ctypes, json, sys; h = ctypes.windll.kernel32.GetConsoleWindow(); "
+        "v = bool(h) and bool(ctypes.windll.user32.IsWindowVisible(h)); "
+        f"open({str(out)!r}, 'w').write(json.dumps([v, sys.flags.safe_path]))"
+    )
+    servicecli.spawn_detached([supervisor.python_exe(), "-P", "-c", code], tmp_path)
+    deadline = time.monotonic() + 30
+    while not (out.is_file() and out.stat().st_size) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert json.loads(out.read_text()) == [False, True]
 
 
 def test_applog_handles_a_missing_stderr(

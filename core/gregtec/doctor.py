@@ -688,6 +688,63 @@ def pin_check(home: Path, folders: Guarded) -> Check:
     return Check("db.gt_pin", "Recipe DB and GT pin", OK if pin_ok else WARN, pin_line)
 
 
+SAC_KEY = r"SYSTEM\CurrentControlSet\Control\CI\Policy"  # HKLM, readable without admin
+SAC_STATES = {0: "off", 1: "on", 2: "evaluation"}  # VerifiedAndReputablePolicyState
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"  # HKCU
+RUN_VALUE = "GregtecOS"  # scripts/install_login_start.ps1
+# Unsigned launchers Smart App Control blocked on Clayton's PC (WinError 4551, D379).
+BLOCKED_LAUNCHERS = ("gos-supervisor.exe", "pythonw.exe")
+
+
+def smart_app_control() -> str | None:
+    """Smart App Control's state ("off", "on", "evaluation", "unknown"); None off Windows."""
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SAC_KEY) as key:
+            value = winreg.QueryValueEx(key, "VerifiedAndReputablePolicyState")[0]
+    except OSError:
+        return "unknown"
+    return SAC_STATES.get(value, "unknown") if isinstance(value, int) else "unknown"
+
+
+def login_start_command() -> str | None:
+    """The HKCU Run value install_login_start.ps1 writes, or None (none, or not Windows)."""
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+            value = winreg.QueryValueEx(key, RUN_VALUE)[0]
+    except OSError:
+        return None
+    return value if isinstance(value, str) else None
+
+
+def smart_app_control_lines(state: str | None, login: str | None) -> list[str]:
+    """What doctor prints about Smart App Control (D379): its state, and a warning when the
+    login start names a launcher it blocks (a Run key from before D379)."""
+    if state is None:
+        return []
+    lines = [f"Smart App Control: {state}"]
+    if state in ("on", "evaluation"):
+        lines[0] += (
+            " (it blocks unsigned launchers with no reputation, WinError 4551; GOS starts "
+            "with python.exe, which it allows)"
+        )
+        blocked = [n for n in BLOCKED_LAUNCHERS if login and n in login.lower()]
+        if blocked:
+            lines.append(
+                f"warning: the login start runs {blocked[0]}, which Smart App Control blocks, "
+                "so GOS won't start at login. Run install_login_start.ps1 again, from "
+                "GOS_APP\\scripts (core_service.md A.2)."
+            )
+    return lines
+
+
 def write_env(roots: list[PrismRoot], gos_home: Path, verify: dict[str, str]) -> Path:
     data = gos_home / "data"
     data.mkdir(parents=True, exist_ok=True)
@@ -764,6 +821,8 @@ def main(
         pin_ok, pin_line = gtpin.check_db(home)  # WO-1.9, D148: loud on a mismatch
         healthy = healthy and pin_ok
         print(f"\n{pin_line}", file=out)
+    for line in smart_app_control_lines(smart_app_control(), login_start_command()):
+        print(line, file=out)
 
     verify = {v.id: verify_status(v, roots) for v in load_verify_list()}
     if home_why is None:

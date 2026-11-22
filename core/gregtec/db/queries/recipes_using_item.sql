@@ -2,8 +2,8 @@
 -- and its wildcard-meta row), fluid :fluid_id, or any member of an oredict in :ores (a JSON
 -- array of ore ids), shown or as an accepted alternative, consumed or not (WO-2.2's
 -- recipe_uses). Without :all = 1, disabled and fake recipes are left out (fake NULL stays in, as
--- in recipes_for_item). GT's recycling recipes last (as in recipes_for_item), then by machine,
--- lowest tier and ref; total counts every match.
+-- in recipes_for_item). GT's recycling recipes last and fake NULL ones after the known (both as
+-- in recipes_for_item, D341), then by machine, lowest tier and ref; total counts every match.
 SELECT r.id, r.ref, r.source,
   coalesce(m.name_en, h.name_en, (
     SELECT mc.name_en FROM machine_map AS mm JOIN machine AS mc ON mc.id = mm.machine_id
@@ -24,5 +24,5 @@ WHERE r.run_id = :run_id
     UNION SELECT a.recipe_id FROM recipe_input_alt AS a WHERE a.item_id IN (SELECT value FROM json_each(:items))
     UNION SELECT a.recipe_id FROM recipe_input_alt AS a WHERE a.fluid_id = :fluid_id)
   AND (:all = 1 OR (r.enabled = 1 AND coalesce(r.fake, 0) = 0))
-ORDER BY recycling, machine, r.voltage_tier IS NOT NULL, r.voltage_tier, r.ref
+ORDER BY recycling, r.fake IS NULL, machine, r.voltage_tier IS NOT NULL, r.voltage_tier, r.ref
 LIMIT :limit OFFSET :offset;

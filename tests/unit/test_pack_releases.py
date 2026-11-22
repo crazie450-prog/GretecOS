@@ -285,7 +285,7 @@ PINNED_JARS = {
 }
 # The jars it pins for the Lab test first: not in Play until that test passes. GTNL and GTNLLib
 # are new (D365); the others replace a jar Play has, which stays pinned as the rollback (D373,
-# D381).
+# D382).
 LAB_FIRST_JARS = {
     "sciencenotleisure-0.2.7.jar": "GT-Not-Leisure",
     "gtnllib-1.1.8.jar": "GTNLLib",
@@ -294,7 +294,7 @@ LAB_FIRST_JARS = {
     "OTHTechnology-2.2.1.3.jar": "123Technology",
     "programmablehatches-0.2.1p9.jar": "Programmable Hatches",
 }
-# What upstream's newest 2.9.0 release was on 2026-11-22, per addon row (D379, D381; PlanNH's
+# What upstream's newest 2.9.0 release was on 2026-11-22, per addon row (D380, D382; PlanNH's
 # 0.3.0 is for 2.9.1, so its feed's newest is left out here).
 NEWEST_2026_11_22 = {
     "Twist Space Technology": ("0.8.2", "0.8.1", "0.8.0"),
@@ -363,7 +363,7 @@ def test_watch_checks_every_pinned_addon_in_play(tmp_path: Path) -> None:
 def test_the_watch_reports_each_newer_addon_release_until_play_has_it(
     tmp_path: Path,
 ) -> None:
-    """D373, D381: with Play on its pinned jars, `gos pack watch` reports every addon whose newest
+    """D373, D382: with Play on its pinned jars, `gos pack watch` reports every addon whose newest
     release isn't the installed one (the ready ones and the ones still waiting alike); once
     Play has a Lab-first update, that addon reads as up to date and its jar is still known."""
     addons = [a for a in releases.read_addons() if a.name in NEWEST_2026_11_22]
@@ -393,7 +393,7 @@ def test_the_watch_reports_each_newer_addon_release_until_play_has_it(
     assert set(swapped.values()) < set(LAB_FIRST_JARS)
     after = verdicts([f"mods/{swapped.get(jar, jar)}" for jar in PINNED_JARS])
     for name, verdict in after.items():
-        if name == "worldedit-gtnh":  # Play keeps v0.0.10 (D379, D381)
+        if name == "worldedit-gtnh":  # Play keeps v0.0.10 (D380, D382)
             assert "a newer release?" in verdict, name
         else:
             assert verdict.endswith("matches the installed jar"), name
@@ -431,7 +431,7 @@ def test_addons_watched_always_are_checked_without_plays_mods(
         ("1.2", "x-11.2.jar", False),
         ("1.2.3", "x-1.2.jar", False),
         ("2.2.1.1", "123Technology-2.2.1.1.jar", True),
-        ("v0.2.1p9-beta", "programmablehatches-0.2.1p9.jar", True),  # D381
+        ("v0.2.1p9-beta", "programmablehatches-0.2.1p9.jar", True),  # D382
         ("v0.2.1p9-beta", "programmablehatches-0.2.1p0.jar", False),
         ("0.8.0-beta3.2", "TwistSpaceTechnology-0.8.0.jar", False),
         ("0.2.7-rc2.1", "sciencenotleisure-0.2.7.jar", False),

@@ -1,21 +1,21 @@
-# Addon jars: one Lab sitting, then Play (D365, D373, D379, D381)
+# Addon jars: one Lab sitting, then Play (D365, D373, D380, D382)
 
 One sitting in the Lab tests every addon jar that is waiting to go into Play. Play gets a jar
 only after this test passes **and** you say yes (checklist 5.2.12 and 5.2.13). Nothing in
 Gregtec OS copies these jars: every step here is yours.
 
 You asked for the newest version of every addon, as long as they all work together
-(2026-11-22, D381). So this sitting tests the newest release of each addon for GTNH 2.9.0. That
+(2026-11-22, D382). So this sitting tests the newest release of each addon for GTNH 2.9.0. That
 includes two that their authors call work in progress or a daily build (123Technology 2.2.1.3,
 Programmable Hatches 0.2.1p9). The Lab test is what decides "working".
 
 | Jar (in `Downloads\GTNH-2.9.0`) | What it is | In the Lab it replaces | SHA256 (checked 2026-11-22) |
 |---|---|---|---|
-| `sciencenotleisure-0.2.7.jar` and `gtnllib-1.1.8.jar` | GT-Not-Leisure 0.2.7 and its library: new (D365, D381) | nothing; the two go in together | `17e7f8b2…2c97ce` and `93011e8d…03befa` |
+| `sciencenotleisure-0.2.7.jar` and `gtnllib-1.1.8.jar` | GT-Not-Leisure 0.2.7 and its library: new (D365, D382) | nothing; the two go in together | `17e7f8b2…2c97ce` and `93011e8d…03befa` |
 | `TwistSpaceTechnology-0.8.2.jar` | Twist Space Technology, update from 0.8.0 (D373) | `TwistSpaceTechnology-0.8.0.jar` | `5d5a537a…f427ed` |
-| `OTHTechnology-2.2.1.3.jar` | 123Technology, update from 2.2.1.1 (D381) | `OTHTechnology-2.2.1.1.jar` | `1e29c3bd…5b7a64` |
-| `programmablehatches-0.2.1p9.jar` | Programmable Hatches, update from 0.2.1p0 (D381) | `programmablehatches-0.2.1p0.jar` | `1f6aa649…f0264e` |
-| `plannh-0.2.6.jar` | PlanNH, update from 0.2.0 (D381) | `plannh-0.2.0.jar` | `b3acb053…0ec37` |
+| `OTHTechnology-2.2.1.3.jar` | 123Technology, update from 2.2.1.1 (D382) | `OTHTechnology-2.2.1.1.jar` | `1e29c3bd…5b7a64` |
+| `programmablehatches-0.2.1p9.jar` | Programmable Hatches, update from 0.2.1p0 (D382) | `programmablehatches-0.2.1p0.jar` | `1f6aa649…f0264e` |
+| `plannh-0.2.6.jar` | PlanNH, update from 0.2.0 (D382) | `plannh-0.2.0.jar` | `b3acb053…0ec37` |
 
 The full hashes and download addresses are in `scripts/fetch_play_files.ps1`, which checks every
 jar for you in step 2. You never type a hash.
@@ -29,7 +29,7 @@ jar for you in step 2. You never type a hash.
   he maintains, and keeps 0.2.1p0 as the 2.9.0 release.
 
 **Not in this sitting.**
-- **worldedit-gtnh** stays on `worldedit-v0.0.10.jar` (D381; part G says why).
+- **worldedit-gtnh** stays on `worldedit-v0.0.10.jar` (D382; part G says why).
 - **GTNH 2.9.1** (released 2026-11-21) waits for a TST release that loads on it. TST 0.8.2 stops
   with an error while it registers its recipes on 2.9.1 (TST #1430). That code runs at every
   game start, single-player too, not only on a server. Until TST fixes it, all the addons
@@ -77,7 +77,7 @@ ones back (D93 (5)).
    exclude = ["mods/sciencenotleisure-*", "mods/gtnllib-*", "mods/TwistSpaceTechnology-*", "mods/OTHTechnology-*", "mods/programmablehatches-*", "mods/plannh-*"]
    ```
    Save and close Notepad. (Phase 10's Lab files in `config\worldedit\schematics` and
-   `config\guidenh` are already left alone by default, D380: they need no entry here.)
+   `config\guidenh` are already left alone by default, D381: they need no entry here.)
 4. Keep a copy of the Lab world, so a failed test costs nothing:
    ```powershell
    Copy-Item "$lab\saves\lab-ops" "$env:USERPROFILE\Downloads\lab-ops-before-addon-test" -Recurse
@@ -252,7 +252,7 @@ other way round (remove the new jar, copy the old one in). What a world loses wh
 in the installed jar's name: a newer release? Check it in Lab before Play". That line is
 expected until the addon is pinned here. Nothing to do on your side until then.
 
-- **worldedit-gtnh 1.0.2** (2026-11-21): stays out for now (D381). It is a rewrite, built
+- **worldedit-gtnh 1.0.2** (2026-11-21): stays out for now (D382). It is a rewrite, built
   against newer CodeChickenCore, Carpenter's Blocks and NEI than 2.9.0 or 2.9.1 ship.
   - **Its EndlessIDs support doesn't change anything for GOS.** GOS's shell files name every
     block in `BlockMapping`, which v0.0.10 already reads, and 1.0.2's new tags only matter
