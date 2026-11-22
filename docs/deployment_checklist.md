@@ -352,6 +352,7 @@ Every question still pending you, from the decision rows marked "pending Clayton
 | 5.1.17 | Shells: nothing inside the layout below the roof, walls only in the 1-block ring; one checklist per multi type, per layer; a multi with several variants placed at its largest | as built | inner partitions or mezzanines; a per-machine checklist; pick the variant a recipe needs | D312, D316, D320, G10 Q29, Q40, Q49 |
 | 5.1.18 | Ores: veins of an unknown mix at the end of every search? | not listed | listed last | G1 PR #42 Q1 |
 | 5.1.19 | The quest goals feature shows at level 0 that a locked quest n steps away asks for an item with your goal's words | as built (from your own goals note) | hide goal distances to locked quests | D269, G6 Q30 |
+| 5.1.20 | **Thaumcraft recipes in GOS?** The full pack's NEI files have Aspect Recipe Index pages (Alchemy, Arcane Infusion, and two aspect lookup pages) whose stacks are Thaumcraft aspects, which GOS has no way to count yet | every line with an aspect is left out of the DB and counted in the `gos db build` report (`NEI: skipped N lines with Thaumcraft aspects ...`); the planner never routes through Thaumcraft | model aspects as their own kind of ingredient, which the planner flags as "not made by GT routes" (a WO of its own: a DB schema change and every planner reader) | D379 |
 
 ### 5.2 Anything touching Play
 
