@@ -17,6 +17,11 @@ changes only what the words name; everything else is copied as it was. What it u
   ``fewer``, and for windows ``bigger`` / ``wider`` / ``smaller`` / ``narrower`` / ``taller``;
 - the plinth or trim, the eaves or band: ``no ...`` / ``add ...``.
 
+An operation on a volume of its own (``lo``, ``hi``; WO-10.12) that stands above the walls (a
+tower, a clerestory, a capped roof) moves up and down with the roof, volume and all; the roof the
+words mean is the whole building's (the last roof without a volume, else the last roof). A
+``script`` operation is copied as it is: its words are its own.
+
 A request it can't act on, in full, is never half done: :attr:`Revision.unknown` lists the
 parts it didn't understand and the caller refuses the revision (nothing written), naming them.
 The gate (:func:`gregtec.build.shell.design`) checks the result like any other design.
@@ -166,6 +171,7 @@ class _Ops:
         self.floor = int(rec["bounds"]["lo"][1])
         lo, hi = rec["bounds"]["lo"], rec["bounds"]["hi"]
         self.short = min(hi[0] - lo[0], hi[2] - lo[2]) + 1
+        self.span_x, self.span_z = hi[0] - lo[0] + 1, hi[2] - lo[2] + 1
         self.roles = {str(p["role"]) for p in rec["palette"]}
 
     def of(self, kind: str, role: str | None = None) -> list[dict[str, Any]]:
@@ -182,12 +188,17 @@ class _Ops:
         return [int(got[0]), int(got[1])]
 
     def roof(self) -> dict[str, Any] | None:
+        """The whole building's roof: the last one without a volume, else the last one."""
         found = self.of("roof")
-        return found[-1] if found else None
+        whole = [r for r in found if "lo" not in r]
+        return (whole or found)[-1] if found else None
 
     def roof_at(self) -> int:
         r = self.roof()
-        return int(r.get("y", self.roof_y)) if r is not None else self.roof_y
+        if r is None:
+            return self.roof_y
+        default = r["lo"][1] if "lo" in r else self.roof_y
+        return int(r.get("y", default))
 
     def raise_by(self) -> int:
         """How far the roof stands above the machines' space today."""
@@ -197,8 +208,16 @@ class _Ops:
         """The headroom the roof (with its slope and parapet) needs to stand whole."""
         r = self.roof()
         top = self.roof_at()
-        if r is not None and r.get("style") == "gable":
+        style = r.get("style", "flat") if r is not None else "flat"
+        if r is not None and "hi" in r:  # a roof in its own volume closes at its top
+            return max(int(r["hi"][1]), top + int(r.get("parapet", 0))) - self.wall_top
+        if style in ("gable", "hip"):
             steps = (self.short - 1) // 2 + 1
+            top += steps * int(r.get("pitch", 1)) - 1  # type: ignore[union-attr]
+        elif style in ("shed", "sawtooth") and r is not None:
+            side = (r.get("sides") or ["north"])[0]
+            run = self.span_z if side in ("north", "south") else self.span_x
+            steps = min(run, int(r.get("every", 4))) if style == "sawtooth" else run
             top += steps * int(r.get("pitch", 1)) - 1
         if r is not None:
             top += int(r.get("parapet", 0))
@@ -291,16 +310,21 @@ def _roof(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
             r.get("pitch", 1)
         ) == 1:
             r["style"] = "flat"
-            r.pop("pitch", None)
+            for k in (
+                "pitch",
+                "sides",
+                "every",
+            ):  # a shed's high side, a sawtooth's tooth
+                r.pop(k, None)
             changes.append("roof: flat")
         else:
             r["pitch"] = int(r.get("pitch", 1)) - 1
             if r["pitch"] == 1:
                 r.pop("pitch")
-            changes.append(f"roof: gable, pitch {r.get('pitch', 1)}")
+            changes.append(f"roof: {style}, pitch {r.get('pitch', 1)}")
         return
     if _STEEPER.search(c) or _TALLER.search(c):
-        if style != "gable":
+        if style == "flat":
             r["style"] = "gable"
             r.pop("parapet", None)  # a parapet stands on a flat roof's edge
             r.pop("parapet_role", None)
@@ -312,7 +336,7 @@ def _roof(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
             )
         else:
             r["pitch"] = int(r.get("pitch", 1)) + 1
-            changes.append(f"roof: gable, pitch {r['pitch']}")
+            changes.append(f"roof: {style}, pitch {r['pitch']}")
 
 
 def _parapet(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
@@ -330,7 +354,8 @@ def _parapet(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None
         return
     if r.get("style", "flat") != "flat":
         impossible.append(
-            f"{c!r}: a parapet stands on a flat roof's edge; the roof is a gable"
+            f"{c!r}: a parapet stands on a flat roof's edge; the roof is a "
+            f"{r.get('style', 'flat')}"
         )
         return
     n = min(3, int(r.get("parapet", 0)) + 1)
@@ -344,6 +369,14 @@ def _parapet(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None
 
 
 def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
+    whole = [w for w in (*o.of("walls"), *o.of("roof")) if "lo" not in w]
+    if o.of("script") and not whole:
+        impossible.append(
+            f"{c!r}: this version's walls and roof are drawn by its build script, which sets "
+            "them from the layout's height, not the headroom; the script has to be rewritten "
+            "to change the height"
+        )
+        return
     k = _by(c)
     if _SHORTER.search(c):
         up = o.raise_by()
@@ -361,15 +394,30 @@ def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
         )
         return
     old_top = o.wall_top + o.raise_by()
+    for v in o.ops:  # the volumes above the walls rise (or sink) whole
+        if "lo" in v and v.get("op") in shell.VOLUME_OPS and int(v["lo"][1]) > old_top:
+            v["lo"] = [v["lo"][0], int(v["lo"][1]) + k, v["lo"][2]]
+            v["hi"] = [v["hi"][0], int(v["hi"][1]) + k, v["hi"][2]]
+            if "y" in v:
+                y = v["y"]
+                v["y"] = (
+                    int(y) + k if isinstance(y, int) else [int(y[0]) + k, int(y[1]) + k]
+                )
     for w in o.of("walls"):
+        if "lo" in w:
+            continue
         y0, y1 = o.y(w, o.floor, o.wall_top)
         if y1 >= old_top:  # the walls' top course (and the eaves band on it) moves up
             w["y"] = [y0 + k if y0 == y1 else y0, y1 + k]
     for p in o.of("pillars"):
+        if "lo" in p:
+            continue
         y0, y1 = o.y(p, o.floor, o.wall_top)
         if y1 >= old_top:
             p["y"] = [y0, y1 + k]
     for op in (*o.of("roof"), *o.of("lights")):
+        if "lo" in op:
+            continue
         op["y"] = int(op.get("y", o.roof_y)) + k
     o.headroom += k
     changes.append(
@@ -541,6 +589,12 @@ def describe(
         a = [o for o in ops_a if o.get("op") == k]
         b = [o for o in ops_b if o.get("op") == k]
         if a == b:
+            continue
+        if k == "script":  # a build script: its size, never its text (WO-10.12)
+            la = sum(str(o.get("script", "")).count("\n") + 1 for o in a)
+            lb = sum(str(o.get("script", "")).count("\n") + 1 for o in b)
+            what = "added" if not a else "removed" if not b else "rewritten"
+            out.append(f"script: {what} ({la} -> {lb} lines)")
             continue
         if not a:
             out.append(f"{k}: added ({len(b)})")

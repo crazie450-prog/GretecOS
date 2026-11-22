@@ -506,7 +506,8 @@ TOOLS = (
         "build_request",
         "Design a decorative shell (walls, roof, windows, lights; never machines) around saved "
         "plans' layout, from a theme or a prompt: without design GOS draws its procedural shell, "
-        "with design your operations in the building vocabulary are turned into blocks by code. "
+        "with design your operations in the building vocabulary are turned into blocks by code "
+        "(one of them may be a script: a Python build script GOS runs in its sandbox). "
         "Code checks every design: blocks in a machine's keep-out, a corridor, a chase or the "
         "doorway are removed and said; a tile-entity block, GT's machine block, a block outside "
         "the palette or more than max_blocks is refused and nothing is saved. Returns the build "

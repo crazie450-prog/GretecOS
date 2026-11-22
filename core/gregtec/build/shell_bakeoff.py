@@ -53,6 +53,7 @@ Nothing here writes a world or a ``.schematic``.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import random
@@ -617,6 +618,10 @@ def estimate(
             f"Each call: at most {out_limit} output tokens (thinking included); the briefs are "
             f"about {in_typical // max(1, steps)} tokens each."
         ),
+        (
+            f"Designer prompt v{shell_brief.PROMPT_VERSION}: {len(system):,} characters, sent "
+            "with every call."
+        ),
     ]
     worst = 0.0
     unpriced = []
@@ -833,6 +838,8 @@ def create(
         "plans": {k: list(v) for k, v in plans.items()},
         "repair_rounds": REPAIR_ROUNDS,
         "max_output_tokens": shell_brief.MAX_OUTPUT_TOKENS,
+        # the designer's instructions this run sent (WO-10.12): a run without it used version 1
+        "prompt": prompt_record(),
         "caps": {"usd": cap_usd, "tokens": cap_tokens},
         "spent": {"usd": 0.0, "unpriced_tokens": 0, "calls": 0},
         # calls that broke off after they were sent: no usage reported, maybe billed
@@ -1413,6 +1420,25 @@ def summary(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def prompt_record() -> dict[str, Any]:
+    """Which designer instructions a run sends: their version and a hash of the system text
+    (so a change that forgot to bump the version still shows)."""
+    text = shell_brief.system_prompt()
+    return {
+        "version": shell_brief.PROMPT_VERSION,
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:12],
+        "chars": len(text),
+    }
+
+
+def prompt_label(run: Mapping[str, Any]) -> str:
+    """``v2 (sha 1a2b3c4d5e6f)``; a run from before the version was recorded is v1."""
+    p = run.get("prompt")
+    if not isinstance(p, Mapping):
+        return "v1 (recorded before WO-10.12: the op vocabulary only)"
+    return f"v{p.get('version')} (sha {p.get('sha256')})"
+
+
 def blind(run: Mapping[str, Any]) -> dict[str, Any]:
     """The run as the rater may see it: letters, never a model's label, id, provider, cost,
     tokens or time. Built from a fixed list of fields, so a new field in ``run.json`` never
@@ -1732,6 +1758,7 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
             ),
         ),
         ("seed", str(run["seed"])),
+        ("designer prompt", prompt_label(run)),
     ]
     if broke := broken_off(run):
         notes.append(broke)

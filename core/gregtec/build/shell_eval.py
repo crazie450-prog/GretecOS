@@ -107,10 +107,16 @@ def _value(rec: Mapping[str, Any], kind: str, key: str | None) -> Any:  # noqa: 
     if key is None:
         return found
     if kind == "walls" and key == "top":
-        tops = [o.get("y", [0, rec["wall_top"]]) for o in found]
+        whole = [o for o in found if "lo" not in o] or found  # not a tower's walls
+        tops = [
+            o.get("y", [0, o["hi"][1] if "hi" in o else rec["wall_top"]]) for o in whole
+        ]
         return max((t[1] if isinstance(t, list) else t) for t in tops) if tops else None
-    if kind == "roof" and found:
-        return found[-1].get(key, "flat" if key == "style" else None)
+    if (
+        kind == "roof" and found
+    ):  # the whole building's roof (WO-10.12: not a tower's cap)
+        whole = [o for o in found if "lo" not in o] or found
+        return whole[-1].get(key, "flat" if key == "style" else None)
     return found[0].get(key) if found else None
 
 

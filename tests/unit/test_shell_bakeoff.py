@@ -1770,7 +1770,9 @@ def test_the_estimate_is_cases_x_models_x_bounds_x_prices(
     calls = 3 * 2 * (1 + bo.REPAIR_ROUNDS)
     out = calls * shell_brief.MAX_OUTPUT_TOKENS
     floor = out * (ZEBRA.price.output + QUOKKA.price.output) / 1e6  # type: ignore[union-attr]
-    assert floor < est.worst_usd < floor * 1.3
+    # the input side adds up to half again (designer prompt v2 and a repair round's echo of up
+    # to MAX_ECHO characters, enough for a whole build script: WO-10.12)
+    assert floor < est.worst_usd < floor * 1.5
     free = bo.estimate(prepared, [bo.FAKES[shell_fakes.PLAIN]], 10.0, 1_000_000)
     assert free.hosts == () and free.worst_usd == 0.0
     assert "Contacts: nothing" in "\n".join(free.lines)
