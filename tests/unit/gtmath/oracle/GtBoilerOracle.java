@@ -5,16 +5,25 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import net.minecraft.block.Block;
+import net.minecraft.block.material.Material;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraftforge.fluids.FluidStack;
 
+import cpw.mods.fml.common.IFuelHandler;
 import cpw.mods.fml.common.Loader;
+import cpw.mods.fml.common.registry.GameRegistry;
 import cpw.mods.fml.common.registry.RegistryDelegate;
 import gregtech.api.interfaces.IToolStats;
 import gregtech.api.items.MetaGeneratedTool;
+import gregtech.api.recipe.check.CheckRecipeResultRegistry;
+import gregtech.api.recipe.maps.LargeBoilerFuelBackend;
 import gregtech.common.items.MetaGeneratedTool01;
 import gregtech.common.tileentities.machines.multi.MTELargeBoilerBase;
 import gregtech.common.tileentities.machines.multi.MTELargeBoilerBronze;
@@ -36,6 +45,17 @@ import gregtech.common.tileentities.machines.multi.MTETreeFarm;
  * getWaterConsumptionForSteam and getSuperheatedSteam over many ticks; and runtimeBoost over a range of burn
  * times. The tree farm: getTierMultiplier per tier, the mode multipliers and the tool constants.
  *
+ * Solid fuels (D380): LargeBoilerFuelBackend.getBurntimeRatioTicks over a range of burn times, and each boiler's
+ * own checkProcessing on an item. The boiler is a subclass that only stands in for its hatches (its input bus
+ * holds the item, it has no fluid, and the programmed circuit's number is put where setupCircuit puts it); the
+ * item's furnace burn value comes from a Forge fuel handler, so GT reads it through GTModHandler.getFuelValue as
+ * in the game. Per furnace burn value and circuit the oracle loads SOLID_LOADS items, one after the other, and
+ * sums the burn counter GT sets for each (the counter is zeroed in between, as burning it down does), or prints
+ * "refused" when GT doesn't take the item; and LargeBoilerFuelBackend.isAllowedFuel for a few items. Two items: one registered as gregtech:gt.blockreinforced, at meta 6
+ * (a fuel GT allows in the superheated boilers), and an unregistered one (not allowed there). For this the oracle
+ * sets up what GT touches: a water and a lava block and the bucket and bottle items Forge's fluid container
+ * registry names, and GregTech as the mod registering the item.
+ *
  * Everything runs on a thread named "Server thread" with an empty FML loader, as GtTurbineOracle does.
  *
  * Output (one line each): kind, name, then key=value fields.
@@ -46,6 +66,21 @@ public final class GtBoilerOracle {
         12345 };
     static final int LOADS = 1000;
     static final int TICKS = 4800;
+    /** Furnace burn values: around 80, each boiler's EUT_GENERATED and the 10 s (16000) the ratio starts at. */
+    static final int[] BURN_VALUES = { 79, 80, 159, 479, 480, 500, 1199, 1200, 1600, 1650, 2000, 3210, 4799, 4800,
+        12800, 15999, 16000, 16079, 16080, 16081, 19199, 19200, 20000, 32000, 99999, 100000, 160000, 250001, 1000000,
+        1500000 };
+    static final int[] SOLID_CIRCUITS = { 0, 1, 7, 25 };
+    static final String[][] ALLOWED_PROBES = { { "gregtech:gt.blockreinforced", "5" },
+        { "gregtech:gt.blockreinforced", "6" }, { "gregtech:gt.blockreinforced", "7" },
+        { "gregtech:gt.blockreinforced", "8" }, { "minecraft:coal", "1" }, { "minecraft:coal_block", "0" },
+        { "minecraft:blaze_rod", "0" } };
+    /** GT carries a burn value's remainder of 80 from item to item: 160 items are two full cycles of it. */
+    static final int SOLID_LOADS = 160;
+
+    static final ArrayList<ItemStack> INPUTS = new ArrayList<>();
+    static int burnValue;
+    static int circuit;
 
     private static sun.misc.Unsafe unsafe;
 
@@ -112,6 +147,7 @@ public final class GtBoilerOracle {
                 n += boiler(c, out);
             }
             n += treeFarm(out);
+            n += solidFuels(out);
         }
         System.out.println("GtBoilerOracle: " + n + " lines");
     }
@@ -204,6 +240,235 @@ public final class GtBoilerOracle {
             n++;
         }
         return n;
+    }
+
+    /** GT's boiler on the oracle's input bus: its item, no fluid, and the circuit number a circuit would set. */
+    private static void setCircuit(MTELargeBoilerBase b, boolean isFluid) {
+        try {
+            setInt(b, isFluid ? "integratedCircuitConfigFluid" : "integratedCircuitConfigSolid", circuit);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    static final class Bronze extends MTELargeBoilerBronze {
+
+        Bronze() {
+            super("gos.oracle");
+        }
+
+        @Override
+        public ArrayList<ItemStack> getStoredInputs() {
+            return INPUTS;
+        }
+
+        @Override
+        public ArrayList<FluidStack> getStoredFluids() {
+            return new ArrayList<>();
+        }
+
+        @Override
+        public void updateSlots() {}
+
+        @Override
+        protected void setupCircuit(boolean isFluid) {
+            setCircuit(this, isFluid);
+        }
+    }
+
+    static final class Steel extends MTELargeBoilerSteel {
+
+        Steel() {
+            super("gos.oracle");
+        }
+
+        @Override
+        public ArrayList<ItemStack> getStoredInputs() {
+            return INPUTS;
+        }
+
+        @Override
+        public ArrayList<FluidStack> getStoredFluids() {
+            return new ArrayList<>();
+        }
+
+        @Override
+        public void updateSlots() {}
+
+        @Override
+        protected void setupCircuit(boolean isFluid) {
+            setCircuit(this, isFluid);
+        }
+    }
+
+    static final class Titanium extends MTELargeBoilerTitanium {
+
+        Titanium() {
+            super("gos.oracle");
+        }
+
+        @Override
+        public ArrayList<ItemStack> getStoredInputs() {
+            return INPUTS;
+        }
+
+        @Override
+        public ArrayList<FluidStack> getStoredFluids() {
+            return new ArrayList<>();
+        }
+
+        @Override
+        public void updateSlots() {}
+
+        @Override
+        protected void setupCircuit(boolean isFluid) {
+            setCircuit(this, isFluid);
+        }
+    }
+
+    static final class TungstenSteel extends MTELargeBoilerTungstenSteel {
+
+        TungstenSteel() {
+            super("gos.oracle");
+        }
+
+        @Override
+        public ArrayList<ItemStack> getStoredInputs() {
+            return INPUTS;
+        }
+
+        @Override
+        public ArrayList<FluidStack> getStoredFluids() {
+            return new ArrayList<>();
+        }
+
+        @Override
+        public void updateSlots() {}
+
+        @Override
+        protected void setupCircuit(boolean isFluid) {
+            setCircuit(this, isFluid);
+        }
+    }
+
+    private static void setStatic(Class<?> c, String name, Object v) {
+        Field f = field(c, name);
+        unsafe.putObject(unsafe.staticFieldBase(f), unsafe.staticFieldOffset(f), v);
+    }
+
+    private static int solidFuels(BufferedWriter out) throws Exception {
+        // Forge's fluid registries, which GT asks whether the item holds a fluid, name these blocks and items.
+        Class.forName("net.minecraft.init.Blocks");
+        Block water = new Block(Material.water) {};
+        water.setBlockName("water");
+        setStatic(net.minecraft.init.Blocks.class, "water", water);
+        Block lava = new Block(Material.lava) {};
+        lava.setBlockName("lava");
+        setStatic(net.minecraft.init.Blocks.class, "lava", lava);
+        Class.forName("net.minecraft.init.Items");
+        for (String name : new String[] { "bucket", "water_bucket", "lava_bucket", "potionitem", "glass_bottle" }) {
+            setStatic(net.minecraft.init.Items.class, name, new Item());
+        }
+        // GregTech registers the allowed fuel, so its registry name is gregtech:gt.blockreinforced.
+        cpw.mods.fml.common.ModMetadata meta = new cpw.mods.fml.common.ModMetadata();
+        meta.modId = "gregtech";
+        meta.name = "GregTech";
+        Object controller = unsafe.allocateInstance(cpw.mods.fml.common.LoadController.class);
+        unsafe.putObject(
+            controller,
+            unsafe.objectFieldOffset(field(cpw.mods.fml.common.LoadController.class, "activeContainer")),
+            new cpw.mods.fml.common.DummyModContainer(meta));
+        unsafe.putObject(
+            Loader.instance(),
+            unsafe.objectFieldOffset(field(Loader.class, "modController")),
+            controller);
+        Item allowed = new Item();
+        GameRegistry.registerItem(allowed, "gt.blockreinforced");
+        Item plain = new Item();
+        GameRegistry.registerFuelHandler(new IFuelHandler() {
+
+            @Override
+            public int getBurnTime(ItemStack fuel) {
+                return burnValue;
+            }
+        });
+        int n = 0;
+        StringBuilder sb = new StringBuilder();
+        for (int t = 1; t <= 40000; t += t < 400 ? 1 : 37) {
+            if (sb.length() > 0) sb.append('\t');
+            sb.append("t_")
+                .append(t)
+                .append('=')
+                .append(LargeBoilerFuelBackend.getBurntimeRatioTicks(t, 20));
+        }
+        line(out, "ratio", "LargeBoilerFuelBackend", sb.toString());
+        n++;
+        // The solids GT allows in the superheated boilers, by registry name and meta.
+        sb = new StringBuilder();
+        for (String[] key : ALLOWED_PROBES) {
+            if (sb.length() > 0) sb.append('\t');
+            sb.append(key[0])
+                .append('@')
+                .append(key[1])
+                .append('=')
+                .append(LargeBoilerFuelBackend.isAllowedFuel(key[0], Integer.parseInt(key[1])));
+        }
+        line(out, "allowed", "LargeBoilerFuelBackend", sb.toString());
+        n++;
+        for (Class<?> c : new Class<?>[] { Bronze.class, Steel.class, Titanium.class, TungstenSteel.class }) {
+            MTELargeBoilerBase b = (MTELargeBoilerBase) unsafe.allocateInstance(c);
+            Class<?> gt = c.getSuperclass();
+            setInt(b, "eut", gt.getField("EUT_GENERATED").getInt(null));
+            setBool(b, "isSuperheated", gt.getField("SUPERHEATED").getBoolean(null));
+            for (int cfg : SOLID_CIRCUITS) {
+                line(out, "solid", gt.getSimpleName(), solid(b, new ItemStack(allowed, 1, 6), cfg));
+                n++;
+            }
+            line(out, "solid_plain", gt.getSimpleName(), solid(b, new ItemStack(plain, 1, 0), 0));
+            n++;
+        }
+        return n;
+    }
+
+    /** checkProcessing on SOLID_LOADS items of each burn value: the burn counters GT set, summed. */
+    private static String solid(MTELargeBoilerBase b, ItemStack item, int cfg) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        sb.append("item=")
+            .append(Item.itemRegistry.getNameForObject(item.getItem()))
+            .append('@')
+            .append(item.getItemDamage())
+            .append("\tcircuit=")
+            .append(cfg)
+            .append("\tloads=")
+            .append(SOLID_LOADS);
+        circuit = cfg;
+        for (int value : BURN_VALUES) {
+            burnValue = value;
+            item.stackSize = SOLID_LOADS;
+            INPUTS.clear();
+            INPUTS.add(item);
+            for (String f : new String[] { "excessFuel", "excessProjectedEU", "solidBurnTime", "fluidBurnTime" }) {
+                setInt(b, f, 0);
+            }
+            long total = 0;
+            boolean refused = false;
+            for (int i = 0; i < SOLID_LOADS; i++) {
+                if (b.checkProcessing() != CheckRecipeResultRegistry.SUCCESSFUL) {
+                    refused = true;
+                    break;
+                }
+                total += b.getSolidBurnTime();
+                setInt(b, "solidBurnTime", 0);
+            }
+            if (refused != (item.stackSize == SOLID_LOADS) || (!refused && item.stackSize != 0)) {
+                throw new IllegalStateException("burn value " + value + ": " + item.stackSize + " items left");
+            }
+            sb.append("\tv_")
+                .append(value)
+                .append('=')
+                .append(refused ? "refused" : Long.toString(total));
+        }
+        return sb.toString();
     }
 
     @SuppressWarnings("unchecked")

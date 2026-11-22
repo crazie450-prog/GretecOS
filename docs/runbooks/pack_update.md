@@ -123,8 +123,9 @@ changes GT, before answering yes:
      D231): `uv run python tests/unit/gtmath/oracle/make_turbine_vectors.py`; if a turbine
      controller's `fluidIntoPower` changed, port the change into `gtmath/turbine.py` first.
      Then the boiler and tree-farm vectors (WO-4.2, D233):
-     `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py`; if a 2.9 large boiler or
-     `MTETreeFarm` changed, port it into `gtmath/boiler.py` or `gtmath/treefarm.py` first.
+     `uv run python tests/unit/gtmath/oracle/make_boiler_vectors.py`; if a 2.9 large boiler,
+     `LargeBoilerFuelBackend` (solid fuels, D380) or `MTETreeFarm` changed, port it into
+     `gtmath/boiler.py` or `gtmath/treefarm.py` first.
      Then the Large Naquadah Reactor's (WO-4.8, D326):
      `uv run python tests/unit/gtmath/oracle/make_naquadah_vectors.py`; if
      `MTELargeNaquadahReactor` (or GoodGenerator's fuel loader) changed, port it into

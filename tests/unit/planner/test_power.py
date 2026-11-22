@@ -611,6 +611,84 @@ def test_single_block_fuel_is_gts_truncated_eu_per_litre(
         c.close()
 
 
+def test_a_large_boiler_burns_a_solid_by_its_exported_burn_value(
+    db: Path, tmp_path: Path
+) -> None:
+    # D380: charcoal with the export's exact furnace burn value (1650 here, so GT's carried
+    # remainder shows) in a bronze boiler feeding a large steam turbine, Steel large rotor.
+    c = _writable_copy(db, tmp_path)
+    multi = "gregtech.common.tileentities.machines.multi."
+    fake = "gt.recipe.largeboilerfakefuels"
+    coal, log = "minecraft:coal@1", "minecraft:log@0"
+    try:
+        c.execute(
+            "INSERT INTO machine(mte_id, class_name, mod_id, name_en, is_multiblock) VALUES"
+            " (1020, ?, 'gregtech', 'Large Bronze Boiler', 1),"
+            " (1131, ?, 'gregtech', 'Large Steam Turbine', 1)",
+            (f"{multi}MTELargeBoilerBronze", f"{multi}turbines.MTELargeTurbineSteam"),
+        )
+        c.execute("INSERT INTO rotor_size VALUES (1, 174, 'large', 3.0, 5.0, 3.0)")
+        c.execute(
+            "INSERT INTO rotor_material VALUES (1, 'Steel', 6.0, 2, 512, 1.0, 1.0, 1.0)"
+        )
+        c.executemany(
+            "INSERT INTO fuel VALUES (1, ?, ?, ?, 'largeBoilerFakeFuels', ?, NULL, 0, 0, ?,"
+            " ?, ?)",
+            [
+                (900, f"r:{fake}/aaaaaaaaaaaa", fake, coal, 1, "furnace burn value", 1650.0),
+                # A solid the export has no burn value for (a run made before D380).
+                (901, f"r:{fake}/bbbbbbbbbbbb", fake, log, 0, "furnace burn value / 1600", 0.0),
+            ],
+        )  # fmt: skip
+        req = power.PowerRequest(free=FREE, kinds=("boiler_steam",))
+        gens, notes = power.candidates(c, 1, req, 2)
+        [g] = gens
+        # A fluid fuel of the same boiler is pruned in a slot of its own: an item's EU per
+        # unit is not a litre's, and must not crowd the fluids out.
+        c.execute(
+            "INSERT INTO fuel VALUES (1, 902, ?, ?, 'largeBoilerFakeFuels', 'testacid',"
+            " 'testacid', 1, 0, 8, 'steel boiler ticks per 1000 L', 16.0)",
+            (f"r:{fake}/cccccccccccc", fake),
+        )
+        both, _ = power.candidates(c, 1, req, 2)
+        assert {x.fuel for x in power.prune(both, 1)} == {coal, ACID}
+        c.execute("DELETE FROM fuel WHERE recipe_id = 902")
+        assert g.fuel == coal and g.kind == "boiler_steam" and g.eut == 128
+        # The turbine takes 900 L/t; one boiler at circuit 1 gives (480 - 25) x 2 = 910.
+        assert dict(g.spec)["boilers"] == 1 and dict(g.spec)["circuit"] == 1
+        # 1650 / 80: of 80 items, 30 burn 20 raw ticks and 50 burn 21, x 2 in the bronze
+        # boiler: 41.25 ticks an item, stretched by 480 / 455 at the throttle.
+        assert g.fuel_per_s == pytest.approx(20 * 455 / (41.25 * 480))
+        assert g.water_per_s == pytest.approx(910 / 160 * 20)
+        assert any("1 solid boiler fuels not sized" in n for n in notes)
+        # The validator derives the same ports on its own.
+        p, why = sustain.gen_ports(c, {"recipe": g.id, "spec": dict(g.spec)})
+        assert why is None and p is not None
+        assert p.used == {
+            coal: pytest.approx(g.fuel_per_s),
+            "fluid:water": pytest.approx(g.water_per_s),
+        }
+        # self_sustaining offers a solid only when the request names it (D381).
+        ss = power.PowerRequest(
+            mode="self_sustaining", free=FREE, kinds=("boiler_steam",)
+        )
+        none, ss_notes = power.candidates(c, 1, ss, 2)
+        assert none == [] and any(
+            "1 solid boiler fuels left out" in n for n in ss_notes
+        )
+        named = power.PowerRequest(
+            mode="self_sustaining", free=FREE, kinds=("boiler_steam",), fuels=(coal,)
+        )
+        assert [x.fuel for x in power.candidates(c, 1, named, 2)[0]] == [coal]
+        # A burn value below the boiler's 480 EU/t is not a fuel GT takes.
+        c.execute("UPDATE fuel SET value = 479 WHERE recipe_id = 900")
+        assert power.candidates(c, 1, req, 2)[0] == []
+        p, why = sustain.gen_ports(c, {"recipe": g.id, "spec": dict(g.spec)})
+        assert p is None and why is not None and "burn value" in why
+    finally:
+        c.close()
+
+
 def test_the_most_efficient_single_block_for_sustain_and_effort(
     db: Path, tmp_path: Path
 ) -> None:

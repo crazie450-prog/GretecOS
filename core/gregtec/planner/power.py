@@ -15,9 +15,10 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
 - ``gas_turbine`` and ``plasma_turbine``: the large turbine with the request's rotor at its
   optimal flow (``gtmath.turbine``), on the smallest dynamo hatch (1 A, up to the tier cap) that
   doesn't cap it;
-- ``boiler_steam``: a 2.9 large boiler on a fluid fuel (``gtmath.boiler``) feeding a large steam
-  turbine (an HP steam turbine for the superheated boilers) at its optimal flow: as many boilers
-  as the flow needs, throttled by GT's circuit so their fuel follows the steam taken;
+- ``boiler_steam``: a 2.9 large boiler on a fluid fuel or a solid one (``gtmath.boiler``; a
+  solid by its exported furnace burn value, D380) feeding a large steam turbine (an HP steam
+  turbine for the superheated boilers) at its optimal flow: as many boilers as the flow needs,
+  throttled by GT's circuit so their fuel follows the steam taken;
 - ``naquadah_reactor``: GoodGenerator's Large Naquadah Reactor (WO-4.8, D327) on one fuel of
   its map, unboosted (no coolant, no excited fluid: ``gtmath.naquadah``'s steady run), taking
   its liquid air (an input of the line like the fuel) and giving back the depleted fuel (a
@@ -25,7 +26,9 @@ offered for a new build, D232), each burning one fuel of its maps (WO-4.1's cata
   output, up to the tier cap (``generators.dynamo``).
 
 For each generator the fuels are pruned to the top :data:`TOP_FUELS` by EU per unit of fuel
-(the request's ``candidates``; ``self_sustaining`` keeps only fuels a forward closure over the
+(the request's ``candidates``; a boiler's solid fuels apart from its fluid ones, since an item
+is not a litre, D380, and in ``self_sustaining`` only a solid the request names, D381;
+``self_sustaining`` keeps only fuels a forward closure over the
 DB's recipes reaches from the free set and the farms first, :func:`reachable`).
 
 **EU** (WO-4.7, D323): the chain pays for its EU out of the generator's output, so the network
@@ -474,11 +477,35 @@ def candidates(
             (e for e in cat if _simple(e.class_name) in gt_boiler.BOILERS),
             key=lambda e: e.mte_id,
         )
-        fake = [
-            f
-            for f in by_map.get(fuels.BY_NAME["largeBoilerFakeFuels"].map, ())
-            if f.fluid and f.unit == fuels.Unit.BOILER_TICKS.value
-        ]
+        # (fuel row, its key, how gtmath.boiler.steady takes it): a fluid by its burn ticks, a
+        # solid by its exact furnace burn value.
+        fake: list[tuple[fuels.Fuel, str, dict[str, Any]]] = []
+        unsized = 0
+        unnamed = 0
+        for f in by_map.get(fuels.BY_NAME["largeBoilerFakeFuels"].map, ()):
+            if f.fluid and f.unit == fuels.Unit.BOILER_TICKS.value:
+                burns = {"fluid": f.fluid, "duration": int(f.value)}
+                fake.append((f, f"fluid:{f.fluid}", burns))
+            elif f.unit == fuels.Unit.BURN_VALUE.value and is_stable_key(f.input):
+                # self_sustaining offers a solid only when the request names it (D381): each
+                # costs a chain search, and none closed on the harness DB.
+                if req.mode == "self_sustaining" and f.input not in req.fuels:
+                    unnamed += 1
+                    continue
+                burns = {"item": f.input, "burn_value": int(f.value)}
+                fake.append((f, f.input, burns))
+            elif f.unit == fuels.Unit.BURN_RATIO.value:
+                unsized += 1
+        if unsized:
+            notes.append(
+                f"{unsized} solid boiler fuels not sized: the export run has no furnace burn"
+                " values (gt_power.json's boiler_fuels, D380); export again"
+            )
+        if unnamed:
+            notes.append(
+                f"{unnamed} solid boiler fuels left out: self_sustaining offers a solid only"
+                " when the request names it (D381)"
+            )
         for b in boilers:
             spec = gt_boiler.BOILERS[_simple(b.class_name)]
             t = turbines.get(_STEAM_TURBINE[spec.superheated])
@@ -493,10 +520,9 @@ def candidates(
             run = r.runs[1]
             if run.eut <= 0:
                 continue
-            for f in fake:
-                assert f.fluid is not None
+            for f, key, burns in fake:
                 try:
-                    st = gt_boiler.steady(spec, fluid=f.fluid, duration=int(f.value))
+                    st = gt_boiler.steady(spec, **burns)
                 except gt_boiler.BoilerError:
                     continue
                 need = Fraction(run.flow) / st.steam  # boilers per turbine, unthrottled
@@ -507,25 +533,22 @@ def candidates(
                 throttle = max(
                     c
                     for c in range(gt_boiler.MAX_CIRCUIT + 1)
-                    if gt_boiler.steady(
-                        spec, fluid=f.fluid, duration=int(f.value), circuit=c
-                    ).steam
-                    >= per_boiler
+                    if gt_boiler.steady(spec, **burns, circuit=c).steam >= per_boiler
                 )
-                st = gt_boiler.steady(
-                    spec, fluid=f.fluid, duration=int(f.value), circuit=throttle
-                )
+                st = gt_boiler.steady(spec, **burns, circuit=throttle)
                 surplus = st.steam * count - run.flow
                 gens.append(
                     Gen(
                         id=f"gen:boiler_steam/{b.ref}/{f.ref}/{t.ref}/{r.refs[0]}/d{r.dynamo_tier}",
                         kind="boiler_steam",
                         label=(
-                            f"{count} x {b.name} on {f.fluid} -> {t.name}, "
+                            f"{count} x {b.name} on {f.fluid or f.input} -> {t.name}, "
                             f"{r.material} {r.size} rotor"
                         ),
-                        slot=f"{b.ref}+{t.ref}",
-                        fuel=f"fluid:{f.fluid}",
+                        # Solids are pruned apart from fluids: an item holds far more EU
+                        # than a litre, so in one slot they would crowd every fluid out.
+                        slot=f"{b.ref}+{t.ref}" + ("" if f.fluid else "/solid"),
+                        fuel=key,
                         fuel_ref=f.ref,
                         fuel_per_s=float(count * st.fuel * 20),
                         water_per_s=float(count * st.water * 20),

@@ -17,6 +17,10 @@ the harnesses; locally: mod/README.md):
 - **The Large Naquadah Reactor** (WO-4.8, D326): ``make_naquadah_vectors.py`` reruns GT's own
   class and must write exactly ``vectors/naquadah.tsv``; the export's reactor lists and fuel map
   are the oracle's, and the catalog's steady run on each fuel equals the oracle's run.
+- **Solid boiler fuels** (D380): ``make_boiler_vectors.py`` reruns GT's own boilers and must
+  write exactly ``vectors/boiler.tsv``; every solid fuel of ``largeBoilerFakeFuels`` carries the
+  furnace burn value GT gave in the game (``boiler_fuel``), and the 2.9 large boilers are sized
+  on charcoal from it, the designer and the validator alike.
 
 Nothing is written outside tmp_path.
 """
@@ -34,7 +38,8 @@ import pytest
 
 from gregtec.db import access, build
 from gregtec.ingest import collect
-from gregtec.planner import fuels, generators
+from gregtec.planner import fuels, generators, power, sustain
+from gregtec.planner.gtmath import boiler as gt_boiler
 from gregtec.planner.gtmath import naquadah as gt_naquadah
 from gregtec.planner.gtmath.turbine import Kind
 
@@ -80,6 +85,20 @@ def test_the_committed_naquadah_vectors_are_what_gts_own_class_computes(
     kept = (GTMATH_TESTS / "vectors" / "naquadah.tsv").read_text(encoding="utf-8")
     assert fresh == kept.splitlines(), (
         "naquadah.tsv: run make_naquadah_vectors.py and commit"
+    )
+
+
+def test_the_committed_boiler_vectors_are_what_gts_own_classes_compute(
+    tmp_path: Path,
+) -> None:
+    """D380: GT's own 2.9 large boilers (solid fuels through their ``checkProcessing``) and
+    Tree Growth Simulator, rerun on the mod's GT jar."""
+    _require_harness()
+    assert _load("make_boiler_vectors").main(["--out", str(tmp_path)]) == 0
+    fresh = (tmp_path / "boiler.tsv").read_text(encoding="utf-8").splitlines()
+    kept = (GTMATH_TESTS / "vectors" / "boiler.tsv").read_text(encoding="utf-8")
+    assert fresh == kept.splitlines(), (
+        "boiler.tsv: run make_boiler_vectors.py and commit"
     )
 
 
@@ -185,6 +204,74 @@ def test_every_fuel_map_is_decoded(conn: sqlite3.Connection) -> None:
     assert ("rtgFuels", fuels.Unit.EU_PER_ITEM.value) in units
     assert ("largeBoilerFakeFuels", fuels.Unit.BOILER_TICKS.value) in units
     assert ("smallNaquadahReactorFuels", fuels.Unit.EU_PER_ITEM.value) in units
+
+
+CHARCOAL = "minecraft:coal@1"
+
+
+def test_solid_boiler_fuels_carry_gts_furnace_values(conn: sqlite3.Connection) -> None:
+    """D380: every solid fuel of GT's large boiler map has the furnace burn value GT's own
+    ``GTModHandler.getFuelValue`` gave in the game, keyed by registry name and meta, and its
+    ``fuel`` row carries it (the map's own value is that / 1600, rounded down)."""
+    run = _run(conn)
+    exported = {
+        f"{r[0]}@{r[1]}": (int(r[2]), int(r[3]))
+        for r in conn.execute(
+            "SELECT registry_name, meta, special, fuel_value FROM boiler_fuel"
+            " WHERE run_id = ?",
+            (run,),
+        )
+    }
+    assert len(exported) >= 10
+    assert exported[CHARCOAL] == (1, 1600)
+    solids = {
+        str(r[0]): (int(r[1]), str(r[2]), float(r[3]))
+        for r in conn.execute(
+            "SELECT input, fuel_value, unit, value FROM fuel WHERE run_id = ?"
+            " AND gt_name = 'largeBoilerFakeFuels' AND fluid IS NULL",
+            (run,),
+        )
+    }
+    assert set(solids) == set(exported)
+    for key, (special, unit, value) in solids.items():
+        assert unit == fuels.Unit.BURN_VALUE.value, key
+        assert (special, int(value)) == exported[key], key
+        assert int(value) // 1600 == special, key
+        assert int(value) >= gt_boiler.BOILERS["MTELargeBoilerBronze"].eut, key
+
+
+def test_the_large_boilers_are_sized_on_charcoal(conn: sqlite3.Connection) -> None:
+    """D380: at EV the designer offers the bronze and the steel boiler on charcoal (GT's 1600:
+    20 raw ticks an item, x 2 in the bronze boiler), never a superheated one (charcoal is not
+    one of GT's allowed fuels), and the validator derives the same ports from the DB."""
+    run = _run(conn)
+    req = power.PowerRequest(kinds=("boiler_steam",), fuels=(CHARCOAL,))
+    gens, notes = power.candidates(conn, run, req, 4)
+    assert not any("not sized" in n for n in notes), notes
+    names = {m: _class_of(conn, m) for g in gens for m in [dict(g.spec)["boiler_mte"]]}
+    assert set(names.values()) == {"MTELargeBoilerBronze", "MTELargeBoilerSteel"}
+    for g in gens:
+        spec = dict(g.spec)
+        boiler = gt_boiler.BOILERS[names[spec["boiler_mte"]]]
+        leut = gt_boiler.throttled_eut(boiler, spec["circuit"])
+        ticks = boiler.runtime_boost(1600 // 80) * boiler.eut / leut  # one item's
+        assert g.fuel == CHARCOAL
+        assert g.fuel_per_s == pytest.approx(spec["boilers"] * 20 / ticks)
+        assert g.water_per_s == pytest.approx(spec["boilers"] * leut * 2 / 160 * 20)
+        ports, why = sustain.gen_ports(conn, {"recipe": g.id, "spec": spec}, run_id=run)
+        assert why is None and ports is not None
+        assert ports.used == {
+            CHARCOAL: pytest.approx(g.fuel_per_s),
+            "fluid:water": pytest.approx(g.water_per_s),
+        }
+        assert ports.given == {"eu": float(g.eut * 20)}
+
+
+def _class_of(conn: sqlite3.Connection, mte_id: int) -> str:
+    row = conn.execute(
+        "SELECT class_name FROM machine WHERE mte_id = ?", (mte_id,)
+    ).fetchone()
+    return str(row[0]).rsplit(".", 1)[-1]
 
 
 def test_single_blocks_match_gts_fuel_values_in_the_game(

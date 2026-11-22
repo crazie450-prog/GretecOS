@@ -118,6 +118,7 @@ GAME_TABLES = frozenset(
         "my_base_machine", "my_base_stock",  # the core's (store.py): My base, WO-3.8 (D210)
         "rotor_size", "rotor_material", "rotor_gt", "generator", "generator_gt",
         "fuel_container", "fuel",
+        "boiler_fuel",  # D380
         "cable", "battery", "battery_buffer", "transformer", "lsc_cell",  # WO-4.5 (D240)
         "reactor_boost", "dynamo_hatch",  # WO-4.8 (D326)
         "block_state", "block_texture",  # the block catalog, WO-10.3 (D307)

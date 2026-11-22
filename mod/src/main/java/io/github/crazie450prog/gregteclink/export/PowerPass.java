@@ -23,6 +23,8 @@ import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEBasicGenerator;
 import gregtech.api.metatileentity.implementations.MTEHatchDynamo;
 import gregtech.api.recipe.RecipeMap;
+import gregtech.api.recipe.RecipeMaps;
+import gregtech.api.util.GTModHandler;
 import gregtech.api.util.GTOreDictUnificator;
 import gregtech.api.util.GTRecipe;
 import gregtech.api.util.GTUtility;
@@ -51,6 +53,10 @@ import gregtech.common.tileentities.machines.multi.MTELargeNaquadahReactor;
  * lists (fluid, litres a second, efficiency or multiplier, in its order) and its liquid air a second, read from the
  * reactor class and GoodGenerator's config as this instance loaded them. {@code dynamos}: every dynamo hatch (GT's,
  * TecTech's multi-amp and laser source hatches) with its voltage and amps out, the cap a generator's output must fit.
+ * <p>
+ * {@code boiler_fuels} (D380): every solid fuel of GT's large boiler map with its exact furnace burn value
+ * ({@code GTModHandler.getFuelValue}), which the 2.9 large boilers compute its burn time from; the map's recipe keeps
+ * only that value divided by 1600, rounded down. Keyed by item ref, never by numeric IDs.
  */
 final class PowerPass {
 
@@ -140,6 +146,7 @@ final class PowerPass {
         root.add("containers", containers());
         root.add("naquadah_reactors", naquadahReactors());
         root.add("dynamos", dynamos());
+        root.add("boiler_fuels", boilerFuels());
         StoragePass storage = new StoragePass(stacks);
         root.add("storage", storage.json());
         errors += storage.errors;
@@ -259,6 +266,41 @@ final class PowerPass {
             }
             a.add(o);
         }
+        return a;
+    }
+
+    /**
+     * The solid fuels of GT's large boiler map (an item input that holds no fluid; fluid fuels are listed by their
+     * fluid) with what GT's own {@code GTModHandler.getFuelValue} gives for one item, sorted by their JSON.
+     */
+    private JsonArray boilerFuels() {
+        List<JsonObject> rows = new ArrayList<>();
+        for (GTRecipe r : RecipeMaps.largeBoilerFakeFuels.getAllRecipes()) {
+            if (r.mInputs == null || r.mInputs.length == 0 || r.mInputs[0] == null) continue;
+            ItemStack one = r.mInputs[0].copy();
+            one.stackSize = 1;
+            JsonObject f = new JsonObject();
+            try {
+                if (GTUtility.getFluidForFilledItem(one, true) != null) continue;
+                f.add("input", stacks.item(one));
+                f.addProperty("special", r.mSpecialValue);
+                f.addProperty("fuel_value", GTModHandler.getFuelValue(one));
+            } catch (Throwable t) {
+                f.addProperty("error", Json.error(t));
+                errors++;
+            }
+            rows.add(f);
+        }
+        Collections.sort(rows, new Comparator<JsonObject>() {
+
+            @Override
+            public int compare(JsonObject a, JsonObject b) {
+                return a.toString()
+                    .compareTo(b.toString());
+            }
+        });
+        JsonArray a = new JsonArray();
+        for (JsonObject f : rows) a.add(f);
         return a;
     }
 

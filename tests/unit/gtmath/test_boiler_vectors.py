@@ -1,6 +1,7 @@
 """Replay GT's own 2.9 large boilers and Tree Growth Simulator (``vectors/boiler.tsv``, written by
 ``oracle/make_boiler_vectors.py`` from GT 5.09.54.265's classes) through the ports in
-``gtmath/boiler.py`` and ``gtmath/treefarm.py`` (WO-4.2, D231, D234)."""
+``gtmath/boiler.py`` and ``gtmath/treefarm.py`` (WO-4.2, D231, D234), solid fuels included
+(D380: GT's own ``checkProcessing`` on an item of each furnace burn value)."""
 
 from __future__ import annotations
 
@@ -69,6 +70,60 @@ def test_throttle_steam_water_and_burn_time(name: str, f: dict[str, str]) -> Non
     if burn == 591:
         measured = Fraction(1000 * LOADS, int(f["burn_591"]))
         assert abs(measured - st.fuel) / st.fuel < Fraction(1, LOADS)
+
+
+def test_burntime_ratio_ticks_against_gt() -> None:
+    ((name, f),) = _rows("ratio")
+    assert name == "LargeBoilerFuelBackend" and len(f) > 1000
+    for k, v in f.items():
+        assert boiler.burntime_ratio_ticks(int(k[2:])) == int(v), k
+
+
+def test_the_solids_gt_allows_in_superheated_boilers() -> None:
+    ((_, f),) = _rows("allowed")
+    assert {k for k, v in f.items() if v == "true"} == {
+        k for k in boiler.ALLOWED_FUELS if "@" in k
+    }
+    assert "false" in f.values()
+
+
+def test_every_29_boiler_burns_solids_in_the_vectors() -> None:
+    for kind, rows in (("solid", 4), ("solid_plain", 1)):
+        names = [name for name, _ in _rows(kind)]
+        assert sorted(names) == sorted(list(boiler.BOILERS) * rows)
+
+
+@pytest.mark.parametrize(
+    "name,f", _rows("solid") + _rows("solid_plain"), ids=lambda v: str(v)[:60]
+)
+def test_solid_fuel_burn_time(name: str, f: dict[str, str]) -> None:
+    """GT's ``checkProcessing`` loaded ``loads`` items (whole cycles of its carried remainder)
+    of each furnace burn value and set a burn counter of twice the burn time for each: their
+    sum is twice the port's average x the items, stretched by the throttle (its remainder
+    carried, so the sum is the floor). An item GT refused is one the port refuses."""
+    spec = boiler.BOILERS[name]
+    circuit, loads = int(f["circuit"]), int(f["loads"])
+    leut = boiler.throttled_eut(spec, circuit)
+    # The item GT doesn't know by a registry name stands for any fuel it doesn't allow.
+    item = "minecraft:coal@1" if f["item"].startswith("null@") else f["item"]
+    burned = 0
+    for k, v in f.items():
+        if not k.startswith("v_"):
+            continue
+        value = int(k[2:])
+        if v == "refused":
+            with pytest.raises(boiler.BoilerError):
+                boiler.steady(spec, item=item, burn_value=value, circuit=circuit)
+            continue
+        burned += 1
+        st = boiler.steady(spec, item=item, burn_value=value, circuit=circuit)
+        ticks = st.burn_ticks * loads
+        assert ticks.denominator == 1, k
+        assert int(v) == 2 * (int(ticks) * spec.eut // leut), k
+        # Items per tick: one per stretched burn time, the same EU per item at every throttle.
+        assert st.fuel == 1 / (st.burn_ticks * spec.eut / leut)
+    allowed = item in boiler.ALLOWED_FUELS or not spec.superheated
+    assert (burned > 0) == allowed
 
 
 def test_tree_farm_against_gt() -> None:
