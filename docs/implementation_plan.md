@@ -1258,7 +1258,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 - **Play-world start gate (D02):**
   - GTNL has a release that includes `28007498`. **0.2.7 does** (D365); it is pinned, and the item is met once its Lab smoke test passes (load the world, NEI opens, one GTNL multi forms and runs a recipe).
   - TST and 123Tech are confirmed on stable by a Lab smoke test: load the world, open NEI, form one addon multi, run one recipe. One Lab session that forms and runs one TST multi and one 123Tech multi covers both, and doubles as D90's check (D93). **Done 2026-11-05 (D94).** TST 0.8.2 and 123Technology 2.2.1.3 (D373, D382) repeat it in the Lab before they replace 0.8.0 and 2.2.1.1 in Play: one TST multi and one 123Tech multi form and run a recipe.
-  - #575 is fixed or Clayton accepts it (still open on 2026-11-22; the D365 Lab test looks at memory). #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93), in the same Lab session (D365).
+  - #575 is fixed or Clayton accepts it. **He accepts it if the Lab sitting's memory readings stay flat** (D383; still open upstream on 2026-11-22). #323 is closed and accepted for now; re-test it when GTNL goes in (a PH dual hatch in a GTNL large centrifuge, D93), in the same Lab session (D365).
 - **Development doesn't wait.** P0–P2 run on base 2.9.0 plus whatever addon jars load in Export/Lab. The addon watcher re-exports as releases land.
 
 ### 13.2 VERIFY list

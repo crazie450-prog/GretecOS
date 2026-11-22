@@ -124,7 +124,8 @@ ones back (D93 (5)).
     you left it. Add one recipe to it, close the planner, open it again: the change is there.
 16. **Memory** (GTNL #575, a leak with TST, is still open): press F3 and note the memory line
     now, after 10 minutes and after 20 to 30 minutes in the world. Worked: it goes up and down
-    but does not climb steadily toward the limit.
+    but does not climb steadily toward the limit. You accept #575 on that result (D383). If it
+    climbs, GT-Not-Leisure waits: send the three readings.
 17. Quit the game from the menu.
 
 **Paste back** (in the PR or to the PM): which multiblock and recipe for steps 11, 12 and 13;

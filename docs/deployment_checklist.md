@@ -573,6 +573,8 @@ These rows say "pending Clayton" in their text, but a later row of yours settled
 | D111 (flagged machines) | D142 (a), (b) |
 | D114 ("at tier X") | D142 (3): started (its hull made) |
 | D117 (cookie, pairing limits, approve step) | D142 (12): the core's defaults stand, no approve step |
+| 5.2.12's GTNL #575 | D383: accepted if the Lab sitting's memory readings (3.4.3, runbook step 16) stay flat |
+| 5.2.13's 123Technology 2.2.1.3 | D383: yes, into Play after the Lab sitting passes, with TST 0.8.2 |
 | D121 (an export whose NEI part failed) | D142 (6): doesn't count; quitting keeps asking |
 | D125 (who runs the extractor) | D142 (11): gos-dev runs it, you load it |
 | D129 (`ore_find` order) | D142 (c): by layer, then distance |
