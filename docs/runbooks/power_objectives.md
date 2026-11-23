@@ -65,9 +65,12 @@ line (D236, D237):
   the turbine controller itself has no route at EV yet (a WO-3.5 follow-up).
 - Each row is one recipe (`crafting` map for crafting-table and furnace steps at `craft_s`,
   2 s by default, `craft_s:` in `me/prefs.md`): its map, the machine the map's steps are sized
-  on, its whole crafts, the machines My base owns on that map (at least 1) and its hours.
-- `--json` carries the breakdown under `metrics.effort`: `rows` per map (`crafts`, `machines`,
-  `h`, and `recipes`, each `{id, crafts, h}`), `components`, `unlocks`, `uncounted`, `notes`;
+  on, its whole crafts, the machines My base owns on that map (at least 1) and its hours. A
+  `hand` row is a hand-fed machine (the Bricked Blast Furnace): no crafts, `hand_fed_s` per
+  machine the line builds, 300 s (5 minutes) by default, `hand_fed_s:` in `me/prefs.md` (D417).
+- `--json` carries the breakdown under `metrics.effort`: `craft_s`, `hand_fed_s`, `rows` per map
+  (`crafts`, `machines`, `h`, and `recipes`, each `{id, crafts, h}`), `components`, `unlocks`,
+  `uncounted`, `notes`;
   `output_per_effort` ranks by net EU/t / `eff_h` (`rank.eut_per_effort_h`).
 - The dashboard gets the breakdown as a `table` card (`tool: effort_estimate`) from
   `GET /api/plans/{id}/cards` (`effort`), next to the flow and BOM cards.

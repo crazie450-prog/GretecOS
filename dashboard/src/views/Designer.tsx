@@ -1,14 +1,18 @@
-// Designer (plan 7.14: "Compare 2-3 routes, then build one"; plan 7.1, D61, WO-3.7). The routes
-// side by side with their differences marked (the route comparison card), each route's flow
-// diagram (React Flow + elkjs, the flow card's one layout, D159) and machine nodes; pick any node
-// to swap it to another candidate recipe or pin it, and the core solves again; accept one route.
-// Every number is the planner's and the order is rank.py's (the view never sorts routes). The
-// design shown is in the address (#/designer/<plan id>), so a reload shows it again, pins and all;
-// with none, the latest design opens. The approved Designer board (D92) hasn't come through the
-// canvas handoff: built to the design system (D158 (5)), to be reconciled with the board.
+// Designer (plan 7.14: "Compare the routes, then build one", D417 (4); plan 7.1, D61, WO-3.7).
+// The routes side by side with their differences marked (the route comparison card), each route's
+// flow diagram (React Flow + elkjs, the flow card's one layout, D159) and machine nodes; pick any
+// node to swap it to another candidate recipe or pin it, and the core solves again; accept one
+// route. Every number is the planner's and the order is the core's (the view never sorts routes):
+// the base routes in rank.py's order, then the addon, reviewed and simplest routes, as on the card
+// (D417 (3)). The design shown is in the address (#/designer/<plan id>), so a reload shows it
+// again, pins and all; with none, the latest design opens. The approved Designer board (D92)
+// hasn't come through the canvas handoff: built to the design system (D158 (5)), to be reconciled
+// with the board.
 // Designs, re-solves and pins run as design jobs (WO-3.9, D353): the busy panel shows the stage,
 // the time and a Cancel; leaving the view leaves the job running to its saved result (D354).
-// While one runs, design, pin and re-solve wait; accept and rename stay usable (D411 (6)).
+// While one runs, design, pin and re-solve wait; accept and rename stay usable (D411 (6)). During
+// a job without a review they wait for it to save (the planner lock), and their route says so
+// (D417 (5)).
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type {
@@ -40,6 +44,15 @@ const EXPORTS: [string, string][] = [
   ["gtnhplanner", "gtnhplanner.com"],
   ["gtnhflow", "gtnh-flow"],
 ];
+
+const ACCEPTING = "Accepting";
+const RENAMING = "Renaming";
+
+/** Whether a Designer job runs the route reviewer: the core titles it "... · reviewed"
+ * (api/job_routes.designer_work). Its accept and rename wait only while it solves or saves. */
+export function reviewedJob(job: { title: string }): boolean {
+  return job.title.endsWith(" · reviewed");
+}
 
 function message(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
@@ -296,6 +309,9 @@ function RouteColumn(props: {
   names: Map<string, string>; // item key -> name, from every route of the design
   busy: boolean; // a design job or a call is running: re-solve and unpin wait
   acting: boolean; // an accept, a rename or a job's start is under way (D411 (6))
+  // This route's accept or rename, sent while a design job runs, and whether it waits for that
+  // job to finish (a job without a review holds the planner lock until it has saved, D417 (5)).
+  pending: { what: string; waits: boolean } | null;
   picked: string | null;
   onPick: (node: DesignerNode) => void;
   onUnpin: (node: string) => void;
@@ -308,6 +324,12 @@ function RouteColumn(props: {
   const [naming, setNaming] = useState<string | null>(null);
   const byBox = new Map(r.nodes.map((n) => [n.n, n]));
   const accepted = r.status !== "proposed";
+  const pending = props.pending && (
+    <p className="gos-sub" role="status" aria-busy="true" data-testid={`pending-${r.id}`}>
+      {GLYPH.progress} {props.pending.what}
+      {props.pending.waits ? ". Will apply when the design finishes." : ""}
+    </p>
+  );
   return (
     <section className={`gos-panel designer-route${accepted ? " accepted" : ""}`} data-route={r.id} data-testid={`route-${r.position}-${r.column}`}>
       <div className="panel-head">
@@ -348,6 +370,7 @@ function RouteColumn(props: {
           <Button onClick={() => setNaming(null)}>Cancel</Button>
         </form>
       )}
+      {props.pending?.what === RENAMING && pending}
       <div className="designer-cites">
         <Cite cite={`plan:${r.id}`} />
         <span className="gos-src">
@@ -433,6 +456,7 @@ function RouteColumn(props: {
           </a>
         ))}
       </div>
+      {props.pending?.what === ACCEPTING && pending}
       {!accepted &&
         (confirming ? (
           <div className="designer-accept needs" data-testid={`accept-confirm-${r.id}`}>
@@ -554,6 +578,7 @@ export function Designer() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // what the core is doing
+  const [actingOn, setActingOn] = useState<string | null>(null); // the route of an accept or rename
   const [clarify, setClarify] = useState<{ card: ChoicesCard; spec: DesignSpec } | null>(null);
   const [picked, setPicked] = useState<{ route: string; node: DesignerNode } | null>(null);
   const [alts, setAlts] = useState<Alternatives | null>(null);
@@ -649,8 +674,13 @@ export function Designer() {
     );
   };
 
-  const run = async (what: string, call: () => Promise<{ view: DesignerView; problems?: string[] }>): Promise<boolean> => {
+  const run = async (
+    what: string,
+    call: () => Promise<{ view: DesignerView; problems?: string[] }>,
+    route: string | null = null,
+  ): Promise<boolean> => {
     setBusy(what);
+    setActingOn(route);
     const ended = jobsEnded.current;
     const during = runner.job !== null;
     try {
@@ -667,6 +697,7 @@ export function Designer() {
       return false;
     } finally {
       setBusy(null);
+      setActingOn(null);
     }
   };
 
@@ -737,7 +768,7 @@ export function Designer() {
     <div className="view-designer" data-testid="view-designer">
       <div className="view-head">
         <h1 className="page-title">Designer</h1>
-        <p className="lede">Compare 2-3 routes, then build one. Ranked by code; pick any machine to swap or pin it.</p>
+        <p className="lede">Compare the routes, then build one. Ranked by code; pick any machine to swap or pin it.</p>
       </div>
       <div className="designer-top">
         <DesignForm busy={working} onDesign={design} />
@@ -807,11 +838,14 @@ export function Designer() {
                 names={names}
                 busy={working}
                 acting={busy !== null}
+                pending={
+                  runner.job && busy && actingOn === r.id ? { what: busy, waits: !reviewedJob(runner.job) } : null
+                }
                 picked={picked?.route === r.id ? picked.node.n : null}
                 onPick={(n) => pick(r.id, n)}
                 onUnpin={(node) => startJob({ pin: { plan: r.id, node, recipe: null } })}
-                onAccept={() => void run("Accepting", () => api.accept(r.id))}
-                onRename={(name) => void run("Renaming", () => api.rename(r.id, name))}
+                onAccept={() => void run(ACCEPTING, () => api.accept(r.id), r.id)}
+                onRename={(name) => void run(RENAMING, () => api.rename(r.id, name), r.id)}
                 onResolve={() => startJob({ resolve: r.id })}
               />
             ))}

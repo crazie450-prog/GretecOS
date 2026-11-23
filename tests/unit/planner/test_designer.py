@@ -469,8 +469,12 @@ def test_comparison_holds_the_addon_column() -> None:
     assert any("simplest route" in n for n in both["notes"])
     one = designer.comparison_card([plans[0], simplest, plans[3]], books, {}, "w")
     assert [r["id"] for r in one["routes"]] == ["pl-a", "pl-d", "pl-e"]
-    keys = sorted([plans[3], simplest, plans[1], plans[0]], key=designer._order_key)
-    assert [x["id"] for x in keys] == ["pl-a", "pl-b", "pl-e", "pl-d"]
+    # D417 (3): the route list has the card's order, base, then addon, reviewed, simplest
+    reviewed = p("pl-f", 1, "reviewed", "r:m/ffffffffffff")
+    keys = sorted(
+        [simplest, plans[3], reviewed, plans[1], plans[0]], key=designer._order_key
+    )
+    assert [x["id"] for x in keys] == ["pl-a", "pl-b", "pl-d", "pl-f", "pl-e"]
     # a base route that is also the simplest stays one base column, marked
     also = {**plans[0], "route": {"simplest": True}}
     marked = designer.comparison_card([also, *plans[1:3]], books, {}, "w")

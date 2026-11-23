@@ -908,7 +908,7 @@ One shell with two modes. GTNH captures the mouse, so the dashboard has to work 
 |---|---|---|
 | **Now** (home) | Ranked by context (D55): alerts first when something's wrong, the last answer right after a question, otherwise the advisor's next steps, power net and running jobs | One click from a step to its plan or quest |
 | Chat | Conversation as cards | Re-open any past card full size |
-| Designer | Compare 2–3 routes, then build one | Side-by-side route cards with differences highlighted; swap or pin any node; accept |
+| Designer | Compare the routes, then build one (up to 6 since D411 (4), D417 (4)) | Side-by-side route cards with differences highlighted; swap or pin any node; accept |
 | Power | Am I in deficit, at which tier? | Generation vs use per tier; click a line to see its draw |
 | Base + My base | What's broken? What do I have? | Stalled machines first; pending actions; tier, owned machines and stock (WO-3.8) |
 | Activity | What happened this session? | Session timeline; jump to journal |

@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from gregtec.planner import rank, validate
+from gregtec.planner import effort, rank, validate
 
 Writer = Callable[[str], str]
 
@@ -77,6 +77,8 @@ def _metrics(m: Mapping[str, Any]) -> dict[str, Any]:
             for r in m["effort"]["rows"]
         ],
     }
+    if m.get("hand_h"):  # the configured time per hand-fed machine (D417 (1))
+        out["hand_fed_s"] = float(m["effort"].get("hand_fed_s", effort.HAND_FED_S))
     if "batch" in m:
         out["batch"] = m["batch"]
     return out
@@ -173,7 +175,7 @@ def template(doc: Mapping[str, Any]) -> str:
             + (
                 f", by hand {fmt(m['hand_h'])} h for "
                 f"{fmt(sum(e['machines'] for e in m['effort'] if e['part'] == 'hand'))}"
-                " hand-fed machines"
+                f" hand-fed machines at {fmt(m['hand_fed_s'] / 60)} min each"
                 if m.get("hand_h")
                 else ""
             )

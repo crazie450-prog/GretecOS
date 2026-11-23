@@ -343,7 +343,15 @@ def test_the_effort_tools_on_a_plan_with_the_largest_structure(home: Path) -> No
         **{k: eff[k] for k in ("eff_h", "build_h", "unlock_h")},
         "effort": {
             k: eff[k]
-            for k in ("craft_s", "rows", "components", "unlocks", "uncounted", "notes")
+            for k in (
+                "craft_s",
+                "hand_fed_s",
+                "rows",
+                "components",
+                "unlocks",
+                "uncounted",
+                "notes",
+            )
         },
     }
     (home / "data" / "plans" / "pl-real-forge.json").write_text(

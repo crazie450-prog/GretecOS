@@ -31,9 +31,12 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
 
 - **Hand feeding** (``hand_h``, D404 (4), D411 (1)): a machine fed and emptied by hand, no pipe
   or hopper (the Bricked Blast Furnace, ``hand_fed`` on its plan node), costs the route a fixed
-  :data:`HAND_FED_S` (5 minutes) per machine of it the route builds (the node's ``count``),
-  whatever the batch or the rate. It is in ``eff_h``, so rank.py's effort term puts a hand-fed
-  route below an otherwise equal automatable one.
+  ``hand_fed_s`` per machine of it the route builds (the node's ``count``), whatever the batch
+  or the rate: :data:`HAND_FED_S` (5 minutes) by default, ``hand_fed_s`` in ``me/prefs.md``
+  (D417 (1)). It is in ``eff_h``, so rank.py's effort term puts a hand-fed route below an
+  otherwise equal automatable one. A plan saved before the setting existed (its ``effort``
+  has no ``hand_fed_s``) gets its hand rows again when it is read back (:func:`rescore`,
+  D417 (2)).
 
 The result's ``rows`` are the breakdown table: per part (``build``, ``unlock`` or ``hand``) and recipe map
 (``crafting`` for hand steps), the crafts, the machines it is spread over, the hours and the
@@ -46,6 +49,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sqlite3
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -60,7 +64,12 @@ UNLOCK_DEPTH = 3  # §7.2: unlock recursion depth
 # how deep make() follows items a component's flow imports through a gate
 GATE_DEPTH = 3
 HAND = "crafting"  # the breakdown's map name for crafting-table and furnace steps
-HAND_FED_S = 300.0  # D411 (1): effort per hand-fed machine the route builds (5 minutes)
+HAND_FED_S = 300.0  # D411 (1), D417 (1): default per hand-fed machine (5 minutes)
+HAND_NOTE = "fed and emptied by hand (no pipe or hopper):"  # the effort note's start
+HAND_WARNING = re.compile(  # the plan warning's (D405's and D412's words too)
+    r"(mte:\d+ \(.*\) is fed and emptied by hand, no pipe or hopper \(.*\)); "
+    r"the route's effort counts .*"
+)
 
 
 @dataclass
@@ -304,6 +313,7 @@ class Effort:
         tier_cap: int,
         *,
         craft_s: float = CRAFT_S,
+        hand_fed_s: float = HAND_FED_S,
         templates: chains.Templates | None = None,
         run_id: int | None = None,
     ) -> None:
@@ -312,6 +322,7 @@ class Effort:
         self.base = base
         self.tier_cap = tier_cap
         self.craft_s = craft_s
+        self.hand_fed_s = hand_fed_s
         self.templates = templates
         self.run_id = run_id
         self._solved: dict[str, _Solved | None] = {}
@@ -539,12 +550,9 @@ class Effort:
                 f"not counted, imported through a gate more than {GATE_DEPTH} levels down "
                 f"or in a loop ({len(deep)}): " + ", ".join(deep)
             )
-        hand = hand_rows(plan)
+        hand = hand_rows(plan, self.hand_fed_s)
         if hand:
-            notes.append(
-                f"fed and emptied by hand (no pipe or hopper): each such machine counts"
-                f" {duration(HAND_FED_S / 3600.0)} (D411 (1))"
-            )
+            notes.append(hand_note(self.hand_fed_s))
         rows = self._rows("build", build) + self._rows("unlock", unlock) + hand
         uncounted = skipped + extra_uncounted + len(missing) + len(deep)
         build_h = math.fsum(r["h"] for r in rows if r["part"] == "build")
@@ -556,6 +564,7 @@ class Effort:
             "unlock_h": unlock_h,
             "hand_h": hand_h,
             "craft_s": self.craft_s,
+            "hand_fed_s": self.hand_fed_s,
             "rows": rows,
             "components": [
                 {"id": c.key, "qty": c.qty, "for": f"mte:{c.of}", "part": c.part}
@@ -567,10 +576,12 @@ class Effort:
         }
 
 
-def hand_rows(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """The ``hand`` rows of a route's breakdown (D411 (1)): per map a hand-fed machine runs,
-    the machines the route builds for it (its nodes' ``count``), :data:`HAND_FED_S` each; no
-    crafts, so neither the batch nor the rate changes it."""
+def hand_rows(
+    plan: Mapping[str, Any], hand_fed_s: float = HAND_FED_S
+) -> list[dict[str, Any]]:
+    """The ``hand`` rows of a route's breakdown (D411 (1), D417 (1)): per map a hand-fed
+    machine runs, the machines the route builds for it (its nodes' ``count``), ``hand_fed_s``
+    each; no crafts, so neither the batch nor the rate changes it."""
     by_map: dict[str, dict[str, Any]] = {}
     fed = [n for n in plan["nodes"] if (n.get("machine") or {}).get("hand_fed")]
     for n in sorted(fed, key=lambda n: str(n["recipe"])):
@@ -582,13 +593,73 @@ def hand_rows(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
             {"part": "hand", "map": str(n["map"]), "mte": n["machine"]["mte"], "crafts": 0,
              "machines": 0, "h": 0.0, "recipes": []},
         )  # fmt: skip
-        h = count * HAND_FED_S / 3600.0
+        h = count * hand_fed_s / 3600.0
         row["machines"] += count
         row["h"] += h
         row["recipes"].append(
             {"id": n["recipe"], "crafts": 0, "machines": count, "h": h}
         )
     return [by_map[k] for k in sorted(by_map)]
+
+
+def hand_note(hand_fed_s: float) -> str:
+    """The effort note of a route with hand-fed machines."""
+    return f"{HAND_NOTE} each such machine counts {duration(hand_fed_s / 3600.0)} (D417 (1))"
+
+
+def hand_warning(mte: int, name: str, pids: Sequence[str], hand_fed_s: float) -> str:
+    """The plan's warning for one hand-fed machine and the recipes it runs."""
+    return (
+        f"mte:{mte} ({name}) is fed and emptied by hand, no pipe or hopper"
+        f" ({', '.join(pids)})" + _counts(hand_fed_s)
+    )
+
+
+def _counts(hand_fed_s: float) -> str:
+    return f"; the route's effort counts {duration(hand_fed_s / 3600.0)} per machine (D417 (1))"
+
+
+def stale(plan: Mapping[str, Any]) -> bool:
+    """Whether a saved production plan's hand effort predates the ``hand_fed_s`` setting
+    (D417 (2)): its breakdown stores no ``hand_fed_s`` and it has a hand-fed machine or a
+    ``hand`` row (D405's rows counted crafts on one machine, D412's a fixed 5 minutes)."""
+    eff = (plan.get("metrics") or {}).get("effort")
+    if plan.get("kind") != "production" or not eff or "hand_fed_s" in eff:
+        return False
+    return any((n.get("machine") or {}).get("hand_fed") for n in plan["nodes"]) or any(
+        r["part"] == "hand" for r in eff["rows"]
+    )
+
+
+def rescore(plan: Mapping[str, Any], hand_fed_s: float) -> dict[str, Any]:
+    """A :func:`stale` plan with its hand rows made again from its nodes at ``hand_fed_s``,
+    and ``hand_h``, ``eff_h``, the effort note and the plan warning to match (D417 (2)). Only
+    the hand part moves: the build and unlock rows need the DB and stay as solved, and so
+    does the stored ``rank``."""
+    m = plan["metrics"]
+    eff = m["effort"]
+    hand = hand_rows(plan, hand_fed_s)
+    hand_h = math.fsum(r["h"] for r in hand)
+    notes = [n for n in eff["notes"] if not str(n).startswith(HAND_NOTE)]
+    if hand:
+        notes.append(hand_note(hand_fed_s))
+    warnings = []
+    for w in plan.get("warnings") or ():
+        found = HAND_WARNING.fullmatch(str(w))
+        warnings.append(found[1] + _counts(hand_fed_s) if found else w)
+    effort = {
+        **eff,
+        "hand_fed_s": hand_fed_s,
+        "rows": [r for r in eff["rows"] if r["part"] != "hand"] + hand,
+        "notes": notes,
+    }
+    metrics = {
+        **m,
+        "eff_h": float(m["build_h"]) + float(m["unlock_h"]) + hand_h,
+        "hand_h": hand_h,
+        "effort": effort,
+    }
+    return {**plan, "metrics": metrics, "warnings": warnings}
 
 
 COLUMNS = ("part", "map", "machine", "recipe", "crafts", "machines", "hours")

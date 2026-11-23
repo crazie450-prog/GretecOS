@@ -667,9 +667,16 @@ def test_output_per_effort_ranks_by_net_eut_per_effort_hour(
     # With a crafting-table step of 60 s instead of 2 s (me/prefs.md's craft_s), the hand
     # steps weigh more and the effort changes accordingly.
     slow = design(
-        conn, no_farms, OWNED_FEW, rank.parse_prefs("craft_s: 60\n"), fuels=(tg.GAS,)
+        conn,
+        no_farms,
+        OWNED_FEW,
+        rank.parse_prefs("craft_s: 60\nhand_fed_s: 120\n"),
+        fuels=(tg.GAS,),
     )
+    assert {p["metrics"]["effort"]["hand_fed_s"] for p in d.options} == {300}
     for p in slow.options:
+        # D417 (1): power.design carries me/prefs.md's hand_fed_s to the effort model too.
+        assert p["metrics"]["effort"]["hand_fed_s"] == 120
         fast = next(q for q in d.options if q["id"] == p["id"])
         hand = sum(
             r["crafts"]

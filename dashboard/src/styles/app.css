@@ -249,7 +249,9 @@ td.num {
 }
 
 .shell-rail .quote,
-.shell-rail .job-title {
+.shell-rail .job-title,
+.shell-rail .job-design .gos-btn {
+  /* a running job's Cancel sits on the rail, not a panel (D417 (5)'s contrast check) */
   color: var(--shell-text);
 }
 
