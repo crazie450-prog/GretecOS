@@ -633,7 +633,7 @@ def heuristic(
     """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
     recycling, GT's container maps and EU-less recipes last (D142 (2), D189); then the reverse
     of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
-    up, ``made_from``, D189); avoid chanced-only; lower tier; ``item`` as the recipe's main
+    up, ``made_from``, D189; the builder adds the request's target, WO-3.10); avoid chanced-only; lower tier; ``item`` as the recipe's main
     product (first output) before a byproduct route; recipes that use fluid cells after those
     that don't (D189); fewer inputs; base machine first (D12); machine before manual; unbadged
     first (D142 (a)); then the key. All but the last four are known before the machine check
@@ -909,8 +909,12 @@ class _Builder:
                 rejected.append(
                     Candidate(self.reader.recipes[rid].ref, "rejected", c.reason)
                 )
+        # Every node of the graph is an input, at some depth, of the request's target, so a
+        # recipe that uses the target up to make one is a loop back to the target, never a
+        # source of it (steel nuggets from the steel ingot asked for, WO-3.10).
+        target = frozenset({self.req.target} - {key})
         uses = self.uses[key] = (
-            self.reader.made_from(key) - self.boundary.keys()
+            (self.reader.made_from(key) | target) - self.boundary.keys()
             if len(passed) > 1
             else frozenset()
         )
