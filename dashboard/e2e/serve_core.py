@@ -12,7 +12,8 @@ What the dashboard reads from the desktop comes from files the tests write in ``
 (a JSON list of running GTNH roles, default none), ``key`` (``missing``: no Anthropic key, so
 "AI offline") and ``design_delay`` (seconds each design stage waits before it goes on, so the
 design-job tests (WO-3.9) can watch the stages and cancel on these small made-up exports, which
-design in well under a second); the core polls them every second. Test-only: production code never reads these
+design in well under a second) and ``review_delay`` (seconds a reviewed design's review waits,
+outside the planner lock, D411 (6)); the core polls them every second. Test-only: production code never reads these
 files. Its gos.toml marks setup done, so the shell shows.
 
 Ores (WO-6.6, :func:`load_ores`): WO-1.6's made-up ore mixes and Lab world (tests/unit/test_ores.py)
@@ -58,8 +59,9 @@ import json
 import shutil
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 DASHBOARD_HOST = "gos-e2e.localhost"
@@ -544,6 +546,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         real_stage(name, k, n)
 
     progress.stage = slow_stage
+    # ``review_delay``: a reviewed design's review (no key here: the reviewer skips at once)
+    # waits that many seconds first, outside the planner lock as a model call does (D409), so
+    # the Designer's accept and rename can be watched going ahead meanwhile (D411 (6)).
+    from gregtec.api import plan_routes
+
+    real_reviewer_for = plan_routes.reviewer_for
+
+    def slow_reviewer_for(core: Any) -> Callable[[], Any]:  # noqa: ANN401
+        made = real_reviewer_for(core)
+
+        class SlowReviewer:
+            def __init__(self) -> None:
+                self.inner = made()
+
+            def run(self, *a: Any, **kw: Any) -> Any:  # noqa: ANN401
+                delay = float(_read(controls / "review_delay") or 0)
+                if delay > 0:
+                    real_stage("review", 1, 1)
+                    end = time.monotonic() + delay
+                    while time.monotonic() < end:
+                        time.sleep(0.05)
+                        progress.check()
+                return self.inner.run(*a, **kw)
+
+        return SlowReviewer
+
+    plan_routes.reviewer_for = slow_reviewer_for
     if not args.fresh:  # --fresh: the real check, against the file keyring
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).

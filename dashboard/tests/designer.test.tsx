@@ -497,6 +497,60 @@ describe("the Designer view", () => {
     expect((await screen.findByText(/core restarted/)).textContent).toContain("start it again");
   });
 
+  it("keeps accept and rename usable while a design job runs, and keeps them when it ends (D411 (6))", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    const second = "pl-aaaaaaaaaa";
+    let latest = FIRST; // what the core holds now
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: latest });
+    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job() } });
+    let polled = job({ stage: "solve", k: 1, n: 3 });
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: polled } });
+    routes[`POST /api/plans/${FIRST.id}/accept`] = () => {
+      latest = view(FIRST.id, [route(FIRST.id, 1, { status: "accepted" }), latest.routes[1]]);
+      return {
+        status: 200,
+        body: { id: FIRST.id, status: "accepted", line: "base/lines/ln-bbbbbbbbbb.md", note: null, ledger: { recorded: false, note: "" }, problems: [], view: latest },
+      };
+    };
+    routes[`POST /api/plans/${second}/name`] = () => {
+      latest = view(FIRST.id, [latest.routes[0], route(second, 2, { name: "Steel for the wall" })]);
+      return { status: 200, body: { view: latest } };
+    };
+    render(<Designer />);
+    await screen.findByTestId("route-1-base");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-resolve"));
+    });
+    await screen.findByText(/Solving route 1 of 3/);
+    const disabled = (id: string): boolean => (screen.getByTestId(id) as HTMLButtonElement).disabled;
+    // design, pin and re-solve wait for the job; accept and rename don't
+    expect(disabled("designer-go")).toBe(true);
+    expect(disabled("designer-resolve")).toBe(true);
+    expect(disabled(`accept-${FIRST.id}`)).toBe(false);
+    expect(disabled(`rename-${second}`)).toBe(false);
+    fireEvent.click(screen.getByTestId(`accept-${FIRST.id}`));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`accept-yes-${FIRST.id}`));
+    });
+    expect(screen.getByTestId("route-1-base").textContent).toContain("accepted");
+    fireEvent.click(screen.getByTestId(`rename-${second}`));
+    fireEvent.change(screen.getByTestId(`rename-input-${second}`), { target: { value: "Steel for the wall" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`rename-save-${second}`));
+    });
+    expect(screen.getByTestId("route-2-base").textContent).toContain("Steel for the wall");
+    expect(screen.getByTestId("designer-busy")).not.toBeNull(); // the job still runs
+    // The job ends with the view it built before the accept and the rename: the Designer reads
+    // the design again rather than show its stale statuses and names.
+    polled = job({ status: "done", result: { ids: [FIRST.id, second], problems: [], view: FIRST } });
+    await screen.findByTestId("designer-go", {}, { timeout: 3000 });
+    await vi.waitFor(() => expect(screen.queryByTestId("designer-busy")).toBeNull(), { timeout: 3000 });
+    await vi.waitFor(() => expect(screen.getByTestId("route-1-base").textContent).toContain("accepted"));
+    expect(screen.getByTestId("route-2-base").textContent).toContain("Steel for the wall");
+    expect(screen.queryByTestId(`accept-${FIRST.id}`)).toBeNull();
+    expect(disabled("designer-resolve")).toBe(false);
+  });
+
   it("says when another design is already running", async () => {
     routes["POST /api/designer/jobs"] = () => ({
       status: 409,

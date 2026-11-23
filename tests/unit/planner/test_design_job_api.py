@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from gregtec.agents import route_review as rr
+from gregtec.api import plan_routes
 from gregtec.db import access
 from gregtec.planner import chains, designer, powerview, progress
 from gregtec.planner import design_jobs as dj
@@ -218,6 +220,85 @@ def test_the_designer_job_api(
                 free.set()
             assert statistics.median(pairs) < 2.0, pairs
             assert _ended(c, jid)["status"] == dj.DONE
+    finally:
+        core.store.close()
+
+
+class HeldReviewer:
+    """A fake route reviewer (no model) whose "model call" waits until the test lets it go,
+    hearing a cancel as the real one does; it changes nothing."""
+
+    def __init__(self) -> None:
+        self.waiting = threading.Event()
+        self.go = threading.Event()
+
+    def run(self, *_: Any) -> rr.Outcome:  # noqa: ANN401
+        progress.stage("review", 1, 8)
+        self.waiting.set()
+        while not self.go.wait(0.05):
+            progress.check()
+        return rr.Outcome({"id": "rv-0123456789", "status": "done"}, None)
+
+
+def test_accept_and_rename_go_ahead_while_a_reviewed_design_job_runs(
+    plan_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D411 (6): the Designer view keeps accept and rename usable during a design job, so
+    the API must answer them while one (a reviewed one) runs; a second design, re-solve or pin
+    job is still a 409 (D353). The job re-saves the same plans (the same spec): its result
+    keeps the accepted status and the new name, not the ones it started with."""
+    from fastapi.testclient import TestClient
+
+    from gregtec.api.app import create_app
+
+    home = _home(plan_db, tmp_path / "home")
+    rv = HeldReviewer()
+    monkeypatch.setattr(plan_routes, "reviewer_for", lambda core: lambda: rv)
+    core = _core(home)
+    try:
+        with TestClient(create_app(core), base_url="http://gos.localhost:8765") as c:
+            spec = {"target": tp.WIDGET, "rate": "2/s", "tier": "MV"}
+            first = c.post("/api/designer/design", json=spec, headers=ADMIN_H).json()
+            ids = first["ids"]
+            body = {"spec": {**spec, "review": True}}
+            started = c.post("/api/designer/jobs", json=body, headers=ADMIN_H)
+            assert started.status_code == 200, started.text
+            jid = started.json()["job"]["id"]
+            assert rv.waiting.wait(120)
+            for other in (
+                body,
+                {"resolve": ids[0]},
+                {"pin": {"plan": ids[0], "node": tp.WIDGET, "recipe": None}},
+            ):
+                busy = c.post("/api/designer/jobs", json=other, headers=ADMIN_H)
+                assert busy.status_code == 409, (other, busy.text)
+            took = c.post(f"/api/plans/{ids[0]}/accept", headers=ADMIN_H)
+            assert took.status_code == 200, took.text
+            assert took.json()["status"] == "accepted"
+            named = c.post(
+                f"/api/plans/{ids[0]}/name",
+                json={"name": "Widget line"},
+                headers=ADMIN_H,
+            )
+            assert named.status_code == 200, named.text
+            row = named.json()["view"]["routes"][0]
+            assert (row["id"], row["name"], row["status"]) == (
+                ids[0],
+                "Widget line",
+                "accepted",
+            )
+            job = c.get(f"/api/design-jobs/{jid}", headers=ADMIN_H).json()["job"]
+            assert job["status"] == dj.RUNNING  # both answered while it ran
+            rv.go.set()
+            done = _ended(c, jid)
+            assert done["status"] == dj.DONE, done["error"]
+            assert done["result"]["ids"] == ids
+            top = done["result"]["view"]["routes"][0]
+            assert (top["id"], top["name"], top["status"]) == (
+                ids[0],
+                "Widget line",
+                "accepted",
+            )
     finally:
         core.store.close()
 
