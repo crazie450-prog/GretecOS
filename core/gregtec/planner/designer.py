@@ -2,13 +2,14 @@
 
 What the dashboard's Designer view, the line-designer skill's tools and ``gos plan`` share. Every
 number is the planner's (:mod:`.plan`, ranked by :mod:`.rank`); nothing here computes one, and
-the routes keep the order rank.py gives them.
+the base routes keep the order rank.py gives them (the extra columns follow, D417 (3)).
 
 - :func:`design`: solve a request, rank the routes and save each one (WO-3.6's
   :func:`gregtec.planner.outputs.store.save`: JSON, exports, the ``plan`` row, the vault note).
   The design's ids, in rank order, become the Designer's latest design
   (``data/plans/designer.json``), which the view opens with when its address names none.
-- :func:`group`: a saved plan and its alternatives (the routes solved with it), in rank order.
+- :func:`group`: a saved plan and its alternatives (the routes solved with it): the base routes
+  in rank order, then the addon, reviewed and simplest columns, as the comparison card has them.
 - :func:`view`: what the Designer shows for a group: each route's summary (nodes with their
   item, machine, tier, count, pin and primary flags; ``affected``, the export run that flagged
   the plan "affected by update" and the cites it hit, QA:D9, WO-11.1), the route comparison card with its
@@ -410,7 +411,8 @@ def latest(home: Path) -> list[str]:
 # --- what the view shows -----------------------------------------------------------------------
 
 
-_COLUMN_ORDER = {"base": 0, "simplest": 1, "addon": 2, "reviewed": 3}
+# The comparison card's order (D417 (3)): the base routes, then addon, reviewed and simplest.
+_COLUMN_ORDER = {"base": 0, "addon": 1, "reviewed": 2, "simplest": 3}
 
 
 def _order_key(p: Mapping[str, Any]) -> tuple[int, int, str]:
@@ -424,7 +426,8 @@ def _order_key(p: Mapping[str, Any]) -> tuple[int, int, str]:
 
 def group(home: Path, pid: str) -> list[dict[str, Any]]:
     """``pid`` and the routes solved with it (its ``alternatives``) that are still saved, in
-    rank order (the base routes by position, then the simplest, addon and reviewed columns)."""
+    the comparison card's order (D417 (3)): the base routes by rank.py's position, then the
+    addon, reviewed and simplest columns."""
     first = load(home, pid)
     plans = [first]
     for other in first.get("alternatives") or ():

@@ -84,7 +84,8 @@ function jobAnswers(result: unknown): void {
 
 type Call = { method: string; url: string; body: unknown };
 let calls: Call[];
-let routes: Record<string, () => { status: number; body: unknown }>;
+type Answer = { status: number; body: unknown };
+let routes: Record<string, () => Answer | Promise<Answer>>;
 
 beforeEach(() => {
   calls = [];
@@ -112,7 +113,7 @@ beforeEach(() => {
     calls.push({ method, url, body: init.body ? JSON.parse(String(init.body)) : undefined });
     const path = url.split("?")[0];
     const answer = routes[`${method} ${path}`] ?? (() => ({ status: 404, body: { error: `no route ${method} ${path}` } }));
-    const { status, body } = answer();
+    const { status, body } = await answer();
     return new Response(JSON.stringify(body), { status });
   });
 });
@@ -233,6 +234,8 @@ describe("the Designer view", () => {
     expect(screen.getByTestId("designer-compare").querySelector("li.differs")?.textContent).toContain("differs");
     expect(window.location.hash).toBe(`#/designer/${FIRST.id}`);
     expect(screen.getByTestId("designer-weights").textContent).toContain("balanced");
+    // The lede fits up to 6 routes (D417 (4)), not plan 7.14's old "2-3 routes".
+    expect(screen.getByTestId("view-designer").querySelector(".lede")?.textContent).toContain("Compare the routes, then build one.");
     // A multi with a footprint opens in the Build view's 3D guide (WO-10.8); others have no link.
     const link = await screen.findByTestId(`guide-link-${FIRST.routes[0].id}-n1`);
     expect(link.getAttribute("href")).toBe("#/build?guide=gregtech%3Agt.blockmachines%401000");
@@ -549,6 +552,91 @@ describe("the Designer view", () => {
     expect(screen.getByTestId("route-2-base").textContent).toContain("Steel for the wall");
     expect(screen.queryByTestId(`accept-${FIRST.id}`)).toBeNull();
     expect(disabled("designer-resolve")).toBe(false);
+  });
+
+  it("says on the route that an accept or rename waits for a design without a review (D417 (5))", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    const second = "pl-aaaaaaaaaa";
+    let latest = FIRST; // what the core holds now
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: latest });
+    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job() } });
+    let polled = job({ stage: "solve", k: 1, n: 3 });
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({ status: 200, body: { job: polled } });
+    // The core holds the accept until the job lets go of the planner lock.
+    let release: () => void = () => {};
+    const accepted = view(FIRST.id, [route(FIRST.id, 1, { status: "accepted" }), FIRST.routes[1]]);
+    routes[`POST /api/plans/${FIRST.id}/accept`] = () =>
+      new Promise((done) => {
+        release = () => {
+          latest = accepted;
+          done({
+            status: 200,
+            body: { id: FIRST.id, status: "accepted", line: "base/lines/ln-bbbbbbbbbb.md", note: null, ledger: { recorded: false, note: "" }, problems: [], view: accepted },
+          });
+        };
+      });
+    render(<Designer />);
+    await screen.findByTestId("route-1-base");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-resolve"));
+    });
+    await screen.findByText(/Solving route 1 of 3/);
+    fireEvent.click(screen.getByTestId(`accept-${FIRST.id}`));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`accept-yes-${FIRST.id}`));
+    });
+    // The note is in the route he clicked, beside the job's progress panel; no other route has one.
+    const note = await screen.findByTestId(`pending-${FIRST.id}`);
+    expect(note.textContent).toContain("Accepting. Will apply when the design finishes.");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(screen.getByTestId("route-1-base").contains(note)).toBe(true);
+    expect(screen.queryByTestId(`pending-${second}`)).toBeNull();
+    expect(screen.getByTestId("designer-busy")).not.toBeNull(); // the job's panel stays
+    // The job saves and lets go of the lock: the accept answers and the note goes.
+    polled = job({ status: "done", result: { ids: [FIRST.id, second], problems: [], view: FIRST } });
+    await vi.waitFor(() => expect(screen.queryByTestId("designer-job-stage")).toBeNull(), { timeout: 3000 });
+    await act(async () => {
+      release();
+    });
+    await vi.waitFor(() => expect(screen.queryByTestId("designer-busy")).toBeNull());
+    expect(screen.queryByTestId(`pending-${FIRST.id}`)).toBeNull();
+    await vi.waitFor(() => expect(screen.getByTestId("route-1-base").textContent).toContain("accepted"));
+  });
+
+  it("says only what is under way during a reviewed design, which lets it go ahead (D411 (6))", async () => {
+    window.location.hash = `/designer/${FIRST.id}`;
+    const second = "pl-aaaaaaaaaa";
+    routes[`GET /api/plans/${FIRST.id}/designer`] = () => ({ status: 200, body: FIRST });
+    routes["POST /api/designer/jobs"] = () => ({ status: 200, body: { job: job({ title: "Designer: steel ingot · HV · reviewed" }) } });
+    routes[`GET /api/design-jobs/${JOB}`] = () => ({
+      status: 200,
+      body: { job: job({ title: "Designer: steel ingot · HV · reviewed", stage: "review", k: 1, n: 1 }) },
+    });
+    let release: () => void = () => {};
+    routes[`POST /api/plans/${second}/name`] = () =>
+      new Promise((done) => {
+        release = () => done({ status: 200, body: { view: view(FIRST.id, [FIRST.routes[0], route(second, 2, { name: "Steel for the wall" })]) } });
+      });
+    render(<Designer />);
+    await screen.findByTestId("route-1-base");
+    fireEvent.change(screen.getByTestId("designer-target"), { target: { value: "steel ingot" } });
+    await act(async () => {
+      fireEvent.submit(screen.getByTestId("designer-target").closest("form") as HTMLFormElement);
+    });
+    await screen.findByTestId("designer-job-stage");
+    fireEvent.click(screen.getByTestId(`rename-${second}`));
+    fireEvent.change(screen.getByTestId(`rename-input-${second}`), { target: { value: "Steel for the wall" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`rename-save-${second}`));
+    });
+    const note = await screen.findByTestId(`pending-${second}`);
+    expect(note.textContent).toContain("Renaming");
+    expect(note.textContent).not.toContain("Will apply");
+    await act(async () => {
+      release();
+    });
+    await vi.waitFor(() => expect(screen.queryByTestId(`pending-${second}`)).toBeNull());
+    expect(screen.getByTestId("route-2-base").textContent).toContain("Steel for the wall");
   });
 
   it("says when another design is already running", async () => {

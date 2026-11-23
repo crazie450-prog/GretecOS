@@ -6,14 +6,16 @@
 // (`design_delay`, a harness control) long enough to watch it. Needs Clayton's board approval
 // (D92): the job panel is built to the design system's busy state.
 // Accept and rename go ahead while a reviewed design runs (D411 (6)): `review_delay` holds its
-// review outside the planner lock, as a model call does (D409).
+// review outside the planner lock, as a model call does (D409). During a design without a review
+// they wait for the planner lock until it has saved, and the route says so (D417 (5)):
+// `design_delay` holds that design's stages inside the lock.
 // Named to run after power.spec.ts (files run in name order): its power designs leave a latest
 // design on the power core, whose empty ledger power.spec.ts checks first.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page, expect, test } from "@playwright/test";
 import type { DesignerView } from "../src/api/types";
-import { HOME, asAdmin, clipped, control, pair } from "./harness";
+import { HOME, asAdmin, clipped, control, pair, themeMisses } from "./harness";
 import { POWER_BASE, POWER_HOME, powerAdmin, powerCode } from "./power";
 
 const shot = (name: string) => test.info().outputPath(`${name}.png`);
@@ -166,6 +168,46 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       const core = await asAdmin<DesignerView>(`/api/plans/${pid}/designer`);
       expect(core.routes.find((r) => r.id === pid)?.name).toBe(name);
       expect(core.routes.find((r) => r.id === take)?.status).toBe("accepted");
+    });
+
+    test("a rename during a design without a review says it will apply when the design finishes (D417 (5))", async () => {
+      control("review_delay", "0");
+      control("design_delay", "3"); // each stage waits inside the planner lock
+      await page.goto("/#/designer");
+      await expect(page.getByTestId("route-1-base")).toBeVisible({ timeout: 10_000 });
+      const pid = (await page.getByTestId("route-1-base").getAttribute("data-route")) ?? "";
+      expect(pid).toMatch(/^pl-/);
+      await page.getByTestId("designer-target").fill("steel ingot");
+      await page.getByTestId("designer-tier").selectOption("HV");
+      await page.getByTestId("designer-review").uncheck(); // the last test ticked it
+      await page.getByTestId("designer-go").click();
+      const stage = page.getByTestId("designer-job-stage");
+      await expect(stage).toBeVisible({ timeout: 1000 });
+      const name = `Steel after the design (${size})`;
+      await page.getByTestId(`rename-${pid}`).click();
+      await page.getByTestId(`rename-input-${pid}`).fill(name);
+      await page.getByTestId(`rename-save-${pid}`).click();
+      // The rename waits for the job's lock: its route says so, beside the job's own panel.
+      const note = page.getByTestId(`pending-${pid}`);
+      await expect(note).toHaveText(/Renaming\. Will apply when the design finishes\./);
+      await expect(page.locator(`.designer-route[data-route="${pid}"]`).getByTestId(`pending-${pid}`)).toBeVisible();
+      await expect(stage).toBeVisible();
+      expect((await asAdmin<Jobs>("/api/design-jobs")).running).toHaveLength(1);
+      await note.scrollIntoViewIfNeeded();
+      expect(await themeMisses(page)).toEqual({});
+      if (size === "phone") {
+        expect((await clipped(page)).filter((c) => !c.startsWith("react-flow"))).toEqual([]);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+      }
+      await page.screenshot({ path: shot(`designer-rename-waits-${size}`), fullPage: true });
+      // The design saves, the rename applies after it, and the note goes.
+      await expect(page.getByTestId("designer-busy")).toHaveCount(0, { timeout: 60_000 });
+      await expect(note).toHaveCount(0);
+      expect((await asAdmin<Jobs>("/api/design-jobs")).latest.designer.status).toBe("done");
+      const title = page.locator(`.designer-route[data-route="${pid}"] .gos-title`);
+      await expect(title).toHaveText(name);
+      const core = await asAdmin<DesignerView>(`/api/plans/${pid}/designer`);
+      expect(core.routes.find((r) => r.id === pid)?.name).toBe(name);
     });
   });
 }
