@@ -91,6 +91,13 @@ def _fact(v: object) -> str:
     return " ".join(str(v).split())
 
 
+def _changes(review: Mapping[str, Any]) -> str:
+    applied = review.get("applied") or {}
+    parts = [f"excluded {x}" for x in applied.get("exclude") or ()]
+    parts += [f"pinned {p['node']} to {p['recipe']}" for p in applied.get("pins") or ()]
+    return "; ".join(parts) or "no change"
+
+
 def note_body(plan: Mapping[str, Any], book: Book, status: str) -> str:
     """The vault note's body (no frontmatter: VaultIO writes it)."""
     m = plan.get("metrics") or {}
@@ -121,6 +128,16 @@ def note_body(plan: Mapping[str, Any], book: Book, status: str) -> str:
             (
                 "rank",
                 f"{r.get('position')} of {r.get('of')} · {r.get('column')} · score {r.get('score')}",
+            )
+        )
+    rv = plan.get("review")
+    if rv:  # D389 (7): say what the route reviewer changed, and whether it edited
+        what = "edited" if rv.get("edited") else "re-run"
+        facts.append(
+            (
+                "note",
+                f"reviewed: {what} by the route reviewer ({_changes(rv)}); the planner's "
+                "routes: " + ", ".join(f"[[{a}]]" for a in rv.get("of") or ()),
             )
         )
     if plan.get("alternatives"):

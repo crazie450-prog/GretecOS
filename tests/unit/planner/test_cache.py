@@ -18,6 +18,7 @@ from types import ModuleType
 import pytest
 
 from gregtec.db import access, build
+from gregtec.ingest.quests import ALWAYS_DIMENSIONS
 from gregtec.planner import (
     cache,
     chains,
@@ -283,6 +284,19 @@ def two_runs(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
+def _plate_mix(c: sqlite3.Connection, dim: str) -> None:
+    """An ore mix placing the fixture's plate in ``dim`` (as `gos ores load` writes it)."""
+    c.execute(
+        "INSERT OR REPLACE INTO ore_mix(id, name, dims, ymin, ymax, weight, density, size,"
+        " ores) VALUES ('ore.mix.plate', 'Plate', ?, 10, 40, 40, 3, 24, ?)",
+        (
+            json.dumps({dim: {"ids": []}}),
+            json.dumps([{"layer": "primary", "material": "Plate", "name": "Plate",
+                         "item": tg.T, "meta": 2}]),
+        ),
+    )  # fmt: skip
+
+
 MV = Request(tp.WIDGET, qty=2, tier_cap="MV")
 OWNED_ONLY = Request(
     tp.WIDGET, qty=2, tier_cap="MV", constraints=Constraints(require_owned=True)
@@ -298,7 +312,9 @@ SOLVE_INPUTS = [
     "lines",
     "lines_fraction",
     "templates",
-    "raw_inputs",
+    "raw_sources",
+    "dimensions",
+    "ore_mix",
     "run",
     "generation",
 ]
@@ -360,14 +376,25 @@ def test_each_input_of_a_component_solve_is_in_its_key(
         tpl = chains.load(tmp_path)
         before = lambda: _solve(c, MV, tg.Base())
         after = lambda: _solve(c, MV, tg.Base(), tpl)
-    elif what == "raw_inputs":  # data/curated/raw_inputs.tsv, a repo file
+    elif what == "raw_sources":  # data/curated/raw_inputs.tsv, a repo file
 
         def after() -> str:
             with monkeypatch.context() as m:
-                m.setattr(graph, "raw_inputs", lambda: (*raw(), tg.PLATE))
+                m.setattr(graph, "raw_sources", lambda: {**raw(), tg.PLATE: "world"})
                 return _solve(c, MV, tg.Base())
 
-        raw = graph.raw_inputs
+        raw = graph.raw_sources
+        before = lambda: _solve(c, MV, tg.Base())
+    elif what == "dimensions":  # the plate only from a moon vein (D389 (2))
+        _plate_mix(c, "moon")
+        before = lambda: _solve(c, MV, tg.Base())
+        after = lambda: _solve(c, MV, tg.Base(dims=ALWAYS_DIMENSIONS | {"moon"}))
+    elif what == "ore_mix":  # `gos ores load`: no new DB generation (WO-3.10 F2)
+
+        def after() -> str:
+            _plate_mix(c, "Overworld")
+            return _solve(c, MV, tg.Base())
+
         before = lambda: _solve(c, MV, tg.Base())
     elif what == "run":  # an older run of the same DB (same generation)
         c = access.connect(two_runs, readonly=True)

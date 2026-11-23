@@ -42,6 +42,7 @@ from gregtec.packupdate.plans import PLAN_ID
 from gregtec.planner.outputs import FILES  # a plain dict: imports no planner code
 
 if TYPE_CHECKING:
+    from gregtec.agents.route_review import Reviewer
     from gregtec.api.app import Core
     from gregtec.planner.designer import Designed
 
@@ -136,20 +137,46 @@ def _run(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         ) from None
 
 
+def reviewer_for(core: "Core") -> Callable[[], "Reviewer"]:
+    """The route reviewer on the core's models, meter and no-AI mode (D389 (7)), made when a
+    job with ``review: true`` runs (no key: a reviewer that skips and says why)."""
+
+    def make() -> "Reviewer":
+        from gregtec.agents import route_review
+
+        return route_review.from_config(core.cfg, core.meter, core.ai)
+
+    return make
+
+
 def _changed(home: Path, d: "Designed") -> dict[str, Any]:
     from gregtec.planner import designer
 
-    return {"ids": d.ids, "problems": d.problems, "view": designer.view(home, d.ids[0])}
+    out: dict[str, Any] = {
+        "ids": d.ids,
+        "problems": d.problems,
+        "view": designer.view(home, d.ids[0]),
+    }
+    if d.review is not None:  # the route reviewer ran (D389 (7))
+        out["review"] = d.review
+    return out
 
 
-def designed(home: Path, spec: dict[str, Any]) -> dict[str, Any]:
-    """POST /api/designer/design's answer: the view of the new design, or the question."""
+def designed(
+    home: Path,
+    spec: dict[str, Any],
+    reviewer: Callable[[], "Reviewer"] | None = None,
+) -> dict[str, Any]:
+    """POST /api/designer/design's answer: the view of the new design, or the question.
+    ``review: true`` in the spec runs the route reviewer (``reviewer``) before saving."""
     from gregtec.planner import designer
 
     req = designer.request_from_spec(home, spec)
     if not isinstance(req, designer.Request):
         return {"clarify": req.card()}
-    return _changed(home, designer.design(home, req))
+    if not (designer.wants_review(spec) and reviewer is not None):
+        return _changed(home, designer.design(home, req))
+    return _changed(home, designer.design(home, req, reviewer=reviewer()))
 
 
 def accepted(home: Path, pid: str) -> dict[str, Any]:
@@ -270,7 +297,8 @@ def add_routes(
     @app.post("/api/designer/design")
     async def designer_design(request: Request, who: Trusted) -> dict[str, Any]:
         body = await json_body(request)
-        return await call(lambda: designed(home(), body))
+        made = reviewer_for(core)
+        return await call(lambda: designed(home(), body, made))
 
     @app.post("/api/plans/{plan_id}/pin")
     async def plan_pin(plan_id: str, request: Request, who: Trusted) -> dict[str, Any]:

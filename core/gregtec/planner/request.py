@@ -18,7 +18,10 @@ same request always has the same text and digest, and the graph built from it th
   keys), ``require_owned``, ``cleanroom``, ``coil_max``;
 - ``pins``: ``{node, recipe}``, a node being an item's stable key and the recipe its ``r:`` key
   (D61); at most one pin per node;
-- ``routes``: how many ranked routes to return, 1 to 3 (D11).
+- ``routes``: how many ranked routes to return, 1 to 3 (D11);
+- ``simplest``: also return the simplest route, every node on its first (heuristic) recipe,
+  as an extra column beside the ranked routes (D389 (4)); written only when true, so every
+  request from before keeps its text and digest.
 
 **My base** (:class:`BaseInputs`) is the interface WO-3.3 and WO-3.8 both code to: the player's
 tier cap, owned machines (by GT mte id), stock and the outputs of accepted lines (by stable
@@ -38,6 +41,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from gregtec.ingest.quests import ALWAYS_DIMENSIONS
 from gregtec.planner.gtmath.tiers import VN
 
 Mode = Literal["rate", "batch"]
@@ -49,6 +53,10 @@ MAX_TIER = 14  # MAX: GT's last real voltage tier (VN[15] is its error tier)
 MAX_COIL = 13  # tiers.COILS: Cupronickel 0 .. Eternal 13
 MAX_ROUTES = 3
 VERSION = 1  # of the canonical form
+# What a person or agent who names no amount gets: a batch of 64, with its ETA (D389 (5)).
+# Applied by the entry points (plancli, designer.request_from_spec); the dataclass default
+# stays a rate of 1/s, so library callers and stored requests keep their meaning.
+DEFAULT_BATCH = 64.0
 
 # Stable keys (the tool layer's, gregtec.agents.tools.items): items registry@meta[#nbt],
 # fluids fluid:<name>; requests and pins never name numeric ids.
@@ -196,6 +204,7 @@ class Request:
     constraints: Constraints = field(default_factory=Constraints)
     pins: tuple[Pin, ...] = ()
     routes: int = MAX_ROUTES
+    simplest: bool = False  # D389 (4): the extra simplest-route column
 
     def __post_init__(self) -> None:
         if not is_stable_key(self.target):
@@ -236,6 +245,7 @@ class Request:
             or not 1 <= self.routes <= MAX_ROUTES
         ):
             raise RequestError(f"routes {self.routes!r}: 1 to {MAX_ROUTES}")
+        _flag("simplest", self.simplest)
 
     @property
     def rate_per_s(self) -> float | None:
@@ -251,7 +261,7 @@ class Request:
 
     def as_dict(self) -> dict[str, Any]:
         c = self.constraints
-        return {
+        out: dict[str, Any] = {
             "v": VERSION,
             "target": self.target,
             "mode": self.mode,
@@ -271,6 +281,9 @@ class Request:
             "pins": [{"node": p.node, "recipe": p.recipe} for p in self.pins],
             "routes": self.routes,
         }
+        if self.simplest:  # only when set: older requests keep their digest
+            out["simplest"] = True
+        return out
 
     def canonical(self) -> str:
         """The request as canonical JSON: sorted keys, no spaces, UTF-8 text."""
@@ -297,6 +310,7 @@ class Request:
             "constraints",
             "pins",
             "routes",
+            "simplest",
         }
         extra = sorted(set(data) - known)
         if extra:
@@ -336,6 +350,7 @@ class Request:
                     for p in data.get("pins") or ()
                 ),
                 routes=data.get("routes", MAX_ROUTES),
+                simplest=_flag("simplest", data.get("simplest", False)),
             )
         except (KeyError, TypeError) as exc:
             raise RequestError(f"malformed request: {exc}") from None
@@ -376,13 +391,19 @@ class BaseInputs(Protocol):
         """Stable key -> rate per second from accepted lines."""
         ...
 
+    def dimensions(self) -> frozenset[str]:
+        """The dimensions he can reach, named as GT's ore mixes name them (D389 (2))."""
+        ...
+
 
 @dataclass(frozen=True)
 class DefaultBaseInputs:
-    """WO-3.3's My base: the quest-detected tier (WO-1.5, ``tier.override`` first), and
-    nothing owned, stocked or produced by lines (D63)."""
+    """WO-3.3's My base: the quest-detected tier (WO-1.5, ``tier.override`` first), the
+    quest-unlocked dimensions (D389 (2)), and nothing owned, stocked or produced by lines
+    (D63)."""
 
     tier: int
+    dims: frozenset[str] = ALWAYS_DIMENSIONS
 
     def __post_init__(self) -> None:
         tier_index(self.tier)
@@ -393,7 +414,7 @@ class DefaultBaseInputs:
         from gregtec.ingest import quests as bq
 
         stage, _, _ = quest_db.effective_tier(conn)
-        return cls(bq.STAGES[stage])
+        return cls(bq.STAGES[stage], quest_db.reachable_dimensions(conn))
 
     def tier_cap(self) -> int:
         return self.tier
@@ -406,3 +427,6 @@ class DefaultBaseInputs:
 
     def line_outputs(self) -> Mapping[str, float]:
         return {}
+
+    def dimensions(self) -> frozenset[str]:
+        return self.dims

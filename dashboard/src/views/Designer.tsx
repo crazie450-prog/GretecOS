@@ -56,8 +56,11 @@ function showPlan(id: string): void {
 }
 
 /** The route's head line: its place in code's ranking, never a re-sort. */
-export function routeLabel(r: Pick<DesignerRoute, "column" | "position" | "of">): string {
-  return r.column === "addon" ? "Addon column" : `Route ${r.position} of ${r.of}`;
+export function routeLabel(r: Pick<DesignerRoute, "column" | "position" | "of"> & { simplest?: boolean }): string {
+  if (r.column === "addon") return "Addon column";
+  if (r.column === "simplest") return "Simplest route";
+  if (r.column === "reviewed") return "Reviewed route";
+  return `Route ${r.position} of ${r.of}${r.simplest ? " (also the simplest)" : ""}`;
 }
 
 function Cite({ cite }: { cite: string | null }) {
@@ -69,19 +72,25 @@ function Cite({ cite }: { cite: string | null }) {
 
 function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void }) {
   const [target, setTarget] = useState("");
-  const [rate, setRate] = useState("1/s");
+  const [amount, setAmount] = useState("64");
   const [tier, setTier] = useState("");
   const [routes, setRoutes] = useState(3);
   const [addons, setAddons] = useState(false);
+  const [simplest, setSimplest] = useState(true);
+  const [review, setReview] = useState(false);
   const submit = (e: FormEvent): void => {
     e.preventDefault();
     if (!target.trim()) return;
+    // A rate has a "/" (2/s); a plain number is a batch; nothing is the server's batch of 64 (D389 (5)).
+    const a = amount.trim();
     props.onDesign({
       target: target.trim(),
-      rate: rate.trim() || "1/s",
+      ...(a ? (a.includes("/") ? { rate: a } : { batch: a }) : {}),
       ...(tier ? { tier } : {}),
       routes,
       addons,
+      simplest,
+      ...(review ? { review } : {}),
     });
   };
   return (
@@ -99,13 +108,13 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
           />
         </label>
         <label className="field small">
-          <span className="gos-label">Rate</span>
+          <span className="gos-label">Amount</span>
           <input
             className="ask-input num"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            placeholder="2/s"
-            aria-label="Rate: 2/s, 30/min, 100/h"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="64"
+            aria-label="Amount: a batch (64) or a rate (2/s, 30/min, 100/h)"
             data-testid="designer-rate"
           />
         </label>
@@ -144,6 +153,14 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
         <label className="field check">
           <input type="checkbox" checked={addons} onChange={(e) => setAddons(e.target.checked)} data-testid="designer-addons" />
           <span>Addon machines too</span>
+        </label>
+        <label className="field check">
+          <input type="checkbox" checked={simplest} onChange={(e) => setSimplest(e.target.checked)} data-testid="designer-simplest" />
+          <span>Simplest route too</span>
+        </label>
+        <label className="field check">
+          <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} data-testid="designer-review" />
+          <span>Review routes (uses the AI)</span>
         </label>
         <Button type="submit" variant="primary" disabled={props.busy || !target.trim()} testId="designer-go">
           Design
@@ -332,7 +349,11 @@ function RouteColumn(props: {
       <div className="designer-cites">
         <Cite cite={`plan:${r.id}`} />
         <span className="gos-src">
-          {r.target.name} · {plain(r.target.rate_s)}/s · cap <TierChip tier={r.tier_cap} />
+          {r.target.name} ·{" "}
+          {r.target.eta_s != null && r.target.qty != null
+            ? `batch ${plain(r.target.qty)} · ETA ${plain(Math.round(r.target.eta_s))} s`
+            : `${plain(r.target.rate_s)}/s`}{" "}
+          · cap <TierChip tier={r.tier_cap} />
         </span>
       </div>
       {r.affected && (
@@ -373,6 +394,16 @@ function RouteColumn(props: {
             </li>
           ))}
         </ul>
+      )}
+      {r.review && (
+        <div className="notice" role="status" data-testid={`review-${r.id}`}>
+          <span>
+            {GLYPH.warn} {r.review.edited ? "Edited by the route reviewer" : "Re-run by the route reviewer"}:{" "}
+            {[...r.review.applied.exclude.map((x) => `excluded ${x}`), ...r.review.applied.pins.map((p) => `pinned ${p.node} to ${p.recipe}`)].join("; ") ||
+              "no change"}
+            . {r.review.summary}
+          </span>
+        </div>
       )}
       {r.warnings.slice(0, 3).map((w) => (
         <p key={w} className="gos-sub">

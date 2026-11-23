@@ -18,8 +18,9 @@ row scaling PlanNH uses, so ``imp_k`` and ``exp_k`` are solved in row units. EU 
 any other: a machine recipe consumes ``EU/t x ticks`` per craft from the ``eu`` port, which
 nothing in a production line makes, so it is imported (WO-4's generators will supply it).
 An item is **free** to import when nothing in the network makes it or the graph names it a
-boundary (raw, stock, line outputs, request, locked, depth) and free to export when nothing in
-the network uses it or the graph names it a boundary; any other crossing is a **gate**,
+boundary (raw, stock, line outputs, request) and free to export when nothing in the network
+uses it or the graph names it a boundary (locked and depth too); an import of a locked or depth
+boundary (``Network.gated_in``, WO-3.10 F4) and any other crossing is a **gate**,
 ``imp_k + exp_k <= M g_k``. M is per row in row units: 1e4, then 1e5 if HiGHS finds the stage
 infeasible (1e7 caused spurious infeasibility, [E§3.3]). Each recipe's column is scaled by its
 largest port too, and the target rate is normalised to 1 while solving, so small rates stay
@@ -130,6 +131,9 @@ class Network:
     # EU per unit an import of each item stands for: a power line's fuel at its generator's
     # EU per unit (WO-4.7, D323). Only used when EU is banned (the EU stage, below).
     eu_value: tuple[tuple[str, float], ...] = ()
+    # Items imported only through a gate although nothing makes them: the graph's locked and
+    # depth boundaries (WO-3.10 F4), legal but costed like an intermediate's import.
+    gated_in: frozenset[str] = frozenset()
 
     @property
     def costs_eu(self) -> bool:
@@ -261,7 +265,7 @@ def _build(
         if k in used:
             i = m.imp[k] = m.var(0.0, 0.0 if k in net.banned else math.inf)
             coefs[i] = 1.0
-            if k in made and k not in net.free_in:
+            if k in net.gated_in or (k in made and k not in net.free_in):
                 gated.append(i)
             elif k != EU_KEY:
                 m.raw_imports.append(i)
@@ -430,11 +434,16 @@ def _close_gates(m: _Model, x: np.ndarray) -> list[tuple[int, float, float]]:
 def _open_gates(m: _Model, x: np.ndarray) -> dict[str, float]:
     """Each gate's state in ``x``: open when its binary is, or when its item crosses at all.
     HiGHS accepts a binary within its integrality tolerance of 0, which lets
-    ``imp + exp <= M g`` leak up to about ``M x 1e-6``; such a crossing counts as a gate."""
-    return {
-        k: 1.0 if x[g] > 0.5 or sum(float(x[v]) for v in m.gated[k]) > RUNNING else 0.0
-        for k, g in m.gate.items()
-    }
+    ``imp + exp <= M g`` leak up to about ``M x 1e-6``; such a crossing counts as a gate.
+    An import of a ``gated_in`` item (nothing makes it) is real down to ``ABS_TOL``: a recipe at
+    the stage-4 floor can need less than ``RUNNING`` of it, and closing that gate would leave
+    the replay infeasible (WO-3.10 F4)."""
+    out = {}
+    for k, g in m.gate.items():
+        noise = ABS_TOL if k in m.net.gated_in else RUNNING
+        crossing = sum(float(x[v]) for v in m.gated[k])
+        out[k] = 1.0 if x[g] > 0.5 or crossing > noise else 0.0
+    return out
 
 
 Objectives = tuple[float, float, float, float | None]  # gates, quantity, machines, EU
@@ -660,13 +669,17 @@ def _flow(
 ) -> Flow:
     s = m.scale
 
-    def val(i: int, c: float = 1.0) -> float:
+    def val(i: int, c: float = 1.0, noise: float = RUNNING) -> float:
         v = float(x[i])
-        return 0.0 if abs(v) < RUNNING else v * c * s
+        return 0.0 if abs(v) < noise else v * c * s
 
     crafts = tuple(sorted((p.id, val(m.x[p.id], 1 / m.cr[p.id])) for p in m.procs))
+    # A gated_in import is real down to ABS_TOL, as _open_gates counts its gate, so the plan
+    # lists (and warns) every such import whose gate it counts (WO-3.10 F4).
     imports = tuple(
-        (k, val(i, m.c[k])) for k, i in sorted(m.imp.items()) if val(i, m.c[k]) > 0
+        (k, v)
+        for k, i in sorted(m.imp.items())
+        if (v := val(i, m.c[k], ABS_TOL if k in m.net.gated_in else RUNNING)) > 0
     )
     exports = [
         (k, val(i, m.c[k])) for k, i in sorted(m.exp.items()) if val(i, m.c[k]) > 0

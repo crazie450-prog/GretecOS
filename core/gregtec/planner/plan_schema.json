@@ -77,7 +77,7 @@
       "properties": {
         "mte": {"type": "integer", "minimum": 0},
         "name": {"type": "string"},
-        "kind": {"enum": ["singleblock", "multiblock", "steam"]},
+        "kind": {"enum": ["singleblock", "multiblock", "steam", "primitive"]},
         "tier": {"$ref": "#/$defs/tier"},
         "hatches": {
           "type": "array",
@@ -216,7 +216,7 @@
       "properties": {
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "position": {"type": "integer", "minimum": 1},
-        "column": {"enum": ["base", "addon"]},
+        "column": {"enum": ["base", "simplest", "addon", "reviewed"]},
         "weights": {"enum": ["balanced", "custom"]}
       }
     },
@@ -243,8 +243,9 @@
       "required": ["n", "column", "mode", "exact", "choices", "gates", "all_run", "floor", "objectives", "big_m"],
       "properties": {
         "n": {"type": "integer", "minimum": 1},
-        "column": {"enum": ["base", "addon"]},
+        "column": {"enum": ["base", "simplest", "addon"]},
         "mode": {"enum": ["rate", "batch"]},
+        "simplest": {"type": "boolean", "description": "D389 (4): this base route is also the simplest route"},
         "exact": {"type": "boolean"},
         "choices": {"type": "array", "items": {"$ref": "#/$defs/pin"}},
         "gates": {"type": "array", "items": {"$ref": "#/$defs/key"}},
@@ -263,6 +264,23 @@
         "big_m": {"type": "number"}
       }
     },
-    "warnings": {"type": "array", "items": {"type": "string"}}
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "review": {
+      "type": "object",
+      "description": "D389 (7): the route reviewer's record, on its reviewed route only (gregtec.agents.route_review)",
+      "required": ["v", "id", "of", "verdict", "status", "edited", "changes", "applied", "summary", "summary_source", "models"],
+      "properties": {
+        "v": {"const": 1},
+        "id": {"type": "string", "pattern": "^rv-[0-9a-f]{10}$"},
+        "of": {"type": "array", "items": {"$ref": "#/$defs/planId"}},
+        "verdict": {"enum": ["ok", "fixed", "unresolved"]},
+        "status": {"enum": ["done", "capped", "error", "refused", "skipped"]},
+        "edited": {"type": "boolean"},
+        "changes": {"type": "array", "items": {"type": "object"}},
+        "applied": {"type": "object"},
+        "summary": {"type": "string"},
+        "summary_source": {"enum": ["model", "template"]}
+      }
+    }
   }
 }

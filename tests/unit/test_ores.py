@@ -736,6 +736,27 @@ def test_ore_mixes_parse() -> None:
     assert om.problems == []
 
 
+def test_write_mixes_replaces_the_mixes_only(tmp_path: Path) -> None:
+    """The mixes path of `gos ores load` with no world (WO-3.10 F2's harness test)."""
+    conn = access.connect(tmp_path / "gos.sqlite")
+    try:
+        conn.execute(
+            "INSERT INTO vein(dim, cx, cz, mix_id, known, depleted, src)"
+            " VALUES (0, 1, 2, 'ore.mix.ferrite', 1, 0, 'server/x')"
+        )
+        conn.execute(
+            "INSERT INTO ore_mix(id, name, dims, ores) VALUES ('old', 'Old', '{}', '[]')"
+        )
+        ore_db.write_mixes(conn, RUN, ore_mixes.parse(ore_mix_bytes()))
+        ids = [r[0] for r in conn.execute("SELECT id FROM ore_mix ORDER BY id")]
+        kv = conn.execute("SELECT value FROM kv WHERE key = 'ores.mixes'").fetchone()
+        veins = conn.execute("SELECT count(*) FROM vein").fetchone()[0]
+    finally:
+        conn.close()
+    assert "old" not in ids and "ore.mix.ferrite" in ids and len(ids) == 4
+    assert json.loads(kv[0])["run"] == RUN and veins == 1
+
+
 @pytest.mark.parametrize(
     ("doc", "error"),
     [

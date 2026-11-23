@@ -6,13 +6,17 @@ choice and the whole design re-runs, D61), WO-3.2's machine for each recipe (:mo
 the staged MILP (:mod:`.solve`) for up to ``request.routes`` routes differing in a primary
 choice, and with ``machines: base+addons`` the best route on addon machines for the
 side-by-side column (D12), which lists the ``machine_fact`` confidence of each addon machine.
+With ``simplest`` (D389 (4)) it adds the **simplest route**: every primary node on its first
+candidate in the graph's heuristic order (pins kept), solved by the same staged MILP, as a
+``simplest`` column after the base routes; when a base route already uses exactly its recipes,
+that route gets ``route.simplest: true`` instead of a copy. The ranking is unchanged.
 
 Every route becomes one **plan**, a dict shaped as §7.1's sketch: ``id``, ``name``, ``v``, ``gt``,
 ``run`` (the export run key it was solved on, which WO-1.9's affected-plan check reads), ``kind``,
 ``target``, ``tier_cap``, ``machines``, ``pins``, ``nodes``, ``edges``, ``boundary``, ``metrics``
 and ``rank`` (WO-3.5's :mod:`.metrics` and :mod:`.rank`: the base routes come back in rank
-order, each named for its place, the addon route last), ``alternatives`` (the other routes' ids)
-and ``layout``
+order, each named for its place, then the simplest and addon routes), ``alternatives`` (the
+other routes' ids) and ``layout``
 (WO-3.6's bounding-box footprint, :mod:`.outputs.footprint`, D200), plus ``request`` (to re-solve it), ``route`` (the solver's view: choices,
 gates, the replay floor) and ``warnings`` (D194). ``plan_schema.json`` is its JSON Schema. Every
 number in it is the DB's or GT's math on it: a node cites its ``r:`` recipe and ``mte:`` machine
@@ -59,8 +63,15 @@ KIND = "production"
 SCHEMA = Path(__file__).with_name("plan_schema.json")
 BATCH_WINDOW_S = 3600.0  # D14: a batch with no within: is sized at qty per hour
 # Graph boundaries the player supplies or takes away freely (D63); a byproduct or catalyst
-# is free by structure (nothing uses it up), the target is the plan's export.
+# is free by structure (nothing uses it up), the target is the plan's export. Locked and
+# depth are free only to export: importing one is a gate (UNSOURCED, WO-3.10 F4).
 FREE = frozenset({"raw", "stock", "line", "request", "locked", "depth", "eu"})
+# Boundaries a plan imports although nothing tells it the player has them (WO-3.10).
+_NOT_SOURCED = {
+    "locked": "no recipe for it runs at this tier or for this request",
+    "depth": "the graph stopped at its depth limit",
+}
+UNSOURCED = frozenset(_NOT_SOURCED)
 
 
 @dataclass(frozen=True)
@@ -131,6 +142,7 @@ def network(
         free_out=free,
         choices=tuple(choices),
         pinned=pins,
+        gated_in=frozenset(i.id for i in g.items if i.boundary in UNSOURCED),
     )
 
 
@@ -159,6 +171,8 @@ def design(
         built.append(
             _plan(g, request, run_key, net, flow, base_sized, "base", n, exact)
         )
+    if request.simplest:
+        _add_simplest(g, request, run_key, net, base_sized, exact, built)
     if request.addons:
         addon_sized = sizing.size(conn, g, player, addon=True, excluded_mtes=excluded)
         addon_net = network(g, request, addon_sized, base_only=False)
@@ -203,6 +217,31 @@ def design(
         p["metrics"] = _rounded(p["metrics"])
         p["rank"] = _rounded(r)
     return Design(g, tuple(ranked))
+
+
+def _add_simplest(
+    g: Graph,
+    request: Request,
+    run_key: str,
+    net: solve.Network,
+    sized: Mapping[str, sizing.Sized],
+    exact: bool,
+    built: list[dict[str, Any]],
+) -> None:
+    """The simplest route (D389 (4)): each primary node's first candidate, pins kept. Added
+    as its own column, or flagged on the base route that already has exactly its recipes."""
+    pins = dict(net.pinned)
+    first = {k: opts[0] for k, opts in net.choices if k not in pins}
+    try:
+        flow = solve.solve_route(net, first)
+    except solve.SolveError:
+        return  # no such route solves; the ranked routes stand alone
+    recipes = frozenset(pid for pid, _ in flow.crafts)
+    for p in built:
+        if frozenset(n["recipe"] for n in p["nodes"]) == recipes:
+            p["route"]["simplest"] = True
+            return
+    built.append(_plan(g, request, run_key, net, flow, sized, "simplest", 1, exact))
 
 
 def _rounded(value: object) -> object:
@@ -254,6 +293,8 @@ def _name(g: Graph, request: Request, column: str, n: int) -> str:
     parts = [f"{target} line", amount, VN[g.tier_cap]]
     if column == "addon":
         parts.append("addons")
+    elif column == "simplest":
+        parts.append("simplest")
     elif n > 1:
         parts.append(f"route {n}")
     return " · ".join(parts)
@@ -295,18 +336,13 @@ def _sizes(size: sizing.NodeSize) -> dict[str, Any]:
     return out
 
 
-# Boundaries a plan imports although nothing tells it the player has them (WO-3.10).
-_NOT_SOURCED = {
-    "locked": "no recipe for it runs at this tier or for this request",
-    "depth": "the graph stopped at its depth limit",
-}
-
-
 def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
     """One warning per import the plan takes without making or sourcing it: a locked or
-    depth boundary (free to the solver, but not to the player), or a gated intermediate (an
-    item the route makes, imported as well)."""
+    depth boundary (a gate to the solver, WO-3.10 F4), a raw input GOS knows no
+    source for (no ore mix, not curated: D389 (6)), or a gated intermediate (an item the
+    route makes, imported as well)."""
     kind = {i.id: i.boundary for i in g.items}
+    src = {i.id: i.source for i in g.items}
     gates = set(flow.gates)
     out: list[str] = []
     for k, _ in flow.imports:
@@ -315,6 +351,11 @@ def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
         if (b := kind.get(k)) in _NOT_SOURCED:
             out.append(
                 f"imports {k} ({b}: {_NOT_SOURCED[b]}); the plan doesn't make it"
+            )
+        elif b == "raw" and src.get(k) is None:  # D389 (6): allowed, but warned
+            out.append(
+                f"imports {k} (raw: no recipe makes it and GOS has no source for it);"
+                " check where it comes from"
             )
         elif k in gates:
             out.append(f"imports {k}, which the route also makes (a gated import)")

@@ -8,32 +8,46 @@ no recipe makes, so a free "raw" import) -> Steeleaf ingot -> dust -> centrifuge
 Bricked Blast Furnace's iron + coal recipes have no machine model and nothing gates where a raw
 input comes from.
 
-``test_steel_at_mv_is_iron_and_carbon`` is the acceptance test of the fix Clayton is asked to
-approve: a strict xfail until then, so it fails CI the day the planner starts passing it
-(remove the mark in that PR). ``test_a_locked_import_is_warned`` holds today.
+``test_steel_at_mv_is_iron_and_carbon`` is the acceptance test of the fixes Clayton approved
+(D389), on a batch of 64 (what a request with no amount gets, F6): a strict xfail until then, so it fails CI the day the planner starts passing it
+(remove the mark in that PR). ``test_a_locked_import_is_gated_and_warned`` checks F4 (D395).
+The fixture loads
+the run's GT ore mixes as `gos ores load` does (no world, so no veins), so the raw-source gate
+(F2, D391) sees vein sources: ``test_twilight_raws_are_gated`` checks it, and
+``test_steel_starts_with_iron_and_coal`` checks F3's ranking on them (D393).
+``test_simplest_steel_route_is_an_extra_column`` checks F5's extra column (D389 (4)).
 ``GOS_SERVER_RUN`` names another server run folder.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gregtec.db import access
+from gregtec.db import access, ores
+from gregtec.db import quests as quest_db
 from gregtec.ingest import collect
-from gregtec.planner import plan
-from gregtec.planner.request import Constraints, DefaultBaseInputs, Request
+from gregtec.ingest import quests as bq
+from gregtec.planner import graph, plan
+from gregtec.planner.request import DEFAULT_BATCH, DefaultBaseInputs, Request
 
 REPO = Path(__file__).resolve().parents[2]
 STEEL = "gregtech:gt.metaitem.01@11305"
 STEELEAF_NUGGET = "gregtech:gt.metaitem.01@9339"
 STEELEAF_INGOT = "gregtech:gt.metaitem.01@11339"
-MV = 2
+STEELEAF_DUST = "gregtech:gt.metaitem.01@2339"
+STEELEAF_ALLOY = "r:gt.recipe.alloysmelter/1d5e67877281"  # nuggets -> Steeleaf ingot
+IRON_ORE = "gregtech:gt.blockores2@32"
+NETHER_IRON_ORE = "gregtech:gt.blockores2@1032"
+PLATINUM = "gregtech:gt.metaitem.01@2085"
+MV, IV = 2, 5
 IRON = {"Iron", "WroughtIron", "PigIron"}
 CARBON = {"Coal", "Charcoal", "Coke", "Carbon", "Lignite"}
 TWILIGHT = {"Steeleaf", "Knightmetal", "FierySteel", "IronWood"}
@@ -50,6 +64,14 @@ def conn(
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("steel-route-harness")
     built_home(game, home)
+    # The run's GT ore mixes, as `gos ores load` writes them (no world here, so no veins):
+    # the graph then gates raw ores by dimension (WO-3.10 F2).
+    run_id, mixes = ores.read_mixes(home, allow_harness=True)
+    w = access.connect(access.db_path(home))
+    try:
+        ores.write_mixes(w, run_id, mixes)
+    finally:
+        w.close()
     c = access.connect(access.db_path(home), readonly=True)
     try:
         yield c
@@ -59,7 +81,9 @@ def conn(
 
 @pytest.fixture(scope="module")
 def best(conn: sqlite3.Connection) -> dict[str, Any]:
-    d = plan.design(conn, Request(STEEL, tier_cap=MV), DefaultBaseInputs(MV))
+    # No amount named: a batch of 64, as the entry points make it (D389 (5), F6).
+    req = Request(STEEL, tier_cap=MV, mode="batch", qty=DEFAULT_BATCH)
+    d = plan.design(conn, req, DefaultBaseInputs(MV))
     assert d.plans
     return d.plans[0]
 
@@ -80,24 +104,105 @@ def materials(conn: sqlite3.Connection, keys: set[str]) -> set[str]:
     return out
 
 
-def test_a_locked_import_is_warned(conn: sqlite3.Connection) -> None:
-    """Holds today: with the Steeleaf nugget left out, the best plan imports the Steeleaf
-    ingot, which this player can't make (locked), and its warnings say so."""
-    req = Request(
-        STEEL, tier_cap=MV, constraints=Constraints(exclude=(STEELEAF_NUGGET,))
+def test_twilight_raws_are_gated(conn: sqlite3.Connection) -> None:
+    """D389 (2): with no quests, only the Overworld and the Nether are reachable, so the
+    Steeleaf ingot's alloy smelter recipe is rejected for its nugget (a Twilight Forest
+    material, data/curated/raw_inputs.tsv), and iron ore is a raw input from its veins."""
+    g = graph.build(conn, Request(STEELEAF_INGOT, tier_cap=MV), DefaultBaseInputs(MV))
+    why = {c.recipe: c.reason for c in g.item(STEELEAF_INGOT).candidates}
+    assert (
+        why[STEELEAF_ALLOY] == "Steeleaf Nugget: Twilight Forest, not reachable (D389)"
     )
-    p = plan.design(conn, req, DefaultBaseInputs(MV)).plans[0]
+    vein = graph.sources(conn).vein
+    assert {"Overworld", "Nether"} <= set(vein[IRON_ORE])
+    assert vein[NETHER_IRON_ORE] == ("Nether",)  # a Netherrack ore: the Nether's only
+    g = graph.build(conn, Request(IRON_ORE, tier_cap=MV), DefaultBaseInputs(MV))
+    ore = g.item(IRON_ORE)
+    assert ore.boundary == "raw" and (ore.source or "").startswith("vein:")
+
+
+def test_every_ore_mix_dimension_is_known(conn: sqlite3.Connection) -> None:
+    """Every dimension the run's ore mixes name is always reachable or has an unlock quest
+    in data/curated/dimension_unlocks.tsv (catches a typo or a new dimension)."""
+    named: set[str] = set()
+    for (dims,) in conn.execute("SELECT dims FROM ore_mix"):
+        named.update(json.loads(dims))
+    assert named, "no ore mixes loaded"
+    rows = bq.read_dimension_unlocks(quest_db.DIMENSION_UNLOCKS)
+    unlocks = {u.dimension for u in rows}
+    assert named - bq.ALWAYS_DIMENSIONS - unlocks == set()
+
+
+def test_a_locked_import_is_gated_and_warned(
+    conn: sqlite3.Connection, best: dict[str, Any]
+) -> None:
+    """F4 (D389 (6), D395): a locked import is a gate, so steel's best plan makes its steel
+    from reachable raws instead of importing the locked Steeleaf ingot (the best plan before
+    F4). It stays legal: Steeleaf dust, which only the ingot's macerator recipe makes, still
+    gets a plan that imports the ingot through a gate, with its warning."""
+    imports = {b["id"] for b in best["boundary"]["in"]}
+    assert STEELEAF_INGOT not in imports, imports
+    assert not [w for w in best["warnings"] if "(locked" in w], best["warnings"]
+    p = plan.design(
+        conn, Request(STEELEAF_DUST, tier_cap=MV), DefaultBaseInputs(MV)
+    ).plans[0]
     imports = {b["id"] for b in p["boundary"]["in"]}
     assert STEELEAF_INGOT in imports, imports
+    assert STEELEAF_INGOT in p["route"]["gates"]
     assert f"imports {STEELEAF_INGOT} (locked" in "\n".join(p["warnings"])
     for w in p["warnings"]:
         if w.startswith("imports "):
             assert w.split()[1] in imports
+        if "(locked:" in w or "(depth:" in w:  # every unsourced import is a gate
+            assert w.split()[1] in p["route"]["gates"], w
+
+
+def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
+    """F3 (D389 (3), D393): with the run's ore mixes loaded, iron dust is one step from its
+    veins' ores, so steel's first candidate is the Bricked Blast Furnace's iron dust + coal,
+    and the EBF is still offered beside it (D389 (1)). The platline still builds in time."""
+    g = graph.build(conn, Request(STEEL, tier_cap=MV), DefaultBaseInputs(MV))
+    steel = g.item(STEEL)
+    first = g.recipe(steel.candidates[0].recipe)
+    assert first.map == "gt.recipe.primitiveblastfurnace", first.id
+    keys = {p.key for p in first.inputs if p.consumed}
+    assert materials(conn, keys) & IRON, keys
+    assert "minecraft:coal@0" in keys or materials(conn, keys) & CARBON, keys
+    assert any(g.recipe(r).map == "gt.recipe.blastfurnace" for r in steel.chosen)
+    started = time.perf_counter()
+    graph.build(conn, Request(PLATINUM, tier_cap=IV), DefaultBaseInputs(0))
+    assert time.perf_counter() - started < 2.0  # §8 row 3.3's LIMIT_S
+
+
+def test_simplest_steel_route_is_an_extra_column(
+    conn: sqlite3.Connection, best: dict[str, Any]
+) -> None:
+    """F5 (D389 (4)): asking for the simplest route adds it beside the ranked routes, made of
+    each node's first candidate (steel's: the Bricked Blast Furnace, F3), and leaves the
+    ranked routes as they were."""
+    req = Request(STEEL, tier_cap=MV, mode="batch", qty=DEFAULT_BATCH, simplest=True)
+    d = plan.design(conn, req, DefaultBaseInputs(MV))
+    base = [p for p in d.plans if p["rank"]["column"] == "base"]
+    # the same ranked routes (equal scores break on the plan id, which hashes the request)
+    assert base[0]["rank"]["score"] == best["rank"]["score"]
+    assert best["route"]["choices"] in [p["route"]["choices"] for p in base]
+    simplest = [p for p in d.plans if p["rank"]["column"] == "simplest"]
+    simplest += [p for p in base if p["route"].get("simplest")]
+    assert len(simplest) == 1, [p["rank"]["column"] for p in d.plans]
+    first = graph.build(conn, req, DefaultBaseInputs(MV)).item(STEEL).chosen[0]
+    assert first in {n["recipe"] for n in simplest[0]["nodes"]}
+    if simplest[0]["rank"]["column"] == "simplest":
+        assert d.plans.index(simplest[0]) == len(base)  # right after the ranked routes
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="WO-3.10: no Bricked Blast Furnace model and no raw-source gate (pending Clayton)",
+    reason=(
+        "WO-3.10: F1-F4 and F6 are built; at a batch of 64 the best plan is the Bricked"
+        " Blast Furnace's from magnetite and coal ores, 12 machines: 7 BBFs (7200 ticks an"
+        " ingot, 64 in the 3600 s window) + 5; its iron is Magnetite (not in IRON) because"
+        " iron dust's top 4 are all electrolysis; pinned to impure iron dust it is 11"
+    ),
 )
 def test_steel_at_mv_is_iron_and_carbon(
     conn: sqlite3.Connection, best: dict[str, Any]

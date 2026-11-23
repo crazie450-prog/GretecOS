@@ -1,0 +1,54 @@
+# Reachable dimensions (D389 (2)): the quests that show the player can reach a dimension beyond
+# the Overworld and the Nether (always reachable). Read by gregtec.ingest.quests.
+# read_dimension_unlocks; any completed quest of a dimension's rows unlocks it. A raw input only
+# that dimension's ore mixes (or a curated dimension source) give is rejected until then.
+# Dimension names are spelled as GT's ore mixes name them (gt_ore_mixes.json, ore_mix.dims).
+# Quest ids are BetterQuesting's compact ids (q:<id>); the names are for review only. Ids, names
+# and the tasks quoted in the notes are from GTNH 2.9.0's DefaultQuests (tag 2.9.0, commit
+# 79f9a03b5dd9), (c) the GT: New Horizons team, licensed CC BY-NC-SA 4.0, read 2026-11-23.
+# Licence of this file: it quotes that book (quest names, task summaries), so this file is
+# shared under CC BY-NC-SA 4.0 (https://creativecommons.org/licenses/by-nc-sa/4.0/), whatever
+# licence the repo takes. Changes: a selection of quests, with their tasks summarised.
+# Rocket tiers: each "Rocket Tier N" quest is crafting that rocket. A note says where the book
+# shows the dimension; "from GTNH's planet tiers" rows are not in the book (WO-3.10 F2).
+dimension	quest	name	note
+Twilight Forest	AAAAAAAAAAAAAAAAAAAA4Q	Searching for Answers	location task: dimension 7 (Twilight arrival)
+The End	AAAAAAAAAAAAAAAAAAAD2g	Is This the End? No, it's the END Dimension	location task: dimension 1
+EndAsteroid	AAAAAAAAAAAAAAAAAAAD2g	Is This the End? No, it's the END Dimension	GT's name for The End's outer islands (dimension 1); same quest as The End
+dimensionDarkWorld	AAAAAAAAAAAAAAAAAAAKSg	A Vision of the Future (FPS Drop Not Included)	location task: dimension 227 (Toxic Everglades)
+moon	AAAAAAAAAAAAAAAAAAADKg	Rocket Tier 1	its text: before you can go to the Moon; the Moon Dungeon's prerequisite
+mars	AAAAAAAAAAAAAAAAAAAFlQ	Rocket Tier 2	its text: before you can go to Mars; the Mars Dungeon's prerequisite
+phobos	AAAAAAAAAAAAAAAAAAAFlQ	Rocket Tier 2	from GTNH's planet tiers, not the book (to confirm)
+deimos	AAAAAAAAAAAAAAAAAAAFlQ	Rocket Tier 2	from GTNH's planet tiers, not the book (to confirm)
+asteroids	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	On Your Way to Asteroids and Other Rocket Tier 3 DIMs follows it
+ceres	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	the Ceres Dungeon's prerequisite; On Your Way to ... Tier 3 DIMs leads to the Ceres trip
+callisto	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	On Your Way to ... Tier 3 DIMs leads to the Callisto trip
+europa	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	On Your Way to ... Tier 3 DIMs leads to the Europa trip
+ganymed	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	from GTNH's planet tiers, not the book (to confirm)
+ross128b	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	On Your Way to ... Tier 3 DIMs leads to the Ross128b trip
+ross128ba	AAAAAAAAAAAAAAAAAAAFrg	Rocket Tier 3	from GTNH's planet tiers, not the book (to confirm)
+iojupiter	AAAAAAAAAAAAAAAAAAAF_w	Rocket Tier 4	On Your Way to Tier 4 DIMs names Io; the Io Dungeon's prerequisite
+venus	AAAAAAAAAAAAAAAAAAAF_w	Rocket Tier 4	On Your Way to Tier 4 DIMs names Venus
+mercury	AAAAAAAAAAAAAAAAAAAF_w	Rocket Tier 4	On Your Way to Tier 4 DIMs names Mercury
+enceladus	AAAAAAAAAAAAAAAAAAAGvg	Rocket Tier 5	the Enceladus Dungeon's prerequisite
+titan	AAAAAAAAAAAAAAAAAAAGvg	Rocket Tier 5	from GTNH's planet tiers, not the book (to confirm)
+miranda	AAAAAAAAAAAAAAAAAAAGvg	Rocket Tier 5	from GTNH's planet tiers, not the book (to confirm)
+oberon	AAAAAAAAAAAAAAAAAAAGvg	Rocket Tier 5	from GTNH's planet tiers, not the book (to confirm)
+proteus	AAAAAAAAAAAAAAAAAAAKUA	Rocket Tier 6	the Proteus Dungeon's prerequisite
+triton	AAAAAAAAAAAAAAAAAAAKUA	Rocket Tier 6	from GTNH's planet tiers, not the book (to confirm)
+pluto	AAAAAAAAAAAAAAAAAAAKUg	Rocket Tier 7	the Pluto Dungeon's prerequisite; its text: the planets on the edge of the solar system
+kuiperbelt	AAAAAAAAAAAAAAAAAAAKUg	Rocket Tier 7	from GTNH's planet tiers, not the book (to confirm)
+makemake	AAAAAAAAAAAAAAAAAAAKUg	Rocket Tier 7	from GTNH's planet tiers, not the book (to confirm)
+haumea	AAAAAAAAAAAAAAAAAAAKUg	Rocket Tier 7	from GTNH's planet tiers, not the book (to confirm)
+barnarda2	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+barnarda4	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+barnarda5	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+tcetie	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+vega1	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+centauribb	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+horus	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+seth	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+anubis	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+maahes	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+neper	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)
+asteroidbeltmehen	AAAAAAAAAAAAAAAAAAAKVA	Rocket Tier 8	its text: other solar systems; which of them T8 reaches is from GTNH's planet tiers, not the book (to confirm)

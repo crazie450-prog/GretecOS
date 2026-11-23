@@ -929,6 +929,60 @@ def read_tier_keys(path: Path) -> list[TierKey]:
     return keys
 
 
+# --- reachable dimensions (D389 (2)) ---------------------------------------------------------
+
+# Always reachable; any other dimension once one of its quests is complete. Names as GT's ore
+# mixes spell them (gt_ore_mixes.json, ``ore_mix.dims``).
+ALWAYS_DIMENSIONS: frozenset[str] = frozenset({"Overworld", "Nether"})
+
+
+@dataclass(frozen=True)
+class DimensionUnlock:
+    """A curated quest: completing it means the player can reach ``dimension``."""
+
+    dimension: str
+    quest: str
+    name: str
+    note: str
+
+
+def read_dimension_unlocks(path: Path) -> list[DimensionUnlock]:
+    """``data/curated/dimension_unlocks.tsv``: ``dimension quest name note``, any number of
+    quests per dimension (any one unlocks it). ValueError names the line of a bad row."""
+    rows: list[DimensionUnlock] = []
+    seen: set[tuple[str, str]] = set()
+    header: list[str] | None = None
+    for n, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not text.strip() or text.startswith("#"):
+            continue
+        cells = text.split("\t")
+        if header is None:
+            header = cells
+            if header[:4] != ["dimension", "quest", "name", "note"]:
+                raise ValueError(
+                    f"{path.name}:{n}: header must be dimension, quest, name, note"
+                )
+            continue
+        if len(cells) != 4:
+            raise ValueError(f"{path.name}:{n}: {len(cells)} cells, not 4")
+        dim, quest, name, note = cells
+        if not dim.strip() or dim in ALWAYS_DIMENSIONS:
+            raise ValueError(
+                f"{path.name}:{n}: {dim!r} is always reachable or not a name"
+            )
+        try:
+            qid = encode_id(*decode_id(quest))
+        except ValueError as exc:
+            raise ValueError(f"{path.name}:{n}: {exc}") from None
+        if (dim, qid) in seen:
+            raise ValueError(f"{path.name}:{n}: {dim} {qid} is listed twice")
+        seen.add((dim, qid))
+        rows.append(DimensionUnlock(dim, qid, name, note))
+    if header is None:
+        raise ValueError(f"{path.name}: no header")
+    return rows
+
+
 def detect_tier(keys: Iterable[TierKey], done: Iterable[str]) -> Tier:
     """The highest stage with a complete key quest; the first stage when none is."""
     finished = set(done)

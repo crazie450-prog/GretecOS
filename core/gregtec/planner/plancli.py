@@ -1,15 +1,25 @@
 """``gos plan``: the designer's routes from the command line (WO-3.4, WO-3.5).
 
 - ``gos plan TARGET [--tier T] [--qty 2/s | --batch N [--within 2h]] [--routes N] [--addons]
-  [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
+  [--simplest] [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
-  and prints a summary per route (with its effort breakdown table, WO-4.3), or the plans as canonical JSON lines (``--json``), or writes
+  and prints a summary per route (with its effort breakdown table, WO-4.3, and a batch's ETA),
+  or the plans as canonical JSON lines (``--json``), or writes
   each plan to ``DIR/<id>.json`` (``--out``), or saves every route into GOS_HOME (``--save``,
   WO-3.6: ``data/plans/<id>.json``, its exports, the plan row, the vault note). Routes come
   ranked (WO-3.5) with the weights from the vault's ``me/prefs.md`` (read only; balanced
   without one, D67), and the summary prints the weights first; ``--explain`` adds the templated
   explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
+- No ``--qty`` or ``--batch``: a batch of 64 (``request.DEFAULT_BATCH``, D389 (5)), with
+  ``--within`` if given.
+- ``--simplest``: also the simplest route (each node's first recipe, D389 (4)), as an extra
+  column after the ranked routes, or ``[base, simplest]`` on the base route that is it.
+- ``--review``: the route reviewer reads the ranked routes (D389 (7), off by default; it uses the
+  AI and spends, capped by ``[budget] task_max_usd``). Its reviewed route, re-solved and scored by
+  the planner, prints after the ranked ones as ``[reviewed]``, with every edit named ("EDITED by
+  the reviewer"); ``--json`` prints it too, ``--save`` saves it and the review's record. With no
+  key or the AI off it prints ``review: skipped (why)``.
 - ``--request FILE``: a request as JSON (``Request.from_json``) instead of TARGET and the flags.
 - ``gos plan TARGET --alternatives ITEM [--all]``: the candidate recipes for one node of the
   graph (D61), with ``--all`` the unchecked and rejected ones too.
@@ -25,10 +35,11 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import sqlite3
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from gregtec import config
 from gregtec.agents import prefetch
@@ -38,6 +49,7 @@ from gregtec.db import access
 from gregtec.planner import alternatives, effort, explain, graph, plan, rank, solve
 from gregtec.planner.outputs import book, store
 from gregtec.planner.request import (
+    DEFAULT_BATCH,
     Pin,
     Request,
     RequestError,
@@ -45,7 +57,7 @@ from gregtec.planner.request import (
     parse_qty,
     tier_index,
 )
-from gregtec.vault.io import VaultIO
+from gregtec.vault.io import VaultIO, atomic_write
 
 if TYPE_CHECKING:
     from gregtec.planner import designer
@@ -66,7 +78,9 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument("--request", type=Path, default=None, help="a request as JSON")
     p.add_argument("--tier", default=None, help="tier cap (LV, IV, ... or 0-14)")
     p.add_argument(
-        "--qty", default="1/s", help="a rate: 2/s, 30/min, 100/h (default 1/s)"
+        "--qty",
+        default=None,
+        help="a rate: 2/s, 30/min, 100/h (default: a batch of 64, D389 (5))",
     )
     p.add_argument("--batch", default=None, help="a batch quantity instead of a rate")
     p.add_argument(
@@ -75,7 +89,17 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument("--routes", type=int, default=3, help="routes to solve, 1-3")
     p.add_argument("--addons", action="store_true", help="allow addon machines (D12)")
     p.add_argument(
+        "--simplest",
+        action="store_true",
+        help="also the simplest route: each node's first recipe (D389 (4))",
+    )
+    p.add_argument(
         "--exact", action="store_true", help="whole machine counts (integer MILP)"
+    )
+    p.add_argument(
+        "--review",
+        action="store_true",
+        help="the route reviewer reads the routes (uses the AI; D389 (7))",
     )
     p.add_argument(
         "--pin",
@@ -158,7 +182,7 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     try:
         vault = cfg.gos_home / "vault"
         prefs = rank.read_prefs(vault)
-        return _run(conn, db, Glossary.find(vault), args, out, prefs, cfg.gos_home)
+        return _run(conn, db, Glossary.find(vault), args, out, prefs, cfg.gos_home, cfg)
     finally:
         conn.close()
 
@@ -233,12 +257,21 @@ def _request(
         "machines": "base+addons" if args.addons else "base",
         "pins": tuple(pins),
         "routes": args.routes,
+        "simplest": args.simplest,
     }
+    within = parse_duration(args.within) if args.within else None
+    if args.batch is None and args.qty is None:  # no amount: a batch of 64 (D389 (5))
+        return Request(
+            found.key,
+            mode="batch",
+            qty=DEFAULT_BATCH,
+            within_s=within,
+            **common,  # type: ignore[arg-type]
+        )
     if args.batch is not None:
         qty, unit = parse_qty(args.batch)
         if unit is not None:
             raise RequestError("--batch is a quantity, without /s, /min or /h")
-        within = parse_duration(args.within) if args.within else None
         return Request(found.key, mode="batch", qty=qty, within_s=within, **common)  # type: ignore[arg-type]
     if args.within is not None:
         raise RequestError("--within is for --batch only")
@@ -262,6 +295,47 @@ def _save(
         rw.close()
 
 
+def _review(
+    cfg: config.Config,
+    db: Path,
+    conn: sqlite3.Connection,
+    design: plan.Design,
+    request: Request,
+    base: MyBase,
+    prefs: rank.Prefs,
+    exact: bool,
+) -> tuple[plan.Design, dict[str, Any]]:
+    """``--review``: the design with the reviewed route added (when the reviewer made one) and
+    the review's record. The meter and no-AI mode are the core DB's, as the paid evals'."""
+    from gregtec.agents import route_review
+    from gregtec.agents.no_ai import AiMode, CreditWatch
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    store_ = Store(db)
+    try:
+        meter = UsageMeter(
+            store_, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
+        )
+        mode = AiMode(store_)
+        CreditWatch(meter, mode).check()
+        reviewer = route_review.from_config(cfg, meter, mode)
+        done = reviewer.run(
+            design,
+            request,
+            lambda r: plan.design(conn, r, base, exact=exact, prefs=prefs),
+            prefs,
+            conn,
+        )
+    finally:
+        store_.close()
+    if done.reviewed is None:
+        return design, done.record
+    for p in design.plans:
+        p["alternatives"] = [*p["alternatives"], done.reviewed["id"]]
+    return plan.Design(design.graph, (*design.plans, done.reviewed)), done.record
+
+
 def _run(
     conn: sqlite3.Connection,
     db: Path,
@@ -270,7 +344,9 @@ def _run(
     out: TextIO,
     prefs: rank.Prefs = rank.BALANCED,
     home: Path | None = None,
+    cfg: config.Config | None = None,
 ) -> int:
+    record: dict[str, Any] | None = None  # --review's record
     try:
         request = _request(conn, db, glossary, args, out)
         if isinstance(request, int):
@@ -283,6 +359,17 @@ def _run(
                 print(f"{a['status']:<11} {a['recipe']}{reason}", file=out)
             return 0
         design = plan.design(conn, request, base, exact=args.exact, prefs=prefs)
+        if getattr(args, "review", False):
+            design, record = _review(
+                cfg or config.load(None),
+                db,
+                conn,
+                design,
+                request,
+                base,
+                prefs,
+                args.exact,
+            )
     except (
         OSError,
         KeyError,
@@ -302,6 +389,12 @@ def _run(
             print("refused: --save needs GOS_HOME", file=out)
             return 2
         _save(conn, db, home, design, out)
+        if record is not None:
+            from gregtec.planner import designer
+
+            path = home / designer.REVIEWS / f"{design.plans[0]['id']}.json"
+            atomic_write(path, json.dumps(record, sort_keys=True, indent=1).encode())
+            print(f"saved review {record['id']}: {path}", file=out)
     if args.json:
         for p in design.plans:
             print(plan.dumps(p), file=out)
@@ -313,7 +406,9 @@ def _run(
         r = p["route"]
         m, k = p["metrics"], p["rank"]
         machines = sum(n["count"] or 0 for n in p["nodes"])
-        print(f"{p['id']}  {p['name']}  [{r['column']}]", file=out)
+        also = ", simplest" if r.get("simplest") else ""  # a base route that is it
+        column = "reviewed" if p.get("review") else r["column"]
+        print(f"{p['id']}  {p['name']}  [{column}{also}]", file=out)
         print(
             f"  score {k['score']:g}: {m['machines']} machines, {len(m['new_types'])} new "
             f"types, {m['eut_avg']:g} EU/t avg, scarcity "
@@ -322,6 +417,14 @@ def _run(
         )
         for line in effort.text(m):
             print(line, file=out)
+        t = p["target"]
+        if t.get("eta_s") is not None:
+            print(
+                f"  batch {explain.fmt(t['qty'])}: ETA {explain.fmt(t['eta_s'])} s "
+                f"({explain.fmt(t['eta_s'] / 3600.0)} h) with these machines, sized at "
+                f"{explain.fmt(t['qty'])} per {explain.fmt(t['window_s'])} s",
+                file=out,
+            )
         print(
             f"  {len(p['nodes'])} nodes, {machines} machines, gates: "
             f"{', '.join(r['gates']) or 'none'}, every machine runs: {r['all_run']}",
@@ -331,6 +434,11 @@ def _run(
             print(f"  choice {c['node']}: {c['recipe']}", file=out)
         for w in p["warnings"]:
             print(f"  warning: {w}", file=out)
+    if record is not None:
+        from gregtec.agents import route_review
+
+        for line in route_review.describe(record):
+            print(f"  {line}", file=out)
     if args.explain and design.plans:
         g = design.graph
         doc = explain.facts(design.plans, g.item(g.target).name, prefs)

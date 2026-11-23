@@ -113,6 +113,21 @@ def test_addon_column_comes_last_scored_against_the_base_routes() -> None:
     )  # base routes ranked among themselves
 
 
+def test_simplest_column_follows_the_base_routes_before_the_addon_column() -> None:
+    """D389 (4): the simplest route is scored like the addon column; the base order holds."""
+    base = [plan("pl-b", machines=20), plan("pl-a", machines=10)]
+    alone = [p["rank"] for p in rank.order([dict(p) for p in base])]
+    simplest = plan("pl-1", machines=4, column="simplest")
+    addon = plan("pl-0", machines=5, column="addon")
+    out = rank.order([addon, simplest, *base])
+    assert ids(out) == ["pl-a", "pl-b", "pl-1", "pl-0"]
+    assert [p["rank"] for p in out[:2]] == alone
+    r = out[2]["rank"]
+    assert r["column"] == "simplest" and r["position"] == 1 and r["of"] == 1
+    assert r["terms"]["machines"] == 0.2  # 4 of the largest, 20
+    assert r["score"] > out[0]["rank"]["score"]  # better scored, still after the base
+
+
 def test_weights_change_the_order() -> None:
     cheap = plan("pl-a", machines=30, eut=80)
     small = plan("pl-b", machines=10, eut=100)

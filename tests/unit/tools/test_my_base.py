@@ -24,6 +24,7 @@ from gregtec.agents.tools.registry import Registry
 from gregtec.base import state
 from gregtec.db import access, build
 from gregtec.db import quests as quest_db
+from gregtec.ingest import quests as bq
 from gregtec.planner import graph
 from gregtec.planner import machines as m
 from gregtec.planner.request import BaseInputs, Constraints, Request
@@ -68,8 +69,9 @@ def test_nothing_owned_or_stocked_by_default(conn: sqlite3.Connection) -> None:
 
 
 def test_my_base_implements_the_interface_exactly() -> None:
-    """The four methods with exactly WO-3.3's signatures (structural typing)."""
-    for name in ("tier_cap", "owned_machines", "stock", "line_outputs"):
+    """The five methods with exactly WO-3.3's signatures (structural typing; dimensions:
+    WO-3.10 F2)."""
+    for name in ("tier_cap", "owned_machines", "stock", "line_outputs", "dimensions"):
         want = inspect.signature(getattr(BaseInputs, name))
         got = inspect.signature(getattr(state.MyBase, name))
         assert list(got.parameters) == list(want.parameters) == ["self"]
@@ -235,6 +237,23 @@ def test_the_tier_override_is_set_and_cleared(conn: sqlite3.Connection) -> None:
     assert (t.stage, t.tier, t.how) == ("stone", 0, "quests")
     with pytest.raises(state.BaseError, match="unknown stage"):
         state.set_tier(conn, "hv")
+
+
+def test_reachable_dimensions_come_from_the_quests(conn: sqlite3.Connection) -> None:
+    """D389 (2): the Overworld and the Nether, and the Twilight Forest once its quest is
+    complete for the tracked player."""
+    assert state.MyBase.from_db(conn).dimensions() == bq.ALWAYS_DIMENSIONS
+    conn.execute(
+        'INSERT INTO kv(key, value, upd) VALUES (?, \'{"player": "P"}\', 0)'
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (quest_db.KV_SOURCE,),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO quest_state(player_uuid, quest_id, state, shown)"
+        " VALUES ('P', 'AAAAAAAAAAAAAAAAAAAA4Q', 'done', 1)"
+    )
+    dims = state.MyBase.from_db(conn).dimensions()
+    assert dims == bq.ALWAYS_DIMENSIONS | {"Twilight Forest"}
 
 
 # --- outliving a rebuild and a restart -----------------------------------------------------------

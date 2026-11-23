@@ -261,6 +261,36 @@ BOXINATOR = m.MachineInfo(
     ("gt.recipe.a",),
 )
 
+# GT's primitive machines (D390): a recipe's own duration, no EU, one recipe at a time.
+BBF = m.MachineInfo(
+    140,
+    "Bricked Blast Furnace",
+    "gregtech.common.tileentities.machines.multi.MTEBrickedBlastFurnace",
+    "gregtech",
+    False,
+    None,
+    ("gt.recipe.primitiveblastfurnace",),
+)
+COKE = m.MachineInfo(
+    236,
+    "Coke Oven",
+    "gregtech.common.tileentities.machines.multi.MTECokeOven",
+    "gregtech",
+    True,
+    None,
+    ("gt.recipe.cokeoven",),
+    facts(
+        fact("processing", "custom"),
+        fact("parallel", "1"),
+        fact("speed", "1"),
+        fact("eu_modifier", "0"),
+        fact("oc", "none"),
+    ),
+)
+R_BBF = recipe(0, 2400, "gt.recipe.primitiveblastfurnace")
+R_COKE = recipe(0, 900, "gt.recipe.cokeoven")
+PRIMITIVE_RUN = Run(m.Check.SUCCESS, eut=0, duration=2400, parallel=1)
+
 PLAYER_LV = m.Player(tier=LV)
 PLAYER_MV = m.Player(tier=MV)
 PLAYER_HV = m.Player(tier=HV)
@@ -391,6 +421,31 @@ CASES: list[Case] = [
         steam(106, "Bronze"),
         m.Player(tier=0, steam=False),
         "steam stage",
+    ),
+    # --- primitive machines (D390): the recipe's own duration, from stone up ---
+    Case(
+        "bricked blast furnace at stone",
+        R_BBF,
+        BBF,
+        m.Player(tier=0, steam=False),
+        lambda: [(0, PRIMITIVE_RUN)],
+        literal=(0, 2400, 1),
+    ),
+    Case(
+        "bricked blast furnace at MV",
+        R_BBF,
+        BBF,
+        PLAYER_MV,
+        lambda: [(0, PRIMITIVE_RUN)],
+        literal=(0, 2400, 1),
+    ),
+    Case(
+        "coke oven at stone: no energy hatches",
+        R_COKE,
+        COKE,
+        m.Player(tier=0, steam=False),
+        lambda: [(0, Run(m.Check.SUCCESS, eut=0, duration=900, parallel=1))],
+        literal=(0, 900, 1),
     ),
     Case(
         "steam can't find a 120 EU/t recipe",
@@ -919,7 +974,7 @@ def test_table(case: Case) -> None:
 
 def test_table_covers_the_acceptance_kinds() -> None:
     kinds = {c.machine.kind for c in CASES}
-    assert kinds == {"singleblock", "steam", "multiblock", None}
+    assert kinds == {"singleblock", "steam", "multiblock", "primitive", None}
     assert any(c.coil is not None for c in CASES)  # coils
     assert any(c.requires == ("cleanroom",) for c in CASES)  # cleanroom
     assert any(c.batch for c in CASES)  # batch mode
@@ -1083,6 +1138,25 @@ def test_map_first_single_blocks() -> None:
     )
     assert brewer.kind == "singleblock"
     assert SCANNER.kind is None
+
+
+def test_primitive_machines() -> None:
+    assert BBF.kind == "primitive"
+    assert COKE.kind == "primitive"  # a multiblock class, sized by GT's primitive rule
+    options, rejected = m.options_for(R_BBF, BBF, m.Player(tier=0, steam=False))
+    assert rejected is None
+    (o,) = options
+    assert o.sizing.crafts_per_second.value == pytest.approx(20 / 2400)
+    assert o.sizing.amps.value == 0 and o.sizing.steam_per_tick is None
+    assert o.hatches == () and o.requires == () and o.badges == ()
+    assert any("by hand" in n for n in o.notes)
+    assert any("output chances" in n for n in o.notes)
+    (coke,), _ = m.options_for(R_COKE, COKE, m.Player(tier=0, steam=False))
+    assert coke.notes == () and coke.hatches == ()
+    _, why = m.options_for(
+        recipe(0, 0, "gt.recipe.primitiveblastfurnace"), BBF, PLAYER_LV
+    )
+    assert why is not None and "no duration" in why.reason
 
 
 def test_unlimited_tier_skips_and_overflow_guard() -> None:

@@ -64,7 +64,7 @@ DESIGN_PRODUCTION_SCHEMA: dict[str, Any] = {
         },
         "rate": {
             "type": "string",
-            "description": 'a rate: "2/s", "30/min", "100/h" (default 1/s)',
+            "description": 'a rate: "2/s", "30/min", "100/h" (no rate or batch: a batch of 64)',
             "maxLength": 40,
         },
         "batch": {
@@ -91,6 +91,11 @@ DESIGN_PRODUCTION_SCHEMA: dict[str, Any] = {
         "addons": {
             "type": "boolean",
             "description": "also solve the best route on addon machines (its own column)",
+        },
+        "simplest": {
+            "type": "boolean",
+            "description": "also the simplest route, each node's first recipe, as its own "
+            "column after the ranked routes (default true)",
         },
     },
     "required": ["target"],
@@ -213,10 +218,11 @@ def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str,
         m = r["metrics"]
         rows.append(
             (
-                r["position"] if r["column"] != "addon" else "addon",
+                r["position"] if r["column"] == "base" else r["column"],
                 f"plan:{r['id']}",
                 r["name"],
-                r["column"],
+                # a base route that is also the simplest route (D389 (4)) says so
+                r["column"] + (", simplest" if r.get("simplest") else ""),
                 r["score"],
                 m.get("machines"),
                 m.get("new_types"),
@@ -362,14 +368,20 @@ def plan_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         )  # fmt: skip
     p = d.load(home, pid)
     m = p.get("metrics") or {}
+    also = ", simplest" if route.get("simplest") else ""  # D389 (4)
     head: list[tuple[str, object]] = [
         ("plan", cite),
         ("name", route["name"]),
         ("status", route["status"]),
         ("target", f"{route['target']['name']} [{p['target']['id']}]"),
         ("rate_s", p["target"]["rate_s"]),
+        *(
+            [("batch", p["target"]["qty"]), ("eta_s", p["target"]["eta_s"])]
+            if p["target"].get("eta_s") is not None
+            else []
+        ),
         ("tier_cap", p["tier_cap"]),
-        ("rank", f"{route['position']} of {route['of']} ({route['column']})"),
+        ("rank", f"{route['position']} of {route['of']} ({route['column']}{also})"),
         ("score", route["score"]),
         ("machines", m.get("machines")),
         ("new_types", len(m.get("new_types") or ())),

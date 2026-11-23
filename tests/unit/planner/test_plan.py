@@ -311,6 +311,65 @@ def test_exact_counts_never_exceed_the_ceiling(conn: sqlite3.Connection) -> None
             assert nb["count"] * cps >= nb["crafts_s"] - 1e-9
 
 
+def test_request_simplest_is_written_only_when_set() -> None:
+    """D389 (4): every request from before keeps its canonical text, digest and plan ids."""
+    r = Request(WIDGET)
+    assert "simplest" not in r.as_dict() and not r.simplest
+    s = Request(WIDGET, simplest=True)
+    assert s.as_dict()["simplest"] is True and s.digest() != r.digest()
+    assert Request.from_json(s.canonical()) == s
+    assert Request.from_dict({"target": WIDGET}) == r
+    with pytest.raises(RequestError, match="simplest must be true or false"):
+        Request.from_dict({"target": WIDGET, "simplest": "yes"})
+
+
+def _choices(p: Mapping[str, object]) -> list[tuple[str, str]]:
+    return [(c["node"], c["recipe"]) for c in p["route"]["choices"]]  # type: ignore[index]
+
+
+def test_simplest_route_is_its_own_column(conn: sqlite3.Connection) -> None:
+    """D389 (4): each primary node's first candidate, solved as one more route after the
+    ranked ones; the ranked routes are the same as without it."""
+    first = design(conn, Request(WIDGET, routes=1)).graph.item(WIDGET).chosen[0]
+    ex = dataclasses.replace(
+        Request(WIDGET, qty=2, routes=1).constraints, exclude=(first,)
+    )
+    plain = design(conn, Request(WIDGET, qty=2, routes=1, constraints=ex))
+    d = design(conn, Request(WIDGET, qty=2, routes=1, constraints=ex, simplest=True))
+    assert [p["route"]["column"] for p in d.plans] == ["base", "simplest"]
+    base, simplest = d.plans
+    assert _choices(base) == _choices(plain.plans[0])
+    assert "simplest" not in base["route"]
+    heuristic = d.graph.item(WIDGET).chosen[0]
+    assert _choices(simplest) == [(WIDGET, heuristic)] != _choices(base)
+    assert simplest["name"] == "Widget line · 2/s · MV · simplest"
+    r = simplest["rank"]
+    assert (r["column"], r["position"], r["of"]) == ("simplest", 1, 1)
+    assert base["alternatives"] == [simplest["id"]]
+    assert simplest["request"]["simplest"] is True
+    for p in d.plans:
+        valid(p)
+
+
+def test_simplest_route_marks_the_ranked_route_that_is_it(
+    conn: sqlite3.Connection,
+) -> None:
+    plain = design(conn, Request(WIDGET, qty=2))
+    d = design(conn, Request(WIDGET, qty=2, simplest=True))
+    assert [_choices(p) for p in d.plans] == [_choices(p) for p in plain.plans]
+    assert [p["route"]["column"] for p in d.plans] == ["base"] * 3
+    marked = [p for p in d.plans if p["route"].get("simplest")]
+    assert len(marked) == 1
+    assert _choices(marked[0]) == [(WIDGET, d.graph.item(WIDGET).chosen[0])]
+    # a pin holds in the simplest route too: it is the pinned route
+    electro = ref_of(conn, "electrolyzer", 0)
+    pinned = design(
+        conn, Request(WIDGET, routes=1, pins=(Pin(WIDGET, electro),), simplest=True)
+    )
+    assert len(pinned.plans) == 1 and pinned.plans[0]["route"]["simplest"] is True
+    valid(pinned.plans[0])
+
+
 def test_addon_column(conn: sqlite3.Connection) -> None:
     d = design(conn, Request(WIDGET, machines="base+addons", qty=2))
     columns = [p["route"]["column"] for p in d.plans]
@@ -361,6 +420,9 @@ def test_pick_order() -> None:
     assert sizing.pick(opts) is single_hv  # unbadged single block, highest tier
     assert sizing.pick(opts, addon=True) is addon
     assert sizing.pick((multi, steam)) is multi
+    primitive = _option(mte_id=7, kind="primitive", tier=0)
+    assert sizing.pick((primitive,)) is primitive
+    assert sizing.pick((steam, primitive)) is steam
     assert sizing.pick((badged,)) is badged  # kept, with its badge (D142 (a))
     assert sizing.pick((addon,)) is None
 
@@ -425,6 +487,14 @@ def run_cli(home: Path, monkeypatch: pytest.MonkeyPatch, *argv: str) -> tuple[in
     return plancli.run(parser.parse_args(["plan", *argv]), out), out.getvalue()
 
 
+def test_request_default_is_still_a_rate() -> None:
+    """D389 (5)'s batch of 64 is the entry points' default, not the dataclass's: library
+    callers and stored requests keep a rate of 1/s."""
+    r = Request(WIDGET)
+    assert (r.mode, r.qty, r.unit) == ("rate", 1.0, "/s")
+    assert Request.from_dict({"target": WIDGET}).rate_per_s == 1.0
+
+
 def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     home = db.parent.parent
     code, text = run_cli(home, monkeypatch, "widget", "--tier", "MV", "--qty", "2/s")
@@ -445,6 +515,20 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         prefs.unlink()
     assert code == 0 and text.startswith("ranked by weights (custom):")
     assert "EU/t 3" in text and "Ranked by code, weights (custom)" in text
+    # no amount: a batch of 64 with its ETA (D389 (5)); --within still sets its window
+    code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1")
+    assert code == 0 and "Widget line · 64 batch · MV" in text, text
+    assert "  batch 64: ETA " in text and "sized at 64 per 3,600 s" in text
+    code, text = run_cli(
+        home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1", "--within", "10min"
+    )
+    assert code == 0 and "sized at 64 per 600 s" in text, text
+    code, text = run_cli(
+        home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1", "--simplest"
+    )
+    assert code == 0 and "[base, simplest]" in text, text  # D389 (4)
+    code, text = run_cli(home, monkeypatch, WIDGET, "--qty", "2/s", "--within", "1h")
+    assert code == 2 and "--within is for --batch only" in text
     code, text = run_cli(
         home, monkeypatch, WIDGET, "--tier", "MV", "--json", "--routes", "1"
     )

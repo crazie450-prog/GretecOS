@@ -9,7 +9,7 @@ GOS's designer (plan 7.1) builds the recipe graph, solves up to three routes, si
 
 | Tool | What it does |
 |---|---|
-| `design_production(target, rate?, batch?, within?, tier?, routes?, addons?)` | Solves and saves every route (each a plan, `plan:<id>`). Returns one row per route in rank order: score, machines, new machine types, EU/t, effort, scarcity, complexity, the choices that differ from the other routes, and an explanation built from the metrics by code. |
+| `design_production(target, rate?, batch?, within?, tier?, routes?, addons?, simplest?)` | Solves and saves every route (each a plan, `plan:<id>`). Returns one row per route in rank order: score, machines, new machine types, EU/t, effort, scarcity, complexity, the choices that differ from the other routes, and an explanation built from the metrics by code. |
 | `plan_get(id, view)` | `summary` (a plan's facts and metrics), `nodes` (each machine: recipe `r:` id, machine, tier, count, pinned), `routes` (its design's routes side by side), `alternatives` with `node` (that node's candidate recipes). |
 | `plan_pin(id, node, recipe)` / `plan_pin(id, node, unpin=true)` | Pins one node to another candidate recipe (or frees it) and solves again. The pin is saved in the plan. Returns the new routes as `design_production` does. |
 | `plan_explain(id)` | The design's explanation, written by the planner model from the metrics only and checked number by number by GOS's validator (else GOS's own template). Returns the text and its `source`. |
@@ -19,7 +19,8 @@ GOS's designer (plan 7.1) builds the recipe graph, solves up to three routes, si
 
 ## 1. Design
 
-- Call `design_production` with his words for the target (or a key you already have), his rate ("2/s", "30/min") or a batch ("64", with `within` "2h"), and a tier only when he names one (otherwise My base's tier is used). `addons: true` only when he asks about addon machines; the addon route comes last, in its own column.
+- Call `design_production` with his words for the target (or a key you already have), his rate ("2/s", "30/min") or a batch ("64", with `within` "2h"; when he names no amount, give neither: that is a batch of 64, and say its ETA from `plan_get` view `summary`'s `eta_s`), and a tier only when he names one (otherwise My base's tier is used). `addons: true` only when he asks about addon machines; the addon route comes last, in its own column.
+- The design also has the **simplest route** (each node's first recipe), in its own column after the ranked routes, or marked on the ranked route that already is it (its `column` reads `base, simplest`); `simplest: false` leaves it out. It is an extra option, not a re-ranking: route 1 is still code's first.
 - `ambiguous: 1`: ask one short question naming the candidates, then design with the key he picks.
 - A refusal ("no route", "can't design it") is the answer: say what it says and which part he could change (the tier, the rate, a stocked input in My base).
 

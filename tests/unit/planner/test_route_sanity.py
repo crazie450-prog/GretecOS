@@ -5,7 +5,8 @@ would rank it first. Every item, recipe and machine is made up; no pack data.
 
 - A recipe that uses the request's target up is a loop back to the target, never a source of
   one of its inputs: it ranks as a reversal, and a primary node doesn't expand it.
-- A plan that imports what it can't make (a ``locked`` boundary) says so in its warnings.
+- A plan that imports what it can't make (a ``locked`` boundary) says so in its warnings,
+  and imports it through a gate (WO-3.10 F4).
 """
 
 from __future__ import annotations
@@ -114,3 +115,6 @@ def test_a_plan_importing_what_it_cannot_make_warns(conn: sqlite3.Connection) ->
         warned = [w for w in p["warnings"] if w.startswith(f"imports {DUST_B} (locked")]
         assert bool(warned) == (DUST_B in imported), (imported, p["warnings"])
     assert DUST_B in {b["id"] for b in d.plans[0]["boundary"]["in"]}
+    # Legal, but not free (WO-3.10 F4): the locked import goes through a gate.
+    assert DUST_B in d.plans[0]["route"]["gates"]
+    assert DUST_B in plan.network(d.graph, req, {}, base_only=True).gated_in

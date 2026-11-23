@@ -27,6 +27,12 @@ number comes from the recipe, a machine fact or GT's math, and each carries its 
   ``batch_mode``. Multiblocks ignore cleanroom and low gravity (only ``MTEBasicMachine`` checks
   them). Its energy hatches are the player's choice: by default one or two plain hatches of
   each tier he has reached (one plain hatch runs it at 1 A, D175).
+- ``primitive``: the Bricked Blast Furnace and the Coke Oven (``PRIMITIVE_MACHINES``): one
+  recipe at a time in its own duration, no EU, no overclock, no parallel, from stone through
+  every tier (D389 (1), D390). The Bricked Blast Furnace never reads the special value, so it
+  needs no cleanroom or low gravity.
+
+Any other single block runs its own recipe check and is not modelled (D176).
 
 **Variables** (D109): build variables come from the hatches (``vt``, ``vt_avg``, ``vt_eu``,
 ``vt_eu_floor``, ``input_eu``), the coils (``coil_tier``, ``coil_heat``) or the player's
@@ -93,6 +99,18 @@ STEAM_PACKAGE = "gregtech.common.tileentities.machines.steam.MTESteam"
 STEAM_VARIANTS = {"Bronze": (1, 2), "Steel": (2, 1)}
 STEAM_RECIPE_VOLTAGE = 32  # TierEU.LV: the voltage a steam machine finds recipes at
 STEAM_PER_EU = 2  # SteamOverclockDescriber.convertEUToSteam: 2 L of steam per EU
+# GT's primitive machines (D390): a recipe runs in its own duration with no EU, no overclock and
+# no parallel, one recipe at a time. The Bricked Blast Furnace (a plain MetaTileEntity) takes no
+# pipe or hopper and gives chanced outputs whole; the Coke Oven has its own hatches.
+BRICKED_BLAST_FURNACE = (
+    "gregtech.common.tileentities.machines.multi.MTEBrickedBlastFurnace"
+)
+PRIMITIVE_MACHINES = frozenset(
+    {
+        BRICKED_BLAST_FURNACE,
+        "gregtech.common.tileentities.machines.multi.MTECokeOven",
+    }
+)
 # GT's special values (GTRecipeBuilder): -100 low gravity, -200 cleanroom, -300 both.
 LOW_GRAVITY_VALUES = (-100, -300)
 CLEANROOM_VALUES = (-200, -300)
@@ -123,7 +141,7 @@ DERIVED = frozenset(
 # TecTech's laser target hatches start at 256 A; its multi-amp hatches stop at 64 A.
 LASER_MIN_AMPS = 256
 
-Kind = Literal["singleblock", "steam", "multiblock"]
+Kind = Literal["singleblock", "steam", "multiblock", "primitive"]
 State = Literal["worst", "steady"]
 
 
@@ -202,6 +220,8 @@ class MachineInfo:
 
     @property
     def kind(self) -> Kind | None:
+        if self.class_name in PRIMITIVE_MACHINES:
+            return "primitive"
         if self.multiblock:
             return "multiblock"
         if (
@@ -455,6 +475,27 @@ def size_steam(
         steam_per_tick=Cited(STEAM_PER_EU * run.eut, refs),
     )
     return _option(recipe, machine, player, "steam", 0, (), needs, sizing)
+
+
+def size_primitive(
+    recipe: RecipeInfo, machine: MachineInfo, player: Player
+) -> MachineOption:
+    """A primitive machine (``PRIMITIVE_MACHINES``) running ``recipe`` in its own duration."""
+    if recipe.duration < 1:
+        raise Unsized("no duration")
+    run = Run(Check.SUCCESS, eut=0, duration=recipe.duration, parallel=1)
+    sizing = _sizing(run, "fixed", (recipe.ref, machine.ref), 1)
+    opt = _option(recipe, machine, player, "primitive", 0, (), (), sizing)
+    if machine.class_name != BRICKED_BLAST_FURNACE:
+        return opt
+    return replace(
+        opt,
+        notes=(
+            *opt.notes,
+            "all input and output by hand through the controller (no pipe or hopper)",
+            "GT gives every output whole: it ignores output chances",
+        ),
+    )
 
 
 # --- multiblocks ---------------------------------------------------------------------------
@@ -880,6 +921,8 @@ def options_for(
             return [size_singleblock(recipe, machine, player)], None
         if kind == "steam":
             return [size_steam(recipe, machine, player)], None
+        if kind == "primitive":
+            return [size_primitive(recipe, machine, player)], None
         if kind is None:
             return rejected(
                 f"{machine.class_name.rsplit('.', 1)[-1]}: a single block with its own "
@@ -904,7 +947,7 @@ def options_for(
 
 
 def _order(o: MachineOption) -> tuple[object, ...]:
-    kinds = {"steam": 0, "singleblock": 1, "multiblock": 2}
+    kinds = {"steam": 0, "singleblock": 1, "multiblock": 2, "primitive": 3}
     return (
         o.addon,
         kinds[o.kind],

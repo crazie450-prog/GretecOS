@@ -592,7 +592,7 @@ constraints: max_eut? exclude[] require_owned? cleanroom? coil_max?    pins: [{n
 1. **Resolve** the target through FTS + glossary. If it's ambiguous, ask one clarifying question.
 2. **Build the recipe graph** backward from the target.
    - Candidate recipes: `enabled && !fake`; voltage ≤ tier cap; machine owned or unlockable at tier; special conditions satisfiable (cleanroom, low gravity, coil heat, assembly-line research).
-   - Prune to the top 4 recipes per item by heuristic: lower tier, fewer inputs, base machine first, avoid chanced-only routes.
+   - Prune to the top 4 recipes per item by heuristic: inputs closer to the world first (at hand or one step from it, then the rest, then an unknown raw; D389 (3), D393), then lower tier, fewer inputs, base machine first, avoid chanced-only routes; fewer unsourced inputs break ties before the recipe key.
    - Stop at boundary items or depth 12.
    - Curated **chain templates** for notorious chains (platline, rare earths, naquadah…) live in `line-designer/references/chains/*.tsv` to stop combinatorial blow-up.
 3. **Alternatives.**

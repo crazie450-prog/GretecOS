@@ -38,7 +38,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gregtec.agents import prefetch
 from gregtec.agents.tools.glossary import Glossary
@@ -55,6 +55,7 @@ from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
 from gregtec.planner.outputs.book import Book
 from gregtec.planner.request import (
+    DEFAULT_BATCH,
     RECIPE_KEY,
     Pin,
     Request,
@@ -65,7 +66,11 @@ from gregtec.planner.request import (
 )
 from gregtec.vault.io import VaultError, VaultIO, atomic_write
 
+if TYPE_CHECKING:
+    from gregtec.agents.route_review import Reviewer
+
 LATEST = Path("data", "plans", "designer.json")  # in GOS_HOME
+REVIEWS = Path("data", "plans", "reviews")  # the route reviewer's records (D389 (7))
 LINES = "base/lines"
 NAME_MAX = 80
 # One design, pin, accept or rename at a time per process; re-entrant so a design job
@@ -91,9 +96,11 @@ class DesignerError(ValueError):
 
 @dataclass
 class Designed:
-    ids: list[str]  # rank order: the base routes, then the addon column
+    ids: list[str]  # rank order: base routes, then simplest, addon, reviewed
     plans: list[dict[str, Any]]
     problems: list[str] = field(default_factory=list)  # saved, but a vault note wasn't
+    review: dict[str, Any] | None = None  # the route reviewer's record, when asked for
+    reviewed: str | None = None  # the reviewed route's id, when it made one
 
 
 def _db(home: Path) -> Path:
@@ -154,23 +161,50 @@ def resolve_target(home: Path, text: str) -> graph.Resolved | prefetch.Clarify:
 
 
 SPEC_KEYS = frozenset(
-    {"target", "rate", "batch", "within", "tier", "routes", "addons", "pins"}
+    {
+        "target",
+        "rate",
+        "batch",
+        "within",
+        "tier",
+        "routes",
+        "addons",
+        "pins",
+        "simplest",
+        "review",
+    }
 )
+
+
+def wants_review(spec: Mapping[str, Any]) -> bool:
+    """Whether the spec turns the route reviewer on (D389 (7): off unless ``review`` is
+    true). The toggle is the Designer's, not the request's, so plan ids don't change."""
+    review = spec.get("review", False)
+    if not isinstance(review, bool):
+        raise DesignerError("review is true or false")
+    return review
 
 
 def request_from_spec(
     home: Path, spec: Mapping[str, Any]
 ) -> Request | prefetch.Clarify:
     """A request from the Designer's form or ``design_production``'s spec: ``target`` (words
-    or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"),
+    or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"; with
+    neither, a batch of :data:`~gregtec.planner.request.DEFAULT_BATCH`, D389 (5)),
     ``tier`` (LV..MAX, else My base's), ``routes`` (1-3), ``addons`` (bool), ``pins``
-    ([{node, recipe}]). An unclear target gives the clarifying question instead."""
+    ([{node, recipe}]), ``simplest`` (bool, default true here: the simplest route beside the
+    ranked ones, D389 (4)), ``review`` (bool, default false: :func:`wants_review`, never
+    in the request). An unclear target gives the clarifying question instead."""
     unknown = set(spec) - SPEC_KEYS
     if unknown:
         raise DesignerError(f"unknown fields: {', '.join(sorted(unknown))}")
+    wants_review(spec)
     target = spec.get("target")
     if not isinstance(target, str) or not target.strip():
         raise DesignerError("name a target item or fluid")
+    simplest = spec.get("simplest", True)
+    if not isinstance(simplest, bool):
+        raise DesignerError("simplest is true or false")
     found = resolve_target(home, target.strip())
     if isinstance(found, prefetch.Clarify):
         return found
@@ -182,6 +216,7 @@ def request_from_spec(
                 Pin(str(p["node"]), str(p["recipe"])) for p in spec.get("pins") or ()
             ),
             "routes": int(spec.get("routes") or 3),
+            "simplest": simplest,
         }
         if spec.get("batch") not in (None, ""):
             if spec.get("rate") not in (None, ""):
@@ -191,9 +226,14 @@ def request_from_spec(
                 raise DesignerError("a batch is a quantity, without /s, /min or /h")
             within = parse_duration(str(spec["within"])) if spec.get("within") else None
             return Request(found.key, mode="batch", qty=qty, within_s=within, **common)
+        if spec.get("rate") in (None, ""):  # no amount: a batch of 64 (D389 (5))
+            within = parse_duration(str(spec["within"])) if spec.get("within") else None
+            return Request(
+                found.key, mode="batch", qty=DEFAULT_BATCH, within_s=within, **common
+            )
         if spec.get("within"):
             raise DesignerError("within is for a batch only")
-        qty, unit = parse_qty(str(spec.get("rate") or "1/s"))
+        qty, unit = parse_qty(str(spec["rate"]))
         if unit is None:
             raise DesignerError("a rate needs /s, /min or /h")
         return Request(found.key, qty=qty, unit=unit, **common)
@@ -216,25 +256,64 @@ def _solve(conn: sqlite3.Connection, home: Path, request: Request) -> plan.Desig
         raise DesignerError(f"can't design it: {exc}") from None
 
 
-def _save_all(home: Path, d: plan.Design, conn: sqlite3.Connection) -> Designed:
+def _save_all(
+    home: Path,
+    d: plan.Design,
+    conn: sqlite3.Connection,
+    extra: Sequence[dict[str, Any]] = (),
+    review: str | None = None,
+) -> Designed:
     out = Designed([], [])
     vault = _vault(home)
     with _conn(home, readonly=False) as rw:
-        for p in d.plans:
+        for p in [*d.plans, *extra]:
             saved = store.save(home, p, rw, book_mod.read(conn, p), vault)
             out.ids.append(saved.id)
             out.problems.extend(saved.problems)
     out.plans = [store.load(home, pid) for pid in out.ids]  # names from the rows
-    _remember(home, out.ids)
+    _remember(home, out.ids, review)
     return out
 
 
-def design(home: Path, request: Request) -> Designed:
-    """Solve, rank and save every route of ``request`` (see the module docstring)."""
+def design(
+    home: Path, request: Request, *, reviewer: Reviewer | None = None
+) -> Designed:
+    """Solve, rank and save every route of ``request`` (see the module docstring). With
+    ``reviewer`` (the toggle, D389 (7)) the route reviewer reads the ranked routes first; its
+    re-runs are solved in memory, so a cancel still saves nothing (D353). Its reviewed route,
+    when it made one, is saved as an extra column beside the planner's own routes, and its
+    record goes to ``data/plans/reviews/<the top route's id>.json``."""
     with _LOCK, _conn(home, readonly=True) as conn:
         d = _solve(conn, home, request)
+        out = None
+        if reviewer is not None:
+            prefs = rank.read_prefs(home / "vault")
+            out = reviewer.run(d, request, lambda r: _solve(conn, home, r), prefs, conn)
         progress.stage("saving")  # a design job's last cancel point (D353)
-        return _save_all(home, d, conn)
+        if out is None:
+            return _save_all(home, d, conn)
+        extra = [out.reviewed] if out.reviewed is not None else []
+        for p in d.plans:
+            p["alternatives"] = [*p["alternatives"], *(r["id"] for r in extra)]
+        saved = _save_all(home, d, conn, extra, out.record["id"])
+        atomic_write(
+            home / REVIEWS / f"{d.plans[0]['id']}.json",
+            json.dumps(out.record, sort_keys=True, indent=1).encode("utf-8"),
+        )
+        saved.review = out.record
+        saved.reviewed = extra[0]["id"] if extra else None
+        return saved
+
+
+def review_record(home: Path, pid: str) -> dict[str, Any] | None:
+    """The route reviewer's last record for the routes whose top route is ``pid``, if any."""
+    try:
+        data = json.loads(
+            (home / REVIEWS / f"{_pid(pid)}.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def resolve(home: Path, pid: str) -> Designed:
@@ -262,23 +341,31 @@ def pin(home: Path, pid: str, node: str, recipe: str | None) -> Designed:
     with _LOCK, _conn(home, readonly=True) as conn:
         d = _solve(conn, home, changed)
         if recipe is not None:
-            try:
-                found = alts.node_alternatives(d.graph, node, show_all=True)
-            except KeyError:
-                raise DesignerError(f"{node} isn't a node of this design") from None
-            ok = {a["recipe"] for a in found if a["status"] != "rejected"}
-            if recipe not in ok:
-                why = next((a["reason"] for a in found if a["recipe"] == recipe), "")
-                raise DesignerError(
-                    f"{recipe} can't make {node} here"
-                    + (f": {why}" if why else " (it isn't one of its recipes)")
-                )
+            check_pin(d, node, recipe)
         progress.stage("saving")  # a design job's last cancel point (D353)
         return _save_all(home, d, conn)
 
 
-def _remember(home: Path, ids: Sequence[str]) -> None:
-    body = {"ids": list(ids), "ts": int(time.time())}
+def check_pin(d: plan.Design, node: str, recipe: str) -> None:
+    """Refuse a pin of ``node`` to ``recipe`` unless it is one of the node's candidates in
+    ``d``'s graph that the graph didn't reject (the Designer's pin and the route reviewer's)."""
+    try:
+        found = alts.node_alternatives(d.graph, node, show_all=True)
+    except KeyError:
+        raise DesignerError(f"{node} isn't a node of this design") from None
+    ok = {a["recipe"] for a in found if a["status"] != "rejected"}
+    if recipe not in ok:
+        why = next((a["reason"] for a in found if a["recipe"] == recipe), "")
+        raise DesignerError(
+            f"{recipe} can't make {node} here"
+            + (f": {why}" if why else " (it isn't one of its recipes)")
+        )
+
+
+def _remember(home: Path, ids: Sequence[str], review: str | None = None) -> None:
+    body: dict[str, Any] = {"ids": list(ids), "ts": int(time.time())}
+    if review is not None:
+        body["review"] = review
     atomic_write(home / LATEST, json.dumps(body, sort_keys=True).encode("utf-8"))
 
 
@@ -297,10 +384,13 @@ def latest(home: Path) -> list[str]:
 # --- what the view shows -----------------------------------------------------------------------
 
 
+_COLUMN_ORDER = {"base": 0, "simplest": 1, "addon": 2, "reviewed": 3}
+
+
 def _order_key(p: Mapping[str, Any]) -> tuple[int, int, str]:
     r = p.get("rank") or {}
     return (
-        1 if r.get("column") == "addon" else 0,
+        _COLUMN_ORDER.get(str(r.get("column")), 0),
         int(r.get("position") or 0),
         p["id"],
     )
@@ -308,7 +398,7 @@ def _order_key(p: Mapping[str, Any]) -> tuple[int, int, str]:
 
 def group(home: Path, pid: str) -> list[dict[str, Any]]:
     """``pid`` and the routes solved with it (its ``alternatives``) that are still saved, in
-    rank order (the base routes by position, then the addon column)."""
+    rank order (the base routes by position, then the simplest, addon and reviewed columns)."""
     first = load(home, pid)
     plans = [first]
     for other in first.get("alternatives") or ():
@@ -363,16 +453,26 @@ def _metric(p: Mapping[str, Any], key: str) -> float:
     return float(m.get(key) or 0)
 
 
+def _column(p: Mapping[str, Any]) -> str:
+    return str((p.get("rank") or {}).get("column") or "base")
+
+
 def _addon(p: Mapping[str, Any]) -> bool:
-    return (p.get("rank") or {}).get("column") == "addon"
+    return _column(p) == "addon"
 
 
 def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The routes the comparison card holds (at most 3, the catalog's limit): the top base
-    routes in rank order, with the addon column (D12) last whenever the design has one."""
-    base = [p for p in plans if not _addon(p)]
-    addon = [p for p in plans if _addon(p)][:1]
-    return base[: 3 - len(addon)] + addon
+    routes in rank order, then the simplest route (D389 (4)), the addon column (D12) and the
+    reviewed route (D389 (7)) whenever the design has them, but never fewer than one base
+    route (D11): with all three extras the simplest route is left out."""
+    base = [p for p in plans if _column(p) == "base"]
+    extras: list[Mapping[str, Any]] = []
+    for column in ("simplest", "addon", "reviewed"):
+        extras.extend([p for p in plans if _column(p) == column][:1])
+    if base:  # the top ranked route always stays: the simplest route gives way first
+        extras = extras[-2:]
+    return base[: 3 - len(extras)] + extras
 
 
 def _made_by(p: Mapping[str, Any]) -> dict[str, str]:
@@ -402,10 +502,10 @@ def comparison_card(
     prefs_line: str,
 ) -> dict[str, Any]:
     """The catalog's ``route_comparison`` card for up to 3 routes, in the order given (rank
-    order): the base routes, and when the design has an addon route, the top 2 base routes and
-    the addon column last (its rank reads ``addon``). A metric is marked ``best`` on the routes
-    that have the best value when the routes don't all tie; a choice ``differs`` when another
-    route makes that item with another recipe or not at all."""
+    order): the base routes, then the simplest route and the addon column when the design has
+    them, in fewer base routes' place (their rank reads ``simplest`` or ``addon``). A metric is
+    marked ``best`` on the routes that have the best value when the routes don't all tie; a
+    choice ``differs`` when another route makes that item with another recipe or not at all."""
     shown = _shown(plans)
     by_route = [_made_by(p) for p in shown]
     routes = []
@@ -445,7 +545,9 @@ def comparison_card(
             {
                 "id": p["id"],
                 "name": clip(p["name"], 200),
-                "rank": "addon" if _addon(p) else int(r.get("position") or i + 1),
+                "rank": _column(p)
+                if _column(p) != "base"
+                else int(r.get("position") or i + 1),
                 "ref": f"plan:{p['id']}",
                 "accepted": statuses.get(p["id"], "proposed") != "proposed",
                 "metrics": metrics,
@@ -458,6 +560,16 @@ def comparison_card(
     ]
     if any(_addon(p) for p in shown):
         notes.append("the addon column is ranked against the base routes, shown last")
+    if any(_column(p) == "simplest" for p in shown):
+        notes.append(
+            "the simplest route (each node's first recipe) is scored against the base "
+            "routes, shown after them"
+        )
+    if any(_column(p) == "reviewed" for p in shown):
+        notes.append(
+            "the reviewed route is the route reviewer's change, re-solved and scored by the "
+            "planner against the base routes, shown last"
+        )
     title = shown[0]["name"] if shown else "Routes"
     return checked(
         {
@@ -503,6 +615,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "name": p["name"],
                 "status": statuses.get(p["id"], "proposed"),
                 "column": r.get("column"),
+                "simplest": bool((p.get("route") or {}).get("simplest")),
                 "position": r.get("position"),
                 "of": r.get("of"),
                 "score": r.get("score"),
@@ -511,6 +624,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "pins": p.get("pins") or [],
                 "nodes": [_node(n, b) for n in p.get("nodes") or ()],
                 "warnings": p.get("warnings") or [],
+                "review": p.get("review"),  # the reviewed route's changes (D389 (7))
                 "affected": flags.get(p["id"]),
                 # every route's comparison metrics and differing choices, against all the
                 # design's routes (the card holds at most 3 of them)
@@ -523,6 +637,8 @@ def view(home: Path, pid: str) -> dict[str, Any]:
     return {
         "id": pid,
         "weights": rank.describe(prefs),
+        # the route reviewer's last record for these routes (D389 (7)), whatever it did
+        "review": review_record(home, plans[0]["id"]) if plans else None,
         "routes": routes,
         "comparison": comparison_card(plans, books, statuses, rank.describe(prefs)),
     }
@@ -539,17 +655,38 @@ def alternatives(
             g = graph.build(conn, request, MyBase.from_db(conn))
         except (graph.GraphError, LookupError, ValueError) as exc:
             raise DesignerError(f"can't build the graph: {exc}") from None
-        try:
-            found = alts.node_alternatives(g, node, show_all)
-        except KeyError:
-            raise DesignerError(f"{node} isn't a node of this design") from None
-        names = dict(
-            conn.execute(
-                "SELECT unloc_name, name_en FROM recipe_map WHERE name_en IS NOT NULL"
-            ).fetchall()
-        )
+        out = alternative_rows(conn, g, p.get("nodes") or (), node, show_all)
+    return {
+        "plan": pid,
+        "node": node,
+        "name": g.item(node).name,
+        "pinned": request.pin_for(node),
+        "all": show_all,
+        "alternatives": out,
+    }
+
+
+def alternative_rows(
+    conn: sqlite3.Connection,
+    g: graph.Graph,
+    nodes: Sequence[Mapping[str, Any]],
+    node: str,
+    show_all: bool = False,
+) -> list[dict[str, Any]]:
+    """Node ``node``'s candidates in graph ``g`` (D61), each with its machine map's name, tier,
+    EU/t, duration and whether a route with ``nodes`` uses it (the Designer's alternatives
+    and the route reviewer's)."""
+    try:
+        found = alts.node_alternatives(g, node, show_all)
+    except KeyError:
+        raise DesignerError(f"{node} isn't a node of this design") from None
+    names = dict(
+        conn.execute(
+            "SELECT unloc_name, name_en FROM recipe_map WHERE name_en IS NOT NULL"
+        ).fetchall()
+    )
     in_graph = {r.id: r for r in g.recipes}
-    used = {n["recipe"] for n in p.get("nodes") or () if node in (n.get("for") or ())}
+    used = {n["recipe"] for n in nodes if node in (n.get("for") or ())}
     out = []
     for a in found:
         r = in_graph.get(a["recipe"])
@@ -563,14 +700,7 @@ def alternatives(
                 "used": a["recipe"] in used,
             }
         )
-    return {
-        "plan": pid,
-        "node": node,
-        "name": g.item(node).name,
-        "pinned": request.pin_for(node),
-        "all": show_all,
-        "alternatives": out,
-    }
+    return out
 
 
 # --- accept and rename -------------------------------------------------------------------------

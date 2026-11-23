@@ -33,12 +33,30 @@ machine with a badge (flagged, low confidence, custom, D142 (a)) still counts, a
 only badged machines run carries the badge as a warning. Crafting-table and furnace recipes
 (NEI's) are kept, flagged ``manual``.
 
+**Raw sources** (WO-3.10 F2, D389 (2), (6)): a raw input comes from an ore vein (an ore block
+GT's ore mixes place, ``ore_mix`` from ``gos ores load``: by its exact key, or any ore block of
+the mix's material in the same registry namespace on a stone of ``STONE_DIMS``, a Netherrack ore
+in the Nether only and an Endstone ore in the End only; another planet's stone only by its exact
+key), a curated source (``data/curated/raw_inputs.tsv``: world, pump, mob, crop or
+``dimension:<name>``), or nowhere GOS knows (allowed; the plan warns). The player
+reaches the Overworld and the Nether, and each dimension whose unlock quest he has completed
+(``BaseInputs.dimensions``). An ore a reachable dimension places is a ``raw`` boundary from the
+start (GT's space miner makes ores too, never expanded); a recipe that consumes an input only
+unreachable dimensions give, or an oredict or wildcard slot whose every member is one, is
+rejected ("Steeleaf Nugget: Twilight Forest, not reachable (D389)"), and such a member is left
+out of its slot. What he has (stock, line outputs, the request's boundary) is never gated.
+
 **Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling,
-GT's container maps and EU-less recipes last, D142 (2), D189; then the reverse of one of the
-item's own uses; avoid chanced-only; lower tier; the item as the main product before a
-byproduct route; fluid cells after none; fewer inputs; base machine first; machine before
-manual; unbadged first; key) and the first :data:`TOP_N` valid ones are kept; every candidate
-stays listed with its status for D61's swap and "show all". Only primary choices (§7.1 step 3)
+GT's container maps and EU-less recipes but a primitive machine's last, D142 (2), D189, D390;
+then the reverse of one of the item's own uses; avoid chanced-only; inputs closer to the world
+(WO-3.10 F3, D389 (3), (6), D393: every input it uses up at hand or one step from it, then some
+not, then an unknown raw among them; a fluid cell counts as its fluid, and a recipe that uses
+cells up is never in the first group; with no ore mixes loaded an unknown raw ranks as unsourced, and
+the graph warns, since every ore block is unknown then); lower tier; the item as the main
+product before a byproduct route; fluid cells after none; fewer inputs; base machine first;
+machine before manual; unbadged first; fewer unsourced inputs; key) and the first :data:`TOP_N` valid ones are kept, plus the first
+recipe a primitive machine runs (the Bricked Blast Furnace beside the EBF, D389 (1), D390); every
+candidate stays listed with its status for D61's swap and "show all". Only primary choices (§7.1 step 3)
 expand more than their first: the target and its direct inputs expand their top recipes but
 their side routes (:func:`side_route`), and a chain template on the target's route expands its
 recipes, its branch points primary (D189). A pin (D61) or a chain template (:mod:`.chains`)
@@ -60,7 +78,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -82,6 +100,21 @@ FULL = 10000
 MANUAL_SOURCES = frozenset({"crafting", "furnace"})
 RESEARCH_MAPS = ("gt.recipe.researchStation", "gt.recipe.scanner")
 RAW_INPUTS = chains.REPO_ROOT / "data" / "curated" / "raw_inputs.tsv"
+RAW_SOURCES = ("world", "pump", "mob", "crop")
+DIMENSION_SOURCE = "dimension:"
+# The ore stones an ore mix's material reaches (WO-3.10 F2): None, wherever its mixes are; a
+# set, only there (Netherrack and Endstone are found in one dimension only). A stone not listed
+# (Horus, Seth, Packed Ice: other planets' rock) counts only where a mix names its exact block.
+STONE_DIMS: dict[str, frozenset[str] | None] = {
+    "ore": None,
+    "oreSmall": None,
+    "oreBlackgranite": None,
+    "oreRedgranite": None,
+    "oreMarble": None,
+    "oreBasalt": None,
+    "oreNetherrack": frozenset({"Nether"}),
+    "oreEndstone": frozenset({"The End", "EndAsteroid"}),
+}
 GREGTECH = "gregtech"
 IC2_CELL = "IC2:itemCellEmpty"
 # GT maps that only move a material between containers or stack sizes (D189): ranked last.
@@ -132,7 +165,9 @@ class RecipeNode:
     machines: tuple[int, ...]  # mte ids that can run it, base before addon
     base: bool  # a base-pack machine runs it (D12)
     badges: tuple[str, ...]  # warnings every machine option carries (D142 (a))
-    flags: tuple[str, ...]  # manual, recycling, research, cleanroom, low_gravity
+    flags: tuple[
+        str, ...
+    ]  # manual, recycling, research, cleanroom, low_gravity, primitive
     research: str | None = None  # the research recipe (assembly line)
 
     def supplies(self, crafts: int) -> tuple[Supply, ...]:
@@ -183,6 +218,9 @@ class ItemNode:
     template: str | None = None  # the chain template that chose its recipes
     branch: str | None = None  # the template's branch-point id
     warnings: tuple[str, ...] = ()
+    # Where a raw input comes from (WO-3.10 F2, D389): "vein:<dims>" (an ore mix places it),
+    # a curated source (raw_inputs.tsv: world, pump, dimension:<name>...), None if unknown.
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -316,6 +354,12 @@ class _Reader:
         ] = {}  # key -> recipe, amount, chance
         self.machines: dict[str, list[machines.MachineInfo]] = {}
         self.uses: dict[str, frozenset[str]] = {}
+        self.slots: dict[str, list[str]] = {}  # oredict or wildcard slot -> members
+        # key -> (tier, counts, consumed keys) per recipe that outputs it (WO-3.10 F3)
+        self.feeds: dict[str, tuple[tuple[int, bool, frozenset[str]], ...]] = {}
+        self.holds: dict[
+            str, frozenset[str]
+        ] = {}  # key -> fluids a container map fills it with
 
     def _rows(self, sql: str, ids: Iterable[int]) -> list[sqlite3.Row]:
         return self.conn.execute(sql, (json.dumps(sorted(set(ids))),)).fetchall()
@@ -405,6 +449,99 @@ class _Reader:
                 self.makers[of[int(r[1])]].append((int(r[0]), int(r[2]), int(r[3])))
                 found.add(int(r[0]))
         self.load_recipes(found)
+
+    def load_feeds(self, keys: Iterable[str]) -> None:
+        """What makes each of ``keys``, for F3's sourcing (WO-3.10, D389 (3)): per recipe of
+        the run that outputs it in any slot (enabled; not fake but the assembly line), its
+        tier, whether it ``counts`` as a step from the world, and the keys it uses up. A
+        recipe counts when a crafting table or furnace makes it, or a machine map does with
+        EU (or a primitive machine with none, D390), recycling aside: the Eye of Harmony's
+        EU-less dust from nothing is no way to source iron. Also :attr:`holds`: the fluids
+        GT's container maps (the canner) fill it with, for a fluid cell. Request-independent,
+        so cached on the shared reader (D352); the builder decides what is in reach."""
+        keys = [k for k in dict.fromkeys(keys) if k not in self.feeds]
+        if not keys:
+            return
+        item_of: dict[int, str] = {}
+        fluid_of: dict[int, str] = {}
+        for k in keys:
+            self.feeds[k] = ()
+            self.holds[k] = frozenset()
+            items, fluids = self.key_ids(k)
+            item_of.update({i: k for i in items})
+            fluid_of.update({f: k for f in fluids})
+        sql = (
+            "SELECT o.{col}, r.id, r.voltage_tier, r.source, m.unloc_name,"
+            f" coalesce(r.eut, 0), {_NOT_RECYCLING}"
+            " FROM json_each(?) AS j CROSS JOIN recipe_output AS o ON o.{col} = j.value"
+            " CROSS JOIN recipe AS r ON r.id = o.recipe_id"
+            " LEFT JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+            " WHERE r.run_id = ? AND r.enabled = 1"
+            " AND (coalesce(r.fake, 0) = 0 OR m.unloc_name = ?) AND o.chance_bp > 0"
+        )
+        made: dict[tuple[str, int], tuple[int, bool]] = {}
+        canned: set[tuple[str, int]] = set()
+        cur = self.conn.cursor()
+        cur.row_factory = None  # plain tuples: tens of thousands of rows a build
+        for col, of in (("item_id", item_of), ("fluid_id", fluid_of)):
+            if not of:
+                continue
+            for r in cur.execute(
+                sql.format(col=col),
+                (json.dumps(sorted(of)), self.run, chains.ASSEMBLY_LINE_MAP),
+            ):
+                at = (of[int(r[0])], int(r[1]))
+                if at not in made:
+                    source, rmap, eut = str(r[3]), r[4], int(r[5])
+                    counts = source in MANUAL_SOURCES or (
+                        source != "nei"
+                        and rmap is not None
+                        and bool(r[6])
+                        and (
+                            eut > 0
+                            or any(
+                                m.kind == "primitive" for m in self.machines_for(rmap)
+                            )
+                        )
+                    )
+                    made[at] = (int(r[2] or 0), counts)
+                    if rmap in CONTAINER_MAPS:
+                        canned.add(at)
+        uses: dict[int, set[tuple[int | None, int | None, int | None]]] = {
+            rid: set() for _, rid in made
+        }
+        for r in cur.execute(
+            "SELECT recipe_id, item_id, fluid_id, ore_id FROM recipe_input"
+            " WHERE consumed = 1 AND recipe_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(sorted(uses)),),
+        ):
+            if r[1] is not None or r[2] is not None or r[3] is not None:
+                uses[int(r[0])].add((r[1], r[2], r[3]))
+        slots = [x for u in uses.values() for x in u]
+        self.load_items(int(i) for i, _, o in slots if i is not None and o is None)
+        self.load_fluids(int(f) for i, f, o in slots if f is not None and o is None)
+        ores = {int(o) for _, _, o in slots if o is not None} - set(self.ores)
+        for o in self._rows(
+            "SELECT id, name FROM ore WHERE id IN (SELECT value FROM json_each(?))",
+            ores,
+        ):
+            self.ores[int(o[0])] = str(o[1])
+        out: dict[str, list[tuple[int, bool, frozenset[str]]]] = {}
+        for at, (tier, counts) in made.items():
+            ins = {
+                self._slot_key(i, f, int(o) if o is not None else None)
+                for i, f, o in uses[at[1]]
+            }
+            out.setdefault(at[0], []).append(
+                (tier, counts, frozenset(k for k in ins if k is not None))
+            )
+        for k, fs in out.items():  # in one order, whoever read first
+            self.feeds[k] = tuple(sorted(fs, key=lambda f: (f[0], f[1], sorted(f[2]))))
+        for at in canned:
+            fluids = {
+                self.fluids[int(f)].key for _, f, _ in uses[at[1]] if f is not None
+            }
+            self.holds[at[0]] = self.holds[at[0]] | fluids
 
     def load_recipes(self, ids: Iterable[int]) -> None:
         want = [i for i in ids if i not in self.recipes]
@@ -516,6 +653,11 @@ class _Reader:
 
     def members(self, key: str) -> list[str]:
         """The members of an oredict (``ore:``) or wildcard (``@32767``) slot."""
+        if key not in self.slots:
+            self.slots[key] = self._members(key)
+        return self.slots[key]
+
+    def _members(self, key: str) -> list[str]:
         if key.startswith("ore:"):
             rows = self.conn.execute(
                 f"SELECT i.id, {_ITEM_KEY_SQL} FROM ore_member AS om JOIN ore AS o"
@@ -628,27 +770,51 @@ class _Check:
 
 
 def heuristic(
-    item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
+    item: str,
+    rec: RecipeNode,
+    made_from: frozenset[str] = frozenset(),
+    src: tuple[int, int] = (0, 0),
 ) -> tuple[object, ...]:
     """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
-    recycling, GT's container maps and EU-less recipes last (D142 (2), D189); then the reverse
-    of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
-    up, ``made_from``, D189; the builder adds the request's target, WO-3.10); avoid chanced-only; lower tier; ``item`` as the recipe's main
+    recycling, GT's container maps and EU-less recipes but a primitive machine's last (D142 (2),
+    D189, D390); then the reverse of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
+    up, ``made_from``, D189; the builder adds the request's target, WO-3.10); avoid chanced-only;
+    the sourcing rank ``src[0]`` (WO-3.10 F3, D389 (3): 0 every input it uses up is at hand or
+    one step from it, 1 some aren't, 2 one is an unknown raw, which the builder ranks 1 when
+    the run has no ore mixes loaded); lower tier; ``item`` as the recipe's main
     product (first output) before a byproduct route; recipes that use fluid cells after those
     that don't (D189); fewer inputs; base machine first (D12); machine before manual; unbadged
-    first (D142 (a)); then the key. All but the last four are known before the machine check
-    (:func:`_cheap`)."""
+    first (D142 (a)); fewer unsourced inputs ``src[1]``; then the key. All but the last five
+    are known before the machine check (:func:`_cheap`)."""
     return (
-        *_cheap(item, rec, made_from),
+        *_cheap(item, rec, made_from, src),
         not rec.base,
         "manual" in rec.flags,
         bool(rec.badges),
+        src[1],
         rec.id,
     )
 
 
+def _plain(valid: Sequence[RecipeNode]) -> int:
+    """How many of ``valid`` count towards :data:`TOP_N`: a primitive recipe doesn't (D390)."""
+    return sum(1 for n in valid if "primitive" not in n.flags)
+
+
+def _top(valid: Sequence[RecipeNode]) -> list[str]:
+    """The top recipes of ``valid`` (in heuristic order): the first :data:`TOP_N` that aren't
+    primitive and the first primitive one, so the Bricked Blast Furnace stays a candidate
+    beside the EBF without taking its slot (D389 (1), D390)."""
+    plain = [n.id for n in valid if "primitive" not in n.flags][:TOP_N]
+    prim = [n.id for n in valid if "primitive" in n.flags][:1]
+    return [n.id for n in valid if n.id in plain or n.id in prim]
+
+
 def _cheap(
-    item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
+    item: str,
+    rec: RecipeNode,
+    made_from: frozenset[str] = frozenset(),
+    src: tuple[int, int] = (0, 0),
 ) -> tuple[object, ...]:
     outs = [p for p in rec.outputs if p.key == item]
     chanced_only = bool(outs) and all(p.chance_bp < FULL for p in outs)
@@ -657,6 +823,7 @@ def _cheap(
         bool({"recycling", "container", "eu0"} & set(rec.flags)),
         bool(consumed & made_from),
         chanced_only,
+        src[0],
         rec.tier,
         not rec.outputs or rec.outputs[0].key != item,
         "cells" in rec.flags,
@@ -671,12 +838,11 @@ def side_route(
     map, EU-less), the reverse of one of the item's uses, or ``item`` only as a byproduct.
     A primary node doesn't expand its side routes while it has another (D189): the platline
     step that gives nitrogen dioxide off is no way to plan nitric acid."""
-    cheap = _cheap(item, rec, made_from)
-    if cheap[0]:
+    if {"recycling", "container", "eu0"} & set(rec.flags):
         return "ranked last"
-    if cheap[1]:
+    if {p.key for p in rec.inputs if p.consumed and p.key != EU_KEY} & made_from:
         return "the reverse of one of its uses"
-    if cheap[4]:
+    if not rec.outputs or rec.outputs[0].key != item:
         return "makes it as a byproduct"
     return None
 
@@ -721,7 +887,26 @@ class _Builder:
         self.excluded_recipes = cons.excluded_recipes()
         self.excluded_keys = cons.excluded_keys()
         self.excluded_mtes = cons.excluded_mtes()
-        self.boundary: dict[str, str] = dict.fromkeys(raw_inputs(), "raw")
+        src = sources(conn)
+        self.boundary: dict[str, str] = dict.fromkeys(src.curated, "raw")
+        # Where raws come from, and what this player can't reach (D389 (2), (6)): an ore an
+        # ore mix places in a reachable dimension is a raw input, never expanded (GT's space
+        # miner makes ores too); one only unreachable dimensions place, or a curated
+        # dimension:<name> row he can't reach, rejects every recipe that consumes it.
+        self.reach = frozenset(base.dimensions())
+        self.source: dict[str, str] = {}
+        self.unreachable: dict[str, str] = {}  # key -> where it comes from
+        for k, dims in src.vein.items():
+            if set(dims) & self.reach:
+                self.boundary.setdefault(k, "raw")
+                self.source[k] = "vein:" + ", ".join(dims)
+            else:
+                self.unreachable[k] = ", ".join(dims) or "no ore mix places it"
+        for k, where in src.curated.items():
+            self.source[k] = where
+            dim = where.removeprefix(DIMENSION_SOURCE)
+            if where.startswith(DIMENSION_SOURCE) and dim not in self.reach:
+                self.unreachable[k] = dim
         for k, v in sorted(base.line_outputs().items()):
             # A running line's output is a boundary for other designs, never for its own
             # target: redesigning (scaling, superseding) a running line must still route (D238).
@@ -732,7 +917,18 @@ class _Builder:
                 self.boundary[k] = "stock"
         for k in request.boundary:
             self.boundary[k] = "request"
+        for k, v in self.boundary.items():
+            if v in ("line", "stock", "request"):  # what he has is never gated
+                self.unreachable.pop(k, None)
+        self._slot_members: dict[str, list[str]] = {}
         self.uses: dict[str, frozenset[str]] = {}  # item -> made_from, minus boundaries
+        # F3's sourcing (D389 (3), (6)), request-dependent so never on the shared reader:
+        # input key -> level (:meth:`_sourcing`).
+        # Unknown raws rank last only where GOS has source data (ore mixes loaded): without
+        # it every ore block is unknown and a space-mined one would outrank them.
+        self.unknown_last = bool(src.vein)
+        self.collapsed = False  # an unknown raw ranked as unsourced (no source data)
+        self.src: dict[str, int] = {}
         self.checks: dict[int, _Check] = {}
         self.fit: dict[
             tuple[object, ...], tuple[list[machines.MachineOption], str]
@@ -789,6 +985,23 @@ class _Builder:
         for p in consumed:
             if p.key in self.excluded_keys:
                 return _Check(False, f"uses excluded {p.key}")
+        for p in consumed:
+            where = self.unreachable.get(p.key)
+            if where is None and _kind(p.key) in ("ore", "wildcard"):
+                if p.key not in self._slot_members:
+                    self._slot_members[p.key] = self.reader.members(p.key)
+                ms = self._slot_members[p.key]
+                if ms and all(m in self.unreachable for m in ms):
+                    where = "; ".join(sorted({self.unreachable[m] for m in ms}))
+                    where = f"every member: {where}"
+            if where is not None:
+                info = (
+                    self.reader.info(p.key)
+                    if _kind(p.key) in ("item", "fluid")
+                    else None
+                )
+                name = info.name if info else p.key
+                return _Check(False, f"{name}: {where}, not reachable (D389)")
         fluids = [p.key for p in consumed if p.key.startswith("fluid:")]
         dup = sorted({k for k in fluids if fluids.count(k) > 1})
         if dup:
@@ -807,6 +1020,12 @@ class _Builder:
             flags.append("manual")
         elif r.map is None or r.eut is None or r.duration is None:
             return _Check(False, "no recipe map, EU/t or duration")
+        elif r.eut <= 0 and any(
+            m.kind == "primitive" for m in self.reader.machines_for(r.map)
+        ):
+            # A primitive machine (the Bricked Blast Furnace, the Coke Oven) runs it with no
+            # EU by GT's own rule: ranked like any other recipe (D389 (1), D390).
+            flags.append("primitive")
         elif r.eut <= 0:
             # The Eye of Harmony, the neutron activator...: the machine powers it its own
             # way. Kept when a machine runs it (always a badged one), ranked last (D189);
@@ -879,6 +1098,86 @@ class _Builder:
             fitted=True,
         )
 
+    # sourcing (WO-3.10 F3) ------------------------------------------------------------------
+
+    def _world(self, key: str) -> bool:
+        """Whether ``key`` is at hand: a boundary (a reachable raw source, stock, a line
+        output, the request's boundary), or for an oredict or wildcard slot one member is."""
+        if key in self.boundary and key not in self.unreachable:
+            return True
+        if _kind(key) in ("ore", "wildcard"):
+            return any(
+                m in self.boundary and m not in self.unreachable
+                for m in self.reader.members(key)
+            )
+        return False
+
+    def _sourcing(self, keys: Iterable[str]) -> None:
+        """Each of ``keys``'s level in :attr:`src`: 0 at hand (:meth:`_world`); 1 one step
+        from it (a recipe that counts, :meth:`_Reader.load_feeds`, at the tier cap, using
+        up something and only what is at hand); 2 made, but further; 3 an unknown raw (no
+        recipe makes it and it is not at hand). An oredict or wildcard slot takes its best
+        reachable member's, and a fluid cell the fluid it holds (:attr:`_Reader.holds`): a
+        recipe with a cell of A and fluid B ties with one with fluid A and a cell of B, and
+        the cells key (before this tie-break) still puts recipes without cells first."""
+        todo = sorted(set(keys) - set(self.src))
+        if not todo:
+            return
+        flat = {
+            k: [k]
+            if _kind(k) not in ("ore", "wildcard")
+            else [k, *(m for m in self.reader.members(k) if m not in self.unreachable)]
+            for k in todo
+        }
+        self.reader.load_feeds(
+            sorted(
+                {m for ms in flat.values() for m in ms if _kind(m) in ("item", "fluid")}
+            )
+        )
+
+        held = {
+            m: sorted(self.reader.holds.get(m, ()))
+            for ms in flat.values()
+            for m in ms
+            if (info := self.reader.info(m) if _kind(m) == "item" else None)
+            and info.cell
+        }
+        self.reader.load_feeds(sorted({f for fs in held.values() for f in fs}))
+
+        def level(m: str) -> int:
+            if self._world(m):
+                return 0
+            if held.get(m):
+                return min(level(f) for f in held[m])
+            fs = self.reader.feeds.get(m, ())
+            if not fs:
+                return 3
+            near = any(
+                counts and tier <= self.cap and ins and all(map(self._world, ins))
+                for tier, counts, ins in fs
+            )
+            return 1 if near else 2
+
+        for k, ms in flat.items():
+            self.src[k] = min(level(m) for m in ms)
+
+    def _pair(self, rec: RecipeNode) -> tuple[int, int]:
+        """(rank, unsourced) of a recipe: how many distinct inputs it uses up are not at hand
+        or one step from it, and its rank: 0 none, 1 some, 2 an unknown raw (1 with no
+        source data, :attr:`unknown_last`). A recipe that uses up fluid cells is never rank 0:
+        its empty cells have to be made and sent back (else a recipe that only swaps one cell
+        for another outranks the empty cell's own way to be made)."""
+        levels = [
+            self.src[k] for k in {p.key for p in rec.inputs if p.consumed} - {EU_KEY}
+        ]
+        unsourced = sum(v >= 2 for v in levels)
+        if 3 in levels and not self.unknown_last:
+            self.collapsed = True
+        rank = 2 if 3 in levels and self.unknown_last else 1 if unsourced else 0
+        if "cells" in rec.flags:
+            rank = max(rank, 1)
+        return rank, unsourced
+
     # one item -------------------------------------------------------------------------------
 
     def candidates(
@@ -886,7 +1185,7 @@ class _Builder:
     ) -> tuple[list[RecipeNode], list[Candidate], list[Candidate]]:
         """(valid recipes in heuristic order, unchecked, rejected) for ``key``. The machine
         check runs in heuristic order, a group of equal cheap keys at a time, until
-        :data:`TOP_N` are valid, and always for the recipes a pin or a template names; the
+        :data:`TOP_N` are valid (a primitive recipe doesn't count, :func:`_plain`), and always for the recipes a pin or a template names; the
         rest are listed unchecked (D61's "show all" checks one when it is picked)."""
         need = (
             set(self.templates.choices[key].recipes)
@@ -918,24 +1217,52 @@ class _Builder:
             if len(passed) > 1
             else frozenset()
         )
+        srcs: dict[str, tuple[int, int]] = {}
+        if len(passed) > 1:
+            self._sourcing(
+                p.key
+                for _, n in passed
+                for p in n.inputs
+                if p.consumed and p.key != EU_KEY
+            )
+            srcs = {n.id: self._pair(n) for _, n in passed}
+        none = (0, 0)
         cheap = sorted(
-            ((_cheap(key, n, uses), rid, n) for rid, n in passed),
-            key=lambda x: (x[0], x[2].id),
+            (
+                (
+                    _cheap(key, n, uses, srcs.get(n.id, none)),
+                    srcs.get(n.id, none)[1],
+                    rid,
+                    n,
+                )
+                for rid, n in passed
+            ),
+            key=lambda x: (x[0], x[1], x[3].id),
         )
         valid: list[RecipeNode] = []
         unchecked: list[Candidate] = []
         group: tuple[object, ...] | None = None
-        for prefix, rid, node in cheap:
-            if len(valid) >= TOP_N and prefix != group and node.id not in need:
+        for prefix, _, rid, node in cheap:
+            # A primitive recipe is still checked past the top 4 until one is valid: it
+            # takes its own slot, not one of theirs (D390 (c)).
+            extra = "primitive" in node.flags and not any(
+                "primitive" in n.flags for n in valid
+            )
+            if (
+                _plain(valid) >= TOP_N
+                and prefix != group
+                and node.id not in need
+                and not extra
+            ):
                 unchecked.append(Candidate(node.id, "unchecked", "below the top 4"))
                 continue
-            group = prefix if len(valid) < TOP_N else group
+            group = prefix if _plain(valid) < TOP_N else group
             c = self.check(rid)
             if c.ok and c.node is not None:
                 valid.append(c.node)
             else:
                 rejected.append(Candidate(node.id, "rejected", c.reason))
-        valid.sort(key=lambda n: heuristic(key, n, uses))
+        valid.sort(key=lambda n: heuristic(key, n, uses, srcs.get(n.id, none)))
         rejected.sort(key=lambda c: c.recipe)
         return valid, unchecked, rejected
 
@@ -971,8 +1298,8 @@ class _Builder:
             warns.append(
                 f"chain {choice.chain}: none of its recipes for {key} fit; heuristic used"
             )
-            return refs[:TOP_N], False, None, None, warns
-        return refs[:TOP_N], False, None, None, []
+            return _top(valid), False, None, None, warns
+        return _top(valid), False, None, None, []
 
     def in_loop(self, key: str) -> bool:
         """Whether ``key`` is on a loop of its chain template: its template recipes use up,
@@ -1018,25 +1345,95 @@ class _Builder:
         return key in self.loops[choice.chain]
 
 
-def raw_inputs(path: Path = RAW_INPUTS) -> tuple[str, ...]:
-    """``data/curated/raw_inputs.tsv``'s keys: inputs taken from the world (D189)."""
-    keys: list[str] = []
+def raw_sources(path: Path = RAW_INPUTS) -> dict[str, str]:
+    """``data/curated/raw_inputs.tsv``: key -> source, inputs taken from the world (D189;
+    sources WO-3.10 F2): one of :data:`RAW_SOURCES` or ``dimension:<name>``."""
+    out: dict[str, str] = {}
     header = False
     for n, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not text.strip() or text.startswith("#"):
             continue
         cells = text.split("\t")
         if not header:
-            if cells[:2] != ["key", "note"]:
-                raise ValueError(f"{path.name}:{n}: header must be key, note")
+            if cells[:3] != ["key", "source", "note"]:
+                raise ValueError(f"{path.name}:{n}: header must be key, source, note")
             header = True
             continue
         if not is_stable_key(cells[0]):
             raise ValueError(
                 f"{path.name}:{n}: {cells[0]!r} is not an item or fluid key"
             )
-        keys.append(cells[0])
-    return tuple(keys)
+        where = cells[1] if len(cells) > 1 else ""
+        dim = where.removeprefix(DIMENSION_SOURCE)
+        if where not in RAW_SOURCES and not (
+            where.startswith(DIMENSION_SOURCE) and dim.strip()
+        ):
+            raise ValueError(
+                f"{path.name}:{n}: source {where!r} is not one of"
+                f" {', '.join(RAW_SOURCES)} or {DIMENSION_SOURCE}<name>"
+            )
+        out[cells[0]] = where
+    if not header:
+        raise ValueError(f"{path.name}: no header")
+    return out
+
+
+def raw_inputs(path: Path = RAW_INPUTS) -> tuple[str, ...]:
+    """``data/curated/raw_inputs.tsv``'s keys: inputs taken from the world (D189)."""
+    return tuple(raw_sources(path))
+
+
+@dataclass(frozen=True)
+class Sources:
+    """Where raw inputs come from (WO-3.10 F2): ore blocks by the dimensions GT's ore mixes
+    place them in (``ore_mix``, from ``gos ores load``; an empty tuple: its material has
+    mixes, but none in a dimension with its stone), and the curated table's rows."""
+
+    vein: Mapping[str, tuple[str, ...]]
+    curated: Mapping[str, str]
+
+    def digest(self) -> str:
+        data = (sorted(self.vein.items()), sorted(self.curated.items()))
+        return hashlib.sha256(repr(data).encode("utf-8")).hexdigest()
+
+
+def sources(conn: sqlite3.Connection) -> Sources:
+    """The raw-input sources for one build. Read per build, not in the shared reader: ``gos
+    ores load`` doesn't change the DB generation (D352). An ore block gets its mixes'
+    dimensions by its exact key, and every ore block of a mix's material (in the same
+    registry namespace: Minecraft's coal ore is Coal too) on a stone of :data:`STONE_DIMS`
+    gets them as well, a Netherrack ore only the Nether's and an Endstone ore only the End's
+    (another planet's stone only by its exact key). With no mixes loaded, none."""
+    exact: dict[str, set[str]] = {}
+    by_material: dict[tuple[str, str], set[str]] = {}
+    for dims_json, ores_json in conn.execute(
+        "SELECT dims, ores FROM ore_mix ORDER BY id"
+    ):
+        dims = set(json.loads(dims_json or "{}"))
+        for o in json.loads(ores_json or "[]"):
+            item, material = o.get("item"), o.get("material")
+            if item is None:
+                continue
+            exact.setdefault(f"{item}@{o.get('meta', 0)}", set()).update(dims)
+            if material:
+                ns = str(item).split(":")[0]
+                by_material.setdefault((ns, str(material)), set()).update(dims)
+    vein = {k: set(v) for k, v in exact.items()}
+    if by_material:
+        for reg, meta, prefix, material in conn.execute(
+            "SELECT registry_name, meta, gt_prefix, gt_material FROM item"
+            " WHERE gt_prefix LIKE 'ore%' AND nbt_hash = '' AND gt_material IS NOT NULL"
+        ):
+            dims = by_material.get((str(reg).split(":")[0], str(material)))
+            if dims is None or prefix not in STONE_DIMS:
+                continue  # no mix places its material or its stone: unknown here
+            if (only := STONE_DIMS[prefix]) is not None:
+                dims = dims & only
+            vein.setdefault(f"{reg}@{meta}", set()).update(dims)
+    return Sources(
+        {k: tuple(sorted(v)) for k, v in sorted(vein.items())},
+        raw_sources(),
+    )
 
 
 # --- step 2: build ---------------------------------------------------------------------------
@@ -1071,7 +1468,7 @@ def build(
 
 
 def _reader_size(reader: _Reader) -> int:
-    return len(reader.recipes)
+    return len(reader.recipes) + len(reader.feeds)
 
 
 def _bind(reader: _Reader, conn: sqlite3.Connection | None) -> None:
@@ -1137,13 +1534,17 @@ def _build(
                 info = reader.info(key) if kind in ("item", "fluid") else None
                 name = info.name if info else key
                 if key in b.boundary:
-                    nodes[key] = ItemNode(key, kind, name, depth, b.boundary[key])
+                    nodes[key] = ItemNode(
+                        key, kind, name, depth, b.boundary[key],
+                        source=b.source.get(key),
+                    )  # fmt: skip
                     continue
                 if kind == "eu":
                     nodes[key] = ItemNode(key, kind, "EU", depth, "eu")
                     continue
                 if kind in ("ore", "wildcard"):
-                    members = reader.members(key)
+                    # A member he can't reach is never in the graph (D389 (2)).
+                    members = [m for m in reader.members(key) if m not in b.unreachable]
                     for m in members[:TOP_N]:
                         flows[(m, key, "member")] = 1.0
                         if m not in nodes:
@@ -1168,7 +1569,7 @@ def _build(
                     # Recipes make it, but none this player can run: locked, not a raw input.
                     nodes[key] = ItemNode(
                         key, kind, name, depth, "locked" if rejected else "raw",
-                        candidates=tuple(rejected),
+                        candidates=tuple(rejected), source=b.source.get(key),
                     )  # fmt: skip
                     continue
                 # A chain template off the route fixes its first pick, but a loop of the
@@ -1289,6 +1690,11 @@ def _build(
     routed = on_route(direct)
     primary.update(n.id for n in items if n.branch and n.template in routed)
     primary &= {n.id for n in items if n.chosen}
+    if b.collapsed:
+        b.warnings.append(
+            "no ore mixes loaded (gos ores load): inputs no recipe makes and GOS has no"
+            " source for rank with the other unsourced ones, not last (D389 (6))"
+        )
     warnings = list(b.warnings)
     for n in items:
         warnings.extend(n.warnings)

@@ -195,13 +195,15 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (for approval; none built yet)
+## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394; F4 built, D395, reviewed D396; F7 built, D401, reviewed D402)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
 one: F1 + F2 + F3 together should make it pass.
 
-**F1. Model the primitive machines (R1).** Add a `primitive` kind to `machines.py` for the
+**F1. Model the primitive machines (R1).** *Built (D390): the Bricked Blast Furnace and the
+Coke Oven are a `primitive` kind; the harness graph offers the furnace beside the EBF for steel
+at MV, with one extra top-4 slot for it.* Add a `primitive` kind to `machines.py` for the
 Bricked Blast Furnace (and the Coke Oven and Primitive Pump family where they run recipe maps):
 no energy, the recipe's own duration, no overclock, one craft at a time. That is my reading of
 GT's behaviour, to be checked against the pinned 5.09.54.265 jar before writing it (no GT code
@@ -209,7 +211,12 @@ copied, as D176). Stop flagging those recipes `eu0`, since primitive is not "pow
 odd way". Tests: a sizing unit test, and the harness graph shows `primitiveblastfurnace` steel
 recipes as valid candidates. *Question 1 decides whether the planner offers it at MV.*
 
-**F2. A raw-source gate (R3).** At graph build, each `raw` item gets a *source*:
+**F2. A raw-source gate (R3).** *Built (D391): reachable dimensions from the quest book
+(`data/curated/dimension_unlocks.tsv`; the Overworld and the Nether always), sources from the
+ore mixes and the curated table's new `source` column; the Steeleaf nugget is
+`dimension:Twilight Forest`, so on the harness the Steeleaf alloy smelter recipe is rejected and
+the top steel plan imports the locked Steeleaf ingot until F4; unknown raws are warned. No
+`me/prefs.md` list: D389 (2) says the quest book decides.* At graph build, each `raw` item gets a *source*:
 
 - `vein:<dims>` when it is an ore block in `ore_mix` (layers' `item`/`meta`): kept only if one
   of its dimensions is reachable;
@@ -224,7 +231,13 @@ like a tier-capped one, so a pin can still bring it back and the alternatives li
 `unknown` raws are kept but warned, and rank after a sourced one (F3). Tests: a fixture with a
 two-dimension ore mix; the harness steel test.
 
-**F3. Inputs closer to the world first (R2).** In `_cheap`, before `rec.tier`, add a key: whether
+**F3. Inputs closer to the world first (R2).** *Built (D393): a sourcing rank (at hand or one
+step from it; some inputs not; an unknown raw) before tier, and the unsourced count before the
+recipe key; a fluid cell counts as its fluid, and a recipe using cells is never fully sourced;
+with no ore mixes loaded an unknown raw ranks as
+unsourced, with a warning. On the harness with the run's mixes, steel's first candidate is the
+Bricked Blast Furnace's iron dust + coal, the EBF still beside it; the top plan is unchanged
+until F4.* In `_cheap`, before `rec.tier`, add a key: whether
 the recipe's consumed inputs are all *sourced*, meaning a sourced raw, stock, a line output, or
 one recipe step from those. Then replace the hash as the last tie-break by the number of
 consumed inputs that aren't sourced, before `rec.id`. This keeps the order deterministic and
@@ -232,21 +245,50 @@ needs no item values (§7.1 step 4's "no per-item cost values" holds). It is a r
 change to the *graph's* heuristic, not to `rank.py`, so it needs Clayton's yes (Question 3).
 Tests: unit fixtures where a tier-0 detour and a tier-1 direct recipe compete.
 
-**F4. Imports the player can't make are not free (R4).** Make `locked` and `depth` boundaries
+**F4. Imports the player can't make are not free (R4).** *Built (D395): a locked or depth
+import is a gate (`solve.Network.gated_in`), still legal and still warned; effort doesn't
+recurse into one. On the harness with the run's mixes, steel's best plan is the Bricked Blast
+Furnace's from magnetite and coal ores (12 machines at a 64 batch, 395 at 1/s), not the locked
+Steeleaf ingot; Steeleaf dust still imports the ingot through a gate. Epoxid at EV trades an
+End ore import (35 machines) for 6 gates (54). The acceptance test stays xfail: its iron is
+magnetite's and it is over 10 machines even at a 64 batch.* Make `locked` and `depth` boundaries
 *gated* for the solver instead of free, so a route that makes everything beats one that imports
 what can't be made. Where no such route exists, the plan still solves and keeps the PR's warning.
 Tests: the fixture case in `test_route_sanity.py`, which then expects the non-importing route
 first.
 
-**F5. A "simplest route" mode (R2, R6).** `routes: simplest`: the graph keeps only each node's
+**F5. A "simplest route" mode (R2, R6).** *Built (D399): `Request.simplest` (written only when
+true) adds the route of each node's first candidate, solved by the staged MILP, as a `simplest`
+column after the ranked routes (or `route.simplest` on the base route that is it), scored like
+the addon column, ranking unchanged; `gos plan --simplest`, on by default in the Designer and
+`design_production`. On the harness with the run's mixes, steel at MV's simplest route is the
+Bricked Blast Furnace from banded iron and coal ores, 13 machines, beside the 12-machine ranked
+routes. Reviewed (D400): the agent tool, the phone and Discord now say when a ranked route is
+also the simplest.* `routes: simplest`: the graph keeps only each node's
 first recipe after F1-F3, and the result is one route with the fewest steps among them. That is
 the D11 "simplest at the tier" promise made literal. It is offered next to the 2-3 ranked routes
 rather than replacing them, unless Clayton prefers it as the default (Question 4).
 
-**F6. Sane sizing defaults (R7).** A missing rate becomes a **batch**: `qty` items, with the
+**F6. Sane sizing defaults (R7).** *Built (D397): no amount is a batch of 64
+(`request.DEFAULT_BATCH`, applied by `gos plan`, `designer.request_from_spec` and so the agent
+tool, the Designer form and API; the `Request` dataclass default stays 1/s). The `gos plan`
+summary, `plan_get` summary and the Designer's route header show a batch's ETA. The acceptance
+test now asks for a batch of 64 and stays xfail: 12 machines (7 Bricked Blast Furnaces at
+7200 ticks an ingot fill the hour) and its iron is magnetite's. Reviewed (D398): the
+phone's job check parses a `within` given with no amount.* A missing rate becomes a **batch**: `qty` items, with the
 ETA reported, instead of 1/s. Or the default rate becomes a smaller one, Clayton's choice
 (Question 5). Either way the plan's name already shows the rate ("· 1/s ·"); the Designer should
 put it in front of him before solving. Tests: request defaults, CLI default.
+
+**F7. The route reviewer (§6, D389 (7)).** *Built (D401): a per-request toggle, off by default
+(`review: true` in the Designer spec and form, `gos plan --review`; never in the request, never
+offered to `design_production`). A model reviews the ranked routes with five tools
+(`alternatives`, `propose_constraints`, `propose_pin`, `escalate`, `finish`), at most 8 calls, 4
+re-solves and 1 advisor call, capped by `task_max_usd`; every number it writes is checked
+against the planner's. A re-run excludes keys, an edit pins a node to a candidate the graph
+lists (only after a re-run, always reported); the planner re-solves and re-scores, and the result
+is an extra `reviewed` column beside the planner's untouched ranked routes. Tested with a scripted
+fake only; the first real run is a paid smoke run for Clayton (5.3.12).*
 
 Order of work: F1 → F2 → F3 → F4 (each is its own PR with its tests), then F5 and F6, which are
 small.

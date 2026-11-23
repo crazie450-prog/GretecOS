@@ -18,6 +18,7 @@ function route(id: string, position: number, over: Partial<DesignerRoute> = {}):
     name: `Steel Ingot line · 1/s · HV${position > 1 ? ` · route ${position}` : ""}`,
     status: "proposed",
     column: "base",
+    simplest: false,
     position,
     of: 2,
     score: position === 1 ? 0.76 : 0.5,
@@ -132,6 +133,17 @@ describe("helpers", () => {
   it("labels a route by the core's rank", () => {
     expect(routeLabel({ column: "base", position: 2, of: 3 })).toBe("Route 2 of 3");
     expect(routeLabel({ column: "addon", position: 1, of: 1 })).toBe("Addon column");
+    expect(routeLabel({ column: "simplest", position: 1, of: 1 })).toBe("Simplest route");
+    expect(routeLabel({ column: "base", position: 1, of: 2, simplest: true })).toBe("Route 1 of 2 (also the simplest)");
+    expect(routeLabel({ column: "reviewed", position: 1, of: 1 })).toBe("Reviewed route");
+  });
+
+  it("heads the comparison's simplest route as its own column (D389 (4))", () => {
+    const card = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), route("pl-dddddddddd", 1, { column: "simplest" })]).comparison;
+    card.routes[1].rank = "simplest";
+    render(<RouteComparisonView card={card} />);
+    const heads = [...document.querySelectorAll(".route-head .gos-label")].map((e) => e.textContent);
+    expect(heads).toEqual(["Route 1", "Simplest route"]);
   });
 
   it("heads the comparison's addon route as the addon column, never as a rank", () => {
@@ -144,6 +156,52 @@ describe("helpers", () => {
 });
 
 describe("the Designer view", () => {
+  it("can leave the simplest route out of a design", async () => {
+    jobAnswers({ ids: [FIRST.id], problems: [], view: FIRST });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    fireEvent.click(screen.getByTestId("designer-simplest"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
+    expect(designs).toEqual([{ spec: { target: STEEL, batch: "64", routes: 3, addons: false, simplest: false } }]);
+  });
+
+  it("asks for the route reviewer only when its box is ticked (D389 (7))", async () => {
+    jobAnswers({ ids: [FIRST.id], problems: [], view: FIRST });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    fireEvent.click(screen.getByTestId("designer-review"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
+    expect(designs).toEqual([{ spec: { target: STEEL, batch: "64", routes: 3, addons: false, simplest: true, review: true } }]);
+  });
+
+  it("says on the reviewed route that the reviewer edited it", async () => {
+    const reviewed = route("pl-eeeeeeeeee", 1, {
+      column: "reviewed",
+      review: {
+        id: "rv-0123456789", of: ["pl-bbbbbbbbbb"], verdict: "fixed", status: "done", edited: true,
+        applied: { exclude: [DUST], pins: [{ node: STEEL, recipe: "r:gt.recipe.blastfurnace/9c40869458cb" }] },
+        summary: "Swapped the furnace.",
+      },
+    });
+    const v = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), reviewed]);
+    jobAnswers({ ids: [v.id, reviewed.id], problems: [], view: v });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const banner = await screen.findByTestId("review-pl-eeeeeeeeee");
+    expect(banner.textContent).toContain("Edited by the route reviewer");
+    expect(banner.textContent).toContain(`pinned ${STEEL}`);
+    expect(screen.queryByTestId("review-pl-bbbbbbbbbb")).toBeNull();
+  });
+
   it("says so when there is no design yet", async () => {
     render(<Designer />);
     expect((await screen.findByTestId("designer-empty")).textContent).toContain("No design open");
@@ -282,10 +340,29 @@ describe("the Designer view", () => {
     });
     const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
     expect(designs).toEqual([
-      { spec: { target: "ingot", rate: "1/s", tier: "HV", routes: 3, addons: false } },
-      { spec: { target: STEEL, rate: "1/s", tier: "HV", routes: 3, addons: false } },
+      { spec: { target: "ingot", batch: "64", tier: "HV", routes: 3, addons: false, simplest: true } },
+      { spec: { target: STEEL, batch: "64", tier: "HV", routes: 3, addons: false, simplest: true } },
     ]);
     await screen.findByTestId("route-1-base");
+  });
+
+  it("sends a typed rate as a rate, and shows a batch's ETA in the route header (D389 (5))", async () => {
+    const batch = view("pl-cccccccccc", [
+      route("pl-cccccccccc", 1, {
+        target: { id: STEEL, name: "Steel Ingot", rate_s: 0.0178, qty: 64, window_s: 3600, eta_s: 3291.43 },
+      }),
+    ]);
+    jobAnswers({ ids: ["pl-cccccccccc"], problems: [], view: batch });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    fireEvent.change(screen.getByTestId("designer-rate"), { target: { value: "2/s" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
+    expect(designs).toEqual([{ spec: { target: STEEL, rate: "2/s", routes: 3, addons: false, simplest: true } }]);
+    const head = await screen.findByTestId("route-1-base");
+    expect(head.textContent).toContain("batch 64 · ETA 3291 s");
   });
 
   it("tries the floor plan again when its panel is reopened after a failed load", async () => {

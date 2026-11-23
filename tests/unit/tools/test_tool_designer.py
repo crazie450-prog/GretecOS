@@ -52,6 +52,11 @@ def test_design_production_ranks_and_saves(run: Runner, home: Path) -> None:
     assert any(n.startswith("explanation (template") for n in p.notes)
     assert all(r["differs"] != "-" for r in p.rows)
     assert designer.latest(home) == ids
+    # D389 (4): the simplest route (on by default) is a ranked route here, and says so
+    assert [c for c in p.col("column") if "simplest" in c] == ["base, simplest"]
+    marked = ids[p.col("column").index("base, simplest")]
+    summary = run("plan_get", id=f"plan:{marked}", view="summary")
+    assert summary.head["rank"].endswith("(base, simplest)")
     assert [float(s) for s in p.col("score")] == sorted(
         (float(s) for s in p.col("score")), reverse=True
     )
@@ -74,15 +79,19 @@ def test_plan_get_views_and_pin(run: Runner) -> None:
     summary = run("plan_get", id=f"plan:{ids[0]}", view="summary")
     assert summary.head["plan"] == f"plan:{ids[0]}"
     assert summary.head["status"] == "proposed" and summary.head["pins"] == "none"
-    nodes = run("plan_get", id=ids[1], view="nodes")
-    assert all(r["recipe"].startswith("r:") for r in nodes.rows)
-    dust = next(r for r in nodes.rows if r["key"] != STEEL)
+    # no amount: a batch of 64, and the summary says its ETA (D389 (5))
+    assert summary.head["batch"] == "64" and float(summary.head["eta_s"]) > 0
+    views = {i: run("plan_get", id=i, view="nodes") for i in ids}
+    assert all(r["recipe"].startswith("r:") for v in views.values() for r in v.rows)
+    # The route with a dust node (the EBF's; the Bricked Blast Furnace's has none, D390).
+    one = next(i for i in ids if any(r["key"] != STEEL for r in views[i].rows))
+    dust = next(r for r in views[one].rows if r["key"] != STEEL)
     routes = run("plan_get", id=ids[2], view="routes")
     assert routes.col("plan") == [f"plan:{i}" for i in ids]
-    alts = run("plan_get", id=ids[1], view="alternatives", node=dust["key"])
+    alts = run("plan_get", id=one, view="alternatives", node=dust["key"])
     other = next(r["recipe"] for r in alts.rows if r["used"] != "yes")
-    assert "need" in run.fail("plan_get", id=ids[1], view="alternatives")
-    pinned = run("plan_pin", id=ids[1], node=dust["key"], recipe=other)
+    assert "need" in run.fail("plan_get", id=one, view="alternatives")
+    pinned = run("plan_pin", id=one, node=dust["key"], recipe=other)
     new = pinned.col("plan")[0].removeprefix("plan:")
     got = run("plan_get", id=new, view="summary")
     assert f"{dust['key']}={other}" in got.head["pins"]

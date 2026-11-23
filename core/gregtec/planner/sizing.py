@@ -6,9 +6,9 @@ GT's math from WO-3.1), sized for the same player the graph was checked for
 base machines, for the addon column an addon machine where one runs the recipe (D12); then
 unbadged before badged (a flagged, low-confidence, partial, deprecated or custom machine keeps
 its badge and notes when it is the only one, D142 (a)); a single block before a multiblock
-before a steam machine (the simplest at the tier, D11); the highest tier (the most overclocks,
-so the fewest machines); fewer energy hatches (one hatch runs a multi at 1 A, D175); then the
-mte id. Swapping the machine is WO-3.7's.
+before a steam machine before a primitive one (the simplest at the tier, D11, D390); the
+highest tier (the most overclocks, so the fewest machines); fewer energy hatches (one hatch
+runs a multi at 1 A, D175); then the mte id. Swapping the machine is WO-3.7's.
 
 **Numbers per node** (:func:`node_size`): ``count = ceil(rate x ticks_eff / (20 x parallel))``
 (``rate / crafts_per_second`` of one machine), utilisation ``rate / (count x crafts/s)``, EU/t
@@ -27,7 +27,7 @@ from gregtec.planner import machines
 from gregtec.planner.graph import Graph
 from gregtec.planner.machines import MachineInfo, MachineOption, Player, Sizing
 
-KIND_ORDER = {"singleblock": 0, "multiblock": 1, "steam": 2}
+KIND_ORDER = {"singleblock": 0, "multiblock": 1, "steam": 2, "primitive": 3}
 
 
 @dataclass(frozen=True)
