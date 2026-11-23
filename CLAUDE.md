@@ -75,6 +75,9 @@ One WO = one branch `wo/<id>-<slug>` + one PR (summary, tests run, evidence, VER
 - Python 3.12 via uv. ruff + pytest must pass. Type hints everywhere.
 - Game numbers come from gregtec.planner / gregtec.db only. Never in prompts, never estimated. Cite r:/plan:/q:/w: ids.
 - Route ranking is the deterministic score in planner/rank.py. Models explain routes; they never reorder them.
+  One exception (D389, Clayton 2026-11-23): the route reviewer, a per-request toggle (off by default), may request
+  re-runs and edit a route's recipe choices from the graph's candidates, then the planner re-sizes and re-scores it.
+  It always says when it edited a route. Numbers still come only from the planner.
 - GT pin 5.09.54.265 (GTNH 2.9.0). Any change under planner/gtmath must keep the ported GT unit tests green.
 - Never key on numeric block/item IDs (EndlessIDs). Key = registry_name + meta (+ nbt hash).
 - Game files: gamestate.safe_open (share-delete), copy then parse, retry ×3. Never hold handles.

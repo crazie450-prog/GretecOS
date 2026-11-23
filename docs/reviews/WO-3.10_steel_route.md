@@ -278,6 +278,11 @@ recommend it.
 
 ## 7. Questions for Clayton
 
+**Answered 2026-11-23: D389.** In short: Bricked Blast Furnace alongside the EBF; dimensions from the
+quest book; sourcing before tier; simplest route as an extra option; a batch by default; unknown
+raws warned and ranked last; a model route reviewer as a per-request toggle (Sonnet, escalating to
+Opus) that may request re-runs and edit a route, and says when it did.
+
 1. **Primitive machines at MV.** Should an MV steel plan offer the Bricked Blast Furnace route
    (iron + coal/coke, slow, no power) alongside the EBF, or only from the stone/steam stages,
    with the EBF route (iron + oxygen, or iron + carbon where your pack has it) at LV+?
