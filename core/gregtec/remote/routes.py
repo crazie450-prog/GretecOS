@@ -147,6 +147,7 @@ def _route(r: Mapping[str, Any]) -> dict[str, Any]:
         "id": r.get("id"),
         "name": r.get("name"),
         "column": r.get("column"),
+        "simplest": bool(r.get("simplest")),  # a base route that is also the simplest
         "position": r.get("position"),
         "of": r.get("of"),
         "target": target.get("name") or target.get("id"),

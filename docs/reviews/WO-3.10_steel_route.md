@@ -263,7 +263,8 @@ column after the ranked routes (or `route.simplest` on the base route that is it
 the addon column, ranking unchanged; `gos plan --simplest`, on by default in the Designer and
 `design_production`. On the harness with the run's mixes, steel at MV's simplest route is the
 Bricked Blast Furnace from banded iron and coal ores, 13 machines, beside the 12-machine ranked
-routes.* `routes: simplest`: the graph keeps only each node's
+routes. Reviewed (D400): the agent tool, the phone and Discord now say when a ranked route is
+also the simplest.* `routes: simplest`: the graph keeps only each node's
 first recipe after F1-F3, and the result is one route with the fewest steps among them. That is
 the D11 "simplest at the tier" promise made literal. It is offered next to the 2-3 ranked routes
 rather than replacing them, unless Clayton prefers it as the default (Question 4).

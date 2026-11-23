@@ -92,7 +92,7 @@ class DesignerError(ValueError):
 
 @dataclass
 class Designed:
-    ids: list[str]  # rank order: the base routes, then the addon column
+    ids: list[str]  # rank order: the base routes, then the simplest and addon columns
     plans: list[dict[str, Any]]
     problems: list[str] = field(default_factory=list)  # saved, but a vault note wasn't
 

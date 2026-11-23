@@ -108,6 +108,8 @@ def plan_result(job: Mapping[str, Any], settings: BotSettings) -> str:
         where = (
             column if column in ("simplest", "addon") else f"route {r.get('position')}"
         )
+        if r.get("simplest") and column == "base":
+            where += " (also the simplest)"
         lines.append(
             f"{where} of {r.get('of')}: {r.get('name')} (plan:{r.get('id')}): "
             f"{num(r.get('machines'))} machines, {num(r.get('eut_avg'))} EU/t average, "

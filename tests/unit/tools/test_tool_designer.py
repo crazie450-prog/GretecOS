@@ -52,6 +52,11 @@ def test_design_production_ranks_and_saves(run: Runner, home: Path) -> None:
     assert any(n.startswith("explanation (template") for n in p.notes)
     assert all(r["differs"] != "-" for r in p.rows)
     assert designer.latest(home) == ids
+    # D389 (4): the simplest route (on by default) is a ranked route here, and says so
+    assert [c for c in p.col("column") if "simplest" in c] == ["base, simplest"]
+    marked = ids[p.col("column").index("base, simplest")]
+    summary = run("plan_get", id=f"plan:{marked}", view="summary")
+    assert summary.head["rank"].endswith("(base, simplest)")
     assert [float(s) for s in p.col("score")] == sorted(
         (float(s) for s in p.col("score")), reverse=True
     )

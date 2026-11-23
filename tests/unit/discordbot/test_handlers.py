@@ -664,3 +664,22 @@ def test_a_deep_task_the_core_lost_says_so(core: FakeCore) -> None:
         assert it.texts == ["Deep lane.", texts.DEEP_LOST]
 
     run(go)
+
+
+def test_a_plan_reply_names_the_simplest_route() -> None:
+    """D389 (4): the simplest route's own column, or the ranked route that is also it."""
+    from .fakes import SETTINGS
+
+    def row(column: str, position: int, simplest: bool = False) -> dict[str, Any]:
+        return {"id": f"pl-0000000{position}", "name": "Steel", "column": column,
+                "simplest": simplest, "position": position, "of": 2,
+                "machines": 3, "eut_avg": 1, "eff_h": 1, "warnings": []}  # fmt: skip
+
+    def reply(*routes: dict[str, Any]) -> str:
+        job = {"id": 1, "spec": {"target": "steel"}, "state": "done",
+               "result": {"ids": [r["id"] for r in routes], "routes": list(routes)}}  # fmt: skip
+        return texts.plan_result(job, SETTINGS)
+
+    assert "route 1 (also the simplest) of 2: Steel" in reply(row("base", 1, True))
+    text = reply(row("base", 1), row("simplest", 2))
+    assert "route 1 of 2: Steel" in text and "simplest of 2: Steel" in text
