@@ -100,6 +100,7 @@ def make(
     headroom: int | None = None,
     ops: Sequence[Mapping[str, Any]] | None = None,
     relief: int | None = None,
+    layout_options: layout_lib.Options | None = None,
     site: Site | None = None,
     save_it: bool = True,
 ) -> Made:
@@ -115,7 +116,7 @@ def make(
         except (OSError, ValueError) as exc:
             raise shell.ShellError(f"plan {pid} isn't saved: {exc}") from None
     try:
-        lay = layout_lib.plan_layout(conn, plans)
+        lay = layout_lib.plan_layout(conn, plans, layout_options)
     except layout_lib.LayoutError as exc:
         raise shell.ShellError(f"no layout: {exc}") from None
     if not lay["placements"]:
@@ -366,6 +367,7 @@ def rebuild(
         max_blocks=rec["max_blocks"],
         headroom=rec["headroom"],
         relief=rec.get("relief", 0),  # a build from before D386 had none
+        interior_open=rec.get("interior_open", False),  # nor before D389
     )
     spec = replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
     outcome = shell.design(
@@ -411,6 +413,7 @@ def cells_of(
         max_blocks=rec["max_blocks"],
         headroom=rec["headroom"],
         relief=rec.get("relief", 0),  # a build from before D386 had none
+        interior_open=rec.get("interior_open", False),  # nor before D389
     )
     got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
     vols = shell._index(spec)
@@ -426,6 +429,18 @@ def cells_of(
     return spec, cells
 
 
+def _saved_options(home: Path, rec: Mapping[str, Any]) -> dict[str, int]:
+    """The layout options a build was laid out with (its layout.json; none: the defaults)."""
+    try:
+        lay = json.loads(
+            (folder(home, str(rec["id"])) / "layout.json").read_text(encoding="utf-8")
+        )
+        got = lay.get("options") or {}
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {k: int(v) for k, v in got.items() if k in layout_lib.LIMITS}
+
+
 def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -> None:
     """The layout of the build's plans laid out again now must be the saved one (its id hashes
     the geometry, WO-10.5): after a re-solve or new footprint data its keep-outs and corridors
@@ -438,7 +453,9 @@ def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -
         except (OSError, ValueError):
             raise shell.ShellError(f"plan {pid} isn't saved any more: {redo}") from None
     try:
-        now = layout_lib.plan_layout(conn, plans)["id"] if plans else None
+        # laid out with the options it was saved with (D389: spacing, band_gap, max_run)
+        opts = layout_lib.Options(**_saved_options(home, rec))
+        now = layout_lib.plan_layout(conn, plans, opts)["id"] if plans else None
     except layout_lib.LayoutError as exc:
         raise shell.ShellError(
             f"the plans can't be laid out now ({exc}): {redo}"

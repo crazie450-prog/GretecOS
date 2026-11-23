@@ -502,6 +502,7 @@ def revise(
             max_blocks=mb,
             headroom=hr,
             relief=rec.get("relief", 0),  # a version keeps its parent's relief (D386)
+            interior_open=rec.get("interior_open", False),  # and interior (D389)
         )
     except shell.ShellError as exc:
         return _refused(ds, parent, rec, [str(exc)], tuple(changes))

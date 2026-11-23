@@ -98,7 +98,14 @@ LIMITS: dict[str, tuple[int, int, int]] = {
     "clearance_top": (CLEARANCE_Y, 1, 4),
     "chase_height": (2, 1, 4),
     "max_run": (64, 8, 512),
+    # open floor between machines in a row and between bands (D389): room for the shell's
+    # inner walls, columns and courtyards; 0 packs them flush as before
+    "spacing": (0, 0, 8),
+    "band_gap": (0, 0, 16),
 }
+# options a layout's id and JSON leave out while they are 0, so layouts from before D389 keep
+# their ids
+_NEW = ("spacing", "band_gap")
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,8 @@ class Options:
     clearance_top: int = LIMITS["clearance_top"][0]
     chase_height: int = LIMITS["chase_height"][0]
     max_run: int = LIMITS["max_run"][0]
+    spacing: int = LIMITS["spacing"][0]
+    band_gap: int = LIMITS["band_gap"][0]
 
     def __post_init__(self) -> None:
         for name, (_, lo, hi) in LIMITS.items():
@@ -372,15 +381,18 @@ def _pack(
         w = kx[inst.footprint.key]
         band = bands[-1]
         rows = sorted((band.north, band.south), key=lambda r: r.length)
+        gap = opts.spacing
         row = next(
-            (r for r in rows if not r.items or r.length + w <= opts.max_run), None
+            (r for r in rows if not r.items or r.length + gap + w <= opts.max_run),
+            None,
         )
         if row is None:
             band = _Band()
             bands.append(band)
             row = band.north
-        row.items.append((idx, inst, row.length))
-        row.length += w
+        at = row.length + (gap if row.items else 0)
+        row.items.append((idx, inst, at))
+        row.length = at + w
     return bands
 
 
@@ -445,7 +457,9 @@ def plan_layout(
     spines: list[tuple[int, str, str]] = []  # (spine z0, corridor id, chase id)
     slots: dict[int, tuple[Instance, fp.Footprint, Box, Box, str, str]] = {}
     z = 0
-    for band in bands:
+    for n_band, band in enumerate(bands):
+        if n_band:
+            z += opts.band_gap
         z0 = z + band.north.depth(kz)
         length = max(band.north.length, band.south.length)
         cid, hid = f"c{len(corridors) + 2}", f"h{len(chases) + 2}"
@@ -516,7 +530,7 @@ def plan_layout(
         "gt": next((p.get("gt") for p in plans if p.get("gt")), None),
         "run": next((p.get("run") for p in plans if p.get("run") is not None), None),
         "axes": AXES,
-        "options": asdict(opts),
+        "options": {k: v for k, v in asdict(opts).items() if k not in _NEW or v},
         "bounds": {**bounds.to_json(), "size": list(bounds.size)},
         "placements": placements,
         "keepouts": keepouts,

@@ -84,6 +84,60 @@ export function Scene(props: SceneProps) {
     at && props.front && controller >= 0 && frontDir >= 0 && at[1] <= upTo
       ? frontArrow(size, at, props.front as Vec, view)
       : null;
+  // The faces are built once per drawing (a big shell has thousands): a hover, a zoom or a
+  // parent's refresh must not rebuild them (D388: the bake-off panel lagged the whole PC).
+  const faces = useMemo(
+    () =>
+      drawing.polys.map((p) => {
+        const [, y, , b, s] = cells[p.cell];
+        const block = b >= 0 ? palette[b] : null;
+        const colour = block
+          ? ((p.shade === "top" ? block.top : block.side) ?? block.top ?? block.side ?? fallbackColour(block.block))
+          : undefined;
+        const cls = [
+          "guide-face",
+          p.shade,
+          block ? "" : "hatch-only",
+          s >= 0 ? "hatch-slot" : "",
+          y === upTo ? "current" : "below",
+          p.cell === controller ? "controller" : "",
+          p.cell === controller && p.dir === frontDir ? "controller-front" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return <polygon key={`${p.cell}-${p.dir}`} className={cls} points={p.points} fill={colour} data-cell={p.cell} />;
+      }),
+    [drawing, cells, palette, upTo, controller, frontDir],
+  );
+  // The hovered block's faces are marked in place, not by building every face again.
+  useEffect(() => {
+    const el = svg.current;
+    if (!el) return;
+    el.querySelectorAll(".guide-face.hovered").forEach((f) => f.classList.remove("hovered"));
+    if (hover !== null) el.querySelectorAll(`.guide-face[data-cell="${hover}"]`).forEach((f) => f.classList.add("hovered"));
+  }, [hover, faces]);
+  // A drag turns the view at most once a frame.
+  const pending = useRef<{ dx: number; dy: number; frame: number } | null>(null);
+  const turnBy = (dx: number, dy: number): void => {
+    const p = pending.current ?? { dx: 0, dy: 0, frame: 0 };
+    p.dx += dx;
+    p.dy += dy;
+    if (!pending.current) {
+      p.frame = window.requestAnimationFrame(() => {
+        const got = pending.current;
+        pending.current = null;
+        if (!got) return;
+        setView((v) => ({
+          yaw: (v.yaw - got.dx * 0.5 + 360) % 360,
+          pitch: Math.max(5, Math.min(85, v.pitch + got.dy * 0.3)),
+        }));
+      });
+    }
+    pending.current = p;
+  };
+  useEffect(() => () => {
+    if (pending.current) window.cancelAnimationFrame(pending.current.frame);
+  }, []);
 
   useEffect(() => {
     // A wheel listener React would add is passive, so it couldn't keep the page from scrolling.
@@ -128,11 +182,7 @@ export function Scene(props: SceneProps) {
             d.moved += Math.abs(dx) + Math.abs(dy);
             d.x = e.clientX;
             d.y = e.clientY;
-            if (d.moved > 4)
-              setView((v) => ({
-                yaw: (v.yaw - dx * 0.5 + 360) % 360,
-                pitch: Math.max(5, Math.min(85, v.pitch + dy * 0.3)),
-              }));
+            if (d.moved > 4) turnBy(dx, dy);
             return;
           }
           setHover(cellOf(e.target));
@@ -151,26 +201,7 @@ export function Scene(props: SceneProps) {
           if (!drag.current) setHover(null);
         }}
       >
-        {drawing.polys.map((p) => {
-          const [, y, , b, s] = cells[p.cell];
-          const block = b >= 0 ? palette[b] : null;
-          const colour = block
-            ? ((p.shade === "top" ? block.top : block.side) ?? block.top ?? block.side ?? fallbackColour(block.block))
-            : undefined;
-          const cls = [
-            "guide-face",
-            p.shade,
-            block ? "" : "hatch-only",
-            s >= 0 ? "hatch-slot" : "",
-            y === upTo ? "current" : "below",
-            p.cell === controller ? "controller" : "",
-            p.cell === controller && p.dir === frontDir ? "controller-front" : "",
-            hover === p.cell ? "hovered" : "",
-          ]
-            .filter(Boolean)
-            .join(" ");
-          return <polygon key={`${p.cell}-${p.dir}`} className={cls} points={p.points} fill={colour} data-cell={p.cell} />;
-        })}
+        {faces}
         {(props.ghosts ?? []).map((g) => (
           <path
             key={`${g.kind}-${g.id}`}

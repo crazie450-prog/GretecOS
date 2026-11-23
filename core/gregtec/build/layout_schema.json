@@ -123,6 +123,16 @@
      "type": "integer",
      "minimum": 8,
      "maximum": 512
+    },
+    "spacing": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 8
+    },
+    "band_gap": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 16
     }
    }
   },
