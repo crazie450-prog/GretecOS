@@ -63,7 +63,7 @@ from gregtec.planner.request import RECIPE_KEY, Request, is_stable_key
 log = logging.getLogger(__name__)
 
 LANE = "review"
-MAX_CALLS = 8  # reviewer calls; from the last one on, finish is forced
+MAX_CALLS = 8  # reviewer calls; from the last one on, only finish runs
 MAX_RESOLVES = 4  # re-solves: re-runs and edits together
 MAX_ESCALATIONS = 1
 MAX_TOKENS = 8000
@@ -75,6 +75,9 @@ TEXT_MAX, SUMMARY_MAX, ISSUES_MAX, ITEMS_MAX, EXCLUDE_MAX = 300, 600, 8, 6, 8
 ISSUE_KINDS = ("out_of_reach", "loop", "detour", "import", "overbuilt", "other")
 VERDICTS = ("ok", "fixed", "unresolved")
 NOT_THE_PLANNERS = "these numbers aren't the planner's: "
+# The configured models refuse a forced tool_choice ("tool"/"any" is a 400), so the last call is
+# asked for finish in text, and code runs nothing else from it.
+LAST_CALL = "This is your last call: end the review with finish now."
 
 Solver = Callable[[Request], plan.Design]
 
@@ -312,6 +315,33 @@ def _text(inp: Mapping[str, Any], key: str, limit: int = TEXT_MAX) -> str:
     return " ".join(v.split())[:limit]
 
 
+def _is_key(x: object) -> bool:
+    """A stable item or fluid key or an r: recipe id (no free text, so no numbers)."""
+    return (
+        isinstance(x, str)
+        and len(x) <= TEXT_MAX
+        and (is_stable_key(x.strip()) or bool(RECIPE_KEY.fullmatch(x.strip())))
+    )
+
+
+def _advice(rec: object) -> dict[str, Any] | None:
+    """The advisor's recommendation, keys only (free text in it is dropped)."""
+    if not isinstance(rec, Mapping) or rec.get("kind") not in (
+        "exclude",
+        "pin",
+        "none",
+    ):
+        return None
+    out: dict[str, Any] = {"kind": rec["kind"]}
+    ex = rec.get("exclude")
+    if isinstance(ex, list):
+        out["exclude"] = [x.strip() for x in ex[:EXCLUDE_MAX] if _is_key(x)]
+    for k in ("node", "recipe"):
+        if _is_key(rec.get(k)):
+            out[k] = str(rec[k]).strip()
+    return out
+
+
 def _keys(v: object, what: str, most: int) -> list[str]:
     if not isinstance(v, list) or not v or len(v) > most:
         raise _Refused(f"{what} is a list of 1 to {most} keys")
@@ -521,11 +551,13 @@ class _Review:
             items = i.get("items") or []
             if not isinstance(items, list) or len(items) > ITEMS_MAX:
                 raise _Refused(f"an issue's items are at most {ITEMS_MAX} keys")
+            if not all(_is_key(x) for x in items):
+                raise _Refused("an issue's items are item, fluid or r: recipe keys")
             issues.append(
                 {
                     "kind": i["kind"],
                     "text": _text(i, "text"),
-                    "items": [str(x)[:TEXT_MAX] for x in items],
+                    "items": [x.strip() for x in items],
                 }
             )
         summary = _text(inp, "summary", SUMMARY_MAX)
@@ -610,7 +642,7 @@ class Reviewer:
         nudged = False
         worker_calls = 0
         while not st.finished:
-            if worker_calls > MAX_CALLS:  # the last forced finish was refused too
+            if worker_calls > MAX_CALLS:  # the last call's finish was refused too
                 status, stopped = "capped", "calls"
                 break
             worker_calls += 1
@@ -623,8 +655,7 @@ class Reviewer:
                 "tools": TOOLS,
                 "messages": list(messages),  # this call's turns, not later ones
             }
-            if worker_calls >= MAX_CALLS:
-                req["tool_choice"] = {"type": "tool", "name": "finish"}
+            last = worker_calls >= MAX_CALLS
             try:
                 msg, cost = self._call(req, rv)
             except anthropic.APIError as exc:
@@ -652,12 +683,19 @@ class Reviewer:
                         "role": "assistant",
                         "content": blocks or [{"type": "text", "text": "-"}],
                     },
-                    {"role": "user", "content": "Call finish to end the review."},
+                    {
+                        "role": "user",
+                        "content": "Call finish to end the review."
+                        + (f" {LAST_CALL}" if worker_calls + 1 >= MAX_CALLS else ""),
+                    },
                 ]
                 continue
             results = []
             for use in uses:
-                text, error, spent = self._tool(st, use["name"], use["input"], rv)
+                if last and use["name"] != "finish":
+                    text, error, spent = LAST_CALL, True, (0, 0.0)
+                else:
+                    text, error, spent = self._tool(st, use["name"], use["input"], rv)
                 calls += spent[0]
                 usd += spent[1]
                 results.append(
@@ -673,6 +711,8 @@ class Reviewer:
             if usd >= self.cap_usd and not st.finished:
                 status, stopped = "capped", "usd"
                 break
+            if worker_calls + 1 >= MAX_CALLS:
+                results.append({"type": "text", "text": LAST_CALL})
             messages += [
                 {"role": "assistant", "content": blocks},
                 {"role": "user", "content": results},
@@ -737,8 +777,7 @@ class Reviewer:
             "max_tokens": ADVISOR_MAX_TOKENS,
             "output_config": {"effort": EFFORT},
             "system": ADVISOR_SYSTEM,
-            "tools": [ADVISE],
-            "tool_choice": {"type": "tool", "name": "advise"},
+            "tools": [ADVISE],  # asked for in the system prompt: no forced tool_choice
             "messages": [
                 {
                     "role": "user",
@@ -770,12 +809,12 @@ class Reviewer:
             return "the advisor gave no advice", True, (1, cost)
         assessment = str(advice.get("assessment") or "")[:SUMMARY_MAX]
         bad = st.offending([assessment])
-        rec = advice.get("recommendation")
+        rec = _advice(advice.get("recommendation"))
         st.advisor = {
             "model": self.advisor,
             "issue": issue,
             "assessment": None if bad else assessment,
-            "recommendation": dict(rec) if isinstance(rec, Mapping) else None,
+            "recommendation": rec,
             "unresolved": bool(advice.get("unresolved")),
         }
         if bad:

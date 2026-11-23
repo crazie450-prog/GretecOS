@@ -312,6 +312,21 @@ def test_a_number_the_planner_gave_is_allowed(home: Path) -> None:
     assert d.review is not None and d.review["summary_source"] == "model"
 
 
+def test_issue_items_are_keys_not_text(home: Path) -> None:
+    bad = {"kind": "loop", "text": "a loop", "items": ["make 4242 ingots"]}
+    good = {"kind": "loop", "text": "a loop", "items": [DUST_C, ELECTRO]}
+    r, client = reviewer(
+        [
+            Turn(tools=[use("finish", verdict="ok", issues=[bad], summary="ok")]),
+            Turn(tools=[use("finish", verdict="ok", issues=[good], summary="ok")]),
+        ]
+    )
+    d = designer.design(home, REQ, reviewer=r)
+    refused = results(client, 1)[0]
+    assert refused["is_error"] and "keys" in refused["content"]
+    assert d.review is not None and d.review["issues"][0]["items"] == [DUST_C, ELECTRO]
+
+
 # --- limits -------------------------------------------------------------------------------------
 
 
@@ -319,10 +334,14 @@ def test_a_reviewer_that_never_finishes_is_stopped(home: Path) -> None:
     turns = [Turn(tools=[use("alternatives", node=WIDGET)]) for _ in range(20)]
     r, client = reviewer(turns)
     d = designer.design(home, REQ, reviewer=r)
-    assert len(client.requests) <= rr.MAX_CALLS + 1
-    assert "tool_choice" not in client.requests[rr.MAX_CALLS - 2]
-    forced = {"type": "tool", "name": "finish"}
-    assert client.requests[rr.MAX_CALLS - 1]["tool_choice"] == forced
+    assert len(client.requests) == rr.MAX_CALLS + 1
+    # the configured models refuse a forced tool_choice: the last call is asked in text
+    assert all("tool_choice" not in req for req in client.requests)
+    told = client.requests[rr.MAX_CALLS - 1]["messages"][-1]["content"][-1]
+    assert told == {"type": "text", "text": rr.LAST_CALL}
+    # on the last call only finish runs: its alternatives call is refused
+    res = results(client, rr.MAX_CALLS)[0]
+    assert res["is_error"] and res["content"] == rr.LAST_CALL
     assert d.review is not None and d.review["status"] == "capped"
     assert d.review["stopped"] == "calls" and d.reviewed is None
     rows = json.loads(results(client, 1)[0]["content"])["alternatives"]
@@ -370,7 +389,11 @@ def test_unknown_tools_are_refused(home: Path) -> None:
 def test_escalation_asks_the_advisor_once(home: Path, store: Store) -> None:
     advice = {
         "assessment": "Exclude the electrolyzer.",
-        "recommendation": {"kind": "exclude", "exclude": [ELECTRO]},
+        "recommendation": {
+            "kind": "exclude",
+            "exclude": [ELECTRO, "about 9999 of them"],
+            "note": "build 31337",
+        },
         "unresolved": False,
     }
     r, client = reviewer(
@@ -385,13 +408,17 @@ def test_escalation_asks_the_advisor_once(home: Path, store: Store) -> None:
     d = designer.design(home, REQ, reviewer=r)
     adv = client.requests[1]
     assert adv["model"] == OPUS
-    assert adv["tool_choice"] == {"type": "tool", "name": "advise"}
+    assert "tool_choice" not in adv  # a forced tool_choice is a 400 on these models
     assert [t["name"] for t in adv["tools"]] == ["advise"]
     assert "Exclude the electrolyzer" in results(client, 2)[0]["content"]
     second = results(client, 3)[0]
     assert second["is_error"] and "at most 1 escalation" in second["content"]
     assert d.review is not None and d.review["advisor"]["model"] == OPUS
-    assert d.review["advisor"]["recommendation"]["exclude"] == [ELECTRO]
+    # keys only: the free text in the recommendation is dropped
+    assert d.review["advisor"]["recommendation"] == {
+        "kind": "exclude",
+        "exclude": [ELECTRO],
+    }
     assert d.review["models"] == {"worker": SONNET, "advisor": OPUS}
     models = [
         x["model"] for x in store.rows("SELECT model FROM llm_usage ORDER BY rowid")

@@ -96,9 +96,7 @@ class DesignerError(ValueError):
 
 @dataclass
 class Designed:
-    ids: list[
-        str
-    ]  # rank order: the base routes, the simplest, addon and reviewed columns
+    ids: list[str]  # rank order: base routes, then simplest, addon, reviewed
     plans: list[dict[str, Any]]
     problems: list[str] = field(default_factory=list)  # saved, but a vault note wasn't
     review: dict[str, Any] | None = None  # the route reviewer's record, when asked for
