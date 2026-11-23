@@ -163,6 +163,9 @@ def test_a_locked_import_is_gated_and_warned(
     imports = {b["id"] for b in p["boundary"]["in"]}
     assert STEELEAF_INGOT in imports, imports
     assert STEELEAF_INGOT in p["route"]["gates"]
+    # D404 (6): rank.py reads the locked import from route.unsourced; steel's best has none
+    assert STEELEAF_INGOT in p["route"]["unsourced"]
+    assert "unsourced" not in best["route"]
     assert f"imports {STEELEAF_INGOT} (locked" in "\n".join(p["warnings"])
     for w in p["warnings"]:
         if w.startswith("imports "):
