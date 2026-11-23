@@ -53,7 +53,7 @@ test("a typed request designs every route, in the core's rank order, differences
   const ids = await routeIds();
   expect(ids[0]).toBe(pid);
   // The order on screen is the core's (rank.py's), never re-sorted: the three ranked routes,
-  // then the simplest route's own column (on by default, D399, D404 (8)).
+  // then the simplest route's own column (on by default, D399, D404 (8), D411 (4)).
   const core = await asAdmin<DesignerView>(`/api/plans/${pid}/designer`);
   expect(ids).toEqual(core.routes.map((r) => r.id));
   expect(core.routes.map((r) => [r.column, r.position])).toEqual([
@@ -62,7 +62,10 @@ test("a typed request designs every route, in the core's rank order, differences
     ["base", 3],
     ["simplest", 1],
   ]);
+  // The comparison card holds them all (D411 (4)): the ranked routes, then the simplest route.
   const compare = page.getByTestId("designer-compare");
+  await expect(compare.locator(".route-head .gos-label")).toHaveText(["Route 1", "Route 2", "Route 3", "Simplest route"]);
+  expect(core.comparison.routes.map((r) => r.id)).toEqual(ids);
   await expect(compare.locator("li.differs").first()).toBeVisible();
   await expect(compare.locator("dd.best").first()).toBeVisible();
   // Each route's flow diagram, laid out by elkjs (the card's one layout, D159).

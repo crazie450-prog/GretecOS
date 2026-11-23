@@ -136,7 +136,7 @@
     "Route": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "rank", "ref", "accepted", "metrics", "choices"],
+      "required": ["id", "name", "rank", "ref", "accepted", "metrics", "choices", "simplest"],
       "properties": {
         "id": {"type": "string", "maxLength": 100},
         "name": {"type": "string", "maxLength": 200},
@@ -144,11 +144,12 @@
         "ref": {"$ref": "#/$defs/Ref"},
         "accepted": {"type": "boolean"},
         "metrics": {"type": "array", "items": {"$ref": "#/$defs/Metric"}, "maxItems": 20},
-        "choices": {"type": "array", "items": {"$ref": "#/$defs/RouteChoice"}, "maxItems": 100}
+        "choices": {"type": "array", "items": {"$ref": "#/$defs/RouteChoice"}, "maxItems": 100},
+        "simplest": {"type": "boolean"}
       }
     },
     "RouteComparisonCard": {
-      "description": "Route comparison: 2-3 routes the planner ranked (planner/rank.py), side by side, differences marked (Phase 3).",
+      "description": "Route comparison: up to 3 routes the planner ranked (planner/rank.py), then the addon, reviewed and simplest columns when the design has them (D411 (4)), side by side, differences marked (Phase 3).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "title", "ref", "routes", "notes"],
@@ -156,7 +157,7 @@
         "type": {"const": "route_comparison"},
         "title": {"type": "string", "maxLength": 300},
         "ref": {"anyOf": [{"$ref": "#/$defs/Ref"}, {"type": "null"}]},
-        "routes": {"type": "array", "items": {"$ref": "#/$defs/Route"}, "minItems": 1, "maxItems": 3},
+        "routes": {"type": "array", "items": {"$ref": "#/$defs/Route"}, "minItems": 1, "maxItems": 6},
         "notes": {"$ref": "#/$defs/Notes"}
       }
     },

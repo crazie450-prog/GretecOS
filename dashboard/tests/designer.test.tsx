@@ -56,6 +56,7 @@ function view(id: string, routes: DesignerRoute[]): DesignerView {
         rank: r.position,
         ref: `plan:${r.id}`,
         accepted: r.status !== "proposed",
+        simplest: r.simplest,
         metrics: [{ key: "score", label: "score", value: r.score, unit: "", better: "higher", best: r.position === 1 }],
         choices: [{ node: STEEL, label: "Steel Ingot", machine: "Electric Blast Furnace", tier: "HV", ref: r.nodes[0].recipe, differs: true }],
       })),
@@ -144,6 +145,20 @@ describe("helpers", () => {
     render(<RouteComparisonView card={card} />);
     const heads = [...document.querySelectorAll(".route-head .gos-label")].map((e) => e.textContent);
     expect(heads).toEqual(["Route 1", "Simplest route"]);
+  });
+
+  it("holds up to 6 columns: the ranked routes, then the addon, reviewed and simplest (D411 (4))", () => {
+    const ids = ["pl-aaaaaaaaaa", "pl-bbbbbbbbbb", "pl-cccccccccc"];
+    const extras = (["addon", "reviewed", "simplest"] as const).map((column, i) => route(`pl-${"def"[i].repeat(10)}`, 1, { column }));
+    const card = view(ids[0], [route(ids[0], 1, { simplest: true }), route(ids[1], 2), route(ids[2], 3), ...extras]).comparison;
+    for (const [i, rank] of (["addon", "reviewed", "simplest"] as const).entries()) card.routes[3 + i].rank = rank;
+    render(<RouteComparisonView card={card} />);
+    const heads = [...document.querySelectorAll(".route-head .gos-label")].map((e) => e.textContent);
+    expect(heads).toEqual(["Route 1 (also the simplest)", "Route 2", "Route 3", "Addon column", "Reviewed route", "Simplest route"]);
+    // 4-6 columns wrap at a readable width (the .many grid), not squeezed into one row
+    const grid = document.querySelector(".routes") as HTMLElement;
+    expect(grid.classList.contains("many")).toBe(true);
+    expect(grid.style.gridTemplateColumns).toBe("");
   });
 
   it("heads the comparison's addon route as the addon column, never as a rank", () => {

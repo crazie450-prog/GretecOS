@@ -487,16 +487,20 @@ def _addon(p: Mapping[str, Any]) -> bool:
     return _column(p) == "addon"
 
 
+def _also_simplest(p: Mapping[str, Any]) -> bool:
+    return _column(p) == "base" and bool((p.get("route") or {}).get("simplest"))
+
+
 def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    """The routes the comparison card holds (at most 3, the catalog's limit): the top 3 base
-    routes in rank order (D404 (8)), then the addon column (D12) and the reviewed route
-    (D389 (7)) in the places they leave. The simplest route is never on the card; it shows
-    in the route list only (D404 (8))."""
+    """The routes the comparison card holds (at most 6, the catalog's limit, D411 (4)): the
+    top 3 base routes in rank order, then the addon column (D12), the reviewed route
+    (D389 (7)) and the simplest route (D389 (4)), each when the design has it. A base route
+    that is also the simplest stays one base column (``route.simplest``)."""
     base = [p for p in plans if _column(p) == "base"][:3]
     extras: list[Mapping[str, Any]] = []
-    for column in ("addon", "reviewed"):
+    for column in ("addon", "reviewed", "simplest"):
         extras.extend([p for p in plans if _column(p) == column][:1])
-    return base + extras[: 3 - len(base)]
+    return base + extras
 
 
 def _made_by(p: Mapping[str, Any]) -> dict[str, str]:
@@ -525,9 +529,10 @@ def comparison_card(
     statuses: Mapping[str, str],
     prefs_line: str,
 ) -> dict[str, Any]:
-    """The catalog's ``route_comparison`` card for up to 3 routes, in the order given (rank
-    order), as :func:`_shown` picks them: the base routes, then the addon and reviewed columns
-    in the places they leave (their rank reads ``addon`` or ``reviewed``). A metric is
+    """The catalog's ``route_comparison`` card for up to 6 routes, as :func:`_shown` picks
+    them: the base routes in rank order, then the addon, reviewed and simplest columns (their
+    rank reads ``addon``, ``reviewed`` or ``simplest``; ``simplest`` is true on a base route
+    that is also the simplest). A metric is
     marked ``best`` on the routes that have the best value when the routes don't all tie; a
     choice ``differs`` when another route makes that item with another recipe or not at all."""
     shown = _shown(plans)
@@ -576,6 +581,8 @@ def comparison_card(
                 "accepted": statuses.get(p["id"], "proposed") != "proposed",
                 "metrics": metrics,
                 "choices": choices,
+                # a base route that is also the simplest stays one column (D411 (4))
+                "simplest": _also_simplest(p),
             }
         )
     notes = [
@@ -583,11 +590,18 @@ def comparison_card(
         "ranked by code (planner/rank.py); differences are marked on each route",
     ]
     if any(_addon(p) for p in shown):
-        notes.append("the addon column is ranked against the base routes, shown last")
+        notes.append(
+            "the addon column is ranked against the base routes, shown after them"
+        )
     if any(_column(p) == "reviewed" for p in shown):
         notes.append(
             "the reviewed route is the route reviewer's change, re-solved and scored by the "
-            "planner against the base routes, shown last"
+            "planner against the base routes, shown after them"
+        )
+    if any(_column(p) == "simplest" for p in shown):
+        notes.append(
+            "the simplest route (each node's first recipe) is scored against the base "
+            "routes, shown last"
         )
     title = shown[0]["name"] if shown else "Routes"
     return checked(

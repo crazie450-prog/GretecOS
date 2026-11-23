@@ -87,9 +87,10 @@ export interface Route {
   accepted: boolean;
   metrics: Metric[];
   choices: RouteChoice[];
+  simplest: boolean;
 }
 
-/** Route comparison: 2-3 routes the planner ranked (planner/rank.py), side by side, differences marked (Phase 3). */
+/** Route comparison: up to 3 routes the planner ranked (planner/rank.py), then the addon, reviewed and simplest columns when the design has them (D411 (4)), side by side, differences marked (Phase 3). */
 export interface RouteComparisonCard {
   type: "route_comparison";
   title: string;
