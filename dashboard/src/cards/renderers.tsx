@@ -296,11 +296,16 @@ export function RouteComparisonView({ card }: { card: RouteComparisonCard }) {
   return (
     <div className="card route-card" data-card="route_comparison">
       <CardHead label="Route comparison" title={card.title} cite={card.ref} />
-      <div className="routes" style={{ gridTemplateColumns: `repeat(${card.routes.length}, minmax(0, 1fr))` }}>
+      {/* Up to 3 routes side by side; 4-6 (the ranked routes, then the addon, reviewed and simplest
+          columns, D411 (4)) wrap at a readable width. */}
+      <div
+        className={`routes${card.routes.length > 3 ? " many" : ""}`}
+        style={card.routes.length > 3 ? undefined : { gridTemplateColumns: `repeat(${card.routes.length}, minmax(0, 1fr))` }}
+      >
         {card.routes.map((r) => (
           <section key={r.id} className={`route${r.accepted ? " accepted" : ""}`} data-route={r.id}>
             <div className="route-head">
-              <span className="gos-label">{r.rank === "addon" ? "Addon column" : r.rank === "simplest" ? "Simplest route" : r.rank === "reviewed" ? "Reviewed route" : `Route ${r.rank}`}</span>
+              <span className="gos-label">{r.rank === "addon" ? "Addon column" : r.rank === "simplest" ? "Simplest route" : r.rank === "reviewed" ? "Reviewed route" : `Route ${r.rank}${r.simplest ? " (also the simplest)" : ""}`}</span>
               <span className="route-name">{r.name}</span>
               {r.accepted && <StatusGlyph status="ok" label="accepted" glyph={GLYPH.done} />}
               <Chip cite={r.ref} />

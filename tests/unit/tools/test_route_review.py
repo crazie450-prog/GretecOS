@@ -231,10 +231,11 @@ def test_a_rerun_adds_a_reviewed_column(home: Path, store: Store) -> None:
     v = designer.view(home, d.ids[0])
     assert [x["column"] for x in v["routes"]][-1] == "reviewed"
     assert v["routes"][-1]["review"]["id"] == review["id"]
-    # the card keeps the 3 ranked routes; the reviewed route takes a place they leave
-    # (D404 (8)), here only in the route list
+    # the card holds the 3 ranked routes, then the reviewed route (D411 (4))
     assert len(plain.ids) == 3
-    assert [r["rank"] for r in v["comparison"]["routes"]] == [1, 2, 3]
+    card = v["comparison"]["routes"]
+    assert [r["rank"] for r in card] == [1, 2, 3, "reviewed"]
+    assert [r["id"] for r in card] == d.ids
     loaded = [designer.load(home, i) for i in d.ids]
     two = [x["id"] for x in designer._shown([*loaded[:2], loaded[-1]])]
     assert two == [*d.ids[:2], d.reviewed]

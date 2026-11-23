@@ -29,11 +29,11 @@ from the machine the planner sizes it with (:mod:`.sizing`, GT's math), never an
   unlocked once (de-duplicated). With no owned machines listed (WO-3.8 not filled in), every map
   counts as one machine he has, so ``unlock_h`` is 0 and a note says so (D196).
 
-- **Hand feeding** (``hand_h``, D404 (4)): a machine fed and emptied by hand, no pipe or hopper
-  (the Bricked Blast Furnace, ``hand_fed`` on its plan node), costs the route a hand step
-  (``craft_s``) per craft it runs: the batch's crafts, or an hour's (D14) in rate mode. One
-  player does it, so it is never spread over machines. It is in ``eff_h``, so rank.py's
-  effort term puts a hand-fed route below an otherwise equal automatable one.
+- **Hand feeding** (``hand_h``, D404 (4), D411 (1)): a machine fed and emptied by hand, no pipe
+  or hopper (the Bricked Blast Furnace, ``hand_fed`` on its plan node), costs the route a fixed
+  :data:`HAND_FED_S` (5 minutes) per machine of it the route builds (the node's ``count``),
+  whatever the batch or the rate. It is in ``eff_h``, so rank.py's effort term puts a hand-fed
+  route below an otherwise equal automatable one.
 
 The result's ``rows`` are the breakdown table: per part (``build``, ``unlock`` or ``hand``) and recipe map
 (``crafting`` for hand steps), the crafts, the machines it is spread over, the hours and the
@@ -60,7 +60,7 @@ UNLOCK_DEPTH = 3  # §7.2: unlock recursion depth
 # how deep make() follows items a component's flow imports through a gate
 GATE_DEPTH = 3
 HAND = "crafting"  # the breakdown's map name for crafting-table and furnace steps
-RATE_WINDOW_S = 3600.0  # rate mode: a hand-fed machine's crafts in an hour's run (D14)
+HAND_FED_S = 300.0  # D411 (1): effort per hand-fed machine the route builds (5 minutes)
 
 
 @dataclass
@@ -539,11 +539,11 @@ class Effort:
                 f"not counted, imported through a gate more than {GATE_DEPTH} levels down "
                 f"or in a loop ({len(deep)}): " + ", ".join(deep)
             )
-        hand = hand_rows(plan, self.craft_s)
+        hand = hand_rows(plan)
         if hand:
             notes.append(
-                "fed and emptied by hand (no pipe or hopper): each craft counts as one"
-                " hand step (D404 (4))"
+                f"fed and emptied by hand (no pipe or hopper): each such machine counts"
+                f" {duration(HAND_FED_S / 3600.0)} (D411 (1))"
             )
         rows = self._rows("build", build) + self._rows("unlock", unlock) + hand
         uncounted = skipped + extra_uncounted + len(missing) + len(deep)
@@ -567,29 +567,27 @@ class Effort:
         }
 
 
-def hand_rows(
-    plan: Mapping[str, Any], craft_s: float = CRAFT_S
-) -> list[dict[str, Any]]:
-    """The ``hand`` rows of a route's breakdown (D404 (4)): per map a hand-fed machine runs,
-    its crafts (the batch's, else an hour's), one ``craft_s`` hand step each, on one player."""
+def hand_rows(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The ``hand`` rows of a route's breakdown (D411 (1)): per map a hand-fed machine runs,
+    the machines the route builds for it (its nodes' ``count``), :data:`HAND_FED_S` each; no
+    crafts, so neither the batch nor the rate changes it."""
     by_map: dict[str, dict[str, Any]] = {}
     fed = [n for n in plan["nodes"] if (n.get("machine") or {}).get("hand_fed")]
     for n in sorted(fed, key=lambda n: str(n["recipe"])):
-        m = n["machine"]
-        made = n.get("crafts")
-        made = float(n["crafts_s"]) * RATE_WINDOW_S if made is None else float(made)
-        crafts = math.ceil(round(made, 6))
-        if crafts <= 0:
+        count = int(n.get("count") or 0)
+        if count <= 0:
             continue
         row = by_map.setdefault(
             str(n["map"]),
-            {"part": "hand", "map": str(n["map"]), "mte": m["mte"], "crafts": 0,
-             "machines": 1, "h": 0.0, "recipes": []},
+            {"part": "hand", "map": str(n["map"]), "mte": n["machine"]["mte"], "crafts": 0,
+             "machines": 0, "h": 0.0, "recipes": []},
         )  # fmt: skip
-        h = crafts * craft_s / 3600.0
-        row["crafts"] += crafts
+        h = count * HAND_FED_S / 3600.0
+        row["machines"] += count
         row["h"] += h
-        row["recipes"].append({"id": n["recipe"], "crafts": crafts, "h": h})
+        row["recipes"].append(
+            {"id": n["recipe"], "crafts": 0, "machines": count, "h": h}
+        )
     return [by_map[k] for k in sorted(by_map)]
 
 
@@ -609,7 +607,8 @@ def table(eff: Mapping[str, Any]) -> list[list[str]]:
     """The breakdown table's rows as text cells (:data:`COLUMNS`), one per recipe, build rows
     first, then unlock rows: the machine its map's steps are sized on cited ``mte:`` and the
     recipe by its id, each cell one id so the card draws it as a chip (WO-4.3, D237). A row
-    with no per-recipe entries (a plan saved before WO-4.3) is its map's totals."""
+    with no per-recipe entries (a plan saved before WO-4.3) is its map's totals. A ``hand``
+    row (D411 (1)) has no crafts (``-``) and its machines per recipe."""
     out = []
     for r in eff["rows"]:
         mte = f"mte:{r['mte']}" if r.get("mte") is not None else "-"
@@ -620,8 +619,8 @@ def table(eff: Mapping[str, Any]) -> list[list[str]]:
                     str(r["map"]),
                     mte,
                     str(x["id"]),
-                    str(x["crafts"]),
-                    str(r["machines"]),
+                    "-" if r["part"] == "hand" else str(x["crafts"]),
+                    str(x.get("machines", r["machines"])),
                     duration(float(x["h"])),
                 ]
             )

@@ -5,11 +5,14 @@
 // Power view. The made-up exports design in well under a second, so each stage waits
 // (`design_delay`, a harness control) long enough to watch it. Needs Clayton's board approval
 // (D92): the job panel is built to the design system's busy state.
+// Accept and rename go ahead while a reviewed design runs (D411 (6)): `review_delay` holds its
+// review outside the planner lock, as a model call does (D409).
 // Named to run after power.spec.ts (files run in name order): its power designs leave a latest
 // design on the power core, whose empty ledger power.spec.ts checks first.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page, expect, test } from "@playwright/test";
+import type { DesignerView } from "../src/api/types";
 import { HOME, asAdmin, clipped, control, pair } from "./harness";
 import { POWER_BASE, POWER_HOME, powerAdmin, powerCode } from "./power";
 
@@ -27,6 +30,7 @@ function powerDelay(seconds: string): void {
 
 test.afterAll(() => {
   rmSync(join(HOME, "e2e", "design_delay"), { force: true });
+  rmSync(join(HOME, "e2e", "review_delay"), { force: true });
   rmSync(join(POWER_HOME, "e2e", "design_delay"), { force: true });
 });
 
@@ -41,6 +45,7 @@ for (const [size, viewport] of Object.entries(SIZES)) {
 
     test.afterAll(async () => {
       control("design_delay", "0");
+      control("review_delay", "0");
       await page.close();
     });
 
@@ -113,6 +118,54 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       expect((await asAdmin<Jobs>("/api/design-jobs")).latest.designer.status).toBe("done");
       await expect(page.getByTestId("route-1-base")).toBeVisible();
       expect(page.url()).toMatch(/#\/designer\/pl-[a-z0-9]+$/); // the result handed to the view
+    });
+
+    test("accept and rename go ahead while a reviewed design runs, and stay when it ends (D411 (6))", async () => {
+      control("design_delay", "0");
+      control("review_delay", "8");
+      await page.goto("/#/designer");
+      await expect(page.getByTestId("route-1-base")).toBeVisible({ timeout: 10_000 });
+      // The open design is steel at HV; the job designs it again (the review toggle doesn't
+      // change plan ids), so it saves these same plans once its review ends.
+      const pid = (await page.getByTestId("route-1-base").getAttribute("data-route")) ?? "";
+      const take = ((await page.locator('[data-testid^="accept-pl-"]').first().getAttribute("data-testid")) ?? "").slice("accept-".length);
+      expect(pid).toMatch(/^pl-/);
+      expect(take).toMatch(/^pl-/); // a route still proposed (the monitor run accepted one)
+      await page.getByTestId("designer-target").fill("steel ingot");
+      await page.getByTestId("designer-tier").selectOption("HV");
+      await page.getByTestId("designer-review").check();
+      await page.getByTestId("designer-go").click();
+      const stage = page.getByTestId("designer-job-stage");
+      await expect(stage).toContainText("review", { timeout: 10_000 });
+      // Design, pin and re-solve wait for the job (one per kind, D353); accept and rename don't.
+      await expect(page.getByTestId("designer-go")).toBeDisabled();
+      await expect(page.getByTestId("designer-resolve")).toBeDisabled();
+      const name = `Steel during a review (${size})`;
+      await page.getByTestId(`rename-${pid}`).click();
+      await page.getByTestId(`rename-input-${pid}`).fill(name);
+      await page.getByTestId(`rename-save-${pid}`).click();
+      const title = page.locator(`.designer-route[data-route="${pid}"] .gos-title`);
+      await expect(title).toHaveText(name);
+      await page.getByTestId(`accept-${take}`).click();
+      await page.getByTestId(`accept-yes-${take}`).click();
+      const column = page.locator(`.designer-route[data-route="${take}"]`);
+      await expect(column).toContainText("accepted");
+      // Both answered while the job still ran.
+      await expect(stage).toContainText("review");
+      expect((await asAdmin<Jobs>("/api/design-jobs")).running).toHaveLength(1);
+      if (size === "phone") expect(await clipped(page)).toEqual([]);
+      await page.screenshot({ path: shot(`designer-accept-during-job-${size}`), fullPage: true });
+      // The job ends on the same plans: the view keeps the new name and the accepted route.
+      await expect(page.getByTestId("designer-busy")).toHaveCount(0, { timeout: 30_000 });
+      expect((await asAdmin<Jobs>("/api/design-jobs")).latest.designer.status).toBe("done");
+      expect(page.url()).toMatch(new RegExp(`#/designer/${pid}$`));
+      await expect(title).toHaveText(name);
+      await expect(column).toContainText("accepted");
+      await expect(page.getByTestId(`accept-${take}`)).toHaveCount(0);
+      await expect(page.getByTestId("designer-resolve")).toBeEnabled();
+      const core = await asAdmin<DesignerView>(`/api/plans/${pid}/designer`);
+      expect(core.routes.find((r) => r.id === pid)?.name).toBe(name);
+      expect(core.routes.find((r) => r.id === take)?.status).toBe("accepted");
     });
   });
 }

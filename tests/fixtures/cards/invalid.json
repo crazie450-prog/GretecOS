@@ -9,11 +9,14 @@
   {"why": "a citation with a line break after it", "error": "card.recipes[0].ref: doesn't match", "card": {"type": "recipe", "tool": null, "error": null, "title": "x", "item": null, "run": null, "recipes": [{"ref": "r:m/0123456789ab\n", "machine": "m", "tier": "MV", "eut": 120, "amps": 1, "dur_t": 500, "dur_s": "25", "inputs": [], "outputs": [], "conditions": [], "flags": []}], "total": null, "notes": []}},
   {"why": "a number as text", "error": "card.recipes[0].eut: must be integer or null", "card": {"type": "recipe", "tool": null, "error": null, "title": "x", "item": null, "run": null, "recipes": [{"ref": "r:m/0123456789ab", "machine": "m", "tier": "MV", "eut": "120", "amps": 1, "dur_t": 500, "dur_s": "25", "inputs": [], "outputs": [], "conditions": [], "flags": []}], "total": null, "notes": []}},
   {"why": "an unknown tier", "error": "card.recipes[0].tier: matches none of the allowed shapes", "card": {"type": "recipe", "tool": null, "error": null, "title": "x", "item": null, "run": null, "recipes": [{"ref": "r:m/0123456789ab", "machine": "m", "tier": "XV", "eut": 120, "amps": 1, "dur_t": 500, "dur_s": "25", "inputs": [], "outputs": [], "conditions": [], "flags": []}], "total": null, "notes": []}},
-  {"why": "four routes", "error": "card.routes: more than 3 items", "card": {"type": "route_comparison", "title": "t", "ref": null, "notes": [], "routes": [
-    {"id": "a", "name": "a", "rank": 1, "ref": "plan:p/a", "accepted": false, "metrics": [], "choices": []},
-    {"id": "b", "name": "b", "rank": 2, "ref": "plan:p/b", "accepted": false, "metrics": [], "choices": []},
-    {"id": "c", "name": "c", "rank": 3, "ref": "plan:p/c", "accepted": false, "metrics": [], "choices": []},
-    {"id": "d", "name": "d", "rank": 4, "ref": "plan:p/d", "accepted": false, "metrics": [], "choices": []}]}},
+  {"why": "seven routes", "error": "card.routes: more than 6 items", "card": {"type": "route_comparison", "title": "t", "ref": null, "notes": [], "routes": [
+    {"id": "a", "name": "a", "rank": 1, "ref": "plan:p/a", "accepted": false, "metrics": [], "choices": [], "simplest": false},
+    {"id": "b", "name": "b", "rank": 2, "ref": "plan:p/b", "accepted": false, "metrics": [], "choices": [], "simplest": false},
+    {"id": "c", "name": "c", "rank": 3, "ref": "plan:p/c", "accepted": false, "metrics": [], "choices": [], "simplest": false},
+    {"id": "d", "name": "d", "rank": 4, "ref": "plan:p/d", "accepted": false, "metrics": [], "choices": [], "simplest": false},
+    {"id": "e", "name": "e", "rank": 5, "ref": "plan:p/e", "accepted": false, "metrics": [], "choices": [], "simplest": false},
+    {"id": "f", "name": "f", "rank": 6, "ref": "plan:p/f", "accepted": false, "metrics": [], "choices": [], "simplest": false},
+    {"id": "g", "name": "g", "rank": 7, "ref": "plan:p/g", "accepted": false, "metrics": [], "choices": [], "simplest": false}]}},
   {"why": "an approval action that isn't one", "error": "card.actions[0].id: must be one of", "card": {"type": "approval", "id": "x", "kind": "action", "title": "t", "readback": "r", "detail": null, "expires_at": null, "actions": [{"id": "rm -rf", "label": "Go", "primary": true}]}},
   {"why": "a table that is no tool's result (rule 1)", "error": "card.tool: must be string", "card": {"type": "table", "tool": null, "error": null, "title": "Anything", "head": [], "columns": ["a"], "rows": [["b"]], "span": null, "total": null, "notes": []}}
 ]

@@ -8,6 +8,7 @@
 // canvas handoff: built to the design system (D158 (5)), to be reconciled with the board.
 // Designs, re-solves and pins run as design jobs (WO-3.9, D353): the busy panel shows the stage,
 // the time and a Cancel; leaving the view leaves the job running to its saved result (D354).
+// While one runs, design, pin and re-solve wait; accept and rename stay usable (D411 (6)).
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type {
@@ -293,7 +294,8 @@ function FloorPlan({ planId }: { planId: string }) {
 function RouteColumn(props: {
   route: DesignerRoute;
   names: Map<string, string>; // item key -> name, from every route of the design
-  busy: boolean;
+  busy: boolean; // a design job or a call is running: re-solve and unpin wait
+  acting: boolean; // an accept, a rename or a job's start is under way (D411 (6))
   picked: string | null;
   onPick: (node: DesignerNode) => void;
   onUnpin: (node: string) => void;
@@ -319,7 +321,7 @@ function RouteColumn(props: {
       {naming === null ? (
         <div className="designer-name">
           <h2 className="gos-title">{r.name}</h2>
-          <Button disabled={props.busy} onClick={() => setNaming(r.name)} testId={`rename-${r.id}`}>
+          <Button disabled={props.acting} onClick={() => setNaming(r.name)} testId={`rename-${r.id}`}>
             Rename
           </Button>
         </div>
@@ -340,7 +342,7 @@ function RouteColumn(props: {
             aria-label="Plan name"
             data-testid={`rename-input-${r.id}`}
           />
-          <Button type="submit" variant="primary" disabled={props.busy || !naming.trim()} testId={`rename-save-${r.id}`}>
+          <Button type="submit" variant="primary" disabled={props.acting || !naming.trim()} testId={`rename-save-${r.id}`}>
             Save
           </Button>
           <Button onClick={() => setNaming(null)}>Cancel</Button>
@@ -439,7 +441,7 @@ function RouteColumn(props: {
             </p>
             <Button
               variant="confirm"
-              disabled={props.busy}
+              disabled={props.acting}
               onClick={() => {
                 setConfirming(false);
                 props.onAccept();
@@ -451,7 +453,7 @@ function RouteColumn(props: {
             <Button onClick={() => setConfirming(false)}>Cancel</Button>
           </div>
         ) : (
-          <Button variant="primary" disabled={props.busy} onClick={() => setConfirming(true)} testId={`accept-${r.id}`}>
+          <Button variant="primary" disabled={props.acting} onClick={() => setConfirming(true)} testId={`accept-${r.id}`}>
             Accept this route
           </Button>
         ))}
@@ -632,11 +634,31 @@ export function Designer() {
     };
   }, [pickedRoute, pickedItem, all]);
 
+  // Accept and rename go ahead while a design job runs (D411 (6)). A job that ends meanwhile
+  // hands the view its own result, which may predate the accept or rename: the view then reads
+  // its design again, so neither is lost nor overwritten (the same plans keep their status and
+  // name when a job saves them again; a new design's plans are new, the old ones stay saved).
+  const jobsEnded = useRef(0);
+  const editedInJob = useRef(false);
+  const reread = (): void => {
+    const id = shown.current;
+    if (!id) return;
+    api.designerView(id).then(
+      (v) => shown.current === id && show(v),
+      () => {},
+    );
+  };
+
   const run = async (what: string, call: () => Promise<{ view: DesignerView; problems?: string[] }>): Promise<boolean> => {
     setBusy(what);
+    const ended = jobsEnded.current;
+    const during = runner.job !== null;
     try {
       const out = await call();
-      show(out.view);
+      if (jobsEnded.current === ended) {
+        show(out.view);
+        if (during) editedInJob.current = true;
+      } else reread(); // a job's result came in meanwhile: keep its design, read afresh
       setNotice(out.problems && out.problems.length ? out.problems.join("; ") : null);
       refreshPlans();
       return true;
@@ -651,7 +673,12 @@ export function Designer() {
   // A design job's result is what POST /api/designer/design answers (D353).
   const designed = (result: unknown): void => {
     const out = result as Designed;
+    jobsEnded.current += 1;
     show(out.view);
+    if (editedInJob.current) {
+      editedInJob.current = false;
+      reread();
+    }
     setNotice(out.problems.length ? out.problems.join("; ") : null);
     refreshPlans();
   };
@@ -779,6 +806,7 @@ export function Designer() {
                 route={r}
                 names={names}
                 busy={working}
+                acting={busy !== null}
                 picked={picked?.route === r.id ? picked.node.n : null}
                 onPick={(n) => pick(r.id, n)}
                 onUnpin={(node) => startJob({ pin: { plan: r.id, node, recipe: null } })}

@@ -170,7 +170,13 @@ def template(doc: Mapping[str, Any]) -> str:
             f"{fmt(m['new_types'])} new machine types; {fmt(m['eut_avg'])} EU/t average, "
             f"{fmt(m['eut_peak'])} EU/t peak; effort {fmt(m['eff_h'])} h "
             f"(build {fmt(m['build_h'])} h, unlock {fmt(m['unlock_h'])} h"
-            + (f", by hand {fmt(m['hand_h'])} h" if m.get("hand_h") else "")
+            + (
+                f", by hand {fmt(m['hand_h'])} h for "
+                f"{fmt(sum(e['machines'] for e in m['effort'] if e['part'] == 'hand'))}"
+                " hand-fed machines"
+                if m.get("hand_h")
+                else ""
+            )
             + "); scarcity "
             f"{fmt(m['scarcity'])}; complexity {fmt(m['complexity'])} ({fmt(m['nodes'])} "
             f"nodes, {fmt(m['fluids'])} fluids, {fmt(m['loops'])} loops)."

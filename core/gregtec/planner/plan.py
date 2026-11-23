@@ -456,7 +456,8 @@ def _plan(
     for (mte, name), pids in sorted(hand.items()):
         warnings.append(
             f"mte:{mte} ({name}) is fed and emptied by hand, no pipe or hopper"
-            f" ({', '.join(pids)}); the route's effort counts the hand work (D404 (4))"
+            f" ({', '.join(pids)}); the route's effort counts"
+            f" {effort.duration(effort.HAND_FED_S / 3600.0)} per machine (D411 (1))"
         )
     edges = _edges(net, flow, node_of)
     target_out = dict(flow.exports).get(g.target, rate)

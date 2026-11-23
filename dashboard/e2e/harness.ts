@@ -42,7 +42,7 @@ export async function pendingCode(): Promise<string> {
 }
 
 /** Write one of the harness's desktop controls (foreground, running, key). */
-export function control(name: "foreground" | "running" | "key" | "design_delay", value: string): void {
+export function control(name: "foreground" | "running" | "key" | "design_delay" | "review_delay", value: string): void {
   mkdirSync(join(HOME, "e2e"), { recursive: true });
   writeFileSync(join(HOME, "e2e", name), value, "utf-8");
 }

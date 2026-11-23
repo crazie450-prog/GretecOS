@@ -42,6 +42,7 @@
         "rank": 1,
         "ref": "plan:pe-line-1/a",
         "accepted": false,
+        "simplest": true,
         "metrics": [{"key": "eut", "label": "Power", "value": 480, "unit": "EU/t", "better": "lower", "best": true}],
         "choices": [{"node": "n1", "label": "Ethylene", "machine": "Chemical Reactor", "tier": "LV", "ref": "r:gt.recipe.chemicalreactor/0123456789ab", "differs": true}]
       },
@@ -51,6 +52,7 @@
         "rank": 2,
         "ref": "plan:pe-line-1/b",
         "accepted": false,
+        "simplest": false,
         "metrics": [{"key": "eut", "label": "Power", "value": 960, "unit": "EU/t", "better": "lower", "best": false}],
         "choices": [{"node": "n1", "label": "Ethylene", "machine": "Distillation Tower", "tier": "HV", "ref": null, "differs": true}]
       }

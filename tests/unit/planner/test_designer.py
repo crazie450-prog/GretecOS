@@ -422,9 +422,9 @@ def test_accept_and_rename_refuse_a_pruned_run_whole(home: Path) -> None:
 
 
 def test_comparison_holds_the_addon_column() -> None:
-    """Review M2 and L4, D404 (8): the card keeps the top 3 base routes; with 2, the addon
-    column takes the third place (rank "addon"); the simplest route is never on it; a node
-    that makes only EU never differs."""
+    """Review M2 and L4, D411 (4): the card holds the top 3 base routes, then the addon
+    column (rank "addon") and the simplest route (rank "simplest"), each when the design has
+    it; a node that makes only EU never differs."""
     from gregtec.planner.outputs.book import Book
 
     def p(pid: str, pos: int, column: str, recipe: str) -> dict[str, Any]:
@@ -453,27 +453,38 @@ def test_comparison_holds_the_addon_column() -> None:
     assert any("addon column" in n for n in card["notes"])
     for r in card["routes"]:
         assert [c["differs"] for c in r["choices"]] == [True, False]
-    full = designer.comparison_card(plans, books, {}, "w")  # 3 base routes: those 3
-    assert [r["rank"] for r in full["routes"]] == [1, 2, 3]
+    full = designer.comparison_card(
+        plans, books, {}, "w"
+    )  # 3 base routes, then the addon
+    assert [r["rank"] for r in full["routes"]] == [1, 2, 3, "addon"]
     base = designer.comparison_card(plans[:3], books, {}, "w")  # no addon: the top 3
     assert [r["rank"] for r in base["routes"]] == [1, 2, 3]
-    # D404 (8): the simplest route is in the route list only, never on the card
+    assert not any(r["simplest"] for r in base["routes"])
+    # D411 (4): the simplest route is on the card too, after the addon column
     simplest = p("pl-e", 1, "simplest", "r:m/eeeeeeeeeeee")
     books = books | {"pl-e": Book()}
     both = designer.comparison_card([*plans, simplest], books, {}, "w")
     check_card(both)
-    assert [r["rank"] for r in both["routes"]] == [1, 2, 3]
-    assert not any("simplest route" in n for n in both["notes"])
+    assert [r["rank"] for r in both["routes"]] == [1, 2, 3, "addon", "simplest"]
+    assert any("simplest route" in n for n in both["notes"])
     one = designer.comparison_card([plans[0], simplest, plans[3]], books, {}, "w")
-    assert [r["id"] for r in one["routes"]] == ["pl-a", "pl-d"]
+    assert [r["id"] for r in one["routes"]] == ["pl-a", "pl-d", "pl-e"]
     keys = sorted([plans[3], simplest, plans[1], plans[0]], key=designer._order_key)
     assert [x["id"] for x in keys] == ["pl-a", "pl-b", "pl-e", "pl-d"]
+    # a base route that is also the simplest stays one base column, marked
+    also = {**plans[0], "route": {"simplest": True}}
+    marked = designer.comparison_card([also, *plans[1:3]], books, {}, "w")
+    check_card(marked)
+    assert [(r["rank"], r["simplest"]) for r in marked["routes"]] == [
+        (1, True),
+        (2, False),
+        (3, False),
+    ]
 
 
-def test_the_card_keeps_a_ranked_route_beside_every_extra_column() -> None:
-    """The comparison card keeps the top 3 ranked routes (D404 (8)); the addon and reviewed
-    columns take only the places they leave, and the simplest route is never on it (it shows
-    in the route list only)."""
+def test_the_card_holds_the_ranked_routes_then_every_extra_column() -> None:
+    """D411 (4): the comparison card holds the top 3 ranked routes in rank order, then the
+    addon, reviewed and simplest routes, each when the design has it: at most 6 columns."""
 
     def p(pid: str, column: str) -> dict[str, Any]:
         return {"id": pid, "rank": {"column": column}}
@@ -483,8 +494,11 @@ def test_the_card_keeps_a_ranked_route_beside_every_extra_column() -> None:
 
     base = [p("pl-1", "base"), p("pl-2", "base"), p("pl-3", "base")]
     extras = [p("pl-s", "simplest"), p("pl-a", "addon"), p("pl-r", "reviewed")]
-    assert shown([*base, *extras]) == ["pl-1", "pl-2", "pl-3"]
-    assert shown([*base[:2], *extras]) == ["pl-1", "pl-2", "pl-a"]
-    assert shown([*base[:2], extras[0], extras[2]]) == ["pl-1", "pl-2", "pl-r"]
-    assert shown([base[0], *extras]) == ["pl-1", "pl-a", "pl-r"]
-    assert shown([base[0], extras[0]]) == ["pl-1"]
+    six = ["pl-1", "pl-2", "pl-3", "pl-a", "pl-r", "pl-s"]
+    assert shown([*base, *extras]) == six
+    assert shown([*base, p("pl-4", "base"), *extras]) == six  # 3 ranked routes at most
+    assert shown([*base[:2], *extras]) == ["pl-1", "pl-2", "pl-a", "pl-r", "pl-s"]
+    assert shown([*base[:2], extras[0], extras[2]]) == ["pl-1", "pl-2", "pl-r", "pl-s"]
+    assert shown([base[0], *extras]) == ["pl-1", "pl-a", "pl-r", "pl-s"]
+    assert shown([base[0], extras[0]]) == ["pl-1", "pl-s"]
+    assert shown(base) == ["pl-1", "pl-2", "pl-3"]

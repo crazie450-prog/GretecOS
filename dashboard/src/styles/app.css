@@ -802,6 +802,11 @@ td {
   gap: var(--space-4);
 }
 
+/* 4-6 routes on the comparison card (D411 (4)): as many in a row as read at a column's width. */
+.routes.many {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+
 .route {
   display: flex;
   flex-direction: column;
