@@ -7,7 +7,8 @@ server harness; locally: mod/README.md), and writes nothing outside tmp_path:
 - the platline graph (platinum dust at IV) builds in under 2 s (§8 row 3.3) on its template, with
   its loops (metallic powder from its own refined salt, calcium from its calcium chloride) and
   its branch points as primary choices, the same on every build;
-- three more G3 lines (D65): steel in the EBF at MV, neodymium (rare earths) at LuV and naquadah
+- three more G3 lines (D65): steel in the EBF at MV (and the Bricked Blast Furnace beside it,
+  D390), neodymium (rare earths) at LuV and naquadah
   at ZPM, each on its template; and every other G3 target the dev runtime has builds in time
   (not nanocircuits or wetware circuits: their recipes come from GTNH's core mod, which the dev
   runtime doesn't load).
@@ -39,6 +40,7 @@ STEEL = "gregtech:gt.metaitem.01@11305"
 NEODYMIUM = "gregtech:gt.metaitem.01@2067"
 NAQUADAH = "gregtech:gt.metaitem.01@2324"
 EBF = 1000
+BBF = 140  # the Bricked Blast Furnace
 IV, LUV, ZPM, MV = 5, 6, 7, 2
 # Other G3 targets the dev runtime has (D65), with a tier their lines run at.
 OTHER_G3 = {
@@ -115,6 +117,29 @@ def test_steel_in_the_ebf(conn: sqlite3.Connection) -> None:
     ]
     assert ebf and all(EBF in r.machines for r in ebf)
     assert all(r.tier <= MV for r in g.recipes)
+
+
+def test_steel_offers_the_bricked_blast_furnace(conn: sqlite3.Connection) -> None:
+    """D389 (1), D390: GT's Bricked Blast Furnace is a candidate for steel at MV, beside the
+    EBF, with no EU (a ``primitive`` recipe, not ``eu0``)."""
+    g, _ = timed(conn, STEEL, MV)
+    bbf = [
+        g.recipe(ref)
+        for ref in g.item(STEEL).chosen
+        if g.recipe(ref).map == "gt.recipe.primitiveblastfurnace"
+    ]
+    assert bbf and all(
+        r.machines == (BBF,) and "primitive" in r.flags and "eu0" not in r.flags
+        for r in bbf
+    )
+    # Every Bricked Blast Furnace recipe for steel passes the machine check.
+    assert not [
+        c
+        for c in g.item(STEEL).candidates
+        if c.recipe.startswith("r:gt.recipe.primitiveblastfurnace/")
+        and c.status == "rejected"
+        and "no machine" in c.reason
+    ]
 
 
 @pytest.mark.parametrize(

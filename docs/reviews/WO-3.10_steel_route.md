@@ -195,13 +195,15 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (for approval; none built yet)
+## 5. Proposed fixes (approved in D389; F1 built, D390)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
 one: F1 + F2 + F3 together should make it pass.
 
-**F1. Model the primitive machines (R1).** Add a `primitive` kind to `machines.py` for the
+**F1. Model the primitive machines (R1).** *Built (D390): the Bricked Blast Furnace and the
+Coke Oven are a `primitive` kind; the harness graph offers the furnace beside the EBF for steel
+at MV, with one extra top-4 slot for it.* Add a `primitive` kind to `machines.py` for the
 Bricked Blast Furnace (and the Coke Oven and Primitive Pump family where they run recipe maps):
 no energy, the recipe's own duration, no overclock, one craft at a time. That is my reading of
 GT's behaviour, to be checked against the pinned 5.09.54.265 jar before writing it (no GT code

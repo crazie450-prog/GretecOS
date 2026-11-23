@@ -263,7 +263,7 @@ def components(
         else:
             skipped += 1
             notes.append(f"mte:{mte} has no item in the DB: its making is not counted")
-        if kinds[mte] == "multiblock":
+        if kinds[mte] in ("multiblock", "primitive"):
             blocks = structure_blocks(conn, mte)
             if blocks is None:
                 skipped += 1

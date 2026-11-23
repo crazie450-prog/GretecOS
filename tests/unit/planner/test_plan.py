@@ -361,6 +361,9 @@ def test_pick_order() -> None:
     assert sizing.pick(opts) is single_hv  # unbadged single block, highest tier
     assert sizing.pick(opts, addon=True) is addon
     assert sizing.pick((multi, steam)) is multi
+    primitive = _option(mte_id=7, kind="primitive", tier=0)
+    assert sizing.pick((primitive,)) is primitive
+    assert sizing.pick((steam, primitive)) is steam
     assert sizing.pick((badged,)) is badged  # kept, with its badge (D142 (a))
     assert sizing.pick((addon,)) is None
 

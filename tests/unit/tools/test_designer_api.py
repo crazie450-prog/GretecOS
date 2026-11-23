@@ -91,8 +91,11 @@ def test_design_view_pin_reload_resolve_accept(client: TestClient, home: Path) -
     listed = ok(client.get("/api/plans", headers=admin()))["plans"]
     assert {p["id"] for p in listed} == set(ids)
 
-    # The second route's dust node: its alternatives, then pin the one it doesn't use.
-    second = view["routes"][1]
+    # The route with a dust node (the EBF's; the Bricked Blast Furnace's has none, D390): its
+    # alternatives, then pin the one it doesn't use.
+    second = next(
+        r for r in view["routes"] if any(n["item"] != STEEL for n in r["nodes"])
+    )
     dust = next(n for n in second["nodes"] if n["item"] != STEEL)
     alts = ok(
         client.get(

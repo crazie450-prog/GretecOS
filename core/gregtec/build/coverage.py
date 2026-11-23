@@ -82,15 +82,15 @@ class Coverage:
 
 
 def plan_multis(plan: Mapping[str, Any]) -> dict[int, str | None]:
-    """MTE id -> name of every multiblock a plan uses: its nodes' machines and a power plan's
-    ``machines_used`` (generators)."""
+    """MTE id -> name of every multiblock (or primitive structure, D390) a plan uses: its
+    nodes' machines and a power plan's ``machines_used`` (generators)."""
     out: dict[int, str | None] = {}
     entries = [*plan.get("nodes", []), *plan.get("machines_used", [])]
     for n in entries:
         m = n.get("machine") if isinstance(n, Mapping) else None
         if (
             isinstance(m, Mapping)
-            and m.get("kind") == "multiblock"
+            and m.get("kind") in ("multiblock", "primitive")
             and m.get("mte") is not None
         ):
             out.setdefault(int(m["mte"]), m.get("name"))

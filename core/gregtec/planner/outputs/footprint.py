@@ -55,7 +55,7 @@ def structure_size(
 def machine(conn: sqlite3.Connection, mte: int, kind: str) -> dict[str, Any]:
     """One machine type's footprint: ``size`` (the structure's box, or one block) and ``box``
     (with clearance), or ``footprint: unknown`` and why."""
-    if kind == "multiblock":
+    if kind in ("multiblock", "primitive"):
         found = structure_size(conn, mte)
         if found is None:
             return {

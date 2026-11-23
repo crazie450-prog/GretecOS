@@ -34,11 +34,12 @@ only badged machines run carries the badge as a warning. Crafting-table and furn
 (NEI's) are kept, flagged ``manual``.
 
 **Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling,
-GT's container maps and EU-less recipes last, D142 (2), D189; then the reverse of one of the
-item's own uses; avoid chanced-only; lower tier; the item as the main product before a
+GT's container maps and EU-less recipes but a primitive machine's last, D142 (2), D189, D390;
+then the reverse of one of the item's own uses; avoid chanced-only; lower tier; the item as the main product before a
 byproduct route; fluid cells after none; fewer inputs; base machine first; machine before
-manual; unbadged first; key) and the first :data:`TOP_N` valid ones are kept; every candidate
-stays listed with its status for D61's swap and "show all". Only primary choices (§7.1 step 3)
+manual; unbadged first; key) and the first :data:`TOP_N` valid ones are kept, plus the first
+recipe a primitive machine runs (the Bricked Blast Furnace beside the EBF, D389 (1), D390); every
+candidate stays listed with its status for D61's swap and "show all". Only primary choices (§7.1 step 3)
 expand more than their first: the target and its direct inputs expand their top recipes but
 their side routes (:func:`side_route`), and a chain template on the target's route expands its
 recipes, its branch points primary (D189). A pin (D61) or a chain template (:mod:`.chains`)
@@ -132,7 +133,9 @@ class RecipeNode:
     machines: tuple[int, ...]  # mte ids that can run it, base before addon
     base: bool  # a base-pack machine runs it (D12)
     badges: tuple[str, ...]  # warnings every machine option carries (D142 (a))
-    flags: tuple[str, ...]  # manual, recycling, research, cleanroom, low_gravity
+    flags: tuple[
+        str, ...
+    ]  # manual, recycling, research, cleanroom, low_gravity, primitive
     research: str | None = None  # the research recipe (assembly line)
 
     def supplies(self, crafts: int) -> tuple[Supply, ...]:
@@ -631,8 +634,8 @@ def heuristic(
     item: str, rec: RecipeNode, made_from: frozenset[str] = frozenset()
 ) -> tuple[object, ...]:
     """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
-    recycling, GT's container maps and EU-less recipes last (D142 (2), D189); then the reverse
-    of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
+    recycling, GT's container maps and EU-less recipes but a primitive machine's last (D142 (2),
+    D189, D390); then the reverse of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
     up, ``made_from``, D189; the builder adds the request's target, WO-3.10); avoid chanced-only; lower tier; ``item`` as the recipe's main
     product (first output) before a byproduct route; recipes that use fluid cells after those
     that don't (D189); fewer inputs; base machine first (D12); machine before manual; unbadged
@@ -645,6 +648,20 @@ def heuristic(
         bool(rec.badges),
         rec.id,
     )
+
+
+def _plain(valid: Sequence[RecipeNode]) -> int:
+    """How many of ``valid`` count towards :data:`TOP_N`: a primitive recipe doesn't (D390)."""
+    return sum(1 for n in valid if "primitive" not in n.flags)
+
+
+def _top(valid: Sequence[RecipeNode]) -> list[str]:
+    """The top recipes of ``valid`` (in heuristic order): the first :data:`TOP_N` that aren't
+    primitive and the first primitive one, so the Bricked Blast Furnace stays a candidate
+    beside the EBF without taking its slot (D389 (1), D390)."""
+    plain = [n.id for n in valid if "primitive" not in n.flags][:TOP_N]
+    prim = [n.id for n in valid if "primitive" in n.flags][:1]
+    return [n.id for n in valid if n.id in plain or n.id in prim]
 
 
 def _cheap(
@@ -807,6 +824,12 @@ class _Builder:
             flags.append("manual")
         elif r.map is None or r.eut is None or r.duration is None:
             return _Check(False, "no recipe map, EU/t or duration")
+        elif r.eut <= 0 and any(
+            m.kind == "primitive" for m in self.reader.machines_for(r.map)
+        ):
+            # A primitive machine (the Bricked Blast Furnace, the Coke Oven) runs it with no
+            # EU by GT's own rule: ranked like any other recipe (D389 (1), D390).
+            flags.append("primitive")
         elif r.eut <= 0:
             # The Eye of Harmony, the neutron activator...: the machine powers it its own
             # way. Kept when a machine runs it (always a badged one), ranked last (D189);
@@ -886,7 +909,7 @@ class _Builder:
     ) -> tuple[list[RecipeNode], list[Candidate], list[Candidate]]:
         """(valid recipes in heuristic order, unchecked, rejected) for ``key``. The machine
         check runs in heuristic order, a group of equal cheap keys at a time, until
-        :data:`TOP_N` are valid, and always for the recipes a pin or a template names; the
+        :data:`TOP_N` are valid (a primitive recipe doesn't count, :func:`_plain`), and always for the recipes a pin or a template names; the
         rest are listed unchecked (D61's "show all" checks one when it is picked)."""
         need = (
             set(self.templates.choices[key].recipes)
@@ -926,10 +949,10 @@ class _Builder:
         unchecked: list[Candidate] = []
         group: tuple[object, ...] | None = None
         for prefix, rid, node in cheap:
-            if len(valid) >= TOP_N and prefix != group and node.id not in need:
+            if _plain(valid) >= TOP_N and prefix != group and node.id not in need:
                 unchecked.append(Candidate(node.id, "unchecked", "below the top 4"))
                 continue
-            group = prefix if len(valid) < TOP_N else group
+            group = prefix if _plain(valid) < TOP_N else group
             c = self.check(rid)
             if c.ok and c.node is not None:
                 valid.append(c.node)
@@ -971,8 +994,8 @@ class _Builder:
             warns.append(
                 f"chain {choice.chain}: none of its recipes for {key} fit; heuristic used"
             )
-            return refs[:TOP_N], False, None, None, warns
-        return refs[:TOP_N], False, None, None, []
+            return _top(valid), False, None, None, warns
+        return _top(valid), False, None, None, []
 
     def in_loop(self, key: str) -> bool:
         """Whether ``key`` is on a loop of its chain template: its template recipes use up,

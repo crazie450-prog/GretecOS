@@ -187,7 +187,7 @@ class Instance:
     node: str
     role: str  # machine (a recipe or farm node) or generator (a power plan's generator)
     mte: int
-    kind: str  # multiblock, singleblock or steam
+    kind: str  # multiblock, singleblock, steam or primitive (a structure, like a multiblock)
     name: str | None
     tier: str | None
     footprint: fp.Footprint  # facing north
@@ -245,7 +245,7 @@ class _Footprints:
         return self._cache[key]
 
     def _find(self, mte: int, kind: str, name: str | None) -> fp.Footprint | None:
-        if kind != "multiblock":
+        if kind not in ("multiblock", "primitive"):
             return _single(mte, name)
         found = self.lib.for_mte(mte) or self.linked.get(mte, [])
         if not found:
